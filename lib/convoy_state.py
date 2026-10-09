@@ -429,9 +429,10 @@ BOUND_RESUMES = "resumes"
 BOUND_END_ROUNDS = "end_rounds"
 # Why code sends a ticket back to a fresh author session (T20): its session
 # was interrupted, the merge returned it, the repair it waited for is closed,
-# or the request that parked it was answered. The correction round and a
+# the request that parked it was answered, or its branch, finished, does not
+# contain the tip of the integration branch (T44). The correction round and a
 # commit after a verdict are counted where they are written.
-RESUME_CAUSES = ("interrupted", "returned", "unblocked", "answered")
+RESUME_CAUSES = ("interrupted", "returned", "unblocked", "answered", "behind")
 RESUME_MAX_LAUNCHES = 1
 # What bin/spec-integration did of a ticket (Spec §4): merged into the
 # integration branch, or returned to its author by a conflict or by red tests

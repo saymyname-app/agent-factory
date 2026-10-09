@@ -48,6 +48,9 @@ ticket to a session of the reviewer role, sends it once more when the review
 gave no result, stops the ticket when the relaunch gave none either, and
 sends the answers given to its Blocking Findings to a second reviewer
 session. bin/spec-integration merges nothing without a favorable verdict.
+bin/code-review sends no reviewer on a branch that does not contain the tip
+of the integration branch (T44, af-m1iibk; Spec §6): such a refusal is
+listed under `code_review.behind` and does not fail the pass.
 
 A pass also has each finished ticket evaluated on the launched product
 before its merge (T15, af-higj9z; Spec §7, §8): it hands each convoy that
@@ -80,7 +83,12 @@ A pass also counts and bounds the resumes of a ticket (T20, af-y9pw9z; Spec
 or ended without one), that the merge returned, whose repair is closed or
 whose request was answered is sent to one fresh author session on the same
 branch, through bin/dispatch-door, and the resume is counted
-(bin/convoy-state open-resume). At its third resume, whatever counted them
+(bin/convoy-state open-resume). So is a finished, unmerged ticket whose
+branch does not contain the tip of the integration branch (cause `behind`,
+T44: `behind` of bin/code-review show), once per Ticket Exit, and counted
+even when the ceiling makes its session wait: its exit is taken back, so
+neither the review nor the evaluation is sent on the old tip. At its third
+resume, whatever counted them
 -- these, the correction round, a commit after a verdict -- the ticket is
 parked with every ticket that waits for it and is not restarted; the others
 keep starting. When nothing but parked tickets is left in a convoy, the pass
@@ -263,6 +271,9 @@ CORRECTION_STOP = "still_refused"
 # Spec §5: the exits that park their ticket; what the merge returns.
 PARKING_EXITS = ("planning_exception", "operator_request")
 RETURNED_MERGES = ("conflict", "red")
+# The resume of a finished ticket whose branch did not take the tip of the
+# integration branch: bin/code-review sends no reviewer on it (T44).
+BEHIND = "behind"
 # Spec §8, K: a ticket out of resumes is parked for this cause (bin/convoy-state).
 PARK_EXHAUSTED = "resumes_exhausted"
 # The words of the operator for each cause of parking.
@@ -919,6 +930,24 @@ def park_exhausted(convoy: Convoy, ticket: dict[str, Any]) -> dict[str, Any]:
     return {"id": ticket["id"], "cause": PARK_EXHAUSTED, "parked": answer["parked"]}
 
 
+def behind_due(convoy: Convoy, ticket: dict[str, Any]) -> tuple[str, str, str] | None:
+    """Spec §6: the code review is not sent on a branch that does not hold
+    the tip of the integration branch. bin/code-review says so (`behind` of
+    its `show`, read only); the ticket goes back to its author, once per
+    exit, to take that tip."""
+    exit_record = ticket.get("exit") or {}
+    if exit_record.get("exit") != "finished" or (ticket.get("merge") or {}).get("outcome") == "merged":
+        return None
+    if not convoy.repo or not convoy.integration:
+        return None
+    answer = parsed(run([str(CODE_REVIEW_BIN), "show", convoy.id, ticket["id"], "--repo", str(convoy.repo)]),
+                    f"code-review show {convoy.id} {ticket['id']}")
+    behind = answer.get("behind") if isinstance(answer, dict) else None
+    if not isinstance(behind, dict):
+        return None
+    return "new", BEHIND, f"integration:{behind.get('integration')}/exit:{exit_record.get('at')}"
+
+
 def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: set[str], out: dict[str, Any],
                    only: set[str] | None = None) -> None:
     """Spec §8: park the ticket that took its last resume; send the ticket
@@ -933,7 +962,7 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
                 out["parked"].append(park_exhausted(convoy, ticket))
                 convoy.load()
                 continue
-            due = resume_due(ticket, alive)
+            due = resume_due(ticket, alive) or behind_due(convoy, ticket)
             if due is None:
                 continue
             what, cause, ref = due
@@ -943,7 +972,11 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
                               f"le ticket attend une reprise ({cause}) que rien ne peut lancer")
             if not rig:
                 raise Refusal("le ticket ne nomme pas un seul projet connu de config/projects sous « Target rigs »")
-            if len(out["started"]) + len(out["resumed"]) >= free:
+            full = len(out["started"]) + len(out["resumed"]) >= free
+            # A branch behind is counted at once, session or not: its exit
+            # is taken back, so neither the review nor the Ticket Evaluation
+            # is sent on the old tip while the ticket waits for a session.
+            if full and (what, cause) != ("new", BEHIND):
                 out["waiting"].append({"id": ticket_id, "reason": f"reprise ({cause}) : plafond N={settings['ceiling']} atteint"})
                 continue
             if what == "new":
@@ -955,6 +988,9 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
                     out["parked"].append(park_exhausted(convoy, ticket))
                     convoy.load()
                     continue
+            if full:
+                out["waiting"].append({"id": ticket_id, "reason": f"reprise ({cause}) : plafond N={settings['ceiling']} atteint"})
+                continue
             bead_id = launch_resume(convoy, ticket_id, cause, rig, settings)
             out["resumed"].append({"id": ticket_id, "cause": cause, "bead": bead_id})
             convoy.load()
@@ -1917,7 +1953,14 @@ def settle_code_reviews(convoy: Convoy) -> dict[str, Any] | None:
         return {"error": f"refus : {exc}"}
     if not isinstance(answer, dict):
         return {"error": f"refus : code-review settle {convoy.id} a rendu une réponse illisible"}
-    kept = ("launched", "relaunched", "pending", "waiting", "stopped", "escalated", "deferred", "refused", "error")
+    # A branch behind the integration tip is refused by the review and handed
+    # back by the next pass (behind_due): a wait here, not a failed pass.
+    refused = answer.get("refused") if isinstance(answer.get("refused"), list) else []
+    behind = [entry for entry in refused if isinstance(entry, dict) and entry.get("cause") == BEHIND]
+    if behind:
+        answer = {**answer, "refused": [entry for entry in refused if entry not in behind], "behind": behind}
+    kept = ("launched", "relaunched", "pending", "waiting", "stopped", "escalated", "deferred", "refused", "behind",
+            "error")
     return {name: answer[name] for name in kept if answer.get(name)}
 
 

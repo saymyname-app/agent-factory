@@ -51,7 +51,11 @@ the Ticket Exit is « terminé », the complete Ticket Handoff was taken at the
 tip, the ticket is green at the tip (`bin/tdd-step`), and it is not stopped,
 parked, closed, or already merged at that tip. `bin/convoy-advance` calls
 the code review and the evaluation in the same pass: they run in parallel,
-on the same tip.
+on the same tip. A finished ticket whose branch does not contain the tip of
+the integration branch is handed back to its author by the resumes of that
+pass, before both (cause `behind`, T44, `docs/CONVOY_ADVANCE.md`): its
+Ticket Exit is taken back, so no evaluation is sent on the old tip. The
+evaluation has no check of that tip of its own.
 
 | State of the evaluation | What `settle` does |
 |---|---|

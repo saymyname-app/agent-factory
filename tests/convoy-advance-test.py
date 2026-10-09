@@ -1600,6 +1600,55 @@ class ConvoyAdvanceTest(unittest.TestCase):
         self.assertEqual([(T1, "unblocked")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
         self.assertEqual(1, self.resumes())
 
+    def integration_moved(self):
+        """One commit more on the integration branch, as the merge of
+        another ticket leaves it; returns the new tip."""
+        self.git("checkout", "-q", "--detach", self.INTEGRATION)
+        (self.root / "autre.md").write_text("un autre ticket a fusionné\n")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "un autre ticket fusionne")
+        tip = self.git("rev-parse", "HEAD")
+        self.git("update-ref", f"refs/heads/{self.INTEGRATION}", tip)
+        self.git("checkout", "-q", "--detach", "main")
+        return tip
+
+    def test_a_finished_ticket_behind_the_integration_tip_goes_back_to_its_author_once_and_is_counted(self):
+        self.integrated()
+        self.resumable()
+        self.code_reviewed("favorable")
+        self.evaluated()
+        self.advance(CONVOY)
+        tip = self.finished(T1)
+        self.integration_moved()
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "behind")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+        self.assertEqual(["sling", "fx-worker", self.of(answer, "resumed")[0]["bead"], "fx-resume"],
+                         self.resume_launches()[-1][:4])
+        shown = self.shown_state(T1)
+        self.assertEqual((1, None, f"ticket/{T1}", tip),
+                         (shown["counters"]["resumes"], shown["exit"], shown["branch"], shown["tip"]))
+        self.assertEqual(([], []), (self.code_review_launches(), self.evaluation_launches()))
+        self.assertIsNone(shown["verdicts"].get("code_review"))
+        self.assertNotIn(T1, [m["id"] for m in (self.integration_of(answer) or {}).get("merged", [])])
+        self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
+        self.assertEqual(1, self.resumes())
+
+    def test_a_finished_ticket_that_holds_the_integration_tip_is_reviewed_and_not_resumed(self):
+        self.integrated()
+        self.resumable()
+        self.code_reviewed("favorable")
+        self.evaluated()
+        self.advance(CONVOY)
+        self.integration_moved()
+        self.finished(T1)
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual(([], 0), (self.of(answer, "resumed"), self.resumes()))
+        self.assertEqual(1, len(self.code_review_launches()))
+
     def test_a_ticket_the_merge_returned_is_resumed_and_the_resume_is_counted(self):
         self.integrated(regression="false")
         self.resumable()
