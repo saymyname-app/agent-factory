@@ -24,6 +24,19 @@ PODMAN=${FACTORY_CI_RUNNER_PODMAN:-podman}
 # A runner too old is refused by GitHub, and the image carries the system's
 # security fixes: rebuild it after this many days.
 IMAGE_MAX_AGE_DAYS=${FACTORY_CI_RUNNER_IMAGE_MAX_AGE_DAYS:-7}
+# A build makes new calls of wsl.exe from Windows hang about 30 s, once or
+# twice (docs/OPERATIONS.md, af-uw246a): an image that is only old is built
+# again between these hours of the host's clock, start included, end not
+# (Benjamin, 2026-10-09: 05:00-07:00) -- or at any hour once it is this old,
+# for a PC that is off at night.
+BUILD_HOURS=${FACTORY_CI_RUNNER_BUILD_HOURS:-5-7}
+IMAGE_HARD_MAX_AGE_DAYS=${FACTORY_CI_RUNNER_IMAGE_HARD_MAX_AGE_DAYS:-14}
+# A build that failed is not tried again before this long while an image exists.
+BUILD_RETRY_SECONDS=${FACTORY_CI_RUNNER_BUILD_RETRY_SECONDS:-3600}
+# While a container runs: look every WATCH_PAUSE seconds for stop-now, and
+# every DUE_CHECK_TICKS looks whether the image is due.
+WATCH_PAUSE=${FACTORY_CI_RUNNER_WATCH_PAUSE:-2}
+DUE_CHECK_TICKS=${FACTORY_CI_RUNNER_DUE_CHECK_TICKS:-30}
 # A job that never ends would hold the only runner for ever.
 JOB_MAX_SECONDS=${FACTORY_CI_RUNNER_JOB_MAX_SECONDS:-7200}
 # Tests only: stop after this many turns of the loop.
@@ -34,19 +47,37 @@ NAME=factory-ci-job
 
 log() { printf 'runner-loop: %s\n' "$*"; }
 
+in_build_hours() {
+  # Tests only: FACTORY_CI_RUNNER_HOUR stands for the hour of the clock.
+  local hour=${FACTORY_CI_RUNNER_HOUR:-$(date +%-H)}
+  [ "$hour" -ge "${BUILD_HOURS%-*}" ] && [ "$hour" -lt "${BUILD_HOURS#*-}" ]
+}
+
+# True when nothing asks for a build now: the image exists, its recipe did not
+# change, and it is young -- or old, but not yet too old, outside the hours.
 image_is_fresh() {
-  local created
+  local created age
   created=$("$PODMAN" image inspect "$IMAGE" --format '{{.Created.Unix}}' 2>/dev/null) || return 1
-  [ $(( $(date +%s) - created )) -lt $(( IMAGE_MAX_AGE_DAYS * 86400 )) ] || return 1
-  # A new install of its recipe (config/ci-runner/root-install) is a new image.
+  age=$(( $(date +%s) - created ))
+  [ "$age" -lt $(( IMAGE_HARD_MAX_AGE_DAYS * 86400 )) ] || return 1
+  if [ "$age" -ge $(( IMAGE_MAX_AGE_DAYS * 86400 )) ] && in_build_hours; then return 1; fi
+  # A changed recipe (config/ci-runner/root-install leaves an unchanged one
+  # its date) is a new image.
   local recipe
   for recipe in "$LIB/Containerfile" "$LIB/entrypoint.sh"; do
     [ ! -e "$recipe" ] || [ "$(stat -c %Y "$recipe")" -le "$created" ] || return 1
   done
 }
 
+build_tried_at=0
+# A failed build is not a reason to try every minute: the old image serves.
+build_was_just_tried() {
+  [ $(( $(date +%s) - build_tried_at )) -lt "$BUILD_RETRY_SECONDS" ] && "$PODMAN" image exists "$IMAGE"
+}
+
 build_image() {
   local latest
+  build_tried_at=$(date +%s)
   latest=$(curl -fsS --max-time 20 https://api.github.com/repos/actions/runner/releases/latest \
     | jq -r '.tag_name // empty' | sed 's/^v//') || latest=
   if [ -z "$latest" ]; then
@@ -68,7 +99,7 @@ while :; do
   # `bin/ci-runner pause --now`: nothing runs until `resume` removes the file.
   if [ -e "$RUN_DIR/stop-now" ]; then sleep "$PAUSE"; continue; fi
 
-  if ! image_is_fresh && ! build_image && ! "$PODMAN" image exists "$IMAGE"; then
+  if ! image_is_fresh && ! build_was_just_tried && ! build_image && ! "$PODMAN" image exists "$IMAGE"; then
     log "no image and none could be built: next try in a minute"
     sleep 60; continue
   fi
@@ -95,12 +126,24 @@ while :; do
     --timeout "$JOB_MAX_SECONDS" "$IMAGE" &
   pid=$!
   jit=
+  ticks=0
   while kill -0 "$pid" 2>/dev/null; do
     if [ -e "$RUN_DIR/stop-now" ]; then
       log "stop-now: killing the job container"
       "$PODMAN" kill "$NAME" >/dev/null 2>&1 || true
     fi
-    sleep 2
+    # A runner can wait for a job for days: without this the image would be
+    # built only when a job happens to end inside the hours. A runner that
+    # only waits (no Runner.Worker in its container) is stopped; one that
+    # serves a job is left alone and the next look decides.
+    ticks=$((ticks + 1))
+    # Only on the container's own word: a look that fails stops nothing.
+    if [ $((ticks % DUE_CHECK_TICKS)) -eq 0 ] && ! image_is_fresh && ! build_was_just_tried \
+       && [ "$("$PODMAN" exec "$NAME" sh -c 'pgrep -f Runner.Worker >/dev/null && echo busy || echo idle' 2>/dev/null)" = idle ]; then
+      log "the image is due and the runner only waits: stopping it to build"
+      "$PODMAN" kill "$NAME" >/dev/null 2>&1 || true
+    fi
+    sleep "$WATCH_PAUSE"
   done
   wait "$pid"; log "job container ended (exit $?)"
 done

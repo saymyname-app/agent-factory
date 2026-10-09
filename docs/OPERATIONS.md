@@ -736,7 +736,7 @@ What he chose on 2026-10-08, each among options put to him in the live chat:
 
 | Piece | Runs as | What it does |
 |---|---|---|
-| `factory-ci-runner.service` (system service, `config/ci-runner/runner-loop`) | `factory-ci`: no password, no shell, no sudo, no group but its own | Waits for a one-job runner configuration, starts a rootless container, lets GitHub's runner serve one job in it, throws the container away, starts again. Rebuilds the image (`config/ci-runner/Containerfile`) every 7 days with the latest runner of GitHub and the system's fixes. |
+| `factory-ci-runner.service` (system service, `config/ci-runner/runner-loop`) | `factory-ci`: no password, no shell, no sudo, no group but its own | Waits for a one-job runner configuration, starts a rootless container, lets GitHub's runner serve one job in it, throws the container away, starts again. Rebuilds the image (`config/ci-runner/Containerfile`) every 7 days, between 05:00 and 07:00, with the latest runner of GitHub and the system's fixes ("While the image is built", below). |
 | `factory-ci-runner-broker.service` (user service, `bin/ci-runner broker`) | the operator | Each time the runner's loop is free, asks GitHub for one just-in-time runner (it serves one job, then GitHub forgets it) and writes its configuration on the pipe `/run/factory-ci-runner/handoff`. The operator's token never reaches the runner's user; the configuration is never printed, logged or stored. |
 | `.github/workflows/ci.yml` | | Goes to the label `factory-ci` only when the repository variable `FACTORY_CI_RUNNER` is `self-hosted`; without it, GitHub's runners as before. On the host the run is one lot, `Tests` alone: the runner takes one job at a time, and four lots would wait on each other for ever. Its first step there is `config/ci-runner/isolation-probe.sh`. |
 
@@ -806,13 +806,79 @@ at a lower priority than the Factory and the batteries.
 | Runner paused, then a push (18:42) | `Tests` "queued", `ci-runner status`: "waiting for a runner since 18:42", `factory-doctor`: ADVISORY "the operator paused the runner" |
 | `mode github`, `gh run cancel`, `gh run rerun` (18:44) | the same run started on `ubuntu-latest`, four lots, 30 s later; cancelled at once |
 | `mode self-hosted`, `resume` | a runner online and idle again within 20 s |
-| Building the image | about 2 minutes, once a week and after each install |
+| Building the image | about 2 minutes, once a week and after an install that changes its recipe; calls of `wsl.exe` hang meanwhile (below) |
 
-Seen, not explained: during each of the first two image builds by the
-service (17:38 and 18:01), one call of `wsl.exe` from Windows timed out
-(`Wsl/Service/0x8007274c`). WSL did not restart and the supervisor stayed
-active; the next call answered. If calls from Windows fail in a cluster,
-look at `journalctl -u factory-ci-runner.service` for "building the image".
+### While the image is built, calls of `wsl.exe` from Windows hang (af-uw246a)
+
+Intent (Benjamin, his words, 2026-10-08): « Je suis aussi ok pour mettre test
+sur pc aussi » -- and, from the mechanism recorded with it above, not a PC he
+cannot use while CI runs.
+Intent (Benjamin, his words, 2026-10-09): « ok pour ta reco, fenêtre
+05:00-7:00 , réinstallation root au bon moment », the recommendation being
+the weekly build kept to night hours, and allowed at any hour past 14 days.
+Mechanism (agent interpretation): know why a build of the image freezes his
+sessions, build it as seldom as possible, and keep the weekly build to hours
+when he is not at the PC. It does not mean a changed kernel setting of the
+guest, a wider share of the PC for the build, or a Factory that pauses at
+night: inside WSL nothing waits on a build.
+
+What you see: once or twice per build, for about 30 s each time, every new
+call of `wsl.exe` from Windows waits (an operator session, a terminal), and
+one of them fails with `Wsl/Service/0x8007274c`. Inside WSL nothing stops:
+the Factory, its orders and the processes already started go on.
+
+| Link of the chain | Seen |
+|---|---|
+| Each new call of `wsl.exe` opens a Hyper-V socket to the guest, and the guest's kernel needs one free block of 512 KB in one piece for it | `vmbus_alloc_ring` under `hvs_probe`, an allocation of order 7 (kernel 6.18.33.2-microsoft-standard-WSL2) |
+| A build writes about 1.5 GB of layers through the disk cache in two minutes | The guest still has 100 to 700 MB free, but in pieces of 256 KB or less: no block of 512 KB for 2 to 24 seconds of a build (`/proc/buddyinfo`, every second) |
+| The allocation fails | `journalctl -k`: `kworker: page allocation failure: order:7`; the socket is not opened and `wsl.exe` gives up after 30 s |
+| Windows serves the calls one after the other | Every call started behind the failed one waits for its 30 s, then answers |
+
+It is the build, not the service: the same recipe built by the operator's own
+rootless Podman, outside every limit of the service, does it too. It is not
+one step either: the end of the `apt-get install` layer, Node.js unpacked,
+GitHub's runner unpacked. The allocation is the WSL kernel's (third party):
+nothing of ours to repair there. Since the boot of 2026-10-07 the kernel
+journal holds this failure at the builds of the image and at 06:00 to 06:22
+on 2026-10-08 (three batteries at once: `docs/DELIVERY.md`, "One battery at a
+time on the host"), and at no other time -- not during a CI job, not during
+one battery.
+
+Measured 2026-10-08, 21:48 to 23:48 (Paris), the Factory running: the same
+build by the operator's Podman, a call of `wsl -d Ubuntu-24.04 -u benja -e
+true` every 4 s, each timed on its own (0.12 to 0.3 s when all is well):
+
+| Build | Seconds with no block of 512 KB | Failed allocations | Calls of `wsl.exe` |
+|---|---|---|---|
+| As the service builds it | 24 | 4 | 2 failed after 30 s, 14 waited behind them: two hangs of 30 s |
+| Podman's own processes held to 512 MB (`MemoryHigh` on their unit; the build's steps were outside it) | 2 | 0 | none over 1.1 s |
+| `vm.compaction_proactiveness` 0 -> 100 | 18 | 4 | 4 failed, 27 waited: a hang of 2 minutes |
+| `vm.min_free_kbytes` 45056 -> 262144 and `vm.watermark_scale_factor` 10 -> 200 | 7 | 1 | 1 failed, 7 waited: one hang of 30 s |
+
+No kernel setting removed the hang, so none is kept: the three are back to
+the guest's own values (root, with Benjamin's word for that test, 2026-10-08).
+The ceiling on memory is the one lever that worked, measured once and outside
+the service; inside it, it needs a control group of its own under the
+service's and is not built.
+
+What holds today (`config/ci-runner/runner-loop`):
+
+| The image is built when | At what hour |
+|---|---|
+| It is older than 7 days | Between 05:00 and 07:00 on the host's clock (`BUILD_HOURS`). A runner that only waits for a job is stopped for the build; one that serves a job is never stopped, the build follows the job if the hour still holds |
+| It is older than 14 days (the PC was off those nights) | Any |
+| Its recipe changed (`Containerfile`, `entrypoint.sh`) | At the install, whatever the hour: the operator is there. `root-install` leaves an unchanged recipe its date, so installing a new `runner-loop` or service file builds nothing |
+| There is none | At once |
+
+A build that fails is tried again an hour later; the old image serves
+meanwhile. A waiting runner stopped at the very second GitHub hands it a job
+would end that run red: re-run it (`gh run rerun <id> --failed`). To tell this from a guest that is down: `uptime` inside WSL is
+unchanged, and
+
+```bash
+journalctl -k --since -10min | grep -c 'page allocation failure: order:7'
+journalctl -u factory-ci-runner.service --since -10min | grep 'building the image'
+```
 
 ### Install, stop, remove
 
@@ -829,7 +895,8 @@ wsl -d Ubuntu-24.04 -u root -- /home/benja/agent-factory/config/ci-runner/root-i
 The operator's token must be admin of the repository (it asks for the
 just-in-time runners). After a change to `config/ci-runner/` or to
 `bin/ci-runner` has merged, run the same two installs again: the service
-runs the copy in `/usr/local/lib/factory-ci-runner`, not the checkout.
+runs the copy in `/usr/local/lib/factory-ci-runner`, not the checkout. The
+image is built again only when `Containerfile` or `entrypoint.sh` changed.
 
 Stop without removing: `./bin/ci-runner pause` (above), or `./bin/ci-runner
 mode github` to keep CI running elsewhere.
@@ -847,7 +914,8 @@ be removed before this repository ever becomes public (af-5vjm1h): on a
 public repository anyone could run code on the PC through a pull request.
 
 `tests/ci-runner-test.sh` holds the variable, the single lot, the limits of
-the service, the container's options and the hand-off;
+the service, the container's options, the hand-off and the hours of the
+weekly build;
 `config/ci-runner/isolation-probe.sh` proves the box on every run.
 
 ## Upgrade
