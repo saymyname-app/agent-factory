@@ -145,31 +145,37 @@ def cmd_start(args: argparse.Namespace) -> int:
         )
         return 1
 
-    dataset_rel = None
-    if args.dataset is not None:
-        if args.dataset not in launch["datasets"]:
-            print(
-                json.dumps(
-                    {
-                        "started": False,
-                        "error": (
-                            f"unknown dataset {args.dataset!r}; declared "
-                            f"datasets: {sorted(launch['datasets'])}"
-                        ),
-                    },
-                    sort_keys=True,
-                )
-            )
-            return 1
-        dataset_rel = launch["datasets"][args.dataset]
-    elif any("{dataset}" in token for token in launch["recipe"]):
+    # A product is launched on a named synthetic dataset, never without one
+    # (spec af-wf4w5r .12, T38).
+    if args.dataset is None:
         print(
             json.dumps(
-                {"started": False, "error": "launch.recipe requires --dataset"},
+                {
+                    "started": False,
+                    "error": (
+                        "no dataset named: a product is launched on a named dataset "
+                        f"(--dataset); declared datasets: {sorted(launch['datasets'])}"
+                    ),
+                },
                 sort_keys=True,
             )
         )
         return 1
+    if args.dataset not in launch["datasets"]:
+        print(
+            json.dumps(
+                {
+                    "started": False,
+                    "error": (
+                        f"unknown dataset {args.dataset!r}; declared "
+                        f"datasets: {sorted(launch['datasets'])}"
+                    ),
+                },
+                sort_keys=True,
+            )
+        )
+        return 1
+    dataset_rel = launch["datasets"][args.dataset]
 
     try:
         resolved_commit = resolve_commit(repo_root, args.commit)
