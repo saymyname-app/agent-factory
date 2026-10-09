@@ -59,6 +59,14 @@ class OutcomePromoteTest(answers.OwnerAnswerTest):
         self.passed(self.respond("abandonné", None, None, "--reason", REASON, words=None))
         return commit, self.remote_tip(PROTECTED)
 
+    def break_the_tests(self):
+        """The protected branch receives, from elsewhere, a commit that makes
+        the regression command of the project red."""
+        def edit(tree):
+            app = tree / APP
+            app.write_text(app.read_text().replace('<p data-anchor="fixture-generated-at">', "<p>"))
+        return self.commit_to(PROTECTED, edit, "la date perd son ancre")
+
     def parents(self, commit):
         out = subprocess.run(("git", "--git-dir", str(self.origin), "rev-list", "--parents", "-n", "1", commit),
                              env=self.env, text=True, capture_output=True).stdout.split()
@@ -178,7 +186,9 @@ class OutcomePromoteTest(answers.OwnerAnswerTest):
 
     def test_a_conflict_with_the_protected_branch_merges_nothing_and_voids_the_acceptance(self):
         commit, _ = self.accepted()
-        clash = self.commit_to(PROTECTED, lambda tree: (tree / APP).write_text("# réécrit ailleurs\n"), "réécriture ailleurs")
+        # The protected branch receives a file the convoy also wrote.
+        written = f"docs/{answers.packs.gate.SLICE}.md"
+        clash = self.commit_to(PROTECTED, lambda tree: self.write(tree / written, "écrit ailleurs\n"), "le même fichier, ailleurs")
 
         answer = self.assert_red("conflict", commit, clash)
 
@@ -273,8 +283,8 @@ class OutcomePromoteTest(answers.OwnerAnswerTest):
                 ("owner-answer", lambda: self.respond("constats rendus", commit, digest, "--findings",
                                                       self.findings_file(answers.cited()))),
                 ("spec-end", lambda: self.outcome(gate.TOOL, "run", "--profile", self.profile)),
-                ("resume", lambda: self.outcome(answers.packs.gate.STATE_TOOL, "resume", ticket, "--cause", "returned",
-                                                repo=False))):
+                ("open-resume", lambda: self.outcome(answers.packs.gate.STATE_TOOL, "open-resume", ticket, repo=False)),
+                ("mark", lambda: self.outcome(answers.packs.gate.STATE_TOOL, "mark", repo=False))):
             with self.subTest(command=name):
                 before, merged = self.tracker.read_bytes(), self.remote_tip(PROTECTED)
                 status, answer = call()
@@ -282,6 +292,11 @@ class OutcomePromoteTest(answers.OwnerAnswerTest):
                 self.assertIn("rien ne le rouvre", answer["error"])
                 self.assertIn("travail nouveau", answer["error"])
                 self.assertEqual((before, merged), (self.tracker.read_bytes(), self.remote_tip(PROTECTED)))
+
+    @staticmethod
+    def write(path, text):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
 
     def outcome(self, tool, command, *args, repo=True):
         proc = self.run_cmd(tool, command, CONVOY, *(("--repo", self.repo) if repo else ()), *args)

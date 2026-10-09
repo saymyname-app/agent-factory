@@ -15,9 +15,10 @@
                  of that tip (bin/project-launch). Green: the integration
                  branch is merged into the protected branch by one merge
                  commit, the promotion is recorded with the two commits
-                 (judged, merged), the Evidence Pack notes them, the convoy
-                 is closed on Benjamin's words, its Spec and its draft are
-                 closed, and the evidence store of the Spec is purged. Red,
+                 (judged, merged), the Evidence Pack notes them, the
+                 evidence store of the Spec is purged, the convoy is closed
+                 on Benjamin's words, and its Spec and its draft are closed
+                 (bin/planning-artifacts-close). Red,
                  or the two branches conflict: nothing is merged, the red
                  is recorded on the integration branch (the next pass of
                  bin/convoy-advance publishes its `repair`), and the
@@ -384,31 +385,34 @@ def cmd_check(args: argparse.Namespace) -> int:
 
 
 def close(convoy: Convoy, base: dict[str, Any]) -> int:
-    """Close the convoy on Benjamin's words, then what follows its closing:
-    its Spec and its draft, and for an accepted Outcome its two commits in
-    the dossier and the purge of the evidence store. What follows is
-    replayed by the next run when a step of it fails: `pending` names it."""
+    """Close the convoy on Benjamin's words. For an accepted Outcome, the
+    two commits are first noted in its dossier and the evidence store of
+    its Spec purged: the convoy stays open until both are done, so the next
+    run takes them up again. Its Spec and its draft are closed after it; a
+    failure there is named in `pending`, and the order that closes them
+    (orders/planning-artifacts-close.toml) takes it up."""
+    purged = None
     if convoy.state.get("status") != "closed":
+        if convoy.state.get("promotion"):
+            status, noted = tool(PACK_TOOL, "promoted", convoy.id, "--repo", str(convoy.repo()))
+            if status != 0:
+                raise Refusal(f"la fusion est faite et enregistrée, mais le dossier ne la note pas encore "
+                              f"({refusal_text(noted)}) : le convoi {convoy.id} reste ouvert, la prochaine passe reprend")
+            spec = convoy.state.get("spec")
+            if spec:
+                status, purge = tool(CAPTURE_TOOL, "purge", "--spec", spec)
+                if status != 0:
+                    raise Refusal(f"la fusion est faite et enregistrée, mais les preuves de la Spec {spec} ne sont pas "
+                                  f"purgées ({refusal_text(purge)}) : le convoi {convoy.id} reste ouvert, la prochaine "
+                                  "passe reprend")
+                purged = purge.get("removed")
         state_write("close-convoy", convoy.id)
         convoy.load()
     closed = convoy.state.get("closed") or {}
     pending: list[str] = []
-    accepted = closed.get("how") == "accepted"
-    if accepted:
-        status, noted = tool(PACK_TOOL, "promoted", convoy.id, "--repo", str(convoy.repo()))
-        if status != 0:
-            pending.append(f"dossier : {refusal_text(noted)}")
     proc = run([str(ARTIFACTS_TOOL)])
     if proc.returncode != 0:
         pending.append(f"Spec et brouillon : {detail_of(proc)}")
-    purged = None
-    spec = convoy.state.get("spec")
-    if accepted and not pending and spec:
-        status, purge = tool(CAPTURE_TOOL, "purge", "--spec", spec)
-        if status != 0:
-            pending.append(f"purge des preuves : {refusal_text(purge)}")
-        else:
-            purged = purge.get("removed")
     print(json.dumps({**base, "ok": True, "convoy": convoy.id, "closed": True, "how": closed.get("how"),
                       "said": closed.get("said"), "outcome": convoy.state.get("outcome"),
                       "promotion": convoy.state.get("promotion"), "purged": purged,
@@ -420,8 +424,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     refuse_agent_session()
     convoy = Convoy(args.convoy, args.repo)
     if convoy.state.get("status") == "closed":
-        # Closed by command (a convoy closed otherwise is unruled): what
-        # follows the closing is replayed, nothing else is written.
+        # Closed by command (a convoy closed otherwise is unruled): only
+        # the closing of its Spec and its draft is replayed.
         return close(convoy, {"done": True, "promoted": False})
     answer = convoy.answer()
     if answer is None:

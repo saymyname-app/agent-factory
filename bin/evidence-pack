@@ -1174,7 +1174,9 @@ def cmd_promoted(args: argparse.Namespace) -> int:
     folder = Path(recorded["path"])
     if altered(folder, recorded):
         raise Refusal(f"dossier altéré depuis sa génération : {altered(folder, recorded)} ; rien n'est écrit")
-    closed = convoy.get("closed") or {}
+    # The « accepté » the merge follows: the last answer, on the judged commit.
+    answers = (convoy.get("judgement") or {}).get("answers") or []
+    accepted = answers[-1] if answers and answers[-1].get("commit") == promotion["judged"] else {}
     integration = convoy.get("integration") or {}
     rows = [
         ("Spec", e(convoy.get("spec"))),
@@ -1186,7 +1188,7 @@ def cmd_promoted(args: argparse.Namespace) -> int:
             "" if promotion["tip"] == promotion["judged"] else
             " (le commit jugé, plus la reprise de la branche protégée : contrôles mécaniques rejoués verts)")),
         ("Fusion enregistrée", e(promotion["at"])),
-        ("Mots de l'approbateur", f"{e(closed.get('approver'))} : {e(closed.get('said'))}" if closed else "convoi non fermé"),
+        ("Mots de l'approbateur", f"{e(accepted.get('approver'))} : {e(accepted.get('words'))}" if accepted else "non lus"),
     ]
     page = ("<!doctype html>\n<html lang=\"fr\"><head><meta charset=\"utf-8\">"
             f"<title>Fusion de l'Outcome accepté — {e(args.convoy)}</title></head><body>\n"
