@@ -23,7 +23,11 @@ the **one tool that records what he answers**. The rules it holds:
   proposition door that fails after the answer is written).
 - **Nothing reopens an accepted or abandoned Outcome**: a defect or a wish
   found afterwards is new work, through a Planning Run.
-- **It closes and merges nothing**: that is T30.
+- **It closes and merges nothing itself.** Once « accepté » or
+  « abandonné » is recorded, the next pass of the Factory's order follows
+  it through `bin/outcome-promote`: the one merge into the protected branch
+  and the closing of the convoy, or the closing alone (T30,
+  `docs/OUTCOME_PROMOTE.md`).
 
 Everything is written through `bin/convoy-state`, in one convoy field,
 `gc.flow.judgement` (`docs/CONVOY_STATE.md`).
@@ -60,7 +64,13 @@ or returned with an answer). The same verdict again writes nothing.
 
 **`record --response accepté`** takes `--words`, `--commit` and
 `--pack-digest`. It appends the answer and nothing else: the Outcome stays
-Delivered and the convoy stays open.
+Delivered and the convoy stays open until the next pass of
+`bin/convoy-advance`, which merges the integration branch into the
+protected branch and closes the convoy (`docs/OUTCOME_PROMOTE.md`). If the
+protected branch moved since and its take-up is red or in conflict, that
+pass merges nothing and **voids the acceptance**: the answer stays in the
+record with `voided`, the Outcome goes back through the end of its Spec,
+and he answers again on a new dossier.
 
 **`record --response "constats rendus"`** takes the same three, and
 `--findings`, a JSON file:
@@ -80,7 +90,8 @@ proposition « à faire avant d'accepter » is waiting: it is the batch.
 
 **`record --response abandonné`** takes `--reason`, one line. It is
 recorded with the commit and the fingerprint of the dossier he judged — the
-Delivered Outcome, or the one of a « non conforme » request.
+Delivered Outcome, or the one of a « non conforme » request. The next pass
+closes the convoy with that reason and merges nothing.
 
 **`resolve-exception`** records, on his words, that the Planning Exception
 of the last batch is resolved.
@@ -149,7 +160,8 @@ nothing is recorded on such a convoy); 4 the convoy does not carry the mark
 | --- | --- | --- |
 | all | `--approved-by` is not the declared human approver of the project, or that approver cannot be read (tickets naming no single project) | nothing |
 | all | the convoy is in an « état sans règle »: exit 3, not a refusal | nothing |
-| `verdict`, `record` | the last answer is « accepté » or « abandonné »: nothing reopens it | nothing |
+| `verdict`, `record` | the last answer is « accepté » or « abandonné » and no red replay voided it: nothing reopens it | nothing |
+| `verdict`, `record`, `resolve-exception` | the convoy is closed by command (`convoy.closed`): « rien ne le rouvre, ni lui ni ses tickets ; un défaut ou un souhait trouvé après entre comme travail nouveau, par un Planning Run » | nothing |
 | `verdict` | the verdict is not one of the three; the convoy is not Delivered; the id is not a proposition of the convoy; no words; the verdict already had its follow-up and another one is given | nothing |
 | `record` | `--response` is « refusé » (return findings or abandon instead), a partial acceptance (`--stories`, « accepté partiellement »…), or unknown | nothing |
 | `record` accepté, constats rendus | no words; no `--commit` or `--pack-digest`; the convoy is not Delivered | nothing |
@@ -175,7 +187,10 @@ second repair for a finding; `set-owner-proposal` and
   approver, commit, pack, at}` with `words` (accepted, findings), `reason`
   (abandoned), `findings` — each `{text, route, cites?, draft?, ticket?,
   proposal?, proposition?}` — and `exception`: `{findings: [n…], at,
-  resolved?: {approver, words, at}}`.
+  resolved?: {approver, words, at}}`. An « accepté » may carry `voided`:
+  `{cause: regression|fidelity|start|conflict, at}`, written by
+  `bin/convoy-state void-acceptance` and never by this tool
+  (`docs/OUTCOME_PROMOTE.md`).
 
 ## Environment
 
@@ -200,6 +215,8 @@ second repair for a finding; `set-owner-proposal` and
 # a new Acceptance Request arrives, its dossier opens with rubric 0
 ./bin/owner-answer record af-convoy --response accepté --approved-by benjamin \
     --words "C'est bon pour moi." --commit <new commit> --pack-digest sha256:<new fingerprint>
+# … the next pass of the order merges the integration branch into the
+# protected branch and closes the convoy (bin/outcome-promote)
 ```
 
 The commit and the fingerprint are the ones `bin/acceptance-session open`
@@ -233,10 +250,12 @@ unchanged.
 
 ## Limits
 
-- **Nothing closes or merges** on « accepté » or « abandonné »: T30. An
-  accepted or abandoned convoy stays open, and until T30
-  `bin/convoy-state show` still reports every closed marked convoy as an
-  « état sans règle ».
+- **The answer is not the merge.** Between « accepté » and the pass that
+  follows it the Outcome is accepted and unmerged, and it stays so while
+  that pass cannot merge (`docs/OUTCOME_PROMOTE.md`, Limits). An
+  « accepté » can also be voided by that pass, and nothing tells Benjamin
+  when it happens: a new Acceptance Request arrives once the repair is
+  delivered, and the record keeps the cause.
 - **The Planning Exception of a batch is recorded and holds the end of the
   Spec, nothing more.** Amending the Spec and revising the graph is a
   Planning Run done by hand: no code starts it and nothing notifies the
@@ -261,7 +280,13 @@ unchanged.
 - **A proposition door that keeps failing holds nothing**: the Outcome can
   be Delivered and accepted while a « plus tard » still has no proposition;
   every pass says so (`acceptance.proposals_pending`) and nothing else
-  reports it.
-- **The Cockpit still shows « Accepter »** on a closed marked convoy with
-  no recorded answer; the click is refused.
+  reports it. Once « accepté » or « abandonné » is recorded the pass no
+  longer runs `proposals` (it only follows the answer,
+  `docs/CONVOY_ADVANCE.md`), and on the closed convoy the proposition can
+  no longer be named: a « plus tard » still pending at that moment is to
+  create by hand through `bin/proposal-door`.
+- **The Cockpit still shows « Accepter »** on a closed marked convoy whose
+  last answer is not « accepté »: one closed by hand with no recorded
+  answer, and one closed by command on « abandonné » (T30), which it
+  renders as delivered and waiting for him. The click is refused.
 - No real convoy reached an answer.

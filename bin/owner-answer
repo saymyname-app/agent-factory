@@ -212,6 +212,17 @@ class Convoy:
         self.tickets: list[dict[str, Any]] = answer["tickets"]
         self.state: dict[str, Any] = answer["convoy"]
 
+    def never_reopened(self) -> None:
+        """No verdict and no answer follows the closing of the convoy on
+        Benjamin's words (Spec §11)."""
+        closed = self.state.get("closed")
+        if isinstance(closed, dict):
+            said = {"accepted": "accepté", "abandoned": "abandonné"}.get(closed.get("how"), closed.get("how"))
+            raise Refusal(
+                f"l'Outcome du convoi {self.id} est {said} et son convoi est fermé : rien ne le rouvre, ni lui ni ses "
+                "tickets ; un défaut ou un souhait trouvé après entre comme travail nouveau, par un Planning Run ; "
+                "rien n'est écrit")
+
     def rig(self) -> str:
         rig = ticket_rig(self.tickets[0]["id"]) if self.tickets else None
         if not rig:
@@ -377,6 +388,7 @@ def answer_request(convoy: Convoy) -> str | None:
 
 def cmd_verdict(args: argparse.Namespace) -> dict[str, Any]:
     convoy = Convoy(args.convoy, args.repo)
+    convoy.never_reopened()
     verdict = VERDICTS.get(normalized(args.verdict or ""))
     if verdict is None:
         raise Refusal(
@@ -405,6 +417,7 @@ def cmd_verdict(args: argparse.Namespace) -> dict[str, Any]:
 
 def cmd_record(args: argparse.Namespace) -> dict[str, Any]:
     convoy = Convoy(args.convoy, args.repo)
+    convoy.never_reopened()
     said = normalized(args.response or "")
     response = RESPONSES.get(said)
     if response is None or args.stories:
@@ -455,6 +468,7 @@ def cmd_record(args: argparse.Namespace) -> dict[str, Any]:
 
 def cmd_resolve_exception(args: argparse.Namespace) -> dict[str, Any]:
     convoy = Convoy(args.convoy, args.repo)
+    convoy.never_reopened()
     approver = convoy.approved_by(args.approved_by, "résout la Planning Exception d'un lot de constats")
     state_write("resolve-owner-exception", convoy.id, "--approver", approver, "--words", args.words or "")
     return {"ok": True, "convoy": convoy.id, "exception": Convoy(convoy.id, args.repo).judgement()["answers"][-1]["exception"]}

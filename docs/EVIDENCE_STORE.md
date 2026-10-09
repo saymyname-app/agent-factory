@@ -181,7 +181,9 @@ ticket must hold is the business of the gate that calls it.
 pieces it held; every other Spec, and the seal key, stay. The fingerprints
 stay in the tracker: after a purge `verify` reports the pieces as absent from
 the store. Spec §9 keeps the pieces until promotion; the code that promotes is
-the caller.
+the caller: `bin/outcome-promote`, once the accepted Outcome is merged and
+noted in its dossier, before it closes the convoy (T30,
+`docs/OUTCOME_PROMOTE.md`). An abandoned Outcome is not purged.
 
 ## Limits
 

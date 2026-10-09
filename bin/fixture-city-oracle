@@ -16,7 +16,10 @@ A scenario that expects an outcome (T26, af-vwcflt) is walked on to the end
 of the Spec: the repairs the flow publishes, each on the same lifecycle,
 bin/spec-end check and bin/escalation-door list after each event, and
 Delivered on the tip of the integration branch, never while a condition is
-missing.
+missing. A scenario that expects `accepted` or `abandoned` (T30, af-vlzc6v)
+is walked on to Benjamin's answer: Delivered, then the state his answer ends
+the Outcome in, as two observed states, and the protected branch untouched
+until « accepté » then holding one merge of the integration branch.
 It reads no prompt, no formula and no role. Details: docs/FIXTURE_CITY_ORACLE.md.
 """
 
@@ -49,7 +52,10 @@ DELIVERY_RESULT_CONTRACT = "agent-factory-fixture-delivery-result/v1"
 # allows (Spec af-wf4w5r §4 to §9).
 DELIVERY_STATES = ("published", "started", "red", "frozen", "coded", "reviewed", "evaluated", "merged", "closed")
 DELIVERY_INJECTIONS = ("none", "criterion-edited", "closed-by-hand", "three-failures", "story-not-observed")
-DELIVERY_OUTCOMES = ("delivered",)
+DELIVERY_OUTCOMES = ("delivered", "accepted", "abandoned")
+# The outcomes Benjamin's answer ends a convoy in (T30): the driver is asked
+# to play that answer once the Outcome is Delivered.
+DELIVERY_ANSWERS = ("accepted", "abandoned")
 DELIVERY_MAX_EVENTS = 16
 # A walk that also parks tickets goes on, past the closed ticket, until an
 # event changes nothing (T20).
@@ -1137,6 +1143,14 @@ class DeliveryTarget:
         return subprocess.run(("git", "-C", str(self.repo), "merge-base", "--is-ancestor", commit, of),
                               env=git_env(), capture_output=True, check=False).returncode == 0
 
+    def history(self, *arguments: str) -> list[str]:
+        """What `git rev-list` answers in the repository."""
+        result = subprocess.run(("git", "-C", str(self.repo), "rev-list", *arguments),
+                                env=git_env(), text=True, capture_output=True, check=False)
+        if result.returncode != 0:
+            raise OracleError(f"git rev-list {' '.join(arguments)} failed: {result.stderr.strip()}")
+        return result.stdout.split()
+
 
 def gate_record(ticket: dict[str, Any]) -> dict[str, Any]:
     """The record of the ticket-end gate of a closed ticket: the version of
@@ -1410,11 +1424,105 @@ def outcome_result(target: DeliveryTarget, published: list[str], expected: int, 
     }
 
 
+def standing_answer(convoy: dict[str, Any]) -> str | None:
+    """The answer of Benjamin that ends the judgement of the convoy, when one stands."""
+    answers = (convoy.get("judgement") or {}).get("answers") or []
+    last = answers[-1] if answers and isinstance(answers[-1], dict) else {}
+    return last.get("response") if last.get("response") in DELIVERY_ANSWERS and "voided" not in last else None
+
+
+def observe_answer(target: DeliveryTarget, expected: str, seen: dict[str, Any]) -> bool:
+    """After an event of a walk that goes on to Benjamin's answer (T30,
+    Spec §9 and §11): the protected branch against where it was when the
+    graph was published, and the state of the Outcome -- Delivered, then
+    what his answer ends it in, as two states observed one after the other.
+    True once his answer stands: the end of the Spec is no longer observed
+    on an Outcome he judged. `seen` keeps what the result reports."""
+    _, shown = target.read("convoy-state", "show", target.convoy, "--repo", str(target.repo))
+    convoy = as_dict(shown.get("convoy"), "convoy state")
+    integration = convoy.get("integration") or {}
+    branch = required_string(integration.get("branch"), "integration branch")
+    tip, protected = target.tip(branch), target.tip(integration.get("protected"))
+    base = seen.setdefault("protected", protected)
+    answer, state = standing_answer(convoy), convoy.get("outcome")
+    states = seen.setdefault("states", [])
+    if state not in (None, *DELIVERY_OUTCOMES):
+        raise OracleError(f"bin/convoy-state show names an outcome the flow does not know: {state!r}")
+    if states and state != states[-1] and (state is None or states[-1] != "delivered"):
+        raise OracleError(f"the Outcome was observed {states[-1]}, then {state or 'not Delivered any more'}")
+
+    # Nothing of the convoy reaches the protected branch before « accepté »
+    # is recorded; what it then receives is checked once the convoy is closed.
+    held = len(target.history(f"{base}..{branch}")) - len(target.history(f"{protected}..{branch}"))
+    if answer != "accepted" and (protected != base or held):
+        raise OracleError(
+            "the protected branch moved before « accepté » was recorded"
+            + (f": it holds {held} commit(s) of the convoy" if held else ""))
+    if state == "delivered" and not states:
+        if answer is not None:
+            raise OracleError("the answer was recorded by the event that recorded the Outcome Delivered: "
+                              "Delivered was not observed before it")
+        if (convoy.get("delivered") or {}).get("commit") != tip or not target.history(f"{base}..{branch}"):
+            raise OracleError("the Delivered Outcome is not the tip of an integration branch that holds the commits of the convoy")
+        seen["judged"] = tip
+    if state in DELIVERY_ANSWERS and "delivered" not in states:
+        raise OracleError(f"the convoy is closed « {state} » without having been observed Delivered first: "
+                          "Delivered and Accepted are two states")
+    if state is not None and state not in states:
+        states.append(state)
+    if state not in DELIVERY_ANSWERS:
+        if protected != base:
+            raise OracleError("the protected branch moved and the convoy is not closed on an accepted Outcome")
+        return answer is not None
+
+    if state != expected:
+        raise OracleError(f"the convoy is closed « {state} », the scenario expects {expected}")
+    closing, promotion = convoy.get("closed") or {}, convoy.get("promotion")
+    left = [str(entry.get("id")) for entry in as_list(shown.get("tickets"), "convoy tickets")
+            if isinstance(entry, dict) and entry.get("status") != "closed"]
+    if (convoy.get("status") != "closed" or closing.get("how") != state or left
+            or not all(isinstance(closing.get(name), str) and closing[name].strip() for name in ("approver", "said"))):
+        raise OracleError(f"the Outcome is {state} and its convoy is not closed on the words of its approver"
+                          + (f"; ticket(s) still open: {', '.join(left)}" if left else ""))
+    if target.requests():
+        raise OracleError(f"the convoy is closed « {state} » and the operator's list still shows a request")
+    if tip != seen["judged"]:
+        raise OracleError("the integration branch is no longer at the commit of the Delivered Outcome that was judged")
+    if state == "abandoned":
+        # Nothing is merged: the protected branch is where it was, the integration branch stays.
+        if promotion is not None or protected != base:
+            raise OracleError("an abandoned convoy was merged into the protected branch, or carries the record of a merge")
+        merges = 0
+    else:
+        merges = len(target.history("--first-parent", f"{base}..{protected}"))
+        if merges != 1 or target.history("--parents", "-n", "1", protected) != [protected, base, tip]:
+            raise OracleError(
+                "the protected branch did not receive one merge of the integration branch: its tip is not a merge commit "
+                "whose first parent is its tip before the answer and whose second parent is the tip of the integration branch")
+        if (not isinstance(promotion, dict) or (promotion.get("judged"), promotion.get("merged"), promotion.get("protected"),
+                                                 promotion.get("tip")) != (seen["judged"], protected, base, tip)):
+            raise OracleError("the promotion recorded on the convoy does not name the commit judged, the merge, "
+                              "the protected tip before it and the integration tip")
+    seen["closing"] = {
+        "state": state,
+        "states": list(states),
+        "closed": {"how": closing["how"], "approver": closing["approver"], "said": closing["said"]},
+        "protected_branch": {"moved_before_the_answer": False, "convoy_commits_before_the_answer": 0, "merges": merges,
+                             **({"first_parent_is_the_previous_tip": True, "second_parent_is_the_integration_tip": True}
+                                if merges else {"unchanged": True})},
+        "integration_branch": {"kept": True, "at_the_judged_commit": True},
+        "requests_once_closed": 0,
+    }
+    return True
+
+
 def execute_delivery(scenario: dict[str, Any], driver: Path) -> dict[str, Any]:
     inject, expect, project = validate_delivery_scenario(scenario)
     with tempfile.TemporaryDirectory(prefix="fixture-city-delivery-") as temporary:
         workspace = Path(temporary).resolve()
-        prepare = ("--inject", inject, *(("--project", project) if project else ()))
+        answering = expect["outcome"] in DELIVERY_ANSWERS
+        prepare = ("--inject", inject, *(("--project", project) if project else ()),
+                   *(("--answer", expect["outcome"]) if answering else ()))
         target = DeliveryTarget(run_driver(driver, workspace, "prepare", *prepare), workspace)
         try:
             target.name(run_driver(driver, workspace, "publish"))
@@ -1430,6 +1538,40 @@ def execute_delivery(scenario: dict[str, Any], driver: Path) -> dict[str, Any]:
                 _, shown = target.read("convoy-state", "show", target.convoy, "--repo", str(target.repo))
                 published = [str(entry.get("id")) for entry in as_list(shown.get("tickets"), "convoy tickets")
                              if isinstance(entry, dict)]
+            if answering:
+                # Where the protected branch is before anything of the convoy is written.
+                observe_answer(target, expect["outcome"], seen)
+
+            def final_reads(idle: bool) -> dict[str, Any]:
+                """What the walk ends in, read on the public state: the
+                ticket-end gate and the evidence of the walked ticket, the
+                parked tickets, the Delivered Outcome."""
+                closed = lifecycle[-1] == "closed"
+                status, check = target.read("ticket-end", "check", target.convoy, target.ticket, "--repo", str(target.repo))
+                missing = sorted(check.get("missing") or [])
+                conditions = [
+                    {"number": entry.get("number"), "name": entry.get("name"), "verdict": entry.get("verdict")}
+                    for entry in as_list(check.get("conditions"), "ticket-end check conditions")]
+                if closed != expect["closed"]:
+                    named = "; ".join(f"condition {n} ({TICKET_END_CONDITIONS[n - 1]})" for n in missing)
+                    raise OracleError(
+                        f"the ticket is {'closed' if closed else 'open'} after {', '.join(lifecycle)}"
+                        + (f"; the ticket-end gate names: {named}" if named else ""))
+                if missing != expect["missing"] or (status == 0) != (not missing):
+                    raise OracleError(f"the ticket-end gate names conditions {missing}, the scenario expects {expect['missing']}")
+                verify_status, verified = target.read("evidence-capture", "verify", target.convoy, target.ticket)
+                if closed and verify_status != 0:
+                    raise OracleError(f"the evidence of the closed ticket does not verify: {verified.get('error')}")
+                return {
+                    "closed": closed,
+                    "ticket_end": {"version": check.get("version"), "conditions": conditions, "missing": missing},
+                    "evidence": {"verified": verify_status == 0,
+                                 "pieces": sorted(entry.get("piece") for entry in verified.get("pieces") or [])},
+                    "parking": parking_result(target, expect["parked"], reached_after or []) if parking else None,
+                    "outcome": outcome_result(target, published, expect["repairs"], idle, seen) if watching else None,
+                }
+
+            final = None
             for _ in range(DELIVERY_MAX_EVENTS_OUTCOME if watching else
                            DELIVERY_MAX_EVENTS_PARKING if parking else DELIVERY_MAX_EVENTS):
                 event = run_driver(driver, workspace, "advance")
@@ -1444,29 +1586,25 @@ def execute_delivery(scenario: dict[str, Any], driver: Path) -> dict[str, Any]:
                     elif observe_parking(target)[0]:
                         reached_after = []
                 lifecycle = reached
-                if watching:
+                # T30: on a walk that goes on to Benjamin's answer, the end
+                # of the Spec is observed until his answer stands, and the
+                # Delivered Outcome is read while it is the state observed:
+                # the acceptance purges the evidence it is read on.
+                if watching and not (answering and observe_answer(target, expect["outcome"], seen)):
                     observe_outcome(target, published, expect["repairs"], seen)
+                if answering and final is None and seen["states"] == ["delivered"]:
+                    final = final_reads(True)
                 if event.get("idle") is True or (lifecycle[-1] == "closed" and not parking and not watching):
                     break
-            closed = lifecycle[-1] == "closed"
-            status, check = target.read("ticket-end", "check", target.convoy, target.ticket, "--repo", str(target.repo))
-            missing = sorted(check.get("missing") or [])
-            conditions = [
-                {"number": entry.get("number"), "name": entry.get("name"), "verdict": entry.get("verdict")}
-                for entry in as_list(check.get("conditions"), "ticket-end check conditions")]
-            if closed != expect["closed"]:
-                named = "; ".join(f"condition {n} ({TICKET_END_CONDITIONS[n - 1]})" for n in missing)
+            if not answering:
+                final = final_reads(event.get("idle") is True)
+            elif event.get("idle") is not True or seen["states"] != ["delivered", expect["outcome"]] or final is None:
                 raise OracleError(
-                    f"the ticket is {'closed' if closed else 'open'} after {', '.join(lifecycle)}"
-                    + (f"; the ticket-end gate names: {named}" if named else ""))
-            if missing != expect["missing"] or (status == 0) != (not missing):
-                raise OracleError(f"the ticket-end gate names conditions {missing}, the scenario expects {expect['missing']}")
-            verify_status, verified = target.read("evidence-capture", "verify", target.convoy, target.ticket)
-            if closed and verify_status != 0:
-                raise OracleError(f"the evidence of the closed ticket does not verify: {verified.get('error')}")
-            parked = parking_result(target, expect["parked"], reached_after or []) if parking else None
-            outcome = (outcome_result(target, published, expect["repairs"], event.get("idle") is True, seen)
-                       if watching else None)
+                    f"the walk ends on an Outcome observed {', then '.join(seen['states']) or 'neither Delivered nor closed'}"
+                    f"{'' if event.get('idle') is True else ', and the convoy still changes'}: "
+                    f"the scenario expects delivered, then {expect['outcome']}")
+            else:
+                final["outcome"] = {**final["outcome"], **seen["closing"]}
         finally:
             run_driver(driver, workspace, "stop")
     result = {
@@ -1475,10 +1613,9 @@ def execute_delivery(scenario: dict[str, Any], driver: Path) -> dict[str, Any]:
         "scenario_id": scenario["scenario_id"],
         "lifecycle": lifecycle,
         "observations": observations,
-        "closed": closed,
-        "ticket_end": {"version": check.get("version"), "conditions": conditions, "missing": missing},
-        "evidence": {"verified": verify_status == 0,
-                     "pieces": sorted(entry.get("piece") for entry in verified.get("pieces") or [])},
+        "closed": final["closed"],
+        "ticket_end": final["ticket_end"],
+        "evidence": final["evidence"],
         "interfaces": {
             "driver": ["prepare", "publish", "advance", "stop"],
             "read": ["convoy-state show", "git merge-base", "ticket-end check", "evidence-capture verify"],
@@ -1486,13 +1623,15 @@ def execute_delivery(scenario: dict[str, Any], driver: Path) -> dict[str, Any]:
     }
     if project:
         result["project"] = project
-    if parked:
-        result["parking"] = parked
+    if final["parking"]:
+        result["parking"] = final["parking"]
         result["interfaces"]["read"].append("escalation-door list")
-    if outcome:
-        result["outcome"] = outcome
+    if final["outcome"]:
+        result["outcome"] = final["outcome"]
         result["interfaces"]["read"] += ["git rev-parse", "spec-end check", "escalation-door list", "evidence-pack check",
                                          "acceptance-session open", "acceptance-session close"]
+    if answering:
+        result["interfaces"]["read"].append("git rev-list")
     result["oracle_digest"] = canonical_digest(result)
     return result
 

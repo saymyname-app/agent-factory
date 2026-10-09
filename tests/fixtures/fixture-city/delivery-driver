@@ -5,7 +5,7 @@ It makes one ticket of a marked convoy walk the delivery flow in a throwaway
 city, one event per call, so that bin/fixture-city-oracle can observe the
 public state after each. Called only as:
 
-    delivery-driver --workspace DIR prepare [--inject NAME] [--project NAME]
+    delivery-driver --workspace DIR prepare [--inject NAME] [--project NAME] [--answer NAME]
     delivery-driver --workspace DIR publish
     delivery-driver --workspace DIR advance
     delivery-driver --workspace DIR stop
@@ -67,6 +67,17 @@ af-f62cxt); the same events are played on either, each from its own profile:
     delivery-fixture-city       the first one (default): a web page in Python, with a Validated Prototype;
                                 its ticket is an interface ticket
     delivery-fixture-city-api   the second one: a JSON API on Node.js, no web page, no prototype
+
+`--answer` makes the walk go on past the Delivered Outcome (T30, af-vlzc6v):
+the project declares its human approver, and the event that follows the
+pass that recorded the Outcome Delivered is his answer, played by the driver
+as the operator through the real bin/owner-answer (`owner:accepted`,
+`owner:abandoned`). The pass after it follows the answer by itself
+(bin/outcome-promote):
+    none        nobody answers (default): the walk settles on the Delivered Outcome
+    accepted    a verdict « sans suite » on each « proposition » left without one, then
+                « accepté » with his words, on the commit and the dossier of the Delivered Outcome
+    abandoned   « abandonné », with its one-line reason
 """
 import argparse
 import hashlib
@@ -103,6 +114,12 @@ CONVOY, SPEC, TICKET, RIG = "fx-convoy", "fx-spec", "fx-t1", "fx-rig"
 SICK, BEHIND = "fx-t2", "fx-t3"
 FAILURES = 3
 INTEGRATION = f"integration/{SPEC}"
+ANSWERS = ("none", "accepted", "abandoned")
+# With `--answer`: who answers, and what he says.
+APPROVER = "benjamin"
+ACCEPTED_WORDS = "Accepté : c'est ce que la Spec demandait."
+VERDICT_WORDS = "Pas utile pour cet Outcome."
+ABANDON_REASON = "Le besoin a changé : cet Outcome n'est plus voulu."
 INJECTIONS = ("none", "criterion-edited", "closed-by-hand", "three-failures", "story-not-observed", "proposition")
 # The injections whose graph is published by the real publication door.
 THROUGH_THE_DOOR = ("story-not-observed", "proposition")
@@ -300,7 +317,7 @@ class City:
 
     # --- prepare, publish ----------------------------------------------------------
 
-    def prepare(self, inject: str, project: str) -> dict:
+    def prepare(self, inject: str, project: str, answer: str = "none") -> dict:
         self.use(project)
         for name in ("tmp", "locks"):
             (self.workspace / name).mkdir(parents=True, exist_ok=True)
@@ -311,8 +328,8 @@ class City:
         (config / "projects").mkdir(parents=True)
         (config / "project-descriptors").mkdir()
         (config / "projects" / f"{RIG}.toml").write_text(
-            # With `proposition`, the project the tickets target declares who answers for it.
-            ('human_approver = "benjamin"\n' if inject == "proposition" else "")
+            # With `proposition` or an answer, the project the tickets target declares who answers for it.
+            (f'human_approver = "{APPROVER}"\n' if inject == "proposition" or answer != "none" else "")
             + 'rig_dir = "."\nrepo = "example/fx"\nprotected_branch = "main"\nrequired_ci = "CI"\n'
             'sling_target = "fx-worker"\nformulas = "fx-start,fx-resume"\n')
         shutil.copy(ROOT / "config" / "delivery-roles.json", config / "delivery-roles.json")
@@ -360,7 +377,7 @@ class City:
         # at the entry point the repair restores.
         (self.workspace / "evaluation-plan.json").write_text(json.dumps(
             ["door-defers", self.project["evaluation"], *((ITEMS,) if through_the_door else ())]))
-        self.remember(inject=inject, project=project, base=self.git("rev-parse", "HEAD"))
+        self.remember(inject=inject, project=project, answer=answer, base=self.git("rev-parse", "HEAD"))
         where = {"repo": str(self.root), "environment": self.state_environment(),
                  "profile": str(config / "project-descriptors" / profile)}
         # The publication door numbers the convoy and the ticket: `publish` names them.
@@ -552,9 +569,40 @@ class City:
         self.remember(failures=failures + 1)
         return "session:ended-without-exit"
 
+    def owner_answer(self, memo: dict) -> str | None:
+        """`--answer`: once the Outcome is Delivered, what Benjamin answers,
+        recorded by the real bin/owner-answer. The driver is the operator
+        here: the environment of the call names no agent session."""
+        if memo.get("answer", "none") == "none" or memo.get("answered"):
+            return None
+        shown = json.loads(self.run(BIN / "convoy-state", "show", self.convoy, "--repo", self.root, check=False).stdout)
+        delivered = shown["convoy"].get("delivered")
+        if not delivered:
+            return None
+
+        def say(command: str, *args: str) -> None:
+            self.run(BIN / "owner-answer", command, self.convoy, "--repo", self.root, "--approved-by", APPROVER, *args)
+
+        if memo["answer"] == "abandoned":
+            say("record", "--response", "abandonné", "--reason", ABANDON_REASON)
+        else:
+            # « accepté » waits for his verdict on each « proposition » of the dossier.
+            judged = {entry["proposition"] for entry in (shown["convoy"].get("judgement") or {}).get("verdicts") or []}
+            for ticket in shown["tickets"]:
+                for finding in ticket.get("findings") or []:
+                    if finding.get("classification") == "proposal" and finding["id"] not in judged:
+                        say("verdict", "--proposition", finding["id"], "--verdict", "sans suite", "--words", VERDICT_WORDS)
+            say("record", "--response", "accepté", "--words", ACCEPTED_WORDS,
+                "--commit", delivered["commit"], "--pack-digest", delivered["pack"])
+        self.remember(answered=True)
+        return f"owner:{memo['answer']}"
+
     def advance(self) -> dict:
         memo = json.loads(self.memo.read_text())
         before = self.tracker.read_bytes()
+        answered = self.owner_answer(memo)
+        if answered:
+            return {"event": answered, "idle": before == self.tracker.read_bytes()}
         shown = self.at_work()
         gates, finished = shown.get("gates") or {}, (shown.get("exit") or {}).get("exit") == "finished"
         failed = self.failed_session(memo) if memo["inject"] == "three-failures" else None
@@ -601,6 +649,7 @@ def main() -> int:
     prepare = sub.add_parser("prepare")
     prepare.add_argument("--inject", choices=INJECTIONS, default="none")
     prepare.add_argument("--project", default=DEFAULT_PROJECT)
+    prepare.add_argument("--answer", choices=ANSWERS, default="none")
     for name in ("publish", "advance", "stop"):
         sub.add_parser(name)
     args = parser.parse_args()
@@ -612,7 +661,7 @@ def main() -> int:
         if args.inject in THROUGH_THE_DOOR and args.project != DEFAULT_PROJECT:
             raise SystemExit(f"delivery-driver: --inject {args.inject} is played on {DEFAULT_PROJECT} only: "
                              f"the story it leaves unserved is one {args.project} already serves")
-        answer = city.prepare(args.inject, args.project)
+        answer = city.prepare(args.inject, args.project, args.answer)
     elif args.command == "publish":
         answer = city.publish()
     elif args.command == "advance":

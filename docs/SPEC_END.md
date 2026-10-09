@@ -28,6 +28,7 @@ is not red (`docs/CONVOY_ADVANCE.md`).
 ./bin/spec-end check af-convoy --repo <project repository>                          # the verdicts as they stand now; reads only
 ./bin/spec-end check af-convoy --repo <project repository> --before-pack            # conditions 1 to 6 only: what the Evidence Pack reports
 ./bin/spec-end run   af-convoy --repo <project repository> --profile <descriptor>   # the gate; refused from an agent session
+./bin/spec-end replay af-convoy --repo <project repository> --profile <descriptor>  # after « accepté »: the mechanical controls only (bin/outcome-promote); refused from an agent session
 ```
 
 To know where the end of a Spec stands, run `check`: each condition has a
@@ -185,6 +186,32 @@ the tip, and a round of the end review made on another commit never stands
 for it (« revue de fin liée à un autre commit »): the review is made again
 in full on the new tip.
 
+## After « accepté »: `replay` (T30)
+
+Spec §9. Once Benjamin accepted an Outcome and the protected branch moved
+since his judgement, `bin/outcome-promote` calls `replay` before it merges
+anything (`docs/OUTCOME_PROMOTE.md`). `replay` is `run` held to the
+**mechanical controls**: conditions 1 to 3, on one tip, the protected
+branch taken up (`bin/spec-integration take-up`). What differs from `run`:
+
+- **No judged condition is read**: neither the Outcome Evaluation, the
+  findings « hors ticket », the end code review nor the Evidence Pack.
+  Nothing is Delivered again.
+- **A red counts no round of the end**: the take-up and the red of the
+  fidelity are recorded without `--end-round`. The rounds belong to the
+  judgement that follows the voided acceptance.
+- **A registry that refuses raises no request** to the operator.
+
+Green: the three verdicts are recorded on the new tip (`record-spec-end`,
+which withdraws a `delivered` tied to another commit), and the answer is
+`{ok: true, conditions, commit, protected, replayed}`, exit 0 —
+`replayed: false` when verdicts rendered on that very tip were kept. Red:
+exit 1 with `red`, the record of the red control, written on the
+integration branch as `run` writes it. Voiding the acceptance, merging and
+closing are `bin/outcome-promote`'s; `replay` does none of them. It is
+refused from an agent session and while the integration branch is red, as
+`run` is.
+
 ## Refusals and exit status
 
 Every answer is one JSON object on stdout: `conditions` (number, name,
@@ -245,8 +272,10 @@ conditions that refused; `check` every condition that is not green.
 - **The gate verifies; it accepts nothing and closes nothing.** Delivered
   is recorded and the Acceptance Request is sent by the pass (T28,
   `docs/ACCEPTANCE_SESSION.md`); Benjamin's answer is recorded by
-  `bin/owner-answer` (T29, `docs/OWNER_ANSWER.md`), which closes and merges
-  nothing either: that is a later ticket (T30).
+  `bin/owner-answer` (T29, `docs/OWNER_ANSWER.md`); the one merge into the
+  protected branch and the closing of the convoy are made by
+  `bin/outcome-promote` (T30, `docs/OUTCOME_PROMOTE.md`), which calls
+  `replay` here when the protected branch moved since the judgement.
 - **Nothing withdraws the stop of the rounds yet.** Once `end_stop` is
   written the convoy stays stopped whatever the operator answers to the
   « non conforme » request: `bin/acceptance-session record` hands his issue
@@ -303,6 +332,10 @@ conditions that refused; `check` every condition that is not green.
 - `tests/convoy-stops-fixture-city-test.py`, T26: a mechanical red found by
   the gate once the rounds are consumed — the red and the stop recorded, no
   repair, the « non conforme » request raised under the red.
+- `tests/outcome-promote-test.py`, T30: `replay` through
+  `bin/outcome-promote` — a protected branch that moved taken up and the
+  controls replayed green; red controls on the take-up, nothing merged
+  (`docs/OUTCOME_PROMOTE.md`). No test calls `replay` on its own.
 - `tests/spec-integration-test.py` (`take-up`), `tests/convoy-state-test.py`
   (tracked elements, `--item`, `set-item-repair`, `record-spec-end`,
   `--check`, `--end-round`, the bound of the rounds and their stop).

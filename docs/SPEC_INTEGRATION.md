@@ -7,7 +7,9 @@ integration branch. `bin/spec-integration` opens that branch when the convoy
 is published and merges the tickets into it, one at a time, with tests on
 each merged result. No ticket opens a pull request toward the protected
 branch, and the protected branch receives nothing: its one merge comes after
-the acceptance (T30). A convoy without the mark is not touched (exit 4).
+the acceptance, made by `bin/outcome-promote` (T30,
+`docs/OUTCOME_PROMOTE.md`). A convoy without the mark is not touched
+(exit 4).
 
 ```bash
 ./bin/spec-integration open  af-convoy --repo <project repository> --protected main
