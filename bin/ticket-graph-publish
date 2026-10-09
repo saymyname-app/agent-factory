@@ -28,10 +28,13 @@ every declared operator need is lifted (`lift-need`), the project has a
 launch recipe or its first slice establishes it, and the door itself poses
 the pointers in each ticket (Spec and digest, user stories, sibling tickets
 with their demonstration line, seams). In each interface ticket it also
-poses the reference of the Spec's Validated Prototype (branch, commit, path,
+poses the reference of the ticket's Validated Prototype (branch, commit, path,
 states), and it refuses an interface graph without the one vertical_slice
 that is the Prototype Fold (`prototype_fold: true`), or with an interface
-ticket that does not wait for it (T36, Spec §3). `bd-patch` applies all of it to the
+ticket that does not wait for it (T36, Spec §3). A Spec that names several
+Validated Prototypes has one Prototype Fold per prototype: each interface
+ticket names its own by path (`prototype: <chemin>`) and waits for the Fold
+of that one (T46, af-lb9zkz). `bd-patch` applies all of it to the
 graph that results from the patch, tickets added or withdrawn included, and
 publishes without a new approval a patch that only adds `repair` tickets.
 A first publication is also refused without a graph review that holds for
