@@ -428,7 +428,8 @@ by hand. `bin/local-only-tests --list` prints what a run would do (`run
 `tests/local-only-tests-coverage-test.sh` fails in CI when a marked file is
 neither run nor excluded, or when an exclusion has no reason or names no
 marked file. A test stopped after `LOCAL_ONLY_TEST_TIMEOUT` (default
-1800 s) counts as failed; the order's own timeout (`3h`) bounds the night.
+1800 s) counts as failed; the order's own timeout (`6h`) bounds the night: run one at a
+time on a loaded host, the marked tests take a little over two hours.
 A trial on the real tracker that calls `bin/convoy-state` or a tool built on
 it exports `FACTORY_ROOT` to its disposable city: the tools name their city
 to `gc` from it, and left unset they name the repository they run from.

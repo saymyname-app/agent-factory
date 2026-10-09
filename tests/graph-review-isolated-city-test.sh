@@ -53,7 +53,14 @@ done
 # sandbox of the reviewer role mounts an empty /tmp, and the session must
 # still read the city it works for. Never erased if it exists: another
 # trial may be using it.
-TRIAL="${GRAPH_REVIEW_TRIAL_DIR:-$HOME/.local/share/af-role-trial}"
+# Without the real session nothing asks for that trusted folder, and
+# bin/role-adoption-trial leaves it behind between its runs: part 1 alone
+# takes a directory of its own, so that the nightly run does not depend on it.
+if [ "${GRAPH_REVIEW_TRIAL_SESSION:-0}" = 1 ]; then
+  TRIAL="${GRAPH_REVIEW_TRIAL_DIR:-$HOME/.local/share/af-role-trial}"
+else
+  TRIAL="${GRAPH_REVIEW_TRIAL_DIR:-$HOME/.local/share/af-graph-review-trial-$$}"
+fi
 [ ! -e "$TRIAL" ] || fail "$TRIAL exists: another trial is using it, or left it behind -- nothing is touched"
 mkdir -p "$TRIAL"
 CITY="$TRIAL/c"

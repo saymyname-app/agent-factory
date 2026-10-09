@@ -12,4 +12,4 @@ description = "Run the local-only test suite nightly and page the Mayor on failu
 trigger = "cron"
 schedule = "0 4 * * *"
 exec = "/home/benja/agent-factory/bin/local-only-tests --quiet"
-timeout = "3h"
+timeout = "6h"

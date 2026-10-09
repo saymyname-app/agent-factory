@@ -502,8 +502,9 @@ set +e
 refusal=$(check_gate); rc=$?
 set -e
 [ "$rc" = 1 ] || fail "the gate did not refuse with a Blocking Finding of the end review: $refusal"
-jq -e '.missing == [6] and (.error | test("F1.1")) and (.error | test("sans verdict favorable"))' <<<"$refusal" >/dev/null \
-  || fail "the refusal of the gate does not name the Blocking Finding: $(jq -r '.error' <<<"$refusal")"
+# Condition 7 (the Evidence Pack, spec-end/v4) is not launched while one before it is missing.
+jq -e '.missing == [6, 7] and .conditions[6].verdict == "not_run" and (.error | test("F1.1")) and (.error | test("sans verdict favorable"))' <<<"$refusal" >/dev/null \
+  || fail "the refusal of the gate does not name the Blocking Finding, on condition 6 alone: missing $(jq -c '.missing' <<<"$refusal"), $(jq -r '.error' <<<"$refusal")"
 repair_named() { [ -n "$(end_review | jq -r '.rounds[0].findings[0].repair // empty' 2>/dev/null)" ]; }
 wait_for 300 repair_named || { dump; fail "the drafted repair was not published within 300s: $(end_review | jq -c '.rounds[0].findings[0]')"; }
 REPAIR=$(end_review | jq -r '.rounds[0].findings[0].repair')
@@ -518,7 +519,7 @@ done
 repair_started() { [ -n "$(field "$REPAIR" gc.flow.gate.dispatch)" ]; }
 wait_for 300 repair_started || { dump; fail "the repair $REPAIR was not started through the dispatch door within 300s"; }
 [ "$(field "$REPAIR" gc.dispatched_via)" = dispatch-door ] || fail "the repair was not started through the dispatch door"
-echo "$(date -u +%H:%M:%S) 2 : revue par la session $reviewer1 ($(jq -r '.duration_seconds' <<<"$round1") s, sortie complète) ; Blocking Finding F1.1 qui cite « $STORY_ONE » ; porte de fin refusée (condition 6 seule) : $(jq -r '.conditions[5].detail' <<<"$refusal" | cut -c1-150)… ; repair rédigé publié par la porte de patch ($REPAIR), démarré par la passe par la porte de dispatch ; tours de fin : 1"
+echo "$(date -u +%H:%M:%S) 2 : revue par la session $reviewer1 ($(jq -r '.duration_seconds' <<<"$round1") s, sortie complète) ; Blocking Finding F1.1 qui cite « $STORY_ONE » ; porte de fin refusée (condition 6 ; la 7, Evidence Pack, non lancée) : $(jq -r '.conditions[5].detail' <<<"$refusal" | cut -c1-150)… ; repair rédigé publié par la porte de patch ($REPAIR), démarré par la passe par la porte de dispatch ; tours de fin : 1"
 
 # --- 3: the repair delivered, the review is replayed in full on the new tip --------
 TIP2=$(delivered "$REPAIR" "docs/sonde-avec-chaque-jeu.md" "$RESTORED")
