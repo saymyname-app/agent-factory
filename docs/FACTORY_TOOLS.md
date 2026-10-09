@@ -766,7 +766,7 @@ sortie a une destination fixée par du code, et le compte rendu du ticket
 
 ```bash
 ./bin/ticket-exit exit <convoi> <ticket> --exit finished --repo <worktree> --handoff <compte rendu.json>
-./bin/ticket-exit exit <convoi> <ticket> --exit planning_exception --kind semantic|topology --summary "<la question>"
+./bin/ticket-exit exit <convoi> <ticket> --exit planning_exception --repo <worktree> --handoff <compte rendu.json> --kind semantic|topology --summary "<la question>"
 ./bin/ticket-exit exit <convoi> <ticket> --exit operator_request --request <demande.json>
 ./bin/ticket-exit exit <convoi> <ticket> --exit technically_blocked --repair <ticket repair.json>
 ./bin/ticket-exit exit <convoi> <ticket> --exit interrupted --repo <worktree> [--handoff <partiel.json>]
@@ -784,6 +784,11 @@ sortie a une destination fixée par du code, et le compte rendu du ticket
 - **Planning Exception** et **demande opérateur** : le ticket et tous ceux
   qui l'attendent sont parqués ; la demande apparaît dans
   `./bin/escalation-door list`. Les tickets sans lien continuent de démarrer.
+- **Planning Exception, le compte rendu d'abord** : refusée sans un compte
+  rendu qui a ses quatre rubriques (le refus nomme celle qui manque, rien
+  n'est écrit) ; le compte rendu est enregistré avant elle. Si elle nomme
+  une ancre du prototype (`--anchor`), la rubrique « Écarts » doit
+  mentionner cette ancre, sinon refus.
 - **Bloqué technique** : un ticket `repair` est créé par du code et publié
   par la porte de patch ; il bloque le ticket, rien n'est parqué.
 - **Interrompu** : la branche est poussée, un compte rendu partiel est
@@ -1114,7 +1119,8 @@ n'arrive jamais jusqu'à Benjamin sans l'être.
   noté, aucun seuil n'existe. Elles servent aux yeux de Benjamin.
 - **Un écart voulu** ne se lève pas ici, et pas par l'auteur : l'auteur
   sort par `./bin/ticket-exit exit … --exit planning_exception --anchor
-  <ancre>` ; la demande propose à Benjamin « Accepter l'écart sur l'ancre
+  <ancre>`, après avoir écrit l'écart et son ancre sous « Écarts » dans son
+  compte rendu (sinon refus) ; la demande propose à Benjamin « Accepter l'écart sur l'ancre
   … » ; sa réponse par `./bin/escalation-door repondre` fait lire l'écart
   « accepté par Benjamin ». Toute autre réponse le laisse rouge. Un écart
   de token se répare.

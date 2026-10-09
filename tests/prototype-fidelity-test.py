@@ -453,7 +453,13 @@ class PrototypeFidelityTest(unittest.TestCase):
 
     def raise_planning_exception(self, *anchors):
         args = [arg for anchor in anchors for arg in ("--anchor", anchor)]
+        # The deviation is written in the Ticket Handoff first (T41), anchor by anchor.
+        handoff = self.tmp / "handoff-exception.json"
+        handoff.write_text(json.dumps({
+            "done": "aucun", "not_done": "aucun", "out_of_ticket": "aucun",
+            "deviations": [f"L'ancre {anchor} s'écarte du prototype." for anchor in anchors] or "aucun"}))
         self.run_door(EXIT_TOOL, "exit", CONVOY, T1, "--exit", "planning_exception", "--kind", "semantic",
+                      "--repo", self.repo, "--handoff", handoff,
                       "--summary", "La liste est livrée sans sa région, le prototype la montre", *args)
 
     def accept_letter(self):

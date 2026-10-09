@@ -397,7 +397,11 @@ quoted, the commit it was red on and the tips of both branches;
   by code: a revision that adds one ticket of kind `repair` to the graph as
   it is published, sent through the patch door (`bin/ticket-graph-publish
   bd-patch`, with no approval: Spec §2, a repair inside the approved intent
-  needs none). Its `restores` is `{kind: red_check, ref: <the control>}`,
+  needs none). Its `restores` is `{kind: red_check, ref: <the control>}` —
+  the name the convoy records that red under (`convoy.red_checks` in
+  `bin/convoy-state show`), which is what the patch door reads it against
+  (T40); the repair of a red of the mechanical fidelity cites it the same
+  way and is published as an interface ticket —,
   its demonstration line and its one criterion are that control green
   again, and what the control printed is quoted in what it delivers. The
   entry contract applies to it as to any added ticket; a refusal of the
@@ -520,7 +524,8 @@ whose deviations or « non faits » the operator asked to have repaired
 (their Planning Exception answered by another option than the one that
 accepts) and that have no `repair` yet. It publishes one `repair` per such
 ticket through the patch door, as for a red — `restores: {kind: red_check,
-ref: registre de la porte de fin de Spec : …}`, the elements quoted —, names
+ref: registre de la porte de fin de Spec : …}`, the name `convoy.red_checks`
+gives that red, the elements quoted in what it delivers —, names
 it on the elements (`bin/convoy-state set-item-repair`) and starts it. The
 entry carries `item_repairs` (`{id, key, draft, published, ticket, items}`,
 or `error`). One repair per request, whatever the number of passes. A
