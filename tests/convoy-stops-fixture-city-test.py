@@ -44,6 +44,7 @@ No agent runs here: what an author session leaves (a Planning Exception, a
 closed repair, a Ticket Handoff) and what the Evaluator of the end hands in
 are written the way their tools write them."""
 
+import html
 import importlib.machinery
 import importlib.util
 import json
@@ -64,6 +65,7 @@ STATE = ROOT / "bin" / "convoy-state"
 INTEGRATION_TOOL = ROOT / "bin" / "spec-integration"
 ESCALATION = ROOT / "bin" / "escalation-door"
 SESSION = ROOT / "bin" / "acceptance-session"
+OWNER = ROOT / "bin" / "owner-answer"
 DRIVER = ROOT / "tests" / "fixtures" / "fixture-city" / "delivery-driver"
 FLOW_GC = ROOT / "tests" / "fixtures" / "convoy-state" / "gc"
 GATE_REPORT = ROOT / "tests" / "fixtures" / "convoy-state" / "ticket-end-report.json"
@@ -1060,10 +1062,10 @@ class ConvoyStopsOnTheFixtureCity(publication.Harness):
         self.assertEqual((2, 1), (self.end_rounds(), len(self.requests())))
 
 
-class AcceptanceOnTheFixtureCity(unittest.TestCase):
-    """T28 (af-3x6zkb; Spec §11) on the convoy the reference driver walks to
-    the end of its Spec: every pass is the real bin/convoy-advance, the
-    Evidence Pack is the generated one and the product is really launched."""
+class FixtureCityWalk(unittest.TestCase):
+    """The convoy the reference driver walks to the end of its Spec: every
+    pass is the real bin/convoy-advance, the Evidence Pack is the generated
+    one and the product is really launched. The harness of the suites below."""
 
     def setUp(self):
         self.workspace = Path(tempfile.mkdtemp(prefix="acceptance-fixture-city-")).resolve()
@@ -1152,6 +1154,11 @@ class AcceptanceOnTheFixtureCity(unittest.TestCase):
 
     def written(self):
         return [json.loads(line) for line in self.write_log.read_text().splitlines() if line]
+
+
+class AcceptanceOnTheFixtureCity(FixtureCityWalk):
+    """T28 (af-3x6zkb; Spec §11) on the convoy the reference driver walks to
+    the end of its Spec."""
 
     # --- the Acceptance Request ---------------------------------------------
 
@@ -1296,6 +1303,159 @@ class AcceptanceOnTheFixtureCity(unittest.TestCase):
             self.assertFalse(answers(address), address)
         self.assertEqual(before, self.tracker.read_bytes())
 
+
+class OwnerAnswerOnTheFixtureCity(FixtureCityWalk):
+    """T29 (af-mcd7pw; Spec §11) on the convoy the reference driver walks to
+    the end of its Spec: Benjamin's answer is recorded by the real
+    bin/owner-answer, and the repair of the finding he returns is published,
+    delivered and judged again by the real passes of the order."""
+
+    APPROVER = "benjamin"
+    FINDING = "La liste des éléments ne se relit pas en JSON à l'adresse /items."
+    LATER = "Un export CSV de la liste serait utile."
+    REPAIR = {
+        "title": "Servir la liste des éléments en JSON",
+        "what_it_delivers": "Le produit sert la liste des éléments du jeu de données en JSON à l'adresse /items.",
+        "demonstration_line": "Sur le produit lancé avec le jeu de données « content », GET /items rend les trois éléments.",
+        "acceptance_criteria": [{
+            "entry_point": "GET /items sur le produit lancé avec le jeu de données « content »",
+            "observable": "le champ items contient « alpha », « beta », « gamma »",
+            "false_if": "un élément manque, ou /items ne répond pas"}]}
+
+    def owner(self, command, *args):
+        return self.tool(OWNER, command, self.convoy, "--repo", self.repo, "--approved-by", self.APPROVER, *args)
+
+    def owner_ok(self, command, *args):
+        proc = self.owner(command, *args)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        return json.loads(proc.stdout)
+
+    def pack(self):
+        """The Evidence Pack of the convoy as bin/evidence-pack holds it, and its page."""
+        pack = json.loads(self.tool_ok(ROOT / "bin" / "evidence-pack", "check", self.convoy, "--repo", self.repo).stdout)
+        return pack, Path(pack["page"]).read_text(encoding="utf-8")
+
+    def last_pass(self):
+        """What the last pass of the order answered about the convoy."""
+        answer = json.loads((self.workspace / "order-pass.json").read_text(encoding="utf-8"))
+        return next(result for result in answer["convoys"] if result["id"] == self.convoy)
+
+    def test_accepted_waits_for_the_verdicts_a_returned_finding_is_repaired_and_judged_again_then_accepted(self):
+        first = self.walk_to_delivered(inject="proposition")
+        self.assert_one_acceptance_request(first)
+        first_pack, first_page = self.pack()
+        self.assertNotIn("Depuis ton dernier jugement", first_page)
+        self.assertNotIn('<section id="rubrique-0">', first_page)
+        shown = self.shown()
+        integration = shown["convoy"]["integration"]["branch"]
+        tracked = [ticket["id"] for ticket in shown["tickets"]]
+        # The dossier carries one « proposition »: what the author found « hors ticket ».
+        [proposition] = [finding for ticket in shown["tickets"] for finding in ticket.get("findings") or []
+                         if finding["classification"] == "proposal"]
+        main = self.tip("main")
+
+        # « accepté » while the proposition has no verdict: refused, nothing written.
+        before = self.tracker.read_bytes()
+        refused = self.owner("record", "--response", "accepté", "--words", "C'est bon pour moi.",
+                             "--commit", first["commit"], "--pack-digest", first["pack"])
+        self.assertEqual(EXIT_REFUSED, refused.returncode, refused.stdout + refused.stderr)
+        error = json.loads(refused.stdout)["error"]
+        self.assertTrue(error.startswith("refus : "), error)
+        self.assertIn("verdict", error)
+        self.assertIn(proposition["id"], error)
+        self.assertEqual(before, self.tracker.read_bytes())
+        self.assertEqual(shown, self.shown())
+
+        # His verdict on it, then one finding that cites the second user story of the Spec.
+        self.owner_ok("verdict", "--proposition", proposition["id"], "--verdict", "sans suite", "--words", "Pas utile.")
+        findings = self.workspace / "owner-findings.json"
+        findings.write_text(json.dumps({"findings": [
+            {"text": self.FINDING, "cites": {"kind": "user_story", "ref": "user story 2"}, "repair": self.REPAIR},
+            {"text": self.LATER, "later": True}]}, ensure_ascii=False), encoding="utf-8")
+        returned = self.owner_ok("record", "--response", "constats rendus", "--words", "Il manque le JSON.",
+                                 "--commit", first["commit"], "--pack-digest", first["pack"], "--findings", findings)
+        self.assertEqual(["repair", "later"], [finding["route"] for finding in returned["findings"]])
+        # The proposition door of the fixture creates nothing: his answer is recorded all the same.
+        self.assertEqual([2], [pending["finding"] for pending in returned["proposals_pending"]])
+
+        # Nothing closed, nothing merged; the Outcome is no longer Delivered and its rounds start again.
+        shown = self.shown()
+        self.assertIsNone(shown["convoy"]["delivered"])
+        self.assertEqual(0, shown["convoy"]["counters"]["end_rounds"])
+        self.assertEqual("findings", shown["convoy"]["judgement"]["answers"][-1]["response"])
+        self.assertNotEqual("closed", json.loads(self.tracker.read_text())["beads"][self.convoy]["status"])
+        self.assertEqual(tracked, [ticket["id"] for ticket in shown["tickets"]])
+        self.assertEqual((main, first["commit"]), (self.tip("main"), self.tip(integration)))
+        self.assertEqual([], self.requests())
+        self.assertFalse(shown["unruled"])
+
+        # The next pass publishes the one repair of the finding, by code, and says so; the door
+        # answers again, and the same pass creates the proposition of his « plus tard ».
+        (self.workspace / "proposal-door").write_text(
+            '#!/bin/sh\n[ "$1" = create ] && echo "PROPOSITION CRÉÉE: fx-later — notée" || echo 0\n')
+        self.order_pass()
+        [published] = self.last_pass()["acceptance"]["owner_repairs"]
+        self.assertEqual([{"finding": 2, "proposal": "fx-later"}], self.last_pass()["acceptance"]["owner_proposals"])
+        self.assertEqual("fx-later", self.shown()["convoy"]["judgement"]["answers"][-1]["findings"][1]["proposal"])
+        shown = self.shown()
+        [repair] = [ticket for ticket in shown["tickets"] if ticket["id"] not in tracked]
+        self.assertEqual((1, repair["id"], True), (published["finding"], published["id"], published["published"]))
+        self.assertEqual(("repair", "open"), (repair["kind"], repair["status"]))
+        self.assertEqual(repair["id"], shown["convoy"]["judgement"]["answers"][-1]["findings"][0]["ticket"])
+        self.assertIsNone(shown["convoy"]["delivered"])
+
+        # The whole flow passes again by itself: the repair through the ticket-end gate, then the
+        # whole end of the Spec at the new tip.
+        second = None
+        for _ in range(48):
+            event = self.driver("advance")
+            second = self.shown()["convoy"]["delivered"]
+            if second:
+                break
+            self.assertFalse(event["idle"], "the walk settled before the Outcome was Delivered again")
+        self.assertTrue(second, "the Outcome is not Delivered again after 48 events")
+        shown = self.shown()
+        self.assertEqual(tracked + [repair["id"]], [ticket["id"] for ticket in shown["tickets"]])
+        self.assertEqual(["closed"] * len(shown["tickets"]), [ticket["status"] for ticket in shown["tickets"]])
+        self.assertNotEqual(first["commit"], second["commit"])
+        self.assertEqual(second["commit"], self.tip(integration))
+        self.assertEqual(main, self.tip("main"))
+        # What the repair delivered is in it: the product, on top of what Benjamin judged first.
+        changed = subprocess.run(("git", "-C", str(self.repo), "diff", "--name-only", first["commit"], second["commit"]),
+                                 text=True, capture_output=True, check=True).stdout.split()
+        self.assertTrue([path for path in changed if path.endswith("/app.py")], changed)
+        # A fresh Outcome Evaluation and a fresh end review, both at the new tip.
+        rounds = shown["convoy"]["outcome_evaluation"]["rounds"]
+        self.assertEqual([first["commit"], second["commit"]], [entry["commit"] for entry in rounds][-2:])
+        self.assertEqual(second["commit"], shown["convoy"]["end_review"]["rounds"][-1]["commit"])
+        self.assertEqual(0, shown["convoy"]["counters"]["end_rounds"])
+        self.assertFalse(shown["unruled"])
+
+        # A second dossier arrives, and it opens with what was done since his last judgement.
+        self.assert_one_acceptance_request(second)
+        second_pack, page = self.pack()
+        self.assertNotEqual((first_pack["digest"], first_pack["page"]), (second_pack["digest"], second_pack["page"]))
+        start, end = page.index('<section id="rubrique-0">'), page.index('<section id="rubrique-1">')
+        self.assertLess(start, end)
+        rubric = page[start:end]
+        self.assertIn("Depuis ton dernier jugement", rubric)
+        self.assertIn(html.escape(self.FINDING), rubric)
+        self.assertIn(repair["id"], rubric)
+
+        # « accepté », now: recorded with his words, the commit and the fingerprint. Nothing closes.
+        words = "Accepté, le JSON est là."
+        accepted = self.owner_ok("record", "--response", "accepté", "--words", words,
+                                 "--commit", second["commit"], "--pack-digest", second["pack"])
+        self.assertEqual("accepted", accepted["response"])
+        shown = self.shown()
+        last = shown["convoy"]["judgement"]["answers"][-1]
+        self.assertEqual(("accepted", words, self.APPROVER, second["commit"], second["pack"]),
+                         (last["response"], last["words"], last["approver"], last["commit"], last["pack"]))
+        self.assertEqual(["findings", "accepted"], [entry["response"] for entry in shown["convoy"]["judgement"]["answers"]])
+        self.assertEqual(second, shown["convoy"]["delivered"])
+        self.assertNotEqual("closed", json.loads(self.tracker.read_text())["beads"][self.convoy]["status"])
+        self.assertEqual((main, second["commit"]), (self.tip("main"), self.tip(integration)))
+        self.assertFalse(shown["unruled"])
 
 
 if __name__ == "__main__":

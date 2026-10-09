@@ -281,10 +281,46 @@ class AccepterActionTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.state_file = str(Path(self.tmp.name) / "state.json")
         self.calls_file = str(Path(self.tmp.name) / "calls.jsonl")
-        beads = load_fixture("convoy-livre-not-accepted.json")
+        # The click accepts a chantier of the flow before the Delivery
+        # Workflow, which says what to look at; one of the new flow is not
+        # accepted by it (tests below).
+        beads = _delivered(note="Vérifier le résultat livré avant d'accepter")
         with open(self.state_file, "w") as fh:
             json.dump(beads, fh)
         self.bd_bin = str(ACTIONS_FIXTURES / "fake-bd")
+
+    def _stored(self, beads):
+        with open(self.state_file, "w") as fh:
+            json.dump(beads, fh)
+
+    def test_the_click_is_refused_on_a_chantier_of_the_new_flow_and_writes_nothing(self):
+        self._stored(_delivered(mark=True))
+        with open(self.state_file) as fh:
+            before = fh.read()
+        with self.assertRaises(chantier_actions.AccepterError) as refused:
+            chantier_actions.accepter_chantier(
+                self._bd_bin_with_env(), "af-convoy20", clock=FakeClock(100.0), confirm=True,
+            )
+        self.assertIn("bin/owner-answer", str(refused.exception))
+        with open(self.state_file) as fh:
+            self.assertEqual(before, fh.read())
+
+    def test_a_chantier_of_the_new_flow_is_accepted_by_the_recorded_answer_not_by_the_cockpit_key(self):
+        commit, pack = "a" * 40, "sha256:" + "b" * 64
+        answer = {"response": "accepted", "approver": "benjamin", "words": "Accepté.", "commit": commit, "pack": pack,
+                  "at": "2026-10-09T08:00:00Z"}
+        # The cockpit's own key says nothing of a convoy of the new flow.
+        beads = _delivered(mark=True)
+        beads[0]["metadata"]["gc.cockpit_chantier_accepted"] = "true"
+        self.assertEqual(LIVRE, convoy_chantiers(beads)[0].stage)
+        # Benjamin's recorded answer does.
+        beads = _delivered(mark=True)
+        beads[0]["metadata"]["gc.flow.judgement"] = json.dumps({"verdicts": [], "answers": [answer]})
+        self.assertEqual(ACCEPTE, build_historique(beads)[0].stage)
+        # « constats rendus » is not an acceptance.
+        returned = {**answer, "response": "findings", "findings": [{"text": "Le titre manque.", "route": "later"}]}
+        beads[0]["metadata"]["gc.flow.judgement"] = json.dumps({"verdicts": [], "answers": [returned]})
+        self.assertEqual(LIVRE, convoy_chantiers(beads)[0].stage)
 
     def _bd_bin_with_env(self):
         # cockpit.actions.trace shells out with subprocess.run([bd_bin,

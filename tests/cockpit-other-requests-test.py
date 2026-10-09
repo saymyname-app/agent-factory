@@ -82,7 +82,7 @@ def beads():
         {
             "id": "af-conv-b", "title": "Page d'accueil publique", "status": "closed", "issue_type": "convoy",
             "labels": ["approved-ticket-graph"], "notes": "",
-            "metadata": {"gc.graph_digest": "sha256:b", "gc.flow.mark": "new-flow/v1"},
+            "metadata": {"gc.graph_digest": "sha256:b", "gc.cockpit_acceptance_note": "Vérifier le résultat livré avant d'accepter"},
         },
         {
             "id": "af-tk-b1", "title": "ticket", "status": "closed", "issue_type": "task",
