@@ -736,7 +736,7 @@ What he chose on 2026-10-08, each among options put to him in the live chat:
 
 | Piece | Runs as | What it does |
 |---|---|---|
-| `factory-ci-runner.service` (system service, `config/ci-runner/runner-loop`) | `factory-ci`: no password, no shell, no sudo, no group but its own | Waits for a one-job runner configuration, starts a rootless container, lets GitHub's runner serve one job in it, throws the container away, starts again. Rebuilds the image (`config/ci-runner/Containerfile`) every 7 days with the latest runner of GitHub and the system's fixes. |
+| `factory-ci-runner.service` (system service, `config/ci-runner/runner-loop`) | `factory-ci`: no password, no shell, no sudo, no group but its own | Waits for a one-job runner configuration, starts a rootless container, lets GitHub's runner serve one job in it, throws the container away, starts again. Rebuilds the image (`config/ci-runner/Containerfile`) every 7 days, between 05:00 and 07:00, with the latest runner of GitHub and the system's fixes ("While the image is built", below). |
 | `factory-ci-runner-broker.service` (user service, `bin/ci-runner broker`) | the operator | Each time the runner's loop is free, asks GitHub for one just-in-time runner (it serves one job, then GitHub forgets it) and writes its configuration on the pipe `/run/factory-ci-runner/handoff`. The operator's token never reaches the runner's user; the configuration is never printed, logged or stored. |
 | `.github/workflows/ci.yml` | | Goes to the label `factory-ci` only when the repository variable `FACTORY_CI_RUNNER` is `self-hosted`; without it, GitHub's runners as before. On the host the run is one lot, `Tests` alone: the runner takes one job at a time, and four lots would wait on each other for ever. Its first step there is `config/ci-runner/isolation-probe.sh`. |
 
@@ -813,12 +813,14 @@ at a lower priority than the Factory and the batteries.
 Intent (Benjamin, his words, 2026-10-08): « Je suis aussi ok pour mettre test
 sur pc aussi » -- and, from the mechanism recorded with it above, not a PC he
 cannot use while CI runs.
+Intent (Benjamin, his words, 2026-10-09): « ok pour ta reco, fenêtre
+05:00-7:00 , réinstallation root au bon moment », the recommendation being
+the weekly build kept to night hours, and allowed at any hour past 14 days.
 Mechanism (agent interpretation): know why a build of the image freezes his
-sessions, and build it as seldom as possible. It does not mean a changed
-kernel setting of the guest, a wider share of the PC for the build, or a
-build kept to a night window: that window was put to him on 2026-10-09 and he
-had not chosen (his words: « je ne sais pas car l'usine devrait tourner h24
-normalement »).
+sessions, build it as seldom as possible, and keep the weekly build to hours
+when he is not at the PC. It does not mean a changed kernel setting of the
+guest, a wider share of the PC for the build, or a Factory that pauses at
+night: inside WSL nothing waits on a build.
 
 What you see: once or twice per build, for about 30 s each time, every new
 call of `wsl.exe` from Windows waits (an operator session, a terminal), and
@@ -859,10 +861,18 @@ The ceiling on memory is the one lever that worked, measured once and outside
 the service; inside it, it needs a control group of its own under the
 service's and is not built.
 
-What holds today: the image is built every 7 days and after an install that
-changes its recipe, at whatever hour that falls. `root-install` leaves an
-unchanged recipe its date, so installing a new `runner-loop` or service file
-builds nothing. To tell this from a guest that is down: `uptime` inside WSL is
+What holds today (`config/ci-runner/runner-loop`):
+
+| The image is built when | At what hour |
+|---|---|
+| It is older than 7 days | Between 05:00 and 07:00 on the host's clock (`BUILD_HOURS`). A runner that only waits for a job is stopped for the build; one that serves a job is never stopped, the build follows the job if the hour still holds |
+| It is older than 14 days (the PC was off those nights) | Any |
+| Its recipe changed (`Containerfile`, `entrypoint.sh`) | At the install, whatever the hour: the operator is there. `root-install` leaves an unchanged recipe its date, so installing a new `runner-loop` or service file builds nothing |
+| There is none | At once |
+
+A build that fails is tried again an hour later; the old image serves
+meanwhile. A waiting runner stopped at the very second GitHub hands it a job
+would end that run red: re-run it (`gh run rerun <id> --failed`). To tell this from a guest that is down: `uptime` inside WSL is
 unchanged, and
 
 ```bash
@@ -904,7 +914,8 @@ be removed before this repository ever becomes public (af-5vjm1h): on a
 public repository anyone could run code on the PC through a pull request.
 
 `tests/ci-runner-test.sh` holds the variable, the single lot, the limits of
-the service, the container's options and the hand-off;
+the service, the container's options, the hand-off and the hours of the
+weekly build;
 `config/ci-runner/isolation-probe.sh` proves the box on every run.
 
 ## Upgrade
