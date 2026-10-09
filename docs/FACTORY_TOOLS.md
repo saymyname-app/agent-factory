@@ -518,7 +518,9 @@ touché : il reste avancé par le Mayor.
   `interrupted` (sortie « interrompu », ou session terminée sans sortie),
   `returned` (la fusion a rendu le ticket : conflit ou rouge), `unblocked`
   (son `repair` est fermé), `answered` (la demande qui le parquait a sa
-  réponse). Chaque reprise est comptée et prend une place sous N. À la
+  réponse), `behind` (terminé sur une branche qui ne contient pas la pointe
+  de la branche d'intégration : `bin/code-review` n'y envoie aucun
+  relecteur, T44). Chaque reprise est comptée et prend une place sous N. À la
   troisième, toutes causes confondues (celles-ci, le tour de correction, un
   commit après verdict), le ticket est parqué avec ceux qui l'attendent et
   n'est pas relancé ; les autres continuent. Listes `resumed`, `parked`,

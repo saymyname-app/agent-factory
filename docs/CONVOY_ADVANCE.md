@@ -155,11 +155,21 @@ that follows in the same pass takes a ticket only when its review is
 favorable at its tip, so a ticket whose verdict was already there is merged
 by that pass, and the others wait.
 
+The command sends no reviewer on a branch that does not contain the tip of
+the integration branch (T44, Spec §6). The resumes of the pass run before
+the code review and hand such a ticket back to its author (cause `behind`,
+« Resumes, their bound, parking and the grouped request » below), so the
+review is sent once the author finished again on a branch that holds the
+tip.
+
 The convoy's entry then carries `code_review` (`launched`, `relaunched`,
-`pending`, `waiting`, `stopped`, `escalated`, `deferred`, `refused`). A
-launch the door deferred is retried by the next pass; a settlement that
-could not run, or a launch the door refused, fails the pass (exit 1). A
-stopped convoy (« état sans règle ») is settled no more than it is started.
+`pending`, `waiting`, `stopped`, `escalated`, `deferred`, `refused`,
+`behind`). A launch the door deferred is retried by the next pass; a
+settlement that could not run, or a launch the door refused, fails the pass
+(exit 1). A launch `bin/code-review settle` refused for a branch behind the
+integration tip is listed under `behind`, not `refused`, and does not fail
+the pass: the next pass hands the ticket back. A stopped convoy (« état
+sans règle ») is settled no more than it is started.
 
 ## A finished ticket is evaluated on the launched product before its merge (T15)
 
@@ -276,6 +286,7 @@ ticket:
 | `returned` | the Ticket Exit is `finished` and the merge returned the ticket (`merge.outcome` `conflict` or `red`) at the tip of its branch |
 | `unblocked` | the Ticket Exit is `technically_blocked` and no bead it waits for with a `blocks` edge is open any more (its repair is closed) |
 | `answered` | the Ticket Exit is `planning_exception` or `operator_request` and the ticket is no longer parked: its parking was lifted |
+| `behind` | the Ticket Exit is `finished`, the ticket is not merged, and `bin/code-review show <convoy> <ticket> --repo` reports `behind`: its branch does not contain the tip of the integration branch, so no reviewer is sent on it (T44, `docs/CODE_REVIEW.md`). The fact is `integration:<tip>/exit:<exit time>`: once per Ticket Exit |
 
 The pass counts the resume first — `bin/convoy-state open-resume <convoy>
 <ticket> --cause <cause> --ref <fact>`: one more `resumes`, the record under
@@ -289,6 +300,14 @@ mol-ticket-resume --role author`, and records it (`bin/convoy-state
 launch-resume`): one session per resume. The session takes the ticket with
 `bin/ticket-author start`, does only what is missing, and leaves by a Ticket
 Exit (`formulas/mol-ticket-resume.formula.toml`).
+
+A `behind` resume is counted like the others (K; the third parks the
+ticket), and, unlike them, it is counted even when the ceiling N is reached
+and its session has to wait for a later pass (`waiting`, « reprise (behind)
+: plafond N=… atteint »): with the Ticket Exit taken back, neither the code
+review nor the Ticket Evaluation is sent on the old tip meanwhile. Its
+author merges the integration branch into the ticket branch, corrects,
+commits and finishes again; the review then runs on the new tip.
 
 A ticket to resume that names no single known project, or when the
 settings have no `resume` entry, is listed under `refused` (exit 1) before
@@ -347,6 +366,12 @@ Two decisions taken here:
   lift its parking.
 - **A stopped convoy** (« état sans règle »): nothing is lifted, resumed,
   parked or grouped until its state is valid again.
+- **A ticket behind the integration tip while the integration branch is
+  red** (T21, below): only the repair is resumed then, so the ticket is not
+  handed back until the branch is green again; its review stays refused
+  meanwhile (`code_review.behind`). The Ticket Evaluation has no check of
+  the integration tip of its own: it is kept off the old tip only by the
+  Ticket Exit the `behind` resume takes back.
 - A session is read as ended from `gc session list` alone, by the names a
   live session answers to (`id`, `name`, `session_name`, `alias`). There is
   no timeout on a resume session that stays alive without working.
@@ -801,7 +826,11 @@ grouped request naming each parked ticket and its cause, none while a
 ticket that is not parked is left, one for several passes, the answer that
 lifts and the one that leaves the tickets parked, and the answer to the
 request of a ticket its own exit parked. `tests/convoy-state-test.py`
-covers the state commands (`docs/CONVOY_STATE.md`).
+covers the state commands (`docs/CONVOY_STATE.md`). The cause `behind`
+(T44), through the real `bin/code-review`:
+`test_a_finished_ticket_behind_the_integration_tip_goes_back_to_its_author_once_and_is_counted`
+and
+`test_a_finished_ticket_that_holds_the_integration_tip_is_reviewed_and_not_resumed`.
 `tests/convoy-advance-isolated-city-test.sh` (local-only) ends on a resume:
 once the third ticket's author session has left by the exit « interrompu »,
 the city's own order counts one resume, routes one bead « Reprise — »
