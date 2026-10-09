@@ -14,10 +14,22 @@ This test extracts every (subcommand, flag) shape the declared-scope fakes
 under tests/fixtures actually accept, then checks each shape against the
 installed real tool's own --help/usage text. It is local-only because it
 needs the real gc/bd/gh binaries on PATH, which CI runners do not have.
+
+A shape the real tool accepts can still mean something else than the fake
+makes of it (T48, af-1zxao6: `bd create --deps blocks:<id>` makes <id> wait
+for the new issue, and the fake stored nothing, so a door that posed every
+edge backwards stayed green). So the stateful fake `bd` of the publication
+door is also run beside the real `bd`, in a disposable city that shares
+nothing with the live Factory: the same dependency commands, then the same
+question -- which issue waits for which.
 """
+import json
+import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -133,6 +145,91 @@ def check_fake(fake_name, relpath, checker):
     print(f"OK {fake_name}: checked {len(shapes)} accepted shape(s)")
 
 
+# Each way the fake `bd` of the publication door accepts to pose a
+# dependency between a new issue and an older one: the arguments of
+# `bd create` for the new issue, then the `bd dep` commands that follow.
+DEPENDENCY_SHAPES = {
+    "create --deps <old>": (["--deps", "{old}"], []),
+    "create --deps blocks:<old>": (["--deps", "blocks:{old}"], []),
+    "create --deps depends-on:<old>": (["--deps", "depends-on:{old}"], []),
+    "create --deps blocked-by:<old>": (["--deps", "blocked-by:{old}"], []),
+    "create --deps tracks:<old>": (["--deps", "tracks:{old}"], []),
+    "dep add <new> <old>": ([], [["dep", "add", "{new}", "{old}"]]),
+    "dep add <new> <old> --type tracks": ([], [["dep", "add", "{new}", "{old}", "--type", "tracks"]]),
+    "dep add then dep remove <new> <old>": ([], [["dep", "add", "{new}", "{old}"], ["dep", "remove", "{new}", "{old}"]]),
+}
+PUBLISH_FAKE_BD = FIXTURES / "ticket-graph-publish" / "bd-bead-mode"
+
+
+def dependency_edges(bd, env, cwd, create_args, followups):
+    """Pose one dependency shape with this `bd` and return the edges the
+    tracker then shows, as (issue that waits or tracks, the other, type)."""
+    def run(*argv):
+        proc = subprocess.run([*bd, *argv], env=env, cwd=cwd, text=True, capture_output=True)
+        if proc.returncode != 0:
+            raise RuntimeError(f"{' '.join(argv)}: {proc.stderr.strip() or proc.stdout.strip()}")
+        return proc.stdout.strip()
+
+    old = run("create", "--title", "old issue", "--type", "task", "--silent")
+    names = {"old": old}
+    new = run("create", "--title", "new issue", "--type", "task",
+              *(arg.format(**names) for arg in create_args), "--silent")
+    names["new"] = new
+    for followup in followups:
+        run(*(arg.format(**names) for arg in followup))
+    role = {old: "old", new: "new"}
+    return sorted(
+        (role[holder], role.get(dep.get("id"), "?"), dep.get("dependency_type"))
+        for holder in (old, new)
+        for dep in json.loads(run("show", holder, "--json"))[0].get("dependencies") or []
+    )
+
+
+def check_bd_dependency_direction():
+    """The fake `bd` of the publication door and the real one pose each
+    dependency the same way round."""
+    trial = Path(tempfile.mkdtemp(prefix="af-1zxao6-fake-bd-contract."))
+    try:
+        # Nothing of the live Factory may reach this city.
+        env = {k: v for k, v in os.environ.items()
+               if not re.match(r"^(GC_|BEADS_|BD_BIN$|GH_BIN$|FACTORY_ROOT$)", k)}
+        env.update(HOME=str(trial / "home"), TMUX_TMPDIR=str(trial / "tmux"))
+        for directory in ("home", "tmux"):
+            (trial / directory).mkdir()
+        city = trial / "city"
+        for setup in (
+            ["dolt", "config", "--global", "--add", "user.name", "fake-bd contract trial"],
+            ["dolt", "config", "--global", "--add", "user.email", "trial@example.invalid"],
+            ["gc", "init", "--template", "minimal", "--default-provider", "codex", "--skip-provider-readiness",
+             "--no-start", "--yes", "--name", "af-1zxao6-fake-bd-contract", str(city)],
+        ):
+            proc = subprocess.run(setup, env=env, text=True, capture_output=True)
+            if proc.returncode != 0:
+                fail(f"the disposable city of the bd dependency check could not be made ({' '.join(setup[:2])}): "
+                     f"{proc.stderr.strip()[-300:]}")
+                return
+        fake_env = {**env, "TICKET_GRAPH_BD_STATE": str(trial / "fake-beads.json")}
+        for shape, (create_args, followups) in DEPENDENCY_SHAPES.items():
+            try:
+                real = dependency_edges(["bd"], env, city, create_args, followups)
+                fake = dependency_edges([str(PUBLISH_FAKE_BD)], fake_env, trial, create_args, followups)
+            except RuntimeError as exc:
+                fail(f"ticket-graph-publish/bd-bead-mode, `bd {shape}`: {exc}")
+                continue
+            if real != fake:
+                fail(f"ticket-graph-publish/bd-bead-mode, `bd {shape}`: the real bd shows the edges {real} "
+                     f"(issue that waits, the other, type) and the fake shows {fake}")
+            else:
+                print(f"  bd {shape}: {real}")
+    finally:
+        # The city's managed Dolt server outlives `gc init`; its command line
+        # carries the trial directory, and nothing else does.
+        subprocess.run(["pkill", "-f", "--", f"{trial}/"], capture_output=True)
+        subprocess.run(["sleep", "1"])
+        subprocess.run(["pkill", "-9", "-f", "--", f"{trial}/"], capture_output=True)
+        shutil.rmtree(trial, ignore_errors=True)
+
+
 def main():
     print("Recording installed real tool versions:")
     print(" ", real_version("gc", "version"))
@@ -153,6 +250,9 @@ def main():
                     else check_convoy_shape(n, tokens, flags)
                 ))
     check_fake("shared-drain/fake-gh.py", "shared-drain/fake-gh.py", check_gh_pr_shape)
+
+    print("\nDependency direction, real bd beside the publication door's fake:")
+    check_bd_dependency_direction()
 
     if FAILURES:
         print(f"\nFAIL: {len(FAILURES)} fake tool shape(s) diverge from the real tool", file=sys.stderr)

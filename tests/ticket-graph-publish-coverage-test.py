@@ -748,6 +748,30 @@ class PatchDoorTest(Harness):
         self.assertIn("user_story : user story 2", beads[r1]["description"])
         self.assertNotIn("approved_by", beads["draft-2"]["metadata"])
 
+    def waits_for(self, bead_id):
+        """The beads this one waits for, as the tracker shows them."""
+        proc = subprocess.run((str(FAKE_BD), "show", bead_id, "--json"), env=self.env, text=True, capture_output=True)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        return sorted(dep["id"] for dep in json.loads(proc.stdout)[0].get("dependencies", [])
+                      if dep["dependency_type"] == "blocks")
+
+    def test_added_repair_waits_for_the_added_ticket_that_blocks_it(self):
+        # T48: the edge of an added ticket goes the way of `blocked_by`, in
+        # the tracker as in the metadata -- the blocked ticket waits.
+        second = {**copy.deepcopy(self.REPAIR), "id": "R2", "title": "La liste retrouve son ordre",
+                  "blocked_by": ["R1"]}
+        draft = self.revision(self.REPAIR, second, keep=("T1", "T2"))
+        self.ticket(draft, "T2")["blocked_by"] = ["T1", "R2"]
+        self.propose(draft, approved=False)
+
+        result = self.patched()
+        self.assertEqual(["R1", "R2"], sorted(result["created"]))
+        r1, r2 = result["ids"]["R1"], result["ids"]["R2"]
+        self.assertEqual("R1", self.beads()[r2]["metadata"]["gc.blocked_by"])
+        self.assertEqual([r1], self.waits_for(r2))
+        self.assertEqual([], self.waits_for(r1))
+        self.assertIn(r2, self.waits_for(self.ids["T2"]))
+
     def test_unapproved_repair_in_front_of_a_ticket_whose_blocker_is_delivered(self):
         # T11: a ticket at work has every blocker delivered, and a revision
         # never carries a delivered ticket. T2 gains the repair and keeps T1.

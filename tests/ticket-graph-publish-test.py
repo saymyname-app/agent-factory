@@ -384,6 +384,36 @@ class TicketGraphPublishBeadModeTest(unittest.TestCase):
         state = self.current_state()
         self.assertIn("does a thing", state["beads"]["af-t1"]["description"])
 
+    def test_bd_patch_added_ticket_waits_for_its_blocker(self):
+        # T48: on the tracker, the ticket a patch adds waits for the ticket
+        # that blocks it -- never the other way round.
+        self.seed_patch(self.ONE_TICKET_YAML + (
+            "  - id: T2\n"
+            "    title: A ticket added behind the first\n"
+            "    blocked_by: [T1]\n"
+            "    target_rigs: [fixture_city]\n"
+            "    what_it_delivers: does another thing\n"
+            "    acceptance_criteria: [does the other thing]\n"
+            "    scope:\n"
+            "      paths: [bin/bar.py]\n"
+        ))
+
+        result = json.loads(self.bd_patch(check=True).stdout)
+        self.assertEqual(["T2"], result["created"])
+        added = result["ids"]["T2"]
+        self.assertEqual("T1", self.current_state()["beads"][added]["metadata"]["gc.blocked_by"])
+        self.assertEqual(["af-t1"], self.waits_for(added))
+        self.assertEqual([], self.waits_for("af-t1"))
+
+    def waits_for(self, bead_id):
+        """The beads this one waits for, as the tracker shows them."""
+        proc = subprocess.run(
+            (str(FAKE_BD_BEAD_MODE), "show", bead_id, "--json"),
+            env={**os.environ, "TICKET_GRAPH_BD_STATE": str(self.state_path)}, text=True, capture_output=True, check=True,
+        )
+        return sorted(dep["id"] for dep in json.loads(proc.stdout)[0].get("dependencies", [])
+                      if dep["dependency_type"] == "blocks")
+
     def seed_patch(self, tickets_yaml):
         old_digest = "sha256:" + "1" * 64
         self.seed({

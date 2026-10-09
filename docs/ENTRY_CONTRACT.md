@@ -320,7 +320,14 @@ outside a gate.
 
 On success the added tickets are created in dependency order, tracked by
 the convoy (`bd dep add <convoy> <ticket> --type tracks`) and marked through
-`bin/convoy-state`; the Mayor is not woken. As for a publication, a patch
+`bin/convoy-state`; the Mayor is not woken. An added ticket waits for each
+ticket of its `blocked_by` in the tracker itself, as a published one does
+(T48): the door creates it with `bd create --deps depends-on:<blocker>`.
+`--deps blocks:<blocker>` is the reverse edge on bd 1.2.2 -- the blocker
+would wait for the added ticket, which `bd ready` and `bin/convoy-advance`
+would then start first; `gc.blocked_by` says the same thing as the edge,
+and is not what they read. The same holds for a patch of the old flow. As
+for a publication, a patch
 whose marking fails says so, and running the same command again completes
 it (withdrawals and marking) without writing anything twice.
 
@@ -356,3 +363,12 @@ operator need, the Prototype Fold (refusals, reference shown by `gc bd
 show`, the Fold alone given by `bd ready` among the interface tickets until
 it is closed), a repair added by patch without approval, a withdrawal and
 the undeclared case on the real `gc`/`bd` in a disposable city.
+`tests/ticket-graph-publish-patch-edges-real-tracker-test.sh` (local-only,
+T48) proves the sense of the blocking edges there, on both flows: a ticket
+added behind another waits for it, `bd ready` gives the blocker alone, a
+pass of `bin/convoy-advance` leaves the blocked repair waiting, and it is
+ready once its blocker is closed. In CI the same is asked of the fake
+tracker (`test_added_repair_waits_for_the_added_ticket_that_blocks_it`,
+`test_bd_patch_added_ticket_waits_for_its_blocker`), and
+`tests/fake-tool-contract-test.py` (local-only) runs that fake beside the
+real `bd` to prove both pose each dependency the same way round.
