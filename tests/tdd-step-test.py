@@ -141,7 +141,9 @@ class TddStepTest(unittest.TestCase):
             "GIT_CONFIG_SYSTEM": os.devnull,
         }
         self.seed_tracker()
-        shutil.copytree(ROOT / FIXTURE, self.repo / FIXTURE)
+        # The fixture as git holds it: a bytecode cache another suite left in
+        # it would be committed here as a file of the test perimeter.
+        shutil.copytree(ROOT / FIXTURE, self.repo / FIXTURE, ignore=shutil.ignore_patterns("__pycache__"))
         self.git("init", "-q", "-b", "main")
         self.base = self.commit("base")
         self.base_app = (self.repo / APP).read_text()
