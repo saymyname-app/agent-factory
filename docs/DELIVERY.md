@@ -277,8 +277,8 @@ publication for a Ticket Graph Draft that declares `flow_contract:
 new-flow/v1` (`docs/ENTRY_CONTRACT.md`). It is opt-in per draft. No draft of
 a live project declares it yet; the flow runs on the Fixture City. An
 unmarked convoy is published, dispatched, merged and closed exactly as
-before: every command below answers « pas un convoi du nouveau flux »
-(exit 4) on it and writes nothing.
+before: the commands below read the mark first and write nothing on a convoy
+that does not carry it.
 
 In a marked convoy the control of the flow is code and agents are at the
 leaves (Spec `af-wf4w5r` §0). The state lives in the tracker, read and
