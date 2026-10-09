@@ -126,7 +126,7 @@ replace available primary evidence for a load-bearing claim.
 
 Choose the lowest-risk sufficient profile when creating the work bead and record the profile as a label (`delivery:fast`, `delivery:standard`, or `delivery:guarded`). The bead description names the repository, allowed scope, required deterministic validations and the merge authority. Risk escalation changes the profile before the risky step; it does not broaden the original authorization.
 
-A delivery is complete only when the bead notes record the effective agent/session and model when an LLM ran, branch, commit SHA, PR URL/number, required checks and their conclusions, merge/final state, and deterministic validation. Closing a Bead never substitutes for GitHub merge evidence. For PR-backed work, `closed` is itself guarded: only `bin/deliver-close` may atomically close after recording `merge_result=merged`, `merged_sha`, `merged_target`, the six ADR-0016 proof fields, and a successful required workflow run whose `gc.ci_head_sha` equals `gc.pr_head` (ADR-0026).
+A delivery is complete only when the bead notes record the effective agent/session and model when an LLM ran, branch, commit SHA, PR URL/number, required checks and their conclusions, merge/final state, and deterministic validation. Closing a Bead never substitutes for GitHub merge evidence. For PR-backed work, `closed` is itself guarded: only `bin/deliver-close` may atomically close after recording `merge_result=merged`, `merged_sha`, `merged_target`, the six ADR-0016 proof fields, and a successful required workflow run whose `gc.ci_head_sha` equals `gc.pr_head` (ADR-0026). A ticket of a convoy that carries the new-flow mark is not closed by that proof: `bin/deliver-close` refuses it, and it closes only through `bin/ticket-end` (`docs/TICKET_END.md`; ADR-0026, amendment 2026-10-09).
 
 For GUARDED work, create the gate against only the bead that performs the protected transition:
 
@@ -191,7 +191,10 @@ added to the autopilot's rig table (see *Production stays gated* below).
 ### Reading delivery state
 
 A PR-backed bead is delivered only when it is closed with coherent merge and
-exact-head CI proof. `merge_result=merged` alone, `closed` alone, or a green run
+exact-head CI proof. A ticket of a marked convoy is the exception: that
+proof does not close it, `bin/deliver-close` refuses it, and it closes only
+through `bin/ticket-end` (`docs/TICKET_END.md`; ADR-0026, amendment
+2026-10-09). `merge_result=merged` alone, `closed` alone, or a green run
 for another head is insufficient. `lib/factory_delivery_proof.py` owns this
 pure predicate; `factory-waiting-guard`, `factory-delivery-guard`,
 `factory-guard` and `pr-autopilot` use it, so a legacy false close cannot clear
@@ -265,6 +268,110 @@ surfaces". Grep count is zero for `gh pr merge`, merge-conditioned `bd close`
 and `merge_result` across `publish`, `review`, `implement`, `do-work` and
 `build-basic`. No bead carried `merge_strategy` or `pr_number` metadata, which
 is why `pr-autopilot` links PR to bead by branch name instead.
+
+## Marked convoys — the delivery flow of a Planning Run (D01)
+
+A second delivery flow exists beside the closed loop above. It applies to
+**marked convoys** only: convoys that carry the **new-flow mark**, posed at
+publication for a Ticket Graph Draft that declares `flow_contract:
+new-flow/v1` (`docs/ENTRY_CONTRACT.md`). It is opt-in per draft. No draft of
+a live project declares it yet; the flow runs on the Fixture City. An
+unmarked convoy is published, dispatched, merged and closed exactly as
+before: the commands below read the mark first and write nothing on a convoy
+that does not carry it.
+
+In a marked convoy the control of the flow is code and agents are at the
+leaves (Spec `af-wf4w5r` §0). The state lives in the tracker, read and
+written through `bin/convoy-state` only, and in the evidence store. The
+Mayor is not woken for it and never advances, closes or modifies its
+tickets; it keeps the operation of the Factory. One order runs
+`bin/convoy-advance` on every open marked convoy; each pass does what is due
+and nothing else.
+
+**The life of a ticket.**
+
+1. **Start.** `bin/convoy-advance` starts the ready tickets, in dependency
+   order, under the ceiling N (`max_sessions` of
+   `config/delivery-flow.json`), through `bin/dispatch-door`. The door
+   refuses a marked ticket to anyone else.
+2. **Author.** One fresh author session, in a work tree of its own, on a
+   branch that leaves from the integration branch of the Spec; the formula
+   `mol-ticket-author` holds the sequence and `bin/ticket-author` its gates.
+3. **TDD.** `bin/tdd-step red` proves the criterion tests red;
+   `bin/test-review` has a test reviewer read them; `bin/tdd-step freeze`
+   refuses without its favorable verdict; `bin/tdd-step green` proves them
+   green, unchanged since the freeze.
+4. **Exit.** The author ends by `bin/ticket-exit`, with its Ticket Handoff
+   and the demonstration captured on the launched product. It never closes
+   its ticket.
+5. **Review and evaluation**, in parallel on the same tip: `bin/code-review`
+   (a reviewer session; a finding blocks only with a citation found in its
+   source) and `bin/ticket-evaluation` (an Evaluator on the launched
+   product, one state per criterion; code computes the verdict). When the
+   ticket touches a screen, `bin/prototype-fidelity` compares it to the
+   Validated Prototype.
+6. **At most one correction round** (`bin/correction-round`), common to
+   both, by another fresh author session. Still refused: the ticket stops.
+7. **Merge.** `bin/spec-integration merge` merges the ticket into the
+   integration branch, one at a time, with tests on the merged result. No
+   ticket opens a pull request toward the protected branch.
+8. **Close.** `bin/ticket-end` reads its nine conditions and writes the
+   closing with its gate record. Nothing else closes the ticket.
+
+**The end of the Spec.** Once every ticket is closed, `bin/spec-end` renders
+three mechanical verdicts (registry, tests, fidelity) on one tip of the
+integration branch that holds the tip of the protected branch. On that
+commit, in parallel, `bin/outcome-evaluation` gives one state per numbered
+user story of the Spec and `bin/spec-end-review` reviews the whole assembled
+diff. A refusal counts one repair round, its `repair` tickets published
+by code; the rounds are bounded to 2, then a « non conforme » request goes
+to the operator. `bin/evidence-pack` then generates the Evidence Pack, by code;
+with its seven conditions met on one commit, the Outcome is **Delivered**.
+
+**Acceptance.** The pass sends one Acceptance Request through
+`bin/escalation-door`, with the link of the Evidence Pack.
+`bin/acceptance-session` launches the product at the commit of that dossier
+and stops it. `bin/owner-answer` records the owner's answer — « accepté »,
+« constats rendus » or « abandonné », no other — and routes each Owner
+Finding by code. The next pass runs `bin/outcome-promote`: on « accepté »,
+one merge commit into the protected branch and the convoy closed; on
+« abandonné », the convoy closed and nothing merged. No delay answers in
+the owner's place, and a marked convoy never closes by itself.
+
+**Stops and bounds.** The bounds are set in `bounds` of
+`config/delivery-flow.json` and nowhere else.
+
+- A ticket is resumed at most 3 times, every cause together; at the third
+  it is parked with its descendants and raised to the operator.
+- The convoy stops entirely while its integration branch is red (code
+  publishes one `repair`) or while 2 Planning Exceptions are open on its
+  Spec.
+- An author that meets a question about approved intent exits by a Planning
+  Exception (`bin/ticket-exit`, `docs/PLANNING_EXCEPTION.md`); a ticket
+  leaves the graph only by a resolved one.
+- A state the code has no rule for — a ticket started outside the dispatch
+  door or closed outside its gate, evidence without a fingerprint — stops
+  the convoy and raises one factory incident. The repair is Factory
+  maintenance, never advancing or closing the tickets by hand; the convoy
+  resumes by code once the state is valid again.
+
+| Question | Read |
+|---|---|
+| What must a draft hold to be published marked? Who reviews the graph? | `docs/ENTRY_CONTRACT.md`, `docs/GRAPH_REVIEW.md` |
+| Where does a convoy stand, and why does nothing start? | `docs/CONVOY_STATE.md`, `docs/CONVOY_ADVANCE.md` |
+| What does the author session do, step by step? | `docs/TICKET_AUTHOR.md`, `docs/TDD_STEP.md`, `docs/TEST_REVIEW.md`, `docs/TICKET_EXIT.md` |
+| Why was a ticket refused before its merge? | `docs/CODE_REVIEW.md`, `docs/TICKET_EVALUATION.md`, `docs/PROTOTYPE_FIDELITY.md`, `docs/VALIDATED_PROTOTYPE.md`, `docs/CORRECTION_ROUND.md` |
+| How is a ticket merged, and why is it still open? | `docs/SPEC_INTEGRATION.md`, `docs/TICKET_END.md` |
+| Why is the Spec not Delivered? | `docs/SPEC_END.md`, `docs/OUTCOME_EVALUATION.md`, `docs/SPEC_END_REVIEW.md` |
+| What is a proof, and what does the owner read? | `docs/EVIDENCE_STORE.md`, `docs/EVIDENCE_PACK.md` |
+| How does the owner judge and answer, and what follows? | `docs/ACCEPTANCE_SESSION.md`, `docs/OWNER_ANSWER.md`, `docs/OUTCOME_PROMOTE.md` |
+
+Two checks hold this description to the code. `./bin/method-check table`
+reads the requirement → mechanism → proof table of
+`docs/REQUIREMENT_TABLE.md` and is red in CI when a row has no mechanism or
+cites a command absent from `bin/`. `./bin/method-check register` checks
+that every deviation of Spec §16 has its entry in the Adaptation Register
+(`docs/ADAPTATION_REGISTER.md`), with its reason and the v1.3.1 baseline.
 
 ## Main-landing gate — `main` cannot go red silently anymore
 

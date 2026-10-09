@@ -287,7 +287,7 @@ _French conversational alias_: graphe de travail
 _Avoid_: queue, backlog, memory, ticket graph
 
 **Delivery Work Graph**:
-The approved executable Work Graph published once by `to-tickets` as Vertical Slice Beads and dependency edges, then executed without semantic redesign by the Mayor.
+The approved executable Work Graph published once by `to-tickets` as Vertical Slice Beads and dependency edges, then executed without semantic redesign: by the Mayor, or by code (`bin/convoy-advance`) when its convoy carries the new-flow mark.
 _French conversational alias_: graphe de livraison
 _Avoid_: Planning Graph, Ticket Graph Draft, queue
 

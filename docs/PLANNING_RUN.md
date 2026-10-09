@@ -104,14 +104,28 @@ Planning Run starts.
    On success, in the same door: delivery beads and the convoy are created
    atomically (one approved ticket becomes exactly one delivery bead), the
    Planning Run Reservation advances (to `next`, or clears) when the
-   Spec's target is the active one, and the Mayor is woken by default.
-7. **The Mayor executes the published Delivery Work Graph.** No planning
-   bead is ever dispatched, woken for, or counted as delivery. When the
-   convoy closes, the Spec and Ticket Graph Draft beads close with it
-   (`bin/planning-artifacts-close`) -- both stay open and readable during
-   delivery. A convoy that carries the new-flow mark does not close when
-   its last ticket does: it, its Spec and its Draft stay open until the
-   operator's acceptance or abandon (`docs/CONVOY_ADVANCE.md`, T22).
+   Spec's target is the active one, and the Mayor is woken by default --
+   except for a convoy published with the new-flow mark, for which the
+   Mayor is not woken: code starts its tickets.
+7. **The published Delivery Work Graph is executed: by the Mayor, or by
+   code when its convoy carries the new-flow mark.** No planning bead is
+   ever dispatched, woken for, or counted as delivery.
+   - **Unmarked convoy** (nothing changes): the Mayor executes it. When the
+     convoy closes, the Spec and Ticket Graph Draft beads close with it
+     (`bin/planning-artifacts-close`) -- both stay open and readable during
+     delivery.
+   - **Marked convoy**: code advances it -- `bin/convoy-advance`, run by an
+     order of the Factory (`docs/CONVOY_ADVANCE.md`). The Mayor never
+     advances, closes or modifies its tickets. A ticket closes only through
+     the ticket-end gate, and the Spec ends through the end-of-Spec gate.
+     Then come the Evidence Pack, the Acceptance Request and the Acceptance
+     Session, and the owner's recorded answer; on « accepté » code makes
+     the one merge into the protected branch and closes the convoy, on
+     « abandonné » it closes the convoy and merges nothing. The convoy
+     does not close when its last ticket does: it, its Spec and its Draft
+     stay open until that answer. The walk, tool by tool, is in
+     `docs/DELIVERY.md` ("Marked convoys -- the delivery flow of a Planning
+     Run (D01)").
 
 ## Research and prototype tickets
 
