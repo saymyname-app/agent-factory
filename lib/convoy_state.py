@@ -3818,11 +3818,6 @@ def cmd_record_code_review(args: argparse.Namespace) -> int:
         refused = [finding["id"] for finding in findings if finding["blocking"]]
     else:
         reviewed = record["rounds"][-1]
-        if isinstance(recorded_by, str) and recorded_by.strip() == reviewed["recorded_by"]:
-            # Spec §6: a second reviewer session judges the answers.
-            problems.append(
-                f"le jugement est rendu par la session qui a fait la revue ({reviewed['recorded_by']}) : "
-                "une seconde session relecteur juge les réponses")
         expected = blocking_ids(reviewed)
         judgements = given.get("judgements") if isinstance(given.get("judgements"), dict) else {}
         problems += [f"{name} n'est pas un Blocking Finding de la revue jugée" for name in sorted(set(judgements) - set(expected))]

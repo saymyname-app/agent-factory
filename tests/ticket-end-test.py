@@ -254,7 +254,7 @@ class TicketEndTest(unittest.TestCase):
     def reviewed(self, ticket, commit, findings=()):
         self.state("open-code-review", CONVOY, ticket, "--kind", "review", "--commit", commit, "--base", self.base)
         return self.state("record-code-review", CONVOY, ticket, "--file", self.json_file(f"review-{ticket}.json", {
-            "commit": commit, "recorded_by": "delivery-reviewer-fx", "findings": list(findings), "answers": {}}))
+            "commit": commit, "recorded_by": f"delivery-reviewer-{ticket}-{commit[:6]}", "findings": list(findings), "answers": {}}))
 
     def evaluated(self, ticket, commit):
         shown = self.shown(ticket)
@@ -264,7 +264,7 @@ class TicketEndTest(unittest.TestCase):
                 "environment": [{"dataset": None, "address": "http://127.0.0.1:1", "state_file": "/launch.json"}]}))
         self.capture(ticket, "evaluation.seen")
         return self.state("record-evaluation", CONVOY, ticket, "--file", self.json_file(f"evaluation-{ticket}.json", {
-            "commit": commit, "recorded_by": "delivery-evaluator-fx",
+            "commit": commit, "recorded_by": f"delivery-evaluator-{ticket}-{commit[:6]}",
             "criteria": [{"number": number, "text": text, "state": "observed", "evidence": "evaluation.seen"}
                          for number, text in enumerate(shown["criteria"], start=1)],
             "demonstration_line": {"text": shown["demonstration_line"], "state": "observed",
@@ -299,7 +299,7 @@ class TicketEndTest(unittest.TestCase):
                 f"request-{ticket}.json", {"files": files, "criteria": {"1": [f"{test}::T::test"]}}))
             self.state("record-test-review", CONVOY, ticket, "--file", self.json_file(f"verdict-{ticket}.json", {
                 "commit": red_commit, "files": files, "tests": {f"{test}::T::test": {"state": "favorable"}},
-                "recorded_by": "delivery-test-reviewer-fx"}))
+                "recorded_by": f"delivery-test-reviewer-{ticket}"}))
             self.capture(ticket, "tdd_freeze", {"files": files})
             self.state("set-tdd", CONVOY, ticket, "--step", "freeze", "--commit", red_commit)
             tip = self.commit_on(ticket, {f"docs/{ticket}.md": "la tranche\n"})

@@ -1396,7 +1396,7 @@ class ConvoyStateTest(unittest.TestCase):
         self.verdicts = getattr(self, "verdicts", 0) + 1
         return self.json_file(f"verdict-{self.verdicts}.json", {
             "commit": commit or self.RED, "files": files or self.REVIEW_FILES,
-            "tests": answers if tests is None else tests, "recorded_by": "delivery-reviewer-fx"})
+            "tests": answers if tests is None else tests, "recorded_by": f"delivery-reviewer-tests-{self.verdicts}"})
 
     def record_review(self, refused=None, **given):
         return self.ok("record-test-review", CONVOY, T1, "--file", self.verdict_file(refused, **given))
@@ -1497,7 +1497,7 @@ class ConvoyStateTest(unittest.TestCase):
         review = self.review_state()
         self.assertNotIn("request", review)
         (round_,) = review["rounds"]
-        self.assertEqual(("favorable", self.RED, self.REVIEW_FILES, "delivery-reviewer-fx"),
+        self.assertEqual(("favorable", self.RED, self.REVIEW_FILES, "delivery-reviewer-tests-1"),
                          tuple(round_[name] for name in ("verdict", "commit", "files", "recorded_by")))
         self.assertEqual({self.COUNT_TEST: {"state": "favorable"}, self.HEALTH_TEST: {"state": "favorable"}},
                          round_["tests"])
@@ -1691,7 +1691,7 @@ class ConvoyStateTest(unittest.TestCase):
 
     def review_file(self, findings=(), answers=None, commit=None, **extra):
         self.reviews = getattr(self, "reviews", 0) + 1
-        content = {"commit": commit or self.REVIEWED, "recorded_by": "delivery-reviewer-fx",
+        content = {"commit": commit or self.REVIEWED, "recorded_by": f"delivery-reviewer-fx-{self.reviews}",
                    "findings": list(findings), **extra}
         if answers is not None:
             content["answers"] = answers
@@ -1833,7 +1833,7 @@ class ConvoyStateTest(unittest.TestCase):
         ticket = self.ticket(self.show(), T1)
         self.assertNotIn("request", ticket["code_review"])
         (round_,) = ticket["code_review"]["rounds"]
-        self.assertEqual(("review", "favorable", self.REVIEWED, self.REVIEW_BASE, "delivery-reviewer-fx"),
+        self.assertEqual(("review", "favorable", self.REVIEWED, self.REVIEW_BASE, "delivery-reviewer-fx-1"),
                          tuple(round_[name] for name in ("kind", "verdict", "commit", "base", "recorded_by")))
         self.assertEqual({"verdict": "favorable", "commit": self.REVIEWED, "unsettled": []}, ticket["code_review"]["state"])
         self.assertEqual(("favorable", self.REVIEWED),
@@ -2020,11 +2020,12 @@ class ConvoyStateTest(unittest.TestCase):
     def test_a_judgement_given_by_the_session_that_reviewed_is_refused(self):
         self.corrected_review()
         self.open_code_review("judgement", self.CORRECTED, self.REVIEWED)
+        reviewed_by = self.ticket(self.show(), T1)["code_review"]["rounds"][0]["recorded_by"]
         same_session = self.json_file("judgement-same.json", {
-            "commit": self.CORRECTED, "recorded_by": "delivery-reviewer-fx", "judgements": {"F1.1": {"state": "favorable"}}})
+            "commit": self.CORRECTED, "recorded_by": reviewed_by, "judgements": {"F1.1": {"state": "favorable"}}})
 
         self.assert_refused_and_nothing_written(
-            "record-code-review", CONVOY, T1, "--file", same_session, mention="seconde session")
+            "record-code-review", CONVOY, T1, "--file", same_session, mention="session neuve")
 
     def test_a_judgement_refuses_a_list_that_is_not_the_blocking_findings(self):
         self.corrected_review()
@@ -2101,8 +2102,9 @@ class ConvoyStateTest(unittest.TestCase):
     def states(self, commit=None, **changes):
         """Every state « observed », each on a captured piece."""
         piece = self.captured(commit=commit)
+        self.evaluations = getattr(self, "evaluations", 0) + 1
         content = {
-            "commit": commit or self.REVIEWED, "recorded_by": "delivery-evaluator-fx",
+            "commit": commit or self.REVIEWED, "recorded_by": f"delivery-evaluator-fx-{self.evaluations}",
             "criteria": [{"number": number, "text": text, "state": "observed", "evidence": piece}
                          for number, text in enumerate(self.CRITERIA, start=1)],
             "demonstration_line": {"text": self.LINE, "state": "observed", "evidence": piece},
@@ -2223,7 +2225,7 @@ class ConvoyStateTest(unittest.TestCase):
         evaluation = self.evaluation()
         self.assertNotIn("request", evaluation)
         (round_,) = evaluation["rounds"]
-        self.assertEqual(("evaluation", self.REVIEWED, "delivery-evaluator-fx", self.ROLES),
+        self.assertEqual(("evaluation", self.REVIEWED, "delivery-evaluator-fx-1", self.ROLES),
                          tuple(round_[name] for name in ("kind", "commit", "recorded_by", "roles")))
         self.assertEqual([{"dataset": "content", "address": self.PRODUCT["address"]}], round_["environment"])
         self.assertEqual([(1, self.CRITERIA[0], "observed"), (2, self.CRITERIA[1], "observed")],

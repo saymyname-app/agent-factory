@@ -271,8 +271,9 @@ class TddStepTest(unittest.TestCase):
         self.state("open-test-review", CONVOY, ticket, "--commit", proof["commit"], "--file", request)
         answers = {test["id"]: {"state": "unfavorable", "reason": refused[test["id"]]} if test["id"] in (refused or {})
                    else {"state": "favorable"} for test in proof["tests"]}
+        self.reviews = getattr(self, "reviews", 0) + 1
         verdict.write_text(json.dumps({"commit": proof["commit"], "files": fingerprints, "tests": answers,
-                                       "recorded_by": "delivery-reviewer-fx"}))
+                                       "recorded_by": f"delivery-reviewer-fx-{self.reviews}"}))
         return self.state("record-test-review", CONVOY, ticket, "--file", verdict)
 
     def store_files(self):

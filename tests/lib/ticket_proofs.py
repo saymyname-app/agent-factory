@@ -132,7 +132,7 @@ def prove_freeze(env, repo, convoy, ticket):
                   _json_file(holder, {"files": files, "criteria": {"1": [TEST_ID]}}))
             state(env, "record-test-review", convoy, ticket, "--file", _json_file(holder, {
                 "commit": red, "files": files, "tests": {TEST_ID: {"state": "favorable"}},
-                "recorded_by": "delivery-test-reviewer-fx"}))
+                "recorded_by": f"delivery-test-reviewer-{ticket}"}))
         state(env, "set-tdd", convoy, ticket, "--step", "freeze", "--commit", red)
     frozen = (known.get("freeze") or {}).get("commit") or red
     if "tdd_freeze" not in filed:

@@ -141,7 +141,7 @@ evaluated() {  # TICKET COMMIT REPO: a favorable Ticket Evaluation, as an Evalua
     environment: [{dataset: null, address: "http://127.0.0.1:1", state_file: "/launch.json"}]}' > "$TRIAL/evaluation-request-$1.json"
   state open-evaluation "$CONVOY" "$1" --commit "$2" --file "$TRIAL/evaluation-request-$1.json" >/dev/null
   python3 "$ROOT/tests/lib/ticket_proofs.py" capture "$CONVOY" "$1" evaluation.seen "$2" --repo "$3" >/dev/null
-  jq -n --arg commit "$2" --argjson t "$shown" '{commit: $commit, recorded_by: "delivery-evaluator-trial",
+  jq -n --arg commit "$2" --arg session "delivery-evaluator-trial-$1" --argjson t "$shown" '{commit: $commit, recorded_by: $session,
     criteria: [$t.criteria | to_entries[] | {number: (.key + 1), text: .value, state: "observed", evidence: "evaluation.seen"}],
     demonstration_line: {text: $t.demonstration_line, state: "observed", evidence: "evaluation.seen"}}' > "$TRIAL/evaluation-$1.json"
   state record-evaluation "$CONVOY" "$1" --file "$TRIAL/evaluation-$1.json" >/dev/null
@@ -150,7 +150,7 @@ judge() {  # TICKET COMMIT
   # The code review as a reviewer session records it (bin/code-review, T14),
   # and the Ticket Evaluation as an Evaluator session records it
   # (bin/ticket-evaluation, T15): the merge takes no ticket without them.
-  jq -n --arg commit "$2" '{commit: $commit, recorded_by: "delivery-reviewer-trial", findings: [], answers: {}}' \
+  jq -n --arg commit "$2" --arg session "delivery-reviewer-trial-$1" '{commit: $commit, recorded_by: $session, findings: [], answers: {}}' \
     > "$TRIAL/review-$1.json"
   state open-code-review "$CONVOY" "$1" --kind review --commit "$2" --base "$BASE"
   state record-code-review "$CONVOY" "$1" --file "$TRIAL/review-$1.json"

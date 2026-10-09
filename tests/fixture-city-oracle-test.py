@@ -748,7 +748,7 @@ elif FAULT == "freeze":
     write("set-tdd", "--step", "freeze", "--commit", head)
 elif FAULT == "review":
     write("open-test-review", "--commit", head, files=files, criteria={{"1": [test]}})
-    write("record-test-review", commit=head, files=files, tests={{test: {{"state": "favorable"}}}}, recorded_by="relecteur-fx")
+    write("record-test-review", commit=head, files=files, tests={{test: {{"state": "favorable"}}}}, recorded_by="relecteur-" + ticket)
 else:
     write("set-exit", "--exit", "finished")
 print(json.dumps({{"ok": True}}))
