@@ -290,6 +290,8 @@ class EvidenceCaptureTest(unittest.TestCase):
         failing_gc = self.tmp / "gc-refusing-writes"
         failing_gc.write_text(
             "#!/bin/sh\n"
+            # A leading `--city DIR` is accepted, as gc does (af-2o6oyl).
+            'if [ "$1" = "--city" ]; then shift 2; fi\n'
             'if [ "$1 $2" = "bd update" ]; then echo "tracker indisponible" >&2; exit 1; fi\n'
             f'exec "{FAKE_GC}" "$@"\n'
         )
