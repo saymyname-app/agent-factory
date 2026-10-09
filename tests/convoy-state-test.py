@@ -775,6 +775,25 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         self.assertTrue(json.loads(proc.stdout)["new_flow"])
 
+    def test_every_tracker_call_names_the_city(self):
+        # Left to find the city by itself, gc starts one more command before
+        # each read (af-2o6oyl).
+        calls = self.tmp / "gc-calls.log"
+        recorder = self.tmp / "recording-gc"
+        recorder.write_text(f'#!/bin/sh\nprintf "%s\\n" "$*" >> "{calls}"\nexec "{FAKE_GC}" "$@"\n')
+        recorder.chmod(0o755)
+        city = self.tmp / "city"
+        city.mkdir()
+        env = {**self.env, "GC_BIN": str(recorder), "FACTORY_ROOT": str(city)}
+
+        for command in (("mark", CONVOY), ("show", CONVOY), ("list",)):
+            proc = subprocess.run((str(TOOL), *command), env=env, text=True, capture_output=True)
+            self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+
+        lines = calls.read_text().splitlines()
+        self.assertIn(f"--city {city} bd show {CONVOY} --json", lines)
+        self.assertEqual([], [line for line in lines if not line.startswith(f"--city {city} bd ")])
+
     def test_ticket_with_an_unknown_mark_is_a_state_without_rule(self):
         self.edit_tracker(T1, **{"gc.flow.mark": "new-flow/v0"})
 
