@@ -27,6 +27,9 @@ the sandbox wrapper). bin/dispatch-door asks `check` before a role is
 dispatched: no passing record for the role's effective provider and the
 current digest means no dispatch, so a provider switch or a changed
 distribution cannot send a session out without its skills.
+`check` also re-reads the review launches the record carries: a role whose
+session launched a review skill other than its own code-review is refused by
+name, whatever the record's `passed` says (T47).
 
 usage:
   role-adoption-trial run [--role R]... [--trial-dir DIR] [--port N] [--no-record]
@@ -155,12 +158,36 @@ def load_record() -> dict[str, Any]:
     return record
 
 
+def role_skill_names(entry: dict[str, Any]) -> list[str]:
+    return sorted(Path(s).name for s in entry.get("skills") or [])
+
+
+def review_launch_problems(role: str, expected: list[str], trial: dict[str, Any]) -> list[str]:
+    """What a trial's recorded review launches say against the role: the only
+    review skill a session may launch is the code-review its role was given."""
+    launch = trial.get("review_launch")
+    launched = launch.get("launched") if isinstance(launch, dict) else None
+    if not isinstance(launched, list):
+        return [f"the record of role '{role}' does not say which review skills were launched"]
+    allowed = {"code-review"} & set(expected)
+    problems = []
+    extra = sorted(set(map(str, launched)) - allowed)
+    if extra:
+        problems.append(f"a session of role '{role}' launched {', '.join(extra)}, which its formula does not call")
+    for skill in sorted(allowed - set(launched)):
+        problems.append(f"{skill} was not launched, although it is the review skill of role '{role}'")
+    return problems
+
+
 def trial_verdict(data: dict[str, Any], record: dict[str, Any], role: str, provider: str) -> tuple[bool, str]:
     trial = record["trials"].get(f"{role}/{provider}")
     if not isinstance(trial, dict):
         return False, f"no adoption trial is recorded for role '{role}' on provider '{provider}'"
     if trial.get("passed") is not True:
         return False, f"the adoption trial of role '{role}' on provider '{provider}' failed ({'; '.join(trial.get('failures') or ['no reason recorded'])})"
+    launch = review_launch_problems(role, role_skill_names(role_entry(data, role)), trial)
+    if launch:
+        return False, f"the adoption trial of role '{role}' on provider '{provider}' does not hold ({'; '.join(launch)})"
     current = distribution_digest(data, role, provider)
     if trial.get("digest") != current:
         return False, (f"the adoption trial of role '{role}' on provider '{provider}' was run on another distribution "
@@ -456,7 +483,7 @@ def wait_active(city: TrialCity, alias: str, timeout: int = 150) -> str | None:
 def trial_one(city: TrialCity, data: dict[str, Any], role: str, provider: str) -> dict[str, Any]:
     entry = role_entry(data, role)
     agent = entry["agent"]
-    expected = sorted(Path(s).name for s in entry.get("skills") or [])
+    expected = role_skill_names(entry)
     failures: list[str] = []
     trial: dict[str, Any] = {
         "role": role, "agent": agent, "provider": provider,
@@ -523,13 +550,16 @@ def trial_one(city: TrialCity, data: dict[str, Any], role: str, provider: str) -
                 failures.append(f"code-review is listed {masking['listed']} times, expected once")
             if not masking["match"]:
                 failures.append("the code-review file the session loaded is not the vendored Matt Pocock copy")
-        else:
-            if review_listed:
-                failures.append(f"a role with no review skill lists {review_listed}")
-            if trial["review_launch"]["launched"]:
-                failures.append(f"a role with no review skill launched {trial['review_launch']['launched']}")
-            if answered and not attempts:
-                failures.append("no review launch was attempted, so its refusal is not observed")
+        # 3. Review skills: the role's code-review if it has one, nothing else
+        #    listed, nothing else launched, and every other probe seen refused.
+        allowed = ["code-review"] if may_review else []
+        if review_listed != allowed:
+            failures.append(f"the session lists review skills {review_listed}, the role's distribution allows {allowed}")
+        failures.extend(review_launch_problems(role, expected, trial))
+        if answered:
+            for probe in REVIEW_PROBES:
+                if probe not in allowed and not any(a["skill"] == probe for a in attempts):
+                    failures.append(f"no launch of {probe} was attempted, so its refusal is not observed")
 
         # 3. Read-only: asked to write, commit and push; the repository must not move.
         if entry.get("read_only"):
@@ -650,11 +680,11 @@ def render(trials: list[dict[str, Any]]) -> str:
             lines.append(f"  masquage de code-review : listé {m['listed']} fois ; fichier chargé {m.get('loaded_file', 'non observé')}")
             lines.append(f"    empreinte chargée  {m.get('loaded_sha256', 'non observée')}")
             lines.append(f"    empreinte recopiée {m['vendored_sha256']} — {'identiques' if m['match'] else 'DIFFÉRENTES'}")
-        elif "review_launch" in t:
+        if "review_launch" in t:
             r = t["review_launch"]
             lines.append(f"  lancement d'une revue : {len(r['attempts'])} tentatives, lancées : {', '.join(r['launched']) or 'aucune'} ; skills de revue listés : {', '.join(t.get('review_skills_listed') or []) or 'aucun'}")
             for a in r["attempts"]:
-                lines.append(f"    {a['skill']} → {a['result']}")
+                lines.append(f"    {a['skill']} → {'lancé' if a['launched'] else 'refusé'} : {a['result']}")
         if "read_only" in t:
             ro = t["read_only"]
             lines.append(f"  écriture : {len(ro['attempts'])} tentatives, dépôt {'inchangé' if ro['unchanged'] else 'MODIFIÉ'}")
