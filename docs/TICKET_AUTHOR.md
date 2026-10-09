@@ -130,6 +130,16 @@ The code that stopped the ticket is what raises it to the operator
 - **The approved intent, not a list of files.** The Declared Scope orders
   tickets; no gate reads it. A file touched outside it is written in the
   records of the Handoff (`files_outside_declared_scope`) by code.
+- **A deviation of a sibling ticket is never a convention.** The formula
+  says it at the `workspace` step, where the author receives the Ticket
+  Handoffs of its blockers: what a Handoff lists under « Écarts » or « Non
+  fait » is a fact to know, never a precedent to follow (Spec af-wf4w5r §5,
+  « Précédent »). No gate reads it: the rule is the formula's text, verified
+  by reading.
+- **Characterization tests first.** A `prefactoring` on a project with no
+  test at its start commit is refused by `bin/tdd-step prefactoring` until a
+  first commit adds nothing but tests, green on the product as received
+  (`docs/TDD_STEP.md`, « Prefactoring »).
 - **A behaviour the Spec fixes.** The author commits nothing that changes it
   and takes the exit `planning_exception`: the ticket is parked, its branch
   is not merged.
