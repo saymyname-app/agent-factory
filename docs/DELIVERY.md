@@ -414,6 +414,25 @@ The gate runs `bin/ci-run-tests` — the same discovery CI itself runs (every
 never drift from CI's own list, and neither has to be hand-edited when a
 test file is added (ADR-0017, `tests/ci-registration-test.sh`).
 
+What the marker leaves out of CI runs at night instead (T49, af-xcfup7):
+`bin/local-only-tests`, started at 04:00 by `orders/local-only-tests.toml`,
+runs every `tests/*.sh|*.py` file marked `# ci: local-only`, one at a time,
+and on a failure files a bead and pages the Mayor through
+`bin/escalation-door`. It reads the marker, not a list of names: a new
+local-only test runs the next night with nothing else to edit. The only
+files left out are the ones `tests/local-only-exclusions.txt` names, each
+with its reason — a test whose every run spends a real session (today the
+real Mayor of `tests/convoy-stop-mayor-isolated-city-test.sh`); run those
+by hand. `bin/local-only-tests --list` prints what a run would do (`run
+<path>` / `excluded <path> <reason>`) without running anything, and
+`tests/local-only-tests-coverage-test.sh` fails in CI when a marked file is
+neither run nor excluded, or when an exclusion has no reason or names no
+marked file. A test stopped after `LOCAL_ONLY_TEST_TIMEOUT` (default
+1800 s) counts as failed; the order's own timeout (`3h`) bounds the night.
+A trial on the real tracker that calls `bin/convoy-state` or a tool built on
+it exports `FACTORY_ROOT` to its disposable city: the tools name their city
+to `gc` from it, and left unset they name the repository they run from.
+
 The runner also keeps tests off the host's escalation lock (af-wnj692): each
 test runs with a throwaway `XDG_RUNTIME_DIR`, and one that still reaches
 `bin/escalation-door`'s default lock file fails the run. A test that calls

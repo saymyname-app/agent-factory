@@ -64,7 +64,9 @@ trap cleanup EXIT
 
 factory_git_state() {
   git -C "$ROOT" status --porcelain --untracked-files=all
-  git -C "$ROOT" rev-list --all --count
+  # The checkout's own commit, not a count over every ref: the refs of the
+  # repository move under any other work tree or fetch during the run (T49).
+  git -C "$ROOT" rev-parse HEAD
 }
 FACTORY_BEFORE=$(factory_git_state)
 

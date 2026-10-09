@@ -463,7 +463,7 @@ git -C "$PRODUCT" merge-base --is-ancestor "$TIP1" "$GATE1" && git -C "$PRODUCT"
 pass1=$(launch_pass "$GATE1")
 [ -n "$pass1" ] || { dump; fail "no pass launched the end review of the commit of the gate ($GATE1)"; }
 jq -e --arg commit "$GATE1" '.spec_end.commit == $commit and .spec_end.replayed == true
-  and .spec_end.verdicts == {registry: "pass", tests: "pass", fidelity: "pass", outcome_evaluation: "fail", findings: "not_run", end_review: "fail"}
+  and .spec_end.verdicts == {registry: "pass", tests: "pass", fidelity: "pass", outcome_evaluation: "fail", findings: "not_run", end_review: "fail", evidence_pack: "not_run"}
   and .end_review.commit == $commit and .end_review.launches == 1' <<<"$pass1" >/dev/null \
   || fail "the end review was not launched by the pass that rendered the three verdicts, on their commit: $pass1"
 jq -e --arg commit "$GATE1" '.outcome_evaluation.action == "launched" and .outcome_evaluation.commit == $commit' <<<"$pass1" >/dev/null \

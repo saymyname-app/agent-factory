@@ -3,9 +3,13 @@
 # CI can't run them (they need the installed gc/bd runtime and the live
 # city), so regressions in that surface went unnoticed until someone ran
 # them by hand. Runs nightly, off-peak, and pages the Mayor on failure.
+# Every marked test runs, one at a time (T49, af-xcfup7), which takes far
+# longer than the 300 s an exec order gets by default: the timeout is the
+# bound of the whole night's run. Each test has its own, shorter one
+# (LOCAL_ONLY_TEST_TIMEOUT in bin/local-only-tests).
 [order]
 description = "Run the local-only test suite nightly and page the Mayor on failure"
 trigger = "cron"
 schedule = "0 4 * * *"
 exec = "/home/benja/agent-factory/bin/local-only-tests --quiet"
-timeout = "300s"
+timeout = "3h"

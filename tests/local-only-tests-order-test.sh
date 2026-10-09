@@ -86,7 +86,7 @@ jq -e --arg source "$ROOT/orders/local-only-tests.toml" --arg exec "$ROOT/bin/lo
   .order.trigger == "cron" and
   .order.schedule == "0 4 * * *" and
   .order.exec == $exec and
-  .order.timeout == "300s" and
+  .order.timeout == "3h" and
   .order.enabled == true and
   .order.source == $source
 ' >/dev/null <<<"$order" || fail "local-only-tests Order is not discoverable and deterministic"
