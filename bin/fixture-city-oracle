@@ -1686,7 +1686,13 @@ def execute_delivery(scenario: dict[str, Any], driver: Path) -> dict[str, Any]:
             final = None
             for _ in range(DELIVERY_MAX_EVENTS_OUTCOME if watching else
                            DELIVERY_MAX_EVENTS_PARKING if parking else DELIVERY_MAX_EVENTS):
-                event = run_driver(driver, workspace, "advance", flow=flow)
+                try:
+                    event = run_driver(driver, workspace, "advance", flow=flow)
+                except OracleError:
+                    # A state written outside its gate is the cause to name,
+                    # when a later gate of the same event refuses over it.
+                    flow.observe(target)
+                    raise
                 reached = [state for state, _ in observe_delivery(target)]
                 # T37: each state of the author's step is one its gate wrote.
                 through_the_gates = flow.observe(target)

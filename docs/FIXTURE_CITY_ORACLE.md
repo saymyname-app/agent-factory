@@ -272,7 +272,9 @@ been written by its gate (T37):
 A state written another way — a direct `bin/convoy-state` write, for
 instance — fails the run (exit 1), with on stderr: `fixture-city-oracle:
 the state « rouge » of ticket fx-t1 was written outside its gate (tdd-step
-red)`. A closed ticket whose kind is not `prefactoring` must also have gone
+red)`. The check runs after the publication and after each event, and
+before the report of an event the driver failed, so that a later gate
+refusing over such a state does not hide it. A closed ticket whose kind is not `prefactoring` must also have gone
 through `ticket-author start` and `ticket-author demonstrate` and show the
 six states; otherwise the run fails with `ticket <id> is closed without
 having gone through the gates of the author's step: <commands>`.
