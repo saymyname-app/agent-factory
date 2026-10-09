@@ -14,7 +14,7 @@ for required in gc bd jq; do
   command -v "$required" >/dev/null 2>&1 || fail "required command is unavailable: $required"
 done
 
-# FACTORY_ROOT doubles as both "where the two hardcoded test paths live" and
+# FACTORY_ROOT doubles as both "where the marked tests are looked for" and
 # "which city to write beads/mail into" (bin/local-only-tests cd's there and
 # never passes --city), so the test city itself has to carry the fake tests/.
 TEST_TMPDIR=$(mktemp -d /tmp/af-o13-local-only-tests.XXXXXX)
@@ -99,10 +99,12 @@ run_clean gc init \
 mkdir -p "$TEST_CITY/tests"
 cat >"$TEST_CITY/tests/build-basic-fail-fast-runtime-test.sh" <<'EOF'
 #!/usr/bin/env bash
+# ci: local-only — fake passing test
 exit 0
 EOF
 cat >"$TEST_CITY/tests/factory-watchdog-order-test.sh" <<'EOF'
 #!/usr/bin/env bash
+# ci: local-only — fake failing test
 echo "FAIL: injected failure for local-only-tests-order-test.sh" >&2
 exit 1
 EOF

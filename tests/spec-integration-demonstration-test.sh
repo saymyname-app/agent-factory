@@ -66,6 +66,9 @@ FACTORY_BEFORE=$(factory_git_state)
 # Dolt, city path, session identity, GC_BIN) and no shared HOME.
 while IFS= read -r name; do unset "$name"; done < <(compgen -e | grep -E '^(GC_|BEADS_|BD_BIN$|GH_BIN$|FACTORY_ROOT$)' || true)
 export HOME="$TRIAL/home" TMUX_TMPDIR="$TRIAL/tmux" CONVOY_STATE_LOCK_DIR="$TRIAL/locks"
+# The tools name their city to gc from FACTORY_ROOT (af-2o6oyl); left unset,
+# they name the repository they are run from -- the live Factory (af-xcfup7).
+export FACTORY_ROOT="$TEST_CITY"
 export EVIDENCE_STORE_DIR="$TRIAL/store" SPEC_INTEGRATION_LOCK_DIR="$TRIAL/locks" SPEC_INTEGRATION_WORK_DIR="$TRIAL/work"
 mkdir -p "$HOME" "$TMUX_TMPDIR"
 dolt config --global --add user.name "spec-integration trial" >/dev/null
