@@ -39,7 +39,8 @@ anchor attribute to carry: its `launch` block declares `anchors` instead
 (spec af-wf4w5r .12, T35) -- either the equivalent of the anchors, each a
 named observable of a declared entry point, or `not_applicable` with its
 reason. `describe` renders it, and refuses a launch block that declares
-neither a screen nor `anchors` (T38).
+neither a screen nor `anchors` (T38); an empty list of `screens` declares no
+screen (T50).
 """
 
 from __future__ import annotations
@@ -444,7 +445,8 @@ def load_launch(raw: Any, name: str) -> dict[str, Any]:
         loaded["screens"] = screens
     if "anchors" in launch:
         loaded["anchors"] = load_anchors(launch["anchors"], f"{name}.anchors", entry_points)
-    elif "screens" not in launch:
+    elif not loaded.get("screens"):
+        # An empty list of screens is a project with no declared screen (T50).
         raise ProfileError(
             f"{name}.anchors is required when the profile declares no screen ({name}.screens): declare "
             f"{ANCHORS_EQUIVALENT!r} (the equivalent of the anchors) or {ANCHORS_NOT_APPLICABLE!r} with its reason"
