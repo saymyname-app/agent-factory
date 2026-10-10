@@ -9,6 +9,7 @@ bin/escalation-door, read back from its list. No agent runs:
 tests/fixtures/code-review/reviewer stands in for the dispatch door and the
 reviewer sessions it starts."""
 
+import functools
 import hashlib
 import json
 import os
@@ -88,10 +89,70 @@ def branch_of(ticket):
     return f"ticket/{ticket}"
 
 
+def staged(helper):
+    """A helper whose result is built once and restored afterwards (see
+    CodeReviewTest.stage), when a test reaches it first: it leaves only
+    files (commits and steps written by the real commands), no review sent
+    and nothing read against the clock. One stage per helper and per
+    arguments. A test that did anything since its setUp gets the helper
+    walked for real: a restore would wipe what the test did."""
+    @functools.wraps(helper)
+    def reached(self, *args, **kwargs):
+        if self.footprint() != self.seeded_footprint:
+            return helper(self, *args, **kwargs)
+        asked = json.dumps([args, kwargs], sort_keys=True, ensure_ascii=False)
+        name = f"{helper.__name__}-{hashlib.sha256(asked.encode()).hexdigest()[:16]}"
+        return self.stage(name, lambda: helper(self, *args, **kwargs))
+    return reached
+
+
 class CodeReviewTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # One directory for the whole class (tests/spec-end-test.py): a stage
+        # reached once (the seeded city, a finished ticket) is archived and
+        # restored at the same paths, which the scripts, the settings, the
+        # work trees and the remote of the product hold absolute.
+        cls.holder = Path(tempfile.mkdtemp(prefix="code-review-test-"))
+        cls.tmp = cls.holder / "city"
+        cls.stages = {}
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.holder, ignore_errors=True)
+
+    def stage(self, name, build):
+        """The state `build` leaves, built once and restored afterwards.
+        What it returns is commits: a string, or a tuple of strings."""
+        archive = self.holder / f"{name}.tar"
+        if name in self.stages:
+            shutil.rmtree(self.tmp, ignore_errors=True)
+            self.tmp.mkdir()
+            subprocess.run(("tar", "-C", str(self.tmp), "-xf", str(archive)), check=True)
+        else:
+            built = build()
+            subprocess.run(("tar", "-C", str(self.tmp), "-cf", str(archive), "."), check=True)
+            # Known only once its archive is whole.
+            self.stages[name] = built
+        return self.stages[name]
+
+    def footprint(self):
+        """Every file and folder of the test's directory with its mode, and
+        for a file its size and the time it was last written: the same as
+        after setUp only while the test did nothing there."""
+        found = []
+        for folder, folders, names in os.walk(self.tmp):
+            for name in folders:
+                found.append((os.path.join(folder, name), os.lstat(os.path.join(folder, name)).st_mode, 0, 0))
+            for name in names:
+                entry = os.lstat(os.path.join(folder, name))
+                found.append((os.path.join(folder, name), entry.st_mode, entry.st_size, entry.st_mtime_ns))
+        return sorted(found)
+
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="code-review-test-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        # No test sees what another left: an empty directory, then the stage.
+        shutil.rmtree(self.tmp, ignore_errors=True)
+        self.tmp.mkdir()
         self.tracker = self.tmp / "tracker.json"
         self.write_log = self.tmp / "writes.log"
         self.door_log = self.tmp / "door.log"
@@ -102,17 +163,8 @@ class CodeReviewTest(unittest.TestCase):
         self.origin = self.tmp / "origin.git"
         self.work = self.tmp / "work"
         self.root = self.tmp / "root"
-        self.seed_root()
-        (self.tmp / "path").mkdir()
-        # The real `gc` finds its city from the working directory: called
-        # from a merge work tree it finds none (tests/spec-integration-test.py).
+        self.profile = self.root / "config" / "project-descriptors" / "fx.json"
         gc = self.tmp / "path" / "gc"
-        gc.write_text(
-            f'#!/bin/sh\ncase "$PWD/" in "{self.work}"/*) echo "gc bd: not in a city directory" >&2; exit 1;; esac\n'
-            f'exec "{FAKE_GC}" "$@"\n')
-        gc.chmod(0o755)
-        (self.tmp / "proposal-door").write_text("#!/bin/sh\necho 0\n")
-        (self.tmp / "proposal-door").chmod(0o755)
         self.env = {
             **os.environ,
             "PATH": f"{self.tmp / 'path'}{os.pathsep}{os.environ['PATH']}",
@@ -138,6 +190,25 @@ class CodeReviewTest(unittest.TestCase):
         }
         for name in ("CONVOY_STATE_FAKE_MAIL_FAIL", *SESSION_IDENTITY):
             self.env.pop(name, None)
+        self.base = self.stage("seeded", self.seed)
+        self.seeded_footprint = self.footprint()
+
+    def seed(self):
+        """What every test starts from, left by real launches and holding
+        only files: the Factory root, the stand-ins on the path, the marked
+        convoy, the product with its remote and its integration branch.
+        Returns the first commit of the product."""
+        self.seed_root()
+        (self.tmp / "path").mkdir()
+        # The real `gc` finds its city from the working directory: called
+        # from a merge work tree it finds none (tests/spec-integration-test.py).
+        gc = self.tmp / "path" / "gc"
+        gc.write_text(
+            f'#!/bin/sh\ncase "$PWD/" in "{self.work}"/*) echo "gc bd: not in a city directory" >&2; exit 1;; esac\n'
+            f'exec "{FAKE_GC}" "$@"\n')
+        gc.chmod(0o755)
+        (self.tmp / "proposal-door").write_text("#!/bin/sh\necho 0\n")
+        (self.tmp / "proposal-door").chmod(0o755)
         self.reviewer("favorable")
         self.providers(reviewer="p-codex")
         self.seed_tracker()
@@ -145,6 +216,7 @@ class CodeReviewTest(unittest.TestCase):
         opened = self.run_cmd(INTEGRATION_TOOL, "open", CONVOY, "--repo", self.repo, "--protected", PROTECTED)
         self.assertEqual(0, opened.returncode, opened.stdout + opened.stderr)
         self.write_log.write_text("")
+        return self.base
 
     # --- harness ------------------------------------------------------------
 
@@ -164,7 +236,6 @@ class CodeReviewTest(unittest.TestCase):
         (config / "projects" / f"{RIG}.toml").write_text(f'rig_dir = "{self.repo}"\n')
         profile = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
         profile["rigs"] = [RIG]
-        self.profile = config / "project-descriptors" / "fx.json"
         self.profile.write_text(json.dumps(profile))
 
     def settings(self, **code_review):
@@ -289,6 +360,7 @@ class CodeReviewTest(unittest.TestCase):
     def green(self, ticket, tip):
         self.state("set-tdd", CONVOY, ticket, "--step", "green", "--commit", tip)
 
+    @staged
     def finished_slice(self, files=None, ticket=SLICE, green=True):
         """A slice whose criterion test was proven red, read by the test
         reviewer and frozen, whose code is green at the tip, and whose
