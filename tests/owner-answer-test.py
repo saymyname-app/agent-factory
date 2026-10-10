@@ -665,6 +665,7 @@ for inherited in (sessions.AcceptanceSessionTest,):
     for name in dir(inherited):
         if name.startswith("test_") and name not in OwnerAnswerTest.__dict__:
             setattr(OwnerAnswerTest, name, None)
+del inherited  # left bound to the module, the last class is collected by unittest and its cases run twice
 
 
 if __name__ == "__main__":
