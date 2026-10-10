@@ -622,6 +622,30 @@ class TicketExitTest(unittest.TestCase):
         self.assertEqual([], self.shown()["planning_exceptions"])
         self.assertEqual([], self.escalation_list())
 
+    def test_planning_exception_is_refused_when_the_deviations_name_only_an_anchor_that_contains_its_own(self):
+        """The name is compared whole, whatever separates it from what follows
+        (T51): `fixture` is not named by `fixture.items` nor by `fixture:items`."""
+        for other in ("fixture-items", "fixture.items", "fixture:items", "fixture_items", "page.fixture", "page:fixture"):
+            with self.subTest(other=other):
+                self.assert_refused_and_nothing_written(
+                    lambda: self.exit(*self.EXCEPTION, "--anchor", "fixture", "--repo", self.repo, "--handoff",
+                                      self.handoff(deviations=[f"La région de l'ancre {other} n'est pas livrée."])),
+                    "fixture", "Écarts")
+        self.assertEqual([], self.shown()["planning_exceptions"])
+        self.assertEqual([], self.escalation_list())
+
+    def test_planning_exception_reads_its_anchor_before_the_punctuation_of_a_sentence(self):
+        for deviation in ("La liste est rendue à plat, sans la région de l'ancre fixture.",
+                          "Écart sur l'ancre fixture, rendue à plat.",
+                          "fixture : la liste est rendue à plat.",
+                          "fixture: la liste est rendue à plat.",
+                          "L'ancre `fixture` (et non fixture.items) est rendue à plat."):
+            with self.subTest(deviation=deviation):
+                self.setUp()
+                self.raise_exception("--kind", "semantic", "--summary", "La liste est livrée sans sa région",
+                                     "--anchor", "fixture", deviations=[deviation])
+                self.assertEqual([["fixture"]], [e["anchors"] for e in self.shown()["planning_exceptions"]])
+
     def test_planning_exception_names_under_deviations_the_anchor_it_raises(self):
         self.raise_exception("--kind", "semantic", "--summary", "La liste est livrée sans sa région",
                              "--anchor", "fixture-items", deviations=[self.DEVIATION])
