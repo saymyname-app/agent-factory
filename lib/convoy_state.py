@@ -5650,13 +5650,32 @@ def cmd_set_owner_proposal(args: argparse.Namespace) -> int:
     return done(args.convoy, args.convoy, values)
 
 
+def spec_approval(spec_id: Any) -> tuple[str | None, str | None]:
+    """The text of the Spec and the digest it is approved at, as
+    `bin/spec-approve` left them; None for what cannot be read."""
+    if not isinstance(spec_id, str) or not BEAD_ID_RE.match(spec_id):
+        return None, None
+    try:
+        bead = json.loads(run_gc(["bd", "show", spec_id, "--json"]))
+    except (Refusal, json.JSONDecodeError):
+        return None, None
+    bead = bead[0] if isinstance(bead, list) and bead else bead
+    if not isinstance(bead, dict):
+        return None, None
+    text, metadata = bead.get("description"), metadata_of(bead)
+    approved = metadata.get("approved_digest") if metadata.get("spec_state") == "APPROVED_SPEC" else None
+    return (text if isinstance(text, str) else None,
+            approved if isinstance(approved, str) and DIGEST_RE.match(approved) else None)
+
+
 def cmd_resolve_owner_exception(args: argparse.Namespace) -> int:
     """Record that the Planning Exception of the last batch of returned
     findings is resolved, on the operator's words, once the Spec is amended
     and its graph revised (Spec §11): refused while the convoy is still
     published from the approved Spec it was raised against (T40) -- the
     patch door writes the digest of the newly approved Spec on the convoy.
-    Until then the Outcome is not Delivered again."""
+    The refusal names the step that is missing, read on the Spec bead
+    (T52). Until then the Outcome is not Delivered again."""
     convoy, _ = load_convoy(args.convoy)
     require_marked(convoy)
     metadata = metadata_of(convoy)
@@ -5671,11 +5690,24 @@ def cmd_resolve_owner_exception(args: argparse.Namespace) -> int:
     raised_on = last["exception"].get("spec_digest")
     if raised_on is not None and metadata.get(KEY_SPEC_DIGEST) == raised_on:
         spec_id = metadata.get(KEY_SPEC)
+        held = (f"le convoi {args.convoy} est toujours publié depuis sa version approuvée d'alors ({raised_on}) ; la "
+                "Planning Exception se résout une fois la Spec amendée approuvée (bin/spec-approve) et le graphe révisé "
+                "publié depuis elle (bin/ticket-graph-publish bd-patch)")
+        # What is missing, read on the Spec itself (T52, af-ezqgma).
+        text, approved = spec_approval(spec_id)
+        current = "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest() if text is not None else None
+        if approved is not None and approved == current and approved != raised_on:
+            raise Refusal(
+                f"la Spec amendée {spec_id} est approuvée ({approved}) mais le graphe révisé n'est pas publié depuis "
+                f"elle : il manque bin/ticket-graph-publish bd-patch ; {held}")
+        if current is not None and current != raised_on:
+            raise Refusal(
+                f"le texte de la Spec {spec_id} a changé depuis que la Planning Exception du lot a été levée, mais sa "
+                f"nouvelle version n'est pas approuvée : il manque la nouvelle approbation (bin/spec-approve), puis le "
+                f"graphe révisé (bin/ticket-graph-publish bd-patch) ; {held}")
         raise Refusal(
-            f"la Spec {spec_id} n'a pas été amendée depuis que la Planning Exception du lot a été levée : le convoi "
-            f"{args.convoy} est toujours publié depuis sa version approuvée d'alors ({raised_on}) ; la Planning Exception "
-            "se résout une fois la Spec amendée approuvée (bin/spec-approve) et le graphe révisé publié depuis elle "
-            "(bin/ticket-graph-publish bd-patch)")
+            f"la Spec {spec_id} n'a pas été amendée depuis que la Planning Exception du lot a été levée : il manque "
+            f"l'amendement de la Spec, sa nouvelle approbation et le graphe révisé ; {held}")
     last["exception"]["resolved"] = {"approver": approver, "words": words, "at": now()}
     values = {KEY_JUDGEMENT: encode(judgement_record(encode(judgement)))}
     write_metadata(args.convoy, values)

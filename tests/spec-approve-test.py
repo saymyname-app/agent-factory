@@ -611,6 +611,63 @@ class SpecApproveEntryContractTest(unittest.TestCase):
         self.assertEqual(before, self.current_state())
 
 
+    # --- T52 (af-ezqgma): an amended Spec is approved again ----------------
+
+    AMENDMENT = "\n3. As a visiteur, I want un thème sombre, so that je lise la page la nuit.\n"
+
+    def amended(self, description):
+        """The approved Spec whose text was amended since: its approval is void (bd-status)."""
+        self.assert_approved(description)
+        state = self.current_state()
+        state["beads"]["spec-1"]["description"] = description + self.AMENDMENT
+        self.state_path.write_text(json.dumps(state))
+        self.assertTrue(json.loads(self.invoke("bd-status", "--spec", "spec-1").stdout)["void"])
+        return description + self.AMENDMENT
+
+    def test_an_amended_approved_spec_is_approved_again_on_fresh_evidence(self):
+        amended = self.amended(SPEC_BODY)
+
+        proc = self.invoke(
+            "bd-approve", "--spec", "spec-1", "--approved-by", "benjamin",
+            "--evidence", "« J'approuve la Spec amendée » (Benjamin)",
+            "--project", "delivery-fixture-city", "--repo-root", self.repo_root, "--config-dir", PROJECTS_CONFIG_DIR,
+            "--prototype-remote", self.remote)
+
+        self.assertEqual(0, proc.returncode, proc.stdout)
+        digest = "sha256:" + hashlib.sha256(amended.encode("utf-8")).hexdigest()
+        self.assertEqual(digest, json.loads(proc.stdout)["digest"])
+        metadata = self.current_state()["beads"]["spec-1"]["metadata"]
+        self.assertEqual(("APPROVED_SPEC", digest, "« J'approuve la Spec amendée » (Benjamin)"),
+                         (metadata["spec_state"], metadata["approved_digest"], metadata["approved_evidence"]))
+        status = json.loads(self.invoke("bd-status", "--spec", "spec-1").stdout)
+        self.assertFalse(status["void"])
+
+    def test_an_amended_approved_spec_is_held_to_the_entry_contract_again(self):
+        self.assert_approved(SPEC_BODY)
+        state = self.current_state()
+        state["beads"]["spec-1"]["description"] = "prose spec body, its user stories removed\n"
+        self.state_path.write_text(json.dumps(state))
+        before = self.current_state()
+
+        proc = self.bd_approve()
+
+        self.assertNotEqual(0, proc.returncode, proc.stdout)
+        self.assertIn("user stories numérotées", json.loads(proc.stdout)["error"])
+        self.assertEqual(before, self.current_state())
+
+    def test_an_amended_approved_spec_is_not_approved_again_by_somebody_else(self):
+        self.amended(SPEC_BODY)
+        before = self.current_state()
+
+        proc = self.invoke(
+            "bd-approve", "--spec", "spec-1", "--approved-by", "un-agent", "--evidence", "« J'approuve »",
+            "--project", "delivery-fixture-city", "--repo-root", self.repo_root, "--config-dir", PROJECTS_CONFIG_DIR,
+            "--prototype-remote", self.remote)
+
+        self.assertNotEqual(0, proc.returncode, proc.stdout)
+        self.assertIn("declared human", json.loads(proc.stdout)["error"])
+        self.assertEqual(before, self.current_state())
+
 
 class SpecOutlineTest(unittest.TestCase):
     """T06 (af-cgauf8): `outline` reads, from a Spec text on stdin, what the

@@ -48,7 +48,8 @@ Planning Run starts.
    tool ("Benjamin-invoked skills").
 4. **Benjamin approves the Spec live**, through `bin/spec-approve
    bd-approve` (`docs/SPEC_APPROVE.md`, "Bead mode"). Before any write the
-   door refuses unless, in order: the Spec is not already approved; its
+   door refuses unless, in order: the Spec is not already approved as it
+   reads (an approved Spec amended since is approved again); its
    Planning Run target is allowed through by the active Planning Run
    Reservation; its named map is finished (or it names no map and carries
    non-empty No-fog evidence); the approver is the project's declared
