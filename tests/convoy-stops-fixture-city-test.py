@@ -1162,28 +1162,32 @@ class ConvoyStopsOnTheFixtureCity(Staged, publication.Harness):
         self.assertEqual((2, 1), (self.end_rounds(), len(self.requests())))
 
 
-def tearDownModule():
-    if FixtureCityWalk.holder is not None:
-        shutil.rmtree(FixtureCityWalk.holder, ignore_errors=True)
-        FixtureCityWalk.holder = None
-
-
 class FixtureCityWalk(Staged, unittest.TestCase):
     """The convoy the reference driver walks to the end of its Spec: every
     pass is the real bin/convoy-advance, the Evidence Pack is the generated
     one and the product is really launched. The harness of the suites below."""
 
     holder = None
+    # The injections whose Delivered Outcome several tests start from.
+    SHARED_WALKS = ("none", "proposition")
 
     @classmethod
     def setUpClass(cls):
-        # One holder for the suites of the walk, removed with the module:
-        # they start from the same Delivered Outcomes (see walk_to_delivered),
-        # each walked once whatever the suite that reaches it first.
+        # One holder for the suites of the walk: they start from the same
+        # Delivered Outcomes (see walk_to_delivered). It is removed with the
+        # module that runs, this one or a file that loads this harness: a
+        # module cleanup is run for the module of the running class, where a
+        # tearDownModule of this file would not be looked for.
         if FixtureCityWalk.holder is None:
             FixtureCityWalk.holder = Path(tempfile.mkdtemp(prefix="acceptance-fixture-city-")).resolve()
             FixtureCityWalk.city = FixtureCityWalk.holder / "city"
             FixtureCityWalk.stages = {}
+            unittest.addModuleCleanup(FixtureCityWalk.drop_holder)
+
+    @staticmethod
+    def drop_holder():
+        shutil.rmtree(FixtureCityWalk.holder, ignore_errors=True)
+        FixtureCityWalk.holder = None
 
     def setUp(self):
         # No test sees what another left: an empty workspace, at the fixed
@@ -1227,22 +1231,37 @@ class FixtureCityWalk(Staged, unittest.TestCase):
         self.assertEqual("order-pass", event["event"])
         return event
 
-    def walk_to_delivered(self, inject="none"):
+    def walk_to_delivered(self, inject="none", real=False):
         """The walk of the fixture, up to the pass that records the Delivered
         Outcome and not one event further. Returns the record.
 
-        Walked once for each injection and restored afterwards, when the
-        test reaches it first: a Delivered Outcome leaves only files (the
-        product its evaluations launched is stopped, no session is open) and
-        every clock read after it is later than what it recorded. A test
-        that did anything in its workspace gets the walk for real."""
-        def build():
+        A stage is decor; the walk a test is about runs in that test. A test
+        whose claim is about what happens after the Delivered Outcome may
+        start from one walked earlier, restored: for the injections several
+        tests start from (SHARED_WALKS), the walk is archived the first time
+        and restored afterwards, when the test reaches it first. A Delivered
+        Outcome leaves only files (the product its evaluations launched is
+        stopped, no session is open: checked before the archive is written)
+        and every clock read after it is later than what it recorded. A test
+        whose claim is about the walk itself (what it sent, wrote or merged
+        on the way) asks for it with `real`: walked in that test, always.
+        So is the walk of a test that did anything in its workspace."""
+        def walked():
             delivered = self.walk(inject, lambda convoy: convoy["delivered"])
             return {"prepared": self.prepared, "convoy": self.convoy, "delivered": delivered}
 
-        if any(self.workspace.iterdir()):
-            return build()["delivered"]
+        def build():
+            reached = walked()
+            # A launch recorded in an archive would have `stop` signal, in
+            # every test that restores it, a process that is no longer that one.
+            launches, sessions = self.workspace / "launches", self.workspace / "acceptance-sessions"
+            self.assertEqual([], sorted(str(record) for record in launches.rglob("*.json")))
+            self.assertEqual([], sorted(str(record) for record in sessions.rglob("*") if not record.is_dir()))
+            return reached
+
         name = f"delivered-{inject}"
+        if inject not in self.SHARED_WALKS or any(self.workspace.iterdir()) or (real and name in self.stages):
+            return walked()["delivered"]
         restored = name in self.stages
         reached = self.stage(name, build)
         if restored:
@@ -1309,7 +1328,7 @@ class AcceptanceOnTheFixtureCity(FixtureCityWalk):
     # --- the Acceptance Request ---------------------------------------------
 
     def test_the_pass_that_reaches_delivered_sends_one_acceptance_request_with_the_dossier_and_never_again(self):
-        delivered = self.walk_to_delivered()
+        delivered = self.walk_to_delivered(real=True)
 
         request = self.assert_one_acceptance_request(delivered)
         mails = [entry for entry in self.written() if entry[0] == "mail"]
@@ -1487,7 +1506,7 @@ class OwnerAnswerOnTheFixtureCity(FixtureCityWalk):
         return next(result for result in answer["convoys"] if result["id"] == self.convoy)
 
     def test_accepted_waits_for_the_verdicts_a_returned_finding_is_repaired_and_judged_again_then_accepted(self):
-        first = self.walk_to_delivered(inject="proposition")
+        first = self.walk_to_delivered(inject="proposition", real=True)
         self.assert_one_acceptance_request(first)
         first_pack, first_page = self.pack()
         self.assertNotIn("Depuis ton dernier jugement", first_page)
@@ -1615,10 +1634,11 @@ class PromotionOnTheFixtureCity(OwnerAnswerOnTheFixtureCity):
     REASON = "Le besoin a disparu."
     test_accepted_waits_for_the_verdicts_a_returned_finding_is_repaired_and_judged_again_then_accepted = None
 
-    def judged(self):
+    def judged(self, real=False):
         """The Delivered Outcome, every proposition of its dossier judged.
-        Returns its record, the integration branch and the protected tip."""
-        delivered = self.walk_to_delivered(inject="proposition")
+        Returns its record, the integration branch and the protected tip.
+        With `real`, the walk to it runs in the test (see walk_to_delivered)."""
+        delivered = self.walk_to_delivered(inject="proposition", real=real)
         shown = self.shown()
         for ticket in shown["tickets"]:
             for finding in ticket.get("findings") or []:
@@ -1652,7 +1672,7 @@ class PromotionOnTheFixtureCity(OwnerAnswerOnTheFixtureCity):
             subprocess.run(("git", "-C", str(self.repo), "worktree", "remove", "--force", str(tree)), check=True)
 
     def test_the_protected_branch_holds_nothing_of_the_convoy_before_accepted_then_one_merge_and_the_convoy_is_closed(self):
-        delivered, integration, main = self.judged()
+        delivered, integration, main = self.judged(real=True)
         # Delivered, and judged: the protected branch holds no commit of the convoy.
         convoy_commits = self.rev_list(f"main..{integration}")
         self.assertIn(delivered["commit"], convoy_commits)
