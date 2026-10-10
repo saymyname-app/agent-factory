@@ -1,0 +1,321 @@
+#!/usr/bin/env python3
+"""test-cases-compare — the cases of a Python test file and their number of
+verifications, before and after a change of the file (CI01, Spec af-q9urgr §1,
+user story 2): what makes « same cases, same verifications » a proof and not
+a claim when a test file is made faster or moved down a stage.
+
+Usage:
+  test-cases-compare --before SOURCE [--before SOURCE ...] --after SOURCE [--after SOURCE ...]
+
+A SOURCE is a file, or `REVISION:path` read with `git show` from the
+directory the command is run in (`origin/main:tests/x-test.py`). Several
+sources on one side are read as one set of cases: a file cut in two is
+compared with `--before` once and `--after` twice.
+
+A case is a `test*` method of a class of the file, named `Class.method`,
+methods a class inherits from another class of the same side included (the
+same file, or the other half of a file cut in two, whose harness the second
+half loads). What
+runs around the cases is compared the same way, under its own name
+(`Class.setUp`, `setUpClass`, `tearDown`, `tearDownClass`).
+
+Its verifications are the assertion call sites its body reaches: `assert`
+statements, calls of a method named `assert*` or `fail`, in the body itself
+and in every helper of the same file it names (methods through `self`, `cls`
+or `super()`, functions of the module), each time it names them. A helper
+that loses an assertion therefore lowers every case that uses it.
+
+Also refused, because the case would no longer run: a class whose bases
+changed, a decorator added to a case, a `skipTest` added to what it reaches.
+
+Nothing is run and nothing is written: the sources are only parsed. So the
+verifications are counted, not executed: code that is never reached (after a
+`return`, under `if False`), a decorator that does not call what it wraps, a
+case removed by an assignment (`test_x = None`), a `test*` function outside a
+class, what a case reaches in another module, are not seen. A case with no
+counted verification is named on stdout: this command proves nothing of it.
+
+Exit 0: every case of before is in after, runs as before and has at least as
+        many verifications; one line on stdout, then one line per case that
+        is new, has more verifications, or has none counted.
+Exit 1: one French reason per line on stderr, each naming its case: a case
+        that is gone, a case renamed, a case with fewer verifications, a case
+        that would no longer run, a case present twice.
+Exit 2: usage, or a source that cannot be read or parsed.
+"""
+import ast
+import subprocess
+import sys
+from typing import NamedTuple
+
+PROGRAM = "test-cases-compare"
+EXIT_OK, EXIT_REFUSED, EXIT_USAGE = 0, 1, 2
+RECEIVERS = ("self", "cls")
+AROUND = ("setUp", "setUpClass", "tearDown", "tearDownClass")
+FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
+VERIFICATIONS, SKIPS = "verifications", "skips"
+
+
+class SourceError(Exception):
+    pass
+
+
+class Case(NamedTuple):
+    verifications: int
+    skips: int        # decorators on the case, plus the skipTest call sites it reaches
+    bases: tuple      # what its class inherits from outside the sources, as written
+    shape: str        # its body, to recognize it under another name
+
+
+def read_source(source):
+    """The text of a SOURCE: a file, or `REVISION:path` through git."""
+    try:
+        with open(source, encoding="utf-8") as handle:
+            return handle.read()
+    except UnicodeDecodeError as error:
+        raise SourceError(f"{source} : n'est pas du texte UTF-8") from error
+    except OSError as error:
+        if ":" not in source:
+            raise SourceError(f"{source} : illisible ({error.strerror})") from error
+    try:
+        shown = subprocess.run(("git", "show", source), text=True, capture_output=True)
+    except (OSError, UnicodeDecodeError) as error:
+        raise SourceError(f"{source} : git show a échoué ({error})") from error
+    if shown.returncode != 0:
+        raise SourceError(f"{source} : ni un fichier, ni une révision lisible par git show")
+    return shown.stdout
+
+
+def is_verification(node):
+    if isinstance(node, ast.Assert):
+        return True
+    return (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and (node.func.attr.startswith("assert") or node.func.attr == "fail"))
+
+
+def is_skip(node):
+    return isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "skipTest"
+
+
+def is_super(node):
+    return isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "super"
+
+
+class Module:
+    """The functions and classes of one parsed test file."""
+
+    def __init__(self, tree, others=()):
+        """`others` are the other sources of the same side: a class or a
+        function this file does not define is looked for there, which is how
+        the second half of a file cut in two finds the harness of the first."""
+        self.own = self.classes_of(tree)
+        self.classes, self.functions = {}, {}
+        for other in (*others, tree):
+            self.classes.update(self.classes_of(other))
+            self.functions.update({node.name: node for node in other.body if isinstance(node, FUNCTIONS)})
+        self.bodies = {}
+
+    @staticmethod
+    def classes_of(tree):
+        return {node.name: node for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
+
+    @staticmethod
+    def base_name(base):
+        """`Harness` for `Harness` and for `first_half.Harness`."""
+        return base.id if isinstance(base, ast.Name) else base.attr if isinstance(base, ast.Attribute) else None
+
+    def lineage(self, class_name, seen=()):
+        """The class, then the classes of the sources it inherits from, nearest first."""
+        if class_name not in self.classes or class_name in seen:
+            return []
+        order = [class_name]
+        for base in self.classes[class_name].bases:
+            order += [name for name in self.lineage(self.base_name(base), (*seen, class_name)) if name not in order]
+        return order
+
+    def roots(self, class_name):
+        """What the lineage inherits from outside the sources, as written:
+        `unittest.TestCase` for a test class, whatever harness stands between."""
+        found = set()
+        for name in self.lineage(class_name):
+            found.update(ast.unparse(base) for base in self.classes[name].bases
+                         if self.base_name(base) not in self.classes)
+        return tuple(sorted(found))
+
+    def methods(self, lineage):
+        """Every method of a lineage, the nearest class winning: name -> (owner, node)."""
+        found = {}
+        for owner in reversed(lineage):
+            for node in self.classes[owner].body:
+                if isinstance(node, FUNCTIONS):
+                    found[node.name] = (owner, node)
+        return found
+
+    def read(self, node):
+        """What one body holds itself, read once: (verification sites, skip
+        sites, the names it uses that may be helpers)."""
+        if id(node) not in self.bodies:
+            sites, names = {VERIFICATIONS: 0, SKIPS: 0}, []
+            for inner in ast.walk(node):
+                if is_verification(inner):
+                    sites[VERIFICATIONS] += 1
+                elif is_skip(inner):
+                    sites[SKIPS] += 1
+                elif isinstance(inner, ast.Attribute) and isinstance(inner.value, ast.Name) \
+                        and inner.value.id in RECEIVERS:
+                    names.append(("method", inner.attr))
+                elif isinstance(inner, ast.Attribute) and is_super(inner.value):
+                    names.append(("super", inner.attr))
+                elif isinstance(inner, ast.Attribute) and isinstance(inner.value, ast.Name):
+                    # `first_half.page`: a function of the other half, through the name it was loaded under.
+                    names.append(("function", inner.attr))
+                elif isinstance(inner, ast.Name) and isinstance(inner.ctx, ast.Load):
+                    names.append(("function", inner.id))
+            self.bodies[id(node)] = (sites, names)
+        return self.bodies[id(node)]
+
+    def reached(self, wanted, class_name, owner, node, path=()):
+        """The sites of one kind that `node` reaches, helpers of this file
+        included. `class_name` is the class the case runs as, `owner` the
+        class that wrote `node` (what `super()` starts after)."""
+        key = (class_name, id(node))
+        if key in path:
+            return 0
+        path = (*path, key)
+        lineage = self.lineage(class_name) if class_name else []
+        helpers = {"method": self.methods(lineage), "function": self.functions,
+                   "super": self.methods(lineage[lineage.index(owner) + 1:]) if owner in lineage else {}}
+        sites, names = self.read(node)
+        total = sites[wanted]
+        for kind, name in names:
+            if name in helpers[kind]:
+                found = helpers[kind][name]
+                total += self.reached(wanted, *((class_name, *found) if kind != "function" else (None, None, found)), path)
+        return total
+
+    def cases(self):
+        """`Class.method` -> Case, for the cases and for what runs around them."""
+        found = {}
+        for class_name in self.own:
+            bases = self.roots(class_name)
+            for name, (owner, node) in self.methods(self.lineage(class_name)).items():
+                if name.startswith("test") or name in AROUND:
+                    found[f"{class_name}.{name}"] = Case(
+                        self.reached(VERIFICATIONS, class_name, owner, node),
+                        len(node.decorator_list) + self.reached(SKIPS, class_name, owner, node),
+                        bases, ast.dump(ast.Module(body=node.body, type_ignores=[])))
+        return found
+
+
+def is_case(name):
+    return name.rsplit(".", 1)[-1].startswith("test")
+
+
+def cases_of(sources):
+    """The cases of several sources read as one set; a case two of them hold is named."""
+    found, twice, trees = {}, [], []
+    for source in sources:
+        try:
+            trees.append(ast.parse(read_source(source)))
+        except SyntaxError as error:
+            raise SourceError(f"{source} : n'est pas du Python lisible (ligne {error.lineno})") from error
+    for tree in trees:
+        others = [other for other in trees if other is not tree]
+        for name, case in Module(tree, others).cases().items():
+            if name in found and is_case(name):
+                twice.append(name)
+            found[name] = case
+    return found, twice
+
+
+def compare(before, after):
+    """(reasons of refusal, notes), each naming its case."""
+    reasons, notes = [], []
+    gone = [name for name in before if name not in after]
+    new = [name for name in after if name not in before]
+    renamed = {}
+    for name in gone:
+        twins = [other for other in new if other not in renamed.values() and after[other].shape == before[name].shape]
+        if twins and is_case(name):
+            renamed[name] = twins[0]
+    for name in gone:
+        if name in renamed:
+            reasons.append(f"cas renommé : {name} est devenu {renamed[name]}")
+        elif is_case(name) or before[name].verifications:
+            reasons.append(f"cas disparu : {name} ({before[name].verifications} vérifications)")
+    for name, was in before.items():
+        if name not in after:
+            continue
+        now = after[name]
+        if now.verifications < was.verifications:
+            reasons.append(f"vérifications en moins : {name} en avait {was.verifications}, en a {now.verifications}")
+        elif now.verifications > was.verifications:
+            notes.append(f"vérifications en plus : {name} en avait {was.verifications}, en a {now.verifications}")
+        if now.bases != was.bases:
+            reasons.append(f"cas qui ne tournerait plus comme avant : {name}, sa classe héritait de "
+                           f"({', '.join(was.bases)}), elle hérite de ({', '.join(now.bases)})")
+        if now.skips > was.skips:
+            reasons.append(f"cas qui ne tournerait plus comme avant : {name}, décorateur ou skipTest ajouté")
+    for name in new:
+        if name not in renamed.values() and is_case(name):
+            notes.append(f"cas nouveau : {name} ({after[name].verifications} vérifications)")
+    empty = [name for name in before if name in after and is_case(name) and not after[name].verifications]
+    if empty:
+        notes.append(f"{len(empty)} cas sans vérification comptée, non prouvés par ce contrôle : {', '.join(empty)}")
+    return reasons, notes
+
+
+def parse_args(argv):
+    sides = {"--before": [], "--after": []}
+    position = 0
+    while position < len(argv):
+        option = argv[position]
+        if option not in sides or position + 1 >= len(argv):
+            return None
+        sides[option].append(argv[position + 1])
+        position += 2
+    if not sides["--before"] or not sides["--after"]:
+        return None
+    return sides["--before"], sides["--after"]
+
+
+def main(argv=None, stdout=None, stderr=None):
+    stdout, stderr = stdout or sys.stdout, stderr or sys.stderr
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if argv in (["-h"], ["--help"]):
+        print(__doc__.strip(), file=stdout)
+        return EXIT_OK
+    sides = parse_args(argv)
+    if sides is None:
+        print(f"usage: {PROGRAM} --before SOURCE [--before SOURCE ...] --after SOURCE [--after SOURCE ...]",
+              file=stderr)
+        return EXIT_USAGE
+    try:
+        (before, before_twice), (after, after_twice) = cases_of(sides[0]), cases_of(sides[1])
+    except SourceError as error:
+        print(f"{PROGRAM}: {error}", file=stderr)
+        return EXIT_USAGE
+    tests = [name for name in before if is_case(name)]
+    if not tests:
+        print(f"{PROGRAM}: aucun cas dans {', '.join(sides[0])} : rien à comparer", file=stderr)
+        return EXIT_USAGE
+    reasons, notes = compare(before, after)
+    reasons += [f"cas présent deux fois avant : {name}" for name in before_twice]
+    reasons += [f"cas présent deux fois après : {name}" for name in after_twice]
+    if reasons:
+        for reason in reasons:
+            print(f"{PROGRAM}: {reason}", file=stderr)
+        return EXIT_REFUSED
+    total = sum(before[name].verifications for name in tests)
+    kept = sum(after[name].verifications for name in tests)
+    same = "identiques" if total == kept and not any("nouveau" in note for note in notes) \
+        else "aucun cas ni vérification en moins"
+    print(f"{PROGRAM}: {len(tests)} cas, {total} vérifications avant, {kept} après sur les mêmes cas : {same} "
+          f"(comptées, non exécutées ; {', '.join(sides[0])} -> {', '.join(sides[1])})", file=stdout)
+    for note in notes:
+        print(f"{PROGRAM}: {note}", file=stdout)
+    return EXIT_OK
+
+
+if __name__ == "__main__":
+    sys.exit(main())
