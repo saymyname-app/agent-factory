@@ -10,6 +10,9 @@ bin/test-review (tests/fixtures/test-review/reviewer stands in for the
 dispatch door and the reviewer session), the pieces are filed by the real
 bin/evidence-capture and the exits are taken by the real bin/ticket-exit."""
 
+import copy
+import functools
+import hashlib
 import json
 import os
 import shutil
@@ -99,32 +102,86 @@ HANDOFF = {
 DEMONSTRATION = ("sh", "-c", 'curl -sf "$PRODUCT_ADDRESS/" | grep -F \'data-anchor="fixture-count">3<\'')
 
 
+def staged(helper):
+    """A step of the author's sequence whose result is built once and restored
+    afterwards (see TicketAuthorTest.stage): it leaves only files (a work
+    tree, commits, steps and pieces written by the real commands; the product
+    it launches is stopped before it returns) and nothing read against the
+    clock. One stage per starting point, per helper, per arguments and per
+    environment of the commands. A test that did anything in its directory
+    since the stage it stands on gets the helper walked for real, there and
+    until its end: a restore would wipe what the test did.
+
+    A stage is decor: the command a test is about runs in that test. Such a
+    test calls the helper with `real=True`: the helper is walked for real,
+    and so is everything after it in that test."""
+    @functools.wraps(helper)
+    def reached(self, *args, real=False, **kwargs):
+        if real or self.at is None or self.footprint() != self.at_footprint:
+            self.at = None
+            return helper(self, *args, **kwargs)
+        asked = json.dumps([args, kwargs, sorted(self.env.items())], sort_keys=True, ensure_ascii=False, default=str)
+        name = f"{self.at}+{helper.__name__}-{hashlib.sha256(asked.encode()).hexdigest()[:16]}"
+        built = self.stage(name, lambda: helper(self, *args, **kwargs))
+        self.at, self.at_footprint = name, self.footprint()
+        return built
+    return reached
+
+
 class TicketAuthorTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # One directory for the whole class (tests/spec-end-test.py): a stage
+        # reached once (the seeded product and tracker, a started ticket, a
+        # step of its sequence) is archived and restored at the same paths,
+        # which the settings, the tracker and the work trees hold absolute.
+        cls.holder = Path(tempfile.mkdtemp(prefix="ticket-author-test-"))
+        cls.tmp = cls.holder / "city"
+        cls.stages = {}
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.holder, ignore_errors=True)
+
+    def stage(self, name, build):
+        """The state `build` leaves, built once and restored afterwards.
+        What it returns is plain data, handed out as a copy each time."""
+        archive = self.holder / f"{name}.tar"
+        if name in self.stages:
+            shutil.rmtree(self.tmp, ignore_errors=True)
+            self.tmp.mkdir()
+            subprocess.run(("tar", "-C", str(self.tmp), "-xf", str(archive)), check=True)
+        else:
+            built = build()
+            subprocess.run(("tar", "-C", str(self.tmp), "-cf", str(archive), "."), check=True)
+            # Known only once its archive is whole.
+            self.stages[name] = built
+        return copy.deepcopy(self.stages[name])
+
+    def footprint(self):
+        """Every file and folder of the test's directory with its mode, and
+        for a file its size and the time it was last written: the same as
+        after a stage only while the test did nothing there since."""
+        found = []
+        for folder, folders, names in os.walk(self.tmp):
+            for name in folders:
+                found.append((os.path.join(folder, name), os.lstat(os.path.join(folder, name)).st_mode, 0, 0))
+            for name in names:
+                entry = os.lstat(os.path.join(folder, name))
+                found.append((os.path.join(folder, name), entry.st_mode, entry.st_size, entry.st_mtime_ns))
+        return sorted(found)
+
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="ticket-author-test-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        # No test sees what another left: an empty directory, then the stage.
+        shutil.rmtree(self.tmp, ignore_errors=True)
+        self.tmp.mkdir()
         self.tracker = self.tmp / "tracker.json"
         self.write_log = self.tmp / "writes.log"
         self.store = self.tmp / "store"
         self.repo = self.tmp / "product"
         self.worktrees = self.tmp / "worktrees"
         self.root = self.tmp / "root"
-        (self.root / "config" / "projects").mkdir(parents=True)
-        (self.root / "config" / "project-descriptors").mkdir()
-        (self.root / "config" / "projects" / "fx-rig.toml").write_text(
-            f'rig_dir = "{self.repo}"\nrepo = "example/fx"\nprotected_branch = "main"\nrequired_ci = "CI"\n'
-            'sling_target = "fx-worker"\nformulas = "fx-start"\n')
-        profile = json.loads(DESCRIPTOR.read_text())
-        profile["rigs"] = ["fx-rig"]
         self.profile = self.root / "config" / "project-descriptors" / "fx.json"
-        self.profile.write_text(json.dumps(profile))
-        (self.tmp / "proposal-door").write_text("#!/bin/sh\necho 0\n")
-        (self.tmp / "proposal-door").chmod(0o755)
-        (self.root / "config" / "delivery-flow.json").write_text(json.dumps({
-            "contract": "agent-factory-delivery-flow/v1", "max_sessions": 2,
-            "start": {"formula": "fx-start", "role": None},
-            "test_review": {"formula": "mol-test-review", "role": "reviewer", "rig": "fx-rig", "timeout_seconds": 3600}}))
-        (self.tmp / "review-plan.json").write_text(json.dumps(["favorable"]))
         self.env = {
             **os.environ,
             "GC_BIN": str(FAKE_GC),
@@ -150,8 +207,35 @@ class TicketAuthorTest(unittest.TestCase):
         # Never as this suite's own session: the session is what a test gives.
         for name in SESSION_IDENTITY:
             self.env.pop(name, None)
+        self.at = None
+        seeded = self.stage("seeded", self.seed)
+        self.main, self.base_app, self.integration = seeded["main"], seeded["base_app"], seeded["integration"]
+        self.at, self.at_footprint = "seeded", self.footprint()
+
+    def seed(self):
+        """What every test starts from, left by real commands and holding
+        only files: the Factory root, the stand-ins, the product with its
+        integration branch, the marked convoys. Returns what the tests read
+        of the product: its first commit, its code there, the tip of the
+        integration branch."""
+        (self.root / "config" / "projects").mkdir(parents=True)
+        (self.root / "config" / "project-descriptors").mkdir()
+        (self.root / "config" / "projects" / "fx-rig.toml").write_text(
+            f'rig_dir = "{self.repo}"\nrepo = "example/fx"\nprotected_branch = "main"\nrequired_ci = "CI"\n'
+            'sling_target = "fx-worker"\nformulas = "fx-start"\n')
+        profile = json.loads(DESCRIPTOR.read_text())
+        profile["rigs"] = ["fx-rig"]
+        self.profile.write_text(json.dumps(profile))
+        (self.tmp / "proposal-door").write_text("#!/bin/sh\necho 0\n")
+        (self.tmp / "proposal-door").chmod(0o755)
+        (self.root / "config" / "delivery-flow.json").write_text(json.dumps({
+            "contract": "agent-factory-delivery-flow/v1", "max_sessions": 2,
+            "start": {"formula": "fx-start", "role": None},
+            "test_review": {"formula": "mol-test-review", "role": "reviewer", "rig": "fx-rig", "timeout_seconds": 3600}}))
+        (self.tmp / "review-plan.json").write_text(json.dumps(["favorable"]))
         self.seed_repo()
         self.seed_tracker()
+        return {"main": self.main, "base_app": self.base_app, "integration": self.integration}
 
     # --- harness ------------------------------------------------------------
 
@@ -275,6 +359,7 @@ class TicketAuthorTest(unittest.TestCase):
 
     # --- the sequence of an author ---------------------------------------------
 
+    @staged
     def start(self, ticket=T1, session=SESSION, convoy=CONVOY):
         answer = self.ok("start", convoy, ticket, session=session)
         return answer, Path(answer["worktree"])
@@ -292,6 +377,7 @@ class TicketAuthorTest(unittest.TestCase):
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         self.assertEqual("favorable", json.loads(proc.stdout)["verdict"])
 
+    @staged
     def red_step(self, worktree, base):
         table = json.dumps({"criteria": {"1": [COUNT_ID], "2": [HEALTH_ID]}})
         self.commit("tests de critère", {COUNT_FILE: COUNT_TEST, HEALTH_FILE: HEALTH_TEST, TABLE: table}, repo=worktree)
@@ -299,6 +385,7 @@ class TicketAuthorTest(unittest.TestCase):
         self.review(worktree)
         self.tdd("freeze", worktree)
 
+    @staged
     def code_step(self, worktree):
         """The code of the ticket, with a wiring file outside its Declared Scope."""
         app = self.base_app.replace(
@@ -309,10 +396,12 @@ class TicketAuthorTest(unittest.TestCase):
         self.tdd("green", worktree)
         return head
 
+    @staged
     def demonstrate(self, worktree, *command, ticket=T1):
         return self.ok("demonstrate", CONVOY, ticket, "--repo", worktree, "--dataset", "content", "--",
                        *(command or DEMONSTRATION))
 
+    @staged
     def finish(self, worktree, ticket=T1):
         handoff = self.tmp / "handoff.json"
         handoff.write_text(json.dumps(HANDOFF, ensure_ascii=False))
@@ -323,7 +412,7 @@ class TicketAuthorTest(unittest.TestCase):
     # --- start: a fresh session, a work tree, a branch from the integration branch
 
     def test_start_gives_the_ticket_its_work_tree_on_a_branch_left_from_the_integration_branch(self):
-        answer, worktree = self.start()
+        answer, worktree = self.start(real=True)
 
         self.assertEqual(self.worktrees / T1, worktree)
         self.assertEqual(f"ticket/{T1}", self.git("symbolic-ref", "--short", "HEAD", repo=worktree))
@@ -346,14 +435,14 @@ class TicketAuthorTest(unittest.TestCase):
         failover.chmod(0o755)
         self.env["DELIVERY_ROLE_PROVIDER_FAILOVER_BIN"] = str(failover)
 
-        self.start()
+        self.start(real=True)
 
         author = self.shown()["models"]["author"]
         self.assertEqual(("delivery-author", "p-author", "claude-opus-5-5"),
                          (author["agent"], author["provider"], author["model"]))
 
     def test_start_without_a_readable_author_model_records_none(self):
-        self.start()
+        self.start(real=True)
 
         self.assertIsNone(self.shown()["models"])
 
@@ -374,7 +463,7 @@ class TicketAuthorTest(unittest.TestCase):
         self.refused("start", CONVOY, T1, session=SESSION, mention="porte de dispatch")
 
     def test_start_again_by_the_same_session_changes_nothing(self):
-        first, _ = self.start()
+        first, _ = self.start(real=True)
         before = (self.tracker.read_bytes(), self.repo_state())
 
         again, _ = self.start()
@@ -455,7 +544,7 @@ class TicketAuthorTest(unittest.TestCase):
         head = self.code_step(worktree)
         self.gate_refused("demonstration", mention="preuve de démonstration")
 
-        proof = self.demonstrate(worktree)
+        proof = self.demonstrate(worktree, real=True)
 
         self.assertEqual(("demonstration", head), (proof["piece"], proof["commit"]))
         self.assertTrue(proof["address"].startswith("http://127.0.0.1:"))
@@ -493,7 +582,7 @@ class TicketAuthorTest(unittest.TestCase):
     # --- the whole sequence, to the exit « terminé » -----------------------------
 
     def test_a_ticket_walked_through_its_gates_ends_finished_with_its_proofs(self):
-        answer, worktree = self.start()
+        answer, worktree = self.start(real=True)
         self.assertTrue(self.gate("workspace")["passed"])
         self.red_step(worktree, answer["base"])
         self.assertTrue(self.gate("red")["passed"])

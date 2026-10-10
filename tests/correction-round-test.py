@@ -12,6 +12,8 @@ door and the author session it starts; the verdicts of the reviewer and of
 the Evaluator are written as their sessions write them, through
 bin/convoy-state."""
 
+import functools
+import hashlib
 import json
 import os
 import shutil
@@ -84,10 +86,75 @@ def branch_of(ticket):
     return f"ticket/{ticket}"
 
 
+def staged(helper):
+    """A helper whose result is built once and restored afterwards (see
+    CorrectionRoundTest.stage), when a test reaches it first: it leaves only
+    files (commits, steps, pieces, verdicts and, for a stopped ticket, the
+    round and the stop the real settlement wrote, its author session ended),
+    no process and nothing read against the clock. One stage per helper and
+    per arguments. A test that did anything since its setUp gets the helper
+    walked for real: a restore would wipe what the test did. The number of
+    the files given so far (json_file) comes back with the stage."""
+    @functools.wraps(helper)
+    def reached(self, *args, **kwargs):
+        if self.footprint() != self.seeded_footprint:
+            return helper(self, *args, **kwargs)
+        asked = json.dumps([args, kwargs], sort_keys=True, ensure_ascii=False)
+        name = f"{helper.__name__}-{hashlib.sha256(asked.encode()).hexdigest()[:16]}"
+        tip, self.files = self.stage(name, lambda: (helper(self, *args, **kwargs), self.files))
+        return tip
+    return reached
+
+
 class CorrectionRoundTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # One directory for the whole class (tests/spec-end-test.py): a stage
+        # reached once (the seeded city, a finished slice, a slice refused by
+        # both) is archived and restored at the same paths, which the
+        # scripts, the settings, the work trees and the remote of the product
+        # hold absolute.
+        cls.holder = Path(tempfile.mkdtemp(prefix="correction-round-test-"))
+        cls.tmp = cls.holder / "city"
+        cls.stages = {}
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.holder, ignore_errors=True)
+
+    def stage(self, name, build):
+        """The state `build` leaves, built once and restored afterwards.
+        What it returns is plain and never changed: a commit, or a commit
+        and a number."""
+        archive = self.holder / f"{name}.tar"
+        if name in self.stages:
+            shutil.rmtree(self.tmp, ignore_errors=True)
+            self.tmp.mkdir()
+            subprocess.run(("tar", "-C", str(self.tmp), "-xf", str(archive)), check=True)
+        else:
+            built = build()
+            subprocess.run(("tar", "-C", str(self.tmp), "-cf", str(archive), "."), check=True)
+            # Known only once its archive is whole.
+            self.stages[name] = built
+        return self.stages[name]
+
+    def footprint(self):
+        """Every file and folder of the test's directory with its mode, and
+        for a file its size and the time it was last written: the same as
+        after setUp only while the test did nothing there."""
+        found = []
+        for folder, folders, names in os.walk(self.tmp):
+            for name in folders:
+                found.append((os.path.join(folder, name), os.lstat(os.path.join(folder, name)).st_mode, 0, 0))
+            for name in names:
+                entry = os.lstat(os.path.join(folder, name))
+                found.append((os.path.join(folder, name), entry.st_mode, entry.st_size, entry.st_mtime_ns))
+        return sorted(found)
+
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="correction-round-test-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        # No test sees what another left: an empty directory, then the stage.
+        shutil.rmtree(self.tmp, ignore_errors=True)
+        self.tmp.mkdir()
         self.tracker = self.tmp / "tracker.json"
         self.write_log = self.tmp / "writes.log"
         self.door_log = self.tmp / "door.log"
@@ -98,17 +165,8 @@ class CorrectionRoundTest(unittest.TestCase):
         self.work = self.tmp / "work"
         self.root = self.tmp / "root"
         self.files = 0
-        self.seed_root()
-        (self.tmp / "path").mkdir()
-        # The real `gc` finds its city from the working directory: called
-        # from a merge work tree it finds none (tests/spec-integration-test.py).
+        self.profile = self.root / "config" / "project-descriptors" / "fx.json"
         gc = self.tmp / "path" / "gc"
-        gc.write_text(
-            f'#!/bin/sh\ncase "$PWD/" in "{self.work}"/*) echo "gc bd: not in a city directory" >&2; exit 1;; esac\n'
-            f'exec "{FAKE_GC}" "$@"\n')
-        gc.chmod(0o755)
-        (self.tmp / "proposal-door").write_text("#!/bin/sh\necho 0\n")
-        (self.tmp / "proposal-door").chmod(0o755)
         self.env = {
             **os.environ,
             "PATH": f"{self.tmp / 'path'}{os.pathsep}{os.environ['PATH']}",
@@ -133,12 +191,32 @@ class CorrectionRoundTest(unittest.TestCase):
         }
         for name in ("CONVOY_STATE_FAKE_MAIL_FAIL", "PROJECT_PLANNING_PROFILE_BIN", *SESSION_IDENTITY):
             self.env.pop(name, None)
+        self.base = self.stage("seeded", self.seed)
+        self.seeded_footprint = self.footprint()
+
+    def seed(self):
+        """What every test starts from, left by real launches and holding
+        only files: the Factory root, the stand-ins on the path, the plan of
+        the author session, the marked convoy, the product with its remote
+        and its integration branch. Returns the first commit of the product."""
+        self.seed_root()
+        (self.tmp / "path").mkdir()
+        # The real `gc` finds its city from the working directory: called
+        # from a merge work tree it finds none (tests/spec-integration-test.py).
+        gc = self.tmp / "path" / "gc"
+        gc.write_text(
+            f'#!/bin/sh\ncase "$PWD/" in "{self.work}"/*) echo "gc bd: not in a city directory" >&2; exit 1;; esac\n'
+            f'exec "{FAKE_GC}" "$@"\n')
+        gc.chmod(0o755)
+        (self.tmp / "proposal-door").write_text("#!/bin/sh\necho 0\n")
+        (self.tmp / "proposal-door").chmod(0o755)
         self.author("works")
         self.seed_tracker()
         self.seed_repo()
         opened = self.run_cmd(INTEGRATION_TOOL, "open", CONVOY, "--repo", self.repo, "--protected", PROTECTED)
         self.assertEqual(0, opened.returncode, opened.stdout + opened.stderr)
         self.write_log.write_text("")
+        return self.base
 
     # --- harness ------------------------------------------------------------
 
@@ -156,7 +234,6 @@ class CorrectionRoundTest(unittest.TestCase):
         (config / "projects" / f"{RIG}.toml").write_text(f'rig_dir = "{self.repo}"\nhuman_approver = "{APPROVER}"\n')
         profile = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
         profile["rigs"] = [RIG]
-        self.profile = config / "project-descriptors" / "fx.json"
         self.profile.write_text(json.dumps(profile))
 
     def author(self, *plan):
@@ -252,6 +329,7 @@ class CorrectionRoundTest(unittest.TestCase):
         ticket_proofs.finish(self.env, self.repo, CONVOY, ticket, tip, self.base, branch_of(ticket), sections=SECTIONS, records={
             "files_changed": [NOTE], "commits": [{"commit": tip, "subject": "travail du ticket"}], "amendment": None})
 
+    @staged
     def finished_slice(self, ticket=SLICE):
         """A slice started through the dispatch door, whose criterion test
         is frozen, whose code is green at the tip, and whose author has
@@ -309,6 +387,7 @@ class CorrectionRoundTest(unittest.TestCase):
             "commit": tip, "recorded_by": f"delivery-evaluator-{ticket}-{tip[:6]}", "criteria": [criterion],
             "demonstration_line": {"text": LINE, "state": "observed", "evidence": "evaluation.seen"}}))
 
+    @staged
     def refused_by_both(self):
         """A finished slice the code review refused (Blocking Finding F1.1)
         and the Ticket Evaluation refused (criterion 1 not observed), both
@@ -337,6 +416,7 @@ class CorrectionRoundTest(unittest.TestCase):
     def tickets(self, entries):
         return [entry["ticket"] for entry in entries]
 
+    @staged
     def stopped_ticket(self):
         """A ticket refused by both, whose correction session ended without
         correcting anything, and that the settlement stopped. Returns the tip."""
