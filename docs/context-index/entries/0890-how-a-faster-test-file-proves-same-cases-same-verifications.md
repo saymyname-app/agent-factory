@@ -1,0 +1,2 @@
+Need: Proving that a test file made faster or moved down a stage still holds the same cases with the same number of verifications (the name of each case and its count of assertion call sites, before and after; a case gone, renamed, or with one verification fewer is refused by name; a file cut in two is compared as one set), and what that comparison cannot see (a shared decor leaking from one case to the next)
+Read: `FACTORY_TOOLS.md` (`./bin/test-cases-compare`), `tests/test-cases-compare-test.py`
