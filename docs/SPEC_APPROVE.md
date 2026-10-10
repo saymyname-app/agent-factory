@@ -65,12 +65,22 @@ never touches a map. `bd-status` recomputes the description's digest and
 reports `void: true` once it no longer matches `approved_digest`, i.e. the
 Spec was edited after approval and needs re-approval with fresh evidence.
 
+**Re-approval of an amended Spec (T52, af-ezqgma; spec af-wf4w5r section
+11).** `bd-approve` on an `APPROVED_SPEC` whose text changed since its
+approval (`void: true`) approves it again: same checks as a first approval
+(Reservation, approver, evidence, entry contract), fresh `approved_by`,
+`approved_evidence` and `approved_digest`, and `amended: true` in the
+output. The map, closed by the first approval, is not closed again. An
+`APPROVED_SPEC` whose text is unchanged stays refused: approval never
+creates a duplicate approved document.
+
 ## Entry contract (T07, af-tvda3w; spec af-wf4w5r sections 2 and 3)
 
 The Spec is the unit of coverage of the delivery flow, so `bd-approve`
 reads its text and refuses, naming what is missing, a Spec that cannot be
 sliced and verified. Refusal messages are in French (Operator Language).
-An already approved Spec is never re-examined: `bd-status` is unchanged.
+An already approved Spec is never re-examined unless it is amended and
+handed to `bd-approve` again: `bd-status` is unchanged.
 
 What `bd-approve` reads in the Spec's description:
 

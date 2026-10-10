@@ -811,7 +811,8 @@ sortie a une destination fixée par du code, et le compte rendu du ticket
   rendu qui a ses quatre rubriques (le refus nomme celle qui manque, rien
   n'est écrit) ; le compte rendu est enregistré avant elle. Si elle nomme
   une ancre du prototype (`--anchor`), la rubrique « Écarts » doit
-  mentionner cette ancre, sinon refus.
+  mentionner cette ancre par son nom entier, sinon refus (`fixture` n'est
+  pas nommée par `fixture.items` ni par `fixture:items`).
 - **Bloqué technique** : un ticket `repair` est créé par du code et publié
   par la porte de patch ; il bloque le ticket, rien n'est parqué.
 - **Interrompu** : la branche est poussée, un compte rendu partiel est
@@ -1807,8 +1808,10 @@ que tu réponds. Toi seul réponds : `--approved-by` doit être le
 - **Rien ne rouvre** un Outcome accepté ou abandonné : un défaut ou un
   souhait trouvé après entre comme travail nouveau, par un Planning Run.
 - **`resolve-exception`** : tu dis que la Planning Exception du lot est
-  résolue (Spec amendée et graphe révisé, ou souhait abandonné) ; d'ici là
-  la fin de Spec attend.
+  résolue, une fois la Spec amendée approuvée (`bin/spec-approve`, qui
+  approuve de nouveau une Spec dont le texte a changé) et le graphe révisé
+  publié (`bin/ticket-graph-publish bd-patch`) ; sinon refus, qui dit
+  l'étape qui manque ; d'ici là la fin de Spec attend.
 - **Cockpit** : sur un convoi du nouveau flux, le bouton « Accepter » est
   refusé et renvoie ici ; l'étape « Accepté » se lit dans ta réponse
   enregistrée.

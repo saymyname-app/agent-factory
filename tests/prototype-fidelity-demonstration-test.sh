@@ -64,7 +64,9 @@ trap cleanup EXIT
 
 factory_git_state() {
   git -C "$ROOT" status --porcelain --untracked-files=all
-  git -C "$ROOT" rev-list --all --count
+  # The checkout's own commit, not a count over every ref: the refs of the
+  # repository move under any other work tree or fetch during the run (T49).
+  git -C "$ROOT" rev-parse HEAD
 }
 FACTORY_BEFORE=$(factory_git_state)
 
@@ -72,6 +74,9 @@ FACTORY_BEFORE=$(factory_git_state)
 # Dolt, city path, session identity, GC_BIN) and no shared HOME.
 while IFS= read -r name; do unset "$name"; done < <(compgen -e | grep -E '^(GC_|BEADS_|BD_BIN$|GH_BIN$)' || true)
 export HOME="$TRIAL/home" TMUX_TMPDIR="$TRIAL/tmux" CONVOY_STATE_LOCK_DIR="$TRIAL/locks" TMPDIR="$TRIAL/tmp"
+# The tools name their city to gc from FACTORY_ROOT (af-2o6oyl); left unset,
+# they name the repository they are run from -- the live Factory (af-xcfup7).
+export FACTORY_ROOT="$TEST_CITY"
 export EVIDENCE_STORE_DIR="$TRIAL/store" EVIDENCE_CAPTURE_BROWSER="$BROWSER"
 mkdir -p "$HOME" "$TMUX_TMPDIR" "$TMPDIR"
 dolt config --global --add user.name "prototype-fidelity trial" >/dev/null

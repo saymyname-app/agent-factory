@@ -607,7 +607,12 @@ printf '%s' "$record" | jq -e --arg tip "$TIP" '
       [4,"fidelity","pass"],[5,"deferral","pass"],[6,"merge","pass"],[7,"evidence","pass"],[8,"tdd","pass"],[9,"review","pass"]])
   and ([.conditions[] | select((.detail | length) == 0)] | length == 0)' >/dev/null \
   || fail "the record of the gate is not its version, its nine passing verdicts and the merged commit: $record"
-closing_pass=$(jq -c --arg c "$CONVOY" --arg t "$T" 'select(any(.convoys[]?; .id == $c and any(.ticket_end.closed[]?; .id == $t)))' "$TRIAL/passes.jsonl" | head -1)
+# The pass that closes the ticket writes its line once it has returned, and
+# it carries on past the close: the line is waited for, not read once.
+closing_line() { jq -c --arg c "$CONVOY" --arg t "$T" 'select(any(.convoys[]?; .id == $c and any(.ticket_end.closed[]?; .id == $t)))' "$TRIAL/passes.jsonl" 2>/dev/null | head -1; }
+closing_reported() { [ -n "$(closing_line)" ]; }
+wait_for 600 closing_reported || dump
+closing_pass=$(closing_line)
 [ -n "$closing_pass" ] || fail "no pass of the order reports having closed the ticket through the gate"
 "$ROOT/bin/evidence-capture" verify "$CONVOY" "$T" >/dev/null || fail "the evidence of the ticket does not verify"
 [ "$(printf '%s' "$t" | jq -c '.unruled')" = '[]' ] || fail "the ticket, closed by its gate, reads as an anomaly: $(printf '%s' "$t" | jq -c '.unruled')"

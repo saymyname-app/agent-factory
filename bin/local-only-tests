@@ -9,19 +9,37 @@
 # someone happened to run them by hand. This closes that gap without
 # giving CI new requirements.
 #
+# What runs is read from the marker itself (T49, af-xcfup7): every
+# tests/*.sh and tests/*.py marked `# ci: local-only`, one at a time, except
+# the files config/local-only-tests-exclusions.txt names with their reason (a real
+# model session, a real Mayor session). A list of names kept here went stale:
+# seven adoption trials of D01 were red on main and ran nowhere.
+#
 # Usage: local-only-tests [--quiet]
+#        local-only-tests --list
+#
+# --list prints what a run would do, one line per marked file -- `run <path>`
+# or `excluded <path> <reason>` -- and runs nothing; it needs no gc. It exits
+# 2 on an exclusion that names no marked file or gives no reason.
+# The output of a run names each test (PASS, FAIL) and each exclusion
+# (EXCLUDED). A test that runs longer than LOCAL_ONLY_TEST_TIMEOUT (default
+# 1800 s) is stopped and counted as failed.
 set -uo pipefail
 
 ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
 QUIET=0
+LIST=0
 # Overridable so a test city (which has no bin/ of its own) can point this
 # at the real repo's escalation-door instead of $FACTORY_ROOT's.
 ESCALATION_DOOR_BIN="${ESCALATION_DOOR_BIN:-$ROOT/bin/escalation-door}"
+EXCLUSIONS_FILE="config/local-only-tests-exclusions.txt"
+TEST_TIMEOUT="${LOCAL_ONLY_TEST_TIMEOUT:-1800}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --quiet) QUIET=1 ;;
-    -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --list) LIST=1 ;;
+    -h|--help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -30,26 +48,57 @@ done
 say() { [ "$QUIET" = "1" ] || printf '%s\n' "$*"; }
 
 cd "$ROOT" || { echo "local-only-tests: $ROOT unreachable" >&2; exit 2; }
+
+# Same marker, same files as bin/ci-run-tests leaves out.
+is_local_only() { grep -qE '^#[[:space:]]*ci:[[:space:]]*local-only' "$1"; }
+
+declare -A EXCLUDED=()
+if [ -f "$EXCLUSIONS_FILE" ]; then
+  while read -r path reason; do
+    case "$path" in ''|'#'*) continue ;; esac
+    if [ -z "$reason" ]; then
+      echo "local-only-tests: $EXCLUSIONS_FILE excludes $path without a reason" >&2; exit 2
+    fi
+    if [ ! -f "$path" ] || ! is_local_only "$path"; then
+      echo "local-only-tests: $EXCLUSIONS_FILE excludes $path, which is not a test marked ci: local-only" >&2; exit 2
+    fi
+    EXCLUDED["$path"]="$reason"
+  done <"$EXCLUSIONS_FILE"
+fi
+
+TESTS=()
+SKIPPED=()
+for t in tests/*.sh tests/*.py; do
+  [ -f "$t" ] && is_local_only "$t" || continue
+  if [ -n "${EXCLUDED[$t]:-}" ]; then SKIPPED+=("$t"); else TESTS+=("$t"); fi
+done
+
+if [ "$LIST" = "1" ]; then
+  for t in ${TESTS[@]+"${TESTS[@]}"}; do printf 'run %s\n' "$t"; done
+  for t in ${SKIPPED[@]+"${SKIPPED[@]}"}; do printf 'excluded %s %s\n' "$t" "${EXCLUDED[$t]}"; done
+  exit 0
+fi
+
 command -v gc >/dev/null 2>&1 || { say "local-only-tests: gc unavailable, skipping"; exit 0; }
 
-TESTS=(
-  "tests/build-basic-fail-fast-runtime-test.sh"
-  "tests/factory-watchdog-order-test.sh"
-  "tests/orders-validate-test.sh"
-  "tests/fake-tool-contract-test.py"
-)
+for t in ${SKIPPED[@]+"${SKIPPED[@]}"}; do
+  say "local-only-tests: EXCLUDED $t — ${EXCLUDED[$t]}"
+done
 
 FAILED=()
-for t in "${TESTS[@]}"; do
+for t in ${TESTS[@]+"${TESTS[@]}"}; do
   if [ ! -x "$t" ]; then
     say "local-only-tests: $t missing or not executable — treating as failed"
     FAILED+=("$t: missing or not executable")
     continue
   fi
-  OUTPUT=$("$t" 2>&1)
-  if [ $? -eq 0 ]; then
+  OUTPUT=$(timeout --kill-after=30 "$TEST_TIMEOUT" "$t" 2>&1)
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
     say "local-only-tests: PASS $t"
   else
+    [ "$rc" -eq 124 ] && OUTPUT="$OUTPUT
+stopped after ${TEST_TIMEOUT}s"
     say "local-only-tests: FAIL $t"
     FAILED+=("$t: $(printf '%s' "$OUTPUT" | tail -5 | tr '\n' ' ')")
   fi

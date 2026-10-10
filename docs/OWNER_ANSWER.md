@@ -99,10 +99,15 @@ Spec §11, « Spec amendée et graphe révisé »). The exception keeps the
 digest of the approved Spec the convoy was published from when it was
 raised (`exception.spec_digest`); while the convoy still carries that
 digest (`convoy.spec_digest` in `bin/convoy-state show`), the call is
-refused and says the Spec has not been amended. The digest changes when the
-amended Spec is approved (`bin/spec-approve`) and the revised graph is
-published from it (`bin/ticket-graph-publish bd-patch`, which writes it on
-the convoy).
+refused. The digest changes when the amended Spec is approved
+(`bin/spec-approve`, which approves again an approved Spec whose text
+changed) and the revised graph is published from it
+(`bin/ticket-graph-publish bd-patch`, which writes it on the convoy). The
+refusal names the step that is missing, read on the Spec itself (T52,
+af-ezqgma): the Spec has not been amended; its text changed but the new
+version is not approved (`bin/spec-approve`); or it is approved and the
+revised graph is not published from it (`bin/ticket-graph-publish
+bd-patch`).
 
 **`proposals`** creates the proposition of each « plus tard » he gave — a
 verdict on a proposition, an Owner Finding of his last answer — that has
@@ -177,7 +182,7 @@ nothing is recorded on such a convoy); 4 the convoy does not carry the mark
 | `record` accepté | a proposition has no verdict; a proposition « à faire avant d'accepter » has not been returned | nothing |
 | `record` constats rendus | no finding and no proposition to do first; a malformed finding; a finding that cites a held story or an anchor without its drafted `repair`; `later` with a `repair`; a finding that cites an anchor while the Validated Prototype cannot be read (the commit is neither in the repository nor on its `origin`): nothing is routed on a citation that cannot be checked | nothing |
 | `record` abandonné | no `--reason`, empty or on several lines; the convoy is neither Delivered nor carrying a « non conforme » request | nothing |
-| `resolve-exception` | the last answer carries no Planning Exception; no words; the Spec has not been amended since the exception was raised (the convoy still carries the digest of the approved Spec of then) | nothing |
+| `resolve-exception` | the last answer carries no Planning Exception; no words; the convoy still carries the digest of the approved Spec the exception was raised on — the refusal says which step is missing: the amendment of the Spec, its new approval, or the revised graph | nothing |
 
 Refused by `bin/convoy-state` itself, whoever calls it: `set-owner-repair`
 with a ticket the convoy does not track or that is not a `repair`, or a
@@ -269,7 +274,10 @@ unchanged.
   Planning Run done by hand: no code starts it and nothing notifies the
   Mayor. `resolve-exception` checks that the convoy is published from
   another approved Spec than the one the exception was raised on (T40);
-  that the amendment answers the findings is Benjamin's word. An exception
+  that the amendment answers the findings is Benjamin's word. The whole
+  passage — `bin/spec-approve` on the amended Spec, `bd-patch`, then
+  `resolve-exception` — is walked by the real doors in
+  `tests/owner-exception-amended-spec-fixture-city-test.py` (T52). An exception
   recorded before T40, or on a convoy that carries no Spec digest, keeps no
   digest and is resolved on his words alone.
 - **The issue of a « non conforme » request is still read by nothing**

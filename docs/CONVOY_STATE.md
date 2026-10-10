@@ -674,9 +674,12 @@ the Planning Exception of the last batch is resolved. It refuses an answer
 that carries none. The same call again writes nothing. T40 (af-o6tu3z): the
 exception keeps, as `spec_digest`, the `gc.spec_digest` of the convoy when
 it was raised — the approved Spec its graph is published from —, and the
-call is refused while the convoy still carries that digest: the Spec has
-not been amended (the patch door writes the digest of the amended Spec once
-it is approved and the revised graph published). An exception without
+call is refused while the convoy still carries that digest (the patch door
+writes the digest of the amended Spec once it is approved and the revised
+graph published). The refusal names the missing step (T52, af-ezqgma),
+read on the Spec bead: not amended; amended and not approved again
+(`bin/spec-approve`); approved and the revised graph not published
+(`bin/ticket-graph-publish bd-patch`). An exception without
 `spec_digest` is resolved on the words alone.
 
 `record-owner-answer --repo DIR` (T40) names the repository of the project:

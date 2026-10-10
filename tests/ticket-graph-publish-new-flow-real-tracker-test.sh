@@ -64,6 +64,9 @@ trap cleanup EXIT
 # Dolt, city path, session identity, GC_BIN) and no shared HOME.
 while IFS= read -r name; do unset "$name"; done < <(compgen -e | grep -E '^(GC_|BEADS_|BD_BIN$|GH_BIN$|FACTORY_ROOT$)' || true)
 export HOME="$TRIAL/home" TMUX_TMPDIR="$TRIAL/tmux" CONVOY_STATE_LOCK_DIR="$TRIAL/locks"
+# The tools name their city to gc from FACTORY_ROOT (af-2o6oyl); left unset,
+# they name the repository they are run from -- the live Factory (af-xcfup7).
+export FACTORY_ROOT="$TEST_CITY"
 mkdir -p "$HOME" "$TMUX_TMPDIR" "$TRIAL/repo"
 dolt config --global --add user.name "entry-contract trial" >/dev/null
 dolt config --global --add user.email "trial@example.invalid" >/dev/null
@@ -419,9 +422,9 @@ for delivered in "$T1" "$R1"; do
 done
 "$STATE" record-gate "$CONVOY" "$T2" --gate dispatch >/dev/null || fail "dispatch gate record refused for T2"
 gc bd update "$T2" --status in_progress >/dev/null
-mkdir -p "$TRIAL/exit-root/config/projects"
-cp "$PROJECTS/delivery-fixture-city.toml" "$TRIAL/exit-root/config/projects/"
-cp -r "$TRIAL/descriptors" "$TRIAL/exit-root/config/project-descriptors"
+mkdir -p "$TEST_CITY/config/projects"
+cp "$PROJECTS/delivery-fixture-city.toml" "$TEST_CITY/config/projects/"
+cp -r "$TRIAL/descriptors" "$TEST_CITY/config/project-descriptors"
 cat >"$TRIAL/repair.json" <<'JSON'
 {"title": "Le harnais de test relit le jeu de données",
  "what_it_delivers": "Le harnais de test du produit charge de nouveau le jeu de données « contenu ».",
@@ -430,7 +433,7 @@ cat >"$TRIAL/repair.json" <<'JSON'
  "acceptance_criteria": [{"entry_point": "GET /api/items sur le produit lancé avec le jeu de données « contenu »",
    "observable": "la réponse JSON liste trois éléments", "false_if": "la réponse est vide ou en erreur"}]}
 JSON
-blocked=$(FACTORY_ROOT="$TRIAL/exit-root" "$ROOT/bin/ticket-exit" exit "$CONVOY" "$T2" --exit technically_blocked \
+blocked=$("$ROOT/bin/ticket-exit" exit "$CONVOY" "$T2" --exit technically_blocked \
   --repair "$TRIAL/repair.json") || fail "the exit « bloqué technique » was refused: $blocked"
 R2=$(jq -r '.repair.id' <<<"$blocked")
 jq -e '.repair.key == "R2" and .exit == "technically_blocked"' <<<"$blocked" >/dev/null || fail "unexpected exit answer: $blocked"

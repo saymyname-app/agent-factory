@@ -81,7 +81,9 @@ by the author: it exits by a Planning Exception that names the anchors
 (`--anchor`, repeatable; refused on any other exit and for a malformed
 name). The deviation is written in the Handoff first: the exit is refused
 when the « Écarts » (`deviations`) of the Handoff does not mention each
-anchor named, by its name. The request then carries a third option, « Accepter l'écart sur
+anchor named, by its whole name: `fixture` is not named by `fixture.items`,
+`fixture:items` or `fixture-items`, while the « . », « , » or « : » that
+punctuates a sentence after the name does not hide it. The request then carries a third option, « Accepter l'écart sur
 l'ancre <name> », and the ticket records the letter the escalation door
 gives it. Once the operator answers by that letter (`bin/escalation-door
 repondre`), the fidelity check reads the deviation as « accepté par

@@ -25,7 +25,8 @@ remote repository, and a Validated Prototype that
 included (T46, af-lb9zkz): a branch that is not a `prototype/` branch, or a
 commit reachable from the project's protected branch on the remote. A Spec with no
 interface story is approved without a reference; an already approved Spec
-is never re-examined.
+is never re-examined, unless its text changed since: an amended Spec is
+approved again by `bd-approve`, held to the same checks (T52, af-ezqgma).
 
 `outline` reads a Spec text on stdin and prints, with that same reader, what
 the publication door poses in each ticket (T06, af-cgauf8): the numbered
@@ -510,10 +511,16 @@ def cmd_bd_approve(args: argparse.Namespace) -> int:
     try:
         spec_bead = bd_show(args.spec)
         metadata = spec_bead.get("metadata") or {}
-        if metadata.get("spec_state") == APPROVED_SPEC:
+        # An amended Spec -- approved, its text changed since (`void` in
+        # bd-status) -- is approved again, on fresh evidence and held to
+        # every check below (T52, af-ezqgma; Spec af-wf4w5r section 11).
+        amended = metadata.get("spec_state") == APPROVED_SPEC and metadata.get("approved_digest") \
+            != canonical_bead_digest(spec_bead.get("description") or "")
+        if metadata.get("spec_state") == APPROVED_SPEC and not amended:
             raise SpecApproveError(
-                f"cannot approve state={APPROVED_SPEC!r}: only a DRAFT_SPEC can be approved -- an "
-                "APPROVED_SPEC is already approved once and approval never creates a duplicate approved document"
+                f"cannot approve state={APPROVED_SPEC!r}: only a DRAFT_SPEC, or an APPROVED_SPEC amended since "
+                "its approval, can be approved -- this APPROVED_SPEC is already approved, its text unchanged, and "
+                "approval never creates a duplicate approved document"
             )
 
         target = metadata.get("planning_run_target")
@@ -579,7 +586,8 @@ def cmd_bd_approve(args: argparse.Namespace) -> int:
         run_bd(update_args)
 
         map_closed = False
-        if planning_map is not None:
+        # The map of an amended Spec was closed by its first approval.
+        if planning_map is not None and not amended:
             map_close(planning_map, f"Spec approved by {approved_by}: {args.spec}", map_bin)
             map_closed = True
     except SpecApproveError as exc:
@@ -595,6 +603,7 @@ def cmd_bd_approve(args: argparse.Namespace) -> int:
                 "approved_by": approved_by,
                 "map": planning_map,
                 "map_closed": map_closed,
+                "amended": amended,
             },
             indent=2, sort_keys=True,
         )

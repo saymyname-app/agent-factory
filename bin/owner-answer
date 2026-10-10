@@ -44,9 +44,10 @@ acceptance:
 
 `resolve-exception` records, on his words, that the Planning Exception of
 the last batch is resolved; until then the Outcome is not Delivered again.
-Refused while the Spec has not been amended: the convoy is still published
-from the approved Spec the exception was raised against (the amended Spec
-is approved, then the revised graph is published by the patch door).
+Refused while the convoy is still published from the approved Spec the
+exception was raised against, naming the step that is missing: the
+amendment of the Spec, its new approval (bin/spec-approve), or the revised
+graph (bin/ticket-graph-publish bd-patch).
 
 `proposals` creates the proposition of each « plus tard » he gave that has
 none yet. A proposition door that fails is not a refusal of his answer: the
