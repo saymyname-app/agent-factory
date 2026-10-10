@@ -13,7 +13,9 @@ sources on one side are read as one set of cases: a file cut in two is
 compared with `--before` once and `--after` twice.
 
 A case is a `test*` method of a class of the file, named `Class.method`,
-methods a class inherits from another class of the same file included. What
+methods a class inherits from another class of the same side included (the
+same file, or the other half of a file cut in two, whose harness the second
+half loads). What
 runs around the cases is compared the same way, under its own name
 (`Class.setUp`, `setUpClass`, `tearDown`, `tearDownClass`).
 
@@ -61,7 +63,7 @@ class SourceError(Exception):
 class Case(NamedTuple):
     verifications: int
     skips: int        # decorators on the case, plus the skipTest call sites it reaches
-    bases: tuple      # the bases of its class, as written
+    bases: tuple      # what its class inherits from outside the sources, as written
     shape: str        # its body, to recognize it under another name
 
 
@@ -102,20 +104,43 @@ def is_super(node):
 class Module:
     """The functions and classes of one parsed test file."""
 
-    def __init__(self, tree):
-        self.functions = {node.name: node for node in tree.body if isinstance(node, FUNCTIONS)}
-        self.classes = {node.name: node for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
+    def __init__(self, tree, others=()):
+        """`others` are the other sources of the same side: a class or a
+        function this file does not define is looked for there, which is how
+        the second half of a file cut in two finds the harness of the first."""
+        self.own = self.classes_of(tree)
+        self.classes, self.functions = {}, {}
+        for other in (*others, tree):
+            self.classes.update(self.classes_of(other))
+            self.functions.update({node.name: node for node in other.body if isinstance(node, FUNCTIONS)})
         self.bodies = {}
 
+    @staticmethod
+    def classes_of(tree):
+        return {node.name: node for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
+
+    @staticmethod
+    def base_name(base):
+        """`Harness` for `Harness` and for `first_half.Harness`."""
+        return base.id if isinstance(base, ast.Name) else base.attr if isinstance(base, ast.Attribute) else None
+
     def lineage(self, class_name, seen=()):
-        """The class, then the classes of this file it inherits from, nearest first."""
+        """The class, then the classes of the sources it inherits from, nearest first."""
         if class_name not in self.classes or class_name in seen:
             return []
         order = [class_name]
         for base in self.classes[class_name].bases:
-            if isinstance(base, ast.Name):
-                order += [name for name in self.lineage(base.id, (*seen, class_name)) if name not in order]
+            order += [name for name in self.lineage(self.base_name(base), (*seen, class_name)) if name not in order]
         return order
+
+    def roots(self, class_name):
+        """What the lineage inherits from outside the sources, as written:
+        `unittest.TestCase` for a test class, whatever harness stands between."""
+        found = set()
+        for name in self.lineage(class_name):
+            found.update(ast.unparse(base) for base in self.classes[name].bases
+                         if self.base_name(base) not in self.classes)
+        return tuple(sorted(found))
 
     def methods(self, lineage):
         """Every method of a lineage, the nearest class winning: name -> (owner, node)."""
@@ -141,6 +166,9 @@ class Module:
                     names.append(("method", inner.attr))
                 elif isinstance(inner, ast.Attribute) and is_super(inner.value):
                     names.append(("super", inner.attr))
+                elif isinstance(inner, ast.Attribute) and isinstance(inner.value, ast.Name):
+                    # `first_half.page`: a function of the other half, through the name it was loaded under.
+                    names.append(("function", inner.attr))
                 elif isinstance(inner, ast.Name) and isinstance(inner.ctx, ast.Load):
                     names.append(("function", inner.id))
             self.bodies[id(node)] = (sites, names)
@@ -168,8 +196,8 @@ class Module:
     def cases(self):
         """`Class.method` -> Case, for the cases and for what runs around them."""
         found = {}
-        for class_name, class_node in self.classes.items():
-            bases = tuple(ast.unparse(base) for base in class_node.bases)
+        for class_name in self.own:
+            bases = self.roots(class_name)
             for name, (owner, node) in self.methods(self.lineage(class_name)).items():
                 if name.startswith("test") or name in AROUND:
                     found[f"{class_name}.{name}"] = Case(
@@ -185,13 +213,15 @@ def is_case(name):
 
 def cases_of(sources):
     """The cases of several sources read as one set; a case two of them hold is named."""
-    found, twice = {}, []
+    found, twice, trees = {}, [], []
     for source in sources:
         try:
-            tree = ast.parse(read_source(source))
+            trees.append(ast.parse(read_source(source)))
         except SyntaxError as error:
             raise SourceError(f"{source} : n'est pas du Python lisible (ligne {error.lineno})") from error
-        for name, case in Module(tree).cases().items():
+    for tree in trees:
+        others = [other for other in trees if other is not tree]
+        for name, case in Module(tree, others).cases().items():
             if name in found and is_case(name):
                 twice.append(name)
             found[name] = case

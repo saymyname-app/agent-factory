@@ -103,6 +103,18 @@ class TestCasesCompareTest(unittest.TestCase):
         self.assertEqual((0, ""), (status, err))
         self.assertIn("2 cas, 5 vérifications avant, 5 après", out)
 
+    def test_a_second_half_that_loads_the_harness_of_the_first_keeps_its_verifications(self):
+        first = BEFORE[:BEFORE.index("        def test_an_order_is_paid")].replace("class ShopTest(", "class Shop(")
+        first += ("\n\n    class ShopTest(Shop):\n        def test_an_order_is_paid(self):\n"
+                  '            order = self.paid({"state": "paid"})\n            self.assertIn("state", order)\n')
+        second = ("\n    import first_half\n\n\n    class ShopTest(first_half.Shop):\n        def test_the_page_answers(self):\n"
+                  '            self.assertEqual("ok", first_half.page("http://localhost"))\n')
+
+        status, out, err = self.compare(BEFORE, first, second)
+
+        self.assertEqual((0, ""), (status, err))
+        self.assertIn("2 cas, 5 vérifications avant, 5 après sur les mêmes cas : identiques", out)
+
     def test_a_new_case_and_an_added_verification_are_accepted_and_named(self):
         after = BEFORE.replace('self.assertIn("state", order)', 'self.assertIn("state", order)\n            self.assertTrue(order)')
         after += "\n        def test_a_refund_is_shown(self):\n            self.fail('pas encore')\n"
