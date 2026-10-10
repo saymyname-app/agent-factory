@@ -213,6 +213,7 @@ stub stub-author <<'STUB'
 LOG="$TRIAL/author.log"
 say() { echo "$(date -u +%H:%M:%S) ${GC_SESSION_NAME:-?} $*" >> "$LOG"; }
 tool() { "$@" >> "$LOG" 2>&1; }
+echo "stub> " # the prompt its provider declares: the start of the session waits for it
 while true; do
   CLAIM=$(gc hook --claim --json 2>/dev/null)
   ACTION=$(printf '%s' "$CLAIM" | jq -r '.action // empty' 2>/dev/null)
@@ -266,6 +267,7 @@ stub stub-reviewer <<'STUB'
 export DELIVERY_ROLE_READ_ONLY=1
 LOG="$TRIAL/reviewer.log"
 say() { echo "$(date -u +%H:%M:%S) ${GC_SESSION_NAME:-?} $*" >> "$LOG"; }
+echo "stub> "
 while true; do
   CLAIM=$(gc hook --claim --json 2>/dev/null)
   ACTION=$(printf '%s' "$CLAIM" | jq -r '.action // empty' 2>/dev/null)
@@ -315,6 +317,7 @@ STUB
 stub stub-evaluator-inner <<'STUB'
 LOG="$TRIAL/evaluator.log"
 say() { echo "$(date -u +%H:%M:%S) ${GC_SESSION_NAME:-?} $*" >> "$LOG"; }
+echo "stub> "
 while true; do
   CLAIM=$(gc hook --claim --json 2>/dev/null)
   ACTION=$(printf '%s' "$CLAIM" | jq -r '.action // empty' 2>/dev/null)
@@ -387,18 +390,29 @@ command = "$TRIAL/stub-author"
 # \`claude\` process in the session and reaps it as a zombie.
 process_names = ["stub-author", "bash"]
 ready_delay_ms = 0
+# A stub shows no startup dialog and no prompt. Left to the claude base, the
+# start of a session waits for both, about 40 s on a quiet host against the
+# 60 s Gas City gives a start: under load the start times out
+# (session.cold_start_timeout) and the session that holds the ticket is
+# replaced by a new one, step after step.
+accept_startup_dialogs = false
+ready_prompt_prefix = "stub>"
 
 [providers.stub-reviewer]
 base = "builtin:claude"
 command = "$TRIAL/stub-reviewer"
 process_names = ["stub-reviewer", "bash"]
 ready_delay_ms = 0
+accept_startup_dialogs = false
+ready_prompt_prefix = "stub>"
 
 [providers.stub-evaluator]
 base = "builtin:claude"
 command = "$TRIAL/stub-evaluator"
 process_names = ["stub-evaluator", "stub-evaluator-inner", "bwrap", "bash"]
 ready_delay_ms = 0
+accept_startup_dialogs = false
+ready_prompt_prefix = "stub>"
 TOML
 mkdir -p "$CITY/formulas" "$CITY/orders" "$CITY/config/projects" "$CITY/config/project-descriptors" "$CITY/bin" "$CITY/assets/scripts/checks"
 for role in author reviewer evaluator; do
