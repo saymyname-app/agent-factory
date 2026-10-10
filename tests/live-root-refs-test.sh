@@ -69,7 +69,7 @@ expect() {  # WHAT LINE-PATTERN: the last write is the only new line, and matche
   local now
   now=$(written)
   [ "$(printf '%s\n' "$now" | grep -c .)" = "$((SEEN + 1))" ] || fail "$1: expected one more reference named, got: $now"
-  printf '%s\n' "$now" | tail -1 | grep -Eq "$2" || fail "$1 is not named as « $2 »: $(printf '%s\n' "$now" | tail -1)"
+  grep -Eq "$2" <<<"$(printf '%s\n' "$now" | tail -1)" || fail "$1 is not named as « $2 »: $(printf '%s\n' "$now" | tail -1)"
   SEEN=$((SEEN + 1))
 }
 SEEN=0
