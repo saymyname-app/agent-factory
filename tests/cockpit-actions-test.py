@@ -44,26 +44,52 @@ def free_port():
         return s.getsockname()[1]
 
 
-def wait_for_port(host, port, timeout=5):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
+# No step of this file is bounded by how long it "should" take: every wait
+# ends on the thing it observes (the port answers, the HTTP response
+# arrives, the payload matches) and DEADLINE_SECONDS is only the point where
+# a cockpit that never gets there is declared broken, with a message that
+# says what was being waited for. On a saturated host a single fake-bd
+# spawn can take seconds, and one action or one recheck is several of them
+# (before: 3 s per HTTP call, 5 s per wait — one slow attempt used it all).
+DEADLINE_SECONDS = 120
+
+
+def wait_for_port(host, port, proc=None, timeout=DEADLINE_SECONDS):
+    """Returns once something accepts connections on host:port. Stops at
+    once, with its stderr, if the process expected to listen has exited."""
+    deadline = time.monotonic() + timeout
+    while True:
         try:
-            with socket.create_connection((host, port), timeout=0.2):
+            with socket.create_connection((host, port), timeout=5):
                 return
         except OSError:
-            time.sleep(0.05)
-    raise TimeoutError("nothing listening on %s:%d after %ss" % (host, port, timeout))
+            pass
+        if proc is not None and proc.poll() is not None:
+            raise AssertionError(
+                "cockpit exited (rc=%s) before listening on %s:%d: %s"
+                % (proc.returncode, host, port, proc.stderr.read()[-2000:])
+            )
+        if time.monotonic() >= deadline:
+            raise TimeoutError("nothing listening on %s:%d after %ss" % (host, port, timeout))
+        time.sleep(0.05)
 
 
-def wait_until(predicate, timeout=5, interval=0.05):
-    deadline = time.time() + timeout
-    last = None
-    while time.time() < deadline:
+def wait_until(predicate, timeout=DEADLINE_SECONDS, interval=0.05):
+    """Polls until predicate() is truthy. The predicate is always tried
+    again after the deadline has passed once, so a single slow attempt
+    never ends the wait before a second look."""
+    deadline = time.monotonic() + timeout
+    attempts = 0
+    while True:
         last = predicate()
+        attempts += 1
         if last:
             return last
+        if time.monotonic() >= deadline and attempts > 1:
+            raise AssertionError(
+                "condition not met within %ss (%d attempts, last=%r)" % (timeout, attempts, last)
+            )
         time.sleep(interval)
-    raise AssertionError("condition not met within %ss (last=%r)" % (timeout, last))
 
 
 def escalation_bead(bead_id, quoi, pourquoi, que_faire, horodatage, bloquant=False, project=None, extra_metadata=None):
@@ -100,18 +126,24 @@ class ActionsSeamTest(unittest.TestCase):
             if self.proc.poll() is None:
                 self.proc.terminate()
                 try:
+                    # Not a verdict: a cockpit slow to end is killed below.
                     self.proc.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     self.proc.kill()
-                    self.proc.wait(timeout=5)
+                    self.proc.wait(timeout=DEADLINE_SECONDS)
             self.proc.stdout.close()
             self.proc.stderr.close()
         self.fake_gc.stop()
         self.tmp.cleanup()
 
     def write_beads(self, beads):
-        with open(self.state_file, "w") as fh:
+        # Written aside then renamed: the cockpit polls fake-bd every 0.1 s
+        # while the test runs, and a plain open("w") leaves the file empty
+        # for an instant — fake-bd would read that as "no bead at all".
+        aside = self.state_file + ".new"
+        with open(aside, "w") as fh:
             json.dump(beads, fh)
+        os.replace(aside, self.state_file)
 
     def read_beads(self):
         with open(self.state_file) as fh:
@@ -150,13 +182,13 @@ class ActionsSeamTest(unittest.TestCase):
             text=True,
         )
         self.proc = proc
-        wait_for_port("127.0.0.1", self.port)
+        wait_for_port("127.0.0.1", self.port, proc=proc)
         self._capture_session_cookie()
         return proc
 
     def _capture_session_cookie(self):
         req = urllib.request.Request("http://127.0.0.1:%d/" % self.port)
-        with urllib.request.urlopen(req, timeout=3) as resp:
+        with urllib.request.urlopen(req, timeout=DEADLINE_SECONDS) as resp:
             resp.read()
             set_cookie = resp.headers.get("Set-Cookie", "")
         # "cockpit_session=<token>; Path=/; SameSite=Strict; HttpOnly"
@@ -164,12 +196,12 @@ class ActionsSeamTest(unittest.TestCase):
 
     def requests_payload(self):
         req = urllib.request.Request("http://127.0.0.1:%d/api/requests" % self.port)
-        with urllib.request.urlopen(req, timeout=3) as resp:
+        with urllib.request.urlopen(req, timeout=DEADLINE_SECONDS) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     def home_body(self):
         req = urllib.request.Request("http://127.0.0.1:%d/" % self.port)
-        with urllib.request.urlopen(req, timeout=3) as resp:
+        with urllib.request.urlopen(req, timeout=DEADLINE_SECONDS) as resp:
             return resp.read().decode("utf-8")
 
     def force_recheck(self):
@@ -182,13 +214,16 @@ class ActionsSeamTest(unittest.TestCase):
         req = urllib.request.Request(
             "http://127.0.0.1:%d/api/health/recheck" % self.port, method="POST"
         )
-        with urllib.request.urlopen(req, timeout=20) as resp:
+        with urllib.request.urlopen(req, timeout=DEADLINE_SECONDS) as resp:
             resp.read()
 
-    def wait_for_requests(self, predicate, timeout=5):
+    def wait_for_requests(self, predicate, timeout=DEADLINE_SECONDS):
         return wait_until(lambda: self._try(predicate), timeout=timeout)
 
     def _try(self, predicate):
+        # One forced re-read is not always enough: a background read begun
+        # before the state changed can finish after this one and put the
+        # older answer back until the next poll, hence the retries above.
         self.force_recheck()
         payload = self.requests_payload()
         return payload if predicate(payload) else None
@@ -216,7 +251,7 @@ class ActionsSeamTest(unittest.TestCase):
         else:
             req = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(req, timeout=3) as resp:
+            with urllib.request.urlopen(req, timeout=DEADLINE_SECONDS) as resp:
                 return resp.status, json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             payload = exc.read().decode("utf-8")
@@ -366,14 +401,14 @@ class ActionsSeamTest(unittest.TestCase):
         # deadline is moved to an instant already passed.
         status, _ = self.post_action("reporter", {"bead_id": "af-hhhh", "option": "libre", "custom_epoch": time.time() + 3600})
         self.assertEqual(200, status)
-        self.wait_for_requests(lambda p: len(p["requests"]) == 0, timeout=15)
+        self.wait_for_requests(lambda p: len(p["requests"]) == 0)
 
         beads = self.read_beads()
         bead = next(b for b in beads if b["id"] == "af-hhhh")
         self.assertIn("gc.cockpit_defer_until", bead["metadata"])
         bead["metadata"]["gc.cockpit_defer_until"] = "2026-09-30T08:00:01Z"
         self.write_beads(beads)
-        self.wait_for_requests(lambda p: len(p["requests"]) == 1, timeout=15)
+        self.wait_for_requests(lambda p: len(p["requests"]) == 1)
 
     def test_urgent_reported_stays_visible_greyed(self):
         self.write_beads([escalation_bead("af-iiii", "l'usine est muette", "rien ne répond", SOME_OPTIONS, "2026-09-30T08:00:00Z", bloquant=True)])
