@@ -206,6 +206,12 @@ After a patch, the tickets the revision does not carry keep their own text
 and get these sections again, so a ticket names the siblings added since,
 and an interface ticket the reference of a Spec amended and approved again.
 
+The test method of a ticket is the « Testing Decisions » its Spec wrote,
+posed under `## Seams`. Those of a Spec to come refer to
+`docs/TEST_GUIDELINE.md` (public interface, level, decor, durations) instead
+of restating it (Spec CI01, af-q9urgr §3). The door does not pose that
+reference itself: it copies what the Spec says.
+
 ## What a refusal looks like
 
 Everything is checked before any write, and every reason is listed at once,

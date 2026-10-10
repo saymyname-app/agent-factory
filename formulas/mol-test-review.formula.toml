@@ -72,8 +72,19 @@ that makes that criterion false?
   does not go through the named entry point.
 
 A test that proves several criteria is judged against each of them: one
-criterion it does not observe makes it `unfavorable`. Judge nothing else:
-not the style of the test, not the criterion itself, not the code to come.
+criterion it does not observe makes it `unfavorable`.
+
+Then ask the question of the double, from the test guideline
+(`"$FACTORY_ROOT/docs/TEST_GUIDELINE.md"`, points 2 and 6; read it, it is
+not restated here): is this criterion already proven at a lower level; if
+so, does this test prove anything other than the transmission? Look for the
+lower case in the tests of the repository at the commit of the brief. A
+test that only proves again what a lower case already proves is a double:
+answer `unfavorable`, and name that lower case in the reason. The author
+then removes the case, or writes what it proves that the lower one does not.
+
+Judge nothing else: not the style of the test, not the criterion itself,
+not the code to come.
 An `unfavorable` answer carries a `reason`, one line, in the Operator
 Language (`"$FACTORY_ROOT/bin/operator-config" language`), that quotes what
 the test asserts and says what the criterion asks. You give no overall

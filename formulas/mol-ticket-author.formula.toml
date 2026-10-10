@@ -165,8 +165,10 @@ Then close this step.
 **A `vertical_slice` or a `repair`:** call the `tdd` skill and write every
 criterion test of the ticket first, before any code of the product. Change
 only the test perimeter the profile declares (`launch.test_perimeter`), and
-write the criterion → test table (docs/TDD_STEP.md). Commit, then have the
-red proven:
+write the criterion → test table (docs/TDD_STEP.md). How a test is written
+(public interface, level, decor, durations) is the test guideline: read
+`"$FACTORY_ROOT/docs/TEST_GUIDELINE.md"` before the first test; it is not
+restated here. Commit, then have the red proven:
 
 ```bash
 "$FACTORY_ROOT/bin/tdd-step" red "$CONVOY" "$TICKET" --repo "$WORKTREE" --profile "$PROFILE" \\

@@ -16,6 +16,16 @@ fingerprints of the files the freeze seals, and `bin/tdd-step freeze` refuses
 without it. A refusal returns once to the author; a second one stops the
 ticket. A review that gives no result is not a passed one.
 
+How a test is written is not restated here: `docs/TEST_GUIDELINE.md` is the
+one document. The reviewer reads it and asks, of each criterion test, the
+question of its point 6 as well (Spec CI01, af-q9urgr §3): is this criterion
+already proven at a lower level; if so, does this case prove anything other
+than the transmission? A double is answered `unfavorable`, its reason naming
+the lower case that already proves it: the author removes the case, or
+writes what it proves that the lower one does not. The states, the verdict
+and the stop are unchanged; the question reaches the reviewer through the
+formula `mol-test-review`, not through the brief of `bin/test-review`.
+
 `bin/test-review` runs the review. Its state lives in the tracker, read and
 written through `bin/convoy-state` only. A convoy without the new-flow mark
 is not touched (exit 4).
@@ -172,6 +182,9 @@ code of the ticket is committed after.
 - The question is judged by an agent. Code bounds the answer (one per test,
   closed states, reason required, verdict computed, fingerprints bound); it
   does not check that a reason is true.
+- The question of the double is asked by the formula only: no code checks
+  that the reviewer looked at the lower level, and `record` cannot tell a
+  refusal for a double from another refusal.
 - `record` checks that it runs in a read-only role session
   (`DELIVERY_ROLE_READ_ONLY`, set by `bin/delivery-role-sandbox`), not which
   session it is.
