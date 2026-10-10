@@ -1,4 +1,17 @@
 #!/usr/bin/env python3
+"""bin/fixture-city-oracle on the scenarios of tests/fixtures/fixture-city: the
+planning run of the reference protocol, then the delivery of the tickets of
+a marked convoy, walked through the whole delivery flow by the reference
+delivery driver.
+
+The cases are in two files of about the same duration (Spec CI01,
+af-q9urgr: this file was the longest of the battery, and alone set the
+duration of a CI run): this one holds the harness (FixtureCityOracleHarness:
+the launches of the oracle and the drivers made to go wrong) and the cases
+of the planning run, of the delivery of one ticket on each project (T19,
+T35) and of the story repaired then Delivered (T26);
+tests/fixture-city-oracle-parked-answer-author-gates-test.py loads the
+harness from here and holds the others."""
 
 import json
 import subprocess
@@ -21,7 +34,9 @@ AUTHOR_GATES = ["tdd-step freeze", "tdd-step green", "tdd-step red", "test-revie
                 "ticket-author demonstrate", "ticket-author start", "ticket-exit exit"]
 
 
-class FixtureCityOracleTest(unittest.TestCase):
+class FixtureCityOracleHarness(unittest.TestCase):
+    """The launches of the oracle, for the cases of the two files: no case here."""
+
     def invoke(self, scenario, *, check=True):
         return subprocess.run(
             (
@@ -39,6 +54,163 @@ class FixtureCityOracleTest(unittest.TestCase):
             check=check,
         )
 
+    # --- the delivery of one ticket of a marked convoy (T19, af-iefuud) ---------
+
+    def deliver(self, scenario, *adapters):
+        return subprocess.run(
+            (str(ORACLE), "run", str(FIXTURES / scenario), *(adapters or ("--delivery-driver", str(DELIVERY_DRIVER)))),
+            cwd=ROOT, text=True, capture_output=True, check=False)
+
+    def assert_walked_through_the_gates_of_the_author(self, result, tickets):
+        """T37: the commands of the flow the oracle saw run during the walk
+        name each gate of the author's step, and each closed ticket had its
+        red, frozen, reviewed and finished states written by its gate."""
+        for gate in AUTHOR_GATES:
+            self.assertIn(gate, result["interfaces"]["flow"])
+        self.assertEqual(sorted(result["interfaces"]["flow"]), result["interfaces"]["flow"])
+        for direct in ("set-tdd", "record-test-review", "set-exit", "set-handoff"):
+            self.assertNotIn(f"convoy-state {direct}", result["interfaces"]["flow"])
+        self.assertEqual({"tickets": tickets, "commands": AUTHOR_GATES}, result["author_gates"])
+
+    # --- the walk of a scenario with what it expects changed (T26, af-vwcflt) ---
+
+    def deliver_expecting(self, scenario, **expect):
+        """The walk of `scenario` with what it expects changed."""
+        given = json.loads((FIXTURES / scenario).read_text())
+        with tempfile.TemporaryDirectory() as temporary:
+            changed = Path(temporary) / "scenario.json"
+            changed.write_text(json.dumps({**given, "expect": {**given["expect"], **expect}}))
+            return subprocess.run((str(ORACLE), "run", str(changed), "--delivery-driver", str(DELIVERY_DRIVER)),
+                                  cwd=ROOT, text=True, capture_output=True, check=False)
+
+    # --- the reference driver made to go wrong in one way (T30, af-vlzc6v) ---
+
+    FAULTY_DRIVER = '''#!/usr/bin/env python3
+"""The reference delivery driver, going wrong in one named way."""
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+REAL, FAULT = {real!r}, {fault!r}
+workspace, command, options = Path(sys.argv[2]), sys.argv[3], sys.argv[4:]
+
+
+def real(*arguments):
+    proc = subprocess.run((REAL, "--workspace", str(workspace), *arguments), text=True, capture_output=True)
+    if proc.returncode != 0:
+        raise SystemExit(proc.stderr or proc.stdout)
+    return json.loads(proc.stdout)
+
+
+def git(*arguments):
+    return subprocess.run(("git", "-C", str(workspace / "city"), *arguments), text=True, capture_output=True).stdout.strip()
+
+
+if command == "prepare" and FAULT == "nobody-answers":
+    options = [option for option in options if option not in ("--answer", "accepted", "abandoned")]
+answer = real(command, *options)
+if command == "advance" and FAULT == "answers-in-the-event-of-delivered":
+    # Everything up to the pass that follows the answer, as one event.
+    while not answer["idle"] and not answer["event"].startswith("owner:"):
+        answer = real("advance")
+    answer = real("advance")
+if command == "advance" and FAULT == "protected-branch-moved":
+    integration = git("for-each-ref", "--format=%(objectname)", "refs/heads/integration")
+    if integration and integration != git("rev-parse", "refs/heads/main"):
+        git("update-ref", "refs/heads/main", integration)
+print(json.dumps(answer))
+'''
+
+    def deliver_with_a_faulty_driver(self, scenario, fault):
+        """The walk of `scenario` by the reference driver made to go wrong in one way."""
+        with tempfile.TemporaryDirectory() as temporary:
+            driver = Path(temporary) / "delivery-driver"
+            driver.write_text(self.FAULTY_DRIVER.format(real=str(DELIVERY_DRIVER), fault=fault))
+            driver.chmod(0o755)
+            return self.deliver(scenario, "--delivery-driver", str(driver))
+
+    # --- a gate of the author's step replaced by a direct write (T37, af-fg8lhx) ---
+
+    DIRECT_WRITER_DRIVER = '''#!/usr/bin/env python3
+"""The reference delivery driver, with one gate of the author's step replaced
+by a direct write of its state through bin/convoy-state."""
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+REAL, FAULT, GATE = {real!r}, {fault!r}, {gate!r}
+workspace = Path(sys.argv[2])
+flow, doctored = Path(os.environ["FIXTURE_CITY_FLOW_BIN"]), workspace / "doctored-bin"
+if not doctored.is_dir():
+    doctored.mkdir()
+    for tool in flow.iterdir():
+        (doctored / tool.name).symlink_to(tool)
+    (doctored / GATE).rename(doctored / (GATE + ".real"))
+    (doctored / GATE).write_text({writer!r})
+    (doctored / GATE).chmod(0o755)
+raise SystemExit(subprocess.run((REAL, *sys.argv[1:]), env={{**os.environ, "FIXTURE_CITY_FLOW_BIN": str(doctored)}}).returncode)
+'''
+
+    DIRECT_WRITER = '''#!/usr/bin/env python3
+"""A gate of the author's step that writes its state itself."""
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+FAULT, STATE = {fault!r}, {state!r}
+name, arguments = Path(sys.argv[0]).name, sys.argv[1:]
+step = "tdd-step " + arguments[0] if name == "tdd-step" else name
+if step != {{"red": "tdd-step red", "freeze": "tdd-step freeze", "review": "test-review", "exit": "ticket-exit"}}[FAULT]:
+    real = sys.argv[0] + ".real"
+    os.execv(real, [real, *arguments])
+convoy, ticket = arguments[1:3]
+
+
+def option(flag):
+    return arguments[arguments.index(flag) + 1]
+
+
+def write(command, *more, **record):
+    with tempfile.TemporaryDirectory() as holder:
+        if record:
+            Path(holder, "record.json").write_text(json.dumps(record))
+            more = (*more, "--file", str(Path(holder, "record.json")))
+        subprocess.run((STATE, command, convoy, ticket, *more), check=True, stdout=subprocess.DEVNULL)
+
+
+head = subprocess.run(("git", "-C", option("--repo"), "rev-parse", "HEAD"), text=True, capture_output=True).stdout.strip()
+files, test = {{"tests/test_critere.py": "sha256:" + "ab" * 32}}, "tests/test_critere.py::Critere::test_observable"
+if FAULT == "red":
+    write("set-tdd", "--step", "red", "--commit", head, "--base", option("--base"))
+elif FAULT == "freeze":
+    write("set-tdd", "--step", "freeze", "--commit", head)
+elif FAULT == "review":
+    write("open-test-review", "--commit", head, files=files, criteria={{"1": [test]}})
+    write("record-test-review", commit=head, files=files, tests={{test: {{"state": "favorable"}}}}, recorded_by="relecteur-" + ticket)
+else:
+    write("set-exit", "--exit", "finished")
+print(json.dumps({{"ok": True}}))
+'''
+
+    def deliver_with_a_direct_writer(self, scenario, fault):
+        """The walk of `scenario` by the reference driver, where the state
+        `fault` names is written by bin/convoy-state and not by its gate."""
+        gate = {"red": "tdd-step", "freeze": "tdd-step", "review": "test-review", "exit": "ticket-exit"}[fault]
+        with tempfile.TemporaryDirectory() as temporary:
+            driver = Path(temporary) / "delivery-driver"
+            driver.write_text(self.DIRECT_WRITER_DRIVER.format(
+                real=str(DELIVERY_DRIVER), fault=fault, gate=gate,
+                writer=self.DIRECT_WRITER.format(fault=fault, state=str(ROOT / "bin" / "convoy-state"))))
+            driver.chmod(0o755)
+            return self.deliver(scenario, "--delivery-driver", str(driver))
+
+
+class FixtureCityOracleTest(FixtureCityOracleHarness):
     def test_single_rig_run_observes_the_public_lifecycle_deterministically(self):
         first = self.invoke("single-rig.json")
         second = self.invoke("single-rig.json")
@@ -265,22 +437,6 @@ class FixtureCityOracleTest(unittest.TestCase):
 
     # --- the delivery of one ticket of a marked convoy (T19, af-iefuud) ---------
 
-    def deliver(self, scenario, *adapters):
-        return subprocess.run(
-            (str(ORACLE), "run", str(FIXTURES / scenario), *(adapters or ("--delivery-driver", str(DELIVERY_DRIVER)))),
-            cwd=ROOT, text=True, capture_output=True, check=False)
-
-    def assert_walked_through_the_gates_of_the_author(self, result, tickets):
-        """T37: the commands of the flow the oracle saw run during the walk
-        name each gate of the author's step, and each closed ticket had its
-        red, frozen, reviewed and finished states written by its gate."""
-        for gate in AUTHOR_GATES:
-            self.assertIn(gate, result["interfaces"]["flow"])
-        self.assertEqual(sorted(result["interfaces"]["flow"]), result["interfaces"]["flow"])
-        for direct in ("set-tdd", "record-test-review", "set-exit", "set-handoff"):
-            self.assertNotIn(f"convoy-state {direct}", result["interfaces"]["flow"])
-        self.assertEqual({"tickets": tickets, "commands": AUTHOR_GATES}, result["author_gates"])
-
     def test_one_ticket_walks_the_whole_flow_and_is_closed_by_the_ticket_end_gate(self):
         proc = self.deliver("one-ticket-end-to-end.json")
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
@@ -372,54 +528,7 @@ class FixtureCityOracleTest(unittest.TestCase):
                 self.assertEqual("", proc.stdout)
                 self.assertIn(named, proc.stderr)
 
-    # --- a ticket out of resumes is parked, the others go on, one grouped request (T20, af-y9pw9z) ---
-
-    def test_a_ticket_that_fails_three_times_is_parked_with_its_descendant_while_the_other_goes_on_then_one_request(self):
-        proc = self.deliver("three-failures-parked.json")
-        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        result = json.loads(proc.stdout)
-        self.assert_walked_through_the_gates_of_the_author(result, tickets=1)
-
-        # The ticket that waits for no parked ticket walked the whole flow.
-        self.assertTrue(result["closed"])
-        self.assertEqual(DELIVERY_STATES, result["lifecycle"])
-        parking = result["parking"]
-        [sick] = [entry for entry in parking["parked"] if entry["origin"] == entry["id"]]
-        [behind] = [entry for entry in parking["parked"] if entry["origin"] != entry["id"]]
-        self.assertEqual(("resumes_exhausted", 3), (sick["cause"], sick["resumes"]))
-        self.assertEqual((sick["id"], "resumes_exhausted"), (behind["origin"], behind["cause"]))
-        # It went on after the parking, and was closed with the others still parked.
-        self.assertIn("coded", parking["reached_after"])
-        self.assertIn("closed", parking["reached_after"])
-        # No request while a ticket could still advance; then exactly one, which names every parked ticket.
-        self.assertEqual(0, parking["requests_before_only_parked_left"])
-        self.assertEqual(1, parking["requests"])
-        self.assertEqual(sorted([sick["id"], behind["id"]]), parking["named_by_the_request"])
-        self.assertIn("escalation-door list", result["interfaces"]["read"])
-        self.assertEqual(proc.stdout, self.deliver("three-failures-parked.json").stdout)
-
-    def test_a_delivery_scenario_that_expects_parked_tickets_without_a_closed_one_is_rejected(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            broken = Path(temporary) / "broken.json"
-            for expect in ({"closed": False, "missing": [1], "parked": 2}, {"closed": True, "parked": 0},
-                           {"closed": True, "parked": "deux"}):
-                broken.write_text(json.dumps({"contract": "agent-factory-fixture-delivery-scenario/v1",
-                                              "scenario_id": "broken", "expect": expect}))
-                proc = subprocess.run((str(ORACLE), "run", str(broken), "--delivery-driver", str(DELIVERY_DRIVER)),
-                                      cwd=ROOT, text=True, capture_output=True, check=False)
-                self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
-                self.assertIn("expect.parked", proc.stderr)
-
     # --- a story not observed at the end: one repair, the gate replayed, Delivered (T26, af-vwcflt) ---
-
-    def deliver_expecting(self, scenario, **expect):
-        """The walk of `scenario` with what it expects changed."""
-        given = json.loads((FIXTURES / scenario).read_text())
-        with tempfile.TemporaryDirectory() as temporary:
-            changed = Path(temporary) / "scenario.json"
-            changed.write_text(json.dumps({**given, "expect": {**given["expect"], **expect}}))
-            return subprocess.run((str(ORACLE), "run", str(changed), "--delivery-driver", str(DELIVERY_DRIVER)),
-                                  cwd=ROOT, text=True, capture_output=True, check=False)
 
     def test_a_story_not_observed_at_the_end_is_repaired_by_one_ticket_and_the_convoy_is_delivered_on_the_new_tip(self):
         proc = self.deliver("story-repaired-delivered.json")
@@ -517,283 +626,6 @@ class FixtureCityOracleTest(unittest.TestCase):
                 self.assertEqual(1, proc.returncode, expect)
                 self.assertIn(named, proc.stderr, expect)
 
-    # --- after Benjamin's answer: Delivered, then Accepted or abandoned (T30, af-vlzc6v) ---
-
-    FAULTY_DRIVER = '''#!/usr/bin/env python3
-"""The reference delivery driver, going wrong in one named way."""
-import json
-import subprocess
-import sys
-from pathlib import Path
-
-REAL, FAULT = {real!r}, {fault!r}
-workspace, command, options = Path(sys.argv[2]), sys.argv[3], sys.argv[4:]
-
-
-def real(*arguments):
-    proc = subprocess.run((REAL, "--workspace", str(workspace), *arguments), text=True, capture_output=True)
-    if proc.returncode != 0:
-        raise SystemExit(proc.stderr or proc.stdout)
-    return json.loads(proc.stdout)
-
-
-def git(*arguments):
-    return subprocess.run(("git", "-C", str(workspace / "city"), *arguments), text=True, capture_output=True).stdout.strip()
-
-
-if command == "prepare" and FAULT == "nobody-answers":
-    options = [option for option in options if option not in ("--answer", "accepted", "abandoned")]
-answer = real(command, *options)
-if command == "advance" and FAULT == "answers-in-the-event-of-delivered":
-    # Everything up to the pass that follows the answer, as one event.
-    while not answer["idle"] and not answer["event"].startswith("owner:"):
-        answer = real("advance")
-    answer = real("advance")
-if command == "advance" and FAULT == "protected-branch-moved":
-    integration = git("for-each-ref", "--format=%(objectname)", "refs/heads/integration")
-    if integration and integration != git("rev-parse", "refs/heads/main"):
-        git("update-ref", "refs/heads/main", integration)
-print(json.dumps(answer))
-'''
-
-    def deliver_with_a_faulty_driver(self, scenario, fault):
-        """The walk of `scenario` by the reference driver made to go wrong in one way."""
-        with tempfile.TemporaryDirectory() as temporary:
-            driver = Path(temporary) / "delivery-driver"
-            driver.write_text(self.FAULTY_DRIVER.format(real=str(DELIVERY_DRIVER), fault=fault))
-            driver.chmod(0o755)
-            return self.deliver(scenario, "--delivery-driver", str(driver))
-
-    def test_the_complete_scenario_is_observed_delivered_then_accepted_and_the_protected_branch_receives_one_merge(self):
-        proc = self.deliver("outcome-accepted.json")
-        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        result = json.loads(proc.stdout)
-        self.assert_walked_through_the_gates_of_the_author(result, tickets=2)
-
-        self.assertTrue(result["closed"])
-        self.assertEqual(DELIVERY_STATES, result["lifecycle"])
-        outcome = result["outcome"]
-        # Two states, observed one after the other on the public state.
-        self.assertEqual(("accepted", ["delivered", "accepted"]), (outcome["state"], outcome["states"]))
-        # While it was Delivered: the whole end-of-Spec gate at the tip, after the one repair, and the
-        # Acceptance Request with its dossier; the evidence of the walked ticket was read then.
-        self.assertEqual((1, None), (outcome["end_rounds"], outcome["end_stop"]))
-        [repair] = outcome["repairs"]
-        self.assertEqual(("repair", DELIVERY_STATES, True), (repair["kind"], repair["lifecycle"], repair["closed_by_the_gate"]))
-        self.assertEqual((True, True, []), (outcome["spec_end"]["at_the_tip"], outcome["spec_end"]["delivered"],
-                                            outcome["spec_end"]["missing"]))
-        self.assertEqual({"request": 1, "dossier_linked": True, "launched_at_dossier_commit": True, "stopped": True},
-                         outcome["acceptance"])
-        self.assertTrue(result["evidence"]["verified"])
-        # Before « accepté » was recorded the protected branch held no commit of the convoy; after it,
-        # one merge: its first parent is the tip it had, its second the tip of the integration branch.
-        self.assertEqual({"moved_before_the_answer": False, "convoy_commits_before_the_answer": 0, "merges": 1,
-                          "first_parent_is_the_previous_tip": True, "second_parent_is_the_integration_tip": True},
-                         outcome["protected_branch"])
-        self.assertEqual({"kept": True, "at_the_judged_commit": True}, outcome["integration_branch"])
-        # The convoy is closed on the words of its approver, and nothing is left on the operator's list.
-        closed = outcome["closed"]
-        self.assertEqual(("accepted", "benjamin"), (closed["how"], closed["approver"]))
-        self.assertTrue(closed["said"].strip())
-        self.assertEqual((1, 0), (outcome["requests"], outcome["requests_once_closed"]))
-        self.assertIn("git rev-list", result["interfaces"]["read"])
-        self.assertEqual(["prepare", "publish", "advance", "stop"], result["interfaces"]["driver"])
-        for hidden in ("prompt", "formula", "role", "session"):
-            self.assertNotIn(hidden, proc.stdout.lower().replace("acceptance-session", ""))
-        self.assertNotRegex(proc.stdout, r"(?<![0-9a-f])[0-9a-f]{40}(?![0-9a-f])|/tmp/|\d{4}-\d{2}-\d{2}T|127\.0\.0\.1")
-
-    def test_an_abandoned_convoy_is_closed_with_its_reason_and_the_protected_branch_does_not_move(self):
-        proc = self.deliver("outcome-abandoned.json")
-        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        outcome = json.loads(proc.stdout)["outcome"]
-        self.assert_walked_through_the_gates_of_the_author(json.loads(proc.stdout), tickets=1)
-
-        self.assertEqual(("abandoned", ["delivered", "abandoned"]), (outcome["state"], outcome["states"]))
-        closed = outcome["closed"]
-        self.assertEqual(("abandoned", "benjamin"), (closed["how"], closed["approver"]))
-        self.assertTrue(closed["said"].strip())
-        # Nothing is merged, and the integration branch stays where the Outcome was Delivered.
-        self.assertEqual({"moved_before_the_answer": False, "convoy_commits_before_the_answer": 0, "merges": 0,
-                          "unchanged": True}, outcome["protected_branch"])
-        self.assertEqual({"kept": True, "at_the_judged_commit": True}, outcome["integration_branch"])
-        self.assertEqual(0, outcome["requests_once_closed"])
-        self.assertNotRegex(proc.stdout, r"(?<![0-9a-f])[0-9a-f]{40}(?![0-9a-f])|/tmp/|\d{4}-\d{2}-\d{2}T|127\.0\.0\.1")
-
-    def test_a_convoy_closed_accepted_without_having_been_observed_delivered_first_fails_the_oracle(self):
-        proc = self.deliver_with_a_faulty_driver("outcome-accepted.json", "answers-in-the-event-of-delivered")
-
-        self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
-        self.assertEqual("", proc.stdout)
-        self.assertIn("without having been observed Delivered first", proc.stderr)
-
-    def test_a_protected_branch_that_moves_before_the_answer_is_recorded_fails_the_oracle(self):
-        proc = self.deliver_with_a_faulty_driver("outcome-accepted.json", "protected-branch-moved")
-
-        self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
-        self.assertEqual("", proc.stdout)
-        self.assertIn("the protected branch moved before « accepté » was recorded", proc.stderr)
-        self.assertIn("commit(s) of the convoy", proc.stderr)
-
-    def test_an_expected_answer_that_nobody_gives_fails_the_oracle(self):
-        proc = self.deliver_with_a_faulty_driver("outcome-abandoned.json", "nobody-answers")
-
-        self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
-        self.assertEqual("", proc.stdout)
-        self.assertIn("observed delivered", proc.stderr)
-        self.assertIn("expects delivered, then abandoned", proc.stderr)
-
-    def test_the_answer_of_the_owner_is_one_the_driver_plays_only_when_asked(self):
-        proc = subprocess.run((str(DELIVERY_DRIVER), "--workspace", "/nonexistent", "prepare", "--help"),
-                              text=True, capture_output=True, check=False)
-        self.assertIn("--answer {none,accepted,abandoned}", proc.stdout)
-
-    def test_the_injection_of_a_story_not_observed_is_one_the_oracle_and_its_driver_both_know(self):
-        proc = subprocess.run((str(DELIVERY_DRIVER), "--workspace", "/nonexistent", "prepare", "--help"),
-                              text=True, capture_output=True, check=False)
-        self.assertIn("story-not-observed", proc.stdout)
-        with tempfile.TemporaryDirectory() as temporary:
-            broken = Path(temporary) / "broken.json"
-            broken.write_text(json.dumps({"contract": "agent-factory-fixture-delivery-scenario/v1", "scenario_id": "broken",
-                                          "inject": {"delivery": "inconnue"}, "expect": {"closed": True}}))
-            proc = subprocess.run((str(ORACLE), "run", str(broken), "--delivery-driver", str(DELIVERY_DRIVER)),
-                                  cwd=ROOT, text=True, capture_output=True, check=False)
-            self.assertEqual(1, proc.returncode)
-            self.assertIn("story-not-observed", proc.stderr)
-            # The second project already serves the story the injection leaves unserved: the driver refuses it.
-            given = json.loads((FIXTURES / "story-repaired-delivered.json").read_text())
-            broken.write_text(json.dumps({**given, "project": "delivery-fixture-city-api"}))
-            proc = subprocess.run((str(ORACLE), "run", str(broken), "--delivery-driver", str(DELIVERY_DRIVER)),
-                                  cwd=ROOT, text=True, capture_output=True, check=False)
-        self.assertEqual(1, proc.returncode, proc.stdout)
-        self.assertIn("delivery-fixture-city only", proc.stderr)
-
-    def test_a_scenario_is_walked_only_with_the_adapters_of_its_contract(self):
-        planning = ("--operator", str(OPERATOR), "--publication-door", str(OPERATOR))
-        proc = self.deliver("one-ticket-end-to-end.json", *planning)
-        self.assertEqual(1, proc.returncode, proc.stdout)
-        self.assertIn("--delivery-driver", proc.stderr)
-        proc = self.deliver("single-rig.json")
-        self.assertEqual(1, proc.returncode, proc.stdout)
-        self.assertIn("--operator", proc.stderr)
-
-    def test_a_delivery_scenario_that_expects_a_closed_ticket_with_a_missing_condition_is_rejected(self):
-        scenario = FIXTURES / "one-ticket-end-to-end.json"
-        with tempfile.TemporaryDirectory() as tmp:
-            for expect in ({"closed": True, "missing": [1]}, {"closed": False}, {"closed": False, "missing": [10]}):
-                broken = Path(tmp) / "scenario.json"
-                broken.write_text(json.dumps({**json.loads(scenario.read_text()), "expect": expect}))
-                proc = subprocess.run((str(ORACLE), "run", str(broken), "--delivery-driver", str(DELIVERY_DRIVER)),
-                                      cwd=ROOT, text=True, capture_output=True, check=False)
-                self.assertEqual(1, proc.returncode, expect)
-                self.assertIn("expect", proc.stderr)
-
-    # --- the author's step goes through its real gates (T37, af-fg8lhx) ---
-
-    DIRECT_WRITER_DRIVER = '''#!/usr/bin/env python3
-"""The reference delivery driver, with one gate of the author's step replaced
-by a direct write of its state through bin/convoy-state."""
-import os
-import subprocess
-import sys
-from pathlib import Path
-
-REAL, FAULT, GATE = {real!r}, {fault!r}, {gate!r}
-workspace = Path(sys.argv[2])
-flow, doctored = Path(os.environ["FIXTURE_CITY_FLOW_BIN"]), workspace / "doctored-bin"
-if not doctored.is_dir():
-    doctored.mkdir()
-    for tool in flow.iterdir():
-        (doctored / tool.name).symlink_to(tool)
-    (doctored / GATE).rename(doctored / (GATE + ".real"))
-    (doctored / GATE).write_text({writer!r})
-    (doctored / GATE).chmod(0o755)
-raise SystemExit(subprocess.run((REAL, *sys.argv[1:]), env={{**os.environ, "FIXTURE_CITY_FLOW_BIN": str(doctored)}}).returncode)
-'''
-
-    DIRECT_WRITER = '''#!/usr/bin/env python3
-"""A gate of the author's step that writes its state itself."""
-import json
-import os
-import subprocess
-import sys
-import tempfile
-from pathlib import Path
-
-FAULT, STATE = {fault!r}, {state!r}
-name, arguments = Path(sys.argv[0]).name, sys.argv[1:]
-step = "tdd-step " + arguments[0] if name == "tdd-step" else name
-if step != {{"red": "tdd-step red", "freeze": "tdd-step freeze", "review": "test-review", "exit": "ticket-exit"}}[FAULT]:
-    real = sys.argv[0] + ".real"
-    os.execv(real, [real, *arguments])
-convoy, ticket = arguments[1:3]
-
-
-def option(flag):
-    return arguments[arguments.index(flag) + 1]
-
-
-def write(command, *more, **record):
-    with tempfile.TemporaryDirectory() as holder:
-        if record:
-            Path(holder, "record.json").write_text(json.dumps(record))
-            more = (*more, "--file", str(Path(holder, "record.json")))
-        subprocess.run((STATE, command, convoy, ticket, *more), check=True, stdout=subprocess.DEVNULL)
-
-
-head = subprocess.run(("git", "-C", option("--repo"), "rev-parse", "HEAD"), text=True, capture_output=True).stdout.strip()
-files, test = {{"tests/test_critere.py": "sha256:" + "ab" * 32}}, "tests/test_critere.py::Critere::test_observable"
-if FAULT == "red":
-    write("set-tdd", "--step", "red", "--commit", head, "--base", option("--base"))
-elif FAULT == "freeze":
-    write("set-tdd", "--step", "freeze", "--commit", head)
-elif FAULT == "review":
-    write("open-test-review", "--commit", head, files=files, criteria={{"1": [test]}})
-    write("record-test-review", commit=head, files=files, tests={{test: {{"state": "favorable"}}}}, recorded_by="relecteur-" + ticket)
-else:
-    write("set-exit", "--exit", "finished")
-print(json.dumps({{"ok": True}}))
-'''
-
-    def deliver_with_a_direct_writer(self, scenario, fault):
-        """The walk of `scenario` by the reference driver, where the state
-        `fault` names is written by bin/convoy-state and not by its gate."""
-        gate = {"red": "tdd-step", "freeze": "tdd-step", "review": "test-review", "exit": "ticket-exit"}[fault]
-        with tempfile.TemporaryDirectory() as temporary:
-            driver = Path(temporary) / "delivery-driver"
-            driver.write_text(self.DIRECT_WRITER_DRIVER.format(
-                real=str(DELIVERY_DRIVER), fault=fault, gate=gate,
-                writer=self.DIRECT_WRITER.format(fault=fault, state=str(ROOT / "bin" / "convoy-state"))))
-            driver.chmod(0o755)
-            return self.deliver(scenario, "--delivery-driver", str(driver))
-
-    def test_a_state_of_the_author_written_by_convoy_state_and_not_by_its_gate_fails_the_oracle(self):
-        for fault, state, gate in (("red", "« rouge »", "tdd-step red"), ("freeze", "« gel »", "tdd-step freeze"),
-                                   ("review", "« relecture des tests »", "test-review review"),
-                                   ("exit", "« terminé »", "ticket-exit exit")):
-            with self.subTest(fault=fault):
-                proc = self.deliver_with_a_direct_writer("one-ticket-end-to-end.json", fault)
-                self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
-                self.assertEqual("", proc.stdout)
-                self.assertIn(f"the state {state} of ticket fx-t1 was written outside its gate ({gate})", proc.stderr)
-
-    def test_the_commands_of_the_flow_are_the_ones_the_oracle_saw_run_not_the_ones_a_driver_declares(self):
-        # A driver that answers with a list of commands of its own changes nothing of the result.
-        with tempfile.TemporaryDirectory() as temporary:
-            driver = Path(temporary) / "delivery-driver"
-            driver.write_text(
-                "#!/usr/bin/env python3\nimport json, subprocess, sys\n"
-                f"proc = subprocess.run(({str(DELIVERY_DRIVER)!r}, *sys.argv[1:]), text=True, capture_output=True)\n"
-                "if proc.returncode != 0:\n    raise SystemExit(proc.stderr or proc.stdout)\n"
-                "print(json.dumps({**json.loads(proc.stdout), 'flow': ['tdd-step declared'], 'author_gates': 'declared'}))\n")
-            driver.chmod(0o755)
-            proc = self.deliver("one-ticket-missing-condition.json", "--delivery-driver", str(driver))
-        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        result = json.loads(proc.stdout)
-        self.assertNotIn("declared", proc.stdout)
-        # The ticket went through every gate of the author, and is not closed: none is counted.
-        for gate in AUTHOR_GATES:
-            self.assertIn(gate, result["interfaces"]["flow"])
-        self.assertEqual({"tickets": 0, "commands": AUTHOR_GATES}, result["author_gates"])
 
 if __name__ == "__main__":
     unittest.main()
