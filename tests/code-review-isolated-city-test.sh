@@ -192,6 +192,8 @@ while true; do
       fi
       jq --argjson findings "\$FINDINGS" '{commit, findings: \$findings, answers: (.questions | map({key: .id, value: {answer: "oui"}}) | from_entries)}' "\$BRIEF" > "\$RESULT"
     fi
+    # A review the trial holds is handed once the trial releases it.
+    while [ -e "$TRIAL/hold.\$TICKET" ]; do sleep 2; done
     "\$BIN/code-review" record "\$CONVOY" "\$TICKET" --file "\$RESULT" >> "\$LOG" 2>&1 || OUTCOME=fail
     say "ticket \$TICKET : \$KIND remis (\$REVIEW_BEAD, \$OUTCOME)"
   fi
@@ -300,6 +302,7 @@ B=$(new_ticket "ticket B, constat de goût")
 C=$(new_ticket "ticket C, revue sans sortie")
 ALL=("$A" "$B" "$C")
 echo cites > "$TRIAL/reviewer.$A"; echo taste > "$TRIAL/reviewer.$B"; echo mute > "$TRIAL/reviewer.$C"
+: > "$TRIAL/hold.$B"
 for t in "${ALL[@]}"; do
   gc bd dep add "$CONVOY" "$t" --type tracks >/dev/null
   gc bd update "$t" --set-metadata gc.ticket_kind=vertical_slice >/dev/null
@@ -419,6 +422,27 @@ on_integration "$TIP_A" && fail "the tip of A reached the integration branch"
 waiting=$(tail -1 "$TRIAL/passes.jsonl" | jq -r --arg a "$A" '[.convoys[].integration.waiting[]? | select(.id == $a) | .reason] | .[0] // empty')
 echo "$(date -u +%H:%M:%S) A : revue par la session $reviewer_a (auteur trial-author-$A) ; Blocking Finding F1.1 qui cite « $SPEC_LINE » ; mention « même modèle » inscrite (modele-relecteur) ; fusion refusée par la passe : ${waiting:-ticket absent de la fusion}"
 
+# --- C: reviewer without verdict -> one relaunch, then stopped, never merged -------
+# Before anything is merged: no reviewer is sent on a branch behind the
+# integration tip (T44), so a relaunch of C after the merge of B would be
+# refused and C handed back to its author instead of stopped. The review of B
+# is held until C is stopped.
+c_stopped() { [ "$(field "$C" gc.flow.stop | jq -r '.reason // empty' 2>/dev/null)" = code_review_no_result ]; }
+wait_for 900 c_stopped || { dump; fail "C was not stopped after two reviews without result within 900s"; }
+# One review bead per launch: a session started again on a bead it already
+# closed (seen with these stubs on gc 1.4.1) is not a launch.
+launches_c=$(grep "^$C " "$TRIAL/review-sessions" | cut -d' ' -f2 | sort -u | wc -l | tr -d ' ')
+[ "$launches_c" = 2 ] || fail "the review of C was launched $launches_c times, not twice"
+c_raised() { [ "$(on_list "$C")" = 1 ]; }
+wait_for 120 c_raised || { dump; fail "the stop of C is not exactly once on the operator's list: $(operator_list)"; }
+[ "$(review_of "$C" | jq -c '.rounds')" = '[]' ] || fail "C carries a verdict nobody gave"
+sleep 60
+merged "$C" && fail "C was merged although its review gave no verdict"
+on_integration "$TIP_C" && fail "the tip of C reached the integration branch"
+[ "$(on_list "$C")" = 1 ] || fail "C is not exactly once on the operator's list after later passes"
+echo "$(date -u +%H:%M:%S) C : deux sessions de relecteur terminées sans verdict (une relance), ticket arrêté (code_review_no_result), jamais fusionné ; une seule ligne sur la liste : $(operator_list | grep "^  $C — " | head -1)"
+rm -f "$TRIAL/hold.$B"
+
 # --- B: a finding of taste is recorded without blocking; the ticket is merged ------
 wait_for 600 merged "$B" || { dump; fail "B was not merged within 600s"; }
 second=$(review_of "$B" | jq -c '.rounds[0]')
@@ -445,22 +469,6 @@ judge_a=$(printf '%s' "$judgement" | jq -r '.recorded_by')
 [ "$judge_a" != "$reviewer_a" ] || fail "the judgement of A was given by the session that reviewed it: $judge_a"
 on_integration "$FIX_A" || fail "the corrected tip of A is not on the integration branch"
 echo "$(date -u +%H:%M:%S) A : F1.1 « corrigé » au commit $FIX_A, jugé favorablement par une seconde session ($judge_a ≠ $reviewer_a) ; ticket fusionné"
-
-# --- C: reviewer without verdict -> one relaunch, then stopped, never merged -------
-c_stopped() { [ "$(field "$C" gc.flow.stop | jq -r '.reason // empty' 2>/dev/null)" = code_review_no_result ]; }
-wait_for 900 c_stopped || { dump; fail "C was not stopped after two reviews without result within 900s"; }
-# One review bead per launch: a session started again on a bead it already
-# closed (seen with these stubs on gc 1.4.1) is not a launch.
-launches_c=$(grep "^$C " "$TRIAL/review-sessions" | cut -d' ' -f2 | sort -u | wc -l | tr -d ' ')
-[ "$launches_c" = 2 ] || fail "the review of C was launched $launches_c times, not twice"
-c_raised() { [ "$(on_list "$C")" = 1 ]; }
-wait_for 120 c_raised || { dump; fail "the stop of C is not exactly once on the operator's list: $(operator_list)"; }
-[ "$(review_of "$C" | jq -c '.rounds')" = '[]' ] || fail "C carries a verdict nobody gave"
-sleep 60
-merged "$C" && fail "C was merged although its review gave no verdict"
-on_integration "$TIP_C" && fail "the tip of C reached the integration branch"
-[ "$(on_list "$C")" = 1 ] || fail "C is not exactly once on the operator's list after later passes"
-echo "$(date -u +%H:%M:%S) C : deux sessions de relecteur terminées sans verdict (une relance), ticket arrêté (code_review_no_result), jamais fusionné ; une seule ligne sur la liste : $(operator_list | grep "^  $C — " | head -1)"
 
 gc session list --state all --json | jq -e '[.sessions[] | select(.template | test("mayor"))] | length == 0' >/dev/null \
   || fail "a Mayor session exists in the trial city"
