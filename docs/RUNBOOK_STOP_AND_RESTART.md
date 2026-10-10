@@ -141,7 +141,15 @@ Dans cet ordre :
 gc supervisor start
 gc resume            # la cité était suspendue
 gc start             # ré-enregistre et adopte les sessions
+./bin/cockpit start  # processus séparé de gc : aucune commande ci-dessus ne le relance
 ```
+
+**Le Cockpit ne revient pas tout seul** (2026-10-09 : après la fenêtre
+planifiée de 17:36 à 17:55, heure de Paris, il est resté arrêté jusqu'à ce
+que Benjamin le remarque). C'est un processus séparé de `gc` : `wsl
+--shutdown` le coupe, et ni le superviseur ni `gc start` ne le relancent.
+`./bin/cockpit start` est idempotent, sans effet si une instance tourne déjà ;
+`factory-boot` le fait à son étape « 2b. Cockpit ».
 
 **Après un redémarrage non planifié** (reboot Windows, coupure) : ces mêmes
 étapes sont rejouées, de façon idempotente, par `./bin/factory-boot`, que la
@@ -185,6 +193,7 @@ Un redémarrage n'est pas un succès tant que ceci n'est pas vérifié.
 ./bin/factory-resources     # doit montrer le plafond CPU déclaré
 ./bin/factory-guard         # doit finir par « healthy »
 gc doctor 2>&1 | tail -1    # comparer au chiffre de la §1 et expliquer chaque écart
+./bin/cockpit status        # doit répondre « cockpit: running (pid …) »
 ```
 
 Puis recomptez les beads exactement comme en §1 et comparez **store par store**.
