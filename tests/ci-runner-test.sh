@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# ci: every-run — it reads docs/DELIVERY.md to hold what an agent runs before a pull request: a change to that document alone must run it
 #
 # af-r1ymfm: Factory CI on the host's own runner (docs/OPERATIONS.md, "Factory
 # CI on the host's own runner"; docs/SECURITY.md, same title). What is held
