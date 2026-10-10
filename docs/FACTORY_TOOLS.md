@@ -1807,8 +1807,10 @@ que tu réponds. Toi seul réponds : `--approved-by` doit être le
 - **Rien ne rouvre** un Outcome accepté ou abandonné : un défaut ou un
   souhait trouvé après entre comme travail nouveau, par un Planning Run.
 - **`resolve-exception`** : tu dis que la Planning Exception du lot est
-  résolue (Spec amendée et graphe révisé, ou souhait abandonné) ; d'ici là
-  la fin de Spec attend.
+  résolue, une fois la Spec amendée approuvée (`bin/spec-approve`, qui
+  approuve de nouveau une Spec dont le texte a changé) et le graphe révisé
+  publié (`bin/ticket-graph-publish bd-patch`) ; sinon refus, qui dit
+  l'étape qui manque ; d'ici là la fin de Spec attend.
 - **Cockpit** : sur un convoi du nouveau flux, le bouton « Accepter » est
   refusé et renvoie ici ; l'étape « Accepté » se lit dans ta réponse
   enregistrée.

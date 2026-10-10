@@ -169,10 +169,11 @@ class AmendedSpecResolvesTheBatchException(walks.FixtureCityWalk):
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
 
     def hand_in_the_revised_draft(self):
-        """What the Planning Run leaves after the amendment: the published
-        graph plus the slice of the new user story, approved by Benjamin."""
+        """What the Planning Run leaves after the amendment: the slice of
+        the new user story, approved by Benjamin -- a patch does not take up
+        the delivered tickets again."""
         draft = yaml.safe_load(self.bead(DRAFT)["description"])
-        draft["tickets"].append(NEW_TICKET)
+        draft["tickets"] = [NEW_TICKET]
         text = yaml.safe_dump(draft, allow_unicode=True, sort_keys=False)
         state = json.loads(self.tracker.read_text(encoding="utf-8"))
         state["beads"][REVISED_DRAFT] = {

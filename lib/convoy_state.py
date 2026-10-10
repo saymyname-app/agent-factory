@@ -5674,7 +5674,8 @@ def cmd_resolve_owner_exception(args: argparse.Namespace) -> int:
     and its graph revised (Spec §11): refused while the convoy is still
     published from the approved Spec it was raised against (T40) -- the
     patch door writes the digest of the newly approved Spec on the convoy.
-    Until then the Outcome is not Delivered again."""
+    The refusal names the step that is missing, read on the Spec bead
+    (T52). Until then the Outcome is not Delivered again."""
     convoy, _ = load_convoy(args.convoy)
     require_marked(convoy)
     metadata = metadata_of(convoy)

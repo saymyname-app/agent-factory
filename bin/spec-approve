@@ -25,7 +25,8 @@ remote repository, and a Validated Prototype that
 included (T46, af-lb9zkz): a branch that is not a `prototype/` branch, or a
 commit reachable from the project's protected branch on the remote. A Spec with no
 interface story is approved without a reference; an already approved Spec
-is never re-examined.
+is never re-examined, unless its text changed since: an amended Spec is
+approved again by `bd-approve`, held to the same checks (T52, af-ezqgma).
 
 `outline` reads a Spec text on stdin and prints, with that same reader, what
 the publication door poses in each ticket (T06, af-cgauf8): the numbered
