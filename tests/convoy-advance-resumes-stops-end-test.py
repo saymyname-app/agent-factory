@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ci: over-ceiling — second half of tests/convoy-advance-test.py, itself above the ceiling when it was set (CI01, af-q9urgr); what is left is the passes each case verifies
 """bin/convoy-advance on a fake tracker state, the second half of the cases
 (Spec CI01, af-q9urgr: tests/convoy-advance-test.py was the longest file of
 the battery, cut in two files of about the same duration).
