@@ -26,6 +26,11 @@
 # pass raises to the operator: its Spec and its Draft stay open with it. If
 # the state command cannot answer, nothing is closed and the run fails.
 #
+# The order runs on every bead close under a 60 s timeout, and one tracker
+# call costs seconds on a busy host: every artifact/spec id of the run is
+# resolved in ONE `bd show`, never one call per id (af-nybppo: two calls per
+# closed convoy outran the timeout once five convoys had closed).
+#
 # Usage: planning-artifacts-close [--check-only]
 set -uo pipefail
 
@@ -38,7 +43,7 @@ CHECK_ONLY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --check-only) CHECK_ONLY=1 ;;
-    -h|--help) sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "$PROGRAM_NAME: unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -56,24 +61,30 @@ CLOSED=0
 SKIPPED=0
 FAILED=0
 
+# id -> status of every artifact/spec id that resolves to a bead, filled by
+# one tracker call (resolve_all).
+declare -A BEAD_STATUS=()
+
+resolve_all() {  # id...
+  [ $# -gt 0 ] || return 0
+  local show_json id status
+  # Ids that resolve come back as one array; the others are only missing
+  # from it (none at all: an error object, exit 1).
+  show_json=$(cd "$ROOT" && "$GC_BIN" bd show "$@" --json 2>/dev/null)
+  while IFS=$'\t' read -r id status; do
+    [ -n "$id" ] && BEAD_STATUS[$id]=$status
+  done < <(jq -r 'if type == "array" then .[] | select(type == "object" and (.id | type) == "string") | [.id, (.status // "")] | @tsv else empty end' <<<"$show_json" 2>/dev/null)
+}
+
 resolve_and_close() {  # id convoy_id convoy_title
   local id=$1 convoy_id=$2 convoy_title=$3
   [ -n "$id" ] || return 0
 
-  local show_json
-  show_json=$(cd "$ROOT" && "$GC_BIN" bd show "$id" --json 2>/dev/null)
-  if ! jq -e . >/dev/null 2>&1 <<<"$show_json"; then
+  if [ -z "${BEAD_STATUS[$id]+set}" ]; then
     say "  · $id does not resolve to a bead (file-draft artifact/spec id) -- left untouched"
     return 0
   fi
-
-  local resolved_id status
-  resolved_id=$(jq -r '(if type=="array" then .[0] else . end).id // empty' <<<"$show_json")
-  status=$(jq -r '(if type=="array" then .[0] else . end).status // empty' <<<"$show_json")
-  if [ "$resolved_id" != "$id" ]; then
-    say "  · $id does not resolve to a bead (file-draft artifact/spec id) -- left untouched"
-    return 0
-  fi
+  local status=${BEAD_STATUS[$id]}
 
   if [ "$status" = "closed" ]; then
     SKIPPED=$((SKIPPED + 1))
@@ -87,6 +98,7 @@ resolve_and_close() {  # id convoy_id convoy_title
 
   if (cd "$ROOT" && "$GC_BIN" bd close "$id" --reason "Convoy $convoy_id ($convoy_title) closed" >/dev/null 2>&1); then
     CLOSED=$((CLOSED + 1))
+    BEAD_STATUS[$id]=closed
     say "  closed $id -- convoy $convoy_id ($convoy_title) closed"
   else
     FAILED=$((FAILED + 1))
@@ -107,6 +119,19 @@ closed_outside=$(cd "$ROOT" && GC_BIN="$GC_BIN" "$CONVOY_STATE_BIN" list 2>/dev/
 rows=$(jq -r '
   .[] | [.id, .title, (.metadata["gc.artifact_id"] // ""), (.metadata["gc.spec_id"] // "")] | @tsv
 ' <<<"$convoys")
+
+# Only the ids this run may close are looked up. An id that begins with a
+# dash would be read as an option of the one call, so it is left out: it
+# names no bead.
+lookup_ids=()
+while IFS=$'\t' read -r convoy_id convoy_title artifact_id spec_id; do
+  [ -z "$convoy_id" ] && continue
+  grep -qxF -- "$convoy_id" <<<"$closed_outside" && continue
+  for id in "$artifact_id" "$spec_id"; do
+    case "$id" in ''|-*) ;; *) lookup_ids+=("$id") ;; esac
+  done
+done <<<"$rows"
+resolve_all "${lookup_ids[@]+"${lookup_ids[@]}"}"
 
 while IFS=$'\t' read -r convoy_id convoy_title artifact_id spec_id; do
   [ -z "$convoy_id" ] && continue
