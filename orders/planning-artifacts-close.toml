@@ -11,6 +11,10 @@
 # T22 (af-kn83no): a marked convoy closed outside the acceptance or abandon
 # command keeps its Spec and its Draft open (bin/convoy-state list,
 # `closed_outside`); bin/convoy-advance raises it to the operator.
+# af-nybppo: this fires on every bead close, and a tracker call costs seconds
+# on a busy host. The command makes a fixed number of them however many
+# convoys have closed (one `bd show` for all the ids); the timeout holds only
+# as long as that does (tests/planning-artifacts-close-test.sh, case 6).
 [order]
 description = "Closes the Spec bead and Ticket Graph Draft bead a convoy was published from, with a reason naming the convoy, once that convoy closes (W06, A6b)."
 trigger = "event"

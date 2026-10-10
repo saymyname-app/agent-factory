@@ -29,6 +29,11 @@ For the manual lifecycle of a marked convoy (T22, af-kn83no), observed on gc
 adds NAME to the bead's `labels` (null while it has none), in the same write
 as its `--set-metadata`.
 
+For bin/planning-artifacts-close (af-nybppo), observed on the live tracker
+(2026-10-10): `bd show <id> <id>... --json` returns one list of the ids that
+resolve, the others only missing from it, and exits 0; when none resolves it
+prints `{"error": "no issues found matching the provided IDs"}` and exits 1.
+
 For bin/convoy-advance (T04, af-gfyj6k), observed on gc 1.4.1 in an isolated
 city (2026-10-06): a leading `--city DIR` is accepted; `bd list --json`
 filters by `--type`, `--status`, `--has-metadata-key` and `--metadata-field`;
@@ -90,10 +95,8 @@ def view(bead_id, bead):
     }
 
 
-def show(beads, bead_id):
-    bead = beads.get(bead_id)
-    if bead is None:
-        fail(f"issue not found: {bead_id}")
+def shown(beads, bead_id):
+    bead = beads[bead_id]
     out = view(bead_id, bead)
     dependencies = []
     for kind in ("tracks", "blocks"):
@@ -101,7 +104,22 @@ def show(beads, bead_id):
             dependencies.append({**view(dep_id, beads[dep_id]), "dependency_type": kind})
     if dependencies:
         out["dependencies"] = dependencies
-    print(json.dumps([out]))
+    return out
+
+
+def show(beads, bead_id):
+    if bead_id not in beads:
+        fail(f"issue not found: {bead_id}")
+    print(json.dumps([shown(beads, bead_id)]))
+
+
+def show_many(beads, bead_ids):
+    found = [shown(beads, bead_id) for bead_id in bead_ids if bead_id in beads]
+    if not found:
+        print(json.dumps({"error": "no issues found matching the provided IDs", "schema_version": 1}))
+        return 1
+    print(json.dumps(found))
+    return 0
 
 
 def update(state, bead_id, rest):
@@ -256,6 +274,8 @@ def main(args):
         state = read_state()
         show(state["beads"], args[2])
         return 0
+    if args[:2] == ["bd", "show"] and len(args) > 4 and args[-1] == "--json":
+        return show_many(read_state()["beads"], args[2:-1])
     if args[:1] == ["mail"]:
         mail(args[1:])
         return 0

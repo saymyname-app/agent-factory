@@ -21,11 +21,13 @@ fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 export CONVOYS_FILE="$TMP/closed_convoys.json"; echo '[]' > "$CONVOYS_FILE"
 export SHOW_FILE="$TMP/show_beads.json"; echo '{}' > "$SHOW_FILE"
 export CLOSE_LOG="$TMP/closes.log"; : > "$CLOSE_LOG"
+export SHOW_LOG="$TMP/shows.log"; : > "$SHOW_LOG"
 mkdir -p "$TMP/bin"
 
 # --- stub gc: serves `bd list --type convoy --status closed`/`bd show` from
-# the fixture files, records `bd close` calls and reflects them into
-# SHOW_FILE so a second run of the tool sees the target already closed -----
+# the fixture files, records `bd show` and `bd close` calls and reflects the
+# closes into SHOW_FILE so a second run of the tool sees the target already
+# closed -----------------------------------------------------------------
 cat > "$TMP/bin/gc" <<'STUB'
 #!/usr/bin/env bash
 set -Eeuo pipefail
@@ -37,8 +39,19 @@ if [[ ${1:-} == bd && ${2:-} == list ]]; then
   exit 0
 fi
 if [[ ${1:-} == bd && ${2:-} == show ]]; then
-  id=$3
-  jq -e --arg id "$id" '.[$id] // empty' "$SHOW_FILE" || echo '{}'
+  # As bd does with several ids: the ones that resolve come back as one
+  # array, the others are only missing from it; none at all is an error
+  # object and exit 1.
+  shift 2
+  ids=()
+  for arg in "$@"; do [[ $arg == --* ]] || ids+=("$arg"); done
+  printf '%s\n' "${ids[*]}" >> "$SHOW_LOG"
+  found=$(jq -c '[$ARGS.positional[] as $id | .[$id] // empty]' "$SHOW_FILE" --args "${ids[@]}")
+  if [ "$found" = "[]" ]; then
+    echo '{"error": "no issues found matching the provided IDs", "schema_version": 1}'
+    exit 1
+  fi
+  printf '%s\n' "$found"
   exit 0
 fi
 if [[ ${1:-} == bd && ${2:-} == close ]]; then
@@ -222,4 +235,51 @@ out=$(CONVOY_STATE_BIN="$TMP/bin/broken-convoy-state" run_tool) || rc=$?
 [ -s "$CLOSE_LOG" ] && fail "something was closed although the marked convoys could not be told apart"
 [ "$(bead_status zz-fixture-spec-5)" = "open" ] || fail "a Spec was closed although the marked convoys could not be told apart"
 
-echo "PASS: planning-artifacts-close (open convoy untouched, bead-mode closes idempotently, claimed Spec closes, file-draft mode untouched without error, marked convoy closed outside its commands keeps its Spec and Draft, unreadable state closes nothing)"
+# =============================================================================
+# 6. The order runs on every bead close under a 60 s timeout (af-nybppo):
+#    however many convoys have closed, their artifact/spec ids are resolved
+#    in one tracker call -- bead-mode and file-draft convoys together, the
+#    ids of a marked convoy closed outside its commands left out. A Spec two
+#    convoys share is closed once.
+# =============================================================================
+
+jq -n '{
+  "zz-fixture-spec-6a": {"id": "zz-fixture-spec-6a", "status": "open"},
+  "zz-fixture-draft-6a": {"id": "zz-fixture-draft-6a", "status": "open"},
+  "zz-fixture-draft-6b": {"id": "zz-fixture-draft-6b", "status": "closed"},
+  "zz-fixture-spec-6m": {"id": "zz-fixture-spec-6m", "status": "open"},
+  "zz-fixture-draft-6m": {"id": "zz-fixture-draft-6m", "status": "open"}
+}' > "$SHOW_FILE"
+jq -n '[{
+  "id": "zz-fixture-convoy-6a", "title": "Fixture Convoy Six A", "status": "closed", "issue_type": "convoy",
+  "metadata": {"gc.artifact_id": "zz-fixture-draft-6a", "gc.spec_id": "zz-fixture-spec-6a"}
+}, {
+  "id": "zz-fixture-convoy-6b", "title": "Fixture Convoy Six B", "status": "closed", "issue_type": "convoy",
+  "metadata": {"gc.artifact_id": "zz-fixture-draft-6b", "gc.spec_id": "zz-fixture-spec-6a"}
+}, {
+  "id": "zz-fixture-convoy-6f", "title": "Fixture Convoy Six (file draft)", "status": "closed", "issue_type": "convoy",
+  "metadata": {"gc.artifact_id": "ticket-graph-draft-zz-fixture-6", "gc.spec_id": "spec-zz-fixture-6"}
+}, {
+  "id": "zz-fixture-convoy-6m", "title": "Fixture Convoy Six Marked", "status": "closed", "issue_type": "convoy",
+  "close_reason": "convoy autoclose: all children closed",
+  "metadata": {"gc.flow.mark": "new-flow/v1",
+               "gc.artifact_id": "zz-fixture-draft-6m", "gc.spec_id": "zz-fixture-spec-6m"}
+}]' > "$CONVOYS_FILE"
+: > "$CLOSE_LOG"
+: > "$SHOW_LOG"
+
+rc=0
+out=$(run_tool) || rc=$?
+[ "$rc" -eq 0 ] || { echo "$out" >&2; fail "a run over several closed convoys failed"; }
+[ "$(wc -l < "$SHOW_LOG")" -eq 1 ] || { cat "$SHOW_LOG" >&2; fail "expected one bd show for the whole run, not one per artifact/spec id"; }
+grep -q "zz-fixture-draft-6a" "$SHOW_LOG" && grep -q "ticket-graph-draft-zz-fixture-6" "$SHOW_LOG" \
+  || { cat "$SHOW_LOG" >&2; fail "the one bd show does not carry the ids of every closed convoy"; }
+grep -q "6m" "$SHOW_LOG" && { cat "$SHOW_LOG" >&2; fail "the ids of a marked convoy closed outside its commands were looked up"; }
+grep -q "closed=2 skipped=2 failed=0" <<<"$out" || { echo "$out" >&2; fail "expected the open Draft and the shared Spec to close once, the closed Draft and the second sight of the Spec to be skipped"; }
+[ "$(close_count zz-fixture-spec-6a)" = "1" ] || fail "a Spec two closed convoys share was not closed exactly once"
+[ "$(close_count zz-fixture-draft-6a)" = "1" ] || fail "expected exactly one close call for the open Draft"
+[ "$(close_count zz-fixture-draft-6b)" = "0" ] || fail "re-closed an already-closed Draft"
+[ "$(grep -c "does not resolve to a bead" <<<"$out")" = "2" ] || { echo "$out" >&2; fail "the file-draft ids were not left untouched beside the resolved ones"; }
+[ "$(bead_status zz-fixture-spec-6m)" = "open" ] || fail "the Spec of a marked convoy closed outside acceptance or abandon was closed"
+
+echo "PASS: planning-artifacts-close (open convoy untouched, bead-mode closes idempotently, claimed Spec closes, file-draft mode untouched without error, marked convoy closed outside its commands keeps its Spec and Draft, unreadable state closes nothing, one bd show per run)"
