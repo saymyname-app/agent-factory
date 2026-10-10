@@ -110,10 +110,14 @@ def staged(helper):
     clock. One stage per starting point, per helper, per arguments and per
     environment of the commands. A test that did anything in its directory
     since the stage it stands on gets the helper walked for real, there and
-    until its end: a restore would wipe what the test did."""
+    until its end: a restore would wipe what the test did.
+
+    A stage is decor: the command a test is about runs in that test. Such a
+    test calls the helper with `real=True`: the helper is walked for real,
+    and so is everything after it in that test."""
     @functools.wraps(helper)
-    def reached(self, *args, **kwargs):
-        if self.at is None or self.footprint() != self.at_footprint:
+    def reached(self, *args, real=False, **kwargs):
+        if real or self.at is None or self.footprint() != self.at_footprint:
             self.at = None
             return helper(self, *args, **kwargs)
         asked = json.dumps([args, kwargs, sorted(self.env.items())], sort_keys=True, ensure_ascii=False, default=str)
@@ -408,7 +412,7 @@ class TicketAuthorTest(unittest.TestCase):
     # --- start: a fresh session, a work tree, a branch from the integration branch
 
     def test_start_gives_the_ticket_its_work_tree_on_a_branch_left_from_the_integration_branch(self):
-        answer, worktree = self.start()
+        answer, worktree = self.start(real=True)
 
         self.assertEqual(self.worktrees / T1, worktree)
         self.assertEqual(f"ticket/{T1}", self.git("symbolic-ref", "--short", "HEAD", repo=worktree))
@@ -431,14 +435,14 @@ class TicketAuthorTest(unittest.TestCase):
         failover.chmod(0o755)
         self.env["DELIVERY_ROLE_PROVIDER_FAILOVER_BIN"] = str(failover)
 
-        self.start()
+        self.start(real=True)
 
         author = self.shown()["models"]["author"]
         self.assertEqual(("delivery-author", "p-author", "claude-opus-5-5"),
                          (author["agent"], author["provider"], author["model"]))
 
     def test_start_without_a_readable_author_model_records_none(self):
-        self.start()
+        self.start(real=True)
 
         self.assertIsNone(self.shown()["models"])
 
@@ -459,7 +463,7 @@ class TicketAuthorTest(unittest.TestCase):
         self.refused("start", CONVOY, T1, session=SESSION, mention="porte de dispatch")
 
     def test_start_again_by_the_same_session_changes_nothing(self):
-        first, _ = self.start()
+        first, _ = self.start(real=True)
         before = (self.tracker.read_bytes(), self.repo_state())
 
         again, _ = self.start()
@@ -540,7 +544,7 @@ class TicketAuthorTest(unittest.TestCase):
         head = self.code_step(worktree)
         self.gate_refused("demonstration", mention="preuve de démonstration")
 
-        proof = self.demonstrate(worktree)
+        proof = self.demonstrate(worktree, real=True)
 
         self.assertEqual(("demonstration", head), (proof["piece"], proof["commit"]))
         self.assertTrue(proof["address"].startswith("http://127.0.0.1:"))
@@ -578,7 +582,7 @@ class TicketAuthorTest(unittest.TestCase):
     # --- the whole sequence, to the exit « terminé » -----------------------------
 
     def test_a_ticket_walked_through_its_gates_ends_finished_with_its_proofs(self):
-        answer, worktree = self.start()
+        answer, worktree = self.start(real=True)
         self.assertTrue(self.gate("workspace")["passed"])
         self.red_step(worktree, answer["base"])
         self.assertTrue(self.gate("red")["passed"])
