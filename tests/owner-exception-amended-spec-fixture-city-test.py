@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ci: over-ceiling — already above the ceiling when it was set on 2026-10-10 (CI01, af-q9urgr) but not measured then: the file is newer than the durations recorded on 2026-10-09
 """T52 (af-ezqgma; Spec af-wf4w5r section 11, « Spec amendée et graphe
 révisé ») on the convoy the reference driver walks to its Delivered Outcome:
 the Planning Exception of a batch of returned findings is resolved by the

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ci: over-ceiling — already above the ceiling when it was set on 2026-10-10 (CI01, af-q9urgr) but not measured then: the file is newer than the durations recorded on 2026-10-09
 """bin/outcome-promote (T30, Spec §9 and §11), on a fake tracker state and
 on the Delivered Outcome of the delivery fixture, with its remote: what
 follows « accepté » and « abandonné ». One test per pass and per refusal;
