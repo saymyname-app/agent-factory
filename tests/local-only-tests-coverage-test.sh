@@ -5,7 +5,7 @@
 # that does, nightly. It used to carry a list of four names: seven adoption
 # trials of D01 were red on main and nothing said so. This test holds the
 # runner to the marker itself: a marked file is either run or named, with its
-# reason, in the versioned exclusions (tests/local-only-exclusions.txt).
+# reason, in the versioned exclusions (config/local-only-tests-exclusions.txt).
 #
 # What is checked, through the command line of the runner only:
 #   1. on this repository, the marked files are exactly the files the runner
@@ -47,7 +47,7 @@ printf '%s\n' "$listing" | grep -q '^run ' || fail "the runner runs nothing on t
 
 # --- 2. A fake root: the marker alone decides -------------------------------
 FAKE="$TMP/root"
-mkdir -p "$FAKE/tests" "$TMP/bin" "$TMP/ran"
+mkdir -p "$FAKE/tests" "$FAKE/config" "$TMP/bin" "$TMP/ran"
 fake_test() { # <name> <marked: yes|no> <exit code>
   {
     echo '#!/usr/bin/env bash'
@@ -62,7 +62,7 @@ fake_test alpha-test.sh yes 0
 fake_test needs-mayor-test.sh yes 1
 fake_test plain-test.sh no 1
 printf '%s\n' '# path  reason' \
-  'tests/needs-mayor-test.sh  vraie session du Mayor' >"$FAKE/tests/local-only-exclusions.txt"
+  'tests/needs-mayor-test.sh  vraie session du Mayor' >"$FAKE/config/local-only-tests-exclusions.txt"
 
 list() { FACTORY_ROOT="$FAKE" "$TOOL" --list; }
 out=$(list) || fail "--list refused the fake root: $out"
@@ -78,13 +78,13 @@ grep -qx 'run tests/added-later-test.sh' <<<"$out" \
 # --- 3. A stale or unexplained exclusion is refused -------------------------
 refused() { # <label> <exclusions content>
   local saved="$TMP/exclusions.saved" out
-  cp "$FAKE/tests/local-only-exclusions.txt" "$saved"
-  printf '%s\n' "$2" >"$FAKE/tests/local-only-exclusions.txt"
+  cp "$FAKE/config/local-only-tests-exclusions.txt" "$saved"
+  printf '%s\n' "$2" >"$FAKE/config/local-only-tests-exclusions.txt"
   if out=$(list 2>&1); then
-    cp "$saved" "$FAKE/tests/local-only-exclusions.txt"
+    cp "$saved" "$FAKE/config/local-only-tests-exclusions.txt"
     fail "$1: --list accepted it: $out"
   fi
-  cp "$saved" "$FAKE/tests/local-only-exclusions.txt"
+  cp "$saved" "$FAKE/config/local-only-tests-exclusions.txt"
   grep -q "$3" <<<"$out" || fail "$1: the refusal does not name $3: $out"
 }
 refused "an exclusion without a reason" 'tests/needs-mayor-test.sh' 'tests/needs-mayor-test.sh'

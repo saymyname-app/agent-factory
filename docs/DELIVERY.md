@@ -420,7 +420,7 @@ runs every `tests/*.sh|*.py` file marked `# ci: local-only`, one at a time,
 and on a failure files a bead and pages the Mayor through
 `bin/escalation-door`. It reads the marker, not a list of names: a new
 local-only test runs the next night with nothing else to edit. The only
-files left out are the ones `tests/local-only-exclusions.txt` names, each
+files left out are the ones `config/local-only-tests-exclusions.txt` names, each
 with its reason — a test whose every run spends a real session (today the
 real Mayor of `tests/convoy-stop-mayor-isolated-city-test.sh`); run those
 by hand. `bin/local-only-tests --list` prints what a run would do (`run

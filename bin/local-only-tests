@@ -11,7 +11,7 @@
 #
 # What runs is read from the marker itself (T49, af-xcfup7): every
 # tests/*.sh and tests/*.py marked `# ci: local-only`, one at a time, except
-# the files tests/local-only-exclusions.txt names with their reason (a real
+# the files config/local-only-tests-exclusions.txt names with their reason (a real
 # model session, a real Mayor session). A list of names kept here went stale:
 # seven adoption trials of D01 were red on main and ran nowhere.
 #
@@ -32,7 +32,7 @@ LIST=0
 # Overridable so a test city (which has no bin/ of its own) can point this
 # at the real repo's escalation-door instead of $FACTORY_ROOT's.
 ESCALATION_DOOR_BIN="${ESCALATION_DOOR_BIN:-$ROOT/bin/escalation-door}"
-EXCLUSIONS_FILE="tests/local-only-exclusions.txt"
+EXCLUSIONS_FILE="config/local-only-tests-exclusions.txt"
 TEST_TIMEOUT="${LOCAL_ONLY_TEST_TIMEOUT:-1800}"
 
 while [ $# -gt 0 ]; do
