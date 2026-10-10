@@ -16,7 +16,6 @@ import importlib.util
 import io
 import shutil
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -103,6 +102,39 @@ class CeilingTest(unittest.TestCase):
         (self.root / SECONDS).unlink()
         self.refused(call("check", "--root", root), "config/ci-test-seconds.tsv", "nothing is checked")
 
+    def test_recorded_seconds_without_one_duration_are_a_refusal(self):
+        for text in ("", "# Seconds each test file took.\n", "\n\n"):
+            with self.subTest(text=text):
+                root = self.tree({})
+                (self.root / SECONDS).write_text(text, encoding="utf-8")
+                self.refused(call("check", "--root", root), "config/ci-test-seconds.tsv", "holds no duration")
+
+    def test_a_malformed_line_of_the_recorded_seconds_is_refused_with_its_number(self):
+        for line in ("tests/slow-test.py 300", "tests/slow-test.py\t", "tests/slow-test.py\t300s",
+                     "tests/slow-test.py\t300\textra", "\t300"):
+            with self.subTest(line=line):
+                root = self.tree({"tests/a-test.py": 3})
+                (self.root / SECONDS).write_text(
+                    "# Seconds each test file took.\ntests/a-test.py\t3\n%s\n" % line, encoding="utf-8"
+                )
+                err = self.refused(call("check", "--root", root), "config/ci-test-seconds.tsv, line 3", line)
+                self.assertEqual(len(err.splitlines()), 1, err)
+
+    def test_comment_and_blank_lines_of_the_recorded_seconds_are_not_durations(self):
+        root = self.tree({})
+        (self.root / SECONDS).write_text(
+            "# Seconds each test file took in Factory CI run 1 of o/r.\n# Written by bin/ci-test-seconds.\n"
+            "tests/a-test.py\t3\n\n",
+            encoding="utf-8",
+        )
+        self.passed(call("check", "--root", root), "1 test files measured")
+
+    def test_prune_leaves_the_list_as_it_is_when_the_recorded_seconds_hold_no_duration(self):
+        root = self.tree({}, known=[LISTED])
+        before = (self.root / KNOWN).read_text(encoding="utf-8")
+        self.refused(call("prune", "--root", root), "holds no duration", "left as it is")
+        self.assertEqual((self.root / KNOWN).read_text(encoding="utf-8"), before)
+
     # --- the written exception --------------------------------------------
 
     def test_a_written_exception_with_its_reason_passes(self):
@@ -113,7 +145,9 @@ class CeilingTest(unittest.TestCase):
         self.passed(call("check", "--root", root), "1 with a written exception")
 
     def test_a_written_exception_without_reason_is_refused(self):
-        for line in ("# ci: over-ceiling", "# ci: over-ceiling — ", "# ci: over-ceiling -"):
+        for line in ("# ci: over-ceiling", "# ci: over-ceiling — ", "# ci: over-ceiling -",
+                     "# ci: over-ceiling — <reason>", "# ci: over-ceiling — <Raison>",
+                     "# ci: over-ceiling — too slow", "# ci: over-ceiling — 123456789"):
             with self.subTest(line=line):
                 root = self.tree({"tests/slow-test.py": 300}, files={"tests/slow-test.py": line + "\n"})
                 self.refused(call("check", "--root", root), "tests/slow-test.py", "gives no reason")

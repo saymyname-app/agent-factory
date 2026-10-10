@@ -17,14 +17,22 @@ without it. A refusal returns once to the author; a second one stops the
 ticket. A review that gives no result is not a passed one.
 
 How a test is written is not restated here: `docs/TEST_GUIDELINE.md` is the
-one document. The reviewer reads it and asks, of each criterion test, the
-question of its point 6 as well (Spec CI01, af-q9urgr §3): is this criterion
-already proven at a lower level; if so, does this case prove anything other
-than the transmission? A double is answered `unfavorable`, its reason naming
-the lower case that already proves it: the author removes the case, or
-writes what it proves that the lower one does not. The states, the verdict
-and the stop are unchanged; the question reaches the reviewer through the
-formula `mol-test-review`, not through the brief of `bin/test-review`.
+one document. On a ticket of the Factory's own repository (the formula
+compares the Git directory of the brief's repository with the Factory's),
+the reviewer reads it and asks a second question of each criterion test that
+passed the first (Spec CI01, af-q9urgr §3): is this criterion already proven
+at a lower level; if so, does this case prove anything other than the
+transmission? It looks for the lower case only in the test files that
+exercise the tool or entry point the criterion names, at the commit of the
+brief. A double is answered `unfavorable`; its reason starts with « double »,
+names the lower case (`<file>::<case>`) and says why nothing more than the
+transmission is proven. The author removes the case only when another test
+of the ticket still proves the criterion; otherwise it keeps it and writes
+what it proves that the lower one does not. On a ticket of another project
+the guideline is not yet applied (af-8cfygl) and the second question is not
+asked. The states, the verdict and the stop are unchanged; the question
+reaches the reviewer through the formula `mol-test-review`, not through the
+brief of `bin/test-review`.
 
 `bin/test-review` runs the review. Its state lives in the tracker, read and
 written through `bin/convoy-state` only. A convoy without the new-flow mark
@@ -185,6 +193,11 @@ code of the ticket is committed after.
 - The question of the double is asked by the formula only: no code checks
   that the reviewer looked at the lower level, and `record` cannot tell a
   refusal for a double from another refusal.
+- A double costs the author its one return like any refusal, and
+  `bin/tdd-step red` refuses a criterion left without a test: an author who
+  removes the only test of a criterion is refused there, and a second
+  refusal of the review stops the ticket. The author formula says so; no
+  code tells the author which of the two answers a double calls for.
 - `record` checks that it runs in a read-only role session
   (`DELIVERY_ROLE_READ_ONLY`, set by `bin/delivery-role-sandbox`), not which
   session it is.

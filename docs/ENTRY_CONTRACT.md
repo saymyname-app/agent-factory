@@ -207,10 +207,11 @@ and get these sections again, so a ticket names the siblings added since,
 and an interface ticket the reference of a Spec amended and approved again.
 
 The test method of a ticket is the « Testing Decisions » its Spec wrote,
-posed under `## Seams`. Those of a Spec to come refer to
-`docs/TEST_GUIDELINE.md` (public interface, level, decor, durations) instead
-of restating it (Spec CI01, af-q9urgr §3). The door does not pose that
-reference itself: it copies what the Spec says.
+posed under `## Seams`. Those of a Spec to come on the Factory's own
+repository refer to `docs/TEST_GUIDELINE.md` (public interface, level,
+decor, durations) instead of restating it (Spec CI01, af-q9urgr §3); for a
+Spec of another project the guideline is not yet applied (af-8cfygl). The
+door does not pose that reference itself: it copies what the Spec says.
 
 ## What a refusal looks like
 

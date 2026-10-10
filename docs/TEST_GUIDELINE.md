@@ -5,9 +5,13 @@
 This is the one document that says how a test is written here. The test
 method of a ticket, the author formula, the maintenance formula and the
 review of the tests refer to it; none of them restates it. Its six points
-name no tool, no file and no figure of this repository, so that they read
-the same in any project. What is particular to this repository is in the
-last two sections.
+name no tool and no file of this repository, so that they read the same in
+any project; the figures of point 5 are those of the Spec, written here.
+What is particular to this repository is in the last two sections.
+
+It applies to the Factory's own repository. It is not yet applied to the
+other projects the Factory delivers (af-8cfygl): the formulas test which
+repository a ticket is on before they send an agent here.
 
 Intent (Benjamin, his words, live chat, 2026-10-09, about 23:10 Paris): « il
 faut reflechir comment réduire structurellement les temps de CI, tout en
@@ -112,8 +116,8 @@ author and the reviewer; no code checks them:
 **Ceiling: 120 seconds per test file.** Above it the file is cut in two.
 This one figure is held by code (below).
 
-The figures change on a word of Benjamin or by a Spec. No review of them is
-scheduled.
+The figures change on a word of the owner of the project or by a Spec. No
+review of them is scheduled.
 
 ### 6. Review of the tests
 
@@ -125,14 +129,23 @@ The reviewer of the tests asks, of each case, one more question:
 A case that proves again, higher, what a lower case already proves, and
 nothing more than the transmission another case already shows, is a
 **double**. A double refuses the test: the author removes the case, or
-writes what it proves that the lower one does not.
+writes what it proves that the lower one does not. A case that is the only
+proof of its criterion is never removed: its author writes what it proves
+more.
 
 ## Known limits
 
 - The rule of point 2, « a red above obliges a case below », is held by no
   code.
-- A maintenance pull request has no reviewer of the tests: only this
+- A change made outside a ticket has no reviewer of the tests: only this
   guideline and the ceiling apply to it.
+- The ceiling is checked on recorded durations, so its verdict moves only
+  when they are refreshed: the change that adds a slow file stays green
+  until then.
+- A file that left the list of files known to be above the ceiling, and
+  goes above it again, could be written back into that list without the
+  check seeing it: the names of the first day stay accepted. Refusing that
+  line is the reviewer's job; no code does it.
 
 ## In this repository: the whole journeys
 
@@ -169,7 +182,8 @@ that breaks the rule is red in CI.
 |---|---|
 | a test file above 120 s | refused, by name, with its seconds |
 | the same, with a line `# ci: over-ceiling — <reason>` in the file | accepted: a written exception |
-| that line without a reason | refused |
+| that line without a reason: none, the template `<reason>` left as it is, or under 10 characters | refused |
+| recorded seconds that cannot be read, hold no duration, or hold a line that is neither a comment nor `<path><TAB><seconds>` | refused, naming the line |
 | a file above 120 s named in `config/ci-test-ceiling-known.txt` | accepted: it was above when the control was introduced |
 | a line added to that list | refused: the list may only name the 20 files that were above on 2026-10-10 (held in the command itself) |
 | a line of that list whose file is no longer above 120 s | refused: the line leaves (`bin/ci-test-ceiling prune`) |
@@ -190,5 +204,6 @@ not by this control.
 
 Limits of the control: it reads what CI recorded, on a host whose load moves
 the seconds (a file near 120 s can cross at a refresh without having
-changed); a file never measured is not checked; nothing stops a written
-exception whose reason is poor, which is what the code review reads.
+changed); a file never measured is not checked; a written exception needs
+ten characters that are not the template, and whether its reason is a good
+one is what the code review reads.

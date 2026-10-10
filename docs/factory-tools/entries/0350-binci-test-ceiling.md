@@ -16,7 +16,11 @@ au-dessus du plafond est rouge.
   une exception écrite sans raison ; une ligne ajoutée à la liste connue ;
   une ligne de la liste dont le fichier n'est plus au-dessus de 120 s.
 - **Exception écrite** : une ligne du fichier de test,
-  `# ci: over-ceiling — <raison>`.
+  `# ci: over-ceiling — <raison>`. Le modèle laissé tel quel ou une raison
+  de moins de 10 caractères est refusé.
+- **Durées illisibles** : fichier absent, sans aucune durée, ou portant une
+  ligne qui n'est ni un commentaire ni `<chemin><TAB><secondes>` : rouge, en
+  nommant la ligne. `prune` ne touche alors pas à la liste.
 - **Liste connue** : `config/ci-test-ceiling-known.txt`, les 20 fichiers
   déjà au-dessus à la mise en place (2026-10-10). Elle ne peut que rétrécir :
   la commande porte elle-même les 20 noms de ce jour-là et refuse tout autre
