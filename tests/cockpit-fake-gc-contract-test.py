@@ -130,8 +130,9 @@ class FakeGcAnswersLikeTheRealOne(unittest.TestCase):
         real, fake = (json.loads(b) for b in self.both("/v0/city/%s/beads/ready"))
         self.assertEqual(READY_KEYS, set(real))
         self.assertEqual(READY_KEYS, set(fake))
-        if real["items"]:
-            self.assertIn("metadata", real["items"][0])
+        # The real gc leaves `metadata` out of a bead that carries none.
+        for item in real["items"]:
+            self.assertIsInstance(item.get("metadata", {}), dict)
 
     def test_sessions(self):
         self.fake.set_sessions([{

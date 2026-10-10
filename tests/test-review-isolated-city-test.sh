@@ -496,7 +496,9 @@ echo "$(date -u +%H:%M:%S) B : deux refus, ticket arrêté (test_review_refused)
 # --- C: reviewer without verdict -> one relaunch, then stopped ---------------------
 c_stopped() { [ "$(field "$C" gc.flow.stop | jq -r '.reason // empty' 2>/dev/null)" = test_review_no_result ]; }
 wait_for 900 c_stopped || { dump; fail "C was not stopped after two reviews without result within 900s"; }
-launches_c=$(grep -c "^$C " "$TRIAL/review-sessions" || true)
+# A launch is a review bead: a bead claimed again by another session of the
+# pool is the same launch.
+launches_c=$(grep "^$C " "$TRIAL/review-sessions" | cut -d' ' -f2 | sort -u | wc -l | tr -d ' ')
 [ "$launches_c" = 2 ] || fail "the review of C was launched $launches_c times, not twice"
 c_raised() { [ "$(on_list "$C")" = 1 ]; }
 wait_for 120 c_raised || { dump; fail "the stop of C is not exactly once on the operator's list: $(operator_list)"; }

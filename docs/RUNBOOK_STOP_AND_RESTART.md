@@ -134,14 +134,47 @@ Docker Desktop. C'est un impact attendu, pas un incident.
 
 ## 3. Redémarrage
 
-Dans cet ordre :
+Dans cet ordre, qui est celui de `./bin/factory-boot` :
 
 ```bash
-./bin/provider-failover apply --no-reload   # city.provider.toml doit exister avant de démarrer
-gc supervisor start
-gc resume            # la cité était suspendue
-gc start             # ré-enregistre et adopte les sessions
+./bin/provider-failover apply --no-reload           # city.provider.toml doit exister avant de démarrer
+systemctl --user start gascity-supervisor.service   # sans effet s'il tourne déjà ; pas « gc supervisor start »
+gc supervisor status                                # doit répondre « Supervisor is running »
+./bin/factory-build-gates                           # contrôles de formule de chaque rig, avant le contrôleur
+./bin/cockpit start                                 # processus séparé de gc : aucune autre commande ne le relance
+gc resume                                           # la cité était suspendue
+gc start                                            # ré-enregistre et adopte les sessions
 ```
+
+**Le superviseur démarre par son unité systemd**, pas par `gc supervisor
+start`, dès que l'unité est installée (`systemctl --user cat
+gascity-supervisor.service` répond). `gc supervisor start` en lance un hors
+de l'unité ; l'unité, que `gc start` active ensuite, trouve la place prise et
+échoue en boucle toutes les 5 secondes (2026-10-08 : 84 démarrages échoués en
+7 minutes), et le superviseur qui tourne n'a pas l'environnement de l'unité :
+c'est l'état de la §6 point 1. Sans unité installée, et seulement là :
+`gc supervisor start`.
+
+**`./bin/factory-build-gates`** remet dans chaque rig les contrôles de
+formule gérés, avant que le contrôleur puisse lancer un workflow ; idempotent.
+Il est nécessaire après un re-clone de rig ou un changement de version d'un
+pack fait pendant la fenêtre. Non vérifié : qu'un `wsl --shutdown` seul le
+rende nécessaire.
+
+**Cette séquence est liée à `bin/factory-boot`** par
+`tests/runbook-restart-sequence-test.sh` : le test lance `factory-boot` dans
+un bac à sable, relève les commandes qu'il exécute, et échoue si l'une d'elles
+manque au bloc ci-dessus ou n'y est pas à la même place. Une étape ajoutée à
+`factory-boot` s'ajoute donc ici dans le même changement. Seul `gc resume`
+est propre à la séquence manuelle : `factory-boot` ne reprend jamais une cité
+suspendue.
+
+**Le Cockpit ne revient pas tout seul** (2026-10-09 : après la fenêtre
+planifiée de 17:36 à 17:55, heure de Paris, il est resté arrêté jusqu'à ce
+que Benjamin le remarque). C'est un processus séparé de `gc` : `wsl
+--shutdown` le coupe, et ni le superviseur ni `gc start` ne le relancent.
+`./bin/cockpit start` est idempotent, sans effet si une instance tourne déjà ;
+`factory-boot` le fait à son étape « 2b. Cockpit ».
 
 **Après un redémarrage non planifié** (reboot Windows, coupure) : ces mêmes
 étapes sont rejouées, de façon idempotente, par `./bin/factory-boot`, que la
@@ -149,7 +182,10 @@ tâche planifiée Windows « Good Morning Agent Factory » lance à l'ouverture 
 session. Il ne défait jamais un arrêt délibéré : une cité suspendue reste
 suspendue. Journal :
 `.gc/runtime/factory-boot.log`. Après une fenêtre **planifiée**, suivez la
-séquence manuelle ci-dessus.
+séquence manuelle ci-dessus, et non `gc resume` suivi de `./bin/factory-boot` :
+ce que fait `factory-boot` sur une cité désenregistrée par `gc stop` puis
+suspendue n'a jamais été essayé (af-8j6lsz, 2026-10-10), et ne s'essaie que
+dans une fenêtre d'arrêt.
 
 **Arrêt que personne n'a demandé** (2026-10-08 : le script d'essai d'un
 ouvrier a lancé `gc supervisor stop` sur l'usine vivante, arrêtée 56 minutes) :
@@ -185,6 +221,7 @@ Un redémarrage n'est pas un succès tant que ceci n'est pas vérifié.
 ./bin/factory-resources     # doit montrer le plafond CPU déclaré
 ./bin/factory-guard         # doit finir par « healthy »
 gc doctor 2>&1 | tail -1    # comparer au chiffre de la §1 et expliquer chaque écart
+./bin/cockpit status        # doit répondre « cockpit: running (pid …) »
 ```
 
 Puis recomptez les beads exactement comme en §1 et comparez **store par store**.
@@ -222,7 +259,7 @@ Si quelque chose ne revient pas, réparez-le **avant** de continuer.
    l'unité reprend la place en 5 secondes et réadopte les sessions (fait le
    2026-10-08 à 05:34, aucun agent interrompu). `factory-boot` ne crée plus
    cet état : il démarre le superviseur par son unité quand elle est
-   installée.
+   installée, et la séquence manuelle de la §3 fait de même.
 2. `gc doctor` — lisez les `✗` avant les `⚠`.
 3. `./bin/factory-guard` — il répare seul la dérive de branche et la sauvegarde.
 4. Les stores Dolt sont dans `.beads/dolt` ; la restauration hors ligne est

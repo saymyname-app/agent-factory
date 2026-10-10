@@ -291,7 +291,7 @@ WRITES="$TRIAL/tracker-writes.log"
 # notes each `bd update` it is asked for.
 cat > "$TRIAL/gc-noting-updates" <<WRAP
 #!/bin/sh
-[ "\$1 \$2" = "bd update" ] && printf '%s\n' "\$*" >> "$WRITES"
+case " \$* " in *" bd update "*) printf '%s\n' "\$*" >> "$WRITES" ;; esac
 exec gc "\$@"
 WRAP
 chmod +x "$TRIAL/gc-noting-updates"

@@ -382,7 +382,8 @@ ends at the closed ticket.
 
 With `--inject story-not-observed` the reference driver publishes through
 the real publication door (`bin/ticket-graph-publish bd-publish`, after
-the real `bin/graph-review`): an approved Spec with two user stories — the
+the real `bin/graph-review`): a Spec approved by the real
+`bin/spec-approve` (T52, af-ezqgma), with two user stories — the
 home page, and the items in JSON at `GET /items`, which the product of the
 fixture does not serve — and an approved draft whose one slice covers
 both. The stand-in Evaluator of the end fetches `GET /items` on the
@@ -534,8 +535,11 @@ Limits of the reference driver (`tests/fixtures/fixture-city/delivery-driver`):
   (the patch door needs a published graph to revise). The door then writes
   the tracker through the fake `bd` of
   `tests/fixtures/ticket-graph-publish/bd-bead-mode`, on the same file as
-  the fake `gc`; the approved Spec, the approved draft and the verdict of
-  the graph review are written by the driver, as a Planning Run leaves them.
+  the fake `gc`; the approved draft and the verdict of the graph review are
+  written by the driver, as a Planning Run leaves them. The Spec is written
+  as a draft and approved by the real `bin/spec-approve`, against a
+  Validated Prototype the driver puts on a `prototype/` branch of the
+  product repository (`tests/lib/fixture_prototype.py`).
 - The browser of the fidelity check is the fake one of
   `tests/fixtures/prototype-fidelity/browser`.
 - On the second project the product is launched, and the merged result

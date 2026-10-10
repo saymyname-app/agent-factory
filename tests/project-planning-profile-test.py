@@ -333,6 +333,34 @@ class ProjectPlanningProfileTest(unittest.TestCase):
         self.assertEqual(0, status, answer)
         self.assertEqual({"not_applicable": "une file de messages"}, answer["launch"]["anchors"])
 
+    # --- an empty list of screens is no declared screen (T50, af-yorkna) ------
+
+    def test_an_empty_list_of_screens_must_also_declare_the_equivalent_of_the_anchors_or_not_applicable(self):
+        descriptor = json.loads(self.LAUNCH_FIXTURE_DESCRIPTOR.read_text())
+        descriptor["launch"]["screens"] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "descriptor.json"
+            path.write_text(json.dumps(descriptor))
+            before = {entry.name: entry.read_bytes() for entry in Path(tmp).iterdir()}
+            proc = self.describe(path)
+            after = {entry.name: entry.read_bytes() for entry in Path(tmp).iterdir()}
+        answer = json.loads(proc.stdout)
+
+        self.assertEqual(1, proc.returncode, answer)
+        self.assertFalse(answer["valid"])
+        self.assertIn("launch.anchors", answer["error"])
+        self.assertEqual(before, after, "the refusal wrote something")
+
+    def test_an_empty_list_of_screens_with_the_equivalent_of_the_anchors_or_not_applicable_is_accepted(self):
+        equivalent = {"equivalent": [{"name": "sante", "entry_point": "GET /health", "observable": "le statut 200"}]}
+        for anchors in (equivalent, {"not_applicable": "une file de messages"}):
+            with self.subTest(anchors=anchors):
+                status, answer = self.describe_launch(screens=[], anchors=anchors)
+
+                self.assertEqual(0, status, answer)
+                self.assertEqual(anchors, answer["launch"]["anchors"])
+                self.assertEqual([], answer["launch"]["screens"])
+
     def test_the_two_profiles_of_the_fixture_city_are_accepted(self):
         for descriptor in (self.LAUNCH_FIXTURE_DESCRIPTOR, self.SECOND_FIXTURE_DESCRIPTOR):
             with self.subTest(descriptor=descriptor.parent.name):

@@ -29,7 +29,8 @@ sortie a une destination fixée par du code, et le compte rendu du ticket
   rendu qui a ses quatre rubriques (le refus nomme celle qui manque, rien
   n'est écrit) ; le compte rendu est enregistré avant elle. Si elle nomme
   une ancre du prototype (`--anchor`), la rubrique « Écarts » doit
-  mentionner cette ancre, sinon refus.
+  mentionner cette ancre par son nom entier, sinon refus (`fixture` n'est
+  pas nommée par `fixture.items` ni par `fixture:items`).
 - **Bloqué technique** : un ticket `repair` est créé par du code et publié
   par la porte de patch ; il bloque le ticket, rien n'est parqué.
 - **Interrompu** : la branche est poussée, un compte rendu partiel est

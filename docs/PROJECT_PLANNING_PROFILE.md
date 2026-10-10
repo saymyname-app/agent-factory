@@ -203,7 +203,7 @@ is missing:
 | `k` | optional — consecutive green runs required at the ticket's green step, a positive integer. Absent: 3 (spec af-wf4w5r §8, starting value); a declared `k` is kept. |
 | `red_error_types` | optional, shared by all seams — error types (e.g. `AttributeError`) that are a valid red on a library seam, where a missing symbol is the red. Absent: only an assertion failure is a red. |
 | `screens` | optional, required by `bin/prototype-fidelity` (T16, `docs/PROTOTYPE_FIDELITY.md`) — the screens compared to the Validated Prototype: `[{name, path, states}]`, the path the launched product serves the screen at and its prototyped states. A state is the dataset of the same name and belongs to one screen; a duplicate name, a path that does not start with `/`, an empty list of states or a state that is no declared dataset is rejected. |
-| `anchors` | **required when the profile declares no `screens`** (the error names `launch.anchors`), not needed otherwise — the equivalent of the anchors for an interface that is **not a web page** (a command line, an API; T35, spec af-wf4w5r §12). Exactly one of: `{"equivalent": [{name, entry_point, observable}]}`, what stands for the anchors of a screen — each a unique name, the declared entry point that answers it (`"METHOD path"`) and the observable read there (a field, an exit status, a line of output); or `{"not_applicable": "<reason>"}`. An empty list, a missing reason, both forms at once, an unknown field, a duplicate name or an entry point that is not declared is rejected. `describe` renders it. |
+| `anchors` | **required when the profile declares no `screens`** — the key absent, or an empty list (T50) — (the error names `launch.anchors`), not needed otherwise — the equivalent of the anchors for an interface that is **not a web page** (a command line, an API; T35, spec af-wf4w5r §12). Exactly one of: `{"equivalent": [{name, entry_point, observable}]}`, what stands for the anchors of a screen — each a unique name, the declared entry point that answers it (`"METHOD path"`) and the observable read there (a field, an exit status, a line of output); or `{"not_applicable": "<reason>"}`. An empty list, a missing reason, both forms at once, an unknown field, a duplicate name or an entry point that is not declared is rejected. `describe` renders it. |
 | `import_rule` | optional, required by `bin/tdd-step` when a seam's mode is `import_rule` — `{product_import, entry_point_import}`, two regular expressions applied to each line of a test: a line that imports the product must import one of its entry points. |
 
 A descriptor with no `launch` block at all (e.g. the Factory's own
@@ -263,8 +263,8 @@ with no screen and no Validated Prototype passes condition 4 of the gate
 | `tests/second-project-isolated-city-test.sh` (local-only) | on a real controller, order and tracker, one of its tickets goes from started to closed by the gate through the real `mol-ticket-author`, `mol-code-review` and `mol-ticket-evaluation` |
 
 Limits. The `anchors` declaration is required of a profile without `screens`
-but read by `describe` only: no gate compares a delivered API to a
-prototype. The black-box seam of `bin/tdd-step` records
+(absent or empty) but read by `describe` only: no gate compares a delivered
+API to a prototype. The black-box seam of `bin/tdd-step` records
 HTTP entry points: a project whose only interface is a command line has no
 mechanical proof of its seam yet. A recipe names its interpreter itself
 (`node`); only `{python}` is substituted by the launcher.
