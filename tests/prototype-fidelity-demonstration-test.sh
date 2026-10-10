@@ -62,11 +62,17 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# The references of the Factory's repository move under any other work tree
+# or fetch during the run: what is compared is the checkout, and what is
+# watched is every branch or tag this run itself creates, moves or deletes
+# there (tests/lib/live-root-refs.sh, T53).
+# shellcheck source=tests/lib/live-root-refs.sh
+. "$ROOT/tests/lib/live-root-refs.sh"
+live_root_refs_watch "$TRIAL/refs-watch" || fail "the watch of the Factory's references does not see a reference written by this run"
 factory_git_state() {
   git -C "$ROOT" status --porcelain --untracked-files=all
-  # The checkout's own commit, not a count over every ref: the refs of the
-  # repository move under any other work tree or fetch during the run (T49).
   git -C "$ROOT" rev-parse HEAD
+  live_root_refs_written "$ROOT"
 }
 FACTORY_BEFORE=$(factory_git_state)
 
@@ -213,6 +219,7 @@ jq -e '.result == "accepté par Benjamin" and ([.deviations[] | .status] | uniqu
 # --- nothing is left running, nothing reached the Factory ----------------------
 [ -z "$(git -C "$PRODUCT" worktree list --porcelain | grep -c '^worktree' | grep -v '^1$' || true)" ] \
   || fail "a launched product left its work tree behind: $(git -C "$PRODUCT" worktree list)"
-[ "$FACTORY_BEFORE" = "$(factory_git_state)" ] || fail "the fidelity check changed the Factory's Git state"
+[ "$FACTORY_BEFORE" = "$(factory_git_state)" ] \
+  || fail "the fidelity check changed the Factory's Git state: $(diff <(printf '%s\n' "$FACTORY_BEFORE") <(factory_git_state) | grep '^[<>]' | head -5)"
 
 echo "PASS: the fixture is green on every prototyped state at its real address; a changed token and a removed anchor are red with the anchor, the state and the property named; the result, its sealed record and the side-by-side captures are read back from the real tracker; only an answered Planning Exception that names the anchor turns the deviation « accepté par Benjamin »"

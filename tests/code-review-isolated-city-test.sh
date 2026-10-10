@@ -192,6 +192,8 @@ while true; do
       fi
       jq --argjson findings "\$FINDINGS" '{commit, findings: \$findings, answers: (.questions | map({key: .id, value: {answer: "oui"}}) | from_entries)}' "\$BRIEF" > "\$RESULT"
     fi
+    # A review the trial holds is handed once the trial releases it.
+    while [ -e "$TRIAL/hold.\$TICKET" ]; do sleep 2; done
     "\$BIN/code-review" record "\$CONVOY" "\$TICKET" --file "\$RESULT" >> "\$LOG" 2>&1 || OUTCOME=fail
     say "ticket \$TICKET : \$KIND remis (\$REVIEW_BEAD, \$OUTCOME)"
   fi
@@ -300,6 +302,7 @@ B=$(new_ticket "ticket B, constat de goût")
 C=$(new_ticket "ticket C, revue sans sortie")
 ALL=("$A" "$B" "$C")
 echo cites > "$TRIAL/reviewer.$A"; echo taste > "$TRIAL/reviewer.$B"; echo mute > "$TRIAL/reviewer.$C"
+: > "$TRIAL/hold.$B"
 for t in "${ALL[@]}"; do
   gc bd dep add "$CONVOY" "$t" --type tracks >/dev/null
   gc bd update "$t" --set-metadata gc.ticket_kind=vertical_slice >/dev/null
@@ -337,7 +340,7 @@ evaluated() {  # TICKET COMMIT REPO: a favorable Ticket Evaluation, as an Evalua
     environment: [{dataset: null, address: "http://127.0.0.1:1", state_file: "/launch.json"}]}' > "$TRIAL/evaluation-request-$1.json"
   state open-evaluation "$CONVOY" "$1" --commit "$2" --file "$TRIAL/evaluation-request-$1.json" >/dev/null
   python3 "$ROOT/tests/lib/ticket_proofs.py" capture "$CONVOY" "$1" evaluation.seen "$2" --repo "$3" >/dev/null
-  jq -n --arg commit "$2" --argjson t "$shown" '{commit: $commit, recorded_by: "delivery-evaluator-trial",
+  jq -n --arg commit "$2" --arg session "delivery-evaluator-trial-$1-${2:0:12}" --argjson t "$shown" '{commit: $commit, recorded_by: $session,
     criteria: [$t.criteria | to_entries[] | {number: (.key + 1), text: .value, state: "observed", evidence: "evaluation.seen"}],
     demonstration_line: {text: $t.demonstration_line, state: "observed", evidence: "evaluation.seen"}}' > "$TRIAL/evaluation-$1.json"
   state record-evaluation "$CONVOY" "$1" --file "$TRIAL/evaluation-$1.json" >/dev/null
@@ -359,8 +362,8 @@ author_finishes() { # <ticket> <author model> <what the slice says>
   state set-tdd "$CONVOY" "$t" --step red --commit "$red" --base "$BASE" >/dev/null
   jq -n --argjson files "$files" --arg id "$FIXTURE/tests/test_count_$t.py::CountTest.test_count" '{files: $files, criteria: {"1": [$id]}}' > "$TRIAL/request.$t.json"
   state open-test-review "$CONVOY" "$t" --commit "$red" --file "$TRIAL/request.$t.json" >/dev/null
-  jq -n --argjson files "$files" --arg commit "$red" --arg id "$FIXTURE/tests/test_count_$t.py::CountTest.test_count" \
-    '{commit: $commit, files: $files, tests: {($id): {state: "favorable"}}, recorded_by: "trial-test-reviewer"}' > "$TRIAL/verdict.$t.json"
+  jq -n --argjson files "$files" --arg commit "$red" --arg session "trial-test-reviewer-$t" --arg id "$FIXTURE/tests/test_count_$t.py::CountTest.test_count" \
+    '{commit: $commit, files: $files, tests: {($id): {state: "favorable"}}, recorded_by: $session}' > "$TRIAL/verdict.$t.json"
   state record-test-review "$CONVOY" "$t" --file "$TRIAL/verdict.$t.json" >/dev/null
   state set-tdd "$CONVOY" "$t" --step freeze --commit "$red" >/dev/null
   finish "$t" "$tip"
@@ -419,31 +422,11 @@ on_integration "$TIP_A" && fail "the tip of A reached the integration branch"
 waiting=$(tail -1 "$TRIAL/passes.jsonl" | jq -r --arg a "$A" '[.convoys[].integration.waiting[]? | select(.id == $a) | .reason] | .[0] // empty')
 echo "$(date -u +%H:%M:%S) A : revue par la session $reviewer_a (auteur trial-author-$A) ; Blocking Finding F1.1 qui cite « $SPEC_LINE » ; mention « même modèle » inscrite (modele-relecteur) ; fusion refusée par la passe : ${waiting:-ticket absent de la fusion}"
 
-# --- B: a finding of taste is recorded without blocking; the ticket is merged ------
-wait_for 600 merged "$B" || { dump; fail "B was not merged within 600s"; }
-second=$(review_of "$B" | jq -c '.rounds[0]')
-printf '%s' "$second" | jq -e '.verdict == "favorable" and (.findings | length) == 1 and .findings[0].blocking == false
-   and (.findings[0].demoted | test("refusé comme bloquant")) and .models.same_model == false' >/dev/null \
-  || fail "the finding of taste of B was not recorded as non-blocking: $second"
-on_integration "$TIP_B" || fail "the tip of B is not on the integration branch"
-echo "$(date -u +%H:%M:%S) B : constat de goût donné comme bloquant sans citation, enregistré non bloquant ($(printf '%s' "$second" | jq -r '.findings[0].demoted')) ; verdict favorable ; modèles distincts (modele-auteur / modele-relecteur) ; ticket fusionné dans $INTEGRATION"
-
-# --- A again: « corrigé », judged by a second reviewer session, merged --------------
-FIX_A=$(commit_on "$A" "docs/$A.md" "Le nombre d'éléments est affiché sur la page d'accueil." "PROSE-DU-COMMIT : correction")
-finish "$A" "$FIX_A"
-jq -n --arg commit "$FIX_A" '{responses: {"F1.1": {response: "fixed", commit: $commit}}}' > "$TRIAL/responses.json"
-"$ROOT/bin/code-review" respond "$CONVOY" "$A" --file "$TRIAL/responses.json" >/dev/null || fail "code-review respond did not pass on A"
-wait_for 600 merged "$A" || { dump; fail "A was not merged within 600s once its Blocking Finding was fixed and judged"; }
-judgement=$(review_of "$A" | jq -c '.rounds[1]')
-printf '%s' "$judgement" | jq -e --arg tip "$FIX_A" --arg base "$TIP_A" \
-  '.kind == "judgement" and .verdict == "favorable" and .commit == $tip and .base == $base and .judgements["F1.1"].state == "favorable"' >/dev/null \
-  || fail "the answers of A were not judged favorably at the corrected tip: $judgement"
-judge_a=$(printf '%s' "$judgement" | jq -r '.recorded_by')
-[ "$judge_a" != "$reviewer_a" ] || fail "the judgement of A was given by the session that reviewed it: $judge_a"
-on_integration "$FIX_A" || fail "the corrected tip of A is not on the integration branch"
-echo "$(date -u +%H:%M:%S) A : F1.1 « corrigé » au commit $FIX_A, jugé favorablement par une seconde session ($judge_a ≠ $reviewer_a) ; ticket fusionné"
-
 # --- C: reviewer without verdict -> one relaunch, then stopped, never merged -------
+# Before anything is merged: no reviewer is sent on a branch behind the
+# integration tip (T44), so a relaunch of C after the merge of B would be
+# refused and C handed back to its author instead of stopped. The review of B
+# is held until C is stopped.
 c_stopped() { [ "$(field "$C" gc.flow.stop | jq -r '.reason // empty' 2>/dev/null)" = code_review_no_result ]; }
 wait_for 900 c_stopped || { dump; fail "C was not stopped after two reviews without result within 900s"; }
 # One review bead per launch: a session started again on a bead it already
@@ -458,6 +441,34 @@ merged "$C" && fail "C was merged although its review gave no verdict"
 on_integration "$TIP_C" && fail "the tip of C reached the integration branch"
 [ "$(on_list "$C")" = 1 ] || fail "C is not exactly once on the operator's list after later passes"
 echo "$(date -u +%H:%M:%S) C : deux sessions de relecteur terminées sans verdict (une relance), ticket arrêté (code_review_no_result), jamais fusionné ; une seule ligne sur la liste : $(operator_list | grep "^  $C — " | head -1)"
+rm -f "$TRIAL/hold.$B"
+
+# --- B: a finding of taste is recorded without blocking; the ticket is merged ------
+wait_for 600 merged "$B" || { dump; fail "B was not merged within 600s"; }
+second=$(review_of "$B" | jq -c '.rounds[0]')
+printf '%s' "$second" | jq -e '.verdict == "favorable" and (.findings | length) == 1 and .findings[0].blocking == false
+   and (.findings[0].demoted | test("refusé comme bloquant")) and .models.same_model == false' >/dev/null \
+  || fail "the finding of taste of B was not recorded as non-blocking: $second"
+on_integration "$TIP_B" || fail "the tip of B is not on the integration branch"
+echo "$(date -u +%H:%M:%S) B : constat de goût donné comme bloquant sans citation, enregistré non bloquant ($(printf '%s' "$second" | jq -r '.findings[0].demoted')) ; verdict favorable ; modèles distincts (modele-auteur / modele-relecteur) ; ticket fusionné dans $INTEGRATION"
+
+# --- A again: « corrigé », judged by a second reviewer session, merged --------------
+# B was merged meanwhile: the author takes the tip of the integration branch
+# before the correction. No reviewer is sent on a branch behind it (T44).
+git -C "$TRIAL/wt/$A" merge -q --no-edit "$INTEGRATION" || fail "the branch of A did not take the tip of the integration branch"
+FIX_A=$(commit_on "$A" "docs/$A.md" "Le nombre d'éléments est affiché sur la page d'accueil." "PROSE-DU-COMMIT : correction")
+finish "$A" "$FIX_A"
+jq -n --arg commit "$FIX_A" '{responses: {"F1.1": {response: "fixed", commit: $commit}}}' > "$TRIAL/responses.json"
+"$ROOT/bin/code-review" respond "$CONVOY" "$A" --file "$TRIAL/responses.json" >/dev/null || fail "code-review respond did not pass on A"
+wait_for 600 merged "$A" || { dump; fail "A was not merged within 600s once its Blocking Finding was fixed and judged"; }
+judgement=$(review_of "$A" | jq -c '.rounds[1]')
+printf '%s' "$judgement" | jq -e --arg tip "$FIX_A" --arg base "$TIP_A" \
+  '.kind == "judgement" and .verdict == "favorable" and .commit == $tip and .base == $base and .judgements["F1.1"].state == "favorable"' >/dev/null \
+  || fail "the answers of A were not judged favorably at the corrected tip: $judgement"
+judge_a=$(printf '%s' "$judgement" | jq -r '.recorded_by')
+[ "$judge_a" != "$reviewer_a" ] || fail "the judgement of A was given by the session that reviewed it: $judge_a"
+on_integration "$FIX_A" || fail "the corrected tip of A is not on the integration branch"
+echo "$(date -u +%H:%M:%S) A : F1.1 « corrigé » au commit $FIX_A, jugé favorablement par une seconde session ($judge_a ≠ $reviewer_a) ; ticket fusionné"
 
 gc session list --state all --json | jq -e '[.sessions[] | select(.template | test("mayor"))] | length == 0' >/dev/null \
   || fail "a Mayor session exists in the trial city"

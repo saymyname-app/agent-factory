@@ -372,7 +372,7 @@ finish() { # <ticket> <tip> <green step>: every step of the TDD with its sealed 
   python3 "$ROOT/tests/lib/ticket_proofs.py" finish "$CONVOY" "$1" "$2" --repo "$PRODUCT" --base "$BASE" --branch "ticket/$1" \
     --done "PROSE-DU-HANDOFF : tout est observable, à ma façon." --subject "PROSE-DU-COMMIT" >/dev/null
   state open-code-review "$CONVOY" "$1" --kind review --commit "$2" --base "$BASE" >/dev/null
-  jq -n --arg commit "$2" '{commit: $commit, findings: [], answers: {}, recorded_by: "trial-reviewer"}' > "$TRIAL/review.$1.json"
+  jq -n --arg commit "$2" --arg session "trial-reviewer-$1-${2:0:12}" '{commit: $commit, findings: [], answers: {}, recorded_by: $session}' > "$TRIAL/review.$1.json"
   state record-code-review "$CONVOY" "$1" --file "$TRIAL/review.$1.json" >/dev/null
 }
 started() { # <ticket>
@@ -389,8 +389,8 @@ files=$(jq -n --arg p "$FIXTURE/tests/test_count_$A.py" --arg d "sha256:$(git -C
 state set-tdd "$CONVOY" "$A" --step red --commit "$red" --base "$BASE" >/dev/null
 jq -n --argjson files "$files" --arg id "$FIXTURE/tests/test_count_$A.py::CountTest.test_count" '{files: $files, criteria: {"1": [$id]}}' > "$TRIAL/request.$A.json"
 state open-test-review "$CONVOY" "$A" --commit "$red" --file "$TRIAL/request.$A.json" >/dev/null
-jq -n --argjson files "$files" --arg commit "$red" --arg id "$FIXTURE/tests/test_count_$A.py::CountTest.test_count" \
-  '{commit: $commit, files: $files, tests: {($id): {state: "favorable"}}, recorded_by: "trial-test-reviewer"}' > "$TRIAL/verdict.$A.json"
+jq -n --argjson files "$files" --arg commit "$red" --arg session "trial-test-reviewer-$A" --arg id "$FIXTURE/tests/test_count_$A.py::CountTest.test_count" \
+  '{commit: $commit, files: $files, tests: {($id): {state: "favorable"}}, recorded_by: $session}' > "$TRIAL/verdict.$A.json"
 state record-test-review "$CONVOY" "$A" --file "$TRIAL/verdict.$A.json" >/dev/null
 state set-tdd "$CONVOY" "$A" --step freeze --commit "$red" >/dev/null
 finish "$A" "$TIP_A" green
