@@ -345,6 +345,7 @@ gc bd update "$SPEC" --set-metadata "spec_state=APPROVED_SPEC" \
   --set-metadata "approved_digest=$(digest_of "$(gc bd show "$SPEC" --json | jq -r '.[0].description')")" \
   --set-metadata "gc.project_id=$PROJECT" >/dev/null
 DRAFT=$(gc bd create --title "Brouillon d'essai" --type task --silent --description "flow_contract: new-flow/v1
+operator_needs: []
 tickets:
 - id: T1
   kind: vertical_slice

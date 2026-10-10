@@ -1292,7 +1292,7 @@ def publish_repair(convoy: Convoy, repair: dict[str, Any], label: str, reason: s
         number += 1
     key = f"R{number}"
     description = yaml.safe_dump(
-        {"flow_contract": NEW_FLOW,
+        {"flow_contract": NEW_FLOW, "operator_needs": [],
          "tickets": [{"id": key, "kind": "repair", "blocked_by": [], "target_rigs": [convoy.rig], **repair}]},
         allow_unicode=True, sort_keys=False)
     created = gc_json("bd", "create", f"Révision : repair {key} ({label}, convoi {convoy.id})",

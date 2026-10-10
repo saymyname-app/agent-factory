@@ -5,6 +5,7 @@
 # relecteur de graphe qui le refuse. Entrée de tests/graph-review-test.py et
 # de l'essai tests/graph-review-isolated-city-test.sh.
 flow_contract: new-flow/v1
+operator_needs: []
 tickets:
 - id: T1
   kind: vertical_slice

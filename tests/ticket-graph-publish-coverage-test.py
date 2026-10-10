@@ -369,6 +369,24 @@ class PublicationCoverageTest(Harness):
             env=self.env, text=True, capture_output=True,
         )
 
+    def test_refuses_a_draft_without_the_operator_needs_field_and_says_to_write_an_empty_list(self):
+        # T39: without the field, nothing tells « no need » from « nobody thought of it ».
+        draft = self.conformant()
+        draft.pop("operator_needs", None)
+        self.seed(draft)
+
+        proc = self.refused("operator_needs", "liste vide")
+        self.assertTrue(any("operator_needs" in line for line in self.refusal_lines(proc, "brouillon")), proc.stderr)
+
+    def test_publishes_a_draft_that_declares_an_empty_list_of_operator_needs(self):
+        draft = self.conformant()
+        draft["operator_needs"] = []
+        self.seed(draft)
+
+        result = self.published()
+        self.assertEqual(MARK, result["flow_contract"])
+        self.assertEqual("open", self.beads()[result["ids"]["_convoy"]]["status"])
+
     def test_refuses_while_a_declared_operator_need_is_not_lifted_and_names_it(self):
         self.seed(self.with_need())
 
@@ -695,6 +713,19 @@ class PatchDoorTest(Harness):
         self.propose(self.revision(self.SLICE, operator_needs=[
             {"id": "acces_horloge", "kind": "access", "what": "Accès au service d'horloge"}]))
         self.refused("acces_horloge")
+
+    def test_refuses_a_revision_without_the_operator_needs_field_and_says_to_write_an_empty_list(self):
+        draft = self.revision(self.SLICE)
+        draft.pop("operator_needs", None)
+        self.propose(draft)
+
+        proc = self.refused("operator_needs", "liste vide")
+        self.assertTrue(any("operator_needs" in line for line in self.refusal_lines(proc, "brouillon")), proc.stderr)
+
+    def test_patches_a_revision_that_declares_an_empty_list_of_operator_needs(self):
+        self.propose(self.revision(self.SLICE, operator_needs=[]))
+
+        self.assertEqual(["T5"], self.patched()["created"])
 
     def test_approved_patch_adds_a_slice_marked_tracked_and_pointed(self):
         self.propose(self.revision(self.SLICE))

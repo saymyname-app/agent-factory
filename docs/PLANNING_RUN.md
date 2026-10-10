@@ -85,8 +85,9 @@ Planning Run starts.
    A draft that declares the new-flow contract (`flow_contract:
    new-flow/v1`) is also held to the entry contract of the Delivery
    Workflow -- declared kind, demonstration line, observable criteria,
-   every numbered user story of the Spec covered by a slice, every
-   declared operator need lifted (`lift-need`), a launch recipe in the
+   every numbered user story of the Spec covered by a slice, the
+   `operator_needs` field present (an empty list when there is no need)
+   and every declared need lifted (`lift-need`), a launch recipe in the
    project profile or established by the first slice, and, when the Spec
    names a Validated Prototype, one Prototype Fold (`prototype_fold: true`)
    per Validated Prototype, which every other interface ticket of that
