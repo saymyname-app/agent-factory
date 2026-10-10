@@ -17,7 +17,6 @@ tests/spec-end-review-test.py
 tests/spec-integration-test.py
 tests/tdd-step-test.py
 tests/test-review-test.py
-tests/ticket-end-test.py
 tests/ticket-evaluation-test.py
 tests/ticket-exit-test.py
 tests/ticket-graph-publish-coverage-test.py
