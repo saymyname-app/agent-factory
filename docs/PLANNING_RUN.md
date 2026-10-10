@@ -130,6 +130,42 @@ Planning Run starts.
      `docs/DELIVERY.md` ("Marked convoys -- the delivery flow of a Planning
      Run (D01)").
 
+## Delivery path of an approved Spec (a preference, not a gate)
+
+Intent (Benjamin, his words, live chat, 2026-10-10): « c'est possible
+d'utiliser des flows plus rapide (claude code et codex peuvent simuler des
+workflows agentiques seules avec moi à l'orchestration, avec les skills matt
+pocock implement-spec et code-review par exemple et autre […]). Donc on peut
+faire ca jusqu'à que notre usine aie reellement montré meilleur performance
+que ca. » And, about this section: « faut que ca soit pas trop strict, c'est
+une préférence ».
+Mechanism (agent interpretation): until the Factory's own delivery (steps 5
+to 7) has shown it does better, Benjamin prefers **Direct Delivery** where it
+is faster: one operator session he orchestrates implements the approved Spec
+with subagents and the pinned upstream skills (`implement-spec`, `tdd`,
+`code-review`), and lands it through ordinary pull requests. It does not mean
+that the Planning Run is skipped (steps 1 to 4 are the same for both paths),
+that steps 5 to 7 are retired, or that any code refuses either path. Undo:
+remove this section and its pointers (`AGENTS.md`, `docs/context-index/`,
+`GLOSSARY.md`).
+
+- **Offer it.** Once a Spec is approved, the operator session says in one
+  line which path it would take and why; Benjamin answers. Direct Delivery
+  tends to win when the slices are independent and the proof is mechanical;
+  the Factory when the work should run unattended. (The agent's reading, to
+  adjust with use.)
+- **Keep it findable.** A Direct Delivery claims the Spec bead, comments
+  there his words and the pull requests it plans, and publishes no ticket
+  graph for that Spec, so the Factory does not deliver it a second time.
+- **Same way to main.** Worktree, pull request, Factory CI (`AGENTS.md`,
+  "Invariants"). A fresh-context review before a pull request is worth its
+  minutes for what a green test cannot show.
+- **Leave the comparison.** At the end, three lines as a comment on the Spec
+  bead: clock time from Spec approval to last merge; number of pull requests;
+  defects found afterwards (added when one shows). The same three lines can
+  be read from Beads and GitHub for a Spec the Factory delivered. That is how
+  "the Factory has shown better" gets read; Benjamin says when it has.
+
 ## Research and prototype tickets
 
 A research or prototype ticket (a Planning Decision Bead labelled

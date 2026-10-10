@@ -1,0 +1,26 @@
+# Test files that were above the ceiling of 120 seconds when the control was
+# introduced (2026-10-10, Spec CI01, af-q9urgr). Read by bin/ci-test-ceiling.
+# This list only shrinks: a line added is refused, and a file that
+# config/ci-test-seconds.tsv no longer gives more than 120 s leaves it
+# (`bin/ci-test-ceiling prune`, in the pull request that refreshes the seconds).
+# The rule: docs/TEST_GUIDELINE.md, point 5.
+tests/acceptance-session-test.py
+tests/code-review-test.py
+tests/convoy-advance-test.py
+tests/convoy-state-test.py
+tests/convoy-stops-fixture-city-test.py
+tests/correction-round-test.py
+tests/evidence-pack-test.py
+tests/fixture-city-oracle-test.py
+tests/outcome-evaluation-test.py
+tests/owner-answer-test.py
+tests/prototype-fidelity-test.py
+tests/spec-end-review-test.py
+tests/spec-integration-test.py
+tests/tdd-step-test.py
+tests/test-review-test.py
+tests/ticket-author-test.py
+tests/ticket-end-test.py
+tests/ticket-evaluation-test.py
+tests/ticket-exit-test.py
+tests/ticket-graph-publish-coverage-test.py

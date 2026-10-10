@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""ci-test-ceiling — no test file above 120 seconds (Spec CI01, af-q9urgr §3;
+the rule is docs/TEST_GUIDELINE.md, point 5).
+
+Usage:
+  ci-test-ceiling check [--root DIR]
+      Reads the seconds each test file took in a real Factory CI run
+      (config/ci-test-seconds.tsv, written by bin/ci-test-seconds: nothing
+      is measured here). Refuses:
+      - a test file above the ceiling, unless it is on the known list or
+        carries a written exception with its reason, one line of the file:
+            # ci: over-ceiling — <reason>
+      - a written exception without a reason: none, the template left as
+        it is, or under 10 characters;
+      - recorded seconds that cannot be read, hold no duration, or hold a
+        line that is neither a comment nor `<path><TAB><seconds>`;
+      - a known list that grows: a line that names a file which was not
+        above the ceiling when the control was introduced (2026-10-10);
+      - a line of the known list whose file is no longer above the ceiling
+        in the recorded seconds: it leaves the list (`prune` does it).
+  ci-test-ceiling prune [--root DIR]
+      Rewrites config/ci-test-ceiling-known.txt without the lines whose file
+      is no longer above the ceiling. Run it after bin/ci-test-seconds, in
+      the same pull request. It never adds a line.
+
+--root is the tree to read (default: the tree this script is in); tests point
+it at a fabricated one. `check` writes nothing.
+
+The verdict moves only when the recorded seconds or the known list change,
+that is in the pull request that refreshes them: a file that got faster or
+slower turns no other pull request red.
+
+Exit 0: one line on stdout. Exit 1: one reason per line on stderr, each
+naming its file. Exit 2: usage.
+"""
+import os
+import re
+import sys
+
+PROGRAM = "ci-test-ceiling"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+CEILING = 120
+SECONDS_FILE = os.path.join("config", "ci-test-seconds.tsv")
+KNOWN_FILE = os.path.join("config", "ci-test-ceiling-known.txt")
+GUIDELINE = "docs/TEST_GUIDELINE.md"
+EXCEPTION = re.compile(r"^#[ \t]*ci:[ \t]*over-ceiling\b(.*)$", re.MULTILINE)
+SECONDS_LINE = re.compile(r"^([^\t]+)\t([0-9]+)$")
+# A reason is words of the author: not the template copied as it is, and not
+# under this many characters.
+REASON_PLACEHOLDERS = ("<reason>", "<raison>")
+REASON_MIN_CHARACTERS = 10
+
+# The test files above the ceiling in config/ci-test-seconds.tsv on the day
+# the control was introduced (2026-10-10, Factory CI run 37872828394). The
+# known list may only name files of this set, so it can only shrink. This set
+# is a record of that day: it is never added to, and a file that leaves the
+# known list stays here.
+KNOWN_AT_INTRODUCTION = frozenset(
+    "tests/%s-test.py" % name
+    for name in (
+        "acceptance-session", "code-review", "convoy-advance", "convoy-state",
+        "convoy-stops-fixture-city", "correction-round", "evidence-pack",
+        "fixture-city-oracle", "outcome-evaluation", "owner-answer",
+        "prototype-fidelity", "spec-end-review", "spec-integration",
+        "tdd-step", "test-review", "ticket-author", "ticket-end",
+        "ticket-evaluation", "ticket-exit", "ticket-graph-publish-coverage",
+    )
+)
+
+
+def read_seconds(root):
+    """({path: seconds}, problems) of the recorded list. It holds what
+    bin/ci-test-seconds writes: comment lines, then `<path><TAB><seconds>`
+    lines. Any other line is a problem (blank lines aside), and so is a
+    list without one duration: a control that reads nothing must not pass."""
+    seconds, problems = {}, []
+    try:
+        with open(os.path.join(root, SECONDS_FILE), encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+    except OSError:
+        return seconds, ["%s cannot be read: no duration is known, nothing is checked." % SECONDS_FILE]
+    for number, line in enumerate(lines, 1):
+        if not line.strip() or line.startswith("#"):
+            continue
+        found = SECONDS_LINE.match(line)
+        if found:
+            seconds[found.group(1)] = int(found.group(2))
+        else:
+            problems.append(
+                "%s, line %d: `%s` is not `<path><TAB><seconds>`: the list is "
+                "written by bin/ci-test-seconds, not by hand." % (SECONDS_FILE, number, line)
+            )
+    if not seconds and not problems:
+        problems.append("%s holds no duration: nothing is checked." % SECONDS_FILE)
+    return seconds, problems
+
+
+def read_known(root):
+    """(lines of the known list as written, the paths they name in order)."""
+    try:
+        with open(os.path.join(root, KNOWN_FILE), encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+    except OSError:
+        return [], []
+    paths = []
+    for line in lines:
+        path = line.strip()
+        if path and not path.startswith("#") and path not in paths:
+            paths.append(path)
+    return lines, paths
+
+
+def written_exception(root, path):
+    """None: no exception line; "": one without a real reason (none, the
+    template left as it is, or too short); else the reason."""
+    try:
+        with open(os.path.join(root, path), encoding="utf-8", errors="replace") as handle:
+            found = EXCEPTION.search(handle.read())
+    except OSError:
+        return None
+    if not found:
+        return None
+    reason = found.group(1).strip(" \t—–:-")
+    if reason.lower() in REASON_PLACEHOLDERS or len(reason) < REASON_MIN_CHARACTERS:
+        return ""
+    return reason
+
+
+def no_longer_above(seconds, known):
+    return [path for path in known if seconds.get(path, 0) <= CEILING]
+
+
+def check(root):
+    seconds, problems = read_seconds(root)
+    if problems:
+        return problems, ""
+    _, known = read_known(root)
+    for path in known:
+        if path not in KNOWN_AT_INTRODUCTION:
+            problems.append(
+                "%s: %s names it, and it was not above %d s when the control was "
+                "introduced: the known list only shrinks. Remove the line; cut the "
+                "file, or write its exception in it (%s, point 5)."
+                % (path, KNOWN_FILE, CEILING, GUIDELINE)
+            )
+    for path in no_longer_above(seconds, known):
+        if path in KNOWN_AT_INTRODUCTION:
+            problems.append(
+                "%s: %s names it, and %s no longer gives it more than %d s (%s): "
+                "it leaves the list. Run `bin/%s prune` and commit the result."
+                % (path, KNOWN_FILE, SECONDS_FILE, CEILING,
+                   "%d s" % seconds[path] if path in seconds else "no line", PROGRAM)
+            )
+    exceptions = 0
+    for path in sorted(seconds):
+        if seconds[path] <= CEILING or path in known:
+            continue
+        if not os.path.isfile(os.path.join(root, path)):
+            continue  # a line bin/ci-test-seconds drops at its next run
+        reason = written_exception(root, path)
+        if reason:
+            exceptions += 1
+        elif reason == "":
+            problems.append(
+                "%s: %d s, above the ceiling of %d s, and its exception line gives no "
+                "reason (none, the template `<reason>` left as it is, or under %d "
+                "characters). Write why this file cannot be cut, or cut it (%s, "
+                "point 5)." % (path, seconds[path], CEILING, REASON_MIN_CHARACTERS, GUIDELINE)
+            )
+        else:
+            problems.append(
+                "%s: %d s in %s, above the ceiling of %d s for one test file. Cut the "
+                "file in two, or write in it `# ci: over-ceiling — <reason>` (%s, "
+                "point 5)." % (path, seconds[path], SECONDS_FILE, CEILING, GUIDELINE)
+            )
+    passed = (
+        "%d test files measured, none above %d s outside the known list "
+        "(%d on the list, %d with a written exception)."
+        % (len(seconds), CEILING, len(known), exceptions)
+    )
+    return problems, passed
+
+
+def prune(root):
+    seconds, problems = read_seconds(root)
+    if problems:
+        return problems + ["%s is left as it is." % KNOWN_FILE], ""
+    lines, known = read_known(root)
+    leaving = set(no_longer_above(seconds, known))
+    if leaving:
+        kept = [line for line in lines if line.strip() not in leaving]
+        with open(os.path.join(root, KNOWN_FILE), "w", encoding="utf-8") as handle:
+            handle.write("".join(line + "\n" for line in kept))
+    passed = "%d line(s) removed from %s%s; %d left." % (
+        len(leaving), KNOWN_FILE,
+        " (%s)" % ", ".join(sorted(leaving)) if leaving else "",
+        len(known) - len(leaving),
+    )
+    return [], passed
+
+
+COMMANDS = {"check": check, "prune": prune}
+
+
+def main(argv):
+    args = argv[1:]
+    if not args or args[0] not in COMMANDS:
+        sys.stderr.write(__doc__)
+        return 2
+    root = ROOT
+    if len(args) == 3 and args[1] == "--root":
+        root = args[2]
+    elif len(args) != 1:
+        sys.stderr.write(__doc__)
+        return 2
+    problems, passed = COMMANDS[args[0]](root)
+    if problems:
+        for problem in problems:
+            sys.stderr.write("%s %s: %s\n" % (PROGRAM, args[0], problem))
+        return 1
+    sys.stdout.write("%s %s: %s\n" % (PROGRAM, args[0], passed))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
