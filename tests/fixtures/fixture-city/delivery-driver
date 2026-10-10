@@ -98,6 +98,9 @@ from pathlib import Path
 
 import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "lib"))
+from fixture_prototype import BRANCH as PROTOTYPE_BRANCH, materialize  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[3]
 # The commands of the flow: the ones the oracle hands over, which it records
 # (T37, af-fg8lhx), or the ones of the checkout when the driver is run alone.
@@ -113,6 +116,7 @@ BROWSER = ROOT / "tests" / "fixtures" / "prototype-fidelity" / "browser"
 # The publication door and what it reads (`story-not-observed`).
 PUBLISHER = BIN / "ticket-graph-publish"
 GRAPH_REVIEW = BIN / "graph-review"
+SPEC_APPROVE = BIN / "spec-approve"
 FAKE_BD = ROOT / "tests" / "fixtures" / "ticket-graph-publish" / "bd-bead-mode"
 REVIEW_FAILOVER = ROOT / "tests" / "fixtures" / "graph-review" / "provider-failover"
 
@@ -451,11 +455,12 @@ class City:
         return where if through_the_door else {"convoy": CONVOY, "ticket": TICKET, **where}
 
     def publish_through_the_door(self, base: str) -> dict:
-        """`story-not-observed`: what a Planning Run leaves -- an approved
-        Spec with two user stories, an approved Ticket Graph Draft whose one
-        slice covers both, its favorable graph review -- then the real
-        publication door, which writes the convoy, marks it and opens the
-        integration branch of the Spec."""
+        """`story-not-observed`: what a Planning Run leaves -- a Spec with
+        two user stories, approved by the real bin/spec-approve (T52,
+        af-ezqgma: nobody writes its approval by hand), an approved Ticket
+        Graph Draft whose one slice covers both, its favorable graph review
+        -- then the real publication door, which writes the convoy, marks it
+        and opens the integration branch of the Spec."""
         def digest(text: str) -> str:
             return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -463,6 +468,10 @@ class City:
             return {"checks": {name: {"state": "favorable"} for name in checks}}
 
         descriptor = json.loads((ROOT / self.fixture / "descriptor.json").read_text())
+        # The Validated Prototype the approval door holds the Spec to: on its
+        # prototype branch, never merged, in the repository of the product.
+        frozen = materialize(self.workspace / "prototype.git")
+        self.git("fetch", "-q", self.workspace / "prototype.git", f"{PROTOTYPE_BRANCH}:{PROTOTYPE_BRANCH}")
         spec = (
             "Spec synthétique de la Fixture City (T26, af-vwcflt). Données de test seulement.\n\n"
             "## Problem Statement\n\nUn visiteur ne voit pas le jeu de données servi, un intégrateur ne peut pas le relire.\n\n"
@@ -472,7 +481,8 @@ class City:
             "so that je sache ce qui est servi. [interface]\n"
             "2. As an intégrateur, I want la liste des éléments en JSON à l'adresse /items, "
             "so that je puisse la relire par programme.\n\n"
-            f"## Validated Prototype\n\n- branche : `main`\n- commit : `{base}`\n- chemin : `{self.fixture}/prototype`\n"
+            f"## Validated Prototype\n\n- branche : `{PROTOTYPE_BRANCH}`\n- commit : `{frozen}`\n"
+            f"- chemin : `{self.fixture}/prototype`\n"
             "- états : `empty`, `content`\n\n### Écran : accueil\n\n"
             "| État | Statut | Détail |\n| --- | --- | --- |\n| vide | prototypé | empty |\n| contenu | prototypé | content |\n"
             "| chargement | sans objet | la page est rendue en une seule réponse du serveur |\n"
@@ -499,8 +509,12 @@ class City:
                 "approved_by": "benjamin", "approved_evidence": "« j'approuve le graphe » (Benjamin, fixture)",
                 "approved_digest": digest(draft)}},
             SPEC: {"id": SPEC, "title": "Spec de la fixture", "description": spec, "status": "open", "labels": [],
-                   "metadata": {"spec_state": "APPROVED_SPEC", "approved_digest": digest(spec),
+                   "metadata": {"spec_state": "DRAFT_SPEC", "planning_map": "none",
+                                "no_fog_evidence": "« pas de brouillard » (Benjamin, fixture)",
                                 "gc.project_id": descriptor["project_id"], "planning_run_target": "F01"}}}}))
+        self.run(SPEC_APPROVE, "bd-approve", "--spec", SPEC, "--approved-by", APPROVER,
+                 "--evidence", "« j'approuve la Spec » (Benjamin, fixture)", "--project", descriptor["project_id"],
+                 "--repo-root", self.root, "--prototype-remote", self.root)
         # The graph review reads its reviewer role in settings of its own.
         factory = self.workspace / "graph-review-factory"
         (factory / "config").mkdir(parents=True)
