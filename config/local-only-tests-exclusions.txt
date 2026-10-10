@@ -1,0 +1,5 @@
+# Tests marked `# ci: local-only` that bin/local-only-tests does not run, each
+# with its reason: one line, the path then the reason. Everything else that
+# carries the marker runs nightly (tests/local-only-tests-coverage-test.sh).
+# A test is excluded only when a run of it spends a real session.
+tests/convoy-stop-mayor-isolated-city-test.sh  vraie session du Mayor (fournisseur Claude) : un tour réel à chaque lancement
