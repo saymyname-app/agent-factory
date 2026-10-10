@@ -9,6 +9,7 @@ assertion reads what GET /, GET /api/requests and POST /api/actions/*
 hand back, or what the fake bd's call log recorded — never an internal
 function.
 """
+import inspect
 import json
 import os
 import socket
@@ -74,10 +75,13 @@ def wait_for_port(host, port, proc=None, timeout=DEADLINE_SECONDS):
         time.sleep(0.05)
 
 
-def wait_until(predicate, timeout=DEADLINE_SECONDS, interval=0.05):
+def wait_until(predicate, timeout=DEADLINE_SECONDS, interval=0.05, expected=None, last_seen=None):
     """Polls until predicate() is truthy. The predicate is always tried
     again after the deadline has passed once, so a single slow attempt
-    never ends the wait before a second look."""
+    never ends the wait before a second look. ``expected`` (text) and
+    ``last_seen`` (zero-argument callable giving the last thing observed)
+    go into the failure message, so a wait that fails says what it was
+    waiting for and what it saw instead."""
     deadline = time.monotonic() + timeout
     attempts = 0
     while True:
@@ -87,7 +91,8 @@ def wait_until(predicate, timeout=DEADLINE_SECONDS, interval=0.05):
             return last
         if time.monotonic() >= deadline and attempts > 1:
             raise AssertionError(
-                "condition not met within %ss (%d attempts, last=%r)" % (timeout, attempts, last)
+                "condition not met within %ss (%d attempts); expected: %s; last seen: %r"
+                % (timeout, attempts, expected or "a truthy answer", last_seen() if last_seen else last)
             )
         time.sleep(interval)
 
@@ -218,7 +223,18 @@ class ActionsSeamTest(unittest.TestCase):
             resp.read()
 
     def wait_for_requests(self, predicate, timeout=DEADLINE_SECONDS):
-        return wait_until(lambda: self._try(predicate), timeout=timeout)
+        self._last_payload = None
+        try:
+            # The calling line, e.g. `...(lambda p: len(p["requests"]) == 1)`.
+            expected = " ".join(inspect.getsource(predicate).split())
+        except (OSError, TypeError):
+            expected = repr(predicate)
+        return wait_until(
+            lambda: self._try(predicate),
+            timeout=timeout,
+            expected="GET /api/requests to satisfy " + expected,
+            last_seen=lambda: self._last_payload,
+        )
 
     def _try(self, predicate):
         # One forced re-read is not always enough: a background read begun
@@ -226,6 +242,7 @@ class ActionsSeamTest(unittest.TestCase):
         # older answer back until the next poll, hence the retries above.
         self.force_recheck()
         payload = self.requests_payload()
+        self._last_payload = payload
         return payload if predicate(payload) else None
 
     def post_action(self, action, body, method="POST", origin="__default__", login="__default__", cookie="__default__"):
