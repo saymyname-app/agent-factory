@@ -7,6 +7,8 @@ product is a copy of the Delivery Fixture City in a throwaway repository
 with its own remote; the tests on a merged result are the regression command
 of its profile, run and sealed for real by bin/evidence-capture."""
 
+import functools
+import hashlib
 import json
 import os
 import shutil
@@ -48,10 +50,70 @@ def branch_of(ticket):
     return f"ticket/{ticket}"
 
 
+def staged(helper):
+    """A helper whose result is built once and restored afterwards (see
+    SpecIntegrationTest.stage), when a test reaches it first: it leaves only
+    files (commits, steps and pieces written by the real commands), no
+    running process and nothing read against the clock. One stage per helper
+    and per arguments. A test that did anything since its setUp gets the
+    helper walked for real: a restore would wipe what the test did."""
+    @functools.wraps(helper)
+    def reached(self, *args, **kwargs):
+        if self.footprint() != self.seeded_footprint:
+            return helper(self, *args, **kwargs)
+        asked = json.dumps([args, kwargs], sort_keys=True, ensure_ascii=False)
+        name = f"{helper.__name__}-{hashlib.sha256(asked.encode()).hexdigest()[:16]}"
+        return self.stage(name, lambda: helper(self, *args, **kwargs))
+    return reached
+
+
 class SpecIntegrationTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # One directory for the whole class (tests/spec-end-test.py): a stage
+        # reached once (the seeded product, two finished tickets) is archived
+        # and restored at the same paths, which the stand-ins on the path, the
+        # remote of the product and the evidence store hold absolute.
+        cls.holder = Path(tempfile.mkdtemp(prefix="spec-integration-test-"))
+        cls.tmp = cls.holder / "city"
+        cls.stages = {}
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.holder, ignore_errors=True)
+
+    def stage(self, name, build):
+        """The state `build` leaves, built once and restored afterwards.
+        What it returns is a commit or a tuple of commits: strings."""
+        archive = self.holder / f"{name}.tar"
+        if name in self.stages:
+            shutil.rmtree(self.tmp, ignore_errors=True)
+            self.tmp.mkdir()
+            subprocess.run(("tar", "-C", str(self.tmp), "-xf", str(archive)), check=True)
+        else:
+            built = build()
+            subprocess.run(("tar", "-C", str(self.tmp), "-cf", str(archive), "."), check=True)
+            # Known only once its archive is whole.
+            self.stages[name] = built
+        return self.stages[name]
+
+    def footprint(self):
+        """Every file and folder of the test's directory with its mode, and
+        for a file its size and the time it was last written: the same as
+        after setUp only while the test did nothing there."""
+        found = []
+        for folder, folders, names in os.walk(self.tmp):
+            for name in folders:
+                found.append((os.path.join(folder, name), os.lstat(os.path.join(folder, name)).st_mode, 0, 0))
+            for name in names:
+                entry = os.lstat(os.path.join(folder, name))
+                found.append((os.path.join(folder, name), entry.st_mode, entry.st_size, entry.st_mtime_ns))
+        return sorted(found)
+
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="spec-integration-test-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        # No test sees what another left: an empty directory, then the stage.
+        shutil.rmtree(self.tmp, ignore_errors=True)
+        self.tmp.mkdir()
         self.tracker = self.tmp / "tracker.json"
         self.write_log = self.tmp / "writes.log"
         self.store = self.tmp / "store"
@@ -59,21 +121,8 @@ class SpecIntegrationTest(unittest.TestCase):
         self.origin = self.tmp / "origin.git"
         self.work = self.tmp / "work"
         self.gh_log = self.tmp / "gh.log"
-        # No pull request is ever opened: any call of `gh` is recorded.
-        (self.tmp / "path").mkdir()
-        gh = self.tmp / "path" / "gh"
-        gh.write_text(f'#!/bin/sh\necho "$@" >> "{self.gh_log}"\n')
-        gh.chmod(0o755)
-        # The real `gc` finds its city from the working directory: called
-        # from a merge work tree it finds none (seen on gc/bd 1.2.2,
-        # tests/spec-integration-demonstration-test.sh).
         gc = self.tmp / "path" / "gc"
-        gc.write_text(
-            f'#!/bin/sh\ncase "$PWD/" in "{self.work}"/*) echo "gc bd: not in a city directory" >&2; exit 1;; esac\n'
-            f'exec "{FAKE_GC}" "$@"\n')
-        gc.chmod(0o755)
         self.profile = self.tmp / "descriptor.json"
-        shutil.copy(ROOT / FIXTURE / "descriptor.json", self.profile)
         self.env = {
             **os.environ,
             "PATH": f"{self.tmp / 'path'}{os.pathsep}{os.environ['PATH']}",
@@ -89,8 +138,31 @@ class SpecIntegrationTest(unittest.TestCase):
         }
         for name in SESSION_IDENTITY:
             self.env.pop(name, None)
+        self.base = self.stage("seeded", self.seed)
+        self.seeded_footprint = self.footprint()
+
+    def seed(self):
+        """What every test starts from, left by real launches and holding
+        only files: the stand-ins on the path, the profile, the marked
+        convoy, the product with its remote. Returns the first commit of the
+        product."""
+        # No pull request is ever opened: any call of `gh` is recorded.
+        (self.tmp / "path").mkdir()
+        gh = self.tmp / "path" / "gh"
+        gh.write_text(f'#!/bin/sh\necho "$@" >> "{self.gh_log}"\n')
+        gh.chmod(0o755)
+        # The real `gc` finds its city from the working directory: called
+        # from a merge work tree it finds none (seen on gc/bd 1.2.2,
+        # tests/spec-integration-demonstration-test.sh).
+        gc = self.tmp / "path" / "gc"
+        gc.write_text(
+            f'#!/bin/sh\ncase "$PWD/" in "{self.work}"/*) echo "gc bd: not in a city directory" >&2; exit 1;; esac\n'
+            f'exec "{FAKE_GC}" "$@"\n')
+        gc.chmod(0o755)
+        shutil.copy(ROOT / FIXTURE / "descriptor.json", self.profile)
         self.seed_tracker()
         self.seed_repo()
+        return self.base
 
     # --- harness ------------------------------------------------------------
 
@@ -278,6 +350,7 @@ class SpecIntegrationTest(unittest.TestCase):
             elif ((self.shown(ticket)[kind] or {}).get("state") or {}).get("commit") != commit:
                 rounds[kind](ticket, commit)
 
+    @staged
     def two_finished_tickets(self):
         self.opened()
         return (self.finished(T1, {"docs/t1.md": "tranche 1\n"}), self.finished(T2, {"docs/t2.md": "tranche 2\n"}))
@@ -503,6 +576,7 @@ class SpecIntegrationTest(unittest.TestCase):
     CITED = {"axis": "spec", "blocking": True, "summary": "La liste n'affiche que deux éléments.",
              "citation": {"source": "ticket", "quote": "Point d'entrée : GET / — Observable : liste"}}
 
+    @staged
     def unreviewed_ticket(self):
         """A ticket whose author has finished, and that no reviewer has read."""
         self.opened()
@@ -571,6 +645,7 @@ class SpecIntegrationTest(unittest.TestCase):
 
     # --- the Ticket Evaluation of a ticket (T15): no merge without a favorable one ---
 
+    @staged
     def reviewed_ticket(self):
         """A finished ticket whose code review is favorable, and that no
         Evaluator has evaluated."""
@@ -695,6 +770,7 @@ class SpecIntegrationTest(unittest.TestCase):
 
     # --- AC3: a conflict goes back to the author -------------------------------
 
+    @staged
     def conflicting_tickets(self):
         self.opened()
         return (self.finished(T1, {README: "Le produit, vu par la tranche 1.\n"}),
@@ -756,6 +832,7 @@ class SpecIntegrationTest(unittest.TestCase):
 
     # --- AC4: red tests on the merged result ------------------------------------
 
+    @staged
     def red_ticket(self):
         """T2 alone breaks the regression command of the profile."""
         self.opened()
@@ -871,6 +948,7 @@ class SpecIntegrationTest(unittest.TestCase):
     def red(self):
         return self.show()["convoy"]["integration_red"]
 
+    @staged
     def red_takeover(self):
         """Two finished tickets, and a protected branch whose tip turns the
         regression command red once the integration branch takes it up; the

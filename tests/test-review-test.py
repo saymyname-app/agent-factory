@@ -9,6 +9,7 @@ bin/escalation-door, read back from its list. No agent runs:
 tests/fixtures/test-review/reviewer stands in for the dispatch door and the
 reviewer session it starts."""
 
+import functools
 import hashlib
 import json
 import os
@@ -113,10 +114,70 @@ def sha256_of(text):
     return "sha256:" + hashlib.sha256(text.encode()).hexdigest()
 
 
+def staged(helper):
+    """A helper whose result is built once and restored afterwards (see
+    TestReviewTest.stage), when a test reaches it first: it leaves only files
+    (a commit, the red proof written by the real bin/tdd-step), no launched
+    product, no review request and nothing read against the clock. One stage
+    per helper and per arguments. A test that did anything since its setUp
+    gets the helper walked for real: a restore would wipe what the test did."""
+    @functools.wraps(helper)
+    def reached(self, *args, **kwargs):
+        if self.footprint() != self.seeded_footprint:
+            return helper(self, *args, **kwargs)
+        asked = json.dumps([args, kwargs], sort_keys=True, ensure_ascii=False)
+        name = f"{helper.__name__}-{hashlib.sha256(asked.encode()).hexdigest()[:16]}"
+        return self.stage(name, lambda: helper(self, *args, **kwargs))
+    return reached
+
+
 class TestReviewTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # One directory for the whole class (tests/spec-end-test.py): a stage
+        # reached once (the seeded tracker and product, a proven red) is
+        # archived and restored at the same paths, which the settings, the
+        # stand-ins and the recorded steps hold absolute.
+        cls.holder = Path(tempfile.mkdtemp(prefix="test-review-test-"))
+        cls.tmp = cls.holder / "city"
+        cls.stages = {}
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.holder, ignore_errors=True)
+
+    def stage(self, name, build):
+        """The state `build` leaves, built once and restored afterwards.
+        What it returns is a commit: a string."""
+        archive = self.holder / f"{name}.tar"
+        if name in self.stages:
+            shutil.rmtree(self.tmp, ignore_errors=True)
+            self.tmp.mkdir()
+            subprocess.run(("tar", "-C", str(self.tmp), "-xf", str(archive)), check=True)
+        else:
+            built = build()
+            subprocess.run(("tar", "-C", str(self.tmp), "-cf", str(archive), "."), check=True)
+            # Known only once its archive is whole.
+            self.stages[name] = built
+        return self.stages[name]
+
+    def footprint(self):
+        """Every file and folder of the test's directory with its mode, and
+        for a file its size and the time it was last written: the same as
+        after setUp only while the test did nothing there."""
+        found = []
+        for folder, folders, names in os.walk(self.tmp):
+            for name in folders:
+                found.append((os.path.join(folder, name), os.lstat(os.path.join(folder, name)).st_mode, 0, 0))
+            for name in names:
+                entry = os.lstat(os.path.join(folder, name))
+                found.append((os.path.join(folder, name), entry.st_mode, entry.st_size, entry.st_mtime_ns))
+        return sorted(found)
+
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="test-review-test-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        # No test sees what another left: an empty directory, then the stage.
+        shutil.rmtree(self.tmp, ignore_errors=True)
+        self.tmp.mkdir()
         self.tracker = self.tmp / "tracker.json"
         self.write_log = self.tmp / "writes.log"
         self.door_log = self.tmp / "door.log"
@@ -124,10 +185,6 @@ class TestReviewTest(unittest.TestCase):
         self.store = self.tmp / "store"
         self.repo = self.tmp / "product"
         self.root = self.tmp / "root"
-        (self.root / "config").mkdir(parents=True)
-        self.settings(timeout_seconds=3600)
-        (self.tmp / "proposal-door").write_text("#!/bin/sh\necho 0\n")
-        (self.tmp / "proposal-door").chmod(0o755)
         self.env = {
             **os.environ,
             "GC_BIN": str(FAKE_GC),
@@ -150,11 +207,23 @@ class TestReviewTest(unittest.TestCase):
         # As an author's tool call would run, but never as this suite's own session.
         for name in ("CONVOY_STATE_FAKE_MAIL_FAIL", *SESSION_IDENTITY):
             self.env.pop(name, None)
+        self.base = self.stage("seeded", self.seed)
+        self.seeded_footprint = self.footprint()
+
+    def seed(self):
+        """What every test starts from, left by real launches and holding
+        only files: the Factory root and its settings, the stand-in of the
+        proposal door, the plan of the reviewer, the marked convoy, the
+        product at its first commit. Returns that commit."""
+        (self.root / "config").mkdir(parents=True)
+        self.settings(timeout_seconds=3600)
+        (self.tmp / "proposal-door").write_text("#!/bin/sh\necho 0\n")
+        (self.tmp / "proposal-door").chmod(0o755)
         self.reviewer("favorable")
         self.seed_tracker()
         shutil.copytree(ROOT / FIXTURE, self.repo / FIXTURE)
         self.git("init", "-q", "-b", "main")
-        self.base = self.commit("base")
+        return self.commit("base")
 
     # --- harness ------------------------------------------------------------
 
@@ -224,6 +293,7 @@ class TestReviewTest(unittest.TestCase):
             argv += ["--profile", DESCRIPTOR, "--dataset", "content"]
         return self.run_cmd(TDD_TOOL, *argv, *args)
 
+    @staged
     def red(self, count_test=COUNT_TEST, ticket=SLICE):
         """The red step of the author: the criterion tests, their table, and
         the proof that they fail at the start commit."""

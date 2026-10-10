@@ -2,20 +2,42 @@
 """bin/convoy-state on a fake tracker state (T33, af-p4d6ec; Spec af-wf4w5r
 §0 rule 2, Testing Decisions seam 2): one test per refusal and per pass, each
 refusal re-reading the tracker to prove nothing was written. Only the command
-line is exercised; ticket branches live in a throwaway Git repository."""
+line is exercised; ticket branches live in a throwaway Git repository.
 
+One stage down (Spec CI01 §3.1, af-q9urgr): a case gives the command line to
+the entry function of the command, `main` of lib/convoy_state.py, in the
+process of the tests, and reads what a caller of the command reads: exit
+status, standard output, standard error, the fake tracker, the write log. No
+other function of the module is called. The commands the tool starts itself
+(the fake `gc`, git) stay real processes. A few cases start bin/convoy-state
+for real, named by `real_process=True`: one pass, one refusal, the bead given
+on standard input, and the eight commands that write at the same time.
+
+    CONVOY_STATE_TEST_REAL_PROCESS=1 python3 tests/convoy-state-test.py
+
+starts every command of every case as a real process, as before: the way to
+check a red seen in-process against the real command line."""
+
+import contextlib
+import importlib.machinery
+import io
 import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
+import types
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT / "bin" / "convoy-state"
+MODULE = ROOT / "lib" / "convoy_state.py"  # what bin/convoy-state imports `main` from
+REAL_PROCESS = os.environ.get("CONVOY_STATE_TEST_REAL_PROCESS") == "1"
 FAKE_GC = ROOT / "tests" / "fixtures" / "convoy-state" / "gc"
 GATE_REPORT = ROOT / "tests" / "fixtures" / "convoy-state" / "ticket-end-report.json"
 
@@ -27,6 +49,52 @@ DIGEST = "sha256:" + "ab" * 32
 
 EXIT_UNRULED = 3
 EXIT_NOT_NEW_FLOW = 4
+
+
+@contextlib.contextmanager
+def standard_streams(stdin_text):
+    out, err = io.StringIO(), io.StringIO()
+    with mock.patch.object(sys, "stdin", io.StringIO(stdin_text or "")), \
+            contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        yield out, err
+
+
+def call_entry(argv, env, stdin_text=None):
+    """One command line given to the entry function, in this process; what a
+    process would have returned (status, standard output, standard error).
+
+    The program is read and compiled once. Its module is run anew for each
+    call, under the environment of that call: it reads GC_BIN and FACTORY_ROOT
+    when it is loaded and keeps the bounds of the flow once read, so a module
+    kept from one call to the next would answer with the environment and the
+    settings of the first. Nothing of a call is left for the next.
+
+    A `SystemExit` is the exit status (argparse leaves that way). Any other
+    exception is a crash of the command: it is not caught, and fails the case
+    with its traceback."""
+    global _program
+    if _program is None:
+        _program = importlib.machinery.SourceFileLoader("convoy_state", str(MODULE)).get_code("convoy_state")
+    module = types.ModuleType("convoy_state")
+    module.__file__ = str(MODULE)
+    with mock.patch.dict(os.environ, env, clear=True), \
+            mock.patch.object(sys, "argv", [str(TOOL), *argv]), \
+            standard_streams(stdin_text) as (out, err):
+        try:
+            exec(_program, module.__dict__)
+            status = module.main(list(argv))
+        except SystemExit as exc:
+            status = exc.code
+    # The interpreter's reading of `raise SystemExit(status)`.
+    if status is None:
+        status = 0
+    elif not isinstance(status, int):
+        err.write(f"{status}\n")
+        status = 1
+    return subprocess.CompletedProcess((str(TOOL), *argv), status, out.getvalue(), err.getvalue())
+
+
+_program = None
 
 
 class ConvoyStateTest(unittest.TestCase):
@@ -72,10 +140,16 @@ class ConvoyStateTest(unittest.TestCase):
         bead.setdefault("metadata", {}).update(metadata)
         self.tracker.write_text(json.dumps(state))
 
-    def run_tool(self, *args):
-        return subprocess.run(
-            (str(TOOL), *[str(a) for a in args]), env=self.env, text=True, capture_output=True,
-        )
+    def run_tool(self, *args, env=None, input=None, real_process=False):
+        """One command line of the tool, under `env` (the case's own by
+        default), `input` on its standard input. Given to the entry function
+        in this process, unless the case asks for a real process or
+        CONVOY_STATE_TEST_REAL_PROCESS=1 asks it for all."""
+        argv = [str(a) for a in args]
+        env = self.env if env is None else env
+        if real_process or REAL_PROCESS:
+            return subprocess.run((str(TOOL), *argv), env=env, text=True, capture_output=True, input=input)
+        return call_entry(argv, env, input)
 
     def ok(self, *args):
         proc = self.run_tool(*args)
@@ -122,11 +196,11 @@ class ConvoyStateTest(unittest.TestCase):
         self.edit_tracker(ticket_id, status="in_progress")
         return tip
 
-    def assert_refused_and_nothing_written(self, *args, mention=None):
+    def assert_refused_and_nothing_written(self, *args, mention=None, real_process=False):
         before_bytes = self.tracker.read_bytes()
         before_show = self.run_tool("show", CONVOY, "--repo", self.repo).stdout
         writes_before = self.write_log.read_text() if self.write_log.exists() else ""
-        proc = self.run_tool(*args)
+        proc = self.run_tool(*args, real_process=real_process)
         self.assertNotEqual(0, proc.returncode, proc.stdout)
         refusal = json.loads(proc.stdout)
         self.assertFalse(refusal["ok"])
@@ -284,9 +358,12 @@ class ConvoyStateTest(unittest.TestCase):
 
     def test_concurrent_counter_bumps_are_all_counted(self):
         self.ok("mark", CONVOY)
+        # Real processes: the lock is held between processes, and one process
+        # has one environment and one standard output.
         with ThreadPoolExecutor(max_workers=8) as pool:
             procs = list(pool.map(
-                lambda _: self.run_tool("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes"),
+                lambda _: self.run_tool("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes",
+                                        real_process=True),
                 range(8),
             ))
         self.assertEqual([0] * 8, [p.returncode for p in procs], [p.stdout + p.stderr for p in procs])
@@ -720,7 +797,8 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertFalse(self.write_log.exists())
 
     def test_mark_refuses_a_bead_that_is_not_a_convoy(self):
-        self.assert_refused_and_nothing_written("mark", T1, mention=T1)
+        # The refusal kept on the real command line (Spec CI01 §3.1).
+        self.assert_refused_and_nothing_written("mark", T1, mention=T1, real_process=True)
 
     # --- AC5: a verdict stops being valid when the branch tip moves -----------
 
@@ -769,8 +847,9 @@ class ConvoyStateTest(unittest.TestCase):
         bead = [{"id": T1, "status": "open", "metadata": self.tracker_state()["beads"][T1]["metadata"]}]
         env = {**self.env, "GC_BIN": "/nonexistent/gc"}  # the tracker is not read again
 
-        proc = subprocess.run((str(TOOL), "ticket", T1, "--bead-json", "-"), env=env, text=True,
-                              capture_output=True, input=json.dumps(bead))
+        # A real process: the bead comes through a real standard input.
+        proc = self.run_tool("ticket", T1, "--bead-json", "-", env=env, input=json.dumps(bead),
+                             real_process=True)
 
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         self.assertTrue(json.loads(proc.stdout)["new_flow"])
@@ -786,8 +865,10 @@ class ConvoyStateTest(unittest.TestCase):
         city.mkdir()
         env = {**self.env, "GC_BIN": str(recorder), "FACTORY_ROOT": str(city)}
 
+        # The pass kept on the real command line (Spec CI01 §3.1): a write
+        # and two reads, through bin/convoy-state and its own start.
         for command in (("mark", CONVOY), ("show", CONVOY), ("list",)):
-            proc = subprocess.run((str(TOOL), *command), env=env, text=True, capture_output=True)
+            proc = self.run_tool(*command, env=env, real_process=True)
             self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
 
         lines = calls.read_text().splitlines()
