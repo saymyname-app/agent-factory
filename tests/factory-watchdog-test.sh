@@ -43,6 +43,7 @@ GH_AUTH_RC="$TMP/gh-auth-rc";   printf '0' > "$GH_AUTH_RC"
 GH_AUTH_OUT="$TMP/gh-auth-out"; printf 'Logged in to github.com account operator-1' > "$GH_AUTH_OUT"
 mkdir -p "$TMP/city/.gc/runtime"
 BEADS_DIR="$TMP/beads"; mkdir -p "$BEADS_DIR"
+DEPS_DIR="$TMP/deps"; mkdir -p "$DEPS_DIR"
 CALLS="$TMP/calls.log"; : > "$CALLS"
 MAIL="$TMP/mail.log"; : > "$MAIL"
 
@@ -54,6 +55,12 @@ case "\$1 \$2" in
   "bd gate")
     [[ "\$3" == list ]] && { cat "$GATES"; exit 0; }
     ;;
+  "bd dep")
+    # bd dep list ID... --direction=up -t TYPE --json: the dependents of
+    # the first id, from a fixture file; none unless the test wrote one.
+    f="$DEPS_DIR/\$4.\${*: -2:1}.json"
+    if [[ -f "\$f" ]]; then cat "\$f"; else echo '[]'; fi
+    exit 0 ;;
   "rig list")
     cat "$RIG_LIST"; exit 0 ;;
   "bd list")
@@ -166,6 +173,39 @@ reset_logs
 out=$(watchdog)
 grep -q "aged gate —" <<<"$out" || fail "the gate should still be reported while open"
 [ "$(mails)" = "0" ] || fail "an immediate re-run must be throttled, not re-mailed"
+printf '[]' > "$GATES"
+
+# 2b. an aged gate whose wait is already a request on the operator's list is
+# reported but never paged: on the bead it blocks, or on the convoy tracking
+# that bead (af-brjmv6: af-fmeaj6 paged every 30 min for three days) ----------
+jq -n --arg c "$(iso $((NOW - 3000)))" '[{"id":"af-gate1","status":"open","await_type":"human","created_at":$c,"description":"Ad-hoc gate blocking af-t32"}]' > "$GATES"
+printf '[{"id":"af-t32","status":"in_progress","metadata":{}}]' > "$DEPS_DIR/af-gate1.blocks.json"
+printf '[{"id":"af-convoy","status":"open","metadata":{"gc.needs_benjamin":"La barriere attend tes mots"}}]' > "$DEPS_DIR/af-t32.tracks.json"
+reset_logs
+out=$(watchdog)
+grep -q "aged gate — already on the operator's list (af-convoy), not paged: gate af-gate1 open" <<<"$out" \
+  || { echo "$out" >&2; fail "a gate already on the operator's list (convoy) was not reported as such"; }
+grep -q "^ATTENTION" <<<"$out" && fail "a wait already on the operator's list is not a problem"
+[ "$(mails)" = "0" ] || fail "a gate already on the operator's list must not page the Mayor"
+grep -q '^bd update af-gate1' "$CALLS" && fail "a gate that is not paged must not be stamped as nudged"
+
+printf '[{"id":"af-t32","status":"blocked","metadata":{"gc.needs_benjamin":"Choisis une variante"}}]' > "$DEPS_DIR/af-gate1.blocks.json"
+rm -f "$DEPS_DIR/af-t32.tracks.json"
+reset_logs
+out=$(watchdog)
+grep -q "already on the operator's list (af-t32), not paged" <<<"$out" \
+  || { echo "$out" >&2; fail "a gate whose blocked bead holds the request was not recognised"; }
+[ "$(mails)" = "0" ] || fail "a gate whose blocked bead holds the request must not page the Mayor"
+
+# An answered request ("none") or one on a closed bead is no longer on the
+# list: the gate is paged again.
+printf '[{"id":"af-t32","status":"in_progress","metadata":{"gc.needs_benjamin":"none"}}]' > "$DEPS_DIR/af-gate1.blocks.json"
+printf '[{"id":"af-convoy","status":"closed","metadata":{"gc.needs_benjamin":"La barriere attend tes mots"}}]' > "$DEPS_DIR/af-t32.tracks.json"
+reset_logs
+out=$(watchdog)
+grep -q "^ATTENTION" <<<"$out" || { echo "$out" >&2; fail "a gate with no active request must still be a problem"; }
+[ "$(mails)" = "1" ] || fail "a gate with no active request on the list must still page the Mayor"
+rm -f "$DEPS_DIR"/*.json
 printf '[]' > "$GATES"
 
 # 3. --check-only reports but sends no mail and creates/updates nothing -------
