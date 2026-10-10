@@ -219,6 +219,21 @@ The executable form of one acceptance criterion of a ticket, written before the 
 _French conversational alias_: test de critère
 _Avoid_: test d'acceptation, test E2E
 
+**Test Case**:
+One test method or function: the unit that passes or fails alone, and that a before/after comparison counts by name. A test file holds several.
+_French conversational alias_: cas
+_Avoid_: test alone (a file or a case?), scenario
+
+**Test Level**:
+How far from the code a Test Case observes a tool: low (the entry function, in the test's own process), command line (one tool as a real process), whole journey (several tools chained from one end of a flow to the other). A pass or a refusal is proven once, at the lowest level where it can be observed; the level above proves the transmission only (`docs/TEST_GUIDELINE.md`).
+_French conversational alias_: étage
+_Avoid_: layer, unit/integration/E2E, pyramid
+
+**Test Decor**:
+Everything a Test Case needs in place before its own gesture (repository, tracker state, files, published graph). Built once per test file, then copied for each case; the values a case verifies stay written in the case.
+_French conversational alias_: décor
+_Avoid_: fixture (here: the files under `tests/fixtures/`), setup, context
+
 **Ticket Exit**:
 The structured, tool-called way a worker ends a ticket: finished, Planning Exception, operator request, technically blocked, or interrupted.
 _French conversational alias_: sortie de ticket
