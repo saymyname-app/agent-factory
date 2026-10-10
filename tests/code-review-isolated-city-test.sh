@@ -337,7 +337,7 @@ evaluated() {  # TICKET COMMIT REPO: a favorable Ticket Evaluation, as an Evalua
     environment: [{dataset: null, address: "http://127.0.0.1:1", state_file: "/launch.json"}]}' > "$TRIAL/evaluation-request-$1.json"
   state open-evaluation "$CONVOY" "$1" --commit "$2" --file "$TRIAL/evaluation-request-$1.json" >/dev/null
   python3 "$ROOT/tests/lib/ticket_proofs.py" capture "$CONVOY" "$1" evaluation.seen "$2" --repo "$3" >/dev/null
-  jq -n --arg commit "$2" --argjson t "$shown" '{commit: $commit, recorded_by: "delivery-evaluator-trial",
+  jq -n --arg commit "$2" --arg session "delivery-evaluator-trial-$1-${2:0:12}" --argjson t "$shown" '{commit: $commit, recorded_by: $session,
     criteria: [$t.criteria | to_entries[] | {number: (.key + 1), text: .value, state: "observed", evidence: "evaluation.seen"}],
     demonstration_line: {text: $t.demonstration_line, state: "observed", evidence: "evaluation.seen"}}' > "$TRIAL/evaluation-$1.json"
   state record-evaluation "$CONVOY" "$1" --file "$TRIAL/evaluation-$1.json" >/dev/null
@@ -359,8 +359,8 @@ author_finishes() { # <ticket> <author model> <what the slice says>
   state set-tdd "$CONVOY" "$t" --step red --commit "$red" --base "$BASE" >/dev/null
   jq -n --argjson files "$files" --arg id "$FIXTURE/tests/test_count_$t.py::CountTest.test_count" '{files: $files, criteria: {"1": [$id]}}' > "$TRIAL/request.$t.json"
   state open-test-review "$CONVOY" "$t" --commit "$red" --file "$TRIAL/request.$t.json" >/dev/null
-  jq -n --argjson files "$files" --arg commit "$red" --arg id "$FIXTURE/tests/test_count_$t.py::CountTest.test_count" \
-    '{commit: $commit, files: $files, tests: {($id): {state: "favorable"}}, recorded_by: "trial-test-reviewer"}' > "$TRIAL/verdict.$t.json"
+  jq -n --argjson files "$files" --arg commit "$red" --arg session "trial-test-reviewer-$t" --arg id "$FIXTURE/tests/test_count_$t.py::CountTest.test_count" \
+    '{commit: $commit, files: $files, tests: {($id): {state: "favorable"}}, recorded_by: $session}' > "$TRIAL/verdict.$t.json"
   state record-test-review "$CONVOY" "$t" --file "$TRIAL/verdict.$t.json" >/dev/null
   state set-tdd "$CONVOY" "$t" --step freeze --commit "$red" >/dev/null
   finish "$t" "$tip"
@@ -429,6 +429,9 @@ on_integration "$TIP_B" || fail "the tip of B is not on the integration branch"
 echo "$(date -u +%H:%M:%S) B : constat de goût donné comme bloquant sans citation, enregistré non bloquant ($(printf '%s' "$second" | jq -r '.findings[0].demoted')) ; verdict favorable ; modèles distincts (modele-auteur / modele-relecteur) ; ticket fusionné dans $INTEGRATION"
 
 # --- A again: « corrigé », judged by a second reviewer session, merged --------------
+# B was merged meanwhile: the author takes the tip of the integration branch
+# before the correction. No reviewer is sent on a branch behind it (T44).
+git -C "$TRIAL/wt/$A" merge -q --no-edit "$INTEGRATION" || fail "the branch of A did not take the tip of the integration branch"
 FIX_A=$(commit_on "$A" "docs/$A.md" "Le nombre d'éléments est affiché sur la page d'accueil." "PROSE-DU-COMMIT : correction")
 finish "$A" "$FIX_A"
 jq -n --arg commit "$FIX_A" '{responses: {"F1.1": {response: "fixed", commit: $commit}}}' > "$TRIAL/responses.json"
