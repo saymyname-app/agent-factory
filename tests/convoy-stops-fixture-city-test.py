@@ -44,6 +44,9 @@ No agent runs here: what an author session leaves (a Planning Exception, a
 closed repair, a Ticket Handoff) and what the Evaluator of the end hands in
 are written the way their tools write them."""
 
+import copy
+import functools
+import hashlib
 import html
 import importlib.machinery
 import importlib.util
@@ -57,6 +60,7 @@ import unittest
 import urllib.error
 import urllib.request
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -106,9 +110,97 @@ publication = load("ticket-graph-publish-coverage-test.py")
 PROJECT = publication.PROJECT
 
 
-class ConvoyStopsOnTheFixtureCity(publication.Harness):
+class Staged:
+    """A decor built once then restored for each case (tests/spec-end-test.py,
+    tests/ticket-evaluation-test.py). `holder` is one directory for the
+    cases that share the decor, `city` the directory of the running case, at
+    one fixed path inside it: emptied when a case starts, so that no case
+    sees what another left, and fixed so that the paths the scripts, the
+    settings, the work trees and the tracker hold absolute stay true once an
+    archive is restored there."""
+
+    def stage(self, name, build):
+        """The state `build` leaves in the city, built once and restored
+        afterwards. What it returns is plain data, copied at each return."""
+        archive = self.holder / f"{name}.tar"
+        if name in self.stages:
+            shutil.rmtree(self.city, ignore_errors=True)
+            self.city.mkdir()
+            subprocess.run(("tar", "-C", str(self.city), "-xf", str(archive)), check=True)
+        else:
+            built = build()
+            subprocess.run(("tar", "-C", str(self.city), "-cf", str(archive), "."), check=True)
+            # Known only once its archive is whole.
+            self.stages[name] = built
+        return copy.deepcopy(self.stages[name])
+
+
+def staged(helper):
+    """A helper whose result is built once and restored afterwards (see
+    Staged.stage), when a test reaches it first: it leaves only files (what
+    the real commands wrote in the tracker and the repository), no launched
+    process and nothing read against the clock. One stage per helper and per
+    arguments. A test that did anything since its setUp gets the helper
+    walked for real: a restore would wipe what the test did."""
+    @functools.wraps(helper)
+    def reached(self, *args, **kwargs):
+        if self.footprint() != self.seeded_footprint:
+            return helper(self, *args, **kwargs)
+        asked = json.dumps([args, kwargs], sort_keys=True, ensure_ascii=False)
+        name = f"{helper.__name__}-{hashlib.sha256(asked.encode()).hexdigest()[:16]}"
+        return self.stage(name, lambda: helper(self, *args, **kwargs))
+    return reached
+
+
+class ConvoyStopsOnTheFixtureCity(Staged, publication.Harness):
+    @classmethod
+    def setUpClass(cls):
+        cls.holder = Path(tempfile.mkdtemp(prefix="convoy-stops-fixture-city-"))
+        cls.city = cls.holder / "city"
+        cls.stages = {}
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.holder, ignore_errors=True)
+
+    def footprint(self):
+        """Every file and folder of the test's directory with its mode, and
+        for a file its size and the time it was last written: the same as
+        after setUp only while the test did nothing there."""
+        found = []
+        for folder, folders, names in os.walk(self.tmp):
+            for name in folders:
+                found.append((os.path.join(folder, name), os.lstat(os.path.join(folder, name)).st_mode, 0, 0))
+            for name in names:
+                entry = os.lstat(os.path.join(folder, name))
+                found.append((os.path.join(folder, name), entry.st_mode, entry.st_size, entry.st_mtime_ns))
+        return sorted(found)
+
     def setUp(self):
-        super().setUp()
+        # No test sees what another left: an empty directory, then the stage.
+        shutil.rmtree(self.city, ignore_errors=True)
+        self.city.mkdir()
+        # The harness of the publication suite builds in the directory it
+        # asks for: it is given the city, so that `self.tmp` is that fixed path.
+        with mock.patch.object(publication.tempfile, "mkdtemp", return_value=str(self.city)):
+            super().setUp()
+        seeded = self.stage("seeded", self.seed_convoy)
+        self.name_convoy(seeded["ids"])
+        self.flow_environment()
+        self.integration, self.base = seeded["integration"], seeded["base"]
+        self.seeded_footprint = self.footprint()
+
+    def name_convoy(self, ids):
+        self.ids = ids
+        self.convoy = self.ids["_convoy"]
+        self.tickets = {key: bead_id for key, bead_id in self.ids.items() if key != "_convoy"}
+
+    def seed_convoy(self):
+        """What every test starts from, left by real launches and holding
+        only files: the red product, the graph published by the real door,
+        which opens the integration branch, the settings of the Factory.
+        Returns the identifiers of the publication, the integration branch
+        and its tip."""
         # The product holds what turns its regression command red, from its
         # protected branch on: the integration branch opens red.
         (self.repo_root / RED_FILE).write_text("le contrôle est rouge tant que ce fichier existe\n")
@@ -130,9 +222,7 @@ class ConvoyStopsOnTheFixtureCity(publication.Harness):
             }],
         })
         self.seed(draft)
-        self.ids = self.published()["ids"]
-        self.convoy = self.ids["_convoy"]
-        self.tickets = {key: bead_id for key, bead_id in self.ids.items() if key != "_convoy"}
+        self.name_convoy(self.published()["ids"])
         # The edges the real tracker holds between the tickets (`blocks`).
         state = self.state()
         for bead_id in self.tickets.values():
@@ -140,11 +230,20 @@ class ConvoyStopsOnTheFixtureCity(publication.Harness):
             state["beads"][bead_id]["blocks"] = [self.ids[key] for key in blockers]
         self.state_path.write_text(json.dumps(state))
         self.factory_root()
-        self.write_log = self.tmp / "writes.log"
-        self.write_log.write_text("")
+        (self.tmp / "writes.log").write_text("")
         for name, body in (("provider-failover", "#!/bin/sh\nprintf '{}\\n'\n"), ("proposal-door", "#!/bin/sh\necho 0\n")):
             (self.tmp / name).write_text(body)
             (self.tmp / name).chmod(0o755)
+        self.flow_environment()
+        (self.tmp / "end-review-plan.json").write_text(json.dumps(["favorable"]))
+        integration = self.shown()["convoy"]["integration"]["branch"]
+        return {"ids": self.ids, "integration": integration, "base": self.git("rev-parse", integration)}
+
+    def flow_environment(self):
+        """The environment of the commands of the flow, on top of the one of
+        the publication door: it writes no file, and is set again once the
+        seeded city is restored."""
+        self.write_log = self.tmp / "writes.log"
         self.env = {
             **self.env,
             "GC_BIN": str(FLOW_GC),
@@ -170,11 +269,8 @@ class ConvoyStopsOnTheFixtureCity(publication.Harness):
             "SPEC_END_REVIEW_FAKE_PLAN": str(self.tmp / "end-review-plan.json"),
             "SPEC_END_REVIEW_FAKE_REPO": str(self.repo_root),
         }
-        (self.tmp / "end-review-plan.json").write_text(json.dumps(["favorable"]))
         for name in SESSION_IDENTITY:
             self.env.pop(name, None)
-        self.integration = self.shown()["convoy"]["integration"]["branch"]
-        self.base = self.git("rev-parse", self.integration)
 
     # --- harness ------------------------------------------------------------
 
@@ -353,6 +449,7 @@ class ConvoyStopsOnTheFixtureCity(publication.Harness):
 
     # --- two open Planning Exceptions -----------------------------------------
 
+    @staged
     def two_at_work(self):
         """T1 and T4 started; T5, ready too, still waits for a place."""
         self.factory_root(ceiling=2)
@@ -1065,14 +1162,35 @@ class ConvoyStopsOnTheFixtureCity(publication.Harness):
         self.assertEqual((2, 1), (self.end_rounds(), len(self.requests())))
 
 
-class FixtureCityWalk(unittest.TestCase):
+def tearDownModule():
+    if FixtureCityWalk.holder is not None:
+        shutil.rmtree(FixtureCityWalk.holder, ignore_errors=True)
+        FixtureCityWalk.holder = None
+
+
+class FixtureCityWalk(Staged, unittest.TestCase):
     """The convoy the reference driver walks to the end of its Spec: every
     pass is the real bin/convoy-advance, the Evidence Pack is the generated
     one and the product is really launched. The harness of the suites below."""
 
+    holder = None
+
+    @classmethod
+    def setUpClass(cls):
+        # One holder for the suites of the walk, removed with the module:
+        # they start from the same Delivered Outcomes (see walk_to_delivered),
+        # each walked once whatever the suite that reaches it first.
+        if FixtureCityWalk.holder is None:
+            FixtureCityWalk.holder = Path(tempfile.mkdtemp(prefix="acceptance-fixture-city-")).resolve()
+            FixtureCityWalk.city = FixtureCityWalk.holder / "city"
+            FixtureCityWalk.stages = {}
+
     def setUp(self):
-        self.workspace = Path(tempfile.mkdtemp(prefix="acceptance-fixture-city-")).resolve()
-        self.addCleanup(shutil.rmtree, self.workspace, ignore_errors=True)
+        # No test sees what another left: an empty workspace, at the fixed
+        # path a restored walk holds absolute.
+        self.workspace = self.city
+        shutil.rmtree(self.workspace, ignore_errors=True)
+        self.workspace.mkdir()
         self.clock = {}
 
     # --- harness ------------------------------------------------------------
@@ -1111,8 +1229,38 @@ class FixtureCityWalk(unittest.TestCase):
 
     def walk_to_delivered(self, inject="none"):
         """The walk of the fixture, up to the pass that records the Delivered
-        Outcome and not one event further. Returns the record."""
-        return self.walk(inject, lambda convoy: convoy["delivered"])
+        Outcome and not one event further. Returns the record.
+
+        Walked once for each injection and restored afterwards, when the
+        test reaches it first: a Delivered Outcome leaves only files (the
+        product its evaluations launched is stopped, no session is open) and
+        every clock read after it is later than what it recorded. A test
+        that did anything in its workspace gets the walk for real."""
+        def build():
+            delivered = self.walk(inject, lambda convoy: convoy["delivered"])
+            return {"prepared": self.prepared, "convoy": self.convoy, "delivered": delivered}
+
+        if any(self.workspace.iterdir()):
+            return build()["delivered"]
+        name = f"delivered-{inject}"
+        restored = name in self.stages
+        reached = self.stage(name, build)
+        if restored:
+            # What the walk set on the test, and its cleanup, as `walk` does.
+            self.addCleanup(self.driver, "stop")
+            self.enter(reached["prepared"])
+            self.convoy = reached["convoy"]
+        return reached["delivered"]
+
+    def enter(self, prepared):
+        """Where the public state of the city `prepare` built is read."""
+        self.prepared = prepared
+        self.repo, self.profile = Path(prepared["repo"]), Path(prepared["profile"])
+        self.env = {"PATH": os.environ["PATH"], "HOME": str(self.workspace / "home"), **prepared["environment"],
+                    "ESCALATION_DOOR_LOCK_FILE": str(self.workspace / "escalation-door.lock"),
+                    "GC_ESCALATION_RECIPIENT": "human"}
+        self.tracker = Path(self.env["CONVOY_STATE_FAKE_TRACKER"])
+        self.write_log = self.workspace / "writes.log"
 
     def walk(self, inject, reached, rounds_consumed=None):
         """The walk of the fixture, up to the pass after which `reached`
@@ -1120,12 +1268,7 @@ class FixtureCityWalk(unittest.TestCase):
         `rounds_consumed`, the rounds of the end the convoy already counts."""
         prepared = self.driver("prepare", "--inject", inject)
         self.addCleanup(self.driver, "stop")
-        self.repo, self.profile = Path(prepared["repo"]), Path(prepared["profile"])
-        self.env = {"PATH": os.environ["PATH"], "HOME": str(self.workspace / "home"), **prepared["environment"],
-                    "ESCALATION_DOOR_LOCK_FILE": str(self.workspace / "escalation-door.lock"),
-                    "GC_ESCALATION_RECIPIENT": "human"}
-        self.tracker = Path(self.env["CONVOY_STATE_FAKE_TRACKER"])
-        self.write_log = self.workspace / "writes.log"
+        self.enter(prepared)
         self.convoy = self.driver("publish").get("convoy", prepared.get("convoy"))
         if rounds_consumed is not None:
             self.tool_ok(STATE, "set-counter", self.convoy, "--counter", "end_rounds", "--value", rounds_consumed)
