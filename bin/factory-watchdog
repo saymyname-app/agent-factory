@@ -6,6 +6,8 @@
 #   1. AGED HUMAN GATE   a "Gate: human" issue can sit open for hours with no
 #                        re-notification and no visible cockpit signal. af-oihx
 #                        sat 2h7m on 2026-09-16 before a human found it by hand.
+#                        A gate whose wait is already a request on the
+#                        operator's list is reported, never paged (af-brjmv6).
 #   2. STUCK PR          a Factory-repo PR that is CONFLICTING, or has never
 #                        triggered any CI check, looks identical from the
 #                        outside to one quietly waiting its turn. PR #57 sat
@@ -98,11 +100,39 @@ should_nudge() {  # should_nudge <bead-id> <metadata-key> -> 0 if due, 1 if thro
   [ "$age_min" -ge "$RENUDGE_MINUTES" ]
 }
 
+# A human gate whose wait is already an open request on the operator's list is
+# a wanted, visible wait, not a silent one: the bead it blocks, or the convoy
+# tracking that bead, carries an active gc.needs_benjamin. Paging the Mayor
+# about it tells nobody anything -- gate af-fmeaj6 (D01's final verification,
+# request on convoy af-wtjo2x) was paged every 30 min for three days, each page
+# cleared by hand (af-brjmv6). Prints the bead holding the request. Any
+# unreadable link reads as "not on the list": the gate is paged as before.
+ON_OPERATOR_LIST='[.[]? | select((.status // "open") != "closed")
+  | select(((.metadata["gc.needs_benjamin"] // "") | tostring) as $n | $n != "" and $n != "none")
+  | .id] | first // empty'
+gate_on_operator_list() {  # gate_on_operator_list <gate-id> -> 0 + holder id if listed
+  local gate_id=$1 blocked holder ids
+  blocked=$(gc bd dep list "$gate_id" --direction=up -t blocks --json 2>/dev/null) || return 1
+  holder=$(jq -r "$ON_OPERATOR_LIST" <<<"$blocked" 2>/dev/null)
+  if [ -z "$holder" ]; then
+    ids=$(jq -r '[.[]?.id // empty] | join(" ")' <<<"$blocked" 2>/dev/null)
+    [ -n "$ids" ] || return 1
+    # shellcheck disable=SC2086  # $ids: bead ids, one argument each
+    holder=$(gc bd dep list $ids --direction=up -t tracks --json 2>/dev/null \
+      | jq -r "$ON_OPERATOR_LIST" 2>/dev/null)
+  fi
+  [ -n "$holder" ] && printf '%s' "$holder"
+}
+
 # --- 1. aged human gates ------------------------------------------------------
 gates_json=$(gc bd gate list --json 2>/dev/null || echo '[]')
 [ -n "$gates_json" ] || gates_json='[]'
 while IFS=$'\t' read -r gate_id code msg; do
   [ -z "$gate_id" ] && continue
+  if [ "$code" = "aged_human_gate" ] && holder=$(gate_on_operator_list "$gate_id"); then
+    say "· aged gate — already on the operator's list ($holder), not paged: $msg"
+    continue
+  fi
   bad "aged gate — $msg"
   if [ "$CHECK_ONLY" != "1" ] && should_nudge "$gate_id" "gc.watchdog_nudged_at"; then
     "$ESCALATION_DOOR" mayor "$gate_id" "factory-watchdog: open human gate past ${GATE_MINUTES}m -- $msg" \
