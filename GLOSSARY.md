@@ -182,6 +182,11 @@ A Delivered Outcome accepted by the project owner's recorded words at a named co
 _French conversational alias_: résultat accepté
 _Avoid_: merely merged code, Delivered Outcome, "refused" (the three answers to a Delivered Outcome are accepted, findings returned, abandoned)
 
+**Direct Delivery**:
+Delivery of an Approved Spec by one operator session that Benjamin orchestrates, with subagents, outside any convoy and through the same pull-request gate. A preference of his, not a gate (`docs/PLANNING_RUN.md`).
+_French conversational alias_: livraison directe
+_Avoid_: vibe coding, bypass, hors usine
+
 **Vertical Slice**:
 A bounded increment that crosses the layers necessary to produce behavior demonstrable on its own on the launched product, through to the point where the product serves it.
 _French conversational alias_: tranche verticale

@@ -8,7 +8,7 @@ Classify the request before touching state:
 
 - **OBSERVE** or **DISCUSS**: read-only. Report product meaning before factory internals.
 - **RECORD**: update the relevant Bead or durable documentation within the stated scope.
-- **EXECUTE**: deliver through the Mayor and Beads workflow unless the task is explicitly bounded Factory maintenance.
+- **EXECUTE**: deliver via the Mayor and Beads workflow unless explicitly bounded Factory maintenance or Direct Delivery.
 - **ADMIN**: change the host, access, secrets, production, or recovery only with explicit authority.
 
 For “where is <project>?”, read that project's own repository and the live
