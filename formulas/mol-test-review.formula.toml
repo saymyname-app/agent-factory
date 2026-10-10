@@ -6,7 +6,9 @@ before they are frozen and hands its answers to `bin/test-review record`
 Only `bin/test-review` dispatches this formula, through `bin/dispatch-door
 --role reviewer`: the session is new, runs on the read-only reviewer role,
 and knows nothing of the session that wrote the tests. The step asks one
-closed question per criterion test; the verdict is computed by
+closed question per criterion test, and a second one, on doubles, for a
+ticket of the Factory's own repository (docs/TEST_GUIDELINE.md; not yet
+applied to the other projects, af-8cfygl); the verdict is computed by
 `bin/convoy-state`, never written by the reviewer, and `bin/tdd-step freeze`
 refuses without a favorable one. The stored state, the bounds and the stop
 are in docs/TEST_REVIEW.md.
@@ -28,7 +30,9 @@ title = "Review the criterion tests of one ticket and record the answers"
 description = """
 You are the reviewer of the criterion tests of one ticket, before they are
 frozen and before any code of the ticket is written. You did not write these
-tests. Judge only the criteria of the ticket and the tests you are given: do
+tests. Judge only the criteria of the ticket and the tests you are given
+(the second question of step 2 says which lower tests you may also read,
+and no others): do
 not look for the author's session, notes or mail, and do not modify the
 tests, the ticket or any file of a repository.
 
@@ -56,10 +60,10 @@ A test may call a helper of the test perimeter that the brief does not
 carry: read it at the same commit, `git -C "$(jq -r .repo
 test-review-brief.json)" show "$(jq -r .commit test-review-brief.json):<path>"`.
 
-**2. Answer the one question, for every test of `.tests`:**
+**2. Answer two questions, in this order, for every test of `.tests`:**
 
-Does this test observe its criterion, and would it fail on the observation
-that makes that criterion false?
+**First question, always.** Does this test observe its criterion, and would
+it fail on the observation that makes that criterion false?
 
 - `favorable` — the assertions of the test read the observable the
   criterion names, through the entry point it names, and a product in which
@@ -72,12 +76,51 @@ that makes that criterion false?
   does not go through the named entry point.
 
 A test that proves several criteria is judged against each of them: one
-criterion it does not observe makes it `unfavorable`. Judge nothing else:
-not the style of the test, not the criterion itself, not the code to come.
+criterion it does not observe makes it `unfavorable`. A test that is
+`unfavorable` here is not asked the second question.
+
+**Second question, only when the ticket is on the Factory's own
+repository.** Run this; it compares the repository of the brief with the
+Factory's:
+
+```bash
+TICKET_GIT=$(git -C "$(jq -r .repo test-review-brief.json)" rev-parse --path-format=absolute --git-common-dir)
+FACTORY_GIT=$(git -C "$FACTORY_ROOT" rev-parse --path-format=absolute --git-common-dir)
+if [ -n "$TICKET_GIT" ] && [ "$TICKET_GIT" = "$FACTORY_GIT" ]; then echo "second question: ask it"; else echo "second question: skip it"; fi
+```
+
+On « skip it » the ticket belongs to another project, where the test
+guideline is not yet applied (af-8cfygl): stop at the first question. On
+« ask it », read `"$FACTORY_ROOT/docs/TEST_GUIDELINE.md"`, points 2 and 6
+(it is not restated here), then ask: is this criterion already proven at a
+lower level; if so, does this test prove anything other than the
+transmission?
+
+Where to look for the lower case, and no further: the test files of the
+repository, at the commit of the brief, that exercise the tool or entry
+point this criterion names (`git -C <repo> grep -l "<tool or entry point>"
+<commit> -- <the test perimeter>`). Do not read the other tests of the
+repository.
+
+- A lower case proves the same pass or the same refusal, and this test
+  shows nothing more than that the answer reaches the level above, which
+  another case already shows: it is a double, `unfavorable`.
+- No such lower case, or this test proves something the lower one does not
+  (a link between two tools that no other case shows): `favorable`.
+
+Judge nothing else: not the style of the test, not the criterion itself,
+not the code to come.
+
 An `unfavorable` answer carries a `reason`, one line, in the Operator
-Language (`"$FACTORY_ROOT/bin/operator-config" language`), that quotes what
-the test asserts and says what the criterion asks. You give no overall
-verdict: code computes it.
+Language (`"$FACTORY_ROOT/bin/operator-config" language`):
+
+- on the first question, it quotes what the test asserts and says what the
+  criterion asks;
+- on a double, it starts with the word « double », names the lower case
+  (`<file>::<case>`) and says in a few words why this test proves nothing
+  more than the transmission.
+
+You give no overall verdict: code computes it.
 
 **3. Write and record your answers:**
 

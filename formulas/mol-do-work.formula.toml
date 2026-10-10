@@ -216,7 +216,11 @@ origin/main` from your work tree (CI runs the whole battery right after, on
 the same machine); when it prints anything else, or for no clear answer, run
 the whole battery, `bin/ci-run-tests --jobs 4`. A change to docs, CI or
 tests alone runs `--rule-checks` either way (`docs/DELIVERY.md`, "What to
-run before a pull request").
+run before a pull request"). In that same repository only, a test you write
+or change follows the test guideline, `docs/TEST_GUIDELINE.md` of your work
+tree (read it first; no reviewer of the tests reads a maintenance change,
+and a test file above 120 seconds turns CI red). On any other rig the
+guideline is not yet applied (af-8cfygl).
 
 Before closing, inspect the working tree:
 ```bash

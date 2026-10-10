@@ -84,7 +84,7 @@ it first (af-5vjm1h).
 | The container's own network, `allow_host_loopback=false` | The host's `127.0.0.1`: Beads' Dolt server (root without password), the supervisor and its dashboard, the Cockpit | same |
 | The service's address filter | The private networks around the host: the Windows side, the local network, the tailnet | `IPAddressDeny` in `config/ci-runner/factory-ci-runner.service` |
 | No sudo in the image, a non-root user in the container | Root, even inside the container | `config/ci-runner/Containerfile` |
-| The service's limits | Taking the PC: 8 cores of 12, 4 GB, low priority | same service file; `Delegate=yes` keeps Podman, and so the job, inside the service (without it Podman moves to its user's session, out of every limit and of the address filter) |
+| The service's limits | Taking the PC: 8 of the 20 processors WSL sees (the PC has 24), 4 GB, low priority | same service file; `Delegate=yes` keeps Podman, and so the job, inside the service (without it Podman moves to its user's session, out of every limit and of the address filter) |
 | The operator's token stays with the operator | Registering runners, reading the repository's secrets | `bin/ci-runner broker` hands over only a configuration for one job |
 
 What it does not stop, and why that is accepted:

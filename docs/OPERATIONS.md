@@ -805,7 +805,16 @@ wait behind a job (`bin/ci-run-tests` skips the host's lock under
 sum is the service: 8 named cores and 4 GB for the job whatever else runs,
 at a lower priority than the Factory and the batteries.
 
-### The job's cores: 8 of the host's 12 (af-guzs0o)
+### The job's cores: 8 of the 20 WSL sees (af-guzs0o)
+
+The share of the PC: the job may take 8 of the 20 processors WSL sees
+(`nproc` on the host: 20; the PC has 24, and Windows keeps 4). WSL saw 12
+until 2026-10-09 (`processors=` in the Windows user's `.wslconfig`, 12 then
+20; that file was last modified on 2026-10-09 at 17:50 Paris, its
+modification time read on 2026-10-10 and converted from the host's clock,
+and WSL takes the figure at its next start, which was not read). The
+measures below dated 2026-10-08 and the night of 2026-10-09 were taken on
+12, and say so. The job's own share did not change with it.
 
 Intent (Benjamin, his words, 2026-10-09, about 01:45 Paris): « Ok pour plus
 de coeurs », in answer to "plus de coeurs pour la CI (4 -> 8) [...] C'est ta
@@ -856,9 +865,10 @@ included (25 on 2026-10-09: 32 s for nothing due on an idle host, half its
 60 s before any load). It now reads one list, then only the escalations
 still pending.
 
-What the PC feels during a run: for about 20 minutes, 8 of the 12 cores can
-be busy with the job at low priority (cores 4 to 11; 0 to 3 are never the
-job's), instead of 4 for about 27 minutes. Nothing was measured with a game
+What the PC feels during a run: for about 20 minutes, 8 of the 20
+processors WSL sees (12 when this was measured; the PC has 24) can be busy
+with the job at low priority (cores 4 to 11; 0 to 3 are never the job's),
+instead of 4 for about 27 minutes. Nothing was measured with a game
 running: `./bin/ci-runner pause` before one, as before.
 
 ### Measured 2026-10-08 (pull request #457, Paris times)
