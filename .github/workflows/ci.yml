@@ -92,13 +92,27 @@ jobs:
         if: runner.environment == 'github-hosted'
         run: python -m pip install PyYAML==6.0.2
 
+      # Every file of bin/ is checked, the whole list is printed, and one bad
+      # file fails the step. Until af-fyc8eo the shell line ended with
+      # `|| true`, there to skip the Python files: on 2026-10-06 a syntax
+      # error of bin/escalation-door was printed here, the step stayed green
+      # and 8 test files went red later in the run. A first line that names
+      # neither Python nor a shell fails too: a file nothing checks is the
+      # same hole. tests/ci-syntax-check-test.sh runs this script on broken
+      # files.
       - name: Syntax check every Python and shell entry point
         run: |
           set -euo pipefail
           python -m compileall -q lib tests
+          failed=0
           for f in bin/*; do
-            head -1 "$f" | grep -q 'bash\|sh$' && bash -n "$f" && echo "ok $f" || true
+            case "$(head -n 1 "$f")" in
+              '#!'*python*) python -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' "$f" ;;
+              '#!'*sh*) bash -n "$f" ;;
+              *) echo "$f: its first line names neither Python nor a shell" >&2; false ;;
+            esac && echo "ok $f" || { failed=1; echo "FAIL $f" >&2; }
           done
+          exit "$failed"
 
       # Nothing to do on the host's own runner, which has no sudo: its image
       # holds bwrap and its kernel does not restrict user namespaces.
