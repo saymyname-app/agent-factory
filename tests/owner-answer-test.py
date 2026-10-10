@@ -7,9 +7,13 @@ proposition door to prove nothing was written."""
 
 from __future__ import annotations
 
+import copy
+import functools
+import hashlib
 import importlib.machinery
 import importlib.util
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -49,7 +53,41 @@ def cited(text="L'accueil ne montre pas le titre attendu.", story="1"):
                        "demonstration_line": "GET / montre le titre attendu.", "acceptance_criteria": [CRITERION]}}
 
 
+def staged(helper):
+    """A helper whose result is built once and restored afterwards (the
+    `stage` of tests/spec-end-test.py), when a test reaches it from a known
+    place: it leaves only files (the tracker, the proposals noted), no
+    launched product and nothing read against the clock. One stage per
+    helper, per arguments, per environment and per place it starts from. A
+    test that did anything since that place gets the helper walked for real:
+    a restore would wipe what the test did."""
+    @functools.wraps(helper)
+    def reached(self, *args, **kwargs):
+        place, untouched = self.standing
+        if self.footprint() != untouched:
+            return helper(self, *args, **kwargs)
+        asked = json.dumps([place, args, kwargs, sorted(self.env.items())], sort_keys=True, ensure_ascii=False)
+        name = f"owner-{helper.__name__}-{hashlib.sha256(asked.encode()).hexdigest()[:16]}"
+        answer = copy.deepcopy(self.stage(name, lambda: helper(self, *args, **kwargs)))
+        self.standing = (name, self.footprint())
+        return answer
+    return reached
+
+
 class OwnerAnswerTest(sessions.AcceptanceSessionTest):
+    def footprint(self):
+        """Every file and folder of the test's directory with its mode, and
+        for a file its size and the time it was last written: the same as
+        at the last known place only while the test did nothing there."""
+        found = []
+        for folder, folders, names in os.walk(self.tmp):
+            for name in folders:
+                found.append((os.path.join(folder, name), os.lstat(os.path.join(folder, name)).st_mode, 0, 0))
+            for name in names:
+                entry = os.lstat(os.path.join(folder, name))
+                found.append((os.path.join(folder, name), entry.st_mode, entry.st_size, entry.st_mtime_ns))
+        return sorted(found)
+
     def setUp(self):
         super().setUp()
         self.proposals = self.tmp / "proposals.log"
@@ -65,6 +103,8 @@ class OwnerAnswerTest(sessions.AcceptanceSessionTest):
         self.env["PROPOSAL_DOOR_BIN"] = str(door)
         self.working_door = door.read_text()
         self.proposal_door = door
+        # The place every test starts from: the seeded city and this door.
+        self.standing = ("set-up", self.footprint())
 
     # --- harness ------------------------------------------------------------
 
@@ -82,6 +122,7 @@ class OwnerAnswerTest(sessions.AcceptanceSessionTest):
     def everything(self):
         return (super().everything(), self.proposals.read_bytes() if self.proposals.exists() else b"")
 
+    @staged
     def delivered_dossier(self):
         """The Delivered Outcome of the fixture, whose project declares its
         human approver; one proposition awaits a verdict. Returns the commit
@@ -94,6 +135,7 @@ class OwnerAnswerTest(sessions.AcceptanceSessionTest):
     def judgement(self):
         return self.show()["convoy"]["judgement"]
 
+    @staged
     def give_verdict(self, verdict, *args, proposition=PROPOSITION, by=APPROVER, words="Vu."):
         return self.owner("verdict", "--proposition", proposition, "--verdict", verdict,
                              "--approved-by", by, "--words", words, *args)
