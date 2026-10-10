@@ -308,6 +308,7 @@ for inherited in (answers.OwnerAnswerTest, answers.sessions.AcceptanceSessionTes
     for name in dir(inherited):
         if name.startswith("test_") and name not in OutcomePromoteTest.__dict__:
             setattr(OutcomePromoteTest, name, None)
+del inherited  # left bound to the module, the last class is collected by unittest and its cases run twice
 
 
 if __name__ == "__main__":
