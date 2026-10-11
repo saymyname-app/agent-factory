@@ -211,6 +211,7 @@ cat > "$T/bin/gh" <<'EOF'
 echo "gh $*" >> "$FAKE_LOG"
 case "$*" in
   "repo view"*) echo "acme/factory" ;;
+  *"--jq .visibility"*) [ "${FAKE_VISIBILITY:-private}" = error ] && exit 1; echo "${FAKE_VISIBILITY:-private}" ;;
   *"select(.busy"*) echo "${FAKE_BUSY:-1}" ;;
   *generate-jitconfig*)
     n=$(cat "$FAKE_COUNT" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$FAKE_COUNT"
@@ -298,6 +299,34 @@ ci_runner pause --now >/dev/null
 ci_runner resume >/dev/null
 [ ! -e "$T/run/stop-now" ] && [ "$(verdict)" = ok ] || fail "resume must clear the pause, got $(verdict)"
 echo "ok   status says absent, ok, down or paused; pause --now stops the job, resume clears it"
+
+# --- no runner comes back on a repository that is not private (af-996mmd) --
+# A self-hosted runner on a public repository runs a stranger's pull request
+# on the host. Every way back asks GitHub and refuses unless it says private.
+: > "$FAKE_LOG"; rm -f "$FAKE_COUNT"
+for vis in public internal error; do
+  for cmd in "mode self-hosted" install resume broker; do
+    # shellcheck disable=SC2086  # the command and its argument
+    if out=$(FAKE_VISIBILITY=$vis FACTORY_CI_RUNNER_BROKER_TURNS=1 ci_runner $cmd 2>&1); then
+      fail "'ci-runner $cmd' went through on a repository whose visibility reads '$vis'"
+    fi
+    grep -q 'not private' <<<"$out" || fail "'ci-runner $cmd' on a '$vis' repository does not say why it refuses: $out"
+  done
+done
+if grep -qE 'variable set|generate-jitconfig|systemctl --user (start|enable|restart)' "$FAKE_LOG"; then
+  fail "a refused command still touched the variable, asked for a runner or started the broker: $(cat "$FAKE_LOG")"
+fi
+[ ! -e "$FAKE_COUNT" ] || fail "the broker asked GitHub for a runner configuration on a repository that is not private"
+# After `ci-runner remove` the broker is gone and the root half is left:
+# that is not a runner down, and factory-doctor must not ask to start it.
+echo active > "$FAKE_SERVICE"; echo absent > "$FAKE_BROKER"
+[ "$(verdict)" = removed ] || fail "a removed broker beside the root half must read 'removed', got $(verdict)"
+ci_runner status --local --json | jq -e '.fix_hint | test("restart|resume") | not' >/dev/null \
+  || fail "the hint of a removed runner tells the reader to start it again"
+grep -qF 'if verdict not in ("ok", "down", "paused")' "$ROOT/bin/factory-doctor" \
+  || fail "bin/factory-doctor no longer stays silent on a verdict it does not know: 'removed' would read as a fault"
+echo active > "$FAKE_BROKER"
+echo "ok   on a repository that is not private: no mode self-hosted, no install, no resume, no broker; a removed runner is not a fault"
 
 # --- `mode` alone: what an agent asks before a pull request ---------------
 # (docs/DELIVERY.md, "What to run before a pull request": Benjamin, 2026-10-08, « A. »)
