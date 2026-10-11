@@ -11,6 +11,13 @@
 # ticket's repair.
 name = "Benjamin"
 
+# The operator's own GitHub accounts, comma-separated (af-996mmd).
+# bin/pr-autopilot acts only on pull requests one of them opened from a
+# branch of the repository itself; a fork's or anyone else's is left to a
+# human. Agents push with the operator's token, so every pull request the
+# Factory opens is on this list. Empty or missing: nothing is armed.
+github_logins = "benjamin-hurand"
+
 # Sender identity `bin/operator-mail` uses for mail from the operator entry
 # path (docs/OPERATOR_BRIDGE.md). Never "human" and never Benjamin's name:
 # the operator's Codex session is an agent acting on Benjamin's stated

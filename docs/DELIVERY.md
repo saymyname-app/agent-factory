@@ -265,6 +265,27 @@ and `pr-autopilot` arms its green PRs too (`bin/pr-autopilot`, rig table entry
 `.|saymyname-app/agent-factory|main`). `main` there is the running factory,
 not a product production branch.
 
+### Outside authors are left to a human (af-996mmd)
+
+Intent (Benjamin, his words, 2026-10-11): « en soit l'usine peut aller en
+publique aussi , pour les CI github »
+Mechanism (agent interpretation): before `agent-factory` can be public,
+`pr-autopilot` acts only on a pull request opened from a branch of the
+repository itself by one of the operator's own GitHub accounts
+(`config/operator.toml`, `github_logins`; agents push with the operator's
+token, so every pull request the Factory opens is on the list). It does not
+mean a review step for the Factory's own pull requests, nor that the
+repository is public: Benjamin changes the visibility himself.
+
+| Cause | Effect without the rule | What holds now |
+|---|---|---|
+| On a public repository anyone opens a pull request, and the workflow that runs for it is the pull request's own | A stranger makes `Tests` green and `pr-autopilot` merges his code into `main`, the code the Factory runs on the host | A fork's pull request, or one whose author is not on the list, is skipped before anything else: never armed, merged, retried, labelled or turned into a bead. The pass prints `fork or outside author -> left to a human` |
+| GitHub does not report the author or the fork flag | | Read as an outsider's |
+| `github_logins` is empty or missing | | Nothing is armed, in any repository, and the pass counts an error |
+
+Proof: `tests/pr-autopilot-outside-author-test.sh`. Undo: revert the change;
+the list itself is one line of `config/operator.toml`.
+
 ### Historical note — why this needed building
 
 `mol-refinery-patrol.toml` implements an equivalent loop upstream (its `direct`

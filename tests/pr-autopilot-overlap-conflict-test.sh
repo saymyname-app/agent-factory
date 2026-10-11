@@ -32,8 +32,8 @@ mkdir -p "$TMP/factory/rigs/saymyname-backend" "$TMP/factory/rigs/saymyname-fron
 #   conflict even though it is a fresh, ticket-owned rejection.
 cat > "$TMP/open.json" <<'JSON'
 [
- {"number":10,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"DIRTY","statusCheckRollup":[],"headRefOid":"sha10a","labels":[]},
- {"number":20,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BLOCKED","statusCheckRollup":[{"conclusion":"FAILURE"}],"headRefOid":"sha20a","labels":[]}
+ {"number":10,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"DIRTY","statusCheckRollup":[],"headRefOid":"sha10a","labels":[]},
+ {"number":20,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BLOCKED","statusCheckRollup":[{"conclusion":"FAILURE"}],"headRefOid":"sha20a","labels":[]}
 ]
 JSON
 
@@ -106,6 +106,7 @@ STUB
 chmod +x "$TMP/bin/"*
 export PATH="$TMP/bin:$PATH"
 export FACTORY_ROOT="$TMP/factory"
+export GC_PR_AUTHORS=example-operator
 export REVERSIBILITY_CHECK_BIN="$TMP/bin/gh"
 export ESCALATION_DOOR_BIN="$TMP/bin/escalation-door"
 export GC_BIN="$TMP/bin/gc"
