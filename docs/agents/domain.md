@@ -5,7 +5,7 @@ How the engineering skills should consume this repo's domain documentation when 
 ## Before exploring, read these
 
 - **`GLOSSARY.md`** at the repo root (single-context repo).
-- **`docs/decisions/`**: read ADRs that touch the area you're about to work in (this repo keeps its ADRs there, not in `docs/adr/`; pre-refactor ADRs are kept in `legacy/docs/decisions/` and read only when a live ADR cites them).
+- **`docs/decisions/`**: read ADRs that touch the area you're about to work in (this repo keeps its ADRs there, not in `docs/adr/`; the pre-refactor ADRs kept there are listed in `docs/decisions/PRE_REFACTOR.md`: active, not re-validated).
 
 If any of these files don't exist, **proceed silently**. Don't flag their absence; don't suggest creating them upfront. The `/domain-modeling` skill creates them lazily when terms or decisions actually get resolved.
 

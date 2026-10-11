@@ -73,6 +73,8 @@ import yaml
 PROGRAM = "ticket-graph-publish"
 ROOT = Path(__file__).resolve().parents[1]
 
+# Gas City 1.5 gives an order BD_BIN set and empty: an empty value is no
+# override (af-d130xt).
 BD_BIN = os.environ.get("BD_BIN") or "bd"
 BD_WORKSPACE = Path(os.environ.get("TICKET_GRAPH_BD_WORKSPACE", str(ROOT)))
 GC_BIN = os.environ.get("GC_BIN", "gc")

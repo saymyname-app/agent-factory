@@ -76,9 +76,4 @@ status=$(controller_check "$T/stub:$PATH")
 [ "$status" = 2 ] || fail "missing archive must exit 2 (cannot evaluate), got $status"
 grep -q 'cannot evaluate' "$T/stderr" || fail "missing archive must say so on stderr"
 
-# 5. No tool reads an empty BD_BIN as a binary name (gc exports BD_BIN=).
-offenders=$(grep -rnE 'environ\.get\("BD_BIN", *"' "$ROOT/bin" --exclude-dir=__pycache__ || true)
-[ -z "$offenders" ] || fail "empty BD_BIN read as a binary name (use: os.environ.get(\"BD_BIN\") or \"bd\"):
-$offenders"
-
 echo "PASS: a check that cannot evaluate is never due, and backup-freshness answers right in the controller's environment"

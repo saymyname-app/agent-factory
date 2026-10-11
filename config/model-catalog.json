@@ -5,7 +5,6 @@
     "codex": { "recommended": ["gpt-5.6-sol"] },
     "claude": { "recommended": ["claude-opus-5-5"] },
     "claude-readonly": { "recommended": ["claude-opus-5-5"] },
-    "claude-standard": { "recommended": ["claude-opus-5-5"] },
-    "claude-cheap": { "recommended": ["haiku"] }
+    "claude-standard": { "recommended": ["claude-opus-5-5"] }
   }
 }
