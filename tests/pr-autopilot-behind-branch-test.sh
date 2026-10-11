@@ -11,7 +11,8 @@
 #     the other, through the REST endpoint (`gh api -X PUT
 #     repos/{repo}/pulls/{num}/update-branch`);
 #  3. once a PR catches up (no longer BEHIND) and its required check is
-#     green, the next tick arms it;
+#     green, the next tick arms it, and the other BEHIND PR waits until it
+#     has merged (af-31t0y8, one queue head: tests/pr-autopilot-queue-head-test.sh);
 #  4. a failed update-branch is logged with gh's own error line, does not
 #     add a run error (order.failed), and the same PR is retried (not
 #     silently dropped) on the next tick;
@@ -121,13 +122,27 @@ grep -qF "/pulls/11/update-branch" "$TMP/gh.log" \
 grep -q "^pr merge 10 " "$TMP/gh.log" && { echo "$out" >&2; fail "BEHIND PR #10 was armed for auto-merge"; }
 grep -q "^pr merge 11 " "$TMP/gh.log" && { echo "$out" >&2; fail "BEHIND PR #11 was armed for auto-merge"; }
 
-# --- tick 2: #10 caught up (CLEAN, green) -> armed; #11 still BEHIND -> updated ---
+# --- tick 2: #10 caught up (CLEAN, green) -> armed; #11 still BEHIND -> waits ---
 : > "$TMP/gh.log"
 out=$(pilot)
 grep -q "^pr merge 10 --repo saymyname-app/agent-factory --auto --squash --delete-branch" "$TMP/gh.log" \
   || { echo "$out" >&2; fail "PR #10 (caught up, checks green) was not armed on tick 2"; }
+grep -qF "/pulls/11/update-branch" "$TMP/gh.log" \
+  && { echo "$out" >&2; fail "PR #11 was updated on tick 2 while PR #10 held the queue"; }
+grep -q "^pr merge 11 " "$TMP/gh.log" && { echo "$out" >&2; fail "PR #11 was armed while still BEHIND"; }
+
+# --- tick 3: #10 has merged -> #11 is updated ---
+python3 - "$TMP/af_open.json" <<'PY'
+import json, sys
+with open(sys.argv[1]) as f:
+    prs = [pr for pr in json.load(f) if pr["number"] != 10]
+with open(sys.argv[1], "w") as f:
+    json.dump(prs, f)
+PY
+: > "$TMP/gh.log"
+out=$(pilot)
 grep -qF "api -X PUT repos/saymyname-app/agent-factory/pulls/11/update-branch" "$TMP/gh.log" \
-  || { echo "$out" >&2; fail "PR #11 was not updated on tick 2 once it was its turn"; }
+  || { echo "$out" >&2; fail "PR #11 was not updated on tick 3 once it was its turn"; }
 grep -q "^pr merge 11 " "$TMP/gh.log" && { echo "$out" >&2; fail "PR #11 was armed while still BEHIND"; }
 
 # --- retry: an update-branch failure is logged and retried next tick ---

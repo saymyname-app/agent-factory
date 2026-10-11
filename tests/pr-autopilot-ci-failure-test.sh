@@ -125,9 +125,11 @@ grep -qF "bd create [ci] PR #99 failed required checks" "$TMP/gc.log" \
 grep -qF "bd create [ci] PR #98 failed required checks" "$TMP/gc.log" \
   || { echo "$out" >&2; fail "PR #98 (red, no bead yet) was not flagged"; }
 
-# PR 97: red and BEHIND -> branch update requested, no bead for the stale head.
+# PR 97: red and BEHIND -> no bead for the stale head. It waits while PR 47
+# (up to date, green) holds the queue (af-31t0y8); the pass at the end of
+# this file, with PR 47 gone, proves it is then brought up to date.
 grep -q "pulls/97/update-branch" "$TMP/gh.log" \
-  || { echo "$out" >&2; fail "PR #97 (red and BEHIND) was not brought up to date"; }
+  && { echo "$out" >&2; fail "PR #97 (BEHIND) was brought up to date while PR #47 held the queue"; }
 grep -qF "bd create [ci] PR #97 failed required checks" "$TMP/gc.log" \
   && { echo "$out" >&2; fail "PR #97 (red and BEHIND) was flagged for a head about to be replaced"; }
 
@@ -136,5 +138,21 @@ grep -q "^bd update af-ci45 --status closed" "$TMP/gc.log" \
   || { echo "$out" >&2; fail "PR #45's CI-failure bead was not closed on merge"; }
 grep -q "^bd update af-work45 .*merge_result=merged .*--status=closed" "$TMP/gc.log" \
   || { echo "$out" >&2; fail "PR #45 work did not pass through the delivery finalizer"; }
+
+# PR 47 merged: nothing holds the queue any more (98 and 99 are red), so the
+# red and BEHIND PR 97 is brought up to date, still without a bead.
+python3 - "$TMP/open.json" <<'PY'
+import json, sys
+with open(sys.argv[1]) as f:
+    prs = [pr for pr in json.load(f) if pr["number"] != 47]
+with open(sys.argv[1], "w") as f:
+    json.dump(prs, f)
+PY
+: > "$TMP/gh.log"; : > "$TMP/gc.log"
+out=$(pilot)
+grep -q "pulls/97/update-branch" "$TMP/gh.log" \
+  || { echo "$out" >&2; fail "PR #97 (red and BEHIND) was not brought up to date once nothing held the queue"; }
+grep -qF "bd create [ci] PR #97 failed required checks" "$TMP/gc.log" \
+  && { echo "$out" >&2; fail "PR #97 (red and BEHIND) was flagged for a head about to be replaced"; }
 
 echo "OK pr-autopilot closes CI-failure beads once checks recover or the PR merges, and files one per PR"

@@ -242,7 +242,8 @@ Si quelque chose ne revient pas, réparez-le **avant** de continuer.
   `core/jsonl-archive` exporte et pousse vers le dépôt privé
   `saymyname-app/agent-factory-archive` toutes les 15 minutes.
 - `factory-guard` sauvegarde seul ce qui n'existe que sur cette machine, y
-  compris l'arbre de travail, vers `refs/factory-guard/snapshots/<utc>`.
+  compris l'arbre de travail, vers `refs/factory-guard/snapshots/<utc>` du
+  remote `backup` (le dépôt privé d'archive), ou d'`origin` sans ce remote.
 - La compaction Dolt tourne toute seule chaque semaine depuis le 2026-09-16.
 
 ---
