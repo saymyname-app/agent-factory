@@ -26,7 +26,7 @@ T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 # --- the workflow ---------------------------------------------------------
 grep -qF "runs-on: \${{ vars.FACTORY_CI_RUNNER == 'self-hosted' && 'factory-ci' || 'ubuntu-latest' }}" "$CI" \
   || fail "$CI: runs-on must be GitHub's runner unless the variable says self-hosted"
-grep -qF "LOTS: \${{ vars.FACTORY_CI_RUNNER == 'self-hosted' && '1' || '4' }}" "$CI" \
+grep -qF "LOTS: \${{ vars.FACTORY_CI_RUNNER == 'self-hosted' && '1' || '6' }}" "$CI" \
   || fail "$CI: one lot on the host's runner (it takes one job at a time: more lots wait on each other for ever)"
 grep -qF "fromJSON(vars.FACTORY_CI_RUNNER == 'self-hosted' && '[1]' ||" "$CI" \
   || fail "$CI: the matrix on the host's runner must be lot 1 alone"

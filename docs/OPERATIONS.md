@@ -726,10 +726,29 @@ Adding an area: a place pull requests often change alone, one line in the
 list; the pull request that adds it is a full run and says at once whether a
 long test reads it.
 
+### How long a run lasts (af-vqew1x)
+
+Intent (Benjamin, his words, 2026-10-11, 16:50 Paris): « oui il faut gérer
+la CI pour l'optimiser en temps d'execution ».
+Mechanism (agent interpretation): now that a minute of GitHub's runners is
+billed nothing, shorten the time between a push and a green or a red
+`Tests`. It does not mean a test or a verification removed, a merge without
+the whole battery green, or a runner of the host registered on the public
+repository.
+
+| What sets the duration | Measured 2026-10-11, four green full runs, four lots | What was done |
+|---|---|---|
+| The longest test file runs alone on one core: a lot cannot end before it. | A run lasted 11.1 to 17.8 minutes; the longest file 638 to 748 s, and not the same one in each run. Dealt into 4, 6, 8 or 10 lots as they were, the files give the same 638 s (simulation on the seconds of one run, 4 cores a lot). | The three longest files cut by the measured duration of their cases, every case and verification kept (`bin/test-cases-compare`). A file above 120 s is cut, not excused: `TEST_GUIDELINE.md`, point 5. |
+| The number of lots, once no file holds a lot. | With no file above 250 s the same simulation gives 369 s at 4 lots, 276 s at 6, 236 s at 8. | Six lots (`LOTS` in `.github/workflows/ci.yml`). One figure to change, with the matrix beside it; `tests/ci-run-tests-shard-test.sh` refuses a matrix that does not match. |
+| A red rule check (a stale catalogue, a lint) was seen only when its lot ended. | 11 to 18 minutes | `--rule-checks-first` in every lot: the lot is red after about a minute. `Tests` ends red as soon as another lot did, without waiting for the longest (`tests/ci-run-tests-rule-checks-first-test.sh`). |
+
+The simulation is not a measure: the figures of the real runs after these
+changes are in the bead af-vqew1x until this section is refreshed with them.
+
 ### Keeping the lots even
 
-A lot costs about one billed minute of setup and rounding; uneven lots cost
-more, because `Tests` waits. When its "Wait for the other lots" step waited
+A run lasts as long as its longest lot (and, while the repository was
+private, each lot cost about one billed minute of setup and rounding). When the "Wait for the other lots" step of `Tests` waited
 more than 3 minutes it prints a warning in the run. Then, from a work tree:
 
 ```bash
