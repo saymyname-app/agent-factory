@@ -1,0 +1,34 @@
+{
+  "input": {
+    "id": "synthetic-outcome",
+    "title": "Résultat à juger",
+    "issue_type": "convoy",
+    "status": "open",
+    "metadata": {
+      "gc.graph_digest": "demo",
+      "gc.project_id": "agent-factory",
+      "gc.flow.mark": "v1",
+      "gc.flow.delivered": "{\"commit\": \"1111111111111111111111111111111111111111\", \"protected\": \"2222222222222222222222222222222222222222\", \"pack\": \"sha256:3333333333333333333333333333333333333333333333333333333333333333\", \"version\": \"spec-end/v4\", \"at\": \"2026-10-11T12:00:00Z\"}"
+    }
+  },
+  "delivered_record_valid": true,
+  "cockpit_output": [
+    {
+      "id": "synthetic-outcome",
+      "titre": "Résultat à juger",
+      "projet": "agent-factory",
+      "stage": "Livraison",
+      "detail": "0/0 tickets mergés · 0 en cours · 0 en PR",
+      "etat": "bloque",
+      "etat_cible": null,
+      "promu_masque": false,
+      "promu_inconnu": false,
+      "termine": false,
+      "a_regarder": "",
+      "abandonne": false,
+      "raison_abandon": null,
+      "planning_run_target": null,
+      "rig": null
+    }
+  ]
+}
