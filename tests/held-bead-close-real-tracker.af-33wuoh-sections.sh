@@ -33,7 +33,10 @@ gc event emit session.stranded --message "pool session terminated without clean 
   >/dev/null 2>&1
 gc events --type session.stranded --since 30m 2>/dev/null | grep -qF "$stranded" \
   || fail "the isolated city does not return the session.stranded event this test emitted"
-out=$(ON_SESSION_STRANDED_STATE_FILE="$TRIAL/stranded-state.json" "$ROOT/bin/on-session-stranded" 2>&1) \
+# The order pages the Mayor through bin/escalation-door, whose seam is GC_BIN
+# too: same wrapper, same minute not spent waiting.
+out=$(GC_BIN="$TRIAL/bin/gc-without-mail" ON_SESSION_STRANDED_STATE_FILE="$TRIAL/stranded-state.json" \
+  "$ROOT/bin/on-session-stranded" 2>&1) \
   || fail "on-session-stranded failed: $out"
 expect "$stranded" '.status' open "on-session-stranded (said: $out)"
 expect "$stranded" '.assignee // ""' "" "on-session-stranded"
