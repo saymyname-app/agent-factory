@@ -50,6 +50,15 @@ mkdir -p "$TEST_CITY"
 cleanup() {
   status=$?
   trap - EXIT
+  # The managed Dolt server and its proxy this run started have $TEST_TMPDIR
+  # in their argv: stop them before rm -rf, which alone leaves them running
+  # (af-ntq8jg; same idiom as tests/backup-freshness-order-test.sh).
+  pkill -f -- "$TEST_TMPDIR" >/dev/null 2>&1 || true
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    pgrep -f -- "$TEST_TMPDIR" >/dev/null 2>&1 || break
+    sleep 0.3
+  done
+  pkill -9 -f -- "$TEST_TMPDIR" >/dev/null 2>&1 || true
   if [ "${KEEP_TEST_CITY:-0}" = 1 ]; then
     echo "test city preserved at $TEST_CITY" >&2
   else
