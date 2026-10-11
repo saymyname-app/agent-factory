@@ -742,8 +742,27 @@ repository.
 | The number of lots, once no file holds a lot. | With no file above 250 s the same simulation gives 369 s at 4 lots, 276 s at 6, 236 s at 8. | Six lots (`LOTS` in `.github/workflows/ci.yml`). One figure to change, with the matrix beside it; `tests/ci-run-tests-shard-test.sh` refuses a matrix that does not match. |
 | A red rule check (a stale catalogue, a lint) was seen only when its lot ended. | 11 to 18 minutes | `--rule-checks-first` in every lot: the lot is red after about a minute. `Tests` ends red as soon as another lot did, without waiting for the longest (`tests/ci-run-tests-rule-checks-first-test.sh`). |
 
-The simulation is not a measure: the figures of the real runs after these
-changes are in the bead af-vqew1x until this section is refreshed with them.
+Measured after these changes, on GitHub's runners, 2026-10-11 (from the
+creation of the run to a green `Tests`):
+
+| Run | State of the files and of the lots | Duration | Test step of the lots |
+|---|---|---|---|
+| four runs before | four lots | 11.1 to 17.8 min | up to 1,047 s |
+| #535, second run | three files cut, four even lots | 8.9 min | 313 to 512 s |
+| #536 | six lots, rule checks first | 7.0 min | |
+| #537 | five more files cut, lots dealt with the seconds before that cut | 6.8 min | |
+| #538, the next pull request | the same | 6.7 min | 245 to 367 s |
+
+Three full runs in a row under 8 minutes. The simulation was optimistic by
+about a fifth (415 s a lot announced, 512 s measured at four lots). The
+longest file is now 312 s, and four files a lot run at once on four cores:
+the seconds of a file went up a little with six lots (7,601 s in all
+against 6,629), which put two files of about 120 s just above the ceiling
+of `TEST_GUIDELINE.md` with no change of theirs; they carry a written
+exception. What would shorten a run further: `tests/convoy-state-test.py`
+and `tests/ticket-evaluation-test.py`, whose cases and helpers share one
+class, and the waiting between runs, which is not the duration of a run
+(bead af-t3tm88, GitHub's merge queue).
 
 ### Keeping the lots even
 

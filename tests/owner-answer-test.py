@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ci: over-ceiling — 104 s then 125 s in two CI runs of 2026-10-11 with no change of the file: around the ceiling, more files run at once on a runner since six lots (af-vqew1x)
 """bin/owner-answer and the judgement records of bin/convoy-state (T29,
 Spec §11), on a fake tracker state and on the Delivered Outcome of the
 delivery fixture: one test per pass and per refusal, each refusal

@@ -9,7 +9,6 @@ tests/convoy-advance-test.py
 tests/convoy-state-test.py
 tests/convoy-stops-fixture-city-test.py
 tests/evidence-pack-test.py
-tests/fixture-city-oracle-test.py
 tests/outcome-evaluation-test.py
 tests/spec-end-review-test.py
 tests/spec-integration-test.py
