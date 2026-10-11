@@ -189,15 +189,41 @@ update_branch() {  # repo num head_sha -> 0 requested, 1 failed (logged)
 ARMED=0; RECONCILED=0; FLAGGED=0; SKIPPED=0; ERRORS=0; HELD=0
 # af-s6lef (P04): a BEHIND PR is never armed for auto-merge (before P05 makes
 # the ruleset strict, GitHub would otherwise merge it without ever picking up
-# the base's latest required check), and at most one BEHIND PR is updated per
-# tick, oldest (lowest PR number) first, so a burst of BEHIND PRs does not
-# spend the whole tick's `gh` budget updating branches serially. A failed
-# branch update is only logged here -- nothing marks the attempt, so the same
-# PR (still BEHIND) is naturally retried on the next tick. It goes through the
-# REST endpoint (update_branch below), never `gh pr update-branch`: the
-# installed gh (2.45) has no such subcommand, and calling it failed every
-# BEHIND tick silently (its stderr was discarded) until 2026-09-29.
-BEHIND_UPDATED_THIS_TICK=0
+# the base's latest required check), and at most one BEHIND PR per repository
+# is updated per tick. A failed branch update is only logged here -- nothing
+# marks the attempt, so the same PR (still BEHIND) is naturally retried on the
+# next tick. It goes through the REST endpoint (update_branch below), never
+# `gh pr update-branch`: the installed gh (2.45) has no such subcommand, and
+# calling it failed every BEHIND tick silently (its stderr was discarded)
+# until 2026-09-29.
+#
+# af-31t0y8: one queue head per repository.
+# Intent (Benjamin, his words, 2026-10-11): « là ya plein de CI qui sont
+# refaites car la PR n'est plus à jour, il faut eviter ca structurellement
+# non ? »
+# Mechanism (agent interpretation): a BEHIND PR is brought up to date only
+# when no other PR of the same repository is the queue head, i.e. already up
+# to date with its required check waiting, running, or green and about to
+# merge. Updating one BEHIND PR per tick put one run in the queue per PR,
+# and each merge made every other run stale (40 runs for 9 merges on
+# 2026-10-11). The head is chosen among the BEHIND PRs once the whole list
+# was read: the oldest whose last required run is not red, else the oldest.
+# A head that goes red (after its single retry) or conflicts stops being the
+# head, so the next BEHIND PR takes over on the same tick. It does not mean
+# the "up to date before merge" rule is relaxed. Known limit: a waiting PR
+# meets the recent base only at its turn, so a red caused by the combination
+# shows late and costs one run.
+QUEUE_HEAD=""; PRS_UNSEEN=0
+BEHIND_NUMS=(); BEHIND_SHAS=(); BEHIND_CHECKS=(); BEHIND_LABELS=()
+queue_head() {  # mergeStateStatus checks labels -> 0 when this PR holds the queue
+  case "$1" in BEHIND|DIRTY) return 1 ;; esac
+  case "$2" in PENDING|OK|NONE) ;; *) return 1 ;; esac
+  # Marked stuck (blocked with nothing pending, or no check ever reported, on
+  # an earlier pass): it will not merge by itself, so it must not hold the
+  # queue for ever.
+  case " ${3//,/ } " in *" $STUCK_LABEL "*) return 1 ;; esac
+  return 0
+}
 TMPDIR_AP=$(mktemp -d); trap 'rm -rf "$TMPDIR_AP"' EXIT
 
 # --- run budget (2026-09-30, same shape as bin/factory-guard's, PR #283) ----
@@ -864,6 +890,8 @@ for entry in "${RIGS[@]}"; do
   RIG_ALL_BEADS_FETCHED=0
   RIG_ALL_BEADS_UNKNOWN=0
   BASE_SHA=""
+  QUEUE_HEAD=""; PRS_UNSEEN=0
+  BEHIND_NUMS=(); BEHIND_SHAS=(); BEHIND_CHECKS=(); BEHIND_LABELS=()
 
   # ---------- 1. ARM open PRs targeting dev ----------
   mark=$(tmo_mark)
@@ -881,7 +909,7 @@ for entry in "${RIGS[@]}"; do
 
   while IFS=$'\t' read -r num draft armed state checks sha green_at origin labels; do
     [ -z "${num:-}" ] && continue
-    if over_budget; then not_checked "$repo open PR #$num and any open PR after it"; break; fi
+    if over_budget; then not_checked "$repo open PR #$num and any open PR after it"; PRS_UNSEEN=1; break; fi
     # af-996mmd: before anything else, so that nothing below (arming, direct
     # merge, retry, label, bead) ever runs for an outsider's pull request.
     if [ "$origin" != "own" ]; then
@@ -927,6 +955,8 @@ for entry in "${RIGS[@]}"; do
       retry_ci_failure "$repo" "$num" "$sha" "$required_workflow"; rc=$?
       if [ "$rc" = 0 ]; then
         vlog "PR #$num: retried once, re-checking next pass"
+        # af-31t0y8: its required run is on again, on an up-to-date branch.
+        [ "$state" = "DIRTY" ] || QUEUE_HEAD=${QUEUE_HEAD:-$num}
         continue
       elif [ "$rc" = 2 ]; then
         log "  PR #$num: required check failed, retry state unknown (a call timed out) -> nothing decided this pass"
@@ -990,28 +1020,18 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
 
     # af-s6lef (P04): BEHIND is never armable -- GitHub would happily arm
     # auto-merge and, on a non-strict ruleset, merge without the base's
-    # latest required check ever running against this branch. Bring at most
-    # one BEHIND PR per tick up to date instead; a second BEHIND PR this same
-    # tick just waits its turn.
+    # latest required check ever running against this branch. It is only
+    # noted here: which BEHIND PR is brought up to date, if any, is decided
+    # after the loop, once it is known whether another PR holds the queue
+    # (af-31t0y8).
     if [ "$state" = "BEHIND" ]; then
-      if [ "$BEHIND_UPDATED_THIS_TICK" = "0" ]; then
-        log "  PR #$num: BEHIND base -> updating branch"
-        if update_branch "$repo" "$num" "$sha"; then
-          vlog "PR #$num: branch update requested"
-        elif [ -n "$UPDATE_BRANCH_ERR" ]; then
-          log "    will retry next tick (marked now, filed if GitHub refuses again)"
-          flag_stuck "$repo" "$rig_path" "$num" "behind base, branch update refused" \
-            "bringing the branch up to date with its base (update-branch), refused on at least two passes; GitHub answered: $UPDATE_BRANCH_ERR" "$labels"
-        else
-          log "    will retry next tick"
-        fi
-        BEHIND_UPDATED_THIS_TICK=1
-      else
-        vlog "PR #$num: BEHIND base, another PR already updated this tick -- waiting"
-      fi
+      BEHIND_NUMS+=("$num"); BEHIND_SHAS+=("$sha"); BEHIND_CHECKS+=("$checks"); BEHIND_LABELS+=("$labels")
       SKIPPED=$((SKIPPED+1))
       continue
     fi
+    # af-31t0y8: past the gates and up to date, with its required check
+    # waiting, running or green: this PR holds the queue.
+    if queue_head "$state" "$checks" "$labels"; then QUEUE_HEAD=${QUEUE_HEAD:-$num}; fi
 
     if [ "$armed" != "null" ] && [ -n "$armed" ]; then
       # af-n8gft2: armed, green and CLEAN is GitHub's turn -- for a short
@@ -1097,6 +1117,35 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
          then "own" else "outside" end),
       ((.labels//[])|map(.name)|join(",")|if .=="" then "-" else . end)
     ]|@tsv' 2>/dev/null)
+
+  # af-31t0y8: bring one BEHIND PR up to date, only when no PR holds the
+  # queue. Not when the list was cut short: a PR that was not read may be the
+  # head.
+  if [ "${#BEHIND_NUMS[@]}" -gt 0 ]; then
+    if [ -n "$QUEUE_HEAD" ]; then
+      vlog "PR #$QUEUE_HEAD holds the queue -- ${#BEHIND_NUMS[@]} BEHIND PR(s) waiting: ${BEHIND_NUMS[*]}"
+    elif [ "$PRS_UNSEEN" = "1" ] || over_budget; then
+      not_checked "$repo BEHIND branch update"
+    else
+      # Oldest first (the list is in ascending PR number); a PR whose last
+      # required run is red only when no other is waiting.
+      pick=0
+      for i in "${!BEHIND_NUMS[@]}"; do
+        if [ "${BEHIND_CHECKS[$i]}" != "FAILURE" ]; then pick=$i; break; fi
+      done
+      num=${BEHIND_NUMS[$pick]}
+      log "  PR #$num: BEHIND base -> updating branch"
+      if update_branch "$repo" "$num" "${BEHIND_SHAS[$pick]}"; then
+        vlog "PR #$num: branch update requested"
+      elif [ -n "$UPDATE_BRANCH_ERR" ]; then
+        log "    will retry next tick (marked now, filed if GitHub refuses again)"
+        flag_stuck "$repo" "$rig_path" "$num" "behind base, branch update refused" \
+          "bringing the branch up to date with its base (update-branch), refused on at least two passes; GitHub answered: $UPDATE_BRANCH_ERR" "${BEHIND_LABELS[$pick]}"
+      else
+        log "    will retry next tick"
+      fi
+    fi
+  fi
 
   # ---------- 2. RECONCILE merged PRs onto their beads ----------
   # This pack's publisher does NOT write pr_number metadata (that was the

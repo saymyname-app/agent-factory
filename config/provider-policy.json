@@ -35,11 +35,6 @@
       "label": "Claude Opus 5.5 · effort moyen",
       "pool": "anthropic",
       "tier": "standard"
-    },
-    "claude-cheap": {
-      "label": "Claude Haiku · effort bas",
-      "pool": "anthropic",
-      "tier": "cheap"
     }
   },
   "targets": {
@@ -48,8 +43,7 @@
       "why": "Codex en tête restauré (af-wpjgu, 2026-09-21) : le quota Codex standard est revenu (reset 2026-09-21T05:22Z, pool openai confirmé 'available') et gpt-5.3-codex-spark est retiré de toute chaîne (af-i6018) plutôt que rendu sain -- les deux conditions de l'ADR sont réunies. Claude reste juste derrière comme repli.",
       "chain": [
         "codex",
-        "claude-standard",
-        "claude-cheap"
+        "claude-standard"
       ]
     },
     "mayor": {

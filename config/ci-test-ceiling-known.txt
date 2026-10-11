@@ -11,8 +11,6 @@ tests/convoy-stops-fixture-city-test.py
 tests/evidence-pack-test.py
 tests/fixture-city-oracle-test.py
 tests/outcome-evaluation-test.py
-tests/owner-answer-test.py
-tests/prototype-fidelity-test.py
 tests/spec-end-review-test.py
 tests/spec-integration-test.py
 tests/tdd-step-test.py

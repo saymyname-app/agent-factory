@@ -16,7 +16,7 @@ Ce qu'il contrôle :
 | `branch` | la racine vive est sur sa branche épinglée ; restaure si la dérive a cassé un invariant |
 | `runtime-files` | `pr-autopilot`, `factory-guard` et leurs orders existent encore sur le disque |
 | `exec-bits` | (af-ogg8z) chaque fichier que git suit en mode `100755` sous `bin/` est bien exécutable sur disque — restaure le bit avec `chmod +x` sinon ; `runtime-files` ne teste que l'existence (`-e`), pas l'exécutabilité, ce qui a laissé `bin/provider-failover` échouer en silence (exit 126) pendant ~2h le 2026-09-17 |
-| `config-invariants` | `permission_mode` est sain et les 5 providers vérifiés (`codex`, `claude`, `claude-readonly`, `claude-standard`, `claude-cheap`) résolvent |
+| `config-invariants` | `permission_mode` est sain et les 4 providers vérifiés (`codex`, `claude`, `claude-readonly`, `claude-standard`) résolvent |
 | `work-backup` | **pousse** toute branche qui n'existe que sur cette machine |
 | `work-tree` | **sauvegarde** l'arbre de travail modifié ou non suivi (voir plus bas) |
 | `rig:*` | un rig suspendu bloque la livraison ; un dispatcher au repos, non |
@@ -35,10 +35,18 @@ travaille. Il prend donc un **instantané qui ne touche à rien** — index jeta
 `write-tree`, `commit-tree` sur `HEAD` — poussé vers
 `refs/factory-guard/snapshots/<utc>`, dont il conserve les dix plus récents.
 
-Pour récupérer un instantané :
+Un instantané contient des fichiers non commités et des commits que personne
+n'a relus : il n'a rien à faire sur un dépôt lisible par des inconnus. Quand le
+dépôt nomme un remote `backup` (un dépôt privé), les instantanés et les
+sauvegardes de worktrees y vont ; sans lui, ils vont vers `origin`
+(af-996mmd). Sur cet hôte, le `backup` de la racine est le dépôt privé
+`saymyname-app/agent-factory-archive` : `git remote get-url backup`.
+
+Pour récupérer un instantané (`origin` à la place de `backup` pour un dépôt
+sans ce remote) :
 
 ```bash
-git fetch origin 'refs/factory-guard/snapshots/*:refs/remotes/snapshots/*'
+git fetch backup 'refs/factory-guard/snapshots/*:refs/remotes/snapshots/*'
 git log --oneline refs/remotes/snapshots/*        # lister
 git show refs/remotes/snapshots/<utc>:<fichier>   # lire un fichier
 ```
