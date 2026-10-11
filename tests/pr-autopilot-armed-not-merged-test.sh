@@ -38,13 +38,13 @@ REPO=saymyname-app/agent-factory
 # 36: an unrelated check is the old green one; the required one is 1 min old.
 cat > "$TMP/af_open.json" <<JSON
 [
- {"number":30,"isDraft":false,"autoMergeRequest":$ARMED_JSON,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"name":"Tests","status":"COMPLETED","conclusion":"SUCCESS","completedAt":"$(at 1020)"}],"headRefOid":"af30","labels":[]},
- {"number":31,"isDraft":false,"autoMergeRequest":$ARMED_JSON,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"name":"Tests","status":"COMPLETED","conclusion":"SUCCESS","completedAt":"$(at 60)"}],"headRefOid":"af31","labels":[]},
- {"number":32,"isDraft":false,"autoMergeRequest":$ARMED_JSON,"mergeStateStatus":"BLOCKED","statusCheckRollup":[{"name":"Tests","status":"IN_PROGRESS","conclusion":"","completedAt":"0001-01-01T00:00:00Z"}],"headRefOid":"af32","labels":[]},
- {"number":33,"isDraft":false,"autoMergeRequest":$ARMED_JSON,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"name":"Tests","status":"COMPLETED","conclusion":"SUCCESS","completedAt":"$(at 1020)"}],"headRefOid":"af33","labels":[]},
- {"number":34,"isDraft":false,"autoMergeRequest":$ARMED_JSON,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"name":"Tests","status":"COMPLETED","conclusion":"SUCCESS","completedAt":"$(at 1020)"}],"headRefOid":"af34","labels":[]},
- {"number":35,"isDraft":false,"autoMergeRequest":$ARMED_JSON,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"name":"Tests","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefOid":"af35","labels":[]},
- {"number":36,"isDraft":false,"autoMergeRequest":$ARMED_JSON,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"name":"Lint","status":"COMPLETED","conclusion":"SUCCESS","completedAt":"$(at 1020)"},{"name":"Tests","status":"COMPLETED","conclusion":"SUCCESS","completedAt":"$(at 60)"}],"headRefOid":"af36","labels":[]}
+ {"number":30,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":$ARMED_JSON,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"name":"Tests","status":"COMPLETED","conclusion":"SUCCESS","completedAt":"$(at 1020)"}],"headRefOid":"af30","labels":[]},
+ {"number":31,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":$ARMED_JSON,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"name":"Tests","status":"COMPLETED","conclusion":"SUCCESS","completedAt":"$(at 60)"}],"headRefOid":"af31","labels":[]},
+ {"number":32,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":$ARMED_JSON,"mergeStateStatus":"BLOCKED","statusCheckRollup":[{"name":"Tests","status":"IN_PROGRESS","conclusion":"","completedAt":"0001-01-01T00:00:00Z"}],"headRefOid":"af32","labels":[]},
+ {"number":33,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":$ARMED_JSON,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"name":"Tests","status":"COMPLETED","conclusion":"SUCCESS","completedAt":"$(at 1020)"}],"headRefOid":"af33","labels":[]},
+ {"number":34,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":$ARMED_JSON,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"name":"Tests","status":"COMPLETED","conclusion":"SUCCESS","completedAt":"$(at 1020)"}],"headRefOid":"af34","labels":[]},
+ {"number":35,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":$ARMED_JSON,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"name":"Tests","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefOid":"af35","labels":[]},
+ {"number":36,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":$ARMED_JSON,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"name":"Lint","status":"COMPLETED","conclusion":"SUCCESS","completedAt":"$(at 1020)"},{"name":"Tests","status":"COMPLETED","conclusion":"SUCCESS","completedAt":"$(at 60)"}],"headRefOid":"af36","labels":[]}
 ]
 JSON
 
@@ -89,6 +89,7 @@ STUB
 chmod +x "$TMP/bin/"*
 export PATH="$TMP/bin:$PATH"
 export FACTORY_ROOT="$TMP/factory"
+export GC_PR_AUTHORS=example-operator
 export REVERSIBILITY_CHECK_BIN="$TMP/bin/gh"
 export PR_AUTOPILOT_NOW_EPOCH=$NOW
 export PR_AUTOPILOT_RECONCILE_CACHE="$TMP/reconciled.tsv"

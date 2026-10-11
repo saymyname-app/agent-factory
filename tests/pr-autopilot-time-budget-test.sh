@@ -25,12 +25,12 @@ fail() { printf 'FAIL: %s\n' "$1" >&2; [ -n "${out:-}" ] && printf '%s\n' "$out"
 
 # The backend has one healthy PR: required check green, CLEAN, not armed yet.
 cat > "$TMP/open-green.json" <<'JSON'
-[{"number":7,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"name":"Maven verify","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefOid":"abc7","labels":[]}]
+[{"number":7,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"name":"Maven verify","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefOid":"abc7","labels":[]}]
 JSON
 # ... or one conflicted PR already marked stuck by an earlier pass (a second
 # stuck pass files a bead unless one is already open).
 cat > "$TMP/open-stuck.json" <<'JSON'
-[{"number":8,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"DIRTY","statusCheckRollup":[{"name":"Maven verify","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefOid":"abc8","labels":[{"name":"autopilot-stuck"}]}]
+[{"number":8,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"DIRTY","statusCheckRollup":[{"name":"Maven verify","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefOid":"abc8","labels":[{"name":"autopilot-stuck"}]}]
 JSON
 
 # gh/gc stubs: GH_HANG / GC_HANG name the one call that never answers (the
@@ -66,6 +66,7 @@ STUB
 chmod +x "$TMP/bin/"*
 export PATH="$TMP/bin:$PATH"
 export FACTORY_ROOT="$TMP/factory"
+export GC_PR_AUTHORS=example-operator
 export PROTECTED_RIGS_CONFIG_DIR="$REPO_ROOT/tests/fixtures/pr-autopilot-projects"
 export REVERSIBILITY_CHECK_BIN="$TMP/bin/check"
 export REVERSIBILITY_CACHE="$TMP/factory/.gc/rev-cache.tsv"
