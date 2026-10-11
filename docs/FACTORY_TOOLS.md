@@ -1,8 +1,8 @@
 # Outils d'usine — ce qu'ils font, quand les lancer
 
 > Systèmes retirés (Cockpit V1, ntfy, campagne, file/statut/preview produit,
-> contrat de release, axes d'amélioration) : documentés seulement dans
-> `../legacy/` (non fiable, voir `../legacy/README.md`).
+> contrat de release, axes d'amélioration) : code retiré (historique Git),
+> documentés seulement dans `../legacy/` (non fiable, voir `../legacy/README.md`).
 
 Trois scripts `bin/` protègent et décrivent l'usine elle-même. Ils sont **L0,
 déterministes, zéro token** : aucun appel de modèle. Vous pouvez les lancer
@@ -31,7 +31,7 @@ Ce qu'il contrôle :
 | `branch` | la racine vive est sur sa branche épinglée ; restaure si la dérive a cassé un invariant |
 | `runtime-files` | `pr-autopilot`, `factory-guard` et leurs orders existent encore sur le disque |
 | `exec-bits` | (af-ogg8z) chaque fichier que git suit en mode `100755` sous `bin/` est bien exécutable sur disque — restaure le bit avec `chmod +x` sinon ; `runtime-files` ne teste que l'existence (`-e`), pas l'exécutabilité, ce qui a laissé `bin/provider-failover` échouer en silence (exit 126) pendant ~2h le 2026-09-17 |
-| `config-invariants` | `permission_mode` est sain et les 5 providers vérifiés (`codex`, `claude`, `claude-readonly`, `claude-standard`, `claude-cheap`) résolvent |
+| `config-invariants` | `permission_mode` est sain et les 4 providers vérifiés (`codex`, `claude`, `claude-readonly`, `claude-standard`) résolvent |
 | `work-backup` | **pousse** toute branche qui n'existe que sur cette machine |
 | `work-tree` | **sauvegarde** l'arbre de travail modifié ou non suivi (voir plus bas) |
 | `rig:*` | un rig suspendu bloque la livraison ; un dispatcher au repos, non |

@@ -194,7 +194,7 @@ Rigs and agents already exist; you almost never add one. The real flow is:
    in-progress ticket already holds, so you do not need to hand-serialize by
    rig.
    **Never dispatch a raw provider name** (`codex`, `claude`,
-   `claude-standard`, `claude-cheap`, ...) — those are scaled agent groups
+   `claude-standard`, ...) — those are scaled agent groups
    whose provider is hardcoded by their own `agent.toml`/pack definition, so
    provider-failover's overlay cannot patch them and a quota wall on that
    provider becomes an unmanaged restart-thrash loop instead of a failover

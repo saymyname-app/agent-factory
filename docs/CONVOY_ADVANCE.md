@@ -540,6 +540,11 @@ below, the seventh the Evidence Pack, last section): with three green mechanical
 Evaluation at their commit, `spec_end` names condition 4 in `missing` and in
 its `reason` — an outcome of the pass, which exits 0.
 
+The product is launched from a clean copy of that commit and evaluated
+story by story by one Evaluator session. An evaluation left without result
+is launched once more, then stopped and raised once. An unfavorable
+evaluation is an outcome of the pass, not a failure.
+
 - **After the gate**, the pass hands the convoy to `bin/outcome-evaluation
   settle` with the repository and the profile of its project, when the gate
   was due or when an evaluation has something left to settle (an open
@@ -615,6 +620,11 @@ verdicts, on their commit — the pass, and the commit, the Outcome Evaluation
 is launched in and on (T24): the two are made in parallel. Until the review
 is favorable there, `spec_end` carries the refusal of condition 6 in its
 `reason`.
+
+One reviewer session reviews the whole assembled diff of the Spec. A review
+left without result is launched once more, then stopped and raised. A
+review that is unfavorable or without result is an outcome of the pass, not
+a failure.
 
 The entry of the convoy carries `end_review` whenever something is due or
 done: `action` (`launched`, `relaunched`, `pending`, `deferred`, `reviewed`,

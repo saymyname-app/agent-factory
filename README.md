@@ -39,7 +39,8 @@ The complete protocol, authority levels, and recovery checks are in
 
 Project status lives in each project's own repository, not here. Cockpit V1,
 its ntfy push, the campaign and the SayMyName product queue, status and preview
-are retired to [`legacy/`](legacy/README.md) (untrusted); Cockpit V2 is the
+are retired: code in Git history, docs under [`legacy/`](legacy/README.md)
+(untrusted); Cockpit V2 is the
 Planning Run C01. Detailed operation and recovery procedures are in
 [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
 

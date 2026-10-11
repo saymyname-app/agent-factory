@@ -16,7 +16,7 @@ regresses.
 
 This mirrors the policy/state split the pre-refactor improvement-axes
 register used (policy versioned and human-edited, state host-local and
-mutable; that register is retired to `legacy/`, untrusted) and the locked-register concurrency discipline `bin/planning-exception`
+mutable; that register is retired, its code in Git history: `../legacy/README.md`) and the locked-register concurrency discipline `bin/planning-exception`
 (B08) already proved. It is a deterministic prototype over caller-supplied
 JSON snapshots, the same fixture-bound scope B08 and P06 used -- it does not
 itself poll live Beads, Git or GitHub; that wiring is a caller's job.
@@ -66,7 +66,7 @@ maps an exemption name to its signal booleans, e.g.
   policy (`config/factory-observe-policy.json`), the
   `agent-factory-observe-measures/v1` measures contract
   (hand-written in `lib/factory_measures.py`; the JSON Schema file that once
-  documented its shape had no reader and moved to `legacy/config/` — F20),
+  documented its shape had no reader and was removed, `../legacy/README.md` — F20),
   and caller-supplied snapshot/evidence/measures JSON fixtures exercised by
   `tests/factory-observe-test.py`.
 - **OBSERVED**: the deterministic CLI output and the acceptance-mapped

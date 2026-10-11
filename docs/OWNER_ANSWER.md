@@ -253,7 +253,7 @@ unchanged.
   while a repair is unpublished or the exception open; the request cleared;
   rubric 0 of the next dossier; « abandonné » and its reason; « refusé »
   and partial acceptance; a convoy without the mark.
-- `tests/convoy-stops-fixture-city-test.py`, class
+- `tests/owner-answer-promotion-fixture-city-test.py`, class
   `OwnerAnswerOnTheFixtureCity`: on the graph of the Fixture City, with the
   real passes — « accepté » waits for the verdicts, a returned finding is
   repaired, delivered and judged again, then accepted
