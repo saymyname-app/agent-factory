@@ -29,9 +29,9 @@ mkdir -p "$TMP/factory/rigs/example-backend" "$TMP/factory/rigs/example-frontend
 # Backend open PRs: 1 reversible, 2 undeclared destructive, 3 declared irreversible (already armed)
 cat > "$TMP/backend-open.json" <<'JSON'
 [
- {"number":1,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"conclusion":"SUCCESS"}],"headRefOid":"aaa1","labels":[]},
- {"number":2,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"conclusion":"SUCCESS"}],"headRefOid":"bbb1","labels":[]},
- {"number":3,"isDraft":false,"autoMergeRequest":{"mergeMethod":"SQUASH"},"mergeStateStatus":"BLOCKED","statusCheckRollup":[],"headRefOid":"ccc1","labels":[{"name":"backend"}]}
+ {"number":1,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"conclusion":"SUCCESS"}],"headRefOid":"aaa1","labels":[]},
+ {"number":2,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"conclusion":"SUCCESS"}],"headRefOid":"bbb1","labels":[]},
+ {"number":3,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":{"mergeMethod":"SQUASH"},"mergeStateStatus":"BLOCKED","statusCheckRollup":[],"headRefOid":"ccc1","labels":[{"name":"backend"}]}
 ]
 JSON
 printf '0' > "$TMP/verdicts/aaa1"; printf '3' > "$TMP/verdicts/bbb1"; printf '4' > "$TMP/verdicts/ccc1"
@@ -121,6 +121,7 @@ STUB
 chmod +x "$TMP/bin/"*
 export PATH="$TMP/bin:$PATH"
 export FACTORY_ROOT="$TMP/factory"
+export GC_PR_AUTHORS=example-operator
 export REVERSIBILITY_CHECK_BIN="$TMP/bin/check"
 export DELIVER_CLOSE_BIN="$TMP/bin/deliver-close"
 export PROTECTED_RIGS_CONFIG_DIR="$REPO_ROOT/tests/fixtures/pr-autopilot-projects"

@@ -36,21 +36,21 @@ mkdir -p "$TMP/factory/rigs/saymyname-backend" "$TMP/factory/rigs/saymyname-fron
 # PR 30/31: same green/red shape for Say-my-name-front's "Tests and build".
 cat > "$TMP/af_open.json" <<'JSON'
 [
- {"number":10,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"name":"Tests","conclusion":"SUCCESS"}],"headRefOid":"af10","labels":[]},
- {"number":11,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BLOCKED","statusCheckRollup":[{"name":"Tests","conclusion":"FAILURE"}],"headRefOid":"af11","labels":[]},
- {"number":12,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"name":"Lint","conclusion":"FAILURE"},{"name":"Tests","conclusion":"SUCCESS"}],"headRefOid":"af12","labels":[]}
+ {"number":10,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"name":"Tests","conclusion":"SUCCESS"}],"headRefOid":"af10","labels":[]},
+ {"number":11,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BLOCKED","statusCheckRollup":[{"name":"Tests","conclusion":"FAILURE"}],"headRefOid":"af11","labels":[]},
+ {"number":12,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"name":"Lint","conclusion":"FAILURE"},{"name":"Tests","conclusion":"SUCCESS"}],"headRefOid":"af12","labels":[]}
 ]
 JSON
 cat > "$TMP/be_open.json" <<'JSON'
 [
- {"number":20,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"context":"Maven verify","state":"SUCCESS"}],"headRefOid":"be20","labels":[]},
- {"number":21,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BLOCKED","statusCheckRollup":[{"context":"Maven verify","state":"FAILURE"}],"headRefOid":"be21","labels":[]}
+ {"number":20,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"context":"Maven verify","state":"SUCCESS"}],"headRefOid":"be20","labels":[]},
+ {"number":21,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BLOCKED","statusCheckRollup":[{"context":"Maven verify","state":"FAILURE"}],"headRefOid":"be21","labels":[]}
 ]
 JSON
 cat > "$TMP/fe_open.json" <<'JSON'
 [
- {"number":30,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"name":"Tests and build","conclusion":"SUCCESS"}],"headRefOid":"fe30","labels":[]},
- {"number":31,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BLOCKED","statusCheckRollup":[{"name":"Tests and build","conclusion":"FAILURE"}],"headRefOid":"fe31","labels":[]}
+ {"number":30,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"name":"Tests and build","conclusion":"SUCCESS"}],"headRefOid":"fe30","labels":[]},
+ {"number":31,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BLOCKED","statusCheckRollup":[{"name":"Tests and build","conclusion":"FAILURE"}],"headRefOid":"fe31","labels":[]}
 ]
 JSON
 
@@ -92,6 +92,7 @@ STUB
 chmod +x "$TMP/bin/"*
 export PATH="$TMP/bin:$PATH"
 export FACTORY_ROOT="$TMP/factory"
+export GC_PR_AUTHORS=example-operator
 export REVERSIBILITY_CHECK_BIN="$TMP/bin/gh"
 
 pilot() { "$AUTOPILOT" "$@" 2>&1 || true; }
