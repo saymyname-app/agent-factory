@@ -52,6 +52,9 @@ CLAUDE_VERSION=2.1.290   # city.toml needs >= 2.1.280
 CODEX_VERSION=0.155.1
 PLAYWRIGHT_VERSION=1.63.0  # Chromium 1243, the one bin/evidence-capture was tried on
 SWAP_SIZE=4G
+# Dolt author identity of the WSL host: no person's name or address.
+DOLT_USER_NAME="Agent Factory"
+DOLT_USER_EMAIL=agent-factory@local.invalid
 
 # The WSL host had Docker Desktop's CLI and Windows' Maven on PATH, and a
 # Temurin 21 in ~/.local: here the engine, Maven and OpenJDK 21 are the
@@ -194,6 +197,14 @@ cmd_user() {
   # API v1.32, which it no longer serves (same file as on the WSL host).
   [ -e "$HOME/.docker-java.properties" ] || printf 'api.version=1.44\n' > "$HOME/.docker-java.properties"
 
+  # gc refuses to initialize a city's bd storage without a Dolt author
+  # identity, and a fresh host has none (seen on the VM, 2026-10-11).
+  [ -n "$(dolt config --global --get user.name 2>/dev/null)" ] \
+    || dolt config --global --add user.name "$DOLT_USER_NAME"
+  [ -n "$(dolt config --global --get user.email 2>/dev/null)" ] \
+    || dolt config --global --add user.email "$DOLT_USER_EMAIL"
+  say "done   Dolt author identity"
+
   if [ ! -d "$FACTORY_ROOT/.git" ]; then
     gh auth status >/dev/null 2>&1 \
       || { say "STOP   the repository is private: run 'gh auth login' as $FACTORY_USER, then this command again"; exit 3; }
@@ -201,6 +212,17 @@ cmd_user() {
     git clone "$FACTORY_REPO" "$FACTORY_ROOT"
   fi
   "$FACTORY_ROOT/bin/factory-setup"
+
+  # The clone's commits carry the GitHub account's no-reply address, as on
+  # the WSL host: read from the login, never typed here.
+  if [ -z "$(git -C "$FACTORY_ROOT" config user.email)" ]; then
+    local login id
+    read -r login id <<<"$(gh api user --jq '"\(.login) \(.id)"')"
+    [ -n "$login" ] && [ -n "$id" ] || die "gh api user did not return the account"
+    git -C "$FACTORY_ROOT" config user.name "$login"
+    git -C "$FACTORY_ROOT" config user.email "$id+$login@users.noreply.github.com"
+  fi
+  say "done   Git author identity of the clone"
 
   say "user: done. Nothing is started: no supervisor, no city, no timer."
   say "Check: $FACTORY_ROOT/bin/factory-host-install check"
@@ -253,6 +275,12 @@ cmd_check() {
     *.githooks) ok "clone at $FACTORY_ROOT, hooks active" ;;
     *) miss "clone at $FACTORY_ROOT with bin/factory-setup run" ;;
   esac
+
+  if [ -n "$(dolt config --global --get user.name 2>/dev/null)" ] \
+    && [ -n "$(dolt config --global --get user.email 2>/dev/null)" ]; then ok "Dolt author identity"
+  else miss "Dolt author identity (dolt config --global user.name and user.email): gc init refuses a city without it"; fi
+  if [ -n "$(git -C "$FACTORY_ROOT" config user.email 2>/dev/null)" ]; then ok "Git author identity of the clone"
+  else miss "Git author identity of the clone (git config user.name and user.email in $FACTORY_ROOT)"; fi
 
   [ "$missing" = 0 ] || return 1
 }

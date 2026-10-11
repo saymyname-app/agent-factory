@@ -1143,6 +1143,17 @@ show the rest, so it is not yet run: the container engine answering, linger,
 the AppArmor profile, the swap file, and the clone (the operator's GitHub
 login).
 
+Run on the VM `factory-vm` the same day (af-o6l5rl): `root`, `user` and
+`check` pass, the container engine answers and linger holds. One gap found:
+a fresh host has no Dolt author identity and `gc init` refuses a city
+without it, so the first isolated city failed there. `user` now sets it
+(the WSL host's values, no person's name) with the clone's Git identity
+(the GitHub account's no-reply address), and `check` has a line for each.
+With the identity set, the slice's proof passes there: an empty isolated
+city starts and runs its orders
+(`tests/convoy-manual-lifecycle-isolated-city-test.sh`, 369 s on the VM,
+272 s on the WSL host; one sample each).
+
 ## Upgrade
 
 Before every active-factory upgrade:
