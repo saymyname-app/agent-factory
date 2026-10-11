@@ -1,18 +1,27 @@
-# legacy/ — pre-refactor code and docs, untrusted
+# legacy/ — pre-refactor docs, untrusted
 
 Everything here predates the project-agnostic refactor (Planning Run kernel,
-ADR-0025..0028). It is kept only as readable evidence. **Nothing here runs**:
-no order, script, test or CI step outside `legacy/` may reference it.
+ADR-0025..0028). Only documents remain: `docs/` (ADR-0001..0024, product and
+pre-refactor docs) and this file. **Nothing here runs**: no order, script,
+test or CI step outside `legacy/` may reference it, and
+`tests/legacy-isolation-test.sh` refuses anything but `docs/` under it.
 
+- **Code, tests and config are gone (af-xbu9gq, 2026-10-11).** The former
+  `legacy/{agents,bin,config,lib,orders,tests,ui}` (73 files, 26,652 lines)
+  were removed; Git history keeps them. Last commit holding them:
+  `b4ceba798cab85fa045a9a39953220420164134e`. List them with
+  `git ls-tree -r --name-only b4ceba7 -- legacy/`, read one with
+  `git show b4ceba7:legacy/<path>`.
 - **Untrusted.** Do not use it as a source of truth, a design reference or a
   template. Consult it only to investigate a concrete recurring problem.
 - **Delete freely.** Any file here can be removed without notice; Git history
-  keeps it.
-- Paths mirror their former location (`legacy/lib/x.py` was `lib/x.py`).
-  Moved files are unchanged, so their own relative paths and tests no longer
-  resolve.
+  keeps it. Exception: the ADRs listed under "Pre-refactor ADRs whose
+  mechanism still runs" are cited by live rules (`AGENTS.md`,
+  `docs/CONTEXT_INDEX.md`): move the citation with them.
+- Paths mirrored their former location (`legacy/lib/x.py` was `lib/x.py`).
+  The table below names files as they were moved, for lookup in Git history.
 
-## Contents, by move
+## Contents, by move (code rows now in Git history only)
 
 | PR | Date | What moved | Replacement |
 |----|------|------------|-------------|
@@ -45,7 +54,7 @@ questions to `saymyname-product-status`.
 
 - `.gc/runtime/factory-watchdog-signals.json` is still written by
   `bin/factory-watchdog`, `bin/on-order-failed` and `bin/on-session-stranded`,
-  but its only readers (Cockpit V1, ntfy) are here now. Input for the Planning
+  but its only readers (Cockpit V1, ntfy) are retired. Input for the Planning
   Run "Factory operations v2": keep as the Cockpit V2 feed, or drop.
 - The coordination bead `af-1vr4` keeps its `gc.campaign_*` metadata (inert);
   factory-guard §7/§7b still use it to store dedup pointers.
@@ -69,11 +78,11 @@ gate), ADR-0020 (main-landing gate), ADR-0022 (live-root enforcement), ADR-0023
 (coordination write doors: `campaign-pointer`, `deliver-close`), ADR-0024 (shared
 drain worktree). Re-decide each through the Planning Run flow when touched.
 
-## ADRs whose mechanism moved here
+## ADRs whose mechanism was retired (code in Git history)
 
-- ADR-0006 (token-free human cockpit) — mechanism now entirely in `legacy/`.
+- ADR-0006 (token-free human cockpit) — mechanism retired with Cockpit V1.
 - ADR-0018 (provider failover) — only its ntfy re-auth hint map
-  (`lib/ntfy_notify.py`) moved; the failover itself still runs.
-- ADR-0027 §5 — the quarantined Cockpit V1 files moved here unchanged; the
+  (`lib/ntfy_notify.py`) was retired; the failover itself still runs.
+- ADR-0027 §5 — the quarantined Cockpit V1 files were retired unchanged; the
   `cockpit-v1-export` fence still applies.
 
