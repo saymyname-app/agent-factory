@@ -48,13 +48,14 @@ class MailReplyReapTest(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="mail-reply-reap-test-"))
         self.close_log = self.tmp / "close.log"
 
-    def run_tool(self, *args, messages=None, assigned_map=None, check=True):
+    def run_tool(self, *args, messages=None, assigned_map=None, check=True, env=None):
         env = {
             **os.environ,
             "BD_BIN": str(FAKE_BD),
             "MAIL_TEST_MESSAGES": json.dumps(messages if messages is not None else []),
             "MAIL_TEST_ASSIGNED_MAP": json.dumps(assigned_map or {}),
             "MAIL_TEST_CLOSE_LOG": str(self.close_log),
+            **(env or {}),
         }
         return subprocess.run(
             (str(TOOL), "--repo-root", str(self.tmp), *args),
@@ -76,6 +77,27 @@ class MailReplyReapTest(unittest.TestCase):
         closes = self.closes()
         self.assertEqual(1, len(closes))
         self.assertEqual("af-wisp-y0cdyzb", closes[0]["id"])
+        # Closed whoever holds it, and only while that holder is the one read (af-vhvmsi).
+        self.assertEqual("af-driu0", closes[0]["if_assignee"])
+        self.assertIn("mail-reply-reap", closes[0]["reason"])
+
+    def test_sweep_leaves_a_mail_whose_holder_changed_since_it_was_read(self):
+        proc = self.run_tool("sweep", messages=[RESOLVED_MESSAGE],
+                             env={"MAIL_TEST_HOLDER_CHANGED": "af-wisp-y0cdyzb"})
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        result = json.loads(proc.stdout)
+        self.assertEqual([], result["closed"])
+        self.assertEqual(1, result["skipped"])
+
+    def test_an_empty_bd_bin_is_not_an_override(self):
+        # Gas City 1.5 gives an order BD_BIN set and empty (af-vhvmsi).
+        bin_dir = self.tmp / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "bd").symlink_to(FAKE_BD)
+        proc = self.run_tool("sweep", "--dry-run", messages=[RESOLVED_MESSAGE],
+                             env={"BD_BIN": "", "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"})
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertEqual(["af-wisp-y0cdyzb"], json.loads(proc.stdout)["closed"])
 
     def test_sweep_leaves_an_unresolved_mail_reply_bead_open(self):
         proc = self.run_tool("sweep", messages=[UNRESOLVED_MESSAGE])
