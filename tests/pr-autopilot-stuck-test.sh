@@ -29,11 +29,11 @@ mkdir -p "$TMP/factory/rigs/saymyname-backend" "$TMP/factory/rigs/saymyname-fron
 # of a healthy PR, never stuck. PR 5: same, but labelled by an earlier pass.
 cat > "$TMP/open.json" <<'JSON'
 [
- {"number":4,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BLOCKED","statusCheckRollup":[{"name":"Maven verify","status":"IN_PROGRESS","conclusion":""}],"headRefOid":"ddd1","labels":[]},
- {"number":5,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BLOCKED","statusCheckRollup":[{"context":"Maven verify","state":"PENDING"}],"headRefOid":"eee1","labels":[{"name":"autopilot-stuck"}]},
- {"number":1,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"DIRTY","statusCheckRollup":[],"headRefOid":"aaa1","labels":[]},
- {"number":2,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BLOCKED","statusCheckRollup":[],"headRefOid":"bbb1","labels":[{"name":"autopilot-stuck"}]},
- {"number":3,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"conclusion":"SUCCESS"}],"headRefOid":"ccc1","labels":[{"name":"autopilot-stuck"}]}
+ {"number":4,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BLOCKED","statusCheckRollup":[{"name":"Maven verify","status":"IN_PROGRESS","conclusion":""}],"headRefOid":"ddd1","labels":[]},
+ {"number":5,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BLOCKED","statusCheckRollup":[{"context":"Maven verify","state":"PENDING"}],"headRefOid":"eee1","labels":[{"name":"autopilot-stuck"}]},
+ {"number":1,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"DIRTY","statusCheckRollup":[],"headRefOid":"aaa1","labels":[]},
+ {"number":2,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BLOCKED","statusCheckRollup":[],"headRefOid":"bbb1","labels":[{"name":"autopilot-stuck"}]},
+ {"number":3,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"conclusion":"SUCCESS"}],"headRefOid":"ccc1","labels":[{"name":"autopilot-stuck"}]}
 ]
 JSON
 
@@ -56,6 +56,7 @@ STUB
 chmod +x "$TMP/bin/"*
 export PATH="$TMP/bin:$PATH"
 export FACTORY_ROOT="$TMP/factory"
+export GC_PR_AUTHORS=example-operator
 export REVERSIBILITY_CHECK_BIN="$TMP/bin/gh"   # unused by these PRs (already CLEAN/no migration path hit)
 
 pilot() { "$AUTOPILOT" "$@" 2>&1 || true; }

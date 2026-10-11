@@ -27,7 +27,7 @@ mkdir -p "$TMP/factory/rigs/saymyname-backend" "$TMP/factory/rigs/saymyname-fron
 # PR 91: still OPEN (never merged) -- af-fixed-2 names it but must stay open.
 cat > "$TMP/open.json" <<'JSON'
 [
- {"number":91,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[],"headRefOid":"sha91a","labels":[]}
+ {"number":91,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[],"headRefOid":"sha91a","labels":[]}
 ]
 JSON
 cat > "$TMP/merged.json" <<'JSON'
@@ -83,6 +83,7 @@ STUB
 chmod +x "$TMP/bin/"*
 export PATH="$TMP/bin:$PATH"
 export FACTORY_ROOT="$TMP/factory"
+export GC_PR_AUTHORS=example-operator
 export REVERSIBILITY_CHECK_BIN="$TMP/bin/gh"
 export DELIVER_CLOSE_BIN="$TMP/bin/deliver-close"
 export GC_BIN="$TMP/bin/gc"
