@@ -1022,13 +1022,21 @@ Before every active-factory upgrade:
 5. Upgrade pinned versions deliberately.
 6. Run doctor.
 7. Run a FAST canary.
-8. Keep a rollback path to the previous binary/config/store state.
+8. Run the tests marked `# ci: local-only` (`bin/local-only-tests`; `--list`
+   names them). CI never runs them, and they are the only ones that run the
+   installed `gc` and `bd` against a real tracker.
+   `tests/held-bead-close-real-tracker-test.sh` is the check for a Beads
+   upgrade: it runs the operator-session commands of
+   `docs/agents/issue-tracker.md` and the closes of the planning tools on a
+   bead another actor holds. On 2026-10-11 Beads 1.3.1 refused both, no test
+   ran them, and they were found by hand (af-tql60u, af-bm9y90).
+9. Keep a rollback path to the previous binary/config/store state.
 
 ### 2026-10-11: Gas City 1.4.1 to 1.5.0, Beads 1.2.2 to 1.3.1 (af-w82f07)
 
 Intent (Benjamin, his words, 2026-10-11): « ok faisons ça. Lançons mise à
 jour ici, je fais les commandes »
-Mechanism (agent interpretation): the eight steps above and
+Mechanism (agent interpretation): the steps above (eight that day) and
 `RUNBOOK_STOP_AND_RESTART.md`, with the Factory idle (D01 closed that
 morning), no separate trial city, and a go/no-go before `gc resume`: until
 the city resumes nothing is written, so restoring the cold backup loses
