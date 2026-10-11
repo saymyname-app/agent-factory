@@ -10,6 +10,12 @@
 # is both stale AND there was something worth backing up.
 #
 # Usage: backup-freshness [--check-only] [--quiet]
+#
+# Exit, --check-only (the order's check= leg, gc fires the order on 0):
+#   0  would page: archive stale and beads changed since
+#   1  nothing to page
+#   2  could not evaluate (tool or archive missing): never 0, a check
+#      that cannot run must not read as due (af-37a1xn)
 set -uo pipefail
 
 ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
@@ -24,7 +30,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --check-only) CHECK_ONLY=1 ;;
     --quiet) QUIET=1 ;;
-    -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -34,15 +40,19 @@ say() { [ "$QUIET" = "1" ] || printf '%s\n' "$*"; }
 
 cd "$ROOT" || { echo "backup-freshness: $ROOT unreachable" >&2; exit 2; }
 for required in gc jq git; do
-  command -v "$required" >/dev/null 2>&1 || { say "backup-freshness: $required unavailable, skipping"; exit 0; }
+  command -v "$required" >/dev/null 2>&1 || { echo "backup-freshness: $required unavailable, cannot evaluate" >&2; exit 2; }
 done
 
-PACK_STATE_DIR="${GC_PACK_STATE_DIR:-$ROOT/.gc/runtime/packs/core}"
-ARCHIVE_REPO="${GC_JSONL_ARCHIVE_REPO:-$PACK_STATE_DIR/jsonl-archive}"
+# The archive is written by jsonl-export, an order of the core pack, under
+# the core pack's state dir. Not $GC_PACK_STATE_DIR: gc sets it to the
+# state dir of the pack that owns the running order, and this order is the
+# city's (.gc/runtime/packs/city), where no archive ever exists (af-37a1xn:
+# the check then took the branch below, exited 0, and fired every tick).
+ARCHIVE_REPO="${GC_JSONL_ARCHIVE_REPO:-$ROOT/.gc/runtime/packs/core/jsonl-archive}"
 
 if [ ! -d "$ARCHIVE_REPO/.git" ]; then
-  say "backup-freshness: no archive repo at $ARCHIVE_REPO, skipping"
-  exit 0
+  echo "backup-freshness: no archive repo at $ARCHIVE_REPO, cannot evaluate" >&2
+  exit 2
 fi
 
 LAST_COMMIT_EPOCH=$(git -C "$ARCHIVE_REPO" log -1 --format=%ct 2>/dev/null)

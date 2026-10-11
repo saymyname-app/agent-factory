@@ -50,7 +50,7 @@ from typing import Any
 
 PROGRAM = "mail-reply-reap"
 ROOT = Path(__file__).resolve().parents[1]
-BD_BIN = os.environ.get("BD_BIN", "bd")
+BD_BIN = os.environ.get("BD_BIN") or "bd"
 
 RESOLVED_NEXT = re.compile(r"(?im)^NEXT:\s*none\b")
 
