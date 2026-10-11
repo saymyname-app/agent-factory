@@ -106,3 +106,10 @@ Intent (Benjamin, ses mots, 2026-10-11) : « Je prefere B une action à la fois,
 Mechanism (agent interpretation) : retenir B pour poursuivre le prototype ; un seul lancement à l’entrée du parcours, puis seulement l’accès à l’avis. Supprimer Rouvrir/Revoir l’essai du chemin B. Retour au résultat conserve l’étape atteinte au lieu de proposer un nouveau lancement. Ce choix ne confirme pas une Spec ni la conformité finale du prototype.
 
 B est la variante par défaut. Après ouverture : Donner mon avis. Dans l’avis : Continuer avec un agent. Les preuves et la navigation de retour restent secondaires. La révision est locale, sans nouveau push public.
+
+## Précision finale de présentation : essai et avis au même niveau
+
+Intent (Benjamin, ses mots, 2026-10-11) : « Je veux juste tout au même niveau : Bouton essai et bouton pour avis » ; « pas besoin de "rouvrir le cockpit d'essai" ».
+Mechanism (agent interpretation) : deux boutons côte à côte dans le détail du résultat, Essai et Avis. Essai ouvre directement le produit dans un onglet séparé, sans changer l’écran courant. Avis affiche le formulaire dans le même détail. Aucune séquence obligatoire, aucun onglet d’essai interne, aucun libellé Rouvrir. Les anciens A/B/C sont conservés dans l’historique Git ; le rendu courant est unique. Cette précision remplace l’interprétation précédente du parcours séquentiel B.
+
+Le sélecteur de variantes et les flèches ont été retirés pour ne plus exposer des choix de disposition abandonnés. Les scénarios restent explorables dans les outils du prototype. Aucun lancement réel ni Spec modifiée.
