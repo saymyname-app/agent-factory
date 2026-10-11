@@ -7,8 +7,13 @@ Handles the three calls mail-reply-reap makes:
   bd -C <root> list --assignee <name> --status open,in_progress --json --limit 0
       -> prints the entry for <name> in MAIL_TEST_ASSIGNED_MAP (a JSON object
          mapping assignee -> array), default "[]" if <name> is absent
-  bd -C <root> close <id> --reason <reason>
-      -> appends {"id": <id>, "reason": <reason>} to MAIL_TEST_CLOSE_LOG
+  bd -C <root> update <id> --if-assignee <holder> --status closed --append-notes <reason>
+      -> appends {"id": <id>, "if_assignee": <holder>, "reason": <reason>} to
+         MAIL_TEST_CLOSE_LOG; exits 13, writing nothing, for an id listed in
+         MAIL_TEST_HOLDER_CHANGED (comma-separated), as bd does when the
+         holder is no longer the one named
+A bare `bd close` is refused: Beads 1.3 refuses it on a bead another actor
+holds, and a mail bead is held by its recipient (af-vhvmsi).
 """
 import json
 import os
@@ -29,12 +34,18 @@ if args[:1] == ["list"] and "--assignee" in args:
     print(json.dumps(mapping.get(assignee, [])))
     raise SystemExit(0)
 
-if args[:1] == ["close"]:
+if args[:1] == ["update"] and "--if-assignee" in args and args[args.index("--status") + 1:][:1] == ["closed"]:
     bead_id = args[1]
-    reason = args[args.index("--reason") + 1] if "--reason" in args else ""
+    if bead_id in os.environ.get("MAIL_TEST_HOLDER_CHANGED", "").split(","):
+        print(f"assignee mismatch on {bead_id}", file=sys.stderr)
+        raise SystemExit(13)
     log = Path(os.environ["MAIL_TEST_CLOSE_LOG"])
     with log.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps({"id": bead_id, "reason": reason}) + "\n")
+        handle.write(json.dumps({
+            "id": bead_id,
+            "if_assignee": args[args.index("--if-assignee") + 1],
+            "reason": args[args.index("--append-notes") + 1],
+        }) + "\n")
     raise SystemExit(0)
 
 print(f"unexpected fake bd arguments: {args}", file=sys.stderr)
