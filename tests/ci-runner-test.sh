@@ -314,10 +314,13 @@ mode() { FAKE_MODE=$1 FACTORY_ROOT="$ROOT" FACTORY_CI_RUNNER_GH="$T/bin/gh-mode"
 [ "$(mode '')" = github ] || fail "mode must print github when the variable is not set"
 [ "$(mode error)" = github ] || fail "mode must print github when GitHub gives no clear answer: in doubt the whole battery runs"
 FORMULA="$ROOT/formulas/mol-do-work.formula.toml"
-grep -qF 'bin/ci-runner" mode' "$FORMULA" || fail "$FORMULA no longer asks where CI runs before choosing the local check"
-grep -qF 'bin/ci-run-tests --jobs 4' "$FORMULA" || fail "$FORMULA lost the whole battery for CI on GitHub's runners"
-grep -qF '| `github`, or no clear answer | The whole battery' "$ROOT/docs/DELIVERY.md" || fail "docs/DELIVERY.md lost the whole battery before a delivery when CI is on GitHub's runners"
-echo "ok   before a delivery: the rule checks while CI is on the host, the whole battery otherwise or in doubt"
+# Since the repository is public a red run is billed nothing on GitHub's
+# runners either (Benjamin, 2026-10-11, « oui »): the light check is the rule
+# and the formula no longer sends a delivery through the whole battery.
+grep -qF 'bin/ci-run-tests --rule-checks --changed-since' "$FORMULA" || fail "$FORMULA lost the rule checks and touched tests before a pull request"
+if grep -qF 'bin/ci-run-tests --jobs 4' "$FORMULA"; then fail "$FORMULA still asks for the whole battery before a pull request: 14 minutes on the host for a red that is billed nothing"; fi
+grep -qF '| The same | GitHub'"'"'s runners on a private repository: billed. Not the case today | The whole battery' "$ROOT/docs/DELIVERY.md" || fail "docs/DELIVERY.md no longer says when the whole battery comes back: where a red run is billed"
+echo "ok   before a pull request: the rule checks and the touched tests; the whole battery only where a red run is billed"
 
 # --- the loop obeys stop-now ----------------------------------------------
 : > "$T/run/stop-now"; : > "$T/stdin"

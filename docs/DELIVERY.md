@@ -488,10 +488,23 @@ not mean fewer tests in CI, a test removed, or a merge without the whole
 battery green: his second sentence is a direction for later work, not
 applied here.
 
-| Kind of change | Where CI runs (`./bin/ci-runner mode`) | Before the pull request | Why |
+Intent (Benjamin, his words, 2026-10-11, 16:50 Paris): « oui », in answer
+to "back to the rule checks and the touched tests before the pull request,
+the whole battery left to CI, as your choice A of 2026-10-08: yes or no?",
+asked once the repository was public; and: « Il faut gérer les regles
+anciennes et nouvelle comme «batterie complète avant chaque PR » »
+Mechanism (agent interpretation): the whole battery before a pull request
+existed for one reason, a red run billed on GitHub's runners. The
+repository is public since 2026-10-11 and its runs are billed nothing
+(`docs/OPERATIONS.md`, "The repository is public"), so the light check is
+the rule for every kind of change, and the row that asked for the battery
+now holds only for a repository whose runs are billed. It does not mean
+fewer tests in CI or a merge without the whole battery green.
+
+| Kind of change | Where CI runs | Before the pull request | Why |
 |---|---|---|---|
-| A delivery: a `do-work` ticket, or anything that changes a tool, a formula, an order or a configuration | `self-hosted`: the host's own runner | The rule checks and the tests the change touches: `bin/ci-run-tests --rule-checks --changed-since origin/main` | The battery by hand (14 minutes on 4 cores) and the CI run that follows (15 minutes on 4 cores) were the same work twice on the same machine, 29 minutes a push; a red in CI is billed nothing there (measured 2026-10-08, `docs/OPERATIONS.md`, "Factory CI on the host's own runner") |
-| The same | `github`, or no clear answer | The whole battery: `bin/ci-run-tests --jobs 4` from the work tree | On GitHub's runners a red is seen after about 37 billed minutes; a run aimed at what the change touches is 75 to 96% of the battery (merged pull requests #407 to #438), and batteries queue on the host (below) |
+| A delivery: a `do-work` ticket, or anything that changes a tool, a formula, an order or a configuration | Where a red is billed nothing: GitHub's runners on a public repository (today), or the host's own runner on a private one | The rule checks and the tests the change touches: `bin/ci-run-tests --rule-checks --changed-since origin/main` | The battery by hand (14 minutes on 4 cores) and the CI run that follows (15 minutes on 4 cores) were the same work twice on the same machine, 29 minutes a push; a red in CI is billed nothing there (measured 2026-10-08, `docs/OPERATIONS.md`, "Factory CI on the host's own runner") |
+| The same | GitHub's runners on a private repository: billed. Not the case today | The whole battery: `bin/ci-run-tests --jobs 4` from the work tree | On GitHub's runners a red is seen after about 37 billed minutes; a run aimed at what the change touches is 75 to 96% of the battery (merged pull requests #407 to #438), and batteries queue on the host (below) |
 | Docs, CI or tests alone | either | The rule checks and the tests the change touches, same command | 2 to 6% of the battery, and none of the 6 test files that failed in CI in that sample would have been missed |
 
 What the lighter check costs: a long test broken by a delivery is seen in
@@ -505,8 +518,7 @@ on 2026-10-08). Of those 6 failed files, 5 were rule checks of 1 second or
 less, a stale generated catalogue most often, and each was seen only after
 about 37 billed minutes of a run. `--changed-since` adds the test files the
 branch changes, committed or not; the run starts with `NOT the battery` and
-counts both. It waits its turn on the host like a battery. In doubt about
-the kind of change, or about where CI runs, run the battery
+counts both. It waits its turn on the host like a battery
 (`tests/ci-run-tests-rule-checks-test.sh`, `tests/ci-runner-test.sh`).
 
 On GitHub's runners Factory CI does not run the rule checks before the long
