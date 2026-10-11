@@ -1,6 +1,7 @@
 """A fake gc supervisor HTTP API, for the cockpit seam tests.
 
-Answers like gc 1.4.1 does on the live host (checked 2026-10-06;
+Answers like gc does on the live host (1.4.1 on 2026-10-06, 1.5.0 on
+2026-10-11;
 ``tests/cockpit-fake-gc-contract-test.py`` re-checks it against the
 installed supervisor): ``/events`` and ``/status`` are the HTML dashboard,
 the API lives under ``/v0``, the per-city stream sends ``event: event``
@@ -27,7 +28,7 @@ class FakeGc:
         self._status = {
             "name": CITY,
             "path": "/fake/" + CITY,
-            "version": "1.4.1",
+            "version": "1.5.0",
             "uptime_sec": 1,
             "suspended": False,
             "agent_count": 2,

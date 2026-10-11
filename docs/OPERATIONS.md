@@ -16,6 +16,11 @@ Verified upstream baseline for this bootstrap on 2026-09-12:
 
 These are bootstrap choices, not permanent upgrade policy.
 
+Running since 2026-10-11 (af-w82f07, "Upgrade" below): Gas City `v1.5.0`,
+Beads `v1.3.1` (Gas City `v1.5.0` pin), Dolt `2.1.7` (unchanged pin). A
+sentence of this file that names `1.4.1` or `1.2.2` describes what was
+observed on that version and was not observed again on `1.5.0`.
+
 ## M1 preflight
 
 The factory host is the dedicated `Ubuntu-24.04` WSL2 distribution, not Docker Desktop's internal `docker-desktop` distribution.
@@ -27,8 +32,8 @@ Observed base versions:
 - tmux `3.4`
 - jq `1.7`
 - flock/util-linux `2.39.3`
-- Gas City `1.4.1`
-- Beads `1.2.2`
+- Gas City `1.5.0` (`1.4.1` until 2026-10-11)
+- Beads `1.3.1` (`1.2.2` until 2026-10-11)
 - Dolt `2.1.7`
 
 GitHub CLI auth inside Ubuntu is required before repository operations.
@@ -197,7 +202,7 @@ curl --fail --silent --show-error \
   http://127.0.0.1:8372/v0/city/agent-factory/health | jq .
 ```
 
-The listener must be `127.0.0.1:8372`, not `0.0.0.0:8372`. The City health response should report `status: ok`, `version: 1.4.1`, and `city: agent-factory`.
+The listener must be `127.0.0.1:8372`, not `0.0.0.0:8372`. The City health response should report `status: ok`, `version: 1.5.0`, and `city: agent-factory`.
 
 If the URL is unavailable:
 
@@ -394,7 +399,7 @@ Final M1 warning interpretation after controller restart:
 
 ## Backup / restore
 
-Use Beads `1.2.2` Dolt-native backup, not JSONL export. JSONL is an interchange format and does not preserve Dolt branches, commit history, working sets, or non-issue tables.
+Use Beads Dolt-native backup, not JSONL export. JSONL is an interchange format and does not preserve Dolt branches, commit history, working sets, or non-issue tables.
 
 Create and refresh the local backup while the City is suspended so the work snapshot is stable:
 
@@ -1014,3 +1019,56 @@ Before every active-factory upgrade:
 6. Run doctor.
 7. Run a FAST canary.
 8. Keep a rollback path to the previous binary/config/store state.
+
+### 2026-10-11: Gas City 1.4.1 to 1.5.0, Beads 1.2.2 to 1.3.1 (af-w82f07)
+
+Intent (Benjamin, his words, 2026-10-11): « ok faisons ça. Lançons mise à
+jour ici, je fais les commandes »
+Mechanism (agent interpretation): the eight steps above and
+`RUNBOOK_STOP_AND_RESTART.md`, with the Factory idle (D01 closed that
+morning), no separate trial city, and a go/no-go before `gc resume`: until
+the city resumes nothing is written, so restoring the cold backup loses
+nothing. Why: gc 1.4.1 failed its own store measure on every read
+(af-jew53p); gc 1.5.0 counts without loading the beads.
+
+What the next upgrade can reuse:
+
+- **gc and bd go together.** gc 1.5.0 keeps its native store (the one with
+  the fast count) only when the `bd` on `PATH` is the version of its linked
+  library, 1.3.1. Both binaries are in `/usr/local/bin`, owned by root:
+  Benjamin replaces them (`install -m 755`), the agent does the rest.
+- **Rollback path.** After the clean stop: a `tar` of `.beads`, of each
+  rig's `.beads`, of `.gc` (without `runtime` and the event logs) and of
+  `.gc/runtime/packs`, plus a copy of the old binaries, outside the
+  repository. The schema migration is one-way: the old binaries cannot read
+  the migrated store, so going back is these archives, not a binary swap.
+- **The first `gc start` fails, and that is expected.** The three stores
+  share one Dolt server, which bd never migrates by itself: gc reports
+  `table not found: leases` and `refusing to auto-apply 13 pending schema
+  migrations to a shared server database (v53 -> v66)`. The managed Dolt
+  server is up at that point. Run `bd migrate schema` in the live root, then
+  in each rig (7 min 24 s for `hq` at 7,650 beads, about 30 s for each rig),
+  then `gc start` again.
+- **Reclaim the space.** The migration took `.beads/dolt` from 736 MB to
+  4.3 GB. `gc maintenance dolt-gc` returned at once and reclaimed nothing;
+  `gc dolt compact --gc-only` brought it to 441 MB in 19 s.
+- **Checks before `gc resume`.** Bead counts per status identical store by
+  store; `GET /v0/city/agent-factory/status` without `partial` and with a
+  `store_health` block (`rows_measured: true`); `beads_store:
+  NativeDoltStore`; `tests/cockpit-fake-gc-contract-test.py` (its sessions
+  case fails while every session is asleep, `last_active` being left out of
+  the answer: run it again after the resume).
+- **After the resume.** `gc order run mol-dog-backup` once: the reaper skips
+  its session prune (`order.skipped`) until a Dolt backup is fresh, and the
+  last one was a month old.
+
+Measured that day (Paris): stopped 07:49, binaries replaced 08:06, migrated
+08:16, resumed 08:18. `gc doctor` went from 97 passed, 6 warnings to 109
+passed, 12 warnings, 0 failed.
+
+Left as it was, on purpose: `gc beads city migrate-proxied` (optional, no
+way back), the `[storage]` preview, the `[imports.gascity]` key of
+`pack.toml` (`gc doctor` warns; needed only to move the pack past 0.1.6),
+and the `afr` database (bound to no rig, zero beads, no longer exported by
+`jsonl-export` since 1.5.0). The Codex hook warning of `gc doctor`
+(`codex-hooks-drift`) is the same after the upgrade as before.
