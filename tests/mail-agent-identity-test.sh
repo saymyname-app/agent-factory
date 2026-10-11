@@ -33,10 +33,13 @@ while IFS= read -r -d '' file; do
     [ -z "$ln" ] && continue
     start=$((ln > 20 ? ln - 20 : 1))
     window=$(sed -n "${start},$((ln + 15))p" "$file")
-    if printf '%s' "$window" | grep -q -- '--from[[:space:]]'; then
+    # A here-string, not `printf | grep -q`: grep -q exits at its first match,
+    # a printf still writing then gets "Broken pipe", and pipefail turns the
+    # match into a miss (af-d4fgcr).
+    if grep -q -- '--from[[:space:]]' <<<"$window"; then
       continue
     fi
-    if printf '%s' "$window" | grep -q "ACTION:.*$base"; then
+    if grep -q "ACTION:.*$base" <<<"$window"; then
       continue
     fi
     violations+=("$file:$ln")
