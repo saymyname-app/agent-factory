@@ -17,7 +17,7 @@ BENJAMIN, and any real risk. Do not dump sessions, issues, Formula steps, or
 logs unless asked.
 
 For “what is the Factory doing?”, use `gc status` and the Beads/GitHub state.
-Cockpit V1 is retired to `legacy/` (untrusted); Cockpit V2 is Planning Run C01.
+Cockpit V1 is retired (code in Git history); Cockpit V2 is Planning Run C01.
 ADR-0001..0024 are pre-refactor (`legacy/docs/decisions/`): where their
 mechanism still runs it is active but not re-validated — re-decide it through
 the Planning Run flow when you touch it.
@@ -35,7 +35,7 @@ For a change:
 - Desktop Codex, CLI Codex, and Codex Remote are operator surfaces for the same local Factory.
 - New work enters through the Planning Run flow (`docs/PLANNING_RUN.md`);
   the Mayor executes approved ticket graphs. The pre-refactor product queue is
-  retired to `legacy/`.
+  retired (Git history).
 - A remote/mobile session has the same authority as its request, not broader authority because the host is reachable.
 - “Full access” means the tools may be available. It never means blanket permission to mutate, publish, expose, spend, handle secrets, or perform destructive operations.
 - Follow `docs/OPERATOR_BRIDGE.md` for the human protocol and access boundaries.
