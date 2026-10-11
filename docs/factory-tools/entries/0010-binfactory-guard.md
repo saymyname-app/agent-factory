@@ -35,10 +35,18 @@ travaille. Il prend donc un **instantané qui ne touche à rien** — index jeta
 `write-tree`, `commit-tree` sur `HEAD` — poussé vers
 `refs/factory-guard/snapshots/<utc>`, dont il conserve les dix plus récents.
 
-Pour récupérer un instantané :
+Un instantané contient des fichiers non commités et des commits que personne
+n'a relus : il n'a rien à faire sur un dépôt lisible par des inconnus. Quand le
+dépôt nomme un remote `backup` (un dépôt privé), les instantanés et les
+sauvegardes de worktrees y vont ; sans lui, ils vont vers `origin`
+(af-996mmd). Sur cet hôte, le `backup` de la racine est le dépôt privé
+`saymyname-app/agent-factory-archive` : `git remote get-url backup`.
+
+Pour récupérer un instantané (`origin` à la place de `backup` pour un dépôt
+sans ce remote) :
 
 ```bash
-git fetch origin 'refs/factory-guard/snapshots/*:refs/remotes/snapshots/*'
+git fetch backup 'refs/factory-guard/snapshots/*:refs/remotes/snapshots/*'
 git log --oneline refs/remotes/snapshots/*        # lister
 git show refs/remotes/snapshots/<utc>:<fichier>   # lire un fichier
 ```
