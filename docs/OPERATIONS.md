@@ -1,8 +1,8 @@
 # Operations
 
 > Retired systems (Cockpit V1, ntfy, campaign, product queue/status/preview,
-> release contract, improvement axes) are documented only under `../legacy/`
-> (untrusted; see `../legacy/README.md`).
+> release contract, improvement axes): code removed (Git history), documented
+> only under `../legacy/` (untrusted; see `../legacy/README.md`).
 
 ## Bootstrap policy
 
@@ -235,10 +235,14 @@ case "$FUNNEL_STATUS" in
 esac
 curl --fail --silent --show-error http://127.0.0.1:8372/health
 curl --fail --silent --show-error \
-  https://benforge.tail9f1386.ts.net/health
+  https://<machine>.<tailnet>.ts.net/health
 ```
 
-The browser URL is `https://benforge.tail9f1386.ts.net/`. Tailnet identity and
+`<machine>.<tailnet>.ts.net` stands for this node's own tailnet name, read on
+the host with `"$TAILSCALE_EXE" status --json | jq -r .Self.DNSName`; the real
+name is not written in this repository (af-996mmd).
+
+The browser URL is `https://<machine>.<tailnet>.ts.net/`. Tailnet identity and
 ACL policy are the access boundary; never add `tailscale funnel`, change the
 supervisor bind address, or expose port `8372` directly.
 
@@ -259,7 +263,7 @@ around a failure by enabling Funnel or a non-loopback listener.
 ### 2026-09-14 Tailscale Serve evidence
 
 - **TARGET:** make the existing loopback-only dashboard available to authenticated tailnet operators over HTTPS without a public route.
-- **CONFIGURED:** Tailscale Serve maps HTTPS port `443` for `benforge.tail9f1386.ts.net` to `http://127.0.0.1:8372`; the Gas City listener remains on `127.0.0.1:8372`.
+- **CONFIGURED:** Tailscale Serve maps HTTPS port `443` for `<machine>.<tailnet>.ts.net` to `http://127.0.0.1:8372`; the Gas City listener remains on `127.0.0.1:8372`.
 - **OBSERVED:** the independently installed Windows Tailscale client reported version `1.102.4`, backend state `Running`, the node online, the HTTPS web proxy handler configured, and `funnel status` labeled the route `(tailnet only)`.
 - **PROVEN:** both the loopback and tailnet `/health` endpoints returned the same healthy Gas City `1.4.1` service, while the client reported no public Funnel route. This proves the path at the time of verification, not durable availability after restart.
 
@@ -1018,13 +1022,21 @@ Before every active-factory upgrade:
 5. Upgrade pinned versions deliberately.
 6. Run doctor.
 7. Run a FAST canary.
-8. Keep a rollback path to the previous binary/config/store state.
+8. Run the tests marked `# ci: local-only` (`bin/local-only-tests`; `--list`
+   names them). CI never runs them, and they are the only ones that run the
+   installed `gc` and `bd` against a real tracker.
+   `tests/held-bead-close-real-tracker-test.sh` is the check for a Beads
+   upgrade: it runs the operator-session commands of
+   `docs/agents/issue-tracker.md` and the closes of the planning tools on a
+   bead another actor holds. On 2026-10-11 Beads 1.3.1 refused both, no test
+   ran them, and they were found by hand (af-tql60u, af-bm9y90).
+9. Keep a rollback path to the previous binary/config/store state.
 
 ### 2026-10-11: Gas City 1.4.1 to 1.5.0, Beads 1.2.2 to 1.3.1 (af-w82f07)
 
 Intent (Benjamin, his words, 2026-10-11): « ok faisons ça. Lançons mise à
 jour ici, je fais les commandes »
-Mechanism (agent interpretation): the eight steps above and
+Mechanism (agent interpretation): the steps above (eight that day) and
 `RUNBOOK_STOP_AND_RESTART.md`, with the Factory idle (D01 closed that
 morning), no separate trial city, and a go/no-go before `gc resume`: until
 the city resumes nothing is written, so restoring the cold backup loses

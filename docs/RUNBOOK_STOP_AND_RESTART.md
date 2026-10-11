@@ -1,8 +1,8 @@
 # Runbook — arrêter et redémarrer l'usine proprement
 
 > Systèmes retirés (Cockpit V1, ntfy, campagne, file/statut/preview produit,
-> contrat de release, axes d'amélioration) : documentés seulement dans
-> `../legacy/` (non fiable, voir `../legacy/README.md`).
+> contrat de release, axes d'amélioration) : code retiré (historique Git),
+> documentés seulement dans `../legacy/` (non fiable, voir `../legacy/README.md`).
 
 Procédure exécutée et vérifiée le 2026-09-16 sur la cité `agent-factory`.
 Chaque piège décrit ici a réellement été rencontré pendant cette fenêtre : ce
@@ -242,7 +242,8 @@ Si quelque chose ne revient pas, réparez-le **avant** de continuer.
   `core/jsonl-archive` exporte et pousse vers le dépôt privé
   `saymyname-app/agent-factory-archive` toutes les 15 minutes.
 - `factory-guard` sauvegarde seul ce qui n'existe que sur cette machine, y
-  compris l'arbre de travail, vers `refs/factory-guard/snapshots/<utc>`.
+  compris l'arbre de travail, vers `refs/factory-guard/snapshots/<utc>` du
+  remote `backup` (le dépôt privé d'archive), ou d'`origin` sans ce remote.
 - La compaction Dolt tourne toute seule chaque semaine depuis le 2026-09-16.
 
 ---
