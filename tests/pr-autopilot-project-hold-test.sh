@@ -26,10 +26,10 @@ mkdir -p "$TMP/factory/rigs/example-backend" "$TMP/factory/rigs/example-frontend
 #  4: touches no project descriptor at all
 cat > "$TMP/backend-open.json" <<'JSON'
 [
- {"number":1,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"conclusion":"SUCCESS"}],"headRefOid":"aaa1","labels":[]},
- {"number":2,"isDraft":false,"autoMergeRequest":{"mergeMethod":"SQUASH"},"mergeStateStatus":"CLEAN","statusCheckRollup":[{"conclusion":"SUCCESS"}],"headRefOid":"bbb1","labels":[]},
- {"number":3,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"conclusion":"SUCCESS"}],"headRefOid":"ccc1","labels":[]},
- {"number":4,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"conclusion":"SUCCESS"}],"headRefOid":"ddd1","labels":[]}
+ {"number":1,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"conclusion":"SUCCESS"}],"headRefOid":"aaa1","labels":[]},
+ {"number":2,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":{"mergeMethod":"SQUASH"},"mergeStateStatus":"CLEAN","statusCheckRollup":[{"conclusion":"SUCCESS"}],"headRefOid":"bbb1","labels":[]},
+ {"number":3,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"conclusion":"SUCCESS"}],"headRefOid":"ccc1","labels":[]},
+ {"number":4,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"conclusion":"SUCCESS"}],"headRefOid":"ddd1","labels":[]}
 ]
 JSON
 
@@ -85,6 +85,7 @@ STUB
 chmod +x "$TMP/bin/"*
 export PATH="$TMP/bin:$PATH"
 export FACTORY_ROOT="$TMP/factory"
+export GC_PR_AUTHORS=example-operator
 export REVERSIBILITY_CHECK_BIN="$TMP/bin/true-check"
 cat > "$TMP/bin/true-check" <<'STUB'
 #!/usr/bin/env bash
@@ -161,7 +162,7 @@ grep -q "^pr merge 1 --repo example-corp/example-backend --auto --squash" "$TMP/
 # find its own explanation (hidden marker) instead of posting it again.
 printf 'config/project-descriptors/fifth.json\tadded\n' > "$TMP/files-5.tsv"
 cat > "$TMP/backend-open.json" <<'JSON'
-[{"number":5,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"conclusion":"SUCCESS"}],"headRefOid":"eee1","labels":[]}]
+[{"number":5,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"conclusion":"SUCCESS"}],"headRefOid":"eee1","labels":[]}]
 JSON
 : > "$TMP/label-fails-once"
 : > "$TMP/gh.log"
