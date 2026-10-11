@@ -68,7 +68,7 @@ if [[ ${1:-} == bd && ${2:-} == update ]]; then
   id=$3
   shift 3
   printf '%s %s\n' "$id" "$*" >> "$UPDATE_LOG"
-  exit 0
+  exit "${UPDATE_RC:-0}"
 fi
 if [[ ${1:-} == mail && ${2:-} == send ]]; then
   printf 'mail-to=%s\n' "$3" >> "$MAIL_LOG"
@@ -227,5 +227,20 @@ grep -q "zz-fixture-no-time routed to 'bd.dog' but assignee is still 'mayor' (st
 grep -q "zz-fixture-hb-fresh" <<<"$out" \
   && { echo "$out" >&2; fail "a bead with a fresh heartbeat was flagged"; }
 [ -s "$UPDATE_LOG" ] && fail "--check-only wrote to Beads"
+
+# af-33wuoh: the repair is a compare-and-set on the assignee this run read;
+# exit 13 (the holder changed since) leaves the bead alone, says so, pages
+# nobody and is not reported as a failed write.
+jq -n --argjson a "$stale_drift" '[$a]' > "$BEADS_FILE"
+: > "$UPDATE_LOG"; : > "$MAIL_LOG"
+out=$(guard)
+grep -q -- "^zz-fixture-stale --if-assignee mayor --assignee  --append-notes" "$UPDATE_LOG" \
+  || { cat "$UPDATE_LOG" >&2; fail "the stale assignee was not cleared by compare-and-set on the assignee read"; }
+: > "$UPDATE_LOG"; : > "$MAIL_LOG"
+out=$(UPDATE_RC=13 guard)
+grep -q "LEFT ALONE: zz-fixture-stale: its assignee is no longer 'mayor'" <<<"$out" \
+  || { echo "$out" >&2; fail "a holder that changed since the read was not reported"; }
+grep -q "could not be repaired" <<<"$out" && fail "a holder that changed was reported as a failed write"
+[ "$(mail_count mayor)" = "0" ] || fail "paged the Mayor for a bead left to its new holder"
 
 echo "PASS: factory-dispatch-guard clears stale dispatch-drift assignees, leaves matched/fresh/unclaimed beads alone, and respects session-affinity liveness"

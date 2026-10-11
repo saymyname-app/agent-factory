@@ -1163,6 +1163,9 @@ Before every active-factory upgrade:
    `docs/agents/issue-tracker.md` and the closes of the planning tools on a
    bead another actor holds. On 2026-10-11 Beads 1.3.1 refused both, no test
    ran them, and they were found by hand (af-tql60u, af-bm9y90).
+   It also runs the three guards that release a bead they do not hold:
+   `bin/factory-dispatch-guard`, `bin/on-session-stranded` and
+   `bin/pr-autopilot` (af-33wuoh).
 9. Keep a rollback path to the previous binary/config/store state.
 
 ### 2026-10-11: Gas City 1.4.1 to 1.5.0, Beads 1.2.2 to 1.3.1 (af-w82f07)
