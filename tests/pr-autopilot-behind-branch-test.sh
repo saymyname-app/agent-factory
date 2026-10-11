@@ -14,7 +14,11 @@
 #     green, the next tick arms it;
 #  4. a failed update-branch is logged with gh's own error line, does not
 #     add a run error (order.failed), and the same PR is retried (not
-#     silently dropped) on the next tick.
+#     silently dropped) on the next tick;
+#  5. (af-jaimhb) a BEHIND PR is waiting, not stuck: neither the one being
+#     updated nor the ones queued behind it are marked or get a bug bead,
+#     even on a second pass; only a branch update GitHub refuses is marked,
+#     then filed on the next refusal, with GitHub's answer in the bead.
 #
 # Regression (2026-09-29): pr-autopilot called `gh pr update-branch`, which
 # the installed gh 2.45 does not have. This test's fake gh used to accept that
@@ -154,4 +158,60 @@ grep -qF "api -X PUT repos/saymyname-app/agent-factory/pulls/20/update-branch" "
 
 grep -q "^pr update-branch" "$TMP/gh.log" && fail "pr-autopilot called 'gh pr update-branch' (absent from gh 2.45)"
 
-echo "OK pr-autopilot updates BEHIND PRs one at a time, oldest first, and never arms auto-merge on one"
+# --- af-jaimhb: a queue of BEHIND PRs is a wait, never a bug bead ---
+# 2026-10-09: with one CI job at a time, every merge left the queued PRs
+# BEHIND again; the first pass labelled them all and updated the oldest, the
+# second pass filed a bead for each of the others (27 beads for 17 PRs).
+# PR 31 carries the label an earlier pass left: under that rule it is filed.
+cat > "$TMP/af_open.json" <<'JSON'
+[
+ {"number":30,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BEHIND","statusCheckRollup":[{"name":"Tests","conclusion":"SUCCESS"}],"headRefOid":"af30","labels":[]},
+ {"number":31,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BEHIND","statusCheckRollup":[{"name":"Tests","conclusion":"SUCCESS"}],"headRefOid":"af31","labels":[{"name":"autopilot-stuck"}]},
+ {"number":32,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BEHIND","statusCheckRollup":[{"name":"Tests","conclusion":"SUCCESS"}],"headRefOid":"af32","labels":[]}
+]
+JSON
+: > "$TMP/gh.log"; : > "$TMP/gc.log"
+out=$(pilot)
+grep -qF "/pulls/30/update-branch" "$TMP/gh.log" \
+  || { echo "$out" >&2; fail "PR #30 (oldest of the queue) was not updated"; }
+grep -q "^bd create" "$TMP/gc.log" \
+  && { echo "$out" >&2; cat "$TMP/gc.log" >&2; fail "a bug bead was filed for a BEHIND PR waiting its turn"; }
+grep -q "^pr comment 3[012] " "$TMP/gh.log" \
+  && { echo "$out" >&2; fail "a waiting BEHIND PR was commented as needing attention"; }
+grep -qE "^api -X POST repos/[^ ]*/issues/3[02]/labels -f labels\[\]=autopilot-stuck" "$TMP/gh.log" \
+  && { echo "$out" >&2; fail "a BEHIND PR being updated or waiting its turn was marked stuck"; }
+
+# --- af-jaimhb: a refused update is marked first, filed on the next refusal ---
+cat > "$TMP/af_open.json" <<'JSON'
+[
+ {"number":40,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BEHIND","statusCheckRollup":[{"name":"Tests","conclusion":"SUCCESS"}],"headRefOid":"af40","labels":[]}
+]
+JSON
+: > "$TMP/gh.log"; : > "$TMP/gc.log"
+export FAIL_UPDATE=40
+out=$(pilot)
+grep -q "^api -X POST repos/saymyname-app/agent-factory/issues/40/labels -f labels\[\]=autopilot-stuck" "$TMP/gh.log" \
+  || { echo "$out" >&2; fail "PR #40 (branch update refused) was not marked on the first refusal"; }
+grep -q "^bd create" "$TMP/gc.log" && { echo "$out" >&2; fail "PR #40 was filed on its first refused update"; }
+
+cat > "$TMP/af_open.json" <<'JSON'
+[
+ {"number":40,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BEHIND","statusCheckRollup":[{"name":"Tests","conclusion":"SUCCESS"}],"headRefOid":"af40","labels":[{"name":"autopilot-stuck"}]}
+]
+JSON
+: > "$TMP/gh.log"; : > "$TMP/gc.log"
+out=$(pilot)
+grep -qF "bd create [autopilot] PR #40 stuck: behind base, branch update refused" "$TMP/gc.log" \
+  || { echo "$out" >&2; cat "$TMP/gc.log" >&2; fail "PR #40 (update refused on a second pass) did not file a bead"; }
+grep -qF "merge conflict between base and head (HTTP 422)" "$TMP/gc.log" \
+  || { cat "$TMP/gc.log" >&2; fail "the bead does not carry GitHub's answer to the refused update"; }
+[ "$(grep -c "^bd create" "$TMP/gc.log")" = 1 ] || fail "more than one bead for PR #40"
+
+# The same marked PR, once GitHub accepts the update: nothing is filed.
+: > "$TMP/gh.log"; : > "$TMP/gc.log"
+unset FAIL_UPDATE
+out=$(pilot)
+grep -q "^bd create" "$TMP/gc.log" \
+  && { echo "$out" >&2; fail "PR #40 was filed although its branch update went through"; }
+
+echo "OK pr-autopilot updates BEHIND PRs one at a time, oldest first, never arms one, and files a bead only for a refused update"
