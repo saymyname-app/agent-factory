@@ -224,6 +224,11 @@ cmd_user() {
   fi
   say "done   Git author identity of the clone"
 
+  # city.toml imports packs that gc keeps in ~/.gc/cache: without them gc
+  # start and bin/factory-build-gates refuse the city (cutover of 2026-10-11).
+  (cd "$FACTORY_ROOT" && gc import install >/dev/null)
+  say "done   imported packs (gc import install)"
+
   say "user: done. Nothing is started: no supervisor, no city, no timer."
   say "Check: $FACTORY_ROOT/bin/factory-host-install check"
 }

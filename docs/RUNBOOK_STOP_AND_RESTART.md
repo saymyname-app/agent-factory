@@ -108,11 +108,19 @@ C'est le point sensible du « sans perte significative ».
 ```bash
 gc supervisor stop
 sleep 2
+pkill -TERM -f '__gc-managed-dolt-scope-watchdog'   # le chien de garde d'abord, sinon il relance Dolt
 pgrep -x dolt && pkill -TERM -x dolt     # SIGTERM, jamais SIGKILL
 for i in $(seq 1 20); do pgrep -x dolt >/dev/null || break; sleep 1; done
-pgrep -a dolt                             # doit être vide
+sleep 10; pgrep -a dolt                   # doit être vide, et le rester
 lsof +D .beads 2>/dev/null | grep -v COMMAND   # doit être vide
 ```
+
+**Observé le 2026-10-11** (bascule vers la VM, af-o6l5rl) : Dolt est revenu
+4 secondes après son SIGTERM, relancé par `gc __gc-managed-dolt-scope-watchdog`
+pendant que le superviseur s'arrêtait, et il a tourné, inactif, pendant une
+copie de `.beads`. Le chien de garde s'arrête donc avant Dolt, et une copie
+de `.beads` ne commence qu'après avoir vu les deux absents une dizaine de
+secondes.
 
 **Observé le 2026-09-16** : la sortie propre de Dolt a fait passer `.beads/dolt`
 de 511 Mo à 379 Mo à elle seule. Un `SIGKILL` aurait perdu ce compactage et

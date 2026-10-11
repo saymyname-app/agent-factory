@@ -1154,6 +1154,29 @@ city starts and runs its orders
 (`tests/convoy-manual-lifecycle-isolated-city-test.sh`, 369 s on the VM,
 272 s on the WSL host; one sample each).
 
+### Moving the Factory to another host (done 2026-10-11, af-o6l5rl)
+
+In a stop window, with `RUNBOOK_STOP_AND_RESTART.md`: section 1 on the old
+host, section 2 with Dolt and its watchdog seen down, then one archive from
+`/home/benja` of `agent-factory` (rigs, `.gc`, `.beads` and the untracked
+local files such as `city.provider.toml` come with it), `agent-factory-po`,
+`.local/share/agent-factory-runtime-worktrees` and `.beads`. Left out that
+day: the `.git` of `.gc/runtime/packs/core/jsonl-archive` (4 GB, cloned again
+at depth 1 from `agent-factory-archive`), the two trace logs of
+`.gc/runtime` and `dolt.log`. Checksum on both sides. On the new host:
+`~/.gc/supervisor.toml` with its own `allowed_hosts`, `gc supervisor
+install`, section 3 of the runbook, `bin/factory-revive install`, section 4
+with the bead counts of section 1, then `tailscale serve` for the Cockpit.
+On the old host the user units are disabled and the city stays unregistered
+and suspended: never two live Factories on one tracker.
+
+Not copied and not needed: the provider homes (`~/.claude`, `~/.codex`),
+whose logins are the operator's. Two files of them matter: `~/.codex/config.toml`
+(trusted projects and hooks) was copied; and since `city.toml` sets
+`CLAUDE_CONFIG_DIR=~/.claude`, Claude's first-run state was copied from
+`~/.claude.json` to `~/.claude/.claude.json` before the start. Whether a
+session stalls without that second copy was not observed.
+
 ## Upgrade
 
 Before every active-factory upgrade:
