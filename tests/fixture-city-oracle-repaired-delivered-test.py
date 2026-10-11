@@ -8,7 +8,10 @@ They were in tests/fixture-city-oracle-test.py, whose harness is loaded
 from there (af-vqew1x: that file, alone on one core, set the duration of a
 CI run). The other cases of the oracle are in that file, in
 tests/fixture-city-oracle-parked-answer-author-gates-test.py and in
-tests/fixture-city-oracle-accepted-answer-test.py."""
+tests/fixture-city-oracle-accepted-answer-test.py.
+
+Since the second cut of af-vqew1x the walk where nothing goes wrong is in
+tests/fixture-city-oracle-nothing-goes-wrong-test.py."""
 
 import importlib.machinery
 import importlib.util
@@ -103,26 +106,6 @@ class FixtureCityOracleTest(first.FixtureCityOracleHarness):
         self.assertEqual("", proc.stdout)
         self.assertIn("1 repair", proc.stderr)
         self.assertIn("expects 0", proc.stderr)
-
-    def test_the_walk_where_nothing_goes_wrong_is_delivered_without_a_repair_and_without_a_round(self):
-        proc = self.deliver_expecting("one-ticket-end-to-end.json", outcome="delivered")
-        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        outcome = json.loads(proc.stdout)["outcome"]
-
-        self.assertEqual(("delivered", [], 0, None), tuple(outcome[name] for name in ("state", "repairs", "end_rounds", "end_stop")))
-        self.assertNotIn("refused", outcome)
-        self.assertTrue(outcome["spec_end"]["delivered"])
-        # After the Delivered Outcome the operator's list shows the Acceptance Request with the link of
-        # the dossier; the session opens the product at the commit of the dossier, and closing it stops it (T28).
-        self.assertEqual(1, outcome["requests"])
-        self.assertEqual({"request": 1, "dossier_linked": True, "launched_at_dossier_commit": True, "stopped": True},
-                         outcome["acceptance"])
-        self.assertNotRegex(proc.stdout, r"(?<![0-9a-f])[0-9a-f]{40}(?![0-9a-f])|/tmp/|\d{4}-\d{2}-\d{2}T|127\.0\.0\.1")
-        # The scenario that asks for no outcome keeps the result it had: nothing of the end in it.
-        plain = json.loads(self.deliver("one-ticket-end-to-end.json").stdout)
-        self.assertNotIn("outcome", plain)
-        self.assertNotIn("spec-end check", plain["interfaces"]["read"])
-        self.assertNotIn("acceptance-session open", plain["interfaces"]["read"])
 
 
 if __name__ == "__main__":

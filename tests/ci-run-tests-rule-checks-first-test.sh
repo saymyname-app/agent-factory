@@ -11,6 +11,14 @@
 # instead of after the long tests. It does not mean a test left out of a
 # green run: green, every discovered test ran.
 #
+# On GitHub's runners too since af-vqew1x. Intent (Benjamin, his words,
+# 2026-10-11, 17:24 Paris): « ok pour toutes tes recommandations », to the
+# question "the rule checks first on GitHub's runners, and more than four
+# lots, now that a minute is billed nothing?"; it replaces his « A pour la
+# ligne 3 » of 2026-10-08, chosen while each minute was billed.
+# Mechanism (agent interpretation): every lot of the workflow passes the
+# option, and the job named "Tests" ends red as soon as another lot did.
+#
 # Proven against a throwaway Git repository, then against the workflow.
 
 set -Eeuo pipefail
@@ -81,10 +89,16 @@ if out=$(runner --rule-checks-first --jobs 2); then echo "$out" >&2; fail "a fai
 grep -Fq 'ran 5 test(s), 1 failure(s)' <<<"$out" || { echo "$out" >&2; fail "with green rule checks the run must run every test"; }
 echo "ok   green rule checks: every test runs and a red long test is a red run"
 
-# --- the workflow passes it on the host's own runner only -------------------
+# --- the workflow passes it in every lot, wherever the run is ---------------
 CI="$ROOT/.github/workflows/ci.yml"
-grep -qF 'if [ "$RUNNER_ENVIRONMENT" = self-hosted ]; then first=(--rule-checks-first); fi' "$CI" \
-  || fail "$CI no longer runs the rule checks first on the host's own runner, or does it on GitHub's billed lots too"
-echo "ok   Factory CI asks for it on the host's own runner only"
+grep -qxF '          first=(--rule-checks-first)' "$CI" \
+  || fail "$CI no longer runs the rule checks first in every lot"
+if grep -qF 'if ' <<<"$(grep -F 'first=(--rule-checks-first)' "$CI")"; then
+  fail "$CI runs the rule checks first under a condition: a lot would keep them for the end"
+fi
+# A red lot is said by the job named "Tests" at once, not when the longest lot ends.
+grep -qF 'select(.status == "completed" and .conclusion != "success")' "$CI" \
+  || fail "$CI: the job named Tests no longer ends red as soon as another lot ended red"
+echo "ok   Factory CI asks for it in every lot, and Tests is red as soon as a lot is"
 
 printf 'PASS: --rule-checks-first changes the order and stops on a red rule check, never what a green run ran\n'

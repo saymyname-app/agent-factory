@@ -1,8 +1,8 @@
 # Operations
 
 > Retired systems (Cockpit V1, ntfy, campaign, product queue/status/preview,
-> release contract, improvement axes): code removed (Git history), documented
-> only under `../legacy/` (untrusted; see `../legacy/README.md`).
+> release contract, improvement axes): code and docs removed; Git history keeps
+> them (untrusted; see `decisions/PRE_REFACTOR.md`).
 
 ## Bootstrap policy
 
@@ -163,7 +163,7 @@ M1 observed the effective Mayor command as `codex --dangerously-bypass-approvals
 
 Gas City `1.4.1` embeds its detailed dashboard SPA in the supervisor and serves
 the UI and API from the same origin. Use it for engineering detail (Cockpit V1
-is retired, see `../legacy/README.md`). In this City the Gas City URL is:
+is retired, see `decisions/PRE_REFACTOR.md`). In this City the Gas City URL is:
 
 ```text
 http://127.0.0.1:8372
@@ -554,10 +554,47 @@ keeps `work_dir`. It used to drop `work_dir` in that case, so the re-run read
 `.`, printed "nothing to do", and the work stayed unpublished.
 
 The SayMyName legacy-automation cutover boundary and its temporary M6
-rollback procedure are dead, product-specific history now retired to
-`legacy/docs/products/saymyname/CUTOVER_AND_M6_ROLLBACK.md`.
+rollback procedure are dead, product-specific history, now in Git history only:
+`git show 987d497:legacy/docs/products/saymyname/CUTOVER_AND_M6_ROLLBACK.md`.
+
+## The repository is public (af-996mmd)
+
+Intent (Benjamin, his words, 2026-10-11): « en soit l'usine peut aller en
+publique aussi , pour les CI github »
+Mechanism (agent interpretation): `saymyname-app/agent-factory` is public
+since 2026-10-11, 16:37 Paris, by Benjamin's own change of visibility; its
+CI runs on GitHub's runners, where a public repository is billed nothing.
+It does not mean any other repository is public (back, front, product and
+the archive stay private), nor that outside contributions are taken.
+
+| Before the opening | Done |
+|---|---|
+| `bin/pr-autopilot` closed to outside authors | pull request #525 |
+| `refs/dolt/data` (Beads up to mid-September) and `refs/factory-guard/snapshots/*` | copied to the private `saymyname-app/agent-factory-archive` under `refs/archive/agent-factory/`, SHAs compared, then deleted here |
+| `bin/factory-guard` snapshots | to the remote `backup` of the live root, the same private archive (pull request #528); `git remote get-url backup` must answer |
+| The host's real tailnet name | out of this file; it stays in three earlier commits, accepted by Benjamin |
+| The audit `research/af-5vjm1h-public-readiness` | copied to the archive (`refs/archive/agent-factory/heads/...`), branch deleted here |
+| The host's runner | `./bin/ci-runner remove`: no runner registered, no broker. The root half (`config/ci-runner/root-install remove`) is host administration, left to Benjamin |
+
+Settings put right after the opening (a private repository does not offer
+them): approval of workflow runs for all outside contributors, pull requests
+limited to collaborators, secret scanning with push protection. Read them:
+
+```bash
+gh api repos/saymyname-app/agent-factory --jq '{visibility, pull_request_creation_policy, security_and_analysis}'
+gh api repos/saymyname-app/agent-factory/actions/permissions/fork-pr-contributor-approval
+gh api repos/saymyname-app/agent-factory/actions/runners --jq .total_count   # 0
+git ls-remote origin 'refs/dolt/*' 'refs/factory-guard/*'                     # nothing
+```
+
+What each layer stops: `docs/SECURITY.md`, "A public repository". No undo:
+what was public may have been copied; going back to private erases nothing.
 
 ## Factory CI cost and the Actions quota (af-mzuprx)
+
+Since 2026-10-11 the repository is public and GitHub's runners are billed
+nothing for it ("The repository is public" above); what follows is the
+record of the time it was private.
 
 Intent (Benjamin, his words, 2026-10-08): « il faut que l'usine consomme
 moins de minute github action »
@@ -689,10 +726,29 @@ Adding an area: a place pull requests often change alone, one line in the
 list; the pull request that adds it is a full run and says at once whether a
 long test reads it.
 
+### How long a run lasts (af-vqew1x)
+
+Intent (Benjamin, his words, 2026-10-11, 16:50 Paris): « oui il faut gérer
+la CI pour l'optimiser en temps d'execution ».
+Mechanism (agent interpretation): now that a minute of GitHub's runners is
+billed nothing, shorten the time between a push and a green or a red
+`Tests`. It does not mean a test or a verification removed, a merge without
+the whole battery green, or a runner of the host registered on the public
+repository.
+
+| What sets the duration | Measured 2026-10-11, four green full runs, four lots | What was done |
+|---|---|---|
+| The longest test file runs alone on one core: a lot cannot end before it. | A run lasted 11.1 to 17.8 minutes; the longest file 638 to 748 s, and not the same one in each run. Dealt into 4, 6, 8 or 10 lots as they were, the files give the same 638 s (simulation on the seconds of one run, 4 cores a lot). | The three longest files cut by the measured duration of their cases, every case and verification kept (`bin/test-cases-compare`). A file above 120 s is cut, not excused: `TEST_GUIDELINE.md`, point 5. |
+| The number of lots, once no file holds a lot. | With no file above 250 s the same simulation gives 369 s at 4 lots, 276 s at 6, 236 s at 8. | Six lots (`LOTS` in `.github/workflows/ci.yml`). One figure to change, with the matrix beside it; `tests/ci-run-tests-shard-test.sh` refuses a matrix that does not match. |
+| A red rule check (a stale catalogue, a lint) was seen only when its lot ended. | 11 to 18 minutes | `--rule-checks-first` in every lot: the lot is red after about a minute. `Tests` ends red as soon as another lot did, without waiting for the longest (`tests/ci-run-tests-rule-checks-first-test.sh`). |
+
+The simulation is not a measure: the figures of the real runs after these
+changes are in the bead af-vqew1x until this section is refreshed with them.
+
 ### Keeping the lots even
 
-A lot costs about one billed minute of setup and rounding; uneven lots cost
-more, because `Tests` waits. When its "Wait for the other lots" step waited
+A run lasts as long as its longest lot (and, while the repository was
+private, each lot cost about one billed minute of setup and rounding). When the "Wait for the other lots" step of `Tests` waited
 more than 3 minutes it prints a warning in the run. Then, from a work tree:
 
 ```bash
@@ -733,6 +789,10 @@ self-hosted runner on the WSL host was his decision of 2026-10-08: "Factory
 CI on the host's own runner" below.
 
 ## Factory CI on the host's own runner (af-r1ymfm)
+
+**Not in use since 2026-10-11** ("The repository is public" above): the
+runner is removed, `bin/ci-runner` refuses to bring one back while the
+repository is not private. This section is kept for a private repository.
 
 Intent (Benjamin, his words, 2026-10-08): « Je suis aussi ok pour mettre test
 sur pc aussi », then « runner sur le pc d'abord alors on oublie le repo
@@ -1011,6 +1071,59 @@ the service, the container's options, the hand-off and the hours of the
 weekly build;
 `config/ci-runner/isolation-probe.sh` proves the box on every run.
 
+## Install on a fresh Ubuntu host (af-o6l5rl)
+
+Intent (Benjamin, his words, 2026-10-11): « je veux la meilleure solution
+cloud existante au meilleur prix pour mon usine et projets stp, et il faut
+tout installer, rapidement »
+Mechanism (agent interpretation): `bin/factory-host-install` puts on an
+Ubuntu 24.04 host the tools inventoried on the WSL host that day, at the
+same versions, for the same user and path (`benja`,
+`/home/benja/agent-factory`, written in 84 tracked files). It does not mean
+a second live Factory: the script starts no supervisor, city, timer or
+agent and copies no Beads data. Moving the Factory is a cutover in a stop
+window (`RUNBOOK_STOP_AND_RESTART.md`), never two cities on the same Beads.
+
+```bash
+# 1. as root, before the clone exists (the file needs nothing beside it)
+ssh root@<host> 'bash -s root' < bin/factory-host-install
+# 2. as benja: the operator logs in GitHub himself (private repository), then
+ssh benja@<host> 'bash -s user' < bin/factory-host-install
+# 3. on the host: every line OK
+/home/benja/agent-factory/bin/factory-host-install check
+```
+
+Each command can be run again: a step whose result is there is skipped.
+
+What the WSL host borrowed, and a real host must own (inventory of
+2026-10-11, shown as `WARN` by `check` on the WSL host):
+
+| On the WSL host | On a fresh host |
+|---|---|
+| `docker` is Docker Desktop's CLI | Ubuntu's `docker.io` (Engine 29) and `docker-compose-v2`; `benja` in the `docker` group, as today |
+| `mvn` is Windows' Maven 3.9.9 (`/mnt/c/Dev/Tools`) | Maven 3.9.9 in `~/.local/opt` |
+| Temurin 21 in `~/.local/opt` | Ubuntu's `openjdk-21-jdk-headless` |
+| The kernel lets `bwrap` build a user namespace | Ubuntu 24.04 denies it: the script loads the AppArmor profile of `config/fixture-city-bwrap.apparmor`, without which `bin/delivery-role-sandbox` fails |
+| 8 GB + 6 GB of swap (`.wslconfig`) | a 4 GB swap file when the host has none |
+
+Pinned, with the checksum verified at download: `gc`, `bd`, `dolt` (the
+upstream binaries are byte-identical to the ones in `/usr/local/bin` on the
+WSL host), Node, Maven. Pinned by version: the Claude and Codex CLIs,
+Playwright (the Chromium of `bin/evidence-capture`). An upgrade changes the
+pins in the script too: `tests/factory-host-install-test.sh` is red on the
+Factory's host while they differ.
+
+Not installed, on purpose: the CI runner (`config/ci-runner`), Tailscale
+and any login (GitHub, Claude, Codex): the operator's.
+
+PROVEN on 2026-10-11: `check` on the WSL host; `root` twice, then `user`, in
+a throwaway `ubuntu:24.04` container: every package, the three pinned
+binaries, Node, Maven, both CLIs and the capture browser with all its
+libraries, and a second `root` that skips what is there. A container cannot
+show the rest, so it is not yet run: the container engine answering, linger,
+the AppArmor profile, the swap file, and the clone (the operator's GitHub
+login).
+
 ## Upgrade
 
 Before every active-factory upgrade:
@@ -1019,7 +1132,8 @@ Before every active-factory upgrade:
 2. Capture deployed versions.
 3. Back up Beads/Dolt.
 4. Stop or isolate the controller as required.
-5. Upgrade pinned versions deliberately.
+5. Upgrade pinned versions deliberately, and the same pins in
+   `bin/factory-host-install`.
 6. Run doctor.
 7. Run a FAST canary.
 8. Run the tests marked `# ci: local-only` (`bin/local-only-tests`; `--list`
@@ -1087,6 +1201,22 @@ What the next upgrade can reuse:
   worker holds. A tool that closes a bead it does not hold uses `bd update
   <id> --if-assignee <holder it read> --status closed`, the reason in the
   notes.
+- **The empty `BD_BIN`, as a class (af-d130xt).** Five more tools had the
+  same read: `bin/idle-ready-work-wake` (its order's check crashed the same
+  way, so the safety net of the Mayor's wake could not fire),
+  `bin/ticket-graph-publish` (reached from the order `convoy-advance` when a
+  repair is published), `bin/spec-approve`, `bin/planning-map` and
+  `bin/graph-review`. A tool reads `os.environ.get("BD_BIN") or "bd"`
+  (Bash: `${BD_BIN:-bd}`); `tests/bd-bin-empty-override-lint-test.py`
+  refuses the form an empty value defeats, and
+  `tests/empty-bd-bin-order-real-tracker-test.sh` has gc check the
+  idle-ready-work-wake order in a disposable city. Measured on gc 1.5.0: an
+  order also gets, set and empty, `BEADS_CREDENTIALS_FILE`, `BEADS_DOLT_*`
+  (password, server host, port, socket, user), `GC_DOLT_*` (host, password,
+  port, user), `GC_RIG` and `GC_RIG_ROOT`; no Factory tool reads one of
+  these with a default. The controller's own environment carries the empty
+  `BD_BIN` (its Dolt server shows it), agent sessions do not; formula exec
+  checks and hooks were not measured.
 
 Measured that day (Paris): stopped 07:49, binaries replaced 08:06, migrated
 08:16, resumed 08:18. `gc doctor` went from 97 passed, 6 warnings to 109

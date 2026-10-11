@@ -53,6 +53,15 @@ unit_state() { # system|user unit -> active, inactive, failed, absent
   echo "${state:-inactive}"
 }
 
+# af-996mmd: a self-hosted runner on a public repository runs any stranger's
+# pull request on this host. Whatever brings a runner back asks GitHub first,
+# and anything but a clear "private" refuses.
+private_or_die() { # repo
+  local v
+  v=$("$GH" api "repos/$1" --jq .visibility 2>/dev/null) || v=
+  [ "$v" = private ] || die "refused: $1 is ${v:-of unknown visibility}, not private. A self-hosted runner on a public repository runs a stranger's pull request on this host (docs/SECURITY.md, Factory CI on the host's own runner)"
+}
+
 # One line a reader or bin/factory-doctor can act on, from local state only.
 local_verdict() {
   local service broker
@@ -61,6 +70,11 @@ local_verdict() {
   VERDICT=ok; MESSAGE="the runner is up: service $service, broker $broker"; FIX=
   if [ "$service" = absent ] && [ "$broker" = absent ]; then
     VERDICT=absent; MESSAGE="no runner is installed on this host"
+  elif [ "$broker" = absent ]; then
+    # `ci-runner remove` was run: nothing asks GitHub for a runner any more.
+    # Not a fault, so not "down": nobody is told to start it again.
+    VERDICT=removed; MESSAGE="the runner is removed from this host's operator side: nothing registers a runner at GitHub (the root half is still installed)"
+    FIX="root, when wanted: config/ci-runner/root-install remove"
   elif [ -e "$PAUSED" ]; then
     VERDICT=paused; MESSAGE="the operator paused the runner on $(cat "$PAUSED" 2>/dev/null): pull requests wait until he resumes it"
     FIX="the operator's own: ./bin/ci-runner resume"
@@ -128,6 +142,7 @@ cmd_pause() {
 }
 
 cmd_resume() {
+  private_or_die "$(repo)"
   rm -f "$PAUSED" "$RUN_DIR/stop-now"
   "$SYSTEMCTL" --user start "$BROKER_UNIT" || die "the broker did not start: journalctl --user -u $BROKER_UNIT -n 30"
   echo "resumed: jobs that waited start now"
@@ -137,6 +152,7 @@ cmd_mode() {
   local r; r=$(repo) || die "cannot read the repository of $ROOT"
   case "${1:-}" in
     self-hosted)
+      private_or_die "$r"
       "$GH" variable set "$VARIABLE" --repo "$r" --body self-hosted
       echo "the next runs of $r go to the host's runner" ;;
     github)
@@ -154,6 +170,7 @@ cmd_mode() {
 }
 
 cmd_install() {
+  private_or_die "$(repo)"
   mkdir -p "$USER_UNIT_DIR"
   sed -e "s|@ROOT@|$ROOT|g" "$ROOT/config/ci-runner/factory-ci-runner-broker.service" > "$USER_UNIT_DIR/$BROKER_UNIT"
   "$SYSTEMCTL" --user daemon-reload
@@ -181,6 +198,7 @@ cmd_remove() {
 cmd_broker() {
   local r pause=${FACTORY_CI_RUNNER_BROKER_PAUSE:-10} turns=${FACTORY_CI_RUNNER_BROKER_TURNS:-0} n=0 config id
   r=$(repo) || die "cannot read the repository of $ROOT"
+  private_or_die "$r"
   echo "ci-runner broker: handing one-job runners of $r to $RUN_DIR/handoff"
   while :; do
     if [ "$turns" -gt 0 ]; then [ "$n" -lt "$turns" ] || return 0; n=$((n + 1)); fi
@@ -193,6 +211,9 @@ cmd_broker() {
         --jq ".runners[] | select(.status == \"offline\" and (.name | startswith(\"$NAME_PREFIX\"))) | .id" 2>/dev/null); do
       "$GH" api -X DELETE "repos/$r/actions/runners/$id" >/dev/null 2>&1 || true
     done
+    # Asked again for each job: the repository can become public while the
+    # broker runs, and from then on it hands nothing over.
+    [ "$("$GH" api "repos/$r" --jq .visibility 2>/dev/null)" = private ] && \
     config=$("$GH" api -X POST "repos/$r/actions/runners/generate-jitconfig" \
       -f "name=$NAME_PREFIX$(date +%Y%m%d-%H%M%S)-$$-$n" -F runner_group_id=1 \
       -f 'labels[]=self-hosted' -f "labels[]=$LABEL" -f work_folder=_work \

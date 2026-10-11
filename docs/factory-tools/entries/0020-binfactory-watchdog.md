@@ -1,7 +1,7 @@
 ## `./bin/factory-watchdog` — la surveillance qui page, pas seulement qui observe
 
 Plusieurs signaux peuvent rester muets sans que rien ne casse visiblement
-(`../legacy/docs/INCIDENT_2026-09-16-silent-campaign-stall.md`, af-539b0) :
+(incident du 2026-09-16, `git show 987d497:legacy/docs/INCIDENT_2026-09-16-silent-campaign-stall.md`, af-539b0) :
 
 ```bash
 ./bin/factory-watchdog                # par défaut : vérifie ET page (mail + bead)
