@@ -595,15 +595,64 @@ This closes the gap P04 (`bin/pr-autopilot`, af-s6lef) could only work
 around: before this change a PR could merge onto `main` while BEHIND, so two
 PRs each green against an older `main` could combine into a red `main`
 without ever conflicting textually. P04 already never arms a BEHIND PR and
-updates the oldest BEHIND PR one per tick — this ruleset flip is what makes
+brings BEHIND PRs up to date itself — this ruleset flip is what makes
 that mechanism load-bearing instead of optional, by making GitHub itself
 refuse a BEHIND merge.
+
+**One queue head at a time (af-31t0y8).**
+
+Intent (Benjamin, his words, 2026-10-11): « là ya plein de CI qui sont
+refaites car la PR n'est plus à jour, il faut eviter ca structurellement
+non ? »
+Mechanism (agent interpretation): `bin/pr-autopilot` brings a BEHIND PR up
+to date only when no other PR of the same repository holds the queue. It
+does not mean the "up to date before merge" rule is relaxed, nor any spend.
+
+| Term | Meaning |
+|---|---|
+| Queue head | A PR that is up to date with its base (neither BEHIND nor in conflict), past the autopilot's holds, whose required check is waiting, running, or green and about to merge. |
+| Waiting PR | A BEHIND PR while another PR is the head. It is left alone: no branch update, so no run. |
+
+| Event | Effect on the next tick |
+|---|---|
+| The head merges | Every other PR is BEHIND, none is the head: the oldest BEHIND PR whose last required run is not red is updated and becomes the head. A PR whose last run is red is taken only when no other waits. |
+| The head goes red (after its single automatic retry) | It is sent back or flagged as before, stops being the head, and the next BEHIND PR is updated on that same tick. |
+| The head conflicts (DIRTY) | Same: it is no longer the head. |
+| The head carries the `autopilot-stuck` label (blocked with nothing pending) | Same: it will not merge by itself, so it does not hold the queue. |
+| A new PR is opened | It is up to date at birth and its run starts by itself, so it counts as a head too: nothing is updated while it runs. Two heads can therefore exist; the autopilot never creates a second one. |
+
+Why: before, one BEHIND PR was updated per tick (3 minutes), whoever was
+already up to date. With one CI job at a time and a run of 14 to 45 minutes,
+ten PRs put ten runs in the queue, one merged, and its merge made the nine
+other runs stale (measured 2026-10-11 from 00:00 to 15:42 Paris: 40 runs for
+9 merges, 18 cancelled). Now a run is asked for only for the PR that can
+merge next.
+
+Known limits:
+
+- A waiting PR meets the recent `main` only at its turn: a red caused by the
+  combination shows late and costs one run.
+- The queue is serial: N waiting PRs merge in about N runs, one after the
+  other. A red head costs its run and its retry before the next one starts.
+- A PR opened while a head runs keeps its own first run; if the head merges
+  first, that run is stale and still occupies the runner until it ends or
+  the PR is updated.
+- When the tick's time budget cuts the list of open PRs short, no branch is
+  updated on that tick (an unread PR may be the head).
+
+Proof: `tests/pr-autopilot-queue-head-test.sh`. Undo: revert the pull
+request of af-31t0y8; the previous rule (one BEHIND PR per tick) comes back.
+
+Replaced later by GitHub's own merge queue (one run for a batch of PRs), if
+it becomes available for this repository: it needs the `merge_group`
+trigger in `.github/workflows/ci.yml` and a ruleset rule, and makes this
+BEHIND logic useless for the repository that uses it.
 
 This is a poor-man's merge queue, not GitHub's merge queue: the org's plan
 does not confirm GitHub Enterprise Cloud, which the real merge queue
 requires on a private repo, so no spend was made (decision Q4). `main`
 going red from two independently-green-but-combined PRs stays possible only
-if pr-autopilot's per-tick update-branch step itself races a second
+if pr-autopilot's update-branch step itself races a second
 concurrent merge — not addressed here.
 
 **Scope:** `saymyname-app/agent-factory` only. `bin/enable-strict-main-protection`

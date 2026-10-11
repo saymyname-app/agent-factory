@@ -416,6 +416,13 @@ done < <(git for-each-ref --format='%(refname:short)' refs/heads/)
 # pushed to refs/factory-guard/snapshots/<utc>. HEAD, the real index and the
 # working tree are never modified. The work is off-box in seconds, nobody is
 # interrupted, and a human reconciles whenever they like.
+#
+# Where a snapshot goes (af-996mmd): it holds uncommitted files and commits
+# nobody reviewed, so it has no place on a repository strangers can read. A
+# repository that names a remote `backup` (a private one) gets its snapshots
+# there; without one they go to origin, as before.
+snap_remote() { git -C "${1:-.}" remote get-url backup >/dev/null 2>&1 && echo backup || echo origin; }
+SNAP_REMOTE=$(snap_remote)
 DIRTY_LIST=$(git status --porcelain --untracked-files=all 2>/dev/null)
 DIRTY=$(printf '%s' "$DIRTY_LIST" | grep -c . || true)
 SNAP_REF=""
@@ -441,14 +448,18 @@ if [ "${DIRTY:-0}" -gt 0 ]; then
         -m "factory-guard snapshot ${stamp}: ${DIRTY} entries that existed only on this machine" \
         2>/dev/null)
       SNAP_REF="refs/factory-guard/snapshots/${stamp}"
-      if [ -n "$commit" ] && bounded 30 git push -q origin "$commit:$SNAP_REF" 2>/dev/null; then
-        did "snapshotted ${DIRTY} working-tree entr(y|ies) to origin $SNAP_REF"
+      if [ -n "$commit" ] && bounded 30 git push -q "$SNAP_REMOTE" "$commit:$SNAP_REF" 2>/dev/null; then
+        did "snapshotted ${DIRTY} working-tree entr(y|ies) to $SNAP_REMOTE $SNAP_REF"
         # Keep the ten most recent; older ones describe states long superseded.
-        bounded 30 git ls-remote --refs origin 'refs/factory-guard/snapshots/*' 2>/dev/null \
-          | awk '{print $2}' | sort | head -n -10 \
-          | while read -r old; do bounded 30 git push -q origin ":$old" 2>/dev/null || true; done
+        # Only the dated ones count: the worktree backups of section 6b live
+        # under the same prefix and sort after every date, so with ten of
+        # them each new snapshot was deleted the moment it was pushed
+        # (seen 2026-10-11: ten worktree refs on origin, no dated one).
+        bounded 30 git ls-remote --refs "$SNAP_REMOTE" 'refs/factory-guard/snapshots/*' 2>/dev/null \
+          | awk '{print $2}' | grep -E '/snapshots/[0-9]{8}T[0-9]{6}Z$' | sort | head -n -10 \
+          | while read -r old; do bounded 30 git push -q "$SNAP_REMOTE" ":$old" 2>/dev/null || true; done
       else
-        bad "could not snapshot the working tree to origin — ${DIRTY} entries at risk"
+        bad "could not snapshot the working tree to $SNAP_REMOTE — ${DIRTY} entries at risk"
       fi
     else
       bad "could not build a snapshot of the working tree — ${DIRTY} entries at risk"
@@ -462,7 +473,7 @@ if [ -n "$WB_UNKNOWN" ]; then
 elif [ "$AT_RISK" = "0" ] && [ "${DIRTY:-0}" = "0" ]; then
   say "✓ work-backup — branches pushed, working tree clean; nothing exists only here"
 elif [ "$AT_RISK" = "0" ] && [ -n "$SNAP_REF" ]; then
-  say "✓ work-backup — branches pushed; working tree snapshotted to origin"
+  say "✓ work-backup — branches pushed; working tree snapshotted to $SNAP_REMOTE"
 fi
 
 # --- 5. a rig with ready work but no dispatcher ------------------------------
@@ -717,10 +728,11 @@ if [ -d "$RUNTIME_WT_ROOT" ]; then
       RT_SNAP_REF="refs/factory-guard/snapshots/worktree/$(basename "$wt")"
       if [ "$CHECK_ONLY" = "1" ]; then
         bad "worktree '$wt' has commit(s) on branch '${RT_BRANCH:-detached}' that exist nowhere but this machine"
-      elif bounded 30 git -C "$wt" push origin "$RT_HEAD:$RT_SNAP_REF" >/dev/null 2>&1; then
-        did "backed up worktree '$wt' HEAD (branch '${RT_BRANCH:-detached}') to origin $RT_SNAP_REF"
+      elif RT_SNAP_REMOTE=$(snap_remote "$wt") \
+           && bounded 30 git -C "$wt" push "$RT_SNAP_REMOTE" "$RT_HEAD:$RT_SNAP_REF" >/dev/null 2>&1; then
+        did "backed up worktree '$wt' HEAD (branch '${RT_BRANCH:-detached}') to $RT_SNAP_REMOTE $RT_SNAP_REF"
       else
-        bad "could not back up worktree '$wt' HEAD to origin — commit(s) exist nowhere else"
+        bad "could not back up worktree '$wt' HEAD to $RT_SNAP_REMOTE — commit(s) exist nowhere else"
       fi
     fi
   done
