@@ -73,7 +73,7 @@ import yaml
 PROGRAM = "ticket-graph-publish"
 ROOT = Path(__file__).resolve().parents[1]
 
-BD_BIN = os.environ.get("BD_BIN", "bd")
+BD_BIN = os.environ.get("BD_BIN") or "bd"
 BD_WORKSPACE = Path(os.environ.get("TICKET_GRAPH_BD_WORKSPACE", str(ROOT)))
 GC_BIN = os.environ.get("GC_BIN", "gc")
 SKIP_MAYOR_NOTIFY_ENV = "TICKET_GRAPH_PUBLISH_SKIP_MAYOR_NOTIFY"
