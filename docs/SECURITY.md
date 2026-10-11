@@ -70,12 +70,38 @@ Since af-r1ymfm the jobs of Factory CI can run on the operator's PC
 running on that PC: the boundary below is what keeps it from the operator's
 files, his tokens and the live Factory.
 
-Who can make it run: whoever can open a pull request on the repository from
-a branch of the repository itself, that is the operator and the Factory's
-agents. The repository is private; keep "run workflows from fork pull
-requests" off in its Actions settings (GitHub's default for a private
-repository). **Never register this runner on a public repository**: remove
-it first (af-5vjm1h).
+**Not in use since 2026-10-11: `saymyname-app/agent-factory` is public
+(af-996mmd), the runner is removed and Factory CI runs on GitHub's
+runners.** A self-hosted runner on a public repository runs any stranger's
+pull request on the host, so no runner may come back while the repository
+is public: `bin/ci-runner mode self-hosted`, `install`, `resume` and
+`broker` ask GitHub for the visibility and refuse anything but `private`
+(`tests/ci-runner-test.sh`). What follows describes the runner as it ran
+while the repository was private, and holds for a private repository only.
+
+Who could make it run: whoever can open a pull request on the repository
+from a branch of the repository itself, that is the operator and the
+Factory's agents, with "run workflows from fork pull requests" off in the
+Actions settings (GitHub's default for a private repository).
+
+## A public repository (af-996mmd)
+
+Since 2026-10-11 anyone can read `saymyname-app/agent-factory` and its
+history. What keeps a stranger from the host, in order:
+
+| Layer | What it stops | Held by |
+|---|---|---|
+| Pull requests limited to collaborators | A stranger opening a pull request at all | Repository setting (`pull_request_creation_policy: collaborators_only`) |
+| Approval before any workflow run of an outside contributor | A stranger's workflow running without a collaborator's click | Actions setting (`approval_policy: all_external_contributors`) |
+| `bin/pr-autopilot` acts only on a pull request from a branch of the repository, by an account of `github_logins` (`config/operator.toml`) | A stranger's pull request merged into `main`, the code the Factory runs on the host; its text reaching an agent through a bead | `tests/pr-autopilot-outside-author-test.sh` |
+| No self-hosted runner, and `bin/ci-runner` refuses to bring one back | A stranger's code running on the host as a CI job | `tests/ci-runner-test.sh` |
+| `bin/factory-guard` sends snapshots to the remote `backup` (the private archive) | Uncommitted files and unreviewed commits published every five minutes | `tests/factory-guard-backup-remote-test.sh` |
+| Secret scanning and push protection | A secret pushed by mistake staying unseen | Repository setting |
+
+Never, while it is public: a self-hosted runner; a `pull_request_target`,
+`workflow_run` or `issue_comment` workflow that runs a pull request's code;
+a repository secret a fork could reach; Beads data, snapshots or an audit of
+the other repositories pushed to it.
 
 | Layer | What it stops | Held by |
 |---|---|---|

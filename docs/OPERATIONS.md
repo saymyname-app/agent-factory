@@ -557,7 +557,44 @@ The SayMyName legacy-automation cutover boundary and its temporary M6
 rollback procedure are dead, product-specific history now retired to
 `legacy/docs/products/saymyname/CUTOVER_AND_M6_ROLLBACK.md`.
 
+## The repository is public (af-996mmd)
+
+Intent (Benjamin, his words, 2026-10-11): « en soit l'usine peut aller en
+publique aussi , pour les CI github »
+Mechanism (agent interpretation): `saymyname-app/agent-factory` is public
+since 2026-10-11, 16:37 Paris, by Benjamin's own change of visibility; its
+CI runs on GitHub's runners, where a public repository is billed nothing.
+It does not mean any other repository is public (back, front, product and
+the archive stay private), nor that outside contributions are taken.
+
+| Before the opening | Done |
+|---|---|
+| `bin/pr-autopilot` closed to outside authors | pull request #525 |
+| `refs/dolt/data` (Beads up to mid-September) and `refs/factory-guard/snapshots/*` | copied to the private `saymyname-app/agent-factory-archive` under `refs/archive/agent-factory/`, SHAs compared, then deleted here |
+| `bin/factory-guard` snapshots | to the remote `backup` of the live root, the same private archive (pull request #528); `git remote get-url backup` must answer |
+| The host's real tailnet name | out of this file; it stays in three earlier commits, accepted by Benjamin |
+| The audit `research/af-5vjm1h-public-readiness` | copied to the archive (`refs/archive/agent-factory/heads/...`), branch deleted here |
+| The host's runner | `./bin/ci-runner remove`: no runner registered, no broker. The root half (`config/ci-runner/root-install remove`) is host administration, left to Benjamin |
+
+Settings put right after the opening (a private repository does not offer
+them): approval of workflow runs for all outside contributors, pull requests
+limited to collaborators, secret scanning with push protection. Read them:
+
+```bash
+gh api repos/saymyname-app/agent-factory --jq '{visibility, pull_request_creation_policy, security_and_analysis}'
+gh api repos/saymyname-app/agent-factory/actions/permissions/fork-pr-contributor-approval
+gh api repos/saymyname-app/agent-factory/actions/runners --jq .total_count   # 0
+git ls-remote origin 'refs/dolt/*' 'refs/factory-guard/*'                     # nothing
+```
+
+What each layer stops: `docs/SECURITY.md`, "A public repository". No undo:
+what was public may have been copied; going back to private erases nothing.
+
 ## Factory CI cost and the Actions quota (af-mzuprx)
+
+Since 2026-10-11 the repository is public and GitHub's runners are billed
+nothing for it ("The repository is public" above); what follows is the
+record of the time it was private.
 
 Intent (Benjamin, his words, 2026-10-08): « il faut que l'usine consomme
 moins de minute github action »
@@ -733,6 +770,10 @@ self-hosted runner on the WSL host was his decision of 2026-10-08: "Factory
 CI on the host's own runner" below.
 
 ## Factory CI on the host's own runner (af-r1ymfm)
+
+**Not in use since 2026-10-11** ("The repository is public" above): the
+runner is removed, `bin/ci-runner` refuses to bring one back while the
+repository is not private. This section is kept for a private repository.
 
 Intent (Benjamin, his words, 2026-10-08): « Je suis aussi ok pour mettre test
 sur pc aussi », then « runner sur le pc d'abord alors on oublie le repo
