@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cockpit</title>
+
+
+
+<style>
+:root{
+  --bg:#F2F4F8; --surface:#FFFFFF; --surface-2:#EAEEF4; --ink:#151B26; --ink-2:#465063; --muted:#687286;
+  --line:#D8DDE6; --accent:#2B4CC0; --accent-ink:#FFFFFF; --accent-soft:#E3E8FA;
+  --urgent:#C22D25; --urgent-soft:#FBE6E4; --normal:#AD6208; --normal-soft:#FAEDD6;
+  --info:#5A6679; --info-soft:#E8ECF2; --ok:#1F7B4B; --ok-soft:#DFF1E6;
+  --shadow:0 1px 2px rgba(20,30,50,.06),0 4px 14px rgba(20,30,50,.06);
+  --font:"Atkinson Hyperlegible Next",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --mono:"Atkinson Hyperlegible Mono",ui-monospace,"SF Mono",Consolas,monospace;
+  --r:10px; --fs-xs:12.5px; --fs-s:14px; --fs-m:16px; --fs-l:19px; --fs-xl:24px;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    color-scheme:dark;
+    --bg:#0D1015; --surface:#161A21; --surface-2:#1D222B; --ink:#E6E9EF; --ink-2:#B6BDCA; --muted:#8A93A4;
+    --line:#2A313D; --accent:#8FA3FF; --accent-ink:#0D1015; --accent-soft:#1E2644;
+    --urgent:#FF6F63; --urgent-soft:#3A1B19; --normal:#F0A33A; --normal-soft:#35270F;
+    --info:#9BA5B7; --info-soft:#222833; --ok:#4DC48B; --ok-soft:#15301F;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 4px 14px rgba(0,0,0,.25);
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);font-size:var(--fs-m);line-height:1.45;padding-inline:16px;padding-block:0 48px}
+h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
+p{margin:0}
+button,select,input{font:inherit;color:inherit}
+button{cursor:pointer}
+button:focus-visible,summary:focus-visible,select:focus-visible,input:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.mono,time{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}
+.stage{max-width:1280px;margin-inline:auto}
+.app{container-type:inline-size;container-name:app}
+
+/* ---------- shared components ---------- */
+.topbar{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;padding-block:18px 10px}
+.brand{display:flex;align-items:baseline;gap:10px}
+.brand h1{font-size:var(--fs-l);letter-spacing:-.01em}
+.brand .who{font-size:var(--fs-xs);color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.fresh{display:inline-flex;align-items:center;gap:8px;font-size:var(--fs-s);color:var(--ink-2);flex-wrap:wrap}
+.fresh .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);flex:none}
+.fresh.warn .dot{background:var(--normal)}
+.fresh form{display:inline-flex;margin:0}
+.recheck{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:2px 10px;font-size:var(--fs-xs)}
+.banner{border-radius:var(--r);padding:10px 14px;font-size:var(--fs-s);margin-block:6px 10px;display:flex;gap:10px;align-items:flex-start}
+.banner.off{background:var(--urgent);color:#fff}
+.lvl{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-xs);font-weight:600;letter-spacing:.02em;white-space:nowrap}
+.lvl i{width:10px;height:10px;border-radius:50%;display:inline-block;flex:none}
+.lvl.urgent{color:var(--urgent)} .lvl.urgent i{background:var(--urgent)}
+.lvl.normal{color:var(--normal)} .lvl.normal i{background:var(--normal)}
+.lvl.info{color:var(--info)} .lvl.info i{border:2px solid var(--info)}
+.lvl.ok{color:var(--ok)} .lvl.ok i{background:var(--ok)}
+.meta{font-size:var(--fs-xs);color:var(--muted);display:flex;flex-wrap:wrap;gap:4px 10px}
+.meta b{color:var(--ink-2);font-weight:600}
+.lbl{font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.07em;color:var(--muted);font-weight:600}
+.why{color:var(--ink-2)}
+.todo{font-weight:600}
+.incomplete{display:inline-block;font-size:var(--fs-xs);background:var(--normal-soft);color:var(--normal);border-radius:6px;padding:1px 7px;font-weight:600}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-xs);border-radius:999px;padding:2px 9px;background:var(--surface-2);color:var(--ink-2);font-weight:600;white-space:nowrap}
+.chip.atoi{background:var(--accent-soft);color:var(--accent)}
+.chip.probleme{background:var(--normal-soft);color:var(--normal)}
+.chip.bloque{background:var(--urgent-soft);color:var(--urgent)}
+.chip.ack{background:var(--surface-2);color:var(--muted)}
+.acts{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:7px 12px;font-size:var(--fs-s);font-weight:600;min-height:38px;text-decoration:none;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{border-color:var(--ink-2)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--accent);padding-inline:6px}
+.btn.opt{text-align:left;display:flex;gap:10px;align-items:baseline;width:100%}
+div.btn.opt{cursor:default}
+div.btn.opt:hover{border-color:var(--line)}
+.btn.opt .k{font-family:var(--mono);color:var(--accent)}
+.btn.opt .ot{display:grid;gap:3px;justify-items:start}
+.cockpit-action-tokens{flex-wrap:wrap;text-align:left;gap:2px 6px}
+.btn small{font-weight:400;font-size:var(--fs-xs);color:var(--muted)}
+.oc{font-size:var(--fs-xs);font-weight:400;color:var(--ink-2);line-height:1.4}
+.hint{margin:0;font-size:var(--fs-xs);color:var(--muted)}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.cockpit-armed{background:var(--accent-soft);border-color:var(--accent)}
+.cockpit-armed-note{font-size:var(--fs-xs);font-weight:600;color:var(--accent)}
+.cockpit-done{opacity:.6}
+.cockpit-done [aria-disabled=true]{pointer-events:none;cursor:default}
+.cockpit-done-note{margin:6px 0;display:inline-flex}
+.cockpit-done[data-done=pending] .cockpit-done-note{font-style:italic}
+.field{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:6px 10px;font-size:var(--fs-s);min-height:38px}
+.inline{display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap}
+details.more{font-size:var(--fs-s)}
+details.more summary{color:var(--muted);cursor:pointer;font-size:var(--fs-xs);list-style:none;display:inline-flex;gap:6px;align-items:center}
+details.more summary::-webkit-details-marker{display:none}
+details.more summary::before{content:"\25B8";font-size:10px}
+details.more[open] summary::before{content:"\25BE"}
+.det{display:grid;gap:6px;margin-top:8px;padding:10px 12px;background:var(--surface-2);border-radius:8px;font-size:var(--fs-xs);color:var(--ink-2)}
+.det .row{display:grid;grid-template-columns:92px 1fr;gap:10px}
+.det .row span:first-child{color:var(--muted)}
+.det code{font-family:var(--mono);font-size:12px;overflow-wrap:anywhere}
+.snoozemenu{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:var(--fs-s)}
+[hidden]{display:none !important}
+.stale-val{opacity:.55}
+.unknown{font-size:var(--fs-s);color:var(--normal);background:var(--normal-soft);border-radius:8px;padding:8px 12px}
+.empty{display:flex;gap:10px;align-items:center;padding:18px;border:1px dashed var(--line);border-radius:var(--r);color:var(--ink-2)}
+.empty .dot{width:10px;height:10px;border-radius:50%;background:var(--ok);flex:none}
+.toast,.cockpit-undo-toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);border-radius:10px;padding:10px 16px;font-size:var(--fs-s);max-width:min(92vw,520px);z-index:60;box-shadow:var(--shadow);display:flex;gap:10px;align-items:center}
+.cockpit-undo-toast button{background:transparent;color:inherit;border:0;text-decoration:underline;font-weight:600}
+
+/* ---------- inbox: short list + detail beside it (PC), sheet (iPhone) ---------- */
+.vc .status{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:10px 14px;font-size:var(--fs-s)}
+.vc .status .sep{width:1px;height:16px;background:var(--line)}
+.vc .inbox{display:grid;gap:14px;margin-top:14px}
+.vc .list{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.vc .list h2{font-size:var(--fs-m);padding:12px 14px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between}
+.vc .li{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:start;width:100%;text-align:left;border:0;border-top:1px solid var(--line);background:transparent;padding:11px 14px;font-size:var(--fs-s);color:inherit;text-decoration:none}
+.vc .li:first-of-type{border-top:0}
+.vc .li[aria-current="true"]{background:var(--accent-soft)}
+.vc .li[data-reportee="true"]{opacity:.55}
+.vc .li .q{font-weight:600;line-height:1.35}
+.vc .li .p{font-size:var(--fs-xs);color:var(--muted);margin-top:2px}
+.vc .li time{font-size:var(--fs-xs);color:var(--muted)}
+.vc .list-foot{padding:10px 14px;border-top:1px solid var(--line);font-size:var(--fs-xs)}
+.vc .list-foot a{color:var(--accent);text-decoration:none}
+.vc .detail{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:18px 20px;display:none;gap:14px;align-content:start}
+.vc .detail .quoi{font-size:var(--fs-xl);line-height:1.25;font-weight:700;letter-spacing:-.01em}
+.vc .detail .sec{display:grid;gap:4px}
+.vc .detail .opts{display:grid;gap:8px}
+.vc .back{display:none}
+.vc.sheet .list{display:none}
+.vc.sheet .detail.on{display:grid}
+.vc.sheet .back{display:inline-flex;justify-self:start}
+@container app (min-width: 900px){
+  .vc .inbox{grid-template-columns:minmax(300px,.9fr) minmax(0,1.3fr)}
+  .vc .inbox.solo{grid-template-columns:minmax(0,1fr)}
+  .vc .detail.on{display:grid}
+  .vc.sheet .list{display:block}
+  .vc .back,.vc.sheet .back{display:none}
+}
+
+/* ---------- zones under the inbox ---------- */
+.va .zone{margin-top:22px}
+.va .zone-h{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:10px}
+.va .zone-h h2{font-size:var(--fs-l)}
+.va .health{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px 16px}
+.va .hlist{display:grid;gap:6px;font-size:var(--fs-s)}
+.va .hl{display:flex;gap:10px;align-items:baseline}
+.va .hl > .lvl:empty{width:10px;flex:none}
+.va .health .hint{margin-top:8px}
+.va .health .acts{margin-top:10px}
+
+/* ---------- "Projets": one block per project, a stepper per chantier ---------- */
+.va .projects{display:grid;gap:0;background:var(--surface);border:1px solid var(--line);border-radius:var(--r)}
+.va .proj{padding:12px 16px;border-top:1px solid var(--line)}
+.va .proj:first-child{border-top:0}
+.va .proj-h{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
+.va .proj-h h3{font-size:var(--fs-m)}
+.va .ch{display:grid;grid-template-columns:1fr auto;gap:4px 12px;padding-block:9px;border-top:1px dashed var(--line)}
+.va .ch .n{font-weight:600}
+.va .ch .s,.va .proj > .s{font-size:var(--fs-s);color:var(--ink-2)}
+.va .proj > p.s{padding-block:9px;border-top:1px dashed var(--line);color:var(--muted)}
+.va .ch .stepper{grid-column:1 / -1}
+.stepper{display:flex;gap:3px;align-items:center}
+.stepper span{height:6px;flex:1;border-radius:3px;background:var(--line);min-width:10px}
+.stepper span.done{background:var(--ink-2)}
+.stepper span.cur{background:var(--accent)}
+.chip.go{border:0;cursor:pointer;font:inherit;font-size:var(--fs-xs);font-weight:600;text-decoration:none}
+.chip.go::after{content:" \2192"}
+.chip.go:hover{filter:brightness(.95);text-decoration:underline}
+.accpanel{grid-column:1 / -1;display:grid;gap:8px;background:var(--accent-soft);border-radius:8px;padding:10px 12px;font-size:var(--fs-s)}
+.cockpit-project-sans h3{color:var(--urgent)}
+
+/* ---------- "Déconnecté du cockpit depuis HH:MM" (spec .69) ---------- */
+.cockpit-disconnected-banner{position:sticky;top:0;z-index:20;margin-inline:-16px;padding:10px 16px;background:var(--urgent);color:#fff;font-size:var(--fs-s);font-weight:700;text-align:center}
+body.cockpit-greyed > *:not(.cockpit-disconnected-banner){opacity:.55;filter:grayscale(1)}
+</style>
+<style>/* Existing production tokens and shell are generated unchanged. Only the request detail varies. */
+body{padding-bottom:110px}.prototype-tools{max-width:1280px;margin:12px auto;padding:10px 14px;background:var(--accent-soft);border:1px dashed var(--accent);border-radius:8px;font-size:13px}.prototype-tools label{display:inline-flex;gap:8px;align-items:center;margin:5px 12px}.prototype-tools select{padding:5px;border:1px solid var(--line);background:var(--surface);border-radius:5px;max-width:100%}.prototype-tools details{margin-top:6px}.prototype-tools pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px var(--mono);margin:8px 0}.prototype-switch{position:fixed;bottom:15px;left:50%;transform:translateX(-50%);display:flex;gap:12px;align-items:center;background:var(--ink);color:var(--bg);padding:7px 14px;border-radius:35px;box-shadow:var(--shadow);z-index:50;white-space:nowrap;font-size:13px}.prototype-switch button{background:none;border:0;color:inherit;font-size:22px;padding:5px 10px}.journey h3{font-size:var(--fs-l);margin:12px 0 7px}.journey p{margin:9px 0}.journey .tabs{display:flex;gap:5px;flex-wrap:wrap;border-bottom:1px solid var(--line);margin:18px 0}.journey .tabs button{border:0;border-bottom:3px solid transparent;background:none;padding:9px 7px;font-size:14px}.journey .tabs button[aria-selected=true]{border-bottom-color:var(--accent);color:var(--accent);font-weight:700}.journey .hint{font-size:14px;color:var(--muted)}.journey .callout{border-left:3px solid var(--accent);background:var(--accent-soft);padding:10px 13px;margin:15px 0}.journey .warn{border-left-color:var(--normal);background:var(--normal-soft)}.journey .good{border-left-color:var(--ok);background:var(--ok-soft)}.journey .button-row{display:flex;gap:8px;flex-wrap:wrap;margin:15px 0}.journey .box{border:1px solid var(--line);background:var(--surface-2);border-radius:8px;padding:13px;margin:10px 0}.journey .facts{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:13px 0}.journey .facts .box{margin:0}.journey .facts b{display:block}.journey textarea{width:100%;min-height:95px;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:7px;padding:10px;font:inherit}.journey input[type=text]{width:100%;background:var(--surface);color:var(--ink);border:1px solid var(--line);padding:8px;border-radius:6px}.journey textarea.prompt{font:12px var(--mono);min-height:150px}.journey .line{border-left:2px solid var(--line);padding:0 0 18px 18px;position:relative;margin-left:8px}.journey .line::before{content:'';position:absolute;left:-6px;top:5px;border-radius:50%;width:10px;height:10px;background:var(--accent)}.journey .line:last-child{padding-bottom:0}.journey .checklist{margin:10px 0;padding-left:22px}.journey .checklist li{margin:8px 0}.journey .two-columns{display:grid;grid-template-columns:155px 1fr;gap:16px}.journey .rail{border-right:1px solid var(--line);padding-right:12px}.journey .rail button{width:100%;text-align:left;margin:3px 0;border:0;background:none;padding:8px;border-radius:5px}.journey .rail button[aria-current=true]{background:var(--accent-soft);color:var(--accent);font-weight:700}.journey .step-count{font:12px var(--mono);color:var(--muted)}.journey details{margin:12px 0}.journey summary{cursor:pointer;font-weight:600}.journey .draft{font-size:13px;color:var(--normal)}.journey .notice{font-size:13px;margin:12px 0;color:var(--ok)}.journey .proposition{padding:12px 0;border-top:1px solid var(--line)}.journey .proposition select{max-width:100%;padding:7px;background:var(--surface);border:1px solid var(--line);border-radius:5px}.journey .mini-product{border:2px solid var(--line);border-radius:10px;padding:15px}.journey .mini-product .label{font-size:12px;color:var(--muted)}.journey .empty-proof{font-size:13px;color:var(--muted)}.journey button:disabled{opacity:.5;cursor:default}.journey .version{font-size:13px;color:var(--muted)}.journey strong{overflow-wrap:anywhere}.journey code{overflow-wrap:anywhere}.li[hidden]{display:none!important}#journey-status{margin-top:5px}.zone-body p{margin-bottom:7px}
+@media(max-width:930px){.prototype-tools{font-size:12px}.prototype-tools label{display:flex;margin:8px 0;flex-wrap:wrap}.prototype-tools select{width:100%}.prototype-switch{max-width:96vw;gap:4px;font-size:12px}.journey .two-columns{grid-template-columns:1fr}.journey .rail{display:flex;overflow:auto;border-right:0;border-bottom:1px solid var(--line);padding:0 0 6px}.journey .rail button{white-space:nowrap;width:auto}.journey .facts{grid-template-columns:1fr}.journey .tabs button{font-size:13px}.journey .button-row .btn{white-space:normal;text-align:left}}
+</style></head>
+<body id="cockpit-body"><div class="prototype-tools"><strong>PROTOTYPE JETABLE</strong> · cockpit actuel · données synthétiques · aucun geste réel
+<label>Parcours <select id="scenario" aria-label="Parcours à explorer"><option value="ready">Résultat à juger</option><option value="dossier">Dossier de preuves</option><option value="trial">Essai en cours</option><option value="findings">Brouillon de constats</option><option value="returned">Constats rendus</option><option value="repairing">Corrections en cours</option><option value="new-result">Nouveau résultat à juger</option><option value="accepted">Accepté, pas encore fusionné</option><option value="merging">Fusion en cours</option><option value="merged">Fusion confirmée</option><option value="outdated">Dossier périmé</option><option value="outage">Essai impossible</option><option value="conflict">Acceptation annulée</option><option value="abandoned">Abandonné</option></select></label>
+<button class="btn" id="reset">Recommencer</button><details><summary>État simulé</summary><pre id="prototype-state"></pre></details></div>
+<div class="prototype-switch"><button id="previous-variant" aria-label="Variante précédente">←</button><span id="variant-name"></span><button id="next-variant" aria-label="Variante suivante">→</button></div>
+
+<div id="cockpit-disconnected-banner" class="cockpit-disconnected-banner" data-state="connected" hidden></div>
+<div class="stage"><div class="app">
+<div class="vd">
+<div class="vc" id="inbox">
+<header class="topbar"><div class="brand"><h1>Cockpit</h1><span class="who">usine + projets</span></div></header>
+<div class="status">En marche · 2 agents au travail<span class="sep"></span><span class="fresh cockpit-headline" data-ok="true"><span class="dot"></span>Lectures vérifiées à <time>15:00</time> (Paris) <form method="post" action="/api/health/recheck"><button class="recheck" type="submit">Revérifier</button></form></span></div>
+<div class="inbox cockpit-requests" data-state="filled"><div class="list" id="inbox-list"><h2><span>Ce qui t&#x27;attend</span><span class="mono muted">2</span></h2><a class="li" href="#d-demo-result" data-id="demo-result" aria-current="true" data-reportee="false"><span class="lvl normal"><i></i></span><span><div class="q">Le cockpit attend ton jugement</div><div class="p">Usine</div></span><time>14:30</time></a><a class="li" href="#d-demo-spec" data-id="demo-spec" aria-current="false" data-reportee="false"><span class="lvl normal"><i></i></span><span><div class="q">Une Spec attend ton approbation</div><div class="p">Projet exemple</div></span><time>14:45</time></a><div class="list-foot"><a href="/journal">Journal des demandes résolues →</a></div></div><article class="detail zone-body cockpit-request on" id="d-demo-result" data-level="normal" data-incomplete="false" data-reportee="false"><a class="btn ghost back" href="#inbox-list">← Retour à la liste</a><span class="lvl normal"><i></i>À faire</span><div class="quoi cockpit-request-quoi">Le cockpit attend ton jugement</div><div class="sec"><span class="lbl">Pourquoi ça t'attend</span><div class="why cockpit-request-pourquoi">Un résultat est prêt à essayer, avec son dossier et ses limites.</div></div><div class="sec"><span class="lbl">Que faire</span><div class="opts cockpit-request-que-faire"></div></div><div class="acts cockpit-actions"><button type="button" class="btn cockpit-action cockpit-action-tokens" data-action="continuer" data-bead-id="demo-result" data-quoi="Le cockpit attend ton jugement">Continuer avec un agent <small>utilise un agent (consomme des tokens)</small></button></div><div class="meta cockpit-request-meta"><b>Usine</b><span>depuis <time>14:30</time></span><span>vérifié <time>15:00</time></span></div><details class="more cockpit-request-details"><summary>Détails</summary><div class="det"><div class="row"><span>Identifiant</span><code>demo-result</code></div><div class="row"><span>Type</span><code>prototype_result</code></div></div></details></article><article class="detail zone-body cockpit-request" id="d-demo-spec" data-level="normal" data-incomplete="false" data-reportee="false"><a class="btn ghost back" href="#inbox-list">← Retour à la liste</a><span class="lvl normal"><i></i>À faire</span><div class="quoi cockpit-request-quoi">Une Spec attend ton approbation</div><div class="sec"><span class="lbl">Pourquoi ça t'attend</span><div class="why cockpit-request-pourquoi">Le périmètre de ce chantier reste à décider.</div></div><div class="sec"><span class="lbl">Que faire</span><div class="opts cockpit-request-que-faire"><div class="btn opt cockpit-option"><span class="k">a</span><span class="ot"><span>Continuer avec un agent</span><span class="oc">Lis le périmètre avant de décider.</span></span></div></div></div><div class="acts cockpit-actions"><button type="button" class="btn cockpit-action cockpit-action-tokens" data-action="continuer" data-bead-id="demo-spec" data-quoi="Une Spec attend ton approbation">Continuer avec un agent <small>utilise un agent (consomme des tokens)</small></button></div><div class="meta cockpit-request-meta"><b>Projet exemple</b><span>depuis <time>14:45</time></span><span>vérifié <time>15:00</time></span></div><details class="more cockpit-request-details"><summary>Détails</summary><div class="det"><div class="row"><span>Identifiant</span><code>demo-spec</code></div><div class="row"><span>Type</span><code>prototype_spec</code></div></div></details></article></div>
+
+
+
+</div>
+<div class="va"><section class="zone cockpit-projects" data-state="filled"><div class="zone-h"><h2>Projets</h2></div><div class="zone-body"><div class="projects cockpit-projects-list"><div class="proj cockpit-project" data-project="demo-usine"><div class="proj-h cockpit-project-h"><h3>Usine</h3><span class="muted" style="font-size:var(--fs-s)"><span class="cockpit-project-roadmap" data-state="known">Roadmap : Améliorer le cockpit</span> · <a class="cockpit-project-page-link" href="/projet/demo-usine" style="color:var(--accent)">Page projet</a></span></div><div class="cockpit-project-chantiers"><div class="ch cockpit-chantier" id="ch-demo-result" data-stage="Livraison" data-termine="false" data-abandonne="false"><div><div class="n cockpit-chantier-n">Parcours du cockpit</div><div class="s cockpit-chantier-s">Livraison · Résultat prêt pour ton jugement</div></div><div><span class="cockpit-chantier-etat" data-etat="normal" data-cible="" hidden>normal</span></div><div class="stepper cockpit-stepper" aria-label="Étape 4 sur 7 : Livraison"><span class="done" title="Cadrage"></span><span class="done" title="Spec"></span><span class="done" title="Graphe"></span><span class="cur" title="Livraison"></span><span class="" title="Livré"></span><span class="" title="Accepté"></span></div></div></div></div><div class="proj cockpit-project" data-project="demo-other"><div class="proj-h cockpit-project-h"><h3>Projet exemple</h3><span class="muted" style="font-size:var(--fs-s)"><span class="cockpit-project-roadmap" data-state="unknown">Roadmap inconnue — illisible</span> · <a class="cockpit-project-page-link" href="/projet/demo-other" style="color:var(--accent)">Page projet</a></span></div><div class="cockpit-project-chantiers"><p class="s muted cockpit-project-empty">Aucun chantier actif.</p></div></div></div></div></section>
+<section class="zone"><div class="zone-h"><h2>Santé de l’usine</h2></div><div class="zone-body"><p>Les sources synthétiques répondent.</p></div></section></div>
+</div>
+</div></div>
+
+
+
+
+
+
+<script>// Intent (Benjamin, 2026-10-11): « prototypes des parcours manquants dans le cockpit actuel ».
+// Mechanism: actual cockpit rendering, only the result's detail varies; all state is in memory.
+const qp=new URLSearchParams(location.search), variants=['A','B','C'];
+const names={A:'Onglets dans le détail',B:'Parcours guidé',C:'Dossier et journal'};
+const titles={ready:'Le cockpit attend ton jugement',dossier:'Le dossier du résultat',trial:'Le résultat est ouvert pour ton essai',findings:'Préparer tes constats',returned:'Tes constats ont été rendus',repairing:'L’usine corrige tes constats','new-result':'Un nouveau résultat attend ton jugement',accepted:'Accepté · fusion en attente',merging:'La fusion est en cours',merged:'Le résultat est fusionné',outdated:'Le dossier doit être renouvelé',outage:'Le produit ne démarre pas',conflict:'Un nouveau jugement sera nécessaire',abandoned:'Le chantier est abandonné'};
+const screens={ready:'result',dossier:'dossier',trial:'trial',findings:'findings',returned:'follow',repairing:'follow','new-result':'result',accepted:'follow',merging:'follow',merged:'follow',outdated:'dossier',outage:'trial',conflict:'follow',abandoned:'follow'};
+const labels={result:'Résultat',dossier:'Dossier',trial:'Essai',findings:'Mes constats',follow:'Suivi'};
+let variant=variants.includes(qp.get('variant'))?qp.get('variant'):'A',scene=titles[qp.get('scene')]?qp.get('scene'):'ready';
+let screen=qp.get('view')&&labels[qp.get('view')]?qp.get('view'):screens[scene],version=scene==='new-result'?2:1,sessionOpen=scene==='trial',trialDone=false,words='',answer='constats',citation='parcours',proposition='',reason='',dataset='Avec une demande',draftPrompt='',notice='',selected='demo-result',sheet=false,dossierRead=false;
+const detail=document.getElementById('d-demo-result'), root=document.getElementById('inbox');
+document.addEventListener('submit',e=>e.preventDefault());
+document.querySelectorAll('[data-action]').forEach(b=>{b.disabled=true;b.title='Commande réelle inactive dans le prototype';});
+document.querySelectorAll('form button').forEach(b=>{b.type='button';b.disabled=true;});
+const prototypeSource={base:'f65d23e',requests:'synthetic',commandsExecuted:0};
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function action(label,fn,primary=false,disabled=false){return `<button type="button" class="btn ${primary?'primary':''}" onclick="${fn}" ${disabled?'disabled':''}>${label}</button>`;}
+function needHuman(){return !['returned','repairing','accepted','merging','merged','abandoned','outage','conflict','outdated'].includes(scene);}
+function state(){return {prototype:true,variant,scene,screen,dossier:{version,read:dossierRead,current:!['outdated','conflict'].includes(scene)},session:{open:sessionOpen,dataset,trialDone},draft:{answer,words,citation,proposition,reason},answerRecorded:['returned','repairing','accepted','merging','merged','conflict','abandoned'].includes(scene),acceptanceValid:['accepted','merging','merged'].includes(scene),merged:scene==='merged',needsHuman:needHuman(),productionWrites:0,...prototypeSource};}
+function sync(){const u=new URL(location.href);u.searchParams.set('variant',variant);u.searchParams.set('scene',scene);u.searchParams.set('view',screen);history.replaceState(null,'',u);document.getElementById('prototype-state').textContent=JSON.stringify(state(),null,2);}
+function show(view){screen=view;if(view==='dossier')dossierRead=true;sheet=true;sync();render();}
+function setScene(s){scene=s;screen=screens[s];selected='demo-result';sheet=true;sessionOpen=s==='trial';version=s==='new-result'?2:version;draftPrompt='';notice='';sync();render();}
+function startTrial(){if(!editable())return;sessionOpen=true;screen='trial';sheet=true;notice='Le produit synthétique est ouvert. Aucune session réelle n’a été lancée.';sync();render();}
+function chooseProposition(value){proposition=value;draftPrompt='' ;sync();render();}
+function chooseDataset(value){dataset=value;sync();render();}
+function finishTrial(){sessionOpen=false;trialDone=true;screen='findings';notice='Essai synthétique fermé. Tu peux préparer ton jugement.';sync();render();}
+function editable(){return !['accepted','merging','merged','abandoned','outdated','conflict','returned','repairing','outage'].includes(scene);}
+function status(){let text=needHuman()?'À toi de jouer · résultat prêt':scene==='merged'?'Terminé · fusion confirmée':scene==='accepted'?'Aucune action attendue · fusion en attente':scene==='abandoned'?'Terminé · aucune fusion':scene==='outdated'?'Dossier périmé · renouvellement attendu':scene==='conflict'?'Acceptation annulée · correction attendue':scene==='outage'?'Panne au lancement · réparation attendue':'L’usine travaille · aucune action attendue';return `<div class="chip ${needHuman()?'atoi':scene==='merged'?'ack':['outdated','conflict','outage'].includes(scene)?'bloque':''}">${text}</div>`;}
+function heading(){return `<a class="btn ghost back" href="#inbox-list" onclick="returnToList();return false">← Retour à la liste</a>${status()}<div class="quoi">${titles[scene]}</div><p class="version">Usine · dossier ${version} du 11 octobre à ${version===1?'15:00':'16:10'} (Paris)</p>${notice?`<p class="notice" role="status">${esc(notice)}</p>`:''}`;}
+function result(){return `<div class="sec"><span class="lbl">Pourquoi ça t’attend</span><p>Les vérifications du résultat sont terminées. Ton jugement porte sur ce que tu peux comprendre et faire dans le produit.</p></div><div class="sec"><span class="lbl">Ce qui a changé</span><p>Un résultat prêt à juger mène au dossier et à un essai de la bonne version. Après ta réponse, le chantier affiche la suite réelle.</p></div>${version===2?`<div class="callout good"><strong>Depuis ton dernier jugement</strong><p>« Je ne trouve pas où revoir mon constat. »</p><p>Le suivi conserve désormais ton texte et mène à sa preuve de correction.</p><button class="btn" onclick="show('dossier')">Voir la réponse à mes constats</button></div>`:''}<div class="facts"><div class="box"><b>Parcours vérifiés</b>4 parcours observés sur données synthétiques</div><div class="box"><b>Limites connues</b>Arrêt réel et notifications en mode Concentration non essayés</div></div><p><strong>À regarder pendant ton essai</strong></p><ul class="checklist"><li>Sais-tu pourquoi le résultat t’attend ?</li><li>Retrouves-tu le dossier et le produit à essayer ?</li><li>Après ton jugement, comprends-tu la suite ?</li></ul><div class="button-row">${action('Lire le dossier',"show('dossier')")}${action('Préparer mon essai','startTrial()',true)}${action('Préparer mon jugement',"show('findings')")}</div><p class="hint">Accepter ne fusionne rien immédiatement. Aucune réponse n’est donnée à ta place.</p>`;}
+function dossier(){let unavailable=['outdated','conflict'].includes(scene);return `${unavailable?'<div class="callout warn"><strong>Ce dossier est périmé.</strong><p>Une nouvelle version est en préparation. L’essai et le jugement de ce dossier sont indisponibles.</p></div>':''}<p class="hint">Dossier synthétique présenté comme une source consultable. Les contenus ci-dessous sont des exemples de preuves, pas les preuves d’une livraison réelle.</p>${version===2?`<section class="box"><h3>0 · Depuis ton dernier jugement</h3><p><strong>Ton constat :</strong> « Je ne trouve pas où revoir mon constat. »</p><p>Réparation terminée : ton texte reste dans le suivi. Le parcours a été rejoué avec la correction.</p><button class="btn" onclick="proof('Parcours corrigé : consulter son constat depuis le suivi')">Voir la preuve</button></section>`:''}<h3>1 · Le résultat à juger</h3><p>Parcours d’acceptation du cockpit, dossier ${version}. La version essayée et celle jugée doivent être la même.</p><h3>2 · Résultats et propositions</h3><p>Quatre parcours observés : attente, consultation, essai et suivi.</p><div class="proposition"><strong>Proposition : ajouter un filtre dans l’historique</strong><p class="hint">Ce besoin dépasse la livraison. Ton verdict doit être explicite avant l’acceptation.</p><label>Ton choix <select id="proposal-verdict" onchange="chooseProposition(this.value)" ${!editable()?'disabled':''}><option value="">Choisir</option><option value="before" ${proposition==='before'?'selected':''}>À faire avant d’accepter</option><option value="plus_tard" ${proposition==='plus_tard'?'selected':''}>Plus tard</option><option value="sans_suite" ${proposition==='sans_suite'?'selected':''}>Sans suite</option></select></label><p class="draft">Choix en brouillon ; aucun verdict enregistré.</p></div><h3>Preuves consultables</h3><div class="button-row">${action('Parcours observés',"proof('Observation : dossier, essai, constats et fusion')")}${action('Tests et relecture',"proof('Tests verts et relecture : exemple synthétique')")}${action('Comparaison avec le prototype',"proof('Comparaison : mêmes ancres dans le détail de la demande')")}</div><details open><summary>Ce qui n’a PAS été vérifié</summary><ul class="checklist"><li>Arrêt propre pendant une livraison réelle.</li><li>Notification prioritaire en mode Concentration.</li><li>La santé du code, l’architecture, les dépendances et les secrets n’ont pas de contrôle dédié dans ce dossier exemple.</li></ul></details><details><summary>Référence de la version et pièces du dossier</summary><p>Dossier ${version} · commit synthétique ${version===1?'1111111':'2222222'} · empreinte synthétique dossier-${version}.</p><p class="empty-proof">Les sections complètes du vrai dossier restent dans sa page de preuves. Ce prototype en montre un extrait pour explorer la navigation.</p></details><div class="button-row">${action('Ouvrir la version à essayer','startTrial()',true,unavailable)}${action('Revenir au résultat',"show('result')")}</div>`;}
+function proof(title){let d=document.getElementById('proof-dialog');if(!d){d=document.createElement('dialog');d.id='proof-dialog';d.style.cssText='max-width:640px;width:90vw;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:24px';document.body.appendChild(d);}d.innerHTML=`<h2>Pièce synthétique</h2><h3>${esc(title)}</h3><p style="margin:15px 0">Version : dossier ${version}. Observation exemple : l’utilisateur ouvre le résultat, lit le dossier, essaie le produit et retrouve sa réponse dans le suivi.</p><p style="margin:15px 0">Résultat de cet exemple : parcours observé. Cette pièce ne prouve aucune livraison réelle.</p><button class="btn" onclick="document.getElementById('proof-dialog').close()">Fermer la pièce</button>`;d.showModal();notice='Pièce synthétique consultée : '+title+'.';sync();}
+function trial(){if(scene==='outage')return `<div class="callout warn"><strong>Le produit ne démarre pas.</strong><p>Le lancement a échoué. L’usine prépare une réparation ; ce n’est pas un jugement sur le résultat.</p></div><p>Aucun produit d’essai n’est resté ouvert. Ton acceptation n’a pas été enregistrée.</p><div class="button-row">${action('Voir le suivi',"show('follow')",true)}${action('Lire le dossier',"show('dossier')")}</div>`;if(['outdated','conflict'].includes(scene))return `<div class="callout warn">Le dossier est périmé. Aucun essai de cette version ne peut être ouvert.</div>${action('Voir le suivi',"show('follow')",true)}`;return `<p>Tu essaies <strong>la version du dossier ${version}</strong>, dans un environnement séparé. Les deux jeux de données sont synthétiques.</p><div class="button-row">${action(sessionOpen?'Produit ouvert dans cet aperçu':'Ouvrir le produit','startTrial()',true)}${sessionOpen?action('Fermer l’essai et préparer mon jugement','finishTrial()'):''}</div>${sessionOpen?`<label>Jeu de données <select id="dataset" onchange="chooseDataset(this.value)"><option ${dataset==='Avec une demande'?'selected':''}>Avec une demande</option><option ${dataset==='Aucune demande'?'selected':''}>Aucune demande</option></select></label><div class="mini-product"><div class="label">PRODUIT D’ESSAI SYNTHÉTIQUE · DOSSIER ${version}</div><h3>Ce qui t’attend</h3>${dataset==='Aucune demande'?'<p>Rien ne t’attend — vérifié à 15:00 (Paris).</p>':'<p><strong>Une livraison attend ton choix</strong></p><p>Pourquoi toi : tu dois choisir entre deux comportements visibles.</p><p>Option A : garder le comportement actuel. Option B : préparer un nouveau prototype.</p><div class="button-row">'+action('Essayer l’option A',"notice='Simulation : option A choisie dans le produit d’essai.';sync();render()")+action('Essayer l’option B',"notice='Simulation : option B choisie dans le produit d’essai.';sync();render()")+'</div>'}</div><p class="hint">Dans le vrai parcours, le produit s’ouvre à son adresse d’essai. L’agent peut t’aider à naviguer ; le dossier reste à lire par toi.</p>`:'<div class="callout">Aucun essai ouvert. Le lancement reprendra la version du dossier.</div>'}<div class="button-row">${action('Noter un constat',"show('findings')")}${action('Lire le dossier',"show('dossier')")}</div>`;}
+function findings(){if(!editable())return `<p>La réponse de cette version est déjà enregistrée, ou son dossier n’est plus à jour.</p><div class="button-row">${action('Voir la suite réelle',"show('follow')",true)}</div><p class="hint">Le texte historique reste dans le suivi. Il n’est pas écrasé par une nouvelle réponse.</p>`;return `<p>Tes mots sont gardés tels quels. Cette zone prépare un passage vers ta session d’agent ; elle n’accepte rien par un clic.</p>${!trialDone?'<p class="hint">L’essai n’a pas été terminé dans ce prototype. Tu peux revenir essayer le produit avant de juger.</p>':''}<label for="finding-text"><strong>Ton constat ou tes mots de jugement</strong></label><textarea id="finding-text" placeholder="Ex. Je ne trouve pas où revoir mon constat." oninput="words=this.value;draftPrompt='';sync();updatePrepare()">${esc(words)}</textarea><p class="draft">Brouillon local · pas transmis · perdu si tu recharges le prototype</p><label>Concerne <select id="citation" onchange="citation=this.value;sync()"><option value="parcours" ${citation==='parcours'?'selected':''}>Un parcours attendu par la Spec</option><option value="new_need" ${citation==='new_need'?'selected':''}>Un besoin supplémentaire</option><option value="later" ${citation==='later'?'selected':''}>Une idée pour plus tard</option></select></label><details><summary>Comment le constat sera traité</summary><p>L’agent prépare la référence et la réparation quand elles existent. Le code classe le constat : réparation d’une exigence, clarification du périmètre, ou proposition pour plus tard.</p><p>Ce classement ne t’oblige pas à diagnostiquer le code ni à inventer un ticket.</p></details><h3>Le jugement à préparer</h3><div class="box">${[['constats','Constats rendus — corriger ou clarifier avant de juger à nouveau'],['accepté','Accepté — autoriser la fusion de cette version'],['abandonné','Abandonné — terminer sans fusionner']].map(([key,label])=>`<p><label><input type="radio" name="answer" value="${key}" ${answer===key?'checked':''} onchange="answer=this.value;draftPrompt='';sync();render()"> ${label}</label></p>`).join('')}</div>${answer==='abandonné'?`<label>Raison de l’abandon<input type="text" id="abandon-reason" value="${esc(reason)}" oninput="reason=this.value;sync();updatePrepare()"></label>`:''}${answer==='accepté'&&proposition==='before'?'<div class="callout warn">La proposition choisie « à faire avant d’accepter » bloque l’acceptation. Rends d’abord tes constats.</div>':''}${!proposition?'<div class="callout warn">La proposition du dossier attend encore ton verdict.</div>':''}<div class="button-row"><button class="btn primary" id="prepare-answer" onclick="prepare()" ${canPrepare()?'':'disabled'}>Préparer le prompt de ma session</button>${action('Revenir à l’essai','startTrial()')}</div><p class="hint">Continuer avec un agent consomme des tokens. L’agent enregistre la réponse par la commande du flux, avec tes mots, la version et l’empreinte du dossier.</p>${draftPrompt?`<label for="prepared-prompt"><strong>Prompt à copier</strong></label><textarea readonly class="prompt" id="prepared-prompt">${esc(draftPrompt)}</textarea><div class="button-row">${action('Copier le prompt','copyPrompt()',true)}</div><p class="draft">Copier n’envoie rien et ne démarre aucun agent.</p>`:''}`;}
+function canPrepare(){return editable()&&words.trim().length>0&&Boolean(proposition)&&(answer!=='abandonné'||reason.trim().length>0)&&(answer!=='accepté'||proposition!=='before');}
+function updatePrepare(){const b=document.getElementById('prepare-answer');if(b)b.disabled=!canPrepare();}
+function prepare(){if(!canPrepare())return;draftPrompt=`Reprendre la session d’essai du résultat Cockpit synthétique.\nDossier ${version}, commit synthétique ${version===1?'1111111':'2222222'}, empreinte dossier-${version}.\nMa réponse préparée : ${answer}.\nMes mots exacts : ${words}\n${reason?'Raison : '+reason+'\n':''}Mon verdict sur la proposition : ${proposition}.\nContexte du constat : ${citation}.\nLire le dossier lié et vérifier qu’il est à jour. Ne pas résumer le dossier ni reformuler mes mots. Préparer les références et la réparation requises si le constat cite une exigence. Enregistrer uniquement ma réponse explicite par owner-answer, avec le commit et l’empreinte exacts du vrai dossier. Ne pas fusionner par un autre chemin.\nATTENTION : ces identifiants sont synthétiques ; ce prompt appartient au prototype et ne doit pas être exécuté.`;notice='Prompt préparé. La réponse n’est pas encore enregistrée.';sync();render();}
+async function copyPrompt(){if(!draftPrompt)return;try{await navigator.clipboard.writeText(draftPrompt);notice='Prompt copié. Aucune réponse enregistrée.';}catch(e){notice='Sélectionne le texte du prompt pour le copier.';}sync();render();}
+function follow(){let received=words||'Je ne trouve pas où revoir mon constat.';let states={returned:['Tes constats sont enregistrés','Aucune fusion. Le code prépare leur suite.'],repairing:['La correction est en cours','Une réparation est en cours ; un nouveau dossier sera préparé.'],accepted:['Ton acceptation est enregistrée','La version jugée n’est pas encore fusionnée.'],merging:['L’usine prépare la fusion','Elle vérifie que la branche de référence n’invalide pas le résultat accepté.'],merged:['La fusion est confirmée','Le résultat accepté est entré dans la version de référence.'],conflict:['Ton acceptation a été annulée','La reprise de la branche de référence a échoué. Aucune fusion ; correction et nouveau dossier attendus.'],abandoned:['Le chantier est abandonné','Le travail reste sur sa branche comme source. Rien n’a été fusionné.'],outdated:['Le dossier doit être renouvelé','Le résultat a changé depuis le dossier. Aucun jugement sur cette ancienne version.'],outage:['L’essai ne démarre pas','Une réparation du lancement est attendue. Aucun jugement inventé.']};let s=states[scene]||['Le résultat attend ton jugement','Lis le dossier et essaie le produit.'];return `<div class="callout ${scene==='merged'?'good':['conflict','outdated','outage'].includes(scene)?'warn':''}"><strong>${s[0]}</strong><p>${s[1]}</p></div>${['returned','repairing','new-result'].includes(scene)?`<h3>Tes mots et leur suite</h3><div class="box"><strong>« ${esc(received)} »</strong><p>${citation==='new_need'?'Le besoin dépasse le périmètre : clarification de la Spec attendue.':citation==='later'?'Proposition créée pour plus tard. Elle ne bloque pas la livraison.':scene==='repairing'?'Une réparation du parcours attendu est en cours.':'Une réparation du parcours attendu est à préparer.'}</p><p class="hint">Référence et classement établis par le flux ; texte de ton constat conservé.</p></div>`:''}<h3>Historique du résultat</h3>${historyRows().map(([t,b])=>`<div class="line"><strong>${t}</strong><p class="hint">${b}</p></div>`).join('')}<details><summary>Version jugée, version fusionnée et dossier</summary><p>Dossier ${version} · résultat jugé : ${version===1?'1111111':'2222222'} (synthétique).</p><p>Version fusionnée : ${scene==='merged'?'3333333 (synthétique)':'aucune preuve de fusion'}.</p><p>Le dossier jugé reste inchangé. La preuve de fusion est séparée.</p></details><div class="button-row">${action('Consulter le dossier',"show('dossier')")}${scene==='merged'?action('Voir la preuve de fusion',"proof('fusion.html : résultat jugé et commit effectivement fusionné')") :''}${needHuman()?action('Préparer mon jugement',"show('findings')",true):''}</div><p class="hint">Le suivi reste accessible depuis Projets quand la demande quitte la boîte de réception.</p>`;}
+function historyRows(){let rows=[['15:00 · Résultat prêt','Dossier et version d’essai disponibles.']];if(['returned','repairing'].includes(scene))rows.push(['15:18 · Constats rendus','Tes mots sont liés au dossier jugé.'],[scene==='repairing'?'15:22 · Correction en cours':'15:19 · Suite préparée','Aucune fusion avant un nouveau jugement.']);if(['accepted','merging','merged','conflict'].includes(scene))rows.push(['15:18 · Accepté','Acceptation liée à la version du dossier.']);if(scene==='merging')rows.push(['15:19 · Fusion en cours','Vérifications de reprise en cours.']);if(scene==='merged')rows.push(['15:20 · Fusion confirmée','Une preuve identifie le résultat jugé et la version fusionnée.']);if(scene==='conflict')rows.push(['15:19 · Acceptation annulée','Conflit à la reprise de la branche de référence. Correction puis nouveau dossier.']);if(scene==='abandoned')rows.push(['15:18 · Abandonné','Raison : '+(reason||'Le besoin n’est plus prioritaire.')]);if(scene==='outage')rows.push(['15:08 · Essai impossible','Le produit n’a pas démarré.']);if(scene==='outdated')rows.push(['15:08 · Dossier périmé','Le résultat a changé.']);return rows;}
+const content={result,dossier,trial,findings,follow};
+function VariantA(){return `<nav class="tabs" aria-label="Parcours du résultat">${Object.keys(labels).map(k=>`<button aria-selected="${screen===k}" onclick="show('${k}')">${labels[k]}</button>`).join('')}</nav>${content[screen]()}`;}
+function VariantB(){const order=['result','dossier','trial','findings','follow'];return `<div class="two-columns"><nav class="rail" aria-label="Étapes du parcours">${order.map((k,i)=>`<button aria-current="${screen===k}" onclick="show('${k}')">${i+1} · ${labels[k]}</button>`).join('')}</nav><section><span class="step-count">Étape ${order.indexOf(screen)+1} sur 5</span><h3>${labels[screen]}</h3>${content[screen]()}${order.indexOf(screen)<4?`<div class="button-row">${action('Étape suivante →',`show('${order[order.indexOf(screen)+1]}')`)}</div>`:''}</section></div>`;}
+function VariantC(){return `<p class="hint">Un seul détail à parcourir : le résultat, son dossier, puis le journal de tes actions.</p><details ${screen==='result'?'open':''} ontoggle="if(this.open){screen='result';sync()}"><summary>Le résultat et ce qui t’attend</summary>${result()}</details><details ${screen==='dossier'?'open':''} ontoggle="if(this.open){screen='dossier';sync()}"><summary>Le dossier · preuves et limites</summary>${dossier()}</details><details ${screen==='trial'?'open':''} ontoggle="if(this.open){screen='trial';sync()}"><summary>Essayer la version du dossier</summary>${trial()}</details><details ${screen==='findings'?'open':''} ontoggle="if(this.open){screen='findings';sync()}"><summary>Préparer mon jugement et mes constats</summary>${findings()}</details><details ${screen==='follow'?'open':''} ontoggle="if(this.open){screen='follow';sync()}"><summary>Suivi · constats, acceptation, fusion</summary>${follow()}</details>`;}
+function returnToList(){sheet=false;root.classList.remove('sheet');sync();}
+function render(){detail.innerHTML=`<div class="journey">${heading()}${{A:VariantA,B:VariantB,C:VariantC}[variant]()}</div>`;root.querySelectorAll('.detail').forEach(d=>d.classList.toggle('on',d.id==='d-'+selected));root.querySelectorAll('.li').forEach(l=>l.setAttribute('aria-current',l.dataset.id===selected?'true':'false'));root.classList.toggle('sheet',sheet);let row=root.querySelector('[data-id="demo-result"]');row.hidden=!needHuman();row.querySelector('.q').textContent=scene==='new-result'?'Un nouveau résultat attend ton jugement':'Le cockpit attend ton jugement';document.querySelector('#inbox-list h2 .mono').textContent=needHuman()?'2':'1';document.getElementById('variant-name').textContent=variant+' · '+names[variant];document.getElementById('scenario').value=scene;document.querySelector('#ch-demo-result .cockpit-chantier-s').textContent=titles[scene];let track=document.querySelector('#ch-demo-result .cockpit-stepper');let phase=['accepted','merging'].includes(scene)?5:scene==='merged'?6:['returned','repairing','outage'].includes(scene)?3:4;track.innerHTML=['Cadrage','Spec','Graphe','Livraison','À juger','Accepté','Fusionné'].map((t,i)=>'<span class="'+(i<phase?'done':i===phase?'cur':'')+'" title="'+t+'"></span>').join('');track.setAttribute('aria-label',titles[scene]);let b=document.getElementById('simulate-answer');b.disabled=!draftPrompt||!canPrepare();sync();}
+root.addEventListener('click',e=>{const r=e.target.closest('.li');if(r){e.preventDefault();selected=r.dataset.id;sheet=true;render();if(matchMedia('(max-width:930px)').matches)root.scrollIntoView({block:'start'});}if(e.target.closest('.back')){e.preventDefault();returnToList();}});
+document.querySelectorAll('.cockpit-projects a').forEach(a=>{a.href='#d-demo-result';a.onclick=e=>{e.preventDefault();selected='demo-result';screen='follow';sheet=true;render();detail.scrollIntoView({block:'start'});};});
+document.querySelector('.cockpit-projects .zone-body').insertAdjacentHTML('beforeend','<div class="button-row" style="margin-top:12px"><button class="btn" id="project-follow">Suivre le résultat du cockpit →</button><span id="journey-status" class="muted"></span></div>');
+document.getElementById('project-follow').onclick=()=>{selected='demo-result';sheet=true;screen='follow';render();detail.scrollIntoView({block:'start'});};
+document.querySelector('.prototype-tools').insertAdjacentHTML('beforeend','<div style="margin-top:8px"><button class="btn" id="simulate-answer" disabled>Simuler l’enregistrement de ma réponse préparée</button><span style="margin-left:8px">Outil du prototype uniquement</span></div>');
+document.getElementById('simulate-answer').onclick=()=>{if(!canPrepare()||!draftPrompt)return;setScene(answer==='accepté'?'accepted':answer==='abandonné'?'abandoned':'returned');};
+function cycle(n){variant=variants[(variants.indexOf(variant)+n+3)%3];sync();render();}
+document.getElementById('previous-variant').onclick=()=>cycle(-1);document.getElementById('next-variant').onclick=()=>cycle(1);
+document.getElementById('scenario').onchange=e=>setScene(e.target.value);
+document.getElementById('reset').onclick=()=>{version=1;words='';answer='constats';citation='parcours';proposition='';reason='';trialDone=false;dossierRead=false;setScene('ready');sheet=false;render();};
+document.addEventListener('keydown',e=>{if(e.target.closest('input,textarea,select,[contenteditable]'))return;if(e.key==='ArrowLeft')cycle(-1);if(e.key==='ArrowRight')cycle(1);});
+if(qp.has('view')||scene!=='ready')sheet=true;
+render();
+
+</script></body>
+</html>
