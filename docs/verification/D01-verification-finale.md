@@ -3,13 +3,16 @@
 Ticket T32 (af-m23wru), Spec af-wf4w5r §14. Dossier assemblé par code (`gen_dossier.py`) à partir des pièces
 rendues par les sessions vérificatrices : aucun état n'est écrit ou reformulé par la session opérateur.
 
-**D01 n'est déclaré livré que par les mots de Benjamin.** Ce dossier ne le déclare pas.
+**D01 n'est déclaré livré que par les mots de Benjamin.** Ses mots du 2026-10-10, cités en entier au §6 : « Et D01 est considéré livré dès qu'on a fait toutes ces bricoles. Il ne faut qu'il reste plus rien latent avec D01, tout ce qui est connu est mémorisé / noté en limite / mémorisé pour la suite. » Ce qui a été fait depuis ces mots est au §1 et au §7 ; ce dossier n'ajoute rien à ses mots.
 
 ## 1. Ce qui a été vérifié, et où
 
 - Commit jugé (passe 2) : `main` `b9dfb77761197d526336e5f093faadcc1ca525b0`.
 - Passe 1 : `main` `2053cc01897ff049949bf4eb340cf876e156dce1` (2026-10-09). Elle a donné 16 tickets de réparation (T37 à T52), tous fermés et sur `main` avant la passe 2.
 - Pièces brutes (hors Git, sur l'hôte) : `/home/benja/t32-verification` (`pass1/`, `pass2/`, `recheck/`, `repairs/`, `window/`, `ruleset/`).
+- Après la passe 2 : une réparation de plus, T53 (af-pw867q), publiée sur les mots de Benjamin le 2026-10-10 à 12:41, fusionnée à 17:25 (PR 505, `main` `b968fdc`), revérifiée sur ce commit (§7).
+- Passe 3 (2026-10-10 et 2026-10-11) : `bin/local-only-tests` depuis la racine de l'usine après T53, deux lancements complets et des rejeux (§7, « Essais hors CI après T53 ») ; la racine est allée de `e83cd06` à `8e8af56` pendant ces lancements.
+- Suites du lot de fin du 2026-10-10 : les limites connues sont écrites dans ce dossier (PR 501) et une ligne d'index y mène depuis le wiki de l'opérateur ; la note « écrire la recette de lancement du projet agent-factory » est posée sur le bead du chantier Cockpit V2 (af-mjfvwx) ; le bead af-os515g porte « regrouper les essais hors CI du nouveau flux après le premier vrai chantier ».
 - Journal des gestes et des décisions : commentaires du bead af-m23wru.
 
 ## 2. Résumé
@@ -260,7 +263,7 @@ Règle (Spec §14, point 4) : toute ligne non « réalisée » a un ticket de r�
 | US53 | partielle | L’arrêt sur rouge est effectif, avec la seule exception du repair. En revanche, à deux Planning Exceptions, le code laisse explicitement continuer les tickets au travail et lance leurs reprises ; le convoi ne s’arrête donc pas entièrement. | partielle | Acceptée par Benjamin sur le constat de la passe 1 (« ok pour tes recos, rédige les 11 tickets », 2026-10-09 vers 15:00). |
 | US66 | partielle | Le mécanisme est une consigne rendue dans la sortie de la commande, sans rôle ni porte qui puisse empêcher une session de la violer. L’essai avec une vraie session est optionnel et passe sans lancer de modèle lorsque ACCEPTANCE_SESSION_TRIAL_SESSION n’est pas positionné. | réalisée | Acceptée par Benjamin comme limite connue (« Pour 2 on accepte les limites connues , on les notes en wiki », 2026-10-10, entre 10:05 et 11:59 (Paris), heure exacte non relevée). |
 | US69 | partielle | Le routage est bien fait par du code, mais il ne vérifie pas que le comportement demandé est réellement exigé par la story ou l’ancre citée. Un constat de goût peut citer une story existante et être routé en réparation au lieu de passer par une Planning Exception. | partielle | Acceptée par Benjamin comme limite connue (« Pour 2 on accepte les limites connues , on les notes en wiki », 2026-10-10, entre 10:05 et 11:59 (Paris), heure exacte non relevée). |
-| US80 | absente | Aucun code ne relivre Cockpit V2 par le nouveau flux et aucun artefact de code n'enregistre un jugement de Benjamin. La fixture existante démontre seulement que l'ancien brouillon n'est pas publiable. | absente | Notée comme reportée par la Spec (cas de validation Cockpit V2, après D01) : « ok pour tes recos, rédige les 11 tickets », 2026-10-09 vers 15:00. |
+| US80 | absente | Aucun code ne relivre Cockpit V2 par le nouveau flux et aucun artefact de code n'enregistre un jugement de Benjamin. La fixture existante démontre seulement que l'ancien brouillon n'est pas publiable. | absente | Notée comme reportée par la Spec (cas de validation Cockpit V2, après D01) : « ok pour tes recos, rédige les 11 tickets », 2026-10-09 vers 15:00. Non remplacée par l'assemblage manuel du Cockpit V2 : elle reste due sur le premier vrai chantier qui passe par le nouveau flux (« j'approuve T53, publie ; ok pour tes recos sur 2 et 3 », 2026-10-10 12:41). |
 | US81 | partielle | Le parcours assemblé de bout en bout existe. Aucun mécanisme branché dans le flux ne produit toutefois la revue complète de tout le diff contre cette Spec, un état pour chaque user story et décision, puis la preuve d'absence de reste. | partielle | Notée comme reportée par la Spec (c'est la présente vérification finale, tenue par une session opérateur) : « ok pour tes recos, rédige les 11 tickets », 2026-10-09 vers 15:00. |
 | US84 | partielle | Le démarrage par le Mayor est techniquement refusé et une fermeture manuelle devient ensuite un incident. Aucun garde de code n'empêche cependant le Mayor d'écrire directement un statut, des métadonnées, une dépendance ou une fermeture dans le tracker ; ces actions ne sont bornées que par son prompt puis détectées après coup. | partielle | Acceptée par Benjamin sur le constat de la passe 1 (« ok pour tes recos, rédige les 11 tickets », 2026-10-09 vers 15:00). |
 | D1.3 | partielle | implement est lu intact et wayfinder, to-spec et to-tickets restent interdits à l'invocation implicite. Aucun prompt ni aucune formule du flux ne référence implement-spec : la seconde skill réservée à l'humain n'est donc pas prise en charge comme exigé. | partielle | Acceptée par Benjamin sur le constat de la passe 1 (« ok pour tes recos, rédige les 11 tickets », 2026-10-09 vers 15:00). |
@@ -297,6 +300,10 @@ Règle (Spec §14, point 4) : toute ligne non « réalisée » a un ticket de r�
 - **2026-10-09 21:38 (Paris), chat live** — « ok pour tes recommandations » — en réponse à trois recommandations de la session opérateur po-agent/736b05c5 : accepter l'écart de T38 critère 1 ; réparer T40 critère 4 par T52 ; approuver le texte de T50, T51 et T52.
 - **2026-10-10 vers 00:22 (Paris), chat live** — « ok recommandation. » — en réponse à la question « Geler la liste des réparations à T52 ? » : plus de réparation sauf parcours complet cassé ; les autres écarts sont inscrits ici et tranchés par lui en une fois.
 - **2026-10-10, entre 10:05 et 11:59 (Paris), heure exacte non relevée, chat live** — « Répare 1. Pour 2 on accepte les limites connues , on les notes en wiki. Pour 3 on accepte la limite et on inscrit l'ecriture de la recette de lancement du projet au cockpit V2. Le 4: les 3 ecarts sur des réparations, j'accepte tes recommandations. Et D01 est considéré livré dès qu'on a fait toutes ces bricoles. Il ne faut qu'il reste plus rien latent avec D01, tout ce qui est connu est mémorisé / noté en limite / mémorisé pour la suite. » — en réponse au lot de fin présenté à 10:05 par la session opérateur po-agent/736b05c5, en quatre points : (1) T49, quatre essais hors CI rouges sur main et photographie de sécurité affaiblie ; (2) les 25 lignes sans décision hors D2.10 ; (3) D2.10 ; (4) T43 critère 1, T44 critère 2, changement de bin/spec-approve par T52. Lecture de la session opérateur : la déclaration « livré » est sous condition, elle vaut une fois ces points faits.
+- **2026-10-10 12:22 (Paris), chat live** — « garde 20 processeurs » — en réponse à la question « WSL à 20 processeurs, revenir à 12 ou garder ? » de la session opérateur po-agent/736b05c5.
+- **2026-10-10 12:41 (Paris), chat live** — « j'approuve T53, publie ; ok pour tes recos sur 2 et 3 » — en réponse à trois points de la session opérateur po-agent/d46f42c1 : (1) le texte exact de T53 ; (2) recommandation « la user story 80 n'est pas remplacée par l'assemblage manuel du Cockpit V2 ; le cas de validation reste dû sur le premier vrai chantier qui passe par le nouveau flux » ; (3) recommandation « garder WSL à 20 processeurs ».
+- **2026-10-10 22:49 (Paris), chat live** — « ok pour tes recos, les 3 en limites connues » — en réponse au lot de la passe 3 présenté par la session opérateur po-agent/2ee8a5d8, trois écarts chacun avec la recommandation « limite connue » : (1) « regression » relevée par la relecture de T53 (hooks Git de la racine masqués pendant l'essai de fidélité) ; (2) fresh-sessions-isolated-city et ticket-evaluation-isolated-city sortent 1 sous forte charge de l'hôte et 0 au repos ; (3) prototype-fidelity-demonstration sort 1 si la racine avance par une fusion pendant qu'il tourne, et a échoué une fois sur son ménage, cause non établie.
+- **2026-10-11 06:26 (Paris), chat live** — « ok pour ta reco, le 4e en limite connue » — en réponse au quatrième écart de la passe 3 présenté par la session opérateur po-agent/2ee8a5d8 : code-review-isolated-city sort 1 par intermittence, y compris rejoué seul au repos ; recommandation « limite connue », trace gardée dans ce dossier et par le bead af-052kl3 laissé ouvert, rattaché à af-os515g.
 
 ### Comparaison des deux passes
 
@@ -305,7 +312,7 @@ Règle (Spec §14, point 4) : toute ligne non « réalisée » a un ticket de r�
 - Non « réalisées » aux deux passes (23) : D1.3, D1.6, D11.2, D11.7, D11.8, D13.15, D2.12, D2.9, D3.1, D3.4, D3.7, D5.24, D8.13, D9.2, D9.7, US09, US14, US36, US53, US69, US80, US81, US84.
 - « Réalisées » à la passe 1, plus à la passe 2 (18) : D10.3, D11.11, D12.8, D2.10, D3.6, D3.8, D5.1, D5.20, D9.23, US07, US15, US16, US17, US18, US19, US28, US37, US66. Ce sont d'autres sessions, sur le même texte : deux lectures indépendantes ne trouvent pas les mêmes écarts.
 
-## 7. Tickets de réparation (T37 à T52) et leur revérification
+## 7. Tickets de réparation (T37 à T53) et leur revérification
 
 Chaque réparation a été revérifiée après sa fusion par une session Codex neuve, en lecture seule (`tools/recheck.sh`, pièces `recheck/T<n>.json`).
 
@@ -323,10 +330,11 @@ Chaque réparation a été revérifiée après sa fusion par une session Codex n
 | T46 | af-lb9zkz | `40a72ce` | tenu | 1 : tenu ; 2 : tenu ; 3 : non tenu ; 4 : tenu ; 5 : non tenu | rien | Critères 3 et 5 : écarts déclarés par l'auteur (PR 478), acceptés par Benjamin (« Oui j'accepte les 2 », 2026-10-09 18:16). |
 | T47 | af-i2lckq | `01ec3d8` | tenu | 1 : tenu ; 2 : tenu ; 3 : tenu | rien | Rien. |
 | T48 | af-1zxao6 | `6122051` | non vérifiable en lecture seule | 1 : non vérifiable en lecture seule ; 2 : non vérifiable en lecture seule ; 3 : tenu ; 4 : tenu | rien | Critères 1 et 2 : l'essai tests/ticket-graph-publish-patch-edges-real-tracker-test.sh sort 0 au commit jugé (essais hors CI ci-dessous). |
-| T49 | af-xcfup7 | `b9dfb77` | non vérifiable en lecture seule | 1 : non vérifiable en lecture seule ; 2 : non vérifiable en lecture seule ; 3 : non vérifiable en lecture seule ; 4 : tenu | tests/prototype-fidelity-demonstration-test.sh:65 — la photographie de sécurité remplace `rev-list --all --count` par le seul `rev-parse HEAD`; l’assertion de la ligne 216 ne détecte donc plus l’ajout ou la suppression d’un ref non-HEAD dans le dépôt de l’usine, ce qui affaiblit la preuve que l’essai n’a pas modifié la racine live. | Critères 1 à 3 non tenus au commit jugé : quatre essais rouges depuis la racine (ci-dessous). Régression relevée, non déclarée par l'auteur. Réparation décidée par Benjamin (« Répare 1 », 2026-10-10, entre 10:05 et 11:59 (Paris), heure exacte non relevée) : un seul ticket groupé, T53, pas encore publié à la date de ce dossier. |
+| T49 | af-xcfup7 | `b9dfb77` | non vérifiable en lecture seule | 1 : non vérifiable en lecture seule ; 2 : non vérifiable en lecture seule ; 3 : non vérifiable en lecture seule ; 4 : tenu | tests/prototype-fidelity-demonstration-test.sh:65 — la photographie de sécurité remplace `rev-list --all --count` par le seul `rev-parse HEAD`; l’assertion de la ligne 216 ne détecte donc plus l’ajout ou la suppression d’un ref non-HEAD dans le dépôt de l’usine, ce qui affaiblit la preuve que l’essai n’a pas modifié la racine live. | Critères 1 à 3 non tenus au commit jugé : quatre essais rouges depuis la racine (ci-dessous). Régression relevée, non déclarée par l'auteur. Réparation décidée par Benjamin (« Répare 1 », 2026-10-10, entre 10:05 et 11:59 (Paris), heure exacte non relevée) : un seul ticket groupé, T53 (ligne suivante). |
 | T50 | af-yorkna | `4adf396` | tenu | 1 : tenu ; 2 : tenu | rien | Rien. |
 | T51 | af-6h09r6 | `484a329` | tenu | 1 : tenu ; 2 : tenu | rien | Rien. |
 | T52 | af-ezqgma | `96d338a` | tenu | 1 : tenu ; 2 : tenu | rien | Écart déclaré par l'auteur (PR 499) : bin/spec-approve approuve de nouveau une Spec déjà approuvée dont le texte a changé. Accepté par Benjamin (« Le 4: les 3 ecarts sur des réparations, j'accepte tes recommandations », 2026-10-10, entre 10:05 et 11:59 (Paris), heure exacte non relevée). |
+| T53 | af-pw867q | `b968fdc` | non vérifiable en lecture seule | 1 : non vérifiable en lecture seule ; 2 : non vérifiable en lecture seule ; 3 : tenu ; 4 : non vérifiable en lecture seule | tests/lib/live-root-refs.sh:43 — le surveillant impose core.hooksPath vers son répertoire temporaire, qui ne contient que son hook de journalisation ; il masque donc pendant l’essai les vrais hooks .githooks/reference-transaction et .githooks/post-checkout. Cela affaiblit le refus mécanique de commit/checkout/reset/merge en racine live défini par .githooks/reference-transaction:46 : une écriture interdite peut désormais réussir, n’être constatée qu’à la fin et rester dans la racine après l’échec. | Publié sur les mots de Benjamin (« j'approuve T53, publie ; ok pour tes recos sur 2 et 3 », 2026-10-10 12:41). Les critères « non vérifiable en lecture seule » et la ligne de démonstration relèvent de l'exécution : voir « Essais hors CI après T53 » ci-dessous (`bin/local-only-tests` sort 1 aux deux lancements complets). La régression relevée et les quatre essais concernés sont des limites connues, acceptées par Benjamin (« ok pour tes recos, les 3 en limites connues », 2026-10-10 22:49 (Paris) ; « ok pour ta reco, le 4e en limite connue », 2026-10-11 06:26 (Paris)). Pas de nouvelle réparation. |
 
 ### Essais hors CI (local-only) au commit jugé
 
@@ -359,6 +367,66 @@ Rejeu, un par un et depuis la racine de l'usine, des essais en échec depuis le 
 - L'auteur de T49 a relevé ces quatre essais à sortie 0 dans la PR 496 ; ses commits vont du 2026-10-09 23:03 au 2026-10-10 02:52 (Paris), T42 a fusionné à 01:14. Les essais local-only ne tournent pas en CI : aucune CI ne pouvait voir cette rencontre entre T42 et T49.
 - Conséquence : la ligne de démonstration de T49 (« bin/local-only-tests sort 0 sur main ») et ses critères 1 à 3 ne sont pas tenus au commit jugé. L'ordre de nuit `local-only-tests` (04:00) ouvrira de lui-même un ticket et appellera le Mayor sur ces quatre échecs.
 
+### Essais hors CI après T53 (passe 3)
+
+`bin/local-only-tests` lancé depuis la racine de l'usine après la fusion de T53 (`tools/pass3-localonly.sh`, pièces `pass3/`). Ils rendent l'état des critères « non vérifiable en lecture seule » de T53.
+
+Premier lancement complet :
+
+```
+commit e83cd06aceed03446bb4300a085f918e5d9c15fb
+début 2026-10-10 18:28:15 (Paris) charge 4.49 6.60 10.54 3/796 171113
+fin 2026-10-10 21:14:55 (Paris) charge 22.98 23.82 23.77 33/908 2931614
+sortie 1
+commit à la fin e265716565d65bfbd635912e362a8fc8cd61996a
+core.hooksPath à la fin : /home/benja/agent-factory/.githooks
+git status de la racine : 1 ligne(s)
+local-only-tests: EXCLUDED tests/convoy-stop-mayor-isolated-city-test.sh — vraie session du Mayor (fournisseur Claude) : un tour réel à chaque lancement
+local-only-tests: FAIL tests/fresh-sessions-isolated-city-test.sh
+local-only-tests: FAIL tests/prototype-fidelity-demonstration-test.sh
+local-only-tests: FAIL tests/ticket-evaluation-isolated-city-test.sh
+local-only-tests: filed af-jhifw6 and paged mayor
+PASS : 28
+charge de l'hôte sur 1 min pendant le lancement (un relevé par minute) : de 4.18 à 55.99
+```
+
+Second lancement complet :
+
+```
+commit 25f63f4477ba7dd086a1435979cad650f6e2d46a
+début 2026-10-10 22:41:30 (Paris) charge 3.27 3.55 5.38 2/717 680517
+fin 2026-10-11 00:30:59 (Paris) charge 4.21 5.36 8.14 1/747 2948956
+sortie 1
+commit à la fin 8e8af5679af63ff0f849895d9f83a8d62e8ef424
+core.hooksPath à la fin : /home/benja/agent-factory/.githooks
+git status de la racine : 1 ligne(s)
+local-only-tests: EXCLUDED tests/convoy-stop-mayor-isolated-city-test.sh — vraie session du Mayor (fournisseur Claude) : un tour réel à chaque lancement
+local-only-tests: FAIL tests/code-review-isolated-city-test.sh
+local-only-tests: filed af-052kl3 and paged mayor
+PASS : 30
+charge de l'hôte sur 1 min pendant le lancement (un relevé par minute) : de 2.4 à 28.94
+```
+
+Rejeu, un par un et depuis la racine, des essais en échec de chaque lancement, chacun parti d'un hôte au repos (`tools/pass3-rerun.sh`, sorties dans `pass3/local-only-rerun/` ; `avant-arret/` : rejeu coupé par l'arrêt de l'hôte ; `tools/pass3-after-run2.sh`, sorties dans `pass3/run2/rerun/`) :
+
+| Essai | Sortie | Durée | Charge au départ | Charge au plus | Racine | Dernière ligne |
+|---|---|---|---|---|---|---|
+| fresh-sessions-isolated-city-test.sh (avant l’arrêt) | 1 | 804s | 3.93 | 37.26 | e265716 | FAIL: the reviewer session delivery-reviewer-arf-4hp did not ask for more work within 300s |
+| fresh-sessions-isolated-city-test.sh | 0 | 345s | 4.70 | 9.49 | e265716 | PASS: two author sessions worked two tickets at the same time under N=2, two successive reviews were rendered by two reviewer sessions, and a verdict |
+| prototype-fidelity-demonstration-test.sh | 1 | 169s | 2.68 | 5.16 | 25f63f4 | > 25f63f4477ba7dd086a1435979cad650f6e2d46a |
+| ticket-evaluation-isolated-city-test.sh | 0 | 333s | 2.72 | 4.13 | 25f63f4 | PASS: each finished ticket was evaluated on a product launched by code from a clean copy of its branch, and code computed the verdict |
+| prototype-fidelity-demonstration-test.sh (rejeu 2) | 0 | 122s |  | 3.24 | 25f63f4 après=25f63f4 | PASS: the fixture is green on every prototyped state at its real address; a changed token and a removed anchor are red with the anchor, the state and the property named; the result, its sealed record and the side-by-side captures are read back from the real tracker; only an answered Planning Excepti |
+| code-review-isolated-city-test.sh (après le second lancement) | 1 | 809s | 3.87 | 11.11 | 8e8af56 | FAIL: the review of C was launched 1 times, not twice |
+
+- Premier lancement complet : trois essais en échec (`fresh-sessions-isolated-city`, `prototype-fidelity-demonstration`, `ticket-evaluation-isolated-city`). Rejoués seuls depuis la racine, partis d'un hôte au repos : `fresh-sessions-isolated-city` et `ticket-evaluation-isolated-city` sortent 0 ; `prototype-fidelity-demonstration` sort 1 une première fois (« the fidelity check changed the Factory's Git state », le reflog de la racine porte une avance rapide sur `origin/main` à 22:29:53, pendant l'essai, après la fusion de la PR 509 d'une autre session), puis 0 au rejeu suivant, sans fusion en cours. Son échec du lancement complet était autre : ligne PASS de l'essai puis `rm: cannot remove …/home: Directory not empty` ; cause non établie.
+- Second lancement complet : un essai en échec, `code-review-isolated-city` ; les trois essais en échec du premier lancement y sortent PASS. Rejoué seul depuis la racine, parti d'un hôte au repos, `code-review-isolated-city` sort encore 1 (« the review of C was launched 1 times, not twice »). Il sort PASS dans le premier lancement, et `git log e83cd06..8e8af56` ne porte aucun commit sur `tests/code-review-isolated-city-test.sh`, `bin/code-review`, `lib/convoy_state.py`, `bin/convoy-advance` ni `tests/lib` ; cause non établie.
+- Les quatre essais rouges de la passe 2, objet de T53, au premier puis au second lancement : `code-review-isolated-city` PASS puis FAIL ; `spec-integration-demonstration` PASS puis PASS ; `second-project-isolated-city` PASS puis PASS ; `ticket-evaluation-isolated-city` FAIL (sur un autre contrôle qu'à la passe 2) puis PASS.
+- Conditions : aucun des deux lancements complets n'a tourné sur un hôte au repos d'un bout à l'autre (charges ci-dessus ; CI et fusions d'autres sessions) ; la racine a avancé pendant chacun. Les fichiers changés par ces fusions (`git diff --stat e83cd06 8e8af56`) sont des fichiers de tests de la batterie de CI et ses durées (`config/ci-test-*`), aucun essai hors CI.
+- Ordre de nuit `local-only-tests` du 2026-10-11 (`bin/local-only-tests --quiet` depuis la racine, lancé par le contrôleur, pas par la session opérateur) : événement `order.fired` à 04:00:15 puis `order.completed` à 05:25:06 (Paris), et non `order.failed` ; aucun bead ouvert par l'outil, qui en ouvre un dès qu'un essai échoue ; racine à `8e8af56` du début à la fin (reflog) ; aucune PR ouverte ni CI à ce moment-là. Pièce : `pass3/night-order.txt`. Sa sortie détaillée n'est pas gardée (`--quiet`).
+- Lancements opérateur avec `ESCALATION_DOOR_BIN=/bin/true` : le Mayor n'a pas été appelé, mais l'outil crée quand même un bead par lancement en échec (`bin/local-only-tests:112`) : af-jhifw6 (premier lancement, fermé avec sa cause) et af-052kl3 (second lancement, laissé ouvert comme trace de l'intermittence de `code-review-isolated-city`, rattaché à af-os515g).
+- Décision de Benjamin : les quatre écarts de la passe 3 sont des limites connues, sans nouvelle réparation (« ok pour tes recos, les 3 en limites connues », 2026-10-10 22:49 (Paris) ; « ok pour ta reco, le 4e en limite connue », 2026-10-11 06:26 (Paris)) : (1) le surveillant de T53 masque les hooks Git de la racine pendant l'essai de fidélité (`tests/lib/live-root-refs.sh:43`, relevé par la relecture de T53) ; (2) deux essais en cité isolée sortent 1 sous forte charge de l'hôte ; (3) l'essai de fidélité sort 1 si la racine avance pendant qu'il tourne ; (4) `code-review-isolated-city` sort 1 par intermittence, y compris au repos.
+- Conséquence connue : l'ordre de nuit `local-only-tests` (04:00) lance les mêmes essais ; tant que ces essais sont sensibles à la charge ou intermittents, il peut ouvrir un ticket et appeler le Mayor certaines nuits.
+
 ### Batterie complète de tests au commit jugé
 
 Lancée à la main dans le worktree (`bin/ci-run-tests --jobs 12`, toujours complète), en compensation de la règle « PR à jour avec main » levée pendant le lot (§11).
@@ -384,7 +452,7 @@ ci-run-tests: ran 171 test(s), 0 failure(s)
 - Toutes les sessions vérificatrices sont des sessions `codex exec -s read-only` neuves, modèle `gpt-5.6-sol`, une par tâche.
 - Auteurs de D01, d'après les lignes Co-Authored-By des commits `d31c6403^..b9dfb77` : Claude Opus 5.5 <noreply@anthropic.com> (106 commits) ; Claude Fable 5.1 <noreply@anthropic.com> (4 commits) ; Claude Sonnet 5 <noreply@anthropic.com> (1 commits).
 - Aucune session vérificatrice n'a écrit de ticket de D01 : elles sont créées pour une lecture, en lecture seule, puis terminées.
-- Les sessions opérateur (po-agent/64db146a, po-agent/736b05c5 puis po-agent/d46f42c1) sont du modèle des auteurs (Claude Opus 5.5) : elles ont lancé, assemblé et consigné, sans rendre d'état.
+- Les sessions opérateur (po-agent/64db146a, po-agent/736b05c5, po-agent/d46f42c1 puis po-agent/2ee8a5d8) sont du modèle des auteurs (Claude Opus 5.5) : elles ont lancé, assemblé et consigné, sans rendre d'état.
 - Écart de forme avec la Spec §14 point 2 (« une session relecteur ») : la revue est faite par 9 sessions, une par bloc de lignes, pour que chacune lise la Spec entière et son bloc sans dépasser un contexte sain.
 
 ### Revue, passe 2
@@ -435,6 +503,7 @@ ci-run-tests: ran 171 test(s), 0 failure(s)
 | T52 | 01a123cb-59c7-7fa1-81f3-55e16d8c99a8 | gpt-5.6-sol | 2026-10-10T05:11:29+02:00 | 2026-10-10T05:14:55+02:00 |
 | T51 | 01a123e6-849e-7761-973b-3340d0746082 | gpt-5.6-sol | 2026-10-10T05:41:11+02:00 | 2026-10-10T05:43:08+02:00 |
 | T49 | 01a123ff-826c-7fa3-bba3-c51a11649d49 | gpt-5.6-sol | 2026-10-10T06:08:29+02:00 | 2026-10-10T06:11:47+02:00 |
+| T53 | 01a1266d-ac20-7f43-8e68-eedee0b6e4f7 | gpt-5.6-sol | 2026-10-10T17:28:02+02:00 | 2026-10-10T17:32:24+02:00 |
 
 ## 9. Les 263 lignes : état et preuve
 
@@ -864,6 +933,9 @@ ci-run-tests: ran 171 test(s), 0 failure(s)
 - Un hôte au repos : la passe 2 a tourné pendant que le runner de CI et des workers travaillaient ; la charge au moment de chaque lancement est notée dans les pièces.
 - La stabilité de la revue : deux passes par des sessions différentes ne rendent pas les mêmes lignes non « réalisées » (§6, comparaison). Une troisième lecture en trouverait probablement d'autres ; elle n'a pas été faite (borne annoncée à Benjamin : deux passes).
 - Les lignes que chaque session dit ne pas avoir pu vérifier en lecture seule : tableau à la fin du §9.
+- Une sortie 0 de `bin/local-only-tests` d'un trait sur `main` (ligne de démonstration de T49 et de T53) : non obtenue par les deux lancements de la session opérateur, qui n'ont pas tourné sur un hôte au repos ; l'ordre de nuit du 2026-10-11 s'est terminé sans échec (§7), sans que sa sortie détaillée soit gardée.
+- La cause de l'intermittence de `code-review-isolated-city`, et celle de l'échec de ménage de `prototype-fidelity-demonstration` au premier lancement : non établies.
+- L'écart relevé par la relecture de T53 (hooks de la racine masqués pendant l'essai de fidélité) vient d'une lecture du code : rien ne l'a exercé.
 
 ## 11. Gestes hors du chemin normal pendant la vérification
 
@@ -873,10 +945,13 @@ ci-run-tests: ran 171 test(s), 0 failure(s)
 - 2026-10-10 00:36 à 06:08 : règle GitHub « PR à jour avec main avant fusion » levée par `./bin/enable-strict-main-protection --rollback`, puis remise. Mots de Benjamin : « A oui ». Le contrôle « Tests » est resté exigé sur chaque PR. Compensation : batterie complète au commit jugé (§7).
 - 2026-10-10 06:09 : premier lancement de l'oracle de la passe 2 sans `--delivery-driver` (erreur de la session opérateur) : sortie 1 en 0 s, rien de jugé ; sorties gardées dans `pass2/oracle-sans-pilote`, oracle relancé avec le pilote de référence.
 - Les essais hors CI de la passe 2 ont été lancés depuis le worktree au commit jugé, avec `ESCALATION_DOOR_BIN=/bin/true` : un échec n'appelle pas le Mayor (lancement opérateur, pas l'ordre de nuit) ; aucun ticket n'a été créé (vérifié). Les onze essais en échec ont été rejoués depuis la racine de l'usine, alors au commit f18f456 : le commit jugé plus les PR 498 et 500, sans rapport avec D01.
+- 2026-10-10 12:22 : WSL gardé à 20 processeurs (mots de Benjamin : « garde 20 processeurs ») ; rien n'est modifié ; l'ancien fichier `.wslconfig.before-20261009` reste en place pour défaire.
+- 2026-10-10 18:28 à 2026-10-11 00:45 : deux lancements complets de `bin/local-only-tests` et des rejeux, par la session opérateur, depuis la racine de l'usine, avec `ESCALATION_DOOR_BIN=/bin/true`. Chaque lancement en échec a créé un bead (af-jhifw6, af-052kl3), annoté « lancement opérateur de T32 » ; le Mayor n'a pas été appelé.
+- 2026-10-10 vers 21:50 : arrêt de l'hôte (mots de Benjamin : « le pc a crashé ») ; WSL reparti à 21:53, usine remontée seule. Un rejeu en cours a été coupé après son premier essai (pièces gardées dans `pass3/local-only-rerun/avant-arret/`) puis relancé.
 
 ## 12. Ce que les auteurs des réparations ont déclaré dans leurs PR
 
-Rubriques « Non fait », « Écarts » et « Constats hors ticket » des PR des tickets T37 à T52, recopiées telles quelles (`gh pr view <n> --json body`, relevé du 2026-10-10). Aucune n'est jugée ici ; celles qu'une session vérificatrice a reprises sont au §7.
+Rubriques « Non fait », « Écarts » et « Constats hors ticket » des PR des tickets T37 à T53, recopiées telles quelles (`gh pr view <n> --json body`, relevé du 2026-10-10). Aucune n'est jugée ici ; celles qu'une session vérificatrice a reprises sont au §7.
 
 ### PR 478 — `do-work/af-lb9zkz`
 
@@ -1174,4 +1249,24 @@ aucun
 - `tests/ticket-graph-publish-coverage-test.py` (`amend_spec` / `spec_bead`) écrit l'approbation de la Spec à la main.
 - `tests/evidence-pack-test.py` pose `gc.spec_digest` à la main dans son état de départ.
 - L'entrée du catalogue `bin/owner-answer` disait encore que `resolve-exception` valait aussi pour un « souhait abandonné », ce qui n'est plus vrai depuis T40 : corrigé ici.
+
+### PR 505 — `do-work/af-pw867q`
+
+**Non fait**
+
+- `bin/local-only-tests` n'a pas été lancé en entier, et rien n'a tourné depuis la racine de l'usine sur main : la ligne de démonstration (« sur main, hôte au repos, sortie 0 ») reste à constater après fusion. L'hôte n'a pas été au repos pendant ce travail (charge de 5 à 17 aux lancements, 105 pendant une batterie du runner CI).
+- L'échec de `tests/prototype-fidelity-demonstration-test.sh` sur une référence laissée par son parcours n'a pas été provoqué sur la démonstration elle-même ; il est observé par `tests/live-root-refs-test.sh`, et la démonstration refuse de partir si la surveillance ne voit pas une référence de sonde.
+- Une des sessions d'auteur remplacées (la deuxième) a été drainée par le contrôleur comme « orphaned » juste après la première annulation, et non par dépassement du délai : ce cas n'est pas expliqué séparément. Il ne se reproduit pas une fois le démarrage corrigé.
+
+**Écarts**
+
+- Le ticket nomme une cause pour `tests/code-review-isolated-city-test.sh` (les noms de session). Deux autres, venues de T44, sont corrigées dans le même essai pour qu'il sorte 0.
+- Les mêmes réglages de démarrage sont posés sur les fournisseurs scriptés du relecteur et de l'Evaluator de l'essai du second projet (même cause : une session d'Evaluator y avait aussi dépassé le délai).
+
+**Constats hors ticket**
+
+- Les autres essais en cité isolée déclarent leurs fournisseurs scriptés de la même façon (`base = "builtin:claude"`, `ready_delay_ms = 0`, ni invite ni dialogue) : sous charge, leurs sessions peuvent être remplacées de la même manière. Ils ne contrôlent pas l'unicité de la session, donc ne l'échouent pas aujourd'hui.
+- Ces essais dépendent de la charge de l'hôte : à une charge de 100 (batterie du runner CI auto-hébergé sur la même machine), `gc init` de la cité isolée échoue.
+- `tests/spec-integration-demonstration-test.sh` et la démonstration de capture de preuves comparent encore toutes les références du dépôt de l'usine : elles échouent si une autre session en déplace une pendant leur parcours.
+- Dans `tests/code-review-isolated-city-test.sh`, la configuration de l'essai n'a pas de formule de reprise : un ticket en retard y reste refusé à chaque passe (« aucune formule de reprise »).
 
