@@ -15,6 +15,12 @@
 # override so tests/factory-orphan-sweep-order-test.sh can point every `gc`
 # call at a fixture binary instead of the live runtime.
 #
+# Not copied from upstream (gc 1.5.0, af-ntq8jg): the `gc mail send` of the
+# summary to GC_ESCALATION_TARGET (default "human") and the exit 1 when that
+# mail cannot be delivered. A released orphan claim is the normal outcome of
+# a dead worker and each released bead carries its cause note; mail to the
+# operator goes through bin/escalation-door and bin/factory-guard here.
+#
 # Runs as an exec order (no LLM, no agent, no wisp).
 set -euo pipefail
 
@@ -26,7 +32,12 @@ GC_BIN="${GC_BIN:-gc}"
 # restart, instead of this sweep releasing it for someone else to pick up
 # while the city is down. Skip the whole pass rather than only the guard
 # below so no in-progress claim (owned or not) is reset during a suspension.
-CITY_STATUS=$("$GC_BIN" status --json 2>/dev/null) || CITY_STATUS=""
+#
+# The answer is read whatever the exit code (af-ntq8jg): since gc 1.5.0,
+# `gc status --json` exits 1 when the city is not usable -- a suspended city
+# is one -- and still prints the full JSON with "suspended": true. Dropping
+# the output on a non-zero exit switched this guard off.
+CITY_STATUS=$("$GC_BIN" status --json 2>/dev/null) || true
 if [ -n "$CITY_STATUS" ] && [ "$(printf '%s' "$CITY_STATUS" | jq -r '.suspended // false' 2>/dev/null)" = "true" ]; then
     exit 0
 fi
@@ -50,8 +61,23 @@ fi
 
 append_session_list() {
     local session_fetch_tmp
+    local row_count
     session_fetch_tmp=$(mktemp) || return 1
     if "$@" >"$session_fetch_tmp" 2>/dev/null; then
+        # An exit-0 response that parses to zero session rows carries no
+        # liveness evidence at all. A city always has at least the calling
+        # session live, so zero rows is never a legitimate steady state --
+        # treat it the same as a hard failure so the caller skips this
+        # scope's beads instead of staging them with no evidence to check
+        # against.
+        row_count=$(jq -r '.sessions // [] | length' "$session_fetch_tmp" 2>/dev/null) || row_count=""
+        case "$row_count" in
+            '' | *[!0-9]*) row_count=0 ;;
+        esac
+        if [ "$row_count" -eq 0 ]; then
+            rm -f "$session_fetch_tmp"
+            return 1
+        fi
         cat "$session_fetch_tmp" >>"$SESSION_TMP"
         rm -f "$session_fetch_tmp"
         return 0
@@ -206,10 +232,41 @@ session_bead_candidates() {
     printf '%s\n' "$work_json" | jq -r "$first_bead_jq | [
         .metadata[\"gc.session_id\"],
         .metadata[\"gc.session_bead_id\"],
-        .metadata[\"session_id\"]
+        .metadata[\"session_id\"],
+        .metadata[\"gc.session_name\"]
     ] | .[]? | select(. != null and . != \"\")" 2>/dev/null || true
 
     printf '%s\n' "$assignee" | grep -Eo '[[:alnum:]]+-wisp-[[:alnum:]][[:alnum:]-]*$' || true
+}
+
+# A pool seat's runtime name comes from CONFIG, not from a session:
+# poolRuntimeSessionName is SanitizeQualifiedNameForSession("<agent>[-<slot>]")
+# plus the "-pool" suffix (cmd/gc/session_name_lookup.go). That sanitizer
+# encodes "/" as "--" (rig-scope) and "." as "__" (pack-qualified city-scope),
+# so reconstructing seat names from $AGENTS recognizes both encodings without
+# guessing from the separator alone -- an ephemeral session name carries a
+# per-session token ("...-gc-<token>") and never reconstructs this way, so it
+# still resets when it goes missing.
+assignee_is_configured_pool_seat() {
+    local name="$1"
+    case "$name" in
+        *-pool) ;;
+        *) return 1 ;;
+    esac
+    [ -n "$AGENTS" ] || return 1
+
+    local seat="${name%-pool}"
+    local slotless="${seat%-[0-9]*}"
+    local cfg_agent sanitized
+    while IFS= read -r cfg_agent; do
+        [ -z "$cfg_agent" ] && continue
+        sanitized="${cfg_agent//\//--}"
+        sanitized="${sanitized//./__}"
+        if [ "$sanitized" = "$seat" ] || [ "$sanitized" = "$slotless" ]; then
+            return 0
+        fi
+    done <<<"$AGENTS"
+    return 1
 }
 
 session_probe_failure_is_unverifiable() {
@@ -218,6 +275,15 @@ session_probe_failure_is_unverifiable() {
 
     [ "$session_id" != "$assignee" ] && return 0
     [[ "$session_id" == mc-* ]] && return 0
+    # A session-name-shaped self-probe (e.g. "beads--deployer-pool") has
+    # nothing else resolvable to ask about -- bead ids never contain a
+    # double dash, so this shape means the probe could not be performed,
+    # not that the candidate resolved and came back dead.
+    [[ "$session_id" == *--* ]] && return 0
+    # Same reasoning for a city-scope pool seat, whose name encodes "." as
+    # "__" and so carries no double dash. Recognizing only the double-dash
+    # form released live city-scope seats mid-work (ga-dei7xx).
+    assignee_is_configured_pool_seat "$session_id" && return 0
     return 1
 }
 
@@ -278,7 +344,12 @@ reset_orphan_if_current() {
     reset_output=$("$GC_BIN" bd release-if-current "$bead_id" "$expected_assignee" 2>/dev/null) || return 1
     reset_state=$(printf '%s\n' "$reset_output" | awk 'NF { print $1; exit }')
     case "$reset_state" in
-        released) return 0 ;;
+        released)
+            if ! "$GC_BIN" bd update "$bead_id" --append-notes "factory-orphan-sweep: reset from assignee $expected_assignee -- no live session matched" >/dev/null 2>&1; then
+                echo "factory-orphan-sweep: failed to record cause note on $bead_id" >&2
+            fi
+            return 0
+            ;;
         skipped) return 2 ;;
         *) return 1 ;;
     esac
