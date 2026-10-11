@@ -60,7 +60,7 @@ import yaml
 PROGRAM = "graph-review"
 SELF_DIR = Path(__file__).resolve().parent
 ROOT = Path(os.environ.get("FACTORY_ROOT") or SELF_DIR.parent)
-BD_BIN = os.environ.get("BD_BIN", "bd")
+BD_BIN = os.environ.get("BD_BIN") or "bd"
 BD_WORKSPACE = Path(os.environ.get("GRAPH_REVIEW_BD_WORKSPACE") or ROOT)
 
 FLOW_CONTRACT_KEY = "flow_contract"

@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any
 
 PROGRAM = "planning-map"
-BD_BIN = os.environ.get("BD_BIN", "bd")
+BD_BIN = os.environ.get("BD_BIN") or "bd"
 PLANE_METADATA_KEY = "gc.plane"
 PLANNING_PLANE = "planning"
 MAP_LABEL = "wayfinder:map"
