@@ -248,7 +248,7 @@ class Resolution(unittest.TestCase):
     def test_one_claude_limit_takes_every_claude_profile_with_it(self):
         self.exhaust("anthropic")
         entries = {e["provider"]: e["state"] for e in self.pick()["chain"]}
-        self.assertEqual({"claude-standard": "exhausted", "claude-cheap": "exhausted", "codex": "available"}, entries)
+        self.assertEqual({"claude-standard": "exhausted", "codex": "available"}, entries)
         self.assertEqual("codex", self.pick()["provider"])
 
     def test_total_exhaustion_names_the_earliest_reset(self):
@@ -347,8 +347,8 @@ class Resolution(unittest.TestCase):
         pf.apply_control(self.state, self.policy, "disable", {"provider": "codex"}, NOW, "B")
         self.assertEqual("claude-standard", self.pick()["provider"])
         pf.apply_control(self.state, self.policy, "chain",
-                         {"target": "workspace", "chain": ["claude-cheap", "claude"]}, NOW, "B")
-        self.assertEqual("claude-cheap", self.pick()["provider"])
+                         {"target": "workspace", "chain": ["claude", "claude-standard"]}, NOW, "B")
+        self.assertEqual("claude", self.pick()["provider"])
         pf.apply_control(self.state, self.policy, "force", {"target": "workspace", "provider": "codex"}, NOW, "B")
         forced = self.pick()
         self.assertEqual(("codex", "forced"), (forced["provider"], forced["reason"]))
