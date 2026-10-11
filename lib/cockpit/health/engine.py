@@ -23,14 +23,6 @@ PARIS = ZoneInfo("Europe/Paris")
 SUPERVISOR_UNREACHABLE_AFTER_SECONDS = 5 * 60
 FACTORY_STALLED_AFTER_SECONDS = 60 * 60
 
-# Blocks of gc's status the cockpit shows nothing of: an error on one of them
-# takes no value away from the page, so it is not a health line (af-jew53p).
-# "store health" is gc's own measure of its store on disk; gc 1.4.1 counts
-# every retained bead under a fixed 1 s limit and fails it on every read once
-# the store holds a few thousand closed beads (fixed upstream in gc 1.5.0).
-SUPERVISOR_PARTIAL_UNREAD_BLOCKS = ("store health:",)
-
-
 def _hhmm(epoch):
     return datetime.fromtimestamp(epoch, tz=PARIS).strftime("%H:%M")
 
@@ -70,9 +62,8 @@ def supervisor_unreachable(unreachable_since, now, after_seconds=SUPERVISOR_UNRE
 def supervisor_partial(partial_errors):
     """Spec .14: gc answered, but reported part of its own state unreadable
     (``partial: true``). The values it did deliver are shown; this line
-    says the read was not whole. An error on a block the cockpit does not
-    read (``SUPERVISOR_PARTIAL_UNREAD_BLOCKS``) is not one."""
-    if not [e for e in partial_errors or () if not str(e).startswith(SUPERVISOR_PARTIAL_UNREAD_BLOCKS)]:
+    says the read was not whole."""
+    if not partial_errors:
         return None
     return {"kind": WARN, "text": "L'usine répond, mais une partie de son état est illisible."}
 

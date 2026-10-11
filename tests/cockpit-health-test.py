@@ -312,18 +312,15 @@ class CockpitHealthZoneTest(unittest.TestCase):
         self.fake_gc.set_status(partial_errors=[])
         wait_until(lambda: self.health() if self.health()["lines"] == [] else None)
 
-    def test_partial_on_a_block_the_cockpit_does_not_read_is_not_a_health_line(self):
-        # af-jew53p: gc 1.4.1 fails its own store measure on every read; the
-        # cockpit shows nothing of that block and the operator can do nothing.
-        store_health = "store health: counting retained bead rows: list timed out: context deadline exceeded"
+    def test_partial_on_the_store_measure_is_a_health_line(self):
+        # af-w82f07: since gc 1.5.0 the store measure answers; the exception
+        # made for gc 1.4.1 (af-jew53p) would now hide a real failure.
+        store_health = "store health: counting retained bead rows: counter fast path: context deadline exceeded"
         self.set_beads([])
-        self.fake_gc.set_status(partial_errors=[store_health, "mail: count timed out after 1s"])
-        self.start_cockpit()
-        self.wait_for_line_containing("une partie de son état est illisible")
-
         self.fake_gc.set_status(partial_errors=[store_health])
-        wait_until(lambda: self.health() if self.health()["lines"] == [] else None)
-        self.assertTrue(self.health()["ok"])
+        self.start_cockpit()
+        line = self.wait_for_line_containing("une partie de son état est illisible")
+        self.assertEqual("warn", line["kind"])
 
     # ------------------------------------------------------------------
     def test_mayor_first_escalation_not_promoted(self):

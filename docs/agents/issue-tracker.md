@@ -6,7 +6,7 @@ Planning Run A6b. Its `## Agent skills` pointer is in `AGENTS.md`, not
 `CLAUDE.md` as the skill says, so Codex reads it too (Benjamin, 2026-09-29).
 
 Issues for this repo live as **Beads** in the Factory's HQ Beads database
-(Dolt-backed). Use the `bd` CLI (v1.2.2), run **only from the live root**
+(Dolt-backed). Use the `bd` CLI (v1.3.1), run **only from the live root**
 `/home/benja/agent-factory`, with `--actor po-agent/<session-id>` (one actor per
 operator session, see Claim) when the operator session writes. Never create a second tracker (GitHub Issues, `.scratch/`) for this repo.
 
