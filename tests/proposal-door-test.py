@@ -224,7 +224,20 @@ class ProposalDoorTest(unittest.TestCase):
         self.assertIn("PROPOSITION RECONVERTIE en décision par mayor — Touche ce que l'opérateur voit", proposal["notes"])
         bug = self.bead("af-bug1")
         self.assertEqual("closed", bug["status"])
-        self.assertIn("Reconvertie", bug["close_reason"])
+        self.assertIn("Reconvertie", bug["notes"])
+
+    def test_reconvertir_stops_a_maintenance_bead_its_worker_holds(self):
+        # Beads 1.3 refuses a bare close to any actor but the holder (af-vhvmsi).
+        self.door("create", json.dumps(self.MAINTENANCE), check=True)
+        self.seed("af-bug1", {**self.bead("af-bug1"), "status": "in_progress", "assignee": "factory-worker-1"})
+        options = json.dumps([
+            {"option": "Filtrer les pages fermées", "consequence": "Tu ne verras plus les pages fermées dans la liste.",
+             "recommande": True, "raison": "La liste redevient lisible."},
+        ])
+        result = self.door("reconvertir", "af-prop1", "Touche ce que l'opérateur voit", options, "mayor")
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("closed", self.bead("af-bug1")["status"])
+        self.assertEqual("decision", self.bead("af-prop1")["metadata"]["gc.proposal_classe"])
 
     def test_reconvertir_refuses_a_decision_or_options_without_a_recommendation(self):
         self.door("create", json.dumps(self.COMPLETE), check=True)
