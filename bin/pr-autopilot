@@ -784,7 +784,7 @@ record_pr_conflict() {  # candidate_json sha rig_name
 
 reject_ticket() {  # repo rig_path num sha reason -> 0 handled (ticket-owned PR), 1 not ticket-owned, 2 unknown (a read timed out)
   local repo=$1 rig_path=$2 num=$3 sha=$4 reason=$5
-  local branch candidate bead status marker count comments rc
+  local branch candidate bead status marker count comments rc held if_held
 
   REJECT_TICKET_CANDIDATE_JSON=""
   REJECT_TICKET_FRESH=0
@@ -819,10 +819,23 @@ reject_ticket() {  # repo rig_path num sha reason -> 0 handled (ticket-owned PR)
   REJECT_TICKET_FRESH=1
   count=$(( $(printf '%s' "$candidate" | jq -r '.metadata["gc.pr_rejection_count"] // 0' 2>/dev/null) + 1 ))
   log "  PR #$num: $reason -> reopening ticket $bead to the pool (rejection $count)"
-  run bash -c "cd '$rig_path' && gc bd update '$bead' --status open --assignee '' \
+  # --if-assignee: Beads 1.3 refuses a bare --assignee '' over another
+  # actor's in_progress claim (exit 1), and this order is never that actor.
+  # The compare-and-set releases the claim this pass read and no other: exit
+  # 13 means the holder changed since, so the ticket is left to it and nothing
+  # is recorded for this head -- the next pass reads it again (af-33wuoh).
+  held=$(printf '%s' "$candidate" | jq -r '.assignee // empty' 2>/dev/null)
+  if_held=""
+  [ -z "$held" ] || if_held="--if-assignee '${held//\'/}' "
+  run bash -c "cd '$rig_path' && gc bd update '$bead' ${if_held}--status open --assignee '' \
     --set-metadata 'gc.pr_rejection_reason=$reason' \
     --set-metadata 'gc.pr_rejection_count=$count' \
-    --append-notes 'pr-autopilot: rejected PR #$num ($reason); rejection $count.'"
+    --append-notes 'pr-autopilot: rejected PR #$num ($reason); rejection $count.'"; rc=$?
+  if [ "$rc" = 13 ]; then
+    log "    $bead: its assignee is no longer '$held' (changed since this pass read it) -> left alone"
+    REJECT_TICKET_FRESH=0
+    return 0
+  fi
   run gh pr comment "$num" --repo "$repo" --body "$marker: $reason." >/dev/null 2>&1
 
   if [ "$count" -ge 3 ]; then

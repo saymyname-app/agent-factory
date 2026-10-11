@@ -84,11 +84,22 @@ while IFS= read -r event; do
     [ "$bead_status" = "in_progress" ] || continue
     # --assignee "" releases the bead: left assigned to the dead session it
     # would be open but still pinned to a worker that no longer exists.
-    if gc bd update "$bead_id" --status open --assignee "" \
+    # --if-assignee: Beads 1.3 refuses a bare --assignee "" over another
+    # actor's in_progress claim (exit 1), and this order is never that actor.
+    # The compare-and-set releases the claim just read and no other: exit 13
+    # means the holder changed since, so the bead is left to it (af-33wuoh).
+    bead_assignee=$(jq -r '(.[0].assignee // empty)' <<<"$bead_json")
+    held=()
+    [ -z "$bead_assignee" ] || held=(--if-assignee "$bead_assignee")
+    gc bd update "$bead_id" "${held[@]}" --status open --assignee "" \
         --set-metadata "gc.session_stranded=$session_id" \
         --append-notes "Reopened by on-session-stranded: session $session_name terminated without a clean drain while this bead was in progress." \
-        >/dev/null 2>&1; then
+        >/dev/null 2>&1
+    rc=$?
+    if [ "$rc" = 0 ]; then
       reopened_here="$reopened_here $bead_id"
+    elif [ "$rc" = 13 ]; then
+      say "on-session-stranded: $bead_id is no longer held by '$bead_assignee' (changed since it was read) -- left alone"
     else
       failed_here=1
     fi

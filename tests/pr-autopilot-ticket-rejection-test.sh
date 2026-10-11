@@ -95,6 +95,7 @@ if [[ "\$1" == bd && "\$2" == list ]]; then
   if [[ "\$*" == *"--all"* ]]; then cat "$TMP/all-beads.json"; else echo '[]'; fi
   exit 0
 fi
+if [[ "\$1" == bd && "\$2" == update ]]; then exit "\${GC_UPDATE_RC:-0}"; fi
 exit 0
 STUB
 cat > "$TMP/bin/escalation-door" <<STUB
@@ -158,5 +159,24 @@ grep -qF "bd update af-tick2" "$TMP/gc.log" \
   && { echo "$out" >&2; fail "PR #20 was rejected a second time for the same head"; }
 [ -s "$TMP/escalation.log" ] \
   && { echo "$out" >&2; fail "escalation-door was called again on an already-escalated, unresolved head"; }
+
+# --- af-33wuoh: a ticket a worker still holds is released by compare-and-set --
+# --- on the assignee this pass read; exit 13 (the holder changed) leaves the --
+# --- ticket alone and records nothing for this head ---------------------------
+cat > "$TMP/all-beads.json" <<'JSON'
+[
+ {"id":"af-tick1","status":"in_progress","assignee":"worker-1","metadata":{"gc.work_branch":"do-work/af-tick1"}}
+]
+JSON
+: > "$TMP/gc.log"; : > "$TMP/gh.log"
+out=$(pilot first)
+grep -qF "bd update af-tick1 --if-assignee worker-1 --status open --assignee  --set-metadata" "$TMP/gc.log" \
+  || { echo "$out" >&2; fail "a held ticket was not released by compare-and-set on the assignee read"; }
+: > "$TMP/gc.log"; : > "$TMP/gh.log"
+out=$(GC_UPDATE_RC=13 pilot first)
+grep -qF "af-tick1: its assignee is no longer 'worker-1'" <<<"$out" \
+  || { echo "$out" >&2; fail "a holder that changed since the read was not reported"; }
+grep -q "^pr comment 10 " "$TMP/gh.log" \
+  && { echo "$out" >&2; fail "a rejection marker was posted although the ticket was left to its new holder"; }
 
 echo "OK pr-autopilot returns a DIRTY or still-red ticket-owned PR to the pool with a rejection reason, escalates on the third, and is idempotent per head"

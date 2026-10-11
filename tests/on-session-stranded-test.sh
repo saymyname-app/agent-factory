@@ -70,6 +70,7 @@ fi
 if [[ \${1:-} == bd && \${2:-} == update ]]; then
   bead_id=\$3
   [[ -f "$TMP/fail-update" ]] && exit 1
+  [[ -f "$TMP/holder-changed" ]] && exit 13
   echo "in_progress" # unused, keep for shellcheck happiness
   echo "\$bead_id updated" >> "$TMP/updated.log"
   exit 0
@@ -152,5 +153,24 @@ rm -f "$SUSPENDED_FILE"; : > "$CALLS"
 run >/dev/null
 grep -q "af-stuck3 updated" "$TMP/updated.log" || fail "the deferred session was not reopened once the city was no longer suspended"
 grep -q '"af-susp1"' "$STATE_FILE" || fail "the deferred session was not recorded as handled once processed"
+
+# --- af-33wuoh: a bead the dead session still holds is released by -----------
+# --- compare-and-set on the assignee just read; exit 13 (the holder changed) -
+# --- leaves the bead alone, says so, and is not retried ----------------------
+cat > "$EVENTS_FILE" <<'JSON'
+{"actor":"gc","message":"pool session terminated without clean drain","payload":{"session_id":"af-held1","session_name":"claude-af-held1","template":"claude","work_bead_ids":["af-stuck4"]},"session_id":"af-held1","type":"session.stranded","ts":"2026-10-11T11:00:00Z","ok":true}
+JSON
+cat > "$TMP/beads/af-stuck4.json" <<'JSON'
+[{"id":"af-stuck4","status":"in_progress","assignee":"claude-af-held1"}]
+JSON
+rm -f "$TMP/updated.log"; : > "$CALLS"; touch "$TMP/holder-changed"
+out=$(run)
+grep -q -- "^bd update af-stuck4 --if-assignee claude-af-held1 --status open --assignee  --set-metadata" "$CALLS" \
+  || fail "a held bead was not released by compare-and-set on the assignee just read"
+grep -q "af-stuck4 is no longer held by 'claude-af-held1'" <<<"$out" \
+  || { echo "$out" >&2; fail "a holder that changed since the read was not reported"; }
+grep -q "mail send mayor" "$CALLS" && fail "the mayor was paged although the bead was left to its new holder"
+grep -q '"af-held1"' "$STATE_FILE" || fail "a session whose bead changed holder must not be retried"
+rm -f "$TMP/holder-changed"
 
 echo "OK on-session-stranded reopens orphaned work, once per session"
