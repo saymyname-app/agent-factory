@@ -25,7 +25,10 @@
 #      is released -- not even a genuinely orphaned delivery claim -- so a
 #      session stopped voluntarily during the suspension keeps its work
 #      claimed for resume; outside the suspension the sweep behaves as
-#      before.
+#      before;
+#   6. af-ntq8jg (upstream gc 1.5.0): an empty session list releases
+#      nothing, a released claim carries its cause note, and a
+#      session-name-shaped claim whose probe cannot be performed is skipped.
 
 set -Eeuo pipefail
 
@@ -116,7 +119,7 @@ UPSTREAM_PACK_DIR=$(dirname -- "$(dirname -- "$UPSTREAM_ORDER_SOURCE")")
 UPSTREAM_SCRIPT="$UPSTREAM_PACK_DIR/assets/scripts/orphan-sweep.sh"
 [ -f "$UPSTREAM_SCRIPT" ] || fail "upstream orphan-sweep.sh not found at $UPSTREAM_SCRIPT"
 
-PINNED_UPSTREAM_SHA256="006ad97d2a0a0ee4967b2f7599c4bd48e9b5a6dc7ef119f62bf2e23a150417ff"
+PINNED_UPSTREAM_SHA256="4a6c47d76f5e330219c7a558d668348a3bd025c793b8ede714e36cdaf598cce5"
 ACTUAL_UPSTREAM_SHA256=$(sha256sum "$UPSTREAM_SCRIPT" | awk '{print $1}')
 [ "$ACTUAL_UPSTREAM_SHA256" = "$PINNED_UPSTREAM_SHA256" ] || fail \
   "gc's core orphan-sweep.sh changed upstream (was $PINNED_UPSTREAM_SHA256, now $ACTUAL_UPSTREAM_SHA256) -- re-diff it against bin/factory-orphan-sweep, update the guard if needed, and re-pin this hash"
@@ -131,9 +134,40 @@ run_clean bd create "orphaned delivery claim" --directory "$TEST_CITY" --id awfo
 run_clean bd update awfos-po1 --directory "$TEST_CITY" --status in_progress --assignee "po-agent/abc123" >/dev/null
 run_clean bd update awfos-plan1 --directory "$TEST_CITY" --status in_progress --assignee "unknown-actor" >/dev/null
 run_clean bd update awfos-orphan1 --directory "$TEST_CITY" --status in_progress --assignee "unknown-delivery-actor" >/dev/null
+run_clean bd create "session-name-shaped claim" --directory "$TEST_CITY" --id awfos-seat1 \
+  --metadata '{"gc.plane":"delivery"}' >/dev/null
+run_clean bd update awfos-seat1 --directory "$TEST_CITY" --status in_progress --assignee "ghostrig--ghost-worker" >/dev/null
 
+# 3a. af-ntq8jg (upstream gc 1.5.0): a session list with zero rows is no
+#     liveness evidence, so nothing is released. This `--no-start` city
+#     lists no session, which is exactly that case.
 (cd "$TEST_CITY" && run_clean "$ROOT/bin/factory-orphan-sweep") \
-  || fail "bin/factory-orphan-sweep exited non-zero"
+  || fail "bin/factory-orphan-sweep exited non-zero on an empty session list"
+orphan_status=$(run_clean bd show awfos-orphan1 --directory "$TEST_CITY" --json | jq -r 'if type=="array" then .[0] else . end | .status')
+[ "$orphan_status" = "in_progress" ] || fail "no claim may be released while the session list is empty, got status=$orphan_status"
+
+# Every sweep below sees one live session, added to the real `gc session
+# list --json` answer by this GC_BIN fixture; every other call goes to the
+# real gc unchanged. gc never calls GC_BIN back, so this cannot loop.
+REAL_GC=$(command -v gc)
+GC_FIXTURE="$TEST_TMPDIR/gc-one-live-session"
+cat >"$GC_FIXTURE" <<EOF
+#!/usr/bin/env bash
+set -o pipefail
+case " \$* " in
+  *" session list "*)
+    "$REAL_GC" "\$@" | jq '.sessions = ((.sessions // []) + [{"id":"awfos-live1","session_name":"awfos-live","agent_name":"awfos-live","state":"active","closed":false}])'
+    ;;
+  *) exec "$REAL_GC" "\$@" ;;
+esac
+EOF
+chmod +x "$GC_FIXTURE"
+
+sweep() {
+  (cd "$TEST_CITY" && run_clean env GC_BIN="$GC_FIXTURE" "$ROOT/bin/factory-orphan-sweep")
+}
+
+sweep || fail "bin/factory-orphan-sweep exited non-zero"
 
 po_status=$(run_clean bd show awfos-po1 --directory "$TEST_CITY" --json | jq -r 'if type=="array" then .[0] else . end | .status')
 plan_status=$(run_clean bd show awfos-plan1 --directory "$TEST_CITY" --json | jq -r 'if type=="array" then .[0] else . end | .status')
@@ -144,6 +178,11 @@ orphan_assignee=$(run_clean bd show awfos-orphan1 --directory "$TEST_CITY" --jso
 [ "$plan_status" = "in_progress" ] || fail "a planning-plane bead's claim must survive the sweep, got status=$plan_status"
 [ "$orphan_status" != "in_progress" ] || fail "a claim by an unknown delivery actor must be released, still in_progress"
 [ -z "$orphan_assignee" ] || fail "a released claim must have no assignee, got assignee=$orphan_assignee"
+run_clean bd show awfos-orphan1 --directory "$TEST_CITY" --json \
+  | jq -e 'if type=="array" then .[0] else . end | (.notes // "") | contains("factory-orphan-sweep: reset from assignee unknown-delivery-actor")' >/dev/null \
+  || fail "a released claim must carry its cause note"
+seat_status=$(run_clean bd show awfos-seat1 --directory "$TEST_CITY" --json | jq -r 'if type=="array" then .[0] else . end | .status')
+[ "$seat_status" = "in_progress" ] || fail "a session-name-shaped claim (double dash) whose probe cannot be performed must be skipped, got status=$seat_status"
 
 # 4. T09 (af-xv706q): a session stopped voluntarily during a city suspension
 #    (`gc suspend`) is not a dead agent -- its claim must survive the sweep
@@ -155,8 +194,7 @@ run_clean bd update awfos-susp1 --directory "$TEST_CITY" --status in_progress --
 
 run_clean gc suspend --city "$TEST_CITY" --json >/dev/null
 
-(cd "$TEST_CITY" && run_clean "$ROOT/bin/factory-orphan-sweep") \
-  || fail "bin/factory-orphan-sweep exited non-zero while the city was suspended"
+sweep || fail "bin/factory-orphan-sweep exited non-zero while the city was suspended"
 
 susp_status=$(run_clean bd show awfos-susp1 --directory "$TEST_CITY" --json | jq -r 'if type=="array" then .[0] else . end | .status')
 susp_assignee=$(run_clean bd show awfos-susp1 --directory "$TEST_CITY" --json | jq -r 'if type=="array" then .[0] else . end | .assignee // ""')
@@ -166,8 +204,7 @@ susp_assignee=$(run_clean bd show awfos-susp1 --directory "$TEST_CITY" --json | 
 # 5. Outside the suspension, the sweep resumes its normal behavior unchanged.
 run_clean gc resume --city "$TEST_CITY" --json >/dev/null
 
-(cd "$TEST_CITY" && run_clean "$ROOT/bin/factory-orphan-sweep") \
-  || fail "bin/factory-orphan-sweep exited non-zero after resume"
+sweep || fail "bin/factory-orphan-sweep exited non-zero after resume"
 
 susp_status=$(run_clean bd show awfos-susp1 --directory "$TEST_CITY" --json | jq -r 'if type=="array" then .[0] else . end | .status')
 [ "$susp_status" != "in_progress" ] || fail "an orphaned claim must be released once the city is no longer suspended"
