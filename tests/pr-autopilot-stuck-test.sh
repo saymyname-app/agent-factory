@@ -7,6 +7,9 @@
 # a second stuck pass (the label already present) files one bead and comments
 # once; a PR that recovers sheds the label and closes that bead. BLOCKED on a
 # check that is still running is a healthy PR waiting, never a stuck one.
+# af-jaimhb: one bead per PR. The bead says what pr-autopilot tried, and a PR
+# stuck again after its bead was closed reopens that bead instead of getting
+# a new one (PR #441, 2026-10-08: three beads in 50 minutes).
 
 set -Eeuo pipefail
 
@@ -71,6 +74,8 @@ grep -qF "bd create [autopilot] PR #2 stuck:" "$TMP/gc.log" \
   || { echo "$out" >&2; fail "PR #2 (BLOCKED, already labelled) did not file a bead"; }
 grep -q "^pr comment 2 --repo saymyname-app/Say-my-name-back" "$TMP/gh.log" \
   || fail "PR #2 was not commented on when filed"
+grep -qF "What pr-autopilot tried: " "$TMP/gc.log" \
+  || { cat "$TMP/gc.log" >&2; fail "the bead filed for PR #2 does not say what pr-autopilot tried"; }
 
 # PR 3 (healthy again, was labelled) -> label removed, nothing filed.
 grep -q "^api -X DELETE repos/saymyname-app/Say-my-name-back/issues/3/labels/autopilot-stuck" "$TMP/gh.log" \
@@ -109,4 +114,31 @@ grep -q "^bd update af-stuck5 --status closed" "$TMP/gc.log" \
   || { echo "$out" >&2; fail "PR #5 recovered but its stuck bead was left open"; }
 grep -q "^bd update af-stuck2 " "$TMP/gc.log" && fail "PR #2 is still stuck but its bead was closed"
 
-echo "OK pr-autopilot flags PRs stuck across passes, once, and un-flags recovered ones"
+# --- stuck again after its bead was closed: that bead is reopened, none created ---
+cat > "$TMP/bin/gc" <<STUB
+#!/usr/bin/env bash
+echo "\$*" >> "$TMP/gc.log"
+if [[ \$1 == bd && \$2 == list ]]; then
+  if [[ "\$*" == *"--all"* ]]; then
+    echo '[{"id":"af-old2a","status":"closed","closed_at":"2026-10-08T06:01:21Z","title":"[autopilot] PR #2 stuck: merge conflict (DIRTY)","metadata":{"source":"pr-autopilot","pr_number":"2"}},
+          {"id":"af-old2b","status":"closed","closed_at":"2026-10-08T06:21:50Z","title":"[autopilot] PR #2 stuck: merge conflict (DIRTY)","metadata":{"source":"pr-autopilot","pr_number":"2"}},
+          {"id":"af-old20","status":"closed","closed_at":"2026-10-08T07:00:00Z","title":"[autopilot] PR #20 stuck: merge conflict (DIRTY)","metadata":{"source":"pr-autopilot","pr_number":"20"}}]'
+  else
+    echo '[]'
+  fi
+  exit 0
+fi
+exit 0
+STUB
+chmod +x "$TMP/bin/gc"
+: > "$TMP/gh.log"; : > "$TMP/gc.log"
+out=$(pilot)
+grep -q "^bd update af-old2b --status open" "$TMP/gc.log" \
+  || { echo "$out" >&2; cat "$TMP/gc.log" >&2; fail "PR #2 stuck again: its last closed bead was not reopened"; }
+grep -qF "bd create [autopilot] PR #2 " "$TMP/gc.log" \
+  && { echo "$out" >&2; fail "PR #2 stuck again: a second bead was created instead of reopening the first"; }
+grep -qE "^bd update af-old(2a|20) " "$TMP/gc.log" && fail "a bead of another episode or another PR was reopened"
+grep -q "^pr comment 2 --repo saymyname-app/Say-my-name-back" "$TMP/gh.log" \
+  || fail "PR #2 was not commented on when its bead was reopened"
+
+echo "OK pr-autopilot flags PRs stuck across passes, once per PR, and un-flags recovered ones"

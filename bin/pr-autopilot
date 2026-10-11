@@ -152,12 +152,16 @@ finalize_delivery() {  # rig-path bead repo pr required-workflow
 # expected_head_sha makes GitHub refuse (422) if the head moved since this
 # tick read it, instead of updating a branch we did not look at. On failure
 # the first stderr line is logged, never discarded. A single PR's failed
-# update is NOT counted in ERRORS: it is retried next tick, and a PR that
-# stays BEHIND is already made visible by stuck_pr (label on the first pass,
-# bead + PR comment on the next), so one transient 422/5xx must not turn the
-# whole order into order.failed every 3 minutes.
+# update is NOT counted in ERRORS: it is retried next tick, and a refused
+# update is made visible by flag_stuck (label on the first refusal, bead + PR
+# comment on the next), so one transient 422/5xx must not turn the whole
+# order into order.failed every 3 minutes. UPDATE_BRANCH_ERR carries GitHub's
+# answer to a refusal; it stays empty when the call was cut (unknown, never a
+# reason to flag).
+UPDATE_BRANCH_ERR=""
 update_branch() {  # repo num head_sha -> 0 requested, 1 failed (logged)
   local repo=$1 num=$2 sha=$3 err rc
+  UPDATE_BRANCH_ERR=""
   local -a args=(api -X PUT "repos/$repo/pulls/$num/update-branch")
   [ -n "$sha" ] && args+=(-f "expected_head_sha=$sha")
   if [ "$DRY_RUN" = "1" ]; then log "  DRY-RUN: gh ${args[*]}"; return 0; fi
@@ -166,7 +170,8 @@ update_branch() {  # repo num head_sha -> 0 requested, 1 failed (logged)
   if timed_out "$rc"; then log "    branch update timed out -- outcome unknown, re-read next tick"; return 1; fi
   err=$(printf '%s
 ' "$err" | sed -n '/[^[:space:]]/{p;q}')
-  log "    branch update failed: ${err:-gh exited non-zero with no stderr}"
+  UPDATE_BRANCH_ERR=${err:-gh exited non-zero with no stderr}
+  log "    branch update failed: $UPDATE_BRANCH_ERR"
   return 1
 }
 
@@ -453,7 +458,7 @@ project_descriptor_gate() {  # repo num sha labels armed -> 0 proceed, 1 hold
   return 1
 }
 
-# af-grln2: a draft, DIRTY, BEHIND, BLOCKED, or zero-check PR used to get one
+# af-grln2: a draft, DIRTY, BLOCKED, or zero-check PR used to get one
 # identical log line every pass, forever -- indistinguishable from one
 # quietly waiting its natural turn. This acts directly on data the loop
 # already fetched this tick (mergeStateStatus, statusCheckRollup, labels) --
@@ -471,7 +476,12 @@ stuck_reason() {  # mergeStateStatus checks -> prints why the PR is stuck, or no
     # repo ruleset requires "Tests"): a healthy PR whose CI outlasts two passes
     # is waiting, not stuck. Only BLOCKED with nothing left pending is.
     BLOCKED) [ "$checks" = "PENDING" ] || reason="blocked (no check is pending: a required check never ran or another merge rule is unmet)" ;;
-    BEHIND) reason="behind base (needs a merge/rebase to pick up new required checks)" ;;
+    # BEHIND is a wait too (af-jaimhb): pr-autopilot itself brings one BEHIND
+    # PR up to date per tick, oldest first, and since Factory CI runs one job
+    # at a time every merge puts the PRs queued behind it BEHIND again.
+    # Marking it here filed a bug bead for every PR but the first of the
+    # queue, at every merge (27 beads for 17 PRs, 2026-10-01 to 2026-10-11).
+    # Only a branch update GitHub refuses is flagged, where it is attempted.
   esac
   [ "$checks" = "NONE" ] && reason="${reason:+$reason; }no status check ever reported"
   printf '%s' "$reason"
@@ -485,6 +495,13 @@ stuck_beads() {  # num -> ids of the open stuck bead(s) filed for this PR
   # definition below for why.
   printf '%s' "$RIG_OPEN_BEADS_JSON" \
     | jq -r --arg t "[autopilot] PR #$1 stuck:" '.[]|select((.title//"")|startswith($t))|.id' 2>/dev/null
+}
+
+closed_stuck_bead() {  # num -> id of the last closed stuck bead filed for this PR, or nothing
+  # af-jaimhb: one bead per PR. Reads $RIG_ALL_BEADS_JSON (ensure_rig_all_beads).
+  printf '%s' "$RIG_ALL_BEADS_JSON" \
+    | jq -r --arg t "[autopilot] PR #$1 stuck:" '[.[]|select(.status=="closed")|select((.title//"")|startswith($t))]
+        | sort_by(.closed_at // .updated_at // "") | last | .id // empty' 2>/dev/null
 }
 
 ci_failure_beads() {  # num -> ids of the open "[ci] PR #num failed" bead(s) filed for this PR
@@ -508,26 +525,52 @@ close_ci_failure_beads() {  # repo rig_path num reason
 }
 
 stuck_pr() {  # repo rig_path num mergeStateStatus checks labels
-  local repo=$1 rig_path=$2 num=$3 state=$4 checks=$5 labels=" ${6//,/ } "
-  local reason
-  reason=$(stuck_reason "$state" "$checks")
+  local reason tried
+  reason=$(stuck_reason "$4" "$5")
   [ -n "$reason" ] || return 0
+  case "$4" in
+    DIRTY) tried="nothing: it never resolves a conflict, and this PR has no open ticket to send back to the pool" ;;
+    *)     tried="nothing: it cannot make a required check run or meet another merge rule" ;;
+  esac
+  flag_stuck "$1" "$2" "$3" "$reason" "$tried" "$6"
+}
+
+# af-jaimhb: a bead is opened once per PR, when pr-autopilot has nothing left
+# to try, and says what it tried. A PR stuck again after its bead was closed
+# (PR #441, 2026-10-08: three conflicts, three beads in 50 minutes) reopens
+# that bead instead of getting a new one.
+flag_stuck() {  # repo rig_path num reason tried labels
+  local repo=$1 rig_path=$2 num=$3 reason=$4 tried=${5//\'/} labels=" ${6//,/ } "
+  local title old
   case "$labels" in
     *" $STUCK_LABEL "*)
       title="[autopilot] PR #$num stuck: $reason"
-      if [ -z "$(stuck_beads "$num")" ]; then
+      if [ -n "$(stuck_beads "$num")" ]; then
+        vlog "PR #$num: stuck ($reason), already filed"
+        return 0
+      fi
+      ensure_rig_all_beads
+      if [ "$RIG_ALL_BEADS_UNKNOWN" = "1" ]; then
+        log "  PR #$num: stuck ($reason), earlier beads unknown (a read timed out) -> nothing filed this pass"
+        return 0
+      fi
+      old=$(closed_stuck_bead "$num")
+      if [ -n "$old" ]; then
+        log "  PR #$num: stuck again ($reason) -> reopening $old"
+        run bash -c "cd '$rig_path' && gc bd update '$old' --status open --title '$title' \
+          --append-notes 'Reopened by pr-autopilot: PR #$num is stuck again: $reason. What pr-autopilot tried: $tried.'"
+      else
         log "  PR #$num: stuck across passes ($reason) -> filing"
         run bash -c "cd '$rig_path' && gc bd create '$title' -p 2 -t bug \
           -d 'PR stuck across multiple pr-autopilot passes (every 3 min): $reason.
 https://github.com/$repo/pull/$num
-Not armable as-is; needs a human/Mayor look (resolve conflicts, push a commit to (re)trigger the required check, or rebase onto the latest base). pr-autopilot only observes and pages -- it never resolves a conflict or forces a check to run.' \
+What pr-autopilot tried: $tried.
+Left to a human or the Mayor: resolve the conflict, push a commit to (re)trigger the required check, or rebase onto the latest base. pr-autopilot closes this bead when the PR is no longer stuck, and reopens it if the PR gets stuck again.' \
           --metadata '{\"pr_number\":\"$num\",\"source\":\"pr-autopilot\"}'"
-        run gh pr comment "$num" --repo "$repo" \
-          --body "pr-autopilot: this PR has been $reason across multiple passes and needs attention (filed as a bead)." >/dev/null 2>&1
-        FLAGGED=$((FLAGGED+1))
-      else
-        vlog "PR #$num: stuck ($reason), already filed"
       fi
+      run gh pr comment "$num" --repo "$repo" \
+        --body "pr-autopilot: this PR has been $reason across multiple passes and needs attention (filed as a bead)." >/dev/null 2>&1
+      FLAGGED=$((FLAGGED+1))
       ;;
     *)
       run gh label create "$STUCK_LABEL" --repo "$repo" --color EDEDED --force \
@@ -832,7 +875,10 @@ for entry in "${RIGS[@]}"; do
     # nor the bead filed for it, which nothing else would ever close.
     case " ${labels//,/ } " in
       *" $STUCK_LABEL "*)
-        if [ -z "$(stuck_reason "$state" "$checks")" ]; then
+        # Not while BEHIND: the label may be the mark of a refused branch
+        # update, and whether that still holds is only known once the update
+        # is attempted again below.
+        if [ -z "$(stuck_reason "$state" "$checks")" ] && [ "$state" != "BEHIND" ]; then
           remove_label "$repo" "$num" "$STUCK_LABEL"
           vlog "PR #$num: no longer stuck -> removed $STUCK_LABEL"
           for stale in $(stuck_beads "$num"); do
@@ -930,8 +976,12 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
         log "  PR #$num: BEHIND base -> updating branch"
         if update_branch "$repo" "$num" "$sha"; then
           vlog "PR #$num: branch update requested"
+        elif [ -n "$UPDATE_BRANCH_ERR" ]; then
+          log "    will retry next tick (marked now, filed if GitHub refuses again)"
+          flag_stuck "$repo" "$rig_path" "$num" "behind base, branch update refused" \
+            "bringing the branch up to date with its base (update-branch), refused on at least two passes; GitHub answered: $UPDATE_BRANCH_ERR" "$labels"
         else
-          log "    will retry next tick (stuck flow flags it if it stays BEHIND)"
+          log "    will retry next tick"
         fi
         BEHIND_UPDATED_THIS_TICK=1
       else
