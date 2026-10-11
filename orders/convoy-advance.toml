@@ -1,63 +1,21 @@
-# T04 (af-gfyj6k, Spec af-wf4w5r §0 rule 3): code, not the Mayor, starts the
-# ready tickets of every convoy that carries the new-flow mark. The check is
-# one tracker read (is there an open marked convoy?), so this order costs
-# nothing and runs nothing while no such convoy exists; a convoy without the
-# mark is never read past that check and stays advanced by the Mayor.
-# The controller evaluates a `condition` order on each of its ticks: the
-# check, not `interval`, paces it (observed on gc 1.4.1: a pass every 20-30 s
-# while a marked convoy is open).
-# T34 (af-ckwina, §0 rule 5): a convoy in an « état sans règle » is stopped by
-# the pass, which raises one factory incident through bin/escalation-door.
+# Code, not the Mayor, advances every convoy that carries the new-flow mark.
+# What a pass does, step by step, its answers and its exits:
+# docs/CONVOY_ADVANCE.md.
+# check: one tracker read (is a marked convoy open, or closed outside its
+# commands?). While there is none, the order costs that read and runs
+# nothing; a convoy without the mark stays advanced by the Mayor.
+# trigger, interval: the controller evaluates a `condition` order on each of
+# its ticks, so the check, not `interval`, paces it (observed on gc 1.4.1: a
+# pass every 20-30 s while the check passes).
+# exec, --stopped-ok: a convoy in an « état sans règle » is stopped by the
+# pass, which raises one factory incident through bin/escalation-door.
 # --stopped-ok keeps that from also being an order failure on every tick
-# (on-order-failed would page the Mayor about a convoy he must not touch);
-# the order still fails when an incident could not be raised.
-# T18 (af-gmz9s1, §4): the same pass merges one finished ticket per convoy into
-# the integration branch of its Spec, through bin/spec-integration, with tests
-# on the merged result. A ticket returned to its author is an outcome, not an
-# order failure; a merge pass that could not run fails the order.
-# T14 (af-96cusm, §6): before that merge, the same pass has the code of each
-# finished ticket reviewed, through bin/code-review settle (a reviewer
-# session per review, one relaunch, then the stop of the ticket). A ticket
-# without a favorable verdict is not merged; that is an outcome, not an
-# order failure.
-# T15 (af-higj9z, §7): the same pass has each finished ticket evaluated on the
-# launched product, through bin/ticket-evaluation settle (the product launched
-# from a clean copy of the ticket's commit, an Evaluator session per
-# evaluation, one relaunch, then the stop of the ticket; for a prefactoring,
-# code checks that the product starts). The launched products outlive the
-# pass and are stopped by a later one, once the states are in.
-# T17 (af-rx0ocp, §8): once the review and the evaluation of a ticket have both
-# answered and one refused, the same pass opens its single correction round
-# and sends it to one fresh author session, through bin/correction-round
-# settle; a ticket still refused after that round is stopped and raised once.
-# A stopped ticket is an outcome, not an order failure.
-# T22 (af-kn83no, §9): a marked convoy closes only by code, on the operator's
-# words. One found closed any other way makes the check pass too, and the
-# pass raises it as the same factory incident; it starts nothing in it.
-# T23 (af-s5uysn, §9 points 1 to 3): once every ticket of a convoy is closed and
-# its integration branch is not red, the same pass runs the end-of-Spec gate,
-# through bin/spec-end run: three mechanical verdicts (registry, tests,
-# fidelity) on one tip of the integration branch. A condition that is not met
-# is an outcome, not an order failure; a gate that could not run fails the
-# order. Red tests or a red fidelity are the red of the integration branch:
-# the next pass publishes their one repair.
-# T24 (af-oy7v3i, §7, §9 points 4 and 5): once those three verdicts are green
-# on a commit, the same pass has the assembled product evaluated story by
-# story, through bin/outcome-evaluation settle (the product launched from a
-# clean copy of that commit, one Evaluator session, one relaunch, then the
-# stop of the evaluation, raised once). The next pass publishes, through the
-# patch door, each repair the Evaluator drafted: for a story it did not
-# observe, or for a finding « hors ticket » it classified « repaired ». An
-# unfavorable evaluation is an outcome, not an order failure.
-# T25 (af-ji2ruy, §6, §9 point 4): on the commit of those three verdicts, the
-# same pass has the whole assembled diff of the Spec reviewed, through
-# bin/spec-end-review settle (one reviewer session, one relaunch, then the
-# stop of the review), and publishes through the patch door the repair the
-# reviewer drafted for each Blocking Finding. A review that is unfavorable or
-# without result is an outcome, not an order failure; a settlement that could
-# not run fails the order.
+# (on-order-failed would page the Mayor about a convoy he must not touch).
+# The order still fails when an incident could not be raised or a step of the
+# pass could not run; a ticket refused, returned or stopped is an outcome of
+# the pass, not an order failure.
 [order]
-description = "Starts the ready tickets of every open convoy that carries the new-flow mark, in dependency order and under the factory-wide ceiling N (config/delivery-flow.json), through bin/dispatch-door; has the code of each finished ticket reviewed through bin/code-review and the ticket evaluated on the launched product through bin/ticket-evaluation, sends what they refuse to one author session once and stops a ticket still refused through bin/correction-round, then merges one reviewed and evaluated ticket per convoy into the integration branch of its Spec through bin/spec-integration; once every ticket of a convoy is closed, renders the three mechanical verdicts of the end of its Spec on one tip of that branch through bin/spec-end, then, on that commit, has the assembled product evaluated story by story through bin/outcome-evaluation and the whole assembled diff reviewed through bin/spec-end-review, and publishes the repairs the Evaluator drafted and the repair drafted for each Blocking Finding; stops a convoy in a state without rule and raises one factory incident for it. No agent takes part."
+description = "Advances by code every open convoy that carries the new-flow mark: starts its ready tickets under the ceiling N, has each finished ticket reviewed, evaluated and merged, runs the end of its Spec, and stops a convoy in a state without rule with one factory incident. No agent takes part. Each step: docs/CONVOY_ADVANCE.md."
 trigger = "condition"
 interval = "1m"
 check = "/home/benja/agent-factory/bin/convoy-advance --check-only"
