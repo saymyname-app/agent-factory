@@ -1106,7 +1106,8 @@ window (`RUNBOOK_STOP_AND_RESTART.md`), never two cities on the same Beads.
 ```bash
 # 1. as root, before the clone exists (the file needs nothing beside it)
 ssh root@<host> 'bash -s root' < bin/factory-host-install
-# 2. as benja: the operator logs in GitHub himself (private repository), then
+# 2. as benja: the operator logs in GitHub himself (the Factory opens its
+#    pull requests and clones its private rigs with that login), then
 ssh benja@<host> 'bash -s user' < bin/factory-host-install
 # 3. on the host: every line OK
 /home/benja/agent-factory/bin/factory-host-install check

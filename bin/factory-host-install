@@ -20,7 +20,9 @@
 #                                user, gc/bd/dolt, the bwrap AppArmor profile
 #   factory-host-install user    as benja: Node, Maven, the Claude and Codex
 #                                CLIs, the capture browser, the clone. Needs
-#                                `gh auth login` done first (private repo).
+#                                `gh auth login` done first: the Factory
+#                                opens its pull requests and clones its
+#                                private rigs with the operator's login.
 #
 # `root` runs before the clone exists, so the file needs nothing beside it:
 #   ssh root@<host> 'bash -s root' < bin/factory-host-install
@@ -207,7 +209,7 @@ cmd_user() {
 
   if [ ! -d "$FACTORY_ROOT/.git" ]; then
     gh auth status >/dev/null 2>&1 \
-      || { say "STOP   the repository is private: run 'gh auth login' as $FACTORY_USER, then this command again"; exit 3; }
+      || { say "STOP   the Factory needs the operator's GitHub login for its pull requests and its private rigs: run 'gh auth login' as $FACTORY_USER, then this command again"; exit 3; }
     gh auth setup-git
     git clone "$FACTORY_REPO" "$FACTORY_ROOT"
   fi
