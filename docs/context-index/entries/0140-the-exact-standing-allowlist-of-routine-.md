@@ -1,2 +1,2 @@
 Need: The exact standing allowlist of routine ops that no longer count as ADMIN (restart dispatcher, prune merged branches, clean worktrees, rotate logs, reload city config), and the named script each gesture runs through
-Read: `../AGENTS.md` (Standing ADMIN allowlist), `./bin/factory-maintain`, `../legacy/docs/decisions/ADR-0016-standing-delegation-and-non-stop-campaign.md` §7 (legacy ADR — mechanism still active, not re-validated)
+Read: `../AGENTS.md` (Standing ADMIN allowlist), `./bin/factory-maintain`, `decisions/ADR-0016-standing-delegation-and-non-stop-campaign.md` §7 (pre-refactor ADR — mechanism still active, not re-validated)

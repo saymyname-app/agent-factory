@@ -414,7 +414,7 @@ runs the guarded local test suite first and refuses the push if it fails**
 (`bin/factory-main-gate`, installed as `.githooks/pre-push`, ADR-0020).
 
 This closes a real gap: commit `8d92c13` landed directly on `main` and broke
-referential integrity between `legacy/docs/products/saymyname/DECISIONS.md` and
+referential integrity between the pre-refactor `docs/products/saymyname/DECISIONS.md` and
 `config/products/saymyname.json`'s `decision_refs` — a check
 the Cockpit V1 suite (`tests/factory-cockpit-test.py`, since removed) already had. Nothing forced that suite to run
 before the commit reached `main`; Factory CI (which then also ran `on: push`
@@ -682,7 +682,7 @@ scope-guarded, rollback) against a faked `gh`.
 ## Real-PII containment — CI structural backstop (af-6eqc)
 
 The dev DB currently holds real person data (the "invariant de confinement"
-in the pre-refactor `legacy/docs/products/saymyname/DESIGN_GOVERNANCE.md`,
+in the pre-refactor `docs/products/saymyname/DESIGN_GOVERNANCE.md` (Git history),
 untrusted). Removing that is a separate, non-urgent piece of
 work (af-hq2j, a synthetic dataset with the same shape). Until it ships,
 this is a **containment** guard against a real identifier landing in a

@@ -1,25 +1,33 @@
-# legacy/ — pre-refactor docs, untrusted
+# Pre-refactor material — what is kept here, where the rest is
 
-Everything here predates the project-agnostic refactor (Planning Run kernel,
-ADR-0025..0028). Only documents remain: `docs/` (ADR-0001..0024, product and
-pre-refactor docs) and this file. **Nothing here runs**: no order, script,
-test or CI step outside `legacy/` may reference it, and
-`tests/legacy-isolation-test.sh` refuses anything but `docs/` under it.
+Intent (Benjamin, his words, 2026-10-11): « on supprime le legacy on garde
+l'historique c'est ok si ya pas de secret »
+Mechanism (agent interpretation, af-996mmd): the `legacy/` directory is gone
+from `main`. Git history keeps every file of it: nothing was rewritten. The
+nine pre-refactor ADRs a rule in force still cites were moved into this
+directory, beside the refactor-born ADR-0025 and later. It does not mean
+those nine were re-validated, nor that the removed files are trusted.
 
-- **Code, tests and config are gone (af-xbu9gq, 2026-10-11).** The former
-  `legacy/{agents,bin,config,lib,orders,tests,ui}` (73 files, 26,652 lines)
-  were removed; Git history keeps them. Last commit holding them:
-  `b4ceba798cab85fa045a9a39953220420164134e`. List them with
-  `git ls-tree -r --name-only b4ceba7 -- legacy/`, read one with
-  `git show b4ceba7:legacy/<path>`.
-- **Untrusted.** Do not use it as a source of truth, a design reference or a
-  template. Consult it only to investigate a concrete recurring problem.
-- **Delete freely.** Any file here can be removed without notice; Git history
-  keeps it. Exception: the ADRs listed under "Pre-refactor ADRs whose
-  mechanism still runs" are cited by live rules (`AGENTS.md`,
-  `docs/CONTEXT_INDEX.md`): move the citation with them.
+Everything named on this page predates the project-agnostic refactor
+(Planning Run kernel, ADR-0025..0028).
+
+## Where the removed files are
+
+| What | Last commit holding it | List | Read one |
+|---|---|---|---|
+| Documents: ADR-0001..0024, `docs/products/` (SayMyName and example), 16 pre-refactor docs (57 files) | `987d497ffb0d129df42c32315324616e3552559e` | `git ls-tree -r --name-only 987d497 -- legacy/` | `git show 987d497:legacy/<path>` |
+| Code, tests and config: `legacy/{agents,bin,config,lib,orders,tests,ui}` (73 files, 26,652 lines; removed by af-xbu9gq) | `b4ceba798cab85fa045a9a39953220420164134e` | `git ls-tree -r --name-only b4ceba7 -- legacy/` | `git show b4ceba7:legacy/<path>` |
+
+- **Untrusted.** Do not use a removed file as a source of truth, a design
+  reference or a template. Read one only to investigate a concrete recurring
+  problem.
+- **Nothing that runs may name a `legacy/` path**, and the directory must not
+  come back: `tests/legacy-isolation-test.sh`.
 - Paths mirrored their former location (`legacy/lib/x.py` was `lib/x.py`).
   The table below names files as they were moved, for lookup in Git history.
+- The nine ADRs kept here are unchanged: a path they name
+  (`docs/products/saymyname/...`, `docs/PRODUCT_QUEUE.md`) is the path at the
+  time they were written, to look up under `legacy/` in Git history.
 
 ## Contents, by move (code rows now in Git history only)
 
@@ -76,7 +84,8 @@ proof fields; standing ADMIN allowlist in `AGENTS.md`), ADR-0017 (four condition
 for Factory improvements), ADR-0018 (provider failover), ADR-0019 (reversibility
 gate), ADR-0020 (main-landing gate), ADR-0022 (live-root enforcement), ADR-0023
 (coordination write doors: `campaign-pointer`, `deliver-close`), ADR-0024 (shared
-drain worktree). Re-decide each through the Planning Run flow when touched.
+drain worktree). These nine files are in this directory. Re-decide each through
+the Planning Run flow when touched.
 
 ## ADRs whose mechanism was retired (code in Git history)
 
