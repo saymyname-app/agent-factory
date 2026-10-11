@@ -277,6 +277,25 @@ class SpecApproveBeadModeTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertFalse(result["void"])
 
+    def test_an_empty_bd_bin_is_not_an_override(self):
+        # Gas City 1.5 gives an order BD_BIN set and empty (af-d130xt).
+        self.seed(self.mapped_spec_beads())
+        bin_dir = self.tmp / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "bd").symlink_to(FAKE_BD)
+        env = {
+            **os.environ,
+            "BD_BIN": "",
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+            "SPEC_APPROVE_BD_STATE": str(self.state_path),
+        }
+
+        proc = subprocess.run(
+            (str(TOOL), "bd-status", "--spec", "spec-1"), env=env, text=True, capture_output=True,
+        )
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertTrue(json.loads(proc.stdout)["ok"])
+
 
 class SpecApproveEntryContractTest(unittest.TestCase):
     """T07 (af-tvda3w; spec af-wf4w5r sections 2 and 3): bd-approve refuses a
