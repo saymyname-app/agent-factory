@@ -28,7 +28,10 @@ Two commands:
                 whose body's `NEXT:` line is "none", the ACTION/STATE/
                 EVIDENCE/NEXT convention this factory's mail follows --
                 see AGENTS.md) and close them, removing the stale
-                assigned-work signal.
+                assigned-work signal. A mail bead is held by its
+                recipient and Beads 1.3 refuses `bd close` to anyone else:
+                each is closed with `bd update --if-assignee <holder read>
+                --status closed`, the reason in its notes (af-vhvmsi).
   should-wake   Report whether a given assignee has any claimable assigned
                 work. Deliberately queries `bd list` WITHOUT
                 `--include-infra`, the same default a claim query uses, so
@@ -50,7 +53,12 @@ from typing import Any
 
 PROGRAM = "mail-reply-reap"
 ROOT = Path(__file__).resolve().parents[1]
+# Gas City 1.5 gives an order BD_BIN set and empty: an empty value is no
+# override either (af-vhvmsi: the tool ran '', its check answered exit 1,
+# "nothing to close", and the order never fired).
 BD_BIN = os.environ.get("BD_BIN") or "bd"
+# bd's exit code when an --if-assignee precondition no longer holds.
+BD_PRECONDITION_FAILED = 13
 
 RESOLVED_NEXT = re.compile(r"(?im)^NEXT:\s*none\b")
 
@@ -74,6 +82,27 @@ def open_mail_reply_beads(repo_root: Path) -> list[dict[str, Any]]:
     return [item for item in payload if isinstance(item, dict)]
 
 
+def close_resolved(repo_root: Path, bead: dict[str, Any]) -> bool:
+    """Close a resolved mail-reply bead whoever its recipient is, unless its
+    holder changed since `bead` was read (False: the next sweep reads it again).
+
+    Beads 1.3 refuses `bd close` to any actor but the assignee; a mail bead is
+    assigned to its recipient and this tool runs as `order:mail-reply-reap`
+    (af-vhvmsi). The resolved body is the authority to close. The reason goes
+    to the notes: `bd update` records no close reason.
+    """
+    try:
+        bd(repo_root, "update", bead["id"], "--if-assignee", bead.get("assignee") or "",
+           "--status", "closed", "--append-notes",
+           "Closed: mail-reply-reap: resolved mail-reply bead (NEXT: none) auto-closed "
+           "to remove a stale assigned-work signal (af-6675l)")
+    except subprocess.CalledProcessError as exc:
+        if exc.returncode != BD_PRECONDITION_FAILED:
+            raise
+        return False
+    return True
+
+
 def cmd_sweep(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root)
     closed: list[str] = []
@@ -85,10 +114,9 @@ def cmd_sweep(args: argparse.Namespace) -> int:
         if not is_resolved(bead):
             skipped += 1
             continue
-        if not args.dry_run:
-            bd(repo_root, "close", bead_id, "--reason",
-               "mail-reply-reap: resolved mail-reply bead (NEXT: none) auto-closed "
-               "to remove a stale assigned-work signal (af-6675l)")
+        if not args.dry_run and not close_resolved(repo_root, bead):
+            skipped += 1
+            continue
         closed.append(bead_id)
     print(json.dumps({"ok": True, "closed": closed, "skipped": skipped}, sort_keys=True))
     if args.dry_run:
