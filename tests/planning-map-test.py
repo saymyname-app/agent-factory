@@ -214,7 +214,7 @@ class PlanningMapTest(unittest.TestCase):
 
         state = self.current_state()
         self.assertEqual(state["beads"]["map-1"]["status"], "closed")
-        self.assertEqual(state["beads"]["map-1"]["notes"], "Closed: done")
+        self.assertEqual(state["beads"]["map-1"]["close_reason"], "done")
 
     def test_close_closes_a_map_held_by_another_actor(self):
         # The map stays claimed by its /to-spec session until approval closes
@@ -230,7 +230,8 @@ class PlanningMapTest(unittest.TestCase):
 
         bead = self.current_state()["beads"]["map-1"]
         self.assertEqual(bead["status"], "closed")
-        self.assertEqual(bead["assignee"], "po-agent/to-spec-session")
+        self.assertEqual(bead["close_reason"], "done")
+        self.assertIn("po-agent/to-spec-session", bead["notes"])
 
     def test_close_abandon_stops_on_a_ticket_whose_holder_changed_since_it_was_read(self):
         self.seed({
@@ -249,6 +250,7 @@ class PlanningMapTest(unittest.TestCase):
         self.assertIn("map-1.1 was not closed: it is no longer held by po-agent/a", result.stdout)
         state = self.current_state()
         self.assertEqual(state["beads"]["map-1.1"]["status"], "in_progress")
+        self.assertEqual(state["beads"]["map-1.1"]["assignee"], "po-agent/b")
         self.assertEqual(state["beads"]["map-1"]["status"], "open")
 
     def test_close_abandon_closes_the_map_and_its_open_tickets_with_the_given_reason(self):
@@ -273,11 +275,11 @@ class PlanningMapTest(unittest.TestCase):
 
         state = self.current_state()
         self.assertEqual(state["beads"]["map-1"]["status"], "closed")
-        self.assertEqual(state["beads"]["map-1"]["notes"], "Closed: superseded")
+        self.assertEqual(state["beads"]["map-1"]["close_reason"], "superseded")
         self.assertEqual(state["beads"]["map-1.1"]["status"], "closed")
-        self.assertEqual(state["beads"]["map-1.1"]["notes"], "Closed: superseded")
+        self.assertEqual(state["beads"]["map-1.1"]["close_reason"], "superseded")
         # already-closed sibling is left alone, not re-closed with the new reason
-        self.assertNotIn("notes", state["beads"]["map-1.2"])
+        self.assertNotIn("close_reason", state["beads"]["map-1.2"])
 
     # --- update (compare-and-set) -----------------------------------------
 

@@ -132,22 +132,25 @@ def close_bead(issue: dict[str, Any], reason: str) -> None:
     """Close a bead whoever holds it, unless its holder changed since `issue` was read.
 
     Beads 1.3 refuses `bd close` to any actor but the assignee, and a map stays
-    claimed by its /to-spec session until approval closes it (af-bm9y90). The
-    reason goes to the notes: `bd update` records no close reason.
+    claimed by its /to-spec session until approval closes it (af-bm9y90). A
+    held bead is first released from the holder that was read, and from that
+    one only; an unassigned bead is closed as before.
     """
     holder = issue.get("assignee") or ""
-    try:
-        run_bd([
-            "update", issue["id"], "--if-assignee", holder,
-            "--status", "closed", "--append-notes", f"Closed: {reason}",
-        ])
-    except PlanningMapError as exc:
-        if getattr(exc, "returncode", None) != BD_PRECONDITION_FAILED:
-            raise
-        raise PlanningMapError(
-            f"{issue['id']} was not closed: it is no longer held by {holder or 'nobody'}, "
-            "as it was when read; run the command again"
-        ) from exc
+    if holder:
+        try:
+            run_bd([
+                "update", issue["id"], "--if-assignee", holder, "--assignee", "",
+                "--append-notes", f"Released from {holder} to be closed: {reason}",
+            ])
+        except PlanningMapError as exc:
+            if getattr(exc, "returncode", None) != BD_PRECONDITION_FAILED:
+                raise
+            raise PlanningMapError(
+                f"{issue['id']} was not closed: it is no longer held by {holder}, "
+                "as it was when read; run the command again"
+            ) from exc
+    run_bd(["close", issue["id"], "--reason", reason])
 
 
 def read_body(body: str | None, body_file: str | None) -> str:

@@ -41,6 +41,12 @@ TEST_CITY="$TRIAL/city"
 cleanup() {
   status=$?
   trap - EXIT
+  # gc starts a named session on demand, in a tmux server whose command
+  # line does not carry the trial directory: its socket does.
+  for sock in "$TRIAL"/tmux/tmux-*/*; do
+    [ -S "$sock" ] || continue
+    tmux -S "$sock" kill-server >/dev/null 2>&1 || true
+  done
   # The city's managed Dolt server and its watchdog outlive `gc init`; their
   # command lines carry the trial directory, and nothing else does.
   pkill -f -- "$TRIAL/" >/dev/null 2>&1 || true
@@ -65,7 +71,14 @@ export HOME="$TRIAL/home" TMUX_TMPDIR="$TRIAL/tmux" CONVOY_STATE_LOCK_DIR="$TRIA
 # The tools name their city to gc from FACTORY_ROOT (af-2o6oyl); left unset,
 # they name the repository they are run from -- the live Factory (af-xcfup7).
 export FACTORY_ROOT="$TEST_CITY"
-mkdir -p "$HOME" "$TMUX_TMPDIR"
+mkdir -p "$HOME" "$TMUX_TMPDIR" "$TRIAL/stubbin"
+# A stub `codex` ahead of PATH: a write on a bead makes gc start the city's
+# named session, and without the stub that session is the real codex CLI,
+# left running after the test (five of them on 2026-10-11; the same trap as
+# tests/local-only-tests-order-test.sh).
+printf '#!/usr/bin/env bash\nexit 0\n' > "$TRIAL/stubbin/codex"
+chmod +x "$TRIAL/stubbin/codex"
+export PATH="$TRIAL/stubbin:$PATH"
 dolt config --global --add user.name "held-bead trial" >/dev/null
 dolt config --global --add user.email "trial@example.invalid" >/dev/null
 # The actor of a write that names none: the tools below run as this one.
@@ -127,8 +140,9 @@ gc bd --actor "$TAKER" update "$map" --claim >/dev/null 2>&1 || fail "could not 
 out=$("$ROOT/bin/planning-map" close --map "$map" --reason "Spec approved by trial") \
   || fail "planning-map close refused a map held by $TAKER: $out"
 expect "$map" '.status' closed "planning-map close"
-grep -qF "Spec approved by trial" <<<"$(field "$map" '[.close_reason, .notes] | map(. // "") | join(" ")')" \
-  || fail "planning-map close: the reason is not readable on the closed map"
+expect "$map" '.close_reason' "Spec approved by trial" "planning-map close"
+grep -qF "$TAKER" <<<"$(field "$map" '.notes // ""')" \
+  || fail "planning-map close: the closed map no longer names the session that held it"
 
 map=$(new "map abandoned while a sibling session holds a ticket" --labels wayfinder:map)
 child=$(new "question a sibling session is on" --parent "$map" --no-inherit-labels)
@@ -152,7 +166,7 @@ out=$("$ROOT/bin/planning-artifacts-close" 2>&1) \
 grep -q "closed=2 skipped=0 failed=0" <<<"$out" || fail "planning-artifacts-close did not close both beads: $out"
 expect "$spec" '.status' closed "planning-artifacts-close"
 expect "$draft" '.status' closed "planning-artifacts-close"
-grep -qF "$convoy" <<<"$(field "$spec" '[.close_reason, .notes] | map(. // "") | join(" ")')" \
-  || fail "planning-artifacts-close: the closed Spec bead does not name the convoy"
+grep -qF "Convoy $convoy " <<<"$(field "$spec" '.close_reason // ""')" \
+  || fail "planning-artifacts-close: the close reason of the Spec bead does not name the convoy"
 
 echo "PASS: held-bead-close-real-tracker"

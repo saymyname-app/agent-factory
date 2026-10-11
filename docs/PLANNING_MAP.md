@@ -26,10 +26,10 @@ they are never hand-typed differently by two sessions:
   closes every still-open child with that same reason, so abandoning a map
   needs no separate command. A map or a child that a session holds is closed
   too, from any session: Beads 1.3 refuses `bd close` to any actor but the
-  assignee, so the command closes with `bd update --if-assignee <holder>
-  --status closed` and writes the reason in the notes (`Closed: <reason>`).
-  If the holder changed since the command read the bead, nothing is closed
-  and the command says so: run it again (af-bm9y90;
+  assignee, so the command first releases the bead from the holder it read
+  (`bd update --if-assignee <holder> --assignee ""`, with a note naming that
+  holder), then closes it. If the holder changed since the command read the
+  bead, nothing is written and the command says so: run it again (af-bm9y90;
   `tests/held-bead-close-real-tracker-test.sh`, local-only).
 - `update` replaces the map's description only when its current description
   still matches what the caller last read (compare-and-set) -- plain

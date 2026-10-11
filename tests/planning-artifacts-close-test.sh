@@ -25,11 +25,11 @@ export SHOW_LOG="$TMP/shows.log"; : > "$SHOW_LOG"
 mkdir -p "$TMP/bin"
 
 # --- stub gc: serves `bd list --type convoy --status closed`/`bd show` from
-# the fixture files, records `bd show` calls and closes, and reflects the
+# the fixture files, records `bd show` and `bd close` calls and reflects the
 # closes into SHOW_FILE so a second run of the tool sees the target already
 # closed. As Beads 1.3 does, it refuses `bd close` on an assigned bead (the
-# tool names no actor), and `bd update --if-assignee` writes nothing and
-# exits 13 when the assignee is another one (af-bm9y90) -------------------
+# tool names no actor); `bd update --if-assignee X --assignee ""` releases
+# the bead only from X, else writes nothing and exits 13 (af-bm9y90) ------
 cat > "$TMP/bin/gc" <<'STUB'
 #!/usr/bin/env bash
 set -Eeuo pipefail
@@ -56,28 +56,38 @@ if [[ ${1:-} == bd && ${2:-} == show ]]; then
   printf '%s\n' "$found"
   exit 0
 fi
-if [[ ${1:-} == bd && ${2:-} == close ]]; then
-  [ -z "$(jq -r --arg id "$3" '.[$id].assignee // ""' "$SHOW_FILE")" ] || {
-    echo "cannot close $3: assignee is another actor" >&2
-    exit 1
-  }
-  echo "unexpected bd close of an unassigned bead: $3" >&2
-  exit 64
-fi
 if [[ ${1:-} == bd && ${2:-} == update ]]; then
   id=$3
-  reason="" status="" if_assignee="<none>"
+  if_assignee="<none>" assignee="<none>"
   shift 3
   while [ $# -gt 0 ]; do
     case "$1" in
-      --append-notes) reason=$2; shift 2 ;;
-      --status) status=$2; shift 2 ;;
       --if-assignee) if_assignee=$2; shift 2 ;;
+      --assignee) assignee=$2; shift 2 ;;
+      --append-notes) shift 2 ;;
+      *) echo "unexpected bd update flag: $1" >&2; exit 64 ;;
+    esac
+  done
+  [ "$assignee" = "" ] || { echo "unexpected bd update of $id" >&2; exit 64; }
+  [ "$if_assignee" = "$(jq -r --arg id "$id" '.[$id].assignee // ""' "$SHOW_FILE")" ] || exit 13
+  tmp=$(mktemp)
+  jq --arg id "$id" 'del(.[$id].assignee)' "$SHOW_FILE" > "$tmp" && mv "$tmp" "$SHOW_FILE"
+  exit 0
+fi
+if [[ ${1:-} == bd && ${2:-} == close ]]; then
+  id=$3
+  [ -z "$(jq -r --arg id "$id" '.[$id].assignee // ""' "$SHOW_FILE")" ] || {
+    echo "cannot close $id: assignee is another actor" >&2
+    exit 1
+  }
+  reason=""
+  shift 3
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --reason) reason=$2; shift 2 ;;
       *) shift ;;
     esac
   done
-  [ "$status" = closed ] || { echo "unexpected bd update of $id" >&2; exit 64; }
-  [ "$if_assignee" = "$(jq -r --arg id "$id" '.[$id].assignee // ""' "$SHOW_FILE")" ] || exit 13
   printf '%s\t%s\n' "$id" "$reason" >> "$CLOSE_LOG"
   tmp=$(mktemp)
   jq --arg id "$id" '.[$id].status = "closed"' "$SHOW_FILE" > "$tmp" && mv "$tmp" "$SHOW_FILE"

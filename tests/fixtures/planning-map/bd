@@ -17,7 +17,7 @@ STATE_PATH = Path(os.environ["PLANNING_MAP_BD_STATE"])
 BOOLEAN_FLAGS = {"--no-inherit-labels", "--silent", "--json"}
 VALUE_FLAGS = {
     "--parent", "--type", "--title", "--labels", "--metadata", "--body-file",
-    "--reason", "--status", "--label", "--if-assignee", "--append-notes",
+    "--reason", "--status", "--label", "--if-assignee", "--assignee", "--append-notes",
 }
 REPEATABLE_VALUE_FLAGS = {"--set-metadata"}
 
@@ -149,12 +149,12 @@ def cmd_update(flags, repeated, positionals):
     if "--if-assignee" in flags and flags["--if-assignee"] != bead.get("assignee", ""):
         sys.stderr.write(f"fake bd: {issue_id}: precondition failed\n")
         raise SystemExit(13)
-    if "--body-file" in flags:
-        bead["description"] = read_body(flags["--body-file"])
-    if "--status" in flags:
-        bead["status"] = flags["--status"]
+    if "--assignee" in flags:
+        bead["assignee"] = flags["--assignee"]
     if "--append-notes" in flags:
         bead["notes"] = "\n".join(filter(None, [bead.get("notes", ""), flags["--append-notes"]]))
+    if "--body-file" in flags:
+        bead["description"] = read_body(flags["--body-file"])
     for entry in repeated.get("--set-metadata", []):
         key, _, value = entry.partition("=")
         bead.setdefault("metadata", {})[key] = value
@@ -184,7 +184,7 @@ def cmd_close(flags, positionals):
     if bead is None:
         fail(f"issue not found: {issue_id}")
     # As Beads 1.3 does: only the assignee closes an assigned bead, and the
-    # tool under test names no actor (af-bm9y90).
+    # tools under test name no actor (af-bm9y90).
     if bead.get("assignee"):
         fail(f"cannot close {issue_id}: assignee is \"{bead['assignee']}\", actor is \"fake\"")
     bead["status"] = "closed"
