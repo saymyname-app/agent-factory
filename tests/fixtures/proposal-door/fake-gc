@@ -7,9 +7,12 @@
 # loudly, like the other fakes in tests/fixtures/ (P10, af-ygibh).
 #
 # Taught: bd create (-l, -t, -d, -p honoured), bd show --json, bd update
-# (--set-metadata, --append-notes), bd list --status --label --json, bd dep
-# relate (logged only), bd close --reason, mail send (logged to
-# $PD_MAIL_LOG when set, else to the call log only).
+# (--set-metadata, --append-notes, --status, --if-assignee: exit 13 and
+# nothing written when the bead's assignee is another one, as bd does), bd
+# list --status --label --json, bd dep relate (logged only), bd close
+# --reason (refused, exit 1, on a bead that has an assignee: Beads 1.3
+# refuses it to any actor but the holder, and no caller here is the holder),
+# mail send (logged to $PD_MAIL_LOG when set, else to the call log only).
 set -Eeuo pipefail
 
 : "${PD_BEAD_DIR:?PD_BEAD_DIR must be set by the test}"
@@ -74,6 +77,19 @@ if [[ ${1:-} == bd && ${2:-} == update ]]; then
         mv "${tmp}.next" "$tmp"
         shift 2
         ;;
+      --status)
+        jq --arg status "$2" '.status = $status' "$tmp" >"${tmp}.next"
+        mv "${tmp}.next" "$tmp"
+        shift 2
+        ;;
+      --if-assignee)
+        if [[ $(jq -r '.assignee // ""' "$file") != "$2" ]]; then
+          rm -f "$tmp"
+          printf 'assignee mismatch on %s\n' "$id" >&2
+          exit 13
+        fi
+        shift 2
+        ;;
       *)
         printf 'unsupported gc bd update flag: %s\n' "$1" >&2
         exit 64
@@ -89,6 +105,8 @@ if [[ ${1:-} == bd && ${2:-} == close ]]; then
   id=$3
   file=$(bead_file "$id")
   [[ -f $file ]] || { printf 'not found\n' >&2; exit 42; }
+  holder=$(jq -r '.assignee // ""' "$file")
+  [[ -z $holder ]] || { printf 'cannot close %s: assignee is "%s"\n' "$id" "$holder" >&2; exit 1; }
   reason=""
   shift 3
   while [[ $# -gt 0 ]]; do
