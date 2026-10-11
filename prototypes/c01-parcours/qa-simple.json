@@ -1,0 +1,13 @@
+{
+  "checks": [
+    "A: missing proposal requests explicit choice",
+    "A: exact words preserved in returned state",
+    "B: dataset switch and trial closure",
+    "C: words preserved across variant switch",
+    "C: acceptance awaits merge",
+    "C: conflict requires new judgment",
+    "A/C: responsive 390px inspected"
+  ],
+  "writes": "simulation only",
+  "scope": "representative browser checks, not previous 84-case battery"
+}

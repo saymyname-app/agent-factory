@@ -78,3 +78,12 @@ Verdict actuel : trois variantes consultables, aucune retenue pour les nouveaux 
 
 Après choix : enregistrer les mots de Benjamin, figer uniquement les parcours retenus avec leurs états et ancres, contrôler la conformité du prototype avant confirmation, puis référencer ce prototype dans la Spec de reprise. Ne pas transformer ce code jetable en implémentation de production.
 Pour quitter l’essai : arrêter uniquement le serveur 8185. Le cockpit 8173 et l’usine n’ont pas été modifiés.
+
+## Révision : alléger l’interface
+
+Intent (Benjamin, ses mots, 2026-10-11) : « dans toutes les propositions il y a trop de texte, trop de detail trop de contenu. Il faut me simplifier la vie surtout, l’interface doit etre simple. »
+Mechanism (agent interpretation) : réduire le détail visible à une phrase et aux actions utiles ; dossier, preuves et historique sur demande ; retirer le classement manuel des constats. Cette demande ne valide aucune variante ni ne supprime les garde-fous du jugement.
+
+A : trois onglets. B : une action à la fois sans rail ni étapes administratives. C : accès directs et avis dépliable. Le texte du prompt est masqué jusqu’à une consultation explicite. Les mots exacts, le verdict sur chaque proposition, l’abandon motivé et l’acceptation distincte de la fusion restent requis. Le verdict manquant est demandé au moment de continuer ; les constats ne sont plus à classer par Benjamin. Aucune écriture réelle.
+
+Les captures et QA de la première révision sont historiques ; la vérification de cette simplification est dans qa-simple.json et screenshots-simple/.
