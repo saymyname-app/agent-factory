@@ -395,7 +395,7 @@ runs the guarded local test suite first and refuses the push if it fails**
 This closes a real gap: commit `8d92c13` landed directly on `main` and broke
 referential integrity between `legacy/docs/products/saymyname/DECISIONS.md` and
 `config/products/saymyname.json`'s `decision_refs` — a check
-`legacy/tests/factory-cockpit-test.py` already had. Nothing forced that suite to run
+the Cockpit V1 suite (`tests/factory-cockpit-test.py`, since removed) already had. Nothing forced that suite to run
 before the commit reached `main`; Factory CI (which then also ran `on: push`
 to `main`; it no longer does, see `OPERATIONS.md`, "Factory CI cost and the
 Actions quota") only reported it after the fact, and

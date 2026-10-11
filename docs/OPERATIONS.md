@@ -1,8 +1,8 @@
 # Operations
 
 > Retired systems (Cockpit V1, ntfy, campaign, product queue/status/preview,
-> release contract, improvement axes) are documented only under `../legacy/`
-> (untrusted; see `../legacy/README.md`).
+> release contract, improvement axes): code removed (Git history), documented
+> only under `../legacy/` (untrusted; see `../legacy/README.md`).
 
 ## Bootstrap policy
 
