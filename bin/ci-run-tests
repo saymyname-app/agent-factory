@@ -68,8 +68,9 @@
 #                            # long tests (15 minutes on the host's own
 #                            # runner), and the host is not kept busy by a
 #                            # run already known red. Green, every test ran:
-#                            # the gate is unchanged. Factory CI passes it on
-#                            # the host's own runner, where a run is one lot.
+#                            # the gate is unchanged. Factory CI passes it in
+#                            # every lot (af-vqew1x): each lot leads with its
+#                            # own rule checks.
 #   ci-run-tests --rule-checks [--changed-since REF] [--list]
 #                            # not the battery: only the rule checks, the
 #                            # files config/ci-test-seconds.tsv gives

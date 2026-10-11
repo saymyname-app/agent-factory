@@ -371,6 +371,21 @@ class GraphReviewTest(unittest.TestCase):
     def test_publication_refuses_a_draft_that_was_never_reviewed(self):
         self.assert_publication_refused("n'a pas de relecture de graphe")
 
+    def test_an_empty_bd_bin_is_not_an_override(self):
+        # Gas City 1.5 gives an order BD_BIN set and empty (af-d130xt): the
+        # check and the door that asks for it answer as with no BD_BIN at all.
+        bin_dir = self.tmp / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "bd").symlink_to(PUBLISH_FIXTURES / "bd-bead-mode")
+        with_bd = self.tool("check", "draft-1")
+        self.env.update({"BD_BIN": "", "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"})
+
+        as_an_order = self.tool("check", "draft-1")
+        self.assertEqual((with_bd.returncode, with_bd.stdout, with_bd.stderr),
+                         (as_an_order.returncode, as_an_order.stdout, as_an_order.stderr))
+        self.assertNotIn("le tracker n'a pas pu être lu", with_bd.stdout + with_bd.stderr)
+        self.assert_publication_refused("n'a pas de relecture de graphe")
+
     def test_publication_passes_with_a_favorable_review_of_the_current_digest(self):
         self.reviewed()
 

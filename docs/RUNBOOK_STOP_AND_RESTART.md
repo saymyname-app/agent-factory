@@ -1,8 +1,8 @@
 # Runbook — arrêter et redémarrer l'usine proprement
 
 > Systèmes retirés (Cockpit V1, ntfy, campagne, file/statut/preview produit,
-> contrat de release, axes d'amélioration) : code retiré (historique Git),
-> documentés seulement dans `../legacy/` (non fiable, voir `../legacy/README.md`).
+> contrat de release, axes d'amélioration) : code et documents retirés, gardés par l'historique
+> Git (non fiable, voir `decisions/PRE_REFACTOR.md`).
 
 Procédure exécutée et vérifiée le 2026-09-16 sur la cité `agent-factory`.
 Chaque piège décrit ici a réellement été rencontré pendant cette fenêtre : ce

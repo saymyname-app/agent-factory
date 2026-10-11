@@ -4,6 +4,10 @@ Snapshot of 2026-09-27 at `f591937` (after legacy PR 5b). Every tracked file
 outside `legacy/` has one verdict; every finding has one disposition. A later
 change does not update this file: the next inventory replaces it.
 
+Note of 2026-10-11 (af-996mmd): `legacy/` has since been removed from `main`.
+A path under it in the tables below is in Git history
+(`decisions/PRE_REFACTOR.md`).
+
 **Verdicts.** `kernel` — refactor-born, project-agnostic core (Planning Run
 flow, graph execution). `ops` — live operations machinery, coherent today,
 reviewed in the Planning Run "Factory operations v2" (A5). `legacy` — serves

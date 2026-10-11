@@ -1,0 +1,266 @@
+#!/usr/bin/env bash
+# factory-host-install — put on a fresh Ubuntu 24.04 host what the Factory
+# needs before its city can start there (af-o6l5rl).
+#
+# Intent (Benjamin, his words, 2026-10-11): « je veux la meilleure solution
+# cloud existante au meilleur prix pour mon usine et projets stp, et il faut
+# tout installer, rapidement »
+# Mechanism (agent interpretation): one self-contained file, replayable, that
+# installs the tools inventoried on the WSL host on 2026-10-11, at the same
+# versions, for the same user and path (`benja`, /home/benja/agent-factory).
+# It does not mean a second live Factory: this script never starts a
+# supervisor, a city, a timer or an agent, and copies no Beads data. That is
+# the cutover (docs/OPERATIONS.md, "Install on a fresh Ubuntu host").
+#
+# Usage:
+#   factory-host-install check   installs and starts nothing: one line per
+#                                requirement (OK, WARN, MISSING); exit 1 on a
+#                                MISSING
+#   factory-host-install root    as root: packages, container engine, the
+#                                user, gc/bd/dolt, the bwrap AppArmor profile
+#   factory-host-install user    as benja: Node, Maven, the Claude and Codex
+#                                CLIs, the capture browser, the clone. Needs
+#                                `gh auth login` done first (private repo).
+#
+# `root` runs before the clone exists, so the file needs nothing beside it:
+#   ssh root@<host> 'bash -s root' < bin/factory-host-install
+# Every step is skipped when its result is already there. No secret is read,
+# asked or written. Not installed on purpose: the CI runner (config/ci-runner),
+# Tailscale (the operator joins the host to the tailnet himself).
+set -Eeuo pipefail
+
+FACTORY_USER=benja
+FACTORY_HOME=/home/benja
+FACTORY_ROOT=$FACTORY_HOME/agent-factory
+FACTORY_REPO=https://github.com/saymyname-app/agent-factory.git
+
+# Pins: the versions running on the WSL host on 2026-10-11. The sha256 is the
+# binary's, identical in the upstream release archive and in /usr/local/bin
+# there. An upgrade (docs/OPERATIONS.md, "Upgrade") changes them here too:
+# tests/factory-host-install-test.sh is red while they differ from the host.
+GC_VERSION=1.5.0
+GC_SHA256=02d9cac82babe4f0316c4764cdb5faadd40c3cae85796c8acbfdcf34b9258376
+BD_VERSION=1.3.1
+BD_SHA256=a8f48d771b9e11eccfced4aed72923b59eda746f7a9b425e7ca1af7a51251653
+DOLT_VERSION=2.1.7
+DOLT_SHA256=277bf8fa57b498704fd729b589470a92fa8601318fd2fb88ecf92ac9724243f2
+NODE_VERSION=22.23.2
+NODE_SHA256=d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307
+MAVEN_VERSION=3.9.9
+MAVEN_SHA512=a555254d6b53d267965a3404ecb14e53c3827c09c3b94b5678835887ab404556bfaf78dcfe03ba76fa2508649dca8531c74bca4d5846513522404d48e8c4ac8b
+CLAUDE_VERSION=2.1.290   # city.toml needs >= 2.1.280
+CODEX_VERSION=0.155.1
+PLAYWRIGHT_VERSION=1.63.0  # Chromium 1243, the one bin/evidence-capture was tried on
+SWAP_SIZE=4G
+
+# The WSL host had Docker Desktop's CLI and Windows' Maven on PATH, and a
+# Temurin 21 in ~/.local: here the engine, Maven and OpenJDK 21 are the
+# host's own. The libraries are the ones Chromium's headless shell links.
+APT_PACKAGES="git gh jq tmux ripgrep curl ca-certificates xz-utils unzip python3
+  bubblewrap uidmap apparmor openjdk-21-jdk-headless docker.io docker-compose-v2
+  libnss3 libnspr4 libasound2t64 libatk1.0-0t64 libatk-bridge2.0-0t64
+  libatspi2.0-0t64 libdrm2 libgbm1 libxkbcommon0 libxcomposite1 libxdamage1
+  libxfixes3 libxrandr2 libx11-6 libxext6 libxcb1 libglib2.0-0t64 libdbus-1-3"
+
+# Ubuntu 24.04 denies unprivileged user namespaces to unconfined programs;
+# bin/delivery-role-sandbox and the oracles build theirs with bwrap. Same
+# text as config/fixture-city-bwrap.apparmor (the test compares them).
+bwrap_profile() {
+  cat <<'EOF'
+abi <abi/4.0>,
+
+include <tunables/global>
+
+profile fixture-city-bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+}
+EOF
+}
+
+say() { printf '%s\n' "$*"; }
+die() { printf 'factory-host-install: %s\n' "$*" >&2; exit 2; }
+sha256_of() { sha256sum "$1" | cut -d' ' -f1; }
+
+# fetch_binary <name> <sha256> <url> <path of the binary in the archive>
+fetch_binary() {
+  local name=$1 want=$2 url=$3 member=$4 tmp
+  if [ -x "/usr/local/bin/$name" ] && [ "$(sha256_of "/usr/local/bin/$name")" = "$want" ]; then
+    say "skip   $name (already the pinned binary)"; return 0
+  fi
+  tmp=$(mktemp -d)
+  curl -fsSL --retry 3 -o "$tmp/a.tgz" "$url"
+  tar -xzf "$tmp/a.tgz" -C "$tmp" "$member"
+  [ "$(sha256_of "$tmp/$member")" = "$want" ] || die "$name: sha256 differs from the pin ($url)"
+  install -m 755 "$tmp/$member" "/usr/local/bin/$name"
+  rm -rf "$tmp"
+  say "done   $name"
+}
+
+cmd_root() {
+  [ "$(id -u)" = 0 ] || die "'root' runs as root"
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  [ "${VERSION_ID:-}" = "24.04" ] || die "Ubuntu 24.04 expected, found ${PRETTY_NAME:-unknown}"
+
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -q
+  # shellcheck disable=SC2086
+  apt-get install -y -q --no-install-recommends $APT_PACKAGES
+
+  if ! id "$FACTORY_USER" >/dev/null 2>&1; then
+    useradd --create-home --shell /bin/bash "$FACTORY_USER"
+    say "done   user $FACTORY_USER (no password, no sudo)"
+  fi
+  [ "$(getent passwd "$FACTORY_USER" | cut -d: -f6)" = "$FACTORY_HOME" ] \
+    || die "$FACTORY_USER's home is not $FACTORY_HOME"
+  # The operator's public keys, so `ssh benja@<host>` works as `ssh root@` did.
+  if [ -s /root/.ssh/authorized_keys ] && [ ! -e "$FACTORY_HOME/.ssh/authorized_keys" ]; then
+    install -d -m 700 -o "$FACTORY_USER" -g "$FACTORY_USER" "$FACTORY_HOME/.ssh"
+    install -m 600 -o "$FACTORY_USER" -g "$FACTORY_USER" /root/.ssh/authorized_keys "$FACTORY_HOME/.ssh/authorized_keys"
+  fi
+  # As on the WSL host: the docker group is root on the machine, in effect.
+  usermod -aG docker "$FACTORY_USER"
+  # The user's systemd units (supervisor, factory-revive) run without a login.
+  loginctl enable-linger "$FACTORY_USER"
+
+  fetch_binary gc "$GC_SHA256" \
+    "https://github.com/gastownhall/gascity/releases/download/v$GC_VERSION/gascity_${GC_VERSION}_linux_amd64.tar.gz" gc
+  fetch_binary bd "$BD_SHA256" \
+    "https://github.com/gastownhall/beads/releases/download/v$BD_VERSION/beads_${BD_VERSION}_linux_amd64.tar.gz" bd
+  fetch_binary dolt "$DOLT_SHA256" \
+    "https://github.com/dolthub/dolt/releases/download/v$DOLT_VERSION/dolt-linux-amd64.tar.gz" dolt-linux-amd64/bin/dolt
+
+  if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+    bwrap_profile > /etc/apparmor.d/fixture-city-bwrap
+    apparmor_parser -r /etc/apparmor.d/fixture-city-bwrap
+    say "done   AppArmor profile for bwrap"
+  fi
+
+  # The WSL host ran on 8 GB + 6 GB of swap and used it under test batteries.
+  if [ -z "$(swapon --noheadings --show=NAME)" ] && [ ! -e /swapfile ]; then
+    fallocate -l "$SWAP_SIZE" /swapfile && chmod 600 /swapfile
+    mkswap -q /swapfile && swapon /swapfile
+    printf '/swapfile none swap sw 0 0\n' >> /etc/fstab
+    say "done   swap $SWAP_SIZE"
+  fi
+
+  say "root: done. Next, as $FACTORY_USER: gh auth login, then '$0 user' (or bash -s user)."
+}
+
+cmd_user() {
+  [ "$(id -un)" = "$FACTORY_USER" ] && [ "$HOME" = "$FACTORY_HOME" ] \
+    || die "'user' runs as $FACTORY_USER with HOME=$FACTORY_HOME"
+  local opt=$HOME/.local/opt bin=$HOME/.local/bin tmp
+  mkdir -p "$opt" "$bin"
+  export PATH="$bin:$PATH"
+
+  if [ ! -x "$opt/node-$NODE_VERSION/bin/node" ]; then
+    tmp=$(mktemp -d)
+    curl -fsSL --retry 3 -o "$tmp/node.tar.xz" "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-linux-x64.tar.xz"
+    [ "$(sha256_of "$tmp/node.tar.xz")" = "$NODE_SHA256" ] || die "node: sha256 differs from the pin"
+    mkdir "$opt/node-$NODE_VERSION"
+    tar -xJf "$tmp/node.tar.xz" -C "$opt/node-$NODE_VERSION" --strip-components=1
+    rm -rf "$tmp"
+  fi
+  ln -sfn "$opt/node-$NODE_VERSION/bin/node" "$bin/node"
+  ln -sfn "$opt/node-$NODE_VERSION/bin/npm" "$bin/npm"
+  ln -sfn "$opt/node-$NODE_VERSION/bin/npx" "$bin/npx"
+  say "done   node $NODE_VERSION"
+
+  if [ ! -x "$opt/apache-maven-$MAVEN_VERSION/bin/mvn" ]; then
+    tmp=$(mktemp -d)
+    curl -fsSL --retry 3 -o "$tmp/maven.tgz" "https://archive.apache.org/dist/maven/maven-3/$MAVEN_VERSION/binaries/apache-maven-$MAVEN_VERSION-bin.tar.gz"
+    [ "$(sha512sum "$tmp/maven.tgz" | cut -d' ' -f1)" = "$MAVEN_SHA512" ] || die "maven: sha512 differs from the pin"
+    tar -xzf "$tmp/maven.tgz" -C "$opt"
+    rm -rf "$tmp"
+  fi
+  ln -sfn "$opt/apache-maven-$MAVEN_VERSION/bin/mvn" "$bin/mvn"
+  say "done   maven $MAVEN_VERSION"
+
+  # Into ~/.local, where the WSL host has them; never a provider login here.
+  if [ "$(claude --version 2>/dev/null | cut -d' ' -f1)" != "$CLAUDE_VERSION" ] \
+    || [ "$(codex --version 2>/dev/null | awk '{print $NF}')" != "$CODEX_VERSION" ]; then
+    npm install --global --prefix "$HOME/.local" --no-fund --no-audit \
+      "@anthropic-ai/claude-code@$CLAUDE_VERSION" "@openai/codex@$CODEX_VERSION"
+  fi
+  say "done   claude $CLAUDE_VERSION, codex $CODEX_VERSION"
+
+  if ! compgen -G "$HOME/.cache/ms-playwright/chromium_headless_shell-*" >/dev/null; then
+    npx --yes "playwright@$PLAYWRIGHT_VERSION" install chromium chromium-headless-shell
+  fi
+  say "done   capture browser (playwright $PLAYWRIGHT_VERSION)"
+
+  # Ubuntu's docker.io is Engine 29: Testcontainers 1.x otherwise asks it for
+  # API v1.32, which it no longer serves (same file as on the WSL host).
+  [ -e "$HOME/.docker-java.properties" ] || printf 'api.version=1.44\n' > "$HOME/.docker-java.properties"
+
+  if [ ! -d "$FACTORY_ROOT/.git" ]; then
+    gh auth status >/dev/null 2>&1 \
+      || { say "STOP   the repository is private: run 'gh auth login' as $FACTORY_USER, then this command again"; exit 3; }
+    gh auth setup-git
+    git clone "$FACTORY_REPO" "$FACTORY_ROOT"
+  fi
+  "$FACTORY_ROOT/bin/factory-setup"
+
+  say "user: done. Nothing is started: no supervisor, no city, no timer."
+  say "Check: $FACTORY_ROOT/bin/factory-host-install check"
+}
+
+cmd_check() {
+  local missing=0 tool path
+  ok()   { printf 'OK      %s\n' "$*"; }
+  warn() { printf 'WARN    %s\n' "$*"; }
+  miss() { printf 'MISSING %s\n' "$*"; missing=1; }
+
+  # shellcheck disable=SC1091
+  if [ "$(. /etc/os-release && printf %s "$VERSION_ID")" = "24.04" ]; then ok "Ubuntu 24.04"; else miss "Ubuntu 24.04"; fi
+  if [ "$(id -un)" = "$FACTORY_USER" ] && [ "$HOME" = "$FACTORY_HOME" ]; then ok "user $FACTORY_USER, home $FACTORY_HOME"
+  else miss "run as $FACTORY_USER with HOME=$FACTORY_HOME (the path is in the tracked files)"; fi
+
+  for tool in git gh jq tmux rg python3 curl flock bwrap java mvn node npm docker claude codex; do
+    path=$(command -v "$tool" 2>/dev/null) || { miss "$tool"; continue; }
+    case "$(readlink -f "$path")" in
+      /mnt/*) warn "$tool comes from Windows ($path): not there on a real host" ;;
+      *) ok "$tool" ;;
+    esac
+  done
+
+  check_pin() {  # <name> <sha256> <version>
+    if [ ! -x "/usr/local/bin/$1" ]; then miss "$1 $3"
+    elif [ "$(sha256_of "/usr/local/bin/$1")" = "$2" ]; then ok "$1 $3 (pinned binary)"
+    else miss "$1 $3: /usr/local/bin/$1 is another binary than the pin"; fi
+  }
+  check_pin gc "$GC_SHA256" "$GC_VERSION"
+  check_pin bd "$BD_SHA256" "$BD_VERSION"
+  check_pin dolt "$DOLT_SHA256" "$DOLT_VERSION"
+
+  if timeout 20 docker info >/dev/null 2>&1; then ok "container engine answers to $FACTORY_USER"
+  else miss "container engine (docker info) for this user: Backend tests use Testcontainers"; fi
+  if timeout 10 bwrap --unshare-user --ro-bind / / true 2>/dev/null; then ok "bwrap can build a user namespace"
+  else miss "bwrap user namespace (AppArmor profile fixture-city-bwrap)"; fi
+  if [ "$(loginctl show-user "$FACTORY_USER" -p Linger --value 2>/dev/null)" = "yes" ]; then ok "linger"
+  else miss "linger for $FACTORY_USER (user units stop at logout)"; fi
+
+  local shell_bin libs
+  shell_bin=$(compgen -G "$HOME/.cache/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-*/chrome-headless-shell" | head -1 || true)
+  libs=$([ -z "$shell_bin" ] || ldd "$shell_bin" 2>/dev/null || true)
+  if [ -z "$shell_bin" ]; then miss "capture browser (chrome-headless-shell)"
+  elif grep -q 'not found' <<<"$libs"; then miss "capture browser: $(grep -c 'not found' <<<"$libs") system libraries not found"
+  else ok "capture browser"; fi
+
+  if gh auth status >/dev/null 2>&1; then ok "gh authenticated"; else miss "gh auth login"; fi
+  case "$(git -C "$FACTORY_ROOT" config core.hooksPath 2>/dev/null)" in
+    *.githooks) ok "clone at $FACTORY_ROOT, hooks active" ;;
+    *) miss "clone at $FACTORY_ROOT with bin/factory-setup run" ;;
+  esac
+
+  [ "$missing" = 0 ] || return 1
+}
+
+case "${1:-}" in
+  check) cmd_check ;;
+  root) cmd_root ;;
+  user) cmd_user ;;
+  -h|--help|help) sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) echo "usage: factory-host-install check|root|user (--help)" >&2; exit 2 ;;
+esac

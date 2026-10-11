@@ -4,9 +4,12 @@ name: Factory CI
 # check there is nothing to gate on, so branches pile up unmerged — which is
 # exactly what happened up to 2026-09-15 (28 branches, 21 commits of drift).
 #
-# On GitHub's runners every minute is billed (private repository): what a run
-# costs, why it has this shape and what to do when the quota is reached are
-# in docs/OPERATIONS.md, "Factory CI cost and the Actions quota" (af-mzuprx).
+# The repository is public since 2026-10-11: on GitHub's runners a minute is
+# billed nothing, so the number of lots and their order are chosen for the
+# time between a push and a green or a red "Tests" (af-vqew1x). What was
+# measured while the minutes were billed, and the choices of that time that
+# still hold (no run on push, a replaced run cancelled, one file per core):
+# docs/OPERATIONS.md, "Factory CI cost and the Actions quota" (af-mzuprx).
 # With the repository variable FACTORY_CI_RUNNER=self-hosted the same jobs
 # run on the host's own runner instead, 0 billed minute: same file,
 # "Factory CI on the host's own runner" (af-r1ymfm); `bin/ci-runner mode`
@@ -34,12 +37,12 @@ permissions:
 
 # The tests run in LOTS lots, one runner each (bin/ci-run-tests --shard),
 # and each runner runs as many test files at once as it has cores (--jobs):
-# the tests are bound by the processor, so a core left idle is billed for
-# nothing. Each lot pays its own setup and rounding to the minute, about one
-# billed minute, and ends the run sooner. The lots are dealt by the seconds
-# each file took in a real run (config/ci-test-seconds.tsv): uneven lots are
-# what costs, because the job named "Tests" is billed while it waits for the
-# longest one.
+# the tests are bound by the processor. Each lot pays about twenty seconds
+# of setup and ends the run sooner, down to the longest test file, which
+# runs alone on one core: more lots than that file allows shorten nothing
+# (docs/OPERATIONS.md, "How long a run lasts"). The lots are dealt by the
+# seconds each file took in a real run (config/ci-test-seconds.tsv): the
+# run lasts as long as its longest lot.
 # Lot 1 is the job named "Tests": the one status check the repository
 # ruleset requires and bin/pr-autopilot gates on. It exists from the first
 # second of the run, as before, and ends green only when its own lot and
@@ -47,10 +50,10 @@ permissions:
 # would report nothing while they run, which the autopilot reads as "no
 # status check ever reported".
 # The host's own runner takes one job at a time: there the run is one lot,
-# "Tests" alone (four lots would wait on each other for ever, "Tests"
+# "Tests" alone (several lots would wait on each other for ever, "Tests"
 # holding the runner while it waits for lots that need it).
 env:
-  LOTS: ${{ vars.FACTORY_CI_RUNNER == 'self-hosted' && '1' || '4' }}
+  LOTS: ${{ vars.FACTORY_CI_RUNNER == 'self-hosted' && '1' || '6' }}
   # A pull request that changes only areas the long tests cannot reach
   # (config/ci-long-test-blind-areas.txt: docs, the Cockpit) runs without
   # them; any other pull request, and any doubt, runs everything
@@ -65,7 +68,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        lot: ${{ fromJSON(vars.FACTORY_CI_RUNNER == 'self-hosted' && '[1]' || '[1, 2, 3, 4]') }}
+        lot: ${{ fromJSON(vars.FACTORY_CI_RUNNER == 'self-hosted' && '[1]' || '[1, 2, 3, 4, 5, 6]') }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -154,12 +157,13 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "$(git rev-list --parents -n 1 HEAD | wc -w)" -eq 3 ]; then
             since=(--changed-since 'HEAD^1')
           fi
-          # On the host's own runner the run is one lot and costs nothing
-          # billed: the rule checks go first and a red one stops the run
-          # after a minute (af-r1ymfm; Benjamin, 2026-10-08). On GitHub's
-          # runners the four lots keep their order.
-          first=()
-          if [ "$RUNNER_ENVIRONMENT" = self-hosted ]; then first=(--rule-checks-first); fi
+          # In every lot the rule checks go first, and a red one stops the
+          # lot there: a stale catalogue or a lint is red on its lot after
+          # about a minute instead of after the long tests. On the host's
+          # own runner since af-r1ymfm (Benjamin, 2026-10-08); on GitHub's
+          # runners since the repository is public and the minute billed
+          # nothing (af-vqew1x; Benjamin, 2026-10-11). Green, every test ran.
+          first=(--rule-checks-first)
           bin/ci-run-tests --shard "${{ matrix.lot }}/$LOTS" --jobs "$(nproc)" "${since[@]}" "${first[@]}"
 
       - name: Wait for the other lots
@@ -172,16 +176,22 @@ jobs:
           for _ in $(seq 1 360); do
             jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" \
               --jq '[.jobs[] | select(.name | startswith("Lot ")) | {name, status, conclusion}]') || jobs='[]'
+            # A lot that ended red: the run is red whatever the others do,
+            # so "Tests" says it now instead of when the longest lot ends.
+            red=$(jq -r '.[] | select(.status == "completed" and .conclusion != "success") | "\(.name): \(.conclusion)"' <<<"$jobs")
+            if [ -n "$red" ]; then
+              echo "$red"
+              echo "a lot failed: see its own job for the failing test (the lots still running are not waited for)" >&2
+              exit 1
+            fi
             total=$(jq length <<<"$jobs")
             running=$(jq '[.[] | select(.status != "completed")] | length' <<<"$jobs")
             if [ "$total" -eq "$others" ] && [ "$running" -eq 0 ]; then
               jq -r '.[] | "\(.name): \(.conclusion)"' <<<"$jobs"
               if [ "$SECONDS" -gt 180 ]; then
-                echo "::warning::Tests was billed ${SECONDS}s waiting for the other lots: they are uneven. Refresh config/ci-test-seconds.tsv with bin/ci-test-seconds (docs/OPERATIONS.md, Factory CI cost)."
+                echo "::warning::Tests waited ${SECONDS}s for the other lots: they are uneven, and the run lasts as long as the longest. Refresh config/ci-test-seconds.tsv with bin/ci-test-seconds (docs/OPERATIONS.md, Keeping the lots even)."
               fi
-              [ "$(jq '[.[] | select(.conclusion != "success")] | length' <<<"$jobs")" -eq 0 ] && exit 0
-              echo "a lot failed: see its own job for the failing test" >&2
-              exit 1
+              exit 0
             fi
             sleep 10
           done

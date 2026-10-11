@@ -56,8 +56,8 @@ contract for a new Planning Run or its future Cockpit V2.
    remains fully readable as evidence. Only the ability of a *new* Planning
    Run to declare it as an export target is fenced.
    *Amendment 2026-09-26:* the same files now live, unchanged, under
-   `legacy/` (Benjamin, 2026-09-25: isolate pre-refactor code; see
-   `legacy/README.md`). The fence above is unaffected. The release contract
+   `legacy/` (Benjamin, 2026-09-25: isolate pre-refactor code; removed from
+   `main` on 2026-10-11, Git history keeps them: `PRE_REFACTOR.md`). The fence above is unaffected. The release contract
    (`product-release`, its schema and `config/releases/`) followed on the
    same day; its `release-contract` fence is unaffected too.
 
