@@ -1075,6 +1075,22 @@ What the next upgrade can reuse:
   worker holds. A tool that closes a bead it does not hold uses `bd update
   <id> --if-assignee <holder it read> --status closed`, the reason in the
   notes.
+- **The empty `BD_BIN`, as a class (af-d130xt).** Five more tools had the
+  same read: `bin/idle-ready-work-wake` (its order's check crashed the same
+  way, so the safety net of the Mayor's wake could not fire),
+  `bin/ticket-graph-publish` (reached from the order `convoy-advance` when a
+  repair is published), `bin/spec-approve`, `bin/planning-map` and
+  `bin/graph-review`. A tool reads `os.environ.get("BD_BIN") or "bd"`
+  (Bash: `${BD_BIN:-bd}`); `tests/bd-bin-empty-override-lint-test.py`
+  refuses the form an empty value defeats, and
+  `tests/empty-bd-bin-order-real-tracker-test.sh` has gc check the
+  idle-ready-work-wake order in a disposable city. Measured on gc 1.5.0: an
+  order also gets, set and empty, `BEADS_CREDENTIALS_FILE`, `BEADS_DOLT_*`
+  (password, server host, port, socket, user), `GC_DOLT_*` (host, password,
+  port, user), `GC_RIG` and `GC_RIG_ROOT`; no Factory tool reads one of
+  these with a default. The controller's own environment carries the empty
+  `BD_BIN` (its Dolt server shows it), agent sessions do not; formula exec
+  checks and hooks were not measured.
 
 Measured that day (Paris): stopped 07:49, binaries replaced 08:06, migrated
 08:16, resumed 08:18. `gc doctor` went from 97 passed, 6 warnings to 109

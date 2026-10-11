@@ -39,7 +39,9 @@ from pathlib import Path
 from typing import Any
 
 PROGRAM = "planning-map"
-BD_BIN = os.environ.get("BD_BIN", "bd")
+# Gas City 1.5 gives an order BD_BIN set and empty: an empty value is no
+# override (af-d130xt).
+BD_BIN = os.environ.get("BD_BIN") or "bd"
 PLANE_METADATA_KEY = "gc.plane"
 PLANNING_PLANE = "planning"
 MAP_LABEL = "wayfinder:map"

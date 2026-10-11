@@ -66,7 +66,9 @@ PROGRAM = "spec-approve"
 DRAFT_SPEC = "DRAFT_SPEC"
 APPROVED_SPEC = "APPROVED_SPEC"
 
-BD_BIN = os.environ.get("BD_BIN", "bd")
+# Gas City 1.5 gives an order BD_BIN set and empty: an empty value is no
+# override (af-d130xt).
+BD_BIN = os.environ.get("BD_BIN") or "bd"
 NO_MAP_VALUES = (None, "", "none")
 PROJECT_METADATA_KEY = "gc.project_id"
 

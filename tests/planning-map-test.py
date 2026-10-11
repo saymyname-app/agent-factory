@@ -195,6 +195,25 @@ class PlanningMapTest(unittest.TestCase):
         self.assertFalse(payload["labelled_map"])
         self.assertFalse(payload["finished"])
 
+    def test_an_empty_bd_bin_is_not_an_override(self):
+        # Gas City 1.5 gives an order BD_BIN set and empty (af-d130xt).
+        self.seed({"map-1": self.bead(id="map-1", labels=["wayfinder:map"])})
+        bin_dir = Path(self.tmp.name) / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "bd").symlink_to(FAKE_BD)
+        env = {
+            **os.environ,
+            "BD_BIN": "",
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+            "PLANNING_MAP_BD_STATE": str(self.state_path),
+        }
+
+        result = subprocess.run(
+            (str(TOOL), "check", "--map", "map-1"), env=env, text=True, capture_output=True,
+        )
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertTrue(json.loads(result.stdout)["labelled_map"])
+
     # --- close ---------------------------------------------------------
 
     def test_close_closes_only_the_map(self):

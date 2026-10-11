@@ -39,7 +39,7 @@ class IdleReadyWorkWakeTest(unittest.TestCase):
         )
         return json.loads(proc.stdout)
 
-    def run_check_only(self, now, ready=READY_ONE_DELIVERY_BEAD, worker_active="0"):
+    def run_check_only(self, now, ready=READY_ONE_DELIVERY_BEAD, worker_active="0", env=None):
         env = {
             **os.environ,
             "BD_BIN": str(FAKE_BD),
@@ -48,6 +48,7 @@ class IdleReadyWorkWakeTest(unittest.TestCase):
             "IDLE_TEST_WORKER_ACTIVE": worker_active,
             "IDLE_TEST_GC_LOG": str(self.gc_log),
             "IDLE_READY_WORK_NOW": now,
+            **(env or {}),
         }
         proc = subprocess.run(
             (str(TOOL), "--repo-root", str(self.tmp), "--check-only"),
@@ -146,6 +147,19 @@ class IdleReadyWorkWakeTest(unittest.TestCase):
         self.assertEqual(1, code)
         self.assertFalse(result["fired"])
         self.assertEqual([], self.wake_calls())
+
+    def test_an_empty_bd_bin_is_not_an_override(self):
+        # Gas City 1.5 gives an order BD_BIN set and empty (af-d130xt).
+        bin_dir = self.tmp / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "bd").symlink_to(FAKE_BD)
+        as_an_order = {"BD_BIN": "", "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+        self.run_check_only("2026-09-28T10:00:00+00:00", env=as_an_order)
+
+        code, result = self.run_check_only("2026-09-28T10:15:01+00:00", env=as_an_order)
+        self.assertEqual(0, code)
+        self.assertTrue(result["fired"])
+        self.assertEqual(1, result["ready_count"])
 
 
 if __name__ == "__main__":
