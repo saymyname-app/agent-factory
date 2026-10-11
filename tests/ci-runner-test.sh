@@ -211,6 +211,7 @@ cat > "$T/bin/gh" <<'EOF'
 echo "gh $*" >> "$FAKE_LOG"
 case "$*" in
   "repo view"*) echo "acme/factory" ;;
+  *"--jq .visibility"*) [ "${FAKE_VISIBILITY:-private}" = error ] && exit 1; echo "${FAKE_VISIBILITY:-private}" ;;
   *"select(.busy"*) echo "${FAKE_BUSY:-1}" ;;
   *generate-jitconfig*)
     n=$(cat "$FAKE_COUNT" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$FAKE_COUNT"
@@ -299,6 +300,34 @@ ci_runner resume >/dev/null
 [ ! -e "$T/run/stop-now" ] && [ "$(verdict)" = ok ] || fail "resume must clear the pause, got $(verdict)"
 echo "ok   status says absent, ok, down or paused; pause --now stops the job, resume clears it"
 
+# --- no runner comes back on a repository that is not private (af-996mmd) --
+# A self-hosted runner on a public repository runs a stranger's pull request
+# on the host. Every way back asks GitHub and refuses unless it says private.
+: > "$FAKE_LOG"; rm -f "$FAKE_COUNT"
+for vis in public internal error; do
+  for cmd in "mode self-hosted" install resume broker; do
+    # shellcheck disable=SC2086  # the command and its argument
+    if out=$(FAKE_VISIBILITY=$vis FACTORY_CI_RUNNER_BROKER_TURNS=1 ci_runner $cmd 2>&1); then
+      fail "'ci-runner $cmd' went through on a repository whose visibility reads '$vis'"
+    fi
+    grep -q 'not private' <<<"$out" || fail "'ci-runner $cmd' on a '$vis' repository does not say why it refuses: $out"
+  done
+done
+if grep -qE 'variable set|generate-jitconfig|systemctl --user (start|enable|restart)' "$FAKE_LOG"; then
+  fail "a refused command still touched the variable, asked for a runner or started the broker: $(cat "$FAKE_LOG")"
+fi
+[ ! -e "$FAKE_COUNT" ] || fail "the broker asked GitHub for a runner configuration on a repository that is not private"
+# After `ci-runner remove` the broker is gone and the root half is left:
+# that is not a runner down, and factory-doctor must not ask to start it.
+echo active > "$FAKE_SERVICE"; echo absent > "$FAKE_BROKER"
+[ "$(verdict)" = removed ] || fail "a removed broker beside the root half must read 'removed', got $(verdict)"
+ci_runner status --local --json | jq -e '.fix_hint | test("restart|resume") | not' >/dev/null \
+  || fail "the hint of a removed runner tells the reader to start it again"
+grep -qF 'if verdict not in ("ok", "down", "paused")' "$ROOT/bin/factory-doctor" \
+  || fail "bin/factory-doctor no longer stays silent on a verdict it does not know: 'removed' would read as a fault"
+echo active > "$FAKE_BROKER"
+echo "ok   on a repository that is not private: no mode self-hosted, no install, no resume, no broker; a removed runner is not a fault"
+
 # --- `mode` alone: what an agent asks before a pull request ---------------
 # (docs/DELIVERY.md, "What to run before a pull request": Benjamin, 2026-10-08, « A. »)
 cat > "$T/bin/gh-mode" <<'EOF'
@@ -314,10 +343,13 @@ mode() { FAKE_MODE=$1 FACTORY_ROOT="$ROOT" FACTORY_CI_RUNNER_GH="$T/bin/gh-mode"
 [ "$(mode '')" = github ] || fail "mode must print github when the variable is not set"
 [ "$(mode error)" = github ] || fail "mode must print github when GitHub gives no clear answer: in doubt the whole battery runs"
 FORMULA="$ROOT/formulas/mol-do-work.formula.toml"
-grep -qF 'bin/ci-runner" mode' "$FORMULA" || fail "$FORMULA no longer asks where CI runs before choosing the local check"
-grep -qF 'bin/ci-run-tests --jobs 4' "$FORMULA" || fail "$FORMULA lost the whole battery for CI on GitHub's runners"
-grep -qF '| `github`, or no clear answer | The whole battery' "$ROOT/docs/DELIVERY.md" || fail "docs/DELIVERY.md lost the whole battery before a delivery when CI is on GitHub's runners"
-echo "ok   before a delivery: the rule checks while CI is on the host, the whole battery otherwise or in doubt"
+# Since the repository is public a red run is billed nothing on GitHub's
+# runners either (Benjamin, 2026-10-11, « oui »): the light check is the rule
+# and the formula no longer sends a delivery through the whole battery.
+grep -qF 'bin/ci-run-tests --rule-checks --changed-since' "$FORMULA" || fail "$FORMULA lost the rule checks and touched tests before a pull request"
+if grep -qF 'bin/ci-run-tests --jobs 4' "$FORMULA"; then fail "$FORMULA still asks for the whole battery before a pull request: 14 minutes on the host for a red that is billed nothing"; fi
+grep -qF '| The same | GitHub'"'"'s runners on a private repository: billed. Not the case today | The whole battery' "$ROOT/docs/DELIVERY.md" || fail "docs/DELIVERY.md no longer says when the whole battery comes back: where a red run is billed"
+echo "ok   before a pull request: the rule checks and the touched tests; the whole battery only where a red run is billed"
 
 # --- the loop obeys stop-now ----------------------------------------------
 : > "$T/run/stop-now"; : > "$T/stdin"

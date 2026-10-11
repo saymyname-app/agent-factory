@@ -38,8 +38,8 @@ agent_bytes=$(wc -c < "$REPO_ROOT/AGENTS.md")
 assert_contains AGENTS.md 'docs/OPERATOR_BRIDGE.md'
 assert_contains AGENTS.md 'Cockpit V1 is retired (code in Git history)'
 # ADR-0016 section 7 is an active rule: its text must stay where AGENTS.md cites it.
-assert_contains AGENTS.md 'legacy/docs/decisions/ADR-0016-standing-delegation-and-non-stop-campaign.md'
-assert_file legacy/docs/decisions/ADR-0016-standing-delegation-and-non-stop-campaign.md
+assert_contains AGENTS.md 'docs/decisions/ADR-0016-standing-delegation-and-non-stop-campaign.md'
+assert_file docs/decisions/ADR-0016-standing-delegation-and-non-stop-campaign.md
 assert_contains AGENTS.md 'Full access'
 assert_contains README.md 'docs/OPERATOR_BRIDGE.md'
 # sandbox: allow-live-root -- real operator-facing doc text (P10, af-ygibh)
@@ -57,7 +57,8 @@ first_adr=$(ls "$REPO_ROOT/docs/decisions"/ADR-*.md 2>/dev/null \
   | xargs -n1 basename | sort | head -1 | sed 's/\.md$//')
 adr_range="\`decisions/${first_adr}.md\` through \`decisions/${latest_adr}.md\`"
 # Pre-refactor material is reachable, and flagged untrusted, from the index.
-assert_contains docs/CONTEXT_INDEX.md '../legacy/README.md'
+assert_contains docs/CONTEXT_INDEX.md 'decisions/PRE_REFACTOR.md'
+assert_file docs/decisions/PRE_REFACTOR.md
 assert_contains docs/CONTEXT_INDEX.md "$adr_range"
 assert_contains agents/mayor/prompt.template.md 'UI/UX design gate'
 # Decisions 7-9 (Benjamin, 2026-09-25): the Mayor executes approved graphs,

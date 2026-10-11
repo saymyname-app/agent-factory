@@ -15,7 +15,7 @@ This module decides, from three inputs, which provider every target should run:
 
 A *pool* is what a quota applies to. Every Claude profile shares one Anthropic
 account, so one "session limit" exhausts claude, claude-standard and
-claude-cheap together. Codex's standard pool and the Spark allocation are
+claude-readonly together. Codex's standard pool and the Spark allocation are
 separate. Exhaustion is tracked per pool, never per provider.
 
 The only side effect is producing text: the generated `city.provider.toml`
