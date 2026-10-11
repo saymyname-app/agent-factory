@@ -87,3 +87,10 @@ Mechanism (agent interpretation) : réduire le détail visible à une phrase et 
 A : trois onglets. B : une action à la fois sans rail ni étapes administratives. C : accès directs et avis dépliable. Le texte du prompt est masqué jusqu’à une consultation explicite. Les mots exacts, le verdict sur chaque proposition, l’abandon motivé et l’acceptation distincte de la fusion restent requis. Le verdict manquant est demandé au moment de continuer ; les constats ne sont plus à classer par Benjamin. Aucune écriture réelle.
 
 Les captures et QA de la première révision sont historiques ; la vérification de cette simplification est dans qa-simple.json et screenshots-simple/.
+
+## Choix du passage vers l’essai
+
+Intent (Benjamin, ses mots, 2026-10-11) : « A », à la question « L’application à tester s’ouvre dans un nouvel onglet. Tu l’utilises, puis reviens donner ton avis. »
+Mechanism (agent interpretation) : le bouton ouvre directement un onglet du produit à essayer, puis le cockpit conserve le passage vers l’avis. Ce A désigne ce comportement, pas la validation globale de la variante à trois onglets.
+
+Le prototype ouvre `?app=trial&dossier=N`, une copie du vrai rendu du cockpit sur demandes fictives, sans formulaire de jugement ni variantes dans le produit essayé. Il ne lance aucun service réel. Pour la future implémentation, lancement au commit du dossier courant par le flux D01 : aucun résumé de dossier, aucun jugement automatisé. La Spec n’a pas été amendée ici. Cette révision est capturée localement ; aucun nouveau contenu n’est publié sur le dépôt devenu public.

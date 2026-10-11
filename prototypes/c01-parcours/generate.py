@@ -32,6 +32,31 @@ page = re.sub(r'<script\b[^>]*>[\s\S]*?</script>', '', page)
 page = re.sub(r'<link\b[^>]*>', '', page)
 page = page.replace('</head>', '<style>'+HERE.joinpath('journey.css').read_text()+'</style></head>')
 page = page.replace('<body id="cockpit-body">', '<body id="cockpit-body">'+HERE.joinpath('controls.html').read_text())
-page = page.replace('</body>', '<script>'+HERE.joinpath('journey.js').read_text()+'</script></body>')
+# A separate tab shows the application under test, not a step in the judging form.
+import json
+trial_requests = [
+    OperatorRequest(id='trial-spec', type='prototype_spec', niveau=A_FAIRE,
+        quoi='Valider le périmètre de recherche', pourquoi='Le projet Carnet ajoute une recherche par titre. Le périmètre proposé couvre les notes existantes.',
+        que_faire=[], projet='Carnet', depuis_quand=STAMP-900, verifie_a=STAMP, reportable=False),
+    OperatorRequest(id='trial-clarify', type='prototype_clarify', niveau=A_FAIRE,
+        quoi='Préciser le comportement du tri', pourquoi='Le projet Carnet attend ton choix : ordre alphabétique ou dernière modification.',
+        que_faire=[], projet='Carnet', depuis_quand=STAMP-300, verifie_a=STAMP, reportable=False),
+]
+trial_page = render_home('Version d’essai · données fictives', [], render_requests_section(trial_requests, STAMP),
+    status_html='Cockpit à tester', extra_sections_html=render_projects_section([Project(project_id='trial-carnet', display_name='Carnet', roadmap_step=RoadmapStep('trial','Recherche et tri des notes','in_progress'))]))
+trial_page = re.sub(r'<script\b[^>]*>[\s\S]*?</script>', '', trial_page)
+trial_body = re.search(r'<body[^>]*>([\s\S]*?)</body>', trial_page).group(1)
+trial_body = '<div style="padding:12px 20px;background:var(--accent-soft)"><strong>Cockpit — version d’essai</strong> · exemples fictifs · reviens au premier onglet pour donner ton avis.</div>' + trial_body
+trial_script = """
+document.title='Cockpit — version d’essai';
+document.body.innerHTML=TRIAL_BODY;
+document.querySelectorAll('[data-action], form button').forEach(b=>b.disabled=true);
+document.addEventListener('submit',e=>e.preventDefault());
+const inbox=document.getElementById('inbox');
+inbox.addEventListener('click',e=>{const row=e.target.closest('.li');if(row){e.preventDefault();document.querySelectorAll('.detail').forEach(d=>d.classList.toggle('on',d.id==='d-'+row.dataset.id));document.querySelectorAll('.li').forEach(r=>r.setAttribute('aria-current',r===row?'true':'false'));inbox.classList.add('sheet');}if(e.target.closest('.back')){e.preventDefault();inbox.classList.remove('sheet');}});
+document.querySelectorAll('a').forEach(a=>{if(!a.classList.contains('li')&&!a.classList.contains('back')){a.removeAttribute('href');a.title='Exemple statique dans ce prototype';}});
+""".replace('TRIAL_BODY',json.dumps(trial_body,ensure_ascii=False))
+script = "if(new URLSearchParams(location.search).get('app')==='trial'){" + trial_script + "}else{const js=document.createElement('script');js.textContent=" + json.dumps(HERE.joinpath('journey.js').read_text(),ensure_ascii=False) + ";document.body.appendChild(js);}"
+page = page.replace('</body>', '<script>'+script+'</script></body>')
 HERE.joinpath('index.html').write_text(page)
 print('Built actual render_home + render_requests_section + render_projects_section, synthetic data only.')

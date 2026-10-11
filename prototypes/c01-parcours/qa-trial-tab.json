@@ -1,0 +1,11 @@
+{
+  "checks": [
+    "click opens distinct in-app browser tab",
+    "trial tab contains application inbox without judging form",
+    "trial inbox opens another request",
+    "original tab retains path to opinion",
+    "words survive variant change"
+  ],
+  "consoleErrors": [],
+  "launch": "synthetic only"
+}
