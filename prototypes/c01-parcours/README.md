@@ -94,3 +94,8 @@ Intent (Benjamin, ses mots, 2026-10-11) : « A », à la question « L’applica
 Mechanism (agent interpretation) : le bouton ouvre directement un onglet du produit à essayer, puis le cockpit conserve le passage vers l’avis. Ce A désigne ce comportement, pas la validation globale de la variante à trois onglets.
 
 Le prototype ouvre `?app=trial&dossier=N`, une copie du vrai rendu du cockpit sur demandes fictives, sans formulaire de jugement ni variantes dans le produit essayé. Il ne lance aucun service réel. Pour la future implémentation, lancement au commit du dossier courant par le flux D01 : aucun résumé de dossier, aucun jugement automatisé. La Spec n’a pas été amendée ici. Cette révision est capturée localement ; aucun nouveau contenu n’est publié sur le dépôt devenu public.
+
+## Accès unique à l’avis
+
+Intent (Benjamin, ses mots, 2026-10-11) : « quelle difference entre "mon avis" et "donner mon avis" ? c'est 2 fois la meme chose ».
+Mechanism (agent interpretation) : supprimer le bouton redondant dans A et garder l’onglet Mon avis ; dans C, garder son accès direct. B conserve le bouton nécessaire, puisqu’il n’a pas cet onglet.
