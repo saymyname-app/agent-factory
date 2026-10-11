@@ -61,19 +61,24 @@ CLOSED=0
 SKIPPED=0
 FAILED=0
 
-# id -> status of every artifact/spec id that resolves to a bead, filled by
-# one tracker call (resolve_all).
+# id -> status and assignee of every artifact/spec id that resolves to a
+# bead, filled by one tracker call (resolve_all).
 declare -A BEAD_STATUS=()
+declare -A BEAD_ASSIGNEE=()
 
 resolve_all() {  # id...
   [ $# -gt 0 ] || return 0
-  local show_json id status
+  local show_json id status assignee
   # Ids that resolve come back as one array; the others are only missing
   # from it (none at all: an error object, exit 1).
   show_json=$(cd "$ROOT" && "$GC_BIN" bd show "$@" --json 2>/dev/null)
-  while IFS=$'\t' read -r id status; do
-    [ -n "$id" ] && BEAD_STATUS[$id]=$status
-  done < <(jq -r 'if type == "array" then .[] | select(type == "object" and (.id | type) == "string") | [.id, (.status // "")] | @tsv else empty end' <<<"$show_json" 2>/dev/null)
+  # \x1f, not a tab: a tab is IFS whitespace, so an empty field would be
+  # merged into its neighbour.
+  while IFS=$'\x1f' read -r id status assignee; do
+    [ -n "$id" ] || continue
+    BEAD_STATUS[$id]=$status
+    BEAD_ASSIGNEE[$id]=$assignee
+  done < <(jq -r 'if type == "array" then .[] | select(type == "object" and (.id | type) == "string") | [.id, (.status // ""), (.assignee // "")] | join("\u001f") else empty end' <<<"$show_json" 2>/dev/null)
 }
 
 resolve_and_close() {  # id convoy_id convoy_title
@@ -96,7 +101,14 @@ resolve_and_close() {  # id convoy_id convoy_title
     return 0
   fi
 
-  if (cd "$ROOT" && "$GC_BIN" bd close "$id" --reason "Convoy $convoy_id ($convoy_title) closed" >/dev/null 2>&1); then
+  # A Spec bead stays claimed by an operator session through delivery, and
+  # Beads 1.3 refuses `bd close` to any actor but the assignee (af-bm9y90).
+  # The closed convoy is the authority to close the bead whoever holds it;
+  # --if-assignee closes it only while its holder is the one read above
+  # (otherwise nothing is written, and the next run reads it again). The
+  # reason goes to the notes: `bd update` records no close reason.
+  if (cd "$ROOT" && "$GC_BIN" bd update "$id" --if-assignee "${BEAD_ASSIGNEE[$id]}" --status closed \
+        --append-notes "Closed: Convoy $convoy_id ($convoy_title) closed" >/dev/null 2>&1); then
     CLOSED=$((CLOSED + 1))
     BEAD_STATUS[$id]=closed
     say "  closed $id -- convoy $convoy_id ($convoy_title) closed"

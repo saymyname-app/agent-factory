@@ -26,6 +26,7 @@ BOOLEAN_FLAGS = {"--no-inherit-labels", "--silent", "--json", "--all"}
 VALUE_FLAGS = {
     "--parent", "--type", "--title", "--labels", "--metadata", "--body-file",
     "--reason", "--limit", "--description", "--deps", "--graph", "--priority",
+    "--status", "--if-assignee",
 }
 REPEATABLE_VALUE_FLAGS = {"--set-metadata", "--append-notes"}
 
@@ -79,6 +80,7 @@ def public_view(bead):
         "labels": bead.get("labels", []),
         "metadata": bead.get("metadata", {}),
         "parent": bead.get("parent"),
+        "assignee": bead.get("assignee", ""),
     }
 
 
@@ -170,6 +172,12 @@ def cmd_update(flags, repeated, positionals):
     bead = state["beads"].setdefault(
         issue_id, {"id": issue_id, "metadata": {}, "labels": [], "status": "open", "parent": None}
     )
+    # As bd does: a precondition that no longer holds writes nothing, exit 13.
+    if "--if-assignee" in flags and flags["--if-assignee"] != bead.get("assignee", ""):
+        sys.stderr.write(f"fake bd: {issue_id}: precondition failed\n")
+        raise SystemExit(13)
+    if "--status" in flags:
+        bead["status"] = flags["--status"]
     if "--body-file" in flags:
         bead["description"] = read_body(flags["--body-file"]) or ""
     if "--description" in flags:
