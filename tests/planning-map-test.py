@@ -19,11 +19,12 @@ class PlanningMapTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.state_path = Path(self.tmp.name) / "state.json"
 
-    def invoke(self, *args, check=False):
+    def invoke(self, *args, check=False, env=None):
         env = {
             **os.environ,
             "BD_BIN": str(FAKE_BD),
             "PLANNING_MAP_BD_STATE": str(self.state_path),
+            **(env or {}),
         }
         return subprocess.run(
             (str(TOOL), *args), env=env, text=True, capture_output=True, check=check,
@@ -195,6 +196,25 @@ class PlanningMapTest(unittest.TestCase):
         self.assertFalse(payload["labelled_map"])
         self.assertFalse(payload["finished"])
 
+    def test_an_empty_bd_bin_is_not_an_override(self):
+        # Gas City 1.5 gives an order BD_BIN set and empty (af-d130xt).
+        self.seed({"map-1": self.bead(id="map-1", labels=["wayfinder:map"])})
+        bin_dir = Path(self.tmp.name) / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "bd").symlink_to(FAKE_BD)
+        env = {
+            **os.environ,
+            "BD_BIN": "",
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+            "PLANNING_MAP_BD_STATE": str(self.state_path),
+        }
+
+        result = subprocess.run(
+            (str(TOOL), "check", "--map", "map-1"), env=env, text=True, capture_output=True,
+        )
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertTrue(json.loads(result.stdout)["labelled_map"])
+
     # --- close ---------------------------------------------------------
 
     def test_close_closes_only_the_map(self):
@@ -214,6 +234,43 @@ class PlanningMapTest(unittest.TestCase):
         state = self.current_state()
         self.assertEqual(state["beads"]["map-1"]["status"], "closed")
         self.assertEqual(state["beads"]["map-1"]["close_reason"], "done")
+
+    def test_close_closes_a_map_held_by_another_actor(self):
+        # The map stays claimed by its /to-spec session until approval closes
+        # it, and Beads 1.3 refuses `bd close` to any other actor (af-bm9y90).
+        self.seed({
+            "map-1": self.bead(
+                id="map-1", labels=["wayfinder:map"], status="in_progress",
+                assignee="po-agent/to-spec-session",
+            ),
+        })
+
+        self.invoke("close", "--map", "map-1", "--reason", "done", check=True)
+
+        bead = self.current_state()["beads"]["map-1"]
+        self.assertEqual(bead["status"], "closed")
+        self.assertEqual(bead["close_reason"], "done")
+        self.assertIn("po-agent/to-spec-session", bead["notes"])
+
+    def test_close_abandon_stops_on_a_ticket_whose_holder_changed_since_it_was_read(self):
+        self.seed({
+            "map-1": self.bead(id="map-1", labels=["wayfinder:map"]),
+            "map-1.1": self.bead(
+                id="map-1.1", parent="map-1", status="in_progress", assignee="po-agent/a",
+                labels=["wayfinder:research"], metadata={"gc.plane": "planning"},
+            ),
+        })
+        result = self.invoke(
+            "close", "--map", "map-1", "--reason", "superseded", "--abandon",
+            env={"FAKE_BD_ASSIGNEE_AFTER_CHILDREN": "map-1.1=po-agent/b"},
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("map-1.1 was not closed: it is no longer held by po-agent/a", result.stdout)
+        state = self.current_state()
+        self.assertEqual(state["beads"]["map-1.1"]["status"], "in_progress")
+        self.assertEqual(state["beads"]["map-1.1"]["assignee"], "po-agent/b")
+        self.assertEqual(state["beads"]["map-1"]["status"], "open")
 
     def test_close_abandon_closes_the_map_and_its_open_tickets_with_the_given_reason(self):
         self.seed({

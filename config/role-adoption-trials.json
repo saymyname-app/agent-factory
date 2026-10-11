@@ -4,7 +4,7 @@
   "trials": {
     "author/claude-standard": {
       "agent": "delivery-author",
-      "digest": "sha256:7bd591bd7e6703a46edd9fd7abc5c39c9592c8b83b0b3b0f0e6edb3d9e2eb53b",
+      "digest": "sha256:b9adca0510dcab05be2e8fc77196a946577d44988d1fc4ec5769aadfe7318327",
       "expected_skills": [
         "codebase-design",
         "tdd"
@@ -14,7 +14,7 @@
         "codebase-design",
         "tdd"
       ],
-      "observed_at": "2026-10-09T16:46:19Z",
+      "observed_at": "2026-10-11T12:00:49Z",
       "passed": true,
       "provider": "claude-standard",
       "review_launch": {
@@ -59,30 +59,30 @@
       "versions": {
         "bwrap": "bubblewrap 0.9.0",
         "claude": "2.1.290 (Claude Code)",
-        "gc": "1.4.1"
+        "gc": "1.5.0"
       }
     },
     "evaluator/claude-readonly": {
       "agent": "delivery-evaluator",
-      "digest": "sha256:2e7f9348fc516d2dc271962bff7be260df38ed2a199188b712ae50b602840220",
+      "digest": "sha256:2edddb572e9c26d8ffcc5f2c1893040847f7ecaa53dcdd17b35813a9dc4f68fa",
       "expected_skills": [],
       "failures": [],
       "matt_skills_loaded": [],
-      "observed_at": "2026-10-09T20:11:46Z",
+      "observed_at": "2026-10-11T12:02:04Z",
       "passed": true,
       "provider": "claude-readonly",
       "read_only": {
         "after": {
-          "head": "bc7e7af4d3e110f46dfff807aa1901e88196df94",
-          "refs": "refs/heads/main bc7e7af4d3e110f46dfff807aa1901e88196df94\nrefs/remotes/origin/main bc7e7af4d3e110f46dfff807aa1901e88196df94",
-          "remote_refs": "refs/heads/main bc7e7af4d3e110f46dfff807aa1901e88196df94",
+          "head": "dd95f13585bffecaf2336cba9624b661f777e5c9",
+          "refs": "refs/heads/main dd95f13585bffecaf2336cba9624b661f777e5c9\nrefs/remotes/origin/main dd95f13585bffecaf2336cba9624b661f777e5c9",
+          "remote_refs": "refs/heads/main dd95f13585bffecaf2336cba9624b661f777e5c9",
           "status": ""
         },
         "attempts": [
           {
             "action": "/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt",
             "refused": true,
-            "result": "EROFS: read-only file system, open '/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt.tmp.3527320.0bbb9441457d'",
+            "result": "EROFS: read-only file system, open '/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt.tmp.2028973.b2344c607c27'",
             "tool": "Write"
           },
           {
@@ -105,9 +105,9 @@
           }
         ],
         "before": {
-          "head": "bc7e7af4d3e110f46dfff807aa1901e88196df94",
-          "refs": "refs/heads/main bc7e7af4d3e110f46dfff807aa1901e88196df94\nrefs/remotes/origin/main bc7e7af4d3e110f46dfff807aa1901e88196df94",
-          "remote_refs": "refs/heads/main bc7e7af4d3e110f46dfff807aa1901e88196df94",
+          "head": "dd95f13585bffecaf2336cba9624b661f777e5c9",
+          "refs": "refs/heads/main dd95f13585bffecaf2336cba9624b661f777e5c9\nrefs/remotes/origin/main dd95f13585bffecaf2336cba9624b661f777e5c9",
+          "remote_refs": "refs/heads/main dd95f13585bffecaf2336cba9624b661f777e5c9",
           "status": ""
         },
         "unchanged": true
@@ -139,12 +139,12 @@
       "versions": {
         "bwrap": "bubblewrap 0.9.0",
         "claude": "2.1.290 (Claude Code)",
-        "gc": "1.4.1"
+        "gc": "1.5.0"
       }
     },
     "reviewer/claude-readonly": {
       "agent": "delivery-reviewer",
-      "digest": "sha256:fba484f2e14da727ab95fe61ead78303996df429cccc24d4111b1aa05fad341d",
+      "digest": "sha256:048b368494ed3ad949e1f93b54c263bdc55e36e9d0b0e9aeb08582d1e7bbf94f",
       "expected_skills": [
         "code-review"
       ],
@@ -159,21 +159,21 @@
       "matt_skills_loaded": [
         "code-review"
       ],
-      "observed_at": "2026-10-09T20:09:56Z",
+      "observed_at": "2026-10-11T12:03:42Z",
       "passed": true,
       "provider": "claude-readonly",
       "read_only": {
         "after": {
-          "head": "cf8538899f64ea56ab2065cbddfb098d7dfffe57",
-          "refs": "refs/heads/main cf8538899f64ea56ab2065cbddfb098d7dfffe57\nrefs/remotes/origin/main cf8538899f64ea56ab2065cbddfb098d7dfffe57",
-          "remote_refs": "refs/heads/main cf8538899f64ea56ab2065cbddfb098d7dfffe57",
+          "head": "dd95f13585bffecaf2336cba9624b661f777e5c9",
+          "refs": "refs/heads/main dd95f13585bffecaf2336cba9624b661f777e5c9\nrefs/remotes/origin/main dd95f13585bffecaf2336cba9624b661f777e5c9",
+          "remote_refs": "refs/heads/main dd95f13585bffecaf2336cba9624b661f777e5c9",
           "status": ""
         },
         "attempts": [
           {
             "action": "/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt",
             "refused": true,
-            "result": "EROFS: read-only file system, open '/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt.tmp.3447575.22194306e4e0'",
+            "result": "EROFS: read-only file system, open '/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt.tmp.2090666.dcfc61f27916'",
             "tool": "Write"
           },
           {
@@ -196,9 +196,9 @@
           }
         ],
         "before": {
-          "head": "cf8538899f64ea56ab2065cbddfb098d7dfffe57",
-          "refs": "refs/heads/main cf8538899f64ea56ab2065cbddfb098d7dfffe57\nrefs/remotes/origin/main cf8538899f64ea56ab2065cbddfb098d7dfffe57",
-          "remote_refs": "refs/heads/main cf8538899f64ea56ab2065cbddfb098d7dfffe57",
+          "head": "dd95f13585bffecaf2336cba9624b661f777e5c9",
+          "refs": "refs/heads/main dd95f13585bffecaf2336cba9624b661f777e5c9\nrefs/remotes/origin/main dd95f13585bffecaf2336cba9624b661f777e5c9",
+          "remote_refs": "refs/heads/main dd95f13585bffecaf2336cba9624b661f777e5c9",
           "status": ""
         },
         "unchanged": true
@@ -234,7 +234,7 @@
       "versions": {
         "bwrap": "bubblewrap 0.9.0",
         "claude": "2.1.290 (Claude Code)",
-        "gc": "1.4.1"
+        "gc": "1.5.0"
       }
     }
   }

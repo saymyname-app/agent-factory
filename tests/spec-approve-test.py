@@ -79,7 +79,11 @@ class SpecApproveBeadModeTest(unittest.TestCase):
     def mapped_spec_beads(self, target="A6b", map_finished=True):
         return {
             "spec-1": self.bead(id="spec-1", metadata={"planning_run_target": target, "planning_map": "map-1"}),
-            "map-1": self.bead(id="map-1", labels=["wayfinder:map"]),
+            # The map stays assigned to its /to-spec session until approval
+            # closes it (docs/agents/issue-tracker.md, Map handoff).
+            "map-1": self.bead(
+                id="map-1", labels=["wayfinder:map"], assignee="po-agent/to-spec-session",
+            ),
             "map-1.1": self.bead(
                 id="map-1.1", parent="map-1", status="closed" if map_finished else "open",
                 labels=["wayfinder:task"], metadata={"gc.plane": "planning"},
@@ -272,6 +276,25 @@ class SpecApproveBeadModeTest(unittest.TestCase):
         result = json.loads(proc.stdout)
         self.assertTrue(result["ok"])
         self.assertFalse(result["void"])
+
+    def test_an_empty_bd_bin_is_not_an_override(self):
+        # Gas City 1.5 gives an order BD_BIN set and empty (af-d130xt).
+        self.seed(self.mapped_spec_beads())
+        bin_dir = self.tmp / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "bd").symlink_to(FAKE_BD)
+        env = {
+            **os.environ,
+            "BD_BIN": "",
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+            "SPEC_APPROVE_BD_STATE": str(self.state_path),
+        }
+
+        proc = subprocess.run(
+            (str(TOOL), "bd-status", "--spec", "spec-1"), env=env, text=True, capture_output=True,
+        )
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertTrue(json.loads(proc.stdout)["ok"])
 
 
 class SpecApproveEntryContractTest(unittest.TestCase):

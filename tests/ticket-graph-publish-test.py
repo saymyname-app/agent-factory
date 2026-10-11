@@ -134,6 +134,19 @@ class TicketGraphPublishBeadModeTest(unittest.TestCase):
         self.assertIn("not approved", proc.stderr)
         self.assertEqual({"draft-1", "spec-1"}, set(self.current_state()["beads"]))
 
+    def test_an_empty_bd_bin_is_not_an_override(self):
+        # Gas City 1.5 gives an order BD_BIN set and empty (af-d130xt), and
+        # the order convoy-advance reaches this door to publish a repair.
+        self.seed({"draft-1": self.draft_bead(), "spec-1": self.spec_bead(approved=False)})
+        bin_dir = self.tmp / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "bd").symlink_to(FAKE_BD_BEAD_MODE)
+
+        proc = self.bd_patch(env={"BD_BIN": "", "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"})
+        self.assertNotEqual(0, proc.returncode)
+        self.assertIn("not approved", proc.stderr)
+        self.assertEqual({"draft-1", "spec-1"}, set(self.current_state()["beads"]))
+
     def test_bd_publish_refuses_when_spec_digest_differs_from_approved(self):
         spec = self.spec_bead()
         self.seed({"draft-1": self.draft_bead(), "spec-1": spec})

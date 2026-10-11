@@ -45,7 +45,8 @@ repository, not a clone. Its commands enter
 Use the upstream Gas City dashboard at port `8372` when detailed sessions,
 runs, events, or full transcripts are needed; it makes no model call. The
 Cockpit V1 human view, its phone access and the SayMyName preview are retired
-to `legacy/` (untrusted); Cockpit V2 is the Planning Run C01.
+(code and docs in Git history, untrusted); Cockpit V2 is the
+Planning Run C01.
 
 ### Speak in intent, not commands
 
