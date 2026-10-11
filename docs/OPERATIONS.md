@@ -1,8 +1,8 @@
 # Operations
 
 > Retired systems (Cockpit V1, ntfy, campaign, product queue/status/preview,
-> release contract, improvement axes): code removed (Git history), documented
-> only under `../legacy/` (untrusted; see `../legacy/README.md`).
+> release contract, improvement axes): code and docs removed; Git history keeps
+> them (untrusted; see `decisions/PRE_REFACTOR.md`).
 
 ## Bootstrap policy
 
@@ -163,7 +163,7 @@ M1 observed the effective Mayor command as `codex --dangerously-bypass-approvals
 
 Gas City `1.4.1` embeds its detailed dashboard SPA in the supervisor and serves
 the UI and API from the same origin. Use it for engineering detail (Cockpit V1
-is retired, see `../legacy/README.md`). In this City the Gas City URL is:
+is retired, see `decisions/PRE_REFACTOR.md`). In this City the Gas City URL is:
 
 ```text
 http://127.0.0.1:8372
@@ -554,8 +554,8 @@ keeps `work_dir`. It used to drop `work_dir` in that case, so the re-run read
 `.`, printed "nothing to do", and the work stayed unpublished.
 
 The SayMyName legacy-automation cutover boundary and its temporary M6
-rollback procedure are dead, product-specific history now retired to
-`legacy/docs/products/saymyname/CUTOVER_AND_M6_ROLLBACK.md`.
+rollback procedure are dead, product-specific history, now in Git history only:
+`git show 987d497:legacy/docs/products/saymyname/CUTOVER_AND_M6_ROLLBACK.md`.
 
 ## Factory CI cost and the Actions quota (af-mzuprx)
 

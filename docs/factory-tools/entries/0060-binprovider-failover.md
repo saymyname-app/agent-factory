@@ -3,7 +3,7 @@
 Quand un quota GPT ou Claude est atteint, l'usine **bascule seule** sur le
 fournisseur suivant, et **revient seule** quand le quota se réinitialise. Plus
 personne n'a à éditer `city.toml` ni à se souvenir de « revenir à Codex ».
-Détails et règles : `../legacy/docs/decisions/ADR-0018-automatic-provider-failover.md`.
+Détails et règles : `decisions/ADR-0018-automatic-provider-failover.md`.
 
 **Réglages manuels** (réversibles, zéro token) :
 
