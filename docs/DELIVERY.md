@@ -509,14 +509,21 @@ counts both. It waits its turn on the host like a battery. In doubt about
 the kind of change, or about where CI runs, run the battery
 (`tests/ci-run-tests-rule-checks-test.sh`, `tests/ci-runner-test.sh`).
 
-On GitHub's runners Factory CI does not run the rule checks before the long
-lots (Benjamin, his words, 2026-10-08: « A pour la ligne 3 », A being "not
-in CI"). Measured gain: about 2 billed minutes a run (4 of 70 runs, about 35
-minutes each). `Tests` must exist from the first second of a run, so it
-cannot wait on a gate job, and the variants that keep it were estimated at
-1 to 3 billed minutes on every run.
+On GitHub's runners Factory CI runs the rule checks first in every lot
+since af-vqew1x. Intent (Benjamin, his words, 2026-10-11, 17:24 Paris):
+« ok pour toutes tes recommandations », to the question "the rule checks
+first on GitHub's runners, and more than four lots, now that a minute is
+billed nothing?". Mechanism (agent interpretation): each lot passes
+`--rule-checks-first`, so a stale catalogue is red on its lot after about a
+minute, and the job named `Tests` ends red as soon as another lot did
+instead of when the longest ends. It does not mean a gate job before
+`Tests`, which must exist from the first second of a run, nor a test left
+out of a green run. Until then the choice was the opposite (Benjamin, his
+words, 2026-10-08: « A pour la ligne 3 », A being "not in CI"), made while
+each minute was billed: the variants were estimated at 1 to 3 billed
+minutes on every run.
 
-On the host's own runner it does (Benjamin, his words, 2026-10-08, about
+On the host's own runner it does since af-r1ymfm (Benjamin, his words, 2026-10-08, about
 22:50 Paris: « oui, vas-y pour la première tranche », the first slice being
 "the rule checks first in CI, and a measure of the long tests"). Mechanism
 (agent interpretation): there the run is one lot and is billed nothing, so
