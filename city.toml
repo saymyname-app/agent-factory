@@ -28,9 +28,9 @@ accept_startup_dialogs = true
 #
 # Intent (Benjamin, his words, 2026-10-06): « dans l'usine il faut utiliser
 # Opus 5.5 ».
-# Mechanism (agent interpretation): `claude` and `claude-standard` run
-# claude-opus-5-5; `claude-cheap` stays on Haiku and the Codex-first fallback
-# chains are untouched. The id is passed in args_append (as Codex does with
+# Mechanism (agent interpretation): every Claude profile of this file runs
+# claude-opus-5-5 and the Codex-first fallback chains are untouched. The id
+# is passed in args_append (as Codex does with
 # `-m`), NOT as option_defaults.model: gc validates that key against its own
 # closed list, which stops at opus-4-8 in the installed 1.4.1 and at opus-5
 # in upstream 1.5.0. An unknown value there fails `gc bd`'s provider cache
@@ -38,7 +38,27 @@ accept_startup_dialogs = true
 # builtin:claude has no default model, so this is the only --model emitted.
 # Needs host Claude CLI >= 2.1.280. bin/provider-failover check-models reads
 # the id from here.
-args_append = ["--disallowedTools", "AskUserQuestion,EnterPlanMode,ExitPlanMode",
+#
+# Context floor (af-qgwvgi, measured 2026-10-11 on Claude CLI 2.1.290, one
+# headless turn in a Factory worktree). The tool list is sent again on every
+# turn, so a tool no session calls is paid on each of them. Context tokens of
+# the first turn: 36,886 with the three tools above alone; 33,576 with the
+# list below; 26,713 once --strict-mcp-config is added (-28%).
+# - --disallowedTools also names the tools a session without a screen or an
+#   operator never called in the 262 transcripts of the 7 days before. Left
+#   available because sessions do call them: Agent, Bash, Edit, Monitor,
+#   Read, ScheduleWakeup, Skill, TaskStop, ToolSearch, Write; WebFetch and
+#   WebSearch stay for research.
+# - --strict-mcp-config loads no MCP server. Without it every session
+#   inherits the claude.ai connectors of the account (Gmail, Drive, Calendar,
+#   Notion, Figma, Docs: 148 tools) and the servers of its plugins. No
+#   Factory session called one, and an unattended session with unrestricted
+#   permissions has no reason to hold them. To give a server back to a
+#   profile, name it there with --mcp-config.
+# The three Claude profiles carry the same two flags
+# (tests/city-claude-profiles-test.py).
+args_append = ["--disallowedTools", "AskUserQuestion,EnterPlanMode,ExitPlanMode,CronCreate,CronDelete,CronList,DesignSync,EnterWorktree,ExitWorktree,ListAgents,ListMcpResourcesTool,NotebookEdit,PushNotification,ReadMcpResourceDirTool,ReadMcpResourceTool,RemoteTrigger,ReportFindings,SendMessage,Workflow",
+               "--strict-mcp-config",
                "--model", "claude-opus-5-5"]
 
 [providers.claude.env]
@@ -49,16 +69,17 @@ DISABLE_AUTOUPDATER = "1"
 permission_mode = "unrestricted"
 effort = "high"
 
-# Lower-cost profile for high-volume/routine roles (orchestration, dispatch,
-# mechanical steps) that don't need the top reasoning tier. Same account,
-# same subscription billing, same base engine as [providers.claude] — only
-# the reasoning effort differs. Point an agent at this by setting
-# provider = "claude-standard" in its agents/<name>/agent.toml.
+# Same model as [providers.claude] (claude-opus-5-5), same account and
+# subscription billing: only the reasoning effort differs (medium instead of
+# high). For high-volume/routine roles (orchestration, dispatch, mechanical
+# steps). Point an agent at this by setting provider = "claude-standard" in
+# its agents/<name>/agent.toml.
 [providers.claude-standard]
 base = "builtin:claude"
 command = "/home/benja/.local/bin/claude"
 accept_startup_dialogs = true
-args_append = ["--disallowedTools", "AskUserQuestion,EnterPlanMode,ExitPlanMode",
+args_append = ["--disallowedTools", "AskUserQuestion,EnterPlanMode,ExitPlanMode,CronCreate,CronDelete,CronList,DesignSync,EnterWorktree,ExitWorktree,ListAgents,ListMcpResourcesTool,NotebookEdit,PushNotification,ReadMcpResourceDirTool,ReadMcpResourceTool,RemoteTrigger,ReportFindings,SendMessage,Workflow",
+               "--strict-mcp-config",
                "--model", "claude-opus-5-5"]
 
 [providers.claude-standard.env]
@@ -82,7 +103,8 @@ effort = "medium"
 base = "builtin:claude"
 command = "/home/benja/agent-factory/bin/delivery-role-sandbox"
 accept_startup_dialogs = true
-args_append = ["--disallowedTools", "AskUserQuestion,EnterPlanMode,ExitPlanMode",
+args_append = ["--disallowedTools", "AskUserQuestion,EnterPlanMode,ExitPlanMode,CronCreate,CronDelete,CronList,DesignSync,EnterWorktree,ExitWorktree,ListAgents,ListMcpResourcesTool,NotebookEdit,PushNotification,ReadMcpResourceDirTool,ReadMcpResourceTool,RemoteTrigger,ReportFindings,SendMessage,Workflow",
+               "--strict-mcp-config",
                "--model", "claude-opus-5-5"]
 
 [providers.claude-readonly.env]
@@ -93,55 +115,6 @@ DELIVERY_ROLE_SANDBOX_EXEC = "/home/benja/.local/bin/claude"
 [providers.claude-readonly.option_defaults]
 permission_mode = "unrestricted"
 effort = "high"
-
-# Cheapest Claude tier (~$1/$5 per 1M tokens) for
-# genuinely low-judgment, high-volume work: classification, triage, simple
-# deterministic-ish checks. Not yet assigned to any agent — the natural
-# targets (issue-triager and similar) are defined in the imported remote
-# pack, not this repo, and pack-scoped agents haven't been confirmed to
-# accept a local provider override. Verify that before relying on this for
-# anything pack-provided.
-[providers.claude-cheap]
-base = "builtin:claude"
-command = "/home/benja/.local/bin/claude"
-accept_startup_dialogs = true
-args_append = ["--disallowedTools", "AskUserQuestion,EnterPlanMode,ExitPlanMode"]
-
-[providers.claude-cheap.env]
-CLAUDE_CONFIG_DIR = "/home/benja/.claude"
-DISABLE_AUTOUPDATER = "1"
-
-[providers.claude-cheap.option_defaults]
-permission_mode = "unrestricted"
-model = "haiku"
-effort = "low"
-
-# Premium tier for long-running, high-difficulty unattended work (Fable 5.1 is
-# built for multi-hour, many-tool jobs). Most expensive of the claude-* tiers
-# — gate its use behind an explicit reason (a specific hard ticket), not a
-# default for any routine role.
-# Model id corrected 2026-09-19: "claude-fable-5-1" is not recognized by the
-# installed `gc` binary's own model validator (the 2026-09-19 failure
-# described at [providers.claude]); "fable-5" is, confirmed via `strings /usr/local/bin/gc` and matches
-# the short-form convention already used by the other tiers (sonnet-5, haiku).
-# Removed from active config 2026-09-28 (O14, F19): no agent, order or
-# formula ever names it, and factory-guard's provider-resolution check does
-# not cover it either. Re-add (and add it to that check) the day a role
-# actually needs it.
-# [providers.claude-fable]
-# base = "builtin:claude"
-# command = "/home/benja/.local/bin/claude"
-# accept_startup_dialogs = true
-# args_append = ["--disallowedTools", "AskUserQuestion,EnterPlanMode,ExitPlanMode"]
-#
-# [providers.claude-fable.env]
-# CLAUDE_CONFIG_DIR = "/home/benja/.claude"
-# DISABLE_AUTOUPDATER = "1"
-#
-# [providers.claude-fable.option_defaults]
-# permission_mode = "unrestricted"
-# model = "fable-5"
-# effort = "high"
 
 [defaults]
 [defaults.rig]
@@ -173,7 +146,13 @@ version = "sha:3b3b89f2011e06d84459aa7bea1552382f13930a"
 # copy of the same upstream script plus a guard that treats po-agent/*
 # claims and planning-plane beads as owned; every other orphaned claim is
 # still released.
-skip = ["dolt-remotes-patrol", "nudge-mail-sweep", "prune-branches", "cross-rig-deps", "orphan-sweep"]
+# renudge-stale-human-gates: re-mails the addressee of a human gate left
+# open. AGENTS.md forbids creating a human gate, none was open on 2026-10-11
+# and the order still ran every 5 minutes (af-qgwvgi). An aged human gate is
+# still paged without it: factory-watchdog (section 1) raises it to the Mayor
+# past 30 minutes, and notify-on-human-gate-creation still fires at creation.
+skip = ["dolt-remotes-patrol", "nudge-mail-sweep", "prune-branches", "cross-rig-deps", "orphan-sweep",
+        "renudge-stale-human-gates"]
 
 [[orders.overrides]]
 # dolt-health.sh only checks live server health; a 2m gap is still well

@@ -137,7 +137,7 @@ the answer, not in a prompt to find:
   port; each refusal re-reading the tracker, the packs and the session
   records; the outage said, recorded, refused again while it waits for its
   repair; « non conforme »: three issues, « accepté » refused.
-- `tests/convoy-stops-fixture-city-test.py` and
+- `tests/acceptance-fixture-city-test.py` and
   `tests/fixture-city-oracle-test.py`: on the graph of the Fixture City,
   the pass sends the request once on a Delivered Outcome and publishes the
   repair of an outage (`docs/FIXTURE_CITY_ORACLE.md`).
