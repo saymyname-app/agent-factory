@@ -1069,6 +1069,20 @@ What the next upgrade can reuse:
 - **After the resume.** `gc order run mol-dog-backup` once: the reaper skips
   its session prune (`order.skipped`) until a Dolt backup is fresh, and the
   last one was a month old.
+- **What an order's tool is given, and what it may close (af-vhvmsi).**
+  gc 1.5.0 runs an order's check and exec with `BEADS_ACTOR=order:<name>` and
+  with `BD_BIN` set and empty; Beads 1.3.1 refuses `bd close` to any actor
+  but the bead's assignee. `bin/mail-reply-reap` read the empty `BD_BIN` as
+  its `bd`: its check crashed, exit 1, which gc reads as "condition: not
+  met", so the order stopped firing with no `order.failed`, and its close of
+  a mail held by its recipient would have been refused next. Found by hand
+  five hours after the resume. `gc order check` on the day of an upgrade
+  shows such an order as never due;
+  `tests/bare-close-held-bead-real-tracker-test.sh` has gc run that order in
+  a disposable city, and `bin/proposal-door reconvertir` on a bug bead its
+  worker holds. A tool that closes a bead it does not hold uses `bd update
+  <id> --if-assignee <holder it read> --status closed`, the reason in the
+  notes.
 
 Measured that day (Paris): stopped 07:49, binaries replaced 08:06, migrated
 08:16, resumed 08:18. `gc doctor` went from 97 passed, 6 warnings to 109
