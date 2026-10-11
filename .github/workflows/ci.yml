@@ -14,6 +14,14 @@ name: Factory CI
 on:
   pull_request:
     branches: [main]
+  # GitHub's merge queue asks for the required check on the commit it is
+  # about to put on main: main, the pull requests ahead in the queue and
+  # this one. Without this trigger "Tests" is never reported on that commit
+  # and nothing queued can merge. While the ruleset requires no queue, the
+  # event never happens. Such a run is always a full run (af-t3tm88).
+  merge_group:
+    types: [checks_requested]
+    branches: [main]
   # No run on `push` to main: the ruleset requires a pull request whose
   # branch is up to date with main, so the run of that pull request already
   # tested the exact tree the merge puts on main. Running it again after the
