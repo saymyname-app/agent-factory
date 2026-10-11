@@ -99,3 +99,10 @@ Le prototype ouvre `?app=trial&dossier=N`, une copie du vrai rendu du cockpit su
 
 Intent (Benjamin, ses mots, 2026-10-11) : « quelle difference entre "mon avis" et "donner mon avis" ? c'est 2 fois la meme chose ».
 Mechanism (agent interpretation) : supprimer le bouton redondant dans A et garder l’onglet Mon avis ; dans C, garder son accès direct. B conserve le bouton nécessaire, puisqu’il n’a pas cet onglet.
+
+## B retenu : une action à la fois
+
+Intent (Benjamin, ses mots, 2026-10-11) : « Je prefere B une action à la fois, le A et le C sont juste avec des doublons (là maintenant c'est l'ouverture de l'essai qui est en doublon) » ; « verifie que ca soit pas en doublon aussi dans le B ».
+Mechanism (agent interpretation) : retenir B pour poursuivre le prototype ; un seul lancement à l’entrée du parcours, puis seulement l’accès à l’avis. Supprimer Rouvrir/Revoir l’essai du chemin B. Retour au résultat conserve l’étape atteinte au lieu de proposer un nouveau lancement. Ce choix ne confirme pas une Spec ni la conformité finale du prototype.
+
+B est la variante par défaut. Après ouverture : Donner mon avis. Dans l’avis : Continuer avec un agent. Les preuves et la navigation de retour restent secondaires. La révision est locale, sans nouveau push public.

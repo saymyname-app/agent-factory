@@ -1,0 +1,11 @@
+{
+  "variant": "B",
+  "checks": [
+    "initial result: one launch link",
+    "after launch: opinion button only, no relaunch",
+    "back to result: continue, no new launch",
+    "opinion: no launch link",
+    "back after completed trial: opinion only"
+  ],
+  "writes": "simulation only"
+}
