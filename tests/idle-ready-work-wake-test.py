@@ -56,6 +56,27 @@ class IdleReadyWorkWakeTest(unittest.TestCase):
         )
         return proc.returncode, json.loads(proc.stdout)
 
+    def test_check_runs_with_the_empty_BD_BIN_the_controller_exports(self):
+        # af-37a1xn: gc 1.5.0 gives an order's check BD_BIN= (empty). Read
+        # as a binary name it crashed the check (exit 1) on every tick, so
+        # this safety net could never fire. Empty means not set.
+        env = {
+            **os.environ,
+            "BD_BIN": "",
+            "GC_BIN": str(FAKE_GC),
+            "PATH": f"{FAKE_BD.parent}{os.pathsep}{os.environ['PATH']}",
+            "IDLE_TEST_READY": READY_NONE,
+            "IDLE_TEST_WORKER_ACTIVE": "0",
+            "IDLE_TEST_GC_LOG": str(self.gc_log),
+            "IDLE_READY_WORK_NOW": "2026-09-28T10:00:00+00:00",
+        }
+        proc = subprocess.run(
+            (str(TOOL), "--repo-root", str(self.tmp), "--check-only"),
+            env=env, text=True, capture_output=True,
+        )
+        self.assertNotIn("Traceback", proc.stderr)
+        self.assertTrue(json.loads(proc.stdout)["ok"])
+
     def wake_calls(self):
         if not self.gc_log.exists():
             return []

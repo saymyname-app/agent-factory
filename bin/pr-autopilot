@@ -26,6 +26,11 @@
 # dev, so their dev -> main promotion stays a human decision by construction;
 # the Factory repo's protected branch is main itself, which is armed.
 #
+# Outside authors (af-996mmd): a pull request from a fork, or whose author is
+# not one of the operator's own GitHub accounts (config/operator.toml,
+# `github_logins`), is never armed, merged, retried, labelled or turned into
+# a bead. It is left to a human.
+#
 # Usage: pr-autopilot [--dry-run] [--verbose]
 set -uo pipefail
 
@@ -57,6 +62,12 @@ ESCALATION_DOOR_BIN="${ESCALATION_DOOR_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE
 # missing or unset.
 OPERATOR_NAME="${GC_OPERATOR_NAME:-$(sed -n 's/^name[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "${OPERATOR_CONFIG_FILE:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/config/operator.toml}" 2>/dev/null | head -n1)}"
 OPERATOR_NAME="${OPERATOR_NAME:-Benjamin}"
+# af-996mmd: the closed list of GitHub accounts whose pull requests this
+# script acts on, comma-separated, from the same file. Every pull request the
+# Factory opens is the operator's (agents push with the operator's token). An
+# empty list arms nothing (fail closed): on a public repository, anyone can
+# open a pull request and rewrite the workflow that reports the required check.
+PR_AUTHORS="${GC_PR_AUTHORS:-$(sed -n 's/^github_logins[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "${OPERATOR_CONFIG_FILE:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/config/operator.toml}" 2>/dev/null | head -n1)}"
 
 # af-37h58 (P03): RIGS' 4th field (required_ci) is the required GitHub
 # Actions *workflow* name (e.g. "Factory CI") -- retry_ci_failure and
@@ -797,6 +808,11 @@ reject_ticket() {  # repo rig_path num sha reason -> 0 handled (ticket-owned PR)
   return 0
 }
 
+if [ -z "$PR_AUTHORS" ]; then
+  log "ERROR: config/operator.toml names no github_logins -- every open PR is treated as an outsider's, nothing is armed"
+  ERRORS=$((ERRORS+1))
+fi
+
 for entry in "${RIGS[@]}"; do
   IFS='|' read -r rig_dir repo dev required_workflow <<<"$entry"
   repo_done
@@ -852,10 +868,10 @@ for entry in "${RIGS[@]}"; do
   # ---------- 1. ARM open PRs targeting dev ----------
   mark=$(tmo_mark)
   open_prs=$(bounded "$AP_READ_CAP" gh pr list --repo "$repo" --state open --base "$dev" --limit 50 \
-    --json number,isDraft,autoMergeRequest,mergeStateStatus,statusCheckRollup,headRefOid,labels 2>/dev/null)
+    --json number,isDraft,autoMergeRequest,mergeStateStatus,statusCheckRollup,headRefOid,labels,author,isCrossRepository 2>/dev/null)
   # A fine-grained token cannot read check runs; rebuild them from Actions runs.
   [ -n "$open_prs" ] || cut_since "$mark" || open_prs=$(bounded "$AP_READ_CAP" gh pr list --repo "$repo" --state open --base "$dev" --limit 50 \
-    --json number,isDraft,autoMergeRequest,mergeStateStatus,headRefOid,labels 2>/dev/null \
+    --json number,isDraft,autoMergeRequest,mergeStateStatus,headRefOid,labels,author,isCrossRepository 2>/dev/null \
     | bounded "$AP_WRITE_CAP" "$(dirname "${BASH_SOURCE[0]}")/factory-gh-rollup" "$repo" 2>/dev/null)
   if cut_since "$mark"; then
     log "  open PRs unknown (a gh call timed out) -- nothing armed or flagged for $repo this tick"; open_prs='[]'
@@ -863,9 +879,15 @@ for entry in "${RIGS[@]}"; do
     log "  (could not list open PRs)"; ERRORS=$((ERRORS+1)); open_prs='[]'
   fi
 
-  while IFS=$'\t' read -r num draft armed state checks sha green_at labels; do
+  while IFS=$'\t' read -r num draft armed state checks sha green_at origin labels; do
     [ -z "${num:-}" ] && continue
     if over_budget; then not_checked "$repo open PR #$num and any open PR after it"; break; fi
+    # af-996mmd: before anything else, so that nothing below (arming, direct
+    # merge, retry, label, bead) ever runs for an outsider's pull request.
+    if [ "$origin" != "own" ]; then
+      log "  PR #$num: fork or outside author -> left to a human (never armed, retried or flagged)"
+      SKIPPED=$((SKIPPED+1)); continue
+    fi
     if [ "$draft" = "true" ]; then
       vlog "PR #$num: draft, not arming"; SKIPPED=$((SKIPPED+1)); continue
     fi
@@ -1041,7 +1063,7 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
         esac
       fi
     fi
-  done < <(printf '%s' "$open_prs" | jq -r --arg reqcheck "$required_check" '
+  done < <(printf '%s' "$open_prs" | jq -r --arg reqcheck "$required_check" --arg authors "$PR_AUTHORS" '
     # af-s6lef (P04): "oldest ready first" for BEHIND PRs needs a stable order
     # -- gh pr list is not guaranteed sorted by age. PR numbers increase
     # monotonically per repo, so ascending number is exactly oldest-first.
@@ -1067,6 +1089,12 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
        | map(select((((.name//.context//"")=="") or ((.name//.context//"")==$reqcheck)))
              | (.completedAt//"") as $t | try ($t|fromdateiso8601) catch 0)
        | if length==0 or any(.<=0) then 0 else max end),
+      # af-996mmd: "own" only for a branch of this repository whose author is
+      # on the closed list; a missing field reads as an outsider.
+      ((.author.login//"") as $who
+       | if .isCrossRepository==false and $who!=""
+            and (($authors|split(",")|map(gsub("^\\s+|\\s+$";""))|index($who))!=null)
+         then "own" else "outside" end),
       ((.labels//[])|map(.name)|join(",")|if .=="" then "-" else . end)
     ]|@tsv' 2>/dev/null)
 
