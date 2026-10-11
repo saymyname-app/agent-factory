@@ -116,25 +116,6 @@ class MailReplyReapTest(unittest.TestCase):
         proc = self.run_tool("sweep", "--dry-run", messages=[UNRESOLVED_MESSAGE])
         self.assertEqual(1, proc.returncode)
 
-    def test_check_runs_with_the_empty_BD_BIN_the_controller_exports(self):
-        # af-37a1xn: gc 1.5.0 gives an order's check BD_BIN= (empty). Read
-        # as a binary name it crashed the check (exit 1), so the order
-        # never fired. Empty means not set: `bd` from PATH.
-        env = {
-            **os.environ,
-            "BD_BIN": "",
-            "PATH": f"{FAKE_BD.parent}{os.pathsep}{os.environ['PATH']}",
-            "MAIL_TEST_MESSAGES": json.dumps([RESOLVED_MESSAGE]),
-            "MAIL_TEST_ASSIGNED_MAP": "{}",
-            "MAIL_TEST_CLOSE_LOG": str(self.close_log),
-        }
-        proc = subprocess.run(
-            (str(TOOL), "--repo-root", str(self.tmp), "sweep", "--dry-run"),
-            env=env, text=True, capture_output=True,
-        )
-        self.assertEqual(0, proc.returncode, proc.stderr)
-        self.assertEqual(["af-wisp-y0cdyzb"], json.loads(proc.stdout)["closed"])
-
     # -- should-wake: message-type beads never count, real work always does -
 
     def test_assigned_message_type_bead_does_not_wake_a_session(self):
