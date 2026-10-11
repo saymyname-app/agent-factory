@@ -1,8 +1,8 @@
 # Operations
 
 > Retired systems (Cockpit V1, ntfy, campaign, product queue/status/preview,
-> release contract, improvement axes) are documented only under `../legacy/`
-> (untrusted; see `../legacy/README.md`).
+> release contract, improvement axes): code removed (Git history), documented
+> only under `../legacy/` (untrusted; see `../legacy/README.md`).
 
 ## Bootstrap policy
 
@@ -235,10 +235,14 @@ case "$FUNNEL_STATUS" in
 esac
 curl --fail --silent --show-error http://127.0.0.1:8372/health
 curl --fail --silent --show-error \
-  https://benforge.tail9f1386.ts.net/health
+  https://<machine>.<tailnet>.ts.net/health
 ```
 
-The browser URL is `https://benforge.tail9f1386.ts.net/`. Tailnet identity and
+`<machine>.<tailnet>.ts.net` stands for this node's own tailnet name, read on
+the host with `"$TAILSCALE_EXE" status --json | jq -r .Self.DNSName`; the real
+name is not written in this repository (af-996mmd).
+
+The browser URL is `https://<machine>.<tailnet>.ts.net/`. Tailnet identity and
 ACL policy are the access boundary; never add `tailscale funnel`, change the
 supervisor bind address, or expose port `8372` directly.
 
@@ -259,7 +263,7 @@ around a failure by enabling Funnel or a non-loopback listener.
 ### 2026-09-14 Tailscale Serve evidence
 
 - **TARGET:** make the existing loopback-only dashboard available to authenticated tailnet operators over HTTPS without a public route.
-- **CONFIGURED:** Tailscale Serve maps HTTPS port `443` for `benforge.tail9f1386.ts.net` to `http://127.0.0.1:8372`; the Gas City listener remains on `127.0.0.1:8372`.
+- **CONFIGURED:** Tailscale Serve maps HTTPS port `443` for `<machine>.<tailnet>.ts.net` to `http://127.0.0.1:8372`; the Gas City listener remains on `127.0.0.1:8372`.
 - **OBSERVED:** the independently installed Windows Tailscale client reported version `1.102.4`, backend state `Running`, the node online, the HTTPS web proxy handler configured, and `funnel status` labeled the route `(tailnet only)`.
 - **PROVEN:** both the loopback and tailnet `/health` endpoints returned the same healthy Gas City `1.4.1` service, while the client reported no public Funnel route. This proves the path at the time of verification, not durable availability after restart.
 

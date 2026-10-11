@@ -1,7 +1,0 @@
-#!/usr/bin/env bash
-
-set -Eeuo pipefail
-
-[[ ${1:-} == --json ]] || exit 64
-[[ ${CAMPAIGN_STATUS_FAIL:-0} != 1 ]] || { printf 'queue lock timeout\n' >&2; exit 42; }
-cat "${CAMPAIGN_STATUS_FILE:?}"
