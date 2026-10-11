@@ -79,7 +79,11 @@ class SpecApproveBeadModeTest(unittest.TestCase):
     def mapped_spec_beads(self, target="A6b", map_finished=True):
         return {
             "spec-1": self.bead(id="spec-1", metadata={"planning_run_target": target, "planning_map": "map-1"}),
-            "map-1": self.bead(id="map-1", labels=["wayfinder:map"]),
+            # The map stays assigned to its /to-spec session until approval
+            # closes it (docs/agents/issue-tracker.md, Map handoff).
+            "map-1": self.bead(
+                id="map-1", labels=["wayfinder:map"], assignee="po-agent/to-spec-session",
+            ),
             "map-1.1": self.bead(
                 id="map-1.1", parent="map-1", status="closed" if map_finished else "open",
                 labels=["wayfinder:task"], metadata={"gc.plane": "planning"},

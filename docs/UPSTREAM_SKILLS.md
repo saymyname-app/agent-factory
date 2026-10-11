@@ -27,6 +27,17 @@ directory at the pinned tag) instead of only into `~/.agents/skills` on
 the host. `./bin/upstream-skills-check compare` is the mechanical proof
 that this copy is unchanged.
 
+### Licence of the copy (af-996mmd)
+
+`mattpocock/skills` is published under the MIT licence, which asks that its
+notice go with every copy. The upstream `LICENSE` file of the pinned tag is
+kept unchanged at `LICENSES/mattpocock-skills-MIT.txt`; it covers `skills/`
+and the role copies under `agents/*/skills/`, and nothing else in this
+repository, which carries no licence of its own (Benjamin, his words,
+2026-10-11: « tous droits réservés »). It sits outside `skills/` so that the
+copy stays what `./bin/upstream-skills-check compare` proves unchanged. At a
+pin change, copy the `LICENSE` of the new tag again.
+
 ## Role copies (T03)
 
 Delivery roles do not read `skills/` directly: each role agent holds plain
