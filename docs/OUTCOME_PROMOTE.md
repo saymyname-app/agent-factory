@@ -264,7 +264,7 @@ following them is not.
   `record-promotion`, `void-acceptance` and `close-convoy` with each
   refusal; a convoy closed by command ruled, one closed or reopened by hand
   not; no write of the flow on a closed convoy or on its tickets.
-- `tests/convoy-stops-fixture-city-test.py`, class
+- `tests/owner-answer-promotion-fixture-city-test.py`, class
   `PromotionOnTheFixtureCity`: on the graph of the Fixture City, with the
   real passes — the protected branch holds nothing of the convoy before
   « accepté », then one merge and the convoy closed; an abandoned convoy
