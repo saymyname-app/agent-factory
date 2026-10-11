@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ci: over-ceiling — one case, 135 s: it walks the whole delivery flow to a Delivered Outcome twice, and a case is not cut (af-vqew1x)
 """bin/fixture-city-oracle on the scenarios of tests/fixtures/fixture-city: the
 walk where nothing goes wrong, Delivered without a repair and without a
 round (T26, T28).
