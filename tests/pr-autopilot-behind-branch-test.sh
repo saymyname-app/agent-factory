@@ -40,8 +40,8 @@ mkdir -p "$TMP/factory" "$TMP/bin"
 # 10 is the older (lower-numbered) PR.
 cat > "$TMP/af_open.json" <<'JSON'
 [
- {"number":11,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BEHIND","statusCheckRollup":[{"name":"Tests","conclusion":"SUCCESS"}],"headRefOid":"af11","labels":[]},
- {"number":10,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BEHIND","statusCheckRollup":[{"name":"Tests","conclusion":"SUCCESS"}],"headRefOid":"af10","labels":[]}
+ {"number":11,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BEHIND","statusCheckRollup":[{"name":"Tests","conclusion":"SUCCESS"}],"headRefOid":"af11","labels":[]},
+ {"number":10,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BEHIND","statusCheckRollup":[{"name":"Tests","conclusion":"SUCCESS"}],"headRefOid":"af10","labels":[]}
 ]
 JSON
 
@@ -107,6 +107,7 @@ STUB
 chmod +x "$TMP/bin/"*
 export PATH="$TMP/bin:$PATH"
 export FACTORY_ROOT="$TMP/factory"
+export GC_PR_AUTHORS=example-operator
 export REVERSIBILITY_CHECK_BIN="$TMP/bin/gh"
 
 pilot() { "$AUTOPILOT" "$@" 2>&1 || true; }
@@ -132,7 +133,7 @@ grep -q "^pr merge 11 " "$TMP/gh.log" && { echo "$out" >&2; fail "PR #11 was arm
 # --- retry: an update-branch failure is logged and retried next tick ---
 cat > "$TMP/af_open.json" <<'JSON'
 [
- {"number":20,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BEHIND","statusCheckRollup":[{"name":"Tests","conclusion":"SUCCESS"}],"headRefOid":"af20","labels":[]}
+ {"number":20,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BEHIND","statusCheckRollup":[{"name":"Tests","conclusion":"SUCCESS"}],"headRefOid":"af20","labels":[]}
 ]
 JSON
 : > "$TMP/gh.log"
@@ -165,9 +166,9 @@ grep -q "^pr update-branch" "$TMP/gh.log" && fail "pr-autopilot called 'gh pr up
 # PR 31 carries the label an earlier pass left: under that rule it is filed.
 cat > "$TMP/af_open.json" <<'JSON'
 [
- {"number":30,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BEHIND","statusCheckRollup":[{"name":"Tests","conclusion":"SUCCESS"}],"headRefOid":"af30","labels":[]},
- {"number":31,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BEHIND","statusCheckRollup":[{"name":"Tests","conclusion":"SUCCESS"}],"headRefOid":"af31","labels":[{"name":"autopilot-stuck"}]},
- {"number":32,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BEHIND","statusCheckRollup":[{"name":"Tests","conclusion":"SUCCESS"}],"headRefOid":"af32","labels":[]}
+ {"number":30,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BEHIND","statusCheckRollup":[{"name":"Tests","conclusion":"SUCCESS"}],"headRefOid":"af30","labels":[]},
+ {"number":31,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BEHIND","statusCheckRollup":[{"name":"Tests","conclusion":"SUCCESS"}],"headRefOid":"af31","labels":[{"name":"autopilot-stuck"}]},
+ {"number":32,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BEHIND","statusCheckRollup":[{"name":"Tests","conclusion":"SUCCESS"}],"headRefOid":"af32","labels":[]}
 ]
 JSON
 : > "$TMP/gh.log"; : > "$TMP/gc.log"
@@ -184,7 +185,7 @@ grep -qE "^api -X POST repos/[^ ]*/issues/3[02]/labels -f labels\[\]=autopilot-s
 # --- af-jaimhb: a refused update is marked first, filed on the next refusal ---
 cat > "$TMP/af_open.json" <<'JSON'
 [
- {"number":40,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BEHIND","statusCheckRollup":[{"name":"Tests","conclusion":"SUCCESS"}],"headRefOid":"af40","labels":[]}
+ {"number":40,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BEHIND","statusCheckRollup":[{"name":"Tests","conclusion":"SUCCESS"}],"headRefOid":"af40","labels":[]}
 ]
 JSON
 : > "$TMP/gh.log"; : > "$TMP/gc.log"
@@ -196,7 +197,7 @@ grep -q "^bd create" "$TMP/gc.log" && { echo "$out" >&2; fail "PR #40 was filed 
 
 cat > "$TMP/af_open.json" <<'JSON'
 [
- {"number":40,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BEHIND","statusCheckRollup":[{"name":"Tests","conclusion":"SUCCESS"}],"headRefOid":"af40","labels":[{"name":"autopilot-stuck"}]}
+ {"number":40,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BEHIND","statusCheckRollup":[{"name":"Tests","conclusion":"SUCCESS"}],"headRefOid":"af40","labels":[{"name":"autopilot-stuck"}]}
 ]
 JSON
 : > "$TMP/gh.log"; : > "$TMP/gc.log"

@@ -89,6 +89,7 @@ STUB
 chmod +x "$TMP/bin/"*
 export PATH="$TMP/bin:$PATH"
 export FACTORY_ROOT="$TMP/factory"
+export GC_PR_AUTHORS=example-operator
 export REVERSIBILITY_CHECK_BIN="$TMP/bin/gh"
 export DELIVER_CLOSE_BIN="$TMP/bin/deliver-close"
 export PROTECTED_RIGS_CONFIG_DIR="$REPO_ROOT/tests/fixtures/pr-autopilot-projects"
