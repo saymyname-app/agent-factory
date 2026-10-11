@@ -166,7 +166,7 @@ ready_delay_ms = 0
 base = "builtin:claude"
 command = "$CLAUDE_BIN"
 accept_startup_dialogs = true
-args_append = ["--disallowedTools", "AskUserQuestion,EnterPlanMode,ExitPlanMode", "--model", "claude-opus-5-5"]
+args_append = ["--disallowedTools", "AskUserQuestion,EnterPlanMode,ExitPlanMode,CronCreate,CronDelete,CronList,DesignSync,EnterWorktree,ExitWorktree,ListAgents,ListMcpResourcesTool,NotebookEdit,PushNotification,ReadMcpResourceDirTool,ReadMcpResourceTool,RemoteTrigger,ReportFindings,SendMessage,Workflow", "--strict-mcp-config", "--model", "claude-opus-5-5"]
 
 [providers.$MAYOR_PROVIDER.env]
 CLAUDE_CONFIG_DIR = "$CLAUDE_HOME"

@@ -36,7 +36,10 @@ agent_bytes=$(wc -c < "$REPO_ROOT/AGENTS.md")
 (( agent_bytes <= 8192 )) || fail "AGENTS.md exceeds the 8 KiB bootstrap budget"
 
 assert_contains AGENTS.md 'docs/OPERATOR_BRIDGE.md'
-assert_contains AGENTS.md 'Cockpit V1 is retired to `legacy/`'
+assert_contains AGENTS.md 'Cockpit V1 is retired (code in Git history)'
+# ADR-0016 section 7 is an active rule: its text must stay where AGENTS.md cites it.
+assert_contains AGENTS.md 'legacy/docs/decisions/ADR-0016-standing-delegation-and-non-stop-campaign.md'
+assert_file legacy/docs/decisions/ADR-0016-standing-delegation-and-non-stop-campaign.md
 assert_contains AGENTS.md 'Full access'
 assert_contains README.md 'docs/OPERATOR_BRIDGE.md'
 # sandbox: allow-live-root -- real operator-facing doc text (P10, af-ygibh)

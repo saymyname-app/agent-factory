@@ -1,0 +1,5 @@
+{
+  "enableAllProjectMcpServers": false,
+  "syncClaudeAiPlugins": false,
+  "syncClaudeAiSkills": false
+}

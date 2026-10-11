@@ -157,8 +157,8 @@ In the battery:
 | File | The journey |
 |---|---|
 | `tests/planning-run-lifecycle-test.py` | a finished map, the approval of its Spec, the publication of its graph into a convoy |
-| `tests/fixture-city-oracle-test.py` | a candidate planning path from a synthetic intent to Delivered and Accepted |
-| `tests/convoy-stops-fixture-city-test.py` | a published graph advanced pass after pass to its stops and to the end of its Spec |
+| `tests/fixture-city-oracle-test.py`, and the three files that hold the rest of its cases and load its harness: `tests/fixture-city-oracle-repaired-delivered-test.py`, `tests/fixture-city-oracle-parked-answer-author-gates-test.py`, `tests/fixture-city-oracle-accepted-answer-test.py` | a candidate planning path from a synthetic intent to Delivered and Accepted |
+| `tests/convoy-stops-fixture-city-test.py`, and the two files that hold the rest of its cases and load its harness: `tests/acceptance-fixture-city-test.py`, `tests/owner-answer-promotion-fixture-city-test.py` | a published graph advanced pass after pass to its stops, to the end of its Spec, and to the answer of the owner |
 
 Outside the battery (marked `# ci: local-only`, run on the host against the
 real runtime; they cost CI nothing):

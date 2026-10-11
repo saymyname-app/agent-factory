@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ci: over-ceiling — 119 s then 122 s in two CI runs of the same file (2026-10-11): at the ceiling, not above it by its cases; to cut with the next long files (af-vqew1x)
 """bin/ticket-end on a fake tracker state (T19, af-iefuud; Spec af-wf4w5r §9,
 Testing Decisions seam 2): one test per pass and per refusal, each refusal
 re-reading the tracker, the evidence store and the branches to prove nothing
