@@ -1011,6 +1011,59 @@ the service, the container's options, the hand-off and the hours of the
 weekly build;
 `config/ci-runner/isolation-probe.sh` proves the box on every run.
 
+## Install on a fresh Ubuntu host (af-o6l5rl)
+
+Intent (Benjamin, his words, 2026-10-11): « je veux la meilleure solution
+cloud existante au meilleur prix pour mon usine et projets stp, et il faut
+tout installer, rapidement »
+Mechanism (agent interpretation): `bin/factory-host-install` puts on an
+Ubuntu 24.04 host the tools inventoried on the WSL host that day, at the
+same versions, for the same user and path (`benja`,
+`/home/benja/agent-factory`, written in 84 tracked files). It does not mean
+a second live Factory: the script starts no supervisor, city, timer or
+agent and copies no Beads data. Moving the Factory is a cutover in a stop
+window (`RUNBOOK_STOP_AND_RESTART.md`), never two cities on the same Beads.
+
+```bash
+# 1. as root, before the clone exists (the file needs nothing beside it)
+ssh root@<host> 'bash -s root' < bin/factory-host-install
+# 2. as benja: the operator logs in GitHub himself (private repository), then
+ssh benja@<host> 'bash -s user' < bin/factory-host-install
+# 3. on the host: every line OK
+/home/benja/agent-factory/bin/factory-host-install check
+```
+
+Each command can be run again: a step whose result is there is skipped.
+
+What the WSL host borrowed, and a real host must own (inventory of
+2026-10-11, shown as `WARN` by `check` on the WSL host):
+
+| On the WSL host | On a fresh host |
+|---|---|
+| `docker` is Docker Desktop's CLI | Ubuntu's `docker.io` (Engine 29) and `docker-compose-v2`; `benja` in the `docker` group, as today |
+| `mvn` is Windows' Maven 3.9.9 (`/mnt/c/Dev/Tools`) | Maven 3.9.9 in `~/.local/opt` |
+| Temurin 21 in `~/.local/opt` | Ubuntu's `openjdk-21-jdk-headless` |
+| The kernel lets `bwrap` build a user namespace | Ubuntu 24.04 denies it: the script loads the AppArmor profile of `config/fixture-city-bwrap.apparmor`, without which `bin/delivery-role-sandbox` fails |
+| 8 GB + 6 GB of swap (`.wslconfig`) | a 4 GB swap file when the host has none |
+
+Pinned, with the checksum verified at download: `gc`, `bd`, `dolt` (the
+upstream binaries are byte-identical to the ones in `/usr/local/bin` on the
+WSL host), Node, Maven. Pinned by version: the Claude and Codex CLIs,
+Playwright (the Chromium of `bin/evidence-capture`). An upgrade changes the
+pins in the script too: `tests/factory-host-install-test.sh` is red on the
+Factory's host while they differ.
+
+Not installed, on purpose: the CI runner (`config/ci-runner`), Tailscale
+and any login (GitHub, Claude, Codex): the operator's.
+
+PROVEN on 2026-10-11: `check` on the WSL host; `root` twice, then `user`, in
+a throwaway `ubuntu:24.04` container: every package, the three pinned
+binaries, Node, Maven, both CLIs and the capture browser with all its
+libraries, and a second `root` that skips what is there. A container cannot
+show the rest, so it is not yet run: the container engine answering, linger,
+the AppArmor profile, the swap file, and the clone (the operator's GitHub
+login).
+
 ## Upgrade
 
 Before every active-factory upgrade:
@@ -1019,7 +1072,8 @@ Before every active-factory upgrade:
 2. Capture deployed versions.
 3. Back up Beads/Dolt.
 4. Stop or isolate the controller as required.
-5. Upgrade pinned versions deliberately.
+5. Upgrade pinned versions deliberately, and the same pins in
+   `bin/factory-host-install`.
 6. Run doctor.
 7. Run a FAST canary.
 8. Run the tests marked `# ci: local-only` (`bin/local-only-tests`; `--list`
