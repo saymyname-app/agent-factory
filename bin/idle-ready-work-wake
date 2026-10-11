@@ -32,7 +32,7 @@ from typing import Any
 
 PROGRAM = "idle-ready-work-wake"
 ROOT = Path(__file__).resolve().parents[1]
-BD_BIN = os.environ.get("BD_BIN", "bd")
+BD_BIN = os.environ.get("BD_BIN") or "bd"
 GC_BIN = os.environ.get("GC_BIN", "gc")
 IDLE_THRESHOLD = timedelta(minutes=15)
 NOTIFY_COOLDOWN = timedelta(hours=1)
