@@ -90,6 +90,11 @@ def lifecycle_preflight(bin_dir, repo, profile, commit, dataset, state):
         raise RuntimeError(f'lifecycle trial cleanup unconfirmed: {state}')
     lifecycle['existing_ports_after'] = sorted(p for p in before if connects(p))
     lifecycle['lost_existing_ports'] = sorted(before - set(lifecycle['existing_ports_after']))
+    if (started['exit_code'] or not lifecycle.get('port_open_before_stop') or
+            lifecycle.get('stop', {}).get('exit_code') != 0 or
+            lifecycle.get('process_alive_after_stop') or lifecycle.get('processes_after_stop') or
+            lifecycle.get('port_open_after_stop') or lifecycle['lost_existing_ports']):
+        raise RuntimeError(f'lifecycle preflight failed: {lifecycle}')
     return lifecycle
 
 

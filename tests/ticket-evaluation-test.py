@@ -620,6 +620,20 @@ class TicketEvaluationTest(unittest.TestCase):
         self.assertEqual("return_to_author", self.recorded(handed)["outcome"])
         self.assertFalse(self.tool("verdict")["favorable"])
 
+    def test_recipe_establishing_ticket_refuses_failed_lifecycle_before_primary_launch(self):
+        files = self.realized()
+        files["config/project-descriptors/fx.json"] = self.profile.read_text()
+        files[APP] = "raise SystemExit('broken launch')\n"
+        self.finished_slice(files)
+        tracker = json.loads(self.tracker.read_text())
+        tracker["beads"][SLICE]["metadata"]["gc.flow.establishes_launch_recipe"] = True
+        self.tracker.write_text(json.dumps(tracker))
+
+        settled = self.settle(expect=1)
+
+        self.assertIn("lifecycle preflight failed", settled["refused"][0]["reason"])
+        self.assertEqual([], self.launches())
+
     def test_recipe_establishing_ticket_refuses_missing_committed_profile(self):
         self.finished_slice(self.realized())
         tracker = json.loads(self.tracker.read_text())

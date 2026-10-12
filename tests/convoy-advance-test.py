@@ -276,15 +276,24 @@ class ConvoyAdvanceHarness(unittest.TestCase):
             if name not in self.env:
                 continue
             marker = Path(self.env[name] + ".pending")
+            done = Path(self.env[name] + ".done")
+            failed = Path(self.env[name] + ".failed")
+            if not marker.exists() and not failed.exists():
+                continue
             deadline = time.monotonic() + 60
             while marker.exists() and time.monotonic() < deadline:
-                settled = self.run_cmd(ROOT / "bin" / program, "settle", args[0], "--repo", self.root)
+                bead = self.bead(marker.read_text())
+                convoy = next(line.removeprefix("convoy: ") for line in bead["description"].splitlines()
+                              if line.startswith("convoy: "))
+                settled = self.run_cmd(ROOT / "bin" / program, "settle", convoy, "--repo", self.root)
                 if settled.returncode:
                     time.sleep(0.2)
                     self.assertFalse(marker.exists(), settled.stdout + settled.stderr)
                     break
                 time.sleep(0.1)
             self.assertFalse(marker.exists(), f"fake {program} did not finish")
+            self.assertFalse(failed.exists(), f"fake {program} failed: {Path(self.env[name] + '.worker').read_text()}")
+            self.assertTrue(done.exists(), f"fake {program} did not close its bead")
         return answer
 
     def slung(self):

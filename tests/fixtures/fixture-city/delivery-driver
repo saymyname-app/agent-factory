@@ -584,6 +584,10 @@ class City:
             if name not in self.env():
                 continue
             marker = Path(self.env()[name] + ".pending")
+            done = Path(self.env()[name] + ".done")
+            failed = Path(self.env()[name] + ".failed")
+            if not marker.exists() and not failed.exists():
+                continue
             deadline = time.monotonic() + 60
             while marker.exists() and time.monotonic() < deadline:
                 settled = self.run(BIN / program, "settle", self.convoy, "--repo", self.root,
@@ -596,6 +600,9 @@ class City:
                 time.sleep(0.1)
             if marker.exists():
                 raise SystemExit(f"delivery-driver: fake {program} did not finish")
+            if failed.exists() or not done.exists():
+                worker = Path(self.env()[name] + ".worker")
+                raise SystemExit(f"delivery-driver: fake {program} failed: {worker.read_text() if worker.exists() else 'no worker log'}")
         return "order-pass"
 
     def gate(self, tool: str, *args, **more: str) -> dict:

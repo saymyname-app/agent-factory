@@ -97,6 +97,10 @@ if len(brief.get("datasets") or []) > 1:
     # The fake Evaluator lives beyond the dispatch call, as a real routed
     # session does. Its product requests are served by later controller passes.
     pending = Path(str(log) + ".pending")
+    done = Path(str(log) + ".done")
+    failed = Path(str(log) + ".failed")
+    done.unlink(missing_ok=True)
+    failed.unlink(missing_ok=True)
     pending.write_text(bead_id)
     child = os.fork()
     if child:
@@ -106,7 +110,11 @@ if len(brief.get("datasets") or []) > 1:
     os.dup2(output, 1)
     os.dup2(output, 2)
     os.close(output)
-    atexit.register(lambda: pending.unlink(missing_ok=True))
+    outcome = {"ok": False}
+    def finish():
+        (done if outcome["ok"] else failed).write_text(bead_id)
+        pending.unlink(missing_ok=True)
+    atexit.register(finish)
 
 
 def json_file(content):
@@ -193,7 +201,10 @@ os.unlink(path)
 sys.stderr.write(proc.stdout + proc.stderr)
 if proc.returncode:
     raise SystemExit(proc.returncode)
-if "pending" in globals():
-    pending.unlink(missing_ok=True)
-subprocess.run([GC, "bd", "close", bead_id, "--reason", "évaluation enregistrée"], capture_output=True)
+closed = subprocess.run([GC, "bd", "close", bead_id, "--reason", "évaluation enregistrée"],
+                        capture_output=True, text=True)
+if closed.returncode:
+    raise RuntimeError(closed.stdout + closed.stderr)
+if "outcome" in globals():
+    outcome["ok"] = True
 raise SystemExit(0)
