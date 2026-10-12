@@ -1,4 +1,4 @@
-# Agent Factory — Codex bootstrap
+# Agent Factory — agent bootstrap
 
 Keep this file small. Load only the context required by the current request.
 
@@ -32,7 +32,7 @@ For a change:
 
 ## Codex bridge contract
 
-- Desktop Codex, CLI Codex, and Codex Remote are operator surfaces for the same local Factory.
+- Desktop Codex, CLI Codex, and Codex Remote are operator surfaces for the same Factory.
 - New work enters through the Planning Run flow (`docs/PLANNING_RUN.md`);
   the Mayor executes approved ticket graphs. The pre-refactor product queue is
   retired (Git history).
@@ -47,7 +47,7 @@ For a change:
 - Promote a learning into `AGENTS.md` only when it is stable, reusable, and changes how future agents should work.
 - When a task exposes stale context, repair the authoritative document in the same bounded change and add a deterministic check when practical.
 - Never silently rewrite policy from chat memory. Resolve conflicts using live state, Git, Beads, and the authority order in `docs/CONTEXT_INDEX.md`.
-- After instruction changes, use a fresh Codex session to verify the effective instruction chain.
+- After instruction changes, use a fresh session to verify the effective instruction chain.
 
 ## Invariants
 
@@ -65,7 +65,6 @@ For a change:
   or closes: one left pinning a merged branch makes `gh pr merge
   --delete-branch` exit non-zero after merging, which reads as a failed merge.
   `factory-guard` names any that are left; it does not remove them for you.
-- Do not extend the retired SayMyName Linear/PowerShell runner except for transition or safety work.
 - Check Gas City, Beads, GitHub, the provider/runtime, and standards before inventing a proprietary primitive.
 - Never put secrets in Git, Beads, logs, prompts, or responses.
 - Architecture changes update durable documentation in the same change.
