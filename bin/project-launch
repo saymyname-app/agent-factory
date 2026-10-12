@@ -72,6 +72,17 @@ def terminate(pid: int) -> None:
             os.kill(pid, 0)
         except ProcessLookupError:
             return
+        if sys.platform == "linux":
+            try:
+                # kill(pid, 0) also succeeds for a zombie. It has exited;
+                # waiting for its parent to reap it spends the whole grace.
+                state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+                if state in {"Z", "X"}:
+                    return
+            except FileNotFoundError:
+                return
+            except (OSError, IndexError):
+                pass  # Cannot inspect it: keep the ordinary signal check.
         time.sleep(0.1)
     try:
         os.kill(pid, signal.SIGKILL)
