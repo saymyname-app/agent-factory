@@ -972,3 +972,16 @@ configured root and refusal type; their public arguments and failure behavior
 stay the same. The stricter list-only bead readers in `acceptance-session`
 and `owner-answer` stay local. Changes to these reads now have one place to
 land, exercised by the existing delivery command tests.
+
+### Registry and review cleanup
+
+Intent (Benjamin, his words, 2026-10-12): « vas y », following the proposal
+to apply review points 3 to 5.
+Mechanism (agent interpretation): the shell registry interface delegates
+TOML decoding to Python's standard-library `tomllib`, including optional
+fields. Required values remain non-empty strings; malformed files fail with
+their filename. No parser dependency is added. The unused cockpit
+`validity_window_for` wrapper is removed; the read model retains its validity
+window check. The fresh-session test also proves that another session's shared
+alias history cannot block it, so its identical second execution is removed;
+the distinct own-session alias check remains for all three delivery roles.

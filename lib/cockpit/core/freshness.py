@@ -30,16 +30,6 @@ VALIDITY_WINDOWS_SECONDS = {
 }
 
 
-def validity_window_for(source):
-    try:
-        return VALIDITY_WINDOWS_SECONDS[source]
-    except KeyError:
-        raise ValueError(
-            "cockpit: no Validity window declared for source %r — add one "
-            "to VALIDITY_WINDOWS_SECONDS instead of guessing" % (source,)
-        )
-
-
 def classify(read_at, now, validity_seconds, complete=True, failing_after_seconds=None):
     """Classify a reading taken at ``read_at`` (epoch seconds, or None).
 
