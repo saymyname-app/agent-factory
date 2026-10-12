@@ -28,6 +28,7 @@ written through `bin/convoy-state` only. A convoy without the mark is not
 touched (exit 4): it is merged as before.
 
 ```bash
+./bin/ticket-evaluation cleanup af-convoy af-t1 [--repo DIR]              # stopped ticket only
 ./bin/ticket-evaluation settle  af-convoy [--repo <project repository>]   # bin/convoy-advance, at each pass
 ./bin/ticket-evaluation brief   af-convoy af-t1                           # the Evaluator session (formula mol-ticket-evaluation)
 ./bin/ticket-evaluation record  af-convoy af-t1 --file result.json        # the Evaluator session
@@ -111,6 +112,12 @@ session comes later. They are stopped by code, by the first pass after the
 states are in (or after the ticket is stopped, or a newer tip replaced the
 evaluation). `gc.flow.evaluation.live` names the launch records still to
 stop; `bin/convoy-advance` runs a settlement as long as a ticket has one.
+
+The launch record also owns descendants that leave the original process group.
+The launcher confirms that those processes, the port and the isolated copy
+are released before deleting the record. A failed stop keeps `live` and the
+record for a later retry; a failed startup keeps its record if cleanup
+cannot be confirmed, and a retry cannot overwrite that record.
 
 A product that does not start from the clean copy (two attempts, each within
 `start_timeout_seconds`) cannot be observed: `settle` records it as an
