@@ -180,3 +180,14 @@ not every later seat using the alias. The delivery roles restrict alias-history
 reads to that exact session id while preserving their own workflow affinity.
 This also applies to authors and evaluators. An old completed review cannot
 make a new review disappear from its session's claim query (af-wet0sq).
+
+## Delegated derivation (AR-039)
+
+Under `PLANNING_DELEGATION.md`, technical corrections run without Benjamin;
+the two-pass limit and existing independent reviewer remain. For a
+derived graph, the verdict also freezes the source Spec digest: changing
+that Spec invalidates the review even when graph text stays identical. One draft is
+bound to the source authorization, so another draft cannot reset its review
+budget. The delegated publication path accepts no override of an unfavorable
+review. Exhaustion triggers bounded technical diagnosis; a new product
+choice is shown to Benjamin concretely. Human-led approvals above remain.

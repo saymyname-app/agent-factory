@@ -130,6 +130,18 @@ Planning Run starts.
      `docs/DELIVERY.md` ("Marked convoys -- the delivery flow of a Planning
      Run (D01)").
 
+## Delegated continuation after validated choices (2026-10-12)
+
+`PLANNING_DELEGATION.md` is the operator's autonomous path from a finished,
+validated map through independent fidelity review, derived Spec, slicing,
+graph review and publication. It supersedes the routine human text/seam
+approvals of steps 3–6 for that authorized path only. Its `derived/v1`
+provenance never impersonates exact human approval. The existing gates,
+prototype validation, protected effects and final acceptance remain.
+There is no mandatory second slash command or launch question. The
+operator chooses the delivery path below within the delegated scope and
+records why; an existing owner's claim or halt remains in force.
+
 ## Delivery path of an approved Spec (a preference, not a gate)
 
 Intent (Benjamin, his words, live chat, 2026-10-10): « c'est possible
@@ -150,7 +162,8 @@ remove this section and its pointers (`AGENTS.md`, `docs/context-index/`,
 `GLOSSARY.md`).
 
 - **Offer it.** Once a Spec is approved, the operator session says in one
-  line which path it would take and why; Benjamin answers. Direct Delivery
+  line which path it would take and why; Benjamin answers on the human-led
+  path. Under `PLANNING_DELEGATION.md`, the agent chooses and records why. Direct Delivery
   tends to win when the slices are independent and the proof is mechanical;
   the Factory when the work should run unattended. (The agent's reading, to
   adjust with use.)

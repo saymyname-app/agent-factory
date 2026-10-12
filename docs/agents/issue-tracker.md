@@ -37,6 +37,15 @@ Ticket Graph Draft as a planning-plane bead linked to its Spec bead
 
 `bd show <id>` and `bd comments <id>`.
 
+## Delegated planning exception (2026-10-12)
+
+For validated choices covered by the standing delegation, follow
+`../PLANNING_DELEGATION.md`: the operator continues without a mandatory
+`/to-spec` or `/to-tickets` invocation and uses the distinct derived doors.
+This is an explicit adaptation outside upstream skills, not an invocation
+or replay of their disabled Skill tools. Map/Spec handoff offers below
+remain the human-led path; claims and Take over stay identical for both.
+
 ## Wayfinding operations
 
 Used by `/wayfinder`. The **map** is one bead (the Planning Map Bead) with

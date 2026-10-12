@@ -1,0 +1,306 @@
+#!/usr/bin/env python3
+"""Bound planning delegation to frozen decisions; no agent impersonates the owner.
+
+This is an authorization/verification door, not a scheduler. See
+ docs/PLANNING_DELEGATION.md. Human exact approval remains supported.
+"""
+import argparse
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+ROOT = Path(__file__).resolve().parents[1]
+KEY = 'gc.planning_delegation'
+REQUEST = 'gc.planning_derivation'
+MODE = 'derived/v1'
+
+
+def digest(value):
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return 'sha256:' + hashlib.sha256(text.encode()).hexdigest()
+
+
+def require(condition, message):
+    if not condition:
+        raise ValueError('refus : ' + message)
+
+
+def run(argv, stdin=None):
+    result = subprocess.run(argv, input=stdin, text=True, capture_output=True)
+    require(result.returncode == 0, result.stderr.strip() or result.stdout.strip())
+    return json.loads(result.stdout)
+
+
+def bd(*args):
+    return run([os.environ.get('BD_BIN') or 'bd', *args])
+
+
+def show(bead):
+    data = bd('show', bead, '--json')
+    return data[0] if isinstance(data, list) else data
+
+
+def metadata(bead, key):
+    value = (bead.get('metadata') or {}).get(key)
+    return json.loads(value) if isinstance(value, str) else value
+
+
+def write(bead, key, value):
+    result = subprocess.run([os.environ.get('BD_BIN') or 'bd', 'update', bead, '--set-metadata',
+                             key + '=' + (value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, sort_keys=True))],
+                            capture_output=True, text=True)
+    require(result.returncode == 0, result.stderr or result.stdout)
+
+
+def tool(name, *args, stdin=None):
+    env = name.upper().replace('-', '_') + '_BIN'
+    result = run([os.environ.get(env) or str(ROOT / 'bin' / name), *args], stdin)
+    require(isinstance(result, dict) and result.get('ok') is not False, 'échec de ' + name)
+    return result
+
+
+def sources(map_id):
+    root = show(map_id)
+    children = bd('children', map_id, '--json')
+    require(isinstance(children, list), 'liste des décisions illisible')
+    rows = [root] + sorted(children, key=lambda row: row['id'])
+    return [{'id': row['id'], 'title': row.get('title') or '',
+             'project': (row.get('metadata') or {}).get('gc.project_id'),
+             'status': row.get('status') if row['id'] != map_id else None,
+             'description': row.get('description') or '',
+             'comments': bd('comments', row['id'], '--json')} for row in rows]
+
+
+def authority(map_id, project=None):
+    bead = show(map_id)
+    auth = metadata(bead, KEY)
+    require(isinstance(auth, dict) and auth.get('mode') == MODE and not auth.get('revoked'),
+            'aucune délégation active sur ' + map_id)
+    require(project is None or auth['project'] == project, 'projet différent de la délégation')
+    require((bead.get('metadata') or {}).get('gc.project_id') == auth['project'], 'projet de la carte modifié')
+    require(tool('planning-map', 'check', '--map', map_id).get('finished'), 'carte réouverte ou inachevée')
+    require(auth['by'] == human(auth['project']), 'propriétaire déclaré modifié depuis la délégation')
+    require(auth['source_digest'] == digest(sources(map_id)),
+            'les décisions sources ont changé : renouveler la délégation, aucune publication')
+    return auth
+
+
+def human(project):
+    return tool('project-planning-profile', 'human-approver', '--project', project)['human_approver']
+
+
+def current_request(artifact, project=None):
+    bead = show(artifact)
+    request = metadata(bead, REQUEST)
+    require(isinstance(request, dict), 'aucune dérivation préparée sur ' + artifact)
+    auth = authority(request['map'], project)
+    require((bead.get('metadata') or {}).get('gc.project_id') == auth['project'], 'projet de l’artefact modifié')
+    require(request['authorization'] == auth['source_digest'], 'délégation remplacée')
+    require(auth.get(request['kind']) == artifact, 'artefact non lié à cette délégation')
+    require(request['digest'] == digest(bead.get('description') or ''), 'artefact modifié depuis la préparation')
+    return bead, request, auth
+
+
+def check(artifact, project=None):
+    bead, request, auth = current_request(artifact, project)
+    if request['kind'] == 'spec':
+        review = request.get('review') or {}
+        require(review.get('favorable') is True and review.get('reviewer') != request['author'],
+                'revue indépendante de fidélité absente ou défavorable')
+    else:
+        require((bead.get('metadata') or {}).get('spec_id') == auth.get('spec'), 'autre Spec sur le graphe')
+        spec = check(auth['spec'], auth['project'])
+        require(request.get('spec_digest') == spec['digest'], 'Spec modifiée depuis la préparation du graphe')
+        verdict = tool('graph-review', 'check', artifact)
+        require(verdict.get('derived_spec_digest') == request['spec_digest'], 'revue du graphe sur une autre Spec')
+        require(not verdict.get('decisions'), 'la voie déléguée ne passe aucun refus de revue')
+    return {'ok': True, 'mode': MODE, 'artifact': artifact, 'digest': request['digest'],
+            'derived_by': request['author'], 'map': request['map'], 'kind': request['kind'],
+            'project': auth['project'], 'delegated_by': auth['by'], 'evidence': auth['evidence'],
+            'authorization': request['authorization']}
+
+
+def execute(args):
+    if args.command == 'authorize':
+        require(args.by == human(args.project), 'seul le propriétaire déclaré délègue')
+        require(bool(args.evidence.strip()), 'mots de délégation manquants')
+        bead = show(args.map)
+        require((bead.get('metadata') or {}).get('gc.project_id') == args.project, 'projet de la carte différent')
+        require(tool('planning-map', 'check', '--map', args.map).get('finished'), 'carte inachevée')
+        sealed = sources(args.map)
+        previous = metadata(bead, KEY) or {}
+        require(previous.get('source_digest') != digest(sealed),
+                'ces sources ont déjà une délégation : reprendre ses artefacts et ses compteurs')
+        value = {**previous, 'mode': MODE, 'project': args.project, 'by': args.by, 'evidence': args.evidence,
+                 'source_digest': digest(sealed), 'source_ids': [row['id'] for row in sealed],
+                 'spec_reviews': previous.get('spec_reviews', 0), 'revoked': False}
+        write(args.map, KEY, value)
+        return {'ok': True, 'map': args.map, 'authorization': value}
+    if args.command == 'revoke':
+        bead = show(args.map)
+        auth = metadata(bead, KEY)
+        require(isinstance(auth, dict), 'délégation absente')
+        require(args.by == human(auth['project']), 'seul le propriétaire déclaré retire la délégation')
+        auth['revoked'] = True
+        write(args.map, KEY, auth)
+        return {'ok': True, 'revoked': args.map}
+    if args.command == 'prepare':
+        auth = authority(args.map, args.project)
+        require(auth.get(args.kind) in (None, args.artifact),
+                'un artefact est déjà lié : le reprendre, sans réinitialiser les revues')
+        require(args.author_session.strip() and args.author_session != auth['by'], 'identité de session auteur requise')
+        bead = show(args.artifact)
+        meta = bead.get('metadata') or {}
+        require(meta.get('gc.plane') == 'planning', 'artefact hors planification')
+        require(meta.get('gc.project_id') == args.project, 'projet de l’artefact différent')
+        request = {'map': args.map, 'kind': args.kind, 'author': args.author_session,
+                   'authorization': auth['source_digest'], 'digest': digest(bead.get('description') or '')}
+        if args.kind == 'spec':
+            require(meta.get('planning_map') == args.map, 'autre carte sur la Spec')
+        else:
+            require(auth.get('publication_digest') in (None, request['digest']), 'graphe déjà remis à la publication : utiliser la porte de patch')
+            require(auth.get('spec') and meta.get('spec_id') == auth['spec'], 'autre Spec sur le graphe')
+            request['spec_digest'] = check(auth['spec'], args.project)['digest']
+        existing = metadata(bead, REQUEST)
+        if existing and all(existing.get(k) == v for k, v in request.items()):
+            return {'ok': True, 'unchanged': True, 'request': existing}
+        if args.kind == 'spec':
+            require(auth['spec_reviews'] < 2, 'deux revues consommées : diagnostic technique, pas de nouveau brouillon')
+        auth[args.kind] = args.artifact
+        write(args.map, KEY, auth)
+        write(args.artifact, REQUEST, request)
+        return {'ok': True, 'request': request}
+    if args.command == 'request-review':
+        bead, request, auth = current_request(args.artifact)
+        require(request['kind'] == 'spec', 'graph-review gère la revue du graphe')
+        require('review' not in request, 'verdict déjà enregistré')
+        if request.get('dispatched'):
+            require(show(request['review_bead']).get('status') != 'closed', 'revue close sans verdict : diagnostic technique requis')
+            return {'ok': True, 'request': request, 'pending': True}
+        review_bead = request.get('review_bead')
+        if not review_bead:
+            result = subprocess.run([os.environ.get('BD_BIN') or 'bd', 'create', '--title',
+                'Fidélité de Spec ' + args.artifact, '--description', 'spec: ' + args.artifact,
+                '--type', 'task', '--labels', 'planning-fidelity', '--silent'], capture_output=True, text=True)
+            require(result.returncode == 0, result.stderr or result.stdout)
+            review_bead = result.stdout.strip()
+            request['review_bead'] = review_bead
+            write(args.artifact, REQUEST, request)
+        result = subprocess.run([os.environ.get('DISPATCH_DOOR_BIN') or str(ROOT / 'bin' / 'dispatch-door'),
+            review_bead, '--rig', 'agent-factory', '--formula', 'mol-planning-fidelity', '--role', 'reviewer'],
+            capture_output=True, text=True)
+        require(result.returncode == 0, result.stderr or result.stdout)
+        request['dispatched'] = True
+        write(args.artifact, REQUEST, request)
+        return {'ok': True, 'request': request, 'pending': True}
+    if args.command == 'brief':
+        bead, request, auth = current_request(args.artifact)
+        return {'ok': True, 'request': request, 'sources': sources(request['map']),
+                'artifact': bead['description'], 'scope': 'Preserve validated choices. Only reversible technical additions.',
+                'review_contract': {'digest': request['digest'], 'authorization': request['authorization'],
+                    'source_coverage': 'one {source, stories, reason} per source, including intentionally not applicable',
+                    'story_basis': 'one {story, sources, reason} per numbered story; empty sources only for reversible technical details',
+                    'all_decisions_preserved': 'boolean', 'no_new_sensitive_effect': 'boolean',
+                    'no_unsourced_product_choice': 'boolean', 'reason': 'nonempty explanation'}}
+    if args.command == 'record':
+        bead, request, auth = current_request(args.artifact)
+        require(request['kind'] == 'spec', 'la revue du graphe appartient à graph-review')
+        reviewer = os.environ.get('GC_SESSION_NAME', '')
+        require(os.environ.get('DELIVERY_ROLE_READ_ONLY') == '1' and reviewer and reviewer != request['author'],
+                'session relecteur indépendante et en lecture seule requise')
+        require('review' not in request, 'un verdict est déjà enregistré pour cette préparation')
+        require(auth['spec_reviews'] < 2, 'deux revues consommées')
+        verdict = json.loads(Path(args.verdict_file).read_text())
+        require(isinstance(verdict, dict), 'verdict objet requis')
+        require(verdict.get('digest') == request['digest'] and verdict.get('authorization') == request['authorization'],
+                'verdict sur une autre version')
+        stories = {str(row['number']) for row in tool('spec-approve', 'outline', stdin=bead['description'])['user_stories']}
+        coverage, basis = verdict.get('source_coverage', []), verdict.get('story_basis', [])
+        require(isinstance(coverage, list) and isinstance(basis, list), 'table de fidélité manquante')
+        require(len(coverage) == len(auth['source_ids']) and {r.get('source') for r in coverage} == set(auth['source_ids']),
+                'une ligne par source est requise')
+        require(len(basis) == len(stories) and {str(r.get('story')) for r in basis} == stories,
+                'une justification par story est requise')
+        for row in coverage:
+            require(isinstance(row.get('stories'), list) and set(map(str, row['stories'])) <= stories
+                    and bool(str(row.get('reason') or '').strip()), 'couverture source incomplète')
+        for row in basis:
+            require(isinstance(row.get('sources'), list) and set(row['sources']) <= set(auth['source_ids'])
+                    and bool(str(row.get('reason') or '').strip()), 'fondement de story incomplet')
+        forward = {(row['source'], str(story)) for row in coverage for story in row['stories']}
+        backward = {(source, str(row['story'])) for row in basis for source in row['sources']}
+        require(forward == backward, 'couverture et fondement doivent correspondre dans les deux sens')
+        questions = ('all_decisions_preserved', 'no_new_sensitive_effect', 'no_unsourced_product_choice')
+        require(all(type(verdict.get(q)) is bool for q in questions) and bool(str(verdict.get('reason') or '').strip()),
+                'questions de fidélité incomplètes')
+        auth['spec_reviews'] += 1
+        request['review'] = {'reviewer': reviewer, 'favorable': all(verdict[q] for q in questions), 'verdict': verdict}
+        write(request['map'], KEY, auth)
+        write(args.artifact, REQUEST, request)
+        return {'ok': True, 'review': request['review'], 'pass': auth['spec_reviews']}
+    if args.command == 'check':
+        return check(args.artifact, args.project)
+    if args.command == 'seal-publication':
+        bead, request, auth = current_request(args.artifact, args.project)
+        require(request['kind'] == 'graph', 'un graphe est requis')
+        proof = check(args.artifact, args.project)
+        require(proof['digest'] == args.expected_digest, 'le graphe a changé pendant la publication')
+        require(auth.get('publication_digest') in (None, proof['digest']),
+                'autre digest déjà remis à la publication : utiliser la porte de patch')
+        auth['publication_digest'] = proof['digest']
+        write(request['map'], KEY, auth)
+        return proof
+    if args.command == 'derive-graph':
+        bead, request, auth = current_request(args.artifact, args.project)
+        require(request['kind'] == 'graph', 'un graphe est requis')
+        proof = check(args.artifact, args.project)
+        for key, value in {'approval_mode': MODE, 'approved_by': proof['derived_by'],
+                           'approved_evidence': 'Derived under delegation: ' + request['map'],
+                           'approved_digest': request['digest'], 'derived_authorization': request['authorization']}.items():
+            write(args.artifact, key, value)
+        return proof
+    raise ValueError('commande inconnue')
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest='command', required=True)
+    for name in ('authorize', 'revoke', 'prepare', 'request-review', 'brief', 'record', 'check', 'derive-graph', 'seal-publication'):
+        p = sub.add_parser(name)
+        if name in ('authorize', 'revoke', 'prepare'):
+            p.add_argument('--map', required=True)
+        if name in ('authorize', 'prepare', 'check', 'derive-graph', 'seal-publication'):
+            p.add_argument('--project', required=True)
+        if name in ('authorize', 'revoke'):
+            p.add_argument('--by', required=True)
+        if name == 'authorize':
+            p.add_argument('--evidence', required=True)
+        if name == 'prepare':
+            p.add_argument('--kind', choices=('spec', 'graph'), required=True)
+            p.add_argument('--author-session', required=True)
+        if name in ('prepare', 'request-review', 'brief', 'record', 'check', 'derive-graph', 'seal-publication'):
+            p.add_argument('--artifact', required=True)
+        if name == 'seal-publication':
+            p.add_argument('--expected-digest', required=True)
+        if name == 'record':
+            p.add_argument('--verdict-file', required=True)
+    args = parser.parse_args(argv)
+    try:
+        # One operator owns the map; also serialize the two-state record locally.
+        with open(Path(tempfile.gettempdir()) / ('factory-planning-delegation-' + str(os.getuid()) + '.lock'), 'a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            result = execute(args)
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
+    except (ValueError, KeyError, TypeError, OSError) as exc:
+        print(json.dumps({'ok': False, 'error': str(exc)}, ensure_ascii=False))
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())
