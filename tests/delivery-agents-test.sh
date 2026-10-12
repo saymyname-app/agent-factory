@@ -72,6 +72,7 @@ offered() { # <agent>: the bead ids the work query offers the session fx-s1
 for agent in delivery-author delivery-reviewer delivery-evaluator; do
   [ -n "$(setting "$agent" work_query)" ] || fail "$agent has no work query: any of its sessions is offered any work of the role"
 
+  # A fresh session stays eligible despite another session sharing its alias.
   echo "[]" > "$FAKE_BD_ASSIGNED"
   fresh=$(offered "$agent")
   [ "$fresh" = '["fx-next","fx-mine"]' ] || fail "a session of $agent that never served is not offered the routed work: $fresh"
@@ -81,13 +82,8 @@ for agent in delivery-author delivery-reviewer delivery-evaluator; do
   [ "$served" = '["fx-mine"]' ] \
     || fail "a session of $agent that already served is offered the work of another workflow: $served"
 
-  # A shared alias's history from another session must not poison a fresh seat.
-  echo "[]" > "$FAKE_BD_ASSIGNED"
-  echo "[]" > "$FAKE_BD_ALIAS_CURRENT"
-  fresh=$(offered "$agent")
-  [ "$fresh" = '["fx-next","fx-mine"]' ] || fail "another session under the shared alias blocks $agent: $fresh"
-
   # Conversely, this session's own alias-assigned work still binds its workflow.
+  echo "[]" > "$FAKE_BD_ASSIGNED"
   echo '[{"id":"fx-own-alias","metadata":{"gc.root_bead_id":"fx-root-served"}}]' > "$FAKE_BD_ALIAS_CURRENT"
   served=$(offered "$agent")
   [ "$served" = '["fx-mine"]' ] || fail "own alias history is lost for $agent: $served"

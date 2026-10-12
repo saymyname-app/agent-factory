@@ -983,3 +983,16 @@ the flag with a queue. GitHub owns the queue; a successful CLI request is
 not evidence of a merged PR. Reconciliation uses GitHub `MERGED`; native
 branch deletion and `factory-maintain prune-merged-branches` handle cleanup
 after merge. No queue bypass or host installation is needed for this fix.
+
+### Registry and review cleanup
+
+Intent (Benjamin, his words, 2026-10-12): « vas y », following the proposal
+to apply review points 3 to 5.
+Mechanism (agent interpretation): the shell registry interface delegates
+TOML decoding to Python's standard-library `tomllib`, including optional
+fields. Required values remain non-empty strings; malformed files fail with
+their filename. No parser dependency is added. The unused cockpit
+`validity_window_for` wrapper is removed; the read model retains its validity
+window check. The fresh-session test also proves that another session's shared
+alias history cannot block it, so its identical second execution is removed;
+the distinct own-session alias check remains for all three delivery roles.
