@@ -482,6 +482,19 @@ class TicketEvaluationTest(unittest.TestCase):
     def launch_records(self):
         return sorted(self.launches_dir.rglob("*.json")) if self.launches_dir.exists() else []
 
+    def niceness(self, record):
+        """The scheduling priority of every thread of the launched product
+        of that record, and of what it started (its process group)."""
+        group = os.getpgid(json.loads(Path(record).read_text())["pid"])
+        found = set()
+        for stat in Path("/proc").glob("[0-9]*/stat"):
+            try:
+                if int(stat.read_text().rsplit(")", 1)[1].split()[2]) == group:
+                    found |= {os.getpriority(os.PRIO_PROCESS, int(task.name)) for task in (stat.parent / "task").iterdir()}
+            except (OSError, ValueError, IndexError):
+                continue
+        return found
+
     def stop_every_product(self):
         for record in self.launch_records():
             subprocess.run((str(LAUNCH_TOOL), "stop", "--state-file", str(record)), env=self.env, capture_output=True)
@@ -627,8 +640,11 @@ class TicketEvaluationTest(unittest.TestCase):
         folder = self.launches_dir / CONVOY / SLICE
         folder.mkdir(parents=True)
         record = folder / "interrupted-content.json"
-        started = self.run_cmd(LAUNCH_TOOL, "--repo-root", self.repo, "start", self.profile,
-                               "--commit", tip, "--dataset", "content", "--state-file", record)
+        # In a session of its own, as the pass launches it.
+        started = subprocess.run(
+            (str(LAUNCH_TOOL), "--repo-root", str(self.repo), "start", str(self.profile), "--commit", tip,
+             "--dataset", "content", "--state-file", str(record)),
+            env=self.env, text=True, capture_output=True, cwd=self.tmp, start_new_session=True)
         self.assertEqual(0, started.returncode, started.stdout + started.stderr)
         original = json.loads(record.read_text())
         self.assertIsNone((self.evaluation() or {}).get("request"))
@@ -642,6 +658,7 @@ class TicketEvaluationTest(unittest.TestCase):
         self.assertEqual(len(json.loads(self.profile.read_text())["launch"]["datasets"]),
                          len(request["environment"]))
         self.assertEqual(original["pid"], json.loads(record.read_text())["pid"])
+        self.assertEqual({19}, self.niceness(record))
         self.assertFalse(self.tool("verdict")["favorable"])
 
     def test_prepared_products_are_stopped_when_the_ticket_is_no_longer_due(self):
@@ -734,6 +751,22 @@ class TicketEvaluationTest(unittest.TestCase):
             self.assertNotIn("fixture-uncommitted", page)
         captured = self.piece(self.capture("evaluation.c1", request["environment"][0]))
         self.assertEqual((request["environment"][0]["address"], tip), (captured["address"], captured["commit"]))
+
+    def test_the_products_waiting_for_the_evaluator_run_at_the_lowest_priority_and_still_answer(self):
+        """af-5rx5mu: one product per dataset waits for the whole session;
+        they leave the host to the rest, and the pass itself is not lowered."""
+        self.finished_slice(self.realized())
+        self.evaluator("silent")
+        mine = os.getpriority(os.PRIO_PROCESS, 0)
+
+        self.settle()
+
+        request = self.evaluation()["request"]
+        self.assertEqual(["content", "empty"], [entry["dataset"] for entry in request["environment"]])
+        for product in request["environment"]:
+            self.assertEqual({19}, self.niceness(product["state_file"]))
+            self.assertIn("fixture-count", urllib.request.urlopen(product["address"] + "/").read().decode())
+        self.assertEqual(mine, os.getpriority(os.PRIO_PROCESS, 0))
 
     def test_settle_on_a_project_without_a_named_dataset_is_refused_and_launches_no_product(self):
         """T38 (af-8o4jcp): no dataset declared, so nothing is launched and

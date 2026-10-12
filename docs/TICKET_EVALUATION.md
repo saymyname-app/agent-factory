@@ -112,6 +112,17 @@ states are in (or after the ticket is stopped, or a newer tip replaced the
 evaluation). `gc.flow.evaluation.live` names the launch records still to
 stop; `bin/convoy-advance` runs a settlement as long as a ticket has one.
 
+The products of one evaluation all wait for the Evaluator at once, one per
+dataset, and a product that polls its sources costs the host for as long as
+it waits (af-5rx5mu, 2026-10-12: 95 products of one evaluation, load average
+above 300, `convoy-advance` cut by its order's timeout). As soon as a product
+answers its probe, `settle` puts its process group — the product, its
+threads and what it starts — at the lowest scheduling priority (`nice` 19).
+A product starts at the ordinary priority, ahead of those already waiting;
+a waiting one takes the processor time the rest of the host leaves, and is
+never starved of it. Every dataset is still launched, at the same addresses,
+and what the Evaluator is given does not change.
+
 A product that does not start from the clean copy (two attempts, each within
 `start_timeout_seconds`) cannot be observed: `settle` records it as an
 unfavorable startup round, on a slice as on a `prefactoring`, and no
@@ -299,6 +310,12 @@ On the ticket, written by `bin/convoy-state` only (`docs/CONVOY_STATE.md`):
 - The Evaluator role holds one session at a time: an evaluation waits
   behind another one, and the time of a launch runs from the dispatch. The
   products of a waiting evaluation stay up meanwhile.
+- The number of products of one evaluation is not bounded: it is the number
+  of datasets the profile declares. Their priority is lowered, not their
+  count: the load average of the host still counts them, and while the host
+  is busy with other work they answer the Evaluator more slowly. The
+  priority holds inside one processor group of the host (the user's, as
+  installed); a product that leaves its process group keeps its own.
 - A launched product belongs to no service manager: if the host restarts
   between the launch and the session, the Evaluator finds nothing at the
   address (an `unobservable` by the environment, or no result), and the

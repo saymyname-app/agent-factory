@@ -90,6 +90,12 @@ MAX_OUTAGES = 2
 # A product that does not start is launched once more before it is said not
 # to start: a free port can be taken between its choice and its use.
 START_ATTEMPTS = 2
+# A launched product waits for the Evaluator on every dataset at once, and
+# one that polls its sources costs the host while it waits (af-5rx5mu: 95
+# products, load average above 300, the pass cut by the order's timeout).
+# Once it answers its probe it runs at the lowest priority: it takes what the
+# rest of the host leaves, and is never starved of it.
+PRODUCT_NICE = 19
 STARTUP_PIECE = "evaluation.startup"
 # What the control of a prefactoring captures: the answer of the health probe.
 PROBE = ("import sys, urllib.request\n"
@@ -487,6 +493,29 @@ def running(state_file: str) -> bool:
     return True
 
 
+def yield_host(state_file: str) -> None:
+    """Put the launched product of that record, with whatever it started, at
+    PRODUCT_NICE. bin/project-launch is started in a session of its own, so
+    the process group of the product holds that launch and nothing else."""
+    try:
+        group = os.getpgid(int(json.loads(Path(state_file).read_text(encoding="utf-8"))["pid"]))
+    except (OSError, ValueError, KeyError, TypeError):
+        return
+    if group == os.getpgrp():
+        return
+    # Twice: what a thread starts between two readings inherits its priority.
+    for _ in range(2):
+        for stat in Path("/proc").glob("[0-9]*/stat"):
+            try:
+                # After the name: state, parent, process group.
+                if int(stat.read_text().rsplit(")", 1)[1].split()[2]) != group:
+                    continue
+                for task in (stat.parent / "task").iterdir():
+                    os.setpriority(os.PRIO_PROCESS, int(task.name), PRODUCT_NICE)
+            except (OSError, ValueError, IndexError):
+                continue
+
+
 def product_folder(convoy_id: str, ticket_id: str) -> Path:
     return state_dir() / re.sub(r"[^A-Za-z0-9._-]", "_", convoy_id) / re.sub(r"[^A-Za-z0-9._-]", "_", ticket_id)
 
@@ -508,6 +537,7 @@ def prepared_products(convoy: Convoy, ticket_id: str, commit: str) -> list[dict[
 def launch_products(convoy: Convoy, ticket_id: str, commit: str, settings: dict[str, Any]) -> list[dict[str, Any]]:
     """Launch the product from a clean copy of `commit`, once per dataset
     the profile declares, each on its own free port (bin/project-launch).
+    A product that answers its probe yields the host to everything else.
     Preparation yields after 60 seconds and resumes from exact launch records.
     No evaluation is opened until every dataset is ready; failure stops them all."""
     profile, _ = convoy.profile(ticket_id, commit)
@@ -521,6 +551,7 @@ def launch_products(convoy: Convoy, ticket_id: str, commit: str, settings: dict[
     try:
         for dataset in datasets:
             if dataset in prepared:
+                yield_host(prepared[dataset]["state_file"])
                 launched.append(prepared[dataset])
                 continue
             if time.monotonic() >= deadline:
@@ -538,6 +569,7 @@ def launch_products(convoy: Convoy, ticket_id: str, commit: str, settings: dict[
                     f"le produit ne démarre pas depuis une copie propre du commit {commit[:12]}"
                     f" sur le jeu {dataset} : {detail_of(started)}")
             record = json.loads(state_file.read_text(encoding="utf-8"))
+            yield_host(str(state_file))
             launched.append({"dataset": dataset, "address": record["address"], "state_file": str(state_file)})
     except Deferred:
         raise
