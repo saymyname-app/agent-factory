@@ -486,18 +486,44 @@ def running(state_file: str) -> bool:
     return True
 
 
+def product_folder(convoy_id: str, ticket_id: str) -> Path:
+    return state_dir() / re.sub(r"[^A-Za-z0-9._-]", "_", convoy_id) / re.sub(r"[^A-Za-z0-9._-]", "_", ticket_id)
+
+
+def prepared_products(convoy: Convoy, ticket_id: str, commit: str) -> list[dict[str, Any]]:
+    """Launch records survive an interrupted pass; only this exact product is reusable."""
+    prepared = []
+    for path in sorted(product_folder(convoy.id, ticket_id).glob("*.json")):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if (record.get("started") is True and record.get("commit") == commit
+                and record.get("repo_root") == str(convoy.repo) and running(str(path))):
+            prepared.append({"dataset": record["dataset"], "address": record["address"], "state_file": str(path)})
+    return prepared
+
+
 def launch_products(convoy: Convoy, ticket_id: str, commit: str, settings: dict[str, Any]) -> list[dict[str, Any]]:
     """Launch the product from a clean copy of `commit`, once per dataset
     the profile declares, each on its own free port (bin/project-launch).
-    All of them, or none: a product that does not start stops the others."""
+    Preparation yields after 60 seconds and resumes from exact launch records.
+    No evaluation is opened until every dataset is ready; failure stops them all."""
     profile, _ = convoy.profile(ticket_id, commit)
     datasets = convoy.datasets(ticket_id)
-    folder = state_dir() / re.sub(r"[^A-Za-z0-9._-]", "_", convoy.id) / re.sub(r"[^A-Za-z0-9._-]", "_", ticket_id)
+    folder = product_folder(convoy.id, ticket_id)
     folder.mkdir(parents=True, exist_ok=True)
     stamp = f"{commit[:12]}-{int(time.time() * 1000)}"
+    prepared = {entry["dataset"]: entry for entry in prepared_products(convoy, ticket_id, commit)}
     launched: list[dict[str, Any]] = []
+    deadline = time.monotonic() + 60
     try:
         for dataset in datasets:
+            if dataset in prepared:
+                launched.append(prepared[dataset])
+                continue
+            if time.monotonic() >= deadline:
+                raise Deferred(f"préparation en cours : {len(launched)}/{len(datasets)} jeux prêts, reprise à la prochaine passe")
             state_file = folder / f"{stamp}-{dataset}.json"
             argv = [str(LAUNCH_TOOL), "--repo-root", str(convoy.repo), "start", str(profile), "--commit", commit,
                     "--timeout", str(settings["start_timeout_seconds"]), "--state-file", str(state_file)]
@@ -512,8 +538,10 @@ def launch_products(convoy: Convoy, ticket_id: str, commit: str, settings: dict[
                     f" sur le jeu {dataset} : {detail_of(started)}")
             record = json.loads(state_file.read_text(encoding="utf-8"))
             launched.append({"dataset": dataset, "address": record["address"], "state_file": str(state_file)})
+    except Deferred:
+        raise
     except (Refusal, OSError, ValueError, KeyError):
-        for entry in launched:
+        for entry in prepared_products(convoy, ticket_id, commit):
             stop_product(entry["state_file"])
         raise
     return launched
@@ -525,7 +553,9 @@ def reap(convoy: Convoy, ticket: dict[str, Any], keep: list[str], withdraw: bool
     stopped by code (Spec §7). `withdraw`: the evaluation that was open on
     them is no longer due (a newer tip, a parked ticket) and is withdrawn
     with them."""
-    stale = [path for path in evaluation_of(ticket).get("live") or [] if path not in keep]
+    tracked = evaluation_of(ticket).get("live") or []
+    local = [str(path) for path in product_folder(convoy.id, ticket["id"]).glob("*.json")]
+    stale = [path for path in dict.fromkeys([*tracked, *local]) if path not in keep]
     if not stale:
         return []
     for path in stale:
@@ -533,7 +563,8 @@ def reap(convoy: Convoy, ticket: dict[str, Any], keep: list[str], withdraw: bool
     args: list[str] = ["--withdraw"] if withdraw else []
     for path in stale:
         args += ["--state-file", path]
-    state_write("release-evaluation", convoy.id, ticket["id"], *args)
+    if any(path in tracked for path in stale):
+        state_write("release-evaluation", convoy.id, ticket["id"], *args)
     return stale
 
 
@@ -754,6 +785,8 @@ def startup_control(convoy: Convoy, ticket_id: str, commit: str, settings: dict[
     probe, stops it, and records what it saw."""
     try:
         launched = launch_products(convoy, ticket_id, commit, settings)
+    except Deferred:
+        raise
     except Refusal as exc:
         written = state_write("record-startup", convoy.id, ticket_id, "--commit", commit, "--detail", short(str(exc), 240))
         return {"ticket": ticket_id, "action": "refused_startup", "commit": commit, "verdict": written["verdict"]}
@@ -794,7 +827,13 @@ def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> d
         # An evaluation left open on a ticket that is no longer to be
         # evaluated at that commit is withdrawn with its products; the one
         # of a stopped ticket stays, as what stopped it.
-        reap(convoy, ticket, [entry["state_file"] for entry in current["environment"]] if current else [],
+        preparing = prepared_products(convoy, ticket_id, detail) if what in ("open", "startup") and not current else []
+        # A completed/outage round must get fresh products. Only records
+        # not yet attached to any evaluation represent partial preparation.
+        previous_live = evaluation_of(ticket).get("live") or []
+        preparing = [entry for entry in preparing if entry["state_file"] not in previous_live]
+        keep = current["environment"] if current else preparing
+        reap(convoy, ticket, [entry["state_file"] for entry in keep],
              withdraw=request is not None and current is None and not ticket.get("stop"))
         stop = own_stop(ticket)
         if stop:
@@ -838,6 +877,8 @@ def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> d
             roles = record_evaluator(convoy.id, ticket)
             try:
                 environment = launch_products(convoy, ticket_id, commit, settings)
+            except Deferred:
+                raise
             except Refusal as exc:
                 # The clean copy does not start: nothing can be observed on it.
                 written = state_write("record-startup", convoy.id, ticket_id, "--commit", commit, "--detail",

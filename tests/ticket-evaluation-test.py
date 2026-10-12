@@ -572,6 +572,45 @@ class TicketEvaluationTest(unittest.TestCase):
         self.assertIn("profil absent au commit évalué", settled["refused"][0]["reason"])
         self.assertEqual([], self.launches())
 
+    def test_interrupted_preparation_reuses_exact_live_products_before_opening_evaluation(self):
+        tip = self.finished_slice(self.realized())
+        folder = self.launches_dir / CONVOY / SLICE
+        folder.mkdir(parents=True)
+        record = folder / "interrupted-content.json"
+        started = self.run_cmd(LAUNCH_TOOL, "--repo-root", self.repo, "start", self.profile,
+                               "--commit", tip, "--dataset", "content", "--state-file", record)
+        self.assertEqual(0, started.returncode, started.stdout + started.stderr)
+        original = json.loads(record.read_text())
+        self.assertIsNone((self.evaluation() or {}).get("request"))
+        self.evaluator("silent")
+        settled = self.settle()
+        self.assertEqual([SLICE], [entry["ticket"] for entry in settled["launched"]])
+        request = self.evaluation()["request"]
+        content = next(e for e in request["environment"] if e["dataset"] == "content")
+        self.assertEqual(str(record), content["state_file"])
+        self.assertEqual(original["address"], content["address"])
+        self.assertEqual(len(json.loads(self.profile.read_text())["launch"]["datasets"]),
+                         len(request["environment"]))
+        self.assertEqual(original["pid"], json.loads(record.read_text())["pid"])
+        self.assertFalse(self.tool("verdict")["favorable"])
+
+    def test_prepared_products_are_stopped_when_the_ticket_is_no_longer_due(self):
+        tip = self.finished_slice(self.realized())
+        folder = self.launches_dir / CONVOY / SLICE
+        folder.mkdir(parents=True)
+        record = folder / "interrupted-content.json"
+        started = self.run_cmd(LAUNCH_TOOL, "--repo-root", self.repo, "start", self.profile,
+                               "--commit", tip, "--dataset", "content", "--state-file", record)
+        self.assertEqual(0, started.returncode, started.stdout + started.stderr)
+        original = json.loads(record.read_text())
+        tracker = json.loads(self.tracker.read_text())
+        tracker["beads"][SLICE]["status"] = "closed"
+        self.tracker.write_text(json.dumps(tracker))
+        self.settle()
+        self.assertEqual([], self.launches())
+        with self.assertRaises(Exception):
+            urllib.request.urlopen(original["address"], timeout=1)
+
     # --- the demonstration line of the ticket -----------------------------------
 
     def test_an_unrealized_criterion_is_recorded_not_observed_with_its_evidence_and_the_verdict_is_unfavorable(self):
