@@ -218,6 +218,43 @@ class IsolatedCockpitLaunch(unittest.TestCase):
         self.assertEqual("factory-suspended", self.status(other["address"])["gc"]["value"]["city"])
         self.assertEqual("home-content", self.status(address)["gc"]["value"]["city"])
 
+    def test_the_state_served_is_the_content_of_the_named_dataset(self):
+        # What each dataset says is read in its file, and observed on the
+        # cockpit launched on it: the name of the dataset alone gives none of it.
+        def launched(dataset: str) -> str:
+            record, _ = self.start(self.requested, dataset)
+            self.assertIs(True, record.get("started"), record)
+            return record["address"]
+
+        # home-content: decisions wait, projects are shown, the Factory runs.
+        content = self.status(launched("home-content"))
+        self.assertTrue(content["beads"]["value"], "home-content shows work, the tracker holds none")
+        self.assertTrue(content["projets"]["value"]["projects"], "home-content shows projects, none is declared")
+        self.assertIs(False, content["gc"]["value"]["suspended"])
+
+        # home-empty: « Rien à afficher ici. Aucun élément dans cette vue. »
+        empty = self.status(launched("home-empty"))
+        self.assertEqual("home-empty", empty["gc"]["value"]["city"])
+        self.assertEqual([], empty["beads"]["value"])
+        self.assertEqual([], empty["projets"]["value"]["projects"])
+
+        # factory-suspended: « Suspension confirmée ».
+        suspended = self.status(launched("factory-suspended"))
+        self.assertEqual("factory-suspended", suspended["gc"]["value"]["city"])
+        self.assertIs(True, suspended["gc"]["value"]["suspended"])
+
+        # home-offline: « Lecture périmée · état actuel inconnu. Dernières
+        # valeurs conservées » -- the supervisor was read, then answers no more.
+        offline = launched("home-offline")
+        deadline = time.monotonic() + 30
+        while True:
+            supervisor = json.loads(fetch(offline + "/api/status")[2])["gc"]
+            if (supervisor["value"] and supervisor["freshness"] != "fresh") or time.monotonic() > deadline:
+                break
+            time.sleep(0.2)
+        self.assertIn(supervisor["freshness"], ("stale", "unknown"), "the supervisor of home-offline is still read")
+        self.assertEqual("home-offline", supervisor["value"]["city"], "the last values are not kept")
+
     def test_a_dataset_that_is_not_synthetic_is_never_served(self):
         # At the requested commit the dataset is synthetic and the cockpit answers.
         record, _ = self.start(self.requested, "home-content")

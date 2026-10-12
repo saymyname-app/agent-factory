@@ -2,7 +2,8 @@
   "criteria": {
     "1": [
       "tests/cockpit-criteria/commands/isolated-launch-test.py::IsolatedCockpitLaunch.test_start_serves_the_real_cockpit_at_the_requested_commit_on_the_named_dataset",
-      "tests/cockpit-criteria/commands/isolated-launch-test.py::IsolatedCockpitLaunch.test_a_dataset_that_is_not_synthetic_is_never_served"
+      "tests/cockpit-criteria/commands/isolated-launch-test.py::IsolatedCockpitLaunch.test_a_dataset_that_is_not_synthetic_is_never_served",
+      "tests/cockpit-criteria/commands/isolated-launch-test.py::IsolatedCockpitLaunch.test_the_state_served_is_the_content_of_the_named_dataset"
     ],
     "2": [
       "tests/cockpit-criteria/commands/isolated-launch-test.py::IsolatedCockpitLaunch.test_stop_closes_the_isolated_process_and_port_and_leaves_other_services"
