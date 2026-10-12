@@ -146,9 +146,13 @@ formula (live canary af-3l8hn, af-kg6j6).
 
 Read the bead's title and description carefully. This is your task.
 
-**Signal liveness:** run `gc bd heartbeat "$WORK_BEAD_ID"` now, and again before any
-shell command you expect to run for many minutes (long builds, test sweeps).
-It stamps `gc.last_heartbeat_at` so the Factory's guards (e.g. `factory-dispatch-guard`) can tell you are alive and
+**Signal liveness:** run `gc bd heartbeat "$GC_BEAD_ID"` now, and again before any
+shell command you expect to run for many minutes (long builds, test sweeps),
+in this step and in the next ones. `$GC_BEAD_ID` is the formula step this
+session holds (the `CLAIMED_BEAD_ID` your claim printed), not `$WORK_BEAD_ID`:
+the work bead has no assignee after the handoff above, and only the holder of
+a bead may heartbeat it (af-r654ku). It stamps the step's `heartbeat_at` so
+the Factory's guards (e.g. `factory-dispatch-guard`) can tell you are alive and
 working rather than wedged.
 
 **2. Never commit directly to a protected branch (af-ogg8z, af-09hxz).**
