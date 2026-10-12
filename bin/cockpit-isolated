@@ -69,9 +69,12 @@ def serve_synthetic_supervisor(city: str, home: str, announce: int, cockpit_aliv
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     sys.path.insert(0, str(FIXTURES / "core"))
-    from fake_gc import FakeGc
+    import fake_gc
 
-    supervisor = FakeGc(city=city).start()
+    # The fake names its one city by this constant; this process runs one
+    # supervisor and nothing else.
+    fake_gc.CITY = city
+    supervisor = fake_gc.FakeGc().start()
     os.write(announce, supervisor.base_url.encode("ascii"))
     os.close(announce)
     while os.read(cockpit_alive, 1):

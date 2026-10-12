@@ -22,14 +22,12 @@ DASHBOARD_PATHS = ("/", "/events", "/status", "/v0")
 
 
 class FakeGc:
-    def __init__(self, heartbeat_seconds=0.1, city=CITY):
-        """``city``: the name of the one city this supervisor runs."""
+    def __init__(self, heartbeat_seconds=0.1):
         self._lock = threading.Lock()
         self._heartbeat_seconds = heartbeat_seconds
-        self._city = city
         self._status = {
-            "name": city,
-            "path": "/fake/" + city,
+            "name": CITY,
+            "path": "/fake/" + CITY,
             "version": "1.5.0",
             "uptime_sec": 1,
             "suspended": False,
@@ -63,11 +61,11 @@ class FakeGc:
                     self._send(200, "text/html; charset=utf-8", DASHBOARD_HTML)
                     return
                 if path == "/v0/cities":
-                    self._send_json({"items": [{"name": gc._city, "path": "/fake/" + gc._city, "running": True}], "total": 1})
+                    self._send_json({"items": [{"name": CITY, "path": "/fake/" + CITY, "running": True}], "total": 1})
                     return
                 if path.startswith("/v0/city/"):
                     city, _, rest = path[len("/v0/city/"):].partition("/")
-                    if city != gc._city:
+                    if city != CITY:
                         self._send_json(
                             {
                                 "type": "urn:gascity:error:city-not-found",

@@ -866,7 +866,7 @@ screen of that state.
 
 **Datasets.** One per state of the seven Validated Prototypes of the Spec:
 the 76 Panorama states and the 19 Runs states, under
-`tests/fixtures/cockpit/datasets/<state>.json`. Each file is the dataset of
+`config/cockpit-datasets/<state>.json`. Each file is the dataset of
 the frozen prototype, byte for byte (Panorama at `632deea`, Runs at
 `d8cb462`, in the private prototype repository). A state is launched with
 `--dataset <state>`.
@@ -904,6 +904,12 @@ launcher and of the profile.
 
 Limits.
 
+- What the recipe reads must not be changed under `tests/` by the ticket
+  that needs the change: `bin/tdd-step` runs the criterion tests of the
+  `commands/` seam in the tree of the product with the whole `tests/`
+  directory of the freeze commit put in its place. This is why the datasets
+  are under `config/`, and why the recipe names the city of the fake
+  supervisor without changing the fake.
 - The tools of the flow read the profile in the Factory root they run from,
   not in the branch of the ticket: a launch block that exists only on a
   branch is passed to them with `--profile`.
