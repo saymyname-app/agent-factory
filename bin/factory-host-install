@@ -17,7 +17,8 @@
 #                                requirement (OK, WARN, MISSING); exit 1 on a
 #                                MISSING
 #   factory-host-install root    as root: packages, container engine, the
-#                                user, gc/bd/dolt, the bwrap AppArmor profile
+#                                user, gc/bd/dolt, the AppArmor profiles of
+#                                bwrap and of the capture browser
 #   factory-host-install user    as benja: Node, Maven, the Claude and Codex
 #                                CLIs, the capture browser, the clone. Needs
 #                                `gh auth login` done first: the Factory
@@ -82,6 +83,22 @@ profile fixture-city-bwrap /usr/bin/bwrap flags=(unconfined) {
 EOF
 }
 
+# The same denial stops the sandbox of Chromium's headless shell, which
+# Playwright keeps in the user's home: without this profile it ends on "No
+# usable sandbox!" and bin/evidence-capture and bin/prototype-fidelity get no
+# image and no measure (af-1umdgn; the WSL host had no such denial).
+browser_profile() {
+  cat <<EOF
+abi <abi/4.0>,
+
+include <tunables/global>
+
+profile factory-capture-browser $FACTORY_HOME/.cache/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-*/chrome-headless-shell flags=(unconfined) {
+  userns,
+}
+EOF
+}
+
 say() { printf '%s\n' "$*"; }
 die() { printf 'factory-host-install: %s\n' "$*" >&2; exit 2; }
 sha256_of() { sha256sum "$1" | cut -d' ' -f1; }
@@ -139,6 +156,9 @@ cmd_root() {
     bwrap_profile > /etc/apparmor.d/fixture-city-bwrap
     apparmor_parser -r /etc/apparmor.d/fixture-city-bwrap
     say "done   AppArmor profile for bwrap"
+    browser_profile > /etc/apparmor.d/factory-capture-browser
+    apparmor_parser -r /etc/apparmor.d/factory-capture-browser
+    say "done   AppArmor profile for the capture browser"
   fi
 
   # The WSL host ran on 8 GB + 6 GB of swap and used it under test batteries.
@@ -270,12 +290,19 @@ cmd_check() {
   if [ "$(loginctl show-user "$FACTORY_USER" -p Linger --value 2>/dev/null)" = "yes" ]; then ok "linger"
   else miss "linger for $FACTORY_USER (user units stop at logout)"; fi
 
-  local shell_bin libs
+  local shell_bin libs profile
   shell_bin=$(compgen -G "$HOME/.cache/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-*/chrome-headless-shell" | head -1 || true)
   libs=$([ -z "$shell_bin" ] || ldd "$shell_bin" 2>/dev/null || true)
   if [ -z "$shell_bin" ]; then miss "capture browser (chrome-headless-shell)"
   elif grep -q 'not found' <<<"$libs"; then miss "capture browser: $(grep -c 'not found' <<<"$libs") system libraries not found"
-  else ok "capture browser"; fi
+  else
+    # Its libraries are not enough: it must start, sandbox included.
+    profile=$(mktemp -d)
+    if { (ulimit -c 0; timeout 30 "$shell_bin" --headless --disable-gpu "--user-data-dir=$profile" --dump-dom about:blank); } >/dev/null 2>&1; then
+      ok "capture browser"
+    else miss "capture browser does not start (AppArmor profile factory-capture-browser: run 'root' again)"; fi
+    rm -rf "$profile"
+  fi
 
   if gh auth status >/dev/null 2>&1; then ok "gh authenticated"; else miss "gh auth login"; fi
   case "$(git -C "$FACTORY_ROOT" config core.hooksPath 2>/dev/null)" in

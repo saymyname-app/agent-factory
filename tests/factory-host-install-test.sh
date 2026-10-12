@@ -5,7 +5,8 @@
 # without a fresh host: the file parses; `check` prints one verdict a line;
 # its pins are the binaries this host runs, when it has them (an upgrade that
 # forgets the installer goes red on the Factory's host); its embedded
-# AppArmor profile is the tracked one.
+# AppArmor profile of bwrap is the tracked one, and the capture browser's
+# parses.
 
 set -Eeuo pipefail
 
@@ -41,5 +42,14 @@ done
 sed -n "/^bwrap_profile() {/,/^EOF/p" "$INSTALL" | sed '1,2d;$d' > "$TMP/embedded"
 grep -v '^#' "$REPO_ROOT/config/fixture-city-bwrap.apparmor" | sed '/./,$!d' > "$TMP/tracked"
 diff -u "$TMP/tracked" "$TMP/embedded" || fail "the embedded bwrap profile differs from config/fixture-city-bwrap.apparmor"
+
+# --- the capture browser's profile parses, and names the browser the tools take
+sed -n "/^browser_profile() {/,/^EOF/p" "$INSTALL" | sed '1,2d;$d' | sed "s|\$FACTORY_HOME|/home/benja|" > "$TMP/browser"
+grep -q -F '/home/benja/.cache/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-*/chrome-headless-shell ' "$TMP/browser" \
+  || fail "the capture browser's profile is not attached to Playwright's headless shell"
+PARSER=$(PATH="$PATH:/usr/sbin:/sbin" command -v apparmor_parser || true)
+if [ -n "$PARSER" ]; then
+  "$PARSER" -Q -K -T "$TMP/browser" 2>"$TMP/parse.err" || fail "the capture browser's profile does not parse: $(cat "$TMP/parse.err")"
+fi
 
 echo "PASS factory-host-install"
