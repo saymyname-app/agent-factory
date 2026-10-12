@@ -4012,7 +4012,9 @@ def cmd_open_evaluation(args: argparse.Namespace) -> int:
     roles = evaluation_roles(given.get("roles"))
     environment = evaluation_environment(given.get("environment"), launched=True)
     last = record["rounds"][-1] if record["rounds"] else None
-    if last and last["commit"] == commit and last["verdict"] is not None:
+    from evaluation_observations import retry_after_lift
+    lifts = park_lifts_record(metadata[KEY_PARK_LIFTS]) if KEY_PARK_LIFTS in metadata else []
+    if last and last["commit"] == commit and last["verdict"] is not None and not retry_after_lift(last, lifts):
         raise Refusal(f"le ticket {args.ticket} est déjà évalué au commit {commit} ({last['outcome']})")
     request = record.get("request")
     wanted = {"commit": commit, "criteria": criteria, "demonstration_line": line}

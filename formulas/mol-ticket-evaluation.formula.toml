@@ -87,6 +87,16 @@ The answer of the tool gives the `path` of the record: read it to see what
 was captured. Pick the product whose dataset shows what the criterion is
 about; a piece may back several states.
 
+For a ticket that establishes the launch recipe, `.controller_observation`
+contains an ordinary sealed Evidence Record produced independently by the
+controller at this evaluation's commit and address. Read its `path`: its
+command output shows the disposable launch/stop, the existing local ports
+before and after, and extraction of the published prototype references from
+a clean Git context. You may cite its `piece` for those observations. Judge
+its actual output, including failures and omissions; its presence is never
+a passed criterion. It grants no access to the repository and no permission
+to run launch/stop yourself. The normal commit, address and seal checks apply.
+
 **3. Give one state per criterion and one for the demonstration line.**
 
 - `observed` — you saw on the launched product what the criterion (or the
