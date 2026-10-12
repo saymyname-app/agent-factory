@@ -44,6 +44,8 @@ PROFILE = "config/project-descriptors/agent-factory.json"
 # The ports of the city in service: its cockpit and its supervisor.
 CITY_COCKPIT_PORT = 8173
 CITY_SUPERVISOR_PORT = 8372
+# The sources of the read model the cockpit serves at /api/status.
+SOURCES = ("gc", "beads", "projets", "journal")
 PR_SET_CHILD_SUBREAPER = 36  # <linux/prctl.h>
 
 
@@ -171,14 +173,16 @@ class IsolatedCockpitLaunch(unittest.TestCase):
         return json.loads(proc.stdout)
 
     def status(self, address: str) -> dict:
-        """GET /api/status, once the cockpit has read its supervisor."""
+        """GET /api/status, once the cockpit has read each of its sources
+        (or as it stands after 15 s, for the assertions to say what is missing)."""
         deadline = time.monotonic() + 15
         while True:
             code, content_type, body = fetch(address + "/api/status")
             self.assertEqual(200, code)
             self.assertTrue(content_type.startswith("application/json"), content_type)
             snapshot = json.loads(body)
-            if (snapshot.get("gc") or {}).get("value") or time.monotonic() > deadline:
+            read = all((snapshot.get(source) or {}).get("freshness") == "fresh" for source in SOURCES)
+            if read or time.monotonic() > deadline:
                 return snapshot
             time.sleep(0.2)
 
@@ -202,7 +206,7 @@ class IsolatedCockpitLaunch(unittest.TestCase):
 
         snapshot = self.status(address)
         # The read model of the cockpit, each source read and fresh.
-        for source in ("gc", "beads", "projets", "journal"):
+        for source in SOURCES:
             self.assertEqual("fresh", snapshot[source]["freshness"], source)
         # Its state is the named dataset's, not the city in service's.
         self.assertEqual("home-content", snapshot["gc"]["value"]["city"])

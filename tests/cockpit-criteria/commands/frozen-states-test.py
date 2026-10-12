@@ -3,8 +3,12 @@
 af-2zseit, « Validated Prototype », seven references).
 
 `DeclaredAddresses` reads the Factory's own profile through
-`bin/project-planning-profile describe`: every frozen state is a named
-dataset of the tree, and belongs to one screen that has an address.
+`bin/project-planning-profile describe`, then uses every address it
+declares: each frozen state is launched by `bin/project-launch` from its
+declared dataset, and the launched cockpit is asked at the address of the
+screen that state belongs to. The page of a screen is delivered by the
+ticket of its reference; what is proven here is that the address is one of
+the launched product, ready for the controls that follow.
 
 `ApprovedReferences` reads the seven references at their approved commits
 through `bin/prototype-conformance anchors`, in the repository an author
@@ -21,9 +25,15 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
+import time
 import unittest
+import urllib.error
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -108,7 +118,78 @@ def declared_launch(case: unittest.TestCase) -> dict:
 
 
 class DeclaredAddresses(unittest.TestCase):
-    def test_every_frozen_state_is_a_named_dataset_of_the_tree(self):
+    """Every declared address is used for real: each frozen state is launched
+    by `bin/project-launch` from its declared dataset, in a disposable Git
+    repository that holds the tree under test and nothing of the planning
+    prototypes, and the launched cockpit is asked at the address of the
+    screen of that state."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.work = Path(tempfile.mkdtemp(prefix="cockpit-frozen-states-"))
+        cls.repo = cls.work / "repo"
+        shutil.copytree(
+            ROOT, cls.repo, symlinks=True,
+            ignore=shutil.ignore_patterns(".git", ".gc", "__pycache__", "var", "node_modules"),
+        )
+        env = {
+            **os.environ,
+            "GIT_AUTHOR_NAME": "criterion", "GIT_AUTHOR_EMAIL": "criterion@example.invalid",
+            "GIT_COMMITTER_NAME": "criterion", "GIT_COMMITTER_EMAIL": "criterion@example.invalid",
+        }
+        for args in (["init", "--quiet"], ["add", "--all", "--force"],
+                     ["commit", "--quiet", "--message", "the tree under test"]):
+            subprocess.run(["git", "-C", str(cls.repo), *args], check=True, capture_output=True, env=env)
+        cls.commit = subprocess.run(
+            ["git", "-C", str(cls.repo), "rev-parse", "HEAD"], check=True, text=True, capture_output=True
+        ).stdout.strip()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        shutil.rmtree(cls.work, ignore_errors=True)
+
+    def launched_state(self, state: str, screen_address: str) -> str | None:
+        """Launch the cockpit on the dataset `state`, ask it its state and the
+        address of its screen, stop it. What is wrong, or None."""
+        record_file = self.work / f"launch-{state}.json"
+        launcher = [sys.executable, str(ROOT / "bin/project-launch"), "--repo-root", str(self.repo)]
+        proc = subprocess.run(
+            [*launcher, "start", str(self.repo / PROFILE), "--commit", self.commit, "--dataset", state,
+             "--state-file", str(record_file), "--timeout", "60"],
+            text=True, capture_output=True, stdin=subprocess.DEVNULL,
+        )
+        try:
+            record = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            return f"{state}: bin/project-launch start answered no JSON ({proc.stderr.strip()})"
+        if record.get("started") is not True:
+            return f"{state}: not launched from its declared dataset ({record.get('error')})"
+        try:
+            if record.get("commit") != self.commit or record.get("dataset") != state:
+                return f"{state}: launched as {record.get('dataset')} at {record.get('commit')}"
+            served, deadline = None, time.monotonic() + 30
+            while served is None and time.monotonic() < deadline:
+                with urllib.request.urlopen(record["address"] + "/api/status", timeout=10) as response:
+                    served = ((json.load(response).get("gc") or {}).get("value") or {}).get("city")
+                if served is None:
+                    time.sleep(0.2)
+            if served != state:
+                return f"{state}: the launched cockpit is in the state {served!r}"
+            try:
+                with urllib.request.urlopen(record["address"] + screen_address, timeout=10) as response:
+                    server = response.headers.get("Server", "")
+            except urllib.error.HTTPError as answer:
+                server = answer.headers.get("Server", "")
+            if not server.startswith("cockpit/"):
+                return f"{state}: {screen_address} is not answered by the launched cockpit (Server: {server!r})"
+            return None
+        except (urllib.error.URLError, ConnectionError, OSError, ValueError) as exc:
+            return f"{state}: the launched cockpit does not answer ({exc})"
+        finally:
+            subprocess.run([*launcher, "stop", "--state-file", str(record_file)], capture_output=True,
+                           stdin=subprocess.DEVNULL)
+
+    def test_every_frozen_state_is_launched_from_its_declared_dataset_at_the_address_of_its_screen(self):
         launch = declared_launch(self)
         panorama = [s for path, (_, states) in REFERENCES.items() if "panorama" in path for s in states]
         self.assertEqual(76, len(set(panorama)))
@@ -123,24 +204,29 @@ class DeclaredAddresses(unittest.TestCase):
             self.assertIs(True, dataset.get("synthetic"), address)
             self.assertTrue(dataset.get("generated_at"), f"{address} carries no fixed time")
         self.assertFalse(any("prototypes/" in token for token in launch["recipe"]), launch["recipe"])
+        self.assertFalse((self.repo / "prototypes").exists(), "the tree under test holds the planning prototypes")
 
-    def test_every_frozen_state_belongs_to_one_screen_that_has_an_address(self):
-        launch = declared_launch(self)
+        # Each state belongs to one screen of the Spec, and each screen has its own address.
         declared = launch.get("screens") or []
         entry_points = {(e["method"], e["path"]) for e in launch["entry_points"] if e["kind"] == "http"}
-        addresses = []
+        address_of = {}
         for title, states in SCREENS.items():
             matching = [screen for screen in declared if sorted(screen["states"]) == sorted(states)]
             self.assertEqual(1, len(matching), f"no single screen shows exactly the states of « {title} »")
             path = matching[0]["path"]
             self.assertTrue(path.startswith("/"), path)
             self.assertIn(("GET", path), entry_points, "the address of the screen is not a declared entry point")
-            addresses.append(path)
+            for state in states:
+                address_of[state] = path
         self.assertEqual(len(SCREENS), len(declared), "a declared screen is none of the Spec's")
-        self.assertEqual(len(SCREENS), len(set(addresses)), "two screens share one address")
-        # What the cockpit is probed at for its launch.
-        self.assertIn(("GET", "/"), entry_points)
-        self.assertIn(("GET", "/api/status"), entry_points)
+        self.assertEqual(len(SCREENS), len(set(address_of.values())), "two screens share one address")
+        self.assertEqual(sorted(panorama + RUNS), sorted(address_of))
+
+        # The launcher serves each state from its declared dataset, and the
+        # launched cockpit is the one asked at the address of its screen.
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            problems = [p for p in pool.map(lambda s: self.launched_state(s, address_of[s]), sorted(address_of)) if p]
+        self.assertEqual([], problems)
 
 
 class ApprovedReferences(unittest.TestCase):
