@@ -317,7 +317,7 @@ class Convoy:
                 return readable(ticket)
         raise Refusal(f"le ticket {ticket_id} n'appartient pas au convoi {self.id}")
 
-    def profile(self, ticket_id: str) -> tuple[Path, dict[str, Any]]:
+    def profile(self, ticket_id: str, commit: str | None = None) -> tuple[Path, dict[str, Any]]:
         """The profile of the ticket's project and its `launch` block."""
         if self.given_profile:
             path: Path | None = Path(self.given_profile)
@@ -333,6 +333,40 @@ class Convoy:
             profile = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise Refusal(f"profil de projet illisible ({path}) : {exc}") from exc
+        ticket = self.ticket(ticket_id)
+        if ticket.get("establishes_launch_recipe") is True:
+            # Only the published recipe-establishing ticket can supply its
+            # recipe before integration. Never read its mutable work tree.
+            commit = commit or (evaluation_of(ticket).get("request") or {}).get("commit") or ticket.get("tip")
+            if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit):
+                raise Refusal("commit exact absent pour la recette du ticket")
+            try:
+                relative = path.resolve().relative_to(ROOT.resolve())
+            except ValueError as exc:
+                raise Refusal("le profil du ticket doit appartenir à la racine Factory") from exc
+            result = run(["git", "-C", str(self.repo), "show", f"{commit}:{relative.as_posix()}"])
+            if result.returncode:
+                raise Refusal(f"profil absent au commit évalué {commit} : {detail_of(result)}")
+            try:
+                candidate = json.loads(result.stdout)
+            except ValueError as exc:
+                raise Refusal(f"profil illisible au commit évalué {commit}") from exc
+            if not isinstance(candidate, dict) or any(candidate.get(key) != profile.get(key)
+                                                       for key in ("project_id", "rigs")):
+                raise Refusal("le profil du ticket change l'identité du projet ou ses rigs")
+            profile = {**profile, "launch": candidate.get("launch")}
+            folder = state_dir() / "profiles" / ticket_id
+            path = folder / f"{commit}.profile"
+            content = json.dumps(profile)
+            if path.exists():
+                if path.read_text(encoding="utf-8") != content:
+                    raise Refusal("le profil conservé de cette évaluation a changé")
+            else:
+                folder.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
+            checked = run([str(BIN / "project-planning-profile"), "describe", str(path)])
+            if checked.returncode:
+                raise Refusal(f"profil du ticket invalide : {detail_of(checked)}")
         launch = profile.get("launch") if isinstance(profile, dict) else None
         if not isinstance(launch, dict):
             raise Refusal(f"le profil {path} ne déclare pas de recette de lancement (launch) : rien à évaluer")
@@ -456,7 +490,7 @@ def launch_products(convoy: Convoy, ticket_id: str, commit: str, settings: dict[
     """Launch the product from a clean copy of `commit`, once per dataset
     the profile declares, each on its own free port (bin/project-launch).
     All of them, or none: a product that does not start stops the others."""
-    profile, _ = convoy.profile(ticket_id)
+    profile, _ = convoy.profile(ticket_id, commit)
     datasets = convoy.datasets(ticket_id)
     folder = state_dir() / re.sub(r"[^A-Za-z0-9._-]", "_", convoy.id) / re.sub(r"[^A-Za-z0-9._-]", "_", ticket_id)
     folder.mkdir(parents=True, exist_ok=True)
@@ -869,7 +903,7 @@ def cmd_brief(args: argparse.Namespace) -> int:
     repository, nor the branch."""
     convoy = Convoy(args.convoy, args.repo, args.profile)
     request = open_request(convoy, args.ticket)
-    _, launch_block = convoy.profile(args.ticket)
+    _, launch_block = convoy.profile(args.ticket, request["commit"])
     capture = [str(CAPTURE_TOOL), "command", args.convoy, args.ticket, "--piece", "evaluation.<name>",
                "--launch-state", "<launch_state of the product>", "--"]
     brief = {

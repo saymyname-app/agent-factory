@@ -72,6 +72,18 @@ A second call on the same state does nothing.
 
 ## The product that is evaluated
 
+Intent (Benjamin, 2026-10-12): « l’évaluation lise la recette du ticket qui l’établit, sans affaiblir les contrôles ».
+Mechanism (agent interpretation): for a ticket marked `establishes_launch_recipe`
+by publication, read only `launch` from the same project descriptor at the exact
+commit being evaluated, using Git objects, never the author's checkout. Keep the
+live project's identity and reject a candidate that changes its project or rigs.
+Validate the resulting profile through the ordinary profile command; missing or
+invalid committed recipes are refused, never replaced by a live fallback. The
+Evaluator brief reads the requested commit, even if the branch has since moved.
+All other tickets keep the ordinary profile selection. This changes no evidence,
+criterion, independent-session or favorable-verdict requirement.
+
+
 For an evaluation `settle` launches the product **once per dataset** the
 profile declares (`launch.datasets`, at least one: a profile that declares
 none is refused before anything is launched or recorded — « le profil … ne
