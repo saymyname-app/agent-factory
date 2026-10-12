@@ -502,8 +502,15 @@ def cmd_settle(args: argparse.Namespace) -> int:
     convoy = Convoy(args.convoy, args.repo)
     answer: dict[str, Any] = {"ok": True, "convoy": args.convoy, "launched": [], "pending": [], "waiting": [],
                               "stopped": [], "escalated": [], "deferred": [], "refused": []}
-    for ticket_id in [ticket.get("id") for ticket in convoy.tickets]:
+    for initial in list(convoy.tickets):
+        ticket_id = initial.get("id")
         try:
+            # No finished exit or stop means no work for this stage. Keep
+            # malformed state visible; candidates still reload under their
+            # lock before acting. A newly finished ticket waits one pass.
+            initial = readable(initial)
+            if not initial.get("exit") and not initial.get("stop"):
+                continue
             done = settle_ticket(convoy, ticket_id)
         except Deferred as exc:
             answer["deferred"].append({"ticket": ticket_id, "reason": str(exc)})

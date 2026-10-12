@@ -164,6 +164,16 @@ On the ticket, written by `bin/convoy-state` only (`docs/CONVOY_STATE.md`):
 | `gc.flow.stop` | reason `still_refused`, a one-line detail, and `raised` once the escalation door accepted the request |
 | `gc.flow.overrides` | `entries`: one `{finding, approver, words, commit, at}` per overridden Blocking Finding |
 
+## Avoiding reads for tickets with no work
+
+Intent (Benjamin, his words, 2026-10-12): « corriger le flow par tranches ordonnées et vérifiées ».
+Mechanism (agent interpretation): the initial convoy snapshot skips tickets
+with neither an exit nor a stop before settlement. Their malformed state is
+still refused. Every candidate is read again under its ticket lock before any
+action, and changes made by an author after the snapshot are seen on the next
+pass. This removes a full-convoy tracker read per unfinished ticket without
+caching a verdict or authorising an action from stale state (af-8cfygl).
+
 ## Limits
 
 - The author session of the round is recognised as ended when its bead is

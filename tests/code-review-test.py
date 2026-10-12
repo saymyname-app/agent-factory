@@ -296,6 +296,33 @@ class CodeReviewTest(unittest.TestCase):
             self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         return proc.stdout.strip()
 
+    def test_malformed_unfinished_ticket_is_still_refused(self):
+        tracker = json.loads(self.tracker.read_text())
+        tracker["beads"][SLICE]["metadata"]["gc.flow.code_review"] = "not-json"
+        self.tracker.write_text(json.dumps(tracker))
+        before = self.tracker.read_bytes()
+        result = self.run_cmd(TOOL, "settle", CONVOY, "--repo", self.repo)
+        self.assertNotEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertIn(SLICE, result.stdout)
+        self.assertEqual(before, self.tracker.read_bytes())
+        self.assertEqual([], self.launches())
+
+    def test_unfinished_tickets_need_only_the_initial_convoy_read(self):
+        calls = self.tmp / "tracker-reads"
+        gc = Path(self.env["GC_BIN"])
+        gc.write_text(
+            f'#!/bin/sh\nprintf "%s\\n" "$*" >> "{calls}"\n'
+            f'exec "{FAKE_GC}" "$@"\n')
+        before = self.tracker.read_bytes()
+        result = self.run_cmd(TOOL, "settle", CONVOY, "--repo", self.repo)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertTrue(json.loads(result.stdout)["ok"])
+        reads = [line for line in calls.read_text().splitlines()
+                 if f"bd show {CONVOY} --json" in line]
+        self.assertEqual(1, len(reads), reads)
+        self.assertEqual(before, self.tracker.read_bytes())
+        self.assertEqual([], self.launches())
+
     def run_cmd(self, tool, *args, env=None):
         return subprocess.run((str(tool), *[str(a) for a in args]), env={**self.env, **(env or {})},
                               text=True, capture_output=True, cwd=self.tmp)
