@@ -575,7 +575,8 @@ class TicketEvaluationTest(unittest.TestCase):
         self.assertFalse(lifecycle["port_open_after_stop"])
         self.assertFalse(lifecycle["process_alive_after_stop"])
         self.assertEqual([], lifecycle["processes_after_stop"])
-        self.assertIn(int(brief["environments"][0]["address"].rsplit(":", 1)[1]), lifecycle["existing_ports_after"])
+        self.assertNotIn(int(brief["environments"][0]["address"].rsplit(":", 1)[1]), lifecycle["existing_ports_before"])
+        self.assertEqual([], lifecycle["lost_existing_ports"])
         reference, = observation["observation"]["references"]
         self.assertEqual(0, reference["anchors"]["exit_code"])
         self.assertEqual(1, len(reference["datasets"]))

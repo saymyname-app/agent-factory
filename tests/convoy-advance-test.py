@@ -32,6 +32,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import time
 import sys
 import unittest
 from pathlib import Path
@@ -267,7 +268,21 @@ class ConvoyAdvanceHarness(unittest.TestCase):
     def advance(self, *args, expect=0, env=None):
         proc = self.run_cmd(TOOL, *args, env=env)
         self.assertEqual(expect, proc.returncode, proc.stdout + proc.stderr)
-        return json.loads(proc.stdout)
+        answer = json.loads(proc.stdout)
+        # Multi-game fake sessions continue after dispatch returns. Advance
+        # their official controller until each requested game is available.
+        for program, name in (("ticket-evaluation", "TICKET_EVALUATION_FAKE_LOG"),
+                              ("outcome-evaluation", "OUTCOME_EVALUATION_FAKE_LOG")):
+            if name not in self.env:
+                continue
+            marker = Path(self.env[name] + ".pending")
+            deadline = time.monotonic() + 60
+            while marker.exists() and time.monotonic() < deadline:
+                settled = self.run_cmd(ROOT / "bin" / program, "settle", args[0], "--repo", self.root)
+                self.assertEqual(0, settled.returncode, settled.stdout + settled.stderr)
+                time.sleep(0.1)
+            self.assertFalse(marker.exists(), f"fake {program} did not finish")
+        return answer
 
     def slung(self):
         lines = [json.loads(line) for line in self.write_log.read_text().splitlines() if line]

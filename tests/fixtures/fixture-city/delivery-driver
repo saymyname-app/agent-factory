@@ -94,6 +94,7 @@ import pwd
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import yaml
@@ -578,6 +579,20 @@ class City:
             raise SystemExit(f"delivery-driver: convoy-advance failed ({proc.returncode}): {proc.stdout[-800:]}{proc.stderr[-300:]}")
         # What the pass answered, for whoever reads the walk afterwards.
         (self.workspace / "order-pass.json").write_text(proc.stdout)
+        for program, name in (("ticket-evaluation", "TICKET_EVALUATION_FAKE_LOG"),
+                              ("outcome-evaluation", "OUTCOME_EVALUATION_FAKE_LOG")):
+            if name not in self.env():
+                continue
+            marker = Path(self.env()[name] + ".pending")
+            deadline = time.monotonic() + 60
+            while marker.exists() and time.monotonic() < deadline:
+                settled = self.run(BIN / program, "settle", self.convoy, "--repo", self.root,
+                                   "--profile", json.loads(self.memo.read_text())["profile"], check=False)
+                if settled.returncode:
+                    raise SystemExit(f"delivery-driver: {program} could not settle: {settled.stdout}{settled.stderr}")
+                time.sleep(0.1)
+            if marker.exists():
+                raise SystemExit(f"delivery-driver: fake {program} did not finish")
         return "order-pass"
 
     def gate(self, tool: str, *args, **more: str) -> dict:

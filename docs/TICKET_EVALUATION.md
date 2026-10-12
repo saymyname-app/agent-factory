@@ -102,7 +102,11 @@ unconfirmed stop keeps its record and slot. Waiting for admission before
 the first Evaluator session starts does not consume that session's deadline.
 `project-launch` writes a provisional record before spawning, so an
 interrupted pass recovers the exact repository, commit and game or stops it.
-A superseded commit is never reused.
+A superseded commit is never reused. For a ticket that establishes its
+launch recipe, the controller tests a disposable start/stop cycle **before**
+opening the evaluated product. Its sealed observation still includes the
+lifecycle result and validated reference checks; the trial and the evaluated
+product never run together.
 
 The request retains historical addresses for Evidence Record verification
 after a switch; `live` names only the product still running. A favorable

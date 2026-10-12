@@ -519,6 +519,10 @@ def launch_products(convoy: Convoy, ticket_id: str, commit: str, settings: dict[
     return [{"dataset": chosen, "address": record["address"], "state_file": str(state_file)}]
 
 
+def preflight_path(convoy: Convoy, ticket_id: str, commit: str) -> Path:
+    return product_folder(convoy.id, ticket_id) / f"{commit}.preflight"
+
+
 def observation_piece(entry: dict[str, Any]) -> str:
     import hashlib
     return "evaluation.controller." + hashlib.sha256(entry["state_file"].encode()).hexdigest()[:24]
@@ -531,7 +535,8 @@ def controller_observation(convoy: Convoy, ticket_id: str, commit: str, entry: d
         return None
     piece = observation_piece(entry)
     argv = [str(BIN / PROGRAM), "observe", convoy.id, ticket_id, "--repo", str(convoy.repo),
-            "--commit", commit, "--launch-state", entry["state_file"]]
+            "--commit", commit, "--launch-state", entry["state_file"],
+            "--preflight-path", str(preflight_path(convoy, ticket_id, commit))]
     if convoy.given_profile:
         argv += ["--profile", convoy.given_profile]
     checked = run([str(CAPTURE_TOOL), "verify", convoy.id, ticket_id, "--piece", piece])
@@ -579,9 +584,22 @@ def cmd_observe(args: argparse.Namespace) -> int:
             if key not in references:
                 references[key] = {**ref, "states": []}
             references[key]["states"] = sorted(set(references[key]["states"]) | set(ref["states"]))
+    if not args.preflight_path:
+        raise Refusal("preuve préalable de démarrage et d'arrêt absente")
+    try:
+        prepared_lifecycle = json.loads(Path(args.preflight_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise Refusal(f"preuve préalable illisible : {exc}") from exc
+    if not isinstance(prepared_lifecycle, dict) or not isinstance(prepared_lifecycle.get("lifecycle"), dict):
+        raise Refusal("preuve préalable mal formée")
+    if (prepared_lifecycle.get("commit") != args.commit or
+            prepared_lifecycle.get("dataset") != next(entry["dataset"] for entry in prepared
+                                                       if entry["state_file"] == args.launch_state)):
+        raise Refusal("preuve préalable étrangère à cette préparation")
     from evaluation_observations import observe
     try:
-        observation = observe(BIN, convoy.repo, profile, args.commit, args.launch_state, list(references.values()))
+        observation = observe(BIN, convoy.repo, profile, args.commit, args.launch_state,
+                              list(references.values()), prepared_lifecycle["lifecycle"])
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         raise Refusal(f"observation interrompue : {exc}") from exc
     print(json.dumps(observation, ensure_ascii=False))
@@ -943,8 +961,27 @@ def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> d
         if current is None:
             # The roles first: an evaluation that is deferred launches nothing.
             roles = record_evaluator(convoy.id, ticket)
+            if ticket.get("establishes_launch_recipe"):
+                # The lifecycle trial uses the one evaluation slot before the
+                # actual product opens. A partial earlier preparation is
+                # stopped first; no two products of this evaluation coexist.
+                for entry in preparing:
+                    stop_product(entry["state_file"])
+                from evaluation_observations import lifecycle_preflight
+                trial = product_folder(convoy.id, ticket_id) / f"{commit}.trial"
+                trial.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    lifecycle = lifecycle_preflight(BIN, convoy.repo, convoy.profile(ticket_id, commit)[0],
+                                                    commit, convoy.datasets(ticket_id)[0], trial)
+                except Busy as exc:
+                    raise Deferred(str(exc)) from exc
+                except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
+                    raise Refusal(f"observation préalable interrompue : {exc}") from exc
+                preflight_path(convoy, ticket_id, commit).write_text(json.dumps({
+                    "commit": commit, "dataset": convoy.datasets(ticket_id)[0], "lifecycle": lifecycle}))
             try:
-                environment = launch_products(convoy, ticket_id, commit, settings)
+                environment = launch_products(convoy, ticket_id, commit, settings,
+                                              reuse=not ticket.get("establishes_launch_recipe"))
             except Deferred:
                 raise
             except Refusal as exc:
@@ -953,6 +990,7 @@ def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> d
                                       short(str(exc), 240))
                 return {"ticket": ticket_id, "action": "refused_startup", "commit": commit, "verdict": written["verdict"]}
             controller_observation(convoy, ticket_id, commit, environment[0], capture=True)
+            preflight_path(convoy, ticket_id, commit).unlink(missing_ok=True)
             try:
                 state_write_file("open-evaluation", convoy.id, ticket_id,
                                  {"roles": roles, "environment": environment, "datasets": convoy.datasets(ticket_id)},
@@ -1297,6 +1335,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--profile")
     p.add_argument("--commit", required=True)
     p.add_argument("--launch-state", required=True)
+    p.add_argument("--preflight-path")
     command("brief", cmd_brief).add_argument("--profile")
     p = command("product", cmd_product)
     p.add_argument("--profile")
