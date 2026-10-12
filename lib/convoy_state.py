@@ -3986,6 +3986,15 @@ def evidence_at(metadata: dict[str, Any], piece: Any, commit: str) -> str | None
     return None
 
 
+def retry_after_lift(last, lifts):
+    """One resolved parking permits a new judgement, never a favorable verdict.
+    A subsequent refusal is newer than the lift and requires a new decision."""
+    return bool(last and last.get('outcome') == 'planning_exception' and isinstance(lifts, list)
+                and any(lift.get('cause') == 'planning_exception'
+                        and lift.get('parked_at', '') >= last['at']
+                        and lift.get('at', '') > last['at'] for lift in lifts))
+
+
 def cmd_open_evaluation(args: argparse.Namespace) -> int:
     """Open the Ticket Evaluation of a ticket (T15, Spec §7) at the commit
     its author finished at, on the products code launched from a clean copy
@@ -4012,7 +4021,6 @@ def cmd_open_evaluation(args: argparse.Namespace) -> int:
     roles = evaluation_roles(given.get("roles"))
     environment = evaluation_environment(given.get("environment"), launched=True)
     last = record["rounds"][-1] if record["rounds"] else None
-    from evaluation_observations import retry_after_lift
     lifts = park_lifts_record(metadata[KEY_PARK_LIFTS]) if KEY_PARK_LIFTS in metadata else []
     if last and last["commit"] == commit and last["verdict"] is not None and not retry_after_lift(last, lifts):
         raise Refusal(f"le ticket {args.ticket} est déjà évalué au commit {commit} ({last['outcome']})")

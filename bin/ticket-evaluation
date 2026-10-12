@@ -67,7 +67,7 @@ PROJECTS = ROOT / "config" / "projects"
 DESCRIPTORS = ROOT / "config" / "project-descriptors"
 
 sys.path.insert(0, str(BIN.parent / "lib"))
-from evaluation_observations import retry_after_lift
+from convoy_state import retry_after_lift
 from delivery_role_identity import role_identity, role_supplier, supplier_of  # noqa: E402
 
 NEW_FLOW = "new-flow/v1"
@@ -609,8 +609,11 @@ def cmd_observe(args: argparse.Namespace) -> int:
                 references[key] = {**ref, "states": []}
             references[key]["states"] = sorted(set(references[key]["states"]) | set(ref["states"]))
     from evaluation_observations import observe
-    print(json.dumps(observe(BIN, convoy.repo, profile, args.commit, args.launch_state,
-                             list(references.values())), ensure_ascii=False))
+    try:
+        observation = observe(BIN, convoy.repo, profile, args.commit, args.launch_state, list(references.values()))
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        raise Refusal(f"observation interrompue : {exc}") from exc
+    print(json.dumps(observation, ensure_ascii=False))
     return 0
 
 
@@ -621,7 +624,8 @@ def reap(convoy: Convoy, ticket: dict[str, Any], keep: list[str], withdraw: bool
     them is no longer due (a newer tip, a parked ticket) and is withdrawn
     with them."""
     tracked = evaluation_of(ticket).get("live") or []
-    local = [str(path) for path in product_folder(convoy.id, ticket["id"]).glob("*.json")]
+    local = [str(path) for pattern in ("*.json", "*.trial")
+             for path in product_folder(convoy.id, ticket["id"]).glob(pattern)]
     stale = [path for path in dict.fromkeys([*tracked, *local]) if path not in keep]
     if not stale:
         return []

@@ -342,6 +342,11 @@ named dataset bytes against the approved Git objects, and reports declared scree
 addresses. No private planning profile or author handoff is read. TCP reachability
 is not a claim about the functional health of a neighbouring service.
 
+The disposable trial keeps a `.trial` launch record beside the preparation.
+An interrupted capture leaves it for the next reap; it is never reused as a
+dataset environment. The report retains the pre-stop process identities so a
+survivor is still detectable after removal of its checkout.
+
 The ordinary evidence-capture command seals the actual output against the first
 product's commit and address. The brief exposes controller_observation with the
 piece, fingerprint, path and output; failures remain visible for the Evaluator's

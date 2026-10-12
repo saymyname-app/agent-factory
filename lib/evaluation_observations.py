@@ -3,7 +3,6 @@ import hashlib
 import json
 import socket
 import subprocess
-import tempfile
 from pathlib import Path
 
 
@@ -72,29 +71,32 @@ def observe(bin_dir, repo, profile, commit, launch_state, references):
     result = {'commit': commit, 'dataset': primary['dataset'], 'references': [],
               'screens': declared.get('screens', []), 'entry_points': declared.get('entry_points', [])}
     before = listeners()
-    with tempfile.TemporaryDirectory(prefix='evaluation-lifecycle-') as temp:
-        state = Path(temp) / 'launch.json'
-        argv = [bin_dir / 'project-launch', '--repo-root', repo, 'start', profile,
-                '--commit', commit, '--dataset', primary['dataset'], '--state-file', state]
-        started = command(argv)
-        lifecycle = {'start': started, 'existing_ports_before': sorted(before)}
-        result['lifecycle'] = lifecycle
-        try:
-            if state.exists():
-                trial = json.loads(state.read_text())
-                lifecycle.update(address=trial['address'], commit=trial['commit'], pid=trial['pid'])
-                lifecycle['port_open_before_stop'] = connects(trial['port'])
-                lifecycle['processes_before_stop'] = processes_in(trial['worktree'])
-                lifecycle['stop'] = command([bin_dir / 'project-launch', 'stop', '--state-file', state])
-                lifecycle['process_alive_after_stop'] = alive(trial['pid'])
-                lifecycle['processes_after_stop'] = sorted(set(processes_in(trial['worktree'])) |
-                    {pid for pid in lifecycle['processes_before_stop'] if alive(pid)})
-                lifecycle['port_open_after_stop'] = connects(trial['port'])
-        finally:
-            if state.exists():
-                command([bin_dir / 'project-launch', 'stop', '--state-file', state])
-        lifecycle['existing_ports_after'] = sorted(p for p in before if connects(p))
-        lifecycle['lost_existing_ports'] = sorted(before - set(lifecycle['existing_ports_after']))
+    # Keep the trial record beside the preparation: a killed observation is
+    # reaped on the next pass, never confused with a reusable dataset product.
+    state = Path(launch_state).with_suffix('.trial')
+    if state.exists():
+        raise ValueError('an interrupted lifecycle trial still needs cleanup')
+    argv = [bin_dir / 'project-launch', '--repo-root', repo, 'start', profile,
+            '--commit', commit, '--dataset', primary['dataset'], '--state-file', state]
+    started = command(argv)
+    lifecycle = {'start': started, 'existing_ports_before': sorted(before)}
+    result['lifecycle'] = lifecycle
+    try:
+        if state.exists():
+            trial = json.loads(state.read_text())
+            lifecycle.update(address=trial['address'], commit=trial['commit'], pid=trial['pid'])
+            lifecycle['port_open_before_stop'] = connects(trial['port'])
+            lifecycle['processes_before_stop'] = processes_in(trial['worktree'])
+            lifecycle['stop'] = command([bin_dir / 'project-launch', 'stop', '--state-file', state])
+            lifecycle['process_alive_after_stop'] = alive(trial['pid'])
+            lifecycle['processes_after_stop'] = sorted(set(processes_in(trial['worktree'])) |
+                {pid for pid in lifecycle['processes_before_stop'] if alive(pid)})
+            lifecycle['port_open_after_stop'] = connects(trial['port'])
+    finally:
+        if state.exists():
+            command([bin_dir / 'project-launch', 'stop', '--state-file', state])
+    lifecycle['existing_ports_after'] = sorted(p for p in before if connects(p))
+    lifecycle['lost_existing_ports'] = sorted(before - set(lifecycle['existing_ports_after']))
     # Read only published reference identities; do not consult private planning
     # profiles, author reports, source diffs or the author's dirty checkout.
     for reference in references:
@@ -121,12 +123,3 @@ def observe(bin_dir, repo, profile, commit, launch_state, references):
             ref['error'] = str(exc)
         result['references'].append(ref)
     return result
-
-
-def retry_after_lift(last, lifts):
-    """One resolved parking permits a new judgement, never a favorable verdict.
-    A subsequent refusal is newer than the lift and requires a new decision."""
-    return bool(last and last.get('outcome') == 'planning_exception' and isinstance(lifts, list)
-                and any(lift.get('cause') == 'planning_exception'
-                        and lift.get('parked_at', '') >= last['at']
-                        and lift.get('at', '') > last['at'] for lift in lifts))

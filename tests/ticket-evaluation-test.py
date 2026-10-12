@@ -653,11 +653,20 @@ class TicketEvaluationTest(unittest.TestCase):
                                "--commit", tip, "--dataset", "content", "--state-file", record)
         self.assertEqual(0, started.returncode, started.stdout + started.stderr)
         original = json.loads(record.read_text())
+        trial = record.with_suffix(".trial")
+        started = self.run_cmd(LAUNCH_TOOL, "--repo-root", self.repo, "start", self.profile,
+                               "--commit", tip, "--dataset", "content", "--state-file", trial)
+        self.assertEqual(0, started.returncode, started.stdout + started.stderr)
+        self.addCleanup(self.run_cmd, LAUNCH_TOOL, "stop", "--state-file", trial)
+        interrupted_trial = json.loads(trial.read_text())
         tracker = json.loads(self.tracker.read_text())
         tracker["beads"][SLICE]["status"] = "closed"
         self.tracker.write_text(json.dumps(tracker))
         self.settle()
         self.assertEqual([], self.launches())
+        self.assertFalse(trial.exists())
+        with self.assertRaises(Exception):
+            urllib.request.urlopen(interrupted_trial["address"], timeout=1)
         with self.assertRaises(Exception):
             urllib.request.urlopen(original["address"], timeout=1)
 
