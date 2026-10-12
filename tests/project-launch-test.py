@@ -18,6 +18,7 @@ import shutil
 import signal
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -132,6 +133,55 @@ class ProjectLaunchTest(unittest.TestCase):
             capture_output=True,
             check=check,
         )
+
+    def test_stop_recognizes_exit_without_waiting_for_the_parent_to_reap(self):
+        # The stop command is not the product's parent, just as for an
+        # evaluation launched by an earlier controller pass. Keep the child
+        # unreaped deliberately: kill(pid, 0) still succeeds after it exits.
+        for already_dead in (True, False):
+            with self.subTest(already_dead=already_dead):
+                proc = subprocess.Popen(
+                    [sys.executable, "-c", "pass" if already_dead else
+                     "import time; print('ready', flush=True); time.sleep(60)"],
+                    stdout=subprocess.PIPE, text=True)
+                try:
+                    if already_dead:
+                        os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOWAIT)
+                    else:
+                        self.assertEqual("ready", proc.stdout.readline().strip())
+                    state_file = self.new_state_file()
+                    state_file.write_text(json.dumps({"pid": proc.pid}))
+                    result = subprocess.run(
+                        [str(TOOL), "stop", "--state-file", str(state_file)],
+                        text=True, capture_output=True, timeout=3)
+                    self.assertEqual(0, result.returncode, result.stderr)
+                    self.assertTrue(json.loads(result.stdout)["stopped"])
+                    self.assertFalse(state_file.exists())
+                    self.assertIsNotNone(proc.wait(timeout=1))
+                finally:
+                    proc.kill()
+                    proc.wait()
+                    proc.stdout.close()
+
+    def test_stop_keeps_the_grace_and_kills_a_product_ignoring_sigterm(self):
+        proc = subprocess.Popen(
+            [sys.executable, "-c", "import signal,time; "
+             "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+             "print('ready', flush=True); time.sleep(60)"],
+            stdout=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual("ready", proc.stdout.readline().strip())
+            started = time.monotonic()
+            result = subprocess.run([str(TOOL), "stop", "--pid", str(proc.pid)],
+                                    text=True, capture_output=True, timeout=8)
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertTrue(json.loads(result.stdout)["stopped"])
+            self.assertGreaterEqual(time.monotonic() - started, 5)
+            self.assertEqual(-signal.SIGKILL, proc.wait(timeout=1))
+        finally:
+            proc.kill()
+            proc.wait()
+            proc.stdout.close()
 
     # AC1 -----------------------------------------------------------------
 

@@ -236,6 +236,14 @@ into `recipe`, and polls `health_probe` until it answers or `--timeout`
 `--state-file`, terminates the process, removes the worktree, and frees
 the port. Two concurrent launches each get their own port and worktree and
 do not disturb each other; stopping one leaves the other answering.
+
+Intent (Benjamin, his words, 2026-10-12): « corriger le flow par tranches ordonnées et vérifiées ».
+Mechanism (agent interpretation): on Linux, `stop` recognises an exited process still awaiting collection by
+its parent (a zombie) as terminated. `kill(pid, 0)` alone also succeeds for
+that state and used to spend the full five-second grace per product during
+serial evaluation cleanup (af-8cfygl). A live process still receives SIGTERM,
+keeps that grace, then receives SIGKILL if it has not exited. This does not
+change launch ownership or collect unrelated orphan processes (af-skz5cj).
 `tests/project-launch-test.py` and `tests/fixtures/delivery-fixture-city/`
 are the fixture project and its proof.
 
