@@ -274,6 +274,10 @@ def gate(draft: Draft) -> dict[str, Any]:
             f"refus : le brouillon {draft.id} a changé depuis sa relecture de graphe : les verdicts valent pour le "
             f"digest {last['digest']}, pas pour le digest courant {draft.digest}{exhausted} ; rien n'est écrit"
         )
+    derivation = stored(draft.metadata, "gc.planning_derivation")
+    if isinstance(derivation, dict) and derivation.get("kind") == "graph":
+        if last.get("derived_spec_digest") != derivation.get("spec_digest"):
+            raise Refusal("refus : la Spec dérivée a changé depuis la relecture du graphe ; nouvelle relecture requise")
     refused = refusals_of(last)
     if refused and last["pass"] < MAX_PASSES:
         names = ", ".join(item["target"] for item in refused)
@@ -299,6 +303,7 @@ def gate(draft: Draft) -> dict[str, Any]:
         "ok": True, "draft": draft.id, "digest": draft.digest, "pass": last["pass"],
         "same_model": bool(last.get("same_model")), "model_independence": state["model_independence"],
         "decisions": {item["target"]: item["decision"] for item in state["remaining"]},
+        **({"derived_spec_digest": last["derived_spec_digest"]} if "derived_spec_digest" in last else {}),
     }
 
 
@@ -377,6 +382,9 @@ def open_request(draft: Draft, author_model: str) -> dict[str, Any]:
         "author_model": author_model, "reviewer_agent": agent, "reviewer_provider": provider,
         "reviewer_model": model, "same_model": normalized_model(author_model) == normalized_model(model),
     }
+    derivation = stored(draft.metadata, "gc.planning_derivation")
+    if isinstance(derivation, dict) and derivation.get("kind") == "graph":
+        request["derived_spec_digest"] = derivation["spec_digest"]
     draft.write(KEY_REQUEST, request)
     return request
 

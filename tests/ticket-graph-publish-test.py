@@ -290,6 +290,41 @@ class TicketGraphPublishBeadModeTest(unittest.TestCase):
 
     # --- nominal --------------------------------------------------------------
 
+    def test_derived_authority_is_transmitted_and_publication_stays_idempotent(self):
+        # The lower door proves the source/fidelity refusals. Here prove
+        # transmission through the real publication command only.
+        spec, draft = self.spec_bead(), self.draft_bead(approved_by="author")
+        for bead in (spec, draft):
+            bead["metadata"].update(approval_mode="derived/v1", derived_authorization="seal", **{"gc.project_id": "acme"})
+        self.seed({"draft-1": draft, "spec-1": spec})
+        helper = self.tmp / "derivation"
+        helper.write_text("#!/usr/bin/env python3\nimport json,os,sys,hashlib\n"
+            "artifact=sys.argv[sys.argv.index('--artifact')+1]\n"
+            "state=json.load(open(os.environ['TICKET_GRAPH_BD_STATE']))\n"
+            "body=state['beads'][artifact]['description']\n"
+            "print(json.dumps({'ok':True,'kind':'spec' if artifact=='spec-1' else 'graph',"
+            "'digest':'sha256:'+hashlib.sha256(body.encode()).hexdigest(),'project':'acme',"
+            "'authorization':'seal','delegated_by':'benjamin','derived_by':'author'}))\n")
+        helper.chmod(0o755)
+        env = {"PLANNING_DELEGATION_BIN": str(helper)}
+        first = json.loads(self.bd_publish(env=env, check=True).stdout)
+        second = json.loads(self.bd_publish(env=env, check=True).stdout)
+        self.assertEqual(first["ids"], second["ids"])
+        self.assertEqual(4, len(self.current_state()["beads"]))
+
+    def test_derived_source_refusal_stops_publication_before_writes(self):
+        spec = self.spec_bead()
+        spec["metadata"].update(approval_mode="derived/v1", derived_authorization="seal")
+        self.seed({"draft-1": self.draft_bead(), "spec-1": spec})
+        before = self.current_state()
+        helper = self.tmp / "derivation"
+        helper.write_text('#!/usr/bin/env python3\nprint(\'{"ok":false,"error":"source changed"}\')\nraise SystemExit(1)\n')
+        helper.chmod(0o755)
+        proc = self.bd_publish(env={"PLANNING_DELEGATION_BIN": str(helper)})
+        self.assertNotEqual(0, proc.returncode)
+        self.assertIn("source changed", proc.stderr)
+        self.assertEqual(before, self.current_state())
+
     def test_bd_publish_creates_delivery_beads_and_convoy_advances_reservation_and_wakes_mayor(self):
         two_tickets = (
             "  - id: T1\n"

@@ -1884,6 +1884,18 @@ def reservation_advance(repo_root: Path, reservation_bin: str) -> dict[str, Any]
     return run_subtool([reservation_bin, "--repo-root", str(repo_root), "advance"])
 
 
+def derived_authority(bead: dict[str, Any], kind: str) -> dict[str, Any]:
+    metadata = bead.get("metadata") or {}
+    proof = run_subtool([tool_path("PLANNING_DELEGATION_BIN", "planning-delegation"),
+                       "check", "--artifact", bead["id"], "--project", metadata.get("gc.project_id") or ""])
+    if (proof.get("kind") != kind or proof.get("digest") != canonical_bead_digest(bead.get("description") or "")
+            or proof.get("project") != metadata.get("gc.project_id")):
+        raise PublishError("refused: derivation proof does not match this artifact")
+    if metadata.get("derived_authorization") != proof["authorization"]:
+        raise PublishError("refused: delegation changed since artifact freeze")
+    return proof
+
+
 def load_approved_spec_bead(spec_id: str) -> dict[str, Any]:
     spec_bead = bd_show(spec_id)
     metadata = spec_bead.get("metadata") or {}
@@ -1898,6 +1910,8 @@ def load_approved_spec_bead(spec_id: str) -> dict[str, Any]:
             f"refused: source Spec {spec_id} digest differs from its approved digest "
             f"(approved {approved_digest!r}, current {actual_digest!r})"
         )
+    if metadata.get("approval_mode") == "derived/v1":
+        derived_authority(spec_bead, "spec")
     return spec_bead
 
 
@@ -1915,7 +1929,11 @@ def load_approved_bead_draft(
 
     if require_approval:
         approved_by = str(metadata.get("approved_by") or "").strip()
-        if approved_by != human_approver:
+        if metadata.get("approval_mode") == "derived/v1":
+            proof = derived_authority(bead, "graph")
+            if proof["delegated_by"] != human_approver or proof["derived_by"] != approved_by:
+                raise PublishError("refused: derived graph authority does not match the project or author")
+        elif approved_by != human_approver:
             raise PublishError(
                 f"refused: draft approver {approved_by!r} is not the project's declared "
                 f"human approver {human_approver!r}"
@@ -2032,6 +2050,10 @@ def cmd_bd_publish(args: argparse.Namespace) -> int:
     for node, ticket in zip((n for n in plan["nodes"] if n["key"] != "_convoy"), tickets):
         node["_blocked_by_keys"] = [str(b) for b in ticket["blocked_by"]]
 
+    if metadata.get("approval_mode") == "derived/v1":
+        run_subtool([tool_path("PLANNING_DELEGATION_BIN", "planning-delegation"),
+                     "seal-publication", "--artifact", draft_id, "--project", args.project,
+                     "--expected-digest", digest])
     mapping = publish(plan, digest, len(tickets))
     new_flow_result: dict[str, Any] = {}
     if new_flow:

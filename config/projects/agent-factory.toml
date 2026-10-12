@@ -55,7 +55,7 @@ sling_target = "factory-worker"
 # whose author must take it again (interrupted, returned by the merge,
 # unblocked, answered) to one fresh author session on the same branch; each
 # resume is counted, the third parks the ticket (docs/CONVOY_ADVANCE.md).
-formulas = "mol-do-work,mol-graph-review,mol-ticket-author,mol-test-review,mol-code-review,mol-ticket-evaluation,mol-outcome-evaluation,mol-ticket-correction,mol-ticket-resume,mol-end-review"
+formulas = "mol-do-work,mol-planning-fidelity,mol-graph-review,mol-ticket-author,mol-test-review,mol-code-review,mol-ticket-evaluation,mol-outcome-evaluation,mol-ticket-correction,mol-ticket-resume,mol-end-review"
 # human_approver (A6b W04) is this project's declared human approver:
 # bin/spec-approve refuses to approve a Spec bead whose --approved-by is
 # anyone else, read via `bin/project-planning-profile human-approver`.

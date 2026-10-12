@@ -94,6 +94,21 @@ class GraphReviewTest(unittest.TestCase):
         self.reviewer_refuses({})
         self.seed(self.draft())
 
+    def test_derived_graph_review_is_bound_to_its_spec_even_if_graph_text_is_unchanged(self):
+        state = json.loads(self.state_path.read_text())
+        state["beads"]["draft-1"]["metadata"]["gc.planning_derivation"] = {"kind": "graph", "spec_digest": "first-spec"}
+        self.state_path.write_text(json.dumps(state))
+        self.reviewed()
+        proof = self.tool("check", "draft-1")
+        self.assertEqual(0, proof.returncode, proof.stdout)
+        self.assertEqual("first-spec", proof.json["derived_spec_digest"])
+        state = json.loads(self.state_path.read_text())
+        state["beads"]["draft-1"]["metadata"]["gc.planning_derivation"]["spec_digest"] = "revised-spec"
+        self.state_path.write_text(json.dumps(state))
+        stale = self.tool("check", "draft-1")
+        self.assertNotEqual(0, stale.returncode)
+        self.assertIn("Spec dérivée a changé", stale.stdout)
+
     # --- harness ------------------------------------------------------------
 
     def digest(self, description):

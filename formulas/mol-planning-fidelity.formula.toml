@@ -1,0 +1,49 @@
+formula = "mol-planning-fidelity"
+description = "One existing read-only reviewer checks frozen choices against a derived Spec (AR-039)."
+[requires]
+formula_compiler = ">=2.0.0"
+[[steps]]
+id = "review"
+title = "Verify source-to-Spec fidelity"
+description = """
+You are an independent reviewer. Do not inspect the author's conversation,
+change sources or the Spec, or give an approval in the owner's name.
+
+Find the single review bead and its Spec:
+```bash
+CONVOY_STATUS=$(gc convoy status {{convoy_id}} --json)
+REVIEW_BEAD=$(printf '%s' "$CONVOY_STATUS" | jq -r 'if (.children | length) == 1 then .children[0].id else empty end')
+[ -n "$REVIEW_BEAD" ] || exit 1
+SPEC=$(gc bd show "$REVIEW_BEAD" --json | jq -r '.[0].description' | sed -n 's/^spec: //p')
+FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+"$FACTORY_ROOT/bin/planning-delegation" brief --artifact "$SPEC" > fidelity-brief.json
+```
+Read the full brief and docs/PLANNING_DELEGATION.md. Verify every retained
+decision and prototype reference against the Spec, and every Spec story
+against those sources. Empty source coverage needs a reason (background,
+rejected option or out of scope), never a silently omitted choice. A story
+without a source may only be a reversible technical detail: identify why
+it changes no user behavior. Judge the whole sources, not only numbered
+stories. Check navigation, invitations, consent, data recipients/retention,
+spend and irreversible effects, including consequences invisible in pixels.
+Do not accept an unconfirmed prototype or treat a recommendation as a human
+choice. Questions must be false on missing evidence or changed meaning.
+
+Write fidelity-verdict.json matching .review_contract in the brief, using
+real arrays for source_coverage and story_basis, booleans for the three
+questions, the exact digest and authorization, and concrete reasons.
+```bash
+"$FACTORY_ROOT/bin/planning-delegation" record --artifact "$SPEC" --verdict-file fidelity-verdict.json
+```
+Fix malformed output once if needed; never alter evidence to make a
+negative verdict positive. An unfavorable verdict is a successfully
+recorded review, not a tool outage.
+Close the review bead and this step with gc.outcome=pass only after record
+succeeds; otherwise fail with the error:
+```bash
+gc bd update "$REVIEW_BEAD" --set-metadata gc.outcome=pass --status=closed --notes "Fidelity verdict recorded for $SPEC."
+if [ -n "${GC_BEAD_ID:-}" ] && [ "$GC_BEAD_ID" != "$REVIEW_BEAD" ]; then
+  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "Fidelity verdict recorded for $SPEC."
+fi
+```
+"""
