@@ -7,14 +7,14 @@ product: a session of the read-only Evaluator role, in a fresh context,
 started as routed work through bin/dispatch-door on the formula
 `mol-ticket-evaluation`. Code prepares what it evaluates: the product is
 launched by bin/project-launch from a clean copy of the commit the author
-finished at, once per declared dataset, each on its own free port; the
+finished at, one declared dataset at a time on a free port; the
 author's work tree is never what is evaluated. The Evaluator is given the
 demonstration line and the frozen criteria only -- neither the Ticket
 Handoff nor the diff -- and hands in one state per criterion and for the
 demonstration line (`observed`, `not_observed`, `unobservable`), each with a
 piece captured by bin/evidence-capture on one of those launched products.
 It gives no verdict: code computes it. For a `prefactoring` no session
-runs: code checks that the product starts and that its probe answers.
+runs: code checks every declared game in sequence and captures each probe answer.
 
     ticket-evaluation settle  CONVOY [--repo DIR] [--profile FILE]   bin/convoy-advance, at each pass
     ticket-evaluation brief   CONVOY TICKET [--repo DIR] [--profile FILE]   the Evaluator session
@@ -68,6 +68,7 @@ DESCRIPTORS = ROOT / "config" / "project-descriptors"
 sys.path.insert(0, str(BIN.parent / "lib"))
 import delivery_reads  # noqa: E402
 from convoy_state import retry_after_lift
+from evaluation_capacity import admission, Busy, product_running
 from delivery_role_identity import role_identity, role_supplier, supplier_of  # noqa: E402
 
 NEW_FLOW = "new-flow/v1"
@@ -142,12 +143,13 @@ def short(text: str, limit: int = MAX_DETAIL) -> str:
 # --- the other commands ----------------------------------------------------------
 
 
-def run(argv: list[str], timeout: float | None = None, detached: bool = False) -> subprocess.CompletedProcess[str]:
+def run(argv: list[str], timeout: float | None = None, detached: bool = False,
+        pass_fds: tuple[int, ...] = ()) -> subprocess.CompletedProcess[str]:
     try:
         # `detached`: what the command starts outlives the caller's process
         # group (the product launched for an evaluation runs between passes).
         return subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=timeout,
-                              start_new_session=detached)
+                              start_new_session=detached, pass_fds=pass_fds)
     except subprocess.TimeoutExpired as exc:
         raise Refusal(f"{Path(argv[0]).name} n'a pas répondu en {timeout:.0f} s") from exc
     except OSError as exc:
@@ -454,13 +456,11 @@ def stop_product(state_file: str) -> None:
 
 
 def running(state_file: str) -> bool:
-    """Whether the product of that launch record still runs."""
     try:
-        pid = int(json.loads(Path(state_file).read_text(encoding="utf-8"))["pid"])
-        os.kill(pid, 0)
-    except (OSError, ValueError, KeyError, TypeError):
+        record = json.loads(Path(state_file).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
         return False
-    return True
+    return product_running(record)
 
 
 def product_folder(convoy_id: str, ticket_id: str) -> Path:
@@ -481,49 +481,42 @@ def prepared_products(convoy: Convoy, ticket_id: str, commit: str) -> list[dict[
     return prepared
 
 
-def launch_products(convoy: Convoy, ticket_id: str, commit: str, settings: dict[str, Any]) -> list[dict[str, Any]]:
-    """Launch the product from a clean copy of `commit`, once per dataset
-    the profile declares, each on its own free port (bin/project-launch).
-    Preparation yields after 60 seconds and resumes from exact launch records.
-    No evaluation is opened until every dataset is ready; failure stops them all."""
+def launch_products(convoy: Convoy, ticket_id: str, commit: str, settings: dict[str, Any],
+                    dataset: str | None = None, reuse: bool = True) -> list[dict[str, Any]]:
+    """Open one declared dataset. Reopening it starts at the same clean commit."""
     profile, _ = convoy.profile(ticket_id, commit)
     datasets = convoy.datasets(ticket_id)
+    chosen = datasets[0] if dataset is None else dataset
+    if chosen not in datasets:
+        raise Refusal(f"jeu {chosen!r} absent du profil de ce ticket")
     folder = product_folder(convoy.id, ticket_id)
     folder.mkdir(parents=True, exist_ok=True)
+    if reuse:
+        prepared = [entry for entry in prepared_products(convoy, ticket_id, commit)
+                    if entry["dataset"] == chosen]
+        if prepared:
+            return [prepared[-1]]
     stamp = f"{commit[:12]}-{int(time.time() * 1000)}"
-    prepared = {entry["dataset"]: entry for entry in prepared_products(convoy, ticket_id, commit)}
-    launched: list[dict[str, Any]] = []
-    deadline = time.monotonic() + 60
+    state_file = folder / f"{stamp}-{chosen}.json"
+    argv = [str(LAUNCH_TOOL), "--repo-root", str(convoy.repo), "start", str(profile), "--commit", commit,
+            "--timeout", str(settings["start_timeout_seconds"]), "--state-file", str(state_file),
+            "--dataset", chosen]
     try:
-        for dataset in datasets:
-            if dataset in prepared:
-                launched.append(prepared[dataset])
-                continue
-            if time.monotonic() >= deadline:
-                raise Deferred(f"préparation en cours : {len(launched)}/{len(datasets)} jeux prêts, reprise à la prochaine passe")
-            state_file = folder / f"{stamp}-{dataset}.json"
-            argv = [str(LAUNCH_TOOL), "--repo-root", str(convoy.repo), "start", str(profile), "--commit", commit,
-                    "--timeout", str(settings["start_timeout_seconds"]), "--state-file", str(state_file)]
-            argv += ["--dataset", dataset]
+        with admission(state_file) as lock_fd:
             for attempt in range(START_ATTEMPTS):
-                started = run(argv, timeout=settings["start_timeout_seconds"] + 60, detached=True)
+                started = run(argv, timeout=settings["start_timeout_seconds"] + 60,
+                              detached=True, pass_fds=(lock_fd,))
                 if started.returncode == 0 and state_file.is_file():
                     break
-                if state_file.is_file():
+                if state_file.exists():
                     stop_product(str(state_file))
             else:
-                raise Refusal(
-                    f"le produit ne démarre pas depuis une copie propre du commit {commit[:12]}"
-                    f" sur le jeu {dataset} : {detail_of(started)}")
-            record = json.loads(state_file.read_text(encoding="utf-8"))
-            launched.append({"dataset": dataset, "address": record["address"], "state_file": str(state_file)})
-    except Deferred:
-        raise
-    except (Refusal, OSError, ValueError, KeyError):
-        for entry in prepared_products(convoy, ticket_id, commit):
-            stop_product(entry["state_file"])
-        raise
-    return launched
+                raise Refusal(f"le produit ne démarre pas depuis une copie propre du commit {commit[:12]} "
+                              f"sur le jeu {chosen} : {detail_of(started)}")
+    except Busy as exc:
+        raise Deferred(str(exc)) from exc
+    record = json.loads(state_file.read_text(encoding="utf-8"))
+    return [{"dataset": chosen, "address": record["address"], "state_file": str(state_file)}]
 
 
 def observation_piece(entry: dict[str, Any]) -> str:
@@ -829,35 +822,42 @@ def probe_of(launch_block: dict[str, Any]) -> tuple[str, int]:
 
 
 def startup_control(convoy: Convoy, ticket_id: str, commit: str, settings: dict[str, Any]) -> dict[str, Any]:
-    """Spec §7, a prefactoring: no Evaluator session. Code launches the
-    product from a clean copy of the commit, captures the answer of its
-    probe, stops it, and records what it saw."""
-    try:
-        launched = launch_products(convoy, ticket_id, commit, settings)
-    except Deferred:
-        raise
-    except Refusal as exc:
-        written = state_write("record-startup", convoy.id, ticket_id, "--commit", commit, "--detail", short(str(exc), 240))
-        return {"ticket": ticket_id, "action": "refused_startup", "commit": commit, "verdict": written["verdict"]}
-    try:
-        path, status = probe_of(convoy.profile(ticket_id)[1])
-        first = launched[0]
-        captured = run([
-            str(CAPTURE_TOOL), "command", convoy.id, ticket_id, "--piece", STARTUP_PIECE,
-            "--launch-state", first["state_file"], "--expect-exit", "0", "--timeout", "60", "--",
-            sys.executable, "-c", PROBE, first["address"] + path, str(status)], timeout=120)
-    finally:
-        for entry in launched:
+    """A prefactoring must start and answer its probe on every declared game."""
+    datasets = convoy.datasets(ticket_id)
+    path, status = probe_of(convoy.profile(ticket_id, commit)[1])
+    environment = []
+    coverage = []
+    for index, dataset in enumerate(datasets):
+        try:
+            launched = launch_products(convoy, ticket_id, commit, settings, dataset=dataset)
+        except Deferred:
+            raise
+        except Refusal as exc:
+            written = state_write("record-startup", convoy.id, ticket_id, "--commit", commit,
+                                  "--detail", short(str(exc), 240))
+            return {"ticket": ticket_id, "action": "refused_startup", "commit": commit,
+                    "verdict": written["verdict"]}
+        entry = launched[0]
+        piece = STARTUP_PIECE if index == 0 else f"{STARTUP_PIECE}.{index + 1}"
+        try:
+            captured = run([
+                str(CAPTURE_TOOL), "command", convoy.id, ticket_id, "--piece", piece,
+                "--launch-state", entry["state_file"], "--expect-exit", "0", "--timeout", "60", "--",
+                sys.executable, "-c", PROBE, entry["address"] + path, str(status)], timeout=120)
+        finally:
             stop_product(entry["state_file"])
-    environment = [{"dataset": entry["dataset"], "address": entry["address"]} for entry in launched]
-    if captured.returncode != 0:
-        written = state_write("record-startup", convoy.id, ticket_id, "--commit", commit, "--detail",
-                              short(f"la sonde du produit lancé ne répond pas comme attendu : {detail_of(captured)}", 240))
-        return {"ticket": ticket_id, "action": "refused_startup", "commit": commit, "verdict": written["verdict"]}
-    written = state_write_file("record-startup", convoy.id, ticket_id, {"environment": environment},
-                               "--commit", commit, "--piece", STARTUP_PIECE)
+        if captured.returncode != 0:
+            written = state_write("record-startup", convoy.id, ticket_id, "--commit", commit, "--detail",
+                                  short(f"la sonde du jeu {dataset} ne répond pas : {detail_of(captured)}", 240))
+            return {"ticket": ticket_id, "action": "refused_startup", "commit": commit,
+                    "verdict": written["verdict"]}
+        environment.append({"dataset": dataset, "address": entry["address"]})
+        coverage.append({"dataset": dataset, "evidence": piece})
+    written = state_write_file("record-startup", convoy.id, ticket_id,
+                               {"environment": environment, "coverage": coverage},
+                               "--commit", commit, "--piece", coverage[0]["evidence"])
     return {"ticket": ticket_id, "action": "started", "commit": commit, "verdict": written["verdict"],
-            "evidence": STARTUP_PIECE}
+            "evidence": coverage[0]["evidence"]}
 
 
 def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> dict[str, Any]:
@@ -906,6 +906,25 @@ def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> d
         convoy.datasets(ticket_id)
         if what == "startup":
             return startup_control(convoy, ticket_id, commit, settings)
+        if current and current.get("wanted"):
+            desired = current["wanted"]
+            live = set(evaluation_of(ticket).get("live") or [])
+            active = [entry for entry in current["environment"] if entry["state_file"] in live]
+            if len(active) > 1:
+                raise Refusal("plusieurs produits historiques encore ouverts : changement de jeu impossible")
+            for old in active:
+                stop_product(old["state_file"])
+                state_write("release-evaluation", convoy.id, ticket_id,
+                            "--state-file", old["state_file"], "--switch")
+            entry = launch_products(convoy, ticket_id, commit, settings,
+                                    dataset=desired["dataset"], reuse=False)[0]
+            try:
+                state_write_file("append-evaluation-product", convoy.id, ticket_id, entry, "--commit", commit)
+            except (Refusal, NotNewFlow):
+                stop_product(entry["state_file"])
+                raise
+            return {"ticket": ticket_id, "action": "product_ready", "commit": commit,
+                    "dataset": entry["dataset"], "address": entry["address"]}
         launches = current["launches"] if current else []
         timeout = settings["timeout_seconds"]
         if launches and not expired(launches[-1], timeout):
@@ -921,7 +940,7 @@ def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> d
             reap(convoy, ticket, [])
             raise_stop(convoy.id, ticket, ticket["stop"])
             return {"ticket": ticket_id, "action": "stopped", "stop": STOP_NO_RESULT}
-        if current is None or not all(running(entry["state_file"]) for entry in current["environment"]):
+        if current is None:
             # The roles first: an evaluation that is deferred launches nothing.
             roles = record_evaluator(convoy.id, ticket)
             try:
@@ -935,7 +954,8 @@ def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> d
                 return {"ticket": ticket_id, "action": "refused_startup", "commit": commit, "verdict": written["verdict"]}
             controller_observation(convoy, ticket_id, commit, environment[0], capture=True)
             try:
-                state_write_file("open-evaluation", convoy.id, ticket_id, {"roles": roles, "environment": environment},
+                state_write_file("open-evaluation", convoy.id, ticket_id,
+                                 {"roles": roles, "environment": environment, "datasets": convoy.datasets(ticket_id)},
                                  "--commit", commit)
             except (Refusal, NotNewFlow):
                 for entry in environment:
@@ -957,7 +977,7 @@ def cmd_settle(args: argparse.Namespace) -> int:
     convoy = Convoy(args.convoy, args.repo, args.profile)
     answer: dict[str, Any] = {"ok": True, "convoy": args.convoy, "launched": [], "relaunched": [], "pending": [],
                               "waiting": [], "started": [], "refused_startup": [], "planning_exception": [],
-                              "stopped": [], "escalated": [], "deferred": [], "refused": []}
+                              "stopped": [], "escalated": [], "deferred": [], "refused": [], "product_ready": []}
     for ticket_id in [ticket.get("id") for ticket in convoy.tickets]:
         try:
             done = settle_ticket(convoy, ticket_id, settings)
@@ -987,6 +1007,40 @@ def cmd_cleanup(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- one product at a time -----------------------------------------------------------
+
+
+def cmd_product(args: argparse.Namespace) -> int:
+    """Ask the controller for one dataset; never launch from the read-only role."""
+    if os.environ.get("DELIVERY_ROLE_READ_ONLY") != "1":
+        raise Refusal("un produit à la demande se demande depuis le rôle Evaluator")
+    convoy = Convoy(args.convoy, args.repo, args.profile)
+    ticket = convoy.ticket(args.ticket)
+    request = open_request(convoy, args.ticket)
+    if ticket.get("stop") or ticket.get("park") or ticket.get("tip") != request["commit"]:
+        raise Refusal("évaluation arrêtée, garée ou remplacée par un autre commit")
+    if args.dataset not in (request.get("datasets") or []):
+        raise Refusal("jeu absent de la demande d'évaluation")
+    live = set(evaluation_of(ticket).get("live") or [])
+    active = [entry for entry in request["environment"] if entry["state_file"] in live]
+    if len(active) > 1:
+        raise Refusal("plusieurs produits historiques encore ouverts : attendre leur arrêt")
+    wanted = request.get("wanted")
+    if (active and active[0]["dataset"] == args.dataset and running(active[0]["state_file"])
+            and not args.fresh and not wanted):
+        entry = active[0]
+        print(json.dumps({"ok": True, "ready": True, "dataset": entry["dataset"],
+                          "address": entry["address"], "launch_state": entry["state_file"],
+                          "commit": request["commit"]}, indent=2, sort_keys=True, ensure_ascii=False))
+        return 0
+    state_write("want-evaluation-product", args.convoy, args.ticket, "--commit", request["commit"],
+                "--dataset", args.dataset, *(["--fresh"] if args.fresh else []))
+    print(json.dumps({"ok": True, "ready": False, "dataset": args.dataset, "commit": request["commit"],
+                      "next": "réessayer après la prochaine passe du contrôleur"},
+                     indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
 # --- brief: what the Evaluator is given ----------------------------------------------
 
 
@@ -1008,6 +1062,8 @@ def cmd_brief(args: argparse.Namespace) -> int:
     convoy = Convoy(args.convoy, args.repo, args.profile)
     request = open_request(convoy, args.ticket)
     _, launch_block = convoy.profile(args.ticket, request["commit"])
+    live = set(evaluation_of(convoy.ticket(args.ticket)).get("live") or [])
+    active = [entry for entry in request["environment"] if entry["state_file"] in live]
     capture = [str(CAPTURE_TOOL), "command", args.convoy, args.ticket, "--piece", "evaluation.<name>",
                "--launch-state", "<launch_state of the product>", "--"]
     brief = {
@@ -1015,9 +1071,12 @@ def cmd_brief(args: argparse.Namespace) -> int:
         "demonstration_line": request["demonstration_line"],
         "criteria": [{"number": number, "text": text} for number, text in enumerate(request["criteria"], start=1)],
         "environments": [{"dataset": entry["dataset"], "address": entry["address"], "launch_state": entry["state_file"]}
-                         for entry in request["environment"]],
+                         for entry in active],
+        "datasets": request.get("datasets") or [entry["dataset"] for entry in request["environment"]],
+        "product": [str(BIN / PROGRAM), "product", args.convoy, args.ticket, "--dataset", "<declared dataset>"],
         "entry_points": launch_block.get("entry_points") or [],
-        "controller_observation": controller_observation(convoy, args.ticket, request["commit"], request["environment"][0]),
+        "controller_observation": (controller_observation(convoy, args.ticket, request["commit"], active[0])
+                                   if active else None),
         "states": list(STATES), "unobservable_causes": list(CAUSES),
         "capture": {
             "command": capture + ["<any command that uses the product at its address>"],
@@ -1032,6 +1091,7 @@ def cmd_brief(args: argparse.Namespace) -> int:
                           "reason": "<required unless observed>", "cause": "|".join(CAUSES) + " (unobservable only)"}],
             "demonstration_line": {"text": "<the demonstration line, copied exactly>", "state": "|".join(STATES),
                                    "evidence": "<piece name>"},
+            "coverage": [{"dataset": "<each declared dataset>", "evidence": "<sealed piece from that dataset>"}],
         },
         "roles": request["roles"], "independence": independence(request["roles"]),
     }
@@ -1074,6 +1134,8 @@ def handed_pieces(given: dict[str, Any]) -> list[Any]:
         if isinstance(given.get("criteria"), list) else []
     if isinstance(given.get("demonstration_line"), dict):
         items.append(given["demonstration_line"])
+    if isinstance(given.get("coverage"), list):
+        items.extend(item for item in given["coverage"] if isinstance(item, dict))
     return list(dict.fromkeys(item.get("evidence") for item in items if isinstance(item.get("evidence"), str)))
 
 
@@ -1099,6 +1161,22 @@ def cmd_record(args: argparse.Namespace) -> int:
     addresses = [entry["address"] for entry in request["environment"]]
     refused = [reason for reason in (piece_refusal(args.convoy, args.ticket, piece, request["commit"], addresses)
                                      for piece in handed_pieces(given)) if reason]
+    declared = request.get("datasets") or list(dict.fromkeys(
+        entry["dataset"] for entry in request["environment"]))
+    if "datasets" in request or len(declared) > 1:
+        coverage = given.get("coverage")
+        if not isinstance(coverage, list) or len(coverage) != len(declared):
+            refused.append("une pièce de couverture par jeu déclaré est exigée")
+        else:
+            for item in coverage:
+                if not isinstance(item, dict) or item.get("dataset") not in declared:
+                    refused.append("jeu de couverture absent de la demande")
+                    continue
+                on_dataset = [entry["address"] for entry in request["environment"]
+                              if entry["dataset"] == item["dataset"]]
+                refused.extend(reason for reason in
+                               [piece_refusal(args.convoy, args.ticket, item.get("evidence"),
+                                              request["commit"], on_dataset)] if reason)
     if refused:
         raise Refusal("état sans Evidence Record valide : " + " ; ".join(refused))
     # Never GC_AGENT: it names a place in the pool of the agent, which the next session takes.
@@ -1148,13 +1226,22 @@ def computed_verdict(convoy: Convoy, ticket: dict[str, Any]) -> dict[str, Any]:
             f" ({refusal_of(evaluation['state'])})" if refusal_of(evaluation["state"]) else ""))
     addresses = [entry["address"] for entry in last.get("environment") or []]
     if last["kind"] == STARTUP:
-        pieces = [last["evidence"]] if last.get("started") else []
+        pieces = ([last["evidence"]] + [item["evidence"] for item in last.get("coverage") or []]
+                  if last.get("started") else [])
     else:
-        pieces = list(dict.fromkeys([item["evidence"] for item in last["criteria"]] + [last["demonstration_line"]["evidence"]]))
+        pieces = list(dict.fromkeys([item["evidence"] for item in last["criteria"]] +
+                                   [last["demonstration_line"]["evidence"]] +
+                                   [item["evidence"] for item in last.get("coverage") or []]))
     for piece in pieces:
         refusal = piece_refusal(convoy.id, ticket["id"], piece, last["commit"], addresses)
         if refusal:
             answer["reasons"].append(f"preuve non recevable : {refusal}")
+    for item in last.get("coverage") or []:
+        on_dataset = [entry["address"] for entry in last.get("environment") or []
+                      if entry["dataset"] == item["dataset"]]
+        refusal = piece_refusal(convoy.id, ticket["id"], item["evidence"], last["commit"], on_dataset)
+        if refusal:
+            answer["reasons"].append(f"couverture du jeu {item['dataset']} non recevable : {refusal}")
     stored = (ticket.get("verdicts") or {}).get(EVALUATION) or {}
     if last["verdict"] is not None and (stored.get("state") != last["verdict"] or stored.get("commit") != last["commit"]):
         answer["reasons"].append("le verdict écrit sur le ticket n'est pas celui de sa dernière évaluation")
@@ -1211,6 +1298,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--commit", required=True)
     p.add_argument("--launch-state", required=True)
     command("brief", cmd_brief).add_argument("--profile")
+    p = command("product", cmd_product)
+    p.add_argument("--profile")
+    p.add_argument("--dataset", required=True)
+    p.add_argument("--fresh", action="store_true")
     command("record", cmd_record).add_argument("--file")
     command("verdict", cmd_verdict)
     command("show", cmd_show)

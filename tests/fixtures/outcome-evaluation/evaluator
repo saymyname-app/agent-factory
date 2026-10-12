@@ -129,6 +129,7 @@ def state_of(story):
 stories = [state_of(story) for story in brief["stories"]]
 handed = {
     "commit": brief["commit"], "stories": stories,
+    "coverage": [{"dataset": brief["environments"][0]["dataset"], "evidence": stories[0]["evidence"]}],
     "exploration": given.get("exploration", "aucun"),
     "fidelity_deviations": given.get("fidelity_deviations", "aucun"),
 }
@@ -141,5 +142,7 @@ path = json_file(handed)
 proc = subprocess.run([TOOL, "record", convoy, "--file", path], env=session, capture_output=True, text=True)
 os.unlink(path)
 sys.stderr.write(proc.stdout + proc.stderr)
+if proc.returncode:
+    raise SystemExit(proc.returncode)
 subprocess.run([GC, "bd", "close", bead_id, "--reason", "évaluation enregistrée"], capture_output=True)
 raise SystemExit(0)

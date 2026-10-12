@@ -99,6 +99,7 @@ handed = {
     "commit": brief["commit"],
     "criteria": [{"number": item["number"], **state_of(f"c{item['number']}", item["text"])} for item in brief["criteria"]],
     "demonstration_line": state_of("demo", brief["demonstration_line"]),
+    "coverage": [{"dataset": product["dataset"], "evidence": "evaluation.c1"}],
 }
 with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as handle:
     json.dump(handed, handle, ensure_ascii=False)

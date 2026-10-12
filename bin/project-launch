@@ -29,10 +29,12 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import re
 import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -193,35 +195,63 @@ def resolve_commit(repo_root: Path, commit: str) -> str:
     return result.stdout.strip()
 
 
-def add_worktree(repo_root: Path, commit: str) -> str:
-    import tempfile
-
-    worktree = tempfile.mkdtemp(prefix="project-launch-")
+def add_worktree(repo_root: Path, commit: str, worktree: str) -> None:
     result = subprocess.run(
         ["git", "-C", str(repo_root), "worktree", "add", "--detach", worktree, commit],
         text=True,
         capture_output=True,
     )
     if result.returncode != 0:
-        import shutil
-
-        shutil.rmtree(worktree, ignore_errors=True)
         raise RuntimeError(f"cannot check out {commit}: {result.stderr.strip()}")
-    return worktree
 
 
-def remove_worktree(repo_root: str, worktree: str) -> None:
+def verify_worktree(repo_root: str, worktree: str, launch_id: str | None = None,
+                    commit: str | None = None) -> tuple[bool, Path | None]:
+    """Refuse cleanup outside a launcher-owned temporary worktree."""
+    target = Path(worktree)
+    temporary = Path(tempfile.gettempdir()).resolve()
+    if (not target.is_absolute() or target.parent != temporary or target.is_symlink()
+            or not re.fullmatch(r"project-launch-[A-Za-z0-9_-]+", target.name)):
+        raise RuntimeError(f"unexpected product worktree path: {worktree}")
+    listed = subprocess.run(["git", "-C", repo_root, "worktree", "list", "--porcelain"],
+                            text=True, capture_output=True)
+    if listed.returncode:
+        raise RuntimeError(f"cannot verify product worktree: {listed.stderr.strip()}")
+    registered = any(block.splitlines()[0] == f"worktree {target}"
+                     for block in listed.stdout.strip().split("\n\n") if block)
+    owner = Path(f"{worktree}.owner")
+    owned = False
+    if launch_id and commit and owner.is_file():
+        try:
+            owned = json.loads(owner.read_text()) == {
+                "launch_id": launch_id, "repo_root": repo_root, "commit": commit}
+        except (OSError, ValueError):
+            pass
+    if target.exists() and not (registered or owned):
+        raise RuntimeError(f"unverified product worktree kept: {worktree}")
+    return registered, owner if owned else None
+
+
+def remove_worktree(repo_root: str, worktree: str, launch_id: str | None = None,
+                    commit: str | None = None) -> None:
     import shutil
 
-    if Path(worktree).exists():
+    registered, owner = verify_worktree(repo_root, worktree, launch_id, commit)
+    if registered and Path(worktree).exists():
+        result = subprocess.run(["git", "-C", repo_root, "worktree", "remove", "--force", worktree],
+                                capture_output=True, text=True)
+        if result.returncode:
+            raise RuntimeError(f"worktree was not released: {worktree}: {result.stderr.strip()}")
+    elif Path(worktree).exists():
+        # An interrupted git worktree add can leave an unregistered partial
+        # checkout. Its owner sidecar was written before that operation.
         shutil.rmtree(worktree)
-    result = subprocess.run(
-        ["git", "-C", repo_root, "worktree", "prune"],
-        capture_output=True,
-        text=True,
-    )
+    result = subprocess.run(["git", "-C", repo_root, "worktree", "prune"],
+                            capture_output=True, text=True)
     if result.returncode or Path(worktree).exists():
         raise RuntimeError(f"worktree was not released: {worktree}: {result.stderr.strip()}")
+    if owner is not None:
+        owner.unlink(missing_ok=True)
 
 
 def cmd_start(args: argparse.Namespace) -> int:
@@ -288,30 +318,54 @@ def cmd_start(args: argparse.Namespace) -> int:
 
     try:
         resolved_commit = resolve_commit(repo_root, args.commit)
-        worktree = add_worktree(repo_root, resolved_commit)
     except RuntimeError as exc:
         print(json.dumps({"started": False, "error": str(exc)}, sort_keys=True))
         return 1
 
-    port = pick_free_port()
-    dataset_abs = str(Path(worktree) / dataset_rel) if dataset_rel else ""
-    argv = [
-        token.format(python=sys.executable, port=str(port), dataset=dataset_abs)
-        for token in launch["recipe"]
-    ]
-
+    # The record owns the capacity slot before git starts materializing the
+    # copy. A crash during checkout therefore leaves a recoverable path.
+    worktree = str(Path(tempfile.gettempdir()) / f"project-launch-{uuid.uuid4().hex}")
     launch_id = uuid.uuid4().hex
-    record = {
-        "started": False, "launch_id": launch_id, "port": port,
-        "worktree": worktree, "repo_root": str(repo_root),
-        "commit": resolved_commit, "dataset": args.dataset,
-    }
+    record = {"started": False, "launch_id": launch_id, "worktree": worktree,
+              "repo_root": str(repo_root), "commit": resolved_commit, "dataset": args.dataset}
     try:
         write_record(args.state_file, record)
     except OSError as exc:
-        remove_worktree(str(repo_root), worktree)
         print(json.dumps({"started": False, "error": f"launch record could not be written: {exc}"}, sort_keys=True))
         return 1
+    try:
+        Path(f"{worktree}.owner").write_text(json.dumps({
+            "launch_id": launch_id, "repo_root": str(repo_root), "commit": resolved_commit}))
+        add_worktree(repo_root, resolved_commit, worktree)
+    except (OSError, RuntimeError) as exc:
+        try:
+            remove_worktree(str(repo_root), worktree, launch_id, resolved_commit)
+        except (OSError, RuntimeError):
+            pass
+        else:
+            Path(args.state_file).unlink(missing_ok=True)
+        print(json.dumps({"started": False, "error": str(exc),
+                          "cleanup_confirmed": not Path(args.state_file).exists()}, sort_keys=True))
+        return 1
+
+    port = pick_free_port()
+    record["port"] = port
+    try:
+        write_record(args.state_file, record)
+    except OSError as exc:
+        try:
+            remove_worktree(str(repo_root), worktree, launch_id, resolved_commit)
+        except (OSError, RuntimeError):
+            pass
+        else:
+            Path(args.state_file).unlink(missing_ok=True)
+        print(json.dumps({"started": False, "error": f"launch record could not be updated: {exc}",
+                          "cleanup_confirmed": not Path(args.state_file).exists()}, sort_keys=True))
+        return 1
+    dataset_abs = str(Path(worktree) / dataset_rel) if dataset_rel else ""
+    argv = [token.format(python=sys.executable, port=str(port), dataset=dataset_abs)
+            for token in launch["recipe"]]
+
     log_file = open(Path(worktree) / "launch.log", "w")
     proc = subprocess.Popen(argv, cwd=worktree, stdout=log_file, stderr=subprocess.STDOUT,
                             start_new_session=True, env={**os.environ, "FACTORY_LAUNCH_ID": launch_id})
@@ -340,7 +394,7 @@ def cmd_start(args: argparse.Namespace) -> int:
         cleaned = terminate_owned(launch_id) and not worktree_processes(worktree) and port_free(port)
         if cleaned:
             try:
-                remove_worktree(str(repo_root), worktree)
+                remove_worktree(str(repo_root), worktree, launch_id, resolved_commit)
             except (OSError, RuntimeError):
                 cleaned = False
         if cleaned:
@@ -375,9 +429,21 @@ def cmd_stop(args: argparse.Namespace) -> int:
 
     group = record.get("process_group")
     launch_id = record.get("launch_id")
+    if worktree:
+        try:
+            verify_worktree(repo_root, worktree, launch_id, record.get("commit"))
+        except RuntimeError as exc:
+            print(json.dumps({"stopped": False, "error": str(exc)}, sort_keys=True))
+            return 1
     if launch_id:
         stopped = terminate_owned(launch_id)
         if (group and group_members(int(group))) or (worktree and worktree_processes(worktree)):
+            stopped = False
+    elif args.state_file:
+        # Old records had no launch marker. A PID may now belong to another
+        # process; only stop processes still inside the verified worktree.
+        stopped = all(terminate(member) for member in worktree_processes(worktree)) if worktree else False
+        if worktree and worktree_processes(worktree):
             stopped = False
     else:
         stopped = terminate(int(pid)) if pid else True
@@ -386,7 +452,7 @@ def cmd_stop(args: argparse.Namespace) -> int:
         return 1
     try:
         if worktree:
-            remove_worktree(repo_root, worktree)
+            remove_worktree(repo_root, worktree, launch_id, record.get("commit"))
     except (OSError, RuntimeError) as exc:
         print(json.dumps({"stopped": False, "error": str(exc)}, sort_keys=True))
         return 1

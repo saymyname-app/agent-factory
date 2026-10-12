@@ -82,6 +82,21 @@ or a screenshot of one address of that product:
   --launch-state "$LAUNCH_STATE" --path /
 ```
 
+For every game in `.datasets`, capture a sealed piece on that game
+before switching away. Ask the controller for another game with:
+
+```bash
+"$FACTORY_ROOT/bin/ticket-evaluation" product "$TICKET_CONVOY" "$TICKET" --dataset NAME > product.json
+```
+
+If `ready` is false, wait for the next controller pass and repeat the
+command. When true, use its `address` and `launch_state` to capture.
+`--fresh` requests a reset of a game at the same commit; retry without
+`--fresh` while it is pending. Keep one `{dataset,evidence}` entry per
+declared game in `coverage`. A missing game or piece from another game's
+address refuses the result. The controller confirms cleanup before it
+launches the next product; do not launch or stop it yourself.
+
 Name your pieces `evaluation.<something>` (letters, digits, `_` and `.`).
 The answer of the tool gives the `path` of the record: read it to see what
 was captured. Pick the product whose dataset shows what the criterion is
@@ -122,7 +137,8 @@ Write `evaluation-result.json` in the current directory in the shape
 
 ```bash
 jq '{commit, criteria: [.criteria[] | {number, text, state: null, evidence: null}],
-     demonstration_line: {text: .demonstration_line, state: null, evidence: null}}' evaluation-brief.json > evaluation-result.json
+     demonstration_line: {text: .demonstration_line, state: null, evidence: null},
+     coverage: [.datasets[] | {dataset: ., evidence: null}]}' evaluation-brief.json > evaluation-result.json
 # then set, for each criterion and for the demonstration line: .state, .evidence (the piece name),
 # and .reason (unless observed) and .cause (unobservable only)
 "$FACTORY_ROOT/bin/ticket-evaluation" record "$TICKET_CONVOY" "$TICKET" --file evaluation-result.json
