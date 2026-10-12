@@ -29,9 +29,13 @@
 # ladder's cadence, so a formula that legitimately self-claims within
 # seconds of dispatch, per af-pl39t, is never a false positive).
 #
-# Last progress = the newest *known* of updated_at / gc.last_heartbeat_at.
-# An empty or unparseable timestamp is unknown and contributes nothing (a
-# missing heartbeat falls back to updated_at). If neither is known there is
+# Last progress = the newest *known* of updated_at / heartbeat_at /
+# gc.last_heartbeat_at. heartbeat_at is the bead's own field, the one
+# `gc bd heartbeat` stamps when the holder refreshes its lease; until
+# 2026-10-12 only the metadata key was read, which that command never writes,
+# so a session heartbeating through a long trial lost its step after 15
+# minutes (af-r654ku). An empty or unparseable timestamp is unknown and
+# contributes nothing (a missing heartbeat falls back to updated_at). If neither is known there is
 # no evidence of progress at all, so the bead is treated as stale and its age
 # reported as unknown -- never invented. (Until 2026-09-29 an empty heartbeat
 # went through `date -d ""`, which silently answers midnight UTC today: a
@@ -168,6 +172,7 @@ rows=$(jq -r '
     (.assignee // ""),
     (.metadata["gc.routed_to"] // ""),
     (.updated_at // ""),
+    (.heartbeat_at // ""),
     (.metadata["gc.last_heartbeat_at"] // ""),
     (.metadata["gc.session_affinity"] // "")
   ] | join("")
@@ -176,7 +181,7 @@ rows=$(jq -r '
 NOW=$(now_epoch)
 STALE_SECONDS=$((STALE_MINUTES * 60))
 
-while IFS=$'\x1f' read -r id status assignee routed_to updated_at heartbeat_at session_affinity; do
+while IFS=$'\x1f' read -r id status assignee routed_to updated_at lease_heartbeat_at heartbeat_at session_affinity; do
   [ -z "$id" ] && continue
   CHECKED=$((CHECKED + 1))
   [ -n "$assignee" ] || continue
@@ -189,7 +194,7 @@ while IFS=$'\x1f' read -r id status assignee routed_to updated_at heartbeat_at s
 
   # Newest KNOWN progress signal; an unknown one contributes nothing.
   last_progress=""
-  for e in "$(epoch_of "$updated_at")" "$(epoch_of "$heartbeat_at")"; do
+  for e in "$(epoch_of "$updated_at")" "$(epoch_of "$lease_heartbeat_at")" "$(epoch_of "$heartbeat_at")"; do
     [ -n "$e" ] || continue
     if [ -z "$last_progress" ] || [ "$e" -gt "$last_progress" ]; then last_progress=$e; fi
   done

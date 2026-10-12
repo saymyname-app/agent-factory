@@ -30,6 +30,11 @@
 # missing, empty or unparseable heartbeat falls back to updated_at; a bead
 # with no parseable timestamp at all is stale with an "unknown" age.
 #
+# Also regression for af-r654ku (2026-10-12): `gc bd heartbeat` stamps the
+# bead's own heartbeat_at field, not the gc.last_heartbeat_at metadata key the
+# guard read, so a session heartbeating through a long trial lost its formula
+# step after 15 minutes. Proves: a fresh heartbeat_at alone keeps the claim.
+#
 # All bead ids here are synthetic fixtures (zz-fixture*), never a real af-*
 # id from the live store.
 
@@ -208,6 +213,11 @@ no_time='{
   "assignee": "mayor", "updated_at": "",
   "metadata": {"gc.routed_to": "bd.dog"}
 }'
+hb_lease_fresh='{
+  "id": "zz-fixture-hb-lease-fresh", "status": "in_progress", "title": "Old update, fresh gc bd heartbeat",
+  "assignee": "af-wisp-fixture", "updated_at": "'"$STALE"'", "heartbeat_at": "'"$FRESH"'",
+  "metadata": {"gc.routed_to": "factory-worker"}
+}'
 hb_fresh='{
   "id": "zz-fixture-hb-fresh", "status": "in_progress", "title": "Old update, fresh heartbeat",
   "assignee": "mayor", "updated_at": "'"$STALE"'",
@@ -216,7 +226,8 @@ hb_fresh='{
 : > "$UPDATE_LOG"; : > "$MAIL_LOG"
 echo '{"sessions":[]}' > "$SESSIONS_FILE"
 jq -n --argjson a "$hb_missing" --argjson b "$hb_empty" --argjson c "$hb_garbage" \
-  --argjson d "$no_time" --argjson e "$hb_fresh" '[$a, $b, $c, $d, $e]' > "$BEADS_FILE"
+  --argjson d "$no_time" --argjson e "$hb_fresh" --argjson f "$hb_lease_fresh" \
+  '[$a, $b, $c, $d, $e, $f]' > "$BEADS_FILE"
 out=$(guard --check-only)
 for id in zz-fixture-hb-missing zz-fixture-hb-empty zz-fixture-hb-garbage; do
   grep -q "$id routed to 'bd.dog' but assignee is still 'mayor' (stale 30m, threshold 15m)" <<<"$out" \
@@ -226,6 +237,8 @@ grep -q "zz-fixture-no-time routed to 'bd.dog' but assignee is still 'mayor' (st
   || { echo "$out" >&2; fail "a bead with no parseable timestamp was not reported stale with an unknown age"; }
 grep -q "zz-fixture-hb-fresh" <<<"$out" \
   && { echo "$out" >&2; fail "a bead with a fresh heartbeat was flagged"; }
+grep -q "zz-fixture-hb-lease-fresh" <<<"$out" \
+  && { echo "$out" >&2; fail "a bead whose holder ran gc bd heartbeat 2 minutes ago (heartbeat_at) was flagged"; }
 [ -s "$UPDATE_LOG" ] && fail "--check-only wrote to Beads"
 
 # af-33wuoh: the repair is a compare-and-set on the assignee this run read;
