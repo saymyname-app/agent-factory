@@ -52,7 +52,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import tomllib
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -60,6 +59,8 @@ from typing import Any, Iterator
 
 PROGRAM = "test-review"
 BIN = Path(__file__).resolve().parent
+sys.path.insert(0, str(BIN.parent / "lib"))
+import delivery_reads  # noqa: E402
 ROOT = Path(os.environ.get("FACTORY_ROOT") or BIN.parent)
 GC_BIN = os.environ.get("GC_BIN", "gc")
 STATE_TOOL = BIN / "convoy-state"
@@ -95,10 +96,6 @@ DEFAULT_POLL = 10.0
 MAX_DETAIL = 300
 # bin/escalation-door refuses a field longer than this, or on several lines.
 REQUEST_LINE_MAX = 140
-
-# The publication door renders a ticket's rigs under this heading.
-RIGS_SECTION_RE = re.compile(r"^## Target rigs[ \t]*\n+([^\n#]*)$", re.MULTILINE)
-RIG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 class Refusal(RuntimeError):
@@ -167,17 +164,7 @@ def state_write(*args: str) -> dict[str, Any]:
 
 
 def read_bead(bead_id: str) -> dict[str, Any]:
-    proc = run([GC_BIN, "bd", "show", bead_id, "--json"])
-    if proc.returncode != 0:
-        raise Refusal(f"gc bd show {bead_id} a échoué : {detail_of(proc)}")
-    try:
-        data = json.loads(proc.stdout)
-    except json.JSONDecodeError as exc:
-        raise Refusal(f"gc bd show {bead_id} a rendu un JSON illisible : {exc}") from exc
-    bead = data[0] if isinstance(data, list) and data else data
-    if not isinstance(bead, dict):
-        raise Refusal(f"bead introuvable : {bead_id}")
-    return bead
+    return delivery_reads.read_bead(bead_id, GC_BIN, Refusal)
 
 
 def git(repo: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
@@ -280,20 +267,12 @@ def refused_tests(round_: dict[str, Any], criteria: dict[str, list[str]] | None 
 
 def rig_repository(ticket_id: str) -> Path:
     """The repository of the single project the ticket names under « Target rigs »."""
-    description = read_bead(ticket_id).get("description")
-    match = RIGS_SECTION_RE.search(description if isinstance(description, str) else "")
-    rigs = [rig.strip() for rig in match.group(1).split(",") if rig.strip()] if match else []
-    if len(rigs) != 1 or not RIG_RE.match(rigs[0]) or not (PROJECTS / f"{rigs[0]}.toml").is_file():
+    rig = delivery_reads.ticket_rig(read_bead(ticket_id).get("description"), PROJECTS)
+    if rig is None:
         raise Refusal(
             "le ticket ne nomme pas un seul projet de config/projects sous « Target rigs » : "
             "son dépôt se donne par --repo")
-    try:
-        rig_dir = tomllib.loads((PROJECTS / f"{rigs[0]}.toml").read_text(encoding="utf-8")).get("rig_dir")
-    except (OSError, tomllib.TOMLDecodeError) as exc:
-        raise Refusal(f"config/projects/{rigs[0]}.toml illisible : {exc}") from exc
-    if not isinstance(rig_dir, str) or not rig_dir:
-        raise Refusal(f"config/projects/{rigs[0]}.toml ne déclare pas rig_dir")
-    return (ROOT / rig_dir).resolve()
+    return delivery_reads.rig_repository(rig, ROOT, Refusal)
 
 
 # --- what a review is bound to ---------------------------------------------------

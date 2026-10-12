@@ -446,6 +446,28 @@ class TicketAuthorTest(unittest.TestCase):
 
         self.assertIsNone(self.shown()["models"])
 
+    def test_start_refuses_invalid_repository_configuration_without_writing(self):
+        config = self.root / "config" / "projects" / "fx-rig.toml"
+        for content, message in (("rig_dir = [", "illisible"), ("rig_dir = 7", "ne déclare pas rig_dir"),
+                                 ('rig_dir = ""', "ne déclare pas rig_dir")):
+            with self.subTest(content=content):
+                config.write_text(content)
+                self.refused("start", CONVOY, T1, session=SESSION, mention=message)
+
+    def test_check_preserves_bead_read_refusals(self):
+        fake = self.tmp / "gc-read-response"
+        fake.write_text("#!/bin/sh\nprintf '%s' \"$READ_RESPONSE\"\nexit \"$READ_STATUS\"\n")
+        fake.chmod(0o755)
+        cases = (("not json", "0", "JSON illisible"), ("[]", "0", "bead introuvable"),
+                 ('{"metadata": {}}', "0", "n'est pas une étape contrôlée"),
+                 ('[{"metadata": {}}]', "0", "n'est pas une étape contrôlée"),
+                 ("tracker unavailable", "1", "a échoué : tracker unavailable"))
+        for response, status, message in cases:
+            with self.subTest(response=response, status=status):
+                self.refused("check", mention=message,
+                             env={"GC_BIN": str(fake), "GC_BEAD_ID": "fx-step",
+                                  "READ_RESPONSE": response, "READ_STATUS": status})
+
     def test_start_is_refused_without_a_session(self):
         self.refused("start", CONVOY, T1, mention="session")
 
