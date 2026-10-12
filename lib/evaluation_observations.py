@@ -62,42 +62,48 @@ def processes_in(worktree):
 
 def lifecycle_preflight(bin_dir, repo, profile, commit, dataset, state):
     """Test start/stop before the evaluation product opens, within one slot."""
-    before = listeners()
-    if state.exists():
-        raise ValueError('an interrupted lifecycle trial still needs cleanup')
-    argv = [bin_dir / 'project-launch', '--repo-root', repo, 'start', profile,
-            '--commit', commit, '--dataset', dataset, '--state-file', state]
-    with admission(state) as lock_fd:
-        started = command(argv, pass_fds=(lock_fd,))
-    lifecycle = {'start': started, 'existing_ports_before': sorted(before)}
-    try:
+    # A controlled listener detects collateral damage without treating an
+    # unrelated service's natural shutdown as a failure of this trial.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sentinel:
+        sentinel.bind(('127.0.0.1', 0))
+        sentinel.listen()
+        sentinel_port = sentinel.getsockname()[1]
+        before = listeners()
         if state.exists():
-            trial = json.loads(state.read_text())
-            lifecycle.update(address=trial.get('address'), commit=trial.get('commit'), pid=trial.get('pid'))
-            if trial.get('port'):
-                lifecycle['port_open_before_stop'] = connects(trial['port'])
-            if trial.get('worktree'):
-                lifecycle['processes_before_stop'] = processes_in(trial['worktree'])
-            lifecycle['stop'] = command([bin_dir / 'project-launch', 'stop', '--state-file', state])
-            lifecycle['process_alive_after_stop'] = alive(trial['pid']) if trial.get('pid') else False
-            lifecycle['processes_after_stop'] = sorted(set(processes_in(trial['worktree'])) |
-                {pid for pid in lifecycle.get('processes_before_stop', []) if alive(pid)}) if trial.get('worktree') else []
-            lifecycle['port_open_after_stop'] = connects(trial['port']) if trial.get('port') else False
-    finally:
+            raise ValueError('an interrupted lifecycle trial still needs cleanup')
+        argv = [bin_dir / 'project-launch', '--repo-root', repo, 'start', profile,
+                '--commit', commit, '--dataset', dataset, '--state-file', state]
+        with admission(state) as lock_fd:
+            started = command(argv, pass_fds=(lock_fd,))
+        lifecycle = {'start': started, 'existing_ports_before': sorted(before),
+                     'sentinel_port': sentinel_port}
+        try:
+            if state.exists():
+                trial = json.loads(state.read_text())
+                lifecycle.update(address=trial.get('address'), commit=trial.get('commit'), pid=trial.get('pid'))
+                if trial.get('port'):
+                    lifecycle['port_open_before_stop'] = connects(trial['port'])
+                if trial.get('worktree'):
+                    lifecycle['processes_before_stop'] = processes_in(trial['worktree'])
+                lifecycle['stop'] = command([bin_dir / 'project-launch', 'stop', '--state-file', state])
+                lifecycle['process_alive_after_stop'] = alive(trial['pid']) if trial.get('pid') else False
+                lifecycle['processes_after_stop'] = sorted(set(processes_in(trial['worktree'])) |
+                    {pid for pid in lifecycle.get('processes_before_stop', []) if alive(pid)}) if trial.get('worktree') else []
+                lifecycle['port_open_after_stop'] = connects(trial['port']) if trial.get('port') else False
+        finally:
+            if state.exists():
+                command([bin_dir / 'project-launch', 'stop', '--state-file', state])
         if state.exists():
-            command([bin_dir / 'project-launch', 'stop', '--state-file', state])
-    if state.exists():
-        raise RuntimeError(f'lifecycle trial cleanup unconfirmed: {state}')
-    lifecycle['existing_ports_after'] = sorted(p for p in before if connects(p))
-    lifecycle['lost_existing_ports'] = sorted(before - set(lifecycle['existing_ports_after']))
-    # Other listeners may close independently during the trial; keep that
-    # observation for diagnosis, but gate on resources owned by this launch.
-    if (started['exit_code'] or not lifecycle.get('port_open_before_stop') or
-            lifecycle.get('stop', {}).get('exit_code') != 0 or
-            lifecycle.get('process_alive_after_stop') or lifecycle.get('processes_after_stop') or
-            lifecycle.get('port_open_after_stop')):
-        raise RuntimeError(f'lifecycle preflight failed: {lifecycle}')
-    return lifecycle
+            raise RuntimeError(f'lifecycle trial cleanup unconfirmed: {state}')
+        lifecycle['existing_ports_after'] = sorted(p for p in before if connects(p))
+        lifecycle['lost_existing_ports'] = sorted(before - set(lifecycle['existing_ports_after']))
+        lifecycle['sentinel_survived'] = connects(sentinel_port)
+        if (started['exit_code'] or not lifecycle.get('port_open_before_stop') or
+                lifecycle.get('stop', {}).get('exit_code') != 0 or
+                lifecycle.get('process_alive_after_stop') or lifecycle.get('processes_after_stop') or
+                lifecycle.get('port_open_after_stop') or not lifecycle['sentinel_survived']):
+            raise RuntimeError(f'lifecycle preflight failed: {lifecycle}')
+        return lifecycle
 
 
 def observe(bin_dir, repo, profile, commit, launch_state, references, lifecycle):
