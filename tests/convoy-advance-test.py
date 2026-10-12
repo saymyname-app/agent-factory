@@ -1539,11 +1539,14 @@ class ConvoyAdvanceTest(ConvoyAdvanceHarness):
         self.advance(CONVOY)
         tip = self.finished(T1)
 
-        answer = self.advance(CONVOY)
-
-        result = next(c for c in answer["convoys"] if c["id"] == CONVOY)
+        first = self.advance(CONVOY)
+        observed = next(c for c in first["convoys"] if c["id"] == CONVOY)
         self.assertEqual([(T1, tip, "vert")],
-                         [(entry["id"], entry["commit"], entry["result"]) for entry in result["fidelity"]["checked"]], result)
+                         [(entry["id"], entry["commit"], entry["result"]) for entry in observed["fidelity"]["checked"]], observed)
+        # The multi-game fixture Evaluator finishes after dispatch; the
+        # next controller pass reads its recorded verdict and integrates.
+        answer = self.advance(CONVOY)
+        result = next(c for c in answer["convoys"] if c["id"] == CONVOY)
         self.assertEqual([T1], [entry["id"] for entry in result["integration"]["merged"]], result)
         self.assertEqual([T1], [entry["id"] for entry in result["ticket_end"]["closed"]], result)
         shown = self.shown(T1)

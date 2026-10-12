@@ -155,7 +155,9 @@ def state_of(story, product):
     captured = subprocess.run(
         [CAPTURE, "command", convoy, convoy, "--piece", piece, "--launch-state", product["launch_state"], "--",
          sys.executable, "-c", FETCH, product["address"] + look.get("path", "/")],
-        env=session, capture_output=True, text=True, check=True)
+        env=session, capture_output=True, text=True)
+    if captured.returncode:
+        raise RuntimeError(f"capture {piece} failed for {product}: {captured.stdout}{captured.stderr}")
     record = json.loads(Path(json.loads(captured.stdout)["path"]).read_text(encoding="utf-8"))
     state = {"number": story["number"], "text": story["text"], "evidence": piece}
     if record["exit_code"] == 0 and look.get("look_for", "") in record["output"]:
@@ -175,10 +177,12 @@ if len(brief.get("datasets") or []) > 1:
             if chosen == dataset:
                 states[story["number"]] = state_of(story, product)
         piece = f"outcome.coverage.{dataset}"
-        subprocess.run([CAPTURE, "command", convoy, convoy, "--piece", piece,
-                        "--launch-state", product["launch_state"], "--",
-                        sys.executable, "-c", FETCH, product["address"] + "/"],
-                       env=session, capture_output=True, text=True, check=True)
+        captured = subprocess.run([CAPTURE, "command", convoy, convoy, "--piece", piece,
+                                   "--launch-state", product["launch_state"], "--",
+                                   sys.executable, "-c", FETCH, product["address"] + "/"],
+                                  env=session, capture_output=True, text=True)
+        if captured.returncode:
+            raise RuntimeError(f"capture {piece} failed for {product}: {captured.stdout}{captured.stderr}")
         coverage.append({"dataset": dataset, "evidence": piece})
     stories = [states[story["number"]] for story in brief["stories"]]
 else:

@@ -1727,7 +1727,10 @@ def execute_delivery(scenario: dict[str, Any], driver: Path) -> dict[str, Any]:
                 final["outcome"] = {**final["outcome"], **seen["closing"]}
         finally:
             run_driver(driver, workspace, "stop", flow=flow)
-        flow_commands = flow.commands()
+        # Driver teardown invokes project-launch only when an evaluation
+        # product still happens to be open. Its lifecycle is checked by
+        # the evaluation tests; it is not a flow interface of the walk.
+        flow_commands = [command for command in flow.commands() if command != "project-launch"]
     result = {
         "contract": DELIVERY_RESULT_CONTRACT,
         "ok": True,
