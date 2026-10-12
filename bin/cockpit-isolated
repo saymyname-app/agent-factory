@@ -12,16 +12,23 @@ synthetic sources only:
 
 - a synthetic supervisor that answers as the installed one does
   (`tests/fixtures/cockpit/core/fake_gc.py`, held to the real contract by
-  `tests/cockpit-fake-gc-contract-test.py`), whose city carries the name of
-  the dataset: the state the cockpit shows is the named dataset's;
+  `tests/cockpit-fake-gc-contract-test.py`);
 - a synthetic tracker (`tests/fixtures/cockpit/core/fake-bd`);
 - an empty environment: a temporary HOME, no local settings file, so no
   secret, no notification, no heartbeat and no project clone; the doors
   that change the Factory are replaced by a command that refuses.
 
+What those sources answer is what the named dataset says
+(`synthetic_sources`): the state it names is the city of the supervisor; a
+state that shows nothing is a tracker and a list of projects that hold
+nothing; a suspended Factory is a suspended city; a reading that is no
+longer current is a supervisor that was read, then answers no more. The
+rest of a dataset (theme, width, selection, the text of its page) is not
+something a source of the cockpit answers.
+
 It starts no controller and no tracker, and reaches nothing of the city in
-service. A dataset that is not marked synthetic, or carries no fixed time
-(`generated_at`), is refused before anything is started.
+service. A dataset that is not marked synthetic, carries no fixed time
+(`generated_at`) or names no state is refused before anything is started.
 
 The process `bin/project-launch` holds is the cockpit itself, so stopping
 it stops the cockpit. The synthetic supervisor runs beside it and ends when
@@ -33,10 +40,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import signal
 import sys
 import tempfile
+import threading
+import time
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -46,11 +59,36 @@ REFUSING_DOOR = "/bin/false"
 # The synthetic sources never change by themselves: read them often, so the
 # cockpit shows its state as soon as it is asked.
 POLL_SECONDS = "0.2"
+# A supervisor that answers no more is shown as such after this long, not
+# after the two minutes a reading stays current in service.
+SILENT_VALIDITY_SECONDS = "2"
+# The views of a Panorama state (`ui.state`) the sources can answer.
+NOTHING_TO_SHOW = "empty"
+NO_LONGER_CURRENT = ("stale", "offline")
+# The step of the stop a Factory state is set up at (`ui.setup`).
+STOP_STEP = re.compile(r"shutdownState='([a-z]+)'")
+# A tracker that holds nothing: every list it is asked for is empty.
+EMPTY_TRACKER = """#!/bin/sh
+[ "$1" = list ] && { echo '[]'; exit 0; }
+echo "empty tracker (cockpit-isolated): refused: bd $*" >&2
+exit 1
+"""
 
 
-def read_dataset(path: Path) -> str:
-    """The name of the state a dataset carries; exits when it is not a
-    synthetic dataset with its fixed time."""
+@dataclass(frozen=True)
+class SyntheticSources:
+    """What the synthetic sources answer for one dataset."""
+
+    city: str
+    suspended: bool
+    holds_nothing: bool
+    falls_silent: bool
+
+
+def synthetic_sources(path: Path) -> SyntheticSources:
+    """What the dataset at `path` says, as the sources of the cockpit answer
+    it; exits when it is not a synthetic dataset with its fixed time and the
+    state it carries."""
     try:
         dataset = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -59,13 +97,40 @@ def read_dataset(path: Path) -> str:
         sys.exit(f"cockpit-isolated: {path} is not marked synthetic: only a synthetic dataset is served")
     if not isinstance(dataset.get("generated_at"), str) or not dataset["generated_at"].strip():
         sys.exit(f"cockpit-isolated: {path} carries no fixed time (generated_at)")
-    return path.stem
+    ui = dataset.get("ui") if isinstance(dataset.get("ui"), dict) else {}
+    # A Panorama state names itself in `ui.id`, a Runs state in `state`.
+    state = ui.get("id") or dataset.get("state")
+    if not isinstance(state, str) or not state.strip():
+        sys.exit(f"cockpit-isolated: {path} names no state (ui.id, or state)")
+    stop_step = STOP_STEP.search(ui.get("setup") or "")
+    return SyntheticSources(
+        city=state,
+        suspended=bool(stop_step) and stop_step.group(1) == "suspended",
+        holds_nothing=ui.get("state") == NOTHING_TO_SHOW,
+        falls_silent=ui.get("state") in NO_LONGER_CURRENT or ui.get("stale") is True,
+    )
 
 
-def serve_synthetic_supervisor(city: str, home: str, announce: int, cockpit_alive: int) -> None:
-    """The process beside the cockpit: the synthetic supervisor of `city`.
-    It writes its address on `announce`, then lives until `cockpit_alive`
-    closes -- the cockpit ended -- and removes `home`."""
+def fall_silent_once_read(supervisor, cockpit_url: str) -> None:
+    """Take `supervisor` down as soon as the cockpit shows a reading of it:
+    the last values are kept, and are no longer current."""
+    while True:
+        try:
+            with urllib.request.urlopen(cockpit_url + "/api/status", timeout=2) as response:
+                if (json.load(response).get("gc") or {}).get("value"):
+                    break
+        except (urllib.error.URLError, ConnectionError, OSError, ValueError):
+            pass
+        time.sleep(float(POLL_SECONDS))
+    supervisor.go_down()
+
+
+def serve_synthetic_supervisor(
+    sources: SyntheticSources, cockpit_url: str, home: str, announce: int, cockpit_alive: int
+) -> None:
+    """The process beside the cockpit: the synthetic supervisor `sources`
+    describes. It writes its address on `announce`, then lives until
+    `cockpit_alive` closes -- the cockpit ended -- and removes `home`."""
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     sys.path.insert(0, str(FIXTURES / "core"))
@@ -73,10 +138,14 @@ def serve_synthetic_supervisor(city: str, home: str, announce: int, cockpit_aliv
 
     # The fake names its one city by this constant; this process runs one
     # supervisor and nothing else.
-    fake_gc.CITY = city
-    supervisor = fake_gc.FakeGc().start()
+    fake_gc.CITY = sources.city
+    supervisor = fake_gc.FakeGc()
+    supervisor.set_status(suspended=sources.suspended)
+    supervisor.start()
     os.write(announce, supervisor.base_url.encode("ascii"))
     os.close(announce)
+    if sources.falls_silent:
+        threading.Thread(target=fall_silent_once_read, args=(supervisor, cockpit_url), daemon=True).start()
     while os.read(cockpit_alive, 1):
         pass
     supervisor.stop()
@@ -88,7 +157,8 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--dataset", required=True)
     args = parser.parse_args(argv)
-    city = read_dataset(Path(args.dataset))
+    sources = synthetic_sources(Path(args.dataset))
+    cockpit_url = f"http://127.0.0.1:{args.port}"
 
     home = tempfile.mkdtemp(prefix="cockpit-isolated-")
     announce_read, announce_write = os.pipe()
@@ -97,7 +167,7 @@ def main(argv: list[str]) -> int:
         os.close(announce_read)
         os.close(alive_write)
         try:
-            serve_synthetic_supervisor(city, home, announce_write, alive_read)
+            serve_synthetic_supervisor(sources, cockpit_url, home, announce_write, alive_read)
         finally:
             os._exit(0)
     os.close(announce_write)
@@ -115,7 +185,7 @@ def main(argv: list[str]) -> int:
         "HOME": home,
         "COCKPIT_HOST": "127.0.0.1",
         "COCKPIT_PORT": str(args.port),
-        "COCKPIT_ALLOWED_ORIGIN": f"http://127.0.0.1:{args.port}",
+        "COCKPIT_ALLOWED_ORIGIN": cockpit_url,
         "COCKPIT_BENJAMIN_LOGIN": "synthetic@example.ts.net",
         "COCKPIT_PID_FILE": os.path.join(home, "cockpit.pid"),
         "COCKPIT_LOCAL_CONFIG": os.path.join(home, "absent.json"),
@@ -130,6 +200,15 @@ def main(argv: list[str]) -> int:
         "COCKPIT_BEADS_POLL_SECONDS": POLL_SECONDS,
         "COCKPIT_PROJECTS_POLL_SECONDS": POLL_SECONDS,
     }
+    if sources.holds_nothing:
+        tracker = Path(home, "empty-tracker")
+        tracker.write_text(EMPTY_TRACKER, encoding="utf-8")
+        tracker.chmod(0o700)
+        Path(home, "no-project").mkdir()
+        env["COCKPIT_BD_BIN"] = str(tracker)
+        env["COCKPIT_DESCRIPTORS_DIR"] = str(Path(home, "no-project"))
+    if sources.falls_silent:
+        env["COCKPIT_VALIDITY_GC_SECONDS"] = SILENT_VALIDITY_SECONDS
     os.execve(sys.executable, [sys.executable, str(ROOT / "bin" / "cockpit"), "run"], env)
     return 1
 

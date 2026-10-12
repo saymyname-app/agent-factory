@@ -844,9 +844,9 @@ copy. What it gives the cockpit to read:
 
 | Source | In the isolated launch |
 |---|---|
-| supervisor | a synthetic one, `tests/fixtures/cockpit/core/fake_gc.py`, the fake `tests/cockpit-fake-gc-contract-test.py` holds to the installed supervisor; its city carries the name of the dataset |
-| tracker | `tests/fixtures/cockpit/core/fake-bd` |
-| declared projects | `tests/fixtures/cockpit/projects/descriptors/` |
+| supervisor | a synthetic one, `tests/fixtures/cockpit/core/fake_gc.py`, the fake `tests/cockpit-fake-gc-contract-test.py` holds to the installed supervisor; what it answers is what the dataset says (below) |
+| tracker | `tests/fixtures/cockpit/core/fake-bd`; a tracker that holds nothing for a state that shows nothing |
+| declared projects | `tests/fixtures/cockpit/projects/descriptors/`; none for a state that shows nothing |
 | doors that change the Factory (`gc`, escalation door, proposal door, loop guard) | a command that refuses |
 | local settings, secrets, notifications, heartbeat, project clones, Tailscale | none: a temporary HOME and no local settings file |
 
@@ -858,11 +858,27 @@ The process the launcher holds is the cockpit itself, so `stop` ends it by
 its own clean stop. The synthetic supervisor runs beside it and ends when
 the cockpit does, whatever ended it; it removes the temporary HOME.
 
-**State from the dataset.** For now the named dataset gives the launched
-cockpit its city: `GET /api/status` answers `gc.value.city` with the name of
-the dataset. The content of a frozen state (its requests, runs, results) is
-not fed to the sources yet: that is the work of the ticket that delivers the
-screen of that state.
+**State from the dataset.** The recipe reads the content of the named
+dataset and makes the synthetic sources answer it (`synthetic_sources` in
+`bin/cockpit-isolated`, the one place where a dataset becomes sources). The
+cockpit reads those sources as it reads the real ones, so what `GET
+/api/status` answers is what the dataset says:
+
+| The dataset says | The sources answer | `GET /api/status` |
+|---|---|---|
+| the state it is: `ui.id` (Panorama), `state` (Runs) | the supervisor's city bears that name | `gc.value.city` |
+| nothing to show: `ui.state` is `empty` (`home-empty`, `health-empty`, `journal-empty`) | a tracker that holds no bead, no declared project | `beads.value` and `projets.value.projects` are empty |
+| a suspended Factory: `ui.setup` sets `shutdownState='suspended'` (`factory-suspended`) | a suspended city | `gc.value.suspended` is true |
+| a reading that is no longer current: `ui.state` is `stale` or `offline`, or `ui.stale` is true (`home-`, `health-`, `journal-stale` and `-offline`, `run-stale`) | a supervisor that is read once, then answers no more | `gc.freshness` leaves `fresh` within seconds (a 2 s Validity window instead of 2 min), the last `gc.value` kept |
+
+A dataset that names no state is refused like one that is not synthetic.
+What a dataset carries beyond that feeds no source, because no source of the
+cockpit answers it at this commit: the theme, width and selection of a
+state, the text of its page (`visible_text`), the runs and lanes of a Runs
+state (`fixtures`), and the views `loading`, `error` and `long`, the steps of
+a stop other than `suspended`, and the states of a result, a ritual or a
+release. Those states are launched on the sources of the ordinary state; the
+ticket that delivers a screen adds its line to the table above.
 
 **Datasets.** One per state of the seven Validated Prototypes of the Spec:
 the 76 Panorama states and the 19 Runs states, under
