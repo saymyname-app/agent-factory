@@ -100,21 +100,21 @@ pilot() { "$AUTOPILOT" "$@" 2>&1 || true; }
 out=$(pilot)
 
 # --- 1 & 2: green required check arms, red does not, unrelated noise ignored ---
-grep -q "^pr merge 10 --repo saymyname-app/agent-factory --auto --squash --delete-branch" "$TMP/gh.log" \
+grep -q "^pr merge 10 --repo saymyname-app/agent-factory --auto --squash" "$TMP/gh.log" \
   || { echo "$out" >&2; fail "agent-factory PR #10 (Tests green) was not armed"; }
 grep -q "^pr merge 11 " "$TMP/gh.log" && { echo "$out" >&2; fail "agent-factory PR #11 (Tests red) was armed"; }
 grep -qF "bd create [ci] PR #11 failed required checks" "$TMP/gc.log" \
   || { echo "$out" >&2; fail "agent-factory PR #11 (Tests red) was not flagged"; }
-grep -q "^pr merge 12 --repo saymyname-app/agent-factory --auto --squash --delete-branch" "$TMP/gh.log" \
+grep -q "^pr merge 12 --repo saymyname-app/agent-factory --auto --squash" "$TMP/gh.log" \
   || { echo "$out" >&2; fail "agent-factory PR #12 (Lint red, Tests green) was held by an unrelated check"; }
 
-grep -q "^pr merge 20 --repo saymyname-app/Say-my-name-back --auto --squash --delete-branch" "$TMP/gh.log" \
+grep -q "^pr merge 20 --repo saymyname-app/Say-my-name-back --auto --squash" "$TMP/gh.log" \
   || { echo "$out" >&2; fail "backend PR #20 (Maven verify green) was not armed"; }
 grep -q "^pr merge 21 " "$TMP/gh.log" && { echo "$out" >&2; fail "backend PR #21 (Maven verify red) was armed"; }
 grep -qF "bd create [ci] PR #21 failed required checks" "$TMP/gc.log" \
   || { echo "$out" >&2; fail "backend PR #21 (Maven verify red) was not flagged"; }
 
-grep -q "^pr merge 30 --repo saymyname-app/Say-my-name-front --auto --squash --delete-branch" "$TMP/gh.log" \
+grep -q "^pr merge 30 --repo saymyname-app/Say-my-name-front --auto --squash" "$TMP/gh.log" \
   || { echo "$out" >&2; fail "frontend PR #30 (Tests and build green) was not armed"; }
 grep -q "^pr merge 31 " "$TMP/gh.log" && { echo "$out" >&2; fail "frontend PR #31 (Tests and build red) was armed"; }
 grep -qF "bd create [ci] PR #31 failed required checks" "$TMP/gc.log" \
@@ -147,5 +147,9 @@ printf '%s\n' "$out" | grep -qF "LOUD: config/projects names required_check='Tes
 [ "$rc" -ne 0 ] || { echo "$out" >&2; fail "config/ruleset drift did not fail the run (exit 0)"; }
 printf '%s\n' "$out" | grep -q "LOUD:.*Say-my-name-back" && fail "backend's required_check matched its live ruleset but was reported as drift"
 printf '%s\n' "$out" | grep -q "LOUD:.*Say-my-name-front" && fail "frontend's required_check matched its live ruleset but was reported as drift"
+
+if grep -q -- "--delete-branch" "$TMP/gh.log"; then
+  fail "merge request must not delete a branch before GitHub confirms merge"
+fi
 
 echo "OK pr-autopilot arms/holds on each repo's real required check name and reports config/ruleset drift loudly"

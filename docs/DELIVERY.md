@@ -973,6 +973,17 @@ stay the same. The stricter list-only bead readers in `acceptance-session`
 and `owner-answer` stay local. Changes to these reads now have one place to
 land, exercised by the existing delivery command tests.
 
+### Merge queue: requesting is not completing
+
+`pr-autopilot` requests both automatic and direct merges without
+`--delete-branch`. On the VM GitHub CLI 2.45, that flag closed queued PR556
+and deleted its head before merge (2026-10-12, af-x2ozgs; upstream
+[cli/cli7011](https://github.com/cli/cli/issues/7011)). Newer CLI versions reject
+the flag with a queue. GitHub owns the queue; a successful CLI request is
+not evidence of a merged PR. Reconciliation uses GitHub `MERGED`; native
+branch deletion and `factory-maintain prune-merged-branches` handle cleanup
+after merge. No queue bypass or host installation is needed for this fix.
+
 ### Registry and review cleanup
 
 Intent (Benjamin, his words, 2026-10-12): « vas y », following the proposal

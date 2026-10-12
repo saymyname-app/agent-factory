@@ -99,7 +99,7 @@ merges_of() { grep -c "^pr merge $1 " "$TMP/gh.log" || true; }
 
 # --- dry run: named, nothing called ---
 out=$(pilot --dry-run)
-printf '%s\n' "$out" | grep -qF "DRY-RUN: gh pr merge 30 --repo $REPO --squash --delete-branch --match-head-commit af30" \
+printf '%s\n' "$out" | grep -qF "DRY-RUN: gh pr merge 30 --repo $REPO --squash --match-head-commit af30" \
   || { echo "$out" >&2; fail "--dry-run did not name the direct merge of PR #30"; }
 grep -q "^pr merge " "$TMP/gh.log" && { echo "$out" >&2; fail "--dry-run called gh pr merge"; }
 
@@ -108,7 +108,7 @@ grep -q "^pr merge " "$TMP/gh.log" && { echo "$out" >&2; fail "--dry-run called 
 out=$(pilot)
 
 # 1. armed, CLEAN, green for 17 min -> one direct squash merge on that head.
-grep -qxF "pr merge 30 --repo $REPO --squash --delete-branch --match-head-commit af30" "$TMP/gh.log" \
+grep -qxF "pr merge 30 --repo $REPO --squash --match-head-commit af30" "$TMP/gh.log" \
   || { echo "$out" >&2; fail "armed, green, CLEAN PR #30 still open after the delay was not merged directly"; }
 [ "$(merges_of 30)" = 1 ] || { echo "$out" >&2; fail "PR #30 got $(merges_of 30) merge calls, expected 1"; }
 printf '%s\n' "$out" | grep -qF "PR #30: armed, required check green for 1020s, CLEAN, still open -> direct squash merge" \
@@ -139,5 +139,9 @@ printf '%s\n' "$out" | grep -qE "(^| )errors=$((missing + 1))( |$)" \
 : > "$TMP/gh.log"
 out=$(PR_AUTOPILOT_ARMED_MERGE_DELAY_SECONDS=30 pilot)
 [ "$(merges_of 31)" = 1 ] || { echo "$out" >&2; fail "PR #31 (green for 60s) was not merged with a 30s delay"; }
+
+if grep -q -- "--delete-branch" "$TMP/gh.log"; then
+  fail "merge request must not delete a branch before GitHub confirms merge"
+fi
 
 echo "OK pr-autopilot merges an armed, green, CLEAN PR that GitHub left open past the delay, once, on its head"
