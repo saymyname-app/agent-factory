@@ -327,3 +327,37 @@ and the Evaluator sessions, and observes the launched product for real.
 demonstration line on a real controller, with the real order, the real
 formula, the real dispatch door, launcher and merge command, and a scripted
 Evaluator that runs inside the real read-only sandbox of its role.
+
+
+## Controller observations for a launch recipe
+
+Intent (Benjamin, his words, 2026-10-12): « Oui je valide, rends ces observations accessibles sans affaiblir les contrôles, puis relance le chantier et vérifie qu’il avance vraiment. »
+Mechanism (agent interpretation): for a published recipe-establishing ticket,
+settle captures an independent command observation before dispatch. It exercises
+start/stop on an additional disposable product of the same commit and dataset,
+records whether its process and port remain, and probes existing local TCP
+listeners before and after. It extracts the published convoy prototype references
+through prototype-conformance anchors in the clean launched checkout, checks the
+named dataset bytes against the approved Git objects, and reports declared screen
+addresses. No private planning profile or author handoff is read. TCP reachability
+is not a claim about the functional health of a neighbouring service.
+
+The disposable trial keeps a `.trial` launch record beside the preparation.
+An interrupted capture leaves it for the next reap; it is never reused as a
+dataset environment. The report retains the pre-stop process identities so a
+survivor is still detectable after removal of its checkout.
+
+The ordinary evidence-capture command seals the actual output against the first
+product's commit and address. The brief exposes controller_observation with the
+piece, fingerprint, path and output; failures remain visible for the Evaluator's
+judgement. No state is inferred from that report. There is no exemption from
+piece_refusal, no imported report text, and no relaxation of criteria, freshness,
+independence or the merge gate. observe refuses agent sessions; the evaluator
+reads the report without gaining repository or process-control access.
+
+When the operator resolves an evaluation Planning Exception and its parking is
+lifted through convoy-state lift-park, the next pass may evaluate the same commit
+again. It retains the prior round and negative verdict until new independent
+states are recorded. One lift only covers the older refusal: a refusal after the
+lift requires a new resolution. Neither a code review refusal nor an unobserved
+criterion is waived by a lift.

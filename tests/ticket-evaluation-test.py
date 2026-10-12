@@ -18,6 +18,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 import sys
 import unittest
 import urllib.request
@@ -543,6 +544,9 @@ class TicketEvaluationTest(unittest.TestCase):
         tip = self.finished_slice(files)
         tracker = json.loads(self.tracker.read_text())
         tracker["beads"][SLICE]["metadata"]["gc.flow.establishes_launch_recipe"] = True
+        tracker["beads"][OTHER_SLICE]["description"] += (
+            "\n\n## Validated Prototype\n\n- branche : main\n"
+            f"- commit : {self.base}\n- chemin : {FIXTURE}/prototype\n- états : empty, content\n")
         self.tracker.write_text(json.dumps(tracker))
         live = json.loads(candidate)
         live["launch"] = None
@@ -557,11 +561,57 @@ class TicketEvaluationTest(unittest.TestCase):
         self.assertEqual(tip, brief["commit"])
         self.assertEqual(json.loads(candidate)["launch"]["entry_points"], brief["entry_points"])
         self.assertIsNone(json.loads(self.profile.read_text())["launch"])
+        observation = brief["controller_observation"]
+        lifecycle = observation["observation"]["lifecycle"]
+        self.assertEqual(0, lifecycle["start"]["exit_code"])
+        self.assertEqual(0, lifecycle["stop"]["exit_code"])
+        self.assertTrue(lifecycle["port_open_before_stop"])
+        self.assertFalse(lifecycle["port_open_after_stop"])
+        self.assertFalse(lifecycle["process_alive_after_stop"])
+        self.assertEqual([], lifecycle["processes_after_stop"])
+        self.assertIn(int(brief["environments"][0]["address"].rsplit(":", 1)[1]), lifecycle["existing_ports_after"])
+        reference, = observation["observation"]["references"]
+        self.assertEqual(0, reference["anchors"]["exit_code"])
+        self.assertEqual(2, len(reference["datasets"]))
+        self.assertTrue(all(d["identical"] for d in reference["datasets"]))
+        self.assertEqual(observation, self.tool("brief", env=SESSION)["controller_observation"])
+        request = self.evaluation()["request"]
+        self.refused("observe", CONVOY, SLICE, "--repo", self.repo, "--commit", tip,
+                     "--launch-state", request["environment"][0]["state_file"],
+                     env=SESSION, mention="réservées au contrôleur")
         verdict = self.tool("verdict")
         self.assertFalse(verdict["favorable"])
         request = self.evaluation()["request"]
-        self.recorded(self.handed(tip, request))
+        handed = self.handed(tip, request)
+        handed["criteria"][1]["evidence"] = observation["piece"]
+        path = Path(observation["path"])
+        saved = path.read_bytes()
+        path.write_text('{}')
+        self.record_refused(handed, "ne correspond plus à l'empreinte")
+        path.write_bytes(saved)
+        self.recorded(handed)
         self.assertTrue(self.tool("verdict")["favorable"])
+
+    def test_inaccessible_reference_is_captured_as_failure_never_as_a_pass(self):
+        files = self.realized()
+        files["config/project-descriptors/fx.json"] = self.profile.read_text()
+        tip = self.finished_slice(files)
+        tracker = json.loads(self.tracker.read_text())
+        tracker["beads"][SLICE]["metadata"]["gc.flow.establishes_launch_recipe"] = True
+        tracker["beads"][OTHER_SLICE]["description"] += (
+            "\n\n## Validated Prototype\n\n- branche : main\n"
+            f"- commit : {'a' * 40}\n- chemin : absent\n- états : content\n")
+        self.tracker.write_text(json.dumps(tracker))
+        self.evaluator("silent")
+        self.settle()
+        report = self.tool("brief")["controller_observation"]
+        ref, = report["observation"]["references"]
+        self.assertNotEqual(0, ref["anchors"]["exit_code"])
+        self.assertIn("error", ref)
+        handed = self.handed(tip, self.evaluation()["request"])
+        handed["criteria"][1].update(state="not_observed", evidence=report["piece"], reason="référence inaccessible")
+        self.assertEqual("return_to_author", self.recorded(handed)["outcome"])
+        self.assertFalse(self.tool("verdict")["favorable"])
 
     def test_recipe_establishing_ticket_refuses_missing_committed_profile(self):
         self.finished_slice(self.realized())
@@ -603,11 +653,20 @@ class TicketEvaluationTest(unittest.TestCase):
                                "--commit", tip, "--dataset", "content", "--state-file", record)
         self.assertEqual(0, started.returncode, started.stdout + started.stderr)
         original = json.loads(record.read_text())
+        trial = record.with_suffix(".trial")
+        started = self.run_cmd(LAUNCH_TOOL, "--repo-root", self.repo, "start", self.profile,
+                               "--commit", tip, "--dataset", "content", "--state-file", trial)
+        self.assertEqual(0, started.returncode, started.stdout + started.stderr)
+        self.addCleanup(self.run_cmd, LAUNCH_TOOL, "stop", "--state-file", trial)
+        interrupted_trial = json.loads(trial.read_text())
         tracker = json.loads(self.tracker.read_text())
         tracker["beads"][SLICE]["status"] = "closed"
         self.tracker.write_text(json.dumps(tracker))
         self.settle()
         self.assertEqual([], self.launches())
+        self.assertFalse(trial.exists())
+        with self.assertRaises(Exception):
+            urllib.request.urlopen(interrupted_trial["address"], timeout=1)
         with self.assertRaises(Exception):
             urllib.request.urlopen(original["address"], timeout=1)
 
@@ -941,6 +1000,29 @@ class TicketEvaluationTest(unittest.TestCase):
         again = self.settle()
         self.assertEqual([], again["planning_exception"])
         self.assertEqual(1, len(self.escalation_list()))
+
+    def test_resolved_evaluation_exception_replays_once_without_erasing_its_refusal(self):
+        tip, request = self.open_evaluation()
+        handed = self.handed(tip, request)
+        handed["criteria"][0].update(state="unobservable", cause="criterion", reason="commande inaccessible")
+        self.recorded(handed)
+        self.settle()
+        previous = self.evaluation()["rounds"]
+        time.sleep(1.1)  # Distinct event timestamps, as in the durable parking contract.
+        self.state("lift-park", CONVOY, SLICE, "--request", SLICE, "--option", "a")
+        self.evaluator("silent")
+        self.assertEqual([SLICE], [e["ticket"] for e in self.settle()["launched"]])
+        self.assertEqual(previous, self.evaluation()["rounds"])
+        self.assertFalse(self.tool("verdict")["favorable"])
+        request = self.evaluation()["request"]
+        handed = self.handed(tip, request)
+        handed["criteria"][0].update(state="unobservable", cause="criterion", reason="toujours inaccessible")
+        self.tool("record", SLICE, "--file", self.json_file("replay.json", handed),
+                  env={**SESSION, "GC_SESSION_NAME": "delivery-evaluator-fx-replay"})
+        self.assertEqual(2, len(self.evaluation()["rounds"]))
+        self.assertEqual([SLICE], [e["ticket"] for e in self.settle()["planning_exception"]])
+        self.assertFalse(self.tool("verdict")["favorable"])
+        self.assertEqual([], self.settle()["launched"])
 
     def test_an_unobservable_by_the_environment_is_an_outage_that_is_not_counted_as_a_refusal(self):
         tip, request = self.open_evaluation()
