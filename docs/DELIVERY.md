@@ -961,3 +961,14 @@ PR, le retrait du worktree et l'absence de changement du drain séparé. Ce
 raccord supprime les reprises manuelles après l'erreur « source anchor has no
 work_dir metadata » et remplace jusqu'à N worktrees/PR par un seul pour N items,
 sans coût modèle supplémentaire pour le cycle Git.
+
+### Shared delivery reads
+
+Intent (Benjamin, his words, 2026-10-12): « Vas-y pour 1 et 2. » in reply
+to the review of repeated ticket reads and project repository lookups.
+Mechanism (agent interpretation): `lib/delivery_reads.py` owns the common
+bead read, Target rigs parsing and repository lookup. Commands pass their
+configured root and refusal type; their public arguments and failure behavior
+stay the same. The stricter list-only bead readers in `acceptance-session`
+and `owner-answer` stay local. Changes to these reads now have one place to
+land, exercised by the existing delivery command tests.

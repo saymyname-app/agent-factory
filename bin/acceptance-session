@@ -46,13 +46,14 @@ import socket
 import subprocess
 import sys
 import time
-import tomllib
 import unicodedata
 from pathlib import Path
 from typing import Any
 
 PROGRAM = "acceptance-session"
 BIN = Path(__file__).resolve().parent
+sys.path.insert(0, str(BIN.parent / "lib"))
+import delivery_reads  # noqa: E402
 ROOT = Path(os.environ.get("FACTORY_ROOT") or BIN.parent)
 GC_BIN = os.environ.get("GC_BIN", "gc")
 STATE_TOOL = BIN / "convoy-state"
@@ -89,9 +90,6 @@ EXIT_REFUSED = 1
 EXIT_UNRULED = 3
 EXIT_NOT_NEW_FLOW = 4
 MAX_DETAIL = 300
-
-RIGS_SECTION_RE = re.compile(r"^## Target rigs[ \t]*\n+([^\n#]*)$", re.MULTILINE)
-RIG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 class Refusal(RuntimeError):
@@ -169,23 +167,11 @@ def read_bead(bead_id: str) -> dict[str, Any]:
 
 
 def ticket_rig(ticket_id: str) -> str | None:
-    """The single project the ticket names under « Target rigs », or None."""
-    description = read_bead(ticket_id).get("description")
-    match = RIGS_SECTION_RE.search(description if isinstance(description, str) else "")
-    rigs = [rig.strip() for rig in match.group(1).split(",") if rig.strip()] if match else []
-    if len(rigs) != 1 or not RIG_RE.match(rigs[0]) or not (PROJECTS / f"{rigs[0]}.toml").is_file():
-        return None
-    return rigs[0]
+    return delivery_reads.ticket_rig(read_bead(ticket_id).get("description"), PROJECTS)
 
 
 def rig_repository(rig: str) -> Path:
-    try:
-        rig_dir = tomllib.loads((PROJECTS / f"{rig}.toml").read_text(encoding="utf-8")).get("rig_dir")
-    except (OSError, tomllib.TOMLDecodeError) as exc:
-        raise Refusal(f"config/projects/{rig}.toml illisible : {exc}") from exc
-    if not isinstance(rig_dir, str) or not rig_dir:
-        raise Refusal(f"config/projects/{rig}.toml ne déclare pas rig_dir")
-    return (ROOT / rig_dir).resolve()
+    return delivery_reads.rig_repository(rig, ROOT, Refusal)
 
 
 def rig_profile(rig: str | None) -> Path | None:

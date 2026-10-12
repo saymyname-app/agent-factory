@@ -49,7 +49,6 @@ import os
 import re
 import subprocess
 import sys
-import tomllib
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -57,6 +56,8 @@ from typing import Any, Iterator
 
 PROGRAM = "correction-round"
 BIN = Path(__file__).resolve().parent
+sys.path.insert(0, str(BIN.parent / "lib"))
+import delivery_reads  # noqa: E402
 ROOT = Path(os.environ.get("FACTORY_ROOT") or BIN.parent)
 GC_BIN = os.environ.get("GC_BIN", "gc")
 STATE_TOOL = BIN / "convoy-state"
@@ -82,8 +83,6 @@ MAX_DETAIL = 300
 # The escalation door refuses a line of a request longer than that.
 REQUEST_LINE_MAX = 140
 
-RIGS_SECTION_RE = re.compile(r"^## Target rigs[ \t]*\n+([^\n#]*)$", re.MULTILINE)
-RIG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 FINDING_ID_RE = re.compile(r"^F[1-9][0-9]*\.[1-9][0-9]*$")
 NEVER_WAIVED = ("un critère non observé ne se dispense jamais : seul un Blocking Finding de la revue de code reçoit "
                 "une dérogation (--finding F<n>.<m>). Pour un critère ou la ligne de démonstration, ouvre une "
@@ -156,17 +155,7 @@ def state_write(*args: str) -> dict[str, Any]:
 
 
 def read_bead(bead_id: str) -> dict[str, Any]:
-    proc = run([GC_BIN, "bd", "show", bead_id, "--json"])
-    if proc.returncode != 0:
-        raise Refusal(f"gc bd show {bead_id} a échoué : {detail_of(proc)}")
-    try:
-        data = json.loads(proc.stdout)
-    except json.JSONDecodeError as exc:
-        raise Refusal(f"gc bd show {bead_id} a rendu un JSON illisible : {exc}") from exc
-    bead = data[0] if isinstance(data, list) and data else data
-    if not isinstance(bead, dict):
-        raise Refusal(f"bead introuvable : {bead_id}")
-    return bead
+    return delivery_reads.read_bead(bead_id, GC_BIN, Refusal)
 
 
 # --- settings ----------------------------------------------------------------
@@ -193,23 +182,11 @@ def load_settings() -> dict[str, str]:
 
 
 def ticket_rig(ticket_id: str) -> str | None:
-    """The single project the ticket names under « Target rigs », or None."""
-    description = read_bead(ticket_id).get("description")
-    match = RIGS_SECTION_RE.search(description if isinstance(description, str) else "")
-    rigs = [rig.strip() for rig in match.group(1).split(",") if rig.strip()] if match else []
-    if len(rigs) != 1 or not RIG_RE.match(rigs[0]) or not (PROJECTS / f"{rigs[0]}.toml").is_file():
-        return None
-    return rigs[0]
+    return delivery_reads.ticket_rig(read_bead(ticket_id).get("description"), PROJECTS)
 
 
 def rig_repository(rig: str) -> Path:
-    try:
-        rig_dir = tomllib.loads((PROJECTS / f"{rig}.toml").read_text(encoding="utf-8")).get("rig_dir")
-    except (OSError, tomllib.TOMLDecodeError) as exc:
-        raise Refusal(f"config/projects/{rig}.toml illisible : {exc}") from exc
-    if not isinstance(rig_dir, str) or not rig_dir:
-        raise Refusal(f"config/projects/{rig}.toml ne déclare pas rig_dir")
-    return (ROOT / rig_dir).resolve()
+    return delivery_reads.rig_repository(rig, ROOT, Refusal)
 
 
 class Convoy:
