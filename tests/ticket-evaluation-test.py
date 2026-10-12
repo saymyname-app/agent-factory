@@ -536,6 +536,42 @@ class TicketEvaluationTest(unittest.TestCase):
         return self.refused("record", CONVOY, SLICE, "--repo", self.repo, "--file",
                             self.json_file("handed.json", content), mention=mention, env=env)
 
+    def test_recipe_establishing_ticket_uses_its_committed_recipe_not_live_or_dirty_profile(self):
+        candidate = self.profile.read_text()
+        files = self.realized()
+        files["config/project-descriptors/fx.json"] = candidate
+        tip = self.finished_slice(files)
+        tracker = json.loads(self.tracker.read_text())
+        tracker["beads"][SLICE]["metadata"]["gc.flow.establishes_launch_recipe"] = True
+        self.tracker.write_text(json.dumps(tracker))
+        live = json.loads(candidate)
+        live["launch"] = None
+        self.profile.write_text(json.dumps(live))
+        # The author's checkout and the live profile cannot provide the recipe.
+        (self.repo / "config/project-descriptors").mkdir(parents=True, exist_ok=True)
+        (self.repo / "config/project-descriptors/fx.json").write_text("invalid dirty profile")
+        self.evaluator("silent")
+        settled = self.settle()
+        self.assertEqual([SLICE], [entry["ticket"] for entry in settled["launched"]])
+        brief = self.tool("brief")
+        self.assertEqual(tip, brief["commit"])
+        self.assertEqual(json.loads(candidate)["launch"]["entry_points"], brief["entry_points"])
+        self.assertIsNone(json.loads(self.profile.read_text())["launch"])
+        verdict = self.tool("verdict")
+        self.assertFalse(verdict["favorable"])
+        request = self.evaluation()["request"]
+        self.recorded(self.handed(tip, request))
+        self.assertTrue(self.tool("verdict")["favorable"])
+
+    def test_recipe_establishing_ticket_refuses_missing_committed_profile(self):
+        self.finished_slice(self.realized())
+        tracker = json.loads(self.tracker.read_text())
+        tracker["beads"][SLICE]["metadata"]["gc.flow.establishes_launch_recipe"] = True
+        self.tracker.write_text(json.dumps(tracker))
+        settled = self.settle(expect=1)
+        self.assertIn("profil absent au commit évalué", settled["refused"][0]["reason"])
+        self.assertEqual([], self.launches())
+
     # --- the demonstration line of the ticket -----------------------------------
 
     def test_an_unrealized_criterion_is_recorded_not_observed_with_its_evidence_and_the_verdict_is_unfavorable(self):
