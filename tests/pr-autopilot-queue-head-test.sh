@@ -130,7 +130,7 @@ expect_updated "101" "ten BEHIND PRs, no head"
 # --- 2. the head holds the queue: required run in progress (set by the stub) ---
 tick -v
 expect_updated "" "head #101 up to date, required run in progress"
-grep -q "^pr merge 101 --repo saymyname-app/agent-factory --auto --squash --delete-branch" "$TMP/gh.log" \
+grep -q "^pr merge 101 --repo saymyname-app/agent-factory --auto --squash" "$TMP/gh.log" \
   || { echo "$out" >&2; fail "head #101 (up to date) was not armed"; }
 printf '%s\n' "$out" | grep -qF "PR #101 holds the queue -- 9 BEHIND PR(s) waiting" \
   || { echo "$out" >&2; fail "the waiting PRs were not reported behind head #101"; }
@@ -195,5 +195,9 @@ tick
 expect_updated "" "head #150 up to date, no check reported yet"
 
 grep -q "^pr update-branch" "$TMP/gh.log" && fail "pr-autopilot called 'gh pr update-branch' (absent from gh 2.45)"
+
+if grep -q -- "--delete-branch" "$TMP/gh.log"; then
+  fail "merge request must not delete a branch before GitHub confirms merge"
+fi
 
 echo "OK pr-autopilot keeps one queue head: a BEHIND PR is updated only when no PR is up to date with its required check waiting, running or green"

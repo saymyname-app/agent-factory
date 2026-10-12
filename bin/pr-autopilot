@@ -320,7 +320,7 @@ case "$RECONCILE_NOW_EPOCH" in *[!0-9]*|'') log "invalid reconciliation clock"; 
 ARMED_MERGE_DELAY_SECONDS="${PR_AUTOPILOT_ARMED_MERGE_DELAY_SECONDS:-180}"
 case "$ARMED_MERGE_DELAY_SECONDS" in *[!0-9]*|'') log "invalid armed merge delay"; exit 2 ;; esac
 
-# The direct path: one squash merge, pinned to the head this tick read (GitHub
+# The direct path: one squash request, pinned to the head this tick read (GitHub
 # refuses it if the head moved). The caller has established that the required
 # check is green and the state CLEAN, which is the gate auto-merge waits for.
 # Hard rule (gastown land-and-deploy): never retry `gh pr merge` after a
@@ -328,13 +328,16 @@ case "$ARMED_MERGE_DELAY_SECONDS" in *[!0-9]*|'') log "invalid armed merge delay
 # when it merged fine but could not delete the local branch -- which is what
 # happens whenever a leftover worktree still pins it. Ask the server what
 # actually happened.
+# Branch deletion is separate: a queued request is not a merge (af-x2ozgs).
+# GitHub/native maintenance cleans branches only after confirmed merge.
 direct_merge() {  # repo num head_sha
   local repo=$1 num=$2 sha=$3 rc d_rc final
-  local -a args=(pr merge "$num" --repo "$repo" --squash --delete-branch)
+  local -a args=(pr merge "$num" --repo "$repo" --squash)
   [ "$sha" != "unknown" ] && args+=(--match-head-commit "$sha")
   if [ "$DRY_RUN" = "1" ]; then log "  DRY-RUN: gh ${args[*]}"; return 0; fi
   bounded "$AP_WRITE_CAP" gh "${args[@]}" >/dev/null 2>&1; d_rc=$?
-  if [ "$d_rc" = 0 ]; then log "    merged"; ARMED=$((ARMED+1)); return 0; fi
+  # A successful request may only enqueue the PR; read GitHub before claiming merge.
+  if [ "$d_rc" = 0 ]; then log "    merge requested (GitHub confirms completion)"; ARMED=$((ARMED+1)); return 0; fi
   final=$(bounded "$AP_READ_CAP" gh pr view "$num" --repo "$repo" --json state \
     --jq .state 2>/dev/null); rc=$?
   if [ "$final" = "MERGED" ]; then
@@ -1062,10 +1065,10 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
 
     log "  PR #$num: arming auto-merge (squash, state=$state)"
     if [ "$DRY_RUN" = "1" ]; then
-      log "  DRY-RUN: gh pr merge $num --repo $repo --auto --squash --delete-branch"
+      log "  DRY-RUN: gh pr merge $num --repo $repo --auto --squash"
       ARMED=$((ARMED+1))
     else
-      bounded "$AP_WRITE_CAP" gh pr merge "$num" --repo "$repo" --auto --squash --delete-branch >/dev/null 2>&1; rc=$?
+      bounded "$AP_WRITE_CAP" gh pr merge "$num" --repo "$repo" --auto --squash >/dev/null 2>&1; rc=$?
       if [ "$rc" = 0 ]; then
         ARMED=$((ARMED+1))
       elif timed_out "$rc"; then

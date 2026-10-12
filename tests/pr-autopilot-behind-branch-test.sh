@@ -125,7 +125,7 @@ grep -q "^pr merge 11 " "$TMP/gh.log" && { echo "$out" >&2; fail "BEHIND PR #11 
 # --- tick 2: #10 caught up (CLEAN, green) -> armed; #11 still BEHIND -> waits ---
 : > "$TMP/gh.log"
 out=$(pilot)
-grep -q "^pr merge 10 --repo saymyname-app/agent-factory --auto --squash --delete-branch" "$TMP/gh.log" \
+grep -q "^pr merge 10 --repo saymyname-app/agent-factory --auto --squash" "$TMP/gh.log" \
   || { echo "$out" >&2; fail "PR #10 (caught up, checks green) was not armed on tick 2"; }
 grep -qF "/pulls/11/update-branch" "$TMP/gh.log" \
   && { echo "$out" >&2; fail "PR #11 was updated on tick 2 while PR #10 held the queue"; }
@@ -229,5 +229,9 @@ unset FAIL_UPDATE
 out=$(pilot)
 grep -q "^bd create" "$TMP/gc.log" \
   && { echo "$out" >&2; fail "PR #40 was filed although its branch update went through"; }
+
+if grep -q -- "--delete-branch" "$TMP/gh.log"; then
+  fail "merge request must not delete a branch before GitHub confirms merge"
+fi
 
 echo "OK pr-autopilot updates BEHIND PRs one at a time, oldest first, never arms one, and files a bead only for a refused update"
