@@ -32,6 +32,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import time
 import sys
 import unittest
 from pathlib import Path
@@ -267,7 +268,33 @@ class ConvoyAdvanceHarness(unittest.TestCase):
     def advance(self, *args, expect=0, env=None):
         proc = self.run_cmd(TOOL, *args, env=env)
         self.assertEqual(expect, proc.returncode, proc.stdout + proc.stderr)
-        return json.loads(proc.stdout)
+        answer = json.loads(proc.stdout)
+        # Multi-game fake sessions continue after dispatch returns. Advance
+        # their official controller until each requested game is available.
+        for program, name in (("ticket-evaluation", "TICKET_EVALUATION_FAKE_LOG"),
+                              ("outcome-evaluation", "OUTCOME_EVALUATION_FAKE_LOG")):
+            if name not in self.env:
+                continue
+            marker = Path(self.env[name] + ".pending")
+            done = Path(self.env[name] + ".done")
+            failed = Path(self.env[name] + ".failed")
+            if not marker.exists() and not failed.exists():
+                continue
+            deadline = time.monotonic() + 60
+            while marker.exists() and time.monotonic() < deadline:
+                bead = self.bead(marker.read_text())
+                convoy = next(line.removeprefix("convoy: ") for line in bead["description"].splitlines()
+                              if line.startswith("convoy: "))
+                settled = self.run_cmd(ROOT / "bin" / program, "settle", convoy, "--repo", self.root)
+                if settled.returncode:
+                    time.sleep(0.2)
+                    self.assertFalse(marker.exists(), settled.stdout + settled.stderr)
+                    break
+                time.sleep(0.1)
+            self.assertFalse(marker.exists(), f"fake {program} did not finish")
+            self.assertFalse(failed.exists(), f"fake {program} failed: {Path(self.env[name] + '.worker').read_text()}")
+            self.assertTrue(done.exists(), f"fake {program} did not close its bead")
+        return answer
 
     def slung(self):
         lines = [json.loads(line) for line in self.write_log.read_text().splitlines() if line]
@@ -1512,11 +1539,14 @@ class ConvoyAdvanceTest(ConvoyAdvanceHarness):
         self.advance(CONVOY)
         tip = self.finished(T1)
 
-        answer = self.advance(CONVOY)
-
-        result = next(c for c in answer["convoys"] if c["id"] == CONVOY)
+        first = self.advance(CONVOY)
+        observed = next(c for c in first["convoys"] if c["id"] == CONVOY)
         self.assertEqual([(T1, tip, "vert")],
-                         [(entry["id"], entry["commit"], entry["result"]) for entry in result["fidelity"]["checked"]], result)
+                         [(entry["id"], entry["commit"], entry["result"]) for entry in observed["fidelity"]["checked"]], observed)
+        # The multi-game fixture Evaluator finishes after dispatch; the
+        # next controller pass reads its recorded verdict and integrates.
+        answer = self.advance(CONVOY)
+        result = next(c for c in answer["convoys"] if c["id"] == CONVOY)
         self.assertEqual([T1], [entry["id"] for entry in result["integration"]["merged"]], result)
         self.assertEqual([T1], [entry["id"] for entry in result["ticket_end"]["closed"]], result)
         shown = self.shown(T1)

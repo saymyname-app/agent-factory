@@ -85,39 +85,37 @@ All other tickets keep the ordinary profile selection. This changes no evidence,
 criterion, independent-session or favorable-verdict requirement.
 
 
-For an evaluation `settle` launches the product **once per dataset** the
-profile declares (`launch.datasets`, at least one: a profile that declares
-none is refused before anything is launched or recorded — « le profil … ne
-déclare aucun jeu de données (launch.datasets) » — the ticket listed under
-`refused`, no startup verdict recorded), each on its own free port, through
-`bin/project-launch start --commit <tip>` on the repository of the project:
-a detached `git worktree` checkout of that exact commit in a temporary
-directory, never the directory the author works in. The launch records are
-kept under `TICKET_EVALUATION_STATE_DIR` (default
-`~/.local/state/agent-factory-evaluation/<convoy>/<ticket>/`), which the
-sandbox of a read-only role can read; the clean copy itself sits under
-`/tmp`, which that sandbox does not show.
+For an evaluation, `settle` opens only the first declared dataset from a
+clean worktree of the evaluated commit. The Evaluator reads every declared
+game in `brief.datasets` and asks for the next one with `ticket-evaluation
+product CONVOY TICKET --dataset NAME`. A `ready=false` response records the
+request. The next controller pass stops the old product, confirms its
+descendants, port and worktree are gone, then opens the requested game.
+Repeat the command until `ready=true`; capture with the returned address
+and launch record. `--fresh` requests a new initial state for a revisit at
+the same commit. Capture proof before switching away. The read-only role
+never launches or stops a process itself.
 
-Preparation is resumable: after 60 seconds, no additional dataset is started
-in that pass. Existing launch records at the exact commit and repository are
-reused on the next pass. No evaluation request or favorable verdict is recorded
-until all datasets are ready. An actual startup failure still stops the products
-and records the existing unfavorable startup outcome. Prepared products are
-also stopped when their ticket is parked, stopped, superseded or no longer due.
-This keeps a large prototype inventory within the order's bounded passes without
-removing datasets, extending startup attempts or weakening evidence checks.
+Ticket and Outcome Evaluation share two host slots and allow one active
+product per evaluation. Startup and shutdown count as occupied. An
+unconfirmed stop keeps its record and slot. Waiting for admission before
+the first Evaluator session starts does not consume that session's deadline.
+`project-launch` writes a provisional record before spawning, so an
+interrupted pass recovers the exact repository, commit and game or stops it.
+A superseded commit is never reused. For a ticket that establishes its
+launch recipe, the controller tests a disposable start/stop cycle **before**
+opening the evaluated product. Its sealed observation still includes the
+lifecycle result and validated reference checks; the trial and the evaluated
+product never run together.
 
-The products are launched by the pass and **outlive it**: the Evaluator
-session comes later. They are stopped by code, by the first pass after the
-states are in (or after the ticket is stopped, or a newer tip replaced the
-evaluation). `gc.flow.evaluation.live` names the launch records still to
-stop; `bin/convoy-advance` runs a settlement as long as a ticket has one.
-
-The launch record also owns descendants that leave the original process group.
-The launcher confirms that those processes, the port and the isolated copy
-are released before deleting the record. A failed stop keeps `live` and the
-record for a later retry; a failed startup keeps its record if cleanup
-cannot be confirmed, and a retry cannot overwrite that record.
+The request retains historical addresses for Evidence Record verification
+after a switch; `live` names only the product still running. A favorable
+result requires a sealed `coverage` piece for every declared game as well
+as one state and proof for every criterion and the demonstration line.
+The result carries `coverage: [{"dataset": NAME, "evidence": PIECE}, ...]`.
+A missing game or a piece captured on another game's address is refused.
+After the result, stop or withdrawal, the controller stops the remaining
+product and releases its slot only after cleanup is confirmed.
 
 A product that does not start from the clean copy (two attempts, each within
 `start_timeout_seconds`) cannot be observed: `settle` records it as an
@@ -133,7 +131,8 @@ session receives.
 |---|---|
 | `demonstration_line` | the demonstration line of the approved ticket |
 | `criteria` | the acceptance criteria of the approved ticket, numbered in order |
-| `environments` | one launched product per dataset: `dataset`, `address`, and `launch_state`, the launch record to name to the capture tool |
+| `environments` | the active product: `dataset`, `address`, and `launch_state`, the launch record to name to the capture tool |
+| `datasets`, `product` | every declared game and the command to request one |
 | `entry_points` | the entry points the profile declares |
 | `states`, `unobservable_causes` | the closed lists |
 | `capture`, `result_shape` | how a piece is captured on a launched product, and the shape of what `record` takes |
@@ -203,12 +202,13 @@ that round. Otherwise `reasons` says why.
 ## A prefactoring: the startup control
 
 A `prefactoring` changes no behaviour: nothing new is to be observed. No
-Evaluator session is started. `settle` launches the product from a clean
-copy of the tip, has `bin/evidence-capture` capture the answer of the
-profile's health probe on it (piece `evaluation.startup`, the command exits
-0 only on the expected status), stops the product, and records a round of
-kind `startup`: favorable when the product started and the probe answered,
-unfavorable otherwise.
+Evaluator session is started. `settle` launches each declared game in
+sequence from a clean copy of the tip, captures the answer of the profile's
+health probe with `bin/evidence-capture`, and confirms cleanup before opening
+the next game. The first piece is `evaluation.startup`; later pieces are
+numbered. The `startup` round stores one coverage piece per game and is
+favorable only when every launch and probe succeeded. A failed launch or
+probe is unfavorable; failed cleanup retains its capacity slot.
 
 ## The roles: another supplier than the author's
 

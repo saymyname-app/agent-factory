@@ -134,6 +134,66 @@ class ProjectLaunchTest(unittest.TestCase):
             check=check,
         )
 
+    def test_reuse_requires_launch_identity_and_its_listening_port(self):
+        sys.path.insert(0, str(ROOT / "lib"))
+        from evaluation_capacity import product_running
+
+        _, state_file = self.start("--dataset", "content")
+        record = json.loads(state_file.read_text())
+        self.assertTrue(product_running(record))
+        self.assertFalse(product_running({**record, "launch_id": "unrelated"}))
+        self.assertFalse(product_running({**record, "port": record["port"] + 1,
+                                          "address": f"http://127.0.0.1:{record['port'] + 1}"}))
+        self.assertFalse(product_running({**record, "commit": "0" * 40}))
+        self.stop(state_file=state_file)
+        self.assertFalse(product_running(record))
+
+    def test_stop_recovers_an_interrupted_unregistered_checkout(self):
+        worktree = Path(tempfile.mkdtemp(prefix="project-launch-"))
+        (worktree / "partial").write_text("checkout interrupted")
+        launch_id = "interrupted-checkout"
+        commit = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+                                text=True, capture_output=True, check=True).stdout.strip()
+        owner = Path(f"{worktree}.owner")
+        owner.write_text(json.dumps({"launch_id": launch_id, "repo_root": str(ROOT), "commit": commit}))
+        state_file = self.new_state_file()
+        state_file.write_text(json.dumps({"started": False, "launch_id": launch_id,
+                                          "worktree": str(worktree), "repo_root": str(ROOT),
+                                          "commit": commit, "dataset": "content"}))
+        stopped = self.stop(state_file=state_file)
+        self.assertTrue(json.loads(stopped.stdout)["stopped"])
+        self.assertFalse(worktree.exists())
+        self.assertFalse(owner.exists())
+        self.assertFalse(state_file.exists())
+
+    def test_legacy_record_never_signals_an_unrelated_reused_pid(self):
+        _, state_file = self.start("--dataset", "content")
+        record = json.loads(state_file.read_text())
+        stranger = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        try:
+            record.pop("launch_id")
+            record["pid"] = stranger.pid
+            state_file.write_text(json.dumps(record))
+            stopped = self.stop(state_file=state_file)
+            self.assertTrue(json.loads(stopped.stdout)["stopped"])
+            self.assertIsNone(stranger.poll())
+        finally:
+            stranger.kill()
+            stranger.wait()
+
+    def test_corrupt_worktree_path_is_refused_without_deleting_it(self):
+        _, state_file = self.start("--dataset", "content")
+        record = json.loads(state_file.read_text())
+        with tempfile.TemporaryDirectory(prefix="unrelated-") as unrelated:
+            altered = {**record, "worktree": unrelated}
+            state_file.write_text(json.dumps(altered))
+            refused = self.stop(state_file=state_file, check=False)
+            self.assertEqual(1, refused.returncode)
+            self.assertTrue(Path(unrelated).exists())
+            self.assertTrue(state_file.exists())
+            state_file.write_text(json.dumps(record))
+            self.stop(state_file=state_file)
+
     def test_stop_recognizes_exit_without_waiting_for_the_parent_to_reap(self):
         # The stop command is not the product's parent, just as for an
         # evaluation launched by an earlier controller pass. Keep the child
@@ -149,14 +209,11 @@ class ProjectLaunchTest(unittest.TestCase):
                         os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOWAIT)
                     else:
                         self.assertEqual("ready", proc.stdout.readline().strip())
-                    state_file = self.new_state_file()
-                    state_file.write_text(json.dumps({"pid": proc.pid}))
                     result = subprocess.run(
-                        [str(TOOL), "stop", "--state-file", str(state_file)],
+                        [str(TOOL), "stop", "--pid", str(proc.pid)],
                         text=True, capture_output=True, timeout=3)
                     self.assertEqual(0, result.returncode, result.stderr)
                     self.assertTrue(json.loads(result.stdout)["stopped"])
-                    self.assertFalse(state_file.exists())
                     self.assertIsNotNone(proc.wait(timeout=1))
                 finally:
                     proc.kill()
@@ -230,9 +287,13 @@ class ProjectLaunchTest(unittest.TestCase):
                 env={**os.environ, "FACTORY_LAUNCH_ID": launch_id})
             child = int(proc.stdout.readline().strip())
             state_file = self.new_state_file()
+            commit = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+                                    text=True, capture_output=True, check=True).stdout.strip()
+            Path(f"{worktree}.owner").write_text(json.dumps({
+                "launch_id": launch_id, "repo_root": str(ROOT), "commit": commit}))
             state_file.write_text(json.dumps({
                 "pid": proc.pid, "process_group": proc.pid, "launch_id": launch_id,
-                "worktree": str(worktree), "repo_root": str(ROOT),
+                "worktree": str(worktree), "repo_root": str(ROOT), "commit": commit,
             }))
             try:
                 first = self.stop(state_file=state_file, check=False)

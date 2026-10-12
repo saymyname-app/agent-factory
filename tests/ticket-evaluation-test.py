@@ -183,6 +183,8 @@ class TicketEvaluationTest(unittest.TestCase):
             "SPEC_INTEGRATION_WORK_DIR": str(self.work),
             "TICKET_EVALUATION_DISPATCH_DOOR_BIN": str(FAKE_EVALUATOR),
             "TICKET_EVALUATION_STATE_DIR": str(self.launches_dir),
+            "OUTCOME_EVALUATION_STATE_DIR": str(self.tmp / "outcome-launches"),
+            "EVALUATION_CAPACITY_STATE_DIR": str(self.tmp / "capacity"),
             "TICKET_EVALUATION_FAKE_LOG": str(self.door_log),
             "TICKET_EVALUATION_FAKE_PLAN": str(self.plan),
             "TICKET_EVALUATION_FAKE_BRIEFS": str(self.briefs),
@@ -248,6 +250,9 @@ class TicketEvaluationTest(unittest.TestCase):
         (config / "projects" / f"{RIG}.toml").write_text(f'rig_dir = "{self.repo}"\n')
         profile = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
         profile["rigs"] = [RIG]
+        profile["launch"]["datasets"] = {"content": profile["launch"]["datasets"]["content"]}
+        for screen in profile["launch"]["screens"]:
+            screen["states"] = ["content"]
         self.profile.write_text(json.dumps(profile))
 
     def settings(self, **evaluation):
@@ -520,6 +525,7 @@ class TicketEvaluationTest(unittest.TestCase):
                           "evidence": self.capture("evaluation.c2", product, "/health")}],
             "demonstration_line": {"text": DEMONSTRATION, "state": "observed",
                                    "evidence": self.capture("evaluation.demo", product)},
+            "coverage": [{"dataset": product["dataset"], "evidence": "evaluation.c1"}],
         }
         result.update(changes)
         return result
@@ -569,10 +575,11 @@ class TicketEvaluationTest(unittest.TestCase):
         self.assertFalse(lifecycle["port_open_after_stop"])
         self.assertFalse(lifecycle["process_alive_after_stop"])
         self.assertEqual([], lifecycle["processes_after_stop"])
-        self.assertIn(int(brief["environments"][0]["address"].rsplit(":", 1)[1]), lifecycle["existing_ports_after"])
+        self.assertNotIn(int(brief["environments"][0]["address"].rsplit(":", 1)[1]), lifecycle["existing_ports_before"])
+        self.assertTrue(lifecycle["sentinel_survived"])
         reference, = observation["observation"]["references"]
         self.assertEqual(0, reference["anchors"]["exit_code"])
-        self.assertEqual(2, len(reference["datasets"]))
+        self.assertEqual(1, len(reference["datasets"]))
         self.assertTrue(all(d["identical"] for d in reference["datasets"]))
         self.assertEqual(observation, self.tool("brief", env=SESSION)["controller_observation"])
         request = self.evaluation()["request"]
@@ -612,6 +619,20 @@ class TicketEvaluationTest(unittest.TestCase):
         handed["criteria"][1].update(state="not_observed", evidence=report["piece"], reason="référence inaccessible")
         self.assertEqual("return_to_author", self.recorded(handed)["outcome"])
         self.assertFalse(self.tool("verdict")["favorable"])
+
+    def test_recipe_establishing_ticket_refuses_failed_lifecycle_before_primary_launch(self):
+        files = self.realized()
+        files["config/project-descriptors/fx.json"] = self.profile.read_text()
+        files[APP] = "raise SystemExit('broken launch')\n"
+        self.finished_slice(files)
+        tracker = json.loads(self.tracker.read_text())
+        tracker["beads"][SLICE]["metadata"]["gc.flow.establishes_launch_recipe"] = True
+        self.tracker.write_text(json.dumps(tracker))
+
+        settled = self.settle(expect=1)
+
+        self.assertIn("lifecycle preflight failed", settled["refused"][0]["reason"])
+        self.assertEqual([], self.launches())
 
     def test_recipe_establishing_ticket_refuses_missing_committed_profile(self):
         self.finished_slice(self.realized())
@@ -723,7 +744,7 @@ class TicketEvaluationTest(unittest.TestCase):
         settled = self.settle()
 
         request = self.evaluation()["request"]
-        self.assertEqual(["content", "empty"], [entry["dataset"] for entry in request["environment"]])
+        self.assertEqual(["content"], [entry["dataset"] for entry in request["environment"]])
         self.assertEqual(request["environment"][0]["address"], settled["launched"][0]["environment"][0]["address"])
         for product in request["environment"]:
             launch = json.loads(Path(product["state_file"]).read_text())
@@ -734,6 +755,58 @@ class TicketEvaluationTest(unittest.TestCase):
             self.assertNotIn("fixture-uncommitted", page)
         captured = self.piece(self.capture("evaluation.c1", request["environment"][0]))
         self.assertEqual((request["environment"][0]["address"], tip), (captured["address"], captured["commit"]))
+
+    def test_datasets_open_on_demand_with_one_live_product_and_separate_proofs(self):
+        profile = json.loads(self.profile.read_text())
+        original = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
+        profile["launch"]["datasets"]["empty"] = original["launch"]["datasets"]["empty"]
+        profile["launch"]["screens"][0]["states"] = ["content", "empty"]
+        self.profile.write_text(json.dumps(profile))
+        tip = self.finished_slice(self.realized())
+        self.evaluator("silent")
+        self.settle()
+        request = self.evaluation()["request"]
+        self.assertEqual(["content"], [entry["dataset"] for entry in request["environment"]])
+        first = request["environment"][0]
+        handed = self.handed(tip, request)
+        asked = self.tool("product", SLICE, "--dataset", "empty", env=SESSION)
+        self.assertFalse(asked["ready"])
+        settled = self.settle()
+        self.assertEqual([SLICE], [entry["ticket"] for entry in settled["product_ready"]])
+        request = self.evaluation()["request"]
+        self.assertEqual(["content", "empty"], [entry["dataset"] for entry in request["environment"]])
+        self.assertFalse(Path(first["state_file"]).exists())
+        second = request["environment"][-1]
+        self.assertEqual([second["state_file"]], self.evaluation()["live"])
+        self.assertEqual(tip, json.loads(Path(second["state_file"]).read_text())["commit"])
+        self.assertTrue(self.tool("product", SLICE, "--dataset", "empty", env=SESSION)["ready"])
+        handed["coverage"].append({"dataset": "empty", "evidence": self.capture("evaluation.empty", second)})
+        self.recorded(handed)
+        self.assertTrue(self.tool("verdict")["favorable"])
+
+    def test_open_legacy_multi_game_request_cannot_record_without_coverage(self):
+        profile = json.loads(self.profile.read_text())
+        original = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
+        profile["launch"]["datasets"]["empty"] = original["launch"]["datasets"]["empty"]
+        profile["launch"]["screens"][0]["states"] = ["content", "empty"]
+        self.profile.write_text(json.dumps(profile))
+        tip = self.finished_slice(self.realized())
+        self.evaluator("silent")
+        self.settle()
+        request = self.evaluation()["request"]
+        handed = self.handed(tip, request)
+        self.tool("product", SLICE, "--dataset", "empty", env=SESSION)
+        self.settle()
+        tracker = json.loads(self.tracker.read_text())
+        metadata = tracker["beads"][SLICE]["metadata"]
+        legacy = json.loads(metadata["gc.flow.evaluation"])
+        self.assertEqual(2, len(legacy["request"]["environment"]))
+        legacy["request"].pop("datasets")
+        metadata["gc.flow.evaluation"] = json.dumps(legacy)
+        self.tracker.write_text(json.dumps(tracker))
+        handed.pop("coverage")
+
+        self.record_refused(handed, "couverture")
 
     def test_settle_on_a_project_without_a_named_dataset_is_refused_and_launches_no_product(self):
         """T38 (af-8o4jcp): no dataset declared, so nothing is launched and
@@ -1083,6 +1156,27 @@ class TicketEvaluationTest(unittest.TestCase):
         # A second pass does nothing more.
         self.assertEqual([], self.settle()["started"])
 
+    def test_prefactoring_probes_each_game_sequentially_with_separate_evidence(self):
+        profile = json.loads(self.profile.read_text())
+        original = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
+        profile["launch"]["datasets"]["empty"] = original["launch"]["datasets"]["empty"]
+        profile["launch"]["screens"][0]["states"] = ["content", "empty"]
+        self.profile.write_text(json.dumps(profile))
+        tip = self.finished_prefactoring()
+
+        settled = self.settle()
+
+        self.assertEqual([PREFACTORING], [entry["ticket"] for entry in settled["started"]])
+        (round_,) = self.evaluation(PREFACTORING)["rounds"]
+        self.assertEqual(["content", "empty"], [entry["dataset"] for entry in round_["environment"]])
+        self.assertEqual(["content", "empty"], [entry["dataset"] for entry in round_["coverage"]])
+        for entry, coverage in zip(round_["environment"], round_["coverage"]):
+            piece = self.piece(coverage["evidence"], PREFACTORING)
+            self.assertEqual((tip, entry["address"], 0),
+                             (piece["commit"], piece["address"], piece["exit_code"]))
+        self.assertTrue(self.tool("verdict", PREFACTORING)["favorable"])
+        self.assertEqual([], self.launch_records())
+
     def test_a_prefactoring_whose_product_does_not_start_gets_an_unfavorable_verdict(self):
         tip = self.finished_prefactoring({APP: "raise SystemExit('le produit ne démarre plus')\n"})
         self.settings(timeout_seconds=3600, start_timeout_seconds=2)
@@ -1132,7 +1226,7 @@ class TicketEvaluationTest(unittest.TestCase):
         self.assertEqual(DEMONSTRATION, brief["demonstration_line"])
         self.assertEqual([{"number": 1, "text": CRITERION}, {"number": 2, "text": SECOND_CRITERION}], brief["criteria"])
         self.assertEqual(tip, brief["commit"])
-        self.assertEqual(["content", "empty"], [entry["dataset"] for entry in brief["environments"]])
+        self.assertEqual(["content"], [entry["dataset"] for entry in brief["environments"]])
         for forbidden in (HANDOFF_PROSE, "PROSE-DU-HANDOFF", COMMIT_PROSE, "handoff", "diff", str(self.repo),
                           branch_of(SLICE), NOTE, self.base, "files_changed"):
             self.assertNotIn(forbidden, given)

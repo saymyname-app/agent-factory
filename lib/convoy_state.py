@@ -1216,6 +1216,31 @@ def evaluation_environment(value: Any, launched: bool) -> list[dict[str, Any]]:
     return value
 
 
+def evaluation_datasets(value: Any) -> list[str | None]:
+    if (not isinstance(value, list) or not value or
+            any(dataset is not None and (not isinstance(dataset, str) or not dataset.strip()) for dataset in value) or
+            len({str(dataset) for dataset in value}) != len(value)):
+        raise Refusal(f"jeux de données de l'évaluation mal formés : {value!r}")
+    return value
+
+
+def evaluation_coverage(value: Any, datasets: list[str | None]) -> list[dict[str, str]]:
+    if not isinstance(value, list) or len(value) != len(datasets):
+        raise Refusal("une pièce de couverture par jeu déclaré est exigée")
+    names = []
+    for item in value:
+        if not isinstance(item, dict) or set(item) != {"dataset", "evidence"}:
+            raise Refusal(f"couverture de jeu mal formée : {item!r}")
+        if item["dataset"] is not None and not isinstance(item["dataset"], str):
+            raise Refusal(f"jeu de couverture mal formé : {item!r}")
+        if not isinstance(item["evidence"], str) or not PIECE_RE.match(item["evidence"]):
+            raise Refusal(f"pièce de couverture de jeu mal formée : {item!r}")
+        names.append(item["dataset"])
+    if set(names) != set(datasets) or len(set(names)) != len(names):
+        raise Refusal("la couverture ne nomme pas chaque jeu déclaré exactement une fois")
+    return value
+
+
 def evaluation_criteria(value: Any) -> list[str]:
     if not isinstance(value, list) or not value or any(not isinstance(text, str) or not text.strip() for text in value):
         raise Refusal(f"critères de l'évaluation absents ou mal formés : {value!r}")
@@ -1232,14 +1257,24 @@ def evaluation_launches(value: Any) -> list[dict[str, Any]]:
 
 
 def evaluation_request(value: Any) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) != {"commit", "criteria", "demonstration_line", "roles", "environment",
-                                                      "launches", "at"}:
+    required = {"commit", "criteria", "demonstration_line", "roles", "environment", "launches", "at"}
+    if not isinstance(value, dict) or not required <= set(value) or set(value) - required - {"datasets", "wanted"}:
         raise Refusal(f"demande d'évaluation mal formée : {value!r}")
+    if "datasets" in value:
+        evaluation_datasets(value["datasets"])
+    if "wanted" in value:
+        wanted = value["wanted"]
+        if (not isinstance(wanted, dict) or set(wanted) != {"dataset", "fresh", "at"} or
+                wanted["dataset"] not in value.get("datasets", []) or not isinstance(wanted["fresh"], bool)):
+            raise Refusal(f"jeu demandé mal formé : {wanted!r}")
+        single_line(wanted["at"], "date de demande du jeu")
     valid_commit(value["commit"], "commit de l'évaluation")
     evaluation_criteria(value["criteria"])
     valid_demonstration_line(value["demonstration_line"])
     evaluation_roles(value["roles"])
     evaluation_environment(value["environment"], launched=True)
+    if "datasets" in value and any(entry["dataset"] not in value["datasets"] for entry in value["environment"]):
+        raise Refusal("produit d'un jeu absent de la demande d'évaluation")
     evaluation_launches(value["launches"])
     return value
 
@@ -1301,12 +1336,15 @@ def evaluation_round(value: Any) -> dict[str, Any]:
     if kind == "startup":
         # A prefactoring: no Evaluator session, code checked that the product
         # starts and that its probe answers (Spec §7).
-        if set(value) - common - {"started", "evidence", "environment", "detail"} or not isinstance(value.get("started"), bool):
+        if set(value) - common - {"started", "evidence", "environment", "coverage", "detail"} or not isinstance(value.get("started"), bool):
             raise Refusal(f"contrôle de démarrage mal formé : {value!r}")
         if value["started"]:
             if not isinstance(value.get("evidence"), str) or not PIECE_RE.match(value["evidence"]) or "detail" in value:
                 raise Refusal(f"contrôle de démarrage sans pièce de preuve : {value!r}")
             evaluation_environment(value.get("environment"), launched=False)
+            if "coverage" in value:
+                evaluation_coverage(value["coverage"], list(dict.fromkeys(
+                    entry["dataset"] for entry in value["environment"])))
         else:
             single_line(value.get("detail"), "précision du démarrage manqué")
             if "evidence" in value or "environment" in value:
@@ -1314,7 +1352,8 @@ def evaluation_round(value: Any) -> dict[str, Any]:
         if outcome != ("favorable" if value["started"] else "return_to_author"):
             raise Refusal("issue du contrôle de démarrage qui n'est pas celle de son résultat")
         return value
-    if set(value) != common | {"criteria", "demonstration_line", "roles", "environment", "recorded_by"}:
+    required = common | {"criteria", "demonstration_line", "roles", "environment", "recorded_by"}
+    if not required <= set(value) or set(value) - required - {"coverage"}:
         raise Refusal(f"passe d'évaluation mal formée : {value!r}")
     if not isinstance(value["criteria"], list) or not value["criteria"]:
         raise Refusal(f"passe d'évaluation sans état par critère : {value['criteria']!r}")
@@ -1325,6 +1364,8 @@ def evaluation_round(value: Any) -> dict[str, Any]:
         raise Refusal("ligne de démonstration : numéro inattendu")
     evaluation_roles(value["roles"])
     evaluation_environment(value["environment"], launched=False)
+    if "coverage" in value:
+        evaluation_coverage(value["coverage"], list(dict.fromkeys(entry["dataset"] for entry in value["environment"])))
     single_line(value["recorded_by"], "session de l'Evaluator")
     if outcome != evaluation_outcome(evaluation_items(value)):
         raise Refusal("issue d'évaluation qui n'est pas celle de ses états")
@@ -2300,12 +2341,23 @@ def outcome_notes(value: Any, name: str) -> Any:
 
 
 def outcome_request(value: Any) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) != {"commit", "stories", "roles", "environment", "launches", "at"}:
+    required = {"commit", "stories", "roles", "environment", "launches", "at"}
+    if not isinstance(value, dict) or not required <= set(value) or set(value) - required - {"datasets", "wanted"}:
         raise Refusal(f"demande d'Outcome Evaluation mal formée : {value!r}")
+    if "datasets" in value:
+        evaluation_datasets(value["datasets"])
+    if "wanted" in value:
+        wanted = value["wanted"]
+        if (not isinstance(wanted, dict) or set(wanted) != {"dataset", "fresh", "at"} or
+                wanted["dataset"] not in value.get("datasets", []) or not isinstance(wanted["fresh"], bool)):
+            raise Refusal(f"jeu demandé mal formé : {wanted!r}")
+        single_line(wanted["at"], "date de demande du jeu")
     valid_commit(value["commit"], "commit de l'Outcome Evaluation")
     outcome_stories(value["stories"])
     outcome_roles(value["roles"])
     evaluation_environment(value["environment"], launched=True)
+    if "datasets" in value and any(entry["dataset"] not in value["datasets"] for entry in value["environment"]):
+        raise Refusal("produit d'un jeu absent de la demande d'Outcome Evaluation")
     evaluation_launches(value["launches"])
     return value
 
@@ -2327,7 +2379,7 @@ def outcome_of_stories(stories: list[dict[str, Any]]) -> str:
 def outcome_round(value: Any) -> dict[str, Any]:
     fields = {"commit", "stories", "exploration", "fidelity_deviations", "repairs", "contradictions", "outcome", "verdict",
               "roles", "environment", "recorded_by", "at"}
-    if not isinstance(value, dict) or set(value) != fields:
+    if not isinstance(value, dict) or not fields <= set(value) or set(value) - fields - {"coverage"}:
         raise Refusal(f"passe d'Outcome Evaluation mal formée : {value!r}")
     valid_commit(value["commit"], "commit de l'Outcome Evaluation")
     if not isinstance(value["stories"], list) or not value["stories"]:
@@ -2368,6 +2420,8 @@ def outcome_round(value: Any) -> dict[str, Any]:
         raise Refusal("issue ou verdict d'Outcome Evaluation qui n'est pas celui de ses états")
     outcome_roles(value["roles"])
     evaluation_environment(value["environment"], launched=False)
+    if "coverage" in value:
+        evaluation_coverage(value["coverage"], list(dict.fromkeys(entry["dataset"] for entry in value["environment"])))
     single_line(value["recorded_by"], "session de l'Evaluator")
     return value
 
@@ -4015,18 +4069,21 @@ def cmd_open_evaluation(args: argparse.Namespace) -> int:
         raise Refusal(f"le ticket {args.ticket} n'a aucun critère d'acceptation sous « ## Acceptance criteria » : rien à évaluer")
     line = valid_demonstration_line(metadata.get(KEY_DEMONSTRATION))
     given = json_argument(args.file, "demande d'évaluation")
-    unknown = sorted(set(given) - {"roles", "environment"})
+    unknown = sorted(set(given) - {"roles", "environment", "datasets"})
     if unknown:
         raise Refusal(f"champs inconnus dans la demande d'évaluation : {', '.join(unknown)}")
     roles = evaluation_roles(given.get("roles"))
     environment = evaluation_environment(given.get("environment"), launched=True)
+    datasets = evaluation_datasets(given["datasets"]) if "datasets" in given else None
     last = record["rounds"][-1] if record["rounds"] else None
     lifts = park_lifts_record(metadata[KEY_PARK_LIFTS]) if KEY_PARK_LIFTS in metadata else []
     if last and last["commit"] == commit and last["verdict"] is not None and not retry_after_lift(last, lifts):
         raise Refusal(f"le ticket {args.ticket} est déjà évalué au commit {commit} ({last['outcome']})")
     request = record.get("request")
     wanted = {"commit": commit, "criteria": criteria, "demonstration_line": line}
-    if request and {name: request[name] for name in wanted} == wanted:
+    if datasets is not None:
+        wanted["datasets"] = datasets
+    if request and {name: request.get(name) for name in wanted} == wanted:
         if request["roles"] == roles and request["environment"] == environment:
             return done(args.convoy, args.ticket, {})
         # The same evaluation on products launched again: its launches stay counted.
@@ -4035,6 +4092,48 @@ def cmd_open_evaluation(args: argparse.Namespace) -> int:
         record["request"] = {**wanted, "roles": roles, "environment": environment, "launches": [], "at": now()}
     record["live"] = list(dict.fromkeys(
         [entry["state_file"] for entry in environment] + record.get("live", [])))
+    values = {KEY_EVALUATION: encode(evaluation_record(encode(record)))}
+    write_metadata(args.ticket, values)
+    return done(args.convoy, args.ticket, values)
+
+
+def cmd_want_evaluation_product(args: argparse.Namespace) -> int:
+    """An Evaluator requests a dataset; controller code opens it later."""
+    ticket, metadata, record = evaluation_target(args)
+    request = record.get("request")
+    if not request or "datasets" not in request or request["commit"] != args.commit:
+        raise Refusal("aucune évaluation à la pointe déclarée pour ce jeu")
+    if KEY_STOP in metadata or KEY_PARK in metadata or args.dataset not in request["datasets"]:
+        raise Refusal("ticket arrêté, garé ou jeu absent de la demande")
+    wanted = request.get("wanted")
+    if wanted and wanted["dataset"] == args.dataset:
+        return done(args.convoy, args.ticket, {})
+    request["wanted"] = {"dataset": args.dataset, "fresh": args.fresh, "at": now()}
+    values = {KEY_EVALUATION: encode(evaluation_record(encode(record)))}
+    write_metadata(args.ticket, values)
+    return done(args.convoy, args.ticket, values)
+
+
+def cmd_append_evaluation_product(args: argparse.Namespace) -> int:
+    """Add one exact product after the previous active product was stopped."""
+    ticket, metadata, record = evaluation_target(args)
+    request = record.get("request")
+    if not request or "datasets" not in request or request["commit"] != args.commit:
+        raise Refusal("aucune évaluation à la pointe déclarée pour ce produit")
+    if KEY_STOP in metadata or KEY_PARK in metadata:
+        raise Refusal("le ticket est arrêté ou garé : aucun produit nouveau")
+    if record.get("live"):
+        raise Refusal("un produit de cette évaluation occupe encore son créneau")
+    given = json_argument(args.file, "produit d'évaluation")
+    entry = evaluation_environment([given], launched=True)[0]
+    if entry["dataset"] not in request["datasets"]:
+        raise Refusal("jeu absent de la demande d'évaluation")
+    if any(old["state_file"] == entry["state_file"] or old["address"] == entry["address"]
+           for old in request["environment"]):
+        raise Refusal("produit déjà inscrit dans cette évaluation")
+    request["environment"].append(entry)
+    request.pop("wanted", None)
+    record["live"] = [entry["state_file"]]
     values = {KEY_EVALUATION: encode(evaluation_record(encode(record)))}
     write_metadata(args.ticket, values)
     return done(args.convoy, args.ticket, values)
@@ -4115,7 +4214,7 @@ def cmd_record_evaluation(args: argparse.Namespace) -> int:
     problems = [
         "le verdict est calculé par du code, jamais donné par l'Evaluator" if name in ("verdict", "outcome")
         else f"champ inconnu : {name}"
-        for name in sorted(set(given) - {"commit", "criteria", "demonstration_line", "recorded_by"})]
+        for name in sorted(set(given) - {"commit", "criteria", "demonstration_line", "coverage", "recorded_by"})]
     if given.get("commit") != request["commit"]:
         problems.append(f"l'évaluation rendue porte sur le commit {given.get('commit')!r}, la demande sur {request['commit']}")
     recorded_by = given.get("recorded_by")
@@ -4149,6 +4248,21 @@ def cmd_record_evaluation(args: argparse.Namespace) -> int:
             by_number[number], f"critère {number}", text, metadata, request["commit"], problems)})
     line = given_state(given.get("demonstration_line"), "ligne de démonstration", request["demonstration_line"],
                        metadata, request["commit"], problems)
+    coverage = None
+    declared = request.get("datasets") or list(dict.fromkeys(
+        entry["dataset"] for entry in request["environment"]))
+    if "datasets" in request or len(declared) > 1:
+        try:
+            coverage = evaluation_coverage(given.get("coverage"), declared)
+        except Refusal as exc:
+            problems.append(str(exc))
+        if coverage:
+            for item in coverage:
+                refusal = evidence_at(metadata, item["evidence"], request["commit"])
+                if refusal:
+                    problems.append(f"couverture du jeu {item['dataset']} : {refusal}")
+    elif "coverage" in given:
+        problems.append("couverture non demandée par cette évaluation")
     if problems:
         raise Refusal("évaluation hors contrat : " + " ; ".join(problems))
     at = now()
@@ -4157,6 +4271,8 @@ def cmd_record_evaluation(args: argparse.Namespace) -> int:
         "roles": request["roles"],
         "environment": [{"dataset": entry["dataset"], "address": entry["address"]} for entry in request["environment"]],
         "recorded_by": recorded_by.strip(), "at": at}
+    if coverage is not None:
+        round_["coverage"] = coverage
     round_["outcome"] = evaluation_outcome(evaluation_items(round_))
     round_["verdict"] = verdict_of_outcome(round_["outcome"])
     record["rounds"].append(evaluation_round(round_))
@@ -4196,8 +4312,18 @@ def cmd_record_startup(args: argparse.Namespace) -> int:
         if refusal:
             raise Refusal(f"contrôle de démarrage sans Evidence Record valide : {refusal}")
         given = json_argument(args.file, "environnement du contrôle de démarrage")
-        round_.update(started=True, evidence=args.piece, outcome="favorable",
-                      environment=evaluation_environment(given.get("environment"), launched=False))
+        environment = evaluation_environment(given.get("environment"), launched=False)
+        datasets = list(dict.fromkeys(entry["dataset"] for entry in environment))
+        coverage = given.get("coverage")
+        if coverage is not None or len(datasets) > 1:
+            coverage = evaluation_coverage(coverage, datasets)
+            for item in coverage:
+                refusal = evidence_at(metadata, item["evidence"], commit)
+                if refusal:
+                    raise Refusal(f"couverture du jeu {item['dataset']} : {refusal}")
+        round_.update(started=True, evidence=args.piece, outcome="favorable", environment=environment)
+        if coverage is not None:
+            round_["coverage"] = coverage
     else:
         round_.update(started=False, detail=single_line(args.detail, "précision du démarrage manqué"),
                       outcome="return_to_author")
@@ -4234,8 +4360,10 @@ def cmd_release_evaluation(args: argparse.Namespace) -> int:
     held = [path for path in args.state_file if path in used]
     if held and args.withdraw:
         del record["request"]
-    elif held and KEY_STOP not in metadata:
+    elif held and not args.switch and KEY_STOP not in metadata:
         raise Refusal(f"une évaluation est ouverte sur ce produit lancé : il ne se libère pas ({', '.join(held)})")
+    if args.switch and (args.withdraw or any(Path(path).exists() for path in args.state_file)):
+        raise Refusal("changement de jeu impossible : arrêt du produit non confirmé")
     left = [path for path in live if path not in args.state_file]
     record.pop("live", None)
     if left:
@@ -6289,18 +6417,21 @@ def cmd_open_outcome_evaluation(args: argparse.Namespace) -> int:
     if stop and stop["commit"] == commit:
         raise Refusal(f"l'Outcome Evaluation du convoi {args.convoy} est arrêtée au commit {commit} ({stop['reason']})")
     given = json_argument(args.file, "demande d'Outcome Evaluation")
-    unknown = sorted(set(given) - {"roles", "environment"})
+    unknown = sorted(set(given) - {"roles", "environment", "datasets"})
     if unknown:
         raise Refusal(f"champs inconnus dans la demande d'Outcome Evaluation : {', '.join(unknown)}")
     roles = outcome_roles(given.get("roles"))
     environment = evaluation_environment(given.get("environment"), launched=True)
+    datasets = evaluation_datasets(given["datasets"]) if "datasets" in given else None
     last = record["rounds"][-1] if record["rounds"] else None
     if last and last["commit"] == commit and last["verdict"] is not None:
         raise Refusal(f"le convoi {args.convoy} a déjà son Outcome Evaluation au commit {commit} ({last['outcome']})")
     stories = spec_of(convoy)["stories"]
     request = record.get("request")
     wanted = {"commit": commit, "stories": stories}
-    if request and {name: request[name] for name in wanted} == wanted:
+    if datasets is not None:
+        wanted["datasets"] = datasets
+    if request and {name: request.get(name) for name in wanted} == wanted:
         if request["roles"] == roles and request["environment"] == environment:
             return done(args.convoy, args.convoy, {})
         request.update(roles=roles, environment=environment)
@@ -6308,6 +6439,44 @@ def cmd_open_outcome_evaluation(args: argparse.Namespace) -> int:
         record["request"] = {**wanted, "roles": roles, "environment": environment, "launches": [], "at": now()}
     record.pop("stop", None)
     record["live"] = list(dict.fromkeys([entry["state_file"] for entry in environment] + record.get("live", [])))
+    values = {KEY_OUTCOME_EVALUATION: encode(outcome_evaluation_record(encode(record)))}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
+def cmd_want_outcome_product(args: argparse.Namespace) -> int:
+    _, _, _, record = outcome_target(args)
+    request = record.get("request")
+    if not request or "datasets" not in request or request["commit"] != args.commit or record.get("stop"):
+        raise Refusal("aucune Outcome Evaluation à la pointe déclarée pour ce jeu")
+    if args.dataset not in request["datasets"]:
+        raise Refusal("jeu absent de la demande d'Outcome Evaluation")
+    wanted = request.get("wanted")
+    if wanted and wanted["dataset"] == args.dataset:
+        return done(args.convoy, args.convoy, {})
+    request["wanted"] = {"dataset": args.dataset, "fresh": args.fresh, "at": now()}
+    values = {KEY_OUTCOME_EVALUATION: encode(outcome_evaluation_record(encode(record)))}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
+def cmd_append_outcome_product(args: argparse.Namespace) -> int:
+    _, _, _, record = outcome_target(args)
+    request = record.get("request")
+    if not request or "datasets" not in request or request["commit"] != args.commit or record.get("stop"):
+        raise Refusal("aucune Outcome Evaluation à la pointe déclarée pour ce produit")
+    if record.get("live"):
+        raise Refusal("un produit de cette Outcome Evaluation occupe encore son créneau")
+    given = json_argument(args.file, "produit d'Outcome Evaluation")
+    entry = evaluation_environment([given], launched=True)[0]
+    if entry["dataset"] not in request["datasets"]:
+        raise Refusal("jeu absent de la demande d'Outcome Evaluation")
+    if any(old["state_file"] == entry["state_file"] or old["address"] == entry["address"]
+           for old in request["environment"]):
+        raise Refusal("produit déjà inscrit dans cette Outcome Evaluation")
+    request["environment"].append(entry)
+    request.pop("wanted", None)
+    record["live"] = [entry["state_file"]]
     values = {KEY_OUTCOME_EVALUATION: encode(outcome_evaluation_record(encode(record)))}
     write_metadata(args.convoy, values)
     return done(args.convoy, args.convoy, values)
@@ -6451,7 +6620,7 @@ def cmd_record_outcome_evaluation(args: argparse.Namespace) -> int:
         "le verdict est calculé par du code, jamais donné par l'Evaluator" if name in ("verdict", "outcome")
         else "une contradiction est inscrite par du code, jamais rendue par l'Evaluator" if name == "contradictions"
         else f"champ inconnu : {name}"
-        for name in sorted(set(given) - {"commit", "stories", "repairs", "recorded_by", *OUTCOME_SECTIONS})]
+        for name in sorted(set(given) - {"commit", "stories", "repairs", "coverage", "recorded_by", *OUTCOME_SECTIONS})]
     if given.get("commit") != commit:
         problems.append(f"l'évaluation rendue porte sur le commit {given.get('commit')!r}, la porte de fin de Spec sur {commit}")
     recorded_by = given.get("recorded_by")
@@ -6505,6 +6674,21 @@ def cmd_record_outcome_evaluation(args: argparse.Namespace) -> int:
             problems.append(str(exc))
     problems += [f"user story {number} « not_observed » sans repair rédigé qui la cite" for number in not_observed
                  if number not in repairs and not any(isinstance(d, dict) and d.get("story") == number for d in drafts)]
+    coverage = None
+    declared = request.get("datasets") or list(dict.fromkeys(
+        entry["dataset"] for entry in request["environment"]))
+    if "datasets" in request or len(declared) > 1:
+        try:
+            coverage = evaluation_coverage(given.get("coverage"), declared)
+        except Refusal as exc:
+            problems.append(str(exc))
+        if coverage:
+            for item in coverage:
+                refusal = evidence_at(metadata, item["evidence"], commit)
+                if refusal:
+                    problems.append(f"couverture du jeu {item['dataset']} : {refusal}")
+    elif "coverage" in given:
+        problems.append("couverture non demandée par cette Outcome Evaluation")
     left = unclassified_findings(tickets)
     if left:
         problems.append(f"constat(s) hors ticket non classé(s) : {', '.join(left)} ; chaque constat est classé avant que "
@@ -6517,6 +6701,8 @@ def cmd_record_outcome_evaluation(args: argparse.Namespace) -> int:
         "contradictions": contradictions_of(stories, tickets), "roles": request["roles"],
         "environment": [{"dataset": entry["dataset"], "address": entry["address"]} for entry in request["environment"]],
         "recorded_by": recorded_by.strip(), "at": now()}
+    if coverage is not None:
+        round_["coverage"] = coverage
     round_["outcome"] = outcome_of_stories(stories)
     round_["verdict"] = verdict_of_outcome(round_["outcome"])
     record["rounds"].append(outcome_round(round_))
@@ -6555,8 +6741,10 @@ def cmd_release_outcome_evaluation(args: argparse.Namespace) -> int:
     held = [path for path in args.state_file if path in used]
     if held and args.withdraw:
         del record["request"]
-    elif held:
+    elif held and not args.switch:
         raise Refusal(f"une Outcome Evaluation est ouverte sur ce produit lancé : il ne se libère pas ({', '.join(held)})")
+    if args.switch and (args.withdraw or any(Path(path).exists() for path in args.state_file)):
+        raise Refusal("changement de jeu impossible : arrêt du produit non confirmé")
     left = [path for path in live if path not in args.state_file]
     record.pop("live", None)
     if left:
@@ -6712,6 +6900,13 @@ def build_parser() -> argparse.ArgumentParser:
     p = command("open-evaluation", cmd_open_evaluation)
     p.add_argument("--commit")
     p.add_argument("--file")
+    p = command("want-evaluation-product", cmd_want_evaluation_product)
+    p.add_argument("--commit")
+    p.add_argument("--dataset")
+    p.add_argument("--fresh", action="store_true")
+    p = command("append-evaluation-product", cmd_append_evaluation_product)
+    p.add_argument("--commit")
+    p.add_argument("--file")
     command("launch-evaluation", cmd_launch_evaluation).add_argument("--bead")
     command("record-evaluation", cmd_record_evaluation).add_argument("--file")
     p = command("record-startup", cmd_record_startup)
@@ -6722,6 +6917,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = command("release-evaluation", cmd_release_evaluation)
     p.add_argument("--state-file", action="append", default=[])
     p.add_argument("--withdraw", action="store_true")
+    p.add_argument("--switch", action="store_true")
     p = command("park", cmd_park)
     p.add_argument("--cause")
     p.add_argument("--detail")
@@ -6795,11 +6991,19 @@ def build_parser() -> argparse.ArgumentParser:
     p = command("open-outcome-evaluation", cmd_open_outcome_evaluation, ticket=False)
     p.add_argument("--commit")
     p.add_argument("--file")
+    p = command("want-outcome-product", cmd_want_outcome_product, ticket=False)
+    p.add_argument("--commit")
+    p.add_argument("--dataset")
+    p.add_argument("--fresh", action="store_true")
+    p = command("append-outcome-product", cmd_append_outcome_product, ticket=False)
+    p.add_argument("--commit")
+    p.add_argument("--file")
     command("launch-outcome-evaluation", cmd_launch_outcome_evaluation, ticket=False).add_argument("--bead")
     command("record-outcome-evaluation", cmd_record_outcome_evaluation, ticket=False).add_argument("--file")
     p = command("release-outcome-evaluation", cmd_release_outcome_evaluation, ticket=False)
     p.add_argument("--state-file", action="append", default=[])
     p.add_argument("--withdraw", action="store_true")
+    p.add_argument("--switch", action="store_true")
     p = command("stop-outcome-evaluation", cmd_stop_outcome_evaluation, ticket=False)
     p.add_argument("--commit")
     p.add_argument("--reason")

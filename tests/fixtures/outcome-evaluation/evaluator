@@ -30,7 +30,9 @@ one entry per call, the last one repeated:
     "door-refuses"                  the door refuses the dispatch
     "door-defers"                   the door defers the dispatch (exit 75)
 """
+import atexit
 import json
+import time
 import os
 import re
 import subprocess
@@ -77,6 +79,44 @@ brief = json.loads(asked.stdout)
 given = step if isinstance(step, dict) else {}
 
 
+def product_for(dataset):
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        proc = subprocess.run([TOOL, "product", convoy, "--dataset", dataset], env=session, capture_output=True, text=True)
+        if proc.returncode:
+            raise RuntimeError(proc.stdout + proc.stderr)
+        answer = json.loads(proc.stdout)
+        if answer["ready"]:
+            return {"dataset": dataset, "address": answer["address"],
+                    "launch_state": answer["launch_state"]}
+        time.sleep(0.15)
+    raise RuntimeError(f"controller never opened {dataset}")
+
+
+if len(brief.get("datasets") or []) > 1:
+    # The fake Evaluator lives beyond the dispatch call, as a real routed
+    # session does. Its product requests are served by later controller passes.
+    pending = Path(str(log) + ".pending")
+    done = Path(str(log) + ".done")
+    failed = Path(str(log) + ".failed")
+    done.unlink(missing_ok=True)
+    failed.unlink(missing_ok=True)
+    pending.write_text(bead_id)
+    child = os.fork()
+    if child:
+        raise SystemExit(0)
+    os.setsid()
+    output = os.open(str(log) + ".worker", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    os.dup2(output, 1)
+    os.dup2(output, 2)
+    os.close(output)
+    outcome = {"ok": False}
+    def finish():
+        (done if outcome["ok"] else failed).write_text(bead_id)
+        pending.unlink(missing_ok=True)
+    atexit.register(finish)
+
+
 def json_file(content):
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as handle:
         json.dump(content, handle, ensure_ascii=False)
@@ -107,17 +147,17 @@ for finding in brief["findings"]:
     sys.stderr.write(proc.stdout + proc.stderr)
 
 
-def state_of(story):
+def state_of(story, product):
     """Capture the entry point the plan names for the story on the launched
     product; answer its state and the piece it rests on."""
     look = given.get("stories", {}).get(str(story["number"]), {})
-    product = next((entry for entry in brief["environments"] if entry["dataset"] == look.get("dataset")),
-                   brief["environments"][0])
     piece = f"outcome.s{story['number']}"
     captured = subprocess.run(
         [CAPTURE, "command", convoy, convoy, "--piece", piece, "--launch-state", product["launch_state"], "--",
          sys.executable, "-c", FETCH, product["address"] + look.get("path", "/")],
-        env=session, capture_output=True, text=True, check=True)
+        env=session, capture_output=True, text=True)
+    if captured.returncode:
+        raise RuntimeError(f"capture {piece} failed for {product}: {captured.stdout}{captured.stderr}")
     record = json.loads(Path(json.loads(captured.stdout)["path"]).read_text(encoding="utf-8"))
     state = {"number": story["number"], "text": story["text"], "evidence": piece}
     if record["exit_code"] == 0 and look.get("look_for", "") in record["output"]:
@@ -126,9 +166,31 @@ def state_of(story):
             "reason": f"le produit lancé ne sert pas ce que la story décrit ({look.get('path', '/')})"}
 
 
-stories = [state_of(story) for story in brief["stories"]]
+if len(brief.get("datasets") or []) > 1:
+    first = brief["environments"][0]["dataset"]
+    states = {}
+    coverage = []
+    for dataset in brief["datasets"]:
+        product = product_for(dataset)
+        for story in brief["stories"]:
+            chosen = given.get("stories", {}).get(str(story["number"]), {}).get("dataset", first)
+            if chosen == dataset:
+                states[story["number"]] = state_of(story, product)
+        piece = f"outcome.coverage.{dataset}"
+        captured = subprocess.run([CAPTURE, "command", convoy, convoy, "--piece", piece,
+                                   "--launch-state", product["launch_state"], "--",
+                                   sys.executable, "-c", FETCH, product["address"] + "/"],
+                                  env=session, capture_output=True, text=True)
+        if captured.returncode:
+            raise RuntimeError(f"capture {piece} failed for {product}: {captured.stdout}{captured.stderr}")
+        coverage.append({"dataset": dataset, "evidence": piece})
+    stories = [states[story["number"]] for story in brief["stories"]]
+else:
+    product = brief["environments"][0]
+    stories = [state_of(story, product) for story in brief["stories"]]
+    coverage = [{"dataset": product["dataset"], "evidence": stories[0]["evidence"]}]
 handed = {
-    "commit": brief["commit"], "stories": stories,
+    "commit": brief["commit"], "stories": stories, "coverage": coverage,
     "exploration": given.get("exploration", "aucun"),
     "fidelity_deviations": given.get("fidelity_deviations", "aucun"),
 }
@@ -141,5 +203,12 @@ path = json_file(handed)
 proc = subprocess.run([TOOL, "record", convoy, "--file", path], env=session, capture_output=True, text=True)
 os.unlink(path)
 sys.stderr.write(proc.stdout + proc.stderr)
-subprocess.run([GC, "bd", "close", bead_id, "--reason", "évaluation enregistrée"], capture_output=True)
+if proc.returncode:
+    raise SystemExit(proc.returncode)
+closed = subprocess.run([GC, "bd", "close", bead_id, "--reason", "évaluation enregistrée"],
+                        capture_output=True, text=True)
+if closed.returncode:
+    raise RuntimeError(closed.stdout + closed.stderr)
+if "outcome" in globals():
+    outcome["ok"] = True
 raise SystemExit(0)

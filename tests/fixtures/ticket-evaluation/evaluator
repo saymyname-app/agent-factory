@@ -24,7 +24,9 @@ one entry per call, the last one repeated:
     "door-refuses"                  the door refuses the dispatch
     "door-defers"                   the door defers the dispatch (exit 75)
 """
+import atexit
 import json
+import time
 import os
 import re
 import subprocess
@@ -70,11 +72,49 @@ if briefs:
     (Path(briefs) / f"brief-{number}.json").write_text(asked.stdout, encoding="utf-8")
 brief = json.loads(asked.stdout)
 given = step if isinstance(step, dict) else {}
+
+
+def product_for(dataset):
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        proc = subprocess.run([TOOL, "product", convoy, ticket, "--dataset", dataset], env=session, capture_output=True, text=True)
+        if proc.returncode:
+            raise RuntimeError(proc.stdout + proc.stderr)
+        answer = json.loads(proc.stdout)
+        if answer["ready"]:
+            return {"dataset": dataset, "address": answer["address"],
+                    "launch_state": answer["launch_state"]}
+        time.sleep(0.15)
+    raise RuntimeError(f"controller never opened {dataset}")
+
+
+if len(brief.get("datasets") or []) > 1:
+    # The fake Evaluator lives beyond the dispatch call, as a real routed
+    # session does. Its product requests are served by later controller passes.
+    pending = Path(str(log) + ".pending")
+    done = Path(str(log) + ".done")
+    failed = Path(str(log) + ".failed")
+    done.unlink(missing_ok=True)
+    failed.unlink(missing_ok=True)
+    pending.write_text(bead_id)
+    child = os.fork()
+    if child:
+        raise SystemExit(0)
+    os.setsid()
+    output = os.open(str(log) + ".worker", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    os.dup2(output, 1)
+    os.dup2(output, 2)
+    os.close(output)
+    outcome = {"ok": False}
+    def finish():
+        (done if outcome["ok"] else failed).write_text(bead_id)
+        pending.unlink(missing_ok=True)
+    atexit.register(finish)
 product = next((entry for entry in brief["environments"] if entry["dataset"] == given.get("dataset")),
                brief["environments"][0])
 
 
-def observe(name):
+def observe(name, product):
     """Capture the home page of the launched product, or the entry point the plan names; answer the piece
     and what it shows."""
     piece = f"evaluation.{name}"
@@ -84,8 +124,8 @@ def observe(name):
     return piece, json.loads(Path(json.loads(captured.stdout)["path"]).read_text(encoding="utf-8"))["output"]
 
 
-def state_of(name, text):
-    piece, page = observe(name)
+def state_of(name, text, product):
+    piece, page = observe(name, product)
     forced = given.get("states", {}).get(name.removeprefix("c"))
     if forced:
         return {"text": text, "evidence": piece, **forced}
@@ -95,15 +135,42 @@ def state_of(name, text):
             "reason": f"la page du produit lancé ne montre pas « {given['look_for']} »"}
 
 
-handed = {
-    "commit": brief["commit"],
-    "criteria": [{"number": item["number"], **state_of(f"c{item['number']}", item["text"])} for item in brief["criteria"]],
-    "demonstration_line": state_of("demo", brief["demonstration_line"]),
-}
+if len(brief.get("datasets") or []) > 1:
+    first = brief["environments"][0]["dataset"]
+    selected = given.get("dataset", first)
+    criteria = {}
+    line = None
+    coverage = []
+    for dataset in brief["datasets"]:
+        product = product_for(dataset)
+        if dataset == selected:
+            criteria = {item["number"]: {"number": item["number"],
+                        **state_of(f"c{item['number']}", item["text"], product)}
+                        for item in brief["criteria"]}
+            line = state_of("demo", brief["demonstration_line"], product)
+        piece, _ = observe(f"coverage.{dataset}", product)
+        coverage.append({"dataset": dataset, "evidence": piece})
+    handed = {"commit": brief["commit"], "criteria": [criteria[item["number"]] for item in brief["criteria"]],
+              "demonstration_line": line, "coverage": coverage}
+else:
+    handed = {
+        "commit": brief["commit"],
+        "criteria": [{"number": item["number"], **state_of(f"c{item['number']}", item["text"], product)}
+                     for item in brief["criteria"]],
+        "demonstration_line": state_of("demo", brief["demonstration_line"], product),
+        "coverage": [{"dataset": product["dataset"], "evidence": "evaluation.c1"}],
+    }
 with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as handle:
     json.dump(handed, handle, ensure_ascii=False)
 proc = subprocess.run([TOOL, "record", convoy, ticket, "--file", handle.name], env=session, capture_output=True, text=True)
 os.unlink(handle.name)
 sys.stderr.write(proc.stdout + proc.stderr)
-subprocess.run([GC, "bd", "close", bead_id, "--reason", "évaluation enregistrée"], capture_output=True)
+if proc.returncode:
+    raise SystemExit(proc.returncode)
+closed = subprocess.run([GC, "bd", "close", bead_id, "--reason", "évaluation enregistrée"],
+                        capture_output=True, text=True)
+if closed.returncode:
+    raise RuntimeError(closed.stdout + closed.stderr)
+if "outcome" in globals():
+    outcome["ok"] = True
 raise SystemExit(0)

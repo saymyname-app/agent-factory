@@ -76,6 +76,7 @@ class Harness(gate.Harness):
 
     def setUp(self):
         super().setUp()
+        self.outcome_profile = self.tmp / "outcome-descriptor.json"
         self.door_log = self.tmp / "outcome-door.log"
         self.plan = self.tmp / "outcome-plan.json"
         self.briefs = self.tmp / "outcome-briefs"
@@ -83,6 +84,8 @@ class Harness(gate.Harness):
         self.env.update({
             "OUTCOME_EVALUATION_DISPATCH_DOOR_BIN": str(FAKE_EVALUATOR),
             "OUTCOME_EVALUATION_STATE_DIR": str(self.launches_dir),
+            "TICKET_EVALUATION_STATE_DIR": str(self.tmp / "ticket-launches"),
+            "EVALUATION_CAPACITY_STATE_DIR": str(self.tmp / "capacity"),
             "OUTCOME_EVALUATION_FAKE_LOG": str(self.door_log),
             "OUTCOME_EVALUATION_FAKE_PLAN": str(self.plan),
             "OUTCOME_EVALUATION_FAKE_BRIEFS": str(self.briefs),
@@ -122,6 +125,10 @@ class Harness(gate.Harness):
         (config / "project-descriptors").mkdir()
         profile = json.loads((ROOT / gate.FIXTURE / "descriptor.json").read_text())
         profile["rigs"] = ["fx-rig"]
+        profile["launch"]["datasets"] = {"content": profile["launch"]["datasets"]["content"]}
+        for screen in profile["launch"]["screens"]:
+            screen["states"] = ["content"]
+        (self.tmp / "outcome-descriptor.json").write_text(json.dumps(profile))
         (config / "project-descriptors" / "fx.json").write_text(json.dumps(profile))
         self.providers(evaluator=["p-codex"])
         return base
@@ -176,7 +183,7 @@ class Harness(gate.Harness):
             self.fail(f"réponse illisible (exit {proc.returncode}) : {proc.stdout}{proc.stderr}")
 
     def settle(self, expect=0):
-        status, answer = self.tool("settle", "--profile", self.profile)
+        status, answer = self.tool("settle", "--profile", self.outcome_profile)
         self.assertEqual(expect, status, answer)
         return answer
 
@@ -212,7 +219,7 @@ class Harness(gate.Harness):
             self.declare(SLICE, out_of_ticket=list(findings))
         self.evaluator("silent")
         self.assertEqual("launched", self.settle()["action"])
-        status, brief = self.tool("brief", "--profile", self.profile, env=self.session)
+        status, brief = self.tool("brief", "--profile", self.outcome_profile, env=self.session)
         self.assertEqual(0, status, brief)
         return brief
 
@@ -236,8 +243,10 @@ class Harness(gate.Harness):
         return stories
 
     def result(self, brief, **fields):
-        return {"commit": brief["commit"], "stories": self.states(brief), "exploration": "aucun",
-                "fidelity_deviations": "aucun", **fields}
+        stories = self.states(brief)
+        return {"commit": brief["commit"], "stories": stories,
+                "coverage": [{"dataset": "content", "evidence": stories[0]["evidence"]}],
+                "exploration": "aucun", "fidelity_deviations": "aucun", **fields}
 
     def record(self, result, env=None, expect=0):
         status, answer = self.tool("record", "--file", self.json_file("outcome-result.json", result),
@@ -315,13 +324,65 @@ class OutcomeEvaluationTest(Harness):
         self.assertEqual([], self.alive())
         self.assertFalse(self.show()["unruled"])
 
+    def test_two_datasets_are_opened_one_at_a_time_with_proof_from_each(self):
+        commit = self.verified()
+        profile = json.loads((ROOT / gate.FIXTURE / "descriptor.json").read_text())
+        profile["rigs"] = ["fx-rig"]
+        self.outcome_profile.write_text(json.dumps(profile))
+        (self.root / "config" / "project-descriptors" / "fx.json").write_text(json.dumps(profile))
+        self.evaluator("silent")
+        self.assertEqual("launched", self.settle()["action"])
+        _, first_brief = self.tool("brief", "--profile", self.outcome_profile, env=self.session)
+        self.assertEqual(["content"], [entry["dataset"] for entry in first_brief["environments"]])
+        result = self.result(first_brief)
+        first = first_brief["environments"][0]
+        status, pending = self.tool("product", "--dataset", "empty", env=self.session)
+        self.assertEqual(0, status)
+        self.assertFalse(pending["ready"])
+        self.assertEqual("product_ready", self.settle()["action"])
+        self.assertFalse(Path(first["launch_state"]).exists())
+        _, second_brief = self.tool("brief", "--profile", self.outcome_profile, env=self.session)
+        self.assertEqual(["empty"], [entry["dataset"] for entry in second_brief["environments"]])
+        self.assertEqual(1, len(self.alive()))
+        second = second_brief["environments"][0]
+        self.assertEqual(commit, json.loads(Path(second["launch_state"]).read_text())["commit"])
+        result["coverage"].append({"dataset": "empty", "evidence": self.observe(second_brief, "outcome.empty")})
+        self.record(result)
+        self.assertTrue(self.verdict()["favorable"])
+
+    def test_legacy_open_multi_game_request_requires_address_bound_coverage(self):
+        self.verified()
+        profile = json.loads((ROOT / gate.FIXTURE / "descriptor.json").read_text())
+        profile["rigs"] = ["fx-rig"]
+        self.outcome_profile.write_text(json.dumps(profile))
+        (self.root / "config" / "project-descriptors" / "fx.json").write_text(json.dumps(profile))
+        self.evaluator("silent")
+        self.assertEqual("launched", self.settle()["action"])
+        _, brief = self.tool("brief", "--profile", self.outcome_profile, env=self.session)
+        result = self.result(brief)
+        self.tool("product", "--dataset", "empty", env=self.session)
+        self.assertEqual("product_ready", self.settle()["action"])
+        tracker = json.loads(self.tracker.read_text())
+        metadata = tracker["beads"][CONVOY]["metadata"]
+        legacy = json.loads(metadata["gc.flow.outcome_evaluation"])
+        self.assertEqual(2, len(legacy["request"]["environment"]))
+        legacy["request"].pop("datasets")
+        metadata["gc.flow.outcome_evaluation"] = json.dumps(legacy)
+        self.tracker.write_text(json.dumps(tracker))
+
+        result.pop("coverage")
+        self.assert_record_refused(result, "couverture")
+        result["coverage"] = [{"dataset": "content", "evidence": result["stories"][0]["evidence"]},
+                              {"dataset": "empty", "evidence": result["stories"][0]["evidence"]}]
+        self.assert_record_refused(result, "adresse")
+
     def test_the_evaluator_is_given_the_stories_of_the_spec_and_the_launched_products_and_nothing_of_the_authors(self):
         brief = self.opened(findings=[FINDING])
 
         self.assertEqual([1, 2, 3], [story["number"] for story in brief["stories"]])
         self.assertIn("sonde de santé", brief["stories"][2]["text"])
         self.assertEqual(self.show()["convoy"]["spec_end"]["commit"], brief["commit"])
-        self.assertEqual(["content", "empty"], sorted(entry["dataset"] for entry in brief["environments"]))
+        self.assertEqual(["content"], sorted(entry["dataset"] for entry in brief["environments"]))
         self.assertEqual([{"finding": FINDING_ID, "ticket": SLICE, "text": FINDING, "state": "non classé"}],
                          brief["findings"])
         # Neither a Ticket Handoff, nor a diff, nor a repository, nor a branch.
@@ -442,7 +503,7 @@ class OutcomeEvaluationTest(Harness):
 
     def test_evaluation_left_open_on_an_outdated_commit_is_withdrawn_with_its_products(self):
         brief = self.opened()
-        self.assertEqual(2, len(self.alive()))
+        self.assertEqual(1, len(self.alive()))
         result = self.result(brief)
         self.note(gate.INTEGRATION)
 
