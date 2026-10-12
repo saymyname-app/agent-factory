@@ -35,6 +35,12 @@
 # guard read, so a session heartbeating through a long trial lost its formula
 # step after 15 minutes. Proves: a fresh heartbeat_at alone keeps the claim.
 #
+# Also regression for af-cdwo4z (2026-10-12): a live author session lost its
+# step 16 minutes into one turn, a turn in which it cannot heartbeat. Proves:
+# a step whose assignee is the session that claimed it (gc.session_id) is left
+# alone while that session is alive, and is ordinary drift once it is gone; a
+# live session that is the assignee without having claimed is still drift.
+#
 # All bead ids here are synthetic fixtures (zz-fixture*), never a real af-*
 # id from the live store.
 
@@ -240,6 +246,38 @@ grep -q "zz-fixture-hb-fresh" <<<"$out" \
 grep -q "zz-fixture-hb-lease-fresh" <<<"$out" \
   && { echo "$out" >&2; fail "a bead whose holder ran gc bd heartbeat 2 minutes ago (heartbeat_at) was flagged"; }
 [ -s "$UPDATE_LOG" ] && fail "--check-only wrote to Beads"
+
+# 7. claimed step (af-cdwo4z): the assignee is the session that claimed the
+#    step through the hook (gc.session_id), with no heartbeat for 30 minutes.
+#    Left alone while that session is alive; a live session that is the
+#    assignee without being the claimant is still drift; once the claiming
+#    session is gone the step is ordinary drift again ----------------------
+claimed_step='{
+  "id": "zz-fixture-claimed-step", "status": "in_progress", "title": "Step held through one long turn",
+  "assignee": "zz-wisp-author", "updated_at": "'"$STALE"'",
+  "metadata": {"gc.routed_to": "delivery-author", "gc.session_id": "zz-wisp-author"}
+}'
+not_the_claimant='{
+  "id": "zz-fixture-not-claimant", "status": "in_progress", "title": "Live session is the assignee, another one claimed",
+  "assignee": "zz-wisp-author", "updated_at": "'"$STALE"'",
+  "metadata": {"gc.routed_to": "delivery-author", "gc.session_id": "zz-wisp-other"}
+}'
+: > "$UPDATE_LOG"; : > "$MAIL_LOG"
+echo '{"sessions":[{"id":"zz-wisp-author","session_name":"delivery-author-zz-wisp-author","closed":false}]}' > "$SESSIONS_FILE"
+jq -n --argjson a "$claimed_step" --argjson b "$not_the_claimant" '[$a, $b]' > "$BEADS_FILE"
+out=$(guard)
+grep -q "zz-fixture-claimed-step" <<<"$out" \
+  && { echo "$out" >&2; fail "a step held by the live session that claimed it was flagged"; }
+[ "$(update_count zz-fixture-claimed-step)" = "0" ] || fail "cleared the assignee of a step its live claiming session still holds"
+grep -q "zz-fixture-not-claimant: cleared stale assignee 'zz-wisp-author'" <<<"$out" \
+  || { echo "$out" >&2; fail "a live session that is the assignee without having claimed the bead was not treated as drift"; }
+: > "$UPDATE_LOG"; : > "$MAIL_LOG"
+echo '{"sessions":[{"id":"zz-wisp-author","session_name":"delivery-author-zz-wisp-author","closed":true}]}' > "$SESSIONS_FILE"
+jq -n --argjson a "$claimed_step" '[$a]' > "$BEADS_FILE"
+out=$(guard)
+grep -q "zz-fixture-claimed-step: cleared stale assignee 'zz-wisp-author' (routed to 'delivery-author', stale 30m)" <<<"$out" \
+  || { echo "$out" >&2; fail "a claimed step whose session is closed was not repaired"; }
+echo '{"sessions":[]}' > "$SESSIONS_FILE"
 
 # af-33wuoh: the repair is a compare-and-set on the assignee this run read;
 # exit 13 (the holder changed since) leaves the bead alone, says so, pages
