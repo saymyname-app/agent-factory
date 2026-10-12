@@ -91,11 +91,13 @@ INITIAL_ITERATIONS=$(jq \
   )] | length' <<<"$BEFORE")
 [ "$INITIAL_ITERATIONS" -gt 0 ] || fail "fixture did not pre-seed the first review iteration"
 
+# --force: the gate's first iteration is still open, and Beads 1.3.1 refuses
+# to close an issue with a live blocker without it (af-1umdgn).
 run_clean gc --city "$TEST_CITY" bd update "$GATE_ID" \
   --set-metadata 'gc.outcome=fail' \
   --set-metadata 'gc.failure_reason=control_dispatch_error' \
   --set-metadata 'gc.failure_class=hard' \
-  --status=closed \
+  --status=closed --force \
   --notes 'Injected hard gate failure for deterministic fail-fast regression.' >/dev/null
 
 # One scope-control pass must abort the body and sweep both the downstream

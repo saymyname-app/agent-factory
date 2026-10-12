@@ -1124,6 +1124,7 @@ What the WSL host borrowed, and a real host must own (inventory of
 | `mvn` is Windows' Maven 3.9.9 (`/mnt/c/Dev/Tools`) | Maven 3.9.9 in `~/.local/opt` |
 | Temurin 21 in `~/.local/opt` | Ubuntu's `openjdk-21-jdk-headless` |
 | The kernel lets `bwrap` build a user namespace | Ubuntu 24.04 denies it: the script loads the AppArmor profile of `config/fixture-city-bwrap.apparmor`, without which `bin/delivery-role-sandbox` fails |
+| The kernel lets Chromium's headless shell build its sandbox | Ubuntu 24.04 denies it ("No usable sandbox!"): the script loads the AppArmor profile `factory-capture-browser`, without which `bin/evidence-capture` and `bin/prototype-fidelity` get no image and no measure; `check` starts the browser |
 | 8 GB + 6 GB of swap (`.wslconfig`) | a 4 GB swap file when the host has none |
 
 Pinned, with the checksum verified at download: `gc`, `bd`, `dolt` (the
@@ -1154,6 +1155,16 @@ With the identity set, the slice's proof passes there: an empty isolated
 city starts and runs its orders
 (`tests/convoy-manual-lifecycle-isolated-city-test.sh`, 369 s on the VM,
 272 s on the WSL host; one sample each).
+
+OBSERVED on `factory-vm`, 2026-10-12 (af-1umdgn): the first night of
+`bin/local-only-tests` there, `tests/evidence-capture-demonstration-test.sh`
+and `tests/prototype-fidelity-demonstration-test.sh` were red on "No usable
+sandbox!", and red again replayed alone. The capture browser had all its
+libraries, which is all `check` read, and no AppArmor profile. `root` now
+loads one and `check` starts the browser. The profile's text parses
+(`apparmor_parser -Q`); it is not yet loaded on `factory-vm`, where `check`
+says `MISSING capture browser does not start` until `root` is run again
+there, as root: the two tests stay red until then.
 
 ### Moving the Factory to another host (done 2026-10-11, af-o6l5rl)
 
