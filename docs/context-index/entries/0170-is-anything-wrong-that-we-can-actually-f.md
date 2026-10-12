@@ -1,2 +1,2 @@
-Need: Is anything wrong that we can actually fix (vs upstream noise)
-Read: run `./bin/factory-doctor`; see `FACTORY_TOOLS.md`
+Need: Health triage: actionable failures versus upstream
+Read: `FACTORY_TOOLS.md` (factory-doctor)

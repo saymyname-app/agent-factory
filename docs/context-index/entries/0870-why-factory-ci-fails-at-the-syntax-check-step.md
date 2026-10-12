@@ -1,2 +1,2 @@
-Need: Why a Factory CI run fails at the step "Syntax check every Python and shell entry point" before any test, what that step checks (every file of `bin/`, the modules of `lib/` and `tests/`), why a file of `bin/` whose first line names neither Python nor a shell fails it, and what keeps the step able to fail
-Read: `.github/workflows/ci.yml` (step "Syntax check every Python and shell entry point"), `tests/ci-syntax-check-test.sh`
+Need: CI syntax-check failures
+Read: `../.github/workflows/ci.yml`

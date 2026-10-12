@@ -1,2 +1,2 @@
-Need: How the publication door holds a new-flow graph to the Spec it slices and to its project (every numbered user story covered by a slice, declared operator needs lifted with `lift-need`, a launch recipe in the project profile or established by the first slice), which pointers it poses in each ticket (Spec and digest, user stories, sibling tickets with their demonstration line, seams), and what the patch door does with a revision (same contract on the resulting graph, a repair added without approval, a ticket withdrawn on a resolved Planning Exception)
-Read: `ENTRY_CONTRACT.md`, `CONVOY_STATE.md`, `SPEC_APPROVE.md` (`outline`), `./bin/ticket-graph-publish`, `tests/ticket-graph-publish-coverage-test.py`, `tests/ticket-graph-publish-new-flow-real-tracker-test.sh` (local-only)
+Need: Spec-story coverage and operator needs before publication
+Read: `ENTRY_CONTRACT.md` (coverage)

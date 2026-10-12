@@ -1,2 +1,2 @@
-Need: How an Evidence Record is captured by a tool instead of written by an agent (a command run by the tool with its real output, exit code, time and commit; a screenshot of an address of the launched product), where the evidence store lives and why it is refused inside any Git work tree, how a piece's fingerprint reaches the tracker, what `verify` refuses (file no longer matching the fingerprint, piece not produced by the tool), and how one Spec is purged alone (spec af-wf4w5r §9, user story 49, T09)
-Read: `EVIDENCE_STORE.md`, `./bin/evidence-capture`, `CONVOY_STATE.md` (`add-evidence`, `convoy.spec`), `./bin/project-launch`, `ADAPTATION_REGISTER.md` (AR-013), `tests/evidence-capture-test.py`, `tests/evidence-capture-demonstration-test.sh` (local-only)
+Need: Tool-captured evidence and demonstration records
+Read: `EVIDENCE_STORE.md`

@@ -1,2 +1,2 @@
-Need: Where the durable state of a "new flow" convoy lives (mark, Ticket Exit, verdicts tied to a commit, counters, evidence fingerprints, gate records), which closed lists a write is checked against, when a verdict stops being valid, what `show` reports as « état sans règle », and why no other script writes a `gc.flow.*` key
-Read: `CONVOY_STATE.md`, `./bin/convoy-state`, `tests/convoy-state-test.py`, `tests/convoy-state-real-tracker-test.sh` (local-only)
+Need: Convoy state, verdict fingerprints and mutation doors
+Read: `CONVOY_STATE.md`

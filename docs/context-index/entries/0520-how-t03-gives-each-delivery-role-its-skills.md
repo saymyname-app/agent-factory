@@ -1,2 +1,2 @@
-Need: How the author, reviewer and Evaluator delivery roles each get only their own Matt Pocock skills, why reviewer and Evaluator are read-only, and why `bin/dispatch-door --role` refuses a role on a provider with no passing adoption trial for its current distribution (spec af-wf4w5r §1, T03)
-Read: `FACTORY_TOOLS.md` (`./bin/role-adoption-trial`), `ADAPTATION_REGISTER.md` (AR-009), `config/delivery-roles.json`, `config/role-adoption-trials.json`, `./bin/delivery-role-sandbox`, `tests/dispatch-door-role-test.sh`
+Need: Delivery roles, skill scope and sandbox adoption
+Read: `FACTORY_TOOLS.md` (role-adoption-trial), `../config/delivery-roles.json`

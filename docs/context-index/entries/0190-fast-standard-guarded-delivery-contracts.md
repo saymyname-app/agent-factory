@@ -1,2 +1,2 @@
-Need: FAST / STANDARD / GUARDED delivery contracts and gates
+Need: FAST / STANDARD / GUARDED delivery
 Read: `DELIVERY.md`

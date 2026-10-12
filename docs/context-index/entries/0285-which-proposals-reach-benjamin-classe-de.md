@@ -1,2 +1,2 @@
-Need: Which proposals reach Benjamin (classe `decision`) and which the Mayor corrects itself (classe `maintenance`, authorized by ADR-0029)
+Need: Decision versus maintenance proposals
 Read: `decisions/ADR-0029-proposal-classes.md`

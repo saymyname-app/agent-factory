@@ -1,2 +1,2 @@
-Need: How ordinary HQ Factory implementation is dispatched without confusing an agent role with the `workspace` provider class
-Read: `FACTORY_TOOLS.md` (L'ouvrier du dépôt Factory), `decisions/ADR-0018-automatic-provider-failover.md` (§12), `./bin/factory-work-dispatch` (pre-refactor ADR — mechanism still active, not re-validated)
+Need: Dispatch HQ work to the Factory worker
+Read: `FACTORY_TOOLS.md`
