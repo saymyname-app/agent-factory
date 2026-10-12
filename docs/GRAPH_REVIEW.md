@@ -171,3 +171,12 @@ That real session is what showed that a read-only role could not run any
 that one file writable; the cached packs beside it stay read-only. Trial
 record of 2026-10-06 (Gas City 1.4.1): the session claimed the routed step,
 recorded its answers itself, and refused T2 as not demonstrable alone.
+
+## Shared role aliases
+
+A fresh role session may reuse `delivery-reviewer` as its alias. Historical
+work assigned to that alias belongs to the session recorded in `gc.session_id`,
+not every later seat using the alias. The delivery roles restrict alias-history
+reads to that exact session id while preserving their own workflow affinity.
+This also applies to authors and evaluators. An old completed review cannot
+make a new review disappear from its session's claim query (af-wet0sq).

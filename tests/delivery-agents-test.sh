@@ -46,13 +46,16 @@ case "$*" in
   "list --status in_progress --assignee="*) echo "[]" ;;
   "ready --assignee="*) echo "[]" ;;
   "list --all --assignee=$FAKE_SESSION --json --limit=0") cat "$FAKE_BD_ASSIGNED" ;;
+  "list --all --assignee=shared-alias --metadata-field gc.session_id=$FAKE_SESSION --json --limit=0") cat "$FAKE_BD_ALIAS_CURRENT" ;;
+  "list --all --assignee=shared-alias --json --limit=0") echo '[{"id":"fx-other","metadata":{"gc.root_bead_id":"fx-other-root"}}]' ;;
   "list --all --assignee="*) echo "[]" ;;
   "ready --metadata-field gc.routed_to="*" --unassigned "*) cat "$FAKE_BD_READY" ;;
   *) echo "unexpected bd call: $*" >&2; exit 2 ;;
 esac
 SH
 chmod +x "$TMP/bin/bd"
-export FAKE_BD_CALLS="$TMP/calls" FAKE_BD_ASSIGNED="$TMP/assigned.json" FAKE_BD_READY="$TMP/ready.json" FAKE_SESSION="fx-s1"
+export FAKE_BD_CALLS="$TMP/calls" FAKE_BD_ASSIGNED="$TMP/assigned.json" FAKE_BD_READY="$TMP/ready.json" FAKE_SESSION="fx-s1" FAKE_BD_ALIAS_CURRENT="$TMP/alias.json"
+echo "[]" > "$FAKE_BD_ALIAS_CURRENT"
 cat > "$FAKE_BD_READY" <<'JSON'
 [{"id": "fx-next", "metadata": {"gc.root_bead_id": "fx-root-next"}},
  {"id": "fx-mine", "metadata": {"gc.root_bead_id": "fx-root-served"}}]
@@ -60,7 +63,7 @@ JSON
 
 offered() { # <agent>: the bead ids the work query offers the session fx-s1
   : > "$FAKE_BD_CALLS"
-  out=$(PATH="$TMP/bin:$PATH" GC_SESSION_ID="$FAKE_SESSION" GC_SESSION_NAME="" GC_ALIAS="" sh -c "$(setting "$1" work_query)") \
+  out=$(PATH="$TMP/bin:$PATH" GC_SESSION_ID="$FAKE_SESSION" GC_SESSION_NAME="" GC_ALIAS="shared-alias" sh -c "$(setting "$1" work_query)") \
     || fail "the work query of $1 failed: $out"
   grep -qF -- "gc.routed_to=$1 " "$FAKE_BD_CALLS" || fail "the work query of $1 does not ask for the work routed to $1"
   printf '%s' "$out" | jq -c '[.[].id]'
@@ -77,6 +80,18 @@ for agent in delivery-author delivery-reviewer delivery-evaluator; do
   served=$(offered "$agent")
   [ "$served" = '["fx-mine"]' ] \
     || fail "a session of $agent that already served is offered the work of another workflow: $served"
+
+  # A shared alias's history from another session must not poison a fresh seat.
+  echo "[]" > "$FAKE_BD_ASSIGNED"
+  echo "[]" > "$FAKE_BD_ALIAS_CURRENT"
+  fresh=$(offered "$agent")
+  [ "$fresh" = '["fx-next","fx-mine"]' ] || fail "another session under the shared alias blocks $agent: $fresh"
+
+  # Conversely, this session's own alias-assigned work still binds its workflow.
+  echo '[{"id":"fx-own-alias","metadata":{"gc.root_bead_id":"fx-root-served"}}]' > "$FAKE_BD_ALIAS_CURRENT"
+  served=$(offered "$agent")
+  [ "$served" = '["fx-mine"]' ] || fail "own alias history is lost for $agent: $served"
+  echo "[]" > "$FAKE_BD_ALIAS_CURRENT"
 done
 
 echo "PASS: delivery-author is capped at N=$CEILING, and a session of a delivery role that served is offered no other workflow"
