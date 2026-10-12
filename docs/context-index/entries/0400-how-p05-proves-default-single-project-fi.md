@@ -1,2 +1,2 @@
-Need: How P05 proves default single-project filesystem isolation, why City registration alone grants no cross-project access, how a declared multi-project outcome exposes only its named participants, and the selected Bubblewrap enforcement mechanism plus unsupported-host behavior
-Read: `PROJECT_ISOLATION_PROTOTYPE.md`, `ADAPTATION_REGISTER.md` (AR-002), `./bin/project-isolation-oracle`, `tests/project-isolation-oracle-test.py`
+Need: Project isolation and declared cross-project access
+Read: `PROJECT_ISOLATION_PROTOTYPE.md`

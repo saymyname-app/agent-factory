@@ -1,2 +1,2 @@
-Need: Trust boundaries, secrets, and concurrency
+Need: Secrets, trust boundaries and concurrency
 Read: `SECURITY.md`

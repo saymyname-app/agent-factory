@@ -1,2 +1,2 @@
-Need: What an agent runs on the host before it opens a pull request on the Factory's repository (the rule checks and the touched tests, for every kind of change, since the repository is public and a red CI run is billed nothing; the whole battery only where runs are billed), what the rule checks are and the one command that runs them
-Read: `DELIVERY.md` ("What to run before a pull request"), `./bin/ci-run-tests` (`--rule-checks`), `./bin/ci-runner` (`mode`), `config/ci-test-seconds.tsv`, `tests/ci-run-tests-rule-checks-test.sh`
+Need: Required local checks before a Factory PR
+Read: `DELIVERY.md`

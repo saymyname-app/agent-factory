@@ -1,36 +1,20 @@
 
-## Authority order
+## Authority and minimal retrieval
 
-1. Observed runtime state: Gas City, Beads/Dolt, Git, and GitHub.
-2. Versioned Factory documentation and the affected project repositories.
-3. Current official upstream documentation and release notes.
-4. Historical Plan directeur V2.
-5. Chats and model memory as secondary context only.
+Observed Gas City/Beads/Git/GitHub > versioned Factory/project contracts >
+current official upstream documentation > historical Plan directeur V2 >
+chats/model memory. Report conflicts and repair the owning durable source
+within scope. Refresh live evidence before mutation.
 
-When sources conflict, report the conflict and repair the highest durable source
-within scope. A dated snapshot, chat summary, or generated status is never a
-replacement for a live refresh before mutation.
+- Project: nearest project `AGENTS.md`, project knowledge, relevant Beads/GitHub.
+- Factory activity: `gc status`, then relevant Beads/GitHub.
+- Health: `OPERATOR_BRIDGE.md` and its read-only check; triage with
+  `bin/factory-doctor`. Host capacity/unsaved work: `bin/factory-guard
+  --check-only` and `bin/factory-resources` (`FACTORY_TOOLS.md`).
+- Change: root/nearest instructions, named Bead and affected contract only.
+  Architecture/policy changes also read/update the relevant ADR.
 
-## Minimal session bootstrap
-
-- Project question: read that project's own repository (its rig `AGENTS.md`) and live Beads/GitHub.
-- Factory health question: read `OPERATOR_BRIDGE.md`, then run its read-only health check.
-- Host capacity, unsaved work, or "is the factory safe to touch": run `./bin/factory-guard --check-only` and `./bin/factory-resources`; see `FACTORY_TOOLS.md`.
-- Health triage: run `./bin/factory-doctor` rather than reading raw `gc doctor` — it separates what we can fix from upstream and advisory noise.
-- One-glance Factory activity: `gc status`, then Beads/GitHub.
-- Tracked change: read the root and nearest project `AGENTS.md`, the relevant Bead, and only the linked contract needed by the change.
-- Architecture or policy change: also read the relevant ADRs and update/supersede them in the same change.
-
-## Durable versus live context
-
-Durable facts include architectural decisions, safety boundaries, commands, and
-project contracts. They belong in Git. Current work, dependency state, and
-coordination pointers belong in Beads. Processes, sessions, branches, commits,
-PRs, and checks must be observed from their live systems. Do not embed volatile
-SHAs, PIDs, open-task lists, or “currently running” claims in this index.
-
-## Historical baseline
-
-The DOCX *Migration Gas City + Beads — Plan directeur A à Z V2* is the approved
-conceptual baseline dated 2026-09-12. It is historical/reference material now
-that this repository contains verified operational documentation.
+Stable contracts belong in Git; work and coordination in Beads. Observe
+processes, sessions, branches, PRs and CI live. Keep volatile SHAs, PIDs and
+backlogs out of this index. The Plan directeur V2 (2026-09-12) is historical
+conceptual context; verified operational contracts take precedence.

@@ -1,2 +1,2 @@
-Need: Which Factory file is kernel / ops / to redo, and every open finding of the last inventory
+Need: Kernel/ops inventory and open findings
 Read: `INVENTORY.md`

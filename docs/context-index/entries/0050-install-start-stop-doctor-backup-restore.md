@@ -1,2 +1,2 @@
-Need: Install/start/stop/doctor/backup/restore/recovery
+Need: Installation, backup and recovery
 Read: `OPERATIONS.md`

@@ -1,2 +1,2 @@
-Need: How B08 lets a delivery worker distinguish bounded technical repair from a semantic/topology surprise, why raising a Planning Exception parks only the affected subgraph while unrelated Ready Frontier work continues, why a duplicate raise on covered work is detected instead of double-parking, and how a behavioral/topology resolution patches only unfinished work through the same `ticket-graph-publish` door instead of a second decomposition authority
-Read: `decisions/ADR-0028-planning-exception-routing.md`, `PLANNING_EXCEPTION.md`, `ADAPTATION_REGISTER.md` (AR-003), `./bin/planning-exception`, `./bin/ticket-graph-publish patch`, `tests/planning-exception-test.py`
+Need: Planning Exceptions and affected-subgraph repair
+Read: `PLANNING_EXCEPTION.md`

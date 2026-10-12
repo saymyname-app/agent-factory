@@ -1,2 +1,2 @@
-Need: What `factory-guard`, `factory-resources`, `factory-doctor` and `provider-failover` do, and when to run them
+Need: Guard, resources, doctor and provider tools
 Read: `FACTORY_TOOLS.md`

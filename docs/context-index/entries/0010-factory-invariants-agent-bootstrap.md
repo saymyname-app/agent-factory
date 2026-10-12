@@ -1,2 +1,2 @@
-Need: Factory invariants / agent bootstrap
+Need: Factory invariants and bootstrap
 Read: `../AGENTS.md`

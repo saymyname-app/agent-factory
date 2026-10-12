@@ -1,2 +1,2 @@
-Need: How to restart the Cockpit process (`bin/cockpit restart`), what `start`, `stop` and `status` guarantee (started only once the new process listens, stopped only once it is gone, SIGKILL after SIGTERM, a pid file that names another process), and why a stop used to take up to 15 s on a quiet city
-Read: `COCKPIT.md` (« Process lifecycle »), `./bin/cockpit`, `lib/cockpit/core/process.py` (`shut_down`), `lib/cockpit/core/gc_client.py` (`_end_read`), `tests/cockpit-core-test.py` (`CockpitCliLifecycleTest`)
+Need: Cockpit process start, stop and restart
+Read: `COCKPIT.md`

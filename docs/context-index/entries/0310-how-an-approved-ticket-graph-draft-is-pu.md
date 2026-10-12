@@ -1,2 +1,2 @@
-Need: How an approved Ticket Graph Draft is published atomically (the Mayor-restriction part left with the campaign: see the ADR's 2026-09-26 amendment); `bd-publish`/`bd-patch` read the draft from a planning-plane bead bound to the approved Spec bead instead of a YAML file (A6b, W05)
-Read: `decisions/ADR-0025-approved-graph-bootstrap-scope.md`, `./bin/ticket-graph-publish`, `tests/ticket-graph-publish-test.py`
+Need: Atomic graph publication from a planning Bead
+Read: `PLANNING_RUN.md` (graph publication), `../bin/ticket-graph-publish`

@@ -1,2 +1,2 @@
-Need: What D01 (the Delivery Workflow, Spec af-wf4w5r) is known not to do: the Spec lines judged not « réalisée » by the final verification and what Benjamin decided for each, the accepted deviations of the repair tickets T37 to T52, what was never verified, and what the repair authors declared « Non fait », « Écarts » and « Constats hors ticket » in their pull requests (T32, af-m23wru)
-Read: `verification/D01-verification-finale.md` (« Limites connues de D01 : où les lire », then §6, §7, §10, §12); decisions and their dates: `bd comments af-m23wru`
+Need: D01 accepted limits and final verification
+Read: `verification/D01-verification-finale.md` (§6, 7, 10, 12); `bd comments af-m23wru`
