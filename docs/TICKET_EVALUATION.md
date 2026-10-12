@@ -97,6 +97,15 @@ kept under `TICKET_EVALUATION_STATE_DIR` (default
 sandbox of a read-only role can read; the clean copy itself sits under
 `/tmp`, which that sandbox does not show.
 
+Preparation is resumable: after 60 seconds, no additional dataset is started
+in that pass. Existing launch records at the exact commit and repository are
+reused on the next pass. No evaluation request or favorable verdict is recorded
+until all datasets are ready. An actual startup failure still stops the products
+and records the existing unfavorable startup outcome. Prepared products are
+also stopped when their ticket is parked, stopped, superseded or no longer due.
+This keeps a large prototype inventory within the order's bounded passes without
+removing datasets, extending startup attempts or weakening evidence checks.
+
 The products are launched by the pass and **outlive it**: the Evaluator
 session comes later. They are stopped by code, by the first pass after the
 states are in (or after the ticket is stopped, or a newer tip replaced the
