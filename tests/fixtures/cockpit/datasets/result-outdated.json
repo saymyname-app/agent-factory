@@ -1,0 +1,11 @@
+{
+  "generated_at": "2026-10-12T12:00:00+02:00",
+  "synthetic": true,
+  "ui": {
+    "id": "result-outdated",
+    "page": "home",
+    "state": "outdated"
+  },
+  "visible_text": "Vue d’ensemble\nExemple · vérifié à 14:42 (Paris)\nDécisions à prendre\n2\nMaintenant · demandes ouvertes\nRésultats fusionnés\n6\n7 derniers jours · preuves de fusion\nDélai de livraison\n2 h 40\nMédiane · 6 résultats fusionnés\nVérifications CI réussies\n94 %\n7 derniers jours · 47 / 50 exécutions\nActivité sur 7 jours\nDerniers runs\nTout voir\nCe qui t’attend\nLe cockpit attend ton avis\nUsine · résultat prêt\nChoisir le format d’export\nProjet Notes · décision\nUsine · Reprise du cockpit\nLe cockpit attend ton avis\n\nLes nouveaux parcours du cockpit sont prêts.\n\nCe qui a été livré\nChangements et version à essayer\n↗\nVérifications et preuves\nParcours, tests et relecture\n↗\nCe qui reste à vérifier\nVersion et sources\nEssai ↗\nAvis\nProjets\nUsine\nReprise du cockpit · À juger\n6 résultats fusionnés\n12 PR · 7 jours\nCible révisable · 2 acquis · 2 critères restants · 1 décision ouverte\n→\nNotes\nRecherche dans les notes · En cours\n3 résultats fusionnés\n7 PR · 7 jours\nCible révisable · 2 acquis · 2 critères restants · 1 décision ouverte\n→\nPortfolio\nPrésentation du projet · Fusionné\n2 résultats fusionnés\n4 PR · 7 jours\nCible révisable · 2 acquis · 2 critères restants · 1 décision ouverte\n→",
+  "production_writes": 0
+}

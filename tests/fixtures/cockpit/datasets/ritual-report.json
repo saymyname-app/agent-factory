@@ -1,0 +1,11 @@
+{
+  "generated_at": "2026-10-12T12:00:00+02:00",
+  "synthetic": true,
+  "ui": {
+    "id": "ritual-report",
+    "page": "rituals",
+    "setup": "ritualId='incidents';ritualPhase='report';ritualChosen.add('alerts');render()"
+  },
+  "visible_text": "← Rituels\nRevue d’incidents\n\nUsine · données et avancement simulés\n\n1 · Revue\n2 · Ton choix\n3 · Travail précis\n4 · Réalisation\nDeux propositions à examiner\n\nExemple : 7 signalements regroupés en 2 causes. Aucune correction lancée.\n\nRegrouper les signalements d’un même incident\nPlusieurs alertes d’exemple décrivent la même cause.\nDétection et regroupement des alertes ; aucun changement produit.\nDistinguer une lecture impossible d’un état vide\nUne source indisponible peut masquer une attente.\nLecture et affichage de fraîcheur ; aucun changement des règles de jugement.\nPreuves et limites du rapport\nPlus tard\nFaire préparer ma sélection",
+  "production_writes": 0
+}

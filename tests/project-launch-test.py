@@ -29,7 +29,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT / "bin" / "project-launch"
 DESCRIPTOR = ROOT / "tests" / "fixtures" / "delivery-fixture-city" / "descriptor.json"
-NO_LAUNCH_DESCRIPTOR = ROOT / "config" / "project-descriptors" / "agent-factory.json"
+# A real project whose profile declares no launch recipe (the Factory's own
+# declares one since af-oigubn).
+NO_LAUNCH_DESCRIPTOR = ROOT / "config" / "project-descriptors" / "saymyname.json"
 MUTATED_DATASET = ROOT / "tests" / "fixtures" / "delivery-fixture-city" / "datasets" / "content.json"
 
 
@@ -281,7 +283,7 @@ class ProjectLaunchTest(unittest.TestCase):
         error = json.loads(result.stdout)
         self.assertFalse(error["started"])
         self.assertIn("declares no launch recipe", error["error"])
-        self.assertIn("agent-factory", error["error"])
+        self.assertIn("saymyname", error["error"])
 
         self.assertEqual([], started, "the refused start left a process behind")
         self.assertFalse(state_file.exists(), "the refused start wrote a launch record")

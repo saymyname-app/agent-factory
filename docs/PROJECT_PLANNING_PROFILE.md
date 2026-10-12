@@ -161,6 +161,9 @@ holds it for Benjamin.
 - `config/project-descriptors/agent-factory.json`: rig `agent-factory`, no
   `promotion_branch` (the Factory has no Promotion Step), roadmap and
   rituals status from T03 (`docs/roadmap.toml`, `bin/rituals-status`).
+  Since T01 of the Spec af-2zseit it declares a `launch` block: the recipe
+  of the isolated cockpit, its datasets, screens and seams
+  (`docs/COCKPIT.md`, « Isolated launch »).
 - `config/project-descriptors/saymyname.json`: rigs `saymyname-backend`
   and `saymyname-frontend`, each promoting `dev` → `main`, knowledge repo
   `saymyname-app/Say-my-name-product`, roadmap `knowledge/roadmap.toml`,
@@ -206,8 +209,8 @@ is missing:
 | `anchors` | **required when the profile declares no `screens`** — the key absent, or an empty list (T50) — (the error names `launch.anchors`), not needed otherwise — the equivalent of the anchors for an interface that is **not a web page** (a command line, an API; T35, spec af-wf4w5r §12). Exactly one of: `{"equivalent": [{name, entry_point, observable}]}`, what stands for the anchors of a screen — each a unique name, the declared entry point that answers it (`"METHOD path"`) and the observable read there (a field, an exit status, a line of output); or `{"not_applicable": "<reason>"}`. An empty list, a missing reason, both forms at once, an unknown field, a duplicate name or an entry point that is not declared is rejected. `describe` renders it. |
 | `import_rule` | optional, required by `bin/tdd-step` when a seam's mode is `import_rule` — `{product_import, entry_point_import}`, two regular expressions applied to each line of a test: a line that imports the product must import one of its entry points. |
 
-A descriptor with no `launch` block at all (e.g. the Factory's own
-`agent-factory.json`) is unaffected — `describe` reports `launch: null`,
+A descriptor with no `launch` block at all (e.g. `saymyname.json`) is
+unaffected — `describe` reports `launch: null`,
 and `bin/project-launch start` refuses that project outright, naming the
 missing declaration, before anything is spawned.
 

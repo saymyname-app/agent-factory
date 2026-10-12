@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+"""cockpit-isolated — the launch recipe of the cockpit (T01, af-oigubn; Spec
+af-2zseit, user story 126).
+
+    cockpit-isolated --port PORT --dataset FILE
+
+`bin/project-launch` runs it, from a clean copy of the commit asked for, as
+the recipe the Factory's profile declares
+(`config/project-descriptors/agent-factory.json`, `launch.recipe`). It
+becomes the real `bin/cockpit run` of that copy, on 127.0.0.1:PORT, reading
+synthetic sources only:
+
+- a synthetic supervisor that answers as the installed one does
+  (`tests/fixtures/cockpit/core/fake_gc.py`, held to the real contract by
+  `tests/cockpit-fake-gc-contract-test.py`), whose city carries the name of
+  the dataset: the state the cockpit shows is the named dataset's;
+- a synthetic tracker (`tests/fixtures/cockpit/core/fake-bd`);
+- an empty environment: a temporary HOME, no local settings file, so no
+  secret, no notification, no heartbeat and no project clone; the doors
+  that change the Factory are replaced by a command that refuses.
+
+It starts no controller and no tracker, and reaches nothing of the city in
+service. A dataset that is not marked synthetic, or carries no fixed time
+(`generated_at`), is refused before anything is started.
+
+The process `bin/project-launch` holds is the cockpit itself, so stopping
+it stops the cockpit. The synthetic supervisor runs beside it and ends when
+the cockpit does, however it ended; it removes the temporary directory.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import signal
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+FIXTURES = ROOT / "tests" / "fixtures" / "cockpit"
+# A door that changes the Factory: refused, whatever is asked of it.
+REFUSING_DOOR = "/bin/false"
+# The synthetic sources never change by themselves: read them often, so the
+# cockpit shows its state as soon as it is asked.
+POLL_SECONDS = "0.2"
+
+
+def read_dataset(path: Path) -> str:
+    """The name of the state a dataset carries; exits when it is not a
+    synthetic dataset with its fixed time."""
+    try:
+        dataset = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        sys.exit(f"cockpit-isolated: dataset unreadable ({path}): {exc}")
+    if not isinstance(dataset, dict) or dataset.get("synthetic") is not True:
+        sys.exit(f"cockpit-isolated: {path} is not marked synthetic: only a synthetic dataset is served")
+    if not isinstance(dataset.get("generated_at"), str) or not dataset["generated_at"].strip():
+        sys.exit(f"cockpit-isolated: {path} carries no fixed time (generated_at)")
+    return path.stem
+
+
+def serve_synthetic_supervisor(city: str, home: str, announce: int, cockpit_alive: int) -> None:
+    """The process beside the cockpit: the synthetic supervisor of `city`.
+    It writes its address on `announce`, then lives until `cockpit_alive`
+    closes -- the cockpit ended -- and removes `home`."""
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    sys.path.insert(0, str(FIXTURES / "core"))
+    from fake_gc import FakeGc
+
+    supervisor = FakeGc(city=city).start()
+    os.write(announce, supervisor.base_url.encode("ascii"))
+    os.close(announce)
+    while os.read(cockpit_alive, 1):
+        pass
+    supervisor.stop()
+    shutil.rmtree(home, ignore_errors=True)
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="cockpit-isolated", description=__doc__)
+    parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--dataset", required=True)
+    args = parser.parse_args(argv)
+    city = read_dataset(Path(args.dataset))
+
+    home = tempfile.mkdtemp(prefix="cockpit-isolated-")
+    announce_read, announce_write = os.pipe()
+    alive_read, alive_write = os.pipe()
+    if os.fork() == 0:
+        os.close(announce_read)
+        os.close(alive_write)
+        try:
+            serve_synthetic_supervisor(city, home, announce_write, alive_read)
+        finally:
+            os._exit(0)
+    os.close(announce_write)
+    os.close(alive_read)
+    with os.fdopen(announce_read, "rb") as announced:
+        supervisor_url = announced.read().decode("ascii")
+    if not supervisor_url:
+        shutil.rmtree(home, ignore_errors=True)
+        sys.exit("cockpit-isolated: the synthetic supervisor did not start")
+    # Kept open by the cockpit for as long as it lives, and by nothing else.
+    os.set_inheritable(alive_write, True)
+
+    env = {
+        "PATH": os.environ.get("PATH", os.defpath),
+        "HOME": home,
+        "COCKPIT_HOST": "127.0.0.1",
+        "COCKPIT_PORT": str(args.port),
+        "COCKPIT_ALLOWED_ORIGIN": f"http://127.0.0.1:{args.port}",
+        "COCKPIT_BENJAMIN_LOGIN": "synthetic@example.ts.net",
+        "COCKPIT_PID_FILE": os.path.join(home, "cockpit.pid"),
+        "COCKPIT_LOCAL_CONFIG": os.path.join(home, "absent.json"),
+        "COCKPIT_GC_BASE_URL": supervisor_url,
+        "COCKPIT_BD_BIN": str(FIXTURES / "core" / "fake-bd"),
+        "COCKPIT_DESCRIPTORS_DIR": str(FIXTURES / "projects" / "descriptors"),
+        "COCKPIT_GC_BIN": REFUSING_DOOR,
+        "COCKPIT_ESCALATION_DOOR_BIN": REFUSING_DOOR,
+        "COCKPIT_PROPOSAL_DOOR_BIN": REFUSING_DOOR,
+        "COCKPIT_LOOP_GUARD_BIN": REFUSING_DOOR,
+        "COCKPIT_GC_STATUS_POLL_SECONDS": POLL_SECONDS,
+        "COCKPIT_BEADS_POLL_SECONDS": POLL_SECONDS,
+        "COCKPIT_PROJECTS_POLL_SECONDS": POLL_SECONDS,
+    }
+    os.execve(sys.executable, [sys.executable, str(ROOT / "bin" / "cockpit"), "run"], env)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

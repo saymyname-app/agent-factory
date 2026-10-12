@@ -1,0 +1,11 @@
+{
+  "generated_at": "2026-10-12T12:00:00+02:00",
+  "synthetic": true,
+  "ui": {
+    "id": "ritual-confirm",
+    "page": "rituals",
+    "setup": "ritualId='incidents';ritualPhase='confirm';ritualChosen.add('alerts');render()"
+  },
+  "visible_text": "← Rituels\nRevue d’incidents\n\nUsine · données et avancement simulés\n\n1 · Revue\n2 · Ton choix\n3 · Travail précis\n4 · Réalisation\nLancer la revue\n\nComprendre les causes récurrentes et proposer les corrections qui évitent leur retour.\n\nPérimètre\nUsine\nNotes\nPortfolio\nProduit un rapport et des propositions. Ne modifie aucun code ni paramètre.\n\nUtilise un agent et consomme des tokens. Coût exact non connu.\n\nAnnuler\nLancer la revue",
+  "production_writes": 0
+}

@@ -820,3 +820,98 @@ This is also why the write side of the Clean stop cannot be built from
 documentation alone: what gc's session list shows while a city is
 suspended, and after it resumes, has to be observed on a real suspension
 before a fake can answer like it.
+
+## Isolated launch: the cockpit at a commit, on a named dataset (T01, af-oigubn)
+
+Spec af-2zseit, user story 126 and Implementation Decision 5: an author, the
+Evaluator and the Acceptance Session launch the cockpit of the commit they
+judge, on synthetic data, without touching the city in service. The
+Factory's profile (`config/project-descriptors/agent-factory.json`, block
+`launch`, `docs/PROJECT_PLANNING_PROFILE.md`) declares how; nothing is typed
+by hand.
+
+```bash
+./bin/project-launch start config/project-descriptors/agent-factory.json \
+    --commit <sha> --dataset home-content --state-file /tmp/cockpit-launch.json
+curl -s "$(jq -r .address /tmp/cockpit-launch.json)/api/status" | jq '.gc.value.city'   # "home-content"
+./bin/project-launch stop --state-file /tmp/cockpit-launch.json
+```
+
+`bin/project-launch` checks the commit out into a clean copy, picks a free
+port of 127.0.0.1 and runs the recipe there: `bin/cockpit-isolated --port
+<port> --dataset <file>`, which becomes the real `bin/cockpit run` of that
+copy. What it gives the cockpit to read:
+
+| Source | In the isolated launch |
+|---|---|
+| supervisor | a synthetic one, `tests/fixtures/cockpit/core/fake_gc.py`, the fake `tests/cockpit-fake-gc-contract-test.py` holds to the installed supervisor; its city carries the name of the dataset |
+| tracker | `tests/fixtures/cockpit/core/fake-bd` |
+| declared projects | `tests/fixtures/cockpit/projects/descriptors/` |
+| doors that change the Factory (`gc`, escalation door, proposal door, loop guard) | a command that refuses |
+| local settings, secrets, notifications, heartbeat, project clones, Tailscale | none: a temporary HOME and no local settings file |
+
+No controller and no tracker is started. A dataset that is not marked
+`"synthetic": true`, or carries no `generated_at`, is refused before
+anything starts: the launch fails and leaves no process.
+
+The process the launcher holds is the cockpit itself, so `stop` ends it by
+its own clean stop. The synthetic supervisor runs beside it and ends when
+the cockpit does, whatever ended it; it removes the temporary HOME.
+
+**State from the dataset.** For now the named dataset gives the launched
+cockpit its city: `GET /api/status` answers `gc.value.city` with the name of
+the dataset. The content of a frozen state (its requests, runs, results) is
+not fed to the sources yet: that is the work of the ticket that delivers the
+screen of that state.
+
+**Datasets.** One per state of the seven Validated Prototypes of the Spec:
+the 76 Panorama states and the 19 Runs states, under
+`tests/fixtures/cockpit/datasets/<state>.json`. Each file is the dataset of
+the frozen prototype, byte for byte (Panorama at `632deea`, Runs at
+`d8cb462`, in the private prototype repository). A state is launched with
+`--dataset <state>`.
+
+**Screens.** `launch.screens` gives each screen of the Spec its address and
+its states, which is what `bin/prototype-fidelity` compares:
+
+| Screen (`name`) | Address | States |
+|---|---|---|
+| `vue-ensemble` | `/` | `home-*`, `result-*` (24) |
+| `projets` | `/projets` | `projects-*`, `release-expanded`, `release-estimate`, `project-missing` (6) |
+| `journal` | `/journal` | `journal-*` (10) |
+| `usine` | `/usine` | `health-*`, `factory-*` (18) |
+| `rituels` | `/rituels` | `rituals-*`, `ritual-*`, `release-confirm`, `release-review`, `release-report`, `release-saved` (14) |
+| `analyses` | `/analyses` | `analysis-*` (4) |
+| `runs-liste` | `/runs` | `runs-*` (3) |
+| `run-frise` | `/runs/run` | `run-*` (5) |
+| `job-detail` | `/runs/job` | `job-*` (11) |
+
+Only `/` and `/journal` are served today; the other addresses are declared
+for the tickets that deliver those screens, and answer 404 until then.
+
+**Criterion tests.** The profile declares two seams under
+`tests/cockpit-criteria/`: `http/` (black box: the test reaches the launched
+cockpit at `PRODUCT_ADDRESS` and nothing else) and `commands/` (import rule:
+the test runs in the tree of the product and goes through `bin/project-launch`,
+`bin/project-planning-profile`, `bin/prototype-conformance`,
+`bin/acceptance-session`, `bin/owner-answer` or `bin/outcome-promote`). The
+test command is the JUnit harness of the Delivery Fixture City
+(`tests/fixtures/delivery-fixture-city/tests/harness.py`), the one frozen
+harness path. `tests/cockpit-criteria-test.py` runs the criterion tests of
+`commands/` in CI; `tests/cockpit-criteria/regression.py` is the regression
+command: every `tests/cockpit-*-test.py` CI runs, plus the tests of the
+launcher and of the profile.
+
+Limits.
+
+- The tools of the flow read the profile in the Factory root they run from,
+  not in the branch of the ticket: a launch block that exists only on a
+  branch is passed to them with `--profile`.
+- The Validated Prototypes are private: their commits exist in the
+  repository of the delivering host only.
+  `tests/cockpit-criteria/commands/frozen-states-test.py::ApprovedReferences`
+  reads them there (or in the repository `PROTOTYPE_REFERENCES_REPO` names)
+  and is left out where they cannot be read, CI included.
+- `tests/cockpit-criteria/http/` holds no test yet, and
+  `tests/cockpit-criteria-test.py` does not launch the product for it: the
+  first ticket that writes one adds that run.

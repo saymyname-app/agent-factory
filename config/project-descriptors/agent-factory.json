@@ -2,9 +2,379 @@
   "contract": "agent-factory-project-descriptor/v1",
   "project_id": "agent-factory",
   "display_name": "Usine",
-  "rigs": ["agent-factory"],
+  "rigs": [
+    "agent-factory"
+  ],
   "knowledge_repo": "saymyname-app/agent-factory",
   "roadmap_path": "docs/roadmap.toml",
   "rituals_status_command": "bin/rituals-status",
-  "promotion_branch": {}
+  "promotion_branch": {},
+  "launch": {
+    "recipe": [
+      "{python}",
+      "bin/cockpit-isolated",
+      "--port",
+      "{port}",
+      "--dataset",
+      "{dataset}"
+    ],
+    "entry_points": [
+      {
+        "kind": "http",
+        "method": "GET",
+        "path": "/"
+      },
+      {
+        "kind": "http",
+        "method": "GET",
+        "path": "/api/status"
+      },
+      {
+        "kind": "http",
+        "method": "GET",
+        "path": "/api/requests"
+      },
+      {
+        "kind": "http",
+        "method": "GET",
+        "path": "/api/projects"
+      },
+      {
+        "kind": "http",
+        "method": "GET",
+        "path": "/api/journal"
+      },
+      {
+        "kind": "http",
+        "method": "GET",
+        "path": "/api/health"
+      },
+      {
+        "kind": "http",
+        "method": "GET",
+        "path": "/api/notifications"
+      },
+      {
+        "kind": "http",
+        "method": "GET",
+        "path": "/projets"
+      },
+      {
+        "kind": "http",
+        "method": "GET",
+        "path": "/journal"
+      },
+      {
+        "kind": "http",
+        "method": "GET",
+        "path": "/usine"
+      },
+      {
+        "kind": "http",
+        "method": "GET",
+        "path": "/rituels"
+      },
+      {
+        "kind": "http",
+        "method": "GET",
+        "path": "/analyses"
+      },
+      {
+        "kind": "http",
+        "method": "GET",
+        "path": "/runs"
+      },
+      {
+        "kind": "http",
+        "method": "GET",
+        "path": "/runs/run"
+      },
+      {
+        "kind": "http",
+        "method": "GET",
+        "path": "/runs/job"
+      }
+    ],
+    "health_probe": {
+      "path": "/api/status",
+      "expect_status": 200
+    },
+    "datasets": {
+      "home-content": "tests/fixtures/cockpit/datasets/home-content.json",
+      "home-empty": "tests/fixtures/cockpit/datasets/home-empty.json",
+      "home-loading": "tests/fixtures/cockpit/datasets/home-loading.json",
+      "home-error": "tests/fixtures/cockpit/datasets/home-error.json",
+      "home-long": "tests/fixtures/cockpit/datasets/home-long.json",
+      "home-stale": "tests/fixtures/cockpit/datasets/home-stale.json",
+      "home-offline": "tests/fixtures/cockpit/datasets/home-offline.json",
+      "home-content-full": "tests/fixtures/cockpit/datasets/home-content-full.json",
+      "home-narrow": "tests/fixtures/cockpit/datasets/home-narrow.json",
+      "home-light": "tests/fixtures/cockpit/datasets/home-light.json",
+      "result-ready": "tests/fixtures/cockpit/datasets/result-ready.json",
+      "result-dossier": "tests/fixtures/cockpit/datasets/result-dossier.json",
+      "result-findings": "tests/fixtures/cockpit/datasets/result-findings.json",
+      "result-returned": "tests/fixtures/cockpit/datasets/result-returned.json",
+      "result-repairing": "tests/fixtures/cockpit/datasets/result-repairing.json",
+      "result-accepted": "tests/fixtures/cockpit/datasets/result-accepted.json",
+      "result-merging": "tests/fixtures/cockpit/datasets/result-merging.json",
+      "result-merged": "tests/fixtures/cockpit/datasets/result-merged.json",
+      "result-outdated": "tests/fixtures/cockpit/datasets/result-outdated.json",
+      "result-outage": "tests/fixtures/cockpit/datasets/result-outage.json",
+      "result-conflict": "tests/fixtures/cockpit/datasets/result-conflict.json",
+      "result-abandoned": "tests/fixtures/cockpit/datasets/result-abandoned.json",
+      "result-request": "tests/fixtures/cockpit/datasets/result-request.json",
+      "result-confirmation": "tests/fixtures/cockpit/datasets/result-confirmation.json",
+      "projects-content": "tests/fixtures/cockpit/datasets/projects-content.json",
+      "projects-narrow": "tests/fixtures/cockpit/datasets/projects-narrow.json",
+      "projects-light": "tests/fixtures/cockpit/datasets/projects-light.json",
+      "release-expanded": "tests/fixtures/cockpit/datasets/release-expanded.json",
+      "release-estimate": "tests/fixtures/cockpit/datasets/release-estimate.json",
+      "project-missing": "tests/fixtures/cockpit/datasets/project-missing.json",
+      "journal-content": "tests/fixtures/cockpit/datasets/journal-content.json",
+      "journal-empty": "tests/fixtures/cockpit/datasets/journal-empty.json",
+      "journal-loading": "tests/fixtures/cockpit/datasets/journal-loading.json",
+      "journal-error": "tests/fixtures/cockpit/datasets/journal-error.json",
+      "journal-long": "tests/fixtures/cockpit/datasets/journal-long.json",
+      "journal-stale": "tests/fixtures/cockpit/datasets/journal-stale.json",
+      "journal-offline": "tests/fixtures/cockpit/datasets/journal-offline.json",
+      "journal-narrow": "tests/fixtures/cockpit/datasets/journal-narrow.json",
+      "journal-light": "tests/fixtures/cockpit/datasets/journal-light.json",
+      "journal-logs": "tests/fixtures/cockpit/datasets/journal-logs.json",
+      "health-content": "tests/fixtures/cockpit/datasets/health-content.json",
+      "health-empty": "tests/fixtures/cockpit/datasets/health-empty.json",
+      "health-loading": "tests/fixtures/cockpit/datasets/health-loading.json",
+      "health-error": "tests/fixtures/cockpit/datasets/health-error.json",
+      "health-long": "tests/fixtures/cockpit/datasets/health-long.json",
+      "health-stale": "tests/fixtures/cockpit/datasets/health-stale.json",
+      "health-offline": "tests/fixtures/cockpit/datasets/health-offline.json",
+      "health-narrow": "tests/fixtures/cockpit/datasets/health-narrow.json",
+      "health-light": "tests/fixtures/cockpit/datasets/health-light.json",
+      "factory-draining": "tests/fixtures/cockpit/datasets/factory-draining.json",
+      "factory-suspended": "tests/fixtures/cockpit/datasets/factory-suspended.json",
+      "factory-resuming": "tests/fixtures/cockpit/datasets/factory-resuming.json",
+      "factory-blocked": "tests/fixtures/cockpit/datasets/factory-blocked.json",
+      "factory-machine": "tests/fixtures/cockpit/datasets/factory-machine.json",
+      "factory-configure": "tests/fixtures/cockpit/datasets/factory-configure.json",
+      "factory-configure-scope": "tests/fixtures/cockpit/datasets/factory-configure-scope.json",
+      "factory-clean-preview": "tests/fixtures/cockpit/datasets/factory-clean-preview.json",
+      "factory-clean-done": "tests/fixtures/cockpit/datasets/factory-clean-done.json",
+      "rituals-content": "tests/fixtures/cockpit/datasets/rituals-content.json",
+      "rituals-narrow": "tests/fixtures/cockpit/datasets/rituals-narrow.json",
+      "rituals-light": "tests/fixtures/cockpit/datasets/rituals-light.json",
+      "ritual-confirm": "tests/fixtures/cockpit/datasets/ritual-confirm.json",
+      "ritual-review": "tests/fixtures/cockpit/datasets/ritual-review.json",
+      "ritual-report": "tests/fixtures/cockpit/datasets/ritual-report.json",
+      "ritual-preparing": "tests/fixtures/cockpit/datasets/ritual-preparing.json",
+      "ritual-ready": "tests/fixtures/cockpit/datasets/ritual-ready.json",
+      "ritual-execution": "tests/fixtures/cockpit/datasets/ritual-execution.json",
+      "ritual-delivered": "tests/fixtures/cockpit/datasets/ritual-delivered.json",
+      "release-confirm": "tests/fixtures/cockpit/datasets/release-confirm.json",
+      "release-review": "tests/fixtures/cockpit/datasets/release-review.json",
+      "release-report": "tests/fixtures/cockpit/datasets/release-report.json",
+      "release-saved": "tests/fixtures/cockpit/datasets/release-saved.json",
+      "analysis-content": "tests/fixtures/cockpit/datasets/analysis-content.json",
+      "analysis-narrow": "tests/fixtures/cockpit/datasets/analysis-narrow.json",
+      "analysis-light": "tests/fixtures/cockpit/datasets/analysis-light.json",
+      "analysis-time": "tests/fixtures/cockpit/datasets/analysis-time.json",
+      "runs-active": "tests/fixtures/cockpit/datasets/runs-active.json",
+      "runs-all": "tests/fixtures/cockpit/datasets/runs-all.json",
+      "runs-completed": "tests/fixtures/cockpit/datasets/runs-completed.json",
+      "run-abandoned": "tests/fixtures/cockpit/datasets/run-abandoned.json",
+      "run-active": "tests/fixtures/cockpit/datasets/run-active.json",
+      "run-completed": "tests/fixtures/cockpit/datasets/run-completed.json",
+      "run-stale": "tests/fixtures/cockpit/datasets/run-stale.json",
+      "run-waiting": "tests/fixtures/cockpit/datasets/run-waiting.json",
+      "job-code": "tests/fixtures/cockpit/datasets/job-code.json",
+      "job-configuration": "tests/fixtures/cockpit/datasets/job-configuration.json",
+      "job-event": "tests/fixtures/cockpit/datasets/job-event.json",
+      "job-gates": "tests/fixtures/cockpit/datasets/job-gates.json",
+      "job-output": "tests/fixtures/cockpit/datasets/job-output.json",
+      "job-sessions": "tests/fixtures/cockpit/datasets/job-sessions.json",
+      "job-system-prompt": "tests/fixtures/cockpit/datasets/job-system-prompt.json",
+      "job-usage": "tests/fixtures/cockpit/datasets/job-usage.json",
+      "job-usage-unavailable": "tests/fixtures/cockpit/datasets/job-usage-unavailable.json",
+      "job-user-prompt-raw": "tests/fixtures/cockpit/datasets/job-user-prompt-raw.json",
+      "job-user-prompt-rendered": "tests/fixtures/cockpit/datasets/job-user-prompt-rendered.json"
+    },
+    "test_perimeter": [
+      "tests/"
+    ],
+    "frozen_harness_paths": [
+      "tests/fixtures/delivery-fixture-city/tests/harness.py"
+    ],
+    "test_command": "python3 tests/fixtures/delivery-fixture-city/tests/harness.py {test} {report}",
+    "seams": [
+      {
+        "name": "cockpit-http",
+        "mode": "black_box",
+        "test_paths": [
+          "tests/cockpit-criteria/http/"
+        ]
+      },
+      {
+        "name": "factory-commands",
+        "mode": "import_rule",
+        "test_paths": [
+          "tests/cockpit-criteria/commands/"
+        ]
+      }
+    ],
+    "import_rule": {
+      "product_import": "(?<![\\w/.-])bin/[a-z]|^\\s*(?:from|import)\\s+(?:cockpit|convoy_state|factory_[a-z_]+|delivery_role_identity|overlap_conflict_log|provider_failover|reversibility)\\b",
+      "entry_point_import": "(?<![\\w/.-])bin/(?:project-launch|project-planning-profile|prototype-conformance|acceptance-session|owner-answer|outcome-promote)(?![\\w-])"
+    },
+    "regression_command": "python3 tests/cockpit-criteria/regression.py",
+    "k": 3,
+    "screens": [
+      {
+        "name": "vue-ensemble",
+        "path": "/",
+        "states": [
+          "home-content",
+          "home-empty",
+          "home-loading",
+          "home-error",
+          "home-long",
+          "home-stale",
+          "home-offline",
+          "home-content-full",
+          "home-narrow",
+          "home-light",
+          "result-ready",
+          "result-dossier",
+          "result-findings",
+          "result-returned",
+          "result-repairing",
+          "result-accepted",
+          "result-merging",
+          "result-merged",
+          "result-outdated",
+          "result-outage",
+          "result-conflict",
+          "result-abandoned",
+          "result-request",
+          "result-confirmation"
+        ]
+      },
+      {
+        "name": "projets",
+        "path": "/projets",
+        "states": [
+          "projects-content",
+          "projects-narrow",
+          "projects-light",
+          "release-expanded",
+          "release-estimate",
+          "project-missing"
+        ]
+      },
+      {
+        "name": "journal",
+        "path": "/journal",
+        "states": [
+          "journal-content",
+          "journal-empty",
+          "journal-loading",
+          "journal-error",
+          "journal-long",
+          "journal-stale",
+          "journal-offline",
+          "journal-narrow",
+          "journal-light",
+          "journal-logs"
+        ]
+      },
+      {
+        "name": "usine",
+        "path": "/usine",
+        "states": [
+          "health-content",
+          "health-empty",
+          "health-loading",
+          "health-error",
+          "health-long",
+          "health-stale",
+          "health-offline",
+          "health-narrow",
+          "health-light",
+          "factory-draining",
+          "factory-suspended",
+          "factory-resuming",
+          "factory-blocked",
+          "factory-machine",
+          "factory-configure",
+          "factory-configure-scope",
+          "factory-clean-preview",
+          "factory-clean-done"
+        ]
+      },
+      {
+        "name": "rituels",
+        "path": "/rituels",
+        "states": [
+          "rituals-content",
+          "rituals-narrow",
+          "rituals-light",
+          "ritual-confirm",
+          "ritual-review",
+          "ritual-report",
+          "ritual-preparing",
+          "ritual-ready",
+          "ritual-execution",
+          "ritual-delivered",
+          "release-confirm",
+          "release-review",
+          "release-report",
+          "release-saved"
+        ]
+      },
+      {
+        "name": "analyses",
+        "path": "/analyses",
+        "states": [
+          "analysis-content",
+          "analysis-narrow",
+          "analysis-light",
+          "analysis-time"
+        ]
+      },
+      {
+        "name": "runs-liste",
+        "path": "/runs",
+        "states": [
+          "runs-active",
+          "runs-all",
+          "runs-completed"
+        ]
+      },
+      {
+        "name": "run-frise",
+        "path": "/runs/run",
+        "states": [
+          "run-abandoned",
+          "run-active",
+          "run-completed",
+          "run-stale",
+          "run-waiting"
+        ]
+      },
+      {
+        "name": "job-detail",
+        "path": "/runs/job",
+        "states": [
+          "job-code",
+          "job-configuration",
+          "job-event",
+          "job-gates",
+          "job-output",
+          "job-sessions",
+          "job-system-prompt",
+          "job-usage",
+          "job-usage-unavailable",
+          "job-user-prompt-raw",
+          "job-user-prompt-rendered"
+        ]
+      }
+    ]
+  }
 }
