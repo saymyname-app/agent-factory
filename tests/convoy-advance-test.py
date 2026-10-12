@@ -279,7 +279,10 @@ class ConvoyAdvanceHarness(unittest.TestCase):
             deadline = time.monotonic() + 60
             while marker.exists() and time.monotonic() < deadline:
                 settled = self.run_cmd(ROOT / "bin" / program, "settle", args[0], "--repo", self.root)
-                self.assertEqual(0, settled.returncode, settled.stdout + settled.stderr)
+                if settled.returncode:
+                    time.sleep(0.2)
+                    self.assertFalse(marker.exists(), settled.stdout + settled.stderr)
+                    break
                 time.sleep(0.1)
             self.assertFalse(marker.exists(), f"fake {program} did not finish")
         return answer

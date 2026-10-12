@@ -157,5 +157,9 @@ with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="ut
 proc = subprocess.run([TOOL, "record", convoy, ticket, "--file", handle.name], env=session, capture_output=True, text=True)
 os.unlink(handle.name)
 sys.stderr.write(proc.stdout + proc.stderr)
+if proc.returncode:
+    raise SystemExit(proc.returncode)
+if "pending" in globals():
+    pending.unlink(missing_ok=True)
 subprocess.run([GC, "bd", "close", bead_id, "--reason", "évaluation enregistrée"], capture_output=True)
 raise SystemExit(0)

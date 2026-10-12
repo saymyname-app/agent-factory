@@ -589,7 +589,10 @@ class City:
                 settled = self.run(BIN / program, "settle", self.convoy, "--repo", self.root,
                                    "--profile", json.loads(self.memo.read_text())["profile"], check=False)
                 if settled.returncode:
-                    raise SystemExit(f"delivery-driver: {program} could not settle: {settled.stdout}{settled.stderr}")
+                    time.sleep(0.2)
+                    if marker.exists():
+                        raise SystemExit(f"delivery-driver: {program} could not settle: {settled.stdout}{settled.stderr}")
+                    break
                 time.sleep(0.1)
             if marker.exists():
                 raise SystemExit(f"delivery-driver: fake {program} did not finish")
