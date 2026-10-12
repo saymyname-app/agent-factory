@@ -100,8 +100,13 @@ closes nothing: code decides what follows.
 | the author session is at work (its bead is open): the ticket is not finished at the tip, a Blocking Finding has no answer, or the evaluation refused at the commit of the round | waits (`pending`) |
 | the answers wait for their judgement, or the ticket waits for its evaluation at the new tip | waits (`pending`): `bin/code-review` sends the judgement to a second reviewer session, `bin/ticket-evaluation` evaluates the new tip |
 | both accepted at the tip | nothing: the merge follows |
-| the answers are judged unfavorably; a review replayed in full blocks again; a state is still not observed at the new tip | **stops the ticket** |
+| a review judgement or replay blocks, or an evaluation remains not observed at the new tip, even while the other control is pending | **stops the ticket**; the pending control cannot lift the stop |
 | the author session ended (its bead is closed) without finishing the ticket at the tip, or leaving a Blocking Finding unanswered or the refused evaluation as it was | **stops the ticket** |
+
+Before raising the stop, `bin/ticket-evaluation cleanup` reaps only this
+ticket's products. A failed cleanup leaves the stop recorded and is retried on
+the next settlement; the open evaluation request and prior evidence remain
+readable, and a late result is refused by the stopped-ticket gate.
 
 The stop is `bin/convoy-state stop-ticket --reason still_refused`, with one
 line that names everything still refused (« revue de code (F1.1) ; Ticket

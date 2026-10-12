@@ -62,6 +62,7 @@ ROOT = Path(os.environ.get("FACTORY_ROOT") or BIN.parent)
 GC_BIN = os.environ.get("GC_BIN", "gc")
 STATE_TOOL = BIN / "convoy-state"
 ESCALATION_TOOL = BIN / "escalation-door"
+EVALUATION_TOOL = BIN / "ticket-evaluation"
 OPERATOR_CONFIG_BIN = BIN / "operator-config"
 SETTINGS = ROOT / "config" / "delivery-flow.json"
 PROJECTS = ROOT / "config" / "projects"
@@ -279,13 +280,17 @@ def review_position(ticket: dict[str, Any], tip: str) -> tuple[str, list[str], s
             return ACCEPTED, [], ""
         return PENDING, [], "la revue de code est à rejouer sur la pointe"
     if last["kind"] != "review":
+        if last["commit"] != tip:
+            return PENDING, unsettled, "la revue de code est à rejouer sur la pointe"
         return REFUSED, unsettled, ""
     if correction is None:
         if last["commit"] == tip:
             return REFUSED, unsettled, ""
         return PENDING, unsettled, "la revue de code n'a pas rendu son verdict à la pointe"
     if last["commit"] != correction["commit"]:
-        # A review replayed in full after the round, and it blocks again.
+        # A review replayed after the round blocks only at the current tip.
+        if last["commit"] != tip:
+            return PENDING, unsettled, "la revue de code est à rejouer sur la pointe"
         return REFUSED, unsettled, ""
     if all(finding_id in (last.get("responses") or {}) for finding_id in unsettled):
         return PENDING, unsettled, "les réponses aux Blocking Findings attendent leur jugement"
@@ -429,10 +434,17 @@ def raise_stop(convoy_id: str, ticket: dict[str, Any], stop: dict[str, Any]) -> 
     return True
 
 
+def cleanup_stop(convoy: Convoy, ticket_id: str) -> None:
+    cleaned = run([str(EVALUATION_TOOL), "cleanup", convoy.id, ticket_id, "--repo", str(convoy.repo)])
+    if cleaned.returncode != 0:
+        raise Refusal(f"le ticket {ticket_id} est arrêté mais ses produits ne sont pas libérés : {detail_of(cleaned)}")
+
+
 def stop_ticket(convoy: Convoy, ticket_id: str, detail: str) -> dict[str, Any]:
     state_write("stop-ticket", convoy.id, ticket_id, "--reason", STOP_STILL_REFUSED, "--detail", detail)
     convoy.load()
     ticket = convoy.ticket(ticket_id)
+    cleanup_stop(convoy, ticket_id)
     raise_stop(convoy.id, ticket, ticket["stop"])
     return {"ticket": ticket_id, "action": "stopped", "stop": STOP_STILL_REFUSED}
 
@@ -452,6 +464,7 @@ def settle_ticket(convoy: Convoy, ticket_id: str) -> dict[str, Any]:
         ticket = convoy.ticket(ticket_id)
         stop = own_stop(ticket)
         if stop:
+            cleanup_stop(convoy, ticket_id)
             return {"ticket": ticket_id, "action": "escalated" if raise_stop(convoy.id, ticket, stop) else "none"}
         tip = ticket.get("tip")
         merge = ticket.get("merge") or {}
@@ -490,11 +503,14 @@ def settle_ticket(convoy: Convoy, ticket_id: str) -> dict[str, Any]:
                 return stop_ticket(convoy, ticket_id, still_refused(review, evaluation, not finished))
             return {"ticket": ticket_id, "action": "pending", "commit": correction["commit"],
                     "reason": "la session de correction travaille"}
+        # After the only correction, an established refusal at the tip is
+        # final even when the other control has not answered. The pre-round
+        # path above still gathers both findings before opening the round.
+        if REFUSED in positions:
+            return stop_ticket(convoy, ticket_id, still_refused(review, evaluation, False))
         if PENDING in positions:
             return {"ticket": ticket_id, "action": "pending", "commit": correction["commit"],
                     "reason": review[2] if review[0] == PENDING else evaluation[2]}
-        if REFUSED in positions:
-            return stop_ticket(convoy, ticket_id, still_refused(review, evaluation, False))
         return {"ticket": ticket_id, "action": "none"}
 
 

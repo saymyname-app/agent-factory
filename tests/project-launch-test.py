@@ -183,6 +183,103 @@ class ProjectLaunchTest(unittest.TestCase):
             proc.wait()
             proc.stdout.close()
 
+    def test_stop_ends_a_descendant_in_another_session(self):
+        with _adopting_orphans():
+            launch_id = "test-escaped-descendant"
+            env = {**os.environ, "FACTORY_LAUNCH_ID": launch_id}
+            proc = subprocess.Popen(
+                [sys.executable, "-c",
+                 "import subprocess,sys,time; child=subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], "
+                 "start_new_session=True); print(child.pid, flush=True); time.sleep(60)"],
+                stdout=subprocess.PIPE, text=True, start_new_session=True, env=env)
+            child = int(proc.stdout.readline().strip())
+            state_file = self.new_state_file()
+            state_file.write_text(json.dumps({
+                "pid": proc.pid, "process_group": proc.pid, "launch_id": launch_id,
+            }))
+            try:
+                result = self.stop(state_file=state_file)
+                self.assertTrue(json.loads(result.stdout)["stopped"])
+                self.assertFalse(state_file.exists())
+                self.assertIsNotNone(proc.wait(timeout=1))
+                stat = Path(f"/proc/{child}/stat")
+                self.assertTrue(not stat.exists() or stat.read_text().rsplit(")", 1)[1].split()[0] in {"Z", "X"})
+            finally:
+                for pid in (proc.pid, child):
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                proc.wait()
+                proc.stdout.close()
+                try:
+                    os.waitpid(child, os.WNOHANG)
+                except ChildProcessError:
+                    pass
+
+    def test_stop_keeps_the_record_if_a_detached_child_still_holds_the_copy(self):
+        with _adopting_orphans():
+            worktree = Path(tempfile.mkdtemp(prefix="project-launch-detached-test-"))
+            launch_id = "test-unmarked-descendant"
+            proc = subprocess.Popen(
+                [sys.executable, "-c",
+                 "import os,subprocess,sys,time; child=subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], "
+                 "start_new_session=True, env={k:v for k,v in os.environ.items() if k != 'FACTORY_LAUNCH_ID'}); "
+                 "print(child.pid, flush=True); time.sleep(60)"],
+                cwd=worktree, stdout=subprocess.PIPE, text=True, start_new_session=True,
+                env={**os.environ, "FACTORY_LAUNCH_ID": launch_id})
+            child = int(proc.stdout.readline().strip())
+            state_file = self.new_state_file()
+            state_file.write_text(json.dumps({
+                "pid": proc.pid, "process_group": proc.pid, "launch_id": launch_id,
+                "worktree": str(worktree), "repo_root": str(ROOT),
+            }))
+            try:
+                first = self.stop(state_file=state_file, check=False)
+                self.assertEqual(1, first.returncode)
+                self.assertTrue(state_file.exists())
+                self.assertTrue(worktree.exists())
+                os.kill(child, signal.SIGKILL)
+                os.waitpid(child, 0)
+                second = self.stop(state_file=state_file)
+                self.assertTrue(json.loads(second.stdout)["stopped"])
+                self.assertFalse(state_file.exists())
+                self.assertFalse(worktree.exists())
+            finally:
+                for pid in (proc.pid, child):
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                proc.wait()
+                proc.stdout.close()
+                shutil.rmtree(worktree, ignore_errors=True)
+                try:
+                    os.waitpid(child, os.WNOHANG)
+                except ChildProcessError:
+                    pass
+
+    def test_start_requires_a_recoverable_launch_record(self):
+        result = subprocess.run(
+            [str(TOOL), "start", str(DESCRIPTOR), "--dataset", "content"],
+            cwd=ROOT, text=True, capture_output=True)
+        self.assertEqual(2, result.returncode)
+        self.assertIn("--state-file", result.stderr)
+
+    def test_interrupted_record_update_keeps_the_previous_valid_record(self):
+        import runpy
+        from unittest.mock import patch
+
+        write_record = runpy.run_path(str(TOOL))["write_record"]
+        with tempfile.TemporaryDirectory(prefix="launch-record-") as folder:
+            target = Path(folder) / "launch.json"
+            write_record(str(target), {"launch_id": "old"})
+            with patch("os.replace", side_effect=OSError("interrupted")):
+                with self.assertRaises(OSError):
+                    write_record(str(target), {"launch_id": "new"})
+            self.assertEqual({"launch_id": "old"}, json.loads(target.read_text()))
+            self.assertEqual([target], list(Path(folder).iterdir()))
+
     # AC1 -----------------------------------------------------------------
 
     def test_start_on_fixture_project_at_named_commit_answers_health_probe(self):

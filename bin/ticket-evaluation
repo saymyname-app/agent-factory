@@ -448,7 +448,9 @@ def state_dir() -> Path:
 
 def stop_product(state_file: str) -> None:
     if Path(state_file).is_file():
-        run([str(LAUNCH_TOOL), "stop", "--state-file", state_file], timeout=60)
+        stopped = run([str(LAUNCH_TOOL), "stop", "--state-file", state_file], timeout=60)
+        if stopped.returncode or Path(state_file).exists():
+            raise Refusal(f"produit non libéré ({state_file}) : {detail_of(stopped)}")
 
 
 def running(state_file: str) -> bool:
@@ -507,6 +509,8 @@ def launch_products(convoy: Convoy, ticket_id: str, commit: str, settings: dict[
                 started = run(argv, timeout=settings["start_timeout_seconds"] + 60, detached=True)
                 if started.returncode == 0 and state_file.is_file():
                     break
+                if state_file.is_file():
+                    stop_product(str(state_file))
             else:
                 raise Refusal(
                     f"le produit ne démarre pas depuis une copie propre du commit {commit[:12]}"
@@ -970,6 +974,19 @@ def cmd_settle(args: argparse.Namespace) -> int:
     return 0 if answer["ok"] else EXIT_REFUSED
 
 
+def cmd_cleanup(args: argparse.Namespace) -> int:
+    """Reap only a stopped ticket's products before its stop is raised."""
+    convoy = Convoy(args.convoy, args.repo)
+    with ticket_lock(args.ticket):
+        convoy.load()
+        ticket = convoy.ticket(args.ticket)
+        if not ticket.get("stop"):
+            raise Refusal(f"le ticket {args.ticket} n'est pas arrêté")
+        stopped = reap(convoy, ticket, [])
+    print(json.dumps({"ok": True, "ticket": args.ticket, "stopped": stopped}, ensure_ascii=False))
+    return 0
+
+
 # --- brief: what the Evaluator is given ----------------------------------------------
 
 
@@ -1197,6 +1214,7 @@ def build_parser() -> argparse.ArgumentParser:
     command("record", cmd_record).add_argument("--file")
     command("verdict", cmd_verdict)
     command("show", cmd_show)
+    command("cleanup", cmd_cleanup)
     p = sub.add_parser("settle")
     p.add_argument("convoy")
     p.add_argument("--repo")
