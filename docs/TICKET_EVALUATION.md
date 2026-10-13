@@ -371,6 +371,12 @@ criterion is waived by a lift.
 
 ## Validated simple expectations
 
+For a ticket establishing the first launch recipe, the active Factory descriptor
+can declare expectations while its `launch` is still absent. The evaluator
+uses that descriptor's expectations with the recipe read from the ticket's
+exact commit. Keep those expectations unchanged during an open evaluation:
+the brief and the recorded comparison must describe the same pass.
+
 The Factory-owned project descriptor may declare `validated_expectations` for
 simple values that an approved criterion or Spec story and validated data or
 prototype fix. This is a project-specific mapping; the author cannot change it

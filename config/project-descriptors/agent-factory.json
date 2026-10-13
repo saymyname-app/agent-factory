@@ -6,5 +6,23 @@
   "knowledge_repo": "saymyname-app/agent-factory",
   "roadmap_path": "docs/roadmap.toml",
   "rituals_status_command": "bin/rituals-status",
-  "promotion_branch": {}
+  "promotion_branch": {},
+  "validated_expectations": [
+    {
+      "scope": "ticket",
+      "owner": "af-m2tr6o",
+      "number": 1,
+      "text": "Point d'entrée : bin/project-launch start puis URL annoncée — Observable : Le vrai cockpit répond à GET / et GET /api/status au commit demandé sur port isolé ; son état provient du dataset nommé. — Faux si : Révision erronée, page de remplacement, source live ou réponse absente.",
+      "dataset": "journal-content",
+      "source": {
+        "reference": "Spec af-2zseit, prototype Panorama Journal 632deea09daa22d8213807ef48a79891edf1c7bf, data/journal-content.json : premier événement",
+        "digest": "sha256:c4af60be499efb2b2beeb427b16831699f808bd584257d4d01988aefc3d72b86"
+      },
+      "expected": "Deux améliorations proposées après une revue",
+      "observation": {
+        "path": "/api/journal",
+        "pointer": "/entries/0/quoi"
+      }
+    }
+  ]
 }
