@@ -236,6 +236,7 @@ class CodeReviewTest(unittest.TestCase):
         (config / "projects" / f"{RIG}.toml").write_text(f'rig_dir = "{self.repo}"\n')
         profile = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
         profile["rigs"] = [RIG]
+        profile["stacks"] = {RIG: ["fixture-stack"]}
         self.profile.write_text(json.dumps(profile))
 
     def settings(self, **code_review):
