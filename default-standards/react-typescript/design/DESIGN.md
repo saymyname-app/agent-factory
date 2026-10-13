@@ -1,6 +1,6 @@
 # Design standards — React and TypeScript
 
-Default Standards version 2. This proposed design becomes the project's own
+Default Standards version 3. This proposed design becomes the project's own
 standard when adopted at its first interface work. Its palette is a starting
 point to judge on real screens, not an approval of the app's taste.
 
@@ -42,4 +42,8 @@ None.
 
 ## Rendered bench setup
 
-At the first interface work, set `design-bench/bench.config.json` to the real routes and a measured bundle budget (current built bytes plus an explicit margin). A screen entry has an `id`, a route `path`, and a `readySelector` visible only after the app has rendered its content. The app supplies `npm run build` and `npm run preview`, or sets `DESIGN_PREVIEW_COMMAND` in the copied workflow. Its `?lang=zz` route renders every product-defined string as `[zz:key]`; user-entered content carries `data-user-content` and stays unchanged. The browser test waits for each screen, runs at 390 and 1440 px in light and dark mode, scans rendered accessibility violations, compares committed captures, checks CSS and Web Animations motion after reload under reduced motion, then checks pseudo-language text. Initial captures are generated in the pinned Playwright 1.64.0 Noble image and committed with the first interface PR. A changed reference needs a declared visual change and independent before/after review (Factory acceptance integration follows in tranche 10).
+At the first interface work, set `design-bench/bench.config.json` to the real routes and a measured bundle budget (current built bytes plus an explicit margin). A screen entry has an `id`, a route `path`, and a `readySelector` visible only after the app has rendered its content. The app supplies `npm run build` and `npm run preview`, or sets `DESIGN_PREVIEW_COMMAND` in the copied workflow. Its `?lang=zz` route renders every product-defined string as `[zz:key]`; user-entered content carries `data-user-content` and stays unchanged. The browser test waits for each screen, runs at 390 and 1440 px in light and dark mode, scans rendered accessibility violations, compares committed captures, checks CSS and Web Animations motion after reload under reduced motion, then checks pseudo-language text. Initial captures are generated in the pinned Playwright 1.64.0 Noble image and committed with the first interface PR. A new capture is an initial reference. A changed or deleted reference requires a fresh entry in
+`design-bench/visual-changes.json`: the PNG path, the ticket ID, and the intended visual change.
+The PR and merge queue compare this declaration to the base commit and refuse an undeclared
+reference change. The Evaluator compares the before/after render to the ticket intent;
+the Acceptance Session shows the before/after summary.
