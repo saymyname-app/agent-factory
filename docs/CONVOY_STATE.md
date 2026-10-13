@@ -1213,3 +1213,8 @@ not without an answer that ends the judgement; a convoy closed or reopened
 by hand still unruled; no write of the flow on a closed convoy or on its
 tickets). `tests/outcome-promote-test.py` goes through the three with a
 real repository (`docs/OUTCOME_PROMOTE.md`).
+
+## Replacement of a withdrawn launch-recipe ticket
+
+Intent (Benjamin, live chat, 2026-10-13): « Corrigeons le tir à la main pour cette fois […] lançons la livraison des tickets cockpits ».
+Mechanism (agent interpretation): when an approved graph patch replaces the launch-recipe slice, its withdrawn predecessor stays in history with its flags, verdicts and counters. Marking counts only non-withdrawn predecessors for launch-recipe uniqueness. Closing alone is insufficient; the existing withdrawal gate is required. Two active establishing slices remain refused. Regression: `test_mark_replaces_only_a_withdrawn_launch_recipe_slice`. Incident and manual recovery: af-ed6lez.
