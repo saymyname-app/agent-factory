@@ -232,6 +232,7 @@ ESCALATION_BIN = BIN / "escalation-door"
 INTEGRATION_BIN = BIN / "spec-integration"
 TEST_REVIEW_BIN = BIN / "test-review"
 CODE_REVIEW_BIN = BIN / "code-review"
+PROJECT_STANDARDS_BIN = BIN / "project-standards"
 EVALUATION_BIN = BIN / "ticket-evaluation"
 CORRECTION_BIN = BIN / "correction-round"
 TICKET_END_BIN = BIN / "ticket-end"
@@ -2031,6 +2032,24 @@ def settle_code_reviews(convoy: Convoy) -> dict[str, Any] | None:
     return {name: answer[name] for name in kept if answer.get(name)}
 
 
+def settle_standard_recurrences(convoy: Convoy) -> dict[str, Any] | None:
+    """Reconcile already recorded Blocking Findings with written project rules."""
+    if (not convoy.rig
+            or not any((convoy.repo / name).is_file() for name in ("STANDARDS.md", "DESIGN.md"))
+            or not any((ticket.get(control) or {}).get("rounds")
+                       for ticket in convoy.tickets for control in ("code_review", "evaluation"))):
+        return None
+    proc = run([str(PROJECT_STANDARDS_BIN), "--repo-root", str(ROOT), "recurrence", "--rig", convoy.rig])
+    try:
+        answer = parsed(proc, f"project-standards recurrence {convoy.rig}")
+    except Refusal as exc:
+        return {"error": f"refus : {exc}"}
+    if proc.returncode or not isinstance(answer, dict) or not answer.get("ok"):
+        detail = answer.get("error") if isinstance(answer, dict) else "réponse illisible"
+        return {"error": f"refus : project-standards recurrence {convoy.rig} : {detail}"}
+    return {"created": answer["created"]} if answer.get("created") else None
+
+
 def settle_evaluations(convoy: Convoy) -> dict[str, Any] | None:
     """Spec §7, §8: code, not a session, has each finished ticket evaluated
     on the launched product before its merge, through bin/ticket-evaluation.
@@ -2153,6 +2172,9 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
         code_reviews = settle_code_reviews(convoys[result["id"]])
         if code_reviews is not None:
             result["code_review"] = code_reviews
+        recurrences = settle_standard_recurrences(convoys[result["id"]])
+        if recurrences is not None:
+            result["standard_recurrence"] = recurrences
         evaluations = settle_evaluations(convoys[result["id"]])
         if evaluations is not None:
             result["evaluation"] = evaluations
@@ -2229,6 +2251,7 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
         or "error" in result.get("tdd_stops", {})
         or any(key in result.get("test_review", {}) for key in ("error", "refused"))
         or any(key in result.get("code_review", {}) for key in ("error", "refused"))
+        or "error" in result.get("standard_recurrence", {})
         or any(key in result.get("evaluation", {}) for key in ("error", "refused"))
         or any(key in result.get("correction", {}) for key in ("error", "refused"))
         or any(key in result.get("fidelity", {}) for key in ("error", "refused", "message"))
