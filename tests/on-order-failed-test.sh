@@ -45,11 +45,21 @@ if [[ \${1:-} == events ]]; then
   exit 0
 fi
 if [[ \${1:-} == bd && \${2:-} == list ]]; then
-  title=""
+  [[ -f "$TMP/beads/list-fails" ]] && exit 1
+  title=""; status=""
   args=("\$@")
   for i in "\${!args[@]}"; do
     [[ \${args[\$i]} == --title-contains ]] && title="\${args[\$((i+1))]}"
+    [[ \${args[\$i]} == --status ]] && status="\${args[\$((i+1))]}"
   done
+  if [[ \$status == closed ]]; then
+    if [[ -f "$TMP/beads/closed-at" ]]; then
+      echo '[{"id":"af-old","closed_at":"'"\$(cat "$TMP/beads/closed-at")"'"}]'
+    else
+      echo '[]'
+    fi
+    exit 0
+  fi
   if [[ -n \$title && -f "$TMP/beads/filed" ]] && grep -qF "\$title" "$TMP/beads/filed"; then
     echo '[{"id":"af-existing"}]'
   else
@@ -114,6 +124,32 @@ out=$(run --check-only)
 grep -q "^bd create" "$CALLS" && fail "--check-only filed a bead"
 grep -q "^mail send" "$CALLS" && fail "--check-only paged anyone"
 grep -q "would flag dolt-remotes-patrol" <<<"$out" || { echo "$out" >&2; fail "--check-only did not report what it would do"; }
+
+# --- a closed bead answers the failures before its closing (af-yzo8fo.2) -----
+# events_n dates the failures 12:00, 12:01, ... one a minute.
+rm -f "$TMP/beads/filed"; : > "$CALLS"
+events_n dolt-remotes-patrol 5
+echo "2026-09-17T12:02:30Z" > "$TMP/beads/closed-at"
+out=$(run)
+grep -q "^bd create" "$CALLS" && { echo "$out" >&2; fail "refiled a bead for failures its closed bead already answered"; }
+grep -q "2 failure(s) since its last bead closed" <<<"$out" || { echo "$out" >&2; fail "did not say how many failures follow the closing"; }
+
+# ...and the streak counts again from that closing.
+: > "$CALLS"
+events_n dolt-remotes-patrol 8
+out=$(run)
+grep -q "^bd create" "$CALLS" || { echo "$out" >&2; fail "did not file a bead for a new streak after the closing"; }
+grep -q "failed 5 times" "$CALLS" || fail "the page does not count the failures after the closing"
+rm -f "$TMP/beads/closed-at"
+
+# --- a tracker read that fails files nothing ----------------------------------
+rm -f "$TMP/beads/filed"; : > "$CALLS"
+touch "$TMP/beads/list-fails"
+events_n dolt-remotes-patrol 6
+out=$(run)
+grep -q "^bd create" "$CALLS" && fail "filed a bead although the open beads could not be read"
+grep -q "could not read the open beads" <<<"$out" || { echo "$out" >&2; fail "did not say the read failed"; }
+rm -f "$TMP/beads/list-fails"
 
 # --- no events at all: quiet, no error ---------------------------------------
 : > "$EVENTS_FILE"; : > "$CALLS"
