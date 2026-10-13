@@ -6,7 +6,8 @@ successful publish or patch -- the primary wake, and the only door approved
 work enters the delivery plane by. This script is the safety net for when
 that call is missed (a mail delivery failure, a publish run outside the
 router, a manually created delivery-plane bead): it watches for ready
-delivery-plane work with no active worker session, and re-wakes the Mayor
+delivery-plane work the Mayor may dispatch (not a convoy bead, nothing that
+carries the new-flow mark) with no active worker session, and re-wakes the Mayor
 once that condition has held for more than 15 minutes -- then again only
 after an hour-long cooldown, not on every evaluation while still idle.
 
@@ -51,21 +52,38 @@ def now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# The mark bin/convoy-state poses on a convoy of the new flow and on each of
+# its tickets (docs/CONVOY_STATE.md).
+NEW_FLOW_MARK_KEY = "gc.flow.mark"
+
+
+def mayor_may_dispatch(item: dict[str, Any]) -> bool:
+    """Ready delivery-plane work is the Mayor's to dispatch unless it is a
+    convoy bead (a container, never work: af-vnv59w) or carries the new-flow
+    mark: bin/convoy-advance starts those tickets and the dispatch door
+    refuses them to the Mayor (docs/CONVOY_ADVANCE.md). Counting them woke
+    the Mayor every hour for nothing while a marked convoy was open (17
+    wakes in 42 hours, 2026-10-13, af-yzo8fo.1)."""
+    metadata = item.get("metadata") or {}
+    return (
+        metadata.get("gc.plane") == "delivery"
+        and item.get("issue_type") != "convoy"
+        and NEW_FLOW_MARK_KEY not in metadata
+    )
+
+
 def ready_delivery_plane_count(repo_root: Path) -> int:
     """`bd ready` already excludes in_progress/blocked/deferred/hooked
     issues (blocker-aware ready-work semantics), so every item it returns
-    is genuinely unclaimed -- only the delivery-plane label needs filtering
-    here."""
+    is genuinely unclaimed -- only what the Mayor may dispatch needs
+    filtering here."""
     result = subprocess.run(
         [BD_BIN, "-C", str(repo_root), "ready", "--json"],
         check=True, capture_output=True, text=True,
     )
     payload = json.loads(result.stdout or "[]")
     items = payload if isinstance(payload, list) else []
-    return sum(
-        1 for item in items
-        if isinstance(item, dict) and (item.get("metadata") or {}).get("gc.plane") == "delivery"
-    )
+    return sum(1 for item in items if isinstance(item, dict) and mayor_may_dispatch(item))
 
 
 def worker_session_active() -> bool:

@@ -16,6 +16,19 @@ READY_ONE_DELIVERY_BEAD = json.dumps([
     {"id": "af-ready1", "metadata": {"gc.plane": "delivery"}},
 ])
 READY_NONE = "[]"
+# What `bd ready` returned on 2026-10-13 while the marked convoy af-pqfxmd
+# was open: the convoy bead itself, on the delivery plane.
+READY_MARKED_CONVOY_ONLY = json.dumps([
+    {"id": "af-convoy", "issue_type": "convoy",
+     "metadata": {"gc.plane": "delivery", "gc.flow.mark": "new-flow/v1"}},
+])
+READY_MARKED_TICKET_ONLY = json.dumps([
+    {"id": "af-ticket", "issue_type": "task",
+     "metadata": {"gc.plane": "delivery", "gc.flow.mark": "new-flow/v1"}},
+])
+READY_UNMARKED_CONVOY_ONLY = json.dumps([
+    {"id": "af-oldconvoy", "issue_type": "convoy", "metadata": {"gc.plane": "delivery"}},
+])
 
 
 class IdleReadyWorkWakeTest(unittest.TestCase):
@@ -121,6 +134,26 @@ class IdleReadyWorkWakeTest(unittest.TestCase):
         result = self.run_tick("2026-09-28T10:30:00+00:00", ready=READY_NONE)
         self.assertFalse(result["fired"])
         self.assertEqual([], self.wake_calls())
+
+    def test_stays_silent_on_what_the_mayor_may_not_dispatch(self):
+        # af-yzo8fo.1, af-vnv59w: a convoy bead is a container, and a marked
+        # ticket is started by bin/convoy-advance, never by the Mayor.
+        for ready in (READY_MARKED_CONVOY_ONLY, READY_MARKED_TICKET_ONLY, READY_UNMARKED_CONVOY_ONLY):
+            with self.subTest(ready=ready):
+                self.run_tick("2026-09-28T10:00:00+00:00", ready=ready)
+                result = self.run_tick("2026-09-28T10:30:00+00:00", ready=ready)
+                self.assertFalse(result["fired"])
+                self.assertEqual(0, result["ready_count"])
+                self.assertEqual([], self.wake_calls())
+
+    def test_counts_only_the_dispatchable_bead_beside_a_marked_convoy(self):
+        ready = json.dumps(
+            json.loads(READY_MARKED_CONVOY_ONLY) + json.loads(READY_ONE_DELIVERY_BEAD)
+        )
+        self.run_tick("2026-09-28T10:00:00+00:00", ready=ready)
+        fired = self.run_tick("2026-09-28T10:15:01+00:00", ready=ready)
+        self.assertTrue(fired["fired"])
+        self.assertEqual(1, fired["ready_count"])
 
     def test_does_not_renotify_on_every_evaluation_past_15_minutes(self):
         self.run_tick("2026-09-28T10:00:00+00:00")
