@@ -339,3 +339,13 @@ That Planning Run must also make the copied CI jobs required by the target
 branch's merge rule and verify them on a PR and merge queue. Until that gate
 is connected, the copied workflow is a proposed check, not a demonstrated
 merge guarantee. No existing project is activated by this Factory change.
+
+For a new React/TypeScript rig, use the same linked worktree command with
+`--stack react-typescript` and no Java package. The copied starter contains
+`package.json` and a lockfile, typed ESLint with file-and-rule suppressions,
+Prettier, a dependency rule for `src/domain`, Vitest coverage, and a PR/merge
+workflow for 80% changed-line coverage and security scans. In an existing
+React project, integrate those configurations into its own build and folder
+structure in that project's Planning Run. Make each copied job required by
+the target branch's merge rule and prove it on a PR and merge queue before
+calling the standards active. The Factory copy does not alter a product repo.

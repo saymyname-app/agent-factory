@@ -42,6 +42,16 @@ class ProjectStandardsStatusTest(unittest.TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(file.read_bytes())
 
+    def react_defaults(self):
+        source = Path(__file__).resolve().parents[1] / "default-standards" / "react-typescript"
+        target = self.root / "default-standards" / "react-typescript"
+        target.mkdir(parents=True)
+        for file in source.rglob("*"):
+            if file.is_file():
+                path = target / file.relative_to(source)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(file.read_bytes())
+
     def worktree(self):
         source = self.root / "project"
         source.mkdir()
@@ -54,6 +64,7 @@ class ProjectStandardsStatusTest(unittest.TestCase):
         target = self.root / "project-worktree"
         subprocess.run(["git", "-C", str(source), "worktree", "add", "-qb", "standards", str(target)], check=True)
         (self.root / "config/projects/api.toml").write_text('rig_dir = "project"\n')
+        (self.root / "config/projects/web.toml").write_text('rig_dir = "project"\n')
         return source, target
 
     def adopt(self, target, rig="api", stack="java-spring-maven", package="org.example.app"):
@@ -167,6 +178,31 @@ class ProjectStandardsStatusTest(unittest.TestCase):
         self.assertNotEqual(0, code)
         self.assertIn("rig api", result["error"])
         self.assertFalse((wrong / "STANDARDS.md").exists())
+
+    def test_adopt_copies_react_typescript_defaults_into_a_worktree(self):
+        self.react_defaults()
+        _, target = self.worktree()
+        code, result = self.adopt(target, rig="web", stack="react-typescript", package="")
+        self.assertEqual(0, code, result)
+        self.assertTrue((target / "STANDARDS.md").is_file())
+        self.assertTrue((target / "package.json").is_file())
+        self.assertTrue((target / "package-lock.json").is_file())
+        self.assertTrue((target / "eslint.config.mjs").is_file())
+        self.assertTrue((target / ".dependency-cruiser.cjs").is_file())
+        self.assertTrue((target / ".github/workflows/code-standards.yml").is_file())
+        origin = json.loads((target / ".factory/standards-origin.json").read_text())
+        self.assertEqual({"contract": "agent-factory-standards-origin/v1",
+                          "stack": "react-typescript", "version": "1"}, origin)
+
+    def test_react_adoption_refuses_to_replace_existing_package(self):
+        self.react_defaults()
+        _, target = self.worktree()
+        (target / "package.json").write_text('{"name":"local"}\n')
+        code, result = self.adopt(target, rig="web", stack="react-typescript", package="")
+        self.assertNotEqual(0, code)
+        self.assertIn("fichier existant", result["error"])
+        self.assertEqual('{"name":"local"}\n', (target / "package.json").read_text())
+        self.assertFalse((target / "STANDARDS.md").exists())
 
     def test_status_refuses_missing_rig_checkout(self):
         (self.root / "rigs" / "web").rmdir()
