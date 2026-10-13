@@ -349,3 +349,16 @@ React project, integrate those configurations into its own build and folder
 structure in that project's Planning Run. Make each copied job required by
 the target branch's merge rule and prove it on a PR and merge queue before
 calling the standards active. The Factory copy does not alter a product repo.
+
+For the first interface work of a React/TypeScript rig, present the proposed
+palette and tone on real screens, then run `bin/project-standards adopt --rig
+<rig> --stack react-typescript --domain design --target <linked-worktree>`.
+Code adoption skips the design subdirectory; this separate gesture copies
+`DESIGN.md`, light/dark role tokens, choice questions and the static design
+checks, recording `.factory/design-standards-origin.json`. `status` reports
+code and design origins separately. The copied design workflow checks theme
+contrast, CSS/TSX literals, visible JSX text and basic accessibility syntax.
+It becomes a merge guarantee only after the project integrates it, makes its
+job required and proves a PR and merge queue run. The first interface still
+needs Benjamin's visual judgement on a Validated Prototype before delivery;
+these code checks cannot judge taste, focus order or keyboard operation.
