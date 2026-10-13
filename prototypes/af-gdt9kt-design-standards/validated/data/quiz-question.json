@@ -1,0 +1,18 @@
+{
+  "state": "quiz-question",
+  "generated_at": "2026-10-13T10:00:00Z",
+  "synthetic": true,
+  "format": "QCM",
+  "question": "Quel est son prénom ?",
+  "choix": [
+    "Maëlle",
+    "Capucine",
+    "Agathe",
+    "Jade"
+  ],
+  "choisi": "Agathe",
+  "badges": [
+    "Nouveau",
+    "Facile"
+  ]
+}

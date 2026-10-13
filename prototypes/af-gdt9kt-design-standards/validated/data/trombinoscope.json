@@ -1,0 +1,28 @@
+{
+  "state": "trombinoscope",
+  "generated_at": "2026-10-13T10:00:00Z",
+  "synthetic": true,
+  "total": 48,
+  "affiches": [
+    "Maëlle Garnier",
+    "Octave Lemaire",
+    "Inès Bouvier",
+    "Théo Marchand",
+    "Capucine Roy",
+    "Soren Keller",
+    "Yasmine Haddad",
+    "Lucien Perrot",
+    "Agathe Morel",
+    "Noé Fabre",
+    "Jade Collin",
+    "Basile Renaud"
+  ],
+  "suivis": [
+    "Maëlle Garnier",
+    "Inès Bouvier",
+    "Capucine Roy",
+    "Lucien Perrot",
+    "Jade Collin"
+  ],
+  "filtres_actifs": 2
+}

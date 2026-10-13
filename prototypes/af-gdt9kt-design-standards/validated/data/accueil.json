@@ -1,0 +1,13 @@
+{
+  "state": "accueil",
+  "generated_at": "2026-10-13T10:00:00Z",
+  "synthetic": true,
+  "organisation": "Chorale de Riverside",
+  "parcours": {
+    "etat": "Continuer",
+    "attribut": "Prénom",
+    "progression": 62,
+    "revisions_dues": 3
+  },
+  "administrateur": true
+}

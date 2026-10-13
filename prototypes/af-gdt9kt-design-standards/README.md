@@ -55,3 +55,18 @@ La case « Simuler réduire les animations » montre la version sans mouvement.
   (Validated Prototype, `docs/VALIDATED_PROTOTYPE.md`), qui ne garde que la
   proposition choisie en pages statiques.
 - Code de prototype : ni tests ni gestion d'erreurs. À réécrire à la livraison.
+
+## Version gelée (Validated Prototype)
+
+Choix de Benjamin (2026-10-13, chat live) : proposition B, en clair et en
+sombre. Ses mots sont dans le commentaire de résolution du ticket af-gdt9kt.9.
+
+- Dossier : `prototypes/af-gdt9kt-design-standards/validated/`, la proposition
+  B seule, en pages statiques sans script.
+- États : `accueil`, `quiz-question`, `quiz-resultat`, `trombinoscope`,
+  `admin-membres`. Largeurs de référence : 390 × 844 et 1440 × 900. Thèmes :
+  `light` et `dark`, selon le réglage de l'appareil.
+- Produite par `node freeze.js <module playwright>` à partir de `index.html` ;
+  captures de contrôle dans `screenshots-validated/`.
+- Contrôle : `./bin/prototype-conformance check --prototype
+  prototypes/af-gdt9kt-design-standards/validated`.

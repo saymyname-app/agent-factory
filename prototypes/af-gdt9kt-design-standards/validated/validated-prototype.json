@@ -1,0 +1,50 @@
+{
+  "contract": "agent-factory-validated-prototype/v1",
+  "variant": "B",
+  "encoding": "utf-8",
+  "anchor_attribute": "data-anchor",
+  "fixed_time_field": "generated_at",
+  "viewports": [
+    {
+      "name": "mobile",
+      "width": 390,
+      "height": 844
+    },
+    {
+      "name": "desktop",
+      "width": 1440,
+      "height": 900
+    }
+  ],
+  "themes": [
+    "light",
+    "dark"
+  ],
+  "states": [
+    {
+      "id": "accueil",
+      "address": "states/accueil.html",
+      "dataset": "data/accueil.json"
+    },
+    {
+      "id": "quiz-question",
+      "address": "states/quiz-question.html",
+      "dataset": "data/quiz-question.json"
+    },
+    {
+      "id": "quiz-resultat",
+      "address": "states/quiz-resultat.html",
+      "dataset": "data/quiz-resultat.json"
+    },
+    {
+      "id": "trombinoscope",
+      "address": "states/trombinoscope.html",
+      "dataset": "data/trombinoscope.json"
+    },
+    {
+      "id": "admin-membres",
+      "address": "states/admin-membres.html",
+      "dataset": "data/admin-membres.json"
+    }
+  ]
+}

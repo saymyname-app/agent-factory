@@ -1,0 +1,42 @@
+{
+  "state": "admin-membres",
+  "generated_at": "2026-10-13T10:00:00Z",
+  "synthetic": true,
+  "membres": 12,
+  "actifs": 11,
+  "invitations_en_cours": 2,
+  "lien_de_groupe": {
+    "actif": true,
+    "role": "Membre",
+    "validite": "7 jours",
+    "utilisations": "Illimité",
+    "pin": true
+  },
+  "lignes": [
+    [
+      "Maëlle Garnier",
+      "Admin",
+      "Actif"
+    ],
+    [
+      "Octave Lemaire",
+      "Membre",
+      "Actif"
+    ],
+    [
+      "Inès Bouvier",
+      "Contributeur",
+      "Actif"
+    ],
+    [
+      "Théo Marchand",
+      "Membre",
+      "Invité"
+    ],
+    [
+      "Soren Keller",
+      "Membre",
+      "Actif"
+    ]
+  ]
+}
