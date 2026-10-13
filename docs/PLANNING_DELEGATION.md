@@ -72,7 +72,11 @@ use their own ID, approver and prototype repository.
    mechanically verifiable change, as in PLANNING_RUN.md; otherwise use
    the unattended Factory path. Record the reason on the Spec without a
    routine question. Direct Delivery claims the Spec and creates no graph;
-   use its normal PR and independent review workflow. For Factory delivery,
+   before each pull request, a fresh reviewer session must give a favorable
+   verdict on the current diff under `PLANNING_RUN.md`; a cited applicable
+   standard or approved Spec line blocks until correction or favorable
+   independent judgement. For
+   Factory delivery,
    derive one `new-flow/v1` draft against the Spec, honoring ENTRY_CONTRACT,
    criteria, story coverage, scope/dependencies, prototype folds and
    operator needs. Put `spec_id`, `gc.project_id`, display title and language

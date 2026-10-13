@@ -79,7 +79,10 @@ run_check() {
 
 # 1. Before touching git state, capture it so we can prove the order changes
 #    nothing in the repo it runs from, whatever the tag list.
-BEFORE_STATUS=$(cd "$ROOT" && git status --porcelain)
+# Other CI tests run concurrently and may create unrelated files in the
+# checkout. Observe only the vendored skills, pin, and configuration.
+BEFORE_STATUS=$(cd "$ROOT" && git status --porcelain -- skills docs/UPSTREAM_SKILLS.md config .claude city.toml)
+CURRENT_BRANCH_BEFORE=$(cd "$ROOT" && git rev-parse --abbrev-ref HEAD)
 
 # 2. No new tag files nothing.
 : >"$GC_CALLS_LOG"
@@ -150,9 +153,8 @@ grep -q -- '--- call: bd create.*v1.4.0' "$GC_CALLS_LOG" || fail "a tag beyond t
 
 # 5. Whatever the tag list, the order never changes a skill file, pin,
 #    branch, or config in the repo it runs from.
-AFTER_STATUS=$(cd "$ROOT" && git status --porcelain)
-[ "$BEFORE_STATUS" = "$AFTER_STATUS" ] || fail "upstream-skills-check must change no skill file, pin, branch, or config in $ROOT"
-CURRENT_BRANCH_BEFORE=$(cd "$ROOT" && git rev-parse --abbrev-ref HEAD)
+AFTER_STATUS=$(cd "$ROOT" && git status --porcelain -- skills docs/UPSTREAM_SKILLS.md config .claude city.toml)
+[ "$BEFORE_STATUS" = "$AFTER_STATUS" ] || fail "upstream-skills-check must change no skill file, pin, or config in $ROOT"
 [ "$CURRENT_BRANCH_BEFORE" = "$(cd "$ROOT" && git rev-parse --abbrev-ref HEAD)" ] || fail "upstream-skills-check must not switch branches"
 
 # 6. The order loads through gc's own order validation. An isolated
