@@ -99,11 +99,16 @@ class ProjectStandardsStatusTest(unittest.TestCase):
 
         self.assertEqual(0, code, result)
         self.assertEqual("java-spring-maven", result["stack"])
+        self.assertTrue(result["baseline_pending"])
         self.assertTrue((target / "STANDARDS.md").is_file())
         self.assertIn("<groupId>org.example.app</groupId>", (target / "pom.xml").read_text())
         self.assertTrue((target / "src/test/java/org/example/app/ArchitectureTest.java").is_file())
         self.assertNotIn("__JAVA_PACKAGE__", (target / "src/test/java/org/example/app/ArchitectureTest.java").read_text())
+        self.assertIn("FreezingArchRule", (target / "src/test/java/org/example/app/ArchitectureTest.java").read_text())
+        self.assertTrue((target / "src/test/resources/archunit.properties").is_file())
         self.assertTrue((target / ".github/workflows/code-standards.yml").is_file())
+        self.assertTrue((target / ".factory/bin/standards-ratchet").is_file())
+        self.assertIn("standards-ratchet", (target / ".github/workflows/code-standards.yml").read_text())
         self.assertEqual("java-spring-maven", json.loads(
             (target / ".factory" / "standards-origin.json").read_text())["stack"])
 
@@ -113,17 +118,27 @@ class ProjectStandardsStatusTest(unittest.TestCase):
         self.assertEqual(0, self.adopt(target)[0])
         with (target / "STANDARDS.md").open("a", encoding="utf-8") as handle:
             handle.write("- User choice: recommended — par défaut, non confirmée.\n")
+        (target / ".factory/frozen-list.json").write_text(json.dumps({
+            "contract": "agent-factory-frozen-list/v1",
+            "entries": [{"rule": "architecture/layer", "path": "src/Old.java", "count": 2}]}))
+        store = target / ".factory/archunit-freeze"
+        store.mkdir()
+        (store / "stored.rules").write_text("architecture=sample-id\n")
+        (store / "sample-id").write_text(
+            "Field <org.example.app.persistence.Dao.api> has type <org.example.app.web.Api> in (Dao.java:1)\n")
         (self.root / "config/projects/api.toml").write_text('rig_dir = "project-worktree"\n')
 
         code, result = self.status()
 
         self.assertEqual(0, code, result)
         api = result["projects"][0]["rigs"][0]
-        self.assertEqual({"stack": "java-spring-maven", "version": "1"}, api["origin"])
-        self.assertEqual({"java-spring-maven": "1"}, api["latest_versions"])
+        self.assertEqual({"stack": "java-spring-maven", "version": "2"}, api["origin"])
+        self.assertEqual({"java-spring-maven": "2"}, api["latest_versions"])
         self.assertFalse(api["update_available"])
+        self.assertTrue(api["baseline_pending"])
         self.assertTrue(api["unconfirmed_choices"])
-        self.assertEqual({}, api["frozen_counts"])
+        self.assertEqual(1, api["frozen_counts"]["architecture/layer"])
+        self.assertEqual(1, api["frozen_counts"]["archunit/persistence-to-web"])
 
     def test_adopt_refuses_unknown_stack_without_writing(self):
         self.java_defaults()
@@ -194,9 +209,15 @@ class ProjectStandardsStatusTest(unittest.TestCase):
         self.assertTrue((target / "eslint.config.mjs").is_file())
         self.assertTrue((target / ".dependency-cruiser.cjs").is_file())
         self.assertTrue((target / ".github/workflows/code-standards.yml").is_file())
+        self.assertTrue((target / ".factory/bin/standards-ratchet").is_file())
+        self.assertIn("standards-ratchet", (target / ".github/workflows/code-standards.yml").read_text())
         origin = json.loads((target / ".factory/standards-origin.json").read_text())
         self.assertEqual({"contract": "agent-factory-standards-origin/v1",
-                          "stack": "react-typescript", "version": "1"}, origin)
+                          "stack": "react-typescript", "version": "2"}, origin)
+        (target / "eslint-suppressions.json").write_text(json.dumps({
+            "src/App.tsx": {"@typescript-eslint/no-explicit-any": {"count": 2}}}))
+        (self.root / "config/projects/web.toml").write_text('rig_dir = "project-worktree"\n')
+        self.assertEqual({"@typescript-eslint/no-explicit-any": 1}, self.status()[1]["projects"][0]["rigs"][1]["frozen_counts"])
 
     def test_react_code_adoption_does_not_activate_design(self):
         self.react_defaults()

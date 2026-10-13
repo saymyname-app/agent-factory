@@ -1,1 +1,1 @@
-{"contract":"agent-factory-never-frozen/v1","rules":["bug-patterns","secrets","new-code-coverage"]}
+{"contract":"agent-factory-never-frozen/v1","rules":["bug-patterns","secrets","new-code-coverage","java/error-prone","java/null-away"]}

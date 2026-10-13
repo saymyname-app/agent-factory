@@ -1,6 +1,6 @@
 # Code standards — Java, Maven, Spring
 
-Default Standards version 1. This file is copied into a project's repository
+Default Standards version 2. This file is copied into a project's repository
 and becomes that project's own written standard. Tool-held rules live in their
 configuration, not here.
 
@@ -12,6 +12,7 @@ configuration, not here.
 | Architecture | Persistence cannot depend on web classes | Changes stay local | An architecture test | `src/test/java` |
 | Coverage | 80% of changed Java lines are exercised | New work gets test evidence | More tests and CI time | `.github/workflows/code-standards.yml` |
 | Security | PR scans refuse newly introduced vulnerable dependencies and discovered secrets | Known risks surface early | Alert triage and CI time | `.github/workflows/code-standards.yml` |
+| Frozen List | Existing architecture violations can only decrease; probable bugs are never frozen | Old code can be adopted without growing debt | Record the initial count per rule and file | `.factory/frozen-list.json`, `.factory/never-frozen.json`, `.github/workflows/code-standards.yml` |
 
 ## Rules cited by the reviewer
 
@@ -28,3 +29,7 @@ configuration, not here.
 ## Derogations
 
 None.
+
+A bounded exception is one table row under this heading with columns `Standard | Endroit | Intent | Date | Fin`. Intent contains Benjamin's exact words in French guillemets, Date is `YYYY-MM-DD HH:MM Paris`, and Fin is an expiry date. Record and review that decision in a separate PR first; the ratchet accepts an increase only when the exception is already on the target branch for that rule and path and remains current. A new photo instead uses `.factory/ratchet-snapshot.json` for one rule and names the configuration file changed by the same PR.
+
+After code adoption, run `.factory/bin/standards-ratchet --initial-photo --target .` once in the project worktree. It records the current ArchUnit violations without asking Benjamin to sort them. Commit `.factory/baseline-record.json` and `.factory/archunit-freeze/` with the adoption PR. CI refuses an adoption without this initial photo. Error Prone and NullAway findings remain never frozen and must be corrected.

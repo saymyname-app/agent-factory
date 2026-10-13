@@ -1,1 +1,1 @@
-{"contract":"agent-factory-never-frozen/v1","rules":["bug-patterns","secrets","new-code-coverage"]}
+{"contract":"agent-factory-never-frozen/v1","rules":["bug-patterns","secrets","new-code-coverage","@typescript-eslint/no-unsafe-assignment","@typescript-eslint/no-unsafe-call","@typescript-eslint/no-unsafe-member-access","@typescript-eslint/no-unsafe-return"]}
