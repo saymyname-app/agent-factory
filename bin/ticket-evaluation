@@ -1080,6 +1080,9 @@ def cmd_product(args: argparse.Namespace) -> int:
     return 0
 
 
+SCREEN_CHECKS = ("Tout se fait au clavier", "Le focus est visible",
+                 "Les images ont une description", "Le mouvement réduit est respecté")
+
 # --- brief: what the Evaluator is given ----------------------------------------------
 
 
@@ -1132,11 +1135,21 @@ def cmd_brief(args: argparse.Namespace) -> int:
             "demonstration_line": {"text": "<the demonstration line, copied exactly>", "state": "|".join(STATES),
                                    "evidence": "<piece name>"},
             "coverage": [{"dataset": "<each declared dataset>", "evidence": "<sealed piece from that dataset>"}],
+            "screen_findings": [{"check": "<one screen check from this brief>",
+                                 "rule": "<exact line of DESIGN.md>", "evidence": "<sealed piece>",
+                                 "reason": "<visible deviation>"}] if convoy.ticket(args.ticket).get("interface") else [],
         },
         "roles": request["roles"], "independence": independence(request["roles"]),
     }
     brief["expectations"] = planned(json.loads(profile_path.read_text(encoding="utf-8")), "ticket",
                                     brief["criteria"], brief["datasets"], request["commit"], args.ticket)
+    if convoy.ticket(args.ticket).get("interface"):
+        # The Evaluator has no repository access. Give it the rule text from
+        # the exact commit it evaluates, never from a mutable worktree.
+        design = run(["git", "-C", str(convoy.repo), "show", f"{request['commit']}:DESIGN.md"])
+        if design.returncode == 0:
+            brief["design"] = {"path": "DESIGN.md", "text": design.stdout}
+        brief["screen_checks"] = list(SCREEN_CHECKS)
     print(json.dumps(brief, indent=2, sort_keys=True, ensure_ascii=False))
     return 0
 
@@ -1178,6 +1191,8 @@ def handed_pieces(given: dict[str, Any]) -> list[Any]:
         items.append(given["demonstration_line"])
     if isinstance(given.get("coverage"), list):
         items.extend(item for item in given["coverage"] if isinstance(item, dict))
+    if isinstance(given.get("screen_findings"), list):
+        items.extend(item for item in given["screen_findings"] if isinstance(item, dict))
     return list(dict.fromkeys(item.get("evidence") for item in items if isinstance(item.get("evidence"), str)))
 
 
@@ -1212,6 +1227,24 @@ def cmd_record(args: argparse.Namespace) -> int:
         given, _ = enforce(entries, given, "criteria", verified, FETCH)
     except (ValueError, KeyError, TypeError, StopIteration) as exc:
         raise Refusal(f"comparaison validée impossible : {exc}") from exc
+    findings = given.get("screen_findings", [])
+    if not isinstance(findings, list):
+        raise Refusal("screen_findings doit être une liste")
+    if findings:
+        if not convoy.ticket(args.ticket).get("interface"):
+            raise Refusal("constat écran sur un ticket sans interface")
+        design = run(["git", "-C", str(convoy.repo), "show", f"{request['commit']}:DESIGN.md"])
+        if design.returncode != 0:
+            raise Refusal("constat écran sans DESIGN.md au commit évalué")
+        for finding in findings:
+            if not isinstance(finding, dict) or set(finding) != {"check", "rule", "evidence", "reason"}:
+                raise Refusal("constat écran mal formé")
+            if finding["check"] not in SCREEN_CHECKS:
+                raise Refusal("constat écran hors de la liste à vérifier")
+            if finding["rule"] not in design.stdout.splitlines() or not finding["rule"].startswith("- "):
+                raise Refusal("règle absente de DESIGN.md au commit évalué")
+            if not isinstance(finding["reason"], str) or not finding["reason"].strip() or "\n" in finding["reason"]:
+                raise Refusal("constat écran sans raison sur une ligne")
     addresses = [entry["address"] for entry in request["environment"]]
     refused = [reason for reason in (piece_refusal(args.convoy, args.ticket, piece, request["commit"], addresses)
                                      for piece in handed_pieces(given)) if reason]
@@ -1235,7 +1268,8 @@ def cmd_record(args: argparse.Namespace) -> int:
         raise Refusal("état sans Evidence Record valide : " + " ; ".join(refused))
     # Never GC_AGENT: it names a place in the pool of the agent, which the next session takes.
     session = os.environ.get("GC_SESSION_NAME") or os.environ.get("GC_SESSION_ID") or ""
-    written = state_write_file("record-evaluation", args.convoy, args.ticket, {**given, "recorded_by": session})
+    written = state_write_file("record-evaluation", args.convoy, args.ticket, {**given, "recorded_by": session},
+                               "--repo", str(convoy.repo))
     print(json.dumps({
         "ok": True, "convoy": args.convoy, "ticket": args.ticket, "commit": request["commit"],
         "outcome": written["outcome"], "verdict": written["verdict"], "state": written["state"],
@@ -1285,7 +1319,8 @@ def computed_verdict(convoy: Convoy, ticket: dict[str, Any]) -> dict[str, Any]:
     else:
         pieces = list(dict.fromkeys([item["evidence"] for item in last["criteria"]] +
                                    [last["demonstration_line"]["evidence"]] +
-                                   [item["evidence"] for item in last.get("coverage") or []]))
+                                   [item["evidence"] for item in last.get("coverage") or []] +
+                                   [item["evidence"] for item in last.get("screen_findings") or []]))
     for piece in pieces:
         refusal = piece_refusal(convoy.id, ticket["id"], piece, last["commit"], addresses)
         if refusal:

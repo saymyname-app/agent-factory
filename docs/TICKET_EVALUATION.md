@@ -277,12 +277,28 @@ On the ticket, written by `bin/convoy-state` only (`docs/CONVOY_STATE.md`):
 
 | Key | Value |
 |---|---|
-| `gc.flow.evaluation` | `rounds`: each recorded round — an `evaluation` (`commit`, `criteria`: number, text, state, evidence, reason, cause; `demonstration_line`; `outcome`, `verdict`, `roles`, `environment`: dataset and address of each product, `recorded_by`, `at`) or a `startup` (`commit`, `started`, `evidence` and `environment`, or `detail`; `outcome`, `verdict`, `at`). `request`, while an evaluation is open — `commit`, `criteria`, `demonstration_line`, `roles`, `environment` (with `state_file`), `launches` (`bead`, `at`, and `refused`: `{session, at}` when the session that answered had already served), `at`. `live`: the launch records of the products still to stop |
+| `gc.flow.evaluation` | `rounds`: each recorded round — an `evaluation` (`commit`, `criteria`: number, text, state, evidence, reason, cause; `demonstration_line`; optional `screen_findings`; `outcome`, `verdict`, `roles`, `environment`: dataset and address of each product, `recorded_by`, `at`) or a `startup` (`commit`, `started`, `evidence` and `environment`, or `detail`; `outcome`, `verdict`, `at`). `request`, while an evaluation is open — `commit`, `criteria`, `demonstration_line`, `roles`, `environment` (with `state_file`), `launches` (`bead`, `at`, and `refused`: `{session, at}` when the session that answered had already served), `at`. `live`: the launch records of the products still to stop |
 | `gc.flow.verdict.evaluation` | the verdict of the last round that gave one, and the commit it judged |
 | `gc.flow.models` | per delivery role: `agent`, `provider`, `model`, `at` |
 | `gc.flow.stop` | reason `evaluation_no_result` or `evaluation_outage`, a one-line detail, and `raised` once the escalation door accepted the request |
 | `gc.flow.park` | cause `planning_exception`, once a criterion could not be observed |
 | `gc.flow.evidence.<piece>` | the fingerprint of each captured piece (`bin/evidence-capture`) |
+
+## Design standards in the brief
+
+For an interface ticket, `brief` includes the root `DESIGN.md` text from the
+exact evaluated commit and a short screen checklist: keyboard operation,
+visible focus, image descriptions, and reduced motion. The Evaluator's role
+cannot read the repository; these fields give it the written rule to cite
+and the observations to make on the launched product. `record` accepts
+`screen_findings` only on an interface ticket: each finding names one check,
+copies an exact rule line from `DESIGN.md` at the evaluated commit, gives a
+sealed evidence piece and a one-line reason. The state-writing door checks
+the interface marker, the exact committed rule and the sealed piece too, so a
+direct `convoy-state record-evaluation` call cannot bypass them. A valid
+finding makes the verdict unfavorable even when the ticket criteria pass. A project still without
+`DESIGN.md` has no design rule text to cite. Tickets without an interface
+reference receive neither brief field.
 
 ## Limits
 

@@ -1304,7 +1304,7 @@ def evaluation_items(round_: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]
     return named + [("ligne de démonstration", round_["demonstration_line"])]
 
 
-def evaluation_outcome(items: list[tuple[str, dict[str, Any]]]) -> str:
+def evaluation_outcome(items: list[tuple[str, dict[str, Any]]], screen_findings: list[dict[str, Any]] | None = None) -> str:
     """Spec §7: what code makes of the states. Favorable only when every
     state is « observé ». An « inobservable » by the criterion goes back to
     the Planning Run, a « non observé » to the author; when the environment
@@ -1312,7 +1312,7 @@ def evaluation_outcome(items: list[tuple[str, dict[str, Any]]]) -> str:
     states = [item for _, item in items]
     if any(item["state"] == "unobservable" and item["cause"] == "criterion" for item in states):
         return "planning_exception"
-    if any(item["state"] == "not_observed" for item in states):
+    if any(item["state"] == "not_observed" for item in states) or screen_findings:
         return "return_to_author"
     if any(item["state"] == "unobservable" for item in states):
         return "environment_outage"
@@ -1353,7 +1353,7 @@ def evaluation_round(value: Any) -> dict[str, Any]:
             raise Refusal("issue du contrôle de démarrage qui n'est pas celle de son résultat")
         return value
     required = common | {"criteria", "demonstration_line", "roles", "environment", "recorded_by"}
-    if not required <= set(value) or set(value) - required - {"coverage"}:
+    if not required <= set(value) or set(value) - required - {"coverage", "screen_findings"}:
         raise Refusal(f"passe d'évaluation mal formée : {value!r}")
     if not isinstance(value["criteria"], list) or not value["criteria"]:
         raise Refusal(f"passe d'évaluation sans état par critère : {value['criteria']!r}")
@@ -1367,7 +1367,17 @@ def evaluation_round(value: Any) -> dict[str, Any]:
     if "coverage" in value:
         evaluation_coverage(value["coverage"], list(dict.fromkeys(entry["dataset"] for entry in value["environment"])))
     single_line(value["recorded_by"], "session de l'Evaluator")
-    if outcome != evaluation_outcome(evaluation_items(value)):
+    findings = value.get("screen_findings", [])
+    if not isinstance(findings, list):
+        raise Refusal("constats écran mal formés")
+    for finding in findings:
+        if not isinstance(finding, dict) or set(finding) != {"check", "rule", "evidence", "reason"}:
+            raise Refusal("constat écran mal formé")
+        for name in ("check", "rule", "reason"):
+            single_line(finding[name], f"constat écran : {name}")
+        if not isinstance(finding["evidence"], str) or not PIECE_RE.match(finding["evidence"]):
+            raise Refusal("constat écran sans pièce de preuve")
+    if outcome != evaluation_outcome(evaluation_items(value), findings):
         raise Refusal("issue d'évaluation qui n'est pas celle de ses états")
     return value
 
@@ -1407,6 +1417,7 @@ def evaluation_state(record: dict[str, Any]) -> dict[str, Any]:
             state["not_observed"].append(name)
         elif item["state"] == "unobservable":
             state["unobservable"].append({"what": name, "cause": item["cause"]})
+    state["not_observed"].extend("écran : " + finding["check"] for finding in last.get("screen_findings", []))
     return state
 
 
@@ -4215,7 +4226,7 @@ def cmd_record_evaluation(args: argparse.Namespace) -> int:
     problems = [
         "le verdict est calculé par du code, jamais donné par l'Evaluator" if name in ("verdict", "outcome")
         else f"champ inconnu : {name}"
-        for name in sorted(set(given) - {"commit", "criteria", "demonstration_line", "coverage", "recorded_by"})]
+        for name in sorted(set(given) - {"commit", "criteria", "demonstration_line", "coverage", "screen_findings", "recorded_by"})]
     if given.get("commit") != request["commit"]:
         problems.append(f"l'évaluation rendue porte sur le commit {given.get('commit')!r}, la demande sur {request['commit']}")
     recorded_by = given.get("recorded_by")
@@ -4264,6 +4275,52 @@ def cmd_record_evaluation(args: argparse.Namespace) -> int:
                     problems.append(f"couverture du jeu {item['dataset']} : {refusal}")
     elif "coverage" in given:
         problems.append("couverture non demandée par cette évaluation")
+    findings = given.get("screen_findings", [])
+    if not isinstance(findings, list):
+        problems.append("screen_findings doit être une liste")
+        findings = []
+    if findings:
+        if validated_prototype(ticket.get("description")) is None:
+            problems.append("constat écran sur un ticket sans interface")
+        if not args.repo:
+            problems.append("constat écran sans --repo pour vérifier DESIGN.md au commit évalué")
+        else:
+            design = subprocess.run(["git", "-C", args.repo, "show", f"{request['commit']}:DESIGN.md"],
+                                    capture_output=True, text=True)
+            if design.returncode:
+                problems.append("constat écran sans DESIGN.md au commit évalué")
+            else:
+                rules = set(design.stdout.splitlines())
+                for finding in findings:
+                    if not isinstance(finding, dict) or set(finding) != {"check", "rule", "evidence", "reason"}:
+                        problems.append("constat écran mal formé")
+                        continue
+                    if finding["check"] not in ("Tout se fait au clavier", "Le focus est visible",
+                                                "Les images ont une description", "Le mouvement réduit est respecté"):
+                        problems.append("constat écran hors de la liste à vérifier")
+                    if finding["rule"] not in rules or not finding["rule"].startswith("- "):
+                        problems.append("règle absente de DESIGN.md au commit évalué")
+                    if not isinstance(finding["reason"], str) or not finding["reason"].strip() or "\n" in finding["reason"]:
+                        problems.append("constat écran sans raison sur une ligne")
+                    piece = finding["evidence"]
+                    refusal = evidence_at(metadata, piece, request["commit"])
+                    if refusal:
+                        problems.append("constat écran sans Evidence Record valide : " + refusal)
+                        continue
+                    verified = subprocess.run([str(BIN / "evidence-capture"), "verify", args.convoy, args.ticket,
+                                               "--piece", piece], capture_output=True, text=True)
+                    if verified.returncode:
+                        problems.append("constat écran sans preuve scellée : " + verified.stdout.strip())
+                        continue
+                    try:
+                        path = json.loads(verified.stdout)["pieces"][0]["path"]
+                        captured = json.loads(Path(path).read_text(encoding="utf-8"))
+                    except (KeyError, IndexError, ValueError, OSError) as exc:
+                        problems.append(f"constat écran : preuve illisible ({exc})")
+                        continue
+                    addresses = {entry["address"] for entry in request["environment"]}
+                    if captured.get("address") not in addresses:
+                        problems.append("constat écran : preuve hors du produit évalué")
     if problems:
         raise Refusal("évaluation hors contrat : " + " ; ".join(problems))
     at = now()
@@ -4274,7 +4331,9 @@ def cmd_record_evaluation(args: argparse.Namespace) -> int:
         "recorded_by": recorded_by.strip(), "at": at}
     if coverage is not None:
         round_["coverage"] = coverage
-    round_["outcome"] = evaluation_outcome(evaluation_items(round_))
+    if given.get("screen_findings"):
+        round_["screen_findings"] = given["screen_findings"]
+    round_["outcome"] = evaluation_outcome(evaluation_items(round_), round_.get("screen_findings"))
     round_["verdict"] = verdict_of_outcome(round_["outcome"])
     record["rounds"].append(evaluation_round(round_))
     del record["request"]
@@ -6909,7 +6968,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--commit")
     p.add_argument("--file")
     command("launch-evaluation", cmd_launch_evaluation).add_argument("--bead")
-    command("record-evaluation", cmd_record_evaluation).add_argument("--file")
+    p = command("record-evaluation", cmd_record_evaluation)
+    p.add_argument("--file")
+    p.add_argument("--repo")
     p = command("record-startup", cmd_record_startup)
     p.add_argument("--commit")
     p.add_argument("--piece")

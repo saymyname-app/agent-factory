@@ -1279,6 +1279,80 @@ class TicketEvaluationTest(unittest.TestCase):
             self.assertNotIn(forbidden, given)
         self.assertNotIn("repo", brief)
 
+    def test_interface_brief_includes_design_rules_and_screen_checks(self):
+        design = "# Design\n\n- Le focus reste visible.\n"
+        tip = self.finished_slice({**self.realized(), "DESIGN.md": design})
+        self.edit(SLICE, description=TICKET_TEXT + "\n\n## Validated Prototype\n"
+                  + "- branche : prototype/essai\n- commit : " + "a" * 40
+                  + "\n- chemin : /fixture\n- états : content\n")
+        self.evaluator("silent")
+        self.settle()
+        (self.repo / "DESIGN.md").write_text("- Règle du checkout mutable.\n")
+
+        brief = self.tool("brief")
+
+        self.assertEqual(tip, brief["commit"])
+        self.assertEqual({"path": "DESIGN.md", "text": design}, brief["design"])
+        self.assertEqual(["Tout se fait au clavier", "Le focus est visible",
+                          "Les images ont une description", "Le mouvement réduit est respecté"],
+                         brief["screen_checks"])
+
+    def test_non_interface_brief_omits_design_even_if_the_repository_has_it(self):
+        self.finished_slice({**self.realized(), "DESIGN.md": "- Le focus reste visible.\n"})
+        self.evaluator("silent")
+        self.settle()
+
+        brief = self.tool("brief")
+
+        self.assertNotIn("design", brief)
+        self.assertNotIn("screen_checks", brief)
+
+    def test_cited_screen_finding_refuses_an_otherwise_favorable_interface_ticket(self):
+        rule = "- Le focus reste visible."
+        tip, request = self.open_evaluation({**self.realized(), "DESIGN.md": rule + "\n"})
+        self.edit(SLICE, description=TICKET_TEXT + "\n\n## Validated Prototype\n"
+                  + "- branche : prototype/essai\n- commit : " + "a" * 40
+                  + "\n- chemin : /fixture\n- états : content\n")
+        handed = self.handed(tip, request)
+        handed["screen_findings"] = [{"check": "Le focus est visible", "rule": rule,
+                                      "evidence": self.capture("evaluation.focus", request["environment"][0]),
+                                      "reason": "Le focus disparaît après Tab."}]
+
+        result = self.recorded(handed)
+
+        self.assertEqual(("return_to_author", "unfavorable"), (result["outcome"], result["verdict"]))
+        self.assertIn("écran : Le focus est visible", result["state"]["not_observed"])
+        self.assertFalse(self.tool("verdict")["favorable"])
+
+    def test_screen_finding_without_written_rule_is_refused(self):
+        tip, request = self.open_evaluation({**self.realized(), "DESIGN.md": "- Le focus reste visible.\n"})
+        self.edit(SLICE, description=TICKET_TEXT + "\n\n## Validated Prototype\n"
+                  + "- branche : prototype/essai\n- commit : " + "a" * 40
+                  + "\n- chemin : /fixture\n- états : content\n")
+        handed = self.handed(tip, request)
+        handed["screen_findings"] = [{"check": "Le focus est visible", "rule": "- Règle inventée.",
+                                      "evidence": "evaluation.c1", "reason": "Le focus disparaît."}]
+
+        self.record_refused(handed, "règle absente de DESIGN.md")
+
+    def test_direct_state_write_rejects_an_uncited_screen_finding(self):
+        tip, request = self.open_evaluation({**self.realized(), "DESIGN.md": "- Le focus reste visible.\n"})
+        self.edit(SLICE, description=TICKET_TEXT + "\n\n## Validated Prototype\n"
+                  + "- branche : prototype/essai\n- commit : " + "a" * 40
+                  + "\n- chemin : /fixture\n- états : content\n")
+        handed = self.handed(tip, request)
+        handed["recorded_by"] = "delivery-evaluator-fixture-1"
+        handed["screen_findings"] = [{"check": "Le focus est visible", "rule": "- Règle inventée.",
+                                      "evidence": "evaluation.c1", "reason": "Le focus disparaît."}]
+        before = self.tracker.read_bytes()
+
+        result = self.run_cmd(STATE_TOOL, "record-evaluation", CONVOY, SLICE,
+                              "--repo", self.repo, "--file", self.json_file("direct.json", handed))
+
+        self.assertEqual(EXIT_REFUSED, result.returncode, result.stdout + result.stderr)
+        self.assertIn("règle absente de DESIGN.md", result.stdout)
+        self.assertEqual(before, self.tracker.read_bytes())
+
     def test_a_brief_is_refused_when_no_evaluation_is_open(self):
         self.finished_slice(self.realized())
 

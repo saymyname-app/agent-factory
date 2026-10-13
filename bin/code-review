@@ -100,7 +100,7 @@ MIN_QUOTE = 12
 # The files of a repository that usually hold its written rules: a hint for
 # the Standards axis of the skill, which looks for them itself.
 STANDARDS_FILES = ("AGENTS.md", "CLAUDE.md", "CONTRIBUTING.md", "CODING_STANDARDS.md", "STANDARDS.md",
-                   "docs/CODING_STANDARDS.md", "docs/CONTRIBUTING.md", "docs/STANDARDS.md")
+                   "docs/CODING_STANDARDS.md", "docs/CONTRIBUTING.md", "docs/STANDARDS.md", "DESIGN.md")
 # What a file that holds tests usually looks like, outside the declared perimeter too.
 TEST_FILE_RE = re.compile(
     r"(^|/)(tests?|__tests__|spec)/|(^|/)test_[^/]+$|[^/]_test\.[A-Za-z0-9]+$|\.(test|spec)\.[A-Za-z0-9]+$")
