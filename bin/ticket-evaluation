@@ -69,6 +69,7 @@ sys.path.insert(0, str(BIN.parent / "lib"))
 import delivery_reads  # noqa: E402
 from convoy_state import retry_after_lift
 from evaluation_capacity import admission, Busy, product_running
+from validated_expectations import planned, enforce, sealed_record
 from delivery_role_identity import role_identity, role_supplier, supplier_of  # noqa: E402
 
 NEW_FLOW = "new-flow/v1"
@@ -1099,7 +1100,7 @@ def cmd_brief(args: argparse.Namespace) -> int:
     repository, nor the branch."""
     convoy = Convoy(args.convoy, args.repo, args.profile)
     request = open_request(convoy, args.ticket)
-    _, launch_block = convoy.profile(args.ticket, request["commit"])
+    profile_path, launch_block = convoy.profile(args.ticket, request["commit"])
     live = set(evaluation_of(convoy.ticket(args.ticket)).get("live") or [])
     active = [entry for entry in request["environment"] if entry["state_file"] in live]
     capture = [str(CAPTURE_TOOL), "command", args.convoy, args.ticket, "--piece", "evaluation.<name>",
@@ -1133,6 +1134,8 @@ def cmd_brief(args: argparse.Namespace) -> int:
         },
         "roles": request["roles"], "independence": independence(request["roles"]),
     }
+    brief["expectations"] = planned(json.loads(profile_path.read_text(encoding="utf-8")), "ticket",
+                                    brief["criteria"], brief["datasets"], request["commit"], args.ticket)
     print(json.dumps(brief, indent=2, sort_keys=True, ensure_ascii=False))
     return 0
 
@@ -1196,6 +1199,18 @@ def cmd_record(args: argparse.Namespace) -> int:
     if request is None:
         raise Refusal(
             f"aucune évaluation n'est demandée sur le ticket {args.ticket} : des états répondent à une demande ouverte")
+    profile_path, _ = convoy.profile(args.ticket, request["commit"])
+    entries = planned(json.loads(profile_path.read_text(encoding="utf-8")), "ticket",
+                      [{"number": n, "text": t} for n, t in enumerate(request["criteria"], 1)],
+                      request.get("datasets") or [e["dataset"] for e in request["environment"]], request["commit"], args.ticket)
+    def verified(piece: str, dataset: str) -> dict[str, Any]:
+        addresses_for_game = [e["address"] for e in request["environment"] if e["dataset"] == dataset]
+        return sealed_record(str(CAPTURE_TOOL), args.convoy, args.ticket, piece, request["commit"],
+                             addresses_for_game)
+    try:
+        given, _ = enforce(entries, given, "criteria", verified, FETCH)
+    except (ValueError, KeyError, TypeError, StopIteration) as exc:
+        raise Refusal(f"comparaison validée impossible : {exc}") from exc
     addresses = [entry["address"] for entry in request["environment"]]
     refused = [reason for reason in (piece_refusal(args.convoy, args.ticket, piece, request["commit"], addresses)
                                      for piece in handed_pieces(given)) if reason]

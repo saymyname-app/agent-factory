@@ -713,6 +713,30 @@ class TicketEvaluationTest(unittest.TestCase):
         merged = self.merge()
         self.assertEqual(([], [SLICE]), (merged["merged"], [entry["id"] for entry in merged["waiting"]]))
 
+    def test_a_validated_true_value_served_false_refuses_an_observed_criterion(self):
+        tip, request = self.open_evaluation()
+        profile = json.loads(self.profile.read_text())
+        profile["validated_expectations"] = [{
+            "scope": "ticket", "number": 1, "text": CRITERION, "dataset": "content",
+            "source": {"reference": "validated factory-suspended scenario", "digest": sha256_of(b"approved scenario")},
+            "expected": True, "observation": {"path": "/status", "pointer": "/suspended"},
+        }]
+        self.profile.write_text(json.dumps(profile))
+        brief = self.tool("brief", env=SESSION)
+        self.assertEqual(tip, brief["expectations"][0]["commit"])
+        product = request["environment"][0]
+        piece = "evaluation.expected.suspended"
+        captured = self.run_cmd(CAPTURE_TOOL, "command", CONVOY, SLICE, "--piece", piece,
+                                "--launch-state", product["state_file"], "--", sys.executable, "-c",
+                                brief["capture"]["page"][-2], product["address"] + "/status", env=SESSION)
+        self.assertEqual(0, captured.returncode, captured.stdout + captured.stderr)
+        result = self.handed(tip, request, comparisons=[{"id": brief["expectations"][0]["id"], "evidence": piece}])
+        self.recorded(result)
+        round_ = self.evaluation()["rounds"][0]
+        self.assertEqual("return_to_author", round_["outcome"])
+        self.assertEqual("not_observed", round_["criteria"][0]["state"])
+        self.assertIn("servi False", round_["criteria"][0]["reason"])
+
     def test_the_corrected_ticket_has_every_state_observed_with_evidence_and_a_favorable_verdict(self):
         self.finished_slice()
         self.settle()

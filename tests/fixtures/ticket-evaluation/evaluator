@@ -135,6 +135,22 @@ def state_of(name, text, product):
             "reason": f"la page du produit lancé ne montre pas « {given['look_for']} »"}
 
 
+comparisons = []
+
+
+def compare(product):
+    for item in brief.get("expectations", []):
+        if item.get("gap") or item.get("dataset") != product["dataset"]:
+            continue
+        piece = f"evaluation.expected.{item['id']}"
+        path = item["observation"]["path"]
+        captured = subprocess.run(
+            [CAPTURE, "command", convoy, ticket, "--piece", piece, "--launch-state", product["launch_state"], "--",
+             sys.executable, "-c", brief["capture"]["page"][-2], product["address"] + path],
+            env=session, capture_output=True, text=True, check=True)
+        comparisons.append({"id": item["id"], "evidence": piece})
+
+
 if len(brief.get("datasets") or []) > 1:
     first = brief["environments"][0]["dataset"]
     selected = given.get("dataset", first)
@@ -143,6 +159,7 @@ if len(brief.get("datasets") or []) > 1:
     coverage = []
     for dataset in brief["datasets"]:
         product = product_for(dataset)
+        compare(product)
         if dataset == selected:
             criteria = {item["number"]: {"number": item["number"],
                         **state_of(f"c{item['number']}", item["text"], product)}
@@ -153,6 +170,7 @@ if len(brief.get("datasets") or []) > 1:
     handed = {"commit": brief["commit"], "criteria": [criteria[item["number"]] for item in brief["criteria"]],
               "demonstration_line": line, "coverage": coverage}
 else:
+    compare(product)
     handed = {
         "commit": brief["commit"],
         "criteria": [{"number": item["number"], **state_of(f"c{item['number']}", item["text"], product)}
@@ -160,6 +178,7 @@ else:
         "demonstration_line": state_of("demo", brief["demonstration_line"], product),
         "coverage": [{"dataset": product["dataset"], "evidence": "evaluation.c1"}],
     }
+handed["comparisons"] = comparisons
 with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as handle:
     json.dump(handed, handle, ensure_ascii=False)
 proc = subprocess.run([TOOL, "record", convoy, ticket, "--file", handle.name], env=session, capture_output=True, text=True)
