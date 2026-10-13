@@ -457,7 +457,7 @@ human_approver = "$APPROVER"
 TOML
 # The profile of the project is the descriptor of the fixture, whole: only
 # the rig it names is the one of this city.
-jq '.rigs = ["trial"]' "$ROOT/$FIXTURE/descriptor.json" > "$CITY/config/project-descriptors/trial.json"
+jq '.rigs = ["trial"] | .stacks = {"trial": ["fixture-stack"]}' "$ROOT/$FIXTURE/descriptor.json" > "$CITY/config/project-descriptors/trial.json"
 jq -n --argjson n "$CEILING" '{contract: "agent-factory-delivery-flow/v1", max_sessions: $n,
   start: {formula: "mol-ticket-author", role: "author"},
   test_review: {formula: "mol-test-review", role: "reviewer", rig: "trial", timeout_seconds: 600},

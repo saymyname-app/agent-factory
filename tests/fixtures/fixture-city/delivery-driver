@@ -410,6 +410,7 @@ class City:
             "test_review": {"formula": "mol-test-review", "role": "reviewer", "rig": RIG, "timeout_seconds": 3600}}))
         descriptor = json.loads((ROOT / self.fixture / "descriptor.json").read_text())
         descriptor["rigs"] = [RIG]
+        descriptor["stacks"] = {RIG: ["fixture-stack"]}
         if self.project["regression_command"]:
             descriptor["launch"]["regression_command"] = self.project["regression_command"]
         through_the_door = inject in THROUGH_THE_DOOR

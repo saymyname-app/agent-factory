@@ -250,6 +250,7 @@ class TicketEvaluationTest(unittest.TestCase):
         (config / "projects" / f"{RIG}.toml").write_text(f'rig_dir = "{self.repo}"\n')
         profile = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
         profile["rigs"] = [RIG]
+        profile["stacks"] = {RIG: ["fixture-stack"]}
         profile["launch"]["datasets"] = {"content": profile["launch"]["datasets"]["content"]}
         for screen in profile["launch"]["screens"]:
             screen["states"] = ["content"]

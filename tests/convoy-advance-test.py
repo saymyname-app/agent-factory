@@ -352,6 +352,7 @@ class ConvoyAdvanceHarness(unittest.TestCase):
         self.env["SPEC_INTEGRATION_WORK_DIR"] = str(self.tmp / "work")
         descriptor = json.loads((ROOT / "tests" / "fixtures" / "delivery-fixture-city" / "descriptor.json").read_text())
         descriptor["rigs"] = ["fx-rig"]
+        descriptor["stacks"] = {"fx-rig": ["fixture-stack"]}
         descriptor["launch"]["regression_command"] = regression
         (self.root / "config" / "project-descriptors").mkdir()
         (self.root / "config" / "project-descriptors" / "fx.json").write_text(json.dumps(descriptor))

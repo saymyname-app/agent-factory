@@ -294,6 +294,7 @@ class ConvoyStopsOnTheFixtureCity(Staged, publication.Harness):
         (config / "project-descriptors").mkdir(exist_ok=True)
         descriptor = json.loads((self.descriptors / f"{PROJECT}.json").read_text())
         descriptor["rigs"] = [RIG]
+        descriptor["stacks"] = {RIG: ["fixture-stack"]}
         descriptor["launch"]["regression_command"] = REGRESSION
         (config / "project-descriptors" / f"{PROJECT}.json").write_text(json.dumps(descriptor))
         shutil.copy(ROOT / "config" / "delivery-roles.json", config / "delivery-roles.json")

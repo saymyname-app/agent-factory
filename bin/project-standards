@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""Read the code and design standards state of registered project rigs."""
+import argparse
+import json
+from pathlib import Path
+import runpy
+import tomllib
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repo-root", type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument("command", choices=["status"])
+    args = parser.parse_args()
+    root = args.repo_root.resolve()
+    profile = runpy.run_path(str(Path(__file__).with_name("project-planning-profile")))
+    load_descriptor = profile["load_descriptor"]
+    projects = []
+    try:
+        for file in sorted((root / "config/project-descriptors").glob("*.json")):
+            descriptor = load_descriptor(file)
+            rigs = []
+            for rig in descriptor["rigs"]:
+                with (root / "config/projects" / f"{rig}.toml").open("rb") as handle:
+                    rig_dir = tomllib.load(handle)["rig_dir"]
+                path = (root / rig_dir).resolve()
+                if not path.is_relative_to(root):
+                    raise ValueError(f"rig {rig}: path outside repository")
+                if not path.is_dir():
+                    raise ValueError(f"rig {rig}: checkout missing at {path}")
+                rigs.append({
+                    "rig": rig,
+                    "stacks": descriptor["stacks"][rig],
+                    "standards": {
+                        "code": "avec" if (path / "STANDARDS.md").is_file() else "sans",
+                        "design": "avec" if (path / "DESIGN.md").is_file() else "sans",
+                    },
+                })
+            projects.append({"project_id": descriptor["project_id"], "rigs": rigs})
+    except (OSError, KeyError, ValueError, profile["ProfileError"]) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+        return 1
+    print(json.dumps({"ok": True, "projects": projects}, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

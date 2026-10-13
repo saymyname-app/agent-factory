@@ -3,6 +3,7 @@
   "project_id": "delivery-fixture-city-api",
   "display_name": "Delivery Fixture City API",
   "rigs": ["delivery-fixture-city-api"],
+  "stacks": {"delivery-fixture-city-api": ["fixture-stack"]},
   "knowledge_repo": "agent-factory/agent-factory",
   "roadmap_path": "docs/roadmap.toml",
   "rituals_status_command": "true",

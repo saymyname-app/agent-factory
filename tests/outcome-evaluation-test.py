@@ -125,6 +125,7 @@ class Harness(gate.Harness):
         (config / "project-descriptors").mkdir()
         profile = json.loads((ROOT / gate.FIXTURE / "descriptor.json").read_text())
         profile["rigs"] = ["fx-rig"]
+        profile["stacks"] = {"fx-rig": ["fixture-stack"]}
         profile["launch"]["datasets"] = {"content": profile["launch"]["datasets"]["content"]}
         for screen in profile["launch"]["screens"]:
             screen["states"] = ["content"]
@@ -328,6 +329,7 @@ class OutcomeEvaluationTest(Harness):
         commit = self.verified()
         profile = json.loads((ROOT / gate.FIXTURE / "descriptor.json").read_text())
         profile["rigs"] = ["fx-rig"]
+        profile["stacks"] = {"fx-rig": ["fixture-stack"]}
         self.outcome_profile.write_text(json.dumps(profile))
         (self.root / "config" / "project-descriptors" / "fx.json").write_text(json.dumps(profile))
         self.evaluator("silent")
@@ -354,6 +356,7 @@ class OutcomeEvaluationTest(Harness):
         self.verified()
         profile = json.loads((ROOT / gate.FIXTURE / "descriptor.json").read_text())
         profile["rigs"] = ["fx-rig"]
+        profile["stacks"] = {"fx-rig": ["fixture-stack"]}
         self.outcome_profile.write_text(json.dumps(profile))
         (self.root / "config" / "project-descriptors" / "fx.json").write_text(json.dumps(profile))
         self.evaluator("silent")

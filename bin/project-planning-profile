@@ -593,6 +593,11 @@ def load_descriptor(path: Path) -> dict[str, Any]:
     project_id = safe_id(descriptor.get("project_id"), "project_id")
     display_name = required_string(descriptor.get("display_name"), "display_name")
     rigs = safe_id_list(descriptor.get("rigs"), "rigs")
+    stacks_raw = as_dict(descriptor.get("stacks"), "stacks")
+    if set(stacks_raw) != set(rigs):
+        raise ProfileError("descriptor.stacks must name exactly the declared rigs: "
+                           + ", ".join(sorted(set(rigs) ^ set(stacks_raw))))
+    stacks = {rig: safe_id_list(stacks_raw[rig], f"stacks.{rig}") for rig in rigs}
 
     knowledge_repo = required_string(descriptor.get("knowledge_repo"), "knowledge_repo")
     if not REPO_POINTER.fullmatch(knowledge_repo):
@@ -628,6 +633,7 @@ def load_descriptor(path: Path) -> dict[str, Any]:
         "project_id": project_id,
         "display_name": display_name,
         "rigs": rigs,
+        "stacks": stacks,
         "knowledge_repo": knowledge_repo,
         "roadmap_path": roadmap_path,
         "rituals_status_command": rituals_status_command,
@@ -722,6 +728,7 @@ def cmd_list(args: argparse.Namespace) -> int:
                     "project_id": descriptor["project_id"],
                     "display_name": descriptor["display_name"],
                     "rigs": descriptor["rigs"],
+                    "stacks": descriptor["stacks"],
                 }
             )
     except ProfileError as exc:

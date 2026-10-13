@@ -225,6 +225,7 @@ class TicketAuthorTest(unittest.TestCase):
             'sling_target = "fx-worker"\nformulas = "fx-start"\n')
         profile = json.loads(DESCRIPTOR.read_text())
         profile["rigs"] = ["fx-rig"]
+        profile["stacks"] = {"fx-rig": ["fixture-stack"]}
         self.profile.write_text(json.dumps(profile))
         (self.tmp / "proposal-door").write_text("#!/bin/sh\necho 0\n")
         (self.tmp / "proposal-door").chmod(0o755)
