@@ -171,8 +171,21 @@ remove this section and its pointers (`AGENTS.md`, `docs/context-index/`,
   there his words and the pull requests it plans, and publishes no ticket
   graph for that Spec, so the Factory does not deliver it a second time.
 - **Same way to main.** Worktree, pull request, Factory CI (`AGENTS.md`,
-  "Invariants"). A fresh-context review before a pull request is worth its
-  minutes for what a green test cannot show.
+  "Invariants"). Intent (Benjamin, his words, 2026-10-13 13:49 Paris):
+  « j'approuve » la Spec af-t5cgg7, dont la règle Direct Delivery rend la
+  relecture obligatoire. Mechanism (agent interpretation): independent review
+  is required before each Direct Delivery pull request. A fresh reviewer
+  session reads the current diff, the approved Spec, and applicable written
+  standards (including `STANDARDS.md` and `DESIGN.md` when present). A finding
+  citing an applicable written standard blocks the pull request when its
+  citation is verified in that source. A verified citation to the approved
+  Spec also blocks. The author corrects it and obtains a
+  fresh favorable review, or contests it and obtains favorable judgement from
+  another fresh reviewer; the author cannot waive it alone. An unavailable
+  review is not favorable. If the diff changes after review, review the new
+  diff before the PR. Record uncited findings without treating them as a gate.
+  This review rule governs Direct Delivery even though choosing between the
+  two delivery paths remains a preference.
 - **Leave the comparison.** At the end, three lines as a comment on the Spec
   bead: clock time from Spec approval to last merge; number of pull requests;
   defects found afterwards (added when one shows). The same three lines can
