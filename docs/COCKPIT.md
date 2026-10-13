@@ -867,40 +867,76 @@ projects answer. Nothing is canned: a value a source answers is written in
 the dataset, so a dataset edited at another commit is served as edited. The
 cockpit reads those sources as it reads the real ones.
 
-A Panorama dataset carries the text of its page (`visible_text`) and how the
-state is set (`ui`); a Runs dataset carries `fixtures` (lanes, runs, jobs).
+A Runs dataset carries `fixtures` (lanes, runs, jobs). A Panorama dataset
+carries the text of one screen (`visible_text`) and how the state is set
+(`ui`). Its screen is known by the first line of the page, and read in two
+ways:
+
+- what the cockpit has a record for is read into that record: a request, a
+  project and its chantier, a ritual, an event of the journal;
+- every other section of the screen is **kept as said**: one open bead per
+  section, under its heading, labelled `said`, whose description is the
+  lines of the section in their order. The cockpit has no source yet for
+  the measures of the machine, the connections, the configuration of the
+  roles, the steps of a stop, the clean-up, the indicators, the next release
+  of a project, its roadmap or the analyses: the tracker holds what the
+  dataset says of each until the ticket of that screen reads it into records
+  of its own.
 
 | The dataset says | The sources answer | Seen at |
 |---|---|---|
 | the state it is: `ui.id` (Panorama), `state` (Runs) | the supervisor's city bears that name | `GET /api/status`, `gc.value.city` |
-| « Décisions à prendre N », then N lines under « Ce qui t’attend », each with « projet · nature » | one open bead per line that asks the operator (title, project, nature, the fixed time of the dataset) | `beads.value`; `GET /api/requests` |
-| the cards under « Projets » (name, « chantier · étape »), or the project of a project page (« ← Projets ») and its « CHANTIER ACTUEL » | one declared project per name; one open chantier per project, under its title | `projets.value.projects`; `GET /api/projects`, `GET /projet/<key>` |
-| the events of the journal (« HH:MM (Paris) · projet · nature ») and the merged results of the analyses (« projet · hier ») | their projects are declared; a past event is no open work, so the tracker holds no bead for it | `projets.value.projects` |
-| the ritual of a ritual page (« ← Rituels », its title, « projet · … ») and its phase (`ritualPhase` in `ui.setup`) | one open bead under the title of the ritual, its project declared | `beads.value` |
+| « Vue d’ensemble »: « Décisions à prendre N », then N lines under « Ce qui t’attend », each with « projet · nature » | one open bead per line that asks the operator (title, project, nature, the fixed time of the dataset) | `beads.value`; `GET /api/requests` |
+| « Vue d’ensemble »: the dossier open under those lines (« projet · sujet », its title, what it shows), and the state of the result when `ui.state` names one (`ready`, `findings`, `merged`, `abandoned`…) | one bead `synthetic-dossier` under the title of the dossier, of that project; its lines; `synthetic.result_state` | `beads.value` |
+| « Vue d’ensemble »: the cards under « Projets » (name, « chantier · étape », then the figures of the card) | one declared project per name; one open chantier per project, under its title, whose description is the stage and the other lines of the card | `projets.value.projects`; `GET /api/projects`; `beads.value` |
+| « Vue d’ensemble »: the four indicators | one bead kept as said per indicator (value, period) | `beads.value` |
+| the page of a project (« ← Projets »): its name, what is said above the first section; « CHANTIER ACTUEL »; « Prochaine release », « PROCHAIN JALON », « ROADMAP », « Derniers changements » | the project is declared; one bead under its name (purpose, stage, indicators); its open chantier; one bead kept as said per section, of that project | `projets.value.projects`, `GET /projet/<key>`; `beads.value` |
+| « Journal »: each event, « HH:MM (Paris) · projet · nature » or « HH:MM (Paris) · source », under « Aujourd’hui » or « Hier », its title and what follows | one bead of type `event` per event: its title, its nature or source as label, its project (declared), `created_at` the day of the dataset or the day before at that time, the other lines | `beads.value`; `projets.value.projects` |
+| « Usine »: « Machine d’exécution », « Connexions », « Fournisseurs et accès API », « Agents dans le workflow », « Auteur livraison », « Autres rôles », « Suspension, reprise et arrêt », « Nettoyer les espaces inutilisés », « Ressources et libellés longs » | one bead kept as said per section | `beads.value` |
 | a suspended Factory: `ui.setup` sets `shutdownState='suspended'` | a suspended city | `gc.value.suspended` is true |
+| « Rituels »: each ritual (a line in capitals says how it is launched, then its title) | one bead per ritual under its title: how it is launched, what it is for, when it last ran | `beads.value` |
+| the page of a ritual (« ← Rituels », its title, « projet · … ») | one bead under the title of the ritual, its project declared; its steps and what the step it is at shows | `beads.value` |
+| « Analyses »: « Résultats fusionnés » or « Où passe le temps ? »; a merged result (« projet · hier ») | one bead kept as said for the view; the project of each merged result is declared | `beads.value`; `projets.value.projects` |
 | nothing read: `ui.state` is `loading` or `error` | a supervisor and a tracker that never answer | every source `unknown`, without value |
 | a reading that is no longer current: `ui.state` is `stale` or `offline`, or `ui.stale` is true (Runs) | a supervisor that is read once, then answers no more | `gc.freshness` leaves `fresh` within seconds (a 2 s Validity window instead of 2 min), the last `gc.value` kept |
-| the runs of a Runs state | one bead per run under its title, open while the run has no end, with its type, status and start | `beads.value` (the open ones: the cockpit reads the open work of a tracker) |
-| the jobs of a run | one bead per job under its name, child of its run, assigned to the name of its lane, in progress while it has no end; its prompt and result | `beads.value` (those in progress) |
+| the runs of a Runs state | one bead per run under its title, open while the run has no end, with its type, status, start and elapsed time | `beads.value` (the open ones: the cockpit reads the open work of a tracker) |
+| the jobs of a run | one bead per job under its name, child of its run, assigned to the name of its lane, in progress while it has no end; its prompt and result, its start and end, the role of its lane | `beads.value` (those in progress) |
 | the agent lanes | one session per agent lane, running on the job without an end it holds | `sessions.value.sessions`, `gc.value.agents_running` |
 
-The key of a project the dataset only names is its name in lower case
-(« Notes » is `notes`). A page with « Décisions à prendre » whose list does
-not hold that many lines, a project card without its chantier, or a Runs
-state whose fixtures cannot be read, is refused.
+The key of a project the dataset only names is its name without accents, in
+lower case, with dashes between words (« Notes » is `notes`). A screen no
+rule reads, a page with « Décisions à prendre » whose list does not hold
+that many lines, a project card without its chantier, an event or a ritual
+without a title, a `ui.state` that names the state of a result on a page
+that opens no dossier, or a Runs state whose fixtures cannot be read, is
+refused.
 
-What a dataset says that no source of the cockpit answers at this commit is
-left out, and those states differ from one another by their name alone or
-not at all: the theme, width and selection of a state (`home-narrow`,
-`home-light`, the 19 Runs states, which carry the same fixtures and differ
-by what is selected); the state of a result (`result-*`) and the stage of a
-chantier (kept on its bead, not turned into the records of that stage); the
-steps of a stop other than `suspended`; the measures of the machine, the
-connections, the configuration and the clean-up of the Usine page
-(`health-*`, `factory-*`: 18 states served with an empty tracker); the list
-of rituals (`rituals-*`) and the time view of the analyses; the finished
-runs and jobs, which the tracker holds closed and the cockpit does not read
-yet. The ticket that delivers a screen adds its lines to the table above.
+What is left out, and why:
+
+- the theme and the width a state is looked at with (`ui.theme`,
+  `ui.width`): they belong to the browser that looks, no source answers
+  them. `home-light` and `home-narrow` are served the state of
+  `home-content`; the same holds for each screen;
+- what a Runs state selects (`ui.run`, `ui.selected_job`,
+  `ui.selected_event`, `ui.filter`): the 19 Runs datasets carry the same
+  fixtures, byte for byte, and are served the same lanes, runs and jobs;
+- the lines of a page above its first section (title, subtitle, tabs, the
+  banner of a reading that is no longer current, « Rien à afficher ici »)
+  and the sections that hold links only (« Activité sur 7 jours »,
+  « Derniers runs », « Ressources du projet »);
+- the finished runs and jobs are in the tracker, closed: the cockpit reads
+  the open work of a tracker, and does not show them yet.
+
+`tests/cockpit-criteria/commands/frozen-states-test.py` launches the 95
+states and holds the list of those that are served the same tracker and
+projects (`SAME_STATE`): nine groups, each for one of the reasons above or
+because nothing is shown or read (`*-empty`, `*-loading`, `*-error`); the 41
+other states are served a state of their own. The stage of a chantier and
+the state of a result are served as said, not as the records of the
+Delivery Workflow: those are produced by its public commands (Spec
+af-2zseit, Testing Decisions 2), which the tickets of these screens run.
+The ticket that delivers a screen reads its sections into records and
+changes the lines of the table above.
 
 **Datasets.** One per state of the seven Validated Prototypes of the Spec:
 the 76 Panorama states and the 19 Runs states, under
@@ -944,11 +980,14 @@ launcher and of the profile.
 
 Limits.
 
-- What the recipe reads must not be changed under `tests/` by the ticket
-  that needs the change, once its tests are frozen: `bin/tdd-step` runs the
-  criterion tests of the `commands/` seam in the tree of the product with
-  the whole `tests/` directory of the freeze commit put in its place. This
-  is why the datasets are under `config/`.
+- What the recipe reads under `tests/` (the fake supervisor
+  `tests/fixtures/cockpit/core/fake_gc.py` and the fake tracker
+  `tests/fixtures/cockpit/requests/fake-bd`, both frozen harness paths)
+  cannot be changed by a ticket once its tests are frozen: `bin/tdd-step`
+  runs the criterion tests of the `commands/` seam in the tree of the
+  product with the whole `tests/` directory of the freeze commit put in its
+  place. This is why the datasets are under `config/`, and why what a
+  dataset says goes through what those two fakes already answer.
 - The tools of the flow read the profile in the Factory root they run from,
   not in the branch of the ticket: a launch block that exists only on a
   branch is passed to them with `--profile`.
