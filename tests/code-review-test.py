@@ -677,6 +677,16 @@ class CodeReviewTest(unittest.TestCase):
         self.assertEqual(["standards", "spec"], brief["axes"])
         self.assertEqual(["spec", "ticket", "repo_rule"], brief["citation_sources"])
 
+    def test_the_brief_names_design_standards_at_the_reviewed_commit(self):
+        _, tip = self.finished_slice({NOTE: "le nombre est affiché\n", "DESIGN.md": "- Le focus reste visible.\n"})
+        self.reviewer("silent")
+        self.settle()
+
+        brief = json.loads(self.run_cmd(TOOL, "brief", CONVOY, SLICE, "--repo", self.repo).stdout)
+
+        self.assertEqual(tip, brief["commit"])
+        self.assertEqual([RULES, "DESIGN.md"], brief["standards"])
+
     def test_the_brief_holds_neither_the_handoff_nor_any_prose_of_the_author(self):
         red, _ = self.finished_slice()
         tip = self.commit_on(SLICE, {COUNT_FILE: "# le test de critère du nombre, amendé\n"})

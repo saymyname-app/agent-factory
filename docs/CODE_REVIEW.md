@@ -92,7 +92,7 @@ session receives.
 | `diff` | the fixed point (`base`), the command `git diff <base>...<commit>`, the changed files, the SHAs of the commits |
 | `spec` | the id and the text of the Spec the convoy delivers |
 | `ticket_text` | the approved ticket: title, description, criteria, demonstration line, covered user stories, Declared Scope |
-| `standards` | the standards files found at the reviewed commit (`AGENTS.md`, `CONTRIBUTING.md`, `CODING_STANDARDS.md`, `docs/agents/*`, …): a hint, the skill looks for them itself |
+| `standards` | the standards files found at the reviewed commit (`AGENTS.md`, `CONTRIBUTING.md`, `CODING_STANDARDS.md`, `docs/agents/*`, `DESIGN.md`, …): a hint, the skill looks for them itself |
 | `records` | the records written by scripts: the proven TDD steps, the evidence fingerprints, the merge record, and the *records* of the Ticket Handoff |
 | `tests` | the test perimeter, the frozen harness, the frozen criterion tests with their fingerprints, the listed seams (the profile's entry points, and under `declared` the seams it names with the mode of each) |
 | `questions` | the closed questions on the tests (below) |

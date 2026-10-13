@@ -112,6 +112,13 @@ its actual output, including failures and omissions; its presence is never
 a passed criterion. It grants no access to the repository and no permission
 to run launch/stop yourself. The normal commit, address and seal checks apply.
 
+For an interface ticket, read `.design.text` and verify every item of
+`.screen_checks` on the launched product. If a visible deviation violates a
+written rule, add it to `screen_findings`: copy one check from the brief and
+one full rule line from `DESIGN.md`, give a sealed evidence piece and a
+one-line reason. A finding without an exact written rule cannot block. A
+non-interface ticket has no screen checks.
+
 **3. Give one state per criterion and one for the demonstration line.**
 
 - `observed` — you saw on the launched product what the criterion (or the
@@ -138,7 +145,8 @@ Write `evaluation-result.json` in the current directory in the shape
 ```bash
 jq '{commit, criteria: [.criteria[] | {number, text, state: null, evidence: null}],
      demonstration_line: {text: .demonstration_line, state: null, evidence: null},
-     coverage: [.datasets[] | {dataset: ., evidence: null}]}' evaluation-brief.json > evaluation-result.json
+     coverage: [.datasets[] | {dataset: ., evidence: null}],
+     screen_findings: []}' evaluation-brief.json > evaluation-result.json
 # then set, for each criterion and for the demonstration line: .state, .evidence (the piece name),
 # and .reason (unless observed) and .cause (unobservable only)
 "$FACTORY_ROOT/bin/ticket-evaluation" record "$TICKET_CONVOY" "$TICKET" --file evaluation-result.json
