@@ -526,6 +526,24 @@ class ConvoyStateTest(unittest.TestCase):
         self.ok(*self.mark_slice(f"{T1}=3"), "--establishes-launch-recipe", T1)
         self.assertEqual(before, self.tracker.read_bytes())
 
+    def test_mark_replaces_only_a_withdrawn_launch_recipe_slice(self):
+        self.seed(tickets=(T1,), kinds={T1: "vertical_slice"})
+        self.ok(*self.mark_slice(f"{T1}=3"), "--establishes-launch-recipe", T1)
+        state = self.tracker_state()
+        state["beads"][CONVOY]["tracks"].append(T2)
+        state["beads"][T2] = {"title": "replacement", "status": "open", "issue_type": "task",
+                               "metadata": {"gc.ticket_kind": "vertical_slice"}}
+        state["beads"][T1]["status"] = "closed"
+        self.tracker.write_text(json.dumps(state))
+        args = ("mark", CONVOY, "--demonstration-line", f"{T2}={self.LINE}",
+                "--user-stories", f"{T2}=3", "--establishes-launch-recipe", T2)
+        self.assert_refused_and_nothing_written(*args, mention="une seule")
+        self.ok("record-gate", CONVOY, T1, "--gate", "withdrawn")
+        old = self.tracker_state()["beads"][T1]
+        self.ok(*args)
+        self.assertEqual(old, self.tracker_state()["beads"][T1])
+        self.assertIs(True, self.tracker_state()["beads"][T2]["metadata"]["gc.flow.establishes_launch_recipe"])
+
     def test_mark_refuses_a_launch_recipe_established_by_anything_but_a_vertical_slice(self):
         self.assert_refused_and_nothing_written(
             "mark", CONVOY, "--establishes-launch-recipe", T1, mention="vertical_slice")

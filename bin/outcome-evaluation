@@ -702,6 +702,13 @@ def settle(convoy: Convoy, settings: dict[str, Any]) -> dict[str, Any]:
     if launches and not expired(launches[-1], timeout):
         deadline = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(launched_at(launches[-1]) + timeout))
         return {"action": "pending", "commit": commit, "launches": len(launches), "deadline": deadline}
+    if launches:
+        # The Evaluator may have answered between the read of the convoy and
+        # the read of its bead: its states close the request before its bead
+        # is closed, and an evaluation that answered is not sent again.
+        convoy.load()
+        if convoy.outcome.get("request") != current:
+            return settle(convoy, settings)
     if len(launches) >= MAX_LAUNCHES:
         return stop_evaluation(convoy, commit, STOP_NO_RESULT, (
             f"l'Outcome Evaluation n'a rendu aucun état en {len(launches)} lancements "

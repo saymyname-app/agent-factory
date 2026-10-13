@@ -827,6 +827,36 @@ class OutcomeEvaluationTest(Harness):
         self.assertEqual(before, self.snapshot())
         self.assertEqual(1, len(self.calls()))
 
+    def test_evaluator_that_answers_while_the_settlement_decides_is_not_sent_again(self):
+        brief = self.opened()
+        bead = self.outcome()["request"]["launches"][-1]["bead"]
+        result = self.json_file("outcome-result.json", self.result(brief))
+        # The Evaluator hands its states and closes its bead between the two
+        # reads of the settlement: the convoy first, then that bead.
+        tracker = self.tmp / "gc-answering"
+        answered = self.tmp / "answered"
+        tracker.write_text(f"""#!/usr/bin/env python3
+import os, subprocess, sys
+from pathlib import Path
+gc, answered = {self.env["GC_BIN"]!r}, Path({str(answered)!r})
+if "show" in sys.argv and {bead!r} in sys.argv and not answered.exists():
+    answered.write_text("")
+    session = {{**os.environ, "GC_BIN": gc, **{SESSION!r}}}
+    subprocess.run([{str(TOOL)!r}, "record", {CONVOY!r}, "--file", {str(result)!r}, "--repo", {str(self.repo)!r}],
+                   env=session, check=True, capture_output=True)
+    subprocess.run([gc, "bd", "close", {bead!r}, "--reason", "évaluation enregistrée"], check=True, capture_output=True)
+os.execv(gc, [gc, *sys.argv[1:]])
+""")
+        tracker.chmod(0o755)
+
+        status, answer = self.tool("settle", "--profile", self.outcome_profile, env={**self.env, "GC_BIN": str(tracker)})
+
+        self.assertEqual((0, "none"), (status, answer["action"]), answer)
+        self.assertTrue(answered.exists())
+        self.assertEqual(1, len(self.calls()))
+        shown = self.outcome()
+        self.assertEqual((["favorable"], None), ([entry["outcome"] for entry in shown["rounds"]], shown["request"]))
+
     def test_convoy_without_the_mark_is_not_touched(self):
         before = self.snapshot()
 
