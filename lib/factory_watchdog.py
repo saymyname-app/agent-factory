@@ -41,6 +41,7 @@ state.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import os
 import sys
 import time
@@ -150,12 +151,40 @@ def assess_prs(
     return out
 
 
-def assess_workflow(bead: dict[str, Any]) -> tuple[str, str, str] | None:
+DELIVERY_FLOW_CONFIG = Path(__file__).resolve().parents[1] / "config" / "delivery-flow.json"
+
+
+def code_read_formulas(config: Path = DELIVERY_FLOW_CONFIG) -> frozenset[str]:
+    """The formulas of the new delivery flow, as config/delivery-flow.json
+    names them: bin/convoy-advance and its gates start each of their
+    workflows and read its outcome themselves (docs/CONVOY_ADVANCE.md).
+    An unreadable file names none: the watchdog then pages as before."""
+    try:
+        settings = json.loads(config.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return frozenset()
+    if not isinstance(settings, dict):
+        return frozenset()
+    return frozenset(
+        str(value["formula"]) for value in settings.values()
+        if isinstance(value, dict) and value.get("formula")
+    )
+
+
+def assess_workflow(
+    bead: dict[str, Any], code_read: frozenset[str] | None = None,
+) -> tuple[str, str, str] | None:
     """A CLOSED workflow bead whose own outcome was not a real success.
 
     `status: closed` alone reads as "done". Only `metadata["gc.outcome"]`
     tells the difference between a completed workflow and one that hit
     on_fail=abort_scope and skipped every downstream step -- incident gap 6.
+
+    A workflow of a new-flow formula is out of scope: its failed outcome is
+    not hidden, code reads it and resumes, relaunches or stops the ticket.
+    Paging the Mayor for it asked an agent to confirm what code had already
+    done on a convoy it may not touch (4 pages in 42 hours, each cleared
+    untouched, 2026-10-13, af-yzo8fo.2).
     """
     if str(bead.get("status") or "") != "closed":
         return None
@@ -168,6 +197,10 @@ def assess_workflow(bead: dict[str, Any]) -> tuple[str, str, str] | None:
     if outcome in {"pass", "no-op", "noop"}:
         return None
     if not outcome:
+        return None
+    if code_read is None:
+        code_read = code_read_formulas()
+    if str(metadata.get("gc.formula_name") or "") in code_read:
         return None
     bead_id = str(bead.get("id") or "?")
     title = _truncate(bead.get("title") or "")
@@ -191,8 +224,9 @@ def assess_gh_auth(returncode: int, output: str) -> tuple[str, str] | None:
 
 def assess_workflows(beads: Iterable[dict[str, Any]]) -> list[tuple[str, str, str]]:
     out = []
+    code_read = code_read_formulas()
     for bead in beads:
-        verdict = assess_workflow(bead)
+        verdict = assess_workflow(bead, code_read)
         if verdict is not None:
             out.append((str(bead.get("id") or "?"), verdict[0], verdict[1]))
     return out
