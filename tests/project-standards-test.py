@@ -208,6 +208,9 @@ class ProjectStandardsStatusTest(unittest.TestCase):
 
     def test_design_adoption_copies_separate_defaults_and_reports_origin(self):
         self.react_defaults()
+        generated = self.root / "default-standards/react-typescript/design/design-bench/node_modules/junk"
+        generated.parent.mkdir(parents=True)
+        generated.write_text("generated, not a standard")
         _, target = self.worktree()
         self.assertEqual(0, self.adopt(target, rig="web", stack="react-typescript", package="")[0])
         code, result = self.adopt(target, rig="web", stack="react-typescript", package="", domain="design")
@@ -216,18 +219,21 @@ class ProjectStandardsStatusTest(unittest.TestCase):
         self.assertTrue((target / "DESIGN.md").is_file())
         self.assertTrue((target / "src/theme/tokens.css").is_file())
         self.assertTrue((target / ".github/workflows/design-standards.yml").is_file())
+        self.assertTrue((target / "design-bench/package-lock.json").is_file())
+        self.assertTrue((target / "design-bench/bench.spec.mjs").is_file())
+        self.assertFalse((target / "design-bench/node_modules").exists())
         design_origin = json.loads((target / ".factory/design-standards-origin.json").read_text())
         self.assertEqual({"contract": "agent-factory-standards-origin/v1",
-                          "stack": "react-typescript", "version": "1"}, design_origin)
+                          "stack": "react-typescript", "version": "2"}, design_origin)
         (self.root / "config/projects/web.toml").write_text('rig_dir = "project-worktree"\n')
         code, status = self.status()
         self.assertEqual(0, code, status)
         web = status["projects"][0]["rigs"][1]
         self.assertEqual("avec", web["standards"]["design"])
-        self.assertEqual({"stack": "react-typescript", "version": "1"}, web["design_origin"])
-        self.assertEqual({"react-typescript": "1"}, web["latest_design_versions"])
+        self.assertEqual({"stack": "react-typescript", "version": "2"}, web["design_origin"])
+        self.assertEqual({"react-typescript": "2"}, web["latest_design_versions"])
         self.assertFalse(web["design_update_available"])
-        (self.root / "default-standards/react-typescript/design/VERSION").write_text("2\n")
+        (self.root / "default-standards/react-typescript/design/VERSION").write_text("3\n")
         code, status = self.status()
         self.assertEqual(0, code, status)
         self.assertTrue(status["projects"][0]["rigs"][1]["design_update_available"])
