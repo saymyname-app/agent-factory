@@ -1,0 +1,50 @@
+{
+  "contract": "agent-factory-standards-questions/v1",
+  "questions": [
+    {
+      "id": "palette",
+      "question": "Quelle ambiance visuelle reconnaître sur les premiers écrans ?",
+      "recommended": "neutre-claire",
+      "options": [
+        {
+          "id": "neutre-claire",
+          "effect": "Palette sobre, lisible, facile à adapter à la marque."
+        },
+        {
+          "id": "chaleureuse",
+          "effect": "Couleurs plus chaleureuses, à valider à l’œil sur les mêmes écrans."
+        }
+      ]
+    },
+    {
+      "id": "density",
+      "question": "Préférez-vous des écrans aérés ou plus d’information visible d’un coup ?",
+      "recommended": "aeree",
+      "options": [
+        {
+          "id": "aeree",
+          "effect": "Lecture plus calme, davantage de défilement."
+        },
+        {
+          "id": "compacte",
+          "effect": "Davantage d’éléments visibles, lecture plus dense."
+        }
+      ]
+    },
+    {
+      "id": "tone",
+      "question": "Quel ton doivent avoir les textes affichés ?",
+      "recommended": "direct",
+      "options": [
+        {
+          "id": "direct",
+          "effect": "Actions courtes et précises."
+        },
+        {
+          "id": "chaleureux",
+          "effect": "Formulations plus accueillantes, légèrement plus longues."
+        }
+      ]
+    }
+  ]
+}

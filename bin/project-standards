@@ -26,7 +26,8 @@ def adopt(root, args, load_descriptor):
                   for rig, stacks in descriptor["stacks"].items()}
     if args.stack not in registered.get(args.rig, []):
         raise ValueError(f"rig {args.rig}: pile {args.stack} non déclarée")
-    source = root / "default-standards" / args.stack
+    base_source = root / "default-standards" / args.stack
+    source = base_source / "design" if args.domain == "design" else base_source
     if not source.is_dir() or not (source / "VERSION").is_file():
         raise ValueError(f"pile {args.stack}: aucun Default Standards disponible")
     target = args.target.resolve()
@@ -49,10 +50,16 @@ def adopt(root, args, load_descriptor):
         return (checkout / proc.stdout.strip()).resolve()
     if git_common_dir(registered_path) != git_common_dir(target):
         raise ValueError(f"rig {args.rig}: cible liée à un autre dépôt Git")
-    files = [file for file in source.rglob("*") if file.is_file() and file.name != "VERSION"]
-    origin = target / ".factory" / "standards-origin.json"
+    files = [file for file in source.rglob("*") if file.is_file() and file.name != "VERSION"
+             and "__pycache__" not in file.relative_to(source).parts
+             and file.suffix not in {".pyc", ".pyo"}
+             and (args.domain == "design" or file.relative_to(source).parts[0] != "design")]
+    origin_name = "design-standards-origin.json" if args.domain == "design" else "standards-origin.json"
+    origin = target / ".factory" / origin_name
     java_package = args.java_package
-    if args.stack == "java-spring-maven" and not java_package:
+    if args.domain == "design" and java_package:
+        raise ValueError("--java-package réservé à l'adoption de code Java")
+    if args.domain == "code" and args.stack == "java-spring-maven" and not java_package:
         raise ValueError("paquet Java requis : --java-package")
     if java_package and args.stack != "java-spring-maven":
         raise ValueError("--java-package réservé à la pile Java")
@@ -80,7 +87,7 @@ def adopt(root, args, load_descriptor):
     origin.parent.mkdir(parents=True, exist_ok=True)
     origin.write_text(json.dumps({"contract": "agent-factory-standards-origin/v1", "stack": args.stack,
                                   "version": version}, ensure_ascii=False) + "\n", encoding="utf-8")
-    return {"ok": True, "rig": args.rig, "stack": args.stack, "version": version,
+    return {"ok": True, "rig": args.rig, "stack": args.stack, "domain": args.domain, "version": version,
             "files": [str(path.relative_to(target)) for path in destinations]}
 
 
@@ -92,6 +99,7 @@ def main():
     parser.add_argument("--stack")
     parser.add_argument("--target", type=Path)
     parser.add_argument("--java-package")
+    parser.add_argument("--domain", choices=["code", "design"], default="code")
     args = parser.parse_args()
     root = args.repo_root.resolve()
     profile = runpy.run_path(str(Path(__file__).with_name("project-planning-profile")))
@@ -115,16 +123,25 @@ def main():
                         raise ValueError(f"rig {rig}: checkout missing at {path}")
                     origin_file = path / ".factory" / "standards-origin.json"
                     origin = json.loads(origin_file.read_text(encoding="utf-8")) if origin_file.is_file() else None
-                    if origin_file.is_file() and (not isinstance(origin, dict)
-                            or origin.get("contract") != "agent-factory-standards-origin/v1"
-                            or not isinstance(origin.get("version"), str)
-                            or origin.get("stack") not in descriptor["stacks"][rig]):
-                        raise ValueError(f"rig {rig}: origine des standards invalide ou pile non déclarée")
+                    design_origin_file = path / ".factory" / "design-standards-origin.json"
+                    design_origin = json.loads(design_origin_file.read_text(encoding="utf-8")) if design_origin_file.is_file() else None
+                    for value in (origin, design_origin):
+                        if value is not None and (not isinstance(value, dict)
+                                or value.get("contract") != "agent-factory-standards-origin/v1"
+                                or not isinstance(value.get("version"), str)
+                                or value.get("stack") not in descriptor["stacks"][rig]):
+                            raise ValueError(f"rig {rig}: origine des standards invalide ou pile non déclarée")
+                    if design_origin and not (path / "DESIGN.md").is_file():
+                        raise ValueError(f"rig {rig}: origine de design sans DESIGN.md")
                     latest = {}
+                    latest_design = {}
                     for stack in descriptor["stacks"][rig]:
                         version_file = root / "default-standards" / stack / "VERSION"
                         if version_file.is_file():
                             latest[stack] = version_file.read_text(encoding="utf-8").strip()
+                        design_version_file = root / "default-standards" / stack / "design" / "VERSION"
+                        if design_version_file.is_file():
+                            latest_design[stack] = design_version_file.read_text(encoding="utf-8").strip()
                     choices = [line.strip() for name in ("STANDARDS.md", "DESIGN.md")
                                if (path / name).is_file()
                                for line in (path / name).read_text(encoding="utf-8").splitlines()
@@ -146,7 +163,11 @@ def main():
                             "design": "avec" if (path / "DESIGN.md").is_file() else "sans",
                         },
                         "origin": {"stack": origin["stack"], "version": origin["version"]} if origin else None,
+                        "design_origin": {"stack": design_origin["stack"], "version": design_origin["version"]} if design_origin else None,
                         "latest_versions": latest,
+                        "latest_design_versions": latest_design,
+                        "design_update_available": bool(design_origin and design_origin["stack"] in latest_design
+                                                        and latest_design[design_origin["stack"]] != design_origin["version"]),
                         "update_available": bool(origin and origin["stack"] in latest
                                                  and latest[origin["stack"]] != origin["version"]),
                         "unconfirmed_choices": choices,

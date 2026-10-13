@@ -67,10 +67,14 @@ class ProjectStandardsStatusTest(unittest.TestCase):
         (self.root / "config/projects/web.toml").write_text('rig_dir = "project"\n')
         return source, target
 
-    def adopt(self, target, rig="api", stack="java-spring-maven", package="org.example.app"):
-        result = subprocess.run([str(TOOL), "--repo-root", str(self.root), "adopt", "--rig", rig,
-                                 "--stack", stack, "--target", str(target), "--java-package", package],
-                                text=True, capture_output=True)
+    def adopt(self, target, rig="api", stack="java-spring-maven", package="org.example.app", domain=None):
+        command = [str(TOOL), "--repo-root", str(self.root), "adopt", "--rig", rig,
+                   "--stack", stack, "--target", str(target)]
+        if package:
+            command += ["--java-package", package]
+        if domain:
+            command += ["--domain", domain]
+        result = subprocess.run(command, text=True, capture_output=True)
         return result.returncode, json.loads(result.stdout)
 
     def status(self):
@@ -193,6 +197,50 @@ class ProjectStandardsStatusTest(unittest.TestCase):
         origin = json.loads((target / ".factory/standards-origin.json").read_text())
         self.assertEqual({"contract": "agent-factory-standards-origin/v1",
                           "stack": "react-typescript", "version": "1"}, origin)
+
+    def test_react_code_adoption_does_not_activate_design(self):
+        self.react_defaults()
+        _, target = self.worktree()
+        code, result = self.adopt(target, rig="web", stack="react-typescript", package="")
+        self.assertEqual(0, code, result)
+        self.assertFalse((target / "DESIGN.md").exists())
+        self.assertFalse((target / "src/theme/tokens.css").exists())
+
+    def test_design_adoption_copies_separate_defaults_and_reports_origin(self):
+        self.react_defaults()
+        _, target = self.worktree()
+        self.assertEqual(0, self.adopt(target, rig="web", stack="react-typescript", package="")[0])
+        code, result = self.adopt(target, rig="web", stack="react-typescript", package="", domain="design")
+        self.assertEqual(0, code, result)
+        self.assertEqual("design", result["domain"])
+        self.assertTrue((target / "DESIGN.md").is_file())
+        self.assertTrue((target / "src/theme/tokens.css").is_file())
+        self.assertTrue((target / ".github/workflows/design-standards.yml").is_file())
+        design_origin = json.loads((target / ".factory/design-standards-origin.json").read_text())
+        self.assertEqual({"contract": "agent-factory-standards-origin/v1",
+                          "stack": "react-typescript", "version": "1"}, design_origin)
+        (self.root / "config/projects/web.toml").write_text('rig_dir = "project-worktree"\n')
+        code, status = self.status()
+        self.assertEqual(0, code, status)
+        web = status["projects"][0]["rigs"][1]
+        self.assertEqual("avec", web["standards"]["design"])
+        self.assertEqual({"stack": "react-typescript", "version": "1"}, web["design_origin"])
+        self.assertEqual({"react-typescript": "1"}, web["latest_design_versions"])
+        self.assertFalse(web["design_update_available"])
+        (self.root / "default-standards/react-typescript/design/VERSION").write_text("2\n")
+        code, status = self.status()
+        self.assertEqual(0, code, status)
+        self.assertTrue(status["projects"][0]["rigs"][1]["design_update_available"])
+
+    def test_design_adoption_refuses_to_replace_a_project_design(self):
+        self.react_defaults()
+        _, target = self.worktree()
+        (target / "DESIGN.md").write_text("# Product design\n")
+        code, result = self.adopt(target, rig="web", stack="react-typescript", package="", domain="design")
+        self.assertNotEqual(0, code)
+        self.assertIn("fichier existant", result["error"])
+        self.assertEqual("# Product design\n", (target / "DESIGN.md").read_text())
+        self.assertFalse((target / ".factory/design-standards-origin.json").exists())
 
     def test_react_adoption_refuses_to_replace_existing_package(self):
         self.react_defaults()
