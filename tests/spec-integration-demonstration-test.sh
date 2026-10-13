@@ -55,10 +55,20 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# The references and the work trees of the Factory's repository move under
+# any other session during the run (a fetch, a merged branch pruned, the
+# work tree of a launch): what is compared is the checkout, and what is
+# watched is every branch or tag this run itself creates, moves or deletes
+# there (tests/lib/live-root-refs.sh, T53) and every work tree of that
+# repository inside the trial directory, where this run puts its own.
+# shellcheck source=tests/lib/live-root-refs.sh
+. "$ROOT/tests/lib/live-root-refs.sh"
+live_root_refs_watch "$TRIAL/refs-watch" || fail "the watch of the Factory's references does not see a reference written by this run"
 factory_git_state() {
   git -C "$ROOT" status --porcelain --untracked-files=all
-  git -C "$ROOT" for-each-ref
-  git -C "$ROOT" worktree list
+  git -C "$ROOT" rev-parse HEAD
+  live_root_refs_written "$ROOT"
+  git -C "$ROOT" worktree list --porcelain | grep -F -- "worktree $TRIAL/" || true
 }
 FACTORY_BEFORE=$(factory_git_state)
 
@@ -220,6 +230,7 @@ done
 # --- the protected branch received nothing; nothing reached the Factory -------
 [ "$(git -C "$ORIGIN" rev-parse refs/heads/main)" = "$BASE" ] || fail "the protected branch received a commit"
 [ "$(git -C "$REPO" worktree list | wc -l)" = 1 ] || fail "a merge work tree was left behind"
-[ "$FACTORY_BEFORE" = "$(factory_git_state)" ] || fail "the trial changed the Factory's Git state"
+[ "$FACTORY_BEFORE" = "$(factory_git_state)" ] \
+  || fail "the trial changed the Factory's Git state: $(diff <(printf '%s\n' "$FACTORY_BEFORE") <(factory_git_state) | grep '^[<>]' | head -5)"
 
 echo "PASS: on the real tracker, two finished tickets of the fixture are merged one after the other with a test record on each merged result, and a commit added after a verdict invalidates it, counts one resume and refuses the merge until the verdicts are replayed"
