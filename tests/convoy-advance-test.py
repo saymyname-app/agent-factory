@@ -24,6 +24,7 @@ correction round and the test review (T14, T15, T17, T13) are in
 tests/convoy-advance-review-evaluation-correction-test.py."""
 
 import copy
+import fcntl
 import functools
 import hashlib
 import json
@@ -241,7 +242,9 @@ class ConvoyAdvanceHarness(unittest.TestCase):
         self.write_log.write_text("")
 
     def tracker_state(self):
-        return json.loads(self.tracker.read_text())
+        with self.tracker.open(encoding="utf-8") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
+            return json.load(handle)
 
     def bead(self, bead_id):
         return self.tracker_state()["beads"][bead_id]
