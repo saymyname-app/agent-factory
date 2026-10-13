@@ -355,9 +355,11 @@ dataset environment. The report retains the pre-stop process identities so a
 survivor is still detectable after removal of its checkout.
 
 The ordinary evidence-capture command seals the actual output against the first
-product's commit and address. The brief exposes controller_observation with the
-piece, fingerprint, path and output; failures remain visible for the Evaluator's
-judgement. No state is inferred from that report. There is no exemption from
+product's commit and address. The brief keeps verifying that same sealed
+observation after a dataset switch; only `environments` changes to the current
+product. The brief exposes controller_observation with the piece, fingerprint,
+path and output; failures remain visible for the Evaluator's judgement.
+No state is inferred from that report. There is no exemption from
 piece_refusal, no imported report text, and no relaxation of criteria, freshness,
 independence or the merge gate. observe refuses agent sessions; the evaluator
 reads the report without gaining repository or process-control access.

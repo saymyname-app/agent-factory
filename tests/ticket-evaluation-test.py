@@ -599,6 +599,28 @@ class TicketEvaluationTest(unittest.TestCase):
         self.recorded(handed)
         self.assertTrue(self.tool("verdict")["favorable"])
 
+    def test_recipe_observation_remains_verifiable_after_dataset_switch(self):
+        candidate = json.loads(self.profile.read_text())
+        original = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
+        candidate["launch"]["datasets"]["empty"] = original["launch"]["datasets"]["empty"]
+        candidate["launch"]["screens"][0]["states"] = ["content", "empty"]
+        committed = json.dumps(candidate)
+        files = self.realized()
+        files["config/project-descriptors/fx.json"] = committed
+        self.finished_slice(files)
+        tracker = json.loads(self.tracker.read_text())
+        tracker["beads"][SLICE]["metadata"]["gc.flow.establishes_launch_recipe"] = True
+        self.tracker.write_text(json.dumps(tracker))
+        self.profile.write_text(committed)
+        self.evaluator("silent")
+        self.settle()
+        first = self.tool("brief")["controller_observation"]
+        self.assertFalse(self.tool("product", SLICE, "--dataset", "empty", env=SESSION)["ready"])
+        self.settle()
+        brief = self.tool("brief")
+        self.assertEqual("empty", brief["environments"][0]["dataset"])
+        self.assertEqual(first, brief["controller_observation"])
+
     def test_inaccessible_reference_is_captured_as_failure_never_as_a_pass(self):
         files = self.realized()
         files["config/project-descriptors/fx.json"] = self.profile.read_text()
