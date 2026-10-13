@@ -9,9 +9,9 @@ the launcher announces. Nothing here reads the code of the cockpit.
 
 The decor is a disposable Git repository holding the tree these tests run
 in, with three commits: the tree as it is (`requested`); the same tree
-where the datasets `home-content` and `runs-active` say something else
-(`reworded`); then a HEAD where `home-content` is no longer a synthetic
-dataset. A launch asked at a commit must serve that commit, and what the
+where the datasets `home-content`, `runs-active`, `journal-content`,
+`result-merged` and `health-content` say something else (`reworded`); then
+a HEAD where `home-content` is no longer a synthetic dataset. A launch asked at a commit must serve that commit, and what the
 cockpit shows must be what the dataset of that commit says.
 
 What these cases prove that `tests/project-launch-test.py` does not: that
@@ -142,8 +142,12 @@ class IsolatedCockpitLaunch(unittest.TestCase):
         reword(cls.repo, "home-content", {"Choisir le format d’export": "Choisir le format d’archive",
                                           "Portfolio": "Vitrine"})
         reword(cls.repo, "runs-active", {"Reprise du cockpit": "Reprise du tableau de bord", "Léa": "Lina"})
+        reword(cls.repo, "journal-content", {"Le format CSV a été choisi": "Le format JSON a été choisi",
+                                             "14:20 (Paris) · Notes": "09:05 (Paris) · Carnet"})
+        reword(cls.repo, "result-merged", {"La fusion est confirmée.": "La fusion est attestée."})
+        reword(cls.repo, "health-content", {"32 %": "57 %", "126 ms": "480 ms"})
         git(cls.repo, "add", "--all")
-        git(cls.repo, "commit", "--quiet", "--allow-empty", "--message", "two datasets say something else")
+        git(cls.repo, "commit", "--quiet", "--allow-empty", "--message", "five datasets say something else")
         cls.reworded = git(cls.repo, "rev-parse", "HEAD")
 
         reword(cls.repo, "home-content", {'"synthetic": true': '"synthetic": false'})
@@ -340,6 +344,195 @@ class IsolatedCockpitLaunch(unittest.TestCase):
         self.assertNotIn(("Reprise du cockpit", "open"), reworded["runs"])
         self.assertEqual([("Lina", "Revue du code"), ("Noé", "Essayer la tâche")], reworded["sessions"])
         self.assertIn(("Reprise du tableau de bord", "Revue du code", "Lina"), reworded["running"])
+
+    def tracker(self, commit: str, dataset: str) -> list[dict]:
+        """What the cockpit launched at `commit` on `dataset` reads of its
+        tracker, once it has read it."""
+        snapshot = self.status(self.launched(commit, dataset))
+        self.assertEqual("fresh", snapshot["beads"]["freshness"], f"{dataset}: beads")
+        return snapshot["beads"]["value"]
+
+    def test_the_events_served_are_those_the_named_journal_dataset_says(self):
+        def events(commit: str, dataset: str) -> list[tuple]:
+            return sorted(
+                (bead["created_at"], bead["labels"], (bead.get("metadata") or {}).get("gc.project_id"), bead["title"],
+                 bead["description"].split("\n")[0])
+                for bead in self.tracker(commit, dataset) if bead["issue_type"] == "event"
+            )
+
+        # journal-content: four events under « Aujourd’hui », two under
+        # « Hier », each « HH:MM (Paris) · projet · nature », its title and
+        # its consequence. The dataset is fixed on 12 October 2026.
+        self.assertEqual(
+            [
+                ("2026-10-11T16:05:00+02:00", ["Événement"], "usine", "La connexion au superviseur a été rétablie",
+                 "Les lectures ont repris après 3 minutes d’interruption."),
+                ("2026-10-11T18:10:00+02:00", ["Changement"], "portfolio", "La présentation a été fusionnée",
+                 "Le changement est intégré ; sa publication n’est pas attestée ici."),
+                ("2026-10-12T14:20:00+02:00", ["Décision"], "notes", "Le format CSV a été choisi",
+                 "L’usine peut poursuivre la préparation de l’export."),
+                ("2026-10-12T14:36:00+02:00", ["Bug"], "notes", "Une recherche sur des notes longues échoue",
+                 "Le défaut a été enregistré ; la correction reste à préparer."),
+                ("2026-10-12T14:42:00+02:00", ["Changement"], "usine", "Le cockpit est prêt à essayer",
+                 "Un résultat attend ton avis."),
+                ("2026-10-12T14:48:00+02:00", ["Proposition"], "usine", "Deux améliorations proposées après une revue",
+                 "Tu peux choisir les problèmes à faire préparer."),
+            ],
+            events(self.requested, "journal-content"),
+        )
+
+        # The same dataset where one event says something else.
+        reworded = events(self.reworded, "journal-content")
+        self.assertEqual(6, len(reworded))
+        self.assertIn(
+            ("2026-10-12T09:05:00+02:00", ["Décision"], "carnet", "Le format JSON a été choisi",
+             "L’usine peut poursuivre la préparation de l’export."),
+            reworded,
+        )
+        self.assertNotIn("Le format CSV a été choisi", [event[3] for event in reworded])
+
+        # journal-logs: the seven technical events, « HH:MM (Paris) · source »,
+        # of no project.
+        self.assertEqual(
+            [
+                ("2026-10-12T14:10:00+02:00", ["unknown"], None, "Événement non reconnu"),
+                ("2026-10-12T14:20:00+02:00", ["notifications"], None, "Notification remise au service"),
+                ("2026-10-12T14:25:00+02:00", ["maintenance"], None, "Nettoyage terminé"),
+                ("2026-10-12T14:30:00+02:00", ["connections"], None, "Lecture du superviseur interrompue"),
+                ("2026-10-12T14:34:00+02:00", ["delivery"], None, "Résultat prêt à juger"),
+                ("2026-10-12T14:35:00+02:00", ["agents"], None, "Nouvelle session auteur"),
+                ("2026-10-12T14:36:00+02:00", ["ci"], None, "Vérification échouée"),
+            ],
+            [event[:4] for event in events(self.requested, "journal-logs")],
+        )
+
+        # journal-empty: « Rien à afficher ici ».
+        self.assertEqual([], self.tracker(self.requested, "journal-empty"))
+
+    def test_the_dossier_served_is_in_the_state_the_named_result_dataset_says(self):
+        def dossier(commit: str, dataset: str) -> dict:
+            """The dossier open under « Ce qui t’attend »: what it is about,
+            what it says, and the state of the result when the dataset
+            names one."""
+            beads = [bead for bead in self.tracker(commit, dataset) if bead["id"] == "synthetic-dossier"]
+            self.assertEqual(1, len(beads), f"{dataset}: one dossier is open on the page")
+            metadata = beads[0]["metadata"]
+            return {"title": beads[0]["title"], "project": metadata["gc.project_id"],
+                    "says": beads[0]["description"].split("\n"), "state": metadata.get("synthetic.result_state")}
+
+        # result-merged: « Usine · Reprise du cockpit · Suivi du résultat ·
+        # La fusion est confirmée. »
+        merged = dossier(self.requested, "result-merged")
+        self.assertEqual(("Suivi du résultat", "usine", "merged"), (merged["title"], merged["project"], merged["state"]))
+        self.assertEqual(["Usine · Reprise du cockpit", "La fusion est confirmée.", "Historique et preuves"],
+                         merged["says"])
+        # The same dataset where it says something else.
+        self.assertIn("La fusion est attestée.", dossier(self.reworded, "result-merged")["says"])
+
+        # result-abandoned: the same result, in another state.
+        abandoned = dossier(self.requested, "result-abandoned")
+        self.assertEqual("abandoned", abandoned["state"])
+        self.assertIn("Chantier abandonné. Rien n’a été fusionné.", abandoned["says"])
+
+        # result-ready and result-findings show the same dossier and differ
+        # by the state they name; home-content names none.
+        ready, findings = dossier(self.requested, "result-ready"), dossier(self.requested, "result-findings")
+        self.assertEqual("Le cockpit attend ton avis", ready["title"])
+        self.assertEqual(ready["says"], findings["says"])
+        self.assertEqual(("ready", "findings"), (ready["state"], findings["state"]))
+        self.assertIsNone(dossier(self.requested, "home-content")["state"])
+
+        # result-request: the dossier of the decision the project Notes waits for.
+        request = dossier(self.requested, "result-request")
+        self.assertEqual(("Quel format d’export ?", "notes", "request"),
+                         (request["title"], request["project"], request["state"]))
+        self.assertEqual(
+            ["Notes · décision attendue", "Le projet attend ton choix.", "Contexte et ressources", "CSV", "JSON"],
+            request["says"],
+        )
+
+    def test_what_a_screen_says_is_served_section_by_section(self):
+        def said(commit: str, dataset: str) -> dict:
+            """What the tracker holds under each title: the lines said of it."""
+            return {bead["title"]: bead["description"].split("\n")
+                    for bead in self.tracker(commit, dataset) if bead.get("description")}
+
+        # health-content, the page « Usine »: the measures of the machine,
+        # the connections and their latency, the role that writes.
+        usine = said(self.requested, "health-content")
+        self.assertEqual(
+            ["VM Factory · Linux · 8 cœurs · 23 Go de mémoire", "Exemple · dernière lecture 14:42 (Paris)",
+             "Processeur", "32 %", "Charge moyenne : 2,1 / 8 cœurs", "Mémoire", "8,4 Go",
+             "23 Go de capacité totale", "Disque", "41 %", "82 Go utilisés sur 200 Go",
+             "Environnement et provenance"],
+            usine["Machine d’exécution"],
+        )
+        self.assertEqual(["GitHub", "Code, PR et vérifications", "126 ms"], usine["Connexions"][6:9])
+        self.assertEqual(["Départs autorisés", "Demander la suspension"], usine["Suspension, reprise et arrêt"][1:3])
+        # The same dataset where it says something else.
+        reworded = said(self.reworded, "health-content")
+        self.assertEqual(["Processeur", "57 %"], reworded["Machine d’exécution"][2:4])
+        self.assertIn("480 ms", reworded["Connexions"])
+        self.assertNotIn("126 ms", reworded["Connexions"])
+
+        # factory-draining: the same page, a stop under way.
+        draining = said(self.requested, "factory-draining")
+        self.assertEqual(usine["Machine d’exécution"], draining["Machine d’exécution"])
+        self.assertEqual("Travaux en cours de mise au repos", draining["Suspension, reprise et arrêt"][1])
+        self.assertIn("Auteur : sauvegarde en cours · Relecteur : point conservé.",
+                      draining["Suspension, reprise et arrêt"])
+        # factory-clean-done: the clean-up, done.
+        self.assertIn("Simulation terminée : 3 espaces retirés, 3 protégés conservés. Aucun fichier réel supprimé.",
+                      said(self.requested, "factory-clean-done")["Nettoyer les espaces inutilisés"])
+
+        # home-content, the four indicators of the overview.
+        home = said(self.requested, "home-content")
+        self.assertEqual(["6", "7 derniers jours · preuves de fusion"], home["Résultats fusionnés"])
+        self.assertEqual(["94 %", "7 derniers jours · 47 / 50 exécutions"], home["Vérifications CI réussies"])
+        # The card of a project: its chantier, and what the card says of it.
+        self.assertEqual(
+            ["À juger", "6 résultats fusionnés", "12 PR · 7 jours",
+             "Cible révisable · 2 acquis · 2 critères restants · 1 décision ouverte"],
+            home["Reprise du cockpit"],
+        )
+
+        # rituals-content: the five rituals, each with how it is launched
+        # and when it last ran.
+        rituals = said(self.requested, "rituals-content")
+        self.assertEqual(
+            ["Diagnostic Factory", "Préparer la prochaine release", "Qualité / AI Slop", "Revue d’architecture",
+             "Revue d’incidents"],
+            sorted(rituals),
+        )
+        self.assertEqual(
+            ["REVUE CONSEILLÉE · EXEMPLE",
+             "Comprendre les causes récurrentes et proposer les corrections qui évitent leur retour.",
+             "Dernière revue : 11 octobre · historique disponible"],
+            rituals["Revue d’incidents"][:3],
+        )
+
+        # ritual-report: the page of one ritual, and the two proposals of its report.
+        report = said(self.requested, "ritual-report")["Revue d’incidents"]
+        self.assertIn("Deux propositions à examiner", report)
+        self.assertIn("Distinguer une lecture impossible d’un état vide", report)
+
+        # analysis-time: where the time goes.
+        time_spent = said(self.requested, "analysis-time")["Où passe le temps ?"]
+        self.assertEqual("Délai médian : 2 h 40 · 6 résultats fusionnés", time_spent[0])
+        self.assertEqual("40 min", time_spent[time_spent.index("Attente de jugement") + 1])
+
+        # projects-content and release-expanded: the page of the project
+        # Notes, its next release as each of the two says it.
+        release = said(self.requested, "projects-content")["Prochaine release"]
+        self.assertIn("Reste connu 2", release)
+        self.assertIn("Le partage de notes est-il nécessaire dès cette release ?", release)
+        expanded = said(self.requested, "release-expanded")["Prochaine release"]
+        self.assertIn("Reste connu 3", expanded)
+        self.assertIn("Partager une note avec une autre personne ajouté à la cible.", expanded)
+        self.assertEqual(
+            ["Recherche et navigation", "Import des documents", "Terminé", "Recherche dans les notes", "En cours"],
+            said(self.requested, "projects-content")["ROADMAP"][:5],
+        )
 
     def test_the_sources_are_read_as_the_named_dataset_says(self):
         # factory-suspended: « Suspension confirmée ».

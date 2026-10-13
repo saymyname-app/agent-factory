@@ -29,6 +29,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -98,6 +99,28 @@ SCREENS = {
 }
 
 
+# The frozen states that say the same things, and so are served the same
+# tracker and the same projects. A group holds the states of one screen that
+# differ by the theme, the width, or the reading of the sources (« stale »,
+# « offline »: the last values are kept); the three empty views; the six
+# views of which nothing is read; and the 19 Runs states, one set of lanes,
+# runs and jobs seen with another run or job selected. Every other state is
+# served a state of its own.
+SAME_STATE = [
+    ["home-content", "home-content-full", "home-light", "home-narrow", "home-offline", "home-stale"],
+    ["journal-content", "journal-light", "journal-long", "journal-narrow", "journal-offline", "journal-stale"],
+    ["health-content", "health-light", "health-narrow", "health-offline", "health-stale"],
+    ["projects-content", "projects-light", "projects-narrow"],
+    ["rituals-content", "rituals-light", "rituals-narrow"],
+    ["analysis-content", "analysis-light", "analysis-narrow"],
+    ["health-empty", "home-empty", "journal-empty"],
+    ["health-error", "health-loading", "home-error", "home-loading", "journal-error", "journal-loading"],
+    sorted(REFERENCES["prototypes/c01-flow/frozen-runs"][1]),
+]
+# Nothing is read of these: their sources never answer.
+UNREAD = SAME_STATE[7]
+
+
 def tool(name: str, *args: str) -> tuple[int, dict]:
     proc = subprocess.run(
         [sys.executable, str(ROOT / name), *args], cwd=ROOT, text=True, capture_output=True, stdin=subprocess.DEVNULL
@@ -126,6 +149,7 @@ class DeclaredAddresses(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.work = Path(tempfile.mkdtemp(prefix="cockpit-frozen-states-"))
+        cls.served: dict[str, str] = {}
         cls.repo = cls.work / "repo"
         shutil.copytree(
             ROOT, cls.repo, symlinks=True,
@@ -173,12 +197,32 @@ class DeclaredAddresses(unittest.TestCase):
                 server = answer.headers.get("Server", "")
             if not server.startswith("cockpit/"):
                 return f"{state}: {screen_address} is not answered by the launched cockpit (Server: {server!r})"
+            self.served[state] = self.served_state(record["address"], read=state not in UNREAD)
             return None
         except (urllib.error.URLError, ConnectionError, OSError, ValueError) as exc:
             return f"{state}: the launched cockpit does not answer ({exc})"
         finally:
             subprocess.run([*launcher, "stop", "--state-file", str(record_file)], capture_output=True,
                            stdin=subprocess.DEVNULL)
+
+    def served_state(self, address: str, read: bool) -> str:
+        """What the launched cockpit reads of its tracker and of the
+        declared projects, whatever the name of the state: once it has read
+        them, or as it stands after 20 s (after 5 s for a state of which
+        nothing is read)."""
+        sources = ("beads", "projets")
+        deadline = time.monotonic() + (20 if read else 5)
+        while True:
+            with urllib.request.urlopen(address + "/api/status", timeout=10) as response:
+                snapshot = json.load(response)
+            if all(snapshot[source]["freshness"] == "fresh" for source in sources) or time.monotonic() > deadline:
+                break
+            time.sleep(0.2)
+        projects = (snapshot["projets"]["value"] or {}).get("projects")
+        return json.dumps({
+            "beads": snapshot["beads"]["value"] and sorted(snapshot["beads"]["value"], key=lambda bead: bead["id"]),
+            "projects": projects and [(p["display_name"], [c["titre"] for c in p["chantiers"]]) for p in projects],
+        }, sort_keys=True, ensure_ascii=False)
 
     def test_every_frozen_state_is_launched_from_its_declared_dataset_at_the_address_of_its_screen(self):
         launch = declared_launch(self)
@@ -218,6 +262,19 @@ class DeclaredAddresses(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=6) as pool:
             problems = [p for p in pool.map(lambda s: self.launched_state(s, address_of[s]), sorted(address_of)) if p]
         self.assertEqual([], problems)
+
+        # What each launched cockpit read is what its dataset says: two
+        # states are served the same state only when they say the same
+        # things, never because no rule reads what they say.
+        same = {}
+        for state, served in self.served.items():
+            same.setdefault(served, []).append(state)
+        self.assertEqual(
+            sorted(SAME_STATE),
+            sorted(sorted(states) for states in same.values() if len(states) > 1),
+            "states that say different things are served the same state, or the reverse",
+        )
+        self.assertEqual(95 - sum(len(group) for group in SAME_STATE) + len(SAME_STATE), len(same))
 
 
 class ApprovedReferences(unittest.TestCase):
