@@ -73,7 +73,7 @@ DESCRIPTORS = ROOT / "config" / "project-descriptors"
 
 sys.path.insert(0, str(BIN.parent / "lib"))
 import delivery_reads  # noqa: E402
-from evaluation_capacity import admission, Busy, product_running
+from evaluation_capacity import admission, Busy, ready_product, remove_attestation
 from validated_expectations import planned, enforce, sealed_record
 from delivery_role_identity import role_supplier, supplier_of  # noqa: E402
 
@@ -407,13 +407,15 @@ def stop_product(state_file: str) -> None:
         if stopped.returncode or Path(state_file).exists():
             raise Refusal(f"arrêt du produit non confirmé : {detail_of(stopped)}")
 
+        remove_attestation(state_file)
+
 
 def running(state_file: str) -> bool:
     try:
         record = json.loads(Path(state_file).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
-    return product_running(record)
+    return ready_product(state_file, record)
 
 
 def product_folder(convoy_id: str) -> Path:
@@ -474,6 +476,9 @@ def launch_products(convoy: Convoy, commit: str, settings: dict[str, Any],
     except Busy as exc:
         raise Deferred(str(exc)) from exc
     record = json.loads(state_file.read_text(encoding="utf-8"))
+    if not running(str(state_file)):
+        stop_product(str(state_file))
+        raise Refusal("identité du produit lancé non vérifiable")
     return [{"dataset": chosen, "address": record["address"], "state_file": str(state_file)}]
 
 

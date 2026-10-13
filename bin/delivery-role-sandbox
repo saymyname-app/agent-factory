@@ -34,6 +34,11 @@ rw "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 rw "$HOME/.claude.json"
 rw "$HOME/.codex"
 rw "$HOME/.local/state"
+# The controller writes exact launch/commit/socket attestations here. The
+# Evaluator can read them but cannot forge or update one inside its sandbox.
+attest_dir="${EVALUATION_CAPACITY_STATE_DIR:-$HOME/.local/state/agent-factory-product-capacity}/attestations"
+mkdir -p "$attest_dir"
+args+=(--ro-bind "$attest_dir" "$attest_dir")
 rw "$HOME/.cache"
 if [ -n "${GC_CITY:-}" ]; then
   rw "$GC_CITY/.gc"
@@ -49,5 +54,5 @@ rw "${GC_HOME:-$HOME/.gc}/cache/repos/.packman-cache.lock"
 [ -d "$HOME/.config/gh" ] && args+=(--tmpfs "$HOME/.config/gh")
 [ -d "$HOME/.ssh" ] && args+=(--tmpfs "$HOME/.ssh")
 unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN
-export DELIVERY_ROLE_READ_ONLY=1
+export DELIVERY_ROLE_READ_ONLY=1 DELIVERY_ROLE_SANDBOXED=1
 exec bwrap "${args[@]}" -- "$DELIVERY_ROLE_SANDBOX_EXEC" "$@"

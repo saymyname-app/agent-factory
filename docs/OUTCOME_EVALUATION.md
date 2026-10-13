@@ -49,7 +49,9 @@ switching. The sealed result includes one `coverage` entry (`dataset`,
 Historical addresses remain in the request and round for proof checks
 after their products stop. Ticket and Outcome Evaluation share two host
 slots, with one active product per evaluation. Startup and shutdown count;
-failed cleanup retains the slot.
+failed cleanup retains the slot. Product readiness uses the same
+controller attestation and live socket check as Ticket Evaluation
+(`docs/TICKET_EVALUATION.md`, af-bjvd8z).
 
 `record` takes one JSON file:
 
