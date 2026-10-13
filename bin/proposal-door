@@ -33,7 +33,7 @@
 #                operator: at creation this door files one bug bead
 #                authorized by ADR-0029 (gc.authorized_by=ADR-0029), links
 #                it to the proposal, moves the proposal to
-#                `prise_en_charge`, and mails the Mayor, who dispatches the
+#                `prise_en_charge`, and dispatches the
 #                bead through the usual door (bin/factory-work-dispatch).
 #                The Cockpit shows it in the health zone and the journal.
 #   decision     changes what the operator sees or must do, a method rule,
@@ -109,7 +109,7 @@
 #                                 gc.proposal_id=<proposal>), relates the
 #                                 two, sets the proposal to
 #                                 prise_en_charge (gc.proposal_bug=<bead>,
-#                                 traced), mails the Mayor, and prints
+#                                 traced), dispatches it, and prints
 #                                 "PRISE EN CHARGE: <proposal> — ticket
 #                                 <bead>".
 #   accepter <bead> <acteur>    Accept: gc.proposal_state -> a_planifier,
@@ -174,6 +174,8 @@ CLASSE_DECISION="decision"
 CLASSE_SANS_CHAMPS="sans_champs"
 AUTHORIZING_ADR="ADR-0029"
 MAYOR_RECIPIENT="${PROPOSAL_DOOR_MAYOR_RECIPIENT:-mayor}"
+# The door a maintenance bead is dispatched through (af-yzo8fo.3).
+DISPATCH_BIN="${PROPOSAL_DOOR_DISPATCH_BIN:-$ROOT/bin/factory-work-dispatch}"
 # The acteur the door itself writes in a trace it authors (a take-over).
 DOOR_ACTOR="proposal-door"
 
@@ -280,14 +282,17 @@ classe_of_bead() {
 }
 
 # take_over_maintenance files the bug bead a maintenance proposal becomes
-# (ADR-0029 point 2) and routes it to the Mayor by the usual path: the
-# Mayor dispatches it through bin/factory-work-dispatch. Never
-# escalation-door mayor -- its sweep would promote the bead to the operator
-# after 2 h, which is exactly what this class must not do.
+# (ADR-0029 point 2) and dispatches it through bin/factory-work-dispatch, the
+# usual door. The Mayor used to receive a mail and run that same command,
+# one wake per bead (10 in 42 hours, 2026-10-13, af-yzo8fo.3); it is now
+# mailed only when the dispatch did not go through (a refusal, or a deferral
+# on memory or a hot path), to dispatch it later. Never escalation-door
+# mayor -- its sweep would promote the bead to the operator after 2 h,
+# which is exactly what this class must not do.
 # $1 = proposal bead id, $2 = quoi, $3 = pourquoi, $4 = lettered que_faire.
 take_over_maintenance() {
   local proposal=$1 quoi=$2 pourquoi=$3 que_faire=$4
-  local options description create_output bug_id
+  local options description create_output bug_id dispatch_output dispatch_rc
   options=$(jq -r '.[] | "- \(.lettre). \(.option) — \(.consequence)"' <<<"$que_faire")
   description="$pourquoi
 
@@ -318,13 +323,17 @@ Si la correction touche un comportement visible de l'opérateur ou une règle de
     --set-metadata "gc.proposal_response_actor=$DOOR_ACTOR" \
     --append-notes "PROPOSITION PRISE EN CHARGE par $DOOR_ACTOR — ticket $bug_id" \
     >/dev/null || die "Beads write failed for $proposal."
-  "$GC_BIN" mail send "$MAYOR_RECIPIENT" --notify \
-    -s "Maintenance ($AUTHORIZING_ADR): $bug_id" \
-    -m "ACTION: proposal-door filed a maintenance bead from proposal $proposal
+  dispatch_rc=0
+  dispatch_output=$(GC_BIN="$GC_BIN" "$DISPATCH_BIN" "$bug_id" 2>&1) || dispatch_rc=$?
+  if [[ $dispatch_rc -ne 0 ]]; then
+    "$GC_BIN" mail send "$MAYOR_RECIPIENT" --notify \
+      -s "Maintenance ($AUTHORIZING_ADR): $bug_id" \
+      -m "ACTION: proposal-door filed a maintenance bead from proposal $proposal; its dispatch did not go through (exit $dispatch_rc: $(tr '\n' ' ' <<<"$dispatch_output" | cut -c1-300))
 STATE: $quoi
 EVIDENCE: gc bd show $bug_id (gc.authorized_by=$AUTHORIZING_ADR); gc bd show $proposal
 NEXT: dispatch it with ./bin/factory-work-dispatch $bug_id -- correct the observed defect only; if it touches what the operator sees, stop and run bin/proposal-door reconvertir ($AUTHORIZING_ADR point 6)" \
-    >/dev/null || die "Could not mail $MAYOR_RECIPIENT about $bug_id; the bead and the proposal are written -- send the mail again rather than creating a second proposal."
+      >/dev/null || die "Could not dispatch $bug_id (exit $dispatch_rc) nor mail $MAYOR_RECIPIENT about it; the bead and the proposal are written -- run $DISPATCH_BIN $bug_id rather than creating a second proposal."
+  fi
   printf 'PRISE EN CHARGE: %s — ticket %s\n' "$proposal" "$bug_id"
 }
 

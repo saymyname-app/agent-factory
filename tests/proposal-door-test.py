@@ -11,7 +11,7 @@ gc.proposal_state still counts as pending.
 
 ADR-0029 (2026-10-07): a `decision` needs exactly one « Recommandé » option
 with its raison; a `maintenance` proposal becomes, at the door, one bug bead
-authorized by ADR-0029, linked to the proposal, routed to the Mayor by mail
+authorized by ADR-0029, linked to the proposal, dispatched by the door (the Mayor is mailed only when that dispatch fails;
 (never escalation-door mayor, whose sweep would promote it to the operator),
 the proposal moving to `prise_en_charge`; `reconvertir` stops such a bead
 and turns the proposal into a `decision`; `compte` and `list` filter by
@@ -43,6 +43,22 @@ class ProposalDoorTest(unittest.TestCase):
         self.mail_log.write_text("", encoding="utf-8")
         self.next_id_file = root / "next-id"
         self.next_id_file.write_text("af-prop1\naf-bug1\n", encoding="utf-8")
+        # The dispatch door a maintenance bead goes through (af-yzo8fo.3):
+        # a stand-in that records its argument and exits as the test asks.
+        self.dispatch_log = root / "dispatch.log"
+        self.dispatch_log.write_text("", encoding="utf-8")
+        self.dispatch_exit = root / "dispatch-exit"
+        self.dispatch_exit.write_text("0", encoding="utf-8")
+        fake_dispatch = root / "fake-dispatch"
+        fake_dispatch.write_text(
+            "#!/usr/bin/env bash\n"
+            f"printf '%s\\n' \"$*\" >> '{self.dispatch_log}'\n"
+            f"rc=$(cat '{self.dispatch_exit}')\n"
+            "[ \"$rc\" = 0 ] || echo 'dispatch-door: deferred -- guest MemAvailable is low' >&2\n"
+            "exit \"$rc\"\n",
+            encoding="utf-8",
+        )
+        fake_dispatch.chmod(0o755)
         self.env = {
             **os.environ,
             "GC_BIN": str(FAKE_GC),
@@ -50,6 +66,7 @@ class ProposalDoorTest(unittest.TestCase):
             "PD_CALL_LOG": str(self.call_log),
             "PD_MAIL_LOG": str(self.mail_log),
             "PD_NEXT_ID_FILE": str(self.next_id_file),
+            "PROPOSAL_DOOR_DISPATCH_BIN": str(fake_dispatch),
             "PROPOSAL_DOOR_LOCK_FILE": str(root / "lock"),
             "PROPOSAL_DOOR_NOW": "1790000000",
         }
@@ -156,7 +173,7 @@ class ProposalDoorTest(unittest.TestCase):
         self.assertEqual(["af-prop1"], [p.stem for p in self.bead_dir.glob("*.json")])
         self.assertEqual("", self.mail_log.read_text(encoding="utf-8"))
 
-    def test_maintenance_becomes_a_bug_bead_authorized_by_the_adr_and_routed_to_the_mayor(self):
+    def test_maintenance_becomes_a_bug_bead_authorized_by_the_adr_and_dispatched_by_the_door(self):
         # ADR-0029 point 2. A maintenance proposal needs no recommendation.
         result = self.door("create", json.dumps(self.MAINTENANCE), check=True)
         self.assertIn("PROPOSITION CRÉÉE: af-prop1", result.stdout)
@@ -182,12 +199,28 @@ class ProposalDoorTest(unittest.TestCase):
 
         calls = "\n".join(self.calls())
         self.assertIn("bd dep relate af-bug1 af-prop1", calls)
-        # Routed to the Mayor by mail (its turn's first item), never through
-        # escalation-door mayor: that sweep promotes to the operator after 2 h.
+        # Dispatched by the door itself, through the usual dispatch door: the
+        # Mayor is not woken for a dispatch that went through (af-yzo8fo.3).
+        self.assertEqual("af-bug1\n", self.dispatch_log.read_text(encoding="utf-8"))
+        self.assertEqual("", self.mail_log.read_text(encoding="utf-8"))
+        self.assertNotIn("gc.needs_benjamin", calls)
+        self.assertNotIn("gc.escalation_mayor_paged_at", calls)
+
+    def test_maintenance_whose_dispatch_does_not_go_through_is_routed_to_the_mayor(self):
+        # A deferral (exit 75) or a refusal leaves the bead filed and the
+        # proposal taken over; the Mayor is mailed to dispatch it later, never
+        # through escalation-door mayor: that sweep promotes to the operator
+        # after 2 h.
+        self.dispatch_exit.write_text("75", encoding="utf-8")
+        result = self.door("create", json.dumps(self.MAINTENANCE), check=True)
+        self.assertIn("PRISE EN CHARGE: af-prop1 — ticket af-bug1", result.stdout)
+        self.assertEqual("prise_en_charge", self.bead("af-prop1")["metadata"]["gc.proposal_state"])
         mail = self.mail_log.read_text(encoding="utf-8")
         self.assertIn("mayor", mail.split("\n")[0])
         self.assertIn("af-bug1", mail)
+        self.assertIn("did not go through (exit 75", mail)
         self.assertIn("factory-work-dispatch", mail)
+        calls = "\n".join(self.calls())
         self.assertNotIn("gc.needs_benjamin", calls)
         self.assertNotIn("gc.escalation_mayor_paged_at", calls)
 

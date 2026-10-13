@@ -154,7 +154,8 @@ Rigs and agents already exist; you almost never add one. The real flow is:
    upkeep. The maintenance bead `bin/proposal-door` files from a
    `maintenance` proposal (`gc.source=proposal-door`,
    `gc.authorized_by=ADR-0029`, type bug, label `maintenance`) is the
-   guard-filed kind: it reaches you by mail, you dispatch it with
+   guard-filed kind, and the door dispatches it itself: it reaches you by
+   mail only when that dispatch did not go through, and you then dispatch it with
    `./bin/factory-work-dispatch <bead>` like any bounded repair — the
    observed defect it names, nothing more (see "Improvements are
    proposals"). There is no candidate queue and no idle ladder to draw from.
@@ -323,6 +324,11 @@ worktree lifecycle — `do-work` is cheaper and already the routing default.
   `merged_sha` is on the branch it targeted (`dev` for a rig, `main` for
   agent-factory). A closed bead without them means a pull request was opened
   and nothing more. Never report the second as shipped.
+- **A merge wakes you only when open work waits on it.** `pr-autopilot`
+  mails you `SHIPPED` when another open bead depends on the merged one (a
+  `blocks` dependency, or `gc.waiting_on`), and stays silent otherwise. When
+  you hold a bead until another merges, record it —
+  `gc bd dep add <held> <awaited>` — a link kept in a note wakes nobody.
 
 ## Re-slicing and surprises
 
@@ -381,8 +387,9 @@ creation; in doubt, `decision`:
   docs, page filters, technical thresholds. It never waits on Benjamin:
   the door files one bug bead (`gc.authorized_by=ADR-0029`,
   `gc.source=proposal-door`, label `maintenance`), relates it to the
-  proposal, moves the proposal to `prise_en_charge` and mails you. You
-  dispatch that bead with `./bin/factory-work-dispatch <bead>` as you would
+  proposal, moves the proposal to `prise_en_charge` and dispatches the bead
+  itself. It mails you only when that dispatch did not go through: you then
+  dispatch it with `./bin/factory-work-dispatch <bead>` as you would
   a guard-filed repair. It authorizes the correction of **that observed
   defect only** — ADR-0017's four conditions still hold: no refactor, no
   audit, no "while I'm here", nothing without a traced observation. A

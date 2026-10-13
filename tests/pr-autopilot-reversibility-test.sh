@@ -10,8 +10,8 @@
 # DISARMED and escalated to the Mayor; verdicts are cached per head commit; a
 # fixed PR is released; a checker that cannot run fails closed; reconciliation
 # sees closed work beyond the CLI's default 50-row window, silently backfills
-# old history, and wakes the Mayor exactly once for a recent merge or active
-# waiter, with no --from (real gc mail send rejects any --from that is not a
+# old history, and wakes the Mayor exactly once for a merge open work waits
+# on, never for a merge nothing waits behind (af-yzo8fo.3), with no --from (real gc mail send rejects any --from that is not a
 # live session alias or "human" -- af-4ruvv); --dry-run changes nothing.
 
 set -Eeuo pipefail
@@ -129,7 +129,6 @@ export GC_OPERATOR_NAME=operator-1
 export REVERSIBILITY_CACHE="$TMP/factory/.gc/rev-cache.tsv"
 export PR_AUTOPILOT_NOW_EPOCH
 PR_AUTOPILOT_NOW_EPOCH=$(date -u -d '2026-09-21T16:00:00Z' +%s)
-export PR_AUTOPILOT_RECONCILE_WAKE_WINDOW_SECONDS=3600
 
 pilot() { "$AUTOPILOT" "$@" 2>&1 || true; }
 diffs() { grep -c -- '--json' "$TMP/check.log" || true; }
@@ -244,7 +243,7 @@ jq 'map(if .id=="af-work7" then
      else . end)' \
   "$TMP/beads.json" > "$TMP/next.json" && mv "$TMP/next.json" "$TMP/beads.json"
 
-# --- a recent first reconciliation wakes exactly once and never as human -----------------
+# --- a recent merge nothing waits behind is reconciled without waking the Mayor ----------
 cat > "$TMP/backend-merged.json" <<'JSON'
 [{"number":9,"headRefName":"polecat/af-work9","mergeCommit":{"oid":"feedbeef9"},"mergedAt":"2026-09-21T15:30:00Z"}]
 JSON
@@ -262,14 +261,7 @@ grep -q "^mail send mayor" "$TMP/gc.log" && fail "--dry-run sent the completion 
 : > "$TMP/gc.log"
 out=$(pilot)
 grep -q "^bd update af-work9 .*merge_result=merged" "$TMP/gc.log" || { echo "$out" >&2; fail "recent merge was not reconciled"; }
-test "$(grep -c '^mail send mayor --notify' "$TMP/gc.log" || true)" = "1" || fail "recent reconciliation did not send exactly one completion wake"
-grep -q -- "--from pr-autopilot" "$TMP/gc.log" && fail "completion wake passed --from pr-autopilot, which real gc mail send rejects (session not found: only a live session alias or human is a valid sender; af-4ruvv)"
-grep -q -- "--from human" "$TMP/gc.log" && fail "completion wake impersonated human"
-grep -q "SHIPPED: af-work9 via PR #9" "$TMP/gc.log" || fail "completion wake did not name the bead and PR"
-grep -q "ACTION: pr-autopilot reconciled af-work9 from merged PR #9" "$TMP/gc.log" || fail "completion wake lacks its ACTION"
-grep -q "^STATE: SHIPPED$" "$TMP/gc.log" || fail "completion wake lacks its STATE"
-grep -q "^EVIDENCE: af-work9; PR #9; merge SHA feedbeef9$" "$TMP/gc.log" || fail "completion wake lacks exact evidence"
-grep -q "^NEXT: Mayor advances or finalizes work waiting on af-work9\.$" "$TMP/gc.log" || fail "completion wake lacks its next action"
+grep -q "^mail send mayor" "$TMP/gc.log" && fail "a merge nothing waits behind woke the Mayor (af-yzo8fo.3)"
 
 # Model the full proof left by the successful write. The structural proof gate
 # must make the next tick silent for this delivery: no repeat write or mail.
@@ -288,7 +280,7 @@ pilot >/dev/null
 grep -q "^bd update af-work9 " "$TMP/gc.log" && fail "reconciled the same work bead twice"
 grep -q "^mail send mayor" "$TMP/gc.log" && fail "sent the completion wake twice"
 
-# --- an old merge still wakes when active work has a real blocking dependency -----------
+# --- a merge wakes exactly once, never as human, when active work has a real blocking dependency
 cat > "$TMP/backend-merged.json" <<'JSON'
 [{"number":10,"headRefName":"polecat/af-work10","mergeCommit":{"oid":"feedbeef10"},"mergedAt":"2026-09-18T12:00:00Z"}]
 JSON
@@ -301,7 +293,13 @@ jq '. + [
 out=$(pilot)
 grep -q "^bd update af-work10 .*merge_result=merged" "$TMP/gc.log" || { echo "$out" >&2; fail "old merge with active waiter was not reconciled"; }
 test "$(grep -c '^mail send mayor --notify' "$TMP/gc.log" || true)" = "1" || fail "old merge with active waiter did not send exactly one wake"
+grep -q -- "--from pr-autopilot" "$TMP/gc.log" && fail "completion wake passed --from pr-autopilot, which real gc mail send rejects (session not found: only a live session alias or human is a valid sender; af-4ruvv)"
+grep -q -- "--from human" "$TMP/gc.log" && fail "completion wake impersonated human"
+grep -q "SHIPPED: af-work10 via PR #10" "$TMP/gc.log" || fail "completion wake did not name the bead and PR"
 grep -q "ACTION: pr-autopilot reconciled af-work10 from merged PR #10" "$TMP/gc.log" || fail "active-waiter wake lacks its ACTION"
+grep -q "^STATE: SHIPPED$" "$TMP/gc.log" || fail "completion wake lacks its STATE"
+grep -q "^EVIDENCE: af-work10; PR #10; merge SHA feedbeef10$" "$TMP/gc.log" || fail "completion wake lacks exact evidence"
+grep -q "^NEXT: Mayor advances or finalizes work waiting on af-work10\.$" "$TMP/gc.log" || fail "completion wake lacks its next action"
 rm -f "$TMP/backend-merged.json" "$TMP/beads.json"
 
 # --- O3: an exhausted run budget stops cleanly, reported, not SIGKILLed ------------------
