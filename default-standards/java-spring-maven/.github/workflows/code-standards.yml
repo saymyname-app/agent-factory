@@ -22,8 +22,10 @@ jobs:
       - run: pip install diff-cover==10.6.0
       - name: Changed Java lines are at least 80 percent covered
         env:
-          BASE_BRANCH: ${{ github.event.pull_request.base.ref || 'main' }}
+          BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref }}
         run: |
+          BASE_BRANCH="${BASE_REF#refs/heads/}"
+          test -n "$BASE_BRANCH"
           git fetch origin "$BASE_BRANCH"
           if git diff --quiet "origin/$BASE_BRANCH...HEAD" -- src/main/java; then
             exit 0
