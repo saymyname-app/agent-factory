@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+"""Cancel one obsolete Ticket Evaluation dispatch, including its owned role session."""
+
+import json
+import os
+import subprocess
+import sys
+
+GC = os.environ.get("GC_BIN", "gc")
+
+
+def call(*args):
+    result = subprocess.run([GC, *args], capture_output=True, text=True)
+    if result.returncode:
+        raise RuntimeError(f"gc {' '.join(args)}: {result.stderr.strip() or result.stdout.strip()}")
+    return result.stdout
+
+
+def data(*args):
+    return json.loads(call(*args))
+
+
+def cancel(source):
+    bead = data("bd", "show", source, "--json")[0]
+    inputs = data("bd", "dep", "list", source, "--direction", "up", "--type", "tracks", "--json")
+    if len(inputs) != 1:
+        raise RuntimeError(f"{source}: expected one input convoy, got {len(inputs)}")
+    input_id = inputs[0]["id"]
+    input_status = data("convoy", "status", input_id, "--json")
+    if [child["id"] for child in input_status["children"]] != [source]:
+        raise RuntimeError(f"{input_id}: input convoy does not contain only {source}")
+    roots = data("bd", "list", "--all", "--metadata-field", f"gc.input_convoy_id={input_id}",
+                 "--json", "--limit", "0")
+    if len(roots) > 1 or any((root.get("metadata") or {}).get("gc.formula_name") != "mol-ticket-evaluation"
+                             for root in roots):
+        raise RuntimeError(f"{input_id}: ambiguous Ticket Evaluation workflow")
+    sessions = set()
+    for root in roots:
+        root_id = root["id"]
+        steps = data("bd", "list", "--all", "--metadata-field", f"gc.root_bead_id={root_id}",
+                     "--json", "--limit", "0")
+        sessions.update((step.get("metadata") or {}).get("gc.session_id") for step in steps
+                        if step.get("assignee") == "delivery-evaluator" and
+                        (step.get("metadata") or {}).get("gc.session_id"))
+        if root["status"] != "closed":
+            call("convoy", "delete", root_id, "--force")
+    if bead.get("status") != "closed":
+        call("bd", "update", source, "--set-metadata", "gc.outcome=fail",
+             "--set-metadata", "gc.work_outcome=abandoned", "--status", "closed")
+    live = {session["id"]: session for session in data("session", "list", "--json")["sessions"]}
+    for session_id in sorted(sessions):
+        session = live.get(session_id)
+        if not session or session.get("closed"):
+            continue
+        if session.get("template") != "delivery-evaluator":
+            raise RuntimeError(f"{session_id}: claimed session is not the Evaluator role")
+        assigned = data("bd", "list", "--status", "in_progress", "--metadata-field",
+                        f"gc.session_id={session_id}", "--json", "--limit", "0")
+        if assigned:
+            raise RuntimeError(f"{session_id}: Evaluator session still holds in-progress work")
+        call("session", "close", session_id)
+
+
+if __name__ == "__main__":
+    try:
+        cancel(sys.argv[1])
+    except (IndexError, KeyError, ValueError, RuntimeError) as exc:
+        print(f"evaluation-launch-cancel: {exc}", file=sys.stderr)
+        raise SystemExit(1)

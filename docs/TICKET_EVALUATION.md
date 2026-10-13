@@ -122,6 +122,14 @@ The result carries `coverage: [{"dataset": NAME, "evidence": PIECE}, ...]`.
 A missing game or a piece captured on another game's address is refused.
 After the result, stop or withdrawal, the controller stops the remaining
 product and releases its slot only after cleanup is confirmed.
+When a ticket is stopped or withdrawn while its evaluation is open, the
+controller also cancels every launch of that request through its exact input
+convoy and Ticket Evaluation workflow. It closes the source bead as
+`fail`/`abandoned`, then closes only an Evaluator session that was assigned
+to that workflow and holds no other in-progress work. The request is removed
+after product and workflow cleanup; its launch history remains. A failed
+cleanup leaves the request open for retry and never creates a favorable
+verdict.
 
 A product that does not start from the clean copy (two attempts, each within
 `start_timeout_seconds`) cannot be observed: `settle` records it as an

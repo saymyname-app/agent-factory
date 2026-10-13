@@ -4411,14 +4411,14 @@ def cmd_release_evaluation(args: argparse.Namespace) -> int:
     metadata = metadata_of(ticket)
     record = evaluation_record(metadata[KEY_EVALUATION]) if KEY_EVALUATION in metadata else {"rounds": []}
     live = record.get("live", [])
-    if not args.state_file:
+    if not args.state_file and not (args.withdraw and record.get("request") and not live):
         raise Refusal("relevé de lancement absent : --state-file nomme chaque produit arrêté")
     unknown = [path for path in args.state_file if path not in live]
     if unknown:
         raise Refusal(f"produit lancé inconnu de l'évaluation de {args.ticket} : {', '.join(unknown)}")
     used = {entry["state_file"] for entry in (record.get("request") or {}).get("environment", [])}
     held = [path for path in args.state_file if path in used]
-    if held and args.withdraw:
+    if args.withdraw and record.get("request") and not (set(live) - set(args.state_file)):
         del record["request"]
     elif held and not args.switch and KEY_STOP not in metadata:
         raise Refusal(f"une évaluation est ouverte sur ce produit lancé : il ne se libère pas ({', '.join(held)})")

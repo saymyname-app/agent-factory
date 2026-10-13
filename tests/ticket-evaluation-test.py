@@ -182,6 +182,8 @@ class TicketEvaluationTest(unittest.TestCase):
             "SPEC_INTEGRATION_LOCK_DIR": str(self.tmp / "locks"),
             "SPEC_INTEGRATION_WORK_DIR": str(self.work),
             "TICKET_EVALUATION_DISPATCH_DOOR_BIN": str(FAKE_EVALUATOR),
+            "TICKET_EVALUATION_CANCEL_BIN": str(ROOT / "tests" / "fixtures" / "ticket-evaluation" / "cancel"),
+            "TICKET_EVALUATION_CANCEL_LOG": str(self.tmp / "cancel.log"),
             "TICKET_EVALUATION_STATE_DIR": str(self.launches_dir),
             "OUTCOME_EVALUATION_STATE_DIR": str(self.tmp / "outcome-launches"),
             "EVALUATION_CAPACITY_STATE_DIR": str(self.tmp / "capacity"),
@@ -1483,6 +1485,51 @@ class TicketEvaluationTest(unittest.TestCase):
 
         self.assertTrue(settled["ok"])
         self.assertEqual(("request" in self.evaluation(), self.launch_records()), (False, []))
+
+    def test_a_stopped_ticket_with_an_open_evaluation_releases_its_request_and_product(self):
+        tip, request = self.open_evaluation()
+        handed = self.handed(tip, request)
+        self.state("stop-ticket", CONVOY, SLICE, "--reason", "evaluation_no_result",
+                   "--detail", "deux lancements sans résultat")
+
+        self.settle()
+
+        self.assertNotIn("request", self.evaluation())
+        self.assertNotIn("live", self.evaluation())
+        self.assertEqual([], self.launch_records())
+        self.assertNotIn("evaluation", self.shown()["verdicts"])
+        self.assertEqual([request["launches"][0]["bead"]],
+                         (self.tmp / "cancel.log").read_text().splitlines())
+        self.record_refused(handed, "aucune évaluation n'est demandée")
+
+    def test_a_stopped_ticket_with_no_live_product_still_releases_its_launch(self):
+        _, request = self.open_evaluation()
+        self.state("stop-ticket", CONVOY, SLICE, "--reason", "evaluation_no_result",
+                   "--detail", "deux lancements sans résultat")
+        self.tool("cleanup")
+        self.assertIn("request", self.evaluation())
+        self.assertNotIn("live", self.evaluation())
+
+        self.settle()
+
+        self.assertNotIn("request", self.evaluation())
+        self.assertEqual([request["launches"][0]["bead"]],
+                         (self.tmp / "cancel.log").read_text().splitlines())
+        self.assertNotIn("evaluation", self.shown()["verdicts"])
+
+    def test_a_withdrawn_ticket_with_an_open_evaluation_releases_its_request_and_product(self):
+        _, request = self.open_evaluation()
+        self.state("record-gate", CONVOY, SLICE, "--gate", "withdrawn")
+        self.edit(SLICE, status="closed")
+
+        self.settle()
+
+        self.assertNotIn("request", self.evaluation())
+        self.assertNotIn("live", self.evaluation())
+        self.assertEqual([], self.launch_records())
+        self.assertNotIn("evaluation", self.shown()["verdicts"])
+        self.assertEqual([request["launches"][0]["bead"]],
+                         (self.tmp / "cancel.log").read_text().splitlines())
 
     # --- an evaluation that gives no result ---------------------------------------------------
 
