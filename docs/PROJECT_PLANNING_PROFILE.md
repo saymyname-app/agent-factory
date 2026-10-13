@@ -323,3 +323,19 @@ standards or reuse the Planning Profile's `checks` field. `bin/project-standards
 status` reads each rig's `STANDARDS.md` and `DESIGN.md` to report whether code
 and design standards are present. A rig without either file remains registered
 and is reported as `sans` for that domain.
+
+For a new Java/Maven rig, create a linked worktree of its own repository and
+run `bin/project-standards adopt --rig <rig> --stack java-spring-maven
+--target <worktree> --java-package <root.package>` from the Factory. The
+command copies the pinned defaults, renders the Java package in the Maven
+configuration and architecture test, and records the copied version in
+`.factory/standards-origin.json`. It refuses an unregistered stack, a main
+checkout, or any file that would be overwritten. The copied `pom.xml` runs
+format, bug-pattern, null-safety, naming and architecture checks; the copied
+workflow runs the build, changed-line coverage and security scans on PRs.
+It is a starting POM: integrate these plugin configurations into an existing
+POM in that project's own Planning Run, without overwriting its build.
+That Planning Run must also make the copied CI jobs required by the target
+branch's merge rule and verify them on a PR and merge queue. Until that gate
+is connected, the copied workflow is a proposed check, not a demonstrated
+merge guarantee. No existing project is activated by this Factory change.

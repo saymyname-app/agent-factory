@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Public CLI behavior of the project standards status gesture."""
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -31,6 +32,36 @@ class ProjectStandardsStatusTest(unittest.TestCase):
         (self.root / "rigs" / "api").mkdir(parents=True)
         (self.root / "rigs" / "web").mkdir(parents=True)
 
+    def java_defaults(self):
+        source = Path(__file__).resolve().parents[1] / "default-standards" / "java-spring-maven"
+        target = self.root / "default-standards" / "java-spring-maven"
+        target.mkdir(parents=True)
+        for file in source.rglob("*"):
+            if file.is_file():
+                path = target / file.relative_to(source)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(file.read_bytes())
+
+    def worktree(self):
+        source = self.root / "project"
+        source.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "main", str(source)], check=True)
+        (source / "README.md").write_text("# Project\n")
+        env = {**os.environ, "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "test@example.invalid",
+               "GIT_COMMITTER_NAME": "test", "GIT_COMMITTER_EMAIL": "test@example.invalid"}
+        subprocess.run(["git", "-C", str(source), "add", "-A"], check=True, env=env)
+        subprocess.run(["git", "-C", str(source), "commit", "-qm", "base"], check=True, env=env)
+        target = self.root / "project-worktree"
+        subprocess.run(["git", "-C", str(source), "worktree", "add", "-qb", "standards", str(target)], check=True)
+        (self.root / "config/projects/api.toml").write_text('rig_dir = "project"\n')
+        return source, target
+
+    def adopt(self, target, rig="api", stack="java-spring-maven", package="org.example.app"):
+        result = subprocess.run([str(TOOL), "--repo-root", str(self.root), "adopt", "--rig", rig,
+                                 "--stack", stack, "--target", str(target), "--java-package", package],
+                                text=True, capture_output=True)
+        return result.returncode, json.loads(result.stdout)
+
     def status(self):
         result = subprocess.run([str(TOOL), "--repo-root", str(self.root), "status"],
                                 text=True, capture_output=True)
@@ -44,6 +75,98 @@ class ProjectStandardsStatusTest(unittest.TestCase):
         self.assertEqual({"code": "avec", "design": "sans"}, data["projects"][0]["rigs"][0]["standards"])
         self.assertEqual({"code": "sans", "design": "avec"}, data["projects"][0]["rigs"][1]["standards"])
         self.assertEqual(["react-typescript"], data["projects"][0]["rigs"][1]["stacks"])
+
+    def test_adopt_copies_versioned_java_defaults_into_a_worktree(self):
+        self.java_defaults()
+        _, target = self.worktree()
+
+        code, result = self.adopt(target)
+
+        self.assertEqual(0, code, result)
+        self.assertEqual("java-spring-maven", result["stack"])
+        self.assertTrue((target / "STANDARDS.md").is_file())
+        self.assertIn("<groupId>org.example.app</groupId>", (target / "pom.xml").read_text())
+        self.assertTrue((target / "src/test/java/org/example/app/ArchitectureTest.java").is_file())
+        self.assertNotIn("__JAVA_PACKAGE__", (target / "src/test/java/org/example/app/ArchitectureTest.java").read_text())
+        self.assertTrue((target / ".github/workflows/code-standards.yml").is_file())
+        self.assertEqual("java-spring-maven", json.loads(
+            (target / ".factory" / "standards-origin.json").read_text())["stack"])
+
+    def test_status_shows_copied_version_and_unconfirmed_choices(self):
+        self.java_defaults()
+        _, target = self.worktree()
+        self.assertEqual(0, self.adopt(target)[0])
+        with (target / "STANDARDS.md").open("a", encoding="utf-8") as handle:
+            handle.write("- User choice: recommended — par défaut, non confirmée.\n")
+        (self.root / "config/projects/api.toml").write_text('rig_dir = "project-worktree"\n')
+
+        code, result = self.status()
+
+        self.assertEqual(0, code, result)
+        api = result["projects"][0]["rigs"][0]
+        self.assertEqual({"stack": "java-spring-maven", "version": "1"}, api["origin"])
+        self.assertEqual({"java-spring-maven": "1"}, api["latest_versions"])
+        self.assertFalse(api["update_available"])
+        self.assertTrue(api["unconfirmed_choices"])
+        self.assertEqual({}, api["frozen_counts"])
+
+    def test_adopt_refuses_unknown_stack_without_writing(self):
+        self.java_defaults()
+        _, target = self.worktree()
+
+        code, result = self.adopt(target, stack="unknown-stack")
+
+        self.assertNotEqual(0, code)
+        self.assertIn("pile", result["error"])
+        self.assertFalse((target / "STANDARDS.md").exists())
+
+    def test_adopt_refuses_invalid_java_package_without_writing(self):
+        self.java_defaults()
+        _, target = self.worktree()
+        for package in ("../../outside", "org.Example", "org.class"):
+            with self.subTest(package=package):
+                code, result = self.adopt(target, package=package)
+                self.assertNotEqual(0, code)
+                self.assertIn("paquet Java", result["error"])
+                self.assertFalse((target / "pom.xml").exists())
+
+    def test_adopt_refuses_declared_stack_without_defaults(self):
+        _, target = self.worktree()
+        code, result = self.adopt(target, rig="web", stack="react-typescript", package="")
+        self.assertNotEqual(0, code)
+        self.assertIn("aucun Default Standards", result["error"])
+        self.assertFalse((target / "STANDARDS.md").exists())
+
+    def test_adopt_refuses_main_checkout_and_existing_standard(self):
+        self.java_defaults()
+        source, target = self.worktree()
+        code, result = self.adopt(source)
+        self.assertNotEqual(0, code)
+        self.assertIn("worktree", result["error"])
+        (target / "STANDARDS.md").write_text("# Local\n")
+        code, result = self.adopt(target)
+        self.assertNotEqual(0, code)
+        self.assertEqual("# Local\n", (target / "STANDARDS.md").read_text())
+
+    def test_adopt_refuses_worktree_of_another_repo(self):
+        self.java_defaults()
+        self.worktree()
+        other = self.root / "other"
+        other.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "main", str(other)], check=True)
+        (other / "README.md").write_text("# Other\n")
+        env = {**os.environ, "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "test@example.invalid",
+               "GIT_COMMITTER_NAME": "test", "GIT_COMMITTER_EMAIL": "test@example.invalid"}
+        subprocess.run(["git", "-C", str(other), "add", "-A"], check=True, env=env)
+        subprocess.run(["git", "-C", str(other), "commit", "-qm", "base"], check=True, env=env)
+        wrong = self.root / "other-worktree"
+        subprocess.run(["git", "-C", str(other), "worktree", "add", "-qb", "standards", str(wrong)], check=True)
+
+        code, result = self.adopt(wrong)
+
+        self.assertNotEqual(0, code)
+        self.assertIn("rig api", result["error"])
+        self.assertFalse((wrong / "STANDARDS.md").exists())
 
     def test_status_refuses_missing_rig_checkout(self):
         (self.root / "rigs" / "web").rmdir()
@@ -59,6 +182,22 @@ class ProjectStandardsStatusTest(unittest.TestCase):
         code, result = self.status()
         self.assertNotEqual(0, code)
         self.assertIn("web", result["error"])
+
+    def test_status_refuses_origin_from_undeclared_stack(self):
+        (self.root / "rigs/api/.factory").mkdir()
+        (self.root / "rigs/api/.factory/standards-origin.json").write_text(
+            json.dumps({"contract": "agent-factory-standards-origin/v1",
+                        "stack": "react-typescript", "version": "1"}))
+        code, result = self.status()
+        self.assertNotEqual(0, code)
+        self.assertIn("api", result["error"])
+
+    def test_status_reports_malformed_origin_as_json_refusal(self):
+        (self.root / "rigs/api/.factory").mkdir()
+        (self.root / "rigs/api/.factory/standards-origin.json").write_text("[]")
+        code, result = self.status()
+        self.assertNotEqual(0, code)
+        self.assertIn("error", result)
 
 
 if __name__ == "__main__":
