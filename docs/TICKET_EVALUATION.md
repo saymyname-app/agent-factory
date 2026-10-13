@@ -94,7 +94,13 @@ descendants, port and worktree are gone, then opens the requested game.
 Repeat the command until `ready=true`; capture with the returned address
 and launch record. `--fresh` requests a new initial state for a revisit at
 the same commit. Capture proof before switching away. The read-only role
-never launches or stops a process itself.
+never launches or stops a process itself. The controller verifies the clean
+copy's commit, launch marker and ownership of its listening socket, then writes
+an exact identity attestation. The Evaluator's sandbox sees that directory
+read-only and confirms the attested socket still listens before `ready=true`.
+A session without the protected mount, a stale socket, or a changed launch
+record receives `ready=false`; an HTTP response or port alone is insufficient
+(af-bjvd8z).
 
 Ticket and Outcome Evaluation share two host slots and allow one active
 product per evaluation. Startup and shutdown count as occupied. An
