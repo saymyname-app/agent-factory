@@ -114,7 +114,10 @@ class ProposalClassesContractTest(unittest.TestCase):
 
     # -- the producer side: the real door on the fake tracker ------------
     def door(self, *args):
-        return subprocess.run((str(DOOR),) + args, env=self.door_env, text=True, capture_output=True, check=True)
+        # The dispatch of a maintenance bead is tests/proposal-door-test.py's
+        # subject; here it is a stand-in that goes through.
+        env = dict(self.door_env, PROPOSAL_DOOR_DISPATCH_BIN="/bin/true")
+        return subprocess.run((str(DOOR),) + args, env=env, text=True, capture_output=True, check=True)
 
     def seed(self, bead):
         (self.bead_dir / ("%s.json" % bead["id"])).write_text(json.dumps(bead), encoding="utf-8")

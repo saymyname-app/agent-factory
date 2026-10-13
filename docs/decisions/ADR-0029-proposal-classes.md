@@ -41,8 +41,11 @@ son niveau, et ne voit pas celles qui le sont.
      comportement produit.
 2. Une proposition `maintenance` **n'entre pas** dans « Ce qui t'attend ».
    Elle devient un bead bug autorisé par la présente ADR
-   (`gc.authorized_by=ADR-0029`), dispatché par le Mayor par la porte de
-   dispatch habituelle, livré en PR vérifiée par CI et fusionné par
+   (`gc.authorized_by=ADR-0029`), dispatché par la porte des propositions
+   elle-même par la porte de dispatch habituelle (amendement du 2026-10-13,
+   af-yzo8fo.3 ; avant, le Mayor recevait un mail et lançait ce dispatch :
+   il n'est plus prévenu que si le dispatch ne passe pas), livré en PR
+   vérifiée par CI et fusionné par
    `pr-autopilot` sur vert. Elle reste visible dans la zone santé du Cockpit
    et dans le journal.
 3. Une proposition `decision` entre dans « Ce qui t'attend » en « Quand tu
