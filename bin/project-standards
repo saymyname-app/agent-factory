@@ -2,46 +2,162 @@
 """Read the code and design standards state of registered project rigs."""
 import argparse
 import json
+import re
+import shutil
+import subprocess
 from pathlib import Path
 import runpy
 import tomllib
+
+JAVA_RESERVED = set("""abstract assert boolean break byte case catch char class const continue default do
+double else enum extends final finally float for goto if implements import instanceof int
+interface long native new package private protected public return short static strictfp super
+switch synchronized this throw throws transient try void volatile while true false null record
+sealed permits yield var""".split())
+
+
+def descriptors(root, load_descriptor):
+    for file in sorted((root / "config/project-descriptors").glob("*.json")):
+        yield load_descriptor(file)
+
+
+def adopt(root, args, load_descriptor):
+    registered = {rig: stacks for descriptor in descriptors(root, load_descriptor)
+                  for rig, stacks in descriptor["stacks"].items()}
+    if args.stack not in registered.get(args.rig, []):
+        raise ValueError(f"rig {args.rig}: pile {args.stack} non déclarée")
+    source = root / "default-standards" / args.stack
+    if not source.is_dir() or not (source / "VERSION").is_file():
+        raise ValueError(f"pile {args.stack}: aucun Default Standards disponible")
+    target = args.target.resolve()
+    if not target.is_dir() or not (target / ".git").is_file():
+        raise ValueError(f"rig {args.rig}: cible attendue dans un worktree Git lié")
+    top = subprocess.run(["git", "-C", str(target), "rev-parse", "--show-toplevel"],
+                         capture_output=True, text=True)
+    if top.returncode or Path(top.stdout.strip()).resolve() != target:
+        raise ValueError(f"rig {args.rig}: cible hors du worktree Git")
+    with (root / "config/projects" / f"{args.rig}.toml").open("rb") as handle:
+        registered_dir = tomllib.load(handle)["rig_dir"]
+    registered_path = (root / registered_dir).resolve()
+    if not registered_path.is_relative_to(root):
+        raise ValueError(f"rig {args.rig}: dépôt déclaré hors de l'usine")
+    def git_common_dir(checkout):
+        proc = subprocess.run(["git", "-C", str(checkout), "rev-parse", "--git-common-dir"],
+                              capture_output=True, text=True)
+        if proc.returncode:
+            raise ValueError(f"rig {args.rig}: dépôt Git déclaré introuvable")
+        return (checkout / proc.stdout.strip()).resolve()
+    if git_common_dir(registered_path) != git_common_dir(target):
+        raise ValueError(f"rig {args.rig}: cible liée à un autre dépôt Git")
+    files = [file for file in source.rglob("*") if file.is_file() and file.name != "VERSION"]
+    origin = target / ".factory" / "standards-origin.json"
+    java_package = args.java_package
+    if args.stack == "java-spring-maven" and not java_package:
+        raise ValueError("paquet Java requis : --java-package")
+    if java_package and args.stack != "java-spring-maven":
+        raise ValueError("--java-package réservé à la pile Java")
+    if java_package and (not re.fullmatch(r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*", java_package)
+                         or any(part in JAVA_RESERVED for part in java_package.split("."))
+                         or java_package.split(".")[0] == "java"):
+        raise ValueError(f"paquet Java invalide : {java_package}")
+    destinations = [target / str(file.relative_to(source)).replace("src/test/java/example/",
+                    "src/test/java/" + java_package.replace(".", "/") + "/")
+                    if java_package else target / file.relative_to(source) for file in files] + [origin]
+    for path in destinations:
+        if path.exists() or path.is_symlink():
+            raise ValueError(f"rig {args.rig}: fichier existant, adoption refusée : {path.relative_to(target)}")
+        if any(parent.is_symlink() for parent in path.parents if parent != target and target in parent.parents):
+            raise ValueError(f"rig {args.rig}: chemin lié hors du worktree : {path.relative_to(target)}")
+    version = (source / "VERSION").read_text(encoding="utf-8").strip()
+    if not version:
+        raise ValueError(f"pile {args.stack}: version des défauts absente")
+    for file, path in zip(files, destinations):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if java_package and file.suffix in {".xml", ".java"}:
+            path.write_text(file.read_text(encoding="utf-8").replace("__JAVA_PACKAGE__", java_package), encoding="utf-8")
+        else:
+            shutil.copyfile(file, path)
+    origin.parent.mkdir(parents=True, exist_ok=True)
+    origin.write_text(json.dumps({"contract": "agent-factory-standards-origin/v1", "stack": args.stack,
+                                  "version": version}, ensure_ascii=False) + "\n", encoding="utf-8")
+    return {"ok": True, "rig": args.rig, "stack": args.stack, "version": version,
+            "files": [str(path.relative_to(target)) for path in destinations]}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-root", type=Path, default=Path(__file__).resolve().parents[1])
-    parser.add_argument("command", choices=["status"])
+    parser.add_argument("command", choices=["status", "adopt"])
+    parser.add_argument("--rig")
+    parser.add_argument("--stack")
+    parser.add_argument("--target", type=Path)
+    parser.add_argument("--java-package")
     args = parser.parse_args()
     root = args.repo_root.resolve()
     profile = runpy.run_path(str(Path(__file__).with_name("project-planning-profile")))
     load_descriptor = profile["load_descriptor"]
-    projects = []
     try:
-        for file in sorted((root / "config/project-descriptors").glob("*.json")):
-            descriptor = load_descriptor(file)
-            rigs = []
-            for rig in descriptor["rigs"]:
-                with (root / "config/projects" / f"{rig}.toml").open("rb") as handle:
-                    rig_dir = tomllib.load(handle)["rig_dir"]
-                path = (root / rig_dir).resolve()
-                if not path.is_relative_to(root):
-                    raise ValueError(f"rig {rig}: path outside repository")
-                if not path.is_dir():
-                    raise ValueError(f"rig {rig}: checkout missing at {path}")
-                rigs.append({
-                    "rig": rig,
-                    "stacks": descriptor["stacks"][rig],
-                    "standards": {
-                        "code": "avec" if (path / "STANDARDS.md").is_file() else "sans",
-                        "design": "avec" if (path / "DESIGN.md").is_file() else "sans",
-                    },
-                })
-            projects.append({"project_id": descriptor["project_id"], "rigs": rigs})
-    except (OSError, KeyError, ValueError, profile["ProfileError"]) as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
-        return 1
-    print(json.dumps({"ok": True, "projects": projects}, ensure_ascii=False))
-    return 0
+        if args.command == "adopt":
+            if not args.rig or not args.stack or not args.target:
+                raise ValueError("adopt requiert --rig, --stack et --target")
+            result = adopt(root, args, load_descriptor)
+        else:
+            projects = []
+            for descriptor in descriptors(root, load_descriptor):
+                rigs = []
+                for rig in descriptor["rigs"]:
+                    with (root / "config/projects" / f"{rig}.toml").open("rb") as handle:
+                        rig_dir = tomllib.load(handle)["rig_dir"]
+                    path = (root / rig_dir).resolve()
+                    if not path.is_relative_to(root):
+                        raise ValueError(f"rig {rig}: path outside repository")
+                    if not path.is_dir():
+                        raise ValueError(f"rig {rig}: checkout missing at {path}")
+                    origin_file = path / ".factory" / "standards-origin.json"
+                    origin = json.loads(origin_file.read_text(encoding="utf-8")) if origin_file.is_file() else None
+                    if origin_file.is_file() and (not isinstance(origin, dict)
+                            or origin.get("contract") != "agent-factory-standards-origin/v1"
+                            or not isinstance(origin.get("version"), str)
+                            or origin.get("stack") not in descriptor["stacks"][rig]):
+                        raise ValueError(f"rig {rig}: origine des standards invalide ou pile non déclarée")
+                    latest = {}
+                    for stack in descriptor["stacks"][rig]:
+                        version_file = root / "default-standards" / stack / "VERSION"
+                        if version_file.is_file():
+                            latest[stack] = version_file.read_text(encoding="utf-8").strip()
+                    choices = [line.strip() for name in ("STANDARDS.md", "DESIGN.md")
+                               if (path / name).is_file()
+                               for line in (path / name).read_text(encoding="utf-8").splitlines()
+                               if "par défaut, non confirmée" in line]
+                    frozen_file = path / ".factory" / "frozen-list.json"
+                    frozen = json.loads(frozen_file.read_text(encoding="utf-8")) if frozen_file.is_file() else {}
+                    if not isinstance(frozen, dict) or not isinstance(frozen.get("entries", []), list):
+                        raise ValueError(f"rig {rig}: liste figée invalide")
+                    counts = {}
+                    for entry in frozen.get("entries", []):
+                        if not isinstance(entry, dict) or not isinstance(entry.get("rule"), str):
+                            raise ValueError(f"rig {rig}: entrée de liste figée invalide")
+                        counts[entry["rule"]] = counts.get(entry["rule"], 0) + 1
+                    rigs.append({
+                        "rig": rig,
+                        "stacks": descriptor["stacks"][rig],
+                        "standards": {
+                            "code": "avec" if (path / "STANDARDS.md").is_file() else "sans",
+                            "design": "avec" if (path / "DESIGN.md").is_file() else "sans",
+                        },
+                        "origin": {"stack": origin["stack"], "version": origin["version"]} if origin else None,
+                        "latest_versions": latest,
+                        "update_available": bool(origin and origin["stack"] in latest
+                                                 and latest[origin["stack"]] != origin["version"]),
+                        "unconfirmed_choices": choices,
+                        "frozen_counts": counts,
+                    })
+                projects.append({"project_id": descriptor["project_id"], "rigs": rigs})
+            result = {"ok": True, "projects": projects}
+    except (OSError, KeyError, TypeError, ValueError, profile["ProfileError"]) as exc:
+        result = {"ok": False, "error": str(exc)}
+    print(json.dumps(result, ensure_ascii=False))
+    return 0 if result["ok"] else 1
 
 
 if __name__ == "__main__":
