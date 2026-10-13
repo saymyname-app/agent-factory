@@ -1,0 +1,35 @@
+{
+  "contract": "agent-factory-design-skills/v1",
+  "upstreams": {
+    "impeccable": {
+      "repo": "https://github.com/pbakaus/impeccable.git",
+      "tag": "skill-v4.5.2",
+      "commit": "d631a8827f99414d2b6daba4ef08b7f8701751d7",
+      "license": "LICENSES/impeccable-Apache-2.0.txt"
+    },
+    "krehel": {
+      "repo": "https://github.com/jakubkrehel/skills.git",
+      "commit": "c0588bb6d654eb725046f0bf9deec338c34891ab",
+      "license": "LICENSES/jakubkrehel-skills-MIT.txt"
+    },
+    "kowalski": {
+      "repo": "https://github.com/emilkowalski/skills.git",
+      "commit": "2d228630ba1446365f614a108cb8252f1feda202",
+      "license": "LICENSES/emilkowalski-skills-MIT.txt"
+    }
+  },
+  "skills": [
+    {"upstream": "impeccable", "source": ".claude/skills/impeccable", "destination": "impeccable", "exclude": ["scripts"], "note": "docs/design-skills/ENGINE_ABSENT_NOTE.md"},
+    {"upstream": "krehel", "source": "skills/better-writing", "destination": "better-writing"},
+    {"upstream": "krehel", "source": "skills/interface-review", "destination": "interface-review"},
+    {"upstream": "krehel", "source": "skills/better-accessibility", "destination": "better-accessibility"},
+    {"upstream": "krehel", "source": "skills/better-interface", "destination": "better-interface"},
+    {"upstream": "krehel", "source": "skills/better-colors", "destination": "better-colors"},
+    {"upstream": "krehel", "source": "skills/better-layout", "destination": "better-layout"},
+    {"upstream": "krehel", "source": "skills/better-typography", "destination": "better-typography"},
+    {"upstream": "krehel", "source": "skills/better-ui", "destination": "better-ui"},
+    {"upstream": "krehel", "source": "skills/variant", "destination": "variant"},
+    {"upstream": "kowalski", "source": "skills/apple-design", "destination": "apple-design"},
+    {"upstream": "kowalski", "source": "skills/review-animations", "destination": "review-animations"}
+  ]
+}

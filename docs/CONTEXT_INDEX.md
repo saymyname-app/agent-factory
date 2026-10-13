@@ -59,6 +59,7 @@ mechanisms: consult `decisions/PRE_REFACTOR.md` before relying on them.
 | Validated Prototype freeze and conformance | `VALIDATED_PROTOTYPE.md` |
 | Convoy state, verdict fingerprints and mutation doors | `CONVOY_STATE.md` |
 | Delivery roles, skill scope and sandbox adoption | `FACTORY_TOOLS.md` (role-adoption-trial), `../config/delivery-roles.json` |
+| Pinned design skills, upstream copy proof and engine-free adaptation | `DESIGN_SKILLS.md` |
 | Start ready tickets: frontier, dependencies and capacity | `CONVOY_ADVANCE.md` |
 | Unknown convoy states and Mayor hands-off boundary | `CONVOY_ADVANCE.md` |
 | New-flow entry contract and ticket kinds | `ENTRY_CONTRACT.md` |

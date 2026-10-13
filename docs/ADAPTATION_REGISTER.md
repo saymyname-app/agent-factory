@@ -647,3 +647,17 @@ son champ `Baseline`.
 | Preuves | `tests/planning-delegation-test.py`, portes Spec/publication existantes; formule `mol-planning-fidelity`. La preuve de fidélité demeure un jugement LLM structuré, non une garantie sémantique. |
 | Réversibilité bornée | Révoquer avant nouvelle publication; le code ancien ne reconnaît pas cette provenance, donc un simple rollback de code n'invalide pas une Spec dérivée. Voir le contrat. |
 | Règle conserver / remplacer / supprimer | Garder si une dérivation complète respecte sources, compteurs et effets réservés. Ne pas contourner un refus; réparer la classe technique ou soumettre la nouvelle décision produit. |
+
+## AR-040 — Skills de design épinglés, copie textuelle d'impeccable (STANDARDS-01)
+
+| Champ | Enregistrement |
+| --- | --- |
+| Statut | **Adoptée** par la Spec af-t5cgg7, approuvée par Benjamin le 2026-10-13 à 13:49 Paris (« j'approuve »). |
+| Baseline | La Method Baseline mattpocock/skills v1.3.1 ne prescrit aucun skill de design. Les trois sources et leurs commits exacts sont dans `design-skills.json` ; aucune montée de version n'est automatique. |
+| But | Tenir une autorité de design par aspect sans prêter à un skill le pouvoir de refuser seul une livraison. La même copie épinglée est utilisable par les rôles de l'usine et les sessions d'opérateur. |
+| Adaptation sélectionnée | `design-skills/` contient les skills attribués et leurs dépendances textuelles ; `LICENSES/` garde une licence par dépôt amont. `bin/design-skills-check compare` compare chaque fichier au commit épinglé et refuse ajout, retrait ou modification. La copie d'impeccable omet `scripts/` et insère après son en-tête la note `docs/design-skills/ENGINE_ABSENT_NOTE.md` : le moteur est absent et ne se lance pas. Le contrôle compare ce sous-ensemble et la note ; aucun code d'impeccable n'est exécuté. |
+| Preuves | `tests/design-skills-check-test.py` vérifie copie identique, octet modifié, ajout et licence absente ; `bin/design-skills-check compare` est lancé contre les trois dépôts amont réels dans la CI. La distribution et l'essai des rôles complètent la tranche 8. |
+| Coût observé | Trois références figées à vérifier à chaque PR, douze dossiers textuels copiés. Les mises à jour sont proposées en fin de première Spec d'interface livrée, jamais appliquées d'elles-mêmes. |
+| Réversibilité bornée | Retirer la distribution des rôles, puis `design-skills/`, ses licences, le manifeste et le contrôle ; les standards écrits des projets restent l'autorité. |
+| Point de revue | Le comportement réel dans les sessions Claude et Codex et la qualité des constats en français sont inconnus avant la première Spec d'interface. L'installation du moteur d'impeccable reste un geste de Benjamin, hors de cette Spec. |
+| Règle conserver / remplacer / supprimer | À la fin de la première Spec d'interface livrée, lire les constats déjà enregistrés ; retirer un skill surtout contesté ou jamais cité. Aucun avis de skill ne bloque sans citation d'un standard écrit du projet. |

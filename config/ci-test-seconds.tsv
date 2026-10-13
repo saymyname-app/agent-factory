@@ -58,6 +58,7 @@ tests/correction-round-test.py	110
 tests/deliver-close-test.sh	5
 tests/delivery-agents-test.sh	0
 tests/delivery-formula-contract-test.sh	1
+tests/design-skills-check-test.py	15
 tests/dispatch-door-guard-test.sh	1
 tests/dispatch-door-role-test.sh	7
 tests/dispatch-door-test.sh	14
