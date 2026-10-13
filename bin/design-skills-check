@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""Compare vendored design skills with their pinned upstream commits."""
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def git(repo: Path, *args: str) -> bytes:
+    result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True)
+    if result.returncode:
+        raise ValueError(result.stderr.decode(errors="replace").strip())
+    return result.stdout
+
+
+def source_files(repo: Path, prefix: str, excluded: set[str]) -> dict[str, bytes]:
+    names = git(repo, "ls-tree", "-r", "--name-only", "HEAD", prefix).decode().splitlines()
+    files = {}
+    for name in names:
+        rel = name.removeprefix(prefix.rstrip("/") + "/")
+        if rel and rel.split("/")[0] not in excluded:
+            files[rel] = git(repo, "show", "HEAD:" + name)
+    return files
+
+
+def compare() -> None:
+    manifest = Path(os.environ.get("DESIGN_SKILLS_CHECK_MANIFEST", ROOT / "design-skills.json"))
+    project = manifest.parent
+    data = json.loads(manifest.read_text())
+    vendor = Path(os.environ.get("DESIGN_SKILLS_CHECK_VENDOR_ROOT", project / "design-skills"))
+    supplied = os.environ.get("DESIGN_SKILLS_CHECK_SOURCE_ROOT")
+    problems = []
+    with tempfile.TemporaryDirectory(prefix="af-design-skills-source-") as tmp:
+        repos = {}
+        for name, pin in data["upstreams"].items():
+            commit = pin["commit"]
+            if len(commit) != 40:
+                problems.append(f"{name}: pin must be a full commit SHA")
+                continue
+            if supplied:
+                repo = Path(supplied) / name
+            else:
+                repo = Path(tmp) / name
+                repo.mkdir()
+                git(repo, "init", "-q")
+                git(repo, "remote", "add", "origin", pin["repo"])
+                git(repo, "fetch", "-q", "--depth", "1", "--filter=blob:none", "origin", commit)
+                git(repo, "checkout", "-q", "--detach", "FETCH_HEAD")
+                if pin.get("tag"):
+                    git(repo, "fetch", "-q", "--depth", "1", "origin", "tag", pin["tag"])
+            actual = git(repo, "rev-parse", "HEAD").decode().strip()
+            if actual != commit:
+                problems.append(f"{name}: source is {actual}, expected {commit}")
+                continue
+            if pin.get("tag"):
+                tagged = git(repo, "rev-parse", "refs/tags/" + pin["tag"] + "^{commit}").decode().strip()
+                if tagged != commit:
+                    problems.append(f"{name}: tag {pin['tag']} points to {tagged}, expected {commit}")
+                    continue
+            repos[name] = repo
+            license_file = project / pin["license"]
+            expected = git(repo, "show", "HEAD:LICENSE")
+            if not license_file.is_file() or license_file.read_bytes() != expected:
+                problems.append(pin["license"] + ": missing or differs from upstream LICENSE")
+
+        for skill in data["skills"]:
+            upstream = skill["upstream"]
+            if upstream not in repos:
+                continue
+            source = source_files(repos[upstream], skill["source"], set(skill.get("exclude", [])))
+            local = vendor / skill["destination"]
+            note = skill.get("note")
+            if note:
+                original = source.get("SKILL.md", b"")
+                marker = b"---\n\n"
+                if marker not in original:
+                    problems.append(skill["source"] + ": frontmatter marker missing")
+                else:
+                    source["SKILL.md"] = original.replace(marker, marker + (project / note).read_bytes(), 1)
+            actual_names = {str(p.relative_to(local)) for p in local.rglob("*") if p.is_file()} if local.is_dir() else set()
+            for rel in sorted(source.keys() | actual_names):
+                path = local / rel
+                if rel not in source or not path.is_file() or path.read_bytes() != source[rel]:
+                    problems.append(str(path.relative_to(project)) if path.is_relative_to(project) else str(path))
+        selected = {skill["destination"] for skill in data["skills"]}
+        if vendor.is_dir():
+            for extra in sorted({p.name for p in vendor.iterdir()} - selected):
+                problems.append(str(vendor / extra))
+    if problems:
+        raise ValueError("design skill copy differs: " + ", ".join(problems))
+    print("PASS: design skills match pins " + ", ".join(f"{name}={pin['commit']}" for name, pin in data["upstreams"].items()))
+
+
+if __name__ == "__main__":
+    try:
+        if sys.argv[1:] != ["compare"]:
+            raise ValueError("usage: design-skills-check compare")
+        compare()
+    except (ValueError, OSError, KeyError) as exc:
+        print(f"design-skills-check: {exc}", file=sys.stderr)
+        sys.exit(1)
