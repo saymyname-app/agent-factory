@@ -403,7 +403,7 @@ skip` comment there for why) and so do not appear in the live list or here.
 | `gate-sweep` | ops | pack order; retriggered on `condition` (open gates > 0) instead of a 30s poll (O13) |
 | `jsonl-export` | ops | pack order; off-box backup export, kept |
 | `nudge-on-route` | ops | pack order; event-driven, kept |
-| `order-tracking-sweep` | ops | pack order; interval tuned to 10m (O13) |
+| `order-tracking-sweep` | ops | pack order; interval tuned to 10m (O13); closed tracking history kept 24h, not the 7d default, so its scan stays inside its deadline (af-hpux0u, `[beads.policies.order_tracking]` in `city.toml`) |
 | `orphan-sweep` | ops | pack order; kept |
 | `reaper` | ops | pack order; kept |
 | `spawn-storm-detect` | ops | pack order; kept |
