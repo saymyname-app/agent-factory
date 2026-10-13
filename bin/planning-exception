@@ -11,7 +11,7 @@ and its descendants in the Delivery Work Graph snapshot, and detects a
 duplicate raise against work already parked; `resolve` closes the decision --
 `tactical` unparks the existing slice with no artifact change, `behavioral`/
 `topology` route an already-drafted, already-validated revision through the
-sole to-tickets authority (`bin/ticket-graph-publish patch`) before unparking.
+sole to-tickets authority (`bin/ticket-graph-publish bd-patch`) before unparking.
 
 Concurrent `raise`/`resolve` calls against the same register are safe: every
 mutation takes an OS-level exclusive lock (`fcntl.flock`) around a read-
@@ -250,10 +250,11 @@ def cmd_raise(args: argparse.Namespace) -> int:
 # --- resolve -----------------------------------------------------------------
 
 
-def run_patch(draft: str, author: str, reason: str) -> dict[str, Any]:
+def run_patch(draft: str, register: str, project: str, author: str, reason: str) -> dict[str, Any]:
     try:
         result = subprocess.run(
-            [TICKET_GRAPH_PUBLISH, "patch", draft, "--author", author, "--reason", reason],
+            [TICKET_GRAPH_PUBLISH, "bd-patch", draft, "--author", author, "--reason", reason,
+             "--planning-exception-register", register, "--project", project],
             check=True, capture_output=True, text=True,
             env={**os.environ, "TICKET_GRAPH_PUBLISH_NOTIFY_MAYOR": "1"},
         )
@@ -268,21 +269,19 @@ def cmd_resolve(args: argparse.Namespace) -> int:
     try:
         if args.kind not in (TACTICAL, BEHAVIORAL, TOPOLOGY):
             raise PlanningExceptionError(f"--kind must be one of tactical/behavioral/topology, got {args.kind!r}")
+        note = required_string(args.note, "--note")
+        needs_patch = args.kind in (BEHAVIORAL, TOPOLOGY)
+        if needs_patch and not args.patched_draft:
+            raise PlanningExceptionError(
+                f"--patched-draft is required to resolve a {args.kind} exception: a behavioral or "
+                "topology change patches unfinished work through the sole to-tickets authority"
+            )
+        if needs_patch:
+            required_string(args.project, "--project")
 
         patch_result: dict[str, Any] | None = None
-        if args.kind in (BEHAVIORAL, TOPOLOGY):
-            if not args.patched_draft:
-                raise PlanningExceptionError(
-                    f"--patched-draft is required to resolve a {args.kind} exception: a behavioral or "
-                    "topology change patches unfinished work through the sole to-tickets authority"
-                )
-            patch_result = run_patch(
-                args.patched_draft, author=f"planning-exception:{args.decision}", reason=args.note,
-            )
-
         with locked_register(register_path) as state:
-            decisions = state.get("decisions", {})
-            decision = decisions.get(args.decision)
+            decision = state.get("decisions", {}).get(args.decision)
             if decision is None:
                 raise PlanningExceptionError(f"unknown decision: {args.decision}")
             if decision["status"] != OPEN:
@@ -290,15 +289,46 @@ def cmd_resolve(args: argparse.Namespace) -> int:
                     f"decision {args.decision!r} is {decision['status']}, not open -- "
                     "only an open decision can be resolved"
                 )
-            decision["status"] = RESOLVED
-            decision["resolution_kind"] = args.kind
-            decision["resolution_note"] = required_string(args.note, "--note")
-            unparked = decision["parked"]
-            decision["parked"] = []
-            append_history(
-                state, "resolve", decision=args.decision, kind=args.kind, unparked=unparked,
-                patch=patch_result,
-            )
+            if decision.get("patch_authorization"):
+                raise PlanningExceptionError(f"decision {args.decision!r} already has a patch in progress")
+            if needs_patch:
+                # The live bd-patch door needs authorization before withdrawal.
+                # Keep the decision open and its work parked until the exact draft passes.
+                decision["patch_authorization"] = {"draft": args.patched_draft, "bead": decision["bead"]}
+                append_history(state, "patch_authorized", decision=args.decision, draft=args.patched_draft)
+            else:
+                decision["status"] = RESOLVED
+                decision["resolution_kind"] = args.kind
+                decision["resolution_note"] = note
+                unparked = decision["parked"]
+                decision["parked"] = []
+                append_history(state, "resolve", decision=args.decision, kind=args.kind, unparked=unparked,
+                               patch=None)
+
+        if needs_patch:
+            try:
+                patch_result = run_patch(
+                    args.patched_draft, str(register_path), args.project,
+                    author=f"planning-exception:{args.decision}", reason=note,
+                )
+            except (PlanningExceptionError, OSError, json.JSONDecodeError):
+                with locked_register(register_path) as state:
+                    state["decisions"][args.decision].pop("patch_authorization", None)
+                    append_history(state, "patch_failed", decision=args.decision, draft=args.patched_draft)
+                raise
+            with locked_register(register_path) as state:
+                decision = state["decisions"][args.decision]
+                authorization = {"draft": args.patched_draft, "bead": decision["bead"]}
+                if decision["status"] != OPEN or decision.get("patch_authorization") != authorization:
+                    raise PlanningExceptionError("patch succeeded but decision changed; work stays parked for reconciliation")
+                decision.pop("patch_authorization")
+                decision["status"] = RESOLVED
+                decision["resolution_kind"] = args.kind
+                decision["resolution_note"] = note
+                unparked = decision["parked"]
+                decision["parked"] = []
+                append_history(state, "resolve", decision=args.decision, kind=args.kind, unparked=unparked,
+                               patch=patch_result)
     except (PlanningExceptionError, OSError, json.JSONDecodeError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
         return 1
@@ -325,6 +355,11 @@ def cmd_status(args: argparse.Namespace) -> int:
         "run_id": state.get("run_id"),
         "decisions": {
             decision_id: decision["status"] for decision_id, decision in state.get("decisions", {}).items()
+        },
+        "patch_authorizations": {
+            decision_id: decision["patch_authorization"]
+            for decision_id, decision in state.get("decisions", {}).items()
+            if decision["status"] == OPEN and decision.get("patch_authorization")
         },
         "parked": sorted(parked),
     }, indent=2, sort_keys=True))
@@ -365,8 +400,9 @@ def build_parser() -> argparse.ArgumentParser:
     resolve.add_argument("--decision", required=True)
     resolve.add_argument("--kind", required=True, choices=(TACTICAL, BEHAVIORAL, TOPOLOGY))
     resolve.add_argument("--note", required=True)
+    resolve.add_argument("--project", help="project whose configured human approver is checked by bd-patch")
     resolve.add_argument(
-        "--patched-draft", help="immutable revised Ticket Graph Draft (required for behavioral/topology)"
+        "--patched-draft", help="revised Ticket Graph Draft Bead id (required for behavioral/topology)"
     )
     resolve.set_defaults(func=cmd_resolve)
 

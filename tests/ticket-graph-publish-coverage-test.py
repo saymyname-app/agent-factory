@@ -1059,6 +1059,50 @@ class PatchDoorTest(Harness):
         proc = self.refused("pd-1", extra=("--planning-exception-register", str(register)))
         self.assertTrue(any("résolue" in line for line in self.refusal_lines(proc, "T4")), proc.stderr)
 
+    def test_open_decision_authorizes_only_its_exact_draft_and_ticket(self):
+        register = self.register("open")
+        self.amend_spec(self.SPEC_WITHOUT_STORY_3)
+        self.propose(self.withdrawal())
+        state = json.loads(register.read_text())
+        state["decisions"]["pd-1"]["patch_authorization"] = {
+            "draft": "other-draft", "bead": self.ids["T4"]}
+        register.write_text(json.dumps(state))
+        self.refused("pd-1", extra=("--planning-exception-register", str(register)))
+
+        state["decisions"]["pd-1"]["patch_authorization"] = {
+            "draft": "draft-2", "bead": self.ids["T3"]}
+        register.write_text(json.dumps(state))
+        self.refused("pd-1", extra=("--planning-exception-register", str(register)))
+
+        state["decisions"]["pd-1"]["patch_authorization"] = {
+            "draft": "draft-2", "bead": self.ids["T4"]}
+        register.write_text(json.dumps(state))
+        result = self.patched(extra=("--planning-exception-register", str(register)))
+        self.assertEqual({"T4": self.ids["T4"]}, result["withdrawn"])
+        self.assertEqual("open", json.loads(register.read_text())["decisions"]["pd-1"]["status"])
+
+    def test_resolve_topology_patches_then_unparks_with_the_live_door(self):
+        register = self.register("open")
+        self.amend_spec(self.SPEC_WITHOUT_STORY_3)
+        self.propose(self.withdrawal())
+        wrapper = self.tmp / "publish-fixture"
+        wrapper.write_text(
+            f"#!/bin/sh\nexec {PUBLISHER} \"$@\" --repo-root {self.repo_root} "
+            f"--config-dir {PROJECTS_CONFIG_DIR} --descriptors-dir {self.descriptors}\n")
+        wrapper.chmod(0o755)
+        proc = subprocess.run((
+            str(PLANNING_EXCEPTION), "resolve", str(register), "--decision", "pd-1",
+            "--kind", "topology", "--note", "approved revised graph",
+            "--patched-draft", "draft-2", "--project", "acme",
+        ), env={**self.env, "PLANNING_EXCEPTION_PUBLISH_BIN": str(wrapper)},
+            text=True, capture_output=True)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual("closed", self.beads()[self.ids["T4"]]["status"])
+        decision = json.loads(register.read_text())["decisions"]["pd-1"]
+        self.assertEqual("resolved", decision["status"])
+        self.assertEqual([], decision["parked"])
+        self.assertNotIn("patch_authorization", decision)
+
     def test_refuses_a_withdrawal_that_names_no_known_planning_exception(self):
         register = self.register("resolved")
         self.amend_spec(self.SPEC_WITHOUT_STORY_3)
