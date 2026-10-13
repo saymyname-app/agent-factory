@@ -274,7 +274,7 @@ class ProjectLaunchTest(unittest.TestCase):
                 except ChildProcessError:
                     pass
 
-    def test_stop_keeps_the_record_if_a_detached_child_still_holds_the_copy(self):
+    def test_stop_ends_an_unmarked_descendant_still_holding_the_verified_copy(self):
         with _adopting_orphans():
             worktree = Path(tempfile.mkdtemp(prefix="project-launch-detached-test-"))
             launch_id = "test-unmarked-descendant"
@@ -296,16 +296,14 @@ class ProjectLaunchTest(unittest.TestCase):
                 "worktree": str(worktree), "repo_root": str(ROOT), "commit": commit,
             }))
             try:
-                first = self.stop(state_file=state_file, check=False)
-                self.assertEqual(1, first.returncode)
-                self.assertTrue(state_file.exists())
-                self.assertTrue(worktree.exists())
-                os.kill(child, signal.SIGKILL)
-                os.waitpid(child, 0)
-                second = self.stop(state_file=state_file)
-                self.assertTrue(json.loads(second.stdout)["stopped"])
+                result = self.stop(state_file=state_file, check=False)
+                self.assertEqual(0, result.returncode, result.stdout)
+                self.assertTrue(json.loads(result.stdout)["stopped"])
+                self.assertIsNotNone(proc.wait(timeout=1))
                 self.assertFalse(state_file.exists())
                 self.assertFalse(worktree.exists())
+                self.assertFalse(Path(f"/proc/{child}/stat").exists() and
+                                 Path(f"/proc/{child}/stat").read_text().rsplit(")", 1)[1].split()[0] not in {"Z", "X"})
             finally:
                 for pid in (proc.pid, child):
                     try:
