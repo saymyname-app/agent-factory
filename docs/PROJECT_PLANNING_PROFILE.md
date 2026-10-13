@@ -110,7 +110,40 @@ written.
 
 ```bash
 ./bin/project-planning-profile human-approver --project agent-factory
+./bin/project-planning-profile human-approver --project saymyname
 ```
+
+### A project that spans several rigs (af-vx1tkf)
+
+The tools do not all name a project the same way: `bin/spec-approve`,
+`bin/ticket-graph-publish`, `bin/graph-review` and `bin/planning-delegation`
+pass the project id (`saymyname`); `bin/owner-answer` and
+`bin/correction-round` pass the rig a ticket names under « Target rigs »
+(`saymyname-frontend`). For the Factory itself the two are one name,
+`agent-factory`. For SayMyName they are three files, each declaring the same
+`human_approver`:
+
+| File | What it is | Who reads it |
+| --- | --- | --- |
+| `config/projects/saymyname.toml` | the project's own file: `human_approver` and none of the four rig fields | the tools that pass the project id |
+| `config/projects/saymyname-backend.toml`, `config/projects/saymyname-frontend.toml` | the rig files, unchanged but for the added `human_approver` | `lib/project_registry.sh` and `bin/dispatch-door` as before, and the tools that pass the rig |
+
+`lib/project_registry.sh` prints no row for a file that declares none of
+`rig_dir`, `repo`, `protected_branch`, `required_ci`: such a file is no rig,
+is protected by nothing and is no dispatch target. A file that declares some
+of the four and not all is still refused, and a rig Gas City has registered
+with no rig file still fails the coverage check by name.
+`test_real_projects_declare_their_human_approver_by_project_and_by_rig`
+(`tests/project-planning-profile-test.py`) reads the real files: every
+project `list` renders, and every rig of it, answers `human-approver` with
+the same name.
+
+Limits. The three declarations are kept equal by that test, not by one
+source. A project file with no rig field declares no `protected_branch`, so
+`bin/spec-approve` falls back to the default branch of the prototype's remote
+when it checks that a Validated Prototype was not merged
+(`docs/SPEC_APPROVE.md`); for SayMyName, whose rigs protect `dev`, that is
+not the protected branch.
 
 ## Extended descriptor (T04, af-xqgvat: "descripteur de projet", un rig = un projet)
 

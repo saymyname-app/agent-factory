@@ -15,7 +15,11 @@
 #   Prints one row per config/projects/*.toml file, sorted by row:
 #     rig_dir|repo|protected_branch|required_ci|project_name
 #   Fails loudly (non-zero, message on stderr) if a project file is missing
-#   a required field.
+#   a required field. A file that declares none of the four fields describes
+#   no rig and prints no row: it is the file of a project that spans several
+#   rigs (config/projects/saymyname.toml, af-vx1tkf), read by its project id
+#   for human_approver only. A file that declares some of the four and not
+#   all is still refused.
 project_registry_rows() {
   python3 - "$1" <<'PYTHON'
 import sys
@@ -30,6 +34,8 @@ for file in Path(sys.argv[1]).glob("*.toml"):
             data = tomllib.load(handle)
     except (OSError, tomllib.TOMLDecodeError) as error:
         sys.exit(f"project_registry: {file}: {error}")
+    if not any(key in data for key in keys):
+        continue
     if any(not isinstance(data.get(key), str) or not data[key] for key in keys):
         sys.exit(f"project_registry: {file} is missing one of {'/'.join(keys)} (non-empty strings required)")
     rows.append("|".join([*(data[key] for key in keys), file.stem]))
