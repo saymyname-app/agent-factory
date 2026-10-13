@@ -217,9 +217,13 @@ def create(state, rest):
         if flag == "--json":
             i += 1
             continue
-        if flag not in ("-p", "-t", "-d") or i + 1 >= len(options):
+        if flag not in ("-p", "-t", "-d", "--metadata", "--labels") or i + 1 >= len(options):
             fail(f"no canned response configured for: bd create {' '.join(rest)}")
-        if flag == "-t":
+        if flag == "--labels":
+            bead["labels"] = options[i + 1].split(",")
+        elif flag == "--metadata":
+            bead["metadata"] = json.loads(options[i + 1])
+        elif flag == "-t":
             bead["issue_type"] = options[i + 1]
         elif flag == "-d":
             bead["description"] = options[i + 1]

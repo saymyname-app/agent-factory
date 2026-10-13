@@ -224,6 +224,24 @@ other map ticket.
   with a `kind: prototype` ticket before any write; a ticket already
   published that way (C01's T21) is left as it is.
 
+## Cause racine d'un standard récidivant
+
+À l'entrée d'une session d'opérateur qui prend du travail de planification,
+lire la file avec `gc bd list --status open --has-metadata-key
+gc.standard_recurrence --limit 0 --json`. Chaque tâche `ready-for-agent` y
+nomme deux refus enregistrés et une règle écrite encore présente. Prendre une
+tâche par `bd --actor po-agent/<session> update <id> --claim`, selon
+`docs/agents/issue-tracker.md` ; ne pas prendre celle qu'une autre session
+réserve. Cela reprend le travail technique sans nouveau choix de Benjamin :
+ajouter un refus par code pour le standard déjà accepté, ou préciser son texte
+sans changer son sens, puis livrer en worktree avec tests, revue et PR selon
+`docs/DELIVERY.md`. Le Bead reste sur le plan de planification et n'est pas
+dispatché par `bin/dispatch-door`. Si le sens doit changer, préparer l'avant,
+l'après et les effets pour l'Acceptance Session ; attendre l'accord de
+Benjamin avant d'appliquer la nouvelle règle. Cette file est reprise à la
+prochaine session d'opérateur : la création de la tâche ne lance pas une
+session immédiatement.
+
 ## Claims and concurrency
 
 An operator session's claim on a planning ticket (`bd --actor
