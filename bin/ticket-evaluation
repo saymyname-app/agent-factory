@@ -1114,7 +1114,8 @@ def cmd_brief(args: argparse.Namespace) -> int:
         "datasets": request.get("datasets") or [entry["dataset"] for entry in request["environment"]],
         "product": [str(BIN / PROGRAM), "product", args.convoy, args.ticket, "--dataset", "<declared dataset>"],
         "entry_points": launch_block.get("entry_points") or [],
-        "controller_observation": (controller_observation(convoy, args.ticket, request["commit"], active[0])
+        "controller_observation": (controller_observation(
+            convoy, args.ticket, request["commit"], request["environment"][0])
                                    if active else None),
         "states": list(STATES), "unobservable_causes": list(CAUSES),
         "capture": {
