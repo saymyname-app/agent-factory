@@ -7,7 +7,7 @@
     "format:check": "prettier --check src",
     "typecheck": "tsc --noEmit",
     "lint": "eslint \"src/**/*.{ts,tsx}\"",
-    "architecture": "dependency-cruiser src --config .dependency-cruiser.cjs",
+    "architecture": "dependency-cruiser src --config .dependency-cruiser.cjs --ignore-known",
     "test:coverage": "vitest run --coverage",
     "verify": "npm run format:check && npm run typecheck && npm run lint && npm run architecture && npm run test:coverage"
   },

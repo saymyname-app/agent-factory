@@ -1,0 +1,350 @@
+#!/usr/bin/env python3
+"""Compare a project's frozen violations with the target branch of a PR."""
+import argparse
+from datetime import date, datetime
+import json
+from pathlib import Path, PurePosixPath
+import re
+import subprocess
+from zoneinfo import ZoneInfo
+
+LIST = ".factory/frozen-list.json"
+NEVER = ".factory/never-frozen.json"
+SNAPSHOT = ".factory/ratchet-snapshot.json"
+ESLINT = "eslint-suppressions.json"
+DEPCRUISE = ".dependency-cruiser-known-violations.json"
+ARCHUNIT = ".factory/archunit-freeze"
+BASELINE_RECORD = ".factory/baseline-record.json"
+FREEZABLE_ESLINT = {"@typescript-eslint/no-explicit-any", "@typescript-eslint/no-unused-vars",
+                   "@typescript-eslint/naming-convention", "no-console"}
+
+
+def git(repo, *args):
+    proc = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True)
+    if proc.returncode:
+        raise ValueError(proc.stderr.strip() or proc.stdout.strip() or "révision Git illisible")
+    return proc.stdout.strip()
+
+
+def file_at(repo, ref, path):
+    proc = subprocess.run(["git", "-C", str(repo), "show", f"{ref}:{path}"], capture_output=True, text=True)
+    if proc.returncode:
+        return None
+    return proc.stdout
+
+
+def json_at(repo, ref, path, default):
+    source = file_at(repo, ref, path)
+    if source is None:
+        return default
+    try:
+        return json.loads(source)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{path}: JSON invalide : {exc.msg}") from exc
+
+
+def location(value):
+    if not isinstance(value, str) or not value or value.startswith("/") or "\\" in value:
+        raise ValueError(f"endroit invalide : {value!r}")
+    parts = PurePosixPath(value).parts
+    if ".." in parts or "." in parts or value.startswith("-"):
+        raise ValueError(f"endroit invalide : {value!r}")
+    return value
+
+
+def counts(document):
+    if not isinstance(document, dict) or document.get("contract") != "agent-factory-frozen-list/v1":
+        raise ValueError(f"{LIST}: contrat absent ou invalide")
+    entries = document.get("entries")
+    if not isinstance(entries, list):
+        raise ValueError(f"{LIST}: entrées invalides")
+    found = {}
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != {"rule", "path", "count"}:
+            raise ValueError(f"{LIST}: entrée invalide")
+        rule, path, count = entry["rule"], entry["path"], entry["count"]
+        if not isinstance(rule, str) or not re.fullmatch(r"[A-Za-z0-9@._/-]+", rule):
+            raise ValueError(f"{LIST}: règle invalide : {rule!r}")
+        location(path)
+        if type(count) is not int or count <= 0:
+            raise ValueError(f"{LIST}: compte invalide pour {rule} dans {path}")
+        if (rule, path) in found:
+            raise ValueError(f"{LIST}: doublon {rule} dans {path}")
+        found[(rule, path)] = count
+    return found
+
+
+def eslint_counts(document):
+    if not isinstance(document, dict) or "suppressions" in document:
+        raise ValueError(f"{ESLINT}: format natif ESLint attendu (fichier → règle → count)")
+    found = {}
+    for path, rules in document.items():
+        location(path)
+        if not isinstance(rules, dict):
+            raise ValueError(f"{ESLINT}: règles invalides dans {path}")
+        for rule, detail in rules.items():
+            if (not isinstance(rule, str) or not rule or not isinstance(detail, dict)
+                    or set(detail) != {"count"} or type(detail["count"]) is not int or detail["count"] <= 0):
+                raise ValueError(f"{ESLINT}: compte invalide pour {rule} dans {path}")
+            found[(rule, path)] = detail["count"]
+    return found
+
+
+def depcruise_counts(document):
+    if not isinstance(document, list):
+        raise ValueError(f"{DEPCRUISE}: liste native dependency-cruiser attendue")
+    found = {}
+    for item in document:
+        if (not isinstance(item, dict) or not isinstance(item.get("rule"), dict)
+                or not isinstance(item["rule"].get("name"), str)):
+            raise ValueError(f"{DEPCRUISE}: violation invalide")
+        rule, path = item["rule"]["name"], location(item.get("from"))
+        key = (f"dependency-cruiser/{rule}", path)
+        found[key] = found.get(key, 0) + 1
+    return found
+
+
+def archunit_entries(files):
+    found = {}
+    for path, source in files:
+        if path == f"{ARCHUNIT}/stored.rules":
+            continue
+        for violation in source.splitlines():
+            owner = re.search(r"<([\w.$]+)", violation)
+            file = re.search(r"\((\w+\.java):\d+\)$", violation)
+            if not owner or not file:
+                raise ValueError(f"{path}: violation ArchUnit illisible : {violation}")
+            filename = file.group(1)
+            qualifier = owner.group(1)
+            class_start = qualifier.find("." + filename[:-5])
+            if class_start < 0:
+                raise ValueError(f"{path}: classe source ArchUnit illisible : {violation}")
+            package = qualifier[:class_start]
+            source_path = location(f"src/main/java/{package.replace('.', '/')}/{filename}")
+            key = ("archunit/persistence-to-web", source_path)
+            found[key] = found.get(key, 0) + 1
+    return found
+
+
+def archunit_counts(repo, ref):
+    paths = git(repo, "ls-tree", "-r", "--name-only", ref, "--", ARCHUNIT).splitlines()
+    return archunit_entries((path, file_at(repo, ref, path) or "") for path in paths)
+
+
+def archunit_live_counts(repo):
+    directory = repo / ARCHUNIT
+    if not directory.is_dir():
+        return {}
+    return archunit_entries((str(path.relative_to(repo)).replace("\\", "/"), path.read_text(encoding="utf-8"))
+                            for path in directory.iterdir() if path.is_file())
+
+
+def never_rules(document):
+    if (not isinstance(document, dict) or document.get("contract") != "agent-factory-never-frozen/v1"
+            or not isinstance(document.get("rules"), list)):
+        raise ValueError(f"{NEVER}: règles invalides")
+    rules = document["rules"]
+    if any(not isinstance(rule, str) or not rule for rule in rules):
+        raise ValueError(f"{NEVER}: règle invalide")
+    return set(rules)
+
+
+def changed_paths(repo, base, head):
+    lines = git(repo, "diff", "--name-status", "--find-renames=20%", base, head).splitlines()
+    changed, renames = set(), {}
+    for line in lines:
+        parts = line.split("\t")
+        if parts[0].startswith("R") and len(parts) == 3:
+            old, new = parts[1:]
+            renames[old] = new
+            changed.update((old, new))
+        elif len(parts) == 2:
+            changed.add(parts[1])
+    return changed, renames
+
+
+def snapshot_rule(repo, base, head, changed):
+    document = json_at(repo, head, SNAPSHOT, None)
+    if document is None:
+        return None
+    if SNAPSHOT not in changed or not isinstance(document, dict) or set(document) != {"rule", "config"}:
+        raise ValueError("nouvelle photo : déclaration absente de cette PR ou invalide")
+    rule, config = document["rule"], location(document["config"])
+    if not isinstance(rule, str) or not rule or config not in changed or not config.endswith(
+            (".json", ".mjs", ".cjs", ".xml", ".java", ".py", ".css", ".yml")):
+        raise ValueError("nouvelle photo : la configuration de la règle doit changer dans cette PR")
+    if file_at(repo, head, config) is None:
+        raise ValueError("nouvelle photo : configuration absente à la pointe")
+    if ((rule.startswith("archunit/") and not config.endswith("/ArchitectureTest.java"))
+            or (rule.startswith("dependency-cruiser/") and config != ".dependency-cruiser.cjs")
+            or (rule.startswith("@typescript-eslint/") and config != "eslint.config.mjs")):
+        raise ValueError("nouvelle photo : configuration sans lien avec cette règle")
+    before = file_at(repo, base, config) or ""
+    after = file_at(repo, head, config) or ""
+    if rule.startswith("archunit/"):
+        settings = lambda source: tuple(re.findall(r'\.resideInAPackage\("([^"]+)"\)', source))
+        if len(settings(after)) < 2 or settings(before) == settings(after):
+            raise ValueError("nouvelle photo : la règle ArchUnit ne change pas")
+    elif rule.startswith("dependency-cruiser/"):
+        name = rule.split("/", 1)[1]
+        def settings(source):
+            named = re.search(rf"name:\s*['\"]{re.escape(name)}['\"]", source)
+            if not named:
+                return ()
+            tail = source[named.end():]
+            next_rule = re.search(r"\bname:\s*['\"]", tail)
+            block = tail[:next_rule.start()] if next_rule else tail
+            return tuple(re.findall(r"(?:from|to):\s*\{\s*path:\s*['\"]([^'\"]+)", block))
+        if len(settings(after)) < 2 or settings(before) == settings(after):
+            raise ValueError("nouvelle photo : la règle dependency-cruiser ne change pas")
+    else:
+        def settings(source):
+            return [re.sub(r"//.*", "", line).strip() for line in source.splitlines()
+                    if re.search(rf"['\"]{re.escape(rule)}['\"]\s*:", line)]
+        if not settings(after) or settings(before) == settings(after):
+            raise ValueError("nouvelle photo : la configuration de cette règle ne change pas")
+    if before == after:
+        raise ValueError("nouvelle photo : la configuration de cette règle ne change pas")
+    return rule
+
+
+def derogations(repo, head):
+    accepted = set()
+    today = datetime.now(ZoneInfo("Europe/Paris")).date()
+    for filename in ("STANDARDS.md", "DESIGN.md"):
+        source = file_at(repo, head, filename) or ""
+        section = re.split(r"^## (?:Dérogations|Derogations)\s*$", source, maxsplit=1, flags=re.M)
+        if len(section) != 2:
+            continue
+        body = re.split(r"^## ", section[1], maxsplit=1, flags=re.M)[0]
+        for line in body.splitlines():
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            if len(cells) != 5 or cells[0] in ("Standard", "---") or cells[0].startswith("-"):
+                continue
+            rule, path, words, at, until = cells
+            if not re.fullmatch(r"«[^»]+»", words) or not re.fullmatch(r"\d{4}-\d\d-\d\d \d\d:\d\d Paris", at):
+                continue
+            try:
+                expires = date.fromisoformat(until)
+                datetime.strptime(at, "%Y-%m-%d %H:%M Paris")
+            except ValueError:
+                continue
+            if expires >= today:
+                accepted.add((rule, path))
+    return accepted
+
+
+def check(repo, base, head):
+    repo = repo.resolve()
+    top = Path(git(repo, "rev-parse", "--show-toplevel")).resolve()
+    if not repo.is_dir() or top != repo:
+        raise ValueError("cible : racine d'un dépôt Git attendue")
+    git(repo, "rev-parse", "--verify", base)
+    git(repo, "rev-parse", "--verify", head)
+    origin = json_at(repo, head, ".factory/standards-origin.json", None)
+    base_origin = json_at(repo, base, ".factory/standards-origin.json", None)
+    if origin:
+        record = json_at(repo, head, BASELINE_RECORD, None)
+        if (not isinstance(record, dict) or record.get("contract") != "agent-factory-baseline/v1"
+                or record.get("stack") != origin.get("stack")):
+            raise ValueError("photo initiale absente : lancer .factory/bin/standards-ratchet --initial-photo")
+    base_doc = json_at(repo, base, LIST, {"contract": "agent-factory-frozen-list/v1", "entries": []})
+    head_doc = json_at(repo, head, LIST, None)
+    if head_doc is None:
+        raise ValueError(f"{LIST}: liste figée absente à la pointe")
+    old, new = counts(base_doc), counts(head_doc)
+    for target, ref in ((old, base), (new, head)):
+        suppressions = eslint_counts(json_at(repo, ref, ESLINT, {}))
+        if any(rule not in FREEZABLE_ESLINT for rule, _ in suppressions):
+            raise ValueError(f"{ESLINT}: seuls les écarts de style explicitement admis peuvent être figés")
+        suppressions.update(depcruise_counts(json_at(repo, ref, DEPCRUISE, [])))
+        suppressions.update(archunit_counts(repo, ref))
+        if target.keys() & suppressions.keys():
+            raise ValueError(f"{ESLINT}: même règle et endroit déjà dans {LIST}")
+        target.update(suppressions)
+    empty_never = {"contract": "agent-factory-never-frozen/v1", "rules": []}
+    base_never = never_rules(json_at(repo, base, NEVER, empty_never))
+    head_never = never_rules(json_at(repo, head, NEVER, empty_never))
+    if not head_never.issuperset(base_never):
+        raise ValueError(f"{NEVER}: retrait d'une règle jamais figée")
+    never = base_never | head_never
+    for (rule, path), count in new.items():
+        if rule in never:
+            raise ValueError(f"règle jamais figée {rule} dans {path} : corriger l'écart")
+    if origin and not base_origin:
+        return {"ok": True, "initial_photo": True, "frozen_entries": len(new)}
+    changed, renames = changed_paths(repo, base, head)
+    carried = {(rule, renames.get(path, path)): count for (rule, path), count in old.items()}
+    increases = {(rule, path): count - carried.get((rule, path), 0)
+                 for (rule, path), count in new.items() if count > carried.get((rule, path), 0)}
+    if not increases:
+        return {"ok": True, "increases": 0, "frozen_counts": {rule: sum(count for (r, _), count in new.items() if r == rule)
+                                                               for rule, _ in new}}
+    snap = snapshot_rule(repo, base, head, changed)
+    waived = derogations(repo, base)
+    refused = [(rule, path, delta) for (rule, path), delta in increases.items()
+               if rule != snap and (rule, path) not in waived]
+    if refused:
+        rule, path, delta = refused[0]
+        raise ValueError(f"cliquet : {rule} dans {path} augmente de {delta} sans dérogation ou nouvelle photo valide")
+    return {"ok": True, "increases": len(increases), "snapshot_rule": snap,
+            "derogations": sum(key in waived for key in increases)}
+
+
+def initial_photo(repo):
+    repo = repo.resolve()
+    origin = json.loads((repo / ".factory/standards-origin.json").read_text(encoding="utf-8"))
+    stack = origin.get("stack")
+    if stack == "java-spring-maven":
+        command = ["mvn", "-q", "-Dtest=ArchitectureTest",
+                   "-Darchunit.freeze.store.default.allowStoreCreation=true", "test"]
+        expected = repo / ".factory/archunit-freeze"
+    elif stack == "react-typescript":
+        if not (repo / "node_modules/.bin/eslint").is_file():
+            raise ValueError("photo initiale : lancer npm ci dans le projet avant la photo")
+        old = (repo / ESLINT).read_bytes()
+        command = ["npm", "run", "lint", "--", "--suppress-all"]
+        result = subprocess.run(command, cwd=repo, capture_output=True, text=True)
+        if result.returncode:
+            (repo / ESLINT).write_bytes(old)
+            raise ValueError(f"photo initiale ESLint : {result.stderr or result.stdout}")
+        forbidden = never_rules(json.loads((repo / NEVER).read_text(encoding="utf-8")))
+        suppressed = eslint_counts(json.loads((repo / ESLINT).read_text(encoding="utf-8")))
+        if any(rule in forbidden or rule not in FREEZABLE_ESLINT for rule, _ in suppressed):
+            (repo / ESLINT).write_bytes(old)
+            raise ValueError("photo initiale : corriger d'abord les bugs probables jamais figés")
+        command = ["npm", "exec", "--", "dependency-cruiser", "src", "--config",
+                   ".dependency-cruiser.cjs", "--baseline"]
+        expected = repo / DEPCRUISE
+    else:
+        raise ValueError(f"photo initiale : pile inconnue {stack!r}")
+    result = subprocess.run(command, cwd=repo, capture_output=True, text=True)
+    if result.returncode or not expected.exists():
+        raise ValueError(f"photo initiale {stack} : {result.stderr or result.stdout or 'relevé absent'}")
+    record = {"contract": "agent-factory-baseline/v1", "stack": stack}
+    (repo / BASELINE_RECORD).write_text(json.dumps(record) + "\n", encoding="utf-8")
+    return {"ok": True, "stack": stack, "baseline": str(expected.relative_to(repo))}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--target", type=Path, default=Path.cwd())
+    parser.add_argument("--base-ref")
+    parser.add_argument("--head-ref", default="HEAD")
+    parser.add_argument("--initial-photo", action="store_true")
+    args = parser.parse_args()
+    try:
+        if args.initial_photo:
+            result = initial_photo(args.target)
+        elif args.base_ref:
+            result = check(args.target, args.base_ref, args.head_ref)
+        else:
+            raise ValueError("cliquet : --base-ref requis")
+    except (OSError, ValueError) as exc:
+        result = {"ok": False, "error": str(exc)}
+    print(json.dumps(result, ensure_ascii=False))
+    return 0 if result["ok"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -18,6 +18,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Frozen List ratchet
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: python3 .factory/bin/standards-ratchet --target . --base-ref "$BASE_SHA" --head-ref HEAD
       - run: mvn -B verify
       - run: pip install diff-cover==10.6.0
       - name: Changed Java lines are at least 80 percent covered
