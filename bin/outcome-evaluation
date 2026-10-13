@@ -763,31 +763,34 @@ def cmd_settle(args: argparse.Namespace) -> int:
 def cmd_product(args: argparse.Namespace) -> int:
     if os.environ.get("DELIVERY_ROLE_READ_ONLY") != "1":
         raise Refusal("un produit à la demande se demande depuis le rôle Evaluator")
-    convoy = Convoy(args.convoy, args.repo, args.profile)
-    request = open_request(convoy)
-    tip, _ = gate_commit(convoy)
-    if convoy.outcome.get("stop") or tip != request["commit"]:
-        raise Refusal("Outcome Evaluation arrêtée ou remplacée par un autre commit")
-    if args.dataset not in (request.get("datasets") or []):
-        raise Refusal("jeu absent de la demande d'Outcome Evaluation")
-    live = set(convoy.outcome.get("live") or [])
-    active = [entry for entry in request["environment"] if entry["state_file"] in live]
-    if len(active) > 1:
-        raise Refusal("plusieurs produits historiques encore ouverts : attendre leur arrêt")
-    wanted = request.get("wanted")
-    if (active and active[0]["dataset"] == args.dataset and running(active[0]["state_file"])
-            and not args.fresh and not wanted):
-        entry = active[0]
-        print(json.dumps({"ok": True, "ready": True, "dataset": entry["dataset"],
-                          "address": entry["address"], "launch_state": entry["state_file"],
-                          "commit": request["commit"]}, indent=2, sort_keys=True, ensure_ascii=False))
+    # Serialize the read and the requested switch with settle: otherwise a
+    # stale read can re-request the dataset just after settle opened it.
+    with convoy_lock(args.convoy):
+        convoy = Convoy(args.convoy, args.repo, args.profile)
+        request = open_request(convoy)
+        tip, _ = gate_commit(convoy)
+        if convoy.outcome.get("stop") or tip != request["commit"]:
+            raise Refusal("Outcome Evaluation arrêtée ou remplacée par un autre commit")
+        if args.dataset not in (request.get("datasets") or []):
+            raise Refusal("jeu absent de la demande d'Outcome Evaluation")
+        live = set(convoy.outcome.get("live") or [])
+        active = [entry for entry in request["environment"] if entry["state_file"] in live]
+        if len(active) > 1:
+            raise Refusal("plusieurs produits historiques encore ouverts : attendre leur arrêt")
+        wanted = request.get("wanted")
+        if (active and active[0]["dataset"] == args.dataset and running(active[0]["state_file"])
+                and not args.fresh and not wanted):
+            entry = active[0]
+            print(json.dumps({"ok": True, "ready": True, "dataset": entry["dataset"],
+                              "address": entry["address"], "launch_state": entry["state_file"],
+                              "commit": request["commit"]}, indent=2, sort_keys=True, ensure_ascii=False))
+            return 0
+        state_write("want-outcome-product", args.convoy, "--commit", request["commit"],
+                    "--dataset", args.dataset, *(["--fresh"] if args.fresh else []))
+        print(json.dumps({"ok": True, "ready": False, "dataset": args.dataset, "commit": request["commit"],
+                          "next": "réessayer après la prochaine passe du contrôleur"},
+                         indent=2, sort_keys=True, ensure_ascii=False))
         return 0
-    state_write("want-outcome-product", args.convoy, "--commit", request["commit"],
-                "--dataset", args.dataset, *(["--fresh"] if args.fresh else []))
-    print(json.dumps({"ok": True, "ready": False, "dataset": args.dataset, "commit": request["commit"],
-                      "next": "réessayer après la prochaine passe du contrôleur"},
-                     indent=2, sort_keys=True, ensure_ascii=False))
-    return 0
 
 
 # --- brief: what the Evaluator of the end is given --------------------------------------

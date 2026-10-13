@@ -17,6 +17,7 @@ real."""
 
 import importlib.machinery
 import importlib.util
+import fcntl
 import json
 import shutil
 import subprocess
@@ -351,6 +352,31 @@ class OutcomeEvaluationTest(Harness):
         result["coverage"].append({"dataset": "empty", "evidence": self.observe(second_brief, "outcome.empty")})
         self.record(result)
         self.assertTrue(self.verdict()["favorable"])
+
+    def test_product_request_waits_for_the_controller_decision(self):
+        self.verified()
+        self.evaluator("silent")
+        self.assertEqual("launched", self.settle()["action"])
+        lock = Path(self.env["CONVOY_STATE_LOCK_DIR"]) / f"agent-factory-outcome-evaluation-{CONVOY}.lock"
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        with lock.open("w") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            proc = subprocess.Popen((str(TOOL), "product", CONVOY, "--dataset", "content", "--repo", str(self.repo)),
+                                    env=self.session, cwd=self.tmp, text=True, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE)
+            try:
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    proc.communicate(timeout=2)
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        try:
+            stdout, stderr = proc.communicate(timeout=20)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.communicate()
+        self.assertEqual(0, proc.returncode, stdout + stderr)
+        self.assertTrue(json.loads(stdout)["ready"])
 
     def test_legacy_open_multi_game_request_requires_address_bound_coverage(self):
         self.verified()

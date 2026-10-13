@@ -51,7 +51,7 @@ def adopt(root, args, load_descriptor):
     if git_common_dir(registered_path) != git_common_dir(target):
         raise ValueError(f"rig {args.rig}: cible liée à un autre dépôt Git")
     files = [file for file in source.rglob("*") if file.is_file() and file.name != "VERSION"
-             and "__pycache__" not in file.relative_to(source).parts
+             and not {"__pycache__", "node_modules", "test-results", "playwright-report"}.intersection(file.relative_to(source).parts)
              and file.suffix not in {".pyc", ".pyo"}
              and (args.domain == "design" or file.relative_to(source).parts[0] != "design")]
     origin_name = "design-standards-origin.json" if args.domain == "design" else "standards-origin.json"

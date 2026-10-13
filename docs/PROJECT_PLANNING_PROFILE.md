@@ -354,8 +354,11 @@ For the first interface work of a React/TypeScript rig, present the proposed
 palette and tone on real screens, then run `bin/project-standards adopt --rig
 <rig> --stack react-typescript --domain design --target <linked-worktree>`.
 Code adoption skips the design subdirectory; this separate gesture copies
-`DESIGN.md`, light/dark role tokens, choice questions and the static design
-checks, recording `.factory/design-standards-origin.json`. `status` reports
+`DESIGN.md`, light/dark role tokens, choice questions, static checks and one
+rendered browser bench, recording `.factory/design-standards-origin.json`. The
+first interface PR names real routes and ready selectors, measures its bundle
+budget, commits initial captures from the pinned browser image and supplies a
+`?lang=zz` pseudo-language route. `status` reports
 code and design origins separately. The copied design workflow checks theme
 contrast, CSS/TSX literals, visible JSX text and basic accessibility syntax.
 It becomes a merge guarantee only after the project integrates it, makes its
