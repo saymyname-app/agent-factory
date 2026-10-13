@@ -1,0 +1,11 @@
+{
+  "generated_at": "2026-10-12T12:00:00+02:00",
+  "synthetic": true,
+  "ui": {
+    "id": "ritual-preparing",
+    "page": "rituals",
+    "setup": "ritualId='incidents';ritualPhase='preparing';ritualChosen.add('alerts');render()"
+  },
+  "visible_text": "← Rituels\nRevue d’incidents\n\nUsine · données et avancement simulés\n\n1 · Revue\n2 · Ton choix\n3 · Travail précis\n4 · Réalisation\nPréparation du travail\n\nL’usine précise le périmètre, les critères et les limites des propositions choisies.\n\nAucune réalisation commencée.",
+  "production_writes": 0
+}

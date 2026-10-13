@@ -1,0 +1,412 @@
+{
+  "generated_at": "2026-10-12T15:00:00+02:00",
+  "synthetic": true,
+  "state": "job-sessions",
+  "variant": "runs-swimlanes",
+  "clock_frozen": true,
+  "fixtures": {
+    "lanes": [
+      {
+        "id": "human",
+        "name": "Benjamin",
+        "role": "Humain",
+        "kind": "human"
+      },
+      {
+        "id": "code",
+        "name": "Code",
+        "role": "Contrôles et transitions",
+        "kind": "code"
+      },
+      {
+        "id": "alex",
+        "name": "Alex",
+        "role": "Auteur · Codex",
+        "kind": "agent"
+      },
+      {
+        "id": "lea",
+        "name": "Léa",
+        "role": "Relectrice · Claude",
+        "kind": "agent"
+      },
+      {
+        "id": "noe",
+        "name": "Noé",
+        "role": "Évaluateur · Codex",
+        "kind": "agent"
+      }
+    ],
+    "runs": [
+      {
+        "id": "cockpit",
+        "title": "Reprise du cockpit",
+        "type": "Livraison D01",
+        "status": "En cours",
+        "elapsed": 450,
+        "started": "15:00",
+        "jobs": [
+          {
+            "id": "trigger",
+            "lane": "human",
+            "name": "Déclencheur",
+            "start": 0,
+            "end": 18,
+            "prompt": "Reprendre le cockpit : rendre le résultat essayable et les constats faciles à retrouver.",
+            "result": "Besoin transmis ; référence du workflow conservée."
+          },
+          {
+            "id": "launch",
+            "lane": "code",
+            "name": "Préparer le travail",
+            "start": 18,
+            "end": 42,
+            "prompt": null,
+            "result": "Périmètre et dépendances vérifiés ; session auteur lancée."
+          },
+          {
+            "id": "tests",
+            "lane": "alex",
+            "name": "Préparer les tests",
+            "start": 42,
+            "end": 122,
+            "prompt": "Sur le produit lancé, vérifier que le dossier courant est accessible et que le résultat Delivered reste à juger même lorsque le convoi est ouvert. Écrire les critères par les points d’entrée publics.",
+            "result": "Critères préparés à la version enregistrée."
+          },
+          {
+            "id": "test-review",
+            "lane": "lea",
+            "name": "Relire les tests",
+            "start": 122,
+            "end": 177,
+            "prompt": "Relire les critères et les preuves de comportement. Vérifier qu’un faux outil ne donne pas une interface absente du vrai outil. Rendre un verdict et les constats avec leurs preuves.",
+            "result": "Relecture favorable sur la version des critères."
+          },
+          {
+            "id": "seal",
+            "lane": "code",
+            "name": "Geler",
+            "start": 177,
+            "end": 190,
+            "prompt": null,
+            "result": "Empreinte des critères enregistrée."
+          },
+          {
+            "id": "build",
+            "lane": "alex",
+            "name": "Réaliser",
+            "start": 190,
+            "end": 365,
+            "prompt": "Implémenter le périmètre approuvé du cockpit en conservant la boîte de réception. Utiliser les sources D01 existantes. Ne pas changer les portes de jugement. Fournir les preuves des critères au commit de sortie.",
+            "result": "Changement et démonstration enregistrés."
+          },
+          {
+            "id": "code-review",
+            "lane": "lea",
+            "name": "Revue du code",
+            "start": 365,
+            "end": null,
+            "prompt": "Relire le diff de la tâche à sa pointe courante. Vérifier les états Delivered, le traitement d’une source illisible et les limites de périmètre. Un verdict favorable exige des constats résolus sur cette version.",
+            "result": null
+          },
+          {
+            "id": "evaluation",
+            "lane": "noe",
+            "name": "Essayer la tâche",
+            "start": 370,
+            "end": null,
+            "prompt": "Sur le produit lancé au commit demandé, observer chaque critère par l’interface utilisateur. Capturer la preuve. Ne pas lire le diff ni remplacer une observation absente par une déduction.",
+            "result": null
+          }
+        ],
+        "end": null
+      },
+      {
+        "id": "search",
+        "title": "Recherche dans les notes",
+        "type": "Livraison D01",
+        "status": "Fusionné",
+        "elapsed": 720,
+        "started": "14:10",
+        "end": 720,
+        "jobs": [
+          {
+            "id": "trigger",
+            "lane": "human",
+            "name": "Déclencheur",
+            "start": 0,
+            "end": 18,
+            "prompt": "Reprendre le cockpit : rendre le résultat essayable et les constats faciles à retrouver.",
+            "result": "Besoin transmis ; référence du workflow conservée."
+          },
+          {
+            "id": "launch",
+            "lane": "code",
+            "name": "Préparer le travail",
+            "start": 18,
+            "end": 42,
+            "prompt": null,
+            "result": "Périmètre et dépendances vérifiés ; session auteur lancée."
+          },
+          {
+            "id": "tests",
+            "lane": "alex",
+            "name": "Préparer les tests",
+            "start": 42,
+            "end": 122,
+            "prompt": "Sur le produit lancé, vérifier que le dossier courant est accessible et que le résultat Delivered reste à juger même lorsque le convoi est ouvert. Écrire les critères par les points d’entrée publics.",
+            "result": "Critères préparés à la version enregistrée."
+          },
+          {
+            "id": "test-review",
+            "lane": "lea",
+            "name": "Relire les tests",
+            "start": 122,
+            "end": 177,
+            "prompt": "Relire les critères et les preuves de comportement. Vérifier qu’un faux outil ne donne pas une interface absente du vrai outil. Rendre un verdict et les constats avec leurs preuves.",
+            "result": "Relecture favorable sur la version des critères."
+          },
+          {
+            "id": "seal",
+            "lane": "code",
+            "name": "Geler",
+            "start": 177,
+            "end": 190,
+            "prompt": null,
+            "result": "Empreinte des critères enregistrée."
+          },
+          {
+            "id": "build",
+            "lane": "alex",
+            "name": "Réaliser",
+            "start": 190,
+            "end": 365,
+            "prompt": "Implémenter le périmètre approuvé du cockpit en conservant la boîte de réception. Utiliser les sources D01 existantes. Ne pas changer les portes de jugement. Fournir les preuves des critères au commit de sortie.",
+            "result": "Changement et démonstration enregistrés."
+          },
+          {
+            "id": "code-review",
+            "lane": "lea",
+            "name": "Revue du code",
+            "start": 365,
+            "end": 430,
+            "prompt": "Relire le diff de la tâche à sa pointe courante. Vérifier les états Delivered, le traitement d’une source illisible et les limites de périmètre. Un verdict favorable exige des constats résolus sur cette version.",
+            "result": null
+          },
+          {
+            "id": "evaluation",
+            "lane": "noe",
+            "name": "Essayer la tâche",
+            "start": 370,
+            "end": 450,
+            "prompt": "Sur le produit lancé au commit demandé, observer chaque critère par l’interface utilisateur. Capturer la preuve. Ne pas lire le diff ni remplacer une observation absente par une déduction.",
+            "result": null
+          },
+          {
+            "id": "whole",
+            "lane": "code",
+            "name": "Vérifier l’ensemble",
+            "start": 450,
+            "end": 570,
+            "prompt": null,
+            "result": "Contrôles du résultat courant favorables."
+          },
+          {
+            "id": "whole-eval",
+            "lane": "noe",
+            "name": "Essayer le produit",
+            "start": 570,
+            "end": 690,
+            "prompt": "Observer le résultat complet selon les stories approuvées et fournir les pièces du dossier.",
+            "result": "Évaluation du résultat favorable."
+          },
+          {
+            "id": "judgment",
+            "lane": "human",
+            "name": "Juger le résultat",
+            "start": 690,
+            "end": 705,
+            "prompt": "J’ai essayé cette version, elle me convient.",
+            "result": "Acceptation enregistrée sur la version du dossier."
+          },
+          {
+            "id": "promote",
+            "lane": "code",
+            "name": "Fusionner et clore",
+            "start": 705,
+            "end": 720,
+            "prompt": null,
+            "result": "Recontrôles favorables ; fusion prouvée et workflow clos."
+          }
+        ]
+      },
+      {
+        "id": "fix",
+        "title": "Corriger le tri des demandes",
+        "type": "Maintenance",
+        "status": "Terminé",
+        "elapsed": 301,
+        "started": "13:45",
+        "end": 301,
+        "jobs": [
+          {
+            "id": "trigger",
+            "lane": "human",
+            "name": "Déclencheur",
+            "start": 0,
+            "end": 15,
+            "prompt": "Reprendre le cockpit : rendre le résultat essayable et les constats faciles à retrouver.",
+            "result": "Besoin transmis ; référence du workflow conservée."
+          },
+          {
+            "id": "launch",
+            "lane": "code",
+            "name": "Préparer le travail",
+            "start": 15,
+            "end": 35,
+            "prompt": null,
+            "result": "Périmètre et dépendances vérifiés ; session auteur lancée."
+          },
+          {
+            "id": "build",
+            "lane": "alex",
+            "name": "Réaliser",
+            "start": 35,
+            "end": 200,
+            "prompt": "Implémenter le périmètre approuvé du cockpit en conservant la boîte de réception. Utiliser les sources D01 existantes. Ne pas changer les portes de jugement. Fournir les preuves des critères au commit de sortie.",
+            "result": "Changement et démonstration enregistrés."
+          },
+          {
+            "id": "code-review",
+            "lane": "lea",
+            "name": "Revue du code",
+            "start": 200,
+            "end": 270,
+            "prompt": "Relire le diff de la tâche à sa pointe courante. Vérifier les états Delivered, le traitement d’une source illisible et les limites de périmètre. Un verdict favorable exige des constats résolus sur cette version.",
+            "result": null
+          },
+          {
+            "id": "merge",
+            "lane": "code",
+            "name": "Vérifier et fusionner",
+            "start": 270,
+            "end": 301,
+            "prompt": null,
+            "result": "Correction fusionnée selon la route de maintenance."
+          }
+        ]
+      },
+      {
+        "id": "wait",
+        "title": "Préciser le périmètre du dossier",
+        "type": "Livraison D01",
+        "status": "Ta décision",
+        "elapsed": 580,
+        "started": "13:00",
+        "end": null,
+        "jobs": [
+          {
+            "id": "trigger",
+            "lane": "human",
+            "name": "Déclencheur",
+            "start": 0,
+            "end": 18,
+            "prompt": "Reprendre le cockpit : rendre le résultat essayable et les constats faciles à retrouver.",
+            "result": "Besoin transmis ; référence du workflow conservée."
+          },
+          {
+            "id": "launch",
+            "lane": "code",
+            "name": "Préparer le travail",
+            "start": 18,
+            "end": 42,
+            "prompt": null,
+            "result": "Périmètre et dépendances vérifiés ; session auteur lancée."
+          },
+          {
+            "id": "tests",
+            "lane": "alex",
+            "name": "Préparer les tests",
+            "start": 42,
+            "end": 122,
+            "prompt": "Sur le produit lancé, vérifier que le dossier courant est accessible et que le résultat Delivered reste à juger même lorsque le convoi est ouvert. Écrire les critères par les points d’entrée publics.",
+            "result": "Critères préparés à la version enregistrée."
+          },
+          {
+            "id": "test-review",
+            "lane": "lea",
+            "name": "Relire les tests",
+            "start": 122,
+            "end": 177,
+            "prompt": "Relire les critères et les preuves de comportement. Vérifier qu’un faux outil ne donne pas une interface absente du vrai outil. Rendre un verdict et les constats avec leurs preuves.",
+            "result": "Relecture favorable sur la version des critères."
+          },
+          {
+            "id": "decision",
+            "lane": "human",
+            "name": "Décision attendue",
+            "start": 177,
+            "end": null,
+            "prompt": "Le résultat attendu nécessite une décision de périmètre. Que faut-il conserver dans le dossier ?",
+            "result": null
+          }
+        ]
+      },
+      {
+        "id": "abandon",
+        "title": "Ancienne proposition de filtre",
+        "type": "Livraison D01",
+        "status": "Abandonné",
+        "elapsed": 260,
+        "started": "12:20",
+        "end": 260,
+        "jobs": [
+          {
+            "id": "trigger",
+            "lane": "human",
+            "name": "Déclencheur",
+            "start": 0,
+            "end": 18,
+            "prompt": "Reprendre le cockpit : rendre le résultat essayable et les constats faciles à retrouver.",
+            "result": "Besoin transmis ; référence du workflow conservée."
+          },
+          {
+            "id": "launch",
+            "lane": "code",
+            "name": "Préparer le travail",
+            "start": 18,
+            "end": 42,
+            "prompt": null,
+            "result": "Périmètre et dépendances vérifiés ; session auteur lancée."
+          },
+          {
+            "id": "tests",
+            "lane": "alex",
+            "name": "Préparer les tests",
+            "start": 42,
+            "end": 122,
+            "prompt": "Sur le produit lancé, vérifier que le dossier courant est accessible et que le résultat Delivered reste à juger même lorsque le convoi est ouvert. Écrire les critères par les points d’entrée publics.",
+            "result": "Critères préparés à la version enregistrée."
+          },
+          {
+            "id": "abandon",
+            "lane": "human",
+            "name": "Abandonner",
+            "start": 230,
+            "end": 260,
+            "prompt": "Je ne souhaite pas poursuivre ce changement.",
+            "result": "Abandonné avec raison ; aucune fusion."
+          }
+        ]
+      }
+    ]
+  },
+  "ui": {
+    "run": "search",
+    "filter": "all",
+    "stale": false,
+    "selected_job": "build",
+    "selected_event": null,
+    "detail": "job-sessions"
+  }
+}

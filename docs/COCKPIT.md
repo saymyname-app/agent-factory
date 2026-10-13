@@ -820,3 +820,143 @@ This is also why the write side of the Clean stop cannot be built from
 documentation alone: what gc's session list shows while a city is
 suspended, and after it resumes, has to be observed on a real suspension
 before a fake can answer like it.
+
+## Isolated launch: the cockpit at a commit, on a named dataset (T01R, af-m2tr6o)
+
+Spec af-2zseit, user story 126 and Implementation Decision 5: an author, the
+Evaluator and the Acceptance Session launch the cockpit of the commit they
+judge, on synthetic data, without touching the city in service. The
+Factory's profile (`config/project-descriptors/agent-factory.json`, block
+`launch`, `docs/PROJECT_PLANNING_PROFILE.md`) declares how; nothing is typed
+by hand.
+
+```bash
+./bin/project-launch start config/project-descriptors/agent-factory.json \
+    --commit <sha> --dataset home-content --state-file /tmp/cockpit-launch.json
+curl -s "$(jq -r .address /tmp/cockpit-launch.json)/api/status" | jq '.gc.value.city'   # "home-content"
+./bin/project-launch stop --state-file /tmp/cockpit-launch.json
+```
+
+`bin/project-launch` checks the commit out into a clean copy, picks a free
+port of 127.0.0.1 and runs the recipe there: `bin/cockpit-isolated --port
+<port> --dataset <file>`, which becomes the real `bin/cockpit run` of that
+copy. What it gives the cockpit to read:
+
+| Source | In the isolated launch |
+|---|---|
+| supervisor | a synthetic one, `tests/fixtures/cockpit/core/fake_gc.py`, the fake `tests/cockpit-fake-gc-contract-test.py` holds to the installed supervisor; what it answers is what the dataset says (below) |
+| tracker | `tests/fixtures/cockpit/requests/fake-bd`, which answers the beads written for this launch from the dataset, and hides the closed ones from a plain `list` as `bd` does |
+| declared projects | one descriptor per project the dataset names, written for this launch; no file of the repository |
+| doors that change the Factory (`gc`, escalation door, proposal door, loop guard) | a command that refuses |
+| local settings, secrets, notifications, heartbeat, project clones, Tailscale | none: a temporary HOME and no local settings file |
+
+No controller and no tracker is started. A dataset that is not marked
+`"synthetic": true`, carries no `generated_at`, names no state, or whose
+content the rules below cannot read, is refused before anything starts: the
+launch fails and leaves no process.
+
+The process the launcher holds is the cockpit itself, so `stop` ends it by
+its own clean stop, and it keeps the mark the launcher sets on the processes
+of a launch (`FACTORY_LAUNCH_ID`). The synthetic supervisor runs beside it and ends when
+the cockpit does, whatever ended it; it removes the temporary HOME.
+
+**State from the dataset.** `lib/synthetic_city.py` (`from_dataset`) is the
+one place where a dataset becomes sources: it reads the content of the named
+dataset and returns what the supervisor, the tracker and the declared
+projects answer. Nothing is canned: a value a source answers is written in
+the dataset, so a dataset edited at another commit is served as edited. The
+cockpit reads those sources as it reads the real ones.
+
+A Panorama dataset carries the text of its page (`visible_text`) and how the
+state is set (`ui`); a Runs dataset carries `fixtures` (lanes, runs, jobs).
+
+| The dataset says | The sources answer | Seen at |
+|---|---|---|
+| the state it is: `ui.id` (Panorama), `state` (Runs) | the supervisor's city bears that name | `GET /api/status`, `gc.value.city` |
+| « Décisions à prendre N », then N lines under « Ce qui t’attend », each with « projet · nature » | one open bead per line that asks the operator (title, project, nature, the fixed time of the dataset) | `beads.value`; `GET /api/requests` |
+| the cards under « Projets » (name, « chantier · étape »), or the project of a project page (« ← Projets ») and its « CHANTIER ACTUEL » | one declared project per name; one open chantier per project, under its title | `projets.value.projects`; `GET /api/projects`, `GET /projet/<key>` |
+| the events of the journal (« HH:MM (Paris) · projet · nature ») and the merged results of the analyses (« projet · hier ») | their projects are declared; a past event is no open work, so the tracker holds no bead for it | `projets.value.projects` |
+| the ritual of a ritual page (« ← Rituels », its title, « projet · … ») and its phase (`ritualPhase` in `ui.setup`) | one open bead under the title of the ritual, its project declared | `beads.value` |
+| a suspended Factory: `ui.setup` sets `shutdownState='suspended'` | a suspended city | `gc.value.suspended` is true |
+| nothing read: `ui.state` is `loading` or `error` | a supervisor and a tracker that never answer | every source `unknown`, without value |
+| a reading that is no longer current: `ui.state` is `stale` or `offline`, or `ui.stale` is true (Runs) | a supervisor that is read once, then answers no more | `gc.freshness` leaves `fresh` within seconds (a 2 s Validity window instead of 2 min), the last `gc.value` kept |
+| the runs of a Runs state | one bead per run under its title, open while the run has no end, with its type, status and start | `beads.value` (the open ones: the cockpit reads the open work of a tracker) |
+| the jobs of a run | one bead per job under its name, child of its run, assigned to the name of its lane, in progress while it has no end; its prompt and result | `beads.value` (those in progress) |
+| the agent lanes | one session per agent lane, running on the job without an end it holds | `sessions.value.sessions`, `gc.value.agents_running` |
+
+The key of a project the dataset only names is its name in lower case
+(« Notes » is `notes`). A page with « Décisions à prendre » whose list does
+not hold that many lines, a project card without its chantier, or a Runs
+state whose fixtures cannot be read, is refused.
+
+What a dataset says that no source of the cockpit answers at this commit is
+left out, and those states differ from one another by their name alone or
+not at all: the theme, width and selection of a state (`home-narrow`,
+`home-light`, the 19 Runs states, which carry the same fixtures and differ
+by what is selected); the state of a result (`result-*`) and the stage of a
+chantier (kept on its bead, not turned into the records of that stage); the
+steps of a stop other than `suspended`; the measures of the machine, the
+connections, the configuration and the clean-up of the Usine page
+(`health-*`, `factory-*`: 18 states served with an empty tracker); the list
+of rituals (`rituals-*`) and the time view of the analyses; the finished
+runs and jobs, which the tracker holds closed and the cockpit does not read
+yet. The ticket that delivers a screen adds its lines to the table above.
+
+**Datasets.** One per state of the seven Validated Prototypes of the Spec:
+the 76 Panorama states and the 19 Runs states, under
+`config/cockpit-datasets/<state>.json`. Each file is the dataset of
+the frozen prototype, byte for byte (Panorama at `632deea`, Runs at
+`d8cb462`, in the private prototype repository). A state is launched with
+`--dataset <state>`.
+
+**Screens.** `launch.screens` gives each screen of the Spec its address and
+its states, which is what `bin/prototype-fidelity` compares:
+
+| Screen (`name`) | Address | States |
+|---|---|---|
+| `vue-ensemble` | `/` | `home-*`, `result-*` (24) |
+| `projets` | `/projet/notes` | `projects-*`, `release-expanded`, `release-estimate`, `project-missing` (6) |
+| `journal` | `/journal` | `journal-*` (10) |
+| `usine` | `/usine` | `health-*`, `factory-*` (18) |
+| `rituels` | `/rituels` | `rituals-*`, `ritual-*`, `release-confirm`, `release-review`, `release-report`, `release-saved` (14) |
+| `analyses` | `/analyses` | `analysis-*` (4) |
+| `runs-liste` | `/runs` | `runs-*` (3) |
+| `run-frise` | `/runs/run` | `run-*` (5) |
+| `job-detail` | `/runs/job` | `job-*` (11) |
+
+`/`, `/journal` and `/projet/notes` (the page of the project the six states
+of that screen are about) are served today; the other addresses are declared
+for the tickets that deliver those screens, and answer 404 until then.
+
+**Criterion tests.** The profile declares two seams under
+`tests/cockpit-criteria/`: `http/` (black box: the test reaches the launched
+cockpit at `PRODUCT_ADDRESS` and nothing else) and `commands/` (import rule:
+the test runs in the tree of the product and goes through `bin/project-launch`,
+`bin/project-planning-profile`, `bin/prototype-conformance`,
+`bin/acceptance-session`, `bin/owner-answer` or `bin/outcome-promote`). The
+test command is the JUnit harness of the Delivery Fixture City
+(`tests/fixtures/delivery-fixture-city/tests/harness.py`); it is a frozen
+harness path, with the two decors the recipe reads (the fake supervisor and
+the fake tracker). `tests/cockpit-criteria-test.py` runs the criterion tests of
+`commands/` in CI; `tests/cockpit-criteria/regression.py` is the regression
+command: every `tests/cockpit-*-test.py` CI runs, plus the tests of the
+launcher and of the profile.
+
+Limits.
+
+- What the recipe reads must not be changed under `tests/` by the ticket
+  that needs the change, once its tests are frozen: `bin/tdd-step` runs the
+  criterion tests of the `commands/` seam in the tree of the product with
+  the whole `tests/` directory of the freeze commit put in its place. This
+  is why the datasets are under `config/`.
+- The tools of the flow read the profile in the Factory root they run from,
+  not in the branch of the ticket: a launch block that exists only on a
+  branch is passed to them with `--profile`.
+- The Validated Prototypes are private: their commits exist in the
+  repository of the delivering host only.
+  `tests/cockpit-criteria/commands/frozen-states-test.py::ApprovedReferences`
+  reads them there (or in the repository `PROTOTYPE_REFERENCES_REPO` names)
+  and is left out where they cannot be read, CI included.
+- `tests/cockpit-criteria/http/` holds no test yet, and
+  `tests/cockpit-criteria-test.py` does not launch the product for it: the
+  first ticket that writes one adds that run.

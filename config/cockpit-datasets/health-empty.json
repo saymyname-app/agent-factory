@@ -1,0 +1,11 @@
+{
+  "generated_at": "2026-10-12T12:00:00+02:00",
+  "synthetic": true,
+  "ui": {
+    "id": "health-empty",
+    "page": "health",
+    "state": "empty"
+  },
+  "visible_text": "Usine\n\nRessources, connexions et réglages de l’environnement d’exécution.\n\nRien à afficher ici\n\nAucun élément dans cette vue.",
+  "production_writes": 0
+}

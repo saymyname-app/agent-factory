@@ -1,0 +1,11 @@
+{
+  "generated_at": "2026-10-12T12:00:00+02:00",
+  "synthetic": true,
+  "ui": {
+    "id": "ritual-delivered",
+    "page": "rituals",
+    "setup": "ritualId='incidents';ritualPhase='delivered';ritualChosen.add('alerts');render()"
+  },
+  "visible_text": "← Rituels\nRevue d’incidents\n\nUsine · données et avancement simulés\n\n1 · Revue\n2 · Ton choix\n3 · Travail précis\n4 · Réalisation\nRésultat prêt à juger\n\nLes corrections simulées sont terminées. Aucune acceptation ni fusion n’est déduite de leur fin.\n\nLe parcours Essai / Avis validé s’appliquera au dossier de ce résultat.",
+  "production_writes": 0
+}

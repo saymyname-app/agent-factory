@@ -1,0 +1,9 @@
+{
+  "generated_at": "2026-10-12T12:00:00+02:00",
+  "synthetic": true,
+  "ui": {
+    "id": "journal-logs",
+    "setup": "logMode='raw'"
+  },
+  "visible_text": "Journal\nÉvénements utiles\nLogs techniques\nSources disponibles\nTous\nCI\nAgents\nLivraison\nConnexions\nMaintenance\nNotifications\nAutres\n14:36 (Paris) · ci\nVérification échouée\n\nLa vérification de régression n’a pas réussi. Le résultat reste à corriger.\n\nÉvénement brut\n14:35 (Paris) · agents\nNouvelle session auteur\n\nUne nouvelle session reprend le même travail avec son contexte de départ.\n\nÉvénement brut\n14:34 (Paris) · delivery\nRésultat prêt à juger\n\nLes vérifications requises ont terminé ; ton jugement est attendu.\n\nÉvénement brut\n14:30 (Paris) · connections\nLecture du superviseur interrompue\n\nLa dernière valeur est conservée comme périmée.\n\nÉvénement brut\n14:25 (Paris) · maintenance\nNettoyage terminé\n\nLes espaces sans travail actif identifiés ont été retirés.\n\nÉvénement brut\n14:20 (Paris) · notifications\nNotification remise au service\n\nLe service a accepté l’envoi ; la lecture sur le téléphone n’est pas connue.\n\nÉvénement brut\n14:10 (Paris) · unknown\nÉvénement non reconnu\n\nLe type reçu ne possède pas encore de libellé. Le contenu brut reste accessible.\n\nÉvénement brut\n\nLibellés fixes par type d’événement ; aucun appel de modèle."
+}
