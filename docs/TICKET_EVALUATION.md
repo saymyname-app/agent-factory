@@ -368,3 +368,35 @@ again. It retains the prior round and negative verdict until new independent
 states are recorded. One lift only covers the older refusal: a refusal after the
 lift requires a new resolution. Neither a code review refusal nor an unobserved
 criterion is waived by a lift.
+
+## Validated simple expectations
+
+The Factory-owned project descriptor may declare `validated_expectations` for
+simple values that an approved criterion or Spec story and validated data or
+prototype fix. This is a project-specific mapping; the author cannot change it
+by changing the product commit. Each entry has `scope` (`ticket` or `outcome`),
+`owner` (ticket or convoy ID, to distinguish reused local numbers), the frozen subject `number` and exact `text`, a declared `dataset`, a `source`
+with a human-reviewable `reference` and `sha256:` `digest`, a typed `expected`
+value (boolean, number or exact text), and an `observation` with an HTTP `path`
+and JSON `pointer`. For example:
+
+```json
+{"scope":"outcome","number":3,"text":"As an operator, I want suspension status...",
+ "dataset":"factory-suspended",
+ "source":{"reference":"approved factory-suspended scenario","digest":"sha256:..."},
+ "expected":true,"observation":{"path":"/status","pointer":"/suspended"}}
+```
+
+The entry's source citation and digest must be checked against the approved
+data or prototype when the Factory descriptor is reviewed. Code matches the
+entry to the frozen text and exposes it with the evaluated commit in the
+Evaluator brief. The Evaluator captures that URL while the named dataset is
+open and returns the piece as `comparisons: [{"id": N, "evidence": "..."}]`.
+Code verifies the seal, commit, launched address and capture command, then
+compares the typed scalar in the captured JSON. It computes the consequence:
+a contrary value is `not_observed` even if the Evaluator claims `observed`;
+an incomplete or contradictory declared expectation is `unobservable` with
+cause `criterion`, leading to Planning Exception. A missing or forged capture
+is refused. Criteria without an applicable declared simple expectation stay
+with the existing Evaluator judgment and evidence rules. Every declared
+dataset still requires coverage evidence.

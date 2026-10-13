@@ -215,3 +215,5 @@ refusal writes nothing.
   the state writes of the evaluation and of the findings, and their
   refusals, on the real `gc`/`bd`; the user stories are read in a Spec bead
   of that tracker.
+
+Validated scalar expectations use the project-specific profile mapping and sealed comparison contract described in docs/TICKET_EVALUATION.md. The Outcome Evaluation applies it to frozen Spec stories; a contrary value drafts the existing one-story repair, while a missing validated expectation follows Planning Exception.

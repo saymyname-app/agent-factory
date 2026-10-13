@@ -74,6 +74,7 @@ DESCRIPTORS = ROOT / "config" / "project-descriptors"
 sys.path.insert(0, str(BIN.parent / "lib"))
 import delivery_reads  # noqa: E402
 from evaluation_capacity import admission, Busy, product_running
+from validated_expectations import planned, enforce, sealed_record
 from delivery_role_identity import role_supplier, supplier_of  # noqa: E402
 
 EVALUATOR_ROLE = "evaluator"
@@ -811,7 +812,7 @@ def cmd_brief(args: argparse.Namespace) -> int:
     nor the repository, nor a branch."""
     convoy = Convoy(args.convoy, args.repo, args.profile)
     request = open_request(convoy)
-    _, launch_block = convoy.profile()
+    profile_path, launch_block = convoy.profile()
     live = set(convoy.outcome.get("live") or [])
     active = [entry for entry in request["environment"] if entry["state_file"] in live]
     capture = [str(CAPTURE_TOOL), "command", args.convoy, args.convoy, "--piece", "outcome.<name>",
@@ -862,6 +863,8 @@ def cmd_brief(args: argparse.Namespace) -> int:
         },
         "roles": request["roles"], "independence": independence(request["roles"]),
     }
+    brief["expectations"] = planned(json.loads(profile_path.read_text(encoding="utf-8")), "outcome",
+                                    brief["stories"], brief["datasets"], request["commit"], args.convoy)
     print(json.dumps(brief, indent=2, sort_keys=True, ensure_ascii=False))
     return 0
 
@@ -941,6 +944,43 @@ def cmd_record(args: argparse.Namespace) -> int:
     if request is None:
         raise Refusal(
             f"aucune Outcome Evaluation n'est demandée sur le convoi {args.convoy} : des états répondent à une demande ouverte")
+    profile_path, _ = convoy.profile()
+    entries = planned(json.loads(profile_path.read_text(encoding="utf-8")), "outcome",
+                      request["stories"],
+                      request.get("datasets") or [e["dataset"] for e in request["environment"]], request["commit"], args.convoy)
+    def verified(piece: str, dataset: str) -> dict[str, Any]:
+        addresses_for_game = [e["address"] for e in request["environment"] if e["dataset"] == dataset]
+        return sealed_record(str(CAPTURE_TOOL), args.convoy, args.convoy, piece, request["commit"],
+                             addresses_for_game)
+    before = {item.get("number"): item.get("state") for item in given.get("stories", [])
+              if isinstance(item, dict)}
+    try:
+        given, failed = enforce(entries, given, "stories", verified, FETCH)
+    except (ValueError, KeyError, TypeError, StopIteration) as exc:
+        raise Refusal(f"comparaison validée impossible : {exc}") from exc
+    if "repairs" in given and not isinstance(given["repairs"], list):
+        raise Refusal("repairs doit être une liste")
+    # A false simple value is a product defect. Draft the one repair required
+    # by the existing Outcome Evaluation gate from the approved expectation.
+    for entry in entries:
+        number = entry.get("number")
+        if entry.get("id") not in failed or before.get(number) != "observed" or not any(
+                item.get("number") == number and item.get("state") == "not_observed"
+                for item in given.get("stories", []) if isinstance(item, dict)):
+            continue
+        if any(item.get("story") == number for item in given.get("repairs", []) if isinstance(item, dict)):
+            continue
+        point = entry["observation"]["pointer"]
+        expected = repr(entry["expected"])
+        given.setdefault("repairs", []).append({
+            "story": number, "title": f"Rétablir la user story {number}",
+            "what_it_delivers": f"Le produit sert {point}={expected} sur {entry['dataset']}.",
+            "restores": {"kind": "user_story", "ref": f"user story {number}"},
+            "demonstration_line": f"GET {entry['observation']['path']} sert {point}={expected}.",
+            "acceptance_criteria": [{"entry_point": f"GET {entry['observation']['path']}",
+                                     "observable": f"{point}={expected} sur {entry['dataset']}",
+                                     "false_if": f"{point} diffère de {expected}"}],
+        })
     addresses = [entry["address"] for entry in request["environment"]]
     refused = [reason for reason in (piece_refusal(args.convoy, piece, request["commit"], addresses)
                                      for piece in named_pieces(given)) if reason]

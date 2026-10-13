@@ -166,12 +166,29 @@ def state_of(story, product):
             "reason": f"le produit lancé ne sert pas ce que la story décrit ({look.get('path', '/')})"}
 
 
+comparisons = []
+
+
+def compare(product):
+    for item in brief.get("expectations", []):
+        if item.get("gap") or item.get("dataset") != product["dataset"]:
+            continue
+        piece = f"outcome.expected.{item['id']}"
+        path = item["observation"]["path"]
+        subprocess.run(
+            [CAPTURE, "command", convoy, convoy, "--piece", piece, "--launch-state", product["launch_state"], "--",
+             sys.executable, "-c", brief["capture"]["page"][-2], product["address"] + path],
+            env=session, capture_output=True, text=True, check=True)
+        comparisons.append({"id": item["id"], "evidence": piece})
+
+
 if len(brief.get("datasets") or []) > 1:
     first = brief["environments"][0]["dataset"]
     states = {}
     coverage = []
     for dataset in brief["datasets"]:
         product = product_for(dataset)
+        compare(product)
         for story in brief["stories"]:
             chosen = given.get("stories", {}).get(str(story["number"]), {}).get("dataset", first)
             if chosen == dataset:
@@ -187,10 +204,11 @@ if len(brief.get("datasets") or []) > 1:
     stories = [states[story["number"]] for story in brief["stories"]]
 else:
     product = brief["environments"][0]
+    compare(product)
     stories = [state_of(story, product) for story in brief["stories"]]
     coverage = [{"dataset": product["dataset"], "evidence": stories[0]["evidence"]}]
 handed = {
-    "commit": brief["commit"], "stories": stories, "coverage": coverage,
+    "commit": brief["commit"], "stories": stories, "coverage": coverage, "comparisons": comparisons,
     "exploration": given.get("exploration", "aucun"),
     "fidelity_deviations": given.get("fidelity_deviations", "aucun"),
 }
