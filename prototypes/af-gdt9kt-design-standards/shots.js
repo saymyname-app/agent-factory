@@ -10,7 +10,7 @@ const { chromium } = require(process.argv[2] || 'playwright');
     const page = await browser.newPage({ viewport: { width, height: 900 } });
     page.on('console', m => { if (m.type() === 'error') errors.push(name + ': ' + m.text()); });
     page.on('pageerror', e => errors.push(name + ': ' + e.message));
-    for (const p of ['a', 'b', 'c']) {
+    for (const p of ['a', 'b', 'b-sombre', 'c']) {
       await page.goto(url + '#' + p);
       await page.reload();
       await page.waitForTimeout(700);

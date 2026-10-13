@@ -82,6 +82,13 @@ table.cmp{border-collapse:collapse;width:100%;min-width:640px;background:var(--p
   --p-font:"Figtree",system-ui,-apple-system,"Segoe UI",sans-serif; --p-display:var(--p-font); --p-display-w:800; --p-case:none; --p-track:0;
   --p-shadow:0 1px 2px rgba(35,26,58,.06),0 8px 24px rgba(35,26,58,.08); --p-glow:0 6px 16px rgba(107,63,212,.3); --p-dur:260ms; --p-ease:cubic-bezier(.34,1.4,.64,1); --p-press:scale(.96); --p-in:translateY(18px) scale(.96);
 }
+[data-prop="b"][data-mode="sombre"] .sm{
+  --p-bg:#17122A; --p-surface:#221A3A; --p-sunken:#110D20; --p-text:#F1EDFA; --p-muted:#B5ABCF; --p-border:#372D55; --p-border-2:#4E4273;
+  --p-accent:#A488FA; --p-on-accent:#170F2E; --p-accent-soft:#2F2552; --p-accent-text:#BDA7FF; --p-ok:#5BD69B; --p-ok-soft:#153427; --p-bad:#FF8F85; --p-bad-soft:#3E1C20; --p-hi:#FFC940; --p-on-hi:#231A3A;
+  --p-shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.28); --p-glow:0 6px 18px rgba(164,136,250,.28);
+}
+[data-prop="b"][data-mode="sombre"] .sm .course .progress{background:rgba(23,15,46,.28)}
+[data-prop="b"][data-mode="sombre"] .sm .course .progress i{background:var(--p-on-accent)}
 [data-prop="c"] .sm{
   --p-bg:#0E1320; --p-surface:#171E2E; --p-sunken:#0A0E18; --p-text:#EEF2F8; --p-muted:#9DA8BD; --p-border:#293349; --p-border-2:#3A4661;
   --p-accent:#C6F432; --p-on-accent:#10140A; --p-accent-soft:#25301A; --p-accent-text:#C6F432; --p-ok:#4ADE80; --p-ok-soft:#12301F; --p-bad:#FF7A7A; --p-bad-soft:#3A1A1E; --p-hi:#25301A; --p-on-hi:#C6F432;
@@ -337,7 +344,7 @@ table.cmp{border-collapse:collapse;width:100%;min-width:640px;background:var(--p
   <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.500"/><path d="M9.700 9.500a2.400 2.400 0 114 2c-.900.700-1.700 1.200-1.700 2.500M12 17v.01"/></symbol>
 </svg>
 
-<div class="page" id="stage" data-prop="b" data-w="both" data-reduced="0">
+<div class="page" id="stage" data-prop="b" data-mode="clair" data-w="both" data-reduced="0">
   <header>
     <p class="eyebrow">Prototype · ticket af-gdt9kt.9 · données synthétiques</p>
     <h1>Trois propositions de standards de design pour SayMyName</h1>
@@ -355,8 +362,12 @@ table.cmp{border-collapse:collapse;width:100%;min-width:640px;background:var(--p
       <button type="button" data-v="390" aria-pressed="false">390</button>
       <button type="button" data-v="1440" aria-pressed="false">1440</button>
     </div>
+    <div class="seg" id="seg-mode">
+      <button type="button" data-v="clair" aria-pressed="true">B clair</button>
+      <button type="button" data-v="sombre" aria-pressed="false">B sombre</button>
+    </div>
     <label for="reduced"><input type="checkbox" id="reduced"> Simuler « réduire les animations »</label>
-    <span class="hint">← → pour changer de proposition</span>
+    <span class="hint">← → proposition · S clair/sombre</span>
   </div>
 
   <section class="fiche" data-fiche="a" hidden>
@@ -386,7 +397,7 @@ table.cmp{border-collapse:collapse;width:100%;min-width:640px;background:var(--p
 
   <section class="fiche" data-fiche="b">
     <div class="spec">
-      <div><h2>B · Chaleureux <span class="badge">Recommandée</span></h2><p class="idea">Un jeu convivial entre gens qui se connaissent. On a envie d’y revenir.</p></div>
+      <div><h2>B · Chaleureux <span class="badge">Retenue · clair et sombre</span></h2><p class="idea">Un jeu convivial entre gens qui se connaissent. On a envie d’y revenir. Deux modes : l’app suit le réglage de l’appareil, et le bouton lune permet de forcer l’un ou l’autre.</p></div>
       <div class="specimen"></div>
       <div class="ratios"></div>
     </div>
@@ -405,6 +416,7 @@ table.cmp{border-collapse:collapse;width:100%;min-width:640px;background:var(--p
       <div><h3>Ce que ça coûte</h3><ul>
         <li>Les écrans d’administration sont plus longs à faire défiler.</li>
         <li>Plus d’animations à écrire et à vérifier que dans A.</li>
+        <li>Deux palettes à tenir. Les contrastes des deux se vérifient par code, une fois, sur la palette ; les captures de référence se prennent dans les deux modes, par la machine.</li>
       </ul></div>
       <div style="grid-column:1/-1"><h3>Pourquoi je la recommande</h3>
         <p style="margin:0;max-width:70ch">SayMyName est un jeu de mémoire pour des groupes : une chorale, une classe, une équipe. Le ton convivial sert l’envie de rejouer, et son coût reste borné : un fichier de police et des animations qui se coupent proprement.</p></div>
@@ -450,6 +462,7 @@ table.cmp{border-collapse:collapse;width:100%;min-width:640px;background:var(--p
         <tr><th>Mouvement</th><td>Fondus, 120 ms</td><td>Rebonds, 260 ms</td><td>Glissements, 180 ms</td></tr>
         <tr><th>Densité</th><td>Élevée</td><td>Aérée</td><td>Moyenne</td></tr>
         <tr><th>À 1440 px</th><td>Barre en haut, contenu centré</td><td>Actions à gauche, colonne centrale</td><td>Barre en haut, pleine largeur</td></tr>
+        <tr><th>Modes</th><td>Clair</td><td>Clair et sombre</td><td>Sombre</td></tr>
         <tr><th>Effort pour la tenir</th><td>Le plus faible</td><td>Moyen</td><td>Moyen ; double si un mode clair s’ajoute</td></tr>
       </tbody>
     </table></div>
@@ -587,12 +600,15 @@ table.cmp{border-collapse:collapse;width:100%;min-width:640px;background:var(--p
       +'<p class="h">Quel est son prénom ?</p><p>Texte courant : 3 révisions à faire maintenant. <span class="muted">Texte secondaire.</span></p>'
       +'<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center"><button class="btn primary" type="button">Valider</button><button class="btn" type="button">Options</button><span class="chip accent">Prénom</span><span class="chip ok">Actif</span></div>'
       +'</div></div>';
-    var sm=f.querySelector('.sm'), cs=getComputedStyle(sm), probe=document.createElement('span'); sm.appendChild(probe);
+    ratios(f);
+  });
+  function ratios(f){
+    var sm=f.querySelector('.sm'), probe=document.createElement('span'); sm.appendChild(probe);
     function col(v){probe.style.color='var('+v+')';return getComputedStyle(probe).color}
     var rows=[['Texte sur fond','--p-text','--p-bg'],['Texte secondaire sur carte','--p-muted','--p-surface'],['Texte du bouton principal','--p-on-accent','--p-accent'],['Liens et icônes sur carte','--p-accent-text','--p-surface'],['Réponse fausse','--p-bad','--p-bad-soft']];
     f.querySelector('.ratios').innerHTML=rows.map(function(r){var v=ratio(col(r[1]),col(r[2]));return '<span>'+r[0]+' : <b>'+v.toFixed(1).replace('.',',')+' pour 1</b> '+(v>=4.5?'· conforme':'· insuffisant')+'</span>'}).join('');
     probe.remove();
-  });
+  }
 
   /* quiz : sélection, validation, suivant */
   document.querySelectorAll('.quiz').forEach(function(q,idx){
@@ -624,20 +640,28 @@ table.cmp{border-collapse:collapse;width:100%;min-width:640px;background:var(--p
     stage.setAttribute('data-prop',p);
     document.querySelectorAll('#seg-prop button').forEach(function(b){b.setAttribute('aria-pressed',b.dataset.v===p?'true':'false')});
     document.querySelectorAll('.fiche').forEach(function(f){f.hidden=f.getAttribute('data-fiche')!==p});
-    try{history.replaceState(null,'','#'+p)}catch(e){}
+    document.getElementById('seg-mode').hidden=p!=='b';
+    try{history.replaceState(null,'','#'+p+(p==='b'&&stage.getAttribute('data-mode')==='sombre'?'-sombre':''))}catch(e){}
     fit();
   }
+  function setMode(m){
+    stage.setAttribute('data-mode',m);
+    document.querySelectorAll('#seg-mode button').forEach(function(b){b.setAttribute('aria-pressed',b.dataset.v===m?'true':'false')});
+    if(stage.getAttribute('data-prop')==='b'){ratios(document.querySelector('[data-fiche="b"]'));setProp('b')}
+  }
+  document.getElementById('seg-mode').addEventListener('click',function(e){var b=e.target.closest('button');if(b)setMode(b.dataset.v)});
   document.getElementById('seg-prop').addEventListener('click',function(e){var b=e.target.closest('button');if(b)setProp(b.dataset.v)});
   document.getElementById('seg-w').addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;stage.setAttribute('data-w',b.dataset.v);this.querySelectorAll('button').forEach(function(x){x.setAttribute('aria-pressed',x===b?'true':'false')});fit()});
   document.getElementById('reduced').addEventListener('change',function(){stage.setAttribute('data-reduced',this.checked?'1':'0')});
   document.addEventListener('keydown',function(e){
-    if(e.key!=='ArrowLeft'&&e.key!=='ArrowRight')return;
     var t=e.target; if(t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable))return;
+    if(e.key==='s'||e.key==='S'){if(stage.getAttribute('data-prop')==='b')setMode(stage.getAttribute('data-mode')==='sombre'?'clair':'sombre');return}
+    if(e.key!=='ArrowLeft'&&e.key!=='ArrowRight')return;
     var i=ORDER.indexOf(stage.getAttribute('data-prop'));
     setProp(ORDER[(i+(e.key==='ArrowRight'?1:2))%3]);
   });
   var h=(location.hash||'').replace('#','');
-  setProp(ORDER.indexOf(h)>=0?h:'b');
+  if(h==='b-sombre'){setProp('b');setMode('sombre')}else{setProp(ORDER.indexOf(h)>=0?h:'b')}
 })();
 </script>
 
