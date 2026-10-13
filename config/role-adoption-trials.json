@@ -4,17 +4,23 @@
   "trials": {
     "author/claude-standard": {
       "agent": "delivery-author",
-      "digest": "sha256:8f7d625c0242c0ae637fda7de01e88e08d7c366bf33fbdf0bb2042f81f11a1bd",
+      "digest": "sha256:4e86c16cc34e7eba19a89d91b5680964e191132bc1c5d56efe0d9e6f25d2c295",
       "expected_skills": [
+        "apple-design",
+        "better-writing",
         "codebase-design",
+        "impeccable",
         "tdd"
       ],
       "failures": [],
       "matt_skills_loaded": [
+        "apple-design",
+        "better-writing",
         "codebase-design",
+        "impeccable",
         "tdd"
       ],
-      "observed_at": "2026-10-12T04:58:14Z",
+      "observed_at": "2026-10-13T21:47:40Z",
       "passed": true,
       "provider": "claude-standard",
       "review_launch": {
@@ -40,7 +46,7 @@
       "review_skills_listed": [],
       "role": "author",
       "session_provider": "claude-standard",
-      "skills_listed": 10,
+      "skills_listed": 13,
       "subagents": {
         "file_written": false,
         "launches": [
@@ -64,25 +70,41 @@
     },
     "evaluator/claude-readonly": {
       "agent": "delivery-evaluator",
-      "digest": "sha256:fc10ce41e2200b9c1745a78ef6517c1fdb62d9a71636fd6c032c6d295368f26f",
-      "expected_skills": [],
+      "digest": "sha256:d7ff362c1bc695d96c21de4ee1e7c9dea89c4bf654ae7185477416e9881cea2c",
+      "expected_skills": [
+        "better-accessibility",
+        "better-colors",
+        "better-interface",
+        "better-layout",
+        "better-typography",
+        "better-ui",
+        "better-writing"
+      ],
       "failures": [],
-      "matt_skills_loaded": [],
-      "observed_at": "2026-10-13T14:03:25Z",
+      "matt_skills_loaded": [
+        "better-accessibility",
+        "better-colors",
+        "better-interface",
+        "better-layout",
+        "better-typography",
+        "better-ui",
+        "better-writing"
+      ],
+      "observed_at": "2026-10-13T21:50:10Z",
       "passed": true,
       "provider": "claude-readonly",
       "read_only": {
         "after": {
-          "head": "2143445cba756c19fc4861cb44ff56420b2a48ce",
-          "refs": "refs/heads/main 2143445cba756c19fc4861cb44ff56420b2a48ce\nrefs/remotes/origin/main 2143445cba756c19fc4861cb44ff56420b2a48ce",
-          "remote_refs": "refs/heads/main 2143445cba756c19fc4861cb44ff56420b2a48ce",
+          "head": "fee7ab935cbd9981d402d361db48a71500792bac",
+          "refs": "refs/heads/main fee7ab935cbd9981d402d361db48a71500792bac\nrefs/remotes/origin/main fee7ab935cbd9981d402d361db48a71500792bac",
+          "remote_refs": "refs/heads/main fee7ab935cbd9981d402d361db48a71500792bac",
           "status": ""
         },
         "attempts": [
           {
             "action": "/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt",
             "refused": true,
-            "result": "EROFS: read-only file system, open '/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt.tmp.352553.b9c1112ddc0a'",
+            "result": "EROFS: read-only file system, open '/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt.tmp.457024.69ed6c82648b'",
             "tool": "Write"
           },
           {
@@ -105,9 +127,9 @@
           }
         ],
         "before": {
-          "head": "2143445cba756c19fc4861cb44ff56420b2a48ce",
-          "refs": "refs/heads/main 2143445cba756c19fc4861cb44ff56420b2a48ce\nrefs/remotes/origin/main 2143445cba756c19fc4861cb44ff56420b2a48ce",
-          "remote_refs": "refs/heads/main 2143445cba756c19fc4861cb44ff56420b2a48ce",
+          "head": "fee7ab935cbd9981d402d361db48a71500792bac",
+          "refs": "refs/heads/main fee7ab935cbd9981d402d361db48a71500792bac\nrefs/remotes/origin/main fee7ab935cbd9981d402d361db48a71500792bac",
+          "remote_refs": "refs/heads/main fee7ab935cbd9981d402d361db48a71500792bac",
           "status": ""
         },
         "unchanged": true
@@ -135,7 +157,7 @@
       "review_skills_listed": [],
       "role": "evaluator",
       "session_provider": "claude-readonly",
-      "skills_listed": 8,
+      "skills_listed": 15,
       "versions": {
         "bwrap": "bubblewrap 0.9.0",
         "claude": "2.1.290 (Claude Code)",
@@ -144,9 +166,18 @@
     },
     "reviewer/claude-readonly": {
       "agent": "delivery-reviewer",
-      "digest": "sha256:f66be8874335423d9db1cc8d8eac9277788c29a89fe4a984b2b7d76deac15064",
+      "digest": "sha256:7789870658684d8cdf0304bd7fe959b11c80db4b007fb6eeb252013f2ec5cda8",
       "expected_skills": [
-        "code-review"
+        "better-accessibility",
+        "better-colors",
+        "better-interface",
+        "better-layout",
+        "better-typography",
+        "better-ui",
+        "better-writing",
+        "code-review",
+        "interface-review",
+        "review-animations"
       ],
       "failures": [],
       "masking": {
@@ -157,23 +188,32 @@
         "vendored_sha256": "47f4e52c21694def9c7c11cbfbf891ca35eac7a93e395797515be3c8a409ae50"
       },
       "matt_skills_loaded": [
-        "code-review"
+        "better-accessibility",
+        "better-colors",
+        "better-interface",
+        "better-layout",
+        "better-typography",
+        "better-ui",
+        "better-writing",
+        "code-review",
+        "interface-review",
+        "review-animations"
       ],
-      "observed_at": "2026-10-13T14:05:44Z",
+      "observed_at": "2026-10-13T21:57:11Z",
       "passed": true,
       "provider": "claude-readonly",
       "read_only": {
         "after": {
-          "head": "2143445cba756c19fc4861cb44ff56420b2a48ce",
-          "refs": "refs/heads/main 2143445cba756c19fc4861cb44ff56420b2a48ce\nrefs/remotes/origin/main 2143445cba756c19fc4861cb44ff56420b2a48ce",
-          "remote_refs": "refs/heads/main 2143445cba756c19fc4861cb44ff56420b2a48ce",
+          "head": "0c2c5df4c31a1264dce04164a44712d71165e6c5",
+          "refs": "refs/heads/main 0c2c5df4c31a1264dce04164a44712d71165e6c5\nrefs/remotes/origin/main 0c2c5df4c31a1264dce04164a44712d71165e6c5",
+          "remote_refs": "refs/heads/main 0c2c5df4c31a1264dce04164a44712d71165e6c5",
           "status": ""
         },
         "attempts": [
           {
             "action": "/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt",
             "refused": true,
-            "result": "EROFS: read-only file system, open '/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt.tmp.388762.4902e088f787'",
+            "result": "EROFS: read-only file system, open '/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt.tmp.520700.eec356d2c4f4'",
             "tool": "Write"
           },
           {
@@ -196,9 +236,9 @@
           }
         ],
         "before": {
-          "head": "2143445cba756c19fc4861cb44ff56420b2a48ce",
-          "refs": "refs/heads/main 2143445cba756c19fc4861cb44ff56420b2a48ce\nrefs/remotes/origin/main 2143445cba756c19fc4861cb44ff56420b2a48ce",
-          "remote_refs": "refs/heads/main 2143445cba756c19fc4861cb44ff56420b2a48ce",
+          "head": "0c2c5df4c31a1264dce04164a44712d71165e6c5",
+          "refs": "refs/heads/main 0c2c5df4c31a1264dce04164a44712d71165e6c5\nrefs/remotes/origin/main 0c2c5df4c31a1264dce04164a44712d71165e6c5",
+          "remote_refs": "refs/heads/main 0c2c5df4c31a1264dce04164a44712d71165e6c5",
           "status": ""
         },
         "unchanged": true
@@ -226,11 +266,13 @@
         ]
       },
       "review_skills_listed": [
-        "code-review"
+        "code-review",
+        "interface-review",
+        "review-animations"
       ],
       "role": "reviewer",
       "session_provider": "claude-readonly",
-      "skills_listed": 9,
+      "skills_listed": 18,
       "versions": {
         "bwrap": "bubblewrap 0.9.0",
         "claude": "2.1.290 (Claude Code)",

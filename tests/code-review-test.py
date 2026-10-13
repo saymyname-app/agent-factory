@@ -703,8 +703,17 @@ class CodeReviewTest(unittest.TestCase):
         self.assertEqual(
             {"ok", "convoy", "ticket", "kind", "commit", "base", "repo", "diff", "spec", "ticket_text", "models",
              "independence", "skill", "axes", "citation_sources", "standards", "records", "tests", "questions",
-             "answers", "review_shape"}, set(brief))
+             "answers", "review_shape", "interface"}, set(brief))
+        self.assertFalse(brief["interface"])
         self.assertNotIn("sections", json.dumps(brief["records"]))
+
+    def test_brief_exposes_an_interface_ticket_to_the_reviewer_formula(self):
+        tracker = json.loads(self.tracker.read_text())
+        tracker["beads"][SLICE]["description"] += "\n\n## Validated Prototype\n\n- branche : prototype/interface\n- commit : " + self.base + "\n- chemin : prototype.html\n- états : accueil\n"
+        self.tracker.write_text(json.dumps(tracker))
+        self.finished_slice()
+        self.settle()
+        self.assertTrue(json.loads(self.brief_given())["interface"])
 
     def test_brief_is_refused_when_no_review_is_open(self):
         self.finished_slice()

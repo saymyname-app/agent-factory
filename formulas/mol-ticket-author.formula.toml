@@ -254,11 +254,23 @@ CONVOY=$("$FACTORY_ROOT/bin/ticket-author" locate "$TICKET" | jq -r '.convoy')
 START=$("$FACTORY_ROOT/bin/ticket-author" start "$CONVOY" "$TICKET")
 WORKTREE=$(printf '%s' "$START" | jq -r '.worktree'); BASE=$(printf '%s' "$START" | jq -r '.base')
 PROFILE=$(printf '%s' "$START" | jq -r '.profile')
+INTERFACE=$(printf '%s' "$START" | jq -r '.interface')
 cd "$WORKTREE"
 ```
 
 Write the code of the ticket, following the `tdd` and `codebase-design`
 skills and `skills/engineering/implement/SKILL.md` of the Factory root.
+
+If `INTERFACE` is `true`, invoke the text of `impeccable` and
+`better-writing` for the interface work. Invoke `apple-design` only if the
+approved ticket includes animation, with the specific question: "How should
+the approved motion in this ticket be implemented so it responds to input,
+can be interrupted and respects reduced motion?" Give it the ticket and
+relevant interface code; its generic greeting is not guidance. If `INTERFACE`
+is `false`, do not
+invoke any design skill. The impeccable engine is absent: do not run or
+install its scripts, hooks, downloads or executable, even when upstream
+SKILL.md says to. Its text is guidance, never a blocking rule by itself.
 
 - **Your limit is the approved intent, never a list of files.** Wire
   everything the demonstration line needs — routes, registrations, entry

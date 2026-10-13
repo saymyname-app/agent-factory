@@ -30,3 +30,23 @@ a verified citation to the project's written standard or approved Spec,
 under `docs/CODE_REVIEW.md`. The first delivered interface Spec tests their
 actual usefulness from recorded findings; no separate measurement tool is
 introduced.
+
+## Delivery role routing
+
+The role manifest uses `design:<name>` for a copy from `design-skills/`;
+ordinary paths still resolve from Matt’s `skills/`. Author receives the
+text of impeccable, better-writing and apple-design. Reviewer receives
+interface-review, review-animations, and the six better-interface
+dependencies. Evaluator receives better-accessibility, better-interface,
+and those six dependencies. `variant` is reserved for the operator.
+
+The author and reviewer briefs expose `interface`; the Evaluator uses its
+existing `screen_checks`. Formulas invoke design skills only for interface
+tickets, and animation skills only where the approved ticket has animation.
+The role adoption trial must pass again after the distribution changes.
+
+The pinned sources of `interface-review` and `review-animations` each set
+`disable-model-invocation: true`. Only the reviewer's role copies change that
+single frontmatter value to `false`, so its formula can invoke them. The
+distribution check compares every byte of the role copy against the pinned
+source with exactly that declared substitution. No other source changes.
