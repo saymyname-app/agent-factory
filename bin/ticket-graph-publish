@@ -2234,11 +2234,11 @@ def unapproved_patch_refusals(
 
 def withdrawal_refusals(
     parsed: dict[str, Any], tickets: list[dict[str, Any]], members: dict[str, dict[str, Any]],
-    register: str | None,
+    register: str | None, draft_id: str,
 ) -> tuple[dict[str, str], list[tuple[str, str]]]:
     """Spec §9: a ticket leaves the graph only by a resolved Planning
-    Exception. Returns the withdrawn tickets (key -> Planning Exception) and
-    why the withdrawal is refused."""
+    Exception or an in-progress resolution authorized for this exact draft
+    and ticket. Returns withdrawn tickets and any refusal reasons."""
     if "withdrawn" not in parsed:
         return {}, []
     entries = parsed["withdrawn"]
@@ -2246,6 +2246,7 @@ def withdrawal_refusals(
     if not isinstance(entries, list) or not entries:
         return {}, [(WHERE_DRAFT, f"withdrawn mal formé ({expected})")]
     decisions: dict[str, Any] | None = None
+    authorizations: dict[str, Any] = {}
     refusals: list[tuple[str, str]] = []
     if not register:
         refusals.append((
@@ -2256,6 +2257,7 @@ def withdrawal_refusals(
     else:
         status = run_subtool([tool_path("PLANNING_EXCEPTION_BIN", "planning-exception"), "status", register])
         decisions = status.get("decisions") if isinstance(status.get("decisions"), dict) else {}
+        authorizations = status.get("patch_authorizations") if isinstance(status.get("patch_authorizations"), dict) else {}
     drafted = {str(ticket["id"]) for ticket in tickets}
     withdrawn: dict[str, str] = {}
     for entry in entries:
@@ -2277,7 +2279,11 @@ def withdrawal_refusals(
             refusals.append((key, f"retiré, mais {members[key]['id']} est fermé : un ticket livré ou déjà retiré ne se retire pas"))
         if not isinstance(decision, str) or not decision.strip():
             refusals.append((key, "retiré sans Planning Exception (champ planning_exception : l'identifiant de la décision résolue)"))
-        elif decisions is not None and decisions.get(decision) != "resolved":
+        elif decisions is not None and not (
+            decisions.get(decision) == "resolved" or
+            (decisions.get(decision) == "open" and
+             authorizations.get(decision) == {"draft": draft_id, "bead": members[key]["id"]})
+        ):
             state = decisions.get(decision)
             refusals.append((
                 key,
@@ -2413,7 +2419,7 @@ def cmd_bd_patch_new_flow(args: argparse.Namespace, bead: dict[str, Any], human_
                 ))
             elif ticket.get("kind") in TICKET_KINDS:
                 refusals += [(key, reason) for reason in frozen_field_refusals(ticket, states[members[key]["id"]])]
-        withdrawn, withdrawal = withdrawal_refusals(parsed, tickets, members, args.planning_exception_register)
+        withdrawn, withdrawal = withdrawal_refusals(parsed, tickets, members, args.planning_exception_register, draft_id)
         refusals += withdrawal
         if not approved:
             refusals += unapproved_patch_refusals(parsed, tickets, members, human_approver)

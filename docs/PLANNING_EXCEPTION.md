@@ -17,18 +17,19 @@ parking twice.
 
 `resolve --kind tactical` closes the decision and unparks with no artifact
 change -- a clarification doesn't alter the Spec or Ticket Graph Draft.
-`resolve --kind behavioral|topology` requires an already-drafted, already-
-validated revised Ticket Graph Draft and routes it through
-`bin/ticket-graph-publish patch` (B06's extension for this ticket) -- the same
-deterministic to-tickets door, never a second one. `patch` refuses to touch
+`resolve --kind behavioral|topology --project <id>` requires an approved
+revised Ticket Graph Draft Bead and routes it through
+`bin/ticket-graph-publish bd-patch` -- the same
+deterministic to-tickets door, never a second one. `bd-patch` refuses to touch
 any ticket that is already delivered (`status: closed`), updates unfinished
 tickets in place keeping their IDs, and creates Beads only for genuinely new
 scope. If the patch fails, `resolve` fails too and the decision stays open,
 still parked.
 
-This is a deterministic synthetic prototype operating on a caller-supplied
-JSON register and graph snapshot, the same fixture-bound scope B04
-declared -- it does not itself read or write live Beads.
+The register and graph snapshot are caller-supplied JSON. `raise` and
+`tactical` resolution do not write live Beads. Behavioral/topology resolution
+invokes the live `bd-patch` door, which validates the approved draft and writes
+the revised graph to Beads only after its checks pass.
 
 ## Run it
 
@@ -51,7 +52,7 @@ python3 tests/planning-exception-test.py
 | `classify --kind repair\|semantic\|topology` | Read-only. Reports whether the signal requires a Planning Exception (`repair`: no; `semantic`/`topology`: yes). |
 | `init --run --out` | Creates a new empty register bound to a Planning/Wayfinding Run id. |
 | `raise <register> --graph --bead --kind semantic\|topology --run --decision-id --summary --raised-by` | Refuses `repair`. Computes the affected bead's descendants from the graph snapshot and parks `{bead} ∪ descendants`. If an open decision already covers that bead, records a `duplicate_detected` history event and returns the existing decision id instead of creating a second one. |
-| `resolve <register> --decision --kind tactical\|behavioral\|topology --note [--patched-draft]` | Requires the decision to be `open`. `tactical` unparks immediately. `behavioral`/`topology` require `--patched-draft` and invoke `ticket-graph-publish patch`; on failure the decision stays open and parked, on success it resolves and unparks. |
+| `resolve <register> --decision --kind tactical\|behavioral\|topology --note [--patched-draft <bead-id> --project <id>]` | Requires the decision to be `open`. `tactical` unparks immediately. `behavioral`/`topology` require `--patched-draft` and authorize only that draft for `ticket-graph-publish bd-patch`; on failure the decision stays open and parked, on success it resolves and unparks. |
 | `status <register>` | Reports each decision's status and the union of all currently parked beads. |
 
 ## Acceptance mapping
@@ -61,8 +62,15 @@ python3 tests/planning-exception-test.py
 | Technical repair that fits the approved slice remains inside that slice. | `test_classify_repair_never_requires_a_planning_exception` and `test_raise_rejects_a_repair_kind_signal` prove `repair` never creates a Planning Exception and `raise` refuses it outright. |
 | A semantic or topology signal creates one planning-plane decision and parks only descendants that depend on it. | `test_raise_parks_only_the_affected_bead_and_its_descendants` and `test_raise_on_a_bead_with_no_descendants_parks_only_itself` prove the parked set is exactly `{bead} ∪ descendants(bead)` against a graph fixture with unrelated siblings. |
 | Unrelated Ready Frontier work continues. | The same tests assert `af-b09`/`af-b11` (unrelated beads in the fixture graph) never appear in `parked`. |
-| Tactical clarification resumes the existing slice; behavioral or topology change creates immutable revised artifacts and a validated patch to unfinished work through the sole to-tickets authority. | `test_resolve_tactical_unparks_with_no_artifact_patch` proves tactical resolve unparks with `patch: null`. `test_resolve_behavioral_routes_through_ticket_graph_publish_patch` and `test_resolve_behavioral_leaves_the_decision_open_when_the_patch_fails` prove behavioral/topology resolve calls `ticket-graph-publish patch` and only unparks on success. `tests/ticket-graph-publish-test.py::test_patch_refuses_to_touch_an_already_delivered_ticket` and `test_patch_updates_unfinished_tickets_and_creates_new_ones` prove the door itself protects delivered work and creates only new scope. |
+| Tactical clarification resumes the existing slice; behavioral or topology change creates immutable revised artifacts and a validated patch to unfinished work through the sole to-tickets authority. | `test_resolve_tactical_unparks_with_no_artifact_patch` proves tactical resolve unparks with `patch: null`. `test_resolve_behavioral_routes_through_ticket_graph_publish_patch` and `test_resolve_behavioral_leaves_the_decision_open_when_the_patch_fails` prove behavioral/topology resolve calls `ticket-graph-publish bd-patch` with the register and only unparks on success. `tests/ticket-graph-publish-test.py::test_patch_refuses_to_touch_an_already_delivered_ticket` and `test_patch_updates_unfinished_tickets_and_creates_new_ones` prove the door itself protects delivered work and creates only new scope. |
 | Classification and duplicate-escalation evidence is recorded in the Adaptation Register. | `test_raise_on_an_already_open_bead_is_detected_as_duplicate_not_double_parked` proves a second raise on covered work is detected as a duplicate and recorded in register history instead of double-parking; `docs/ADAPTATION_REGISTER.md` AR-003 cites this evidence. |
+
+The live `bd-patch` gate accepts a resolved decision or a temporary authorization
+for this exact revised draft and withdrawn bead. During `resolve`, the decision
+remains open and its descendants parked while the patch runs. Failure removes
+that authorization; an interrupted attempt remains parked and must be
+reconciled or retried. The gate still validates the revised graph, Spec,
+approvals and delivery status before any write.
 
 ## Scope of proof
 
@@ -78,11 +86,12 @@ python3 tests/planning-exception-test.py
 - **OBSERVED**: the deterministic CLI output and the acceptance-mapped tests
   above, including the duplicate-detection, tactical-resume, and
   patch-failure-leaves-decision-open paths.
-- **PROVEN**: within this fixture set, that `classify`/`raise`/`resolve`/
-  `status` hold every acceptance criterion against a plain JSON register and
-  a plain JSON graph snapshot, using the same `fcntl.flock` read-modify-write
-  discipline B04 proved for concurrent map writers, and that the extended
-  `ticket-graph-publish patch` door protects already-delivered tickets.
+- **PROVEN**: the command tests cover the JSON register and graph snapshot,
+  the `fcntl.flock` read-modify-write discipline, and an end-to-end topology
+  resolution through the actual `bd-patch` command against a fake tracker.
+  The patch is bound to its draft and affected ticket; failed patches leave
+  the decision open and the affected work parked. The door's separate tests
+  protect already-delivered tickets.
 
 Not proven here: translating a live Beads Delivery Work Graph into the
 snapshot format `raise` consumes, or a live Planning Run actually authoring

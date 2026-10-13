@@ -176,6 +176,7 @@ class PlanningExceptionTest(unittest.TestCase):
         result = json.loads(self.run_tool(
             "resolve", register, "--decision", "pd-1", "--kind", "behavioral",
             "--note", "AC changed, revised draft published", "--patched-draft", draft,
+            "--project", "agent-factory",
             env={
                 "PLANNING_EXCEPTION_PUBLISH_BIN": str(FAKE_PUBLISH),
                 "PLANNING_EXCEPTION_PUBLISH_LOG": str(log),
@@ -188,8 +189,9 @@ class PlanningExceptionTest(unittest.TestCase):
 
         calls = [json.loads(line) for line in log.read_text().splitlines()]
         self.assertEqual(
-            [["patch", str(draft), "--author", "planning-exception:pd-1",
-              "--reason", "AC changed, revised draft published"]],
+            [["bd-patch", str(draft), "--author", "planning-exception:pd-1",
+              "--reason", "AC changed, revised draft published",
+              "--planning-exception-register", str(register), "--project", "agent-factory"]],
             calls,
         )
 
@@ -198,6 +200,7 @@ class PlanningExceptionTest(unittest.TestCase):
         self.assertEqual("resolved", decision["status"])
         self.assertEqual("behavioral", decision["resolution_kind"])
         self.assertEqual([], decision["parked"])
+        self.assertNotIn("patch_authorization", decision)
 
     def test_resolve_behavioral_leaves_the_decision_open_when_the_patch_fails(self):
         register, _ = self.init()
@@ -209,7 +212,7 @@ class PlanningExceptionTest(unittest.TestCase):
         draft.write_text("placeholder revised draft\n")
         proc = self.run_tool(
             "resolve", register, "--decision", "pd-1", "--kind", "topology",
-            "--note", "n", "--patched-draft", draft,
+            "--note", "n", "--patched-draft", draft, "--project", "agent-factory",
             env={
                 "PLANNING_EXCEPTION_PUBLISH_BIN": str(FAKE_PUBLISH),
                 "PLANNING_EXCEPTION_PUBLISH_FAIL": "1",
@@ -223,6 +226,7 @@ class PlanningExceptionTest(unittest.TestCase):
         decision = state["decisions"]["pd-1"]
         self.assertEqual("open", decision["status"])
         self.assertEqual(["af-b08", "af-b10"], decision["parked"])
+        self.assertNotIn("patch_authorization", decision)
 
     def test_resolve_rejects_an_already_resolved_decision(self):
         register, _ = self.init()

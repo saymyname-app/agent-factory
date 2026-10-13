@@ -20,7 +20,11 @@ if os.environ.get("PLANNING_EXCEPTION_PUBLISH_FAIL"):
     print("fake ticket-graph-publish: forced failure", file=sys.stderr)
     raise SystemExit(1)
 
-if len(args) >= 2 and args[0] == "patch":
+if len(args) >= 2 and args[0] == "bd-patch":
+    register = Path(args[args.index("--planning-exception-register") + 1])
+    decision = json.loads(register.read_text())["decisions"]["pd-1"]
+    assert decision["status"] == "open" and decision["parked"]
+    assert decision["patch_authorization"] == {"draft": args[1], "bead": decision["bead"]}
     print(json.dumps({
         "ok": True,
         "graph_digest": "sha256:" + "9" * 64,
