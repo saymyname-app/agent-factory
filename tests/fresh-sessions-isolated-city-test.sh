@@ -318,7 +318,7 @@ required_ci = "CI"
 sling_target = "delivery-author"
 formulas = "mol-ticket-author,mol-test-review"
 TOML
-jq '.rigs = ["trial"]' "$ROOT/$FIXTURE/descriptor.json" > "$CITY/config/project-descriptors/trial.json"
+jq '.rigs = ["trial"] | .stacks = {"trial": ["fixture-stack"]}' "$ROOT/$FIXTURE/descriptor.json" > "$CITY/config/project-descriptors/trial.json"
 jq '{contract, max_sessions, start, test_review: (.test_review | .rig = "trial" | .timeout_seconds = 600)}' \
   "$ROOT/config/delivery-flow.json" > "$CITY/config/delivery-flow.json"
 cp "$ROOT/config/delivery-roles.json" "$CITY/config/delivery-roles.json"

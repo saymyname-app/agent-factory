@@ -309,3 +309,13 @@ API to a prototype. The black-box seam of `bin/tdd-step` records
 HTTP entry points: a project whose only interface is a command line has no
 mechanical proof of its seam yet. A recipe names its interpreter itself
 (`node`); only `{python}` is substituted by the launcher.
+
+## Standards stack declaration
+
+Each `config/project-descriptors/<project>.json` declares `stacks` as an object
+with exactly one key per rig in `rigs`. Each value is a non-empty list of
+stack identifiers. The declaration describes the rig; it does not activate
+standards or reuse the Planning Profile's `checks` field. `bin/project-standards
+status` reads each rig's `STANDARDS.md` and `DESIGN.md` to report whether code
+and design standards are present. A rig without either file remains registered
+and is reported as `sans` for that domain.

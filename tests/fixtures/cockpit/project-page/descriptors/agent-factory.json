@@ -3,6 +3,7 @@
   "project_id": "agent-factory",
   "display_name": "Usine",
   "rigs": ["agent-factory"],
+  "stacks": {"agent-factory": ["fixture-stack"]},
   "knowledge_repo": "saymyname-app/agent-factory",
   "roadmap_path": "docs/roadmap.toml",
   "rituals_status_command": "bin/rituals-status",

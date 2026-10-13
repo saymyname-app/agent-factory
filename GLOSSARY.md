@@ -384,3 +384,43 @@ _Avoid_: production City, Cockpit test, orchestration implementation
 The instructions, tools, context, feedback loops, and checks that shape how an agent role performs its work.
 _French conversational alias_: environnement agentique, harness
 _Avoid_: Software Factory, orchestrator, agent
+
+## Project standards
+
+**Standard**:
+A rule a project commits to hold on every delivery, enforced either by a tool or by a written rule a reviewer can cite. A check is the mechanism that holds a Standard, not the Standard itself. Taste is judged on a Validated Prototype until it becomes a written or configured rule.
+_French conversational alias_: standard
+_Avoid_: baseline, guideline, convention, best practice, check
+
+**Code Standard**:
+A Standard about code patterns, boundaries, file layout, or writing form.
+_French conversational alias_: standard de code
+
+**Design Standard**:
+A Standard about visual design, interaction, motion, or accessibility.
+_French conversational alias_: standard de design
+
+**Project Standards**:
+The Standards owned by a project and kept in each of its rig repositories.
+_French conversational alias_: standards du projet
+
+**Default Standards**:
+A stack-specific starting set copied from the Factory into a rig; the copy belongs to the project and does not inherit later changes.
+_French conversational alias_: standards par défaut
+
+**Derogation**:
+Benjamin's recorded permission for a Standard to differ at one named place, with his words, the Paris date and an end. It does not change the Standard everywhere.
+_French conversational alias_: dérogation
+_Avoid_: Planning Exception
+
+**Frozen List**:
+The snapshot of pre-existing violations when Standards are activated on an existing rig; its entries may only decrease unless a named exception passes the ratchet.
+_French conversational alias_: liste figée
+
+**Ratchet**:
+The check that prevents a Frozen List from growing at delivery.
+_French conversational alias_: cliquet
+
+**Never-Frozen Rule**:
+A rule whose violations are corrected at activation instead of entering a Frozen List, especially likely bugs.
+_French conversational alias_: règle jamais figée

@@ -3,6 +3,7 @@
   "project_id": "fixture-project-b",
   "display_name": "Fixture B",
   "rigs": ["fixture-rig-b-back", "fixture-rig-b-front"],
+  "stacks": {"fixture-rig-b-back": ["fixture-stack"], "fixture-rig-b-front": ["fixture-stack"]},
   "knowledge_repo": "zz-fixture/knowledge-b",
   "roadmap_path": "knowledge/roadmap.toml",
   "rituals_status_command": "tools/rituals-status.sh",

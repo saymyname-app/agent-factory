@@ -294,7 +294,7 @@ sling_target = "trial-author"
 formulas = "trial-start,mol-end-review"
 TOML
 done
-jq --arg rig "$RIG" '.rigs = [$rig]' "$ROOT/$FIXTURE/descriptor.json" > "$CITY/config/project-descriptors/$PROJECT.json"
+jq --arg rig "$RIG" '.rigs = [$rig] | .stacks = {($rig): ["fixture-stack"]}' "$ROOT/$FIXTURE/descriptor.json" > "$CITY/config/project-descriptors/$PROJECT.json"
 jq -n --argjson n "$CEILING" --arg rig "$RIG" '{contract: "agent-factory-delivery-flow/v1", max_sessions: $n,
   start: {formula: "trial-start", role: null},
   outcome_evaluation: {formula: "mol-outcome-evaluation", role: "evaluator", rig: $rig, timeout_seconds: 600, start_timeout_seconds: 30},
