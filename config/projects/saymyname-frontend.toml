@@ -13,3 +13,8 @@ required_ci = "Frontend CI"
 required_check = "Tests and build"
 sling_target = "claude"
 formulas = "mol-do-work,mol-scoped-work,mol-polecat-commit,build-basic"
+# human_approver (af-vx1tkf): the tools that name a project by the rig of a
+# ticket (bin/owner-answer, bin/correction-round) read it here; it is the
+# approver config/projects/saymyname.toml declares for the whole project,
+# and tests/project-planning-profile-test.py refuses a rig that differs.
+human_approver = "benjamin-hurand"

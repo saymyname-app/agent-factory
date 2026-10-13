@@ -3212,6 +3212,7 @@ def cmd_mark(args: argparse.Namespace) -> int:
             raise Refusal(f"le ticket {ticket_id} n'appartient pas au convoi {args.convoy}")
     establishing = set(args.establishes_launch_recipe) | {
         ticket["id"] for ticket in tickets if KEY_LAUNCH_RECIPE in metadata_of(ticket)
+        and GATE_PREFIX + "withdrawn" not in metadata_of(ticket)
     }
     if len(establishing) > 1:
         raise Refusal(
