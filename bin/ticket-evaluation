@@ -621,14 +621,20 @@ def reap(convoy: Convoy, ticket: dict[str, Any], keep: list[str], withdraw: bool
     local = [str(path) for pattern in ("*.json", "*.trial")
              for path in product_folder(convoy.id, ticket["id"]).glob(pattern)]
     stale = [path for path in dict.fromkeys([*tracked, *local]) if path not in keep]
-    if not stale:
+    if not stale and not (withdraw and evaluation_of(ticket).get("request")):
         return []
     for path in stale:
         stop_product(path)
+    if withdraw:
+        for launched in (evaluation_of(ticket).get("request") or {}).get("launches", []):
+            tool = os.environ.get("TICKET_EVALUATION_CANCEL_BIN") or str(BIN / "evaluation-launch-cancel")
+            cancelled = run([tool, launched["bead"]], timeout=60)
+            if cancelled.returncode:
+                raise Refusal(f"lancement d'évaluation non libéré ({launched['bead']}) : {detail_of(cancelled)}")
     args: list[str] = ["--withdraw"] if withdraw else []
     for path in stale:
         args += ["--state-file", path]
-    if any(path in tracked for path in stale):
+    if any(path in tracked for path in stale) or withdraw:
         state_write("release-evaluation", convoy.id, ticket["id"], *args)
     return stale
 
@@ -897,8 +903,8 @@ def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> d
         request = evaluation_of(ticket).get("request")
         current = request if request and what == "open" and request["commit"] == detail else None
         # An evaluation left open on a ticket that is no longer to be
-        # evaluated at that commit is withdrawn with its products; the one
-        # of a stopped ticket stays, as what stopped it.
+        # evaluated at that commit is withdrawn with its products. The
+        # launch history remains, but an open request must not survive a stop.
         preparing = prepared_products(convoy, ticket_id, detail) if what in ("open", "startup") and not current else []
         # A completed/outage round must get fresh products. Only records
         # not yet attached to any evaluation represent partial preparation.
@@ -906,7 +912,7 @@ def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> d
         preparing = [entry for entry in preparing if entry["state_file"] not in previous_live]
         keep = current["environment"] if current else preparing
         reap(convoy, ticket, [entry["state_file"] for entry in keep],
-             withdraw=request is not None and current is None and not ticket.get("stop"))
+             withdraw=request is not None and current is None)
         stop = own_stop(ticket)
         if stop:
             return {"ticket": ticket_id, "action": "escalated" if raise_stop(convoy.id, ticket, stop) else "none"}

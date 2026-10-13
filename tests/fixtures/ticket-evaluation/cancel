@@ -1,0 +1,2 @@
+#!/bin/sh
+printf '%s\n' "$1" >> "$TICKET_EVALUATION_CANCEL_LOG"

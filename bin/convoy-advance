@@ -509,7 +509,7 @@ class Convoy:
         due = []
         for t in self.tickets:
             stop = t.get("stop") or {}
-            if (t.get("evaluation") or {}).get("live"):
+            if (t.get("evaluation") or {}).get("live") or (t.get("evaluation") or {}).get("request"):
                 due.append(t["id"])
             elif stop:
                 if stop.get("reason") in EVALUATION_STOPS and "raised" not in stop:
