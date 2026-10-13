@@ -1502,6 +1502,21 @@ class TicketEvaluationTest(unittest.TestCase):
                          (self.tmp / "cancel.log").read_text().splitlines())
         self.record_refused(handed, "aucune évaluation n'est demandée")
 
+    def test_a_stopped_ticket_with_no_live_product_still_releases_its_launch(self):
+        _, request = self.open_evaluation()
+        self.state("stop-ticket", CONVOY, SLICE, "--reason", "evaluation_no_result",
+                   "--detail", "deux lancements sans résultat")
+        self.tool("cleanup")
+        self.assertIn("request", self.evaluation())
+        self.assertNotIn("live", self.evaluation())
+
+        self.settle()
+
+        self.assertNotIn("request", self.evaluation())
+        self.assertEqual([request["launches"][0]["bead"]],
+                         (self.tmp / "cancel.log").read_text().splitlines())
+        self.assertNotIn("evaluation", self.shown()["verdicts"])
+
     def test_a_withdrawn_ticket_with_an_open_evaluation_releases_its_request_and_product(self):
         _, request = self.open_evaluation()
         self.state("record-gate", CONVOY, SLICE, "--gate", "withdrawn")
