@@ -513,6 +513,15 @@ class TicketAuthorTest(unittest.TestCase):
         self.start()
         self.assertTrue(self.gate("workspace")["passed"])
 
+    def test_gate_workspace_looks_for_the_worktree_in_the_same_place_whatever_home_is(self):
+        # Gas City runs the check with HOME set to the city root (af-r35155).
+        self.start()
+        named = [self.refused("gate", CONVOY, T1, "--step", "workspace", mention="worktree du ticket",
+                              env={"TICKET_AUTHOR_WORKTREES_DIR": "", "HOME": str(self.tmp / home)})
+                 for home in ("city-root", "elsewhere")]
+        self.assertEqual(named[0], named[1])
+        self.assertNotIn(str(self.tmp), named[0])
+
     def test_gate_workspace_refuses_a_branch_that_did_not_leave_from_the_integration_branch(self):
         self.start()
         # The same ticket branch, rebuilt from a commit the integration branch does not hold.

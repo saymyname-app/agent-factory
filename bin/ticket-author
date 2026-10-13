@@ -48,6 +48,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import pwd
 import subprocess
 import sys
 import tempfile
@@ -215,8 +216,19 @@ def rig_profile(rig: str) -> Path | None:
     return None
 
 
+def account_home() -> Path:
+    """The home of the account, not $HOME: Gas City runs an exec check with
+    HOME set to the city root, so the gate looked for the work tree where the
+    author session, which keeps the home of the account, had not made it
+    (af-r35155)."""
+    try:
+        return Path(pwd.getpwuid(os.getuid()).pw_dir)
+    except KeyError:
+        return Path.home()
+
+
 def worktree_of(ticket_id: str) -> Path:
-    base = os.environ.get("TICKET_AUTHOR_WORKTREES_DIR") or Path.home() / ".local/share/agent-factory-runtime-worktrees"
+    base = os.environ.get("TICKET_AUTHOR_WORKTREES_DIR") or account_home() / ".local/share/agent-factory-runtime-worktrees"
     return Path(base) / ticket_id
 
 
