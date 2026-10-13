@@ -1,0 +1,11 @@
+{
+  "generated_at": "2026-10-12T12:00:00+02:00",
+  "synthetic": true,
+  "ui": {
+    "id": "journal-loading",
+    "page": "journal",
+    "state": "loading"
+  },
+  "visible_text": "Journal\n\nLes changements qui comptent, leurs conséquences et la suite.\n\nÉvénements utiles\nLogs techniques\nSources disponibles\nTout\nBugs\nPropositions\nChangements\nDécisions\nÉvénements\nLecture en cours…",
+  "production_writes": 0
+}

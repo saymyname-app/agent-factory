@@ -1,0 +1,11 @@
+{
+  "generated_at": "2026-10-12T12:00:00+02:00",
+  "synthetic": true,
+  "ui": {
+    "id": "health-loading",
+    "page": "health",
+    "state": "loading"
+  },
+  "visible_text": "Usine\n\nRessources, connexions et réglages de l’environnement d’exécution.\n\nLecture en cours…",
+  "production_writes": 0
+}

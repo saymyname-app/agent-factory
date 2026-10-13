@@ -1,0 +1,13 @@
+{
+  "generated_at": "2026-10-12T12:00:00+02:00",
+  "synthetic": true,
+  "ui": {
+    "id": "journal-content",
+    "page": "journal",
+    "selected": "result",
+    "theme": "dark",
+    "width": 1440
+  },
+  "visible_text": "Journal\n\nLes changements qui comptent, leurs conséquences et la suite.\n\nÉvénements utiles\nLogs techniques\nSources disponibles\nTout\nBugs\nPropositions\nChangements\nDécisions\nÉvénements\nAujourd’hui\n14:48 (Paris) · Usine · Proposition\nDeux améliorations proposées après une revue\n\nTu peux choisir les problèmes à faire préparer.\n\nVoir les propositions\nDétail et source\n14:42 (Paris) · Usine · Changement\nLe cockpit est prêt à essayer\n\nUn résultat attend ton avis.\n\nVoir le résultat\nDétail et source\n14:36 (Paris) · Notes · Bug\nUne recherche sur des notes longues échoue\n\nLe défaut a été enregistré ; la correction reste à préparer.\n\nVoir le projet\nDétail et source\n14:20 (Paris) · Notes · Décision\nLe format CSV a été choisi\n\nL’usine peut poursuivre la préparation de l’export.\n\nVoir le projet\nDétail et source\nHier\n18:10 (Paris) · Portfolio · Changement\nLa présentation a été fusionnée\n\nLe changement est intégré ; sa publication n’est pas attestée ici.\n\nVoir le projet\nDétail et source\n16:05 (Paris) · Usine · Événement\nLa connexion au superviseur a été rétablie\n\nLes lectures ont repris après 3 minutes d’interruption.\n\nVoir les connexions\nDétail et source",
+  "production_writes": 0
+}

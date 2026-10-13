@@ -1,0 +1,11 @@
+{
+  "generated_at": "2026-10-12T12:00:00+02:00",
+  "synthetic": true,
+  "ui": {
+    "id": "release-report",
+    "page": "rituals",
+    "setup": "ritualId='release';ritualTarget='Notes';releaseDraftProject='Notes';releaseDraft=JSON.parse(JSON.stringify(releasePlans.Notes));ritualPhase='report';render()"
+  },
+  "visible_text": "← Rituels\nPréparer la prochaine release\n\nNotes · cible révisable\n\n1 · Périmètre\n2 · Préparation\n3 · Ton cadrage\n4 · Projet mis à jour\nProposition à examiner\n\nGarde une cible provisoire et un prochain jalon précis. Les questions peuvent rester ouvertes.\n\nRésultat attendu pour cette release\nAcquis à conserver\n\n✓ Créer et retrouver une note\n\n✓ Conserver ses notes après reconnexion\n\nCritères restant à satisfaire\n\n○ Exporter les notes au format choisi\n\n○ Vérifier le parcours sans assistance\n\nLe partage de notes est-il nécessaire dès cette release ?\nGarder la question ouverte\nReporter après cette release\nInclure dans la cible de cette release\nProchain jalon\nComment vérifier ce jalon\nEstimation non disponible\n\nHistorique comparable insuffisant. Prochaine réévaluation après le jalon.\n\nSources et inconnues\nRevenir au projet sans conserver\nConserver ce cadrage",
+  "production_writes": 0
+}
