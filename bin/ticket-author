@@ -461,6 +461,7 @@ def cmd_start(args: argparse.Namespace) -> int:
         "integration_branch": integration, "base": merge_base(repo, tip, base) or base,
         "profile": str(profile) if profile else None,
         "demonstration_line": ticket.state.get("demonstration_line"),
+        "interface": bool(ticket.state.get("interface")),
     }, indent=2, sort_keys=True, ensure_ascii=False))
     return 0
 

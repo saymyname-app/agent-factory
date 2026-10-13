@@ -112,6 +112,18 @@ its actual output, including failures and omissions; its presence is never
 a passed criterion. It grants no access to the repository and no permission
 to run launch/stop yourself. The normal commit, address and seal checks apply.
 
+If `.screen_checks` is nonempty, invoke `better-accessibility` and
+`better-interface` while evaluating the launched product. Limit both skills
+to what you can observe at the given product address and capture as sealed
+evidence. Do not follow their generic requests to read framework files,
+tokens or code in the product repository: this Evaluator is a black box.
+Translate a visual finding into `screen_findings` only with one exact
+`.screen_checks` item, one full written `DESIGN.md` rule, and the sealed
+evidence piece. A requested `path/to/file:line` from a skill is not a
+substitute for that contract. If `.screen_checks` is empty, invoke no design
+skill. The skills may use their vendored `better-*` dependencies only within
+these bounds. Their opinions alone cannot block.
+
 For an interface ticket, read `.design.text` and verify every item of
 `.screen_checks` on the launched product. If a visible deviation violates a
 written rule, add it to `screen_findings`: copy one check from the brief and

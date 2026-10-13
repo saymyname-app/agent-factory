@@ -833,7 +833,7 @@ def cmd_brief(args: argparse.Namespace) -> int:
     listing = git(repo, "rev-list", "--reverse", f"{base}..{commit}")
     brief: dict[str, Any] = {
         "ok": True, "convoy": args.convoy, "ticket": args.ticket, "kind": request["kind"], "commit": commit,
-        "base": base, "repo": str(repo),
+        "base": base, "repo": str(repo), "interface": bool(ticket.get("interface")),
         "diff": {
             "fixed_point": base, "command": f"git -C {repo} diff {base}...{commit}",
             "files": changed_files(repo, base, commit), "commits": listing.stdout.split(),

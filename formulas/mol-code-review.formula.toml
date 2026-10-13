@@ -43,7 +43,7 @@ TICKET_CONVOY=$(printf '%s\n' "$REVIEW_TEXT" | sed -n 's/^convoy: //p')
 TICKET=$(printf '%s\n' "$REVIEW_TEXT" | sed -n 's/^ticket: //p')
 FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
 "$FACTORY_ROOT/bin/code-review" brief "$TICKET_CONVOY" "$TICKET" > code-review-brief.json
-jq -r '.kind, .commit, .base, .repo, .diff.command' code-review-brief.json
+jq -r '.kind, .interface, .commit, .base, .repo, .diff.command' code-review-brief.json
 jq -r '.spec.text' code-review-brief.json > code-review-spec.md
 jq -r '.ticket_text.description, "", "Demonstration line: " + (.ticket_text.demonstration_line // "none")' code-review-brief.json > code-review-ticket.md
 ```
@@ -73,8 +73,18 @@ Invoke the skill `code-review` in the repository `.repo` with:
   the repository at `.commit`.
 
 Follow the skill as it is written: its two axes (Standards, Spec), its two
-parallel sub-agents, its smell baseline. Then turn its two reports into
-findings, one per reported point, keeping the two axes apart:
+parallel sub-agents, its smell baseline. If `.interface` is true, also invoke
+`interface-review` explicitly with the exact target `.base...commit` from
+`.diff.command`, in `.repo`; give it the ticket and Spec as the intent. The
+checked-out `HEAD` is not this ticket. If the approved ticket includes
+animation, invoke `review-animations` with the specific question: "Which
+animation or motion regressions did the diff `.base...commit` introduce in
+the changed interface files, and what evidence supports each finding?"
+Give it the exact diff and relevant files; its generic greeting is not a
+review. If `.interface` is false, invoke no design skill. These skills may
+use their vendored `better-*` dependencies; their opinions alone cannot
+block. Then turn the reports into findings, one per reported point, keeping
+the two axes apart:
 
 - `axis`: `standards` or `spec`.
 - `summary`: one line, in the Operator Language

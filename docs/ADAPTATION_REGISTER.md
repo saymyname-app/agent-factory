@@ -661,3 +661,13 @@ son champ `Baseline`.
 | Réversibilité bornée | Retirer la distribution des rôles, puis `design-skills/`, ses licences, le manifeste et le contrôle ; les standards écrits des projets restent l'autorité. |
 | Point de revue | Le comportement réel dans les sessions Claude et Codex et la qualité des constats en français sont inconnus avant la première Spec d'interface. L'installation du moteur d'impeccable reste un geste de Benjamin, hors de cette Spec. |
 | Règle conserver / remplacer / supprimer | À la fin de la première Spec d'interface livrée, lire les constats déjà enregistrés ; retirer un skill surtout contesté ou jamais cité. Aucun avis de skill ne bloque sans citation d'un standard écrit du projet. |
+
+### AR-041 — Invocation des deux skills de revue d’interface
+
+| Champ | Valeur |
+|---|---|
+| Source | Copies épinglées de `design-skills/interface-review` et `design-skills/review-animations`, PR de la tranche 8a de la Spec af-t5cgg7. |
+| Écart | Dans la seule copie du rôle `delivery-reviewer`, `disable-model-invocation: true` devient `false` dans `SKILL.md`. |
+| Cause | La formule de revue doit lancer ces skills explicitement pour les tickets d’interface ; avec le drapeau amont, Claude ne les liste pas et l’essai réel échoue. |
+| Limite | Les sources épinglées restent inchangées. `bin/role-adoption-trial verify-distribution` compare chaque octet de la copie avec cette unique substitution déclarée, puis l’essai réel vérifie le chargement. |
+| Retour | Supprimer l’adaptation et les appels de formule si la première Spec d’interface montre que ces skills n’apportent aucun constat utile. |

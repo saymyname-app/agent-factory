@@ -427,6 +427,13 @@ class TicketAuthorTest(unittest.TestCase):
         self.assertEqual("main", self.git("symbolic-ref", "--short", "HEAD"))
         self.assertEqual("La page d'accueil affiche 3", answer["demonstration_line"])
 
+    def test_start_exposes_an_interface_ticket_to_its_formula(self):
+        tracker = json.loads(self.tracker.read_text())
+        tracker["beads"][T1]["description"] += "\n\n## Validated Prototype\n\n- branche : prototype/interface\n- commit : " + self.main + "\n- chemin : prototype.html\n- états : accueil\n"
+        self.tracker.write_text(json.dumps(tracker))
+        answer, _ = self.start(real=True)
+        self.assertTrue(answer["interface"])
+
     def test_start_records_the_model_the_author_role_runs_on(self):
         # T14: the code review compares the model of its reviewer with it.
         shutil.copy(ROOT / "config" / "delivery-roles.json", self.root / "config" / "delivery-roles.json")
