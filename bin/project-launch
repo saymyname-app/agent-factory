@@ -391,7 +391,9 @@ def cmd_start(args: argparse.Namespace) -> int:
         time.sleep(0.1)
 
     if not ready:
-        cleaned = terminate_owned(launch_id) and not worktree_processes(worktree) and port_free(port)
+        cleaned = (terminate_owned(launch_id) and
+                   all(terminate(pid) for pid in worktree_processes(worktree)) and
+                   not worktree_processes(worktree) and port_free(port))
         if cleaned:
             try:
                 remove_worktree(str(repo_root), worktree, launch_id, resolved_commit)
@@ -437,6 +439,9 @@ def cmd_stop(args: argparse.Namespace) -> int:
             return 1
     if launch_id:
         stopped = terminate_owned(launch_id)
+        if stopped and worktree:
+            # A descendant may drop the marker but still hold this verified copy.
+            stopped = all(terminate(pid) for pid in worktree_processes(worktree))
         if (group and group_members(int(group))) or (worktree and worktree_processes(worktree)):
             stopped = False
     elif args.state_file:

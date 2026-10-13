@@ -275,8 +275,12 @@ Mechanism (agent interpretation): on Linux, `stop` recognises an exited process 
 its parent (a zombie) as terminated. `kill(pid, 0)` alone also succeeds for
 that state and used to spend the full five-second grace per product during
 serial evaluation cleanup (af-8cfygl). A live process still receives SIGTERM,
-keeps that grace, then receives SIGKILL if it has not exited. This does not
-change launch ownership or collect unrelated orphan processes (af-skz5cj).
+keeps that grace, then receives SIGKILL if it has not exited. After verifying
+ownership of the isolated worktree, `stop` also terminates processes whose
+working directory remains inside that copy even if they cleared the launch
+marker; a failed health probe uses the same cleanup. It never kills a process
+outside the verified copy on that basis. This does not collect unrelated
+orphan processes (af-skz5cj).
 `tests/project-launch-test.py` and `tests/fixtures/delivery-fixture-city/`
 are the fixture project and its proof.
 
