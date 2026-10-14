@@ -4211,6 +4211,64 @@ def given_state(given: Any, what: str, text: str, metadata: dict[str, Any], comm
     return stored
 
 
+def visual_reference_changed(repo: str | None, convoy_id: str, commit: str, ticket: dict[str, Any]) -> bool:
+    """Accept only changes declared freshly for this ticket, including direct writes."""
+    if not repo:
+        raise Refusal("constat visuel sans --repo")
+    convoy, _ = load_convoy(convoy_id)
+    stored = metadata_of(convoy).get(KEY_INTEGRATION)
+    if stored is None:
+        raise Refusal("branche d'intégration absente pour le constat visuel")
+    branch = integration_record(stored)["branch"]
+    remote = subprocess.run(["git", "-C", repo, "remote", "get-url", "origin"], capture_output=True, text=True)
+    ref = f"refs/remotes/origin/{branch}" if remote.returncode == 0 else f"refs/heads/{branch}"
+    base = subprocess.run(["git", "-C", repo, "merge-base", commit, ref], capture_output=True, text=True)
+    if base.returncode or not base.stdout.strip():
+        raise Refusal("base du constat visuel introuvable")
+    before = base.stdout.strip()
+    diff = subprocess.run(["git", "-C", repo, "diff", "--name-status", "--no-renames",
+                           before, commit, "--", "design-bench/bench.spec.mjs-snapshots/"],
+                          capture_output=True, text=True)
+    if diff.returncode:
+        raise Refusal("captures du constat visuel illisibles")
+    paths = [path for line in diff.stdout.splitlines() if "\t" in line
+             for status, path in [line.split("\t", 1)] if status != "A" and path.endswith(".png")]
+    if not paths:
+        return False
+
+    def declaration(ref: str, *, required: bool) -> dict[str, dict[str, Any]]:
+        shown = subprocess.run(["git", "-C", repo, "show", f"{ref}:design-bench/visual-changes.json"],
+                               capture_output=True, text=True)
+        if shown.returncode:
+            if required:
+                raise Refusal("déclaration visuelle absente au commit évalué")
+            return {}
+        try:
+            manifest = json.loads(shown.stdout)
+            entries = manifest["entries"]
+        except (ValueError, KeyError, TypeError) as exc:
+            raise Refusal("déclaration visuelle illisible") from exc
+        if (not isinstance(manifest, dict) or
+                manifest.get("contract") != "agent-factory-visual-changes/v1" or
+                not isinstance(entries, list)):
+            raise Refusal("déclaration visuelle mal formée")
+        return {entry.get("path"): entry for entry in entries if isinstance(entry, dict)}
+
+    declared = declaration(commit, required=True)
+    previous = declaration(before, required=False)
+    for path in paths:
+        entry = declared.get(path)
+        if not isinstance(entry, dict) or entry.get("ticket") != ticket["id"]:
+            raise Refusal(f"capture modifiée sans déclaration du ticket {ticket['id']} : {path}")
+        if entry == previous.get(path):
+            raise Refusal(f"déclaration visuelle périmée : {path}")
+        intent = entry.get("intent")
+        if (not isinstance(intent, str) or not intent.strip() or
+                intent not in ticket.get("description", "")):
+            raise Refusal(f"intention visuelle absente du ticket {ticket['id']} : {path}")
+    return True
+
+
 def cmd_record_evaluation(args: argparse.Namespace) -> int:
     """Record what an Evaluator session hands in for the open evaluation,
     and compute the verdict (T15, Spec §7): one state per approved criterion
@@ -4280,6 +4338,10 @@ def cmd_record_evaluation(args: argparse.Namespace) -> int:
         problems.append("screen_findings doit être une liste")
         findings = []
     if findings:
+        if any(isinstance(finding, dict) and
+               finding.get("check") == "Le changement visuel correspond à l'intention déclarée" for finding in findings):
+            if not visual_reference_changed(args.repo, args.convoy, request["commit"], ticket):
+                problems.append("constat visuel hors de la liste à vérifier")
         if validated_prototype(ticket.get("description")) is None:
             problems.append("constat écran sur un ticket sans interface")
         if not args.repo:
@@ -4296,7 +4358,8 @@ def cmd_record_evaluation(args: argparse.Namespace) -> int:
                         problems.append("constat écran mal formé")
                         continue
                     if finding["check"] not in ("Tout se fait au clavier", "Le focus est visible",
-                                                "Les images ont une description", "Le mouvement réduit est respecté"):
+                                                "Les images ont une description", "Le mouvement réduit est respecté",
+                                                "Le changement visuel correspond à l'intention déclarée"):
                         problems.append("constat écran hors de la liste à vérifier")
                     if finding["rule"] not in rules or not finding["rule"].startswith("- "):
                         problems.append("règle absente de DESIGN.md au commit évalué")

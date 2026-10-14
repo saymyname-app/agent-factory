@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import calendar
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -1090,8 +1091,84 @@ def cmd_product(args: argparse.Namespace) -> int:
     return 0
 
 
+VISUAL_CHECK = "Le changement visuel correspond à l'intention déclarée"
+VISUAL_DIR = "design-bench/bench.spec.mjs-snapshots/"
+
+
+def visual_changes(convoy: Convoy, ticket: dict[str, Any], commit: str) -> list[dict[str, Any]]:
+    """Changed reference images from the ticket base, bound to its declared intent."""
+    integration = (convoy.state.get("integration") or {}).get("branch")
+    if not isinstance(integration, str):
+        raise Refusal("branche d'intégration absente pour la comparaison visuelle")
+    remote = run(["git", "-C", str(convoy.repo), "remote", "get-url", "origin"])
+    branch_ref = (f"refs/remotes/origin/{integration}" if remote.returncode == 0
+                  else f"refs/heads/{integration}")
+    base = run(["git", "-C", str(convoy.repo), "merge-base", commit, branch_ref])
+    if base.returncode or not base.stdout.strip():
+        raise Refusal("commit de base du ticket introuvable pour la comparaison visuelle")
+    before = base.stdout.strip()
+    diff = run(["git", "-C", str(convoy.repo), "diff", "--name-status", "--no-renames",
+                before, commit, "--", VISUAL_DIR])
+    if diff.returncode:
+        raise Refusal("captures de référence illisibles : " + detail_of(diff))
+    paths = [(line.split("\t", 1)[0], line.split("\t", 1)[1]) for line in diff.stdout.splitlines()
+             if "\t" in line and line.endswith(".png")]
+    paths = [(status, path) for status, path in paths if status != "A"]
+    if not paths:
+        return []
+    shown = run(["git", "-C", str(convoy.repo), "show", f"{commit}:design-bench/visual-changes.json"])
+    if shown.returncode:
+        raise Refusal("déclaration visuelle absente au commit évalué")
+    try:
+        manifest = json.loads(shown.stdout)
+        entries = manifest["entries"]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise Refusal("déclaration visuelle illisible au commit évalué") from exc
+    if not isinstance(manifest, dict) or manifest.get("contract") != "agent-factory-visual-changes/v1" or not isinstance(entries, list):
+        raise Refusal("déclaration visuelle mal formée au commit évalué")
+    declared = {entry.get("path"): entry for entry in entries if isinstance(entry, dict)}
+    previous = run(["git", "-C", str(convoy.repo), "show", f"{before}:design-bench/visual-changes.json"])
+    if previous.returncode == 0:
+        try:
+            old_manifest = json.loads(previous.stdout)
+            old_entries = old_manifest["entries"]
+        except (ValueError, KeyError, TypeError) as exc:
+            raise Refusal("ancienne déclaration visuelle illisible") from exc
+        if not isinstance(old_entries, list):
+            raise Refusal("ancienne déclaration visuelle mal formée")
+        old_declared = {entry.get("path"): entry for entry in old_entries if isinstance(entry, dict)}
+    else:
+        old_declared = {}
+    folder = product_folder(convoy.id, ticket["id"]) / "visual-references"
+    result = []
+    for status, path in paths:
+        if status == "A":
+            continue
+        entry = declared.get(path)
+        if not isinstance(entry, dict) or entry.get("ticket") != ticket["id"]:
+            raise Refusal(f"capture modifiée sans déclaration du ticket {ticket['id']} : {path}")
+        if entry == old_declared.get(path):
+            raise Refusal(f"déclaration visuelle périmée : {path}")
+        intent = entry.get("intent")
+        if not isinstance(intent, str) or not intent.strip() or intent not in read_bead(ticket["id"]).get("description", ""):
+            raise Refusal(f"intention visuelle absente du ticket {ticket['id']} : {path}")
+        def image(ref: str) -> str:
+            blob = subprocess.run(["git", "-C", str(convoy.repo), "show", f"{ref}:{path}"],
+                                  capture_output=True)
+            if blob.returncode:
+                raise Refusal(f"capture de référence illisible au commit {ref[:12]} : {path}")
+            folder.mkdir(parents=True, exist_ok=True)
+            target = folder / (hashlib.sha256(blob.stdout).hexdigest() + ".png")
+            if not target.is_file() or target.read_bytes() != blob.stdout:
+                target.write_bytes(blob.stdout)
+            return str(target)
+        result.append({"path": path, "intent": intent, "before": image(before),
+                       "after": image(commit) if status != "D" else None})
+    return result
+
+
 SCREEN_CHECKS = ("Tout se fait au clavier", "Le focus est visible",
-                 "Les images ont une description", "Le mouvement réduit est respecté")
+                 "Les images ont une description", "Le mouvement réduit est respecté", VISUAL_CHECK)
 
 # --- brief: what the Evaluator is given ----------------------------------------------
 
@@ -1109,8 +1186,9 @@ def cmd_brief(args: argparse.Namespace) -> int:
     """What the Evaluator session is given, and nothing of the author: the
     demonstration line, the frozen criteria, the launched products, how a
     piece of evidence is captured on them, and the shape of what it hands
-    to `record`. Neither the Ticket Handoff, nor the diff, nor the
-    repository, nor the branch."""
+    to `record`. Neither the Ticket Handoff, nor the code diff, nor the
+    repository or branch; interface tickets may include exported visual
+    references tied to the ticket's declared intent."""
     convoy = Convoy(args.convoy, args.repo, args.profile)
     request = open_request(convoy, args.ticket)
     profile_path, launch_block = convoy.profile(args.ticket, request["commit"])
@@ -1159,7 +1237,10 @@ def cmd_brief(args: argparse.Namespace) -> int:
         design = run(["git", "-C", str(convoy.repo), "show", f"{request['commit']}:DESIGN.md"])
         if design.returncode == 0:
             brief["design"] = {"path": "DESIGN.md", "text": design.stdout}
-        brief["screen_checks"] = list(SCREEN_CHECKS)
+        changes = visual_changes(convoy, convoy.ticket(args.ticket), request["commit"])
+        if changes:
+            brief["visual_changes"] = changes
+        brief["screen_checks"] = [check for check in SCREEN_CHECKS if check != VISUAL_CHECK or changes]
     print(json.dumps(brief, indent=2, sort_keys=True, ensure_ascii=False))
     return 0
 
@@ -1241,6 +1322,9 @@ def cmd_record(args: argparse.Namespace) -> int:
     if not isinstance(findings, list):
         raise Refusal("screen_findings doit être une liste")
     if findings:
+        if any(isinstance(finding, dict) and finding.get("check") == VISUAL_CHECK for finding in findings):
+            if not visual_changes(convoy, convoy.ticket(args.ticket), request["commit"]):
+                raise Refusal("constat visuel hors de la liste à vérifier")
         if not convoy.ticket(args.ticket).get("interface"):
             raise Refusal("constat écran sur un ticket sans interface")
         design = run(["git", "-C", str(convoy.repo), "show", f"{request['commit']}:DESIGN.md"])

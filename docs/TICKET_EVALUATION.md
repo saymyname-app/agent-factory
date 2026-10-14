@@ -438,3 +438,12 @@ cause `criterion`, leading to Planning Exception. A missing or forged capture
 is refused. Criteria without an applicable declared simple expectation stay
 with the existing Evaluator judgment and evidence rules. Every declared
 dataset still requires coverage evidence.
+
+For an interface ticket with changed Playwright references, the brief also
+contains `visual_changes`: before/after PNG paths exported from exact commits and the visual
+intent declared by that ticket. The Evaluator reads the images, checks them
+against the launched product and intent, and records a cited `screen_findings`
+entry with a sealed screenshot when they disagree. Initial captures are
+excluded. The record gate accepts the visual check only with an exact
+`DESIGN.md` rule at the evaluated commit; a finding makes the verdict
+unfavorable.
