@@ -259,7 +259,7 @@ class Pieces:
         self.convoy = convoy_id
         self.records: dict[tuple[str, str], dict[str, Any]] = {}
         self.refused: dict[tuple[str, str], str] = {}
-        self.assets: dict[str, Path] = {}
+        self.assets: dict[str, Path | bytes] = {}
         owners = [(convoy_id, state["convoy"].get("evidence") or {})]
         owners += [(ticket["id"], ticket.get("evidence") or {}) for ticket in state["tickets"]]
         for owner, named in owners:
@@ -294,6 +294,11 @@ class Pieces:
     def asset(self, source: str, digest: str, suffix: str) -> str:
         name = f"{PIECES}/{digest.removeprefix('sha256:')}{suffix}"
         self.assets[name] = Path(source)
+        return name
+
+    def asset_bytes(self, content: bytes, suffix: str) -> str:
+        name = f"{PIECES}/{hashlib.sha256(content).hexdigest()}{suffix}"
+        self.assets[name] = content
         return name
 
     def inadmissible(self) -> list[dict[str, str]]:
@@ -370,8 +375,9 @@ def last_round(record: Any, kind: str | None = None) -> dict[str, Any] | None:
 
 class Page:
     def __init__(self, convoy_id: str, gate: dict[str, Any], state: dict[str, Any], spec: dict[str, Any],
-                 settings: dict[str, Any], pieces: Pieces):
+                 settings: dict[str, Any], pieces: Pieces, repo: Path):
         self.id, self.gate, self.state, self.spec, self.settings, self.pieces = convoy_id, gate, state, spec, settings, pieces
+        self.repo = repo
         self.convoy = state["convoy"]
         self.tickets = state["tickets"]
         self.commit = gate["commit"]
@@ -548,6 +554,64 @@ class Page:
             provider(self.outcome.get("roles") or {}, "Outcome Evaluation", check="outcome_evaluation")
         return same, unknown
 
+    def visual_reference_changes(self) -> str:
+        """Versioned before/after images from the protected and delivered commits."""
+        base = (self.gate.get("protected") or {}).get("commit")
+        if not isinstance(base, str):
+            raise Refusal("commit protégé absent pour le récapitulatif visuel")
+        directory = "design-bench/bench.spec.mjs-snapshots/"
+        diff = run(["git", "-C", str(self.repo), "diff", "--name-status", "--no-renames",
+                    base, self.commit, "--", directory])
+        if diff.returncode:
+            raise Refusal(f"références visuelles illisibles : {diff.stderr.strip()}")
+
+        def manifest(ref: str) -> dict[str, dict[str, str]]:
+            shown = run(["git", "-C", str(self.repo), "show", f"{ref}:design-bench/visual-changes.json"])
+            if shown.returncode:
+                return {}
+            try:
+                data = json.loads(shown.stdout)
+            except ValueError as exc:
+                raise Refusal("déclaration de changement visuel illisible") from exc
+            if not isinstance(data, dict) or data.get("contract") != "agent-factory-visual-changes/v1" \
+                    or not isinstance(data.get("entries"), list):
+                raise Refusal("déclaration de changement visuel mal formée")
+            entries = data["entries"]
+            if any(not isinstance(entry, dict) or any(not isinstance(entry.get(key), str) or not entry[key].strip()
+                                                       for key in ("path", "ticket", "intent")) for entry in entries):
+                raise Refusal("déclaration de changement visuel incomplète")
+            paths = [entry["path"] for entry in entries]
+            if len(paths) != len(set(paths)):
+                raise Refusal("déclaration de changement visuel répétée")
+            return {entry["path"]: entry for entry in entries}
+
+        before_declarations, after_declarations = manifest(base), manifest(self.commit)
+        tickets = {ticket["id"] for ticket in self.tickets if not withdrawn(ticket)}
+
+        def blob(ref: str, path: str) -> bytes:
+            result = subprocess.run(["git", "-C", str(self.repo), "show", f"{ref}:{path}"], capture_output=True)
+            if result.returncode:
+                raise Refusal(f"capture de référence illisible au commit {ref[:12]} : {path}")
+            return result.stdout
+
+        figures = []
+        for line in diff.stdout.splitlines():
+            status, path = line.split("\t", 1)
+            if not path.endswith(".png"):
+                continue
+            declared = after_declarations.get(path)
+            if status != "A" and (declared is None or declared == before_declarations.get(path)
+                                  or declared["ticket"] not in tickets):
+                raise Refusal(f"changement visuel non déclaré par un ticket du convoi : {path}")
+            who = f"Ticket {e(declared['ticket'])} — {e(declared['intent'])}" if declared else "capture initiale"
+            before = (f'<img src="{self.pieces.asset_bytes(blob(base, path), ".png")}" alt="avant {e(path)}">'
+                      if status != "A" else "aucune référence antérieure")
+            after = (f'<img src="{self.pieces.asset_bytes(blob(self.commit, path), ".png")}" alt="après {e(path)}">'
+                     if status != "D" else "référence retirée")
+            figures.append(f'<figure data-visual-change="{e(path)}"><figcaption>{e(path)} — {who}</figcaption>'
+                           f'<p>Avant : {before}</p><p>Après : {after}</p></figure>')
+        return "\n".join(figures) if figures else "<p>Aucune référence visuelle modifiée sur cette Spec.</p>"
+
     def eyes(self) -> str:
         proposals = [li(f"Ticket {e(finding['ticket'])} : {e(finding['text'])}", proposal=finding["id"])
                      for finding in self.findings() if finding.get("classification") == "proposal"]
@@ -557,6 +621,7 @@ class Page:
             "<h3>Propositions</h3>", items(proposals, "aucune"),
             "<h3>Écarts de fidélité relevés par l'Evaluator de fin</h3>", self.free_section("fidelity_deviations"),
             "<h3>Écarts de fidélité mesurés par les contrôles mécaniques</h3>", items(self.measured_deviations()),
+            "<h3>Références visuelles avant/après de cette Spec</h3>", self.visual_reference_changes(),
             "<h3>Captures côte à côte et images de différence, par état prototypé et par rendu</h3>",
             "\n".join(captures) if captures else "<p>Aucune capture de comparaison n'est enregistrée.</p>",
             "<h3>Remarques d'exploration</h3>", self.free_section("exploration"),
@@ -1043,7 +1108,7 @@ def build(convoy_id: str, repo: Path) -> dict[str, Any]:
     spec = read_spec(state["convoy"].get("spec"))
     settings = read_settings()
     pieces = Pieces(convoy_id, state)
-    page = Page(convoy_id, gate, state, spec, settings, pieces)
+    page = Page(convoy_id, gate, state, spec, settings, pieces, repo)
     data = page.render().encode("utf-8")
     return {"page": data, "digest": digest_of(data), "assets": pieces.assets, "commit": gate["commit"],
             "branch": gate.get("branch"), "spec": spec["id"], "conforming": page.conforming, "conditions": gate["conditions"],
@@ -1075,7 +1140,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
     try:
         (staging / PIECES).mkdir()
         for name, source in sorted(built["assets"].items()):
-            data = source.read_bytes()
+            data = source if isinstance(source, bytes) else source.read_bytes()
             if digest_of(data).removeprefix("sha256:") != Path(name).stem:
                 raise Refusal(f"la pièce {source} a changé dans le magasin de preuves pendant la génération : rien n'est écrit")
             (staging / name).write_bytes(data)

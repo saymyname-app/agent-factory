@@ -177,6 +177,18 @@ branch, a convoy that names no Spec or whose Spec has no numbered user
 stories, and the rubric that cannot be filled. The refusals of `promoted`
 are under « Once the accepted Outcome is merged ».
 
+## Références visuelles avant/après
+
+La rubrique « Ce qui demande les yeux de Benjamin » compare les PNG de
+`design-bench/bench.spec.mjs-snapshots/` entre le commit de la branche protégée
+et le commit du dossier. Pour chaque référence ajoutée, modifiée ou retirée,
+le dossier conserve les images avant/après comme pièces nommées par leur
+empreinte. Une référence modifiée ou retirée exige une déclaration fraîche
+dans `design-bench/visual-changes.json`, portant l'identifiant d'un ticket du
+convoi et l'intention de ce changement ; sinon la génération est refusée.
+Quand rien ne change, le dossier le dit explicitement. Les captures du produit
+et du prototype restent dans la section de comparaison existante.
+
 ## Limits
 
 - **The captures side by side are those of the tickets.** The pack shows,

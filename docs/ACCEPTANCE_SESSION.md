@@ -116,6 +116,10 @@ the answer, not in a prompt to find:
 - **never recommend an answer**, nor say whether the product deserves to be
   accepted: the judgment is his.
 
+The Evidence Pack shown in this session includes a before/after visual-reference
+summary for each Spec. Benjamin sees the declared ticket intention beside the
+two versioned images; an undeclared change prevents pack generation.
+
 ## How Benjamin uses it
 
 1. `./bin/escalation-door list`, open the page of the dossier in a browser.
