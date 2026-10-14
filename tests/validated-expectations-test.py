@@ -53,6 +53,19 @@ class ValidatedExpectationsTest(module.Harness):
             {"scope": "ticket", "owner": "another-ticket", "number": 1, "text": "other"}]}
         self.assertEqual([], planned(profile, "ticket", [current], ["content"], "abc", "current-ticket"))
 
+    def test_current_t01r2_keeps_the_approved_journal_comparison(self):
+        sys.path.insert(0, str(ROOT / "lib"))
+        from validated_expectations import planned
+        profile = json.loads((ROOT / "config/project-descriptors/agent-factory.json").read_text())
+        criterion = ("Point d'entrée : bin/project-launch start puis URL annoncée — Observable : "
+                     "Le vrai cockpit répond à GET / et GET /api/status au commit demandé sur port isolé ; "
+                     "son état provient du dataset nommé. — Faux si : Révision erronée, page de remplacement, "
+                     "source live ou réponse absente.")
+        entries = planned(profile, "ticket", [{"number": 1, "text": criterion}],
+                          ["journal-content"], "4bf4fbf3ba28ba502bbf1dc014a63ae259b2f9f1", "af-6a98ip")
+        self.assertEqual([("journal-content", "Deux améliorations proposées après une revue")],
+                         [(entry["dataset"], entry["expected"]) for entry in entries if "gap" not in entry])
+
     def test_planning_gap_takes_precedence_over_other_comparison(self):
         sys.path.insert(0, str(ROOT / "lib"))
         from validated_expectations import enforce
