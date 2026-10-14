@@ -870,7 +870,14 @@ launch fails and leaves no process.
 
 The process the launcher holds is the cockpit itself, so `stop` ends it by
 its own clean stop. The synthetic supervisor runs beside it and ends when
-the cockpit does, whatever ended it; it removes the temporary HOME.
+the cockpit does, whatever ended it; it removes the temporary HOME. Of the
+environment of the launcher the cockpit keeps one variable, the mark
+`bin/project-launch` gives its launch (`FACTORY_LAUNCH_ID`): the launcher
+stops the processes that carry it, and the controller of an evaluation
+attests the product by it -- the process that listens on the port must
+carry it. Without it the Evaluator received « identité du produit lancé non
+vérifiable » (af-u2fa7b, Ticket Evaluation at 5a2e6fb);
+`tests/cockpit-isolated-recipe-test.py` holds it.
 
 **State from the dataset.** `lib/synthetic_city.py` (`from_dataset`) is the
 one place where a dataset becomes sources: it reads the content of the named
@@ -921,7 +928,8 @@ rule reads, a page with « Décisions à prendre » whose list does not hold
 that many lines, a project card without its chantier, an event or a ritual
 without a title, a `ui.state` that names the state of a result on a page
 that opens no dossier, or a Runs state whose fixtures cannot be read, is
-refused.
+refused. Each refusal, and that of a file that is no dataset at all, is
+proven once by `tests/cockpit-isolated-recipe-test.py`.
 
 What is left out, and why:
 

@@ -17,7 +17,8 @@ synthetic sources only:
   projects declared for this launch alone;
 - an empty environment: a temporary HOME, no local settings file, so no
   secret, no notification, no heartbeat and no project clone; the doors
-  that change the Factory are replaced by a command that refuses.
+  that change the Factory are replaced by a command that refuses. Only the
+  mark of the launch (`FACTORY_LAUNCH_ID`) is kept from the launcher's.
 
 What those sources answer is what the named dataset says, and nothing else:
 `lib/synthetic_city.py` translates its content (`docs/COCKPIT.md`, « State
@@ -59,6 +60,10 @@ POLL_SECONDS = "0.2"
 # A supervisor that answers no more is shown as such after this long, not
 # after the two minutes a reading stays current in service.
 SILENT_VALIDITY_SECONDS = "2"
+# The mark bin/project-launch gives what it launches: the launcher stops
+# the processes that carry it, and the controller of an evaluation attests
+# that the process listening on the port carries it. The cockpit keeps it.
+LAUNCH_MARK = "FACTORY_LAUNCH_ID"
 
 
 def read_city(path: Path) -> synthetic_city.SyntheticCity:
@@ -186,6 +191,8 @@ def main(argv: list[str]) -> int:
         "COCKPIT_SESSIONS_POLL_SECONDS": POLL_SECONDS,
         **write_tracker_and_projects(city, home),
     }
+    if LAUNCH_MARK in os.environ:
+        env[LAUNCH_MARK] = os.environ[LAUNCH_MARK]
     if city.reading == synthetic_city.READ_ONCE:
         env["COCKPIT_VALIDITY_GC_SECONDS"] = SILENT_VALIDITY_SECONDS
     os.execve(sys.executable, [sys.executable, str(ROOT / "bin" / "cockpit"), "run"], env)
