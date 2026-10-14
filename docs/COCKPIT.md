@@ -954,7 +954,7 @@ because nothing is shown or read (`*-empty`, `*-loading`, `*-error`); the 41
 other states are served a state of their own. The stage of a chantier and
 the state of a result are served as said, not as the records of the
 Delivery Workflow: those are produced by its public commands (Spec
-af-2zseit, Testing Decisions 2), which the tickets of these screens run.
+af-2zseit, Testing Decisions 2), below.
 The ticket that delivers a screen reads its sections into records and
 changes the lines of the table above.
 
@@ -983,6 +983,22 @@ its states, which is what `bin/prototype-fidelity` compares:
 `/`, `/journal` and `/projet/notes` (the page of the project the six states
 of that screen are about) are served today; the other addresses are declared
 for the tickets that deliver those screens, and answer 404 until then.
+
+**The public commands of the Delivery Workflow.** Beside its `http` entry
+points the profile declares, as entry points of kind `command` (`path` the
+command, `method` its subcommand), the commands that produce the records
+the cockpit reads of a judged result: `bin/acceptance-session open` and
+`close`, `bin/owner-answer verdict` and `record`, `bin/outcome-promote run`.
+`tests/cockpit-d01-records-test.py` runs them on the convoy the Fixture City
+walks to its Delivered Outcome -- the products of the dossier opened and
+closed, a verdict on its proposition, « accepté », the pass of the order
+that merges and closes -- then starts the real `bin/cockpit` on the tracker
+they wrote: before the answer the chantier is among the active ones, after
+it it is in the historique of its project, « Accepté », on `GET /api/status`
+and on `GET /projet/<project>`. It does not claim that a real convoy went
+through the new flow; the other cases of Testing Decisions 2 (findings
+returned, a stale dossier, a red take-up, an abandon...) are observed by
+the tickets of the screens that show them.
 
 **Criterion tests.** The profile declares two seams under
 `tests/cockpit-criteria/`: `http/` (black box: the test reaches the launched

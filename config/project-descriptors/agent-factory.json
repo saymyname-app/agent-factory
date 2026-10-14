@@ -92,6 +92,31 @@
         "kind": "http",
         "method": "GET",
         "path": "/runs/job"
+      },
+      {
+        "kind": "command",
+        "method": "open",
+        "path": "bin/acceptance-session"
+      },
+      {
+        "kind": "command",
+        "method": "close",
+        "path": "bin/acceptance-session"
+      },
+      {
+        "kind": "command",
+        "method": "verdict",
+        "path": "bin/owner-answer"
+      },
+      {
+        "kind": "command",
+        "method": "record",
+        "path": "bin/owner-answer"
+      },
+      {
+        "kind": "command",
+        "method": "run",
+        "path": "bin/outcome-promote"
       }
     ],
     "health_probe": {
