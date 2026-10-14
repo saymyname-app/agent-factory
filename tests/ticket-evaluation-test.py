@@ -624,6 +624,33 @@ class TicketEvaluationTest(unittest.TestCase):
         self.assertEqual("empty", brief["environments"][0]["dataset"])
         self.assertEqual(first, brief["controller_observation"])
 
+    def test_recipe_observation_is_recaptured_when_timeout_replaces_product(self):
+        candidate = json.loads(self.profile.read_text())
+        original = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
+        candidate["launch"]["datasets"]["empty"] = original["launch"]["datasets"]["empty"]
+        candidate["launch"]["screens"][0]["states"] = ["content", "empty"]
+        committed = json.dumps(candidate)
+        files = self.realized()
+        files["config/project-descriptors/fx.json"] = committed
+        self.finished_slice(files)
+        tracker = json.loads(self.tracker.read_text())
+        tracker["beads"][SLICE]["metadata"]["gc.flow.establishes_launch_recipe"] = True
+        self.tracker.write_text(json.dumps(tracker))
+        self.profile.write_text(committed)
+        self.settings(timeout_seconds=0)
+        self.evaluator("silent")
+        self.settle()
+        first = self.tool("brief")["controller_observation"]
+        self.assertFalse(self.tool("product", SLICE, "--dataset", "empty", "--fresh", env=SESSION)["ready"])
+
+        settled = self.settle()
+
+        self.assertEqual([SLICE], [entry["ticket"] for entry in settled["relaunched"]])
+        brief = self.tool("brief")
+        second = brief["controller_observation"]
+        self.assertEqual("empty", brief["environments"][0]["dataset"])
+        self.assertNotEqual(first["piece"], second["piece"])
+
     def test_inaccessible_reference_is_captured_as_failure_never_as_a_pass(self):
         files = self.realized()
         files["config/project-descriptors/fx.json"] = self.profile.read_text()

@@ -260,6 +260,10 @@ measured base), or when its bead was closed while the request is still
 open. It is not a passed evaluation: no verdict is written and the merge
 stays refused. It is launched **once more**, on a new bead, for a new
 session (on products launched again if the first ones are gone). When that
+relaunch replaces the product of a ticket that establishes its launch recipe,
+the lifecycle trial and controller observation are captured again for the new
+launch record before the new Evaluator receives its brief. The prior product's
+observation is not reused as the identity proof of its replacement. When that
 second launch gives no result either, the ticket is stopped
 (`evaluation_no_result`), its products are stopped, and it is raised once to
 the operator through `bin/escalation-door`.
