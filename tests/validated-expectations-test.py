@@ -65,6 +65,22 @@ class ValidatedExpectationsTest(module.Harness):
                           ["journal-content"], "4bf4fbf3ba28ba502bbf1dc014a63ae259b2f9f1", "af-6a98ip")
         self.assertEqual([("journal-content", "Deux améliorations proposées après une revue")],
                          [(entry["dataset"], entry["expected"]) for entry in entries if "gap" not in entry])
+    def test_t01r2_has_source_values_for_factory_and_runs(self):
+        sys.path.insert(0, str(ROOT / "lib"))
+        from validated_expectations import planned
+        profile = json.loads((ROOT / "config/project-descriptors/agent-factory.json").read_text())
+        criterion = profile["validated_expectations"][0]["text"]
+        entries = planned(profile, "ticket", [{"number": 1, "text": criterion}],
+                          ["factory-suspended", "runs-active"], "candidate-commit", "af-6a98ip")
+        actual = {entry["dataset"]: (entry["expected"], entry["observation"]["path"],
+                                     entry["observation"]["pointer"], entry["source"]["digest"])
+                  for entry in entries if "gap" not in entry}
+        self.assertEqual({
+            "factory-suspended": (True, "/api/status", "/gc/value/suspended",
+                                  "sha256:48cd6692c431f85e1b92a23b4bcb6b9408141ab479cb54c493a38c299e4ce989"),
+            "runs-active": ("Reprise du cockpit", "/api/status", "/beads/value/0/title",
+                            "sha256:2e470160d6aa989f9fd22601441a596dcf1ace313148f7637a9a38656cbbc23d"),
+        }, actual)
 
     def test_planning_gap_takes_precedence_over_other_comparison(self):
         sys.path.insert(0, str(ROOT / "lib"))
