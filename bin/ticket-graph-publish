@@ -2234,7 +2234,7 @@ def unapproved_patch_refusals(
 
 def withdrawal_refusals(
     parsed: dict[str, Any], tickets: list[dict[str, Any]], members: dict[str, dict[str, Any]],
-    register: str | None, draft_id: str,
+    states: dict[str, dict[str, Any]], register: str | None, draft_id: str,
 ) -> tuple[dict[str, str], list[tuple[str, str]]]:
     """Spec §9: a ticket leaves the graph only by a resolved Planning
     Exception or an in-progress resolution authorized for this exact draft
@@ -2248,13 +2248,8 @@ def withdrawal_refusals(
     decisions: dict[str, Any] | None = None
     authorizations: dict[str, Any] = {}
     refusals: list[tuple[str, str]] = []
-    if not register:
-        refusals.append((
-            WHERE_DRAFT,
-            "le brouillon retire un ticket et le registre des Planning Exceptions n'est pas donné "
-            "(--planning-exception-register) : un retrait suit une Planning Exception résolue",
-        ))
-    else:
+    needs_register = False
+    if register:
         status = run_subtool([tool_path("PLANNING_EXCEPTION_BIN", "planning-exception"), "status", register])
         decisions = status.get("decisions") if isinstance(status.get("decisions"), dict) else {}
         authorizations = status.get("patch_authorizations") if isinstance(status.get("patch_authorizations"), dict) else {}
@@ -2273,13 +2268,18 @@ def withdrawal_refusals(
             refusals.append((key, "retiré deux fois"))
             continue
         withdrawn[key] = str(decision or "")
+        already_withdrawn = (
+            members[key]["status"] == "closed" and
+            "withdrawn" in (states.get(members[key]["id"], {}).get("gates") or {})
+        )
+        needs_register = needs_register or not already_withdrawn
         if key in drafted:
             refusals.append((key, "retiré et repris par le même brouillon : un ticket retiré n'y figure plus"))
-        if members[key]["status"] == "closed":
+        if members[key]["status"] == "closed" and not already_withdrawn:
             refusals.append((key, f"retiré, mais {members[key]['id']} est fermé : un ticket livré ou déjà retiré ne se retire pas"))
         if not isinstance(decision, str) or not decision.strip():
             refusals.append((key, "retiré sans Planning Exception (champ planning_exception : l'identifiant de la décision résolue)"))
-        elif decisions is not None and not (
+        elif not already_withdrawn and decisions is not None and not (
             decisions.get(decision) == "resolved" or
             (decisions.get(decision) == "open" and
              authorizations.get(decision) == {"draft": draft_id, "bead": members[key]["id"]})
@@ -2290,6 +2290,12 @@ def withdrawal_refusals(
                 f"retiré, mais la Planning Exception {decision} n'est pas résolue "
                 f"({'inconnue du registre' if state is None else f'état : {state}'})",
             ))
+    if needs_register and not register:
+        refusals.insert(0, (
+            WHERE_DRAFT,
+            "le brouillon retire un ticket et le registre des Planning Exceptions n'est pas donné "
+            "(--planning-exception-register) : un retrait suit une Planning Exception résolue",
+        ))
     # A ticket left out of the revision that waits for a withdrawn one would
     # become ready with nothing delivered behind it.
     for key, member in members.items():
@@ -2419,7 +2425,8 @@ def cmd_bd_patch_new_flow(args: argparse.Namespace, bead: dict[str, Any], human_
                 ))
             elif ticket.get("kind") in TICKET_KINDS:
                 refusals += [(key, reason) for reason in frozen_field_refusals(ticket, states[members[key]["id"]])]
-        withdrawn, withdrawal = withdrawal_refusals(parsed, tickets, members, args.planning_exception_register, draft_id)
+        withdrawn, withdrawal = withdrawal_refusals(
+            parsed, tickets, members, states, args.planning_exception_register, draft_id)
         refusals += withdrawal
         if not approved:
             refusals += unapproved_patch_refusals(parsed, tickets, members, human_approver)
