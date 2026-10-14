@@ -45,6 +45,32 @@ the revised graph to Beads only after its checks pass.
 python3 tests/planning-exception-test.py
 ```
 
+### Authorized replacement draft for an already stopped vertical slice
+
+`bin/replacement-draft create` is the bounded entry before `planning-exception
+resolve` and `ticket-graph-publish bd-patch` when the project owner has already
+authorized exactly one replacement for an already stopped `vertical_slice`.
+It clones the approved source graph, preserves the stopped ticket's criteria
+and declared scope, replaces only its graph key and dependent edges, and creates
+one immutable revised Ticket Graph Draft in a single tracker write. The draft
+cites the decision, stopped ticket, convoy, approved Spec/digest, criteria,
+scope and useful commit. It never edits or closes the stopped ticket, never
+removes `gc.flow.stop`, never publishes the patch and never launches work.
+
+Human and agent entry is the same command, from the live Factory root:
+
+```bash
+bin/replacement-draft create --decision <decision-bead> --evidence '<exact recorded words>' \
+  --stopped-ticket <bead> --convoy <convoy> --source-draft <approved-draft> \
+  --replacement-id <new-graph-key> --useful-commit <40-char-sha> \
+  --planning-exception <decision-in-register> --approved-by <project-owner> \
+  --author-session <po-agent/session>
+```
+
+Every cited equality is checked before the sole `bd create`; missing or stale
+evidence refuses with no write. The resulting draft remains only an input to
+the existing Planning Exception and `bd-patch` doors.
+
 ## Lifecycle
 
 | Subcommand | Effect |
