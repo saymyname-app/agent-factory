@@ -1,0 +1,203 @@
+#!/usr/bin/env python3
+"""cockpit-isolated — the launch recipe of the cockpit (T01R4, af-u2fa7b, from T01R3 af-7hk9e7,
+T01R2 af-6a98ip and T01R af-m2tr6o; Spec af-2zseit, user story 126).
+
+    cockpit-isolated --port PORT --dataset FILE
+
+`bin/project-launch` runs it, from a clean copy of the commit asked for, as
+the recipe the Factory's profile declares
+(`config/project-descriptors/agent-factory.json`, `launch.recipe`). It
+becomes the real `bin/cockpit run` of that copy, on 127.0.0.1:PORT, reading
+synthetic sources only:
+
+- a synthetic supervisor that answers as the installed one does
+  (`tests/fixtures/cockpit/core/fake_gc.py`, held to the real contract by
+  `tests/cockpit-fake-gc-contract-test.py`);
+- a synthetic tracker (`tests/fixtures/cockpit/requests/fake-bd`) and the
+  projects declared for this launch alone;
+- an empty environment: a temporary HOME, no local settings file, so no
+  secret, no notification, no heartbeat and no project clone; the doors
+  that change the Factory are replaced by a command that refuses. Only the
+  mark of the launch (`FACTORY_LAUNCH_ID`) is kept from the launcher's.
+
+What those sources answer is what the named dataset says, and nothing else:
+`lib/synthetic_city.py` translates its content (`docs/COCKPIT.md`, « State
+from the dataset »). A dataset it refuses is never served.
+
+It starts no controller and no tracker, and reaches nothing of the city in
+service. The process `bin/project-launch` holds is the cockpit itself, so
+stopping it stops the cockpit. The synthetic supervisor runs
+beside it and ends when the cockpit does, however it ended; it removes the
+temporary directory.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import signal
+import sys
+import tempfile
+import threading
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+FIXTURES = ROOT / "tests" / "fixtures" / "cockpit"
+sys.path.insert(0, str(ROOT / "lib"))
+
+import synthetic_city  # noqa: E402
+
+# A door that changes the Factory: refused, whatever is asked of it.
+REFUSING_DOOR = "/bin/false"
+# The synthetic sources never change by themselves: read them often, so the
+# cockpit shows its state as soon as it is asked.
+POLL_SECONDS = "0.2"
+# A supervisor that answers no more is shown as such after this long, not
+# after the two minutes a reading stays current in service.
+SILENT_VALIDITY_SECONDS = "2"
+# The mark bin/project-launch gives what it launches: the launcher stops
+# the processes that carry it, and the controller of an evaluation attests
+# that the process listening on the port carries it. The cockpit keeps it.
+LAUNCH_MARK = "FACTORY_LAUNCH_ID"
+
+
+def read_city(path: Path) -> synthetic_city.SyntheticCity:
+    """The synthetic city of the dataset at `path`; exits when it is not a
+    dataset the isolated cockpit serves."""
+    try:
+        return synthetic_city.from_dataset(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        sys.exit(f"cockpit-isolated: dataset unreadable ({path}): {exc}")
+    except synthetic_city.DatasetRefused as exc:
+        sys.exit(f"cockpit-isolated: {path}: {exc}")
+
+
+def fall_silent_once_read(supervisor, cockpit_url: str) -> None:
+    """Take `supervisor` down as soon as the cockpit shows a reading of it:
+    the last values are kept, and are no longer current."""
+    while True:
+        try:
+            with urllib.request.urlopen(cockpit_url + "/api/status", timeout=2) as response:
+                if (json.load(response).get("gc") or {}).get("value"):
+                    break
+        except (urllib.error.URLError, ConnectionError, OSError, ValueError):
+            pass
+        time.sleep(float(POLL_SECONDS))
+    supervisor.go_down()
+
+
+def serve_synthetic_supervisor(
+    city: synthetic_city.SyntheticCity, cockpit_url: str, home: str, announce: int, cockpit_alive: int
+) -> None:
+    """The process beside the cockpit: the supervisor of `city`. It writes
+    its address on `announce`, then lives until `cockpit_alive` closes --
+    the cockpit ended -- and removes `home`."""
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    sys.path.insert(0, str(FIXTURES / "core"))
+    import fake_gc
+
+    supervisor = fake_gc.FakeGc(city=city.name)
+    supervisor.set_status(
+        suspended=city.suspended, agents_running=sum(1 for session in city.sessions if session["running"])
+    )
+    supervisor.set_sessions(city.sessions)
+    supervisor.start()
+    if city.reading == synthetic_city.UNREAD:
+        supervisor.go_down()
+    os.write(announce, supervisor.base_url.encode("ascii"))
+    os.close(announce)
+    if city.reading == synthetic_city.READ_ONCE:
+        threading.Thread(target=fall_silent_once_read, args=(supervisor, cockpit_url), daemon=True).start()
+    while os.read(cockpit_alive, 1):
+        pass
+    supervisor.stop()
+    shutil.rmtree(home, ignore_errors=True)
+
+
+def write_tracker_and_projects(city: synthetic_city.SyntheticCity, home: str) -> dict[str, str]:
+    """Put what the tracker holds and the projects declared in `home`; the
+    environment that makes the cockpit read them."""
+    beads = Path(home, "tracker.json")
+    beads.write_text(json.dumps(city.beads, ensure_ascii=False), encoding="utf-8")
+    projects = Path(home, "projects")
+    projects.mkdir()
+    for descriptor in city.projects:
+        Path(projects, descriptor["project_id"] + ".json").write_text(
+            json.dumps(descriptor, ensure_ascii=False), encoding="utf-8"
+        )
+    env = {
+        "COCKPIT_BD_BIN": str(FIXTURES / "requests" / "fake-bd"),
+        "FAKE_BD_STATE_FILE": str(beads),
+        "COCKPIT_DESCRIPTORS_DIR": str(projects),
+    }
+    if city.reading == synthetic_city.UNREAD:
+        # The tracker fails for as long as this file exists: always.
+        env["FAKE_BD_FAIL_FLAG_FILE"] = str(beads)
+    return env
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="cockpit-isolated", description=__doc__)
+    parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--dataset", required=True)
+    args = parser.parse_args(argv)
+    city = read_city(Path(args.dataset))
+    cockpit_url = f"http://127.0.0.1:{args.port}"
+
+    home = tempfile.mkdtemp(prefix="cockpit-isolated-")
+    announce_read, announce_write = os.pipe()
+    alive_read, alive_write = os.pipe()
+    if os.fork() == 0:
+        os.close(announce_read)
+        os.close(alive_write)
+        try:
+            serve_synthetic_supervisor(city, cockpit_url, home, announce_write, alive_read)
+        finally:
+            os._exit(0)
+    os.close(announce_write)
+    os.close(alive_read)
+    with os.fdopen(announce_read, "rb") as announced:
+        supervisor_url = announced.read().decode("ascii")
+    if not supervisor_url:
+        shutil.rmtree(home, ignore_errors=True)
+        sys.exit("cockpit-isolated: the synthetic supervisor did not start")
+    # Kept open by the cockpit for as long as it lives, and by nothing else.
+    os.set_inheritable(alive_write, True)
+
+    env = {
+        "PATH": os.environ.get("PATH", os.defpath),
+        "HOME": home,
+        "COCKPIT_HOST": "127.0.0.1",
+        "COCKPIT_PORT": str(args.port),
+        "COCKPIT_ALLOWED_ORIGIN": cockpit_url,
+        "COCKPIT_BENJAMIN_LOGIN": "synthetic@example.ts.net",
+        "COCKPIT_PID_FILE": os.path.join(home, "cockpit.pid"),
+        "COCKPIT_LOCAL_CONFIG": os.path.join(home, "absent.json"),
+        "COCKPIT_GC_BASE_URL": supervisor_url,
+        "COCKPIT_GC_BIN": REFUSING_DOOR,
+        "COCKPIT_ESCALATION_DOOR_BIN": REFUSING_DOOR,
+        "COCKPIT_PROPOSAL_DOOR_BIN": REFUSING_DOOR,
+        "COCKPIT_LOOP_GUARD_BIN": REFUSING_DOOR,
+        "COCKPIT_GC_STATUS_POLL_SECONDS": POLL_SECONDS,
+        "COCKPIT_BEADS_POLL_SECONDS": POLL_SECONDS,
+        "COCKPIT_PROJECTS_POLL_SECONDS": POLL_SECONDS,
+        "COCKPIT_JOURNAL_POLL_SECONDS": POLL_SECONDS,
+        "COCKPIT_SESSIONS_POLL_SECONDS": POLL_SECONDS,
+        **write_tracker_and_projects(city, home),
+    }
+    if LAUNCH_MARK in os.environ:
+        env[LAUNCH_MARK] = os.environ[LAUNCH_MARK]
+    if city.reading == synthetic_city.READ_ONCE:
+        env["COCKPIT_VALIDITY_GC_SECONDS"] = SILENT_VALIDITY_SECONDS
+    os.execve(sys.executable, [sys.executable, str(ROOT / "bin" / "cockpit"), "run"], env)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

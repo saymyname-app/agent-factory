@@ -1,0 +1,11 @@
+{
+  "generated_at": "2026-10-12T12:00:00+02:00",
+  "synthetic": true,
+  "ui": {
+    "id": "health-error",
+    "page": "health",
+    "state": "error"
+  },
+  "visible_text": "Usine\n\nRessources, connexions et réglages de l’environnement d’exécution.\n\nCette vue est indisponible\n\nL’état réel est inconnu.\n\nRéessayer",
+  "production_writes": 0
+}
