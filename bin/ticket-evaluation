@@ -612,7 +612,8 @@ def cmd_observe(args: argparse.Namespace) -> int:
     return 0
 
 
-def reap(convoy: Convoy, ticket: dict[str, Any], keep: list[str], withdraw: bool = False) -> list[str]:
+def reap(convoy: Convoy, ticket: dict[str, Any], keep: list[str], withdraw: bool = False,
+         cancel: tuple[str, ...] = ()) -> list[str]:
     """Stop every launched product of the ticket that no open evaluation
     runs on (`keep`), and write that it is gone. Environment prepared and
     stopped by code (Spec §7). `withdraw`: the evaluation that was open on
@@ -622,17 +623,18 @@ def reap(convoy: Convoy, ticket: dict[str, Any], keep: list[str], withdraw: bool
     local = [str(path) for pattern in ("*.json", "*.trial")
              for path in product_folder(convoy.id, ticket["id"]).glob(pattern)]
     stale = [path for path in dict.fromkeys([*tracked, *local]) if path not in keep]
-    if not stale and not (withdraw and evaluation_of(ticket).get("request")):
+    if not stale and not cancel and not (withdraw and evaluation_of(ticket).get("request")):
         return []
     for path in stale:
         stop_product(path)
-    if withdraw:
-        for launched in (evaluation_of(ticket).get("request") or {}).get("launches", []):
-            tool = os.environ.get("TICKET_EVALUATION_CANCEL_BIN") or str(BIN / "evaluation-launch-cancel")
-            cancelled = run([tool, launched["bead"]], timeout=60)
-            if cancelled.returncode:
-                raise Refusal(f"lancement d'évaluation non libéré ({launched['bead']}) : {detail_of(cancelled)}")
-    args: list[str] = ["--withdraw"] if withdraw else []
+    launches = ((launched["bead"] for launched in (evaluation_of(ticket).get("request") or {}).get("launches", []))
+                if withdraw else cancel)
+    for bead in launches:
+        tool = os.environ.get("TICKET_EVALUATION_CANCEL_BIN") or str(BIN / "evaluation-launch-cancel")
+        cancelled = run([tool, bead], timeout=60)
+        if cancelled.returncode:
+            raise Refusal(f"lancement d'évaluation non libéré ({bead}) : {detail_of(cancelled)}")
+    args: list[str] = ["--withdraw"] if withdraw else (["--switch"] if cancel else [])
     for path in stale:
         args += ["--state-file", path]
     if any(path in tracked for path in stale) or withdraw:
@@ -936,8 +938,22 @@ def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> d
         convoy.datasets(ticket_id)
         if what == "startup":
             return startup_control(convoy, ticket_id, commit, settings)
-        if current and current.get("wanted"):
-            desired = current["wanted"]
+        launches = current["launches"] if current else []
+        timeout = settings["timeout_seconds"]
+        timed_out = bool(launches and expired(launches[-1], timeout))
+        desired = current.get("wanted") if current else None
+        if timed_out:
+            live = set(evaluation_of(ticket).get("live") or [])
+            dataset = (desired or {}).get("dataset")
+            if dataset is None:
+                dataset = next((entry["dataset"] for entry in reversed(current["environment"])
+                                if entry["state_file"] in live), current["environment"][-1]["dataset"])
+            desired = {"dataset": dataset}
+            reap(convoy, ticket, [], cancel=(launches[-1]["bead"],))
+            convoy.load()
+            ticket = convoy.ticket(ticket_id)
+            current = evaluation_of(ticket)["request"]
+        if desired:
             live = set(evaluation_of(ticket).get("live") or [])
             active = [entry for entry in current["environment"] if entry["state_file"] in live]
             if len(active) > 1:
@@ -950,13 +966,19 @@ def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> d
                                     dataset=desired["dataset"], reuse=False)[0]
             try:
                 state_write_file("append-evaluation-product", convoy.id, ticket_id, entry, "--commit", commit)
+                if timed_out:
+                    replacement = {"roles": current["roles"], "environment": [entry]}
+                    if "datasets" in current:
+                        replacement["datasets"] = current["datasets"]
+                    state_write_file("open-evaluation", convoy.id, ticket_id, replacement, "--commit", commit)
             except (Refusal, NotNewFlow):
                 stop_product(entry["state_file"])
                 raise
-            return {"ticket": ticket_id, "action": "product_ready", "commit": commit,
-                    "dataset": entry["dataset"], "address": entry["address"]}
-        launches = current["launches"] if current else []
-        timeout = settings["timeout_seconds"]
+            if not timed_out:
+                return {"ticket": ticket_id, "action": "product_ready", "commit": commit,
+                        "dataset": entry["dataset"], "address": entry["address"]}
+            convoy.load()
+            current = evaluation_of(convoy.ticket(ticket_id))["request"]
         if launches and not expired(launches[-1], timeout):
             deadline = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(launched_at(launches[-1]) + timeout))
             return {"ticket": ticket_id, "action": "pending", "commit": commit, "launches": len(launches),

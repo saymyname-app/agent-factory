@@ -833,6 +833,36 @@ class TicketEvaluationTest(unittest.TestCase):
         self.recorded(handed)
         self.assertTrue(self.tool("verdict")["favorable"])
 
+    def test_an_expired_launch_is_replaced_before_its_requested_dataset_is_opened(self):
+        profile = json.loads(self.profile.read_text())
+        original = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
+        profile["launch"]["datasets"]["empty"] = original["launch"]["datasets"]["empty"]
+        profile["launch"]["screens"][0]["states"] = ["content", "empty"]
+        self.profile.write_text(json.dumps(profile))
+        self.finished_slice(self.realized())
+        self.settings(timeout_seconds=0)
+        self.evaluator("silent")
+        self.settle()
+        first = self.evaluation()["request"]
+        first_product = first["environment"][0]
+        first_launch = first["launches"][0]["bead"]
+        asked = self.tool("product", SLICE, "--dataset", "empty", "--fresh", env=SESSION)
+        self.assertFalse(asked["ready"])
+
+        settled = self.settle()
+
+        self.assertEqual([SLICE], [entry["ticket"] for entry in settled["relaunched"]])
+        self.assertEqual([], settled["product_ready"])
+        request = self.evaluation()["request"]
+        self.assertEqual(2, len(request["launches"]))
+        self.assertEqual([first_launch], (self.tmp / "cancel.log").read_text().splitlines())
+        self.assertFalse(Path(first_product["state_file"]).exists())
+        replacement = request["environment"][-1]
+        self.assertEqual("empty", replacement["dataset"])
+        self.assertEqual([replacement], request["environment"])
+        self.assertEqual([replacement["state_file"]], self.evaluation()["live"])
+        self.assertTrue(Path(replacement["state_file"]).exists())
+
     def test_open_legacy_multi_game_request_cannot_record_without_coverage(self):
         profile = json.loads(self.profile.read_text())
         original = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
