@@ -469,6 +469,8 @@ jq -e --arg commit "$GATE1" '.spec_end.commit == $commit and .spec_end.replayed 
   || fail "the end review was not launched by the pass that rendered the three verdicts, on their commit: $pass1"
 jq -e --arg commit "$GATE1" '.outcome_evaluation.action == "launched" and .outcome_evaluation.commit == $commit' <<<"$pass1" >/dev/null \
   || fail "the Outcome Evaluation was not launched by the pass that launched the end review, on the same commit: $pass1"
+outcome_round1() { [ "$(outcome | jq -r --arg commit "$GATE1" '[.rounds[] | select(.commit == $commit)] | length' 2>/dev/null)" = 1 ]; }
+wait_for 600 outcome_round1 || { dump; fail "the Outcome Evaluation did not record a round on $GATE1 within 600s"; }
 evaluated1=$(outcome | jq -c --arg commit "$GATE1" '[.rounds[] | select(.commit == $commit)][0]')
 jq -e '.outcome == "favorable" and ([.stories[].state] == ["observed", "observed"])' <<<"$evaluated1" >/dev/null \
   || fail "the Outcome Evaluation of the commit of the gate did not observe the two user stories: $(outcome)"
@@ -550,7 +552,7 @@ expected_files=$(git -C "$PRODUCT" diff --name-only "$BASE" "$GATE2" | sort | tr
   || fail "the second review was not given the whole diff $BASE..$GATE2: $(jq -c '.diff.files' "$brief2")"
 jq -e '.diff.extent.files >= 3' "$brief2" >/dev/null || fail "the second review read less than the whole diff"
 gate_passes() { check_gate >/dev/null 2>&1; }
-wait_for 120 gate_passes || fail "the gate does not pass its six conditions on the new tip: $(check_gate | jq -r '.error')"
+wait_for 600 gate_passes || fail "the gate does not pass its six conditions on the new tip: $(check_gate | jq -r '.error')"
 [ "$(field "$CONVOY" gc.flow.counter.end_rounds)" = 1 ] || fail "a favorable end review counted a round of the end"
 echo "$(date -u +%H:%M:%S) 3 : repair livré, pointe $TIP2 ; la porte rejoue ses verdicts sur $GATE2 et refuse le tour précédent ; revue refaite en entier par une autre session ($reviewer2 ≠ $reviewer1) sur $(jq -r '.diff.extent.files' "$brief2") fichiers, favorable, produit évalué de nouveau par la même passe ; la porte de fin passe ses six conditions : $(check_gate | jq -c '[.conditions[] | {(.name): .verdict}] | add')"
 

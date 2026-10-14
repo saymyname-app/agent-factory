@@ -24,6 +24,38 @@
         "path": "/api/journal",
         "pointer": "/entries/0/quoi"
       }
+    },
+    {
+      "scope": "ticket",
+      "owner": "af-6a98ip",
+      "number": 1,
+      "text": "Point d'entrée : bin/project-launch start puis URL annoncée — Observable : Le vrai cockpit répond à GET / et GET /api/status au commit demandé sur port isolé ; son état provient du dataset nommé. — Faux si : Révision erronée, page de remplacement, source live ou réponse absente.",
+      "dataset": "factory-suspended",
+      "source": {
+        "reference": "Spec af-2zseit, prototype Panorama Usine 632deea09daa22d8213807ef48a79891edf1c7bf, data/factory-suspended.json : suspension confirmée",
+        "digest": "sha256:48cd6692c431f85e1b92a23b4bcb6b9408141ab479cb54c493a38c299e4ce989"
+      },
+      "expected": true,
+      "observation": {
+        "path": "/api/status",
+        "pointer": "/gc/value/suspended"
+      }
+    },
+    {
+      "scope": "ticket",
+      "owner": "af-6a98ip",
+      "number": 1,
+      "text": "Point d'entrée : bin/project-launch start puis URL annoncée — Observable : Le vrai cockpit répond à GET / et GET /api/status au commit demandé sur port isolé ; son état provient du dataset nommé. — Faux si : Révision erronée, page de remplacement, source live ou réponse absente.",
+      "dataset": "runs-active",
+      "source": {
+        "reference": "Spec af-2zseit, prototype Runs d8cb462d3287234ce5349d358899441a5796353c, data/runs-active.json : premier run",
+        "digest": "sha256:2e470160d6aa989f9fd22601441a596dcf1ace313148f7637a9a38656cbbc23d"
+      },
+      "expected": "Reprise du cockpit",
+      "observation": {
+        "path": "/api/status",
+        "pointer": "/beads/value/0/title"
+      }
     }
   ]
 }
