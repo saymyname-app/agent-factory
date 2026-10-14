@@ -93,12 +93,12 @@ def process_tree(pid: int) -> set[int]:
         except (OSError, IndexError, ValueError):
             continue
         parents.setdefault(ppid, []).append(int(stat.parent.name))
-    tree, todo = set(), [pid]
-    while todo:
-        current = todo.pop()
+    tree, pending = set(), [pid]
+    while pending:
+        current = pending.pop()
         if current not in tree:
             tree.add(current)
-            todo.extend(parents.get(current, []))
+            pending.extend(parents.get(current, []))
     return tree
 
 
