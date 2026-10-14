@@ -995,23 +995,23 @@ class PatchDoorTest(Harness):
     SPEC_WITHOUT_STORY_3 = FIXTURE_SPEC.replace(
         "3. As an exploitant, I want une sonde de santé, so that je sache que le produit répond.\n", "")
 
-    def register(self, status):
+    def register(self, status, decision="pd-1", ticket="T4", filename="register.json"):
         """A Planning Exception register written by bin/planning-exception:
-        decision pd-1, open or resolved."""
-        path = self.tmp / "register.json"
+        one decision, open or resolved."""
+        path = self.tmp / filename
         graph = self.tmp / "graph.json"
-        graph.write_text(json.dumps({"beads": {self.ids["T4"]: {"blocked_by": []}}}))
+        graph.write_text(json.dumps({"beads": {self.ids[ticket]: {"blocked_by": []}}}))
 
         def run(*args):
             proc = subprocess.run((str(PLANNING_EXCEPTION), *args), text=True, capture_output=True)
             self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
 
         run("init", "--run", "run-fixture", "--out", str(path))
-        run("raise", str(path), "--graph", str(graph), "--bead", self.ids["T4"], "--kind", "topology",
-            "--run", "run-fixture", "--decision-id", "pd-1", "--summary", "la sonde n'est plus voulue",
+        run("raise", str(path), "--graph", str(graph), "--bead", self.ids[ticket], "--kind", "topology",
+            "--run", "run-fixture", "--decision-id", decision, "--summary", "la tranche n'est plus voulue",
             "--raised-by", "auteur-fixture")
         if status == "resolved":
-            run("resolve", str(path), "--decision", "pd-1", "--kind", "tactical", "--note", "Benjamin retire la sonde")
+            run("resolve", str(path), "--decision", decision, "--kind", "tactical", "--note", "Benjamin retire la tranche")
         return path
 
     def withdrawal(self):
@@ -1038,6 +1038,32 @@ class PatchDoorTest(Harness):
         self.assertIn("withdrawn", self.shown_ticket(self.convoy, self.ids["T4"])["gates"])
         # The withdrawn ticket is no longer named as a sibling.
         self.assertNotIn(T4_LINE, self.beads()[self.ids["T2"]]["description"])
+
+    def test_later_revision_preserves_historical_withdrawal_and_authorizes_only_new_one(self):
+        old_register = self.register("resolved")
+        self.amend_spec(self.SPEC_WITHOUT_STORY_3)
+        self.propose(self.withdrawal())
+        first_patch = self.patched(extra=("--planning-exception-register", str(old_register)))
+        withdrawn_before = copy.deepcopy(self.beads()[self.ids["T4"]])
+
+        current_register = self.register(
+            "resolved", decision="pd-2", ticket="T3", filename="current-register.json")
+        revision = self.revision(
+            keep=("T1", "T2"),
+            withdrawn=[
+                {"ticket": "T4", "planning_exception": "pd-1"},
+                {"ticket": "T3", "planning_exception": "pd-2"},
+            ],
+        )
+        self.propose(revision, draft_id="draft-3", revises=first_patch["graph_digest"])
+
+        result = self.patched(
+            "draft-3", extra=("--planning-exception-register", str(current_register)))
+
+        self.assertEqual({"T3": self.ids["T3"], "T4": self.ids["T4"]}, result["withdrawn"])
+        self.assertEqual(withdrawn_before, self.beads()[self.ids["T4"]])
+        self.assertEqual("closed", self.beads()[self.ids["T3"]]["status"])
+        self.assertIn("withdrawn", self.shown_ticket(self.convoy, self.ids["T3"])["gates"])
 
     def test_coverage_is_recomputed_when_another_slice_takes_the_story_over(self):
         register = self.register("resolved")

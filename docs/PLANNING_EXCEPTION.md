@@ -23,8 +23,11 @@ revised Ticket Graph Draft Bead and routes it through
 deterministic to-tickets door, never a second one. `bd-patch` refuses to touch
 any ticket that is already delivered (`status: closed`), updates unfinished
 tickets in place keeping their IDs, and creates Beads only for genuinely new
-scope. If the patch fails, `resolve` fails too and the decision stays open,
-still parked.
+scope. A later revision preserves a closed ticket whose convoy state already
+records the `withdrawn` gate: it neither replays that withdrawal nor requires
+its historical decision in the current register. A closed ticket without that
+gate remains refused. If the patch fails, `resolve` fails too and the decision
+stays open, still parked.
 
 The register and graph snapshot are caller-supplied JSON. `raise` and
 `tactical` resolution do not write live Beads. Behavioral/topology resolution
