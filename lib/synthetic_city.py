@@ -45,6 +45,8 @@ PROJECT_KEY = "gc.project_id"
 RESULT_STATE = "synthetic.result_state"
 # The label of a bead that keeps one section of a screen as it is said.
 SAID = "said"
+# What an event bead meant for the journal carries (cockpit.ui.journal.entries).
+JOURNAL_EVENT_KEY = "gc.journal_event"
 
 # The step of the stop a Factory state is set up at (`ui.setup`).
 STOP_STEP = re.compile(r"shutdownState='([a-z]+)'")
@@ -268,10 +270,11 @@ def _project_page(lines, tracker) -> None:
 
 
 def _journal(lines, tracker) -> None:
-    """One event bead per event, as `bd create --type event` records it:
-    « HH:MM (Paris) · projet · nature », or « HH:MM (Paris) · source » for
-    a technical one -- its category -- then its title and what the journal
-    says of it. The lines above the first event are tabs."""
+    """One event bead per event, as `bd create --type event` records it,
+    marked for the journal: « HH:MM (Paris) · projet · nature », or « HH:MM
+    (Paris) · source » for a technical one -- its category -- then its
+    title and what the journal says of it. The lines above the first event
+    are tabs."""
     day, events = 0, []
     for line in lines:
         header = JOURNAL_EVENT.match(line)
@@ -287,7 +290,7 @@ def _journal(lines, tracker) -> None:
         if not said:
             raise DatasetRefused(f"an event of the journal without a title: {header.group(0)}")
         tracker.add(f"synthetic-event-{number}", said[0], said=said[1:], at=when, issue_type="event",
-                    event_kind=header["kind"], labels=[header["kind"]],
+                    event_kind=header["kind"], labels=[header["kind"]], metadata={JOURNAL_EVENT_KEY: header["kind"]},
                     project=header["project"] and tracker.declare(header["project"]))
 
 

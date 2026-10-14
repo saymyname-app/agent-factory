@@ -1,7 +1,7 @@
 """The journal's one read (spec af-oohx2x .18, §"Actions opérateur":
 "Aucune copie locale : la page journal relit ces traces"): every bead that
 ever carried an Operator Request, and what its notes say resolved it;
-and every event the tracker records (T01R3, af-7hk9e7).
+and every event bead meant for the journal (T01R3, af-7hk9e7).
 
 The doors and the cockpit's own actions leave their trace in the bead's
 **notes** (``bd update --append-notes``: ``bin/escalation-door``,
@@ -14,23 +14,22 @@ the beads.
 from dataclasses import asdict
 
 from cockpit.core.beads_source import read_beads_json
-from cockpit.ui.journal.entries import JournalEntry, journal_from_beads
+from cockpit.ui.journal.entries import JOURNAL_EVENT_KEY, JournalEntry, journal_from_beads
 
-# A bead carries one of these from the day it bears a request or a trace.
-TRACE_KEYS = ("gc.needs_benjamin", "gc.proposal_state", "gc.cockpit_action_quoi")
-# The events the tracker records (``bd create --type event``), whatever
-# their status.
-EVENTS_READ = ["list", "--type", "event", "--all", "--limit", "0"]
+# A bead carries one of these from the day it bears a request or a trace;
+# an event bead (``bd create --type event``) meant for the journal carries
+# the last one, its category as value.
+TRACE_KEYS = ("gc.needs_benjamin", "gc.proposal_state", "gc.cockpit_action_quoi", JOURNAL_EVENT_KEY)
 
 
 def read_journal(bd_bin="bd", timeout=20):
     """Raises on any failed ``bd`` call: a journal missing a kind of
     resolution would read as "that never happened"."""
     by_id = {}
-    reads = [["list", "--all", "--limit", "0", "--has-metadata-key", key] for key in TRACE_KEYS]
-    reads.append(EVENTS_READ)
-    for args in reads:
-        for bead in read_beads_json(args, bd_bin=bd_bin, timeout=timeout):
+    for key in TRACE_KEYS:
+        for bead in read_beads_json(
+            ["list", "--all", "--limit", "0", "--has-metadata-key", key], bd_bin=bd_bin, timeout=timeout
+        ):
             if isinstance(bead, dict) and bead.get("id"):
                 by_id.setdefault(bead["id"], bead)
     return {"entries": [asdict(entry) for entry in journal_from_beads(by_id.values())]}

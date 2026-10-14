@@ -282,6 +282,11 @@ def _entries_of(bead):
     return entries
 
 
+# The key an event bead meant for the journal carries, its category as
+# value: what the journal finds it by, whatever its status.
+JOURNAL_EVENT_KEY = "gc.journal_event"
+
+
 def _event_entry(bead):
     """A bead of type ``event``, as ``bd create --type event`` records it:
     its title is what happened, ``event_kind`` its category and ``actor``
@@ -291,7 +296,7 @@ def _event_entry(bead):
         quoi=bead.get("title") or "",
         quand=bead.get("created_at") or "",
         par=bead.get("actor") or "",
-        voie=bead.get("event_kind") or "",
+        voie=bead.get("event_kind") or (bead.get("metadata") or {}).get(JOURNAL_EVENT_KEY) or "",
         evenement=True,
     )
 
