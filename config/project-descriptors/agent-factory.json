@@ -11,7 +11,7 @@
   "validated_expectations": [
     {
       "scope": "ticket",
-      "owner": "af-m2tr6o",
+      "owner": "af-6a98ip",
       "number": 1,
       "text": "Point d'entrée : bin/project-launch start puis URL annoncée — Observable : Le vrai cockpit répond à GET / et GET /api/status au commit demandé sur port isolé ; son état provient du dataset nommé. — Faux si : Révision erronée, page de remplacement, source live ou réponse absente.",
       "dataset": "journal-content",
