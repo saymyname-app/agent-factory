@@ -544,10 +544,10 @@ author_finishes() { # <ticket>: a slice finished at its tip with both defects; p
   state set-tdd "$CONVOY" "$t" --step red --commit "$red" --base "$BASE" >/dev/null
   jq -n --argjson files "$files" --arg id "$FIXTURE/tests/test_count_$t.py::CountTest.test_count" '{files: $files, criteria: {"1": [$id]}}' > "$TRIAL/request.$t.json"
   state open-test-review "$CONVOY" "$t" --commit "$red" --file "$TRIAL/request.$t.json" >/dev/null
-  jq -n --argjson files "$files" --arg commit "$red" --arg id "$FIXTURE/tests/test_count_$t.py::CountTest.test_count" \
-    '{commit: $commit, files: $files, tests: {($id): {state: "favorable"}}, recorded_by: "trial-test-reviewer"}' > "$TRIAL/verdict.$t.json"
-  state record-test-review "$CONVOY" "$t" --file "$TRIAL/verdict.$t.json" >/dev/null
-  state set-tdd "$CONVOY" "$t" --step freeze --commit "$red" >/dev/null
+  jq -n --argjson files "$files" --arg commit "$red" --arg id "$FIXTURE/tests/test_count_$t.py::CountTest.test_count" --arg reviewer "trial-test-reviewer-$t" \
+    '{commit: $commit, files: $files, tests: {($id): {state: "favorable"}}, recorded_by: $reviewer}' > "$TRIAL/verdict.$t.json"
+  state record-test-review "$CONVOY" "$t" --file "$TRIAL/verdict.$t.json" >/dev/null || fail "test review refused for $t"
+  state set-tdd "$CONVOY" "$t" --step freeze --commit "$red" >/dev/null || fail "test freeze refused for $t"
   finish "$CONVOY" "$t" "$tip" || fail "the first author could not finish $t"
   printf '%s' "$tip"
 }
