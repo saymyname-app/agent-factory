@@ -1,6 +1,6 @@
 # Design standards — React and TypeScript
 
-Default Standards version 3. This proposed design becomes the project's own
+Default Standards version 4. This proposed design becomes the project's own
 standard when adopted at its first interface work. Its palette is a starting
 point to judge on real screens, not an approval of the app's taste.
 
@@ -17,6 +17,7 @@ point to judge on real screens, not an approval of the app's taste.
 ## Rules cited by the reviewer
 
 - The visual hierarchy makes the primary action and the current state clear on each screen.
+- A changed visual reference matches the visual intent declared by its ticket.
 - Focus order follows the task order, focus remains visible, and every task is operable by keyboard.
 - An image description communicates its purpose rather than repeating its filename.
 - Text uses short, direct sentences and identifies the action a person can take.

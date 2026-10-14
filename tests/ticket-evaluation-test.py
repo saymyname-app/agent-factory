@@ -1299,6 +1299,93 @@ class TicketEvaluationTest(unittest.TestCase):
                           "Les images ont une description", "Le mouvement réduit est respecté"],
                          brief["screen_checks"])
 
+    def test_interface_brief_shows_changed_reference_and_ticket_intent(self):
+        path = "design-bench/bench.spec.mjs-snapshots/home.png"
+        self.git("checkout", "-q", INTEGRATION)
+        baseline = self.repo / path
+        baseline.parent.mkdir(parents=True, exist_ok=True)
+        baseline.write_bytes(b"before image")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "visual baseline")
+        self.git("push", "-q", "origin", INTEGRATION)
+        self.git("checkout", "-q", "--detach", self.base)
+        intent = "La couleur primaire devient plus douce"
+        self.edit(SLICE, description=TICKET_TEXT + "\n\n## Changement visuel\n\n" + intent + "\n"
+                  + "\n## Validated Prototype\n- branche : prototype/essai\n- commit : " + "a" * 40
+                  + "\n- chemin : /fixture\n- états : content\n")
+        manifest = {"contract": "agent-factory-visual-changes/v1", "entries": [
+            {"path": path, "ticket": SLICE, "intent": intent}]}
+        self.finished_slice({**self.realized(), "DESIGN.md": "- Le changement visuel respecte l'intention du ticket.\n",
+                             path: "after image", "design-bench/visual-changes.json": json.dumps(manifest)})
+        self.evaluator("silent")
+        self.settle()
+
+        brief = self.tool("brief")
+
+        self.assertEqual(1, len(brief["visual_changes"]))
+        change = brief["visual_changes"][0]
+        self.assertEqual(path, change["path"])
+        self.assertEqual(intent, change["intent"])
+        self.assertEqual(b"before image", Path(change["before"]).read_bytes())
+        self.assertEqual(b"after image", Path(change["after"]).read_bytes())
+        self.assertIn("Le changement visuel correspond à l'intention déclarée", brief["screen_checks"])
+
+    def test_changed_reference_rejects_a_stale_visual_declaration(self):
+        path = "design-bench/bench.spec.mjs-snapshots/home.png"
+        intent = "La couleur primaire devient plus douce"
+        manifest = {"contract": "agent-factory-visual-changes/v1", "entries": [
+            {"path": path, "ticket": SLICE, "intent": intent}]}
+        self.git("checkout", "-q", INTEGRATION)
+        baseline = self.repo / path
+        baseline.parent.mkdir(parents=True, exist_ok=True)
+        baseline.write_bytes(b"before image")
+        declaration = self.repo / "design-bench/visual-changes.json"
+        declaration.write_text(json.dumps(manifest))
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "visual baseline and declaration")
+        self.git("push", "-q", "origin", INTEGRATION)
+        self.git("checkout", "-q", "--detach", self.base)
+        self.edit(SLICE, description=TICKET_TEXT + "\n\n## Changement visuel\n\n" + intent + "\n"
+                  + "\n## Validated Prototype\n- branche : prototype/essai\n- commit : " + "a" * 40
+                  + "\n- chemin : /fixture\n- états : content\n")
+        self.finished_slice({**self.realized(), "DESIGN.md": "- Le changement visuel respecte l'intention du ticket.\n",
+                             path: "after image"})
+        self.evaluator("silent")
+        self.settle()
+
+        self.refused("brief", CONVOY, SLICE, "--repo", self.repo,
+                     mention="déclaration visuelle périmée")
+
+    def test_initial_visual_reference_needs_no_change_declaration(self):
+        path = "design-bench/bench.spec.mjs-snapshots/home.png"
+        self.finished_slice({**self.realized(), "DESIGN.md": "- Le focus reste visible.\n",
+                             path: "initial image"})
+        self.edit(SLICE, description=TICKET_TEXT + "\n\n## Validated Prototype\n"
+                  + "- branche : prototype/essai\n- commit : " + "a" * 40
+                  + "\n- chemin : /fixture\n- états : content\n")
+        self.evaluator("silent")
+        self.settle()
+
+        brief = self.tool("brief")
+
+        self.assertNotIn("visual_changes", brief)
+        self.assertNotIn("Le changement visuel correspond à l'intention déclarée", brief["screen_checks"])
+
+    def test_interface_brief_without_origin_uses_local_integration_branch(self):
+        self.finished_slice({**self.realized(), "DESIGN.md": "- Le focus reste visible.\n"})
+        self.edit(SLICE, description=TICKET_TEXT + "\n\n## Validated Prototype\n"
+                  + "- branche : prototype/essai\n- commit : " + "a" * 40
+                  + "\n- chemin : /fixture\n- états : content\n")
+        self.evaluator("silent")
+        self.settle()
+        self.git("branch", INTEGRATION, f"origin/{INTEGRATION}")
+        self.git("remote", "remove", "origin")
+
+        brief = self.tool("brief")
+
+        self.assertIn("design", brief)
+        self.assertNotIn("visual_changes", brief)
+
     def test_non_interface_brief_omits_design_even_if_the_repository_has_it(self):
         self.finished_slice({**self.realized(), "DESIGN.md": "- Le focus reste visible.\n"})
         self.evaluator("silent")
@@ -1325,6 +1412,92 @@ class TicketEvaluationTest(unittest.TestCase):
         self.assertEqual(("return_to_author", "unfavorable"), (result["outcome"], result["verdict"]))
         self.assertIn("écran : Le focus est visible", result["state"]["not_observed"])
         self.assertFalse(self.tool("verdict")["favorable"])
+
+    def test_cited_visual_intent_finding_refuses_an_interface_ticket(self):
+        path = "design-bench/bench.spec.mjs-snapshots/home.png"
+        self.git("checkout", "-q", INTEGRATION)
+        baseline = self.repo / path
+        baseline.parent.mkdir(parents=True, exist_ok=True)
+        baseline.write_bytes(b"before image")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "visual baseline")
+        self.git("push", "-q", "origin", INTEGRATION)
+        self.git("checkout", "-q", "--detach", self.base)
+        intent = "La couleur primaire devient plus douce"
+        self.edit(SLICE, description=TICKET_TEXT + "\n\n## Changement visuel\n\n" + intent + "\n"
+                  + "\n## Validated Prototype\n- branche : prototype/essai\n- commit : " + "a" * 40
+                  + "\n- chemin : /fixture\n- états : content\n")
+        rule = "- Le changement visuel respecte l'intention du ticket."
+        manifest = {"contract": "agent-factory-visual-changes/v1", "entries": [
+            {"path": path, "ticket": SLICE, "intent": intent}]}
+        tip, request = self.open_evaluation({**self.realized(), "DESIGN.md": rule + "\n",
+                                             path: "after image",
+                                             "design-bench/visual-changes.json": json.dumps(manifest)})
+        handed = self.handed(tip, request)
+        handed["screen_findings"] = [{"check": "Le changement visuel correspond à l'intention déclarée",
+                                      "rule": rule,
+                                      "evidence": self.capture("evaluation.visual", request["environment"][0]),
+                                      "reason": "La référence montre un contraste réduit, contrairement à l'intention."}]
+
+        result = self.recorded(handed)
+
+        self.assertEqual(("return_to_author", "unfavorable"), (result["outcome"], result["verdict"]))
+        self.assertIn("écran : Le changement visuel correspond à l'intention déclarée",
+                      result["state"]["not_observed"])
+
+    def test_direct_state_write_refuses_stale_visual_declaration(self):
+        path = "design-bench/bench.spec.mjs-snapshots/home.png"
+        intent = "La couleur primaire devient plus douce"
+        manifest = {"contract": "agent-factory-visual-changes/v1", "entries": [
+            {"path": path, "ticket": SLICE, "intent": intent}]}
+        self.git("checkout", "-q", INTEGRATION)
+        baseline = self.repo / path
+        baseline.parent.mkdir(parents=True, exist_ok=True)
+        baseline.write_bytes(b"before image")
+        (self.repo / "design-bench/visual-changes.json").write_text(json.dumps(manifest))
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "visual baseline and declaration")
+        self.git("push", "-q", "origin", INTEGRATION)
+        self.git("checkout", "-q", "--detach", self.base)
+        self.edit(SLICE, description=TICKET_TEXT + "\n\n## Changement visuel\n\n" + intent + "\n"
+                  + "\n## Validated Prototype\n- branche : prototype/essai\n- commit : " + "a" * 40
+                  + "\n- chemin : /fixture\n- états : content\n")
+        rule = "- Le changement visuel respecte l'intention du ticket."
+        tip, request = self.open_evaluation({**self.realized(), "DESIGN.md": rule + "\n", path: "after image"})
+        handed = self.handed(tip, request)
+        handed["screen_findings"] = [{"check": "Le changement visuel correspond à l'intention déclarée",
+                                      "rule": rule,
+                                      "evidence": self.capture("evaluation.visual", request["environment"][0]),
+                                      "reason": "La couleur reste trop vive."}]
+        handed["recorded_by"] = "delivery-evaluator-fixture-1"
+        before = self.tracker.read_bytes()
+
+        direct = self.run_cmd(STATE_TOOL, "record-evaluation", CONVOY, SLICE,
+                              "--repo", self.repo, "--file", self.json_file("direct.json", handed))
+
+        self.assertEqual(EXIT_REFUSED, direct.returncode, direct.stdout + direct.stderr)
+        self.assertIn("déclaration visuelle périmée", direct.stdout)
+        self.assertEqual(before, self.tracker.read_bytes())
+
+    def test_visual_finding_without_changed_reference_is_refused_by_both_doors(self):
+        rule = "- Le changement visuel respecte l'intention du ticket."
+        tip, request = self.open_evaluation({**self.realized(), "DESIGN.md": rule + "\n"})
+        self.edit(SLICE, description=TICKET_TEXT + "\n\n## Validated Prototype\n"
+                  + "- branche : prototype/essai\n- commit : " + "a" * 40
+                  + "\n- chemin : /fixture\n- états : content\n")
+        self.assertNotIn("visual_changes", self.tool("brief"))
+        handed = self.handed(tip, request)
+        handed["screen_findings"] = [{"check": "Le changement visuel correspond à l'intention déclarée",
+                                      "rule": rule, "evidence": "evaluation.c1",
+                                      "reason": "Un écart visuel supposé."}]
+        self.record_refused(handed, "constat visuel hors de la liste à vérifier")
+        handed["recorded_by"] = "delivery-evaluator-fixture-1"
+        before = self.tracker.read_bytes()
+        direct = self.run_cmd(STATE_TOOL, "record-evaluation", CONVOY, SLICE,
+                              "--repo", self.repo, "--file", self.json_file("direct.json", handed))
+        self.assertEqual(EXIT_REFUSED, direct.returncode, direct.stdout + direct.stderr)
+        self.assertIn("constat visuel hors de la liste à vérifier", direct.stdout)
+        self.assertEqual(before, self.tracker.read_bytes())
 
     def test_screen_finding_without_written_rule_is_refused(self):
         tip, request = self.open_evaluation({**self.realized(), "DESIGN.md": "- Le focus reste visible.\n"})
