@@ -61,6 +61,60 @@ def pick_free_port() -> int:
         return sock.getsockname()[1]
 
 
+# The port chosen is free when chosen, not reserved: another process of the
+# host can bind it before the product does. A launch whose port is lost so is
+# made again on another port, this many times in all.
+PORT_ATTEMPTS = 3
+
+
+def listening_sockets(port: int) -> set[str]:
+    """The inodes of the sockets listening on `port` of the loopback (or of
+    every address), as /proc/net/tcp and tcp6 list them."""
+    inodes = set()
+    for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            lines = Path(table).read_text().splitlines()[1:]
+        except OSError:
+            continue
+        for line in lines:
+            fields = line.split()
+            address, _, hex_port = fields[1].rpartition(":")
+            if int(hex_port, 16) == port and fields[3] == "0A" and address.strip("0") in ("", "100007F"):
+                inodes.add(fields[9])
+    return inodes
+
+
+def process_tree(pid: int) -> set[int]:
+    """`pid` and every live process descended from it."""
+    parents: dict[int, list[int]] = {}
+    for stat in Path("/proc").glob("[0-9]*/stat"):
+        try:
+            ppid = int(stat.read_text().rsplit(")", 1)[1].split()[1])
+        except (OSError, IndexError, ValueError):
+            continue
+        parents.setdefault(ppid, []).append(int(stat.parent.name))
+    tree, todo = set(), [pid]
+    while todo:
+        current = todo.pop()
+        if current not in tree:
+            tree.add(current)
+            todo.extend(parents.get(current, []))
+    return tree
+
+
+def listener_is_launched(port: int, pid: int) -> bool:
+    """Whether what listens on `port` is a process of the launch `pid`: the
+    product's identity, not only an answer on its port."""
+    sockets = {f"socket:[{inode}]" for inode in listening_sockets(port)}
+    for member in process_tree(pid):
+        try:
+            if any(os.readlink(fd) in sockets for fd in Path(f"/proc/{member}/fd").iterdir()):
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def terminate(pid: int) -> None:
     try:
         os.kill(pid, signal.SIGTERM)
@@ -116,6 +170,44 @@ def remove_worktree(repo_root: str, worktree: str) -> None:
         capture_output=True,
         text=True,
     )
+
+
+def end_attempt(proc: subprocess.Popen) -> None:
+    """Stop an attempt of the launch, and reap it: it leaves no process."""
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+
+def run_until_healthy(
+    recipe: list[str], worktree: str, port: int, dataset: str, probe_url: str, expect_status: int, timeout: float
+) -> tuple[subprocess.Popen, str]:
+    """Run `recipe` on `port` and probe it. The outcome: `healthy` (the
+    probe answers, and the answer comes from the launched process),
+    `port_lost` (another process answers on the port, or holds it when the
+    product ended) or `unhealthy`."""
+    argv = [token.format(python=sys.executable, port=str(port), dataset=dataset) for token in recipe]
+    with open(Path(worktree) / "launch.log", "a") as log_file:
+        proc = subprocess.Popen(argv, cwd=worktree, stdout=log_file, stderr=subprocess.STDOUT)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            return proc, "port_lost" if listening_sockets(port) else "unhealthy"
+        try:
+            with urllib.request.urlopen(probe_url, timeout=1) as response:
+                answered = response.status == expect_status
+        except (urllib.error.URLError, ConnectionError, OSError):
+            answered = False
+        if answered:
+            if listener_is_launched(port, proc.pid):
+                return proc, "healthy"
+            if proc.poll() is None and listening_sockets(port):
+                return proc, "port_lost"
+        time.sleep(0.1)
+    return proc, "unhealthy"
 
 
 def cmd_start(args: argparse.Namespace) -> int:
@@ -184,46 +276,25 @@ def cmd_start(args: argparse.Namespace) -> int:
         print(json.dumps({"started": False, "error": str(exc)}, sort_keys=True))
         return 1
 
-    port = pick_free_port()
     dataset_abs = str(Path(worktree) / dataset_rel) if dataset_rel else ""
-    argv = [
-        token.format(python=sys.executable, port=str(port), dataset=dataset_abs)
-        for token in launch["recipe"]
-    ]
-
-    log_file = open(Path(worktree) / "launch.log", "w")
-    proc = subprocess.Popen(argv, cwd=worktree, stdout=log_file, stderr=subprocess.STDOUT)
-
-    address = f"http://127.0.0.1:{port}"
-    probe_url = address + launch["health_probe"]["path"]
+    probe_path = launch["health_probe"]["path"]
     expect_status = launch["health_probe"].get("expect_status", 200)
-
-    deadline = time.monotonic() + args.timeout
-    ready = False
-    while time.monotonic() < deadline:
-        if proc.poll() is not None:
-            break
-        try:
-            with urllib.request.urlopen(probe_url, timeout=1) as response:
-                if response.status == expect_status:
-                    ready = True
-                    break
-        except (urllib.error.URLError, ConnectionError, OSError):
-            pass
-        time.sleep(0.1)
-
-    if not ready:
-        terminate(proc.pid)
-        remove_worktree(str(repo_root), worktree)
-        print(
-            json.dumps(
-                {
-                    "started": False,
-                    "error": f"product did not become healthy within {args.timeout}s",
-                },
-                sort_keys=True,
-            )
+    for _ in range(PORT_ATTEMPTS):
+        port = pick_free_port()
+        address = f"http://127.0.0.1:{port}"
+        proc, outcome = run_until_healthy(
+            launch["recipe"], worktree, port, dataset_abs, address + probe_path, expect_status, args.timeout
         )
+        if outcome == "healthy":
+            break
+        end_attempt(proc)
+        if outcome != "port_lost":
+            error = f"product did not become healthy within {args.timeout}s"
+            break
+        error = f"port {port} was taken by another process before the product bound it ({PORT_ATTEMPTS} ports tried)"
+    if outcome != "healthy":
+        remove_worktree(str(repo_root), worktree)
+        print(json.dumps({"started": False, "error": error}, sort_keys=True))
         return 1
 
     record = {

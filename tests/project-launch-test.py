@@ -75,7 +75,11 @@ def _adopting_orphans():
 def _children() -> list[int]:
     """The processes whose parent is this test process, and no other: what
     another battery, a CI job or a live launch runs on the same host at the
-    same moment is not in this list (af-29xv7v)."""
+    same moment is not in this list (af-29xv7v). An adopted process that
+    has already ended is reaped first: it is no longer running."""
+    with contextlib.suppress(ChildProcessError):
+        while os.waitpid(-1, os.WNOHANG)[0]:
+            pass
     me = str(os.getpid())
     found = []
     for stat in Path("/proc").glob("[0-9]*/stat"):
@@ -231,6 +235,113 @@ class ProjectLaunchTest(unittest.TestCase):
                 break
             time.sleep(0.1)
         self.assertTrue(_port_is_free(record_a["port"]))
+
+    # The port is the product's -------------------------------------------------
+
+    def contested_launch(self, taken: int):
+        """Launch the fixture product through a recipe that, before the
+        product binds the port it is given, lets this test answer on that
+        port in its place -- as another launch on the same host can, between
+        the moment the launcher chooses a port and the moment the product
+        binds it. The first `taken` ports given are answered here, 200 to
+        everything, and the product then fails to bind them. Returns the
+        launcher's answer, the ports given, and the impostors' addresses."""
+        import shutil
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        product = Path(tempfile.mkdtemp(prefix="project-launch-contested-"))
+        self.addCleanup(shutil.rmtree, product, ignore_errors=True)
+        fixture = Path("tests") / "fixtures" / "delivery-fixture-city"
+        shutil.copytree(ROOT / fixture, product / fixture)
+        (product / "contested.py").write_text(
+            "import os, sys, time\n"
+            "port, contest = sys.argv[1], os.environ['CONTEST_DIR']\n"
+            "with open(os.path.join(contest, 'ports'), 'a') as given:\n"
+            "    given.write(port + '\\n')\n"
+            "deadline = time.monotonic() + 20\n"
+            "while not os.path.exists(os.path.join(contest, 'release-' + port)) and time.monotonic() < deadline:\n"
+            "    time.sleep(0.05)\n"
+            "os.execv(sys.argv[2], sys.argv[2:])\n"
+        )
+        descriptor = json.loads(DESCRIPTOR.read_text())
+        descriptor["launch"]["recipe"] = ["{python}", "contested.py", "{port}", *descriptor["launch"]["recipe"]]
+        (product / "descriptor.json").write_text(json.dumps(descriptor))
+        env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
+        for args in (("init", "-q", "-b", "main"), ("add", "-A"),
+                     ("-c", "user.name=essai", "-c", "user.email=essai@example.invalid", "commit", "-q", "-m", "produit")):
+            subprocess.run(("git", "-C", str(product), *args), env=env, check=True, capture_output=True)
+
+        class Impostor(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Length", "8")
+                self.end_headers()
+                self.wfile.write(b"impostor")
+
+        contest = product / "contest"
+        contest.mkdir()
+        impostors: dict[int, str] = {}
+        done = threading.Event()
+
+        def answer_in_place_of_the_product():
+            seen: list[int] = []
+            while not done.is_set():
+                given = (contest / "ports").read_text().split() if (contest / "ports").exists() else []
+                for port in map(int, given[len(seen):]):
+                    seen.append(port)
+                    if len(seen) <= taken:
+                        server = ThreadingHTTPServer(("127.0.0.1", port), Impostor)
+                        threading.Thread(target=server.serve_forever, daemon=True).start()
+                        self.addCleanup(server.server_close)
+                        self.addCleanup(server.shutdown)
+                        impostors[port] = f"http://127.0.0.1:{port}/"
+                        time.sleep(1)  # long enough for the health probe to reach the impostor
+                    (contest / f"release-{port}").touch()
+                time.sleep(0.02)
+
+        watcher = threading.Thread(target=answer_in_place_of_the_product, daemon=True)
+        watcher.start()
+        state_file = self.new_state_file()
+        with _adopting_orphans():
+            result = subprocess.run(
+                (str(TOOL), "--repo-root", str(product), "start", str(product / "descriptor.json"),
+                 "--dataset", "content", "--state-file", str(state_file), "--timeout", "15"),
+                cwd=product, env={**env, "CONTEST_DIR": str(contest)}, text=True, capture_output=True)
+            record = json.loads(result.stdout)
+            left = [] if record.get("started") else _children()
+            _end(left)
+        done.set()
+        watcher.join()
+        given = [int(port) for port in (contest / "ports").read_text().split()]
+        return record, state_file, given, impostors, left
+
+    def test_a_port_another_process_answers_on_is_not_the_product_and_another_is_taken(self):
+        record, _, given, impostors, _ = self.contested_launch(taken=1)
+
+        self.assertIs(True, record["started"], record)
+        self.assertEqual(2, len(given), "the launcher did not choose another port")
+        self.assertEqual(given[1], record["port"])
+        self.assertNotIn(record["port"], impostors)
+        # What answers at the announced address is the launched product.
+        _, page = _fetch(record["address"] + "/")
+        self.assertIn('data-anchor="fixture-state">content<', page)
+        # The process that took the first port is not the launcher's to stop.
+        self.assertEqual("impostor", _fetch(impostors[given[0]])[1])
+
+    def test_a_product_whose_every_port_is_taken_is_not_started_and_leaves_nothing(self):
+        record, state_file, given, impostors, left = self.contested_launch(taken=3)
+
+        self.assertIs(False, record["started"], record)
+        self.assertEqual(3, len(given))
+        self.assertIn("another process", record["error"])
+        self.assertEqual([], left, "the refused start left a process behind")
+        self.assertFalse(state_file.exists(), "the refused start wrote a launch record")
+        for address in impostors.values():
+            self.assertEqual("impostor", _fetch(address)[1])
 
     # AC4 ------------------------------------------------------------------------
 
