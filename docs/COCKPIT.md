@@ -578,6 +578,16 @@ The question an entry answers is the `NEEDS BENJAMIN: …` / `PROPOSITION: …`
 note before it. An entry no trace dates shows « date inconnue » and comes
 after the dated ones.
 
+The journal also lists every event the tracker records (T01R3,
+af-7hk9e7): a fourth read, `bd list --type event --all --limit 0`, gives
+the beads `bd create --type event` writes, one entry each -- its title as
+`quoi`, `created_at` as `quand`, `actor` as `par`, `event_kind` as `voie`
+(field names checked on bd, 2026-10-14). An event answers no request, so
+its entry has no « demande » line. Entries are ordered newest first by
+the moment they name, whatever offset (`Z`, `+02:00`) their source
+writes. Known gap: the section is still titled « Journal des demandes
+résolues »; its title and layout are the Journal ticket's (T39).
+
 ### Proposition résolue par une livraison fusionnée
 
 Intent (Benjamin, his words, 2026-10-07): « les propositions sont la main
@@ -891,7 +901,7 @@ ways:
 | « Vue d’ensemble »: the cards under « Projets » (name, « chantier · étape », then the figures of the card) | one declared project per name; one open chantier per project, under its title, whose description is the stage and the other lines of the card | `projets.value.projects`; `GET /api/projects`; `beads.value` |
 | « Vue d’ensemble »: the four indicators | one bead kept as said per indicator (value, period) | `beads.value` |
 | the page of a project (« ← Projets »): its name, what is said above the first section; « CHANTIER ACTUEL »; « Prochaine release », « PROCHAIN JALON », « ROADMAP », « Derniers changements » | the project is declared; one bead under its name (purpose, stage, indicators); its open chantier; one bead kept as said per section, of that project | `projets.value.projects`, `GET /projet/<key>`; `beads.value` |
-| « Journal »: each event, « HH:MM (Paris) · projet · nature » or « HH:MM (Paris) · source », under « Aujourd’hui » or « Hier », its title and what follows | one bead of type `event` per event: its title, its nature or source as label, its project (declared), `created_at` the day of the dataset or the day before at that time, the other lines | `beads.value`; `projets.value.projects` |
+| « Journal »: each event, « HH:MM (Paris) · projet · nature » or « HH:MM (Paris) · source », under « Aujourd’hui » or « Hier », its title and what follows | one bead of type `event` per event, as `bd create --type event` writes it: its title, its nature or source as `event_kind` and as label, its project (declared), `created_at` the day of the dataset or the day before at that time, the other lines | `beads.value`; `projets.value.projects`; `GET /api/journal` `entries` |
 | « Usine »: « Machine d’exécution », « Connexions », « Fournisseurs et accès API », « Agents dans le workflow », « Auteur livraison », « Autres rôles », « Suspension, reprise et arrêt », « Nettoyer les espaces inutilisés », « Ressources et libellés longs » | one bead kept as said per section | `beads.value` |
 | a suspended Factory: `ui.setup` sets `shutdownState='suspended'` | a suspended city | `gc.value.suspended` is true |
 | « Rituels »: each ritual (a line in capitals says how it is launched, then its title) | one bead per ritual under its title: how it is launched, what it is for, when it last ran | `beads.value` |

@@ -62,6 +62,8 @@ def cmd_list(args):
         has_key = args[args.index("--has-metadata-key") + 1]
     if has_key:
         beads = [b for b in beads if has_key in (b.get("metadata") or {})]
+    if "--type" in args:
+        beads = [b for b in beads if b.get("issue_type") == args[args.index("--type") + 1]]
     sys.stdout.write(json.dumps(beads))
     sys.exit(0)
 

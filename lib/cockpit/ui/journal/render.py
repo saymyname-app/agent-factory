@@ -84,9 +84,13 @@ def render_journal_unknown(last_known_at=None):
 def _render_entry(entry):
     when = _when(entry.quand)
     when_html = "<time>%s</time>" % when if when else html.escape(UNDATED_TEXT)
+    # An event answers no request: what happened is its only line.
+    demande_html = "" if entry.evenement else (
+        '<div class="cockpit-journal-demande">%s</div>' % html.escape(entry.demande or NO_REQUEST_TEXT)
+    )
     return (
         '<div class="cockpit-journal-entry" data-bead-id="%s" data-voie="%s">'
-        '<div class="cockpit-journal-demande">%s</div>'
+        "%s"
         '<div class="cockpit-journal-quoi">%s</div>'
         '<div class="meta cockpit-journal-meta"><span>%s</span>%s<span>%s</span></div>'
         '<details class="more"><summary>Détails</summary><div class="det">'
@@ -97,7 +101,7 @@ def _render_entry(entry):
     ) % (
         html.escape(entry.bead_id),
         html.escape(entry.voie),
-        html.escape(entry.demande or NO_REQUEST_TEXT),
+        demande_html,
         html.escape(entry.quoi),
         when_html,
         # A trace that names nobody (a cleared decision) shows no "par".

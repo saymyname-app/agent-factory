@@ -1,5 +1,5 @@
 """What the synthetic sources of the isolated cockpit answer for one dataset
-(T01R2, af-6a98ip, from T01R af-m2tr6o; Spec af-2zseit, user story 126).
+(T01R3, af-7hk9e7, from T01R2 af-6a98ip and T01R af-m2tr6o; Spec af-2zseit, user story 126).
 
     city = synthetic_city.from_dataset(json.loads(text))
 
@@ -268,9 +268,10 @@ def _project_page(lines, tracker) -> None:
 
 
 def _journal(lines, tracker) -> None:
-    """One bead per event: « HH:MM (Paris) · projet · nature », or « HH:MM
-    (Paris) · source » for a technical one, then its title and what the
-    journal says of it. The lines above the first event are tabs."""
+    """One event bead per event, as `bd create --type event` records it:
+    « HH:MM (Paris) · projet · nature », or « HH:MM (Paris) · source » for
+    a technical one -- its category -- then its title and what the journal
+    says of it. The lines above the first event are tabs."""
     day, events = 0, []
     for line in lines:
         header = JOURNAL_EVENT.match(line)
@@ -286,7 +287,8 @@ def _journal(lines, tracker) -> None:
         if not said:
             raise DatasetRefused(f"an event of the journal without a title: {header.group(0)}")
         tracker.add(f"synthetic-event-{number}", said[0], said=said[1:], at=when, issue_type="event",
-                    labels=[header["kind"]], project=header["project"] and tracker.declare(header["project"]))
+                    event_kind=header["kind"], labels=[header["kind"]],
+                    project=header["project"] and tracker.declare(header["project"]))
 
 
 # « Usine »: every section is kept as said.

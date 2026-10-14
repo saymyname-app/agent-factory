@@ -42,6 +42,11 @@ if len(args) == 7 and args[:5] == ["list", "--all", "--limit", "0", "--has-metad
     print(json.dumps([b for b in _beads() if key in (b.get("metadata") or {})]))
     sys.exit(0)
 
+# The journal's read of the events (`bd list --type event --all --limit 0`).
+if args == ["list", "--type", "event", "--all", "--limit", "0", "--json"]:
+    sys.stdout.write(json.dumps([b for b in _read_state() if b.get("issue_type") == "event"]))
+    sys.exit(0)
+
 sys.stderr.write(
     "fake bd (cockpit-health): no canned response for: bd %s\n" % " ".join(args)
 )
