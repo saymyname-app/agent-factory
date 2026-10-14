@@ -195,7 +195,7 @@ is missing:
 | --- | --- |
 | `recipe` | argv tokens to launch the product; `{python}`, `{port}`, `{dataset}` are substituted by `project-launch`. |
 | `entry_points` | the product's public interfaces (`kind`, `method`, `path`), named so an Evaluator or criterion test knows where to look. |
-| `health_probe` | `{path, expect_status}` — polled by `project-launch start` until it answers or the timeout expires. |
+| `health_probe` | `{path, expect_status}` — polled by `project-launch start` until it answers or the timeout expires. An answer counts only when the process listening on the port is the launched one or one of its descendants (af-u2fa7b): a port another process took between its choice and the product's bind is given up, the attempt stopped and reaped, and the product launched again on another port, three times in all. |
 | `datasets` | named synthetic dataset files (fixed `generated_at` time included) a launch selects with `--dataset`. **At least one**: a launchable profile that names none is refused by `describe`/`list` and by every tool that loads the descriptor, the error naming `launch.datasets`. |
 | `test_perimeter` | paths a ticket's red step may write criterion tests under. |
 | `frozen_harness_paths` | test harness/config paths frozen at the ticket's freeze step. |
