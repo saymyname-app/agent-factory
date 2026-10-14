@@ -296,6 +296,42 @@ class JournalTest(unittest.TestCase):
         # The newest entry heads the journal.
         self.assertEqual("af-conv-b", self.journal()["entries"][0]["bead_id"])
 
+    def test_an_event_the_tracker_records_enters_the_journal(self):
+        # Two beads of type event, as ``bd create --type event`` leaves them,
+        # the journal's key their category: one written at Paris time.
+        events = [
+            {
+                "id": "af-evt1", "title": "Le format CSV a été choisi", "status": "closed", "issue_type": "event",
+                "created_at": "2026-10-06T12:00:00+02:00", "actor": "benjamin", "labels": [], "notes": "",
+                "metadata": {"gc.journal_event": "Décision"},
+            },
+            {
+                "id": "af-evt2", "title": "Vérification échouée", "status": "closed", "issue_type": "event",
+                "created_at": "2026-10-07T07:00:00Z", "event_kind": "ci", "labels": [], "notes": "",
+                "metadata": {"gc.journal_event": "ci"},
+            },
+        ]
+        with open(self.state_file, "w") as fh:
+            json.dump(beads() + events, fh)
+        self.start_cockpit()
+        entries = wait_until(self.journal)["entries"]
+        self.assertEqual(9, len(entries), entries)
+
+        # Newest first by the moment written, whatever its offset: 12:00 at
+        # Paris is 10:00 UTC, before the answer of af-rep1 at 11:08 UTC.
+        self.assertEqual(["af-evt2", "af-rep1", "af-evt1", "af-clr2"], [e["bead_id"] for e in entries[:4]])
+        decided = next(e for e in entries if e["bead_id"] == "af-evt1")
+        self.assertEqual(("Le format CSV a été choisi", "benjamin", "Décision", ""),
+                         (decided["quoi"], decided["par"], decided["voie"], decided["demande"]))
+        self.assertEqual("ci", next(e for e in entries if e["bead_id"] == "af-evt2")["voie"])
+
+        # An event answers no request: the page shows what happened, and no request line.
+        shown = self.entry_html(self.get("/journal"), "af-evt1")
+        self.assertIn("Le format CSV a été choisi", shown)
+        self.assertIn("<time>06/10 12:00</time>", shown)
+        self.assertNotIn("cockpit-journal-demande", shown)
+        self.assertIn("cockpit-journal-demande", self.entry_html(self.get("/journal"), "af-rep1"))
+
     def test_unreadable_journal_is_unknown_never_empty(self):
         Path(self.fail_flag_file).write_text("fail")
         self.start_cockpit()

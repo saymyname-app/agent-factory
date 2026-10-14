@@ -1,21 +1,25 @@
 """The journal's one read (spec af-oohx2x .18, §"Actions opérateur":
 "Aucune copie locale : la page journal relit ces traces"): every bead that
-ever carried an Operator Request, and what its notes say resolved it.
+ever carried an Operator Request, and what its notes say resolved it;
+and every event bead meant for the journal (T01R4, af-u2fa7b).
 
 The doors and the cockpit's own actions leave their trace in the bead's
 **notes** (``bd update --append-notes``: ``bin/escalation-door``,
 ``bin/proposal-door``, :mod:`cockpit.actions.trace`), which ``bd list
 --json`` returns — checked on the live tracker, 2026-10-06. Three keyed
-reads find those beads whatever their status; the value kept in the read
-model is the parsed entries as plain data, not the beads.
+reads find those beads and a fourth the events, whatever their status;
+the value kept in the read model is the parsed entries as plain data, not
+the beads.
 """
 from dataclasses import asdict
 
 from cockpit.core.beads_source import read_beads_json
-from cockpit.ui.journal.entries import JournalEntry, journal_from_beads
+from cockpit.ui.journal.entries import JOURNAL_EVENT_KEY, JournalEntry, journal_from_beads
 
-# A bead carries one of these from the day it bears a request or a trace.
-TRACE_KEYS = ("gc.needs_benjamin", "gc.proposal_state", "gc.cockpit_action_quoi")
+# A bead carries one of these from the day it bears a request or a trace;
+# an event bead (``bd create --type event``) meant for the journal carries
+# the last one, its category as value.
+TRACE_KEYS = ("gc.needs_benjamin", "gc.proposal_state", "gc.cockpit_action_quoi", JOURNAL_EVENT_KEY)
 
 
 def read_journal(bd_bin="bd", timeout=20):

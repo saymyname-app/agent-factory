@@ -1,0 +1,11 @@
+{
+  "generated_at": "2026-10-12T12:00:00+02:00",
+  "synthetic": true,
+  "ui": {
+    "id": "home-loading",
+    "page": "home",
+    "state": "loading"
+  },
+  "visible_text": "Vue d’ensemble\nExemple · vérifié à 14:42 (Paris)\nLecture en cours…",
+  "production_writes": 0
+}

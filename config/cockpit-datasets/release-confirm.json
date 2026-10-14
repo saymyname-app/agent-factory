@@ -1,0 +1,11 @@
+{
+  "generated_at": "2026-10-12T12:00:00+02:00",
+  "synthetic": true,
+  "ui": {
+    "id": "release-confirm",
+    "page": "rituals",
+    "setup": "ritualId='release';ritualTarget='Notes';releaseDraftProject='Notes';releaseDraft=JSON.parse(JSON.stringify(releasePlans.Notes));ritualPhase='confirm';render()"
+  },
+  "visible_text": "← Rituels\nPréparer la prochaine release\n\nNotes · cible révisable\n\n1 · Périmètre\n2 · Préparation\n3 · Ton cadrage\n4 · Projet mis à jour\nPréparer le cadrage\nProjet\nNotes\nPortfolio\nUsine\n\nRelire les objectifs, les décisions, les résultats vérifiés et les dépendances connues. Proposer une cible de release et le jalon le plus utile pour avancer ou lever une incertitude.\n\nTu pourras garder des questions ouvertes et modifier la proposition. Aucun périmètre figé, aucune réalisation lancée.\n\nUne préparation réelle consommerait des tokens ; coût non estimé ici.\n\nRetour aux rituels\nLancer la préparation",
+  "production_writes": 0
+}
