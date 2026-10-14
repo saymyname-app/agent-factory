@@ -1,0 +1,13 @@
+{
+  "generated_at": "2026-10-12T12:00:00+02:00",
+  "synthetic": true,
+  "ui": {
+    "id": "rituals-narrow",
+    "page": "rituals",
+    "selected": "result",
+    "theme": "dark",
+    "width": 390
+  },
+  "visible_text": "Rituels\n\nUne revue produit des propositions. Tu choisis lesquelles faire préparer.\n\nCADRAGE DU PROJET\nPréparer la prochaine release\n\nRelier les acquis à une cible révisable, éclaircir les inconnues et proposer le prochain jalon.\n\nDernier cadrage : non renseigné\nPréparer le lancement\nREVUE CONSEILLÉE · EXEMPLE\nRevue d’incidents\n\nComprendre les causes récurrentes et proposer les corrections qui évitent leur retour.\n\nDernière revue : 11 octobre · historique disponible\nPréparer le lancement\nVoir le dernier rapport\nLANCEMENT MANUEL\nRevue d’architecture\n\nRepérer les parties difficiles à modifier et proposer des améliorations ciblées.\n\nDernière revue : non renseignée\nPréparer le lancement\nLANCEMENT MANUEL\nQualité / AI Slop\n\nTrouver code inutile, duplications et complexité évitable.\n\nDernière revue : non renseignée\nPréparer le lancement\nÀ LA DEMANDE\nDiagnostic Factory\n\nComprendre un blocage ou un comportement incohérent de la Factory.\n\nDernière revue : non renseignée\nPréparer le lancement",
+  "production_writes": 0
+}

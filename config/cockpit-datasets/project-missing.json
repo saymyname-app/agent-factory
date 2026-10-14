@@ -1,0 +1,12 @@
+{
+  "generated_at": "2026-10-12T12:00:00+02:00",
+  "synthetic": true,
+  "ui": {
+    "id": "project-missing",
+    "page": "projects",
+    "selected": "Notes",
+    "state": "missing"
+  },
+  "visible_text": "← Projets\nNotes\n\nRetrouver une note à partir de ses mots et de ses documents.\n\nEn cours\n—\nRésultats fusionnés · Non collecté\n—\nPR fusionnées · Non collecté\n—\nVérifications CI réussies · Non collecté\nProchaine release\n\nCadrage et preuves non collectés. Aucun avancement déduit.\n\nCHANTIER ACTUEL\nRecherche dans les notes\n\nAucune décision attendue\n\nVoir le run\nROADMAP\nRecherche et navigation\nImport des documents\nTerminé\nRecherche dans les notes\nEn cours\n\nProchain jalon proposé : Faire essayer le parcours complet à trois utilisateurs.\n\nDerniers changements\n\n● Import des documents\n\nDernier résultat fusionné · exemple\nVoir le journal\nRessources du projet\nObjectif et périmètre\nSources et mesures\nPréparer une revue",
+  "production_writes": 0
+}

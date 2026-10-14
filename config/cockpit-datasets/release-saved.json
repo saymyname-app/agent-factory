@@ -1,0 +1,11 @@
+{
+  "generated_at": "2026-10-12T12:00:00+02:00",
+  "synthetic": true,
+  "ui": {
+    "id": "release-saved",
+    "page": "rituals",
+    "setup": "ritualId='release';ritualTarget='Notes';releaseDraftProject='Notes';releaseDraft=JSON.parse(JSON.stringify(releasePlans.Notes));ritualPhase='saved';render()"
+  },
+  "visible_text": "← Rituels\nPréparer la prochaine release\n\nNotes · cadrage conservé\n\n1 · Périmètre\n2 · Préparation\n3 · Ton cadrage\n4 · Projet mis à jour\nCadrage conservé\n\nLa cible révisable, le prochain jalon et les décisions ouvertes sont visibles dans le projet Notes.\n\nLe jalon reste à préparer avant toute réalisation. Conserver le cadrage n’approuve pas une Spec ni un lancement de travaux.\n\nVoir le projet\nRevoir le cadrage",
+  "production_writes": 0
+}

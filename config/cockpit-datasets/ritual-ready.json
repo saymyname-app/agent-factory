@@ -1,0 +1,11 @@
+{
+  "generated_at": "2026-10-12T12:00:00+02:00",
+  "synthetic": true,
+  "ui": {
+    "id": "ritual-ready",
+    "page": "rituals",
+    "setup": "ritualId='incidents';ritualPhase='ready';ritualChosen.add('alerts');render()"
+  },
+  "visible_text": "← Rituels\nRevue d’incidents\n\nUsine · données et avancement simulés\n\n1 · Revue\n2 · Ton choix\n3 · Travail précis\n4 · Réalisation\nTravail prêt à valider\nRegrouper les signalements d’un même incident\n\nDétection et regroupement des alertes ; aucun changement produit.\n\nRésultat attendu\n\nChaque défaut sélectionné est reproduit, corrigé et vérifié ; le résultat assemblé est prêt à juger.\n\nLimites\n\nUn lot limité aux propositions choisies. Aucun nouveau service, accès public ou changement de production. Toute extension demande une nouvelle décision.\n\nTravail précis et critères\nRevoir la sélection\nLancer les corrections",
+  "production_writes": 0
+}
