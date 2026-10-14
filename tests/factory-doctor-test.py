@@ -88,6 +88,11 @@ class Classification(unittest.TestCase):
             message="missing runtime file %s/bin/pr-autopilot" % fd.ROOT,
         )))
 
+    def test_timeout_in_an_evidence_path_is_not_a_missing_answer(self):
+        self.assertEqual("ACTIONABLE", fd.classify(check(
+            message="missing runtime file /tmp/timeout-report/bin/pr-autopilot",
+        )))
+
     def test_mixed_evidence_stays_actionable(self):
         """One foot in this repo means somebody here must look."""
         self.assertEqual("ACTIONABLE", fd.classify(check(

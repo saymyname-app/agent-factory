@@ -45,7 +45,7 @@ ROOT = os.environ.get(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
 )
 PACK_CACHE = re.compile(r"/\.gc/cache/repos/")
-DID_NOT_ANSWER = re.compile(r"timed out|timeout|abandoned", re.I)
+DID_NOT_ANSWER = re.compile(r"\btimed out\b", re.I)
 # order-firing-current details look like:
 #   "dolt-health: last fired 1m ago, expected every 1m (overdue)"
 ORDER_LINE = re.compile(
