@@ -8,14 +8,19 @@ The doors and the cockpit's own actions leave their trace in the bead's
 --json`` returns — checked on the live tracker, 2026-10-06. Three keyed
 reads find those beads whatever their status; the value kept in the read
 model is the parsed entries as plain data, not the beads.
+
+An event bead marked for the journal (``gc.journal_event``: its nature, or
+the technical source it comes from) is one entry of its own, at the time it
+was created (T01R6, af-ltchro; Spec af-2zseit, user story 126).
 """
 from dataclasses import asdict
 
 from cockpit.core.beads_source import read_beads_json
-from cockpit.ui.journal.entries import JournalEntry, journal_from_beads
+from cockpit.ui.journal.entries import JOURNAL_EVENT_KEY, JournalEntry, journal_from_beads
 
-# A bead carries one of these from the day it bears a request or a trace.
-TRACE_KEYS = ("gc.needs_benjamin", "gc.proposal_state", "gc.cockpit_action_quoi")
+# A bead carries one of these from the day it bears a request or a trace;
+# an event bead meant for the journal carries the last one from its creation.
+TRACE_KEYS = ("gc.needs_benjamin", "gc.proposal_state", "gc.cockpit_action_quoi", JOURNAL_EVENT_KEY)
 
 
 def read_journal(bd_bin="bd", timeout=20):
