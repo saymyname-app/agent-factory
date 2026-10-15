@@ -17,6 +17,9 @@ BENJAMIN, and any real risk. Do not dump sessions, issues, Formula steps, or
 logs unless asked.
 
 For “what is the Factory doing?”, use `gc status` and the Beads/GitHub state.
+`gc status` shows pool slots, « stopped » even while their sessions run: live
+sessions are `gc session list`; a convoy's sessions, ready tickets and
+critical path are `bin/convoy-graph <spec>`.
 Cockpit V1 is retired (code in Git history); Cockpit V2 is Planning Run C01.
 ADR-0001..0024 are pre-refactor (`docs/decisions/PRE_REFACTOR.md`): where their
 mechanism still runs it is active but not re-validated — re-decide it through
