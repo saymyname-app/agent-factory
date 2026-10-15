@@ -734,8 +734,12 @@ def wanted(ticket: dict[str, Any]) -> tuple[str, Any]:
         if outages_at(evaluation, tip) >= MAX_OUTAGES:
             return "outage", state
     # No evaluation at the tip yet (a commit added after a verdict has it
-    # replayed in full, Spec §8), or one that the environment hid.
-    return ("startup" if ticket.get("kind") == KIND_PREFACTORING else "open"), tip
+    # replayed in full, Spec §8), or one that the environment hid. Only an
+    # interface ticket is evaluated by a model (ADR-0030 L4); any other one
+    # gets the start control of a prefactoring: no session, a model
+    # evaluation recorded « not required ».
+    model = ticket.get("kind") != KIND_PREFACTORING and ticket.get("interface")
+    return ("open" if model else "startup"), tip
 
 
 # --- launching the Evaluator --------------------------------------------------------
@@ -888,8 +892,12 @@ def probe_of(launch_block: dict[str, Any]) -> tuple[str, int]:
 
 
 def startup_control(convoy: Convoy, ticket_id: str, commit: str, settings: dict[str, Any]) -> dict[str, Any]:
-    """A prefactoring must start and answer its probe on every game of the ticket."""
+    """A prefactoring, or a ticket without interface (ADR-0030 L4), must
+    start and answer its probe on every game of the ticket; a ticket that
+    establishes the launch recipe proves its start and stop first."""
     datasets = convoy.datasets(ticket_id)
+    prepare_recipe_lifecycle(convoy, ticket_id, commit, datasets[0])
+    preflight_path(convoy, ticket_id, commit).unlink(missing_ok=True)
     path, status = probe_of(convoy.profile(ticket_id, commit)[1])
     environment = []
     coverage = []

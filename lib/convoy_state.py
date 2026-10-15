@@ -1367,7 +1367,10 @@ def evaluation_round(value: Any) -> dict[str, Any]:
     if kind == "startup":
         # A prefactoring: no Evaluator session, code checked that the product
         # starts and that its probe answers (Spec §7).
-        if set(value) - common - {"started", "evidence", "environment", "coverage", "detail"} or not isinstance(value.get("started"), bool):
+        # A ticket without interface likewise (ADR-0030 L4): `model` « not_required ».
+        if (set(value) - common - {"started", "evidence", "environment", "coverage", "detail", "model"}
+                or not isinstance(value.get("started"), bool)
+                or value.get("model", "not_required") != "not_required" or ("model" in value and not value["started"])):
             raise Refusal(f"contrôle de démarrage mal formé : {value!r}")
         if value["started"]:
             if not isinstance(value.get("evidence"), str) or not PIECE_RE.match(value["evidence"]) or "detail" in value:
@@ -4531,19 +4534,23 @@ def cmd_record_evaluation(args: argparse.Namespace) -> int:
 
 def cmd_record_startup(args: argparse.Namespace) -> int:
     """Record what code saw when it launched the product from a clean copy
-    of `--commit` (T15, Spec §7). For a prefactoring it stands for the
+    of `--commit` (T15, Spec §7). For a prefactoring, and for a ticket
+    without interface (ADR-0030 L4, the model evaluation recorded
+    « not_required »), it stands for the
     evaluation: no Evaluator session, the product started and its probe
     answered (`--piece`, the captured answer, and the launched products in
     `--file`). On any ticket, the product did not start (`--detail`):
     nothing can be observed on it. The verdict `evaluation` is written in
     the same write."""
-    _, metadata, record = evaluation_target(args)
+    ticket, metadata, record = evaluation_target(args)
     commit = valid_commit(args.commit, "commit du contrôle de démarrage")
     kind = valid_kind(metadata.get(KEY_KIND))
-    if kind != KIND_WITHOUT_EVALUATOR and args.piece is not None:
+    # ADR-0030 L4: only an interface ticket is evaluated by a model.
+    interface = kind != KIND_WITHOUT_EVALUATOR and validated_prototype(ticket.get("description")) is not None
+    if interface and args.piece is not None:
         raise Refusal(
-            f"le ticket {args.ticket} est un {kind} : son évaluation est faite par une session d'Evaluator, "
-            "un produit qui démarre ne vaut évaluation que pour un prefactoring")
+            f"le ticket {args.ticket} est un ticket d'interface : son évaluation est faite par une session "
+            "d'Evaluator, un produit qui démarre ne vaut évaluation que pour un ticket sans interface")
     finished_at(metadata, args.ticket, commit)
     at = now()
     round_: dict[str, Any] = {"kind": "startup", "commit": commit, "at": at}
@@ -4564,6 +4571,8 @@ def cmd_record_startup(args: argparse.Namespace) -> int:
                 if refusal:
                     raise Refusal(f"couverture du jeu {item['dataset']} : {refusal}")
         round_.update(started=True, evidence=args.piece, outcome="favorable", environment=environment)
+        if kind != KIND_WITHOUT_EVALUATOR:
+            round_["model"] = "not_required"
         if coverage is not None:
             round_["coverage"] = coverage
     else:
