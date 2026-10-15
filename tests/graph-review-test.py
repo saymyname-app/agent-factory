@@ -264,12 +264,54 @@ class GraphReviewTest(unittest.TestCase):
         # Only T3 declares a scope: the question is asked of it alone.
         self.assertEqual("not_applicable", result["tickets"]["T1"]["checks"]["declared_scope_includes_wiring"]["state"])
         self.assertEqual("favorable", result["tickets"]["T3"]["checks"]["declared_scope_includes_wiring"]["state"])
-        self.assertEqual({"no_orphan_story", "assembly_point_not_confiscated", "prototype_fold_present_and_first"},
+        self.assertEqual({"no_orphan_story", "assembly_point_not_confiscated", "prototype_fold_present_and_first",
+                          "critical_path_bounded"},
                          set(result["graph"]["checks"]))
         self.assertEqual("favorable", result["graph"]["verdict"])
         stored = self.shown()["passes"]
         self.assertEqual([self.current_digest()], [record["digest"] for record in stored])
         self.assertEqual(result["tickets"], stored[0]["tickets"])
+
+    # --- af-i4w79r: a graph serialised beyond need is refused by code -------
+
+    def with_tickets_after_t3(self, blockers):
+        """The fixture draft plus T4, T5, T6, each blocked by `blockers[key]`."""
+        draft = self.draft()
+        template = next(t for t in draft["tickets"] if t["id"] == "T1")
+        for key in ("T4", "T5", "T6"):
+            draft["tickets"].append({**template, "id": key, "title": f"Tranche {key}", "blocked_by": blockers[key]})
+        self.seed(draft)
+
+    def test_review_refuses_a_graph_whose_critical_path_is_too_long_and_names_the_chain(self):
+        self.with_tickets_after_t3({"T4": ["T3"], "T5": ["T4"], "T6": ["T5", "T1"]})
+
+        result = self.reviewed()
+
+        self.assertEqual("unfavorable", result["graph"]["verdict"])
+        check = result["graph"]["checks"]["critical_path_bounded"]
+        self.assertEqual("unfavorable", check["state"])
+        self.assertIn("T1 → T2 → T3 → T4 → T5 → T6", check["reason"])
+        self.assertIn("T1 → T6", check["reason"])  # transitively redundant: T6 already waits for T1
+        self.assertEqual(["graphe"], [refusal["target"] for refusal in result["refusals"]])
+
+    def test_a_graph_whose_tickets_wait_only_for_what_they_consume_passes(self):
+        self.with_tickets_after_t3({"T4": ["T1"], "T5": ["T1"], "T6": ["T1"]})
+
+        result = self.reviewed()
+
+        self.assertEqual("favorable", result["graph"]["checks"]["critical_path_bounded"]["state"])
+        self.assertEqual("favorable", result["graph"]["verdict"])
+
+    def test_the_reviewer_is_not_asked_the_question_code_computes(self):
+        self.requested()
+
+        brief = self.tool("brief", "draft-1").json
+
+        self.assertNotIn("critical_path_bounded", brief["graph_checks"])
+        refused = self.record(self.verdict_file(lambda verdict: verdict["graph"]["checks"].update(
+            {"critical_path_bounded": {"state": "favorable"}})))
+        self.assertEqual(1, refused.returncode, refused.stdout)
+        self.assertIn("question hors liste (critical_path_bounded)", refused.stderr)
 
     def test_review_is_routed_to_the_reviewer_role_as_a_fresh_piece_of_work(self):
         result = self.reviewed()

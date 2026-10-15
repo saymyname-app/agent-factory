@@ -75,6 +75,13 @@ or the graph, is `unfavorable` as soon as one of its answers is.
 | graph | `no_orphan_story` | every numbered user story of the Spec is covered by a ticket |
 | graph | `assembly_point_not_confiscated` | the ticket that establishes shared assembly points is ordered first; none keeps the wiring for itself |
 | graph | `prototype_fold_present_and_first` | a Prototype Fold exists and every other interface ticket depends on it; `not_applicable`, with a reason, when the graph has no interface ticket |
+| graph | `critical_path_bounded` | **answered by code, never by the reviewer**: the longest chain of `blocked_by` is at most max(4, ⌈n/3⌉) of the draft's n tickets; the reason names the chain and every link another link already implies (ADR-0031) |
+
+`brief` does not ask `critical_path_bounded`; `record` computes it on the
+draft and a reviewer answer to it is refused as outside the list. An
+unfavorable measure is a graph refusal like the others: correct the draft
+(keep a link only where the blocked ticket consumes a deliverable its text
+cites), ask the second pass, or let Benjamin rule `--graph`.
 
 `record` refuses, before any write and with every reason listed: a verdict
 on another digest than the draft's; a ticket of the draft without answers, or
