@@ -8,7 +8,11 @@ before Benjamin approves it: a session of the read-only reviewer role, in a
 fresh context, that did not write the graph. It answers closed questions per
 ticket and on the graph; code computes the verdicts and binds them to the
 digest of the draft. `bin/ticket-graph-publish bd-publish` refuses a draft
-without a review that holds for its current digest.
+without a review that holds for its current digest, and so does `bd-patch`
+for an approved revision of a published graph (af-8mbftn): the revision is
+reviewed, critical path included (ADR-0031), before it reaches the convoy.
+A revision that only adds `repair` tickets, drafted and published by code
+without approval, is not reviewed.
 
 `bin/graph-review` is the only reader and writer of that state. A draft that
 does not declare the contract is not touched (exit 4) and is published

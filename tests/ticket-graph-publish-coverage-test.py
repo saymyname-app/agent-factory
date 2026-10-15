@@ -131,16 +131,16 @@ class Harness(unittest.TestCase):
         }}))
         self.review_graph()
 
-    def review_graph(self):
+    def review_graph(self, draft_id="draft-1"):
         """Every seeded draft of the new flow comes with a favorable graph
         review of its digest (T08, tests/graph-review-test.py): what these
         tests observe is the entry contract, checked before it."""
         def review(*argv):
             return subprocess.run((str(GRAPH_REVIEW), *argv), env=self.review_env, text=True, capture_output=True)
 
-        if review("request", "draft-1", "--author-model", "modele-auteur").returncode != 0:
+        if review("request", draft_id, "--author-model", "modele-auteur").returncode != 0:
             return
-        brief = json.loads(review("brief", "draft-1").stdout)
+        brief = json.loads(review("brief", draft_id).stdout)
         answers = lambda checks: {"checks": {
             name: {"state": "not_applicable", "reason": "aucun ticket d'interface"}
             if name == "prototype_fold_present_and_first" else {"state": "favorable"} for name in checks}}
@@ -148,7 +148,7 @@ class Harness(unittest.TestCase):
         verdict.write_text(json.dumps({
             "digest": brief["digest"], "graph": answers(brief["graph_checks"]),
             "tickets": {ticket["id"]: answers(ticket["checks"]) for ticket in brief["tickets"]}}))
-        self.assertEqual(0, review("record", "draft-1", "--verdict-file", str(verdict)).returncode)
+        self.assertEqual(0, review("record", draft_id, "--verdict-file", str(verdict)).returncode)
 
     def add_draft(self, draft_id, draft, **kwargs):
         state = self.state()
@@ -657,8 +657,12 @@ class PatchDoorTest(Harness):
         draft.update(top)
         return draft
 
-    def propose(self, draft, approved=True, draft_id="draft-2", revises=None):
+    def propose(self, draft, approved=True, draft_id="draft-2", revises=None, reviewed=True):
+        """An approved revision comes with its graph review, as a first
+        publication does (af-8mbftn); a repair-only one needs none."""
         self.add_draft(draft_id, draft, approved=approved, revises_digest=revises or self.first["graph_digest"])
+        if approved and reviewed:
+            self.review_graph(draft_id)
 
     def refused(self, *mentions, extra=()):
         return self.assert_refused_and_nothing_written(lambda: self.patch(extra=extra), "rien n'est écrit", *mentions)
@@ -863,6 +867,64 @@ class PatchDoorTest(Harness):
         self.propose(self.revision(self.REPAIR, keep=("T1", "T2", "T3"), withdrawn=[
             {"ticket": "T4", "planning_exception": "pd-1"}]), approved=False)
         self.refused("approbation", extra=("--planning-exception-register", str(register)))
+
+    # --- af-8mbftn: an approved revision passes the same graph review ---------
+
+    def test_approved_revision_without_graph_review_is_refused(self):
+        self.propose(self.revision(self.SLICE), reviewed=False)
+
+        proc = self.assert_refused_and_nothing_written(self.patch, "rien n'est écrit")
+        self.assertIn("relecture de graphe", proc.stderr)
+        self.assertIn("graph-review review draft-2", proc.stderr)
+
+    def test_approved_revision_changed_since_its_graph_review_is_refused(self):
+        self.propose(self.revision(self.SLICE))
+        draft = self.revision({**self.SLICE, "title": "La page d'accueil affiche l'heure, revue après la relecture"})
+        self.edit_bead("draft-2", description=self.dump(draft),
+                       metadata={"approved_digest": digest_of(self.dump(draft))})
+
+        self.assert_refused_and_nothing_written(self.patch, "a changé depuis sa relecture de graphe")
+
+    def test_approved_revision_whose_critical_path_is_too_long_is_refused(self):
+        # T1 → T2 → T3 → T5 → T6: five tickets in a row for six (af-i4w79r).
+        t5 = {**copy.deepcopy(self.SLICE), "blocked_by": ["T3"]}
+        t6 = {**copy.deepcopy(self.SLICE), "id": "T6", "blocked_by": ["T5"],
+              "title": "La page d'accueil affiche la date de génération",
+              "demonstration_line": "Sur le produit lancé, la page d'accueil (GET /) affiche la date de génération."}
+        self.propose(self.revision(t5, t6))
+
+        proc = self.assert_refused_and_nothing_written(self.patch, "première passe du relecteur de graphe refuse graphe")
+        shown = subprocess.run((str(GRAPH_REVIEW), "show", "draft-2"), env=self.review_env, text=True, capture_output=True)
+        check = json.loads(shown.stdout)["passes"][0]["graph"]["checks"]["critical_path_bounded"]
+        self.assertEqual("unfavorable", check["state"], check)
+        self.assertIn("T1 → T2 → T3 → T5 → T6", check["reason"])
+
+    def test_approved_revision_result_carries_its_graph_review(self):
+        self.propose(self.revision(self.SLICE))
+
+        review = self.patched()["graph_review"]
+        self.assertEqual(1, review["pass"])
+        self.assertEqual(digest_of(self.beads()["draft-2"]["description"]), review["digest"])
+
+    def test_unapproved_repair_only_revision_needs_no_graph_review(self):
+        draft = self.revision(self.REPAIR, keep=("T1", "T2"))
+        self.ticket(draft, "T2")["blocked_by"] = ["T1", "R1"]
+        self.propose(draft, approved=False)
+
+        result = self.patched()
+        self.assertEqual(["R1"], result["created"])
+        self.assertNotIn("graph_review", result)
+
+    def test_patch_without_project_is_a_usage_error_not_a_crash(self):
+        self.propose(self.revision(self.SLICE))
+        proc = subprocess.run(
+            (str(PUBLISHER), "bd-patch", "draft-2", "--author", "essai", "--reason", "essai",
+             "--repo-root", str(self.repo_root), "--config-dir", str(PROJECTS_CONFIG_DIR)),
+            env=self.env, text=True, capture_output=True,
+        )
+        self.assertEqual(2, proc.returncode, proc.stdout + proc.stderr)
+        self.assertIn("--project", proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
 
     def test_patch_approved_by_someone_else_is_refused(self):
         self.propose(self.revision(self.REPAIR))
