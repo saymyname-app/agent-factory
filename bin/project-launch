@@ -455,7 +455,7 @@ def cmd_start(args: argparse.Namespace) -> int:
     # attempt whose port another process took is stopped, reaped, and made
     # again on another port; the record names the port and process of the
     # current attempt, so a crash at any moment leaves what `stop` needs.
-    for _ in range(PORT_ATTEMPTS):
+    for attempt in range(1, PORT_ATTEMPTS + 1):
         port = pick_free_port()
         record["port"] = port
         try:
@@ -486,7 +486,12 @@ def cmd_start(args: argparse.Namespace) -> int:
         if outcome != "port_lost":
             error = f"product did not become healthy within {args.timeout}s"
             break
-        error = f"port {port} was taken by another process before the product bound it ({PORT_ATTEMPTS} ports tried)"
+        error = (f"port {port} was taken by another process before the product bound it "
+                 f"({attempt} of {PORT_ATTEMPTS} ports tried)")
+        # The lost port is the other process's: a kept record must not make
+        # `stop` wait for it to be free.
+        record.pop("port")
+        write_record(args.state_file, record)
         if not stopped:
             break
 
