@@ -48,7 +48,9 @@ mesurait le parallélisme, et `same_surface_ordered` pousse à ordonner.
 
 Les portes de publication et de patch (`bin/ticket-graph-publish`), les
 liens ajoutés pour les `scope.paths` qui se recouvrent, le plafond de deux
-auteurs. Un patch (`bd-patch`) n'est pas relu par cette commande.
+auteurs. Un patch (`bd-patch`) n'est pas relu par cette commande. La mesure
+porte sur le brouillon tel qu'écrit : les liens que la publication ajoute
+ensuite pour des `scope.paths` qui se recouvrent n'y sont pas comptés.
 
 ## Preuve
 
@@ -68,5 +70,6 @@ Cockpit approuvé) défavorable, chemin critique 35 pour 61 tickets (au plus
 
 ## Retour arrière
 
-Annuler la PR : la question calculée disparaît, les passes déjà enregistrées
-la gardent comme une raison lisible sans effet sur un nouveau brouillon.
+Annuler la PR : la question calculée disparaît pour les nouvelles passes.
+Une passe déjà enregistrée qui la porte n'est plus lisible par l'ancien code
+(question inconnue) : redemander la passe de ce brouillon.

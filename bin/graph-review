@@ -200,7 +200,8 @@ def critical_path(draft: Draft) -> dict[str, Any]:
     max(CRITICAL_PATH_FLOOR, ceil(n/3)) tickets; the reason names the chain
     and every link another link already implies (transitively redundant)."""
     waits = {
-        key: [str(b) for b in (ticket.get("blocked_by") or []) if str(b) in draft.tickets]
+        key: [str(b) for b in ticket.get("blocked_by") or [] if str(b) in draft.tickets]
+        if isinstance(ticket.get("blocked_by") or [], list) else []  # malformed: refused at publication
         for key, ticket in draft.tickets.items()
     }
     chain: dict[str, list[str]] = {}
