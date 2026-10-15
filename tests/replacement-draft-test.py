@@ -121,6 +121,52 @@ class ReplacementDraftTest(unittest.TestCase):
                          draft["metadata"]["replacement_scope_digest"])
         self.assertEqual(graph_digest, before["beads"]["stopped"]["metadata"]["gc.graph_digest"])
 
+    def run_create(self, *extra):
+        return subprocess.run([
+            str(TOOL), "create", "--decision", "decision",
+            "--evidence", "ok go, create this exact replacement",
+            "--stopped-ticket", "stopped", "--convoy", "convoy", "--source-draft", "source",
+            "--replacement-id", "T01R3", "--useful-commit", COMMIT,
+            "--planning-exception", "pe-replacement", "--approved-by", "benjamin",
+            "--author-session", "po-agent/test", *extra,
+        ], env=self.env, text=True, capture_output=True)
+
+    def revision_file(self, revision):
+        path = Path(self.tmp.name) / "revision.json"
+        path.write_text(json.dumps(revision))
+        return str(path)
+
+    def test_applies_a_bounded_revision_and_records_its_digests(self):
+        criteria = [{"entry_point": "start on dataset A", "observable": "answers", "false_if": "absent"}]
+        revision = {"scope": {"paths": ["bin/reduced"]}, "acceptance_criteria": criteria,
+                    "demonstration_line": "Dataset A answers.", "what_it_delivers": "Reduced launch.",
+                    "drop_establishes_launch_recipe": True}
+        proc = self.run_create("--revision-file", self.revision_file(revision))
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        draft = json.loads(self.state_path.read_text())["beads"][json.loads(proc.stdout)["draft"]]
+        replacement = next(t for t in yaml.safe_load(draft["description"])["tickets"] if t["id"] == "T01R3")
+        self.assertEqual(criteria, replacement["acceptance_criteria"])
+        self.assertEqual({"paths": ["bin/reduced"]}, replacement["scope"])
+        self.assertEqual("Dataset A answers.", replacement["demonstration_line"])
+        self.assertNotIn("establishes_launch_recipe", replacement)
+        self.assertTrue(replacement["what_it_delivers"].startswith("Reduced launch. Authorized replacement:"))
+        criteria_digest = digest(json.dumps(criteria, sort_keys=True, separators=(",", ":")))
+        scope_digest = digest("bin/reduced")
+        self.assertEqual(criteria_digest, draft["metadata"]["replacement_revised_criteria_digest"])
+        self.assertEqual(scope_digest, draft["metadata"]["replacement_revised_scope_digest"])
+        self.assertIn(f"revised criteria {criteria_digest} scope {scope_digest}", replacement["what_it_delivers"])
+        self.assertEqual("sha256:criteria", draft["metadata"]["replacement_criteria_digest"])
+
+    def test_refuses_a_revision_outside_its_bounds_without_writing(self):
+        before = json.loads(self.state_path.read_text())
+        for revision in ({"title": "other"}, {"acceptance_criteria": []},
+                         {"acceptance_criteria": [{"entry_point": "x", "observable": "", "false_if": "y"}]},
+                         {"scope": {"paths": [""]}}, {"drop_establishes_launch_recipe": False}):
+            proc = self.run_create("--revision-file", self.revision_file(revision))
+            self.assertNotEqual(0, proc.returncode, revision)
+            self.assertIn("refused: revision", json.loads(proc.stdout)["error"])
+            self.assertEqual(before, json.loads(self.state_path.read_text()))
+
 
 if __name__ == "__main__":
     unittest.main()
