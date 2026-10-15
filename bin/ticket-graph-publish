@@ -2277,6 +2277,10 @@ def withdrawal_refusals(
             refusals.append((key, "retiré et repris par le même brouillon : un ticket retiré n'y figure plus"))
         if members[key]["status"] == "closed" and not already_withdrawn:
             refusals.append((key, f"retiré, mais {members[key]['id']} est fermé : un ticket livré ou déjà retiré ne se retire pas"))
+        parking = own_parking(states.get(members[key]["id"], {}), members[key]["id"])
+        if not already_withdrawn and parking and not parking.get("answer"):
+            refusals.append((key, "retiré alors que son propre parcage attend la réponse de l'opérateur "
+                                  "(bin/escalation-door repondre) : les tickets parqués derrière lui le resteraient"))
         if not isinstance(decision, str) or not decision.strip():
             refusals.append((key, "retiré sans Planning Exception (champ planning_exception : l'identifiant de la décision résolue)"))
         elif not already_withdrawn and decisions is not None and not (
@@ -2309,26 +2313,46 @@ def withdrawal_refusals(
     return withdrawn, refusals
 
 
+def own_parking(state: dict[str, Any], bead_id: str) -> dict[str, Any] | None:
+    """The parking a ticket caused itself by its Planning Exception (Ticket
+    Exit), as bin/convoy-state renders it with the operator's answer to its
+    request; None otherwise (other causes are answered elsewhere)."""
+    park = state.get("park")
+    return park if isinstance(park, dict) and park.get("origin") == bead_id \
+        and park.get("cause") == "planning_exception" else None
+
+
 def withdraw_tickets(
     convoy_id: str, withdrawn: dict[str, str], members: dict[str, dict[str, Any]], author: str, reason: str,
+    states: dict[str, dict[str, Any]],
 ) -> dict[str, str]:
     """Close each withdrawn ticket behind its gate record (`withdrawn`,
     written by bin/convoy-state): a ticket closed without one is an « état
-    sans règle ». A ticket already closed is left as it is."""
+    sans règle ». A ticket already closed is left as it is. The parking a
+    withdrawn ticket caused itself, answered by the operator, is then lifted
+    by bin/convoy-state lift-park: the tickets parked behind it wait for its
+    replacement as a dependency (af-6854ef)."""
     done: dict[str, str] = {}
     for key, decision in withdrawn.items():
         member = members[key]
         done[key] = member["id"]
-        if member["status"] == "closed":
-            continue
-        run_subtool(
-            [tool_path("CONVOY_STATE_BIN", "convoy-state"), "record-gate", convoy_id, member["id"], "--gate", "withdrawn"],
-            cwd=BD_WORKSPACE,
-        )
-        run(
-            "update", member["id"], "--status", "closed",
-            "--append-notes", f"WITHDRAWN by {author} (Planning Exception {decision}): {reason}",
-        )
+        if member["status"] != "closed":
+            run_subtool(
+                [tool_path("CONVOY_STATE_BIN", "convoy-state"), "record-gate", convoy_id, member["id"],
+                 "--gate", "withdrawn"],
+                cwd=BD_WORKSPACE,
+            )
+            run(
+                "update", member["id"], "--status", "closed",
+                "--append-notes", f"WITHDRAWN by {author} (Planning Exception {decision}): {reason}",
+            )
+        park = own_parking(states.get(member["id"], {}), member["id"])
+        if park and park.get("answer"):
+            run_subtool(
+                [tool_path("CONVOY_STATE_BIN", "convoy-state"), "lift-park", convoy_id, member["id"],
+                 "--request", member["id"], "--option", str(park["answer"]["option"])],
+                cwd=BD_WORKSPACE,
+            )
     return done
 
 
@@ -2473,7 +2497,7 @@ def cmd_bd_patch_new_flow(args: argparse.Namespace, bead: dict[str, Any], human_
             if description != member["description"]:
                 run("update", member["id"], "--description", description)
 
-    result["withdrawn"] = withdraw_tickets(convoy_id, withdrawn, members, args.author, args.reason)
+    result["withdrawn"] = withdraw_tickets(convoy_id, withdrawn, members, args.author, args.reason, states)
     marked = mark_new_flow_convoy(draft_id, tickets, result["ids"])
     # Spec §0 rule 3: code starts the tickets of a marked convoy, not the Mayor.
     print(json.dumps({

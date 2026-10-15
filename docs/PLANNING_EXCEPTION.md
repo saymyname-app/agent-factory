@@ -48,7 +48,7 @@ the revised graph to Beads only after its checks pass.
 python3 tests/planning-exception-test.py
 ```
 
-### Authorized replacement draft for an already stopped vertical slice
+### Authorized replacement draft for a stopped or answered-parked vertical slice
 
 `bin/replacement-draft create` is the bounded entry before `planning-exception
 resolve` and `ticket-graph-publish bd-patch` when the project owner has already
@@ -80,6 +80,28 @@ draft keeps the stopped ticket's criteria/scope digests and adds
 `replacement_revised_criteria_digest` / `replacement_revised_scope_digest`,
 also cited in the "Authorized replacement" sentence. The `--evidence` must be
 the owner's recorded approval of that reduced scope, as for any replacement.
+
+The source may also be a `vertical_slice` with no stop that is **parked by its
+own Planning Exception** (`gc.flow.park` with cause `planning_exception` and
+`origin` the ticket itself) once the operator answered that request through
+`bin/escalation-door repondre` after the parking (`gc.needs_benjamin=none`,
+`gc.escalation_response_option`/`_at`, read as `convoy-state` reads them). A
+parking behind another ticket, an unanswered request or an answer older than
+the parking refuses. This is the case of an author who raises a Planning
+Exception where `docs/TDD_STEP.md` would have stopped the ticket (af-6854ef,
+T01R5 → T01R6). The cited sentence names the source state (`stop <reason>` or
+`parked by its own Planning Exception, answered <option> at <time>`).
+
+When `bd-patch` withdraws such a ticket, it closes it behind its `withdrawn`
+gate as usual, then lifts the parking it caused with `convoy-state lift-park
+<convoy> <ticket> --request <ticket> --option <answer>`: the lift is kept in
+`gc.flow.park_lifts`, and the tickets parked behind it wait for the
+replacement as an ordinary dependency. `bd-patch` refuses (nothing written) to
+withdraw a ticket whose own Planning Exception parking has no operator answer
+yet. Other parkings (exhausted resumes, operator requests) are untouched by
+both doors. An answer that *accepts* the deviation (`accept_option`) is lifted
+by `bin/convoy-advance` itself, which resumes the ticket: replace a ticket only
+when the answer did not accept it.
 
 Every cited equality is checked before the sole `bd create`; missing or stale
 evidence refuses with no write. The resulting draft remains only an input to
