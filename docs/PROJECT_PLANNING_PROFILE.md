@@ -194,6 +194,9 @@ holds it for Benjamin.
 - `config/project-descriptors/agent-factory.json`: rig `agent-factory`, no
   `promotion_branch` (the Factory has no Promotion Step), roadmap and
   rituals status from T03 (`docs/roadmap.toml`, `bin/rituals-status`).
+  It declares a `launch` block (Spec af-2zseit, T01; Factory tooling on
+  `main` since af-wv3qu2): the recipe of the isolated cockpit, its datasets,
+  screens and seams (`docs/COCKPIT.md`, « Isolated launch »).
 - `config/project-descriptors/saymyname.json`: rigs `saymyname-backend`
   and `saymyname-frontend`, each promoting `dev` → `main`, knowledge repo
   `saymyname-app/Say-my-name-product`, roadmap `knowledge/roadmap.toml`,
@@ -224,8 +227,8 @@ is missing:
 | Field | Meaning |
 | --- | --- |
 | `recipe` | argv tokens to launch the product; `{python}`, `{port}`, `{dataset}` are substituted by `project-launch`. |
-| `entry_points` | the product's public interfaces (`kind`, `method`, `path`), named so an Evaluator or criterion test knows where to look. |
-| `health_probe` | `{path, expect_status}` — polled by `project-launch start` until it answers or the timeout expires. |
+| `entry_points` | the product's public interfaces (`kind`, `method`, `path`), named so an Evaluator or criterion test knows where to look. `kind` `http`: `method` and `path` of a request — the only kind `bin/tdd-step` counts for a black-box seam. Any other kind is named for the reader, e.g. `command`: `path` the command, `method` its subcommand (the Factory's profile declares so the public commands of the Delivery Workflow, af-u2fa7b). |
+| `health_probe` | `{path, expect_status}` — polled by `project-launch start` until it answers or the timeout expires. An answer counts only when the process listening on the port is the launched one, one of its descendants or a process carrying its launch mark `FACTORY_LAUNCH_ID` (af-u2fa7b, on `main` since af-wv3qu2): a port another process took between its choice and the product's bind is given up, the attempt stopped and reaped, and the product launched again on another port, three times in all. |
 | `datasets` | named synthetic dataset files (fixed `generated_at` time included) a launch selects with `--dataset`. **At least one**: a launchable profile that names none is refused by `describe`/`list` and by every tool that loads the descriptor, the error naming `launch.datasets`. |
 | `test_perimeter` | paths a ticket's red step may write criterion tests under. |
 | `frozen_harness_paths` | test harness/config paths frozen at the ticket's freeze step. |
@@ -239,8 +242,8 @@ is missing:
 | `anchors` | **required when the profile declares no `screens`** — the key absent, or an empty list (T50) — (the error names `launch.anchors`), not needed otherwise — the equivalent of the anchors for an interface that is **not a web page** (a command line, an API; T35, spec af-wf4w5r §12). Exactly one of: `{"equivalent": [{name, entry_point, observable}]}`, what stands for the anchors of a screen — each a unique name, the declared entry point that answers it (`"METHOD path"`) and the observable read there (a field, an exit status, a line of output); or `{"not_applicable": "<reason>"}`. An empty list, a missing reason, both forms at once, an unknown field, a duplicate name or an entry point that is not declared is rejected. `describe` renders it. |
 | `import_rule` | optional, required by `bin/tdd-step` when a seam's mode is `import_rule` — `{product_import, entry_point_import}`, two regular expressions applied to each line of a test: a line that imports the product must import one of its entry points. |
 
-A descriptor with no `launch` block at all (e.g. the Factory's own
-`agent-factory.json`) is unaffected — `describe` reports `launch: null`,
+A descriptor with no `launch` block at all (e.g. `saymyname.json`) is
+unaffected — `describe` reports `launch: null`,
 and `bin/project-launch start` refuses that project outright, naming the
 missing declaration, before anything is spawned.
 

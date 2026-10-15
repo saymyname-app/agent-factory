@@ -1,0 +1,13 @@
+{
+  "generated_at": "2026-10-12T12:00:00+02:00",
+  "synthetic": true,
+  "ui": {
+    "id": "analysis-content",
+    "page": "analysis",
+    "selected": "result",
+    "theme": "dark",
+    "width": 1440
+  },
+  "visible_text": "Analyses\n\nToute l’usine · 7 derniers jours\n\nRésultats\nDélais\nVérifications\nActivité\nRésultats fusionnés\n\n6 résultats sur sept jours · fusion prouvée\n\nRésultats fusionnés\n0\n3\n6\n9\nLun\nMar\nMer\nJeu\nVen\nSam\nDim\nPrésentation du projet\nPortfolio · hier\nImport des documents\nNotes · hier\nFiabilisation des reprises\nUsine · avant-hier\nDéfinition et sources",
+  "production_writes": 0
+}

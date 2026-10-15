@@ -238,7 +238,7 @@ class ProjectPlanningProfileTest(unittest.TestCase):
 
     def test_descriptor_with_no_launch_block_describes_with_launch_null(self):
         result = json.loads(
-            self.describe(REAL_DESCRIPTORS_DIR / "agent-factory.json", check=True).stdout
+            self.describe(REAL_DESCRIPTORS_DIR / "saymyname.json", check=True).stdout
         )
         self.assertIsNone(result["launch"])
 

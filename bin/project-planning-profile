@@ -30,8 +30,8 @@ since a product is never launched without one, and k is 3 when the profile
 declares none. The seams are declared either as `seams` (several, each with
 its own mode and the test paths that go through it) or as `seam_mode` (one
 seam for the whole test perimeter).
-A descriptor with no `launch` block at all (e.g. the Factory's own
-descriptor) is unaffected: `bin/project-launch` refuses to start a project
+A descriptor with no `launch` block at all (e.g. SayMyName's) is
+unaffected: `bin/project-launch` refuses to start a project
 with no declared recipe.
 
 A project whose interface is not a web page (a command line, an API) has no

@@ -75,6 +75,61 @@ def pick_free_port() -> int:
         return sock.getsockname()[1]
 
 
+# The port chosen is free when chosen, not reserved: another process of the
+# host can bind it before the product does. A launch whose port is lost so is
+# made again on another port, this many times in all.
+PORT_ATTEMPTS = 3
+
+
+def listening_sockets(port: int) -> set[str]:
+    """The inodes of the sockets listening on `port` of the loopback (or of
+    every address), as /proc/net/tcp and tcp6 list them."""
+    inodes = set()
+    for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            lines = Path(table).read_text().splitlines()[1:]
+        except OSError:
+            continue
+        for line in lines:
+            fields = line.split()
+            address, _, hex_port = fields[1].rpartition(":")
+            if int(hex_port, 16) == port and fields[3] == "0A" and address.strip("0") in ("", "100007F"):
+                inodes.add(fields[9])
+    return inodes
+
+
+def process_tree(pid: int) -> set[int]:
+    """`pid` and every live process descended from it."""
+    parents: dict[int, list[int]] = {}
+    for stat in Path("/proc").glob("[0-9]*/stat"):
+        try:
+            ppid = int(stat.read_text().rsplit(")", 1)[1].split()[1])
+        except (OSError, IndexError, ValueError):
+            continue
+        parents.setdefault(ppid, []).append(int(stat.parent.name))
+    tree, pending = set(), [pid]
+    while pending:
+        current = pending.pop()
+        if current not in tree:
+            tree.add(current)
+            pending.extend(parents.get(current, []))
+    return tree
+
+
+def listener_is_launched(port: int, pid: int, launch_id: str) -> bool:
+    """Whether what listens on `port` is a process of the launch: `pid`, one
+    of its descendants, or a process carrying its mark -- the product's
+    identity, not only an answer on its port."""
+    sockets = {f"socket:[{inode}]" for inode in listening_sockets(port)}
+    for member in process_tree(pid) | set(owned_processes(launch_id)):
+        try:
+            if any(os.readlink(fd) in sockets for fd in Path(f"/proc/{member}/fd").iterdir()):
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def terminate(pid: int) -> bool:
     try:
         os.kill(pid, signal.SIGTERM)
@@ -254,6 +309,51 @@ def remove_worktree(repo_root: str, worktree: str, launch_id: str | None = None,
         owner.unlink(missing_ok=True)
 
 
+def end_attempt(proc: subprocess.Popen, launch_id: str, worktree: str) -> bool:
+    """Stop an attempt of the launch, and reap it: True when no process of
+    the launch is left (the marked ones, and those still inside its copy)."""
+    stopped = (terminate_owned(launch_id) and
+               all(terminate(pid) for pid in worktree_processes(worktree)) and
+               not worktree_processes(worktree))
+    try:
+        proc.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        stopped = False
+    return stopped
+
+
+def spawn(recipe: list[str], worktree: str, port: int, dataset: str, launch_id: str) -> subprocess.Popen:
+    """Run `recipe` on `port`, in its own session, carrying the launch mark."""
+    argv = [token.format(python=sys.executable, port=str(port), dataset=dataset) for token in recipe]
+    with open(Path(worktree) / "launch.log", "a") as log_file:
+        return subprocess.Popen(argv, cwd=worktree, stdout=log_file, stderr=subprocess.STDOUT,
+                                start_new_session=True, env={**os.environ, "FACTORY_LAUNCH_ID": launch_id})
+
+
+def probe_until_healthy(proc: subprocess.Popen, port: int, launch_id: str, probe_url: str,
+                        expect_status: int, timeout: float) -> str:
+    """Probe the launched product. The outcome: `healthy` (the probe
+    answers, and the answer comes from the launch), `port_lost` (another
+    process answers on the port, or holds it when the product ended) or
+    `unhealthy`."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            return "port_lost" if listening_sockets(port) else "unhealthy"
+        try:
+            with urllib.request.urlopen(probe_url, timeout=1) as response:
+                answered = response.status == expect_status
+        except (urllib.error.URLError, ConnectionError, OSError):
+            answered = False
+        if answered:
+            if listener_is_launched(port, proc.pid, launch_id):
+                return "healthy"
+            if proc.poll() is None and listening_sockets(port):
+                return "port_lost"
+        time.sleep(0.1)
+    return "unhealthy"
+
+
 def cmd_start(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root).resolve()
     if args.state_file and Path(args.state_file).exists():
@@ -348,52 +448,57 @@ def cmd_start(args: argparse.Namespace) -> int:
                           "cleanup_confirmed": not Path(args.state_file).exists()}, sort_keys=True))
         return 1
 
-    port = pick_free_port()
-    record["port"] = port
-    try:
-        write_record(args.state_file, record)
-    except OSError as exc:
-        try:
-            remove_worktree(str(repo_root), worktree, launch_id, resolved_commit)
-        except (OSError, RuntimeError):
-            pass
-        else:
-            Path(args.state_file).unlink(missing_ok=True)
-        print(json.dumps({"started": False, "error": f"launch record could not be updated: {exc}",
-                          "cleanup_confirmed": not Path(args.state_file).exists()}, sort_keys=True))
-        return 1
     dataset_abs = str(Path(worktree) / dataset_rel) if dataset_rel else ""
-    argv = [token.format(python=sys.executable, port=str(port), dataset=dataset_abs)
-            for token in launch["recipe"]]
-
-    log_file = open(Path(worktree) / "launch.log", "w")
-    proc = subprocess.Popen(argv, cwd=worktree, stdout=log_file, stderr=subprocess.STDOUT,
-                            start_new_session=True, env={**os.environ, "FACTORY_LAUNCH_ID": launch_id})
-    record.update(pid=proc.pid, process_group=proc.pid)
-    write_record(args.state_file, record)
-
-    address = f"http://127.0.0.1:{port}"
-    probe_url = address + launch["health_probe"]["path"]
+    probe_path = launch["health_probe"]["path"]
     expect_status = launch["health_probe"].get("expect_status", 200)
-
-    deadline = time.monotonic() + args.timeout
-    ready = False
-    while time.monotonic() < deadline:
-        if proc.poll() is not None:
-            break
+    # The port chosen is free when chosen, not reserved (PORT_ATTEMPTS): an
+    # attempt whose port another process took is stopped, reaped, and made
+    # again on another port; the record names the port and process of the
+    # current attempt, so a crash at any moment leaves what `stop` needs.
+    for attempt in range(1, PORT_ATTEMPTS + 1):
+        port = pick_free_port()
+        record["port"] = port
         try:
-            with urllib.request.urlopen(probe_url, timeout=1) as response:
-                if response.status == expect_status:
-                    ready = True
-                    break
-        except (urllib.error.URLError, ConnectionError, OSError):
-            pass
-        time.sleep(0.1)
+            write_record(args.state_file, record)
+        except OSError as exc:
+            try:
+                remove_worktree(str(repo_root), worktree, launch_id, resolved_commit)
+            except (OSError, RuntimeError):
+                pass
+            else:
+                Path(args.state_file).unlink(missing_ok=True)
+            print(json.dumps({"started": False, "error": f"launch record could not be updated: {exc}",
+                              "cleanup_confirmed": not Path(args.state_file).exists()}, sort_keys=True))
+            return 1
+        address = f"http://127.0.0.1:{port}"
+        try:
+            proc = spawn(launch["recipe"], worktree, port, dataset_abs, launch_id)
+        except OSError as exc:
+            # Nothing was started: the copy and the record are released below.
+            outcome, stopped, error = "unhealthy", True, f"recipe could not be started: {exc}"
+            break
+        record.update(pid=proc.pid, process_group=proc.pid)
+        write_record(args.state_file, record)
+        outcome = probe_until_healthy(proc, port, launch_id, address + probe_path, expect_status, args.timeout)
+        if outcome == "healthy":
+            break
+        stopped = end_attempt(proc, launch_id, worktree)
+        if outcome != "port_lost":
+            error = f"product did not become healthy within {args.timeout}s"
+            break
+        error = (f"port {port} was taken by another process before the product bound it "
+                 f"({attempt} of {PORT_ATTEMPTS} ports tried)")
+        # The lost port is the other process's: a kept record must not make
+        # `stop` wait for it to be free.
+        record.pop("port")
+        write_record(args.state_file, record)
+        if not stopped:
+            break
 
-    if not ready:
-        cleaned = (terminate_owned(launch_id) and
-                   all(terminate(pid) for pid in worktree_processes(worktree)) and
-                   not worktree_processes(worktree) and port_free(port))
+    if outcome != "healthy":
+        # A lost port is held by another process: only an unhealthy product
+        # must have released its own.
+        cleaned = stopped and (outcome == "port_lost" or port_free(port))
         if cleaned:
             try:
                 remove_worktree(str(repo_root), worktree, launch_id, resolved_commit)
@@ -403,7 +508,7 @@ def cmd_start(args: argparse.Namespace) -> int:
             Path(args.state_file).unlink(missing_ok=True)
         print(json.dumps({
             "started": False,
-            "error": f"product did not become healthy within {args.timeout}s",
+            "error": error,
             "cleanup_confirmed": cleaned,
             "state_file": args.state_file if not cleaned else None,
         }, sort_keys=True))

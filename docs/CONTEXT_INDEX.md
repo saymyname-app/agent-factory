@@ -105,6 +105,7 @@ mechanisms: consult `decisions/PRE_REFACTOR.md` before relying on them.
 | Preserve cases/assertions when optimizing tests | `FACTORY_TOOLS.md` (test-cases-compare) |
 | Test-writing guideline and test-file ceilings | `TEST_GUIDELINE.md` |
 | Claude MCP/tool profiles and context floor | `../city.toml` ([providers.claude]) |
+| Launch the cockpit isolated at a commit on a named synthetic dataset: recipe, datasets, screens, seams, regression command | `COCKPIT.md` (« Isolated launch »), `PROJECT_PLANNING_PROFILE.md` (« Launch declarations »), `../config/project-descriptors/agent-factory.json` (`launch`), `../bin/cockpit-isolated`, `../lib/synthetic_city.py` |
 
 ## Authority and minimal retrieval
 
