@@ -274,7 +274,12 @@ EVALUATION_STOPS = ("evaluation_no_result", "evaluation_outage")
 CORRECTION_STOP = "still_refused"
 # The stops bin/tdd-step writes on a ticket and that no settlement of a review
 # or of an evaluation raises: this pass raises them itself (T45, Spec §8).
-TDD_STOPS = {"amendment_exhausted": "amendement épuisé"}
+TDD_STOPS = {"amendment_exhausted": "amendement épuisé",
+             # ADR-0030 L3: the stops a test review wrote before it left the
+             # flow are still raised once, here (bin/test-review settle no
+             # longer runs).
+             "test_review_refused": "relecture des tests refusée deux fois",
+             "test_review_no_result": "relecture des tests sans résultat"}
 
 # Spec §5: the exits that park their ticket; what the merge returns.
 PARKING_EXITS = ("planning_exception", "operator_request")
@@ -2023,7 +2028,9 @@ def tdd_stop_request(ticket: dict[str, Any]) -> str:
     stop = ticket["stop"]
     return json.dumps({
         "quoi": one_line(f"Ticket {ticket['id']} arrêté : {TDD_STOPS[stop['reason']]} — {stop.get('detail', '')}"),
-        "pourquoi": "Un test gelé ne s'amende qu'une fois par ticket : le travail de ce ticket ne reprend pas sans ta réponse.",
+        "pourquoi": ("Un test gelé ne s'amende qu'une fois par ticket" if stop["reason"] == "amendment_exhausted"
+                     else "La relecture des tests a arrêté ce ticket avant ADR-0030 L3")
+                    + " : le travail de ce ticket ne reprend pas sans ta réponse.",
         "que_faire": [
             {"option": "Faire reprendre ce ticket ou ses tests de critère par une Planning Exception",
              "consequence": "Le ticket reste arrêté tant que son arrêt n'est pas levé."},

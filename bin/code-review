@@ -422,9 +422,9 @@ def changed_files(repo: Path, base: str, commit: str) -> list[dict[str, str]]:
     return out
 
 
-def sealed_report(convoy_id: str, ticket_id: str, piece: str) -> dict[str, Any]:
-    """The report a step of bin/tdd-step sealed, once the evidence store
-    vouches for it (bin/evidence-capture verify)."""
+def sealed_report(convoy_id: str, ticket_id: str, piece: str, commit: str) -> dict[str, Any]:
+    """The report a step of bin/tdd-step sealed at `commit`, once the
+    evidence store vouches for it (bin/evidence-capture verify)."""
     proc = run([str(CAPTURE_TOOL), "verify", convoy_id, ticket_id, "--piece", piece])
     try:
         answer = json.loads(proc.stdout)
@@ -434,6 +434,9 @@ def sealed_report(convoy_id: str, ticket_id: str, piece: str) -> dict[str, Any]:
         raise Refusal(f"pièce {piece} du ticket {ticket_id} invérifiable : {detail_of(proc)}") from exc
     if proc.returncode != 0 or not isinstance(report, dict):
         raise Refusal(f"pièce {piece} du ticket {ticket_id} invérifiable : {detail_of(proc)}")
+    if record.get("commit") != commit:
+        raise Refusal(f"pièce {piece} du ticket {ticket_id} : elle porte sur le commit {record.get('commit')}, "
+                      f"l'étape sur {commit}")
     return report
 
 
@@ -447,13 +450,13 @@ def frozen_tests(convoy_id: str, ticket: dict[str, Any]) -> dict[str, Any]:
     tdd = ticket.get("tdd") or {}
     if "freeze" not in tdd:
         return {"files": {}, "criteria": {}, "amended": []}
-    registry = sealed_report(convoy_id, ticket["id"], "tdd_freeze")
+    registry = sealed_report(convoy_id, ticket["id"], "tdd_freeze", tdd["freeze"].get("commit"))
     files, criteria = registry.get("files"), registry.get("criteria")
     if not isinstance(files, dict) or not isinstance(criteria, dict):
         raise Refusal(f"registre du gel du ticket {ticket['id']} illisible (pièce tdd_freeze)")
     amended: list[str] = []
     if "amendment" in tdd:
-        amendment = sealed_report(convoy_id, ticket["id"], "tdd_amendment").get("amendment")
+        amendment = sealed_report(convoy_id, ticket["id"], "tdd_amendment", tdd["amendment"].get("commit")).get("amendment")
         changed = amendment.get("files") if isinstance(amendment, dict) else None
         if not isinstance(changed, list):
             raise Refusal(f"amendement du ticket {ticket['id']} illisible (pièce tdd_amendment)")

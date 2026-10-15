@@ -32,6 +32,7 @@ def load(name):
 first = load("convoy-advance-test.py")
 CONVOY = first.CONVOY
 ESCALATION = first.ESCALATION
+STATE = first.STATE
 EXIT_REFUSED = first.EXIT_REFUSED
 T1 = first.T1
 
@@ -224,6 +225,21 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertIsNone(self.review_of(answer))
         self.assertEqual([], self.review_launches())
         self.assertNotIn("gc.flow.stop", self.bead(self.R1)["metadata"])
+
+    def test_a_stop_a_test_review_wrote_before_l3_still_reaches_the_operator_once(self):
+        self.review_open(launches=2)
+        self.run_ok(STATE, "stop-ticket", self.REVIEWED, self.R1, "--reason", "test_review_no_result",
+                    "--detail", "aucun verdict, relance comprise")
+
+        first = self.advance(self.REVIEWED)
+        second = self.advance(self.REVIEWED)
+
+        convoy = next(c for c in first["convoys"] if c["id"] == self.REVIEWED)
+        self.assertEqual([{"ticket": self.R1, "reason": "test_review_no_result"}], convoy["tdd_stops"]["escalated"])
+        self.assertNotIn("tdd_stops", next(c for c in second["convoys"] if c["id"] == self.REVIEWED))
+        self.assertEqual([], self.review_launches())
+        needs = [line for line in self.run_ok(ESCALATION, "list").stdout.splitlines() if self.R1 in line]
+        self.assertEqual(1, len(needs), needs)
 
 
 if __name__ == "__main__":
