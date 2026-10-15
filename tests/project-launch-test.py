@@ -594,8 +594,15 @@ class ProjectLaunchTest(unittest.TestCase):
         self.assertIn("recipe could not be started", error["error"])
         self.assertTrue(error["cleanup_confirmed"])
         self.assertFalse(state_file.exists(), "the refused start kept its launch record")
-        self.assertEqual(set(), set(Path(tempfile.gettempdir()).glob("project-launch-*")) - before,
-                         "the refused start left its copy")
+        # Only the copies of this repository: the host's other launches
+        # create and remove theirs meanwhile (af-29xv7v).
+        def ours(path: Path) -> bool:
+            sidecar = Path(f"{path}.owner") if path.suffix != ".owner" else path
+            with contextlib.suppress(OSError, ValueError):  # the sidecar is written before the copy
+                return json.loads(sidecar.read_text()).get("repo_root") == str(ROOT)
+            return False
+        left = {path for path in set(Path(tempfile.gettempdir()).glob("project-launch-*")) - before if ours(path)}
+        self.assertEqual(set(), left, "the refused start left its copy")
 
     def test_start_on_a_project_with_no_launch_recipe_is_refused(self):
         # "Nothing was started" is read from what this test owns -- the
@@ -667,6 +674,41 @@ class ProjectLaunchTest(unittest.TestCase):
                 self.assertFalse(state_file.exists(), "the launch record outlived its owner")
                 self.assertFalse(Path(record["worktree"]).exists(), "the launch copy outlived its owner")
                 self.assertTrue(_port_is_free(record["port"]))
+
+    def test_a_launch_ends_when_its_owner_is_killed_before_it_is_healthy(self):
+        # af-f7x7w7, second measure: an agent's tool timeout killed
+        # prototype-fidelity, and project-launch start with it, while the
+        # product was still answering its probe; the record said
+        # started=false and the product lived on.
+        descriptor = json.loads(DESCRIPTOR.read_text())
+        descriptor["launch"]["recipe"] = ["{python}", "-c", "import time; time.sleep(120)"]
+        slow = Path(tempfile.mkdtemp(prefix="project-launch-slow-")) / "descriptor.json"
+        self.addCleanup(shutil.rmtree, slow.parent, True)
+        slow.write_text(json.dumps(descriptor))
+        with _adopting_orphans():
+            state_file = self.new_state_file()
+            owner = subprocess.Popen(
+                [sys.executable, "-c",
+                 "import os, subprocess, sys, time; "
+                 "subprocess.Popen([sys.argv[1], 'start', sys.argv[2], '--dataset', 'content', '--timeout', '60', "
+                 "'--state-file', sys.argv[3], '--owner-pid', str(os.getpid())]); time.sleep(120)",
+                 str(TOOL), str(slow), str(state_file)],
+                cwd=ROOT, start_new_session=True)
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                with contextlib.suppress(OSError, ValueError):
+                    if "pid" in json.loads(state_file.read_text()):
+                        break
+                time.sleep(0.2)
+            record = json.loads(state_file.read_text())
+            self.assertFalse(record["started"])
+            os.killpg(owner.pid, signal.SIGKILL)  # as evidence-capture's timeout does
+            owner.wait(timeout=5)
+            left = self._until_no_children()
+            _end(left)
+        self.assertEqual([], left, "a process of the launch outlived its killed owner")
+        self.assertFalse(state_file.exists(), "the launch record outlived its owner")
+        self.assertFalse(Path(record["worktree"]).exists(), "the launch copy outlived its owner")
 
     def test_an_owned_launch_stopped_normally_leaves_no_guard(self):
         with _adopting_orphans():

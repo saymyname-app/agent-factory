@@ -273,9 +273,11 @@ into `recipe`, and polls `health_probe` until it answers or `--timeout`
 the port. Two concurrent launches each get their own port and worktree and
 do not disturb each other; stopping one leaves the other answering.
 
-`start --owner-pid <pid>` ties the launch to a process: a detached guard
-stops it as soon as that process ends, however it ends (SIGTERM, SIGKILL,
-a timeout that kills its group). The tools that stop their product within
+`start --owner-pid <pid>` ties the launch to a process: a detached guard,
+left from the first launch record on, stops it as soon as that process
+ends, however it ends (SIGTERM, SIGKILL, a timeout that kills its group),
+or as soon as `start` itself ends before the product is healthy (an
+agent's tool timeout killed it while the cockpit still answered its probe). The tools that stop their product within
 their own run name themselves its owner (`bin/tdd-step`, `bin/ticket-author`,
 `bin/outcome-promote`, `bin/prototype-fidelity`); before that, a `finally`
 that SIGKILL never runs left products alive for days (af-f7x7w7). The tools
