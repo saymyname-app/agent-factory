@@ -3229,7 +3229,8 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertEqual(before, self.tracker.read_text())
         self.assertEqual(1, self.resumes())
 
-    def test_every_cause_of_resume_adds_to_the_same_counter(self):
+    def test_each_cause_of_resume_is_bounded_on_its_own_and_all_add_to_the_counter(self):
+        # ADR-0030 L2: three different causes are not three of the same.
         self.interrupted_ticket()
         self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "session:auteur-1")
         self.ok("open-resume", CONVOY, T1, "--cause", "returned", "--ref", "merge:1")
@@ -3238,8 +3239,54 @@ class ConvoyStateTest(unittest.TestCase):
         ticket = self.ticket(self.show(), T1)
 
         self.assertEqual(3, ticket["counters"]["resumes"])
-        self.assertEqual(0, ticket["resumes_left"])
+        self.assertEqual(2, ticket["resumes_left"])
+        self.assertEqual({"interrupted": 2, "returned": 2, "unblocked": 2, "answered": 3, "behind": 3,
+                          "evaluation_no_result": 3, "commit_after_verdict": 3}, ticket["resumes_left_by_cause"])
         self.assertEqual(["interrupted", "returned", "unblocked"], [e["cause"] for e in ticket["resume"]["entries"]])
+
+    def test_an_interruption_a_correction_round_and_a_red_merge_do_not_park_the_ticket(self):
+        # The af-ltchro case: interrupted, corrected, returned by a red merge.
+        self.interrupted_ticket()
+        self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "session:auteur-1")
+        self.ok("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes", "--counter", "correction_rounds")
+        self.ok("open-resume", CONVOY, T1, "--cause", "returned", "--ref", "merge:1")
+
+        ticket = self.ticket(self.show(), T1)
+
+        self.assertEqual((3, 2), (ticket["counters"]["resumes"], ticket["resumes_left"]))
+        self.assert_refused_and_nothing_written(
+            "park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "x", mention="reprises")
+        self.ok("open-resume", CONVOY, T1, "--cause", "returned", "--ref", "merge:2")
+
+    def test_the_same_cause_at_its_bound_exhausts_the_ticket_whatever_the_others(self):
+        self.interrupted_ticket()
+        self.ok("open-resume", CONVOY, T1, "--cause", "returned", "--ref", "merge:1")
+        for ref in ("a", "b", "c"):
+            self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", ref)
+
+        ticket = self.ticket(self.show(), T1)
+
+        self.assertEqual((0, 0, 2), (ticket["resumes_left"], ticket["resumes_left_by_cause"]["interrupted"],
+                                     ticket["resumes_left_by_cause"]["returned"]))
+        self.assert_refused_and_nothing_written(
+            "open-resume", CONVOY, T1, "--cause", "returned", "--ref", "merge:2", mention="cause interrupted")
+        self.ok("park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "3 reprises interrupted")
+
+    def test_commits_after_a_verdict_are_a_cause_of_their_own(self):
+        # Counted without an entry: what the counter holds beyond the
+        # entries and the correction round.
+        self.interrupted_ticket()
+        self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "a")
+        self.ok("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes", "--counter", "correction_rounds")
+        for _ in range(2):
+            self.ok("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
+        self.assertEqual(1, self.ticket(self.show(), T1)["resumes_left_by_cause"]["commit_after_verdict"])
+        self.ok("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
+
+        ticket = self.ticket(self.show(), T1)
+
+        self.assertEqual((0, 2), (ticket["resumes_left"], ticket["resumes_left_by_cause"]["interrupted"]))
+        self.ok("park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "3 commits après verdict")
 
     def test_the_commit_of_a_returned_ticket_resumed_by_code_invalidates_its_verdicts_without_a_second_resume(self):
         judged, base = self.integrated()
@@ -3327,10 +3374,12 @@ class ConvoyStateTest(unittest.TestCase):
     def test_a_ticket_is_parked_for_exhausted_resumes_only_once_they_are(self):
         self.interrupted_ticket()
         self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "a")
-        self.assert_refused_and_nothing_written(
-            "park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "x", mention="reprises")
         self.ok("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes", "--counter", "correction_rounds")
         self.ok("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
+        self.assert_refused_and_nothing_written(
+            "park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "x", mention="reprises")
+        for ref in ("b", "c"):
+            self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", ref)
 
         answer = self.ok("park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "3 reprises")
 
@@ -3367,8 +3416,55 @@ class ConvoyStateTest(unittest.TestCase):
         ticket = self.ticket(self.show(), T1)
         self.assertEqual(3, ticket["counters"]["resumes"])
         self.assertEqual(3, ticket["resumes_left"])
+        self.assertEqual({3}, set(ticket["resumes_left_by_cause"].values()))
+        self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "d")
+        self.ok("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
+        ticket = self.ticket(self.show(), T1)
+        self.assertEqual((2, 2, 2), (ticket["resumes_left"], ticket["resumes_left_by_cause"]["interrupted"],
+                                     ticket["resumes_left_by_cause"]["commit_after_verdict"]))
+
+    def test_a_lift_recorded_before_the_bounds_per_cause_still_gives_the_resumes_back(self):
+        # A lift written before ADR-0030 L2 carries no per-cause count: what
+        # was taken before it is read from the entries older than the lift.
+        self.interrupted_ticket()
+        for ref in ("a", "b", "c"):
+            self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", ref)
+        self.ok("park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "3 reprises")
+        self.ok("lift-park", CONVOY, T1, "--request", "fx-new1", "--option", "a")
+        metadata = self.tracker_state()["beads"][T1]["metadata"]
+        resume = json.loads(metadata["gc.flow.resume"])
+        for entry in resume["entries"]:
+            entry["at"] = "2000-01-01T00:00:00Z"
+        lifts = json.loads(metadata["gc.flow.park_lifts"])
+        for lift in lifts["entries"]:
+            lift.pop("taken")
+        self.edit_tracker(T1, **{"gc.flow.resume": json.dumps(resume), "gc.flow.park_lifts": json.dumps(lifts)})
+
+        self.assertEqual(3, self.ticket(self.show(), T1)["resumes_left"])
         self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "d")
         self.assertEqual(2, self.ticket(self.show(), T1)["resumes_left"])
+
+    def test_an_old_lift_takes_out_only_the_correction_round_recorded_before_it(self):
+        # Three commits after a verdict exhausted the ticket; the lift, written
+        # before ADR-0030 L2, carries no per-cause count; the correction round
+        # came after it and takes nothing back from what was taken before.
+        self.interrupted_ticket()
+        for _ in range(3):
+            self.ok("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
+        self.ok("park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "3 commits après verdict")
+        self.ok("lift-park", CONVOY, T1, "--request", "fx-new1", "--option", "a")
+        metadata = self.tracker_state()["beads"][T1]["metadata"]
+        lifts = json.loads(metadata["gc.flow.park_lifts"])
+        for lift in lifts["entries"]:
+            lift.pop("taken")
+        correction = {"commit": "c" * 40, "blocking_findings": ["F1.1"], "not_observed": [], "launches": [],
+                      "at": "2999-01-01T00:00:00Z"}
+        self.edit_tracker(T1, **{"gc.flow.park_lifts": json.dumps(lifts), "gc.flow.correction": json.dumps(correction)})
+        self.ok("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes", "--counter", "correction_rounds")
+
+        ticket = self.ticket(self.show(), T1)
+
+        self.assertEqual((3, 3), (ticket["resumes_left"], ticket["resumes_left_by_cause"]["commit_after_verdict"]))
 
     def test_a_ticket_that_still_waits_for_another_parked_one_stays_parked_behind_it(self):
         self.seed(tickets=(T1, T2, "fx-t3"))
@@ -3643,9 +3739,29 @@ class ConvoyStateTest(unittest.TestCase):
         self.assert_refused_and_nothing_written(
             "park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "x", mention="reprises")
 
+    def test_the_bound_of_the_resumes_may_be_set_per_cause(self):
+        self.interrupted_ticket()
+        per_cause = {"interrupted": 1, "returned": 2, "unblocked": 3, "answered": 3, "behind": 3,
+                     "evaluation_no_result": 3, "commit_after_verdict": 3}
+        self.bounds(resumes=per_cause, open_planning_exceptions=2)
+
+        self.ok("open-resume", CONVOY, T1, "--cause", "returned", "--ref", "merge:1")
+        self.assertEqual(1, self.ticket(self.show(), T1)["resumes_left"])
+        self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "a")
+
+        ticket = self.ticket(self.show(), T1)
+        self.assertEqual((0, 1), (ticket["resumes_left"], ticket["resumes_left_by_cause"]["returned"]))
+        self.assert_refused_and_nothing_written(
+            "open-resume", CONVOY, T1, "--cause", "returned", "--ref", "merge:2", mention="ses 1 reprises")
+
     def test_a_malformed_bound_of_the_resumes_is_refused_and_nothing_is_written(self):
         self.interrupted_ticket()
-        for value in (0, "trois", True, None):
+        all_causes = ("interrupted", "returned", "unblocked", "answered", "behind", "evaluation_no_result",
+                      "commit_after_verdict")
+        missing = {cause: 3 for cause in all_causes[1:]}
+        unknown = {**missing, "interrupted": 3, "fatigue": 3}
+        zero = {**missing, "interrupted": 0}
+        for value in (0, "trois", True, None, {}, missing, unknown, zero):
             with self.subTest(value=value):
                 self.bounds(resumes=value, open_planning_exceptions=2)
                 before = self.tracker.read_bytes()

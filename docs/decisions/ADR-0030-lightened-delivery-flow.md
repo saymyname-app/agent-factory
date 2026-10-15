@@ -43,7 +43,10 @@ annulant sa PR :
    `returned` par une fusion rouge, `evaluation_no_result`, …). Une fusion
    rouge sur un défaut de code renvoie à l'auteur sans consommer le budget
    d'interruption. Un ticket n'est parqué pour Benjamin que lorsqu'une même
-   cause dépasse sa borne.
+   cause atteint sa borne. Coût accepté : à 7 causes bornées à 3, jusqu'à
+   ~14 sessions neuves d'auteur peuvent tourner avant que Benjamin soit
+   sollicité, contre 2 avant ; la mesure de L6 rapporte les reprises par
+   cause et abaisse une borne qui s'avère coûteuse (par exemple `behind`).
 3. **L3 — Une seule relecture.** La relecture des tests rejoint la revue de
    code : la preuve rouge/gel reste déterministe (`bin/tdd-step`, contrôle
    du harnais gelé conservé) ; un seul relecteur neuf lit les tests de
@@ -95,7 +98,7 @@ le Cockpit en Direct Delivery (option C), ce qui reste sa décision.
 - Un ticket fusionne un rouge que son auteur aurait vu au handoff : L1 n'est
   pas livrée.
 - Benjamin reçoit encore une demande sur un ticket parqué par une cause
-  qui n'a pas dépassé sa propre borne : L2 n'est pas livrée.
+  qui n'a pas atteint sa propre borne : L2 n'est pas livrée.
 - Un ticket non `interface` attend une évaluation par modèle : L4 n'est pas
   livrée.
 
@@ -109,9 +112,9 @@ sauf L7 qui suppose L3–L5. Annuler toutes les PR rend le flux de
 
 | Tranche | Bead | PR | État |
 |---|---|---|---|
-| L0 (cette ADR) | `af-npz9v1.1` | — | en cours |
+| L0 (cette ADR) | `af-npz9v1.1` | #617 | livrée |
 | L1 | `af-npz9v1.2` | #618 | livrée : `bin/tdd-step green` lance aussi le `regression_command` du profil sur la pointe ; rouge = refus simple (ni arrêt ni reprise), donc la porte `code` de `bin/ticket-author` ne passe pas et l'auteur continue |
-| L2 | — | — | à faire |
+| L2 | `af-npz9v1.3` | PR à venir | en revue : `bounds.resumes` une borne par cause (3 chacune : interrupted, returned, unblocked, answered, behind, evaluation_no_result, commit_after_verdict) ; tour de correction hors K (sa borne d'un tour) ; comptes dérivés des entrées de reprise ; une levée rend les bornes par cause |
 | L3 | — | — | à faire |
 | L4 | — | — | à faire |
 | L5 | — | — | à faire |

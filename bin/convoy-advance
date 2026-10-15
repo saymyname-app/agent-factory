@@ -95,9 +95,10 @@ even when the ceiling makes its session wait: its exit is taken back, so
 neither the review nor the evaluation is sent on the old tip. So is a ticket
 stopped because its Ticket Evaluation gave no result (af-xhc0sj), once per
 tip of the integration branch: the resume lifts the stop, keeps it on the
-resume, and withdraws its request; every other stop stays with the operator. At its third
-resume, whatever counted them
--- these, the correction round, a commit after a verdict -- the ticket is
+resume, and withdraws its request; every other stop stays with the operator. At the
+last resume of a same cause (bounds.resumes, one bound per cause, ADR-0030
+L2: these causes and a commit after a verdict; the correction round keeps
+its own bound of one round), the ticket is
 parked with every ticket that waits for it and is not restarted; the others
 keep starting. When nothing but parked tickets is left in a convoy, the pass
 raises one request for the convoy, on a bead of its own, through
@@ -975,13 +976,17 @@ def failed_merged_tests(convoy: Convoy, ticket: dict[str, Any], commit: Any) -> 
 
 
 def park_exhausted(convoy: Convoy, ticket: dict[str, Any]) -> dict[str, Any]:
-    """Spec §8: park the ticket that took its last resume. The detail names
-    the cause of that last resume and, for a merge whose tests were red, the
-    first tests that failed: the grouped request carries it (af-w6xtw0)."""
+    """Spec §8: park the ticket that took the last resume of a same cause
+    (ADR-0030 L2). The detail names that cause, the cause of the last resume
+    recorded and, for a merge whose tests were red, the first tests that
+    failed: the grouped request carries it (af-w6xtw0)."""
     resumes = (ticket.get("counters") or {}).get("resumes")
-    detail = f"{resumes} reprises, toutes causes confondues : le ticket ne redémarre plus"
-    # The correction round (T17) and a commit after a verdict (T18) count a
-    # resume without an entry: the detail names the last one recorded.
+    left = ticket.get("resumes_left_by_cause") or {}
+    exhausted = ", ".join(cause for cause, count in left.items() if count == 0)
+    named = f" pour la cause {exhausted}" if exhausted else ""
+    detail = f"reprises épuisées{named} ({resumes} reprises en tout) : le ticket ne redémarre plus"
+    # A commit after a verdict (T18) counts a resume without an entry: the
+    # detail names the last one recorded.
     entries = (ticket.get("resume") or {}).get("entries") or []
     if entries:
         detail += f" ; dernière reprise enregistrée : {entries[-1]['cause']}"
@@ -1085,7 +1090,7 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
                 convoy.load()
                 ticket = convoy.ticket(ticket_id)
                 if ticket.get("resumes_left") == 0:
-                    # The third: parked with its descendants, not restarted.
+                    # The last of its cause: parked with its descendants, not restarted.
                     out["parked"].append(park_exhausted(convoy, ticket))
                     convoy.load()
                     continue

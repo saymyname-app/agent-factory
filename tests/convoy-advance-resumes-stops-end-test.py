@@ -55,6 +55,19 @@ session = first.session
 class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
     # --- resumes counted and bounded, parked tickets, one grouped request (T20) ---
 
+    def earlier_resumes(self, cause, count, ticket_id=T1):
+        """`count` resumes of `cause` the ticket took long before, written
+        under its recorded ones, the counter with them (ADR-0030 L2: the
+        bound is per cause)."""
+        metadata = self.bead(ticket_id)["metadata"]
+        record = json.loads(metadata.get("gc.flow.resume") or '{"entries": []}')
+        earlier = [{"cause": cause, "ref": f"earlier:{n}", "session": None, "exit": None, "launches": [],
+                    "at": "2000-01-01T00:00:00Z"} for n in range(count)]
+        record["entries"] = earlier + record["entries"]
+        metadata["gc.flow.resume"] = json.dumps(record)
+        metadata["gc.flow.counter.resumes"] += count
+        self.edit(ticket_id, metadata=metadata)
+
     def test_a_pass_sends_an_interrupted_ticket_to_a_fresh_author_session_and_counts_the_resume(self):
         self.started_convoy()
         self.interrupted(T1, "auteur-1")
@@ -258,8 +271,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
 
     def test_a_ticket_stopped_without_an_evaluation_result_at_its_third_resume_is_parked_not_restarted(self):
         self.evaluation_stopped()
-        self.run_ok(STATE, "bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
-        self.run_ok(STATE, "bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
+        self.earlier_resumes(self.NO_RESULT, 2)
 
         answer = self.advance(CONVOY)
 
@@ -413,13 +425,13 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.advance(CONVOY)
         self.finished(T1)
         self.advance(CONVOY)  # the merge returns it: red tests on the merged result
-        self.run_ok(STATE, "bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
-        self.run_ok(STATE, "bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
+        self.earlier_resumes("returned", 2)
 
         answer = self.advance(CONVOY)
 
         self.assertEqual([(T1, "resumes_exhausted")], [(p["id"], p["cause"]) for p in self.of(answer, "parked")])
         detail = self.park_of(T1)["detail"]
+        self.assertIn("reprises épuisées pour la cause returned", detail)
         self.assertIn("dernière reprise enregistrée : returned", detail)
         self.assertIn("tests rouges sur le résultat fusionné", detail)
         self.assertIn("tests/a-test.py, tests/b-test.py, tests/c-test.py, …", detail)
@@ -433,8 +445,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.advance(CONVOY)
         self.finished(T1)
         self.advance(CONVOY)
-        self.run_ok(STATE, "bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
-        self.run_ok(STATE, "bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
+        self.earlier_resumes("returned", 2)
 
         answer = self.advance(CONVOY)
 
@@ -442,7 +453,9 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         detail = self.park_of(T1)["detail"]
         self.assertRegex(detail, r"tests rouges sur le résultat fusionné [0-9a-f]{7,12}\)$")
 
-    def test_a_ticket_at_its_third_resume_whatever_the_causes_is_parked_with_its_descendants_and_not_restarted(self):
+    def test_a_ticket_resumed_for_three_different_causes_is_not_parked_and_keeps_being_resumed(self):
+        # ADR-0030 L2 (the af-ltchro case): an interruption, a correction
+        # round and a commit after a verdict are three causes, none at its bound.
         self.started_convoy()
         self.interrupted(T1, "auteur-1")
         self.advance(CONVOY)  # an interruption: one resume
@@ -454,8 +467,29 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
 
         answer = self.advance(CONVOY)
 
+        self.assertEqual([], self.of(answer, "parked"))
+        self.assertIsNone(self.park_of(T1))
+        self.assertEqual(2, self.shown_state(T1)["resumes_left"])
+        # Interrupted once more, it is restarted.
+        self.interrupted(T1, "auteur-2")
+        again = self.advance(CONVOY)
+        self.assertEqual([(T1, "interrupted")], [(r["id"], r["cause"]) for r in self.of(again, "resumed")])
+        self.assertEqual(4, self.resumes())
+
+    def test_a_ticket_at_the_last_resume_of_one_cause_is_parked_with_its_descendants_and_not_restarted(self):
+        self.started_convoy()
+        self.interrupted(T1, "auteur-1")
+        self.advance(CONVOY)  # an interruption: one resume
+        self.run_ok(STATE, "bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes", "--counter", "correction_rounds")
+        for _ in range(3):  # three commits after a verdict: that cause is at its bound
+            self.run_ok(STATE, "bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
+        self.write_log.write_text("")
+
+        answer = self.advance(CONVOY)
+
         [parked] = self.of(answer, "parked")
         self.assertEqual((T1, "resumes_exhausted", [T1, T3]), (parked["id"], parked["cause"], parked["parked"]))
+        self.assertIn("reprises épuisées pour la cause commit_after_verdict", self.park_of(T1)["detail"])
         for ticket_id in (T1, T3):
             park = self.park_of(ticket_id)
             self.assertEqual(("resumes_exhausted", T1), (park["cause"], park["origin"]), ticket_id)
@@ -465,7 +499,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.interrupted(T1, "auteur-2")
         again = self.advance(CONVOY)
         self.assertEqual(([], []), (self.of(again, "resumed"), self.slung()))
-        self.assertEqual(3, self.resumes())
+        self.assertEqual(5, self.resumes())
 
     def test_a_ticket_interrupted_three_times_is_restarted_twice_and_parked_at_the_third(self):
         self.started_convoy()
