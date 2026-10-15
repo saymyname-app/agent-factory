@@ -1856,7 +1856,8 @@ def resumes_taken(metadata: dict[str, Any]) -> dict[str, int]:
 def taken_at_lift(lift: dict[str, Any], metadata: dict[str, Any]) -> dict[str, int]:
     """What the ticket had taken when its exhausted parking was lifted: kept
     on the lift; for a lift written before (ADR-0030 L2), the entries older
-    than the lift and the rest of its count."""
+    than the lift and the rest of its count, less the correction round when
+    it was recorded before the lift (one without a record counts as before)."""
     if "taken" in lift:
         return lift["taken"]
     entries = resume_record(metadata[KEY_RESUME])["entries"] if KEY_RESUME in metadata else []
@@ -1865,6 +1866,8 @@ def taken_at_lift(lift: dict[str, Any], metadata: dict[str, Any]) -> dict[str, i
     for entry in before:
         taken[entry["cause"]] += 1
     corrections = counter_value(metadata.get(COUNTER_PREFIX + "correction_rounds"), "correction_rounds")
+    if KEY_CORRECTION in metadata and correction_record(metadata[KEY_CORRECTION])["at"] >= lift["at"]:
+        corrections = 0
     taken[COMMIT_AFTER_VERDICT] = max(0, lift["resumes"] - corrections - len(before))
     return taken
 

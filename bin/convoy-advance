@@ -982,8 +982,9 @@ def park_exhausted(convoy: Convoy, ticket: dict[str, Any]) -> dict[str, Any]:
     failed: the grouped request carries it (af-w6xtw0)."""
     resumes = (ticket.get("counters") or {}).get("resumes")
     left = ticket.get("resumes_left_by_cause") or {}
-    exhausted = ", ".join(cause for cause, count in left.items() if count == 0) or "?"
-    detail = f"reprises épuisées pour la cause {exhausted} ({resumes} reprises en tout) : le ticket ne redémarre plus"
+    exhausted = ", ".join(cause for cause, count in left.items() if count == 0)
+    named = f" pour la cause {exhausted}" if exhausted else ""
+    detail = f"reprises épuisées{named} ({resumes} reprises en tout) : le ticket ne redémarre plus"
     # A commit after a verdict (T18) counts a resume without an entry: the
     # detail names the last one recorded.
     entries = (ticket.get("resume") or {}).get("entries") or []

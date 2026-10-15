@@ -3444,6 +3444,28 @@ class ConvoyStateTest(unittest.TestCase):
         self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "d")
         self.assertEqual(2, self.ticket(self.show(), T1)["resumes_left"])
 
+    def test_an_old_lift_takes_out_only_the_correction_round_recorded_before_it(self):
+        # Three commits after a verdict exhausted the ticket; the lift, written
+        # before ADR-0030 L2, carries no per-cause count; the correction round
+        # came after it and takes nothing back from what was taken before.
+        self.interrupted_ticket()
+        for _ in range(3):
+            self.ok("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
+        self.ok("park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "3 commits après verdict")
+        self.ok("lift-park", CONVOY, T1, "--request", "fx-new1", "--option", "a")
+        metadata = self.tracker_state()["beads"][T1]["metadata"]
+        lifts = json.loads(metadata["gc.flow.park_lifts"])
+        for lift in lifts["entries"]:
+            lift.pop("taken")
+        correction = {"commit": "c" * 40, "blocking_findings": ["F1.1"], "not_observed": [], "launches": [],
+                      "at": "2999-01-01T00:00:00Z"}
+        self.edit_tracker(T1, **{"gc.flow.park_lifts": json.dumps(lifts), "gc.flow.correction": json.dumps(correction)})
+        self.ok("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes", "--counter", "correction_rounds")
+
+        ticket = self.ticket(self.show(), T1)
+
+        self.assertEqual((3, 3), (ticket["resumes_left"], ticket["resumes_left_by_cause"]["commit_after_verdict"]))
+
     def test_a_ticket_that_still_waits_for_another_parked_one_stays_parked_behind_it(self):
         self.seed(tickets=(T1, T2, "fx-t3"))
         state = self.tracker_state()

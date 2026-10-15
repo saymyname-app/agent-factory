@@ -37,7 +37,7 @@ when all of this holds:
   Ticket Exit yet (it was never started);
 - the ticket is not parked (T11: a Ticket Exit `planning_exception` or
   `operator_request` parks its ticket and every ticket that waits for it,
-  `docs/TICKET_EXIT.md`; T20: so does the third resume of a same cause, below);
+  `docs/TICKET_EXIT.md`; T20: so does the last resume (its bound) of a same cause, below);
   a parked ticket is listed under `waiting`, with its cause and the ticket
   that parked it, and the tickets that wait for none of them keep starting;
 - the convoy is not stopped (T21, « The two stops of a convoy » below): its
@@ -320,8 +320,8 @@ elsewhere; the fresh author session brings the integration branch into the
 ticket branch and finishes again, and the next passes withdraw the
 evaluation left open on the old exit and send a new one. Stopped again on
 the same integration tip, the ticket stays with the operator; once the tip
-moves, it is resumed once more, always within K: the third resume of
-that cause parks it
+moves, it is resumed once more, always within K: the last resume (its
+bound) of that cause parks it
 (its stop lifted) and the grouped request follows. Every other stop —
 `evaluation_outage`, `amendment_exhausted`, a review without result, a
 ticket still refused — is never resumed.
@@ -862,7 +862,7 @@ sent by the next pass), no `resume` setting, the ceiling, a stopped ticket
 never resumed, a ticket stopped without evaluation result resumed on
 itself once per integration tip, its stop kept, its request and its open
 evaluation withdrawn, and left stopped once its request is answered, the
-third resume of a same cause parking the ticket and its descendants,
+the last resume (its bound) of a same cause parking the ticket and its descendants,
 three different causes leaving it at work (ADR-0030 L2), the unrelated tickets still starting, exactly one
 grouped request naming each parked ticket and its cause, none while a
 ticket that is not parked is left, one for several passes, the answer that
@@ -879,7 +879,7 @@ the city's own order counts one resume, routes one bead « Reprise — »
 through the real dispatch door on the real `mol-ticket-resume`, sends no
 second one at the next passes and counts its place under N. The agent of
 that trial is a stub: no session runs the step of the formula, and the
-third resume, the lift of a parking and the grouped request are not part
+last resume (its bound) of a same cause, the lift of a parking and the grouped request are not part
 of it.
 
 T21: the same file covers the two stops on a fake tracker state: tests
