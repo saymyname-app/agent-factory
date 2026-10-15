@@ -1,0 +1,7 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/isolated-launch-test.py::IsolatedCockpitLaunch.test_the_journal_served_says_the_events_of_the_named_journal_dataset_newest_first"
+    ]
+  }
+}
