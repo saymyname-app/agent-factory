@@ -630,11 +630,13 @@ t=$(shown)
 grep -q "^$T .* review $TIP [1-9]" "$TRIAL/review-sessions" || fail "the reviewer session did not read the diff of the ticket: $(cat "$TRIAL/review-sessions")"
 [ "$(printf '%s' "$t" | jq -r '.evaluation.rounds[-1].outcome')" = favorable ] || fail "the ticket was not evaluated favorably"
 [ "$(printf '%s' "$t" | jq -r '.evaluation.state.commit')" = "$TIP" ] || fail "the evaluation is not on the tip of the ticket"
-for name in evaluation.c1 evaluation.c2 evaluation.demo evaluation.coverage.content evaluation.coverage.empty; do
+for name in evaluation.c1 evaluation.c2 evaluation.demo evaluation.coverage.content; do
   jq -e '.address != null' "$TRIAL/store/$SPEC/$T/$name.json" >/dev/null || fail "the piece $name was not captured on the launched product"
 done
-[ "$(jq -r '.address' "$TRIAL/store/$SPEC/$T/evaluation.coverage.content.json")" != "$(jq -r '.address' "$TRIAL/store/$SPEC/$T/evaluation.coverage.empty.json")" ] \
-  || fail "coverage of empty came from the content product"
+# The ticket names the dataset content only: it is evaluated on that one, not
+# on every declared dataset (af-kdxk6k, docs/TICKET_EVALUATION.md).
+[ ! -e "$TRIAL/store/$SPEC/$T/evaluation.coverage.empty.json" ] \
+  || fail "the ticket was evaluated on the dataset empty, which it does not name"
 [ "$(printf '%s' "$t" | jq -r '.merge.outcome')" = merged ] || fail "the ticket is closed without being merged"
 git -C "$PRODUCT" merge-base --is-ancestor "$TIP" "$INTEGRATION" || fail "the tip of the ticket is not on the integration branch"
 jq -e '.exit_code == 0' "$TRIAL/store/$SPEC/$T/merged_tests.json" >/dev/null || fail "the regression command of the profile did not pass on the merged result"
