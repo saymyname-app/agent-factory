@@ -1,0 +1,7 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/project-registry-list-test.py::ProjectRegistryList.test_a_registry_where_each_rig_has_one_project_is_listed_and_a_rig_without_or_with_two_projects_is_refused_by_its_cause"
+    ]
+  }
+}
