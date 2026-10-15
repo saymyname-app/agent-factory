@@ -1021,7 +1021,7 @@ class PatchDoorTest(Harness):
 
     def park_t2(self, answered):
         """T2 parks itself and T3 behind it (Ticket Exit planning_exception);
-        the operator answered its request through bin/escalation-door repondre."""
+        the operator answered its request through the escalation door (repondre)."""
         self.state_tool("park", self.convoy, self.ids["T2"], "--cause", "planning_exception",
                         "--detail", "Planning Exception (semantic) sur T2")
         # As bin/convoy-state park writes it on each ticket waiting for T2

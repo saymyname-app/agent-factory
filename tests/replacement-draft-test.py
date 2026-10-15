@@ -174,7 +174,7 @@ class ReplacementDraftTest(unittest.TestCase):
     def park_source(self, origin="stopped", answered=True, needs="none", response_at="2026-10-15T10:02:53Z"):
         """The source ticket is parked by a Planning Exception (no stop): its own,
         or one raised on another ticket; answered or not by the operator through
-        bin/escalation-door repondre."""
+        the escalation door (repondre)."""
         state = json.loads(self.state_path.read_text())
         meta = state["beads"]["stopped"]["metadata"]
         del meta["gc.flow.stop"]
