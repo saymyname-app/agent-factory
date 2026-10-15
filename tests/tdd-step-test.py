@@ -632,6 +632,19 @@ class TddStepTest(unittest.TestCase):
         self.assertEqual({COUNT_ID: ["passed"] * 3, HEALTH_ID: ["passed"] * 3},
                          {test["id"]: test["runs"] for test in proof["tests"]})
         self.assertEqual({"tdd_red", "tdd_freeze", "tdd_green"}, self.verified())
+        self.assertEqual([(head, 0)], [(run["commit"], run["exit_code"]) for run in proof["regression"]])
+
+    def test_green_refuses_a_tip_that_breaks_the_regression_command(self):
+        """ADR-0030 L1: the criterion tests are green but the change breaks
+        the profile's regression: the handoff is refused -- nothing written,
+        no stop -- and the author keeps working."""
+        self.frozen()
+        self.commit("code qui casse l'existant",
+                    {APP: self.green_app().replace("fixture-items", "fixture-list")})
+
+        error = self.refused("green")
+
+        self.assertIn("commande de régression en échec", error)
 
     def test_green_runs_the_tests_3_times_when_the_profile_declares_no_k(self):
         self.frozen()

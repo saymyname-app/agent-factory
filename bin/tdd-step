@@ -20,7 +20,8 @@ stops the ticket. `freeze`: a reviewer has read these very tests and refused
 none (bin/test-review, T13), and the fingerprints of the table, of the
 criterion test files and of the frozen harness paths go into a registry of
 the Spec, outside any work tree. `green`: the frozen files are unchanged and the frozen
-tests pass k times in a row against the product at HEAD. `amend`: the one
+tests pass k times in a row against the product at HEAD, then the regression
+command of the profile passes at HEAD (ADR-0030 L1). `amend`: the one
 change of frozen tests a ticket is allowed, with its reason, a new red and a
 new freeze, recorded with its diff. `prefactoring`: the regression command of
 the profile passes before and after, and no existing test was touched; with
@@ -731,6 +732,24 @@ def require_test_review(check: Check, files: dict[str, str]) -> None:
             f"({', '.join(differing)})")
 
 
+def regression_run(check: Check, commit: str, moment: str) -> dict[str, Any]:
+    """One run of the profile's regression command on a clean tree of
+    `commit`; refused unless it exits 0."""
+    command = shlex.split(check.launch["regression_command"])
+    try:
+        proc = subprocess.run(command, cwd=check.export(commit), stdin=subprocess.DEVNULL, capture_output=True,
+                              timeout=COMMAND_TIMEOUT, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+    except subprocess.TimeoutExpired as exc:
+        raise Refusal(f"la commande de régression n'a pas fini en {COMMAND_TIMEOUT} s {moment}") from exc
+    except OSError as exc:
+        raise Refusal(f"commande de régression impossible à exécuter : {command[0]} ({exc.strerror or exc})") from exc
+    output = (proc.stdout + proc.stderr).decode(errors="replace")
+    if proc.returncode != 0:
+        raise Refusal(
+            f"commande de régression en échec {moment} (commit {commit}, exit {proc.returncode}) : {short(output)}")
+    return {"commit": commit, "exit_code": proc.returncode, "output": short(output)}
+
+
 def check_green(check: Check) -> dict[str, Any]:
     check.refuse_prefactoring("l'étape verte")
     if "freeze" not in check.tdd:
@@ -777,11 +796,15 @@ def check_green(check: Check) -> dict[str, Any]:
             problems.append(f"test en échec : {test_id} ({', '.join(runs[test_id])} sur {k} exécutions)")
     if problems:
         raise Refusal(" ; ".join(problems))
+    # ADR-0030 L1: the handoff also proves the regression of the profile at
+    # the tip, so a change that breaks existing tests never reaches a merge.
+    regression = [regression_run(check, check.head, "à la pointe du ticket")]
     tests = [{"id": test_id, "runs": runs[test_id], "entry_points": list(dict.fromkeys(asked[test_id])),
               "seam": seams[test_id]["name"], "seam_mode": seams[test_id]["mode"]} for test_id in ids]
     return {"step": "green", "verdict": "green", "commit": check.head, "k": k, "criteria": registry["criteria"],
             "tests": tests, "seam_mode": check.seam_modes(seams), "frozen": frozen_commit,
-            "launch": {"healthy": True, "commit": check.head}}
+            "launch": {"healthy": True, "commit": check.head},
+            "command": check.launch["regression_command"], "regression": regression}
 
 
 def check_amend(check: Check) -> dict[str, Any]:
@@ -828,24 +851,8 @@ def check_prefactoring(check: Check) -> dict[str, Any]:
     touched = [path for status, path in check.changes(before, check.head) if status != "A" and in_paths(path, scope)]
     if touched:
         raise Refusal(" ; ".join(f"test existant modifié : {path}" for path in touched))
-    command = shlex.split(check.launch["regression_command"])
-    regression = []
-    for commit, moment in ((before, "avant"), (check.head, "après")):
-        tree = check.export(commit)
-        try:
-            proc = subprocess.run(command, cwd=tree, stdin=subprocess.DEVNULL, capture_output=True, timeout=COMMAND_TIMEOUT,
-                                  env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
-        except subprocess.TimeoutExpired as exc:
-            raise Refusal(f"la commande de régression n'a pas fini en {COMMAND_TIMEOUT} s {moment} le changement") from exc
-        except OSError as exc:
-            raise Refusal(f"commande de régression impossible à exécuter : {command[0]} ({exc.strerror or exc})") from exc
-        output = (proc.stdout + proc.stderr).decode(errors="replace")
-        if proc.returncode != 0:
-            raise Refusal(
-                f"commande de régression en échec {moment} le changement (commit {commit}, exit {proc.returncode}) : "
-                f"{short(output)}"
-            )
-        regression.append({"commit": commit, "exit_code": proc.returncode, "output": short(output)})
+    regression = [regression_run(check, before, "avant le changement"),
+                  regression_run(check, check.head, "après le changement")]
     proof = {"step": "prefactoring", "verdict": "unchanged", "commit": check.head, "base": base,
              "command": check.launch["regression_command"], "regression": regression}
     if before != base:
