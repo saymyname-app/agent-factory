@@ -594,8 +594,15 @@ class ProjectLaunchTest(unittest.TestCase):
         self.assertIn("recipe could not be started", error["error"])
         self.assertTrue(error["cleanup_confirmed"])
         self.assertFalse(state_file.exists(), "the refused start kept its launch record")
-        self.assertEqual(set(), set(Path(tempfile.gettempdir()).glob("project-launch-*")) - before,
-                         "the refused start left its copy")
+        # Only the copies of this repository: the host's other launches
+        # create and remove theirs meanwhile (af-29xv7v).
+        def ours(path: Path) -> bool:
+            sidecar = Path(f"{path}.owner") if path.suffix != ".owner" else path
+            with contextlib.suppress(OSError, ValueError):  # the sidecar is written before the copy
+                return json.loads(sidecar.read_text()).get("repo_root") == str(ROOT)
+            return False
+        left = {path for path in set(Path(tempfile.gettempdir()).glob("project-launch-*")) - before if ours(path)}
+        self.assertEqual(set(), left, "the refused start left its copy")
 
     def test_start_on_a_project_with_no_launch_recipe_is_refused(self):
         # "Nothing was started" is read from what this test owns -- the
