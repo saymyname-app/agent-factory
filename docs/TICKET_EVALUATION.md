@@ -290,7 +290,9 @@ tests, a code review or a Ticket Evaluation of the convoy is refused the
 same way (Spec §5, T42; `docs/TEST_REVIEW.md`, « A fresh session per
 review »): the launch it answered is marked `refused` and gave no result.
 `agents/delivery-evaluator/agent.toml` carries the same work query as the
-reviewer, and `record` signs with `GC_SESSION_NAME`, else `GC_SESSION_ID`.
+reviewer and `wake_mode = "fresh"`, and `record` signs with
+`GC_SESSION_NAME`, else `GC_SESSION_ID`, and `GC_CONTINUATION_EPOCH` as
+`conversation`.
 
 A dispatch the door refuses or defers launched nothing: it counts no launch
 and its bead is closed. A deferral is listed under `deferred` and tried
@@ -312,7 +314,7 @@ On the ticket, written by `bin/convoy-state` only (`docs/CONVOY_STATE.md`):
 
 | Key | Value |
 |---|---|
-| `gc.flow.evaluation` | `rounds`: each recorded round — an `evaluation` (`commit`, `criteria`: number, text, state, evidence, reason, cause; `demonstration_line`; optional `screen_findings`; `outcome`, `verdict`, `roles`, `environment`: dataset and address of each product, `recorded_by`, `at`) or a `startup` (`commit`, `started`, `evidence` and `environment`, or `detail`; `outcome`, `verdict`, `at`). `request`, while an evaluation is open — `commit`, `criteria`, `demonstration_line`, `roles`, `environment` (with `state_file`), `launches` (`bead`, `at`, and `refused`: `{session, at}` when the session that answered had already served), `at`. `live`: the launch records of the products still to stop |
+| `gc.flow.evaluation` | `rounds`: each recorded round — an `evaluation` (`commit`, `criteria`: number, text, state, evidence, reason, cause; `demonstration_line`; optional `screen_findings`; `outcome`, `verdict`, `roles`, `environment`: dataset and address of each product, `recorded_by`, `conversation` when known, `at`) or a `startup` (`commit`, `started`, `evidence` and `environment`, or `detail`; `outcome`, `verdict`, `at`). `request`, while an evaluation is open — `commit`, `criteria`, `demonstration_line`, `roles`, `environment` (with `state_file`), `launches` (`bead`, `at`, and `refused`: `{session, at}` when the session that answered had already served), `at`. `live`: the launch records of the products still to stop |
 | `gc.flow.verdict.evaluation` | the verdict of the last round that gave one, and the commit it judged |
 | `gc.flow.models` | per delivery role: `agent`, `provider`, `model`, `at` |
 | `gc.flow.stop` | reason `evaluation_no_result` or `evaluation_outage`, a one-line detail, and `raised` once the escalation door accepted the request |

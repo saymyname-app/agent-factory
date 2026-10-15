@@ -772,6 +772,9 @@ def cmd_record(args: argparse.Namespace) -> int:
         raise Refusal("la revue rendue n'est pas un objet JSON")
     request = open_request_of(convoy)
     session = os.environ.get("GC_SESSION_NAME") or os.environ.get("GC_AGENT") or ""
+    # T42: a session is its name and its conversation. gc 1.5.0 wakes a drained session under the
+    # same name; GC_CONTINUATION_EPOCH changes only when it starts a fresh conversation.
+    identity = {"recorded_by": session, "conversation": os.environ.get("GC_CONTINUATION_EPOCH", "").strip()}
     files, _, _ = diff_extent(convoy.repo, request["base"], request["commit"])
     if isinstance(given.get("findings"), list):
         spec = spec_of(convoy)["text"]
@@ -788,7 +791,7 @@ def cmd_record(args: argparse.Namespace) -> int:
                     finding["citation_refused"] = refusal
             findings.append(finding)
         given = {**given, "findings": findings}
-    given = {**given, "coverage": coverage_of(given.get("coverage"), files), "recorded_by": session}
+    given = {**given, "coverage": coverage_of(given.get("coverage"), files), **identity}
     written = state_write_file("record-end-review", args.convoy, given)
     print(json.dumps({
         "ok": True, "convoy": args.convoy, "commit": request["commit"], "outcome": written["outcome"],

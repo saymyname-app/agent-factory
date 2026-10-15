@@ -439,6 +439,7 @@ scope = "city"
 min_active_sessions = 0
 max_active_sessions = 2
 provider = "stub-$role"
+$([ "$role" = author ] || echo 'wake_mode = "fresh"')
 TOML
   echo "Scripted $role of the correction-round trial." > "$CITY/agents/trial-$role/prompt.template.md"
 done
