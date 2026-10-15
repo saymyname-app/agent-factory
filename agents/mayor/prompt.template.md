@@ -516,6 +516,12 @@ A handoff with any of these fields empty because "nothing to report" should
 say so explicitly (e.g. `OPEN_MAIL: none`) rather than omit the field — an
 omitted field is indistinguishable from one nobody checked.
 
+Backstop (af-3ewcxf): `bin/mayor-context-guard` (order every 10 min) rotates
+your conversation once it passes 150k context tokens or 8h of age, between
+turns and while nobody is attached: it runs `gc session reset mayor`, then mails
+you a `HANDOFF:` with the four fields marked unknown. If you receive that mail, rebuild state from mail,
+Beads and `gc status` before acting. Reaching it means you handed off too late.
+
 ## Environment
 
 Your agent name is available as `$GC_AGENT`.
