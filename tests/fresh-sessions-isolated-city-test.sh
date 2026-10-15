@@ -374,7 +374,7 @@ echo "relevé d'essai — sessions neuves, cité isolée ($(gc version 2>/dev/nu
 echo "agents (agent.toml identiques à ceux livrés) : ${caps% ; }"
 echo "convoi $CONVOY (Spec $SPEC) : A=$A B=$B, sans dépendance"
 
-(gc supervisor run > "$TRIAL/supervisor.out" 2>&1 &)
+(env -u CLAUDE_CODE_SESSION_ID gc supervisor run > "$TRIAL/supervisor.out" 2>&1 &)
 sleep 3
 gc --city "$CITY" start >/dev/null 2>&1 || true
 grep -q "Controller: supervisor-managed" <<<"$(gc --city "$CITY" status 2>/dev/null)" || fail "the isolated city's controller did not start"

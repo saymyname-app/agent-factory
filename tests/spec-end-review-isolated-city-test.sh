@@ -171,6 +171,9 @@ cat > "$TRIAL/stub-reviewer" <<STUB
 #!/bin/bash
 . "$TRIAL/env"
 export DELIVERY_ROLE_READ_ONLY=1
+# As Claude Code does: each process start is a conversation of its own, even
+# a relaunch in the warm tmux box under the same generation (af-bb69uq).
+export CLAUDE_CODE_SESSION_ID=\$(cat /proc/sys/kernel/random/uuid)
 BIN="$ROOT/bin"
 LOG="$TRIAL/reviewer.log"
 say() { echo "\$(date -u +%H:%M:%S) \${GC_SESSION_NAME:-?} \$*" >> "\$LOG"; }
@@ -430,7 +433,9 @@ delivered "$A" "docs/sonde-repond.md" "La sonde de santé répond 200." >/dev/nu
 TIP1=$(delivered "$B" "docs/sonde-nomme.md" "La sonde de santé nomme le jeu de données. $CONTRADICTION")
 echo "$(date -u +%H:%M:%S) deux tickets livrés et fermés par leur porte ; pointe de $INTEGRATION : $TIP1 ; branche protégée main : $BASE"
 
-(gc supervisor run > "$TRIAL/supervisor.out" 2>&1 &)
+# The conversation of a session (af-bb69uq) is Claude Code's
+# CLAUDE_CODE_SESSION_ID: the runner's own must not reach the trial sessions.
+(env -u CLAUDE_CODE_SESSION_ID gc supervisor run > "$TRIAL/supervisor.out" 2>&1 &)
 sleep 3
 gc --city "$CITY" start >/dev/null 2>&1 || true
 grep -q "Controller: supervisor-managed" <<<"$(gc --city "$CITY" status 2>/dev/null)" || fail "the isolated city's controller did not start"
@@ -537,7 +542,8 @@ jq -e --arg commit "$GATE2" --arg base "$BASE" '.commit == $commit and .base == 
   and .findings == [] and .coverage.missing == []' <<<"$round2" >/dev/null \
   || fail "the end review of the new tip is not a favorable review of the whole diff: $round2"
 # A session is its name and its conversation (T42): gc 1.5.0 wakes the drained
-# reviewer again under the same name, in a fresh conversation (wake_mode = "fresh").
+# reviewer again under the same name, in a new generation (GC_RUNTIME_EPOCH,
+# recorded as "g<n>") and a fresh conversation (wake_mode = "fresh").
 reviewer2=$(jq -r '.recorded_by' <<<"$round2")
 [ "$reviewer2 $(jq -r '.conversation // ""' <<<"$round2")" != "$reviewer1 $(jq -r '.conversation // ""' <<<"$round1")" ] \
   || fail "the second end review was made by the conversation of the first: $reviewer2 $(jq -c '.conversation' <<<"$round2")"

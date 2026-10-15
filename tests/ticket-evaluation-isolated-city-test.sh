@@ -176,7 +176,7 @@ while true; do
     # Seen in this trial (gc 1.4.1): the command of the session is started
     # once more between its drain-ack and its stop, and is handed the step
     # it just closed. gc 1.5.0 wakes the drained session again under the same
-    # name; wake_mode = "fresh" gives it a fresh conversation (T42). Nothing is asked any more, and nothing is written.
+    # name, in a new generation (GC_RUNTIME_EPOCH); wake_mode = "fresh" gives it a fresh conversation (T42). Nothing is asked any more, and nothing is written.
     say "ticket \$TICKET : aucune évaluation demandée (\$EVALUATION_BEAD), rien à faire"
     rm -f "\$BRIEF.new"
     gc runtime drain-ack >/dev/null 2>&1
@@ -425,7 +425,7 @@ TIP_P=$(commit_on "$P" "docs/$P.md" "Le rendu de la page est rangé." "PROSE-DU-
 finish "$P" "$TIP_P" prefactoring
 echo "$(date -u +%H:%M:%S) marque posée, branche $INTEGRATION ouverte, deux tickets terminés par leur auteur et relus (A $TIP_A, P $TIP_P)"
 
-(gc supervisor run > "$TRIAL/supervisor.out" 2>&1 &)
+(env -u CLAUDE_CODE_SESSION_ID gc supervisor run > "$TRIAL/supervisor.out" 2>&1 &)
 sleep 3
 gc --city "$CITY" start >/dev/null 2>&1 || true
 grep -q "Controller: supervisor-managed" <<<"$(gc --city "$CITY" status 2>/dev/null)" || fail "the isolated city's controller did not start"

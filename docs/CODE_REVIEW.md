@@ -219,7 +219,8 @@ launch it answered is marked `refused` and gave no result. That is also what
 holds the judgement to a second session: the conversation that reviewed
 cannot judge the answers (a session is its name and its conversation).
 `record` signs with `GC_SESSION_NAME`, else `GC_SESSION_ID`, and
-`GC_CONTINUATION_EPOCH` as `conversation`.
+`"c:"` + `CLAUDE_CODE_SESSION_ID`, else `"g"` + `GC_RUNTIME_EPOCH` as
+`conversation` (`docs/CONVOY_STATE.md`).
 
 A dispatch the door refuses or defers launched nothing: it counts no launch
 and its bead is closed. A deferral is listed under `deferred` and tried

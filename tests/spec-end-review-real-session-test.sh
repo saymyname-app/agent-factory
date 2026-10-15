@@ -218,7 +218,7 @@ jq -n '{version: "spec-end/v4", conditions: [
   {number: 3, name: "fidelity", verdict: "pass", detail: "sans objet (relevé d'"'"'essai)"}]}' > "$TRIAL/spec-end.json"
 state record-spec-end "$CONVOY" --commit "$TIP" --protected "$BASE" --file "$TRIAL/spec-end.json"
 
-gc supervisor run >"$TRIAL/supervisor.out" 2>&1 </dev/null &
+env -u CLAUDE_CODE_SESSION_ID gc supervisor run >"$TRIAL/supervisor.out" 2>&1 </dev/null &
 sleep 3
 gc --city "$CITY" start >"$TRIAL/start.out" 2>&1 || true
 

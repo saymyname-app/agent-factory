@@ -68,6 +68,7 @@ PROJECTS = ROOT / "config" / "projects"
 
 sys.path.insert(0, str(BIN.parent / "lib"))
 import delivery_reads  # noqa: E402
+from convoy_state import session_conversation  # noqa: E402
 from delivery_role_identity import role_identity  # noqa: E402
 
 REVIEWER_ROLE = "reviewer"
@@ -772,9 +773,8 @@ def cmd_record(args: argparse.Namespace) -> int:
         raise Refusal("la revue rendue n'est pas un objet JSON")
     request = open_request_of(convoy)
     session = os.environ.get("GC_SESSION_NAME") or os.environ.get("GC_AGENT") or ""
-    # T42: a session is its name and its conversation. gc 1.5.0 wakes a drained session under the
-    # same name; GC_CONTINUATION_EPOCH changes only when it starts a fresh conversation.
-    identity = {"recorded_by": session, "conversation": os.environ.get("GC_CONTINUATION_EPOCH", "").strip()}
+    # T42: a session is its name and its conversation (convoy_state.session_conversation).
+    identity = {"recorded_by": session, "conversation": session_conversation()}
     files, _, _ = diff_extent(convoy.repo, request["base"], request["commit"])
     if isinstance(given.get("findings"), list):
         spec = spec_of(convoy)["text"]

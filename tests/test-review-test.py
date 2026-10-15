@@ -41,7 +41,7 @@ EXIT_STOPPED = 5
 EXIT_PENDING = 6
 
 SESSION_IDENTITY = ("GC_AGENT", "GC_SESSION_NAME", "GC_SESSION_ID", "BEADS_ACTOR", "GC_TEMPLATE", "GC_BEAD_ID",
-                    "DELIVERY_ROLE_READ_ONLY")
+                    "GC_CONTINUATION_EPOCH", "GC_RUNTIME_EPOCH", "CLAUDE_CODE_SESSION_ID", "DELIVERY_ROLE_READ_ONLY")
 
 TESTS = f"{FIXTURE}/tests"
 TABLE = f"{TESTS}/criteria.json"
@@ -820,6 +820,71 @@ class TestReviewTest(unittest.TestCase):
         requests = self.escalation_list()
         self.assertEqual(1, len(requests), requests)
         self.assertTrue(requests[0].startswith(f"{OTHER_SLICE} — "), requests)
+
+    def open_two_silent_reviews(self):
+        """The reviews of SLICE and OTHER_SLICE launched and left without an
+        answer: the verdict a session would hand in on each."""
+        verdicts = {}
+        for ticket in (SLICE, OTHER_SLICE):
+            head = self.red(ticket=ticket)
+            self.reviewer("silent")
+            self.review(ticket=ticket, expect=EXIT_PENDING)
+            verdicts[ticket] = {"commit": head, "files": self.shown(ticket)["test_review"]["request"]["files"],
+                                "tests": {COUNT_ID: {"state": "favorable"}, HEALTH_ID: {"state": "favorable"}}}
+        return verdicts
+
+    def woken(self, generation):
+        """The reviewer session as gc 1.5.0 wakes it after an idle sleep: same
+        name, same continuation epoch, a new runtime generation."""
+        return {"DELIVERY_ROLE_READ_ONLY": "1", "GC_SESSION_NAME": "delivery-reviewer-fx",
+                "GC_CONTINUATION_EPOCH": "1", "GC_RUNTIME_EPOCH": generation}
+
+    def test_a_session_woken_fresh_under_the_same_name_and_epoch_is_a_new_conversation(self):
+        verdicts = self.open_two_silent_reviews()
+        for ticket, generation in ((SLICE, "3"), (OTHER_SLICE, "4")):
+            command, _ = self.record(verdicts[ticket], ticket=ticket)
+            proc = self.run_cmd(TOOL, *command, env=self.woken(generation))
+            self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+
+        self.assertEqual([("delivery-reviewer-fx", "g3")],
+                         [(r["recorded_by"], r["conversation"]) for r in self.shown()["test_review"]["rounds"]])
+
+    def test_the_same_runtime_generation_is_refused_as_already_served(self):
+        verdicts = self.open_two_silent_reviews()
+        command, _ = self.record(verdicts[SLICE])
+        self.assertEqual(0, self.run_cmd(TOOL, *command, env=self.woken("3")).returncode)
+        command, _ = self.record(verdicts[OTHER_SLICE], ticket=OTHER_SLICE)
+
+        proc = self.run_cmd(TOOL, *command, env=self.woken("3"))
+
+        self.assertEqual(EXIT_REFUSED, proc.returncode, proc.stdout + proc.stderr)
+        self.assertIn("session neuve", json.loads(proc.stdout)["error"])
+
+    def relaunched(self, conversation):
+        """The reviewer relaunched in its warm tmux box: same name, epoch and
+        generation; Claude Code gives the new process its own conversation."""
+        return {**self.woken("3"), "CLAUDE_CODE_SESSION_ID": conversation}
+
+    def test_a_claude_session_relaunched_in_the_same_generation_is_a_new_conversation(self):
+        verdicts = self.open_two_silent_reviews()
+        for ticket, conversation in ((SLICE, "uuid-1"), (OTHER_SLICE, "uuid-2")):
+            command, _ = self.record(verdicts[ticket], ticket=ticket)
+            proc = self.run_cmd(TOOL, *command, env=self.relaunched(conversation))
+            self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+
+        self.assertEqual([("delivery-reviewer-fx", "c:uuid-1")],
+                         [(r["recorded_by"], r["conversation"]) for r in self.shown()["test_review"]["rounds"]])
+
+    def test_the_same_claude_conversation_is_refused_as_already_served(self):
+        verdicts = self.open_two_silent_reviews()
+        command, _ = self.record(verdicts[SLICE])
+        self.assertEqual(0, self.run_cmd(TOOL, *command, env=self.relaunched("uuid-1")).returncode)
+        command, _ = self.record(verdicts[OTHER_SLICE], ticket=OTHER_SLICE)
+
+        proc = self.run_cmd(TOOL, *command, env=self.relaunched("uuid-1"))
+
+        self.assertEqual(EXIT_REFUSED, proc.returncode, proc.stdout + proc.stderr)
+        self.assertIn("session neuve", json.loads(proc.stdout)["error"])
 
     def test_the_session_that_refused_the_tests_of_a_ticket_does_not_review_them_again(self):
         self.red(COUNT_TEST_STATUS_ONLY)

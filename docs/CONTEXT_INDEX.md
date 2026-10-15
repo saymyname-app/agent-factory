@@ -37,8 +37,9 @@ mechanisms: consult `decisions/PRE_REFACTOR.md` before relying on them.
 | External evidence and research format | `DELIVERY.md`, `RESEARCH_BRIEF.md` |
 | Multi-repo delivery proof | `DELIVERY.md` |
 | Secrets, trust boundaries and concurrency | `SECURITY.md` |
-| Structural decisions and historical ADR status | `decisions/ADR-0009-integrated-po-and-product-map.md` through `decisions/ADR-0029-proposal-classes.md`; `decisions/PRE_REFACTOR.md` |
+| Structural decisions and historical ADR status | `decisions/ADR-0009-integrated-po-and-product-map.md` through `decisions/ADR-0030-lightened-delivery-flow.md`; `decisions/PRE_REFACTOR.md` |
 | Decision versus maintenance proposals | `decisions/ADR-0029-proposal-classes.md` |
+| Why the D01 delivery flow was lightened (one review, regression before handoff, resumes per cause, model evaluation for interface tickets only) | `decisions/ADR-0030-lightened-delivery-flow.md` |
 | Delivery-proof writes through doors | `../bin/deliver-close`, `decisions/ADR-0023-coordination-state-write-door.md` (delivery-proof half) |
 | Escalation door, Mayor-first and human notification | `../bin/escalation-door`, `../tests/escalation-door-test.sh` |
 | Proposal resolution from merge proof | `COCKPIT.md` |

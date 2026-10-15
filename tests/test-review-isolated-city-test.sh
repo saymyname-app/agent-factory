@@ -423,7 +423,7 @@ done
 echo "relevé d'essai — relecture des tests de critère avant le gel, cité isolée ($(gc version 2>/dev/null | head -1), N=$CEILING, aucun Mayor, auteur et relecteur scriptés, vraie porte de dispatch)"
 echo "convoi $CONVOY (Spec $SPEC) : A=$A (corrige après un refus) B=$B (second refus) C=$C (relecteur sans verdict)"
 
-(gc supervisor run > "$TRIAL/supervisor.out" 2>&1 &)
+(env -u CLAUDE_CODE_SESSION_ID gc supervisor run > "$TRIAL/supervisor.out" 2>&1 &)
 sleep 3
 gc --city "$CITY" start >/dev/null 2>&1 || true
 grep -q "Controller: supervisor-managed" <<<"$(gc --city "$CITY" status 2>/dev/null)" || fail "the isolated city's controller did not start"

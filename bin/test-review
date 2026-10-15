@@ -61,6 +61,7 @@ PROGRAM = "test-review"
 BIN = Path(__file__).resolve().parent
 sys.path.insert(0, str(BIN.parent / "lib"))
 import delivery_reads  # noqa: E402
+from convoy_state import session_conversation  # noqa: E402
 ROOT = Path(os.environ.get("FACTORY_ROOT") or BIN.parent)
 GC_BIN = os.environ.get("GC_BIN", "gc")
 STATE_TOOL = BIN / "convoy-state"
@@ -653,9 +654,8 @@ def cmd_record(args: argparse.Namespace) -> int:
         raise Refusal("le verdict n'est pas un objet JSON")
     # Never GC_AGENT: it names a place in the pool of the agent, which the next session takes.
     session = os.environ.get("GC_SESSION_NAME") or os.environ.get("GC_SESSION_ID") or ""
-    # T42: a session is its name and its conversation. gc 1.5.0 wakes a drained session under the
-    # same name; GC_CONTINUATION_EPOCH changes only when it starts a fresh conversation.
-    identity = {"recorded_by": session, "conversation": os.environ.get("GC_CONTINUATION_EPOCH", "").strip()}
+    # T42: a session is its name and its conversation (convoy_state.session_conversation).
+    identity = {"recorded_by": session, "conversation": session_conversation()}
     handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
     try:
         with handle:

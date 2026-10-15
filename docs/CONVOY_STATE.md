@@ -234,9 +234,19 @@ open request: the first, then one relaunch; a third is refused.
 refuse what a session hands in when that session already rendered a
 review of tests, a code review or a Ticket Evaluation on a ticket of the
 convoy (Spec §5, T42). A session is its name (`recorded_by`) and its
-conversation (`conversation`, Gas City's `GC_CONTINUATION_EPOCH`): gc 1.5.0
-wakes a drained session again under the same name, and the epoch changes
-only when it starts a fresh provider conversation. A round without
+conversation (`conversation`): `c:` + the `CLAUDE_CODE_SESSION_ID` Claude
+Code exports to its child processes — the conversation itself, new for a
+fresh one, kept by a resumed one. A provider that does not set it (Codex,
+stubs) gives `g` + Gas City's `GC_RUNTIME_EPOCH`, the session generation,
+which gc 1.5.0 raises on every wake: one conversation only because the roles
+that render use `wake_mode = "fresh"`, and a relaunch in the warm tmux box
+(respawn-pane) keeps it, so such a relaunch is refused as the same session.
+`GC_CONTINUATION_EPOCH` is not used: it rises only after a drain-ack, so a
+session woken fresh after an idle sleep or a crash keeps it (af-bb69uq).
+Start the supervisor outside Claude Code (as its systemd unit does): one
+started from a Claude Code shell hands that shell's id to non-Claude
+sessions, which are then refused as the same conversation. Rounds recorded
+before carry the epoch, which no `c:` or `g` value equals. A round without
 `conversation` (recorded before it was, or by a session that does not know
 it) is recognized by the name alone. The last launch of the open request is marked
 `refused` — the only write — and counts as a launch without result for
