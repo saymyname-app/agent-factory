@@ -91,9 +91,9 @@ game in `brief.datasets` and asks for the next one with `ticket-evaluation
 product CONVOY TICKET --dataset NAME`. A `ready=false` response records the
 request. The next controller pass stops the old product, confirms its
 descendants, port and worktree are gone, then opens the requested game.
-Repeat the command until `ready=true`; capture with the returned address
-and launch record. `--fresh` requests a new initial state for a revisit at
-the same commit. Capture proof before switching away. The read-only role
+`--wait SECONDS` repeats the ask inside one call until `ready=true` or the
+timeout (af-oowsc2); capture with the returned address and launch record.
+`--fresh` requests a new initial state for a revisit at the same commit. Capture proof before switching away. The read-only role
 never launches or stops a process itself. The controller verifies the clean
 copy's commit, launch marker and ownership of its listening socket, then writes
 an exact identity attestation. The Evaluator's sandbox sees that directory
