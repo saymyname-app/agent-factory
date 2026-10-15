@@ -57,6 +57,11 @@ as() { printf '{"type":"assistant","timestamp":"%s","message":{"id":"%s","usage"
   as 2026-10-13T09:00:00Z m3 900000 0 0
   as 2026-10-14T12:00:00Z m4 100 0 0
 } > "$TMP/projects/proj/s2.jsonl"
+mkdir -p "$TMP/projects/proj/s1/subagents"
+{ # a subagent transcript counts too; a null timestamp is skipped, not a crash
+  as 2026-10-14T10:00:00Z m5 1000 0 0
+  printf '{"type":"assistant","timestamp":null,"message":{"id":"m6","usage":{"input_tokens":7}}}\n'
+} > "$TMP/projects/proj/s1/subagents/agent-a.jsonl"
 
 export GC_BIN="$TMP/bin/gc"
 export FACTORY_METRICS_TRANSCRIPTS="$TMP/projects"
@@ -70,8 +75,8 @@ out=$(run --day 2026-10-14 --print)
 [ "$(field merged_tickets "$out")" = '["af-t1","af-t2"]' ] || fail "merged_tickets: $out"
 [ "$(field attempts_per_ticket "$out")" = '{"af-t1":3,"af-t2":1}' ] || fail "attempts = 1 + resumes: $out"
 [ "$(field attempts_mean "$out")" = 2 ] || fail "attempts_mean: $out"
-[ "$(field tokens_total "$out")" = 160117 ] || fail "tokens_total dedups message ids, day only: $out"
-[ "$(field tokens_per_merged_ticket "$out")" = 80058.5 ] || fail "tokens_per_merged_ticket: $out"
+[ "$(field tokens_total "$out")" = 161117 ] || fail "tokens_total dedups message ids, day only, subagents included: $out"
+[ "$(field tokens_per_merged_ticket "$out")" = 80558.5 ] || fail "tokens_per_merged_ticket: $out"
 [ "$(field order_failure_rate "$out")" = 0.1667 ] || fail "order_failure_rate = failed/(completed+failed): $out"
 [ "$(field 'order_runs["order-a"]' "$out")" = '{"completed":3,"failed":1,"failure_rate":0.25}' ] || fail "per-order: $out"
 [ "$(field 'order_runs["order-b"]' "$out")" = '{"completed":2,"failed":0,"failure_rate":0}' ] || fail "per-order b: $out"

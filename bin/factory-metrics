@@ -64,7 +64,7 @@ def record(value):
 
 def tickets(day, start, end):
     run = subprocess.run([GC, "bd", "list", "--all", "--has-metadata-key", "gc.flow.merge",
-                          "--updated-after", day.isoformat(), "--limit", "0", "--brief", "--json"],
+                          "--updated-after", (day - timedelta(days=1)).isoformat(), "--limit", "0", "--brief", "--json"],
                          cwd=ROOT, capture_output=True, text=True, timeout=120)
     if run.returncode:
         raise RuntimeError(f"gc bd list failed (rc {run.returncode})")
@@ -86,7 +86,7 @@ def orders(start, end):
             try:
                 ev = json.loads(line)
                 at = epoch(ev["ts"])
-            except (ValueError, KeyError):
+            except (ValueError, KeyError, TypeError, AttributeError):
                 continue
             if start <= at < end:
                 run = runs.setdefault(ev.get("subject") or "?", {"completed": 0, "failed": 0})
@@ -100,7 +100,7 @@ def transcripts(start, end):
     if not os.path.isdir(TRANSCRIPTS):
         raise RuntimeError(f"no transcript directory {TRANSCRIPTS}")
     total, over = 0, 0
-    for path in glob.glob(os.path.join(TRANSCRIPTS, "*", "*.jsonl")):
+    for path in glob.glob(os.path.join(TRANSCRIPTS, "**", "*.jsonl"), recursive=True):
         if os.path.getmtime(path) < start:
             continue
         usages, peak = {}, 0
@@ -111,7 +111,7 @@ def transcripts(start, end):
                 try:
                     rec = json.loads(line)
                     at = epoch(rec["timestamp"])
-                except (ValueError, KeyError):
+                except (ValueError, KeyError, TypeError, AttributeError):
                     continue
                 msg = rec.get("message") or {}
                 if rec.get("type") != "assistant" or not msg.get("usage") or not start <= at < end:
