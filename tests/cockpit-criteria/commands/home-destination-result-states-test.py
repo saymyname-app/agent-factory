@@ -31,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from home_destination import (  # noqa: E402
     CONTENT_PARTS, LaunchTree, assert_destination, assert_inbox_follows_requests, assert_says, fetch, measure,
+    says,
 )
 
 
@@ -180,18 +181,36 @@ class HomeDestinationResultStates(unittest.TestCase):
         assert_says(self, page, "actions-1", "CSV", "JSON")
         assert_says(self, page, "notice-1", "Choix CSV préparé.", "Confirmer", "Annuler")
 
-        # « Confirmer » activated: the door that would record the answer
-        # refuses in the isolated cockpit, so the request stays open at its
-        # source, and the page does not say it was answered.
+        # « Confirmer » activated. Answering a request goes through a door
+        # of the Factory that is not wired on this destination (and refuses
+        # in the isolated cockpit): the answer is not recorded, so
+        # - the request stays open at its source (GET /api/requests);
+        # - the page still lists it in « Ce qui t’attend », as its source
+        #   says, and keeps the decision open in the panel;
+        # - the panel says, in words, that the command is unavailable or was
+        #   not recorded (an explicit unavailability, not a silence);
+        # - nothing on the page says the choice was confirmed, answered,
+        #   recorded, sent or under way at the factory.
         after = page["after"]
         self.assertTrue(after["found"], "no control « Confirmer » to activate")
         code, _, body = fetch(address + "/api/requests")
         self.assertEqual(200, code)
-        self.assertIn("Choisir le format d’export", [r["quoi"] for r in json.loads(body)["requests"]])
-        claimed = [word for word in ("répondu", "Réponse enregistrée", "enregistrée", "envoyée")
-                   if word.lower() in after["text"].lower()]
-        self.assertEqual([], claimed, f"the page shows an answer that was not recorded: « {after['text'][:400]} »")
-
+        self.assertIn("Choisir le format d’export", [r["quoi"] for r in json.loads(body)["requests"]],
+                      "the request left its source although no door recorded an answer")
+        self.assertEqual("/", after["path"], "« Confirmer » left the destination")
+        assert_inbox_follows_requests(self, address, after)
+        assert_says(self, after, "panel-3", "Quel format d’export ?")
+        said = says(after, "panel-3").lower()
+        self.assertTrue(
+            any(word in said for word in ("indisponible", "non enregistré", "pas été enregistré", "pas enregistré",
+                                          "refusé", "échec", "impossible")),
+            f"the panel does not say the answer is unavailable or was not recorded: « {says(after, 'panel-3')} »",
+        )
+        text = after["text"].lower()
+        claimed = [word for word in ("confirmé", "répondu", "réponse enregistrée", "enregistrée", "enregistré à",
+                                     "envoyé", "pris en compte", "en cours de traitement")
+                   if word in text]
+        self.assertEqual([], claimed, f"the page shows an answer that was not recorded: « {after['text'][:600]} »")
 
 if __name__ == "__main__":
     unittest.main()

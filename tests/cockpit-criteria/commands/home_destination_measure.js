@@ -23,8 +23,10 @@
 // contrast  texts whose contrast with their background is under 4.5:1
 //           (3:1 when large), disabled controls apart
 // background the relative luminance of the page's background
-// after     with `click`: the address and text of the frame after the
-//           control named `click` was activated
+// after     with `click`: the frame read again (the same record, its
+//           address and text included) two seconds after the control named
+//           `click` was activated, with `found` and `disabled` for that
+//           control
 (function () {
   var query = new URLSearchParams(location.search);
   var out = document.getElementById('measure');
@@ -295,14 +297,23 @@
       var own = accessibleName(element, doc);
       if (!target && visible(element, frame.contentWindow) && (own === name || own.indexOf(name) === 0)) { target = element; }
     });
-    if (!target) { done({found: false, path: frame.contentWindow.location.pathname, text: doc.body.innerText}); return; }
+    if (!target) {
+      done({found: false, path: frame.contentWindow.location.pathname, text: doc.body.innerText,
+            anchors: [], texts: {}, nav: [], controls: []});
+      return;
+    }
     var finished = false;
     function report() {
       if (finished) { return; }
       finished = true;
-      var d = frame.contentDocument;
-      done({found: true, disabled: target.disabled === true || target.getAttribute('aria-disabled') === 'true',
-            path: frame.contentWindow.location.pathname, text: d && d.body ? d.body.innerText : ''});
+      var d = frame.contentDocument, page;
+      try { page = read(frame, Number(frame.style.width.replace('px', ''))); } catch (error) {
+        page = {path: frame.contentWindow.location.pathname, text: d && d.body ? d.body.innerText : '',
+                anchors: [], texts: {}, nav: [], controls: []};
+      }
+      page.found = true;
+      page.disabled = target.disabled === true || target.getAttribute('aria-disabled') === 'true';
+      done(page);
     }
     frame.addEventListener('load', function () { setTimeout(report, SETTLE_MS); }, {once: true});
     target.click();

@@ -220,9 +220,9 @@ def measure(address: str, path: str = "/", *, theme: str = "dark", widths: tuple
             click: str | None = None) -> list[dict]:
     """How the page at `address` + `path` renders in `theme`, one record per
     frame width: see home_destination_measure.js for what a record holds.
-    With `click`, the control whose accessible name is `click` is activated
-    in each frame, and the record says, under `after`, the address and the
-    text of the frame two seconds later."""
+    With `click`, the control whose accessible name is `click` (or starts
+    with it) is activated in each frame, and the record holds, under
+    `after`, the frame read again two seconds later."""
     query = urllib.parse.urlencode({
         "target": address + path, "widths": ",".join(str(w) for w in widths),
         "height": FRAME_HEIGHT, "click": click or "",

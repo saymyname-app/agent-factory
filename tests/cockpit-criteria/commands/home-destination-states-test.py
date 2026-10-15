@@ -65,13 +65,25 @@ class HomeDestinationStates(unittest.TestCase):
     def tearDown(self) -> None:
         self.tree.stop_all()
 
-    def served(self, dataset: str, commit: str | None = None, ready=None) -> tuple[str, dict]:
+    def served(self, dataset: str, commit: str | None = None, ready=None, theme: str = "dark",
+               width: int = 1440) -> tuple[str, dict]:
         """The address of the cockpit launched on `dataset`, and its page at
-        GET / at 1440 px; with `ready`, once the page shows what it says."""
+        GET /, `width` px wide, in `theme` (the colour scheme the browser
+        prefers); with `ready`, once the page shows what it says."""
         address = self.tree.launch(dataset, commit)
+        options = {"theme": theme, "widths": (width,)}
         if ready is None:
-            return address, measure(address)[0]
-        return address, measure_until(address, lambda frames: ready(frames[0]), seconds=15)[0]
+            return address, measure(address, **options)[0]
+        return address, measure_until(address, lambda frames: ready(frames[0]), seconds=15, **options)[0]
+
+    def assert_theme(self, page: dict, theme: str) -> None:
+        """The page is drawn in `theme`: a dark background (relative
+        luminance at most 0.1) or a light one (at least 0.5), its texts
+        readable on it (contrast at least 4.5:1, 3:1 when large)."""
+        background = page["background"]
+        self.assertTrue(background is not None and (background <= 0.1 if theme == "dark" else background >= 0.5),
+                        f"the page is not drawn in the {theme} theme (background luminance {background})")
+        self.assertEqual([], page["contrast"], f"texts unreadable in the {theme} theme")
 
     def assert_content(self, address: str, page: dict) -> None:
         """What the reference says of the destination with its content:
@@ -114,26 +126,38 @@ class HomeDestinationStates(unittest.TestCase):
     # Criterion 1 ---------------------------------------------------------
 
     def test_home_content_is_the_destination_with_indicators_runs_requests_result_and_projects(self):
+        # The reference draws home-content in the dark theme, at 1440 px.
         address, page = self.served("home-content")
         assert_destination(self, page, CONTENT_PARTS)
         self.assert_content(address, page)
+        self.assert_theme(page, "dark")
 
     def test_home_content_full_is_the_destination_with_its_whole_content(self):
+        # The reference draws home-content-full dark, at 1440 px.
         address, page = self.served("home-content-full")
         assert_destination(self, page, CONTENT_PARTS)
         self.assert_content(address, page)
+        self.assert_theme(page, "dark")
 
-    def test_home_narrow_is_the_destination_with_its_content(self):
-        # The width the state is looked at with belongs to the browser:
-        # criterion 2 measures it at 390 px; the page is the same.
-        address, page = self.served("home-narrow")
+    def test_home_narrow_is_the_destination_with_its_content_at_390_px(self):
+        # The reference draws home-narrow dark, 390 px wide: the same named
+        # parts in the same hierarchy, the same content, within the width
+        # of the phone.
+        address, page = self.served("home-narrow", width=390)
+        self.assertEqual(390, page["width"])
         assert_destination(self, page, CONTENT_PARTS)
         self.assert_content(address, page)
+        self.assert_theme(page, "dark")
+        self.assertEqual(0, page["overflow"], "the page is wider than the phone")
 
-    def test_home_light_is_the_destination_with_its_content(self):
-        address, page = self.served("home-light")
+    def test_home_light_is_the_destination_with_its_content_in_the_light_theme(self):
+        # The reference draws home-light in the light theme, at 1440 px:
+        # the browser prefers the light colour scheme, and the destination
+        # is drawn light, with the same parts and the same content.
+        address, page = self.served("home-light", theme="light")
         assert_destination(self, page, CONTENT_PARTS)
         self.assert_content(address, page)
+        self.assert_theme(page, "light")
 
     def test_home_long_is_the_destination_with_its_long_report_in_the_result(self):
         address, page = self.served("home-long")
@@ -183,20 +207,30 @@ class HomeDestinationStates(unittest.TestCase):
         self.assertEqual([], [c["name"] for c in actions if not c["disabled"]],
                          "an action of the result is offered on a stale reading")
 
-    def test_the_destination_is_reached_from_its_navigation_and_leads_to_the_others(self):
-        # Each entry of the navigation B, activated on the destination,
-        # opens the address of its destination; « Vue d’ensemble » opens
-        # this one, at GET /.
+    def test_the_destination_is_reached_from_the_other_destinations_and_leads_to_them(self):
+        # From the other destinations the cockpit serves, the entry
+        # « Vue d’ensemble » of their navigation opens this destination, at
+        # GET /, with its content: the page they start from is not this one.
         address = self.tree.launch("home-content")
+        for start in ("/journal", "/projet/notes"):
+            frame = measure(address, start, click="Vue d’ensemble")[0]
+            self.assertEqual(start, frame["path"], f"{start} is not served at its own address")
+            after = frame["after"]
+            self.assertTrue(after["found"], f"no entry « Vue d’ensemble » in the navigation of {start}")
+            assert_destination(self, after, CONTENT_PARTS)
+            assert_says(self, after, "panel-2", "Ce qui t’attend")
+
+        # From this destination, each other entry of the navigation B opens
+        # the address of its destination.
         reached = {}
-        for entry in ("Vue d’ensemble", "Projets", "Runs", "Journal", "Usine", "Rituels", "Analyses"):
+        for entry in ("Projets", "Runs", "Journal", "Usine", "Rituels", "Analyses"):
             after = measure(address, click=entry)[0]["after"]
             path = after["path"] if after["found"] else None
             # The projects open under /projet: their list or the page of one.
             reached[entry] = "/projet…" if entry == "Projets" and str(path).startswith("/projet") else path
         self.assertEqual(
-            {"Vue d’ensemble": "/", "Projets": "/projet…", "Runs": "/runs", "Journal": "/journal",
-             "Usine": "/usine", "Rituels": "/rituels", "Analyses": "/analyses"},
+            {"Projets": "/projet…", "Runs": "/runs", "Journal": "/journal", "Usine": "/usine",
+             "Rituels": "/rituels", "Analyses": "/analyses"},
             reached,
         )
 
