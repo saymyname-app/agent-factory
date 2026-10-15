@@ -88,7 +88,7 @@ TICKET_CHECKS = {
     "demonstrable_alone": "démontrable seul",
     "criteria_observable_falsifiable": "critères observables et falsifiables",
     "size_tenable": "taille tenable",
-    "same_surface_ordered": "tickets de même surface ordonnés",
+    "same_surface_ordered": "tickets qui modifient le même code ou le même mécanisme ordonnés",
     SCOPE_CHECK: "Declared Scope qui inclut les fichiers de branchement",
 }
 GRAPH_CHECKS = {
