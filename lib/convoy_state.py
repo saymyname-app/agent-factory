@@ -141,8 +141,9 @@ règle". `invalidate-verdicts` writes that on the verdicts the merge command
 found outdated, and counts one resume for it -- none when the commit is the
 one of the correction round, which `open-correction` already counted.
 
-The bound of the resumes of a ticket (K) is read in the one place the
-bounds of the flow are set: `bounds.resumes` of config/delivery-flow.json,
+The bound of the resumes of a ticket (K), one per cause (ADR-0030 L2), is
+read in the one place the bounds of the flow are set: `bounds.resumes` of
+config/delivery-flow.json,
 under FACTORY_ROOT (default: the repository of this script), and in the
 Factory's own file when that root sets no bounds. The bound of the repair
 rounds of the end of a Spec, `bounds.end_rounds`, is read there too, by the
@@ -428,9 +429,10 @@ HANDOFF_RECORDS_PIECE = "handoff_records"
 # the bound of the resumes of a ticket (Spec §8, T20).
 PARK_EXHAUSTED = "resumes_exhausted"
 PARK_CAUSES = ("planning_exception", "operator_request", PARK_EXHAUSTED)
-# Spec §8, K: the resumes of a ticket, every cause together; at the last one
-# the ticket is parked with its descendants. The value is a setting
-# (`bounds.resumes` of config/delivery-flow.json, `resumes_max`).
+# Spec §8, K: the resumes of a ticket, bounded per cause (ADR-0030 L2): at
+# the last one of a same cause the ticket is parked with its descendants. The
+# values are a setting (`bounds.resumes` of config/delivery-flow.json, one
+# integer per cause, or one integer for every cause; `resume_bounds`).
 BOUND_RESUMES = "resumes"
 BOUND_END_ROUNDS = "end_rounds"
 # Why code sends a ticket back to a fresh author session (T20): its session
@@ -442,6 +444,11 @@ BOUND_END_ROUNDS = "end_rounds"
 RESUME_CAUSES = ("interrupted", "returned", "unblocked", "answered", "behind", "evaluation_no_result")
 # The stops a resume lifts, each by the cause of the same name (af-xhc0sj).
 RESUMABLE_STOPS = ("evaluation_no_result",)
+# A commit after a verdict counts a resume without an entry (T18): it is a
+# cause of its own. The correction round is not one: it has its own bound of
+# one round (CORRECTION_MAX_ROUNDS), held here, outside K.
+COMMIT_AFTER_VERDICT = "commit_after_verdict"
+BOUNDED_RESUME_CAUSES = RESUME_CAUSES + (COMMIT_AFTER_VERDICT,)
 RESUME_MAX_LAUNCHES = 1
 # What bin/spec-integration did of a ticket (Spec §4): merged into the
 # integration branch, or returned to its author by a conflict or by red tests
@@ -592,11 +599,11 @@ def encode(record: dict[str, Any]) -> str:
 
 
 @functools.lru_cache(maxsize=None)
-def flow_bound(name: str) -> int:
-    """One bound of the flow (Spec §8), read where they are all set: `bounds`
-    of config/delivery-flow.json under FACTORY_ROOT, and in the Factory's own
-    file when that root sets none (a synthetic city that sets no bound runs
-    under the Factory's)."""
+def flow_setting(name: str) -> Any:
+    """One bound of the flow (Spec §8), as written where they are all set:
+    `bounds` of config/delivery-flow.json under FACTORY_ROOT, and in the
+    Factory's own file when that root sets none (a synthetic city that sets
+    no bound runs under the Factory's)."""
     bounds = None
     for root in dict.fromkeys((Path(os.environ.get("FACTORY_ROOT") or BIN.parent), BIN.parent)):
         try:
@@ -610,14 +617,32 @@ def flow_bound(name: str) -> int:
             break
     if not isinstance(bounds, dict):
         raise Refusal(f"aucune borne (bounds) dans {SETTINGS} : les bornes du flux s'y règlent, et nulle part ailleurs")
-    value = bounds.get(name)
+    return bounds.get(name)
+
+
+def valid_bound(value: Any, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise Refusal(f"bounds.{name} absent ou invalide dans {SETTINGS} : {value!r} (attendu : un entier d'au moins 1)")
+        raise Refusal(f"{name} absent ou invalide dans {SETTINGS} : {value!r} (attendu : un entier d'au moins 1)")
     return value
 
 
-def resumes_max() -> int:
-    return flow_bound(BOUND_RESUMES)
+def flow_bound(name: str) -> int:
+    return valid_bound(flow_setting(name), f"bounds.{name}")
+
+
+def resume_bounds() -> dict[str, int]:
+    """K per cause (ADR-0030 L2): one integer for each cause of
+    BOUNDED_RESUME_CAUSES, none missing, none other; or one integer, the
+    same bound for every cause."""
+    value = flow_setting(BOUND_RESUMES)
+    if not isinstance(value, dict):
+        bound = valid_bound(value, f"bounds.{BOUND_RESUMES}")
+        return dict.fromkeys(BOUNDED_RESUME_CAUSES, bound)
+    if set(value) != set(BOUNDED_RESUME_CAUSES):
+        raise Refusal(
+            f"bounds.{BOUND_RESUMES} invalide dans {SETTINGS} : causes {sorted(value)!r} "
+            f"(attendu : exactement {', '.join(BOUNDED_RESUME_CAUSES)})")
+    return {cause: valid_bound(value[cause], f"bounds.{BOUND_RESUMES}.{cause}") for cause in BOUNDED_RESUME_CAUSES}
 
 
 # --- validation shared by writes and reads -----------------------------------
@@ -648,7 +673,8 @@ def counter_value(raw: Any, name: str) -> int:
 
 
 def check_ticket_counters(counters: dict[str, int]) -> None:
-    # Spec §8: a correction round counts among the K resumes.
+    # Spec §8: the counter of the resumes holds the correction round too
+    # (bounded on its own, ADR-0030 L2).
     if counters["correction_rounds"] > counters["resumes"]:
         raise Refusal(
             f"compteurs incohérents : correction_rounds ({counters['correction_rounds']}) "
@@ -1781,15 +1807,22 @@ def resume_record(raw: Any) -> dict[str, Any]:
 
 def park_lifts_record(raw: Any) -> list[dict[str, Any]]:
     """The parkings lifted on a ticket (T20), oldest first: what parked it,
-    the request that was answered, the option taken, and the count of its
-    resumes at that moment -- the bound is counted from the last lift of an
+    the request that was answered, the option taken, the count of its
+    resumes at that moment and, since ADR-0030 L2, the resumes it had taken
+    per cause (`taken`) -- each bound is counted from the last lift of an
     exhausted ticket."""
     entries = stored_record(raw, ("entries",))["entries"]
     if not isinstance(entries, list) or not entries:
         raise Refusal(f"parcages levés mal formés : {entries!r}")
     for entry in entries:
-        if not isinstance(entry, dict) or set(entry) != {"cause", "detail", "parked_at", "request", "option", "resumes", "at"}:
+        if not isinstance(entry, dict) \
+                or set(entry) - {"taken"} != {"cause", "detail", "parked_at", "request", "option", "resumes", "at"}:
             raise Refusal(f"parcage levé mal formé : {entry!r}")
+        if "taken" in entry:
+            if not isinstance(entry["taken"], dict) or set(entry["taken"]) - set(BOUNDED_RESUME_CAUSES):
+                raise Refusal(f"reprises prises au parcage levé mal formées : {entry['taken']!r}")
+            for cause, value in entry["taken"].items():
+                counter_value(value, cause)
         one_of(entry["cause"], PARK_CAUSES, "cause de parcage")
         if not isinstance(entry["request"], str) or not BEAD_ID_RE.match(entry["request"]):
             raise Refusal(f"bead de la demande absent ou mal formé : {entry['request']!r}")
@@ -1805,12 +1838,59 @@ def option_letter(value: Any) -> str:
     return value
 
 
-def resumes_left(metadata: dict[str, Any]) -> int:
-    """How many resumes the ticket may still take before it is parked."""
+def resumes_taken(metadata: dict[str, Any]) -> dict[str, int]:
+    """The resumes the ticket took over its life, per cause (ADR-0030 L2):
+    its resume entries by their cause, and the commits after a verdict, the
+    rest of the counter once the entries and the correction round are taken
+    out."""
     resumes = counter_value(metadata.get(COUNTER_PREFIX + "resumes"), "resumes")
+    corrections = counter_value(metadata.get(COUNTER_PREFIX + "correction_rounds"), "correction_rounds")
+    entries = resume_record(metadata[KEY_RESUME])["entries"] if KEY_RESUME in metadata else []
+    taken = dict.fromkeys(BOUNDED_RESUME_CAUSES, 0)
+    for entry in entries:
+        taken[entry["cause"]] += 1
+    taken[COMMIT_AFTER_VERDICT] = max(0, resumes - corrections - len(entries))
+    return taken
+
+
+def taken_at_lift(lift: dict[str, Any], metadata: dict[str, Any]) -> dict[str, int]:
+    """What the ticket had taken when its exhausted parking was lifted: kept
+    on the lift; for a lift written before (ADR-0030 L2), the entries older
+    than the lift and the rest of its count."""
+    if "taken" in lift:
+        return lift["taken"]
+    entries = resume_record(metadata[KEY_RESUME])["entries"] if KEY_RESUME in metadata else []
+    before = [entry for entry in entries if entry["at"] < lift["at"]]
+    taken = dict.fromkeys(BOUNDED_RESUME_CAUSES, 0)
+    for entry in before:
+        taken[entry["cause"]] += 1
+    corrections = counter_value(metadata.get(COUNTER_PREFIX + "correction_rounds"), "correction_rounds")
+    taken[COMMIT_AFTER_VERDICT] = max(0, lift["resumes"] - corrections - len(before))
+    return taken
+
+
+def resumes_left_by_cause(metadata: dict[str, Any]) -> dict[str, int]:
+    """How many resumes of each cause the ticket may still take, counted
+    since the last lift of its exhausted parking: at 0 for one cause, it is
+    parked."""
+    taken = resumes_taken(metadata)
     lifts = park_lifts_record(metadata[KEY_PARK_LIFTS]) if KEY_PARK_LIFTS in metadata else []
-    since = max((lift["resumes"] for lift in lifts if lift["cause"] == PARK_EXHAUSTED), default=0)
-    return max(0, resumes_max() - (resumes - since))
+    exhausted = [lift for lift in lifts if lift["cause"] == PARK_EXHAUSTED]
+    before = taken_at_lift(exhausted[-1], metadata) if exhausted else {}
+    bounds = resume_bounds()
+    return {cause: max(0, bounds[cause] - max(0, taken[cause] - before.get(cause, 0))) for cause in bounds}
+
+
+def resumes_left(metadata: dict[str, Any]) -> int:
+    """How many resumes the ticket may still take before it is parked: the
+    fewest any one cause has left."""
+    return min(resumes_left_by_cause(metadata).values())
+
+
+def exhausted_causes(metadata: dict[str, Any]) -> str:
+    left = resumes_left_by_cause(metadata)
+    bounds = resume_bounds()
+    return ", ".join(f"ses {bounds[cause]} reprises pour la cause {cause}" for cause, n in left.items() if n == 0)
 
 
 def grouped_request_record(raw: Any) -> dict[str, Any]:
@@ -2926,10 +3006,11 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
             out["park_lifts"] = {"unruled": f"{KEY_PARK_LIFTS} : {exc}", "raw": metadata[KEY_PARK_LIFTS]}
             flag(KEY_PARK_LIFTS, out["park_lifts"]["unruled"])
     try:
-        out["resumes_left"] = resumes_left(metadata)
+        out["resumes_left_by_cause"] = resumes_left_by_cause(metadata)
+        out["resumes_left"] = min(out["resumes_left_by_cause"].values())
     except Refusal:
         # The counter or the lifts are already flagged: no default.
-        out["resumes_left"] = None
+        out["resumes_left"] = out["resumes_left_by_cause"] = None
 
     def has_gate(name: str) -> bool:
         return "at" in gates.get(name, {})
@@ -2951,9 +3032,9 @@ def cmd_show(args: argparse.Namespace) -> int:
     mark = metadata.get(KEY_MARK)
     if mark is None:
         raise NotNewFlow(args.convoy)
-    # The resumes each ticket has left are counted against the bound: a
+    # The resumes each ticket has left are counted against the bounds: a
     # bound that cannot be read is a refusal, never a default.
-    resumes_max()
+    resume_bounds()
 
     convoy_unruled: list[dict[str, str]] = []
     if mark != MARK:
@@ -4784,8 +4865,8 @@ def waiting_for(tickets: list[dict[str, Any]], ticket_id: str) -> list[str]:
 def cmd_park(args: argparse.Namespace) -> int:
     """Park a ticket and every ticket of the convoy that waits for it,
     directly or not (Spec §5: a Planning Exception or an operator request
-    parks the ticket and its descendants; Spec §8: so does the third resume
-    of a ticket). The other tickets are untouched."""
+    parks the ticket and its descendants; Spec §8: so does the last resume
+    of a same cause, ADR-0030 L2). The other tickets are untouched."""
     ticket = marked_ticket(args.convoy, args.ticket)
     cause = one_of(args.cause, PARK_CAUSES, "cause de parcage")
     detail = single_line(args.detail, "précision du parcage")
@@ -4795,8 +4876,8 @@ def cmd_park(args: argparse.Namespace) -> int:
         raise Refusal(f"le ticket {args.ticket} est déjà parqué")
     if cause == PARK_EXHAUSTED and resumes_left(metadata_of(ticket)) > 0:
         raise Refusal(
-            f"le ticket {args.ticket} n'a pas épuisé ses reprises ({resumes_max()}, toutes causes confondues) : "
-            "il ne se parque pas pour cette cause")
+            f"le ticket {args.ticket} n'a épuisé ses reprises pour aucune cause "
+            f"({resumes_left_by_cause(metadata_of(ticket))} restantes) : il ne se parque pas pour cette cause")
     _, tickets = load_convoy(args.convoy)
     parked = waiting_for(tickets, args.ticket)
     by_id = {other["id"]: other for other in tickets}
@@ -4819,8 +4900,9 @@ def cmd_lift_park(args: argparse.Namespace) -> int:
     """Lift the parking a ticket caused (T20): on itself and on every ticket
     parked behind it, once the request `--request` was answered. A ticket
     that still waits for another parked one is parked behind that one
-    instead. The lift is kept on the ticket, with the count of its resumes:
-    an exhausted ticket takes its resumes again from there."""
+    instead. The lift is kept on the ticket, with the count of its resumes
+    and what it took per cause: an exhausted ticket takes its resumes again
+    from there."""
     convoy, tickets = load_convoy(args.convoy)
     require_marked(convoy)
     ticket = marked_ticket_among(tickets, args.convoy, args.ticket)
@@ -4837,7 +4919,7 @@ def cmd_lift_park(args: argparse.Namespace) -> int:
     lifts = park_lifts_record(metadata[KEY_PARK_LIFTS]) if KEY_PARK_LIFTS in metadata else []
     resumes = counter_value(metadata.get(COUNTER_PREFIX + "resumes"), "resumes")
     lifts.append({"cause": park["cause"], "detail": park["detail"], "parked_at": park["at"], "request": args.request,
-                  "option": option, "resumes": resumes, "at": now()})
+                  "option": option, "resumes": resumes, "taken": resumes_taken(metadata), "at": now()})
     # Each other ticket that still parks, with those that wait for it.
     still_parked: dict[str, str] = {}
     for other in tickets:
@@ -4873,7 +4955,7 @@ def cmd_open_resume(args: argparse.Namespace) -> int:
     resume, the counter and the removal of the Ticket Exit it replaces go in
     one tracker write. The same fact (`--cause`, `--ref`) again writes
     nothing. Refused on a ticket that is parked, closed, or that has no
-    resume left (that one is parked), and on a stopped ticket unless the
+    resume left for one cause (that one is parked), and on a stopped ticket unless the
     cause is its stop `evaluation_no_result`: that resume lifts the stop
     and keeps it under the resume (af-xhc0sj)."""
     ticket = marked_ticket(args.convoy, args.ticket)
@@ -4896,7 +4978,7 @@ def cmd_open_resume(args: argparse.Namespace) -> int:
         raise Refusal(f"ticket parqué : {args.ticket} ne se reprend pas tant que son parcage n'est pas levé")
     if resumes_left(metadata) == 0:
         raise Refusal(
-            f"reprises épuisées : le ticket {args.ticket} a pris ses {resumes_max()} reprises, toutes causes confondues ; "
+            f"reprises épuisées : le ticket {args.ticket} a pris {exhausted_causes(metadata)} ; "
             "il se parque avec ses descendants")
     counters = {name: counter_value(metadata.get(COUNTER_PREFIX + name), name) for name in TICKET_COUNTERS}
     counters["resumes"] += 1
@@ -5022,7 +5104,7 @@ def cmd_invalidate_verdicts(args: argparse.Namespace) -> int:
     invalidated = [key[len(VERDICT_PREFIX):] for key in values]
     if values:
         if judged != {corrected} and judged != {returned}:
-            # It counts as a resume (K), not as the correction round.
+            # It counts as a resume (K, its own cause), not as the correction round.
             resumes = counter_value(metadata.get(COUNTER_PREFIX + "resumes"), "resumes")
             values[COUNTER_PREFIX + "resumes"] = resumes + 1
         write_metadata(args.ticket, values)
@@ -5035,8 +5117,9 @@ def cmd_open_correction(args: argparse.Namespace) -> int:
     """Open the correction round of a ticket (T17, Spec §8) at the commit
     its code review and its Ticket Evaluation both answered at: what each of
     them refused goes to one fresh author session. There is one round per
-    ticket, and it counts among the resumes: the round and the two counters
-    go in one tracker write. The same round again writes nothing."""
+    ticket, held to that bound on its own (ADR-0030 L2), and the counter of
+    the resumes holds it too: the round and the two counters go in one
+    tracker write. The same round again writes nothing."""
     metadata = metadata_of(marked_ticket(args.convoy, args.ticket))
     commit = valid_commit(args.commit, "commit du tour de correction")
     if KEY_STOP in metadata:

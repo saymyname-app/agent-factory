@@ -109,9 +109,9 @@ sauf L7 qui suppose L3–L5. Annuler toutes les PR rend le flux de
 
 | Tranche | Bead | PR | État |
 |---|---|---|---|
-| L0 (cette ADR) | `af-npz9v1.1` | — | en cours |
+| L0 (cette ADR) | `af-npz9v1.1` | #617 | livrée |
 | L1 | `af-npz9v1.2` | #618 | livrée : `bin/tdd-step green` lance aussi le `regression_command` du profil sur la pointe ; rouge = refus simple (ni arrêt ni reprise), donc la porte `code` de `bin/ticket-author` ne passe pas et l'auteur continue |
-| L2 | — | — | à faire |
+| L2 | `af-npz9v1.3` | PR à venir | en revue : `bounds.resumes` une borne par cause (3 chacune : interrupted, returned, unblocked, answered, behind, evaluation_no_result, commit_after_verdict) ; tour de correction hors K (sa borne d'un tour) ; comptes dérivés des entrées de reprise ; une levée rend les bornes par cause |
 | L3 | — | — | à faire |
 | L4 | — | — | à faire |
 | L5 | — | — | à faire |

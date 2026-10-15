@@ -37,7 +37,7 @@ when all of this holds:
   Ticket Exit yet (it was never started);
 - the ticket is not parked (T11: a Ticket Exit `planning_exception` or
   `operator_request` parks its ticket and every ticket that waits for it,
-  `docs/TICKET_EXIT.md`; T20: so does the third resume of a ticket, below);
+  `docs/TICKET_EXIT.md`; T20: so does the third resume of a same cause, below);
   a parked ticket is listed under `waiting`, with its cause and the ticket
   that parked it, and the tickets that wait for none of them keep starting;
 - the convoy is not stopped (T21, « The two stops of a convoy » below): its
@@ -263,17 +263,21 @@ The lift is `bin/convoy-state lift-park <convoy> <ticket> --request <bead>
 --option <letter>`: the parking is removed from the ticket and from those
 parked behind it — a ticket that still waits for another parked ticket is
 parked behind that one instead — and kept on the ticket under `park_lifts`.
-An exhausted ticket takes its three resumes again, counted from the lift;
-the counter itself is never reset. No hand is put on a ticket.
+An exhausted ticket takes its resumes again, three per cause, counted from
+the lift; the counter itself is never reset. No hand is put on a ticket.
 
 **2. It parks the ticket that is out of resumes.** A ticket at work (started
 through the door, not closed, neither parked nor stopped) whose
 `resumes_left` is 0 is parked with every ticket that waits for it, directly
 or not: `bin/convoy-state park --cause resumes_exhausted`. The bound is K
 (Spec §8), `bounds.resumes` of `config/delivery-flow.json` (3), read by
-`bin/convoy-state` (T21, « The bounds are set in one place » below), **every
-cause together**: the resumes of this section, the correction round (T17),
-and a commit added after a verdict (T18). Its value is a starting one with
+`bin/convoy-state` (T21, « The bounds are set in one place » below), **per
+cause** (ADR-0030 L2): each cause of a resume of this section, and a commit
+added after a verdict (T18), counts against its own bound; the correction
+round (T17) is not one of them, it keeps its own bound of one round. A red
+merge returned to its author takes nothing of the interruptions' bound, and
+`resumes_left` is the fewest any one cause has left (`resumes_left_by_cause`
+of `bin/convoy-state show` names each). Its value is a starting one with
 no measured basis. The park detail names the cause of the last resume
 recorded (`dernière reprise enregistrée : <cause>`; T17/T18 count without an
 entry) and, when it is `returned` by a red merge, the merged commit and the
@@ -316,7 +320,8 @@ elsewhere; the fresh author session brings the integration branch into the
 ticket branch and finishes again, and the next passes withdraw the
 evaluation left open on the old exit and send a new one. Stopped again on
 the same integration tip, the ticket stays with the operator; once the tip
-moves, it is resumed once more, always within K: the third resume parks it
+moves, it is resumed once more, always within K: the third resume of
+that cause parks it
 (its stop lifted) and the grouped request follows. Every other stop —
 `evaluation_outage`, `amendment_exhausted`, a review without result, a
 ticket still refused — is never resumed.
@@ -479,7 +484,7 @@ delivered so far (Spec §8), and no command holds one in its code:
 
 | Bound | Setting | Value | Read by | Effect |
 |---|---|---|---|---|
-| K, resumes of a ticket, every cause together | `bounds.resumes` | 3 | `bin/convoy-state` | at the last one the ticket is parked with its descendants |
+| K, resumes of a ticket, per cause (ADR-0030 L2) | `bounds.resumes` | 3 per cause | `bin/convoy-state` | at the last one of a same cause the ticket is parked with its descendants |
 | Planning Exceptions open on a Spec | `bounds.open_planning_exceptions` | 2 | `bin/convoy-advance` | no new ticket of its convoy starts |
 | Repair rounds at the end of a Spec, every source of findings together | `bounds.end_rounds` | 2 | `bin/convoy-state`, in the write that would count one more round | a refusal more counts no round and publishes no repair: the rounds are stopped and a « non conforme » request goes to the operator (T26) |
 
@@ -857,8 +862,8 @@ sent by the next pass), no `resume` setting, the ceiling, a stopped ticket
 never resumed, a ticket stopped without evaluation result resumed on
 itself once per integration tip, its stop kept, its request and its open
 evaluation withdrawn, and left stopped once its request is answered, the
-third resume parking the ticket and its descendants
-whatever the causes, the unrelated tickets still starting, exactly one
+third resume of a same cause parking the ticket and its descendants,
+three different causes leaving it at work (ADR-0030 L2), the unrelated tickets still starting, exactly one
 grouped request naming each parked ticket and its cause, none while a
 ticket that is not parked is left, one for several passes, the answer that
 lifts and the one that leaves the tickets parked, and the answer to the

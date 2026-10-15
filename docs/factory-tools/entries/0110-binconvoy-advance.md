@@ -75,9 +75,10 @@ touché : il reste avancé par le Mayor.
   réponse), `behind` (terminé sur une branche qui ne contient pas la pointe
   de la branche d'intégration : `bin/code-review` n'y envoie aucun
   relecteur, T44). Chaque reprise est comptée et prend une place sous N. À la
-  troisième, toutes causes confondues (celles-ci, le tour de correction, un
-  commit après verdict), le ticket est parqué avec ceux qui l'attendent et
-  n'est pas relancé ; les autres continuent. Listes `resumed`, `parked`,
+  troisième d'une même cause (`bounds.resumes`, une borne par cause :
+  celles-ci et un commit après verdict ; le tour de correction garde sa
+  propre borne d'un tour, ADR-0030 L2), le ticket est parqué avec ceux qui
+  l'attendent et n'est pas relancé ; les autres continuent. Listes `resumed`, `parked`,
   `lifted` dans la réponse.
 - **Une seule demande groupée** (T20) : quand il ne reste dans un convoi que
   des tickets parqués, la passe lève **une** ligne pour le convoi dans
