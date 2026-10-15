@@ -274,7 +274,10 @@ or not: `bin/convoy-state park --cause resumes_exhausted`. The bound is K
 `bin/convoy-state` (T21, « The bounds are set in one place » below), **every
 cause together**: the resumes of this section, the correction round (T17),
 and a commit added after a verdict (T18). Its value is a starting one with
-no measured basis.
+no measured basis. The park detail names the cause of the last resume
+recorded (`dernière reprise : <cause>`) and, when it is `returned` by a red
+merge, the merged commit and the first three tests the piece `merged_tests`
+lists as `FAILED:` (af-w6xtw0); the grouped request (4) quotes that detail.
 
 **3. It sends a ticket whose author must take it again to one fresh author
 session** (`settle_resumes`), on the same branch. The cause is read on the

@@ -403,6 +403,28 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
         self.assertEqual(1, self.resumes())
 
+    def test_a_ticket_parked_at_a_resume_its_red_merge_asked_for_names_that_cause_and_the_failing_tests(self):
+        # af-w6xtw0: the operator read « 3 reprises » and not why the last one was.
+        failing = " ; ".join(f"echo FAILED: tests/{name}-test.py" for name in ("a", "b", "c", "d"))
+        self.integrated(regression=f"sh -c '{failing} ; exit 1'")
+        self.resumable()
+        self.code_reviewed("favorable")
+        self.evaluated()
+        self.advance(CONVOY)
+        self.finished(T1)
+        self.advance(CONVOY)  # the merge returns it: red tests on the merged result
+        self.run_ok(STATE, "bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
+        self.run_ok(STATE, "bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "resumes_exhausted")], [(p["id"], p["cause"]) for p in self.of(answer, "parked")])
+        detail = self.park_of(T1)["detail"]
+        self.assertIn("dernière reprise : returned", detail)
+        self.assertIn("tests rouges sur le résultat fusionné", detail)
+        self.assertIn("tests/a-test.py, tests/b-test.py, tests/c-test.py, …", detail)
+        self.assertNotIn("tests/d-test.py", detail)
+
     def test_a_ticket_at_its_third_resume_whatever_the_causes_is_parked_with_its_descendants_and_not_restarted(self):
         self.started_convoy()
         self.interrupted(T1, "auteur-1")
