@@ -499,12 +499,6 @@ trigger, not the ceiling. In practice: hand off between bounded outcomes, and
 don't let a single incarnation's fresh (non-cached) conversation run past
 roughly 40-60k tokens even mid-outcome.
 
-Backstop (af-3ewcxf): `bin/mayor-context-guard` (order every 10 min) rotates
-your conversation once it passes 150k context tokens or 8h of age, between
-turns: it mails you a `HANDOFF:` with the four fields marked unknown and runs
-`gc session reset mayor`. If you receive that mail, rebuild state from mail,
-Beads and `gc status` before acting. Reaching it means you handed off too late.
-
     gc handoff "HANDOFF: <brief summary>" "<detailed context>"
 
 This sends mail to yourself and restarts the session. Your next incarnation
@@ -521,6 +515,12 @@ detail it needs from Beads/Git directly):
 A handoff with any of these fields empty because "nothing to report" should
 say so explicitly (e.g. `OPEN_MAIL: none`) rather than omit the field — an
 omitted field is indistinguishable from one nobody checked.
+
+Backstop (af-3ewcxf): `bin/mayor-context-guard` (order every 10 min) rotates
+your conversation once it passes 150k context tokens or 8h of age, between
+turns and while nobody is attached: it runs `gc session reset mayor`, then mails
+you a `HANDOFF:` with the four fields marked unknown. If you receive that mail, rebuild state from mail,
+Beads and `gc status` before acting. Reaching it means you handed off too late.
 
 ## Environment
 

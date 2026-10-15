@@ -22,15 +22,18 @@ mkdir -p "$TMP/city/.gc/runtime" "$TMP/city/var" "$TMP/bin" "$TMP/transcripts"
 printf '[workspace]\nprovider = "claude"\n' > "$TMP/city/city.toml"
 CALLS="$TMP/calls.log"; : > "$CALLS"
 KEY_FILE="$TMP/mayor-key"
+ATTACHED_FILE="$TMP/mayor-attached"; printf 'false' > "$ATTACHED_FILE"
+RESET_RC_FILE="$TMP/reset-rc"; printf '0' > "$RESET_RC_FILE"
 
 cat > "$TMP/bin/gc" <<STUB
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$CALLS"
 if [ "\$1 \$2" = "session list" ]; then
-  jq -n --arg k "\$(cat "$KEY_FILE")" '{ok:true, sessions:[
+  jq -n --arg k "\$(cat "$KEY_FILE")" --argjson a "\$(cat "$ATTACHED_FILE")" '{ok:true, sessions:[
     {id:"af-worker", alias:"factory-worker", name:"factory-worker", state:"active", session_key:"worker-key"},
-    {id:"af-mayor", alias:"mayor", name:"mayor", state:"active", session_key:\$k}]}'
+    {id:"af-mayor", alias:"mayor", name:"mayor", state:"active", attached:\$a, session_key:\$k}]}'
 fi
+[ "\$1 \$2" = "session reset" ] && exit "\$(cat "$RESET_RC_FILE")"
 exit 0
 STUB
 chmod +x "$TMP/bin/gc"
@@ -110,5 +113,23 @@ printf 'conv-missing' > "$KEY_FILE"
 : > "$CALLS"; out=$(guard) || fail "a missing transcript must not fail the order"
 [ "$(field action "$out")" = "skip" ] || fail "missing transcript should skip: $out"
 [ "$(mails)$(resets)" = "00" ] || fail "skip must not act"
+
+# 9. someone attached -> deferred, nothing done -----------------------------
+transcript conv-e 160000 3600 end_turn
+printf 'true' > "$ATTACHED_FILE"
+: > "$CALLS"; out=$(guard)
+[ "$(field action "$out")" = "deferred-attached" ] || fail "attached Mayor must be deferred: $out"
+[ "$(mails)$(resets)" = "00" ] || fail "attached Mayor must not be rotated"
+printf 'false' > "$ATTACHED_FILE"
+
+# 10. failed reset -> exit 1, no mail, not recorded, retried next run -------
+printf '1' > "$RESET_RC_FILE"
+: > "$CALLS"; rc=0; out=$(guard) || rc=$?
+[ "$rc" = "1" ] || fail "a failed reset must fail the order: rc=$rc $out"
+[ "$(field action "$out")" = "reset-failed" ] || fail "expected reset-failed: $out"
+[ "$(mails)" = "0" ] || fail "no handoff mail when the reset failed"
+printf '0' > "$RESET_RC_FILE"
+: > "$CALLS"; out=$(guard)
+[ "$(field action "$out")" = "rotated" ] || fail "a failed reset must be retried: $out"
 
 printf 'PASS: mayor-context-guard rotates the Mayor once per conversation above 150k tokens or 8h\n'

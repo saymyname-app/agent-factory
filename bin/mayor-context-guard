@@ -8,8 +8,8 @@ and, when the conversation carries more than MAYOR_CONTEXT_GUARD_TOKENS
 (default 150000) context tokens or is older than MAYOR_CONTEXT_GUARD_MAX_AGE_HOURS
 (default 8), rotates it:
 
-  gc mail -> mayor: "HANDOFF: ..." with OPEN_MAIL/OPEN_DECISIONS/IN_FLIGHT/NEXT
   gc session reset mayor      # fresh provider conversation; bead, alias, mail kept
+  gc mail -> mayor: "HANDOFF: ..." with OPEN_MAIL/OPEN_DECISIONS/IN_FLIGHT/NEXT
 
 Why not `gc handoff --target mayor`: it kills the session, and the Mayor's
 wake_mode is the default `resume`, so the reconciler would resume the same
@@ -17,14 +17,16 @@ oversized conversation. `gc session reset` is the fresh-restart primitive.
 
 Context tokens = last assistant usage: input + cache_read + cache_creation.
 Age = first transcript timestamp. The guard waits while the Mayor is mid-turn
-(last assistant stop_reason is not end_turn) and acts at most once per
-conversation id (state: .gc/runtime/mayor-context-guard-state.json). It never
+(last assistant stop_reason is not end_turn) or while someone is attached, and acts at most once per
+conversation id (state: .gc/runtime/mayor-context-guard-state.json; a failed
+reset is not recorded and exits 1 so the order fails visibly). It never
 touches any other session.
 
 Usage: mayor-context-guard [--check]   # prints one JSON decision line
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -40,7 +42,7 @@ LOG = os.path.join(ROOT, "var/mayor-context-guard.log")
 
 HANDOFF = """Automatic rotation by bin/mayor-context-guard ({reason}: {tokens} context tokens, conversation {age_h}h old; bounds {limit} tokens / {max_h}h).
 The previous incarnation did not write its own handoff; rebuild state from the durable sources:
-OPEN_MAIL: unknown -- run `gc mail inbox`
+OPEN_MAIL: unknown -- run `gc mail inbox`, including read-but-unactioned mail
 OPEN_DECISIONS: unknown -- check open beads with gc.needs_benjamin
 IN_FLIGHT: unknown -- check in-progress beads and `gc status`
 NEXT: re-read the above, then continue the highest-priority open work. Hand off yourself before ~60k fresh tokens."""
@@ -76,7 +78,7 @@ def read_transcript(path):
 
 
 def main(argv):
-    check = "--check" in argv or "--dry-run" in argv
+    check = "--check" in argv
     now = float(os.environ.get("MAYOR_CONTEXT_GUARD_NOW") or time.time())
     try:
         out = subprocess.run([GC, "session", "list", "--json"], cwd=ROOT,
@@ -88,9 +90,11 @@ def main(argv):
     key = (mayor or {}).get("session_key")
     if not key:
         return emit(action="skip", why="no active mayor session with a conversation id")
+    if mayor.get("attached"):
+        return emit(action="deferred-attached", conversation=key)
 
     tdir = os.environ.get("MAYOR_CONTEXT_GUARD_TRANSCRIPTS") or os.path.expanduser(
-        "~/.claude/projects/" + (mayor.get("work_dir") or ROOT).replace("/", "-").replace(".", "-"))
+        "~/.claude/projects/" + re.sub(r"[^A-Za-z0-9]", "-", mayor.get("work_dir") or ROOT))
     path = os.path.join(tdir, key + ".jsonl")
     if not os.path.isfile(path):
         return emit(action="skip", conversation=key, why=f"no transcript at {path}")
@@ -113,25 +117,31 @@ def main(argv):
     if check:
         return emit(action="rotate", reason=reason, **base)
 
-    # Self-identifying sender (tests/mail-agent-identity-test.sh): a script has
-    # no gc session of its own, so the body names it.
-    body = f"ACTION: mayor-context-guard rotated conversation {key}\n" + HANDOFF.format(
-        reason=reason, tokens=tokens, age_h=round(age / 3600, 1),
-        limit=TOKENS, max_h=round(MAX_AGE / 3600, 1))
-    subject = f"HANDOFF: automatic context rotation ({reason})"
-    mail = subprocess.run([GC, "mail", "send", ALIAS, "-s", subject, "-m", body],
-                          cwd=ROOT, capture_output=True, text=True)
+    # Reset first: a failed reset is not recorded, mails nothing and fails the
+    # order (on-order-failed), so the next run retries.
     reset = subprocess.run([GC, "session", "reset", ALIAS], cwd=ROOT, capture_output=True, text=True)
+    mail_rc = None
+    if reset.returncode == 0:
+        os.makedirs(os.path.dirname(STATE), exist_ok=True)
+        with open(STATE, "w", encoding="utf-8") as fh:
+            json.dump({"rotated": (rotated + [key])[-20:]}, fh)
+        # Self-identifying sender (tests/mail-agent-identity-test.sh): a script has
+        # no gc session of its own, so the body names it.
+        body = (f"ACTION: mayor-context-guard rotated conversation {key}\n"
+                f"STATE: ROTATED ({reason})\nEVIDENCE: var/mayor-context-guard.log\n") + HANDOFF.format(
+            reason=reason, tokens=tokens, age_h=round(age / 3600, 1),
+            limit=TOKENS, max_h=round(MAX_AGE / 3600, 1))
+        subject = f"HANDOFF: automatic context rotation ({reason})"
+        mail_rc = subprocess.run([GC, "mail", "send", ALIAS, "-s", subject, "-m", body],
+                                 cwd=ROOT, capture_output=True, text=True).returncode
     status = "rotated" if reset.returncode == 0 else "reset-failed"
-    os.makedirs(os.path.dirname(STATE), exist_ok=True)
-    with open(STATE, "w", encoding="utf-8") as fh:
-        json.dump({"rotated": (rotated + [key])[-20:]}, fh)
     os.makedirs(os.path.dirname(LOG), exist_ok=True)
     with open(LOG, "a", encoding="utf-8") as fh:
         fh.write(f"{datetime.fromtimestamp(now, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}\tstatus={status}"
                  f"\treason={reason}\tconversation={key}\ttokens={tokens}\tage_seconds={age}"
-                 f"\tmail_rc={mail.returncode}\treset_rc={reset.returncode}\n")
-    return emit(action=status, reason=reason, **base)
+                 f"\tmail_rc={mail_rc}\treset_rc={reset.returncode}\n")
+    emit(action=status, reason=reason, **base)
+    return 0 if reset.returncode == 0 else 1
 
 
 if __name__ == "__main__":
