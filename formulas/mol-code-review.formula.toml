@@ -44,7 +44,7 @@ TICKET=$(printf '%s\n' "$REVIEW_TEXT" | sed -n 's/^ticket: //p')
 FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
 "$FACTORY_ROOT/bin/code-review" brief "$TICKET_CONVOY" "$TICKET" > code-review-brief.json
 jq -r '.kind, .interface, .commit, .base, .repo, .diff.command' code-review-brief.json
-jq -r '.spec.text' code-review-brief.json | awk '/^## /{p=($0=="## Testing Decisions")} p' > code-review-spec.md
+jq -r '.spec.text' code-review-brief.json | awk '/^## /{p=(tolower($0) ~ /^## testing decisions[ \r]*$/)} p' > code-review-spec.md
 jq -r '.ticket_text.description, "", "Demonstration line: " + (.ticket_text.demonstration_line // "none")' code-review-brief.json > code-review-ticket.md
 ```
 
