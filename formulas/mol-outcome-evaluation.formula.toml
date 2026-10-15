@@ -92,7 +92,8 @@ away. Request another game with:
 ```
 
 `--wait 540` blocks until the controller has the game ready, at most 9
-minutes: run it as one shell call with a timeout above that. If `ready` is
+minutes: run it as one foreground shell call with the Bash tool
+`timeout` set to 600000 (its maximum; the default 120 s is too short). If `ready` is
 still false, run the same command once more. When true, use its `address`
 and `launch_state`. `--fresh` requests a reset at the same commit; the wait
 covers that reset too. Record one `{dataset,evidence}` in `coverage` per game. A missing
