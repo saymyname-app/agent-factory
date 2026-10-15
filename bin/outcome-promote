@@ -325,7 +325,7 @@ def starts(convoy: Convoy, repo: Repo, profile: Path, tip: str) -> str | None:
     with tempfile.TemporaryDirectory(prefix="outcome-promote-") as tmp:
         for dataset in sorted(launch.get("datasets") or {}) or [None]:
             state_file = Path(tmp) / f"launch-{dataset or 'product'}.json"
-            argv = [str(LAUNCH_TOOL), "--repo-root", str(repo.path), "start", str(profile), "--commit", tip,
+            argv = [str(LAUNCH_TOOL), "--repo-root", str(repo.path), "start", "--owner-pid", str(os.getpid()), str(profile), "--commit", tip,
                     "--timeout", str(START_TIMEOUT), "--state-file", str(state_file)]
             if dataset is not None:
                 argv += ["--dataset", dataset]

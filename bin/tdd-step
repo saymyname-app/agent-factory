@@ -347,7 +347,7 @@ class Check:
         address, or None and why it did not become healthy."""
         self._counter += 1
         state = self.work / f"launch-{self._counter}.json"
-        argv = [str(LAUNCH_TOOL), "--repo-root", str(self.repo), "start", str(Path(self.args.profile).resolve()),
+        argv = [str(LAUNCH_TOOL), "--repo-root", str(self.repo), "start", "--owner-pid", str(os.getpid()), str(Path(self.args.profile).resolve()),
                 "--commit", commit, "--state-file", str(state)]
         if self.args.dataset:
             argv += ["--dataset", self.args.dataset]
