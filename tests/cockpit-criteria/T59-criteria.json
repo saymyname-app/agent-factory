@@ -1,0 +1,7 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/request-doors-test.py::RequestDoors.test_each_door_records_a_complete_request_and_refuses_an_incomplete_one_explicitly"
+    ]
+  }
+}
