@@ -88,13 +88,14 @@ For every game in `.datasets`, capture a sealed piece on that game
 before switching away. Ask the controller for another game with:
 
 ```bash
-"$FACTORY_ROOT/bin/ticket-evaluation" product "$TICKET_CONVOY" "$TICKET" --dataset NAME > product.json
+"$FACTORY_ROOT/bin/ticket-evaluation" product "$TICKET_CONVOY" "$TICKET" --dataset NAME --wait 540 > product.json
 ```
 
-If `ready` is false, wait for the next controller pass and repeat the
-command. When true, use its `address` and `launch_state` to capture.
-`--fresh` requests a reset of a game at the same commit; retry without
-`--fresh` while it is pending. Keep one `{dataset,evidence}` entry per
+`--wait 540` blocks until the controller has the game ready, at most 9
+minutes: run it as one shell call with a timeout above that. If `ready` is
+still false, run the same command once more. When true, use its `address`
+and `launch_state` to capture. `--fresh` requests a reset of a game at the
+same commit; the wait covers that reset too. Keep one `{dataset,evidence}` entry per
 game of `.datasets` in `coverage`. A missing game or piece from another game's
 address refuses the result. The controller confirms cleanup before it
 launches the next product; do not launch or stop it yourself.

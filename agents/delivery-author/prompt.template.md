@@ -257,3 +257,8 @@ teardown work, run it even if earlier work failed.
 - `gc.kind=check|fanout|scope-check|workflow-finalize` are handled by the
   implicit `workflow-control` lane. Normal workers should not receive them.
 - Do not say "drained" without actually running `gc runtime drain-ack`.
+- Wait for a slow result in one blocking call: a tool's own `--wait` flag,
+  or the command in the foreground with a timeout above its run time, or a
+  background task whose completion wakes you after you end the turn. A
+  claimed step stays yours while your session lives (af-cdwo4z): waiting
+  needs no keepalive heartbeat and no sleep-then-check calls.

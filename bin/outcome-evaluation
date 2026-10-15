@@ -102,6 +102,7 @@ FETCH = ("import sys, urllib.request\n"
          "    sys.stdout.write(answer.read().decode('utf-8', 'replace'))\n")
 
 EXIT_REFUSED = 1
+PRODUCT_POLL_SECONDS = 10  # product --wait: ask again at this pace
 EXIT_UNRULED = 3
 EXIT_NOT_NEW_FLOW = 4
 # What bin/dispatch-door exits with when it defers a dispatch (EX_TEMPFAIL).
@@ -761,6 +762,21 @@ def cmd_settle(args: argparse.Namespace) -> int:
 
 
 def cmd_product(args: argparse.Namespace) -> int:
+    """`--wait N` blocks until the product is ready or N seconds pass: one
+    call instead of an agent's sleep-and-ask loop (af-oowsc2). Only the first
+    ask carries `--fresh`; the repeats wait for that reset."""
+    deadline = time.monotonic() + max(args.wait, 0)
+    while True:
+        answer = ask_product(args)
+        remaining = deadline - time.monotonic()
+        if answer["ready"] or remaining <= 0:
+            print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
+            return 0
+        args.fresh = False
+        time.sleep(min(PRODUCT_POLL_SECONDS, remaining))
+
+
+def ask_product(args: argparse.Namespace) -> dict[str, Any]:
     if os.environ.get("DELIVERY_ROLE_READ_ONLY") != "1":
         raise Refusal("un produit à la demande se demande depuis le rôle Evaluator")
     # Serialize the read and the requested switch with settle: otherwise a
@@ -781,16 +797,13 @@ def cmd_product(args: argparse.Namespace) -> int:
         if (active and active[0]["dataset"] == args.dataset and running(active[0]["state_file"])
                 and not args.fresh and not wanted):
             entry = active[0]
-            print(json.dumps({"ok": True, "ready": True, "dataset": entry["dataset"],
-                              "address": entry["address"], "launch_state": entry["state_file"],
-                              "commit": request["commit"]}, indent=2, sort_keys=True, ensure_ascii=False))
-            return 0
+            return {"ok": True, "ready": True, "dataset": entry["dataset"],
+                    "address": entry["address"], "launch_state": entry["state_file"],
+                    "commit": request["commit"]}
         state_write("want-outcome-product", args.convoy, "--commit", request["commit"],
                     "--dataset", args.dataset, *(["--fresh"] if args.fresh else []))
-        print(json.dumps({"ok": True, "ready": False, "dataset": args.dataset, "commit": request["commit"],
-                          "next": "réessayer après la prochaine passe du contrôleur"},
-                         indent=2, sort_keys=True, ensure_ascii=False))
-        return 0
+        return {"ok": True, "ready": False, "dataset": args.dataset, "commit": request["commit"],
+                "next": "réessayer après la prochaine passe du contrôleur"}
 
 
 # --- brief: what the Evaluator of the end is given --------------------------------------
@@ -845,7 +858,7 @@ def cmd_brief(args: argparse.Namespace) -> int:
         "environments": [{"dataset": entry["dataset"], "address": entry["address"], "launch_state": entry["state_file"]}
                          for entry in active],
         "datasets": request.get("datasets") or [entry["dataset"] for entry in request["environment"]],
-        "product": [str(BIN / PROGRAM), "product", args.convoy, "--dataset", "<declared dataset>"],
+        "product": [str(BIN / PROGRAM), "product", args.convoy, "--dataset", "<declared dataset>", "--wait", "540"],
         "entry_points": launch_block.get("entry_points") or [],
         "states": list(STATES), "unobservable_causes": list(CAUSES),
         "findings": [{"finding": finding["id"], "ticket": finding["ticket"], "text": finding["text"],
@@ -1147,6 +1160,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--profile")
     p.add_argument("--dataset", required=True)
     p.add_argument("--fresh", action="store_true")
+    p.add_argument("--wait", type=int, default=0, metavar="SECONDS")
     command("record", cmd_record).add_argument("--file")
     command("verdict", cmd_verdict)
     command("show", cmd_show)
