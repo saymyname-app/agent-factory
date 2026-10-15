@@ -27,7 +27,8 @@
 #
 # A test that exits 77 says this host cannot run it (for example the capture
 # browser refused by the host sandbox, af-yb2cb5): it is SKIPPED, not failed,
-# with its last `SKIP:` line as the reason. Each SKIPPED line is printed even
+# with its last `SKIP:` line as the reason (exit 77 without a `SKIP:` line
+# fails: a fixture's own 77 leaking through set -e must not hide a regression). Each SKIPPED line is printed even
 # under --quiet, and the bead a failing run files lists the skipped tests
 # too; skips alone file no bead and page nobody. A test exits 77 only on a
 # precise, cheap probe of its host (tests/lib/capture-browser.sh), so a real
@@ -47,7 +48,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --quiet) QUIET=1 ;;
     --list) LIST=1 ;;
-    -h|--help) sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -105,10 +106,9 @@ for t in ${TESTS[@]+"${TESTS[@]}"}; do
   rc=$?
   if [ "$rc" -eq 0 ]; then
     say "local-only-tests: PASS $t"
-  elif [ "$rc" -eq 77 ]; then
-    why=$(printf '%s\n' "$OUTPUT" | grep '^SKIP:' | tail -1)
-    HOST_SKIPPED+=("$t: ${why:-exit 77 without a SKIP: line}")
-    printf 'local-only-tests: SKIPPED %s — %s\n' "$t" "${why:-exit 77 without a SKIP: line}"
+  elif [ "$rc" -eq 77 ] && why=$(printf '%s\n' "$OUTPUT" | grep '^SKIP:' | tail -1) && [ -n "$why" ]; then
+    HOST_SKIPPED+=("$t: $why")
+    printf 'local-only-tests: SKIPPED %s — %s\n' "$t" "$why"
   else
     [ "$rc" -eq 124 ] && OUTPUT="$OUTPUT
 stopped after ${TEST_TIMEOUT}s"

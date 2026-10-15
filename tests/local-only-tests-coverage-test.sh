@@ -154,6 +154,16 @@ grep -q 'SKIPPED tests/host-cannot-test.sh.*af-yb2cb5' <<<"$out" || fail "the sk
 [ ! -e "$TMP/door.calls" ] || fail "a run with nothing failed paged somebody"
 if grep -q 'bd create' "$TMP/gc.calls" 2>/dev/null; then fail "a run with nothing failed filed a bead"; fi
 
+# exit 77 alone (e.g. a fixture's own 77 leaking through set -e) is a failure:
+# only a test that says why with a SKIP: line is skipped.
+printf '#!/usr/bin/env bash\n# ci: local-only — fake test exiting 77 silently\nexit 77\n' >"$FAKE/tests/silent-77-test.sh"
+chmod +x "$FAKE/tests/silent-77-test.sh"
+rm -f "$TMP/gc.calls" "$TMP/door.calls"
+if out=$(run --quiet); then fail "a test exiting 77 without a SKIP: line was not counted as failed: $out"; fi
+if grep -q 'SKIPPED tests/silent-77-test.sh' <<<"$out"; then fail "a silent exit 77 was skipped: $out"; fi
+grep -q 'tests/silent-77-test.sh' "$TMP/gc.calls" || fail "the bead does not name the silent exit 77 as failing"
+rm -f "$FAKE/tests/silent-77-test.sh" "$TMP/gc.calls" "$TMP/door.calls"
+
 # --- 6. The capture-browser probe skips on the sandbox refusal only ---------
 fake_browser() { # <name> <stderr line> <exit code>
   printf '#!/usr/bin/env bash\necho %q >&2\nexit %s\n' "$2" "$3" >"$TMP/bin/$1"
