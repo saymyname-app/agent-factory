@@ -14,7 +14,10 @@ wake_mode = "fresh"
 # works. Once it has rendered its evaluation it is offered nothing, and leaves;
 # the next evaluation starts a new session, or wakes this one in a fresh
 # conversation. bin/convoy-state refuses what a conversation that already
-# served hands in anyway.
+# served hands in anyway: a conversation is Claude Code's
+# CLAUDE_CODE_SESSION_ID, else (other providers) the session generation
+# GC_RUNTIME_EPOCH, raised on every wake, which is right only because this
+# role uses wake_mode = "fresh" (af-bb69uq; docs/CONVOY_STATE.md).
 work_query = '''sh -c 'for id in "$GC_SESSION_ID" "$GC_SESSION_NAME" "$GC_ALIAS"; do [ -z "$id" ] && continue; r=$(bd list --status in_progress --assignee="$id" --json --limit=1 2>/dev/null); [ -n "$r" ] && [ "$r" != "[]" ] && printf "%s" "$r" && exit 0; done; for id in "$GC_SESSION_ID" "$GC_SESSION_NAME" "$GC_ALIAS"; do [ -z "$id" ] && continue; r=$(bd ready --assignee="$id" --json --limit=1 2>/dev/null); [ -n "$r" ] && [ "$r" != "[]" ] && printf "%s" "$r" && exit 0; done; mine=$(for id in "$GC_SESSION_ID" "$GC_SESSION_NAME" "$GC_ALIAS"; do [ -z "$id" ] && continue; if [ "$id" = "$GC_ALIAS" ]; then bd list --all --assignee="$id" --metadata-field "gc.session_id=$GC_SESSION_ID" --json --limit=0 2>/dev/null; else bd list --all --assignee="$id" --json --limit=0 2>/dev/null; fi; done | jq -sc "[.[][] | .metadata[\"gc.root_bead_id\"] // empty] | unique" 2>/dev/null); r=$(bd ready --metadata-field "gc.routed_to=$1" --unassigned --exclude-type=epic --json --sort oldest --limit=20 2>/dev/null); [ -n "$r" ] || r="[]"; case "$mine" in ""|"[]") ;; *) r=$(printf "%s" "$r" | jq -c --argjson mine "$mine" "[.[] | select(.metadata[\"gc.root_bead_id\"] as \$root | \$mine | index(\$root))]" 2>/dev/null); [ -n "$r" ] || r="[]" ;; esac; printf "%s" "$r"' -- delivery-evaluator'''
 
 # Fallback only, same reason as delivery-reviewer.

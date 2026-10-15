@@ -310,7 +310,7 @@ if [ "${GRAPH_REVIEW_TRIAL_SESSION:-0}" != 1 ]; then
   exit 0
 fi
 
-gc supervisor run >"$TRIAL/supervisor.out" 2>&1 </dev/null &
+env -u CLAUDE_CODE_SESSION_ID gc supervisor run >"$TRIAL/supervisor.out" 2>&1 </dev/null &
 sleep 3
 gc --city "$CITY" start >"$TRIAL/start.out" 2>&1 || true
 

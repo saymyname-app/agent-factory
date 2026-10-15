@@ -3583,11 +3583,29 @@ RENDERED_BY = ((KEY_TEST_REVIEW, "la relecture des tests"), (KEY_CODE_REVIEW, "l
                (KEY_EVALUATION, "la Ticket Evaluation"))
 
 
+def session_conversation() -> str:
+    """The conversation of the running session (T42). "c:" + the
+    CLAUDE_CODE_SESSION_ID Claude Code exports to its child processes: the
+    conversation itself, new for a fresh one (a relaunch in the warm tmux box
+    included), kept by a resumed one. Else (Codex, stubs) "g" + Gas City's
+    GC_RUNTIME_EPOCH, the session generation, raised on every wake: one
+    conversation only under wake_mode = "fresh" (delivery-reviewer,
+    delivery-evaluator), and a relaunch in the warm box keeps it. Never
+    GC_CONTINUATION_EPOCH: gc 1.5.0 raises it only after a drain-ack, so a
+    session woken fresh after an idle sleep or a crash keeps it. The prefixes
+    keep a new value from ever equalling an epoch recorded before. Neither:
+    "" (unknown)."""
+    conversation = os.environ.get("CLAUDE_CODE_SESSION_ID", "").strip()
+    if conversation:
+        return f"c:{conversation}"
+    epoch = os.environ.get("GC_RUNTIME_EPOCH", "").strip()
+    return f"g{epoch}" if epoch else ""
+
+
 def conversation_of(given: dict[str, Any]) -> dict[str, str]:
-    """The conversation a session rendered in, when it says so: Gas City's
-    GC_CONTINUATION_EPOCH, raised each time the session starts a fresh
-    provider conversation and kept when it resumes one (gc 1.5.0 wakes a
-    drained session again under the same name). Empty or absent: unknown."""
+    """The conversation a session rendered in, when it says so (see
+    session_conversation; records from before af-bb69uq carry the
+    continuation epoch instead). Empty or absent: unknown."""
     if given.get("conversation") in (None, ""):
         return {}
     return {"conversation": single_line(given["conversation"], "conversation de la session")}

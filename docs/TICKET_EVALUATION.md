@@ -291,8 +291,8 @@ same way (Spec §5, T42; `docs/TEST_REVIEW.md`, « A fresh session per
 review »): the launch it answered is marked `refused` and gave no result.
 `agents/delivery-evaluator/agent.toml` carries the same work query as the
 reviewer and `wake_mode = "fresh"`, and `record` signs with
-`GC_SESSION_NAME`, else `GC_SESSION_ID`, and `GC_CONTINUATION_EPOCH` as
-`conversation`.
+`GC_SESSION_NAME`, else `GC_SESSION_ID`, and `"c:"` + `CLAUDE_CODE_SESSION_ID`, else `"g"` + `GC_RUNTIME_EPOCH` as
+`conversation` (`docs/CONVOY_STATE.md`).
 
 A dispatch the door refuses or defers launched nothing: it counts no launch
 and its bead is closed. A deferral is listed under `deferred` and tried

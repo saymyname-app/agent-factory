@@ -552,7 +552,7 @@ TIP_B=$(author_finishes "$B")
 before_merge=$(gate_check "$A" --before-merge) || true
 echo "$(date -u +%H:%M:%S) marque posée, critères gelés, branche $INTEGRATION ouverte, deux tickets terminés par leur auteur (A $TIP_A, B $TIP_B) ; porte avant fusion sur A, avant toute revue : conditions manquantes $(printf '%s' "$before_merge" | jq -c '.missing')"
 
-(gc supervisor run > "$TRIAL/supervisor.out" 2>&1 &)
+(env -u CLAUDE_CODE_SESSION_ID gc supervisor run > "$TRIAL/supervisor.out" 2>&1 &)
 sleep 3
 gc --city "$CITY" start >/dev/null 2>&1 || true
 grep -q "Controller: supervisor-managed" <<<"$(gc --city "$CITY" status 2>/dev/null)" || fail "the isolated city's controller did not start"

@@ -337,7 +337,7 @@ gc bd update "$A" --set-metadata "gc.scope_paths=$FIXTURE/tests/*,$FIXTURE/app.p
 echo "relevé d'essai — formule de l'auteur en cité isolée ($(gc version 2>/dev/null | head -1), N=$CEILING, aucun Mayor, auteur scripté)"
 echo "convoi $CONVOY (Spec $SPEC) : A=$A (suit la séquence) B=$B (saute le rouge) C=$C (Planning Exception)"
 
-(gc supervisor run > "$TRIAL/supervisor.out" 2>&1 &)
+(env -u CLAUDE_CODE_SESSION_ID gc supervisor run > "$TRIAL/supervisor.out" 2>&1 &)
 sleep 3
 gc --city "$CITY" start >/dev/null 2>&1 || true
 grep -q "Controller: supervisor-managed" <<<"$(gc --city "$CITY" status 2>/dev/null)" || fail "the isolated city's controller did not start"

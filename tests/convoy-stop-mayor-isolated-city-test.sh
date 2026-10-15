@@ -285,7 +285,7 @@ echo "convoi marqué $MARKED : T1=$T1 T2=$T2 T3=$T3 (T3 bloqué par T1 et T2) ; 
 snapshot() { for b in "$MARKED" "${TICKETS[@]}"; do gc bd show "$b" --json | jq -S '.[0] | del(.updated_at)'; done; }
 BEFORE=$(snapshot)
 
-(gc supervisor run > "$TRIAL/supervisor.out" 2>&1 &)
+(env -u CLAUDE_CODE_SESSION_ID gc supervisor run > "$TRIAL/supervisor.out" 2>&1 &)
 sleep 3
 gc --city "$CITY" start >/dev/null 2>&1 || true
 grep -q "Controller: supervisor-managed" <<<"$(gc --city "$CITY" status 2>/dev/null)" || fail "the isolated city's controller did not start"
