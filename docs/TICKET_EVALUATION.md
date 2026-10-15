@@ -365,7 +365,9 @@ reference receive neither brief field.
   `bin/prototype-fidelity` (`docs/PROTOTYPE_FIDELITY.md`); the gate that
   runs them for a ticket is T19's. The fresh author session after a refusal, its single
   correction round and the stop of a ticket still refused are
-  `bin/correction-round`'s (`docs/CORRECTION_ROUND.md`). Nothing lifts a stop yet.
+  `bin/correction-round`'s (`docs/CORRECTION_ROUND.md`). Nothing lifts a stop
+  but `evaluation_no_result`, resumed by `bin/convoy-advance`
+  (`docs/CONVOY_ADVANCE.md`).
 
 ## Proof
 

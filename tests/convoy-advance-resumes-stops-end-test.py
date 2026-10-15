@@ -189,15 +189,34 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
 
     @first.staged
     def evaluation_stopped(self):
-        """T1 finished on the integration branch, then stopped as bin/ticket-evaluation
-        stops it when two launches of its Ticket Evaluation gave no result,
-        and that stop raised to the operator."""
+        """T1, a slice, finished on the integration branch, then stopped as
+        bin/ticket-evaluation stops it: its evaluation request left open
+        with two launches that gave no result, the stop raised to the
+        operator."""
         self.integrated()
         self.resumable()
         self.code_reviewed("favorable")
         self.evaluated()
+        self.env.update({
+            "TICKET_EVALUATION_CANCEL_BIN": str(first.ROOT / "tests" / "fixtures" / "ticket-evaluation" / "cancel"),
+            "TICKET_EVALUATION_CANCEL_LOG": str(self.tmp / "evaluation-cancel.log"),
+        })
         self.advance(CONVOY)
-        self.finished(T1)
+        tip = self.finished(T1)
+        bead = self.bead(T1)
+        self.edit(T1, metadata={**bead["metadata"], "gc.ticket_kind": "vertical_slice",
+                                "gc.flow.demonstration_line": "La page affiche 3",
+                                "gc.flow.user_stories": json.dumps({"stories": ["1"]})},
+                  description="## Acceptance criteria\n\n- [ ] La page affiche 3\n\n" + bead["description"])
+        request = self.tmp / "evaluation-request.json"
+        request.write_text(json.dumps({
+            "roles": {"author": None, "evaluator": None, "same_provider": None, "other_declared": []},
+            "environment": [{"dataset": None, "address": "http://127.0.0.1:9",
+                             "state_file": str(self.tmp / "launches" / "gone.json")}]}))
+        self.run_ok(STATE, "open-evaluation", CONVOY, T1, "--commit", tip, "--file", request)
+        for launch in ("fx-e1", "fx-e2"):
+            self.run_ok(STATE, "launch-evaluation", CONVOY, T1, "--bead", launch)
+        self.assertEqual(2, len(self.shown_state(T1)["evaluation"]["request"]["launches"]))
         self.stop_without_result()
         self.write_log.write_text("")
 
@@ -224,6 +243,8 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         # The stop is lifted, not erased: it is kept on the resume that lifted it.
         self.assertEqual(self.NO_RESULT, shown["resume"]["entries"][-1]["stop"]["reason"])
         self.assertEqual([], [line for line in self.needs() if T1 in line])
+        # The exit taken back, the evaluation left open on it is withdrawn in the same pass.
+        self.assertIsNone(shown["evaluation"].get("request"))
         # Stopped again on the same integration tip: it stays with the operator.
         self.stop_without_result()
         self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))

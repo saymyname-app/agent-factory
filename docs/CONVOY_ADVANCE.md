@@ -850,8 +850,9 @@ per cause of resume, a session ended without an exit, a resume bead closed
 without the ticket being taken, a resume that cannot be sent (counted once,
 sent by the next pass), no `resume` setting, the ceiling, a stopped ticket
 never resumed, a ticket stopped without evaluation result resumed on
-itself once per integration tip, its stop kept and its request withdrawn,
-parked at its third resume, and left stopped once its request is answered, the third resume parking the ticket and its descendants
+itself once per integration tip, its stop kept, its request and its open
+evaluation withdrawn, and left stopped once its request is answered, the
+third resume parking the ticket and its descendants
 whatever the causes, the unrelated tickets still starting, exactly one
 grouped request naming each parked ticket and its cause, none while a
 ticket that is not parked is left, one for several passes, the answer that
