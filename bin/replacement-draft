@@ -97,7 +97,45 @@ def parsed_draft(bead: dict[str, Any]) -> dict[str, Any]:
     return value
 
 
+REVISION_KEYS = {"scope", "acceptance_criteria", "demonstration_line", "what_it_delivers",
+                 "drop_establishes_launch_recipe"}
+CRITERION_FIELDS = ("entry_point", "observable", "false_if")
+
+
+def text(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def revision(path: str) -> dict[str, Any]:
+    """The bounded, owner-approved revision of the stopped ticket a replacement may carry."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            value = json.load(handle)
+    except (OSError, ValueError) as exc:
+        raise Refusal(f"refused: revision file {path} is not readable JSON; nothing written") from exc
+    require(isinstance(value, dict) and value, "revision must be a non-empty JSON object")
+    require(not set(value) - REVISION_KEYS,
+            f"revision carries unknown keys {sorted(set(value) - REVISION_KEYS)} (allowed: {sorted(REVISION_KEYS)})")
+    if "scope" in value:
+        scope = value["scope"]
+        require(isinstance(scope, dict) and set(scope) == {"paths"} and isinstance(scope["paths"], list)
+                and scope["paths"] and all(text(path) for path in scope["paths"]),
+                "revision scope must be {paths: [non-empty strings]}")
+    if "acceptance_criteria" in value:
+        criteria = value["acceptance_criteria"]
+        require(isinstance(criteria, list) and criteria and all(
+            isinstance(item, dict) and set(item) == set(CRITERION_FIELDS) and all(text(item[f]) for f in CRITERION_FIELDS)
+            for item in criteria), "revision acceptance_criteria must be a non-empty list of "
+            "{entry_point, observable, false_if} non-empty strings")
+    for key in ("demonstration_line", "what_it_delivers"):
+        require(key not in value or text(value[key]), f"revision {key} must be a non-empty string")
+    require(value.get("drop_establishes_launch_recipe", True) is True,
+            "revision drop_establishes_launch_recipe must be true")
+    return value
+
+
 def create(args: argparse.Namespace) -> dict[str, Any]:
+    revised = revision(args.revision_file) if args.revision_file else None
     decision = show(args.decision)
     evidence = args.evidence.strip()
     require(evidence and any(evidence in text for text in strings(comments(args.decision))),
@@ -165,11 +203,25 @@ def create(args: argparse.Namespace) -> dict[str, Any]:
     replacement["title"] = f"{original.get('title', old_key)} — replacement of {old_key}"
     criteria_digest = digest(canonical(criteria))
     scope_digest = digest("\n".join(str(path) for path in scope_paths))
+    revised_note, revised_meta = "", {}
+    if revised is not None:
+        for key in ("scope", "acceptance_criteria", "demonstration_line", "what_it_delivers"):
+            if key in revised:
+                replacement[key] = copy.deepcopy(revised[key])
+        if revised.get("drop_establishes_launch_recipe"):
+            replacement.pop("establishes_launch_recipe", None)
+        revised_paths = (replacement.get("scope") or {}).get("paths") or []
+        revised_meta = {
+            "replacement_revised_criteria_digest": digest(canonical(replacement["acceptance_criteria"])),
+            "replacement_revised_scope_digest": digest("\n".join(str(path) for path in revised_paths)),
+        }
+        revised_note = (f"; revised criteria {revised_meta['replacement_revised_criteria_digest']} "
+                        f"scope {revised_meta['replacement_revised_scope_digest']}")
     citation = (f" Authorized replacement: decision {args.decision}; stopped ticket {args.stopped_ticket} ({old_key}); "
                 f"convoy {args.convoy}; Spec {spec_id} at {spec_digest}; criteria {criteria_digest}; "
-                f"scope {scope_digest}; useful commit {args.useful_commit}. The stopped ticket, stop, evidence, "
-                "refusals and counters remain untouched.")
-    replacement["what_it_delivers"] = str(original.get("what_it_delivers") or "").rstrip() + citation
+                f"scope {scope_digest}{revised_note}; useful commit {args.useful_commit}. The stopped ticket, stop, "
+                "evidence, refusals and counters remain untouched.")
+    replacement["what_it_delivers"] = str(replacement.get("what_it_delivers") or "").rstrip() + citation
     draft["tickets"] = [replacement if ticket is original else ticket for ticket in tickets]
     for ticket in draft["tickets"]:
         if isinstance(ticket, dict) and isinstance(ticket.get("blocked_by"), list):
@@ -191,6 +243,7 @@ def create(args: argparse.Namespace) -> dict[str, Any]:
         "replacement_convoy": args.convoy, "replacement_commit": args.useful_commit,
         "replacement_criteria_digest": str(criteria_record.get("digest") or criteria_digest),
         "replacement_scope_digest": scope_digest, "replacement_author_session": args.author_session,
+        **revised_meta,
     }
     created = bd("create", "--id", identifier, "--title", f"Replacement {args.replacement_id} for {old_key}",
                  "--type", "task", "--labels", "ticket-graph-draft", "--metadata", canonical(draft_meta),
@@ -207,6 +260,7 @@ def parser() -> argparse.ArgumentParser:
     for name in ("decision", "evidence", "stopped-ticket", "convoy", "source-draft", "replacement-id",
                  "useful-commit", "planning-exception", "approved-by", "author-session"):
         create_parser.add_argument("--" + name, required=True)
+    create_parser.add_argument("--revision-file")
     return value
 
 

@@ -70,6 +70,17 @@ bin/replacement-draft create --decision <decision-bead> --evidence '<exact recor
   --author-session <po-agent/session>
 ```
 
+When the project owner approved a reduced scope for the replacement, add
+`--revision-file <json>`: an object whose only allowed keys are `scope`
+(`{paths: [non-empty strings]}`), `acceptance_criteria` (non-empty list of
+`{entry_point, observable, false_if}` non-empty strings), `demonstration_line`,
+`what_it_delivers` and `drop_establishes_launch_recipe: true`; any other key or
+shape refuses. The revision is applied after the copy and stays traceable: the
+draft keeps the stopped ticket's criteria/scope digests and adds
+`replacement_revised_criteria_digest` / `replacement_revised_scope_digest`,
+also cited in the "Authorized replacement" sentence. The `--evidence` must be
+the owner's recorded approval of that reduced scope, as for any replacement.
+
 Every cited equality is checked before the sole `bd create`; missing or stale
 evidence refuses with no write. The resulting draft remains only an input to
 the existing Planning Exception and `bd-patch` doors.
