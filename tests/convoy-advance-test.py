@@ -1547,12 +1547,16 @@ class ConvoyAdvanceTest(ConvoyAdvanceHarness):
         observed = next(c for c in first["convoys"] if c["id"] == CONVOY)
         self.assertEqual([(T1, tip, "vert")],
                          [(entry["id"], entry["commit"], entry["result"]) for entry in observed["fidelity"]["checked"]], observed)
-        # The multi-game fixture Evaluator finishes after dispatch; the
-        # next controller pass reads its recorded verdict and integrates.
+        # The ticket names one game (af-kdxk6k): the fixture Evaluator may
+        # finish within the first pass; a pass at most later, the recorded
+        # verdict is read and the ticket integrated and closed.
         answer = self.advance(CONVOY)
         result = next(c for c in answer["convoys"] if c["id"] == CONVOY)
-        self.assertEqual([T1], [entry["id"] for entry in result["integration"]["merged"]], result)
-        self.assertEqual([T1], [entry["id"] for entry in result["ticket_end"]["closed"]], result)
+        passes = (observed, result)
+        self.assertEqual([T1], [entry["id"] for one in passes
+                                for entry in (one.get("integration") or {}).get("merged", [])], passes)
+        self.assertEqual([T1], [entry["id"] for one in passes
+                                for entry in (one.get("ticket_end") or {}).get("closed", [])], passes)
         shown = self.shown(T1)
         self.assertEqual((tip, "vert"), (shown["fidelity"]["commit"], shown["fidelity"]["state"]))
         fidelity = shown["gates"]["ticket_end"]["conditions"][3]
