@@ -150,10 +150,14 @@ class Harness(unittest.TestCase):
             "tickets": {ticket["id"]: answers(ticket["checks"]) for ticket in brief["tickets"]}}))
         self.assertEqual(0, review("record", draft_id, "--verdict-file", str(verdict)).returncode)
 
-    def add_draft(self, draft_id, draft, **kwargs):
+    def add_draft(self, draft_id, draft, reviewed=True, **kwargs):
+        """A revision; an approved one comes with its graph review, as a
+        first publication does (af-8mbftn), a repair-only one needs none."""
         state = self.state()
         state["beads"][draft_id] = {"id": draft_id, **self.draft_bead(self.dump(draft), **kwargs)}
         self.state_path.write_text(json.dumps(state))
+        if kwargs.get("approved", True) and reviewed:
+            self.review_graph(draft_id)
 
     def amend_spec(self, text):
         state = self.state()
@@ -658,11 +662,7 @@ class PatchDoorTest(Harness):
         return draft
 
     def propose(self, draft, approved=True, draft_id="draft-2", revises=None, reviewed=True):
-        """An approved revision comes with its graph review, as a first
-        publication does (af-8mbftn); a repair-only one needs none."""
-        self.add_draft(draft_id, draft, approved=approved, revises_digest=revises or self.first["graph_digest"])
-        if approved and reviewed:
-            self.review_graph(draft_id)
+        self.add_draft(draft_id, draft, reviewed, approved=approved, revises_digest=revises or self.first["graph_digest"])
 
     def refused(self, *mentions, extra=()):
         return self.assert_refused_and_nothing_written(lambda: self.patch(extra=extra), "rien n'est écrit", *mentions)
