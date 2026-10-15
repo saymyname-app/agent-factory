@@ -3607,10 +3607,6 @@ def cmd_set_tdd(args: argparse.Namespace) -> int:
             f"les tests de {args.ticket} sont gelés : un nouveau {'rouge' if step == 'red' else 'gel'} "
             "ne s'enregistre qu'au commit de l'amendement"
         )
-    if step == "freeze" and amended_at != commit:
-        # Spec §5: the criterion tests are read by a reviewer between red and
-        # freeze. An amended test is read by the code review instead (§6).
-        require_favorable_test_review(metadata, commit)
     if step == "amendment":
         if "freeze" not in known:
             raise Refusal("amendement sans gel : il n'y a aucun test gelé à amender")
@@ -3621,25 +3617,6 @@ def cmd_set_tdd(args: argparse.Namespace) -> int:
     values = {TDD_PREFIX + step: encode(record)}
     write_metadata(args.ticket, values)
     return done(args.convoy, args.ticket, values)
-
-
-def require_favorable_test_review(metadata: dict[str, Any], commit: str) -> None:
-    """The freeze of a ticket's criterion tests follows a favorable review
-    of those tests, given at the same commit, with no other review open."""
-    refusal = "gel sans verdict favorable de la relecture des tests de critère (bin/test-review)"
-    if KEY_TEST_REVIEW not in metadata:
-        raise Refusal(f"{refusal} : aucune relecture n'est enregistrée")
-    try:
-        record = test_review_record(metadata[KEY_TEST_REVIEW])
-    except Refusal as exc:
-        raise Refusal(f"{refusal} : relecture illisible ({exc})") from exc
-    if "request" in record:
-        raise Refusal(f"{refusal} : une relecture est demandée et n'a pas rendu son verdict")
-    last = record["rounds"][-1] if record["rounds"] else None
-    if last is None or last["verdict"] != "favorable":
-        raise Refusal(f"{refusal} : la dernière relecture refuse au moins un test")
-    if last["commit"] != commit:
-        raise Refusal(f"{refusal} : la relecture porte sur le commit {last['commit']}, le gel sur {commit}")
 
 
 def review_target(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:

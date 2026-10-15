@@ -124,7 +124,6 @@ class FixtureCityOracleTest(first.FixtureCityOracleHarness):
 
     def test_a_state_of_the_author_written_by_convoy_state_and_not_by_its_gate_fails_the_oracle(self):
         for fault, state, gate in (("red", "« rouge »", "tdd-step red"), ("freeze", "« gel »", "tdd-step freeze"),
-                                   ("review", "« relecture des tests »", "test-review review"),
                                    ("exit", "« terminé »", "ticket-exit exit")):
             with self.subTest(fault=fault):
                 proc = self.deliver_with_a_direct_writer("one-ticket-end-to-end.json", fault)

@@ -363,10 +363,9 @@ class TestReviewTest(unittest.TestCase):
                          (round_["verdict"], round_["commit"], round_["recorded_by"]))
         self.assertEqual({COUNT_ID: {"state": "unfavorable", "reason": STATUS_ONLY}, HEALTH_ID: {"state": "favorable"}},
                          round_["tests"])
+        # ADR-0030 L3: the freeze no longer reads the test review.
         frozen = self.tdd("freeze")
-        self.assertEqual(EXIT_REFUSED, frozen.returncode, frozen.stdout)
-        self.assertIn("relecture", json.loads(frozen.stdout)["error"])
-        self.assertNotIn("freeze", self.shown()["tdd"])
+        self.assertEqual(0, frozen.returncode, frozen.stdout)
         self.assertIsNone(self.shown()["stop"])
         self.assertEqual([], self.escalation_list())
 
@@ -534,9 +533,9 @@ class TestReviewTest(unittest.TestCase):
         self.assertEqual(1, len(self.launches()))
         self.assertEqual(1, len(self.shown()["test_review"]["request"]["launches"]))
         self.assertIsNone(self.shown()["stop"])
+        # ADR-0030 L3: an open review no longer holds the freeze.
         frozen = self.tdd("freeze")
-        self.assertEqual(EXIT_REFUSED, frozen.returncode, frozen.stdout)
-        self.assertIn("relecture", json.loads(frozen.stdout)["error"])
+        self.assertEqual(0, frozen.returncode, frozen.stdout)
 
     def test_the_advance_pass_settles_a_review_left_without_result(self):
         """What bin/convoy-advance runs: no author session is needed for the

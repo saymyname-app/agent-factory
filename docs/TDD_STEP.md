@@ -9,9 +9,10 @@ pass. The author writes the tests and the code; no sentence of the author is
 a proof. A convoy without the mark is not touched (exit 4).
 
 The author formula calls it at its red and code steps, and its gates read
-what it proved (`docs/TICKET_AUTHOR.md`). Between `red` and `freeze` the
-test reviewer reads the tests (`bin/test-review`, `docs/TEST_REVIEW.md`):
-`freeze` refuses without its favorable verdict.
+what it proved (`docs/TICKET_AUTHOR.md`). No test review stands between
+`red` and `freeze` (ADR-0030 L3): the code review reads the criterion tests
+after the green (`docs/CODE_REVIEW.md`); a `gc.flow.test_review` left on a
+ticket in flight is not read.
 
 ```bash
 ./bin/tdd-step red          af-convoy af-t1 --repo <ticket worktree> --profile <descriptor.json> --dataset content \
@@ -129,15 +130,6 @@ tree (a store inside a Git repository is refused) and sealed. It is refused
 without a red proof at the same commit: a commit added after the red means
 the red is replayed first.
 
-It is also refused without a favorable verdict of the test reviewer on these
-very tests (T13, `docs/TEST_REVIEW.md`): no verdict recorded for the ticket
-(« aucun verdict n'est enregistré »), a review still open, a last verdict
-that refuses a test (each named with its reason), a verdict given at another
-commit, or a verdict bound to other fingerprints than those of the files to
-freeze (« d'autres empreintes de tests », each differing file named). The
-freeze that ends an amendment asks for none: an amended test is read by the
-code review.
-
 ## Green
 
 `green` verifies the registry through `evidence-capture verify` (a registry
@@ -203,8 +195,8 @@ The control is on the files, not on what the command runs: a
 ## Limits
 
 - The scripts prove the order and the outcomes, not that a test observes its
-  criterion: that is the test reviewer's question, asked between red and
-  freeze (`docs/TEST_REVIEW.md`).
+  criterion: that is the code reviewer's question, asked after the green
+  (`docs/CODE_REVIEW.md`, ADR-0030 L3).
 - `amend` proves the amended tests red at the start commit; it does not
   re-check that only the test perimeter changed, since the code of the
   ticket is written by then.

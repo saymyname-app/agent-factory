@@ -19,9 +19,8 @@ fermé hors porte fait échouer l'oracle.
 Pendant ce parcours l'oracle enregistre lui-même les commandes du flux
 exécutées : le driver les lance depuis le répertoire reçu dans
 `FIXTURE_CITY_FLOW_BIN`, rien de ce qu'il déclare n'est utilisé. Chaque état
-de l'étape d'auteur (rouge, gel, relecture des tests, vert, Handoff,
-terminé) doit avoir été écrit par sa porte (`tdd-step`, `test-review
-review`, `ticket-exit exit`) ; un état écrit hors de sa porte, ou un ticket
+de l'étape d'auteur (rouge, gel, vert, Handoff, terminé) doit avoir été
+écrit par sa porte (`tdd-step`, `ticket-exit exit`) ; un état écrit hors de sa porte, ou un ticket
 fermé sans être passé par les portes de l'auteur, fait échouer l'oracle
 (T37). Le résultat nomme les commandes vues (`interfaces.flow`) et le nombre
 de tickets passés par toutes les portes (`author_gates`).

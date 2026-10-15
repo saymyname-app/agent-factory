@@ -52,8 +52,10 @@ The brief is everything you are given: the diff of the ticket
 (`.diff.command`, its files and the SHAs of its commits), the approved ticket
 with its acceptance criteria (`code-review-ticket.md`), the « Testing
 Decisions » of the approved Spec (`code-review-spec.md`), the
-standards files of the repository (`.standards`), and the records written by
-scripts (`.records`). Do not read anything else of the author: not the
+standards files of the repository (`.standards`), the records written by
+scripts (`.records`), and the criterion tests the freeze sealed
+(`.tests.criterion_tests`: criterion number -> test ids; `.tests.frozen`:
+the frozen files). Do not read anything else of the author: not the
 Ticket Handoff, not the notes or the comments of the ticket bead, not the
 commit messages (`git log`), not its mail, not its session. `.independence`,
 when it is not null, says that your model is the author's or that it is not
@@ -110,6 +112,28 @@ the two axes apart:
   blocking without a citation that holds is recorded as non-blocking.
 - A smell of the baseline, a matter of taste, anything you cannot cite:
   `blocking: false`. It is recorded and blocks nothing.
+
+**The criterion tests.** You are the only review of this ticket: no one
+read its criterion tests before they were frozen (ADR-0030 L3). Read each
+test of `.tests.criterion_tests` at `.commit` with the criterion it proves
+(`.ticket_text.criteria`, numbered from 1), and ask:
+
+- does it observe its criterion — read the observable the criterion names,
+  through the entry point it names — and would it fail on the observation
+  that makes the criterion false (after « Faux si »)? A test that only
+  checks a status code, that a page or a field exists without reading the
+  named value, or that would pass on a product that does not do what the
+  criterion says, does not.
+- on the Factory's own repository only (`.repo` shares its Git common dir
+  with `$FACTORY_ROOT`): is the criterion already proven by a lower test
+  of the repository on the same tool or entry point, this test proving
+  nothing more than the transmission (a double, `docs/TEST_GUIDELINE.md`)?
+
+A test that fails either question is a finding of axis `spec`. It is
+`blocking` with the same rule as any other finding: cite the criterion
+line of the ticket (`source: ticket`) or the rule of
+`docs/TEST_GUIDELINE.md` it breaks (`source: repo_rule`). Do not judge the
+style of a test.
 
 **The closed questions on the tests.** Answer every question of `.questions`
 (there may be none) by `oui` or `non`, with a one-line `reason` when `non`:

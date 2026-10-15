@@ -16,11 +16,11 @@ checked out in `--repo`, at its HEAD:
 `--base`, the criterion -> test table is complete, the product launched at the
 start commit is healthy, and every criterion test fails there by assertion
 and goes through an entry point of the product. A criterion already green
-stops the ticket. `freeze`: a reviewer has read these very tests and refused
-none (bin/test-review, T13), and the fingerprints of the table, of the
-criterion test files and of the frozen harness paths go into a registry of
-the Spec, outside any work tree. `green`: the frozen files are unchanged and the frozen
-tests pass k times in a row against the product at HEAD, then the regression
+stops the ticket. `freeze`: the fingerprints of the table, of the criterion
+test files and of the frozen harness paths go into a registry of the Spec,
+outside any work tree; no test review precedes it, the code review reads
+the criterion tests after the green (ADR-0030 L3). `green`: the frozen
+files are unchanged and the frozen tests pass k times in a row against the product at HEAD, then the regression
 command of the profile passes at HEAD (ADR-0030 L1). `amend`: the one
 change of frozen tests a ticket is allowed, with its reason, a new red and a
 new freeze, recorded with its diff. `prefactoring`: the regression command of
@@ -696,40 +696,10 @@ def check_freeze(check: Check) -> dict[str, Any]:
         if data is None:
             raise Refusal(f"fichier à geler absent du commit {check.head} : {path}")
         files[path] = digest_of(data)
-    if not amended:
-        # An amended test is read by the code review instead (Spec §6).
-        require_test_review(check, files)
+    # ADR-0030 L3: no test review before the freeze; the code review reads
+    # the criterion tests after the green.
     return {"step": "freeze", "verdict": "frozen", "commit": check.head, "base": proof["base"],
             "table": proof["table"], "criteria": proof["criteria"], "files": files}
-
-
-def require_test_review(check: Check, files: dict[str, str]) -> None:
-    """Spec §5, « Relecture avant gel »: the freeze follows a favorable
-    verdict of the test reviewer (bin/test-review) on every criterion test,
-    given on the very files about to be frozen."""
-    refusal = "gel sans verdict favorable de la relecture des tests de critère"
-    review = check.ticket.get("test_review")
-    if isinstance(review, dict) and "unruled" in review:
-        raise Refusal(f"état sans règle : {review['unruled']}")
-    rounds = review.get("rounds") if isinstance(review, dict) else None
-    if isinstance(review, dict) and review.get("request"):
-        raise Refusal(f"{refusal} : une relecture est demandée et n'a pas rendu son verdict (test-review review)")
-    if not rounds:
-        raise Refusal(f"{refusal} : aucun verdict n'est enregistré pour ce ticket (test-review review)")
-    last = rounds[-1]
-    refused = [f"{test_id} ({answer.get('reason')})" for test_id, answer in last["tests"].items()
-               if answer.get("state") != "favorable"]
-    if last["verdict"] != "favorable" or refused:
-        raise Refusal(f"{refusal} : la relecture refuse {' ; '.join(refused)}")
-    if last["commit"] != check.head:
-        raise Refusal(
-            f"{refusal} : la relecture porte sur le commit {last['commit']}, les tests à geler sont au commit "
-            f"{check.head} (test-review review)")
-    differing = sorted(path for path in {*files, *last["files"]} if files.get(path) != last["files"].get(path))
-    if differing:
-        raise Refusal(
-            f"{refusal} : le verdict de relecture porte sur d'autres empreintes de tests que celles à geler "
-            f"({', '.join(differing)})")
 
 
 def regression_run(check: Check, commit: str, moment: str) -> dict[str, Any]:

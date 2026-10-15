@@ -115,7 +115,7 @@ sauf L7 qui suppose L3–L5. Annuler toutes les PR rend le flux de
 | L0 (cette ADR) | `af-npz9v1.1` | #617 | livrée |
 | L1 | `af-npz9v1.2` | #618 | livrée : `bin/tdd-step green` lance aussi le `regression_command` du profil sur la pointe ; rouge = refus simple (ni arrêt ni reprise), donc la porte `code` de `bin/ticket-author` ne passe pas et l'auteur continue |
 | L2 | `af-npz9v1.3` | PR à venir | en revue : `bounds.resumes` une borne par cause (3 chacune : interrupted, returned, unblocked, answered, behind, evaluation_no_result, commit_after_verdict) ; tour de correction hors K (sa borne d'un tour) ; comptes dérivés des entrées de reprise ; une levée rend les bornes par cause |
-| L3 | — | — | à faire |
+| L3 | `af-npz9v1.5` | PR à venir | en revue : `bin/tdd-step freeze` et `convoy-state set-tdd` ne demandent plus de relecture des tests ; `bin/convoy-advance` n'en lance ni n'en règle aucune ; la revue de code lit les tests de critère du registre `tdd_freeze` (`tests.criterion_tests`) avec les mêmes règles de refus ; un `gc.flow.test_review` d'un ticket en vol est ignoré ; `bin/test-review`, sa formule et `docs/TEST_REVIEW.md` (marqué remplacé) restent jusqu'à L7 |
 | L4 | — | — | à faire |
 | L5 | — | — | à faire |
 | L6 | — | — | à faire |

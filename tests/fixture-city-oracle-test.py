@@ -39,7 +39,7 @@ GATE_CONDITIONS = ["criteria", "handoff", "evaluation", "fidelity", "deferral", 
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 BWRAP_PROFILE = ROOT / "config" / "fixture-city-bwrap.apparmor"
 # The gates of the author's step, as the oracle names the commands it saw run (T37).
-AUTHOR_GATES = ["tdd-step freeze", "tdd-step green", "tdd-step red", "test-review review",
+AUTHOR_GATES = ["tdd-step freeze", "tdd-step green", "tdd-step red",
                 "ticket-author demonstrate", "ticket-author start", "ticket-exit exit"]
 
 
@@ -77,7 +77,7 @@ class FixtureCityOracleHarness(unittest.TestCase):
         for gate in AUTHOR_GATES:
             self.assertIn(gate, result["interfaces"]["flow"])
         self.assertEqual(sorted(result["interfaces"]["flow"]), result["interfaces"]["flow"])
-        for direct in ("set-tdd", "record-test-review", "set-exit", "set-handoff"):
+        for direct in ("set-tdd", "set-exit", "set-handoff"):
             self.assertNotIn(f"convoy-state {direct}", result["interfaces"]["flow"])
         self.assertEqual({"tickets": tickets, "commands": AUTHOR_GATES}, result["author_gates"])
 
@@ -174,7 +174,7 @@ from pathlib import Path
 FAULT, STATE = {fault!r}, {state!r}
 name, arguments = Path(sys.argv[0]).name, sys.argv[1:]
 step = "tdd-step " + arguments[0] if name == "tdd-step" else name
-if step != {{"red": "tdd-step red", "freeze": "tdd-step freeze", "review": "test-review", "exit": "ticket-exit"}}[FAULT]:
+if step != {{"red": "tdd-step red", "freeze": "tdd-step freeze", "exit": "ticket-exit"}}[FAULT]:
     real = sys.argv[0] + ".real"
     os.execv(real, [real, *arguments])
 convoy, ticket = arguments[1:3]
@@ -198,9 +198,6 @@ if FAULT == "red":
     write("set-tdd", "--step", "red", "--commit", head, "--base", option("--base"))
 elif FAULT == "freeze":
     write("set-tdd", "--step", "freeze", "--commit", head)
-elif FAULT == "review":
-    write("open-test-review", "--commit", head, files=files, criteria={{"1": [test]}})
-    write("record-test-review", commit=head, files=files, tests={{test: {{"state": "favorable"}}}}, recorded_by="relecteur-" + ticket)
 else:
     write("set-exit", "--exit", "finished")
 print(json.dumps({{"ok": True}}))
@@ -209,7 +206,7 @@ print(json.dumps({{"ok": True}}))
     def deliver_with_a_direct_writer(self, scenario, fault):
         """The walk of `scenario` by the reference driver, where the state
         `fault` names is written by bin/convoy-state and not by its gate."""
-        gate = {"red": "tdd-step", "freeze": "tdd-step", "review": "test-review", "exit": "ticket-exit"}[fault]
+        gate = {"red": "tdd-step", "freeze": "tdd-step", "exit": "ticket-exit"}[fault]
         with tempfile.TemporaryDirectory() as temporary:
             driver = Path(temporary) / "delivery-driver"
             driver.write_text(self.DIRECT_WRITER_DRIVER.format(

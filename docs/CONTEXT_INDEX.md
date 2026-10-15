@@ -74,7 +74,7 @@ mechanisms: consult `decisions/PRE_REFACTOR.md` before relying on them.
 | Ticket Exits, handoffs and parked descendants | `TICKET_EXIT.md` |
 | Spec integration branch, serial merges and invalidation | `SPEC_INTEGRATION.md` |
 | Author session, worktree and ticket sequence | `TICKET_AUTHOR.md` |
-| Independent criterion-test review before freeze | `TEST_REVIEW.md` |
+| Independent criterion-test review before freeze (superseded by ADR-0030 L3: the code review reads them) | `TEST_REVIEW.md`, `CODE_REVIEW.md` |
 | Code review before ticket merge | `CODE_REVIEW.md` |
 | Evaluate the launched product before ticket merge | `TICKET_EVALUATION.md` |
 | Screen-to-prototype fidelity, anchors and evidence | `PROTOTYPE_FIDELITY.md` |

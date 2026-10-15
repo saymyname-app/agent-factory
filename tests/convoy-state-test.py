@@ -980,7 +980,6 @@ class ConvoyStateTest(unittest.TestCase):
     def frozen_slice(self):
         self.marked_slice()
         self.set_tdd("red", self.RED, "--base", self.BASE)
-        self.reviewed()
         self.set_tdd("freeze", self.RED)
 
     def test_show_renders_the_acceptance_criteria_of_a_ticket_in_order(self):
@@ -1603,7 +1602,7 @@ class ConvoyStateTest(unittest.TestCase):
         self.set_tdd("freeze", self.RED)
         self.assertEqual(self.RED, self.ticket(self.show(), T1)["tdd"]["freeze"]["commit"])
 
-    def test_a_refusal_is_recorded_per_test_with_its_reason_and_the_freeze_is_refused(self):
+    def test_a_refusal_is_recorded_per_test_with_its_reason_and_no_longer_holds_the_freeze(self):
         self.red_slice()
         self.open_review()
 
@@ -1615,27 +1614,27 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertEqual({"state": "unfavorable", "reason": self.STATUS_ONLY}, round_["tests"][self.COUNT_TEST])
         self.assertEqual({"state": "favorable"}, round_["tests"][self.HEALTH_TEST])
         self.assertIsNone(self.ticket(self.show(), T1)["stop"])
-        self.assert_refused_and_nothing_written(
-            "set-tdd", CONVOY, T1, "--step", "freeze", "--commit", self.RED, mention="relecture")
+        # ADR-0030 L3: a review recorded on a ticket in flight is ignored by the freeze.
+        self.set_tdd("freeze", self.RED)
 
-    def test_freeze_is_refused_without_a_review_or_with_one_given_on_another_commit(self):
+    def test_freeze_needs_no_review_of_the_criterion_tests(self):
+        """ADR-0030 L3: the code review reads the criterion tests after the green."""
         self.red_slice()
-        self.assert_refused_and_nothing_written(
-            "set-tdd", CONVOY, T1, "--step", "freeze", "--commit", self.RED, mention="relecture")
-        self.reviewed()
-        self.set_tdd("red", self.AMENDED, "--base", self.BASE)
 
-        self.assert_refused_and_nothing_written(
-            "set-tdd", CONVOY, T1, "--step", "freeze", "--commit", self.AMENDED, mention="relecture")
+        self.set_tdd("freeze", self.RED)
 
-    def test_freeze_is_refused_while_a_review_is_open(self):
+        self.assertEqual(self.RED, self.ticket(self.show(), T1)["tdd"]["freeze"]["commit"])
+        self.assertIsNone(self.ticket(self.show(), T1).get("test_review"))
+
+    def test_freeze_goes_through_while_a_review_recorded_before_l3_is_open(self):
         self.red_slice()
         self.reviewed()
         self.set_tdd("red", self.AMENDED, "--base", self.BASE)
         self.open_review(commit=self.AMENDED, files={**self.REVIEW_FILES, "tests/test_count.py": DIGEST})
 
-        self.assert_refused_and_nothing_written(
-            "set-tdd", CONVOY, T1, "--step", "freeze", "--commit", self.AMENDED, mention="relecture")
+        self.set_tdd("freeze", self.AMENDED)
+
+        self.assertEqual(self.AMENDED, self.ticket(self.show(), T1)["tdd"]["freeze"]["commit"])
 
     def test_record_test_review_refuses_a_verdict_outside_its_request(self):
         self.red_slice()
@@ -1734,8 +1733,6 @@ class ConvoyStateTest(unittest.TestCase):
 
         self.assertIn("unruled", self.ticket(shown, T1)["test_review"])
         self.assertEqual(["gc.flow.test_review"], [entry["field"] for entry in self.ticket(shown, T1)["unruled"]])
-        self.assert_refused_and_nothing_written(
-            "set-tdd", CONVOY, T1, "--step", "freeze", "--commit", self.RED, mention="relecture")
 
     def test_test_review_on_an_unmarked_convoy_writes_nothing(self):
         before = self.tracker.read_text()
