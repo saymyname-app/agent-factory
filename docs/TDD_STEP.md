@@ -47,7 +47,7 @@ order of the steps under its lock.
 |---|---|---|
 | `red` | `tdd_red` | `verdict: red`, `base`, `table`, `criteria` {number: [test id]}, `tests` [{`id`, `outcome`, `seam`, `seam_mode`, `entry_points` for a black-box test}], `seam_mode` (the modes the tests went through, joined by `+`: `black_box`, `black_box+import_rule`), `launch.healthy` |
 | `freeze` | `tdd_freeze` | `files` {path: `sha256:`}, `table`, `criteria`: the **registry of fingerprints** |
-| `green` | `tdd_green` | `verdict: green`, `k`, `tests` [{`id`, `runs`: k outcomes, `seam`, `seam_mode`}], `frozen` (the commit of the freeze) |
+| `green` | `tdd_green` | `verdict: green`, `k`, `tests` [{`id`, `runs`: k outcomes, `seam`, `seam_mode`}], `frozen` (the commit of the freeze), `regression` [{`commit`, `exit_code`}] at HEAD |
 | `amend` | `tdd_amendment` | the red report of the amended tests, plus `amendment` {`reason`, `diff`, `files`, `previous_freeze`} |
 | `prefactoring` | `tdd_prefactoring` | `verdict: unchanged`, `regression` [{`commit`, `exit_code`}] before and after |
 
@@ -149,7 +149,13 @@ test ids of the frozen table, from the files of the frozen commit, against
 the product launched at HEAD, each in the tree of its seam's mode, `k` times
 in a row (3 when the profile declares no `k`): a test that never passes
 is « test en échec », a mixed result is « test instable », a skipped test is
-refused.
+refused. Last, the profile's `regression_command` runs once in a clean tree
+of HEAD (ADR-0030 L1): a non-zero exit is « commande de régression en échec
+à la pointe du ticket », a plain refusal — no stop, no resume — so the author
+fixes the code in the same session and runs `green` again. A change that
+keeps its criterion tests green but breaks existing tests is caught at the
+author's handoff (the `code` gate of `bin/ticket-author` asks for `green` at
+the tip), not only at the merged regression of `bin/spec-integration`.
 
 ## Amendment
 

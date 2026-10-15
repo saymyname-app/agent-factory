@@ -118,7 +118,7 @@ through `bin/evidence-capture verify`, and the tip of the ticket branch.
 |---|---|
 | `workspace` | the session and the branch are recorded on the ticket, the work tree is on that branch, the branch leaves from the integration branch |
 | `red` | the red is proven and the criterion tests frozen (`bin/tdd-step`), which the freeze refuses until the test reviewer passed every one of them (`bin/test-review`); nothing asked of a `prefactoring` |
-| `code` | the criterion tests are green at the tip; for a `prefactoring`, its regression at the tip |
+| `code` | the criterion tests and the profile's regression are green at the tip (`bin/tdd-step green`, ADR-0030 L1); for a `prefactoring`, its regression at the tip |
 | `demonstration` | the piece `demonstration` verifies, was captured on the launched product, and is at the tip; nothing asked of a `prefactoring` |
 | `exit` | a Ticket Exit is recorded; « terminé » is at the tip, with its Handoff |
 
