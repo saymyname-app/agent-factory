@@ -628,5 +628,82 @@ class ProjectLaunchTest(unittest.TestCase):
         self.assertFalse(state_file.exists(), "the refused start wrote a launch record")
 
 
+    def _owned_launch(self, state_file: Path) -> subprocess.Popen:
+        """A launcher that starts the product as its own (`--owner-pid`),
+        then waits, as tdd-step does while its tests run."""
+        owner = subprocess.Popen(
+            [sys.executable, "-c",
+             "import os, subprocess, sys, time; "
+             "r = subprocess.run([sys.argv[1], 'start', sys.argv[2], '--dataset', 'content', "
+             "'--state-file', sys.argv[3], '--owner-pid', str(os.getpid())], capture_output=True, text=True); "
+             "print(r.stdout.strip(), flush=True); time.sleep(120)",
+             str(TOOL), str(DESCRIPTOR), str(state_file)],
+            cwd=ROOT, stdout=subprocess.PIPE, text=True)
+        self.addCleanup(owner.stdout.close)
+        self.addCleanup(lambda: owner.poll() is None and owner.kill())
+        self.assertTrue(json.loads(owner.stdout.readline())["started"])
+        return owner
+
+    def _until_no_children(self, seconds: float = 20.0) -> list[int]:
+        deadline = time.monotonic() + seconds
+        while (left := _children()) and time.monotonic() < deadline:
+            time.sleep(0.2)
+        return left
+
+    def test_a_launch_ends_when_its_owner_is_killed(self):
+        # af-f7x7w7: tdd-step stopped its product in a `finally`, which a
+        # SIGTERM or SIGKILL (evidence-capture's timeout) never runs; the
+        # product, in its own session, outlived it for days.
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            with self.subTest(signal=sig.name), _adopting_orphans():
+                state_file = self.new_state_file()
+                owner = self._owned_launch(state_file)
+                record = json.loads(state_file.read_text())
+                owner.send_signal(sig)
+                owner.wait(timeout=5)
+                left = self._until_no_children()
+                _end(left)
+                self.assertEqual([], left, "a process of the launch outlived its owner")
+                self.assertFalse(state_file.exists(), "the launch record outlived its owner")
+                self.assertFalse(Path(record["worktree"]).exists(), "the launch copy outlived its owner")
+                self.assertTrue(_port_is_free(record["port"]))
+
+    def test_an_owned_launch_stopped_normally_leaves_no_guard(self):
+        with _adopting_orphans():
+            state_file = self.new_state_file()
+            owner = self._owned_launch(state_file)
+            self.stop(state_file=state_file)
+            owner.kill()
+            owner.wait(timeout=5)
+            left = self._until_no_children()
+            _end(left)
+        self.assertEqual([], left, "the guard outlived a normal stop")
+
+    def test_start_refuses_an_owner_that_is_not_running(self):
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        result, state_file = self.start("--dataset", "content", "--owner-pid", str(dead.pid), check=False)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("owner", json.loads(result.stdout)["error"])
+        self.assertFalse(state_file.exists())
+
+    def test_every_factory_launcher_owns_what_it_starts(self):
+        # The class, not tdd-step alone: each tool that starts a product
+        # names itself its owner, so the product ends with it.
+        callers = [path for path in sorted((ROOT / "bin").iterdir())
+                   if path.name != "project-launch" and path.is_file()
+                   and "LAUNCH_TOOL" in path.read_text(errors="replace")
+                   and '"start"' in path.read_text(errors="replace")]
+        # Their products outlive the command on purpose: an open Acceptance
+        # Session, or products prepared for reuse, ended by their own records.
+        detached = {"acceptance-session", "ticket-evaluation", "outcome-evaluation"}
+        self.assertTrue(detached <= {path.name for path in callers})
+        owners = [path for path in callers if path.name not in detached]
+        self.assertGreaterEqual(len(owners), 4)
+        for path in owners:
+            with self.subTest(caller=path.name):
+                self.assertTrue('"--owner-pid", str(os.getpid())' in path.read_text(),
+                                f"{path.name} starts a product it does not own")
+
 if __name__ == "__main__":
     unittest.main()

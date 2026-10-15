@@ -512,7 +512,7 @@ def cmd_demonstrate(args: argparse.Namespace) -> int:
 
     with tempfile.TemporaryDirectory(prefix="ticket-author-") as scratch:
         launch_state = Path(scratch) / "launch.json"
-        launched = run([str(LAUNCH_TOOL), "--repo-root", str(repo), "start", str(profile), "--commit", head,
+        launched = run([str(LAUNCH_TOOL), "--repo-root", str(repo), "start", "--owner-pid", str(os.getpid()), str(profile), "--commit", head,
                         "--dataset", args.dataset, "--state-file", str(launch_state)], timeout=LAUNCH_TIMEOUT)
         try:
             if launched.returncode != 0 or not launch_state.is_file():

@@ -14,6 +14,12 @@ worktree down and frees the port.
     ./bin/project-launch [--repo-root <product repo>] start <descriptor.json> --commit <sha> --dataset <name> --state-file <path>
     ./bin/project-launch stop --state-file <path>
 
+A tool that starts a product passes `--owner-pid <its own pid>`: a guard
+then stops the launch as soon as that process ends, however it ends. A
+`finally` that would have stopped it does not run on SIGKILL, and the
+product, in its own session, lived on for days (af-f7x7w7). Without
+`--owner-pid` (a launch typed in a shell) the product lives until `stop`.
+
 `--repo-root` is the repository of the product (default: the Factory's own);
 the profile tool is always the one next to this launcher.
 
@@ -41,6 +47,26 @@ import urllib.request
 import uuid
 from pathlib import Path
 from types import ModuleType
+
+
+def process_identity(pid: int) -> str | None:
+    """The start time of a running `pid`: with the pid, it names one process
+    for its whole life, so a reused pid is not mistaken for the owner."""
+    try:
+        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+    except (OSError, IndexError):
+        return None
+    return None if fields[0] in {"Z", "X"} else fields[19]
+
+
+def guard(args: argparse.Namespace) -> int:
+    """Stop the launch of `--state-file` once its owner has ended; leave
+    when the record is gone (the owner stopped it)."""
+    while Path(args.state_file).exists():
+        if process_identity(args.owner_pid) != args.owner_start:
+            return cmd_stop(argparse.Namespace(state_file=args.state_file, pid=None, worktree=None))
+        time.sleep(1)
+    return 0
 
 
 def write_record(path: str, record: dict) -> None:
@@ -359,6 +385,13 @@ def cmd_start(args: argparse.Namespace) -> int:
     if args.state_file and Path(args.state_file).exists():
         print(json.dumps({"started": False, "error": "launch record still exists; stop it before retry"}, sort_keys=True))
         return 1
+    owner_start = None
+    if args.owner_pid is not None:
+        owner_start = process_identity(args.owner_pid)
+        if owner_start is None:
+            print(json.dumps({"started": False, "error": f"owner process {args.owner_pid} is not running"},
+                             sort_keys=True))
+            return 1
     descriptor_path = Path(args.descriptor).resolve()
     ppp = load_profile_module()
 
@@ -516,6 +549,12 @@ def cmd_start(args: argparse.Namespace) -> int:
 
     record.update(started=True, address=address)
     write_record(args.state_file, record)
+    if owner_start is not None:
+        subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "guard",
+                          "--owner-pid", str(args.owner_pid), "--owner-start", owner_start,
+                          "--state-file", str(Path(args.state_file).resolve())],
+                         cwd="/", stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
     print(json.dumps(record, sort_keys=True))
     return 0
 
@@ -584,7 +623,15 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--dataset", default=None, help="named synthetic dataset to launch on")
     start.add_argument("--timeout", type=float, default=15.0, help="seconds to wait for the health probe")
     start.add_argument("--state-file", required=True, help="where to write the recoverable launch record for stop")
+    start.add_argument("--owner-pid", type=int, default=None,
+                       help="process whose end stops the launch (the calling tool's own pid)")
     start.set_defaults(func=cmd_start)
+
+    watch = subparsers.add_parser("guard", help=argparse.SUPPRESS)
+    watch.add_argument("--owner-pid", type=int, required=True)
+    watch.add_argument("--owner-start", required=True)
+    watch.add_argument("--state-file", required=True)
+    watch.set_defaults(func=guard)
 
     stop = subparsers.add_parser("stop", help="stop a launched product and release its port")
     stop.add_argument("--state-file", default=None, help="launch record written by `start --state-file`")
