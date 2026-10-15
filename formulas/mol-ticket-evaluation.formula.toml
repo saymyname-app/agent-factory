@@ -95,7 +95,7 @@ If `ready` is false, wait for the next controller pass and repeat the
 command. When true, use its `address` and `launch_state` to capture.
 `--fresh` requests a reset of a game at the same commit; retry without
 `--fresh` while it is pending. Keep one `{dataset,evidence}` entry per
-declared game in `coverage`. A missing game or piece from another game's
+game of `.datasets` in `coverage`. A missing game or piece from another game's
 address refuses the result. The controller confirms cleanup before it
 launches the next product; do not launch or stop it yourself.
 

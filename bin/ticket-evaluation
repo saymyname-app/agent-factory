@@ -7,14 +7,14 @@ product: a session of the read-only Evaluator role, in a fresh context,
 started as routed work through bin/dispatch-door on the formula
 `mol-ticket-evaluation`. Code prepares what it evaluates: the product is
 launched by bin/project-launch from a clean copy of the commit the author
-finished at, one declared dataset at a time on a free port; the
+finished at, one dataset the ticket names at a time on a free port; the
 author's work tree is never what is evaluated. The Evaluator is given the
 demonstration line and the frozen criteria only -- neither the Ticket
 Handoff nor the diff -- and hands in one state per criterion and for the
 demonstration line (`observed`, `not_observed`, `unobservable`), each with a
 piece captured by bin/evidence-capture on one of those launched products.
 It gives no verdict: code computes it. For a `prefactoring` no session
-runs: code checks every declared game in sequence and captures each probe answer.
+runs: code checks every game of the ticket in sequence and captures each probe answer.
 
     ticket-evaluation settle  CONVOY [--repo DIR] [--profile FILE]   bin/convoy-advance, at each pass
     ticket-evaluation brief   CONVOY TICKET [--repo DIR] [--profile FILE]   the Evaluator session
@@ -352,14 +352,29 @@ class Convoy:
         return path, launch
 
     def datasets(self, ticket_id: str) -> list[str]:
-        """The named datasets the product is launched on: at least one."""
+        """The named datasets this ticket is evaluated on: at least one.
+
+        Only the declared datasets the ticket names -- in its frozen criteria,
+        its demonstration line or a validated expectation of its criteria --,
+        else the first declared one. Every declared dataset for every ticket
+        made one evaluation outlast its deadline (af-kdxk6k)."""
         path, launch = self.profile(ticket_id)
         declared = launch.get("datasets")
         if not isinstance(declared, dict) or not declared:
             raise Refusal(
                 f"le profil {path} ne déclare aucun jeu de données (launch.datasets) : le produit ne se lance "
                 "que sur un jeu de données nommé")
-        return sorted(declared)
+        declared = sorted(declared)
+        ticket = self.ticket(ticket_id)
+        criteria = [str(text) for text in ticket.get("criteria") or []]
+        texts = [*criteria, str(ticket.get("demonstration_line") or "")]
+        named = {name for name in declared
+                 if any(re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", text) for text in texts)}
+        expectations = planned(json.loads(path.read_text(encoding="utf-8")), "ticket",
+                               [{"number": n, "text": t} for n, t in enumerate(criteria, 1)],
+                               declared, "", ticket_id)
+        named.update(entry.get("dataset") for entry in expectations if entry.get("dataset") in declared)
+        return sorted(named) or declared[:1]
 
 
 def readable(ticket: dict[str, Any]) -> dict[str, Any]:
@@ -486,7 +501,7 @@ def prepared_products(convoy: Convoy, ticket_id: str, commit: str) -> list[dict[
 
 def launch_products(convoy: Convoy, ticket_id: str, commit: str, settings: dict[str, Any],
                     dataset: str | None = None, reuse: bool = True) -> list[dict[str, Any]]:
-    """Open one declared dataset. Reopening it starts at the same clean commit."""
+    """Open one dataset of the ticket. Reopening it starts at the same clean commit."""
     profile, _ = convoy.profile(ticket_id, commit)
     datasets = convoy.datasets(ticket_id)
     chosen = datasets[0] if dataset is None else dataset
@@ -872,7 +887,7 @@ def probe_of(launch_block: dict[str, Any]) -> tuple[str, int]:
 
 
 def startup_control(convoy: Convoy, ticket_id: str, commit: str, settings: dict[str, Any]) -> dict[str, Any]:
-    """A prefactoring must start and answer its probe on every declared game."""
+    """A prefactoring must start and answer its probe on every game of the ticket."""
     datasets = convoy.datasets(ticket_id)
     path, status = probe_of(convoy.profile(ticket_id, commit)[1])
     environment = []
@@ -1253,7 +1268,7 @@ def cmd_brief(args: argparse.Namespace) -> int:
                           "reason": "<required unless observed>", "cause": "|".join(CAUSES) + " (unobservable only)"}],
             "demonstration_line": {"text": "<the demonstration line, copied exactly>", "state": "|".join(STATES),
                                    "evidence": "<piece name>"},
-            "coverage": [{"dataset": "<each declared dataset>", "evidence": "<sealed piece from that dataset>"}],
+            "coverage": [{"dataset": "<each dataset of datasets>", "evidence": "<sealed piece from that dataset>"}],
             "screen_findings": [{"check": "<one screen check from this brief>",
                                  "rule": "<exact line of DESIGN.md>", "evidence": "<sealed piece>",
                                  "reason": "<visible deviation>"}] if convoy.ticket(args.ticket).get("interface") else [],

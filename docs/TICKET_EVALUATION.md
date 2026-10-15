@@ -114,9 +114,22 @@ opening the evaluated product. Its sealed observation still includes the
 lifecycle result and validated reference checks; the trial and the evaluated
 product never run together.
 
+**The games of a ticket** (af-kdxk6k) are the declared datasets the ticket
+names: in its frozen criteria or its demonstration line (the exact name,
+not inside a longer one), or as the `dataset` of a validated expectation of
+its criteria. A ticket that names none is evaluated on the first declared
+dataset only. Every declared dataset for every ticket made one evaluation
+need about 95 two-minute coverages against a 3,600-second deadline, and
+stopped T01R, T01R2 and T01R3 without a result (Benjamin, 2026-10-15:
+« l'évaluation […] limitée aux datasets du ticket »). The Evaluator can
+request only these games; the request keeps the list it was opened with.
+A behaviour that must hold on every dataset belongs in a deterministic test,
+not in a model's tour of the product. Outcome Evaluation still covers every
+declared game.
+
 The request retains historical addresses for Evidence Record verification
 after a switch; `live` names only the product still running. A favorable
-result requires a sealed `coverage` piece for every declared game as well
+result requires a sealed `coverage` piece for every game of the ticket as well
 as one state and proof for every criterion and the demonstration line.
 The result carries `coverage: [{"dataset": NAME, "evidence": PIECE}, ...]`.
 A missing game or a piece captured on another game's address is refused.
@@ -146,7 +159,7 @@ session receives.
 | `demonstration_line` | the demonstration line of the approved ticket |
 | `criteria` | the acceptance criteria of the approved ticket, numbered in order |
 | `environments` | the active product: `dataset`, `address`, and `launch_state`, the launch record to name to the capture tool |
-| `datasets`, `product` | every declared game and the command to request one |
+| `datasets`, `product` | the games of the ticket (below) and the command to request one |
 | `entry_points` | the entry points the profile declares |
 | `states`, `unobservable_causes` | the closed lists |
 | `capture`, `result_shape` | how a piece is captured on a launched product, and the shape of what `record` takes |
@@ -216,7 +229,8 @@ that round. Otherwise `reasons` says why.
 ## A prefactoring: the startup control
 
 A `prefactoring` changes no behaviour: nothing new is to be observed. No
-Evaluator session is started. `settle` launches each declared game in
+Evaluator session is started. `settle` launches each game of the ticket (a
+prefactoring names none: the first declared dataset) in
 sequence from a clean copy of the tip, captures the answer of the profile's
 health probe with `bin/evidence-capture`, and confirms cleanup before opening
 the next game. The first piece is `evaluation.startup`; later pieces are
