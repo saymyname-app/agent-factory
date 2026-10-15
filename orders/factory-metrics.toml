@@ -1,0 +1,10 @@
+# af-lw581v: one line of daily Factory metrics (merged tickets, attempts,
+# tokens, order failure rate, sessions over 150k context) appended to
+# var/factory-metrics.jsonl. Cron after midnight so the day it reports
+# (yesterday, local time) is complete.
+[order]
+description = "Daily zero-token metrics line for yesterday into var/factory-metrics.jsonl: merged tickets, attempts per ticket, tokens per merged ticket, order failure rate, sessions over 150k context; a field without a source is null and listed as unavailable"
+trigger = "cron"
+schedule = "30 0 * * *"
+exec = "/home/benja/agent-factory/bin/factory-metrics"
+timeout = "300s"
