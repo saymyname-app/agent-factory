@@ -1,0 +1,9 @@
+# af-3ewcxf: backstop for the Mayor prompt's Handoff rule. Staggered like the
+# other condition orders (T10, af-u61al3; see orders/escalation-door-sweep.toml).
+[order]
+description = "Deterministic zero-token backstop: when the Mayor's current conversation passes 150k context tokens or 8h of age, mail it a handoff and 'gc session reset mayor' (fresh conversation, same bead/alias/mail). Once per conversation, never mid-turn, never another session. Decision: 'mayor-context-guard --check'."
+trigger = "condition"
+interval = "10m"
+check = "/home/benja/agent-factory/orders/lib/orders-restart-stagger.sh mayor-context-guard 600"
+exec = "/home/benja/agent-factory/bin/mayor-context-guard"
+timeout = "120s"
