@@ -68,7 +68,7 @@ DESCRIPTORS = ROOT / "config" / "project-descriptors"
 
 sys.path.insert(0, str(BIN.parent / "lib"))
 import delivery_reads  # noqa: E402
-from convoy_state import retry_after_lift
+from convoy_state import retry_after_lift, session_conversation
 from evaluation_capacity import admission, Busy, ready_product, remove_attestation
 from validated_expectations import planned, enforce, sealed_record
 from delivery_role_identity import role_identity, role_supplier, supplier_of  # noqa: E402
@@ -1421,9 +1421,8 @@ def cmd_record(args: argparse.Namespace) -> int:
         raise Refusal("état sans Evidence Record valide : " + " ; ".join(refused))
     # Never GC_AGENT: it names a place in the pool of the agent, which the next session takes.
     session = os.environ.get("GC_SESSION_NAME") or os.environ.get("GC_SESSION_ID") or ""
-    # T42: a session is its name and its conversation. gc 1.5.0 wakes a drained session under the
-    # same name; GC_CONTINUATION_EPOCH changes only when it starts a fresh conversation.
-    identity = {"recorded_by": session, "conversation": os.environ.get("GC_CONTINUATION_EPOCH", "").strip()}
+    # T42: a session is its name and its conversation (convoy_state.session_conversation).
+    identity = {"recorded_by": session, "conversation": session_conversation()}
     written = state_write_file("record-evaluation", args.convoy, args.ticket, {**given, **identity},
                                "--repo", str(convoy.repo))
     print(json.dumps({

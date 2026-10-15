@@ -202,7 +202,7 @@ state mark "$CONVOY"
 echo "relevé d'essai — convoi marqué sans fermeture automatique, en cité isolée ($(gc version 2>/dev/null | head -1), aucun Mayor, aucun agent)"
 echo "convoi marqué $CONVOY (tickets $T1 $T2, Spec $SPEC, brouillon $DRAFT) ; convoi sans marque $PLAIN (ticket $P1, Spec $PLAIN_SPEC, brouillon $PLAIN_DRAFT)"
 
-(gc supervisor run > "$TRIAL/supervisor.out" 2>&1 &)
+(env -u CLAUDE_CODE_SESSION_ID gc supervisor run > "$TRIAL/supervisor.out" 2>&1 &)
 sleep 3
 gc --city "$CITY" start >/dev/null 2>&1 || true
 grep -q "Controller: supervisor-managed" <<<"$(gc --city "$CITY" status 2>/dev/null)" || fail "the isolated city's controller did not start"

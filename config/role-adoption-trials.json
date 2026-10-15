@@ -70,7 +70,7 @@
     },
     "evaluator/claude-readonly": {
       "agent": "delivery-evaluator",
-      "digest": "sha256:335825210d0c7e223d19387c5f5eb7d4d8b46a224d3732d8a78d65cecb9adfb0",
+      "digest": "sha256:98e27e99715819b04d10a9caccde3a520b805b85090d21644c959ad5074f3c0a",
       "expected_skills": [
         "better-accessibility",
         "better-colors",
@@ -90,21 +90,21 @@
         "better-ui",
         "better-writing"
       ],
-      "observed_at": "2026-10-15T08:55:02Z",
+      "observed_at": "2026-10-15T14:15:31Z",
       "passed": true,
       "provider": "claude-readonly",
       "read_only": {
         "after": {
-          "head": "a7f9d8e391aba57677e170955c67017c86e86ffa",
-          "refs": "refs/heads/main a7f9d8e391aba57677e170955c67017c86e86ffa\nrefs/remotes/origin/main a7f9d8e391aba57677e170955c67017c86e86ffa",
-          "remote_refs": "refs/heads/main a7f9d8e391aba57677e170955c67017c86e86ffa",
+          "head": "67551763e425cd00ef2bf6eb07c72bf6fd4f15a8",
+          "refs": "refs/heads/main 67551763e425cd00ef2bf6eb07c72bf6fd4f15a8\nrefs/remotes/origin/main 67551763e425cd00ef2bf6eb07c72bf6fd4f15a8",
+          "remote_refs": "refs/heads/main 67551763e425cd00ef2bf6eb07c72bf6fd4f15a8",
           "status": ""
         },
         "attempts": [
           {
             "action": "/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt",
             "refused": true,
-            "result": "EROFS: read-only file system, open '/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt.tmp.1099195.148c62f6950f'",
+            "result": "EROFS: read-only file system, open '/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt.tmp.4112294.6c7704081d28'",
             "tool": "Write"
           },
           {
@@ -127,9 +127,9 @@
           }
         ],
         "before": {
-          "head": "a7f9d8e391aba57677e170955c67017c86e86ffa",
-          "refs": "refs/heads/main a7f9d8e391aba57677e170955c67017c86e86ffa\nrefs/remotes/origin/main a7f9d8e391aba57677e170955c67017c86e86ffa",
-          "remote_refs": "refs/heads/main a7f9d8e391aba57677e170955c67017c86e86ffa",
+          "head": "67551763e425cd00ef2bf6eb07c72bf6fd4f15a8",
+          "refs": "refs/heads/main 67551763e425cd00ef2bf6eb07c72bf6fd4f15a8\nrefs/remotes/origin/main 67551763e425cd00ef2bf6eb07c72bf6fd4f15a8",
+          "remote_refs": "refs/heads/main 67551763e425cd00ef2bf6eb07c72bf6fd4f15a8",
           "status": ""
         },
         "unchanged": true
@@ -166,7 +166,7 @@
     },
     "reviewer/claude-readonly": {
       "agent": "delivery-reviewer",
-      "digest": "sha256:cce03b2c8c202f7d65fb5a3720e5ffc40a1039fe988a46611997488f86806690",
+      "digest": "sha256:d39c94dbc15e87a7cb56d54bb00fa8c53aeafc429ae6874058c41f4136f05e20",
       "expected_skills": [
         "better-accessibility",
         "better-colors",
@@ -199,21 +199,21 @@
         "interface-review",
         "review-animations"
       ],
-      "observed_at": "2026-10-15T08:57:57Z",
+      "observed_at": "2026-10-15T14:13:31Z",
       "passed": true,
       "provider": "claude-readonly",
       "read_only": {
         "after": {
-          "head": "a7f9d8e391aba57677e170955c67017c86e86ffa",
-          "refs": "refs/heads/main a7f9d8e391aba57677e170955c67017c86e86ffa\nrefs/remotes/origin/main a7f9d8e391aba57677e170955c67017c86e86ffa",
-          "remote_refs": "refs/heads/main a7f9d8e391aba57677e170955c67017c86e86ffa",
+          "head": "67551763e425cd00ef2bf6eb07c72bf6fd4f15a8",
+          "refs": "refs/heads/main 67551763e425cd00ef2bf6eb07c72bf6fd4f15a8\nrefs/remotes/origin/main 67551763e425cd00ef2bf6eb07c72bf6fd4f15a8",
+          "remote_refs": "refs/heads/main 67551763e425cd00ef2bf6eb07c72bf6fd4f15a8",
           "status": ""
         },
         "attempts": [
           {
             "action": "/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt",
             "refused": true,
-            "result": "EROFS: read-only file system, open '/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt.tmp.1122678.a6fda1ba8a01'",
+            "result": "EROFS: read-only file system, open '/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt.tmp.4087108.323e42a2b32b'",
             "tool": "Write"
           },
           {
@@ -236,9 +236,9 @@
           }
         ],
         "before": {
-          "head": "a7f9d8e391aba57677e170955c67017c86e86ffa",
-          "refs": "refs/heads/main a7f9d8e391aba57677e170955c67017c86e86ffa\nrefs/remotes/origin/main a7f9d8e391aba57677e170955c67017c86e86ffa",
-          "remote_refs": "refs/heads/main a7f9d8e391aba57677e170955c67017c86e86ffa",
+          "head": "67551763e425cd00ef2bf6eb07c72bf6fd4f15a8",
+          "refs": "refs/heads/main 67551763e425cd00ef2bf6eb07c72bf6fd4f15a8\nrefs/remotes/origin/main 67551763e425cd00ef2bf6eb07c72bf6fd4f15a8",
+          "remote_refs": "refs/heads/main 67551763e425cd00ef2bf6eb07c72bf6fd4f15a8",
           "status": ""
         },
         "unchanged": true

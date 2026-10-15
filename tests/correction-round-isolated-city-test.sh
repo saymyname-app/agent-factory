@@ -556,7 +556,7 @@ TIP_A=$(author_finishes "$A")
 TIP_B=$(author_finishes "$B")
 echo "$(date -u +%H:%M:%S) marque posée, branche $INTEGRATION ouverte, deux tickets terminés par leur auteur (A $TIP_A, B $TIP_B) : diff contraire à la Spec, critère non réalisé"
 
-(gc supervisor run > "$TRIAL/supervisor.out" 2>&1 &)
+(env -u CLAUDE_CODE_SESSION_ID gc supervisor run > "$TRIAL/supervisor.out" 2>&1 &)
 sleep 3
 gc --city "$CITY" start >/dev/null 2>&1 || true
 grep -q "Controller: supervisor-managed" <<<"$(gc --city "$CITY" status 2>/dev/null)" || fail "the isolated city's controller did not start"
