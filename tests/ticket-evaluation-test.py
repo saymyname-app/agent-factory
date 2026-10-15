@@ -63,6 +63,7 @@ NOTE = "docs/tranche.md"
 CRITERION = "Point d'entrée : GET / — Observable : ancre fixture-count — Faux si : le nombre d'éléments n'y est pas"
 SECOND_CRITERION = "Point d'entrée : GET /health — Observable : statut ok — Faux si : la sonde ne répond pas"
 DEMONSTRATION = "Sur le jeu content, la page d'accueil affiche 3 éléments"
+BOTH_GAMES = "Sur les jeux content et empty, la page d'accueil affiche ses éléments"
 TICKET_TEXT = f"""## What to build
 
 Le nombre d'éléments sur la page d'accueil.
@@ -517,6 +518,12 @@ class TicketEvaluationTest(unittest.TestCase):
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         return piece
 
+    def cite(self, line=BOTH_GAMES, ticket=SLICE):
+        """The ticket names its games in its demonstration line (af-kdxk6k)."""
+        tracker = json.loads(self.tracker.read_text())
+        tracker["beads"][ticket]["metadata"]["gc.flow.demonstration_line"] = line
+        self.tracker.write_text(json.dumps(tracker))
+
     def handed(self, tip, request, **changes):
         """Every state « observed », each on a captured page of the first product."""
         product = request["environment"][0]
@@ -526,7 +533,7 @@ class TicketEvaluationTest(unittest.TestCase):
                           "evidence": self.capture("evaluation.c1", product)},
                          {"number": 2, "text": SECOND_CRITERION, "state": "observed",
                           "evidence": self.capture("evaluation.c2", product, "/health")}],
-            "demonstration_line": {"text": DEMONSTRATION, "state": "observed",
+            "demonstration_line": {"text": request.get("demonstration_line", DEMONSTRATION), "state": "observed",
                                    "evidence": self.capture("evaluation.demo", product)},
             "coverage": [{"dataset": product["dataset"], "evidence": "evaluation.c1"}],
         }
@@ -608,6 +615,7 @@ class TicketEvaluationTest(unittest.TestCase):
         candidate["launch"]["datasets"]["empty"] = original["launch"]["datasets"]["empty"]
         candidate["launch"]["screens"][0]["states"] = ["content", "empty"]
         committed = json.dumps(candidate)
+        self.cite()
         files = self.realized()
         files["config/project-descriptors/fx.json"] = committed
         self.finished_slice(files)
@@ -630,6 +638,7 @@ class TicketEvaluationTest(unittest.TestCase):
         candidate["launch"]["datasets"]["empty"] = original["launch"]["datasets"]["empty"]
         candidate["launch"]["screens"][0]["states"] = ["content", "empty"]
         committed = json.dumps(candidate)
+        self.cite()
         files = self.realized()
         files["config/project-descriptors/fx.json"] = committed
         self.finished_slice(files)
@@ -838,6 +847,7 @@ class TicketEvaluationTest(unittest.TestCase):
         profile["launch"]["datasets"]["empty"] = original["launch"]["datasets"]["empty"]
         profile["launch"]["screens"][0]["states"] = ["content", "empty"]
         self.profile.write_text(json.dumps(profile))
+        self.cite()
         tip = self.finished_slice(self.realized())
         self.evaluator("silent")
         self.settle()
@@ -860,12 +870,44 @@ class TicketEvaluationTest(unittest.TestCase):
         self.recorded(handed)
         self.assertTrue(self.tool("verdict")["favorable"])
 
+    def test_a_ticket_is_evaluated_only_on_the_games_it_names(self):
+        """af-kdxk6k: a second declared game the ticket does not name is
+        neither launched, nor requestable, nor required in coverage."""
+        profile = json.loads(self.profile.read_text())
+        original = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
+        profile["launch"]["datasets"]["empty"] = original["launch"]["datasets"]["empty"]
+        self.profile.write_text(json.dumps(profile))
+        tip = self.finished_slice(self.realized())
+        self.evaluator("silent")
+        self.settle()
+        request = self.evaluation()["request"]
+        self.assertEqual(["content"], request["datasets"])
+        self.refused("product", CONVOY, SLICE, "--repo", self.repo, "--dataset", "empty", env=SESSION)
+        self.recorded(self.handed(tip, request))
+        self.assertTrue(self.tool("verdict")["favorable"])
+
+    def test_a_game_named_only_by_a_validated_expectation_is_a_game_of_the_ticket(self):
+        profile = json.loads(self.profile.read_text())
+        original = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
+        profile["launch"]["datasets"]["empty"] = original["launch"]["datasets"]["empty"]
+        profile["validated_expectations"] = [{
+            "scope": "ticket", "number": 1, "text": CRITERION, "dataset": "empty",
+            "source": {"reference": "validated empty scenario", "digest": sha256_of(b"approved scenario")},
+            "expected": 0, "observation": {"path": "/status", "pointer": "/count"},
+        }]
+        self.profile.write_text(json.dumps(profile))
+        self.finished_slice(self.realized())
+        self.evaluator("silent")
+        self.settle()
+        self.assertEqual(["content", "empty"], self.evaluation()["request"]["datasets"])
+
     def test_an_expired_launch_is_replaced_before_its_requested_dataset_is_opened(self):
         profile = json.loads(self.profile.read_text())
         original = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
         profile["launch"]["datasets"]["empty"] = original["launch"]["datasets"]["empty"]
         profile["launch"]["screens"][0]["states"] = ["content", "empty"]
         self.profile.write_text(json.dumps(profile))
+        self.cite()
         self.finished_slice(self.realized())
         self.settings(timeout_seconds=0)
         self.evaluator("silent")
@@ -896,6 +938,7 @@ class TicketEvaluationTest(unittest.TestCase):
         profile["launch"]["datasets"]["empty"] = original["launch"]["datasets"]["empty"]
         profile["launch"]["screens"][0]["states"] = ["content", "empty"]
         self.profile.write_text(json.dumps(profile))
+        self.cite()
         tip = self.finished_slice(self.realized())
         self.evaluator("silent")
         self.settle()
@@ -1262,7 +1305,9 @@ class TicketEvaluationTest(unittest.TestCase):
         # A second pass does nothing more.
         self.assertEqual([], self.settle()["started"])
 
-    def test_prefactoring_probes_each_game_sequentially_with_separate_evidence(self):
+    def test_prefactoring_probes_only_the_first_declared_game(self):
+        """af-kdxk6k: a prefactoring names no game, so only the first declared
+        one is probed; a behaviour on every game belongs in a test."""
         profile = json.loads(self.profile.read_text())
         original = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
         profile["launch"]["datasets"]["empty"] = original["launch"]["datasets"]["empty"]
@@ -1274,8 +1319,8 @@ class TicketEvaluationTest(unittest.TestCase):
 
         self.assertEqual([PREFACTORING], [entry["ticket"] for entry in settled["started"]])
         (round_,) = self.evaluation(PREFACTORING)["rounds"]
-        self.assertEqual(["content", "empty"], [entry["dataset"] for entry in round_["environment"]])
-        self.assertEqual(["content", "empty"], [entry["dataset"] for entry in round_["coverage"]])
+        self.assertEqual(["content"], [entry["dataset"] for entry in round_["environment"]])
+        self.assertEqual(["content"], [entry["dataset"] for entry in round_["coverage"]])
         for entry, coverage in zip(round_["environment"], round_["coverage"]):
             piece = self.piece(coverage["evidence"], PREFACTORING)
             self.assertEqual((tip, entry["address"], 0),
