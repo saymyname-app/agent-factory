@@ -92,7 +92,10 @@ branch, through bin/dispatch-door, and the resume is counted
 branch does not contain the tip of the integration branch (cause `behind`,
 T44: `behind` of bin/code-review show), once per Ticket Exit, and counted
 even when the ceiling makes its session wait: its exit is taken back, so
-neither the review nor the evaluation is sent on the old tip. At its third
+neither the review nor the evaluation is sent on the old tip. So is a ticket
+stopped because its Ticket Evaluation gave no result (af-xhc0sj), once per
+tip of the integration branch: the resume lifts the stop, keeps it on the
+resume, and withdraws its request; every other stop stays with the operator. At its third
 resume, whatever counted them
 -- these, the correction round, a commit after a verdict -- the ticket is
 parked with every ticket that waits for it and is not restarted; the others
@@ -283,6 +286,10 @@ RETURNED_MERGES = ("conflict", "red")
 # The resume of a finished ticket whose branch did not take the tip of the
 # integration branch: bin/code-review sends no reviewer on it (T44).
 BEHIND = "behind"
+# A Ticket Evaluation without result is most often a defect of the factory:
+# that stop is lifted by a resume of the ticket itself, once per tip of the
+# integration branch (af-xhc0sj). Every other stop stays with the operator.
+NO_RESULT = "evaluation_no_result"
 # Spec §8, K: a ticket out of resumes is parked for this cause (bin/convoy-state).
 PARK_EXHAUSTED = "resumes_exhausted"
 # The words of the operator for each cause of parking.
@@ -870,7 +877,9 @@ def state_write(*args: str) -> dict[str, Any]:
 def at_work(ticket: dict[str, Any]) -> bool:
     """Started through the door, not closed, neither parked nor stopped:
     what a resume or the bound of the resumes may bear on. A stopped ticket
-    is never resumed: its sequence failed, it is with the operator."""
+    is not at work: its sequence failed, it is with the operator, and only
+    its stop `evaluation_no_result` is lifted by a resume
+    (stopped_without_result)."""
     return started(ticket) and ticket.get("status") != "closed" and not ticket.get("park") and not ticket.get("stop")
 
 
@@ -973,21 +982,54 @@ def behind_due(convoy: Convoy, ticket: dict[str, Any]) -> tuple[str, str, str] |
     return "new", BEHIND, f"integration:{behind.get('integration')}/exit:{exit_record.get('at')}"
 
 
+def stopped_without_result(ticket: dict[str, Any]) -> bool:
+    """Started, not closed nor parked, and stopped because its Ticket
+    Evaluation gave no result: the one stop a resume may lift."""
+    return started(ticket) and ticket.get("status") != "closed" and not ticket.get("park") \
+        and (ticket.get("stop") or {}).get("reason") == NO_RESULT
+
+
+def no_result_due(convoy: Convoy, ticket: dict[str, Any]) -> tuple[str, str, str] | None:
+    """The resume a stop without evaluation result asks for: none once the
+    operator answered that stop, none when the ticket has no resume left
+    (its stop stays with the operator), and one per tip of the integration
+    branch, what a repair of the factory merged since may have changed. The
+    fact is `integration:<tip>/stop:<stop time>`."""
+    stop = ticket["stop"]
+    if ticket.get("resumes_left") == 0 or not convoy.integration:
+        return None
+    if request_answer(read_bead(ticket["id"]), stop["at"]) is not None:
+        return None
+    branch = convoy.integration["branch"]
+    # Where bin/code-review reads it: on origin when it is there, else local.
+    for ref in (f"refs/remotes/origin/{branch}", f"refs/heads/{branch}"):
+        tip = run(["git", "-C", str(convoy.repo), "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"]).stdout.strip()
+        if tip:
+            break
+    else:
+        return None
+    entries = (ticket.get("resume") or {}).get("entries") or []
+    if any(entry["cause"] == NO_RESULT and entry["ref"].startswith(f"integration:{tip}/") for entry in entries):
+        return None
+    return "new", NO_RESULT, f"integration:{tip}/stop:{stop['at']}"
+
+
 def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: set[str], out: dict[str, Any],
                    only: set[str] | None = None) -> None:
     """Spec §8: park the ticket that took its last resume; send the ticket
     that needs its author again to one fresh session, and count it. `only`:
     the tickets a red integration branch still lets go on."""
-    for ticket_id in [t["id"] for t in convoy.tickets if at_work(t)]:
+    for ticket_id in [t["id"] for t in convoy.tickets if at_work(t) or stopped_without_result(t)]:
         if only is not None and ticket_id not in only:
             continue
         try:
             ticket = convoy.ticket(ticket_id)
-            if ticket.get("resumes_left") == 0:
+            stopped = bool(ticket.get("stop"))
+            if ticket.get("resumes_left") == 0 and not stopped:
                 out["parked"].append(park_exhausted(convoy, ticket))
                 convoy.load()
                 continue
-            due = resume_due(ticket, alive) or behind_due(convoy, ticket)
+            due = no_result_due(convoy, ticket) if stopped else resume_due(ticket, alive) or behind_due(convoy, ticket)
             if due is None:
                 continue
             what, cause, ref = due
@@ -1005,6 +1047,9 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
                 out["waiting"].append({"id": ticket_id, "reason": f"reprise ({cause}) : plafond N={settings['ceiling']} atteint"})
                 continue
             if what == "new":
+                if stopped and "raised" in ticket["stop"]:
+                    # The resume lifts the stop: its request leaves the operator's list.
+                    passed(run([str(ESCALATION_BIN), "clear", ticket_id]), "escalation-door clear")
                 state_write("open-resume", convoy.id, ticket_id, "--cause", cause, "--ref", ref)
                 convoy.load()
                 ticket = convoy.ticket(ticket_id)

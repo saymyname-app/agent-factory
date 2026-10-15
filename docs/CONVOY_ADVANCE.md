@@ -287,6 +287,7 @@ ticket:
 | `unblocked` | the Ticket Exit is `technically_blocked` and no bead it waits for with a `blocks` edge is open any more (its repair is closed) |
 | `answered` | the Ticket Exit is `planning_exception` or `operator_request` and the ticket is no longer parked: its parking was lifted |
 | `behind` | the Ticket Exit is `finished`, the ticket is not merged, and `bin/code-review show <convoy> <ticket> --repo` reports `behind`: its branch does not contain the tip of the integration branch, so no reviewer is sent on it (T44, `docs/CODE_REVIEW.md`). The fact is `integration:<tip>/exit:<exit time>`: once per Ticket Exit |
+| `evaluation_no_result` | the ticket is stopped `evaluation_no_result` (its Ticket Evaluation gave no result, relaunch included, `docs/TICKET_EVALUATION.md`), it is neither parked nor closed, it has a resume left, the operator has not answered the request of that stop, and no resume of this cause was opened yet on the current tip of the integration branch (on `origin` when it is there, else local). The fact is `integration:<tip>/stop:<stop time>`: once per tip of the integration branch (af-xhc0sj) |
 
 The pass counts the resume first — `bin/convoy-state open-resume <convoy>
 <ticket> --cause <cause> --ref <fact>`: one more `resumes`, the record under
@@ -300,6 +301,20 @@ mol-ticket-resume --role author`, and records it (`bin/convoy-state
 launch-resume`): one session per resume. The session takes the ticket with
 `bin/ticket-author start`, does only what is missing, and leaves by a Ticket
 Exit (`formulas/mol-ticket-resume.formula.toml`).
+
+An `evaluation_no_result` resume lifts the stop in that same write: the stop
+leaves the ticket and is kept on its resume (`resume.entries[].stop`), never
+erased; the request the stop raised is withdrawn first (`bin/escalation-door
+clear <ticket>`). A Ticket Evaluation without result is most often a defect
+of the factory (an Evaluator role, a brief, a launch) whose repair is merged
+elsewhere; the fresh author session brings the integration branch into the
+ticket branch and finishes again, and the next passes withdraw the
+evaluation left open on the old exit and send a new one. Stopped again on
+the same integration tip, the ticket stays with the operator; once the tip
+moves, it is resumed once more, always within K: the third resume parks it
+(its stop lifted) and the grouped request follows. Every other stop —
+`evaluation_outage`, `amendment_exhausted`, a review without result, a
+ticket still refused — is never resumed.
 
 A `behind` resume is counted like the others (K; the third parks the
 ticket), and, unlike them, it is counted even when the ceiling N is reached
@@ -353,8 +368,12 @@ Two decisions taken here:
 
 ### What is not resumed
 
-- **A stopped ticket.** Its sequence failed and it is with the operator;
-  it is never read as interrupted, and nothing lifts a stop.
+- **A stopped ticket**, but for its stop `evaluation_no_result` (above).
+  Its sequence failed and it is with the operator; it is never read as
+  interrupted, and nothing else lifts a stop. Nor is a ticket stopped
+  `evaluation_no_result` whose request the operator answered, that is out
+  of resumes, or that was already resumed for it on the same tip of the
+  integration branch: it stays stopped, with the operator.
 - **A correction session that dies without closing its bead**
   (`docs/CORRECTION_ROUND.md`): the ticket still carries its Ticket Exit
   `finished` and was not returned by the merge, so nothing here reads it as
@@ -830,7 +849,9 @@ T20: the same file covers the resumes in the pass, through the real
 per cause of resume, a session ended without an exit, a resume bead closed
 without the ticket being taken, a resume that cannot be sent (counted once,
 sent by the next pass), no `resume` setting, the ceiling, a stopped ticket
-never resumed, the third resume parking the ticket and its descendants
+never resumed, a ticket stopped without evaluation result resumed on
+itself once per integration tip, its stop kept and its request withdrawn,
+parked at its third resume, and left stopped once its request is answered, the third resume parking the ticket and its descendants
 whatever the causes, the unrelated tickets still starting, exactly one
 grouped request naming each parked ticket and its cause, none while a
 ticket that is not parked is left, one for several passes, the answer that
