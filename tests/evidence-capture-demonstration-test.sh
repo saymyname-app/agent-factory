@@ -33,6 +33,11 @@ if [ -z "$BROWSER" ]; then
   BROWSER=$(ls -1 "$HOME"/.cache/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-*/chrome-headless-shell 2>/dev/null | sort -r | head -1)
 fi
 [ -n "$BROWSER" ] && [ -x "$BROWSER" ] || fail "no chrome-headless-shell found (set EVIDENCE_CAPTURE_BROWSER)"
+# A host whose sandbox refuses the browser cannot run this trial: SKIPPED,
+# named with af-yb2cb5 by bin/local-only-tests, not failed.
+# shellcheck source=tests/lib/capture-browser.sh
+. "$ROOT/tests/lib/capture-browser.sh"
+skip_unless_capture_browser_sandbox "$BROWSER"
 
 TRIAL=$(mktemp -d /tmp/af-pvcg6t-evidence-capture.XXXXXX)
 TEST_CITY="$TRIAL/city"

@@ -170,6 +170,12 @@ real runtime; they cost CI nothing):
 | `tests/*-demonstration-test.sh` (3) | the demonstration line of a ticket on the real tracker, and a real browser where it needs one |
 | `tests/*-real-session-test.sh` (2) | one real model session held to what a command hands it |
 
+`bin/local-only-tests` runs them nightly. A test whose host cannot run it
+exits 77 with a `SKIP: <reason, bead>` line, decided by a cheap, precise probe
+(`tests/lib/capture-browser.sh` for the capture browser): the runner names it
+SKIPPED, not failed, on every run and in the bead of a failing run. Any other
+failure of the probe lets the test run, so a real regression stays red.
+
 ## In this repository: the ceiling held by code
 
 `bin/ci-test-ceiling check` reads the seconds each test file took in a real

@@ -21,9 +21,17 @@
 # --list prints what a run would do, one line per marked file -- `run <path>`
 # or `excluded <path> <reason>` -- and runs nothing; it needs no gc. It exits
 # 2 on an exclusion that names no marked file or gives no reason.
-# The output of a run names each test (PASS, FAIL) and each exclusion
-# (EXCLUDED). A test that runs longer than LOCAL_ONLY_TEST_TIMEOUT (default
-# 1800 s) is stopped and counted as failed.
+# The output of a run names each test (PASS, FAIL, SKIPPED) and each
+# exclusion (EXCLUDED). A test that runs longer than LOCAL_ONLY_TEST_TIMEOUT
+# (default 1800 s) is stopped and counted as failed.
+#
+# A test that exits 77 says this host cannot run it (for example the capture
+# browser refused by the host sandbox, af-yb2cb5): it is SKIPPED, not failed,
+# with its last `SKIP:` line as the reason. Each SKIPPED line is printed even
+# under --quiet, and the bead a failing run files lists the skipped tests
+# too; skips alone file no bead and page nobody. A test exits 77 only on a
+# precise, cheap probe of its host (tests/lib/capture-browser.sh), so a real
+# regression still fails.
 set -uo pipefail
 
 ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
@@ -39,7 +47,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --quiet) QUIET=1 ;;
     --list) LIST=1 ;;
-    -h|--help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -86,6 +94,7 @@ for t in ${SKIPPED[@]+"${SKIPPED[@]}"}; do
 done
 
 FAILED=()
+HOST_SKIPPED=()
 for t in ${TESTS[@]+"${TESTS[@]}"}; do
   if [ ! -x "$t" ]; then
     say "local-only-tests: $t missing or not executable — treating as failed"
@@ -96,6 +105,10 @@ for t in ${TESTS[@]+"${TESTS[@]}"}; do
   rc=$?
   if [ "$rc" -eq 0 ]; then
     say "local-only-tests: PASS $t"
+  elif [ "$rc" -eq 77 ]; then
+    why=$(printf '%s\n' "$OUTPUT" | grep '^SKIP:' | tail -1)
+    HOST_SKIPPED+=("$t: ${why:-exit 77 without a SKIP: line}")
+    printf 'local-only-tests: SKIPPED %s — %s\n' "$t" "${why:-exit 77 without a SKIP: line}"
   else
     [ "$rc" -eq 124 ] && OUTPUT="$OUTPUT
 stopped after ${TEST_TIMEOUT}s"
@@ -104,10 +117,16 @@ stopped after ${TEST_TIMEOUT}s"
   fi
 done
 
-[ "${#FAILED[@]}" -eq 0 ] && { say "local-only-tests: all ${#TESTS[@]} test(s) passed"; exit 0; }
+[ "${#FAILED[@]}" -eq 0 ] && { say "local-only-tests: no failure in ${#TESTS[@]} test(s), ${#HOST_SKIPPED[@]} skipped"; exit 0; }
 
 TITLE="[local-only-tests] $(date -u +%Y-%m-%d) run: ${#FAILED[@]} failure(s)"
 REASON=$(printf '%s\n' "${FAILED[@]}")
+if [ "${#HOST_SKIPPED[@]}" -gt 0 ]; then
+  REASON="$REASON
+
+Skipped, this host cannot run them (exit 77, not counted as failures):
+$(printf '%s\n' "${HOST_SKIPPED[@]}")"
+fi
 
 CREATED=$(gc bd create "$TITLE" -p 1 -t bug \
   -d "The nightly local-only-tests order found ${#FAILED[@]} failing test(s):
