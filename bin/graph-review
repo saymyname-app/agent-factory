@@ -79,6 +79,10 @@ KEY_DECISIONS = "gc.graph_review.decisions"
 FAVORABLE, UNFAVORABLE, NOT_APPLICABLE = "favorable", "unfavorable", "not_applicable"
 SCOPE_CHECK = "declared_scope_includes_wiring"
 FOLD_CHECK = "prototype_fold_present_and_first"
+# Answered by code, never by the reviewer (af-i4w79r): a graph whose longest
+# chain of blocked_by exceeds a third of its tickets keeps two authors idle.
+CRITICAL_PATH_CHECK = "critical_path_bounded"
+CRITICAL_PATH_FLOOR = 4
 # The closed questions of Spec §2, with what each one asks.
 TICKET_CHECKS = {
     "demonstrable_alone": "démontrable seul",
@@ -91,7 +95,9 @@ GRAPH_CHECKS = {
     "no_orphan_story": "aucune story orpheline",
     "assembly_point_not_confiscated": "point d'assemblage non confisqué",
     FOLD_CHECK: "Prototype Fold présent et premier parmi les tickets d'interface",
+    CRITICAL_PATH_CHECK: "chemin critique au plus d'un tiers des tickets",
 }
+REVIEWER_GRAPH_CHECKS = [name for name in GRAPH_CHECKS if name != CRITICAL_PATH_CHECK]
 GRAPH_TARGET = "graphe"
 DECISIONS = {"publish": "publier tel quel", "rework": "à reprendre"}
 
@@ -187,6 +193,47 @@ class Draft:
     @property
     def last(self) -> dict[str, Any] | None:
         return self.passes[max(self.passes)] if self.passes else None
+
+
+def critical_path(draft: Draft) -> dict[str, Any]:
+    """The longest chain of blocked_by in the draft, measured against
+    max(CRITICAL_PATH_FLOOR, ceil(n/3)) tickets; the reason names the chain
+    and every link another link already implies (transitively redundant)."""
+    waits = {
+        key: [str(b) for b in ticket.get("blocked_by") or [] if str(b) in draft.tickets]
+        if isinstance(ticket.get("blocked_by") or [], list) else []  # malformed: refused at publication
+        for key, ticket in draft.tickets.items()
+    }
+    chain: dict[str, list[str]] = {}
+
+    def longest(key: str) -> list[str]:
+        if key not in chain:
+            chain[key] = [key]  # a cycle (refused at publication) ends here
+            chain[key] = max((longest(b) for b in waits[key]), key=len, default=[]) + [key]
+        return chain[key]
+
+    def reaches(start: str, goal: str, skip: str) -> bool:
+        stack, seen = [b for b in waits[start] if b != skip], set()
+        while stack:
+            current = stack.pop()
+            if current == goal:
+                return True
+            if current not in seen:
+                seen.add(current)
+                stack.extend(waits[current])
+        return False
+
+    path = max((longest(key) for key in draft.tickets), key=len)
+    limit = max(CRITICAL_PATH_FLOOR, -(-len(draft.tickets) // 3))
+    redundant = [f"{b} → {key}" for key, blockers in waits.items() for b in blockers if reaches(key, b, b)]
+    reason = f"chemin critique {len(path)} pour {len(draft.tickets)} tickets (au plus {limit}) : {' → '.join(path)}"
+    if redundant:
+        reason += f" ; liens déjà impliqués par d'autres : {', '.join(redundant)}"
+    if len(path) <= limit:
+        return {"state": FAVORABLE, "reason": reason}
+    return {"state": UNFAVORABLE, "reason": reason + (
+        " ; un ticket n'attend que les tickets dont il consomme un livrable cité dans son texte : "
+        "une même surface n'est pas une dépendance")}
 
 
 # --- verdicts ----------------------------------------------------------------
@@ -422,7 +469,7 @@ def cmd_brief(args: argparse.Namespace) -> dict[str, Any]:
             {"id": ticket_id, "checks": {name: TICKET_CHECKS[name] for name in draft.ticket_checks(ticket_id)}}
             for ticket_id in draft.tickets
         ],
-        "graph_checks": GRAPH_CHECKS,
+        "graph_checks": {name: GRAPH_CHECKS[name] for name in REVIEWER_GRAPH_CHECKS},
         "verdict_shape": {
             "digest": draft.digest,
             "tickets": {"<id>": {"checks": {"<check>": {"state": "favorable|unfavorable", "reason": "<required when unfavorable>"}}}},
@@ -490,7 +537,11 @@ def cmd_record(args: argparse.Namespace) -> dict[str, Any]:
         tickets[ticket_id] = judged(ticket_id, given[ticket_id], draft.ticket_checks(ticket_id), problems)
         if tickets[ticket_id] and not draft.declares_scope(ticket_id):
             tickets[ticket_id]["checks"][SCOPE_CHECK] = {"state": NOT_APPLICABLE, "reason": "aucun Declared Scope déclaré"}
-    graph = judged(GRAPH_TARGET, verdict.get("graph"), list(GRAPH_CHECKS), problems)
+    graph = judged(GRAPH_TARGET, verdict.get("graph"), REVIEWER_GRAPH_CHECKS, problems)
+    if graph:
+        graph["checks"][CRITICAL_PATH_CHECK] = critical_path(draft)
+        if graph["checks"][CRITICAL_PATH_CHECK]["state"] == UNFAVORABLE:
+            graph["verdict"] = UNFAVORABLE
     if problems:
         raise Refusal(
             f"refus : le verdict du relecteur de graphe sur le brouillon {draft.id} est incomplet ou hors contrat "
