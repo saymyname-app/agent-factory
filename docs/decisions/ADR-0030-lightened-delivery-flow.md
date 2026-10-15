@@ -110,7 +110,7 @@ sauf L7 qui suppose L3–L5. Annuler toutes les PR rend le flux de
 | Tranche | Bead | PR | État |
 |---|---|---|---|
 | L0 (cette ADR) | `af-npz9v1.1` | — | en cours |
-| L1 | `af-npz9v1.2` | — | livrée : `bin/tdd-step green` lance aussi le `regression_command` du profil sur la pointe ; rouge = refus simple (ni arrêt ni reprise), donc la porte `code` de `bin/ticket-author` ne passe pas et l'auteur continue |
+| L1 | `af-npz9v1.2` | #618 | livrée : `bin/tdd-step green` lance aussi le `regression_command` du profil sur la pointe ; rouge = refus simple (ni arrêt ni reprise), donc la porte `code` de `bin/ticket-author` ne passe pas et l'auteur continue |
 | L2 | — | — | à faire |
 | L3 | — | — | à faire |
 | L4 | — | — | à faire |
