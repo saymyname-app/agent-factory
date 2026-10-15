@@ -420,10 +420,27 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
 
         self.assertEqual([(T1, "resumes_exhausted")], [(p["id"], p["cause"]) for p in self.of(answer, "parked")])
         detail = self.park_of(T1)["detail"]
-        self.assertIn("dernière reprise : returned", detail)
+        self.assertIn("dernière reprise enregistrée : returned", detail)
         self.assertIn("tests rouges sur le résultat fusionné", detail)
         self.assertIn("tests/a-test.py, tests/b-test.py, tests/c-test.py, …", detail)
         self.assertNotIn("tests/d-test.py", detail)
+
+    def test_a_red_merge_whose_output_names_no_test_still_parks_with_the_merged_commit(self):
+        self.integrated(regression="sh -c 'echo boom ; exit 1'")
+        self.resumable()
+        self.code_reviewed("favorable")
+        self.evaluated()
+        self.advance(CONVOY)
+        self.finished(T1)
+        self.advance(CONVOY)
+        self.run_ok(STATE, "bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
+        self.run_ok(STATE, "bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "resumes_exhausted")], [(p["id"], p["cause"]) for p in self.of(answer, "parked")])
+        detail = self.park_of(T1)["detail"]
+        self.assertRegex(detail, r"tests rouges sur le résultat fusionné [0-9a-f]{7,12}\)$")
 
     def test_a_ticket_at_its_third_resume_whatever_the_causes_is_parked_with_its_descendants_and_not_restarted(self):
         self.started_convoy()

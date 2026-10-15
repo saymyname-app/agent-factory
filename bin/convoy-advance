@@ -962,12 +962,12 @@ def launch_resume(convoy: Convoy, ticket_id: str, cause: str, rig: str, settings
 def failed_merged_tests(convoy: Convoy, ticket: dict[str, Any], commit: Any) -> list[str]:
     """The tests the piece `merged_tests` captured red on the merged result
     `commit`, as bin/ci-run-tests names them (`FAILED: <file>`). Empty when
-    the piece is not readable or names none."""
-    proc = run([str(CAPTURE_BIN), "verify", convoy.id, ticket["id"], "--piece", MERGED_TESTS_PIECE])
+    the piece is not readable or names none: never in the way of the park."""
     try:
+        proc = run([str(CAPTURE_BIN), "verify", convoy.id, ticket["id"], "--piece", MERGED_TESTS_PIECE])
         piece = json.loads(proc.stdout)["pieces"][0]
         output = json.loads(Path(piece["path"]).read_text(encoding="utf-8"))["output"]
-    except (OSError, KeyError, IndexError, TypeError, json.JSONDecodeError):
+    except (Refusal, OSError, KeyError, IndexError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
         return []
     if proc.returncode != 0 or piece.get("commit") != commit or not isinstance(output, str):
         return []
@@ -980,15 +980,17 @@ def park_exhausted(convoy: Convoy, ticket: dict[str, Any]) -> dict[str, Any]:
     first tests that failed: the grouped request carries it (af-w6xtw0)."""
     resumes = (ticket.get("counters") or {}).get("resumes")
     detail = f"{resumes} reprises, toutes causes confondues : le ticket ne redémarre plus"
+    # The correction round (T17) and a commit after a verdict (T18) count a
+    # resume without an entry: the detail names the last one recorded.
     entries = (ticket.get("resume") or {}).get("entries") or []
     if entries:
-        detail += f" ; dernière reprise : {entries[-1]['cause']}"
+        detail += f" ; dernière reprise enregistrée : {entries[-1]['cause']}"
         merge = ticket.get("merge") or {}
         if entries[-1]["cause"] == "returned" and merge.get("outcome") == "red":
             failed = failed_merged_tests(convoy, ticket, merge.get("commit"))
             named = ", ".join(failed[:3]) + (", …" if len(failed) > 3 else "")
-            detail += f" (tests rouges sur le résultat fusionné {str(merge.get('commit'))[:7]}" \
-                      + (f" : {named})" if named else ")")
+            suffix = f" : {named}" if named else ""
+            detail += f" (tests rouges sur le résultat fusionné {str(merge.get('commit'))[:12]}{suffix})"
     answer = state_write("park", convoy.id, ticket["id"], "--cause", PARK_EXHAUSTED, "--detail", one_line(detail, 400))
     return {"id": ticket["id"], "cause": PARK_EXHAUSTED, "parked": answer["parked"]}
 
