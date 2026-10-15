@@ -209,8 +209,10 @@ while IFS=$'\x1f' read -r id status assignee routed_to updated_at lease_heartbea
 
   # session_affinity=require: assignee names the session owning this
   # formula step, not stale dispatch drift -- leave it alone as long as
-  # that session is still alive, however stale it looks (af-7qxzh).
-  [ "$session_affinity" = "require" ] && is_session_alive "$assignee" && continue
+  # that session is still alive, however stale it looks (af-7qxzh). The
+  # formula pre-assigns later steps to the session ID, so a live session is
+  # recognised by name or by id (af-hthazy).
+  [ "$session_affinity" = "require" ] && { is_session_alive "$assignee" || is_session_id_alive "$assignee"; } && continue
 
   # assignee is the session that claimed this step through the hook
   # (gc.session_id): the step is held, not drifted, as long as that session

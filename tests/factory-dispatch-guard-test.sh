@@ -41,6 +41,12 @@
 # alone while that session is alive, and is ordinary drift once it is gone; a
 # live session that is the assignee without having claimed is still drift.
 #
+# Also regression for af-hthazy (2026-10-15): the formula pre-assigns later
+# session_affinity=require steps to the session ID, not its name, and leaves
+# gc.session_id empty, so a live author session lost its drain/exit steps.
+# Proves: such a step is left alone while the session with that id is alive,
+# and is ordinary drift once it is closed.
+#
 # All bead ids here are synthetic fixtures (zz-fixture*), never a real af-*
 # id from the live store.
 
@@ -195,6 +201,28 @@ grep -q "cleared stale assignee 'claude-af-c9a25' (routed to 'claude', stale 30m
 call=$(grep "^zz-fixture-affinity-alive " "$UPDATE_LOG" || true)
 [[ $call == *'--assignee '* ]] || fail "repair call did not clear the assignee: $call"
 [ "$(mail_count mayor)" = "1" ] || fail "expected exactly one page to the Mayor once the owning session is gone"
+
+# 5b. session_affinity=require, pre-assigned to the session ID with no
+#     gc.session_id (af-hthazy): left alone while that session is alive,
+#     ordinary drift once it is closed -----------------------------------
+affinity_by_id='{
+  "id": "zz-fixture-affinity-by-id", "status": "open", "title": "Later step pre-assigned to the session id",
+  "assignee": "zz-wisp-author", "updated_at": "'"$STALE"'",
+  "metadata": {"gc.routed_to": "delivery-author", "gc.session_affinity": "require"}
+}'
+: > "$UPDATE_LOG"; : > "$MAIL_LOG"
+echo '{"sessions":[{"id":"zz-wisp-author","session_name":"delivery-author-zz-wisp-author","closed":false}]}' > "$SESSIONS_FILE"
+jq -n --argjson e "$affinity_by_id" '[$e]' > "$BEADS_FILE"
+out=$(guard)
+grep -q "zz-fixture-affinity-by-id" <<<"$out" \
+  && { echo "$out" >&2; fail "a session_affinity=require step pre-assigned to a live session id was flagged"; }
+[ "$(update_count zz-fixture-affinity-by-id)" = "0" ] || fail "cleared a session_affinity=require step whose session (by id) is still alive"
+[ "$(mail_count mayor)" = "0" ] || fail "paged the Mayor over a live session-affinity step assigned by id"
+: > "$UPDATE_LOG"; : > "$MAIL_LOG"
+echo '{"sessions":[{"id":"zz-wisp-author","session_name":"delivery-author-zz-wisp-author","closed":true}]}' > "$SESSIONS_FILE"
+out=$(guard)
+grep -q "zz-fixture-affinity-by-id: cleared stale assignee 'zz-wisp-author' (routed to 'delivery-author', stale 30m)" <<<"$out" \
+  || { echo "$out" >&2; fail "a session_affinity=require step whose session (by id) is closed was not repaired"; }
 
 # 6. empty-heartbeat regression: no heartbeat key, an empty one and an
 #    unparseable one all fall back to updated_at (30m stale, at 00:05 UTC);
