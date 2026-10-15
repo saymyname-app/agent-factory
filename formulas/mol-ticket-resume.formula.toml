@@ -8,8 +8,9 @@ Only `bin/convoy-advance` dispatches this formula, through
 `resume.formula`), on a bead of its own that names the convoy, the ticket
 and the cause. The pass counted the resume before it sent it
 (`bin/convoy-state open-resume`): a ticket is resumed for an interrupted
-session, a ticket the merge returned, a repair that is closed or a request
-that was answered, and at its third resume, every cause together, it is
+session, a ticket the merge returned, a repair that is closed, a request
+that was answered, a branch behind the integration tip, or a stop of its
+Ticket Evaluation without result, and at its third resume, every cause together, it is
 parked with every ticket that waits for it instead of being sent here.
 
 The session is new: it knows of the ticket only what the tracker and the
@@ -93,6 +94,13 @@ Work only in the work tree.
   `behind`). Bring the integration branch into your branch
   (`git fetch origin && git merge "origin/$INTEGRATION"`), resolve what
   conflicts, correct what the merged result breaks, and commit.
+- `evaluation_no_result` — you finished, and the Ticket Evaluation of your
+  tip gave no result twice: the stop is lifted and kept under `.resume`.
+  Nothing is refused in your code. Bring the integration branch into your
+  branch (`git fetch origin && git merge "origin/$INTEGRATION"`), resolve
+  and correct what the merged result breaks, commit when it changed
+  anything, prove the ticket at the tip and finish again: the evaluation is
+  sent again on that tip.
 - `unblocked` — the repair the ticket waited for is closed: its Ticket
   Handoff is among `.blocker_handoffs`. Go on as for `interrupted`.
 - `answered` — the operator answered the request that parked the ticket:

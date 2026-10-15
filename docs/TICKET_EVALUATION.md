@@ -91,9 +91,9 @@ game in `brief.datasets` and asks for the next one with `ticket-evaluation
 product CONVOY TICKET --dataset NAME`. A `ready=false` response records the
 request. The next controller pass stops the old product, confirms its
 descendants, port and worktree are gone, then opens the requested game.
-Repeat the command until `ready=true`; capture with the returned address
-and launch record. `--fresh` requests a new initial state for a revisit at
-the same commit. Capture proof before switching away. The read-only role
+`--wait SECONDS` repeats the ask inside one call until `ready=true` or the
+timeout (af-oowsc2); capture with the returned address and launch record.
+`--fresh` requests a new initial state for a revisit at the same commit. Capture proof before switching away. The read-only role
 never launches or stops a process itself. The controller verifies the clean
 copy's commit, launch marker and ownership of its listening socket, then writes
 an exact identity attestation. The Evaluator's sandbox sees that directory
@@ -280,14 +280,19 @@ launch record before the new Evaluator receives its brief. The prior product's
 observation is not reused as the identity proof of its replacement. When that
 second launch gives no result either, the ticket is stopped
 (`evaluation_no_result`), its products are stopped, and it is raised once to
-the operator through `bin/escalation-door`.
+the operator through `bin/escalation-door`. That stop alone is lifted by
+code: `bin/convoy-advance` resumes the ticket itself, once per tip of the
+integration branch and within the bound K of the resumes, withdrawing the
+request (`docs/CONVOY_ADVANCE.md`, cause `evaluation_no_result`).
 
 An evaluation handed in by a session that already rendered a review of
 tests, a code review or a Ticket Evaluation of the convoy is refused the
 same way (Spec §5, T42; `docs/TEST_REVIEW.md`, « A fresh session per
 review »): the launch it answered is marked `refused` and gave no result.
 `agents/delivery-evaluator/agent.toml` carries the same work query as the
-reviewer, and `record` signs with `GC_SESSION_NAME`, else `GC_SESSION_ID`.
+reviewer and `wake_mode = "fresh"`, and `record` signs with
+`GC_SESSION_NAME`, else `GC_SESSION_ID`, and `GC_CONTINUATION_EPOCH` as
+`conversation`.
 
 A dispatch the door refuses or defers launched nothing: it counts no launch
 and its bead is closed. A deferral is listed under `deferred` and tried
@@ -309,7 +314,7 @@ On the ticket, written by `bin/convoy-state` only (`docs/CONVOY_STATE.md`):
 
 | Key | Value |
 |---|---|
-| `gc.flow.evaluation` | `rounds`: each recorded round — an `evaluation` (`commit`, `criteria`: number, text, state, evidence, reason, cause; `demonstration_line`; optional `screen_findings`; `outcome`, `verdict`, `roles`, `environment`: dataset and address of each product, `recorded_by`, `at`) or a `startup` (`commit`, `started`, `evidence` and `environment`, or `detail`; `outcome`, `verdict`, `at`). `request`, while an evaluation is open — `commit`, `criteria`, `demonstration_line`, `roles`, `environment` (with `state_file`), `launches` (`bead`, `at`, and `refused`: `{session, at}` when the session that answered had already served), `at`. `live`: the launch records of the products still to stop |
+| `gc.flow.evaluation` | `rounds`: each recorded round — an `evaluation` (`commit`, `criteria`: number, text, state, evidence, reason, cause; `demonstration_line`; optional `screen_findings`; `outcome`, `verdict`, `roles`, `environment`: dataset and address of each product, `recorded_by`, `conversation` when known, `at`) or a `startup` (`commit`, `started`, `evidence` and `environment`, or `detail`; `outcome`, `verdict`, `at`). `request`, while an evaluation is open — `commit`, `criteria`, `demonstration_line`, `roles`, `environment` (with `state_file`), `launches` (`bead`, `at`, and `refused`: `{session, at}` when the session that answered had already served), `at`. `live`: the launch records of the products still to stop |
 | `gc.flow.verdict.evaluation` | the verdict of the last round that gave one, and the commit it judged |
 | `gc.flow.models` | per delivery role: `agent`, `provider`, `model`, `at` |
 | `gc.flow.stop` | reason `evaluation_no_result` or `evaluation_outage`, a one-line detail, and `raised` once the escalation door accepted the request |
@@ -362,7 +367,9 @@ reference receive neither brief field.
   `bin/prototype-fidelity` (`docs/PROTOTYPE_FIDELITY.md`); the gate that
   runs them for a ticket is T19's. The fresh author session after a refusal, its single
   correction round and the stop of a ticket still refused are
-  `bin/correction-round`'s (`docs/CORRECTION_ROUND.md`). Nothing lifts a stop yet.
+  `bin/correction-round`'s (`docs/CORRECTION_ROUND.md`). Nothing lifts a stop
+  but `evaluation_no_result`, resumed by `bin/convoy-advance`
+  (`docs/CONVOY_ADVANCE.md`).
 
 ## Proof
 

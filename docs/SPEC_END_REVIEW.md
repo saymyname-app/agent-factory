@@ -193,7 +193,7 @@ On the convoy, written by `bin/convoy-state` only (`docs/CONVOY_STATE.md`):
 
 | Key | Value |
 | --- | --- |
-| `gc.flow.end_review` | `rounds`: each recorded round — `commit`, `base`, `outcome`, `findings`, `coverage`, `extent`, `models`, `recorded_by`, `launched_at`, `duration_seconds`, `at`. `request`, while a review is open — `commit`, `base`, `extent`, `models`, `launches` (`bead`, `at`, and `result: incomplete`), `at`. `stop` — `reason`, `detail`, `commit`, `at`, then `bead` and `raised`. |
+| `gc.flow.end_review` | `rounds`: each recorded round — `commit`, `base`, `outcome`, `findings`, `coverage`, `extent`, `models`, `recorded_by`, `conversation` (`GC_CONTINUATION_EPOCH`, when known), `launched_at`, `duration_seconds`, `at`. `request`, while a review is open — `commit`, `base`, `extent`, `models`, `launches` (`bead`, `at`, and `result: incomplete`), `at`. `stop` — `reason`, `detail`, `commit`, `at`, then `bead` and `raised`. |
 | `gc.flow.end_round` | `commit`, `source`, `at`: the tip the last round of the end was counted for (T26: and the stories not observed, for the early stops). |
 | `gc.flow.counter.end_rounds` | the rounds of the end of the Spec, every source together. |
 | `gc.flow.end_stop` | T26: the stop of the rounds — `reason`, `detail`, `commit`, `source`, `rounds`, `at`, then `request` (`docs/CONVOY_STATE.md`). |

@@ -440,6 +440,7 @@ scope = "city"
 min_active_sessions = 0
 max_active_sessions = 2
 provider = "stub-$role"
+$([ "$role" = author ] || echo 'wake_mode = "fresh"')
 TOML
   echo "Scripted $role of the ticket-end trial." > "$CITY/agents/trial-$role/prompt.template.md"
 done
@@ -584,13 +585,25 @@ printf '%s' "$record" | jq -e --arg tip "$TIP_A" '
       [4,"fidelity","pass"],[5,"deferral","pass"],[6,"merge","pass"],[7,"evidence","pass"],[8,"tdd","pass"],[9,"review","pass"]])
   and ([.conditions[] | select((.detail | length) == 0)] | length == 0)' >/dev/null \
   || fail "the record of the gate on A is not its version, its nine passing verdicts and the merged commit: $record"
-closing_pass=$(jq -c --arg c "$CONVOY" --arg a "$A" 'select(any(.convoys[]?; .id == $c and any(.ticket_end.closed[]?; .id == $a)))' "$TRIAL/passes.jsonl" | head -1)
-[ -n "$closing_pass" ] || fail "no pass of the order reports having closed A through the gate"
+# The gate closes A in the middle of its pass; the wrapper of the order
+# appends that pass's line only once the pass has run its later steps (the
+# end of the Spec, the Evidence Pack, the acceptance), seconds after A reads
+# closed under load (af-pnjrln). So the line is waited for, within the
+# timeout of one pass.
+closed_seen=$(date +%s)
+closing_pass_of_A() {
+  jq -c --arg c "$CONVOY" --arg a "$A" 'select(any(.convoys[]?; .id == $c and any(.ticket_end.closed[]?; .id == $a)))' \
+    "$TRIAL/passes.jsonl" 2>/dev/null | head -1 || true
+}
+closing_pass_recorded() { [ -n "$(closing_pass_of_A)" ]; }
+wait_for 300 closing_pass_recorded || fail "no pass of the order reports having closed A through the gate"
+closing_pass=$(closing_pass_of_A)
+recorded_after=$(( $(date +%s) - closed_seen ))
 printf '%s' "$closing_pass" | jq -e --arg c "$CONVOY" --arg a "$A" 'any(.convoys[]; .id == $c and any(.integration.merged[]?; .id == $a))' >/dev/null \
   || fail "A was not closed by the pass that merged it: $closing_pass"
 "$ROOT/bin/evidence-capture" verify "$CONVOY" "$A" >/dev/null || fail "the evidence of A does not verify"
 [ "$(shown "$A" | jq -c '.unruled')" = '[]' ] || fail "A, closed by its gate, reads as an anomaly: $(shown "$A" | jq -c '.unruled')"
-echo "$(date -u +%H:%M:%S) A : relu ($(field "$A" gc.flow.code_review | jq -r '.rounds[-1].verdict')), évalué ($(field "$A" gc.flow.evaluation | jq -r '.rounds[-1].outcome')), fusionné dans $INTEGRATION puis fermé par la même passe de l'ordre (passe de $(printf '%s' "$closing_pass" | jq -r '.at')) ; statut relu sur le tracker : $(status_of "$A") ; relevé de la porte relu : version $(printf '%s' "$record" | jq -r '.version'), commit $(printf '%s' "$record" | jq -r '.commit'), verdicts $(printf '%s' "$record" | jq -c '[.conditions[] | "\(.number) \(.name) \(.verdict)"]')"
+echo "$(date -u +%H:%M:%S) A : relu ($(field "$A" gc.flow.code_review | jq -r '.rounds[-1].verdict')), évalué ($(field "$A" gc.flow.evaluation | jq -r '.rounds[-1].outcome')), fusionné dans $INTEGRATION puis fermé par la même passe de l'ordre (passe de $(printf '%s' "$closing_pass" | jq -r '.at'), sa ligne relevée ${recorded_after}s après la fermeture vue) ; statut relu sur le tracker : $(status_of "$A") ; relevé de la porte relu : version $(printf '%s' "$record" | jq -r '.version'), commit $(printf '%s' "$record" | jq -r '.commit'), verdicts $(printf '%s' "$record" | jq -c '[.conditions[] | "\(.number) \(.name) \(.verdict)"]')"
 printf '%s' "$record" | jq -r '.conditions[] | "    condition \(.number) (\(.name)) : \(.detail)"'
 
 # --- B: one condition missing -> reviewed, evaluated, never merged, left open, named -----

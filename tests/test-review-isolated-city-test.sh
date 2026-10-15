@@ -340,6 +340,7 @@ scope = "city"
 min_active_sessions = 0
 max_active_sessions = 2
 provider = "stub-reviewer"
+wake_mode = "fresh"
 TOML
 echo "Scripted reviewer of the test-review trial." > "$CITY/agents/trial-reviewer/prompt.template.md"
 cp "$ROOT/formulas/mol-ticket-author.formula.toml" "$ROOT/formulas/mol-test-review.formula.toml" "$CITY/formulas/"

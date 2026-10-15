@@ -855,7 +855,8 @@ class TicketEvaluationTest(unittest.TestCase):
         self.assertEqual(["content"], [entry["dataset"] for entry in request["environment"]])
         first = request["environment"][0]
         handed = self.handed(tip, request)
-        asked = self.tool("product", SLICE, "--dataset", "empty", env=SESSION)
+        # --wait bounds the ask: not ready within it, the same answer (af-oowsc2).
+        asked = self.tool("product", SLICE, "--dataset", "empty", "--wait", "1", env=SESSION)
         self.assertFalse(asked["ready"])
         settled = self.settle()
         self.assertEqual([SLICE], [entry["ticket"] for entry in settled["product_ready"]])
@@ -865,7 +866,7 @@ class TicketEvaluationTest(unittest.TestCase):
         second = request["environment"][-1]
         self.assertEqual([second["state_file"]], self.evaluation()["live"])
         self.assertEqual(tip, json.loads(Path(second["state_file"]).read_text())["commit"])
-        self.assertTrue(self.tool("product", SLICE, "--dataset", "empty", env=SESSION)["ready"])
+        self.assertTrue(self.tool("product", SLICE, "--dataset", "empty", "--wait", "60", env=SESSION)["ready"])
         handed["coverage"].append({"dataset": "empty", "evidence": self.capture("evaluation.empty", second)})
         self.recorded(handed)
         self.assertTrue(self.tool("verdict")["favorable"])

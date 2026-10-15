@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Create one immutable revised graph draft for an authorized stopped-ticket replacement."""
+"""Create one immutable revised graph draft for an authorized replacement of a stopped ticket, or of a
+ticket parked by its own Planning Exception once the operator answered it."""
 from __future__ import annotations
 
 import argparse
@@ -10,9 +11,13 @@ import os
 import re
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 
 import yaml
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+from convoy_state import operator_answer  # noqa: E402
 
 NEW_FLOW = "new-flow/v1"
 SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -97,6 +102,24 @@ def parsed_draft(bead: dict[str, Any]) -> dict[str, Any]:
     return value
 
 
+def replaceable(meta: dict[str, Any], ticket: str) -> str:
+    """Why the ticket may be replaced: its active stop, or the parking its own
+    Planning Exception caused, once the operator answered that request
+    (bin/escalation-door repondre) after it was parked. Read only."""
+    if "gc.flow.stop" in meta:
+        stop = encoded(meta, "gc.flow.stop", ticket)
+        require(str(stop.get("reason") or "").strip(), f"{ticket} has no active stop reason")
+        return f"stop {stop['reason']}"
+    require("gc.flow.park" in meta, f"{ticket} has no active stop reason")
+    park = encoded(meta, "gc.flow.park", ticket)
+    since = str(park.get("at") or "")
+    answer = operator_answer(meta, since) if since else None
+    require(park.get("cause") == "planning_exception" and park.get("origin") == ticket and answer is not None,
+            f"{ticket} has no active stop reason and no answered Planning Exception parking (its own, "
+            "answered through bin/escalation-door repondre after it was parked)")
+    return f"parked by its own Planning Exception, answered {answer['option']} at {answer['at']}"
+
+
 REVISION_KEYS = {"scope", "acceptance_criteria", "demonstration_line", "what_it_delivers",
                  "drop_establishes_launch_recipe"}
 CRITERION_FIELDS = ("entry_point", "observable", "false_if")
@@ -146,8 +169,7 @@ def create(args: argparse.Namespace) -> dict[str, Any]:
     require(stopped.get("status") != "closed", f"stopped ticket {args.stopped_ticket} is already closed")
     require(stopped_meta.get("gc.ticket_kind") == "vertical_slice",
             f"{args.stopped_ticket} is not a vertical_slice")
-    stop = encoded(stopped_meta, "gc.flow.stop", args.stopped_ticket)
-    require(str(stop.get("reason") or "").strip(), f"{args.stopped_ticket} has no active stop reason")
+    source_state = replaceable(stopped_meta, args.stopped_ticket)
     require(convoy_meta.get("gc.flow.mark") == NEW_FLOW, f"convoy {args.convoy} is not {NEW_FLOW}")
 
     source_text = str(source.get("description") or "")
@@ -217,9 +239,9 @@ def create(args: argparse.Namespace) -> dict[str, Any]:
         }
         revised_note = (f"; revised criteria {revised_meta['replacement_revised_criteria_digest']} "
                         f"scope {revised_meta['replacement_revised_scope_digest']}")
-    citation = (f" Authorized replacement: decision {args.decision}; stopped ticket {args.stopped_ticket} ({old_key}); "
+    citation = (f" Authorized replacement: decision {args.decision}; stopped ticket {args.stopped_ticket} ({old_key}, {source_state}); "
                 f"convoy {args.convoy}; Spec {spec_id} at {spec_digest}; criteria {criteria_digest}; "
-                f"scope {scope_digest}{revised_note}; useful commit {args.useful_commit}. The stopped ticket, stop, "
+                f"scope {scope_digest}{revised_note}; useful commit {args.useful_commit}. The replaced ticket, its stop or parking, "
                 "evidence, refusals and counters remain untouched.")
     replacement["what_it_delivers"] = str(replacement.get("what_it_delivers") or "").rstrip() + citation
     draft["tickets"] = [replacement if ticket is original else ticket for ticket in tickets]

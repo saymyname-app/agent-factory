@@ -28,7 +28,8 @@ request answered, finished branch behind the tip of the integration branch
 (T44) — goes to one fresh author session on the formula
 `mol-ticket-resume`, which takes it with the same `start`, on the same
 branch; resumes are counted and the third parks the ticket (T20,
-`docs/CONVOY_ADVANCE.md`). A stopped ticket is not resumed.
+`docs/CONVOY_ADVANCE.md`). A stopped ticket is not resumed, but for a
+Ticket Evaluation without result, once per tip of the integration branch.
 
 ## The pieces
 

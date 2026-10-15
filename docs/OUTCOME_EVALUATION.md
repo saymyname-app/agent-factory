@@ -42,7 +42,8 @@ read-only Evaluator role. The session is given no repository: it sees the
 product through its addresses only. `brief.datasets` lists every declared
 game while `brief.environments` lists only the active product. `product
 CONVOY --dataset NAME` returns `ready=false` until the controller's next
-pass confirms the old product stopped and opens the requested one. `--fresh`
+pass confirms the old product stopped and opens the requested one;
+`--wait SECONDS` blocks for that inside one call (af-oowsc2). `--fresh`
 revisits a game from its initial state at the same commit. Capture before
 switching. The sealed result includes one `coverage` entry (`dataset`,
 `evidence`) for each game; a missing game or wrong address refuses it.

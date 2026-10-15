@@ -189,8 +189,8 @@ while true; do
   # an earlier one, already closed, and reads the review bead of that one.
   NEW="$TRIAL/brief.\$\$.new"
   if ! "\$BIN/spec-end-review" brief "\$CONVOY" > "\$NEW" 2>>"\$LOG"; then
-    # Seen with these stubs (gc 1.4.1): once a stub has drained and exited, a
-    # session is started again on the step it just closed. Nothing is asked
+    # Seen with these stubs (gc 1.4.1; gc 1.5.0 wakes the drained session again
+    # under the same name): a session is started again on the step it just closed. Nothing is asked
     # any more: the brief it was given stays, nothing is written.
     say "aucune revue de fin demandée (\$REVIEW_BEAD), rien à faire"
     rm -f "\$NEW"
@@ -258,6 +258,7 @@ scope = "city"
 min_active_sessions = 0
 max_active_sessions = 1
 provider = "stub-reviewer"
+wake_mode = "fresh"
 TOML
 echo "Scripted reviewer of the end-review trial." > "$CITY/agents/trial-reviewer/prompt.template.md"
 cat > "$CITY/agents/trial-author/agent.toml" <<'TOML'
@@ -535,8 +536,11 @@ GATE2=$(gate_record | jq -r '.commit')
 jq -e --arg commit "$GATE2" --arg base "$BASE" '.commit == $commit and .base == $base and .outcome == "favorable"
   and .findings == [] and .coverage.missing == []' <<<"$round2" >/dev/null \
   || fail "the end review of the new tip is not a favorable review of the whole diff: $round2"
+# A session is its name and its conversation (T42): gc 1.5.0 wakes the drained
+# reviewer again under the same name, in a fresh conversation (wake_mode = "fresh").
 reviewer2=$(jq -r '.recorded_by' <<<"$round2")
-[ "$reviewer2" != "$reviewer1" ] || fail "the second end review was made by the session of the first: $reviewer2"
+[ "$reviewer2 $(jq -r '.conversation // ""' <<<"$round2")" != "$reviewer1 $(jq -r '.conversation // ""' <<<"$round1")" ] \
+  || fail "the second end review was made by the conversation of the first: $reviewer2 $(jq -c '.conversation' <<<"$round2")"
 pass2=$(launch_pass "$GATE2")
 jq -e --arg commit "$GATE2" '.spec_end.commit == $commit and .spec_end.verdicts.end_review == "fail"
   and (.spec_end.reason | test("jamais réutilisé"))' <<<"$pass2" >/dev/null \
