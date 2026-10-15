@@ -1017,6 +1017,75 @@ class PatchDoorTest(Harness):
     def withdrawal(self):
         return self.revision(keep=("T1", "T2", "T3"), withdrawn=[{"ticket": "T4", "planning_exception": "pd-1"}])
 
+    # --- af-6854ef: replacing a ticket parked by its own Planning Exception ---
+
+    def park_t2(self, answered):
+        """T2 parks itself and T3 behind it (Ticket Exit planning_exception);
+        the operator answered its request through bin/escalation-door repondre."""
+        self.state_tool("park", self.convoy, self.ids["T2"], "--cause", "planning_exception",
+                        "--detail", "Planning Exception (semantic) sur T2")
+        # As bin/convoy-state park writes it on each ticket waiting for T2
+        # (the fake tracker keeps no dependency edges for it to read).
+        self.edit_bead(self.ids["T3"], metadata={
+            "gc.flow.park": self.beads()[self.ids["T2"]]["metadata"]["gc.flow.park"]})
+        if answered:
+            self.edit_bead(self.ids["T2"], metadata={
+                "gc.needs_benjamin": "none", "gc.escalation_response_option": "a",
+                "gc.escalation_response_at": "2999-01-01T00:00:00Z"})
+
+    def replacement_of_t2(self):
+        replacement = copy.deepcopy(self.ticket(self.conformant(), "T2"))
+        replacement["id"] = "T2R"
+        draft = self.revision(replacement, keep=("T1", "T3", "T4"),
+                              withdrawn=[{"ticket": "T2", "planning_exception": "pd-1"}])
+        self.ticket(draft, "T3")["blocked_by"] = ["T2R"]
+        self.ticket(draft, "T1")["unblocks"] = "T2R"
+        return draft
+
+    def test_withdrawing_a_ticket_parked_by_its_answered_exception_lifts_its_parking(self):
+        register = self.register("resolved", ticket="T2")
+        self.park_t2(answered=True)
+        self.assertEqual(self.ids["T2"], self.shown_ticket(self.convoy, self.ids["T3"])["park"]["origin"])
+        self.propose(self.replacement_of_t2())
+
+        result = self.patched(extra=("--planning-exception-register", str(register)))
+        self.assertEqual({"T2": self.ids["T2"]}, result["withdrawn"])
+        self.assertEqual("closed", self.beads()[self.ids["T2"]]["status"])
+        self.assertIn("withdrawn", self.shown_ticket(self.convoy, self.ids["T2"])["gates"])
+        # Behind it, T3 now only waits for the replacement, as a dependency.
+        self.assertIsNone(self.shown_ticket(self.convoy, self.ids["T3"]).get("park"))
+        lifted = json.loads(self.beads()[self.ids["T2"]]["metadata"]["gc.flow.park_lifts"])["entries"]
+        self.assertEqual([(self.ids["T2"], "a")], [(entry["request"], entry["option"]) for entry in lifted])
+
+    def test_an_interrupted_withdrawal_lifts_the_parking_when_resumed(self):
+        register = self.register("resolved", ticket="T2")
+        self.park_t2(answered=True)
+        self.propose(self.replacement_of_t2())
+        failing = self.tmp / "convoy-state-without-lift"
+        failing.write_text(f'#!/bin/sh\n[ "$1" = lift-park ] && exit 1\nexec {CONVOY_STATE} "$@"\n')
+        failing.chmod(0o755)
+        interrupted = self.patch(extra=("--planning-exception-register", str(register)),
+                                 env={"CONVOY_STATE_BIN": str(failing)})
+        self.assertNotEqual(0, interrupted.returncode, interrupted.stdout)
+        self.assertEqual("closed", self.beads()[self.ids["T2"]]["status"])
+        # Interrupted before the mark: the convoy is an « état sans règle » until resumed.
+        self.assertIsNotNone(self.shown_ticket(self.convoy, self.ids["T3"], expect=3).get("park"))
+
+        self.patched(extra=("--planning-exception-register", str(register)))
+        self.assertIsNone(self.shown_ticket(self.convoy, self.ids["T3"]).get("park"))
+        self.patched(extra=("--planning-exception-register", str(register)))
+        lifted = json.loads(self.beads()[self.ids["T2"]]["metadata"]["gc.flow.park_lifts"])["entries"]
+        self.assertEqual(1, len(lifted))
+
+    def test_refuses_to_withdraw_a_ticket_whose_parking_has_no_answer(self):
+        register = self.register("resolved", ticket="T2")
+        self.park_t2(answered=False)
+        self.propose(self.replacement_of_t2())
+
+        proc = self.refused(extra=("--planning-exception-register", str(register)))
+        self.assertTrue(any("parcage" in line for line in self.refusal_lines(proc, "T2")), proc.stderr)
+        self.assertEqual(self.ids["T2"], self.shown_ticket(self.convoy, self.ids["T3"])["park"]["origin"])
+
     def test_refuses_a_withdrawal_that_orphans_a_story_the_spec_still_holds(self):
         register = self.register("resolved")
         self.propose(self.withdrawal())

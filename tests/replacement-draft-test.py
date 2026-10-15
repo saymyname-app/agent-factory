@@ -167,6 +167,69 @@ class ReplacementDraftTest(unittest.TestCase):
             self.assertIn("refused: revision", json.loads(proc.stdout)["error"])
             self.assertEqual(before, json.loads(self.state_path.read_text()))
 
+    # --- a ticket parked by its own answered Planning Exception (af-6854ef) ----
+
+    PARK_AT = "2026-10-15T02:34:40Z"
+
+    def park_source(self, origin="stopped", answered=True, needs="none", response_at="2026-10-15T10:02:53Z"):
+        """The source ticket is parked by a Planning Exception (no stop): its own,
+        or one raised on another ticket; answered or not by the operator through
+        bin/escalation-door repondre."""
+        state = json.loads(self.state_path.read_text())
+        meta = state["beads"]["stopped"]["metadata"]
+        del meta["gc.flow.stop"]
+        meta["gc.flow.park"] = json.dumps({"cause": "planning_exception", "origin": origin,
+                                           "detail": "Planning Exception (semantic)", "at": self.PARK_AT})
+        meta["gc.flow.exit"] = json.dumps({"exit": "planning_exception", "at": self.PARK_AT})
+        meta["gc.needs_benjamin"] = needs
+        if answered:
+            meta["gc.escalation_response_option"] = "a"
+            meta["gc.escalation_response_at"] = response_at
+        self.state_path.write_text(json.dumps(state))
+
+    def assert_refused_unwritten(self, mention):
+        before = json.loads(self.state_path.read_text())
+        proc = self.run_create()
+        self.assertNotEqual(0, proc.returncode, proc.stdout)
+        self.assertIn(mention, json.loads(proc.stdout)["error"])
+        self.assertEqual(before, json.loads(self.state_path.read_text()))
+
+    def test_replaces_a_ticket_parked_by_its_own_answered_planning_exception(self):
+        self.park_source()
+        before = json.loads(self.state_path.read_text())
+        proc = self.run_create()
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        after = json.loads(self.state_path.read_text())
+        self.assertEqual(before["beads"]["stopped"], after["beads"]["stopped"])
+        draft = after["beads"][json.loads(proc.stdout)["draft"]]
+        self.assertEqual("stopped", draft["metadata"]["replacement_of"])
+        parsed = yaml.safe_load(draft["description"])
+        self.assertEqual([{"ticket": "T01R2", "planning_exception": "pe-replacement"}], parsed["withdrawn"])
+        replacement = next(t for t in parsed["tickets"] if t["id"] == "T01R3")
+        self.assertIn("parked by its own Planning Exception, answered a", replacement["what_it_delivers"])
+
+    def test_refuses_a_parked_ticket_whose_request_has_no_answer(self):
+        self.park_source(answered=False)
+        self.assert_refused_unwritten("no answered Planning Exception parking")
+
+    def test_refuses_a_parked_ticket_whose_request_is_still_open(self):
+        self.park_source(needs="blocking")
+        self.assert_refused_unwritten("no answered Planning Exception parking")
+
+    def test_refuses_an_answer_older_than_the_parking(self):
+        self.park_source(response_at="2026-10-15T01:00:00Z")
+        self.assert_refused_unwritten("no answered Planning Exception parking")
+
+    def test_refuses_a_ticket_parked_behind_another_one(self):
+        self.park_source(origin="other")
+        self.assert_refused_unwritten("no answered Planning Exception parking")
+
+    def test_refuses_a_ticket_neither_stopped_nor_parked(self):
+        state = json.loads(self.state_path.read_text())
+        del state["beads"]["stopped"]["metadata"]["gc.flow.stop"]
+        self.state_path.write_text(json.dumps(state))
+        self.assert_refused_unwritten("has no active stop reason")
+
 
 if __name__ == "__main__":
     unittest.main()
