@@ -33,7 +33,7 @@ its attempts (same trial).
 | Step | Its gate asks for |
 |---|---|
 | `workspace` | the session and the branch recorded on the ticket, the work tree on that branch, the branch left from the integration branch |
-| `red` | the red proven (`bin/tdd-step`), the criterion tests read by the test reviewer (`bin/test-review`), then frozen; nothing for a `prefactoring` |
+| `red` | the red proven, then the criterion tests frozen (`bin/tdd-step`); nothing for a `prefactoring` |
 | `code` | the criterion tests green at the tip of the branch; for a `prefactoring`, its regression at the tip |
 | `demonstration` | the demonstration line captured on the launched product at the tip (`bin/ticket-author demonstrate`); nothing for a `prefactoring` |
 | `exit` | a Ticket Exit recorded by `bin/ticket-exit`; « terminé » at the tip, with its Handoff |
@@ -193,38 +193,14 @@ A refusal names what is wrong: fix the tests, commit, run the step again.
 A criterion already green stops the ticket (exit status 5): take the Ticket
 Exit `planning_exception`.
 
-**Then have the tests read by the test reviewer, and frozen.** A reviewer in
-a fresh context, not you, answers for each criterion test whether it
-observes its criterion and would fail on the observation that makes it
-false (docs/TEST_REVIEW.md). You do not review your own tests and you do not
-write the verdict:
+**Then freeze them.** No reviewer reads them before the freeze: the code
+review reads them with your code after the green, against the criteria of
+the ticket (ADR-0030 L3). Write them so that each observes its criterion
+and would fail on the observation that makes it false:
 
 ```bash
-"$FACTORY_ROOT/bin/test-review" review "$CONVOY" "$TICKET" --repo "$WORKTREE"; echo "exit status $?"
+"$FACTORY_ROOT/bin/tdd-step" freeze "$CONVOY" "$TICKET" --repo "$WORKTREE"
 ```
-
-- exit status 0 — every test passed the review: freeze them,
-  `"$FACTORY_ROOT/bin/tdd-step" freeze "$CONVOY" "$TICKET" --repo "$WORKTREE"`.
-- exit status 6 — no verdict yet: run the same command again, it resumes
-  the same review.
-- exit status 2 — the reviewer refused at least one test and says why
-  (`refused`). This is your one return: correct those tests so that they
-  observe their criterion, commit, run `tdd-step red` again, then
-  `test-review review` again. A second refusal stops the ticket.
-  A reason that starts with « double » (a ticket of the Factory's own
-  repository only) says a lower case, which it names, already proves what
-  your test proves. Remove your case **only if** another test of the ticket
-  still proves that criterion in the criterion → test table. Otherwise keep
-  it and write in the test, in one comment above its assertions, what it
-  proves that the lower case does not (the link between two tools it is the
-  only one to show), changing its assertions if they do not show it. Never
-  leave a criterion without its test: `tdd-step red` refuses it, and this
-  was your one return.
-- exit status 5 — the ticket is stopped (second refusal, or a review that
-  gave no result twice) and code has already raised it to the operator. Do
-  not write any code and do not change the tests again: close this step.
-  Its gate refuses a stopped ticket, which ends the sequence; nothing of the
-  ticket is merged.
 
 **Close this step:**
 

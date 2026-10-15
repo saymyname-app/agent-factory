@@ -178,10 +178,8 @@ touché : il reste avancé par le Mayor.
   (2), `end_rounds` (tours de réparation de fin de Spec, 2). Changer une valeur change le comportement à la passe suivante ; une
   valeur absente ou mal formée est un refus. k (exécutions au vert) se règle
   par projet, dans son profil (`launch.k`).
-- **Relecture des tests restée sans résultat** : la même passe la relance une
-  fois, puis arrête le ticket et le fait remonter dans
-  `./bin/escalation-door list` (`./bin/test-review settle`), sans qu'aucune
-  session d'auteur ait à vivre.
+- **Aucune relecture des tests** (ADR-0030 L3) : la passe n'en lance ni
+  n'en règle aucune ; la revue de code lit les tests de critère.
 - **Seule cette commande démarre un ticket d'un convoi marqué** :
   `./bin/dispatch-door` le refuse sans `--convoy` et le refuse à toute session
   d'agent, Mayor compris.

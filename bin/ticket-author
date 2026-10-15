@@ -577,8 +577,8 @@ def gate_red(ticket: Ticket) -> str:
     freeze = tdd.get("freeze")
     if not isinstance(freeze, dict) or "commit" not in freeze:
         raise Refusal(
-            f"les tests de critère du ticket {ticket.id} sont rouges mais pas gelés : leur relecture "
-            "(bin/test-review review) puis le gel (bin/tdd-step freeze) précèdent le code")
+            f"les tests de critère du ticket {ticket.id} sont rouges mais pas gelés : le gel "
+            "(bin/tdd-step freeze) précède le code")
     ticket.verified("tdd_freeze", "registre du gel")
     return f"rouge prouvé au commit {red['commit']}, tests gelés au commit {freeze['commit']}"
 

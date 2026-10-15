@@ -253,10 +253,9 @@ class TddStepTest(unittest.TestCase):
         return self.refused("red", ticket, "--base", self.base, "--table", TABLE, **kwargs)
 
     def frozen(self):
-        """A ticket whose criterion tests are proven red, reviewed and frozen."""
+        """A ticket whose criterion tests are proven red and frozen."""
         self.commit_tests()
         self.red()
-        self.reviewed()
         return self.ok("freeze")
 
     def state(self, *args):
@@ -538,7 +537,6 @@ class TddStepTest(unittest.TestCase):
     def test_freeze_records_the_fingerprints_of_tests_table_and_harness_outside_the_work_tree(self):
         head = self.commit_tests()
         self.red()
-        self.reviewed()
 
         answer = self.ok("freeze")
 
@@ -565,53 +563,31 @@ class TddStepTest(unittest.TestCase):
 
         self.assertIn("rouge", self.refused("freeze"))
 
-    def test_freeze_refused_without_a_review_of_the_criterion_tests(self):
-        """T13: the freeze follows a favorable verdict of the test reviewer."""
-        self.commit_tests()
+    def test_freeze_needs_no_review_of_the_criterion_tests(self):
+        """ADR-0030 L3: the criterion tests are read by the code review
+        after the green; the freeze follows the red proof alone."""
+        head = self.commit_tests()
         self.red()
 
-        error = self.refused("freeze")
+        self.ok("freeze")
 
-        self.assertIn("relecture", error)
-        self.assertIn("aucun verdict", error)
+        self.assertEqual(head, self.ticket_state()["tdd"]["freeze"]["commit"])
+        self.assertIsNone(self.ticket_state()["test_review"])
 
-    def test_freeze_refused_when_the_review_refuses_a_criterion_test(self):
-        self.commit_tests()
+    def test_freeze_ignores_a_test_review_recorded_before_the_flow_dropped_it(self):
+        """A ticket in flight keeps its recorded review; the freeze does not read it."""
+        head = self.commit_tests()
         self.red()
         self.reviewed(refused={COUNT_ID: "le test ne vérifie qu'un statut 200"})
 
-        error = self.refused("freeze")
+        self.ok("freeze")
 
-        self.assertIn("relecture", error)
-        self.assertIn(COUNT_ID, error)
-        self.assertIn("statut 200", error)
-
-    def test_freeze_refused_when_the_verdict_is_bound_to_other_fingerprints_of_tests(self):
-        """A verdict given on other tests than the ones about to be frozen."""
-        self.commit_tests()
-        self.red()
-        self.reviewed(files={COUNT_FILE: "sha256:" + "0" * 64})
-
-        error = self.refused("freeze")
-
-        self.assertIn("empreintes", error)
-        self.assertIn(COUNT_FILE, error)
-        self.assertNotIn(HEALTH_FILE, error)
-
-    def test_freeze_refused_when_the_tests_changed_since_their_review(self):
-        self.commit_tests()
-        self.red()
-        self.reviewed()
-        self.commit_tests({COUNT_FILE: COUNT_TEST.replace("fixture-count", "fixture-total")})
-        self.red()
-
-        self.assertIn("relecture", self.refused("freeze"))
+        self.assertEqual(head, self.ticket_state()["tdd"]["freeze"]["commit"])
 
     def test_freeze_refused_when_the_registry_would_sit_in_a_work_tree(self):
         """The registry of fingerprints is never a file of the branch."""
         self.commit_tests()
         self.red()
-        self.reviewed()
 
         error = self.refused("freeze", env={**self.env, "EVIDENCE_STORE_DIR": str(self.repo / "registre")})
 

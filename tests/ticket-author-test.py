@@ -5,9 +5,8 @@ refusal, each refusal re-reading the tracker, the evidence store and the
 repository to prove nothing was written. Only the command lines are
 exercised. The product is a copy of the Delivery Fixture City, launched for
 real by bin/project-launch; the red, the freeze and the green are proven by
-the real bin/tdd-step, the criterion tests are reviewed through the real
-bin/test-review (tests/fixtures/test-review/reviewer stands in for the
-dispatch door and the reviewer session), the pieces are filed by the real
+the real bin/tdd-step (no test review precedes the freeze, ADR-0030 L3),
+the pieces are filed by the real
 bin/evidence-capture and the exits are taken by the real bin/ticket-exit."""
 
 import copy
@@ -27,8 +26,6 @@ TOOL = ROOT / "bin" / "ticket-author"
 CHECK = ROOT / "assets" / "scripts" / "checks" / "ticket-author-check.sh"
 STATE_TOOL = ROOT / "bin" / "convoy-state"
 TDD_TOOL = ROOT / "bin" / "tdd-step"
-REVIEW_TOOL = ROOT / "bin" / "test-review"
-FAKE_REVIEWER = ROOT / "tests" / "fixtures" / "test-review" / "reviewer"
 EXIT_TOOL = ROOT / "bin" / "ticket-exit"
 CAPTURE_TOOL = ROOT / "bin" / "evidence-capture"
 FIXTURE = Path("tests") / "fixtures" / "delivery-fixture-city"
@@ -193,11 +190,6 @@ class TicketAuthorTest(unittest.TestCase):
             "PROPOSAL_DOOR_BIN": str(self.tmp / "proposal-door"),
             "GC_ESCALATION_RECIPIENT": "human",
             "EVIDENCE_STORE_DIR": str(self.store),
-            "TEST_REVIEW_DISPATCH_DOOR_BIN": str(FAKE_REVIEWER),
-            "TEST_REVIEW_POLL_SECONDS": "0",
-            "TEST_REVIEW_FAKE_LOG": str(self.tmp / "review-door.log"),
-            "TEST_REVIEW_FAKE_PLAN": str(self.tmp / "review-plan.json"),
-            "TEST_REVIEW_FAKE_REPO": str(self.repo),
             "TICKET_AUTHOR_WORKTREES_DIR": str(self.worktrees),
             "GIT_CONFIG_GLOBAL": os.devnull,
             "GIT_CONFIG_SYSTEM": os.devnull,
@@ -231,9 +223,7 @@ class TicketAuthorTest(unittest.TestCase):
         (self.tmp / "proposal-door").chmod(0o755)
         (self.root / "config" / "delivery-flow.json").write_text(json.dumps({
             "contract": "agent-factory-delivery-flow/v1", "max_sessions": 2,
-            "start": {"formula": "fx-start", "role": None},
-            "test_review": {"formula": "mol-test-review", "role": "reviewer", "rig": "fx-rig", "timeout_seconds": 3600}}))
-        (self.tmp / "review-plan.json").write_text(json.dumps(["favorable"]))
+            "start": {"formula": "fx-start", "role": None}}))
         self.seed_repo()
         self.seed_tracker()
         return {"main": self.main, "base_app": self.base_app, "integration": self.integration}
@@ -372,18 +362,11 @@ class TicketAuthorTest(unittest.TestCase):
         proc = self.run_cmd(TDD_TOOL, *argv, *args)
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
 
-    def review(self, worktree, ticket=T1):
-        """The criterion tests proven red are read by the test reviewer (T13)."""
-        proc = self.run_cmd(REVIEW_TOOL, "review", CONVOY, ticket, "--repo", worktree, "--wait", "0")
-        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        self.assertEqual("favorable", json.loads(proc.stdout)["verdict"])
-
     @staged
     def red_step(self, worktree, base):
         table = json.dumps({"criteria": {"1": [COUNT_ID], "2": [HEALTH_ID]}})
         self.commit("tests de critère", {COUNT_FILE: COUNT_TEST, HEALTH_FILE: HEALTH_TEST, TABLE: table}, repo=worktree)
         self.tdd("red", worktree, "--base", base, "--table", TABLE)
-        self.review(worktree)
         self.tdd("freeze", worktree)
 
     @staged
@@ -548,8 +531,7 @@ class TicketAuthorTest(unittest.TestCase):
         self.commit("tests de critère", {COUNT_FILE: COUNT_TEST, HEALTH_FILE: HEALTH_TEST, TABLE: table}, repo=worktree)
         self.gate_refused("red", mention="étape rouge")
         self.tdd("red", worktree, "--base", answer["base"], "--table", TABLE)
-        self.gate_refused("red", mention=("relecture", "gel"))
-        self.review(worktree)
+        # ADR-0030 L3: no test review between the red and the freeze.
         self.gate_refused("red", mention="gel")
         self.tdd("freeze", worktree)
 
@@ -561,11 +543,7 @@ class TicketAuthorTest(unittest.TestCase):
         for piece in ("tdd_red", "tdd_freeze"):
             self.state("add-evidence", CONVOY, T1, "--piece", piece, "--digest", "sha256:" + "ab" * 32, "--commit", head)
         self.state("set-tdd", CONVOY, T1, "--step", "red", "--commit", head, "--base", answer["base"])
-        # A freeze written by hand is refused by the state command itself:
-        # no reviewer read these tests (T13).
-        frozen = self.run_cmd(STATE_TOOL, "set-tdd", CONVOY, T1, "--step", "freeze", "--commit", head)
-        self.assertEqual(EXIT_REFUSED, frozen.returncode, frozen.stdout)
-        self.assertIn("relecture", json.loads(frozen.stdout)["error"])
+        self.state("set-tdd", CONVOY, T1, "--step", "freeze", "--commit", head)
         self.gate_refused("red", mention="magasin de preuves")
 
     def test_gate_code_refuses_until_the_tests_are_green_at_the_tip(self):

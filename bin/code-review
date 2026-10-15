@@ -9,7 +9,9 @@ reviewer in a fresh context: a session of the read-only reviewer role,
 started as routed work through bin/dispatch-door, on the formula
 `mol-code-review`, which calls Matt Pocock's `code-review` skill unchanged.
 The reviewer is given the diff, the Spec, the ticket, the standards of the
-repository and the records written by scripts: neither the Ticket Handoff
+repository, the records written by scripts and the criterion tests the
+freeze sealed, which it reads with the code (ADR-0030 L3: the one review of
+the ticket; no test review precedes the freeze): neither the Ticket Handoff
 nor any prose of the author. It hands in findings and one answer per closed
 question on the tests; code computes the verdict.
 
@@ -52,7 +54,6 @@ from __future__ import annotations
 import argparse
 import calendar
 import fcntl
-import hashlib
 import json
 import os
 import re
@@ -70,6 +71,7 @@ BIN = Path(__file__).resolve().parent
 ROOT = Path(os.environ.get("FACTORY_ROOT") or BIN.parent)
 GC_BIN = os.environ.get("GC_BIN", "gc")
 STATE_TOOL = BIN / "convoy-state"
+CAPTURE_TOOL = BIN / "evidence-capture"
 ESCALATION_TOOL = BIN / "escalation-door"
 OPERATOR_CONFIG_BIN = BIN / "operator-config"
 SETTINGS = ROOT / "config" / "delivery-flow.json"
@@ -367,7 +369,7 @@ def readable(ticket: dict[str, Any]) -> dict[str, Any]:
     """A ticket whose review this command can decide from."""
     if ticket.get("mark") != NEW_FLOW:
         raise Refusal(f"état sans règle : le ticket {ticket.get('id')} ne porte pas la marque du nouveau flux")
-    for name in ("code_review", "models", "stop", "exit", "handoff", "merge", "test_review"):
+    for name in ("code_review", "models", "stop", "exit", "handoff", "merge"):
         record = ticket.get(name)
         if isinstance(record, dict) and "unruled" in record:
             raise Refusal(f"état sans règle : {record['unruled']}")
@@ -420,49 +422,70 @@ def changed_files(repo: Path, base: str, commit: str) -> list[dict[str, str]]:
     return out
 
 
-def frozen_tests(ticket: dict[str, Any]) -> dict[str, str]:
-    """The files the freeze sealed, with the fingerprint the test reviewer
-    read them at (bin/test-review): the criterion tests, their table, the
-    declared harness."""
-    rounds = (ticket.get("test_review") or {}).get("rounds") or []
-    favorable = [round_ for round_ in rounds if round_.get("verdict") == FAVORABLE]
-    return dict(favorable[-1]["files"]) if favorable else {}
+def sealed_report(convoy_id: str, ticket_id: str, piece: str) -> dict[str, Any]:
+    """The report a step of bin/tdd-step sealed, once the evidence store
+    vouches for it (bin/evidence-capture verify)."""
+    proc = run([str(CAPTURE_TOOL), "verify", convoy_id, ticket_id, "--piece", piece])
+    try:
+        answer = json.loads(proc.stdout)
+        record = json.loads(Path(answer["pieces"][0]["path"]).read_text(encoding="utf-8"))
+        report = json.loads(record["output"])
+    except (OSError, KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+        raise Refusal(f"pièce {piece} du ticket {ticket_id} invérifiable : {detail_of(proc)}") from exc
+    if proc.returncode != 0 or not isinstance(report, dict):
+        raise Refusal(f"pièce {piece} du ticket {ticket_id} invérifiable : {detail_of(proc)}")
+    return report
+
+
+def frozen_tests(convoy_id: str, ticket: dict[str, Any]) -> dict[str, Any]:
+    """ADR-0030 L3: what the reviewer reads of the criterion tests, from the
+    registry the freeze sealed (bin/tdd-step), not from a test review: the
+    frozen files with their fingerprints (criterion tests, table, declared
+    harness), the criterion -> tests map, and the frozen files the one
+    amendment changed. A gc.flow.test_review left on a ticket by the flow
+    before L3 is not read."""
+    tdd = ticket.get("tdd") or {}
+    if "freeze" not in tdd:
+        return {"files": {}, "criteria": {}, "amended": []}
+    registry = sealed_report(convoy_id, ticket["id"], "tdd_freeze")
+    files, criteria = registry.get("files"), registry.get("criteria")
+    if not isinstance(files, dict) or not isinstance(criteria, dict):
+        raise Refusal(f"registre du gel du ticket {ticket['id']} illisible (pièce tdd_freeze)")
+    amended: list[str] = []
+    if "amendment" in tdd:
+        amendment = sealed_report(convoy_id, ticket["id"], "tdd_amendment").get("amendment")
+        changed = amendment.get("files") if isinstance(amendment, dict) else None
+        if not isinstance(changed, list):
+            raise Refusal(f"amendement du ticket {ticket['id']} illisible (pièce tdd_amendment)")
+        amended = sorted(path for path in changed if isinstance(path, str))
+    return {"files": dict(files), "criteria": dict(criteria), "amended": amended}
 
 
 def closed_questions(convoy: Convoy, ticket: dict[str, Any], base: str, commit: str) -> list[dict[str, str]]:
     """Spec §6, « troisième vérification »: the closed questions on the
     tests, asked by code. One per test file of the diff that is not a frozen
-    criterion test (is it on a listed seam?), one per frozen test file that
-    is no longer the one the test reviewer read (does the amended test still
-    observe its criterion?)."""
+    criterion test (is it on a listed seam?), one per frozen test file the
+    amendment changed (does the amended test still observe its
+    criterion?)."""
     launch = convoy.profile(ticket["id"])
     perimeter = [path for path in launch.get("test_perimeter") or [] if isinstance(path, str)]
     harness = [path for path in launch.get("frozen_harness_paths") or [] if isinstance(path, str)]
-    frozen = frozen_tests(ticket)
+    frozen = frozen_tests(convoy.id, ticket)
     questions: list[dict[str, str]] = []
     for entry in changed_files(convoy.repo, base, commit):
         path = entry["path"]
-        if entry["status"] == "D" or path in frozen or in_paths(path, harness):
+        if entry["status"] == "D" or path in frozen["files"] or in_paths(path, harness):
             continue
         if in_paths(path, perimeter) or TEST_FILE_RE.search(path):
             questions.append({
                 "id": f"Q{len(questions) + 1}", "kind": "internal_test", "subject": path,
                 "text": f"Le fichier de test {path}, qui n'est pas un test de critère gelé, passe-t-il par un seam listé ?"})
-    for path, fingerprint in frozen.items():
-        if in_paths(path, harness):
-            continue
-        if blob_digest(convoy.repo, commit, path) not in (None, fingerprint):
+    for path in frozen["amended"]:
+        if not in_paths(path, harness):
             questions.append({
                 "id": f"Q{len(questions) + 1}", "kind": "amended_test", "subject": path,
                 "text": f"Le test de critère amendé {path} observe-t-il encore son critère ?"})
     return questions
-
-
-def blob_digest(repo: Path, commit: str, path: str) -> str | None:
-    env = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")}
-    proc = subprocess.run(["git", "-C", str(repo), "show", f"{commit}:{path}"], capture_output=True, env=env,
-                          stdin=subprocess.DEVNULL)
-    return "sha256:" + hashlib.sha256(proc.stdout).hexdigest() if proc.returncode == 0 else None
 
 
 def wanted_round(convoy: Convoy, ticket: dict[str, Any]) -> tuple[str, Any]:
@@ -845,6 +868,7 @@ def cmd_brief(args: argparse.Namespace) -> int:
     }
     if request["kind"] == REVIEW:
         launch_ = convoy.profile(args.ticket)
+        frozen = frozen_tests(convoy.id, ticket)
         tracked = git(repo, "ls-tree", "-r", "--name-only", commit).stdout.splitlines()
         brief.update({
             "skill": "code-review", "axes": list(AXES), "citation_sources": list(CITATION_SOURCES),
@@ -853,7 +877,9 @@ def cmd_brief(args: argparse.Namespace) -> int:
             "tests": {
                 "perimeter": launch_.get("test_perimeter") or [],
                 "frozen_harness_paths": launch_.get("frozen_harness_paths") or [],
-                "frozen": frozen_tests(ticket),
+                # ADR-0030 L3: the criterion tests are read here, not
+                # before the freeze.
+                "frozen": frozen["files"], "criterion_tests": frozen["criteria"], "amended": frozen["amended"],
                 "seams": {"mode": launch_.get("seam_mode"), "declared": launch_.get("seams") or [],
                           "entry_points": launch_.get("entry_points") or []},
             },

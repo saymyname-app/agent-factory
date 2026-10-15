@@ -214,37 +214,16 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertIsNone(self.correction_of(answer))
         self.assertEqual([T1], [entry["id"] for entry in self.integration_of(answer)["merged"]])
 
-    # --- review of the criterion tests left without result (T13) ---------------
+    # --- no review of the criterion tests before the freeze (ADR-0030 L3) -------
 
-    def test_a_pass_launches_once_more_a_test_review_left_without_result(self):
+    def test_a_pass_starts_no_test_review_even_on_one_left_open_before_l3(self):
         self.review_open(launches=1)
 
         answer = self.advance(self.REVIEWED)
 
-        self.assertEqual([self.R1], [entry["ticket"] for entry in self.review_of(answer)["relaunched"]])
-        (call,) = self.review_launches()
-        self.assertEqual(["--rig", "fx-rig", "--formula", "mol-test-review", "--role", "reviewer"], call[1:])
-        self.assertNotIn("gc.flow.stop", self.bead(self.R1)["metadata"])
-
-    def test_a_pass_stops_a_ticket_whose_test_review_gave_no_result_twice_and_raises_it_once(self):
-        self.review_open(launches=2)
-
-        first = self.advance(self.REVIEWED)
-        second = self.advance(self.REVIEWED)
-
-        self.assertEqual([self.R1], [entry["ticket"] for entry in self.review_of(first)["stopped"]])
-        self.assertIsNone(self.review_of(second))
+        self.assertIsNone(self.review_of(answer))
         self.assertEqual([], self.review_launches())
-        stop = json.loads(self.bead(self.R1)["metadata"]["gc.flow.stop"])
-        self.assertEqual("test_review_no_result", stop["reason"])
-        needs = [line for line in self.run_ok(ESCALATION, "list").stdout.splitlines() if self.R1 in line]
-        self.assertEqual(1, len(needs), needs)
-        self.assertEqual(1, len(self.log("mail")))
-
-    def test_a_pass_runs_no_test_review_settlement_when_none_is_due(self):
-        answer = self.advance(CONVOY)
-
-        self.assertNotIn("test_review", next(c for c in answer["convoys"] if c["id"] == CONVOY))
+        self.assertNotIn("gc.flow.stop", self.bead(self.R1)["metadata"])
 
 
 if __name__ == "__main__":

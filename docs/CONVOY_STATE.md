@@ -219,8 +219,10 @@ a second amendment); a stopped ticket takes no further step, and a second
 stop is refused. Nothing here lifts a stop.
 
 `open-test-review`, `launch-test-review` and `record-test-review` are called
-by `bin/test-review` (T13, `docs/TEST_REVIEW.md`), which holds the review of
-a ticket's criterion tests between red and freeze. `open-test-review` opens
+by `bin/test-review` (T13, `docs/TEST_REVIEW.md`), which the flow no longer
+starts (ADR-0030 L3, removed in L7): the freeze does not read
+`gc.flow.test_review`, and a record left on a ticket in flight is kept and
+ignored. `open-test-review` opens
 a review of the tests proven red at `--commit`, with the fingerprints the
 freeze will seal and the criterion → test table (`--file`, a JSON object
 `{files, criteria}`); the same request again writes nothing, another one
@@ -978,7 +980,7 @@ version, in order, all passing, each with a one-line detail, or that names
 no full commit SHA, or on a ticket already closed or carrying a closing
 gate record; a TDD step outside its closed
 list, without a full commit SHA, out of order, or on a stopped ticket; a
-freeze without a favorable test review at the same commit; a request, a
+request, a
 launch or a verdict of the test review as described above, or on a stopped
 ticket; a request, a launch, a record or an answer of the code review as
 described above, or on a stopped ticket; a model for a role outside the

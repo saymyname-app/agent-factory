@@ -1,5 +1,8 @@
 ## `./bin/test-review` — un test de critère observe-t-il vraiment son critère ?
 
+> **Remplacé par ADR-0030 L3** : le flux ne lance plus cette relecture ; la
+> revue de code (`./bin/code-review`) lit les tests de critère. Retiré en L7.
+
 Un **relecteur**, pas l'auteur, répond (Spec af-wf4w5r §5 « Relecture avant
 gel », §8, T13). Entre le rouge prouvé et le gel, une session neuve du rôle
 relecteur, en lecture seule, répond à une seule question par test de

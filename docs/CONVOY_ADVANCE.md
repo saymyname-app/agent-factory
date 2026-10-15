@@ -601,21 +601,12 @@ mechanical verdicts again and the product is evaluated again. The round is
 counted when the evaluation that refuses the tip is recorded, not when its
 repair is published (T26, below).
 
-## Test reviews left without result (T13)
+## No test review (ADR-0030 L3)
 
-Once the starts are made, and before the merge, the pass hands each convoy that has
-a review of criterion tests open, or a ticket that review stopped and that
-did not reach the operator yet, to `bin/test-review settle`
-(`docs/TEST_REVIEW.md`): a review whose launch gave no result in
-`test_review.timeout_seconds` is launched once more, the ticket is stopped
-when the relaunch gave none either, and the stop is raised through
-`bin/escalation-door`. No author session has to be alive for that. The
-convoy's entry then carries `test_review` (`launched`, `relaunched`,
-`pending`, `stopped`, `escalated`, `deferred`, `refused`); a launch the
-door deferred is retried by the next pass, while a settlement that could
-not run, or a launch the door refused, fails the pass (exit 1). A
-convoy with nothing due is not handed over, and a stopped convoy (« état
-sans règle ») is settled no more than it is started.
+A pass starts no review of criterion tests and settles none: no test review
+precedes the freeze, and the code review reads the criterion tests after
+the green (`docs/CODE_REVIEW.md`). A `gc.flow.test_review` left on a ticket
+in flight by the flow before L3, open or not, is ignored.
 
 ## A ticket stopped at its second amendment reaches the operator (T45)
 
@@ -693,8 +684,7 @@ two stops (T21: `{reason: integration_red, control, repair}` or `{reason:
 planning_exceptions, open, bound}`), `repair` when the pass published the
 repair of a red (`{id, key, draft, published}`, or `error`),
 `integration` when the pass ran a merge, `tdd_stops` when it raised a ticket
-stopped at its second amendment (T45), `test_review` when it settled
-reviews of criterion tests, `code_review` when it settled code reviews,
+stopped at its second amendment (T45), `code_review` when it settled code reviews,
 `evaluation` when it settled Ticket Evaluations, `correction` when a
 correction round was opened, awaited or ended in a stop, `fidelity` when it
 measured an interface ticket, `ticket_end` when the gate settled merged
@@ -718,7 +708,7 @@ it is named as CONVOY, carries `closed`, the record of its closing.
 | Exit | Meaning |
 |---|---|
 | 0 | the pass is done; what it started is listed, possibly nothing |
-| 1 | refused or could not run (settings, a bound, tracker), the door refused a ticket or a resume (named under `refused`), a ticket to resume has no `resume` setting or no project, a parking could not be lifted, an incident or a grouped request could not be raised or withdrawn, the repair of a red integration branch or of tracked elements could not be published, or the merge pass, the settlement of the test reviews, of the code reviews, of the evaluations or of the correction rounds, a fidelity check, the ticket-end gate, the end-of-Spec gate, the Outcome Evaluation or the settlement of the end code review could not run, a repair the Evaluator of the end drafted could not be published, the Evidence Pack could not be generated, the « non conforme » request of stopped rounds could not be raised or recorded, the Acceptance Request of a Delivered Outcome or the repair of an Acceptance Session's outage could not be sent, published or recorded, or the merge or the closing that follows the operator's answer could not be made (`promotion.error`, `promotion.message`, `promotion.pending`, or the `repair` of a voided acceptance that could not be published) |
+| 1 | refused or could not run (settings, a bound, tracker), the door refused a ticket or a resume (named under `refused`), a ticket to resume has no `resume` setting or no project, a parking could not be lifted, an incident or a grouped request could not be raised or withdrawn, the repair of a red integration branch or of tracked elements could not be published, or the merge pass, the settlement of the code reviews, of the evaluations or of the correction rounds, a fidelity check, the ticket-end gate, the end-of-Spec gate, the Outcome Evaluation or the settlement of the end code review could not run, a repair the Evaluator of the end drafted could not be published, the Evidence Pack could not be generated, the « non conforme » request of stopped rounds could not be raised or recorded, the Acceptance Request of a Delivered Outcome or the repair of an Acceptance Session's outage could not be sent, published or recorded, or the merge or the closing that follows the operator's answer could not be made (`promotion.error`, `promotion.message`, `promotion.pending`, or the `repair` of a voided acceptance that could not be published) |
 | 3 | a convoy is in an « état sans règle »: none of its tickets is started, the anomalies are listed (0 with `--stopped-ok` once its incident is raised) |
 | 4 | the convoy does not carry the mark: « pas un convoi du nouveau flux » |
 

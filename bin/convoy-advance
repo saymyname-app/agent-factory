@@ -34,12 +34,9 @@ merges one ticket into the integration branch of the Spec, runs the tests on
 the merged result, and returns a ticket in conflict or red to its author. No
 agent decides when a ticket is merged.
 
-A pass also settles the reviews of criterion tests (T13, af-nkpjpr; Spec §5,
-§8): it hands each convoy that has a review open, or a ticket that review
-stopped and that did not reach the operator yet, to bin/test-review settle,
-which launches once more a review left without result, stops the ticket
-when the relaunch gave none either, and raises the stop through
-bin/escalation-door. No author session has to be alive for that.
+A pass no longer settles reviews of criterion tests (ADR-0030 L3): the
+code review reads those tests after the green, and no test-review session
+is started; a gc.flow.test_review left on a ticket in flight is ignored.
 
 A pass also raises a ticket bin/tdd-step stopped at its second amendment
 (T45, af-7y457s; Spec §8): one request through bin/escalation-door that
@@ -234,7 +231,6 @@ STATE_BIN = BIN / "convoy-state"
 DOOR_BIN = BIN / "dispatch-door"
 ESCALATION_BIN = BIN / "escalation-door"
 INTEGRATION_BIN = BIN / "spec-integration"
-TEST_REVIEW_BIN = BIN / "test-review"
 CODE_REVIEW_BIN = BIN / "code-review"
 PROJECT_STANDARDS_BIN = BIN / "project-standards"
 EVALUATION_BIN = BIN / "ticket-evaluation"
@@ -269,9 +265,6 @@ MERGES_PER_PASS = 1
 # One interface ticket is measured against its Validated Prototype per pass
 # and per convoy: a launch of the product and its captures take their time.
 FIDELITY_CHECKS_PER_PASS = 1
-
-# The stops the review of criterion tests writes (bin/convoy-state).
-TEST_REVIEW_STOPS = ("test_review_refused", "test_review_no_result")
 
 # The stop the code review of a ticket writes (bin/convoy-state).
 CODE_REVIEW_STOP = "code_review_no_result"
@@ -485,17 +478,6 @@ class Convoy:
 
     def not_started(self) -> list[dict[str, Any]]:
         return [t for t in self.tickets if t.get("status") == "open" and not t.get("gates") and not t.get("exit")]
-
-    def test_reviews_due(self) -> list[str]:
-        """Tickets whose criterion tests are under review, or that the
-        review stopped without the stop having reached the operator: what
-        makes a settlement worth running."""
-        due = []
-        for t in self.tickets:
-            review, stop = t.get("test_review") or {}, t.get("stop") or {}
-            if (stop.get("reason") in TEST_REVIEW_STOPS and "raised" not in stop) or (review.get("request") and not stop):
-                due.append(t["id"])
-        return due
 
     def code_reviews_due(self) -> list[str]:
         """Tickets whose author has finished and that are not merged yet,
@@ -2072,23 +2054,6 @@ def settle_tdd_stops(convoy: Convoy) -> dict[str, Any] | None:
     return result
 
 
-def settle_test_reviews(convoy: Convoy) -> dict[str, Any] | None:
-    """Spec §5, §8: code, not a session, launches once more a review of
-    criterion tests left without result, stops the ticket after that, and
-    raises the stop to the operator, through bin/test-review. None when the
-    convoy has no review to settle."""
-    if not convoy.test_reviews_due():
-        return None
-    try:
-        answer = parsed(run([str(TEST_REVIEW_BIN), "settle", convoy.id]), f"test-review settle {convoy.id}")
-    except Refusal as exc:
-        return {"error": f"refus : {exc}"}
-    if not isinstance(answer, dict):
-        return {"error": f"refus : test-review settle {convoy.id} a rendu une réponse illisible"}
-    kept = ("launched", "relaunched", "pending", "stopped", "escalated", "deferred", "refused", "error")
-    return {name: answer[name] for name in kept if answer.get(name)}
-
-
 def settle_code_reviews(convoy: Convoy) -> dict[str, Any] | None:
     """Spec §6, §8: code, not a session, has each finished ticket reviewed
     before its merge, through bin/code-review. None when the convoy has no
@@ -2247,9 +2212,6 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
             result["tdd_stops"] = tdd_stops
         # The reviews first: a ticket whose verdict is already there is
         # merged by the same pass.
-        reviews = settle_test_reviews(convoys[result["id"]])
-        if reviews is not None:
-            result["test_review"] = reviews
         code_reviews = settle_code_reviews(convoys[result["id"]])
         if code_reviews is not None:
             result["code_review"] = code_reviews
@@ -2330,7 +2292,6 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
         or any("error" in entry for entry in result.get("end_review", {}).get("repairs", []))
         or any(key in result.get("integration", {}) for key in ("error", "message"))
         or "error" in result.get("tdd_stops", {})
-        or any(key in result.get("test_review", {}) for key in ("error", "refused"))
         or any(key in result.get("code_review", {}) for key in ("error", "refused"))
         or "error" in result.get("standard_recurrence", {})
         or any(key in result.get("evaluation", {}) for key in ("error", "refused"))

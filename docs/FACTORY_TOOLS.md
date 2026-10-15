@@ -227,9 +227,8 @@ fermé hors porte fait échouer l'oracle.
 Pendant ce parcours l'oracle enregistre lui-même les commandes du flux
 exécutées : le driver les lance depuis le répertoire reçu dans
 `FIXTURE_CITY_FLOW_BIN`, rien de ce qu'il déclare n'est utilisé. Chaque état
-de l'étape d'auteur (rouge, gel, relecture des tests, vert, Handoff,
-terminé) doit avoir été écrit par sa porte (`tdd-step`, `test-review
-review`, `ticket-exit exit`) ; un état écrit hors de sa porte, ou un ticket
+de l'étape d'auteur (rouge, gel, vert, Handoff, terminé) doit avoir été
+écrit par sa porte (`tdd-step`, `ticket-exit exit`) ; un état écrit hors de sa porte, ou un ticket
 fermé sans être passé par les portes de l'auteur, fait échouer l'oracle
 (T37). Le résultat nomme les commandes vues (`interfaces.flow`) et le nombre
 de tickets passés par toutes les portes (`author_gates`).
@@ -695,10 +694,8 @@ touché : il reste avancé par le Mayor.
   (2), `end_rounds` (tours de réparation de fin de Spec, 2). Changer une valeur change le comportement à la passe suivante ; une
   valeur absente ou mal formée est un refus. k (exécutions au vert) se règle
   par projet, dans son profil (`launch.k`).
-- **Relecture des tests restée sans résultat** : la même passe la relance une
-  fois, puis arrête le ticket et le fait remonter dans
-  `./bin/escalation-door list` (`./bin/test-review settle`), sans qu'aucune
-  session d'auteur ait à vivre.
+- **Aucune relecture des tests** (ADR-0030 L3) : la passe n'en lance ni
+  n'en règle aucune ; la revue de code lit les tests de critère.
 - **Seule cette commande démarre un ticket d'un convoi marqué** :
   `./bin/dispatch-door` le refuse sans `--convoy` et le refuse à toute session
   d'agent, Mayor compris.
@@ -826,10 +823,9 @@ du magasin de preuves, puis inscrit l'étape sur le ticket.
   profil) ; le relevé nomme le seam et le mode de chaque test.
 - **Critère déjà vert** : le ticket est arrêté (sortie 5), le critère est
   nommé, l'arrêt est écrit dans le tracker.
-- **Gel** : refusé tant que le relecteur de tests n'a pas passé chaque test
-  de critère, au même commit et sur les mêmes empreintes
-  (`./bin/test-review`) ; ensuite les empreintes des tests, de la table et
-  du harnais vont dans le magasin de preuves, hors de tout dépôt Git.
+- **Gel** : suit la preuve du rouge au même commit, sans relecture des tests
+  (ADR-0030 L3) ; les empreintes des tests, de la table et du harnais vont
+  dans le magasin de preuves, hors de tout dépôt Git.
 - **Vert** : refus si un fichier gelé a été modifié, supprimé ou déplacé ;
   sinon les tests gelés passent k fois de suite (k du profil ; 3 s'il n'en
   déclare pas). Un résultat mixte nomme le test instable.
@@ -844,8 +840,8 @@ du magasin de preuves, puis inscrit l'étape sur le ticket.
 - **Sorties** : 0 étape prouvée ; 1 refus, rien n'est écrit ; 4 « pas un
   convoi du nouveau flux » ; 5 ticket arrêté.
 - **Limite** : le script prouve l'ordre et les résultats, pas qu'un test
-  observe bien son critère : c'est la question du relecteur de tests, posée
-  entre le rouge et le gel (`./bin/test-review`). Lever un arrêt n'est pas
+  observe bien son critère : c'est la question de la revue de code, posée
+  après le vert (`./bin/code-review`, ADR-0030 L3). Lever un arrêt n'est pas
   dans cette commande.
 
 Détail : `docs/TDD_STEP.md`.
@@ -984,8 +980,8 @@ City lance un contrôle, et c'est lui qui laisse démarrer la suivante.
 - **Personne ne lance la formule à la main** : `./bin/convoy-advance` démarre
   chaque ticket prêt (`start.formula` dans `config/delivery-flow.json`).
 - **Étapes et contrôles** : prise du ticket (worktree, branche, session) ;
-  rouge prouvé, tests relus par le relecteur de tests (`./bin/test-review`)
-  puis gelés ; tests verts à la pointe de la branche ; ligne
+  rouge prouvé puis tests gelés (sans relecture : la revue de code les lit,
+  ADR-0030 L3) ; tests verts à la pointe de la branche ; ligne
   de démonstration capturée sur le produit lancé, au commit de tête ; sortie
   de ticket enregistrée.
 - **Contrôle refusé** : l'étape revient à la session avec le motif. Au bout
@@ -1017,6 +1013,9 @@ Détail : `docs/TICKET_AUTHOR.md`.
 
 ---
 ## `./bin/test-review` — un test de critère observe-t-il vraiment son critère ?
+
+> **Remplacé par ADR-0030 L3** : le flux ne lance plus cette relecture ; la
+> revue de code (`./bin/code-review`) lit les tests de critère. Retiré en L7.
 
 Un **relecteur**, pas l'auteur, répond (Spec af-wf4w5r §5 « Relecture avant
 gel », §8, T13). Entre le rouge prouvé et le gel, une session neuve du rôle
