@@ -302,6 +302,17 @@ class GraphReviewTest(unittest.TestCase):
         self.assertEqual("favorable", result["graph"]["checks"]["critical_path_bounded"]["state"])
         self.assertEqual("favorable", result["graph"]["verdict"])
 
+    def test_same_surface_asks_for_order_only_on_shared_code_or_mechanism(self):
+        # af-0l5fv9, ADR-0031: the same screen is not a dependency.
+        self.requested()
+
+        brief = self.tool("brief", "draft-1").json
+
+        label = brief["tickets"][0]["checks"]["same_surface_ordered"]
+        self.assertIn("même code ou le même mécanisme", label)
+        formula = (ROOT / "formulas" / "mol-graph-review.formula.toml").read_text(encoding="utf-8")
+        self.assertIn("need no order: leave them parallel", formula)
+
     def test_the_reviewer_is_not_asked_the_question_code_computes(self):
         self.requested()
 

@@ -43,6 +43,9 @@ mesurait le parallélisme, et `same_surface_ordered` pousse à ordonner.
 3. Consigne de découpage (`docs/PLANNING_RUN.md`, étape 5) : un ticket n'attend
    que les tickets dont il consomme un livrable cité dans son texte ; une même
    surface n'est pas une dépendance.
+4. La question `same_surface_ordered` du relecteur ne demande d'ordonner que
+   les tickets qui modifient le même code ou le même mécanisme, en le citant
+   (`af-0l5fv9`) ; avant, elle demandait d'ordonner toute la surface.
 
 ## Ce qui ne change pas
 

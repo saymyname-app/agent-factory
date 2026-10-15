@@ -70,7 +70,7 @@ or the graph, is `unfavorable` as soon as one of its answers is.
 | ticket | `demonstrable_alone` | once this ticket and its blockers are merged, and nothing later, its demonstration line is observed on the launched product |
 | ticket | `criteria_observable_falsifiable` | every criterion is an observation through a public interface, with what would make it false |
 | ticket | `size_tenable` | one author session can deliver it |
-| ticket | `same_surface_ordered` | every other ticket on the same surface is ordered against it |
+| ticket | `same_surface_ordered` | every other ticket that changes the same code or the same mechanism is ordered against it; the same screen alone is no dependency (ADR-0031) |
 | ticket | `declared_scope_includes_wiring` | the declared `scope.paths` include the files where the slice is wired in. Asked only of a ticket that declares a scope; code records `not_applicable` otherwise |
 | graph | `no_orphan_story` | every numbered user story of the Spec is covered by a ticket |
 | graph | `assembly_point_not_confiscated` | the ticket that establishes shared assembly points is ordered first; none keeps the wiring for itself |
