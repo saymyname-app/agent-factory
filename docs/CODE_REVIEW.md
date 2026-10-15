@@ -90,7 +90,7 @@ session receives.
 | Field | Content |
 |---|---|
 | `diff` | the fixed point (`base`), the command `git diff <base>...<commit>`, the changed files, the SHAs of the commits |
-| `spec` | the id and the text of the Spec the convoy delivers |
+| `spec` | the id and the text of the Spec the convoy delivers; the formula writes only its « Testing Decisions » to `code-review-spec.md` and the reviewer reads another section by heading only when the ticket or one of its criteria cites it (af-s1yzo9: a Spec can run to ~100 KB; the citation check still uses the whole text) |
 | `ticket_text` | the approved ticket: title, description, criteria, demonstration line, covered user stories, Declared Scope |
 | `standards` | the standards files found at the reviewed commit (`AGENTS.md`, `CONTRIBUTING.md`, `CODING_STANDARDS.md`, `docs/agents/*`, `DESIGN.md`, …): a hint, the skill looks for them itself |
 | `records` | the records written by scripts: the proven TDD steps, the evidence fingerprints, the merge record, and the *records* of the Ticket Handoff |
@@ -293,6 +293,9 @@ dispatch door and the reviewer sessions. The integration tip (T44):
 each state write and its refusals, `tests/spec-integration-test.py` the
 merge control, `tests/convoy-advance-test.py` the settlement by the pass,
 `tests/ticket-author-test.py` the model of the author.
+`tests/code-review-spec-scope-test.sh` runs the formula's own lines on a
+sample brief: the reviewer is handed the ticket and the « Testing Decisions »
+of the Spec, not the whole Spec.
 `tests/code-review-isolated-city-test.sh` (local-only) replays the
 demonstration line on a real controller, with the real order, the real
 formula, the real dispatch door and merge command, and a scripted reviewer.

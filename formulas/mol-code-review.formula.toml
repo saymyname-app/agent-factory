@@ -44,19 +44,30 @@ TICKET=$(printf '%s\n' "$REVIEW_TEXT" | sed -n 's/^ticket: //p')
 FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
 "$FACTORY_ROOT/bin/code-review" brief "$TICKET_CONVOY" "$TICKET" > code-review-brief.json
 jq -r '.kind, .interface, .commit, .base, .repo, .diff.command' code-review-brief.json
-jq -r '.spec.text' code-review-brief.json > code-review-spec.md
+jq -r '.spec.text' code-review-brief.json | awk '/^## /{p=($0=="## Testing Decisions")} p' > code-review-spec.md
 jq -r '.ticket_text.description, "", "Demonstration line: " + (.ticket_text.demonstration_line // "none")' code-review-brief.json > code-review-ticket.md
 ```
 
 The brief is everything you are given: the diff of the ticket
-(`.diff.command`, its files and the SHAs of its commits), the approved Spec
-(`code-review-spec.md`), the approved ticket (`code-review-ticket.md`), the
+(`.diff.command`, its files and the SHAs of its commits), the approved ticket
+with its acceptance criteria (`code-review-ticket.md`), the « Testing
+Decisions » of the approved Spec (`code-review-spec.md`), the
 standards files of the repository (`.standards`), and the records written by
 scripts (`.records`). Do not read anything else of the author: not the
 Ticket Handoff, not the notes or the comments of the ticket bead, not the
 commit messages (`git log`), not its mail, not its session. `.independence`,
 when it is not null, says that your model is the author's or that it is not
 known: go on, it is recorded for the operator.
+
+The ticket is your intent, not the whole Spec (it can run to ~100 KB). Read
+another section of the Spec only when the ticket or one of its criteria cites it,
+by its `## ` heading, and only that section:
+
+```bash
+jq -r '.spec.text' code-review-brief.json | awk -v h='## <heading>' '/^## /{p=($0==h)} p'
+```
+
+Never print the whole Spec, nor `gc bd show` its bead.
 
 `.kind` says which of the two works below is asked. Do that one only.
 
@@ -67,16 +78,16 @@ Invoke the skill `code-review` in the repository `.repo` with:
 - the fixed point `.base`, and the reviewed commit `.commit` standing for
   `HEAD` (the checked-out `HEAD` of the repository is not the ticket: the
   diff is `.diff.command`, the list of commits is `.diff.commits`);
-- the spec source given as paths: `code-review-spec.md` and
-  `code-review-ticket.md`;
+- the spec source given as paths: `code-review-ticket.md` and
+  `code-review-spec.md`, plus any section you read as above;
 - the standards sources `.standards`, plus whatever else the skill finds in
   the repository at `.commit`.
 
 Follow the skill as it is written: its two axes (Standards, Spec), its two
 parallel sub-agents, its smell baseline. If `.interface` is true, also invoke
 `interface-review` explicitly with the exact target `.base...commit` from
-`.diff.command`, in `.repo`; give it the ticket and Spec as the intent. The
-checked-out `HEAD` is not this ticket. If the approved ticket includes
+`.diff.command`, in `.repo`; give it the ticket and the Spec sections you
+read as the intent. The checked-out `HEAD` is not this ticket. If the approved ticket includes
 animation, invoke `review-animations` with the specific question: "Which
 animation or motion regressions did the diff `.base...commit` introduce in
 the changed interface files, and what evidence supports each finding?"
