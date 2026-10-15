@@ -653,10 +653,13 @@ def cmd_record(args: argparse.Namespace) -> int:
         raise Refusal("le verdict n'est pas un objet JSON")
     # Never GC_AGENT: it names a place in the pool of the agent, which the next session takes.
     session = os.environ.get("GC_SESSION_NAME") or os.environ.get("GC_SESSION_ID") or ""
+    # T42: a session is its name and its conversation. gc 1.5.0 wakes a drained session under the
+    # same name; GC_CONTINUATION_EPOCH changes only when it starts a fresh conversation.
+    identity = {"recorded_by": session, "conversation": os.environ.get("GC_CONTINUATION_EPOCH", "").strip()}
     handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
     try:
         with handle:
-            json.dump({**verdict, "recorded_by": session}, handle, ensure_ascii=False)
+            json.dump({**verdict, **identity}, handle, ensure_ascii=False)
         written = state_write("record-test-review", args.convoy, args.ticket, "--file", handle.name)
     finally:
         os.unlink(handle.name)

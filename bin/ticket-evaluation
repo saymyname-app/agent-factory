@@ -1408,7 +1408,10 @@ def cmd_record(args: argparse.Namespace) -> int:
         raise Refusal("état sans Evidence Record valide : " + " ; ".join(refused))
     # Never GC_AGENT: it names a place in the pool of the agent, which the next session takes.
     session = os.environ.get("GC_SESSION_NAME") or os.environ.get("GC_SESSION_ID") or ""
-    written = state_write_file("record-evaluation", args.convoy, args.ticket, {**given, "recorded_by": session},
+    # T42: a session is its name and its conversation. gc 1.5.0 wakes a drained session under the
+    # same name; GC_CONTINUATION_EPOCH changes only when it starts a fresh conversation.
+    identity = {"recorded_by": session, "conversation": os.environ.get("GC_CONTINUATION_EPOCH", "").strip()}
+    written = state_write_file("record-evaluation", args.convoy, args.ticket, {**given, **identity},
                                "--repo", str(convoy.repo))
     print(json.dumps({
         "ok": True, "convoy": args.convoy, "ticket": args.ticket, "commit": request["commit"],

@@ -2126,6 +2126,36 @@ class ConvoyStateTest(unittest.TestCase):
         self.assert_refused_and_nothing_written(
             "record-code-review", CONVOY, T1, "--file", same_session, mention="session neuve")
 
+    def judge_after_a_review_by(self, reviewed_conversation, judged_conversation):
+        """gc 1.5.0 wakes a drained session again under the same name: the
+        review is rendered by `delivery-reviewer-fx` in conversation
+        `reviewed_conversation` (None: a record from before conversations were
+        recorded), the judgement by the same name in `judged_conversation`."""
+        self.finished_slice()
+        self.open_code_review()
+        extra = {} if reviewed_conversation is None else {"conversation": reviewed_conversation}
+        self.ok("record-code-review", CONVOY, T1, "--file", self.json_file("review-woken.json", {
+            "commit": self.REVIEWED, "recorded_by": "delivery-reviewer-fx", "findings": [self.CITED], **extra}))
+        self.respond({"F1.1": {"response": "fixed", "commit": self.CORRECTED}})
+        self.finished_slice(self.CORRECTED)
+        self.open_code_review("judgement", self.CORRECTED, self.REVIEWED)
+        return ("record-code-review", CONVOY, T1, "--file", self.json_file("judgement-woken.json", {
+            "commit": self.CORRECTED, "recorded_by": "delivery-reviewer-fx", "conversation": judged_conversation,
+            "judgements": {"F1.1": {"state": "favorable"}}}))
+
+    def test_a_judgement_by_the_same_conversation_of_a_woken_session_is_refused(self):
+        self.assert_refused_and_nothing_written(*self.judge_after_a_review_by("3", "3"), mention="session neuve")
+
+    def test_a_judgement_by_a_fresh_conversation_of_a_woken_session_is_accepted(self):
+        answer = self.ok(*self.judge_after_a_review_by("3", "4"))
+
+        self.assertEqual("favorable", answer["verdict"])
+        self.assertEqual([("delivery-reviewer-fx", "3"), ("delivery-reviewer-fx", "4")],
+                         [(round_["recorded_by"], round_["conversation"]) for round_ in self.code_review()["rounds"]])
+
+    def test_a_review_recorded_without_its_conversation_still_refuses_its_session_name(self):
+        self.assert_refused_and_nothing_written(*self.judge_after_a_review_by(None, "4"), mention="session neuve")
+
     def test_a_judgement_refuses_a_list_that_is_not_the_blocking_findings(self):
         self.corrected_review()
         self.open_code_review("judgement", self.CORRECTED, self.REVIEWED)

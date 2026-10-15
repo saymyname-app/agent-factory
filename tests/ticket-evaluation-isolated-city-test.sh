@@ -175,7 +175,8 @@ while true; do
   if ! "\$BIN/ticket-evaluation" brief "\$CONVOY" "\$TICKET" > "\$BRIEF.new" 2>>"\$LOG"; then
     # Seen in this trial (gc 1.4.1): the command of the session is started
     # once more between its drain-ack and its stop, and is handed the step
-    # it just closed. Nothing is asked any more, and nothing is written.
+    # it just closed. gc 1.5.0 wakes the drained session again under the same
+    # name; wake_mode = "fresh" gives it a fresh conversation (T42). Nothing is asked any more, and nothing is written.
     say "ticket \$TICKET : aucune évaluation demandée (\$EVALUATION_BEAD), rien à faire"
     rm -f "\$BRIEF.new"
     gc runtime drain-ack >/dev/null 2>&1
@@ -273,6 +274,7 @@ scope = "city"
 min_active_sessions = 0
 max_active_sessions = 1
 provider = "stub-evaluator"
+wake_mode = "fresh"
 TOML
 echo "Scripted Evaluator of the ticket-evaluation trial." > "$CITY/agents/trial-evaluator/prompt.template.md"
 cp "$ROOT/formulas/mol-ticket-evaluation.formula.toml" "$CITY/formulas/"

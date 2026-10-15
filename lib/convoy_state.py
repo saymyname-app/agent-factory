@@ -943,8 +943,9 @@ def review_request(value: Any) -> dict[str, Any]:
 
 
 def review_round(value: Any) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) != {"commit", "files", "verdict", "tests", "recorded_by", "at"}:
+    if not isinstance(value, dict) or set(value) - {"conversation"} != {"commit", "files", "verdict", "tests", "recorded_by", "at"}:
         raise Refusal(f"passe de relecture mal formée : {value!r}")
+    stored_conversation(value)
     valid_commit(value["commit"], "commit de la relecture")
     review_fingerprints(value["files"])
     one_of(value["verdict"], VERDICT_STATES, "verdict de relecture")
@@ -1100,8 +1101,9 @@ def code_review_round(value: Any) -> dict[str, Any]:
     kind = one_of(value["kind"], CODE_REVIEW_KINDS, "genre de revue")
     own = {"findings", "answers", "responses"} if kind == "review" else {"judgements"}
     required = own - {"responses"}
-    if set(value) - common - own or not required <= set(value):
+    if set(value) - common - own - {"conversation"} or not required <= set(value):
         raise Refusal(f"passe de revue de code mal formée : {value!r}")
+    stored_conversation(value)
     valid_commit(value["commit"], "commit de la revue")
     valid_commit(value["base"], "commit de départ de la revue")
     one_of(value["verdict"], VERDICT_STATES, "verdict de revue")
@@ -1356,8 +1358,9 @@ def evaluation_round(value: Any) -> dict[str, Any]:
             raise Refusal("issue du contrôle de démarrage qui n'est pas celle de son résultat")
         return value
     required = common | {"criteria", "demonstration_line", "roles", "environment", "recorded_by"}
-    if not required <= set(value) or set(value) - required - {"coverage", "screen_findings"}:
+    if not required <= set(value) or set(value) - required - {"coverage", "screen_findings", "conversation"}:
         raise Refusal(f"passe d'évaluation mal formée : {value!r}")
+    stored_conversation(value)
     if not isinstance(value["criteria"], list) or not value["criteria"]:
         raise Refusal(f"passe d'évaluation sans état par critère : {value['criteria']!r}")
     for position, item in enumerate(value["criteria"], start=1):
@@ -2059,8 +2062,9 @@ def end_review_record(raw: Any) -> dict[str, Any]:
     for value in record["rounds"]:
         common = {"commit", "base", "outcome", "findings", "coverage", "extent", "models", "recorded_by",
                   "launched_at", "duration_seconds", "at"}
-        if not isinstance(value, dict) or set(value) != common:
+        if not isinstance(value, dict) or set(value) - {"conversation"} != common:
             raise Refusal(f"passe de la revue de fin mal formée : {value!r}")
+        stored_conversation(value)
         valid_commit(value["commit"], "commit de la revue de fin")
         valid_commit(value["base"], "pointe de la branche protégée de la revue de fin")
         outcome = one_of(value["outcome"], END_REVIEW_OUTCOMES, "issue de la revue de fin")
@@ -3579,11 +3583,28 @@ RENDERED_BY = ((KEY_TEST_REVIEW, "la relecture des tests"), (KEY_CODE_REVIEW, "l
                (KEY_EVALUATION, "la Ticket Evaluation"))
 
 
-def rendered_by(convoy_id: str) -> dict[str, str]:
+def conversation_of(given: dict[str, Any]) -> dict[str, str]:
+    """The conversation a session rendered in, when it says so: Gas City's
+    GC_CONTINUATION_EPOCH, raised each time the session starts a fresh
+    provider conversation and kept when it resumes one (gc 1.5.0 wakes a
+    drained session again under the same name). Empty or absent: unknown."""
+    if given.get("conversation") in (None, ""):
+        return {}
+    return {"conversation": single_line(given["conversation"], "conversation de la session")}
+
+
+def stored_conversation(value: dict[str, Any]) -> None:
+    if "conversation" in value:
+        single_line(value["conversation"], "conversation de la session")
+
+
+def rendered_by(convoy_id: str) -> dict[tuple[str, str | None], str]:
     """Every session that rendered a review of tests, a code review or a
-    Ticket Evaluation on a ticket of the convoy, with what it rendered."""
+    Ticket Evaluation on a ticket of the convoy, by session name and
+    conversation (None for a record that does not carry it), with what it
+    rendered."""
     _, tickets = load_convoy(convoy_id)
-    sessions: dict[str, str] = {}
+    sessions: dict[tuple[str, str | None], str] = {}
     for ticket in tickets:
         metadata = metadata_of(ticket)
         for key, what in RENDERED_BY:
@@ -3594,25 +3615,37 @@ def rendered_by(convoy_id: str) -> dict[str, str]:
             for round_ in rounds if isinstance(rounds, list) else []:
                 session = round_.get("recorded_by") if isinstance(round_, dict) else None
                 if isinstance(session, str) and session.strip():
-                    sessions.setdefault(session.strip(), f"{what} du ticket {ticket.get('id')}")
+                    conversation = round_.get("conversation")
+                    conversation = conversation.strip() if isinstance(conversation, str) and conversation.strip() else None
+                    sessions.setdefault((session.strip(), conversation), f"{what} du ticket {ticket.get('id')}")
     return sessions
 
 
 def refuse_served_session(args: argparse.Namespace, key: str, record: dict[str, Any], given: dict[str, Any]) -> None:
     """A fresh session per review, code review or Ticket Evaluation (Spec
-    §5, T42): what a session hands in is refused when it already rendered
-    another one of the convoy. The launch it answered is counted without
+    §5, T42): what a session hands in is refused when its conversation
+    already rendered another one of the convoy. A session is its name and
+    its conversation: a record without conversation, on either side, is
+    recognized by the name alone. The launch it answered is counted without
     result — one relaunch, then the stop — and nothing else is written."""
     session = given.get("recorded_by")
-    served = rendered_by(args.convoy).get(session.strip()) if isinstance(session, str) else None
+    if not isinstance(session, str):
+        return
+    name = session.strip()
+    conversation = conversation_of(given).get("conversation")
+    rendered = rendered_by(args.convoy)
+    served = rendered.get((name, None)) or (
+        rendered.get((name, conversation)) if conversation
+        else next((what for (who, _), what in rendered.items() if who == name), None))
     if served is None:
         return
     launches = record["request"]["launches"]
     if launches and "refused" not in launches[-1]:
-        launches[-1]["refused"] = {"session": session.strip(), "at": now()}
+        launches[-1]["refused"] = {"session": name, "at": now()}
         write_metadata(args.ticket, {key: encode(record)})
     raise Refusal(
-        f"la session {session.strip()} a déjà rendu {served} : une session neuve par relecture, revue ou évaluation ; "
+        f"la session {name}{f' (conversation {conversation})' if conversation else ''} a déjà rendu {served} : "
+        "une session neuve par relecture, revue ou évaluation ; "
         "ce lancement est compté sans résultat (une relance, puis l'arrêt), rien d'autre n'est écrit")
 
 
@@ -3684,7 +3717,7 @@ def cmd_record_test_review(args: argparse.Namespace) -> int:
         raise Refusal(f"aucune relecture n'est demandée sur {args.ticket} : un verdict répond à une demande ouverte")
     given = json_argument(args.file, "verdict de relecture")
     refuse_served_session(args, KEY_TEST_REVIEW, record, given)
-    problems = [f"champ inconnu : {name}" for name in sorted(set(given) - {"commit", "files", "tests", "recorded_by"})]
+    problems = [f"champ inconnu : {name}" for name in sorted(set(given) - {"commit", "files", "tests", "recorded_by", "conversation"})]
     if given.get("commit") != request["commit"]:
         problems.append(f"le verdict porte sur le commit {given.get('commit')!r}, la demande sur {request['commit']}")
     if given.get("files") != request["files"]:
@@ -3714,7 +3747,7 @@ def cmd_record_test_review(args: argparse.Namespace) -> int:
     verdict = "unfavorable" if refused else "favorable"
     record["rounds"].append({
         "commit": request["commit"], "files": request["files"], "verdict": verdict, "tests": tests,
-        "recorded_by": recorded_by.strip(), "at": now()})
+        "recorded_by": recorded_by.strip(), **conversation_of(given), "at": now()})
     del record["request"]
     refusals = review_refusals(record)
     values = {KEY_TEST_REVIEW: encode(record)}
@@ -3899,7 +3932,7 @@ def cmd_record_code_review(args: argparse.Namespace) -> int:
     given = json_argument(args.file, "revue de code")
     refuse_served_session(args, KEY_CODE_REVIEW, record, given)
     review = request["kind"] == "review"
-    known = {"commit", "recorded_by"} | ({"findings", "answers"} if review else {"judgements"})
+    known = {"commit", "recorded_by", "conversation"} | ({"findings", "answers"} if review else {"judgements"})
     problems = [
         "le verdict est calculé par du code, jamais donné par le relecteur" if name == "verdict"
         else f"champ inconnu : {name}" for name in sorted(set(given) - known)]
@@ -3961,7 +3994,7 @@ def cmd_record_code_review(args: argparse.Namespace) -> int:
         raise Refusal("revue de code hors contrat : " + " ; ".join(problems))
     verdict = "unfavorable" if refused else "favorable"
     at = now()
-    round_.update(verdict=verdict, models=request["models"], recorded_by=recorded_by.strip(), at=at)
+    round_.update(verdict=verdict, models=request["models"], recorded_by=recorded_by.strip(), **conversation_of(given), at=at)
     record["rounds"].append(code_review_round(round_))
     del record["request"]
     values = {KEY_CODE_REVIEW: encode(record),
@@ -4291,7 +4324,7 @@ def cmd_record_evaluation(args: argparse.Namespace) -> int:
     problems = [
         "le verdict est calculé par du code, jamais donné par l'Evaluator" if name in ("verdict", "outcome")
         else f"champ inconnu : {name}"
-        for name in sorted(set(given) - {"commit", "criteria", "demonstration_line", "coverage", "screen_findings", "recorded_by"})]
+        for name in sorted(set(given) - {"commit", "criteria", "demonstration_line", "coverage", "screen_findings", "recorded_by", "conversation"})]
     if given.get("commit") != request["commit"]:
         problems.append(f"l'évaluation rendue porte sur le commit {given.get('commit')!r}, la demande sur {request['commit']}")
     recorded_by = given.get("recorded_by")
@@ -4398,7 +4431,7 @@ def cmd_record_evaluation(args: argparse.Namespace) -> int:
         "kind": "evaluation", "commit": request["commit"], "criteria": criteria, "demonstration_line": line,
         "roles": request["roles"],
         "environment": [{"dataset": entry["dataset"], "address": entry["address"]} for entry in request["environment"]],
-        "recorded_by": recorded_by.strip(), "at": at}
+        "recorded_by": recorded_by.strip(), **conversation_of(given), "at": at}
     if coverage is not None:
         round_["coverage"] = coverage
     if given.get("screen_findings"):
@@ -6209,7 +6242,7 @@ def cmd_record_end_review(args: argparse.Namespace) -> int:
     problems = [
         "l'issue est calculée par du code, jamais donnée par le relecteur" if name in ("verdict", "outcome")
         else f"champ inconnu : {name}"
-        for name in sorted(set(given) - {"commit", "recorded_by", "findings", "coverage"})]
+        for name in sorted(set(given) - {"commit", "recorded_by", "conversation", "findings", "coverage"})]
     if given.get("commit") != request["commit"]:
         problems.append(f"la revue rendue porte sur le commit {given.get('commit')!r}, la demande sur {request['commit']}")
     recorded_by = given.get("recorded_by")
@@ -6264,7 +6297,7 @@ def cmd_record_end_review(args: argparse.Namespace) -> int:
     record["rounds"].append({
         "commit": request["commit"], "base": request["base"], "outcome": outcome, "findings": findings,
         "coverage": coverage, "extent": request["extent"], "models": request["models"],
-        "recorded_by": recorded_by.strip(), "launched_at": launched, "duration_seconds": duration, "at": at})
+        "recorded_by": recorded_by.strip(), **conversation_of(given), "launched_at": launched, "duration_seconds": duration, "at": at})
     if complete:
         del record["request"]
     elif request["launches"]:

@@ -930,6 +930,9 @@ def cmd_record(args: argparse.Namespace) -> int:
             f"aucune revue de code n'est demandée sur le ticket {args.ticket} : un verdict répond à une demande ouverte")
     # Never GC_AGENT: it names a place in the pool of the agent, which the next session takes.
     session = os.environ.get("GC_SESSION_NAME") or os.environ.get("GC_SESSION_ID") or ""
+    # T42: a session is its name and its conversation. gc 1.5.0 wakes a drained session under the
+    # same name; GC_CONTINUATION_EPOCH changes only when it starts a fresh conversation.
+    identity = {"recorded_by": session, "conversation": os.environ.get("GC_CONTINUATION_EPOCH", "").strip()}
     if request["kind"] == REVIEW and isinstance(given.get("findings"), list):
         text = ticket_text(ticket)
         sources = {"spec": spec_of(convoy)["text"],
@@ -943,7 +946,7 @@ def cmd_record(args: argparse.Namespace) -> int:
                     finding["citation_refused"] = refusal
             findings.append(finding)
         given = {**given, "findings": findings}
-    written = state_write_file("record-code-review", args.convoy, args.ticket, {**given, "recorded_by": session})
+    written = state_write_file("record-code-review", args.convoy, args.ticket, {**given, **identity})
     print(json.dumps({
         "ok": True, "convoy": args.convoy, "ticket": args.ticket, "kind": written["kind"], "verdict": written["verdict"],
         "blocking": written["blocking"], "demoted": written["demoted"], "findings": written["findings"],

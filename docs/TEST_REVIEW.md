@@ -126,17 +126,22 @@ One reviewer session renders one review (Spec §5, T42). Two things hold it:
   author agent: a session that has ever been assigned a bead is offered, of
   the unassigned work, only that of the workflows it already works. Once it
   has rendered its review it is offered nothing and leaves; the next review
-  starts a new session.
+  starts a new session, or wakes this one: gc 1.5.0 wakes a drained session
+  again under the same name, and the agent's `wake_mode = "fresh"` makes
+  that wake start a fresh conversation instead of resuming the last one.
 - `bin/convoy-state record-test-review` refuses a verdict whose session
-  (`recorded_by`) already rendered a review of tests, a code review or a
-  Ticket Evaluation on any ticket of the convoy. The refusal marks the
+  already rendered a review of tests, a code review or a Ticket Evaluation
+  on any ticket of the convoy. A session is its name (`recorded_by`) and its
+  conversation (`conversation`); a round without `conversation` is
+  recognized by the name alone. The refusal marks the
   launch it answered (`refused`: the session and the time) and writes
   nothing else: that launch gave no result, so the next pass relaunches
   once, then stops the ticket, as above.
 
 `record` signs the verdict with `GC_SESSION_NAME`, else `GC_SESSION_ID` —
 never `GC_AGENT`, which names a place in the pool of the agent that the next
-session takes.
+session takes — and with `GC_CONTINUATION_EPOCH` as `conversation`, which Gas City raises only when
+the session starts a fresh provider conversation (empty: not known).
 
 A dispatch the door refuses or defers (no adoption trial for the role, total
 provider exhaustion, low memory) launched nothing: it counts no launch, its
@@ -177,7 +182,7 @@ On the ticket, written by `bin/convoy-state` only (`docs/CONVOY_STATE.md`):
 
 | Key | Value |
 |---|---|
-| `gc.flow.test_review` | `rounds`: each recorded pass — `commit`, `files` (path → fingerprint), `verdict`, `tests` (test id → `state`, and `reason` when unfavorable), `recorded_by` (the reviewer session), `at`; `request`, while a review is open — `commit`, `files`, `criteria` (the criterion → test table), `launches` (`bead`, `at`, and `refused`: `{session, at}` when the session that answered had already served), `at` |
+| `gc.flow.test_review` | `rounds`: each recorded pass — `commit`, `files` (path → fingerprint), `verdict`, `tests` (test id → `state`, and `reason` when unfavorable), `recorded_by` (the reviewer session), `conversation` (its `GC_CONTINUATION_EPOCH`, when known), `at`; `request`, while a review is open — `commit`, `files`, `criteria` (the criterion → test table), `launches` (`bead`, `at`, and `refused`: `{session, at}` when the session that answered had already served), `at` |
 | `gc.flow.stop` | reason `test_review_refused` or `test_review_no_result`, a one-line detail, and `raised` once the escalation door accepted the request |
 
 The verdict is not written under `gc.flow.verdict.test_review`: a verdict of
