@@ -59,6 +59,8 @@ import yaml
 
 PROGRAM = "graph-review"
 SELF_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SELF_DIR.parent / "lib"))
+import ticket_graph  # noqa: E402
 ROOT = Path(os.environ.get("FACTORY_ROOT") or SELF_DIR.parent)
 # Gas City 1.5 gives an order BD_BIN set and empty: an empty value is no
 # override (af-d130xt).
@@ -204,28 +206,9 @@ def critical_path(draft: Draft) -> dict[str, Any]:
         if isinstance(ticket.get("blocked_by") or [], list) else []  # malformed: refused at publication
         for key, ticket in draft.tickets.items()
     }
-    chain: dict[str, list[str]] = {}
-
-    def longest(key: str) -> list[str]:
-        if key not in chain:
-            chain[key] = [key]  # a cycle (refused at publication) ends here
-            chain[key] = max((longest(b) for b in waits[key]), key=len, default=[]) + [key]
-        return chain[key]
-
-    def reaches(start: str, goal: str, skip: str) -> bool:
-        stack, seen = [b for b in waits[start] if b != skip], set()
-        while stack:
-            current = stack.pop()
-            if current == goal:
-                return True
-            if current not in seen:
-                seen.add(current)
-                stack.extend(waits[current])
-        return False
-
-    path = max((longest(key) for key in draft.tickets), key=len)
+    path = ticket_graph.critical_path(waits)
     limit = max(CRITICAL_PATH_FLOOR, -(-len(draft.tickets) // 3))
-    redundant = [f"{b} → {key}" for key, blockers in waits.items() for b in blockers if reaches(key, b, b)]
+    redundant = [f"{b} → {key}" for b, key in ticket_graph.implied_links(waits)]
     reason = f"chemin critique {len(path)} pour {len(draft.tickets)} tickets (au plus {limit}) : {' → '.join(path)}"
     if redundant:
         reason += f" ; liens déjà impliqués par d'autres : {', '.join(redundant)}"

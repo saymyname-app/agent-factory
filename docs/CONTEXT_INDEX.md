@@ -108,6 +108,7 @@ mechanisms: consult `decisions/PRE_REFACTOR.md` before relying on them.
 | Test-writing guideline and test-file ceilings | `TEST_GUIDELINE.md` |
 | Claude MCP/tool profiles and context floor | `../city.toml` ([providers.claude]) |
 | Launch the cockpit isolated at a commit on a named synthetic dataset: recipe, datasets, screens, seams, regression command | `COCKPIT.md` (« Isolated launch »), `PROJECT_PLANNING_PROFILE.md` (« Launch declarations »), `../config/project-descriptors/agent-factory.json` (`launch`), `../bin/cockpit-isolated`, `../lib/synthetic_city.py` |
+| Where a running convoy stands: active sessions, ready tickets, critical path and width per level (not `gc status`) | `FACTORY_TOOLS.md` (convoy-graph), `../bin/convoy-graph`, `../lib/ticket_graph.py` |
 
 ## Authority and minimal retrieval
 
