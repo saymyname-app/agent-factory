@@ -471,7 +471,12 @@ def cmd_start(args: argparse.Namespace) -> int:
                               "cleanup_confirmed": not Path(args.state_file).exists()}, sort_keys=True))
             return 1
         address = f"http://127.0.0.1:{port}"
-        proc = spawn(launch["recipe"], worktree, port, dataset_abs, launch_id)
+        try:
+            proc = spawn(launch["recipe"], worktree, port, dataset_abs, launch_id)
+        except OSError as exc:
+            # Nothing was started: the copy and the record are released below.
+            outcome, stopped, error = "unhealthy", True, f"recipe could not be started: {exc}"
+            break
         record.update(pid=proc.pid, process_group=proc.pid)
         write_record(args.state_file, record)
         outcome = probe_until_healthy(proc, port, launch_id, address + probe_path, expect_status, args.timeout)
