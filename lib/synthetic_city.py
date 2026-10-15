@@ -23,6 +23,7 @@ screen or a state no rule reads is refused, never served in part.
 
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -43,6 +44,10 @@ DESCRIPTOR_CONTRACT = "agent-factory-project-descriptor/v1"
 NEEDS_BENJAMIN = "gc.needs_benjamin"
 PROJECT_KEY = "gc.project_id"
 RESULT_STATE = "synthetic.result_state"
+# The record of the result open under « Ce qui t’attend », and the card of a
+# chantier, as the overview reads them (cockpit.ui.home.overview).
+RESULT_DOSSIER = "gc.result_dossier"
+PROJECT_CARD = "gc.project_card"
 # The label of a bead that keeps one section of a screen as it is said.
 SAID = "said"
 # What an event bead meant for the journal carries (cockpit.ui.journal.entries).
@@ -163,11 +168,14 @@ def _panorama_city(name, at, ui, text) -> SyntheticCity:
     stop_step = STOP_STEP.search(ui.get("setup") or "")
     tracker = _Tracker(at)
     read_screen(lines, tracker)
-    if result_state:
-        dossier = [bead for bead in tracker.beads if bead["id"] == DOSSIER]
-        if not dossier:
-            raise DatasetRefused(f"« {lines[0]} » opens no dossier to be in the state {result_state!r} (ui.state)")
-        dossier[0]["metadata"][RESULT_STATE] = result_state
+    dossier = next((bead for bead in tracker.beads if bead["id"] == DOSSIER), None)
+    if result_state and dossier is None:
+        raise DatasetRefused(f"« {lines[0]} » opens no dossier to be in the state {result_state!r} (ui.state)")
+    if dossier is not None:
+        if result_state:
+            dossier["metadata"][RESULT_STATE] = result_state
+        dossier["metadata"][RESULT_DOSSIER] = json.dumps(
+            _dossier_record(dossier["title"], dossier["description"].split("\n"), result_state), ensure_ascii=False)
     return SyntheticCity(
         name=name, reading=reading,
         suspended=bool(stop_step) and stop_step.group(1) == "suspended",
@@ -213,7 +221,10 @@ def _overview(lines, tracker) -> None:
         chantier = CHANTIER.match(card[1]) if len(card) > 1 else None
         if not chantier:
             raise DatasetRefused(f"a project card that names no project and chantier: {card}")
-        _chantier(tracker, tracker.declare(card[0]), chantier["title"], [chantier["stage"], *card[2:]])
+        figures = card[2:]
+        _chantier(tracker, tracker.declare(card[0]), chantier["title"], [chantier["stage"], *figures], card={
+            "stage": chantier["stage"], "figures": figures[:-1], "release": figures[-1] if figures else None,
+        })
         card = []
     if card:
         raise DatasetRefused(f"lines under « {PROJECTS} » that belong to no card: {card}")
@@ -243,10 +254,74 @@ def _awaited(sections, tracker) -> list:
     return rows[2 * found:]
 
 
-def _chantier(tracker, project: str, title: str, said) -> None:
-    """The open chantier of `project`, and what the screen says of it."""
+def _chantier(tracker, project: str, title: str, said, card=None) -> None:
+    """The open chantier of `project`, and what the screen says of it; with
+    `card`, its card on the overview: its stage, its figures and the line of
+    its release."""
+    metadata = {"gc.graph_digest": f"synthetic:{project}"}
+    if card is not None:
+        metadata[PROJECT_CARD] = json.dumps(card, ensure_ascii=False)
     tracker.add(f"synthetic-chantier-{project}", title, said=said, project=project, issue_type="convoy",
-                labels=["approved-ticket-graph"], metadata={"gc.graph_digest": f"synthetic:{project}"})
+                labels=["approved-ticket-graph"], metadata=metadata)
+
+
+# The states of a result whose dossier the overview opens (`ui.state`), by
+# what its panel shows: a result already judged is followed, a decision
+# request offers its options; any other state is a result to judge.
+FOLLOW_UP_STATES = ("returned", "repairing", "accepted", "merging", "merged", "conflict", "abandoned")
+DECISION_STATES = ("request", "confirmation")
+# The bar of a result to judge: the cockpit draws it, the record does not
+# carry it.
+RESULT_BAR = ("Essai ↗", "Avis")
+OPENS = "↗"
+# « Choix CSV préparé. ConfirmerAnnuler »: an option prepared, to confirm.
+PREPARED = re.compile(r"^(?P<said>.+?)\s*Confirmer\s*Annuler$")
+
+
+def _dossier_record(title: str, lines, state) -> dict:
+    """The record of the dossier open under « Ce qui t’attend »: what it is
+    about (« projet · sujet »), its title, what its panel says (`summary`)
+    and holds -- resources that open (label, detail, « ↗ ») or that unfold
+    (a label alone), the checks of a dossier (label, status), the options
+    of a decision and the one prepared."""
+    about, *lines = [line for line in lines if line not in RESULT_BAR]
+    if not lines:
+        raise DatasetRefused(f"a dossier that says nothing under its title: « {title} »")
+    record = {"about": about, "title": title, "state": state, "summary": lines[0], "resources": [],
+              "checks": [], "options": [], "prepared": None}
+    rest = lines[1:]
+    if state in DECISION_STATES:
+        record["kind"] = "decision"
+        record["resources"] = [{"label": label, "opens": False} for label in rest[:1]]
+        for line in rest[1:]:
+            prepared = PREPARED.match(line)
+            if prepared:
+                record["prepared"] = prepared["said"]
+            else:
+                record["options"].append(line)
+    elif state in FOLLOW_UP_STATES:
+        record["kind"] = "follow_up"
+        record["resources"] = [{"label": label, "opens": False} for label in rest]
+    elif state == "dossier":
+        # « Dossier du résultat », its version, its checks (label, status)
+        # and, last, what unfolds.
+        record.update(kind="dossier", heading=lines[0], summary=rest[0] if rest else "")
+        checks, unfolds = rest[1:-1], rest[-1:]
+        if len(checks) % 2:
+            raise DatasetRefused(f"a dossier whose checks are not label and status: {checks}")
+        record["checks"] = [{"label": label, "status": status} for label, status in zip(checks[0::2], checks[1::2])]
+        record["resources"] = [{"label": label, "opens": False} for label in unfolds]
+    else:
+        record["kind"] = "judge"
+        at = 0
+        while at < len(rest):
+            if rest[at + 2:at + 3] == [OPENS]:
+                record["resources"].append({"label": rest[at], "detail": rest[at + 1], "opens": True})
+                at += 3
+            else:
+                record["resources"].append({"label": rest[at], "opens": False})
+                at += 1
+    return record
 
 
 # The page of one project (« ← Projets »): what it is and its indicators

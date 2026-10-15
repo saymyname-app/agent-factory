@@ -98,6 +98,19 @@ class TheOverview(unittest.TestCase):
         with self.assertRaisesRegex(DatasetRefused, r"a dossier that names no project and title"):
             from_dataset(dataset)
 
+    def test_a_dossier_that_says_nothing_under_its_title_is_refused(self):
+        dataset = overview("Décisions à prendre", "0", "Ce qui t’attend", "Usine · Reprise du cockpit",
+                           "Le cockpit attend ton avis", "Essai ↗", "Avis")
+        with self.assertRaisesRegex(DatasetRefused, r"a dossier that says nothing under its title"):
+            from_dataset(dataset)
+
+    def test_a_dossier_whose_checks_are_not_label_and_status_is_refused(self):
+        dataset = overview("Décisions à prendre", "0", "Ce qui t’attend", "Usine · Reprise du cockpit",
+                           "Le cockpit attend ton avis", "Dossier du résultat", "Version 1", "Parcours",
+                           "Pièces et version", state="dossier")
+        with self.assertRaisesRegex(DatasetRefused, r"a dossier whose checks are not label and status"):
+            from_dataset(dataset)
+
     def test_a_project_card_that_names_no_chantier_is_refused(self):
         with self.assertRaisesRegex(DatasetRefused, r"a project card that names no project and chantier"):
             from_dataset(overview("Projets", "Notes", "→"))

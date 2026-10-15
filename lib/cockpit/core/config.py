@@ -13,6 +13,7 @@ from cockpit.core.gc_client import (
     STREAM_SILENCE_SECONDS,
 )
 from cockpit.requests.sources.readability import ILLISIBLE_THRESHOLD_SECONDS
+from cockpit.ui.home.overview import READ_GIVE_UP_SECONDS
 from cockpit.notify.pushover import PUSHOVER_URL
 from cockpit.projects.depots import REPO_URL_TEMPLATE
 from cockpit.health.engine import (
@@ -63,6 +64,11 @@ class Config:
         # spec .17: a source unreadable for longer than this is itself a request.
         self.illisible_after_seconds = float(
             env.get("COCKPIT_ILLISIBLE_SECONDS", str(ILLISIBLE_THRESHOLD_SECONDS))
+        )
+        # « Vue d’ensemble » (T02, af-0gonc9): how long the page says the
+        # tracker is being read before it says the view is unavailable.
+        self.read_give_up_seconds = float(
+            env.get("COCKPIT_READ_GIVE_UP_SECONDS", str(READ_GIVE_UP_SECONDS))
         )
         self.pid_file = env.get("COCKPIT_PID_FILE") or _default_pid_file(env)
         # What only this machine knows -- where the secret files are, the

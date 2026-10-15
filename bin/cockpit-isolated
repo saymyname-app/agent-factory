@@ -60,6 +60,10 @@ POLL_SECONDS = "0.2"
 # A supervisor that answers no more is shown as such after this long, not
 # after the two minutes a reading stays current in service.
 SILENT_VALIDITY_SECONDS = "2"
+# A tracker that never answers is said unreadable after this long, not
+# after the minute the page waits in service: the page says it is being
+# read until then.
+READ_GIVE_UP_SECONDS = "8"
 # The mark bin/project-launch gives what it launches: the launcher stops
 # the processes that carry it, and the controller of an evaluation attests
 # that the process listening on the port carries it. The cockpit keeps it.
@@ -189,6 +193,7 @@ def main(argv: list[str]) -> int:
         "COCKPIT_PROJECTS_POLL_SECONDS": POLL_SECONDS,
         "COCKPIT_JOURNAL_POLL_SECONDS": POLL_SECONDS,
         "COCKPIT_SESSIONS_POLL_SECONDS": POLL_SECONDS,
+        "COCKPIT_READ_GIVE_UP_SECONDS": READ_GIVE_UP_SECONDS,
         **write_tracker_and_projects(city, home),
     }
     if LAUNCH_MARK in os.environ:
