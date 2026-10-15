@@ -111,7 +111,7 @@ def revision(path: str) -> dict[str, Any]:
     try:
         with open(path, encoding="utf-8") as handle:
             value = json.load(handle)
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError) as exc:
         raise Refusal(f"refused: revision file {path} is not readable JSON; nothing written") from exc
     require(isinstance(value, dict) and value, "revision must be a non-empty JSON object")
     require(not set(value) - REVISION_KEYS,
