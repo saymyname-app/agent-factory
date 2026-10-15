@@ -1027,7 +1027,7 @@ concerne qu'un ticket d'un convoi qui porte la **marque du nouveau flux**.
 ```bash
 ./bin/test-review review <convoi> <ticket> --repo <worktree>      # l'auteur, après tdd-step red
 ./bin/test-review show <convoi> <ticket>                          # les passes, la demande ouverte, l'arrêt
-./bin/test-review settle <convoi>                                 # lancé par ./bin/convoy-advance à chaque passe
+./bin/test-review settle <convoi>                                 # plus lancé par convoy-advance depuis ADR-0030 L3
 ./bin/test-review brief <convoi> <ticket>                         # la session relecteur (formule mol-test-review)
 ./bin/test-review record <convoi> <ticket> --verdict-file <f>     # la session relecteur
 ```
