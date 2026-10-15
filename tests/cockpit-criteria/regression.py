@@ -31,6 +31,11 @@ ROOT = Path(__file__).resolve().parents[2]
 LOCAL_ONLY = re.compile(r"^#\s*ci:\s*local-only", re.MULTILINE)
 ALSO = ("tests/project-launch-test.py", "tests/project-planning-profile-test.py")
 JOBS = 4
+# The criterion tests launch cockpits and a headless browser for minutes:
+# run beside the others, they starve the tests that time a reading (a
+# recheck answered within 3 s, a supervisor read before the sessions). They
+# run alone, after the others.
+ALONE = ("tests/cockpit-criteria-test.py",)
 
 
 def files() -> list[Path]:
@@ -59,8 +64,10 @@ def as_repository() -> None:
 def main() -> int:
     as_repository()
     failed = 0
+    alone = [path for path in files() if path.relative_to(ROOT).as_posix() in ALONE]
+    together = [path for path in files() if path not in alone]
     with ThreadPoolExecutor(max_workers=JOBS) as pool:
-        for path, status, seconds, output in pool.map(run, files()):
+        for path, status, seconds, output in [*pool.map(run, together), *map(run, alone)]:
             print(f"{'PASS' if status == 0 else 'FAIL'} {path.relative_to(ROOT)} ({seconds:.0f}s)", flush=True)
             if status != 0:
                 failed += 1
