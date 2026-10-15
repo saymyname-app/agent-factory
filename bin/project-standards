@@ -1,0 +1,365 @@
+#!/usr/bin/env python3
+"""Read the code and design standards state of registered project rigs."""
+import argparse
+import fcntl
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import tempfile
+import runpy
+from pathlib import Path
+import tomllib
+
+JAVA_RESERVED = set("""abstract assert boolean break byte case catch char class const continue default do
+double else enum extends final finally float for goto if implements import instanceof int
+interface long native new package private protected public return short static strictfp super
+switch synchronized this throw throws transient try void volatile while true false null record
+sealed permits yield var""".split())
+
+
+def descriptors(root, load_descriptor):
+    for file in sorted((root / "config/project-descriptors").glob("*.json")):
+        yield load_descriptor(file)
+
+
+def adopt(root, args, load_descriptor):
+    registered = {rig: stacks for descriptor in descriptors(root, load_descriptor)
+                  for rig, stacks in descriptor["stacks"].items()}
+    if args.stack not in registered.get(args.rig, []):
+        raise ValueError(f"rig {args.rig}: pile {args.stack} non déclarée")
+    base_source = root / "default-standards" / args.stack
+    source = base_source / "design" if args.domain == "design" else base_source
+    if not source.is_dir() or not (source / "VERSION").is_file():
+        raise ValueError(f"pile {args.stack}: aucun Default Standards disponible")
+    target = args.target.resolve()
+    if not target.is_dir() or not (target / ".git").is_file():
+        raise ValueError(f"rig {args.rig}: cible attendue dans un worktree Git lié")
+    top = subprocess.run(["git", "-C", str(target), "rev-parse", "--show-toplevel"],
+                         capture_output=True, text=True)
+    if top.returncode or Path(top.stdout.strip()).resolve() != target:
+        raise ValueError(f"rig {args.rig}: cible hors du worktree Git")
+    with (root / "config/projects" / f"{args.rig}.toml").open("rb") as handle:
+        registered_dir = tomllib.load(handle)["rig_dir"]
+    registered_path = (root / registered_dir).resolve()
+    if not registered_path.is_relative_to(root):
+        raise ValueError(f"rig {args.rig}: dépôt déclaré hors de l'usine")
+    def git_common_dir(checkout):
+        proc = subprocess.run(["git", "-C", str(checkout), "rev-parse", "--git-common-dir"],
+                              capture_output=True, text=True)
+        if proc.returncode:
+            raise ValueError(f"rig {args.rig}: dépôt Git déclaré introuvable")
+        return (checkout / proc.stdout.strip()).resolve()
+    if git_common_dir(registered_path) != git_common_dir(target):
+        raise ValueError(f"rig {args.rig}: cible liée à un autre dépôt Git")
+    files = [file for file in source.rglob("*") if file.is_file() and file.name != "VERSION"
+             and not {"__pycache__", "node_modules", "test-results", "playwright-report"}.intersection(file.relative_to(source).parts)
+             and file.suffix not in {".pyc", ".pyo"}
+             and (args.domain == "design" or file.relative_to(source).parts[0] != "design")]
+    origin_name = "design-standards-origin.json" if args.domain == "design" else "standards-origin.json"
+    origin = target / ".factory" / origin_name
+    java_package = args.java_package
+    if args.domain == "design" and java_package:
+        raise ValueError("--java-package réservé à l'adoption de code Java")
+    if args.domain == "code" and args.stack == "java-spring-maven" and not java_package:
+        raise ValueError("paquet Java requis : --java-package")
+    if java_package and args.stack != "java-spring-maven":
+        raise ValueError("--java-package réservé à la pile Java")
+    if java_package and (not re.fullmatch(r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*", java_package)
+                         or any(part in JAVA_RESERVED for part in java_package.split("."))
+                         or java_package.split(".")[0] == "java"):
+        raise ValueError(f"paquet Java invalide : {java_package}")
+    destinations = [target / str(file.relative_to(source)).replace("src/test/java/example/",
+                    "src/test/java/" + java_package.replace(".", "/") + "/")
+                    if java_package else target / file.relative_to(source) for file in files] + [origin]
+    if args.domain == "code":
+        destinations.append(target / ".factory/bin/standards-ratchet")
+    for path in destinations:
+        if path.exists() or path.is_symlink():
+            raise ValueError(f"rig {args.rig}: fichier existant, adoption refusée : {path.relative_to(target)}")
+        if any(parent.is_symlink() for parent in path.parents if parent != target and target in parent.parents):
+            raise ValueError(f"rig {args.rig}: chemin lié hors du worktree : {path.relative_to(target)}")
+    version = (source / "VERSION").read_text(encoding="utf-8").strip()
+    if not version:
+        raise ValueError(f"pile {args.stack}: version des défauts absente")
+    for file, path in zip(files, destinations):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if java_package and file.suffix in {".xml", ".java"}:
+            path.write_text(file.read_text(encoding="utf-8").replace("__JAVA_PACKAGE__", java_package), encoding="utf-8")
+        else:
+            shutil.copyfile(file, path)
+    origin.parent.mkdir(parents=True, exist_ok=True)
+    origin.write_text(json.dumps({"contract": "agent-factory-standards-origin/v1", "stack": args.stack,
+                                  "version": version}, ensure_ascii=False) + "\n", encoding="utf-8")
+    if args.domain == "code":
+        ratchet = Path(__file__).with_name("standards-ratchet")
+        (target / ".factory/bin").mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ratchet, target / ".factory/bin/standards-ratchet")
+        (target / ".factory/bin/standards-ratchet").chmod(0o755)
+    return {"ok": True, "rig": args.rig, "stack": args.stack, "domain": args.domain, "version": version,
+            "baseline_pending": args.domain == "code",
+            "files": [str(path.relative_to(target)) for path in destinations]}
+
+
+def _recurrence_unlocked(root, rig, load_descriptor):
+    """Turn the second recorded refusal of a written project rule into one planning task."""
+    projects = [descriptor["project_id"] for descriptor in descriptors(root, load_descriptor)
+                if rig in descriptor["rigs"]]
+    if len(projects) != 1:
+        raise ValueError(f"rig {rig}: projet déclaré unique introuvable")
+    with (root / "config/projects" / f"{rig}.toml").open("rb") as handle:
+        rig_dir = tomllib.load(handle)["rig_dir"]
+    rig_repo = (root / rig_dir).resolve()
+    if not rig_repo.is_relative_to(root):
+        raise ValueError(f"rig {rig}: dépôt déclaré hors de l'usine")
+    standards = {}
+    for path in ("STANDARDS.md", "DESIGN.md"):
+        file = rig_repo / path
+        if file.is_file():
+            lines = file.read_text(encoding="utf-8").splitlines()
+            start = next((index for index, line in enumerate(lines)
+                          if line.strip() == "## Rules cited by the reviewer"), None)
+            if start is not None:
+                end = next((index for index in range(start + 1, len(lines))
+                            if lines[index].startswith("## ")), len(lines))
+                standards[path] = {" ".join(line.split()) for line in lines[start + 1:end]
+                                   if line.startswith("- ")}
+
+    def rule_key(path, quote):
+        if path not in standards or not isinstance(quote, str) or not quote:
+            return None
+        normalized = " ".join(quote.split())
+        matches = [line for line in standards[path] if normalized in line]
+        return (path, matches[0]) if len(matches) == 1 else None
+
+    gc = os.environ.get("GC_BIN", "gc")
+    command = [gc, "--city", str(root), "bd"]
+
+    def tracker(*args):
+        proc = subprocess.run([*command, *args], capture_output=True, text=True)
+        if proc.returncode:
+            raise ValueError(f"bd {args[0]} a échoué : {proc.stderr.strip() or proc.stdout.strip()}")
+        try:
+            return json.loads(proc.stdout)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"bd {args[0]} a rendu une réponse illisible") from exc
+
+    beads = tracker("list", "--all", "--limit", "0", "--json")
+    if not isinstance(beads, list):
+        raise ValueError("bd list n'a pas rendu une liste")
+    previous = {(b.get("metadata") or {}).get("gc.standard_recurrence") for b in beads}
+    occurrences = {}
+    for bead in beads:
+        description = bead.get("description") or ""
+        target = re.search(r"(?m)^## Target rigs\s*\n([^#]+)", description)
+        if not target or rig not in {part.strip() for part in target.group(1).split(",")}:
+            continue
+        raw = (bead.get("metadata") or {}).get("gc.flow.code_review")
+        if not isinstance(raw, str):
+            continue
+        try:
+            rounds = json.loads(raw).get("rounds", [])
+        except (ValueError, AttributeError):
+            continue
+        for number, round_ in enumerate(rounds, 1):
+            if not isinstance(round_, dict) or round_.get("kind") != "review":
+                continue
+            cited = set()
+            for finding in round_.get("findings", []):
+                if not isinstance(finding, dict) or not finding.get("blocking") or finding.get("demoted"):
+                    continue
+                citation = finding.get("citation")
+                if not isinstance(citation, dict) or citation.get("source") != "repo_rule":
+                    continue
+                path, quote = citation.get("path"), citation.get("quote")
+                if path not in ("STANDARDS.md", "DESIGN.md") or not isinstance(quote, str) or not quote:
+                    continue
+                key = rule_key(path, quote)
+                if key:
+                    cited.add(key)
+            for key in cited:
+                occurrences.setdefault(key, []).append((bead["id"], "revue", number))
+    # The Evaluator's screen findings are also refusals with a verified
+    # DESIGN.md line. They use the same rule identity as code-review findings.
+    for bead in beads:
+        description = bead.get("description") or ""
+        target = re.search(r"(?m)^## Target rigs\s*\n([^#]+)", description)
+        if not target or rig not in {part.strip() for part in target.group(1).split(",")}:
+            continue
+        raw = (bead.get("metadata") or {}).get("gc.flow.evaluation")
+        if not isinstance(raw, str):
+            continue
+        try:
+            rounds = json.loads(raw).get("rounds", [])
+        except (ValueError, AttributeError):
+            continue
+        for number, round_ in enumerate(rounds, 1):
+            if not isinstance(round_, dict) or round_.get("kind") != "evaluation":
+                continue
+            rules = {finding.get("rule") for finding in round_.get("screen_findings", [])
+                     if isinstance(finding, dict) and isinstance(finding.get("rule"), str)}
+            for rule in rules:
+                key = rule_key("DESIGN.md", rule)
+                if key:
+                    occurrences.setdefault(key, []).append((bead["id"], "évaluation", number))
+    created = []
+    for (path, quote), hits in sorted(occurrences.items()):
+        if len(hits) < 2:
+            continue
+        signature = hashlib.sha256(json.dumps([projects[0], rig, path, quote], ensure_ascii=False).encode()).hexdigest()
+        if signature in previous:
+            continue
+        sources = ", ".join(f"{ticket} ({kind} {round_})" for ticket, kind, round_ in hits[:2])
+        body = (f"Standard du rig {rig} : {path} — {quote}\n\n"
+                f"Deux refus bloquants déjà enregistrés : {sources}.\n\n"
+                "Traiter la cause racine : ajouter une règle de code si un outil peut refuser cet écart "
+                "pour ce standard déjà accepté ; sinon préciser le standard sans changer son sens. "
+                "La prochaine session d’opérateur le reprend dans la file des récidives "
+                "(`docs/PLANNING_RUN.md`) et livre en worktree, avec tests, relecture et PR, "
+                "sans nouvel accord de Benjamin pour une règle de code ou une précision de même sens. "
+                "Si le sens du standard doit changer, montrer l'avant, l'après et l'effet à "
+                "l'Acceptance Session ; ne l'appliquer qu'après l'accord de Benjamin. "
+                "Ne pas publier un ticket de livraison hors de bin/ticket-graph-publish.\n")
+        metadata = {"gc.plane": "planning", "gc.project_id": projects[0],
+                    "gc.standard_recurrence": signature, "gc.rig": rig}
+        made = tracker("create", f"Cause racine : récidive du standard {rig}/{path}", "-t", "task",
+                       "-p", "2", "-d", body, "--labels", "ready-for-agent",
+                       "--metadata", json.dumps(metadata), "--json")
+        if isinstance(made, list):
+            made = made[0] if made else None
+        if not isinstance(made, dict) or not made.get("id"):
+            raise ValueError("bd create n'a pas rendu l'identifiant du ticket de cause racine")
+        created.append({"ticket": made["id"], "rig": rig, "path": path, "quote": quote})
+    count = sum(len(hits) >= 2 for hits in occurrences.values())
+    return {"ok": True, "project_id": projects[0], "rig": rig, "recurrences": count, "created": created}
+
+
+def recurrence(root, rig, load_descriptor):
+    # Two controller passes can settle different convoys at once. Count and
+    # create under one host-local lock, including the tracker read.
+    name = hashlib.sha256(f"{root}:{rig}".encode()).hexdigest()[:20]
+    lock = Path(tempfile.gettempdir()) / f"agent-factory-standard-recurrence-{name}.lock"
+    with lock.open("w") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        return _recurrence_unlocked(root, rig, load_descriptor)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repo-root", type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument("command", choices=["status", "adopt", "ratchet", "baseline", "recurrence"])
+    parser.add_argument("--rig")
+    parser.add_argument("--stack")
+    parser.add_argument("--target", type=Path)
+    parser.add_argument("--java-package")
+    parser.add_argument("--domain", choices=["code", "design"], default="code")
+    parser.add_argument("--base-ref")
+    parser.add_argument("--head-ref", default="HEAD")
+    args = parser.parse_args()
+    root = args.repo_root.resolve()
+    profile = runpy.run_path(str(Path(__file__).with_name("project-planning-profile")))
+    load_descriptor = profile["load_descriptor"]
+    ratchet = runpy.run_path(str(Path(__file__).with_name("standards-ratchet")))
+    try:
+        if args.command == "recurrence":
+            if not args.rig:
+                raise ValueError("recurrence requiert --rig")
+            result = recurrence(root, args.rig, load_descriptor)
+        elif args.command == "ratchet":
+            if not args.target or not args.base_ref:
+                raise ValueError("ratchet requiert --target et --base-ref")
+            result = ratchet["check"](args.target, args.base_ref, args.head_ref)
+        elif args.command == "baseline":
+            if not args.target:
+                raise ValueError("baseline requiert --target")
+            result = ratchet["initial_photo"](args.target)
+        elif args.command == "adopt":
+            if not args.rig or not args.stack or not args.target:
+                raise ValueError("adopt requiert --rig, --stack et --target")
+            result = adopt(root, args, load_descriptor)
+        else:
+            projects = []
+            for descriptor in descriptors(root, load_descriptor):
+                rigs = []
+                for rig in descriptor["rigs"]:
+                    with (root / "config/projects" / f"{rig}.toml").open("rb") as handle:
+                        rig_dir = tomllib.load(handle)["rig_dir"]
+                    path = (root / rig_dir).resolve()
+                    if not path.is_relative_to(root):
+                        raise ValueError(f"rig {rig}: path outside repository")
+                    if not path.is_dir():
+                        raise ValueError(f"rig {rig}: checkout missing at {path}")
+                    origin_file = path / ".factory" / "standards-origin.json"
+                    origin = json.loads(origin_file.read_text(encoding="utf-8")) if origin_file.is_file() else None
+                    design_origin_file = path / ".factory" / "design-standards-origin.json"
+                    design_origin = json.loads(design_origin_file.read_text(encoding="utf-8")) if design_origin_file.is_file() else None
+                    for value in (origin, design_origin):
+                        if value is not None and (not isinstance(value, dict)
+                                or value.get("contract") != "agent-factory-standards-origin/v1"
+                                or not isinstance(value.get("version"), str)
+                                or value.get("stack") not in descriptor["stacks"][rig]):
+                            raise ValueError(f"rig {rig}: origine des standards invalide ou pile non déclarée")
+                    if design_origin and not (path / "DESIGN.md").is_file():
+                        raise ValueError(f"rig {rig}: origine de design sans DESIGN.md")
+                    latest = {}
+                    latest_design = {}
+                    for stack in descriptor["stacks"][rig]:
+                        version_file = root / "default-standards" / stack / "VERSION"
+                        if version_file.is_file():
+                            latest[stack] = version_file.read_text(encoding="utf-8").strip()
+                        design_version_file = root / "default-standards" / stack / "design" / "VERSION"
+                        if design_version_file.is_file():
+                            latest_design[stack] = design_version_file.read_text(encoding="utf-8").strip()
+                    choices = [line.strip() for name in ("STANDARDS.md", "DESIGN.md")
+                               if (path / name).is_file()
+                               for line in (path / name).read_text(encoding="utf-8").splitlines()
+                               if "par défaut, non confirmée" in line]
+                    frozen_file = path / ".factory" / "frozen-list.json"
+                    frozen = json.loads(frozen_file.read_text(encoding="utf-8")) if frozen_file.is_file() else {
+                        "contract": "agent-factory-frozen-list/v1", "entries": []}
+                    entries = ratchet["counts"](frozen)
+                    suppressions_file = path / "eslint-suppressions.json"
+                    suppressions = ratchet["eslint_counts"](json.loads(suppressions_file.read_text(encoding="utf-8"))) \
+                        if suppressions_file.is_file() else {}
+                    depcruise_file = path / ".dependency-cruiser-known-violations.json"
+                    if depcruise_file.is_file():
+                        suppressions.update(ratchet["depcruise_counts"](
+                            json.loads(depcruise_file.read_text(encoding="utf-8"))))
+                    suppressions.update(ratchet["archunit_live_counts"](path))
+                    if entries.keys() & suppressions.keys():
+                        raise ValueError(f"rig {rig}: écart doublé dans les listes figées")
+                    entries.update(suppressions)
+                    counts = {}
+                    for rule, _ in entries:
+                        counts[rule] = counts.get(rule, 0) + 1
+                    rigs.append({
+                        "rig": rig,
+                        "stacks": descriptor["stacks"][rig],
+                        "standards": {
+                            "code": "avec" if (path / "STANDARDS.md").is_file() else "sans",
+                            "design": "avec" if (path / "DESIGN.md").is_file() else "sans",
+                        },
+                        "origin": {"stack": origin["stack"], "version": origin["version"]} if origin else None,
+                        "design_origin": {"stack": design_origin["stack"], "version": design_origin["version"]} if design_origin else None,
+                        "baseline_pending": bool(origin and not (path / ".factory/baseline-record.json").is_file()),
+                        "latest_versions": latest,
+                        "latest_design_versions": latest_design,
+                        "design_update_available": bool(design_origin and design_origin["stack"] in latest_design
+                                                        and latest_design[design_origin["stack"]] != design_origin["version"]),
+                        "update_available": bool(origin and origin["stack"] in latest
+                                                 and latest[origin["stack"]] != origin["version"]),
+                        "unconfirmed_choices": choices,
+                        "frozen_counts": counts,
+                    })
+                projects.append({"project_id": descriptor["project_id"], "rigs": rigs})
+            result = {"ok": True, "projects": projects}
+    except (OSError, KeyError, TypeError, ValueError, profile["ProfileError"]) as exc:
+        result = {"ok": False, "error": str(exc)}
+    print(json.dumps(result, ensure_ascii=False))
+    return 0 if result["ok"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

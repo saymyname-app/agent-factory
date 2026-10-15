@@ -1,0 +1,12 @@
+# Project file for the SayMyName project itself (af-vx1tkf), not for one of
+# its rigs: it declares none of rig_dir/repo/protected_branch/required_ci, so
+# lib/project_registry.sh prints no row for it and bin/dispatch-door knows no
+# rig of this name. The two rigs keep their own files,
+# config/projects/saymyname-backend.toml and saymyname-frontend.toml; the
+# project and the rigs it spans are config/project-descriptors/saymyname.json.
+#
+# human_approver (A6b W04) is this project's declared human approver, read by
+# its project id via `bin/project-planning-profile human-approver --project
+# saymyname`: bin/spec-approve refuses to approve a Spec bead of this project
+# whose --approved-by is anyone else. See config/projects/agent-factory.toml.
+human_approver = "benjamin-hurand"

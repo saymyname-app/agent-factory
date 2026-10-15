@@ -50,9 +50,8 @@ jq -r '.commit, (.stories[] | "\\(.number). \\(.text)"), (.environments[] | "\\(
 ```
 
 The brief is everything you are given: the numbered user stories of the
-Spec (`.stories`), the launched products (`.environments`: one per dataset,
-each at its own address on this host, with the launch record you name to
-the capture tool), the entry points of the product (`.entry_points`), the
+Spec (`.stories`), the declared games (`.datasets`), the active product (`.environments`
+with its address and launch record), the entry points of the product (`.entry_points`), the
 Validated Prototypes the Spec delivers (`.prototypes`), and the findings
 « hors ticket » the authors declared (`.findings`). Do not read anything
 else of the authors: not the ticket beads, their notes or their comments,
@@ -84,6 +83,21 @@ or a screenshot of one address of that product:
 "$FACTORY_ROOT/bin/evidence-capture" screenshot "$SPEC_CONVOY" "$SPEC_CONVOY" --piece outcome.s1.page \\
   --launch-state "$LAUNCH_STATE" --path /
 ```
+
+Capture a sealed piece for every declared game before switching
+away. Request another game with:
+
+```bash
+"$FACTORY_ROOT/bin/outcome-evaluation" product "$SPEC_CONVOY" --dataset NAME > product.json
+```
+
+If `ready` is false, wait for the next controller pass and repeat the
+command. When true, use its `address` and `launch_state`. `--fresh`
+requests a reset at the same commit; retry without `--fresh` while it is
+pending. Record one `{dataset,evidence}` in `coverage` per game. A missing
+game or piece from another game's address refuses the result. The controller
+confirms cleanup before it launches the next product; do not launch or stop
+it yourself.
 
 Name your pieces `outcome.<something>` (letters, digits, `_` and `.`). The
 answer of the tool gives the `path` of the record: read it to see what was
@@ -167,6 +181,7 @@ shape `.result_shape` shows, then record it:
 
 ```bash
 jq '{commit, stories: [.stories[] | {number, text, state: null, evidence: null}],
+     coverage: [.datasets[] | {dataset: ., evidence: null}],
      exploration: "aucun", fidelity_deviations: "aucun", repairs: []}' outcome-brief.json > outcome-result.json
 # then set, for each story: .state, .evidence (the piece name), and .reason (unless observed) and .cause
 # (unobservable only); the two sections of step 4; and one entry of .repairs per not_observed story

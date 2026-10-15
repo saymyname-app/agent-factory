@@ -51,7 +51,9 @@ The brief is everything you are given: the demonstration line
 (`.demonstration_line`), the frozen acceptance criteria (`.criteria`), the
 launched products (`.environments`: one per dataset, each at its own address
 on this host, with the launch record you name to the capture tool), and the
-entry points of the product (`.entry_points`). Do not read anything of the
+entry points of the product (`.entry_points`). On interface tickets it also
+carries design rules, screen checks, and any changed visual references.
+Do not read anything of the
 author: not the ticket bead, its notes or its comments, not the Ticket
 Handoff, not the diff, the branch or the repository of the product, not the
 commit messages, not its mail, not its session. Do not launch the product
@@ -82,10 +84,66 @@ or a screenshot of one address of that product:
   --launch-state "$LAUNCH_STATE" --path /
 ```
 
+For every game in `.datasets`, capture a sealed piece on that game
+before switching away. Ask the controller for another game with:
+
+```bash
+"$FACTORY_ROOT/bin/ticket-evaluation" product "$TICKET_CONVOY" "$TICKET" --dataset NAME > product.json
+```
+
+If `ready` is false, wait for the next controller pass and repeat the
+command. When true, use its `address` and `launch_state` to capture.
+`--fresh` requests a reset of a game at the same commit; retry without
+`--fresh` while it is pending. Keep one `{dataset,evidence}` entry per
+game of `.datasets` in `coverage`. A missing game or piece from another game's
+address refuses the result. The controller confirms cleanup before it
+launches the next product; do not launch or stop it yourself.
+
 Name your pieces `evaluation.<something>` (letters, digits, `_` and `.`).
 The answer of the tool gives the `path` of the record: read it to see what
 was captured. Pick the product whose dataset shows what the criterion is
 about; a piece may back several states.
+
+For a ticket that establishes the launch recipe, `.controller_observation`
+contains an ordinary sealed Evidence Record produced independently by the
+controller at this evaluation's commit and address. Read its `path`: its
+command output shows the disposable launch/stop, the existing local ports
+before and after, and extraction of the published prototype references from
+a clean Git context. You may cite its `piece` for those observations. Judge
+its actual output, including failures and omissions; its presence is never
+a passed criterion. It grants no access to the repository and no permission
+to run launch/stop yourself. The normal commit, address and seal checks apply.
+
+If `.screen_checks` is nonempty, invoke `better-accessibility` and
+`better-interface` while evaluating the launched product. Limit both skills
+to what you can observe at the given product address and capture as sealed
+evidence. Do not follow their generic requests to read framework files,
+tokens or code in the product repository: this Evaluator is a black box.
+Translate a visual finding into `screen_findings` only with one exact
+`.screen_checks` item, one full written `DESIGN.md` rule, and the sealed
+evidence piece. A requested `path/to/file:line` from a skill is not a
+substitute for that contract. If `.screen_checks` is empty, invoke no design
+skill. The skills may use their vendored `better-*` dependencies only within
+these bounds. Their opinions alone cannot block.
+
+When `.visual_changes` is present, open each `before` and `after` PNG with an
+image-capable read tool. These are blobs from the integration base and the evaluated commit,
+exported outside the product repository. A deleted reference has no `after` PNG. Compare their
+visible change and the launched product with each `intent`; the intent was
+read from the ticket's own declaration, not from the author's handoff.
+A changed reference that contradicts the intent is a `screen_findings`
+entry: use the check `Le changement visuel correspond à l'intention déclarée`,
+cite the full applicable `DESIGN.md` rule, give a sealed screenshot of the
+launched product, and explain the mismatch. The finding returns the ticket
+to its author. Initial references are absent from `.visual_changes`: there is no established
+`before` image to compare.
+
+For an interface ticket, read `.design.text` and verify every item of
+`.screen_checks` on the launched product. If a visible deviation violates a
+written rule, add it to `screen_findings`: copy one check from the brief and
+one full rule line from `DESIGN.md`, give a sealed evidence piece and a
+one-line reason. A finding without an exact written rule cannot block. A
+non-interface ticket has no screen checks.
 
 **3. Give one state per criterion and one for the demonstration line.**
 
@@ -112,7 +170,9 @@ Write `evaluation-result.json` in the current directory in the shape
 
 ```bash
 jq '{commit, criteria: [.criteria[] | {number, text, state: null, evidence: null}],
-     demonstration_line: {text: .demonstration_line, state: null, evidence: null}}' evaluation-brief.json > evaluation-result.json
+     demonstration_line: {text: .demonstration_line, state: null, evidence: null},
+     coverage: [.datasets[] | {dataset: ., evidence: null}],
+     screen_findings: []}' evaluation-brief.json > evaluation-result.json
 # then set, for each criterion and for the demonstration line: .state, .evidence (the piece name),
 # and .reason (unless observed) and .cause (unobservable only)
 "$FACTORY_ROOT/bin/ticket-evaluation" record "$TICKET_CONVOY" "$TICKET" --file evaluation-result.json

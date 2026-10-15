@@ -1,7 +1,8 @@
 # Safety net for O02 (t1-dispatch-wake): ticket-graph-publish's own
 # notify_mayor call is the primary wake at the end of a successful publish
 # or patch. This order exists only for when that call is missed. Evaluating
-# "ready delivery-plane work, no active Mayor session, idle > 15 minutes" is
+# "ready delivery-plane work the Mayor may dispatch (no convoy bead, nothing
+# marked new-flow: af-yzo8fo.1), no active worker session, idle > 15 minutes" is
 # 100% mechanical (bd ready + gc session list + a timestamp comparison) --
 # no LLM judgment needed, so the controller runs it directly via exec.
 [order]

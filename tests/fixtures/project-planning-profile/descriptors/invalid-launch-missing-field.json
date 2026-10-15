@@ -3,6 +3,7 @@
   "project_id": "fixture-project-a",
   "display_name": "Fixture A",
   "rigs": ["fixture-rig-a"],
+  "stacks": {"fixture-rig-a": ["fixture-stack"]},
   "knowledge_repo": "zz-fixture/knowledge-a",
   "roadmap_path": "docs/roadmap.toml",
   "rituals_status_command": "bin/rituals-status",

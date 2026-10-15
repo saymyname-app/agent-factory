@@ -28,6 +28,7 @@ written through `bin/convoy-state` only. A convoy without the mark is not
 touched (exit 4): it is merged as before.
 
 ```bash
+./bin/ticket-evaluation cleanup af-convoy af-t1 [--repo DIR]              # stopped ticket only
 ./bin/ticket-evaluation settle  af-convoy [--repo <project repository>]   # bin/convoy-advance, at each pass
 ./bin/ticket-evaluation brief   af-convoy af-t1                           # the Evaluator session (formula mol-ticket-evaluation)
 ./bin/ticket-evaluation record  af-convoy af-t1 --file result.json        # the Evaluator session
@@ -72,24 +73,76 @@ A second call on the same state does nothing.
 
 ## The product that is evaluated
 
-For an evaluation `settle` launches the product **once per dataset** the
-profile declares (`launch.datasets`, at least one: a profile that declares
-none is refused before anything is launched or recorded — « le profil … ne
-déclare aucun jeu de données (launch.datasets) » — the ticket listed under
-`refused`, no startup verdict recorded), each on its own free port, through
-`bin/project-launch start --commit <tip>` on the repository of the project:
-a detached `git worktree` checkout of that exact commit in a temporary
-directory, never the directory the author works in. The launch records are
-kept under `TICKET_EVALUATION_STATE_DIR` (default
-`~/.local/state/agent-factory-evaluation/<convoy>/<ticket>/`), which the
-sandbox of a read-only role can read; the clean copy itself sits under
-`/tmp`, which that sandbox does not show.
+Intent (Benjamin, 2026-10-12): « l’évaluation lise la recette du ticket qui l’établit, sans affaiblir les contrôles ».
+Mechanism (agent interpretation): for a ticket marked `establishes_launch_recipe`
+by publication, read only `launch` from the same project descriptor at the exact
+commit being evaluated, using Git objects, never the author's checkout. Keep the
+live project's identity and reject a candidate that changes its project or rigs.
+Validate the resulting profile through the ordinary profile command; missing or
+invalid committed recipes are refused, never replaced by a live fallback. The
+Evaluator brief reads the requested commit, even if the branch has since moved.
+All other tickets keep the ordinary profile selection. This changes no evidence,
+criterion, independent-session or favorable-verdict requirement.
 
-The products are launched by the pass and **outlive it**: the Evaluator
-session comes later. They are stopped by code, by the first pass after the
-states are in (or after the ticket is stopped, or a newer tip replaced the
-evaluation). `gc.flow.evaluation.live` names the launch records still to
-stop; `bin/convoy-advance` runs a settlement as long as a ticket has one.
+
+For an evaluation, `settle` opens only the first declared dataset from a
+clean worktree of the evaluated commit. The Evaluator reads every declared
+game in `brief.datasets` and asks for the next one with `ticket-evaluation
+product CONVOY TICKET --dataset NAME`. A `ready=false` response records the
+request. The next controller pass stops the old product, confirms its
+descendants, port and worktree are gone, then opens the requested game.
+Repeat the command until `ready=true`; capture with the returned address
+and launch record. `--fresh` requests a new initial state for a revisit at
+the same commit. Capture proof before switching away. The read-only role
+never launches or stops a process itself. The controller verifies the clean
+copy's commit, launch marker and ownership of its listening socket, then writes
+an exact identity attestation. The Evaluator's sandbox sees that directory
+read-only and confirms the attested socket still listens before `ready=true`.
+A session without the protected mount, a stale socket, or a changed launch
+record receives `ready=false`; an HTTP response or port alone is insufficient
+(af-bjvd8z).
+
+Ticket and Outcome Evaluation share two host slots and allow one active
+product per evaluation. Startup and shutdown count as occupied. An
+unconfirmed stop keeps its record and slot. Waiting for admission before
+the first Evaluator session starts does not consume that session's deadline.
+`project-launch` writes a provisional record before spawning, so an
+interrupted pass recovers the exact repository, commit and game or stops it.
+A superseded commit is never reused. For a ticket that establishes its
+launch recipe, the controller tests a disposable start/stop cycle **before**
+opening the evaluated product. Its sealed observation still includes the
+lifecycle result and validated reference checks; the trial and the evaluated
+product never run together.
+
+**The games of a ticket** (af-kdxk6k) are the declared datasets the ticket
+names: in its frozen criteria or its demonstration line (the exact name,
+not inside a longer one), or as the `dataset` of a validated expectation of
+its criteria. A ticket that names none is evaluated on the first declared
+dataset only. Every declared dataset for every ticket made one evaluation
+need about 95 two-minute coverages against a 3,600-second deadline, and
+stopped T01R, T01R2 and T01R3 without a result (Benjamin, 2026-10-15:
+« l'évaluation […] limitée aux datasets du ticket »). The Evaluator can
+request only these games; the request keeps the list it was opened with.
+A behaviour that must hold on every dataset belongs in a deterministic test,
+not in a model's tour of the product. Outcome Evaluation still covers every
+declared game.
+
+The request retains historical addresses for Evidence Record verification
+after a switch; `live` names only the product still running. A favorable
+result requires a sealed `coverage` piece for every game of the ticket as well
+as one state and proof for every criterion and the demonstration line.
+The result carries `coverage: [{"dataset": NAME, "evidence": PIECE}, ...]`.
+A missing game or a piece captured on another game's address is refused.
+After the result, stop or withdrawal, the controller stops the remaining
+product and releases its slot only after cleanup is confirmed.
+When a ticket is stopped or withdrawn while its evaluation is open, the
+controller also cancels every launch of that request through its exact input
+convoy and Ticket Evaluation workflow. It closes the source bead as
+`fail`/`abandoned`, then closes only an Evaluator session that was assigned
+to that workflow and holds no other in-progress work. The request is removed
+after product and workflow cleanup; its launch history remains. A failed
+cleanup leaves the request open for retry and never creates a favorable
+verdict.
 
 A product that does not start from the clean copy (two attempts, each within
 `start_timeout_seconds`) cannot be observed: `settle` records it as an
@@ -105,7 +158,8 @@ session receives.
 |---|---|
 | `demonstration_line` | the demonstration line of the approved ticket |
 | `criteria` | the acceptance criteria of the approved ticket, numbered in order |
-| `environments` | one launched product per dataset: `dataset`, `address`, and `launch_state`, the launch record to name to the capture tool |
+| `environments` | the active product: `dataset`, `address`, and `launch_state`, the launch record to name to the capture tool |
+| `datasets`, `product` | the games of the ticket (below) and the command to request one |
 | `entry_points` | the entry points the profile declares |
 | `states`, `unobservable_causes` | the closed lists |
 | `capture`, `result_shape` | how a piece is captured on a launched product, and the shape of what `record` takes |
@@ -175,12 +229,14 @@ that round. Otherwise `reasons` says why.
 ## A prefactoring: the startup control
 
 A `prefactoring` changes no behaviour: nothing new is to be observed. No
-Evaluator session is started. `settle` launches the product from a clean
-copy of the tip, has `bin/evidence-capture` capture the answer of the
-profile's health probe on it (piece `evaluation.startup`, the command exits
-0 only on the expected status), stops the product, and records a round of
-kind `startup`: favorable when the product started and the probe answered,
-unfavorable otherwise.
+Evaluator session is started. `settle` launches each game of the ticket (a
+prefactoring names none: the first declared dataset) in
+sequence from a clean copy of the tip, captures the answer of the profile's
+health probe with `bin/evidence-capture`, and confirms cleanup before opening
+the next game. The first piece is `evaluation.startup`; later pieces are
+numbered. The `startup` round stores one coverage piece per game and is
+favorable only when every launch and probe succeeded. A failed launch or
+probe is unfavorable; failed cleanup retains its capacity slot.
 
 ## The roles: another supplier than the author's
 
@@ -218,6 +274,10 @@ measured base), or when its bead was closed while the request is still
 open. It is not a passed evaluation: no verdict is written and the merge
 stays refused. It is launched **once more**, on a new bead, for a new
 session (on products launched again if the first ones are gone). When that
+relaunch replaces the product of a ticket that establishes its launch recipe,
+the lifecycle trial and controller observation are captured again for the new
+launch record before the new Evaluator receives its brief. The prior product's
+observation is not reused as the identity proof of its replacement. When that
 second launch gives no result either, the ticket is stopped
 (`evaluation_no_result`), its products are stopped, and it is raised once to
 the operator through `bin/escalation-door`.
@@ -249,12 +309,28 @@ On the ticket, written by `bin/convoy-state` only (`docs/CONVOY_STATE.md`):
 
 | Key | Value |
 |---|---|
-| `gc.flow.evaluation` | `rounds`: each recorded round — an `evaluation` (`commit`, `criteria`: number, text, state, evidence, reason, cause; `demonstration_line`; `outcome`, `verdict`, `roles`, `environment`: dataset and address of each product, `recorded_by`, `at`) or a `startup` (`commit`, `started`, `evidence` and `environment`, or `detail`; `outcome`, `verdict`, `at`). `request`, while an evaluation is open — `commit`, `criteria`, `demonstration_line`, `roles`, `environment` (with `state_file`), `launches` (`bead`, `at`, and `refused`: `{session, at}` when the session that answered had already served), `at`. `live`: the launch records of the products still to stop |
+| `gc.flow.evaluation` | `rounds`: each recorded round — an `evaluation` (`commit`, `criteria`: number, text, state, evidence, reason, cause; `demonstration_line`; optional `screen_findings`; `outcome`, `verdict`, `roles`, `environment`: dataset and address of each product, `recorded_by`, `at`) or a `startup` (`commit`, `started`, `evidence` and `environment`, or `detail`; `outcome`, `verdict`, `at`). `request`, while an evaluation is open — `commit`, `criteria`, `demonstration_line`, `roles`, `environment` (with `state_file`), `launches` (`bead`, `at`, and `refused`: `{session, at}` when the session that answered had already served), `at`. `live`: the launch records of the products still to stop |
 | `gc.flow.verdict.evaluation` | the verdict of the last round that gave one, and the commit it judged |
 | `gc.flow.models` | per delivery role: `agent`, `provider`, `model`, `at` |
 | `gc.flow.stop` | reason `evaluation_no_result` or `evaluation_outage`, a one-line detail, and `raised` once the escalation door accepted the request |
 | `gc.flow.park` | cause `planning_exception`, once a criterion could not be observed |
 | `gc.flow.evidence.<piece>` | the fingerprint of each captured piece (`bin/evidence-capture`) |
+
+## Design standards in the brief
+
+For an interface ticket, `brief` includes the root `DESIGN.md` text from the
+exact evaluated commit and a short screen checklist: keyboard operation,
+visible focus, image descriptions, and reduced motion. The Evaluator's role
+cannot read the repository; these fields give it the written rule to cite
+and the observations to make on the launched product. `record` accepts
+`screen_findings` only on an interface ticket: each finding names one check,
+copies an exact rule line from `DESIGN.md` at the evaluated commit, gives a
+sealed evidence piece and a one-line reason. The state-writing door checks
+the interface marker, the exact committed rule and the sealed piece too, so a
+direct `convoy-state record-evaluation` call cannot bypass them. A valid
+finding makes the verdict unfavorable even when the ticket criteria pass. A project still without
+`DESIGN.md` has no design rule text to cite. Tickets without an interface
+reference receive neither brief field.
 
 ## Limits
 
@@ -306,3 +382,86 @@ and the Evaluator sessions, and observes the launched product for real.
 demonstration line on a real controller, with the real order, the real
 formula, the real dispatch door, launcher and merge command, and a scripted
 Evaluator that runs inside the real read-only sandbox of its role.
+
+
+## Controller observations for a launch recipe
+
+Intent (Benjamin, his words, 2026-10-12): « Oui je valide, rends ces observations accessibles sans affaiblir les contrôles, puis relance le chantier et vérifie qu’il avance vraiment. »
+Mechanism (agent interpretation): for a published recipe-establishing ticket,
+settle captures an independent command observation before dispatch. It exercises
+start/stop on an additional disposable product of the same commit and dataset,
+records whether its process and port remain, and probes existing local TCP
+listeners before and after. It extracts the published convoy prototype references
+through prototype-conformance anchors in the clean launched checkout, checks the
+named dataset bytes against the approved Git objects, and reports declared screen
+addresses. No private planning profile or author handoff is read. TCP reachability
+is not a claim about the functional health of a neighbouring service.
+
+The disposable trial keeps a `.trial` launch record beside the preparation.
+An interrupted capture leaves it for the next reap; it is never reused as a
+dataset environment. The report retains the pre-stop process identities so a
+survivor is still detectable after removal of its checkout.
+
+The ordinary evidence-capture command seals the actual output against the first
+product's commit and address. The brief keeps verifying that same sealed
+observation after a dataset switch; only `environments` changes to the current
+product. The brief exposes controller_observation with the piece, fingerprint,
+path and output; failures remain visible for the Evaluator's judgement.
+No state is inferred from that report. There is no exemption from
+piece_refusal, no imported report text, and no relaxation of criteria, freshness,
+independence or the merge gate. observe refuses agent sessions; the evaluator
+reads the report without gaining repository or process-control access.
+
+When the operator resolves an evaluation Planning Exception and its parking is
+lifted through convoy-state lift-park, the next pass may evaluate the same commit
+again. It retains the prior round and negative verdict until new independent
+states are recorded. One lift only covers the older refusal: a refusal after the
+lift requires a new resolution. Neither a code review refusal nor an unobserved
+criterion is waived by a lift.
+
+## Validated simple expectations
+
+For a ticket establishing the first launch recipe, the active Factory descriptor
+can declare expectations while its `launch` is still absent. The evaluator
+uses that descriptor's expectations with the recipe read from the ticket's
+exact commit. Keep those expectations unchanged during an open evaluation:
+the brief and the recorded comparison must describe the same pass.
+
+The Factory-owned project descriptor may declare `validated_expectations` for
+simple values that an approved criterion or Spec story and validated data or
+prototype fix. This is a project-specific mapping; the author cannot change it
+by changing the product commit. Each entry has `scope` (`ticket` or `outcome`),
+`owner` (ticket or convoy ID, to distinguish reused local numbers), the frozen subject `number` and exact `text`, a declared `dataset`, a `source`
+with a human-reviewable `reference` and `sha256:` `digest`, a typed `expected`
+value (boolean, number or exact text), and an `observation` with an HTTP `path`
+and JSON `pointer`. For example:
+
+```json
+{"scope":"outcome","number":3,"text":"As an operator, I want suspension status...",
+ "dataset":"factory-suspended",
+ "source":{"reference":"approved factory-suspended scenario","digest":"sha256:..."},
+ "expected":true,"observation":{"path":"/status","pointer":"/suspended"}}
+```
+
+The entry's source citation and digest must be checked against the approved
+data or prototype when the Factory descriptor is reviewed. Code matches the
+entry to the frozen text and exposes it with the evaluated commit in the
+Evaluator brief. The Evaluator captures that URL while the named dataset is
+open and returns the piece as `comparisons: [{"id": N, "evidence": "..."}]`.
+Code verifies the seal, commit, launched address and capture command, then
+compares the typed scalar in the captured JSON. It computes the consequence:
+a contrary value is `not_observed` even if the Evaluator claims `observed`;
+an incomplete or contradictory declared expectation is `unobservable` with
+cause `criterion`, leading to Planning Exception. A missing or forged capture
+is refused. Criteria without an applicable declared simple expectation stay
+with the existing Evaluator judgment and evidence rules. Every declared
+dataset still requires coverage evidence.
+
+For an interface ticket with changed Playwright references, the brief also
+contains `visual_changes`: before/after PNG paths exported from exact commits and the visual
+intent declared by that ticket. The Evaluator reads the images, checks them
+against the launched product and intent, and records a cited `screen_findings`
+entry with a sealed screenshot when they disagree. Initial captures are
+excluded. The record gate accepts the visual check only with an exact
+`DESIGN.md` rule at the evaluated commit; a finding makes the verdict
+unfavorable.

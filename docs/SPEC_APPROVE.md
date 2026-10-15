@@ -172,3 +172,13 @@ project's repository as `--prototype-remote`.
 | T46: a reference that is no `prototype/` branch, or whose commit the protected branch reaches, is refused; each Validated Prototype of a Spec that names several is checked, and two references to one path are refused; `outline` gives every reference. | `test_refuses_a_reference_whose_branch_is_not_a_prototype_branch`, `test_refuses_a_reference_whose_commit_is_reachable_from_the_protected_branch_of_the_remote`, `test_the_protected_branch_is_the_one_the_project_declares`, `test_refuses_a_prototype_that_keeps_a_page_its_manifest_does_not_reference`, `test_refuses_when_the_second_validated_prototype_is_not_on_the_remote` (and `..._has_no_state_inventory`), `test_refuses_two_validated_prototypes_that_name_the_same_path`, `test_outline_gives_every_validated_prototype_the_spec_names`. |
 | T07: the fixture Spec is approved; a Spec without interface is approved without reference; approved Specs stay approved. | `test_approves_the_fixture_spec`, `test_approves_a_spec_without_interface_and_without_prototype_reference`, `test_an_already_approved_spec_without_numbered_stories_stays_approved`. |
 | CI is green. | `tests/spec-approve-test.py`, `tests/project-planning-profile-test.py` and `tests/project-registry-test.sh` run under `bin/ci-run-tests`. |
+
+## Derived authority (AR-039)
+
+`bd-derive` accepts independently reviewed derivation under the delegation
+of validated sources (`PLANNING_DELEGATION.md`). It keeps entry/prototype,
+reservation and map checks. `approval_mode=derived/v1`, the agent in
+`approved_by`, and `derived_authorization` distinguish it from human exact
+approval; the compatible `APPROVED_SPEC` state means eligible for delivery,
+not that Benjamin signed its text. `bd-status` also checks source drift and
+revocation. The publication door repeats that check before publication.

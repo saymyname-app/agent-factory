@@ -1,2 +1,2 @@
-Need: Where the jobs of Factory CI run (the host's own runner or GitHub's billed ones), how the host's runner is installed, paused for a game, repaired when it is down and removed, what share of the PC it may take, and what a pull request's job can and cannot reach on the host
-Read: `OPERATIONS.md` ("Factory CI on the host's own runner"), `SECURITY.md` (same title), `./bin/ci-runner`, `config/ci-runner/`, `.github/workflows/ci.yml` (`FACTORY_CI_RUNNER`), `tests/ci-runner-test.sh`
+Need: CI runner location; historical self-hosted lifecycle
+Read: `OPERATIONS.md`, `SECURITY.md` (CI runner)

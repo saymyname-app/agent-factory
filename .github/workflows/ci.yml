@@ -25,10 +25,10 @@ on:
   merge_group:
     types: [checks_requested]
     branches: [main]
-  # No run on `push` to main: the ruleset requires a pull request whose
-  # branch is up to date with main, so the run of that pull request already
-  # tested the exact tree the merge puts on main. Running it again after the
-  # merge gated nothing, nothing read it, and it was 30% of the minutes.
+  # No run on `push` to main: the required merge-group run tests the
+  # combined commit before the queue merges it. A post-merge run gates
+  # nothing. Before the queue trial, strict up-to-date PR checks served
+  # that role; duplicate post-merge runs were 30% of the billed minutes.
   # A run on main, when one is wanted, is started by hand.
   workflow_dispatch:
 

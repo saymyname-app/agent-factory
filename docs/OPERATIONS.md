@@ -764,6 +764,17 @@ and `tests/ticket-evaluation-test.py`, whose cases and helpers share one
 class, and the waiting between runs, which is not the duration of a run
 (bead af-t3tm88, GitHub's merge queue).
 
+### GitHub merge queue trial (af-t3tm88)
+
+Since 2026-10-11 the Factory's `main` uses GitHub's merge queue. A PR first
+passes its own run, then the queue's combined commit passes `merge_group`.
+The second run is always full. On 13 isolated groups (#539–#551) its observed
+duration was 369–436 seconds, median 414 seconds; simultaneous throughput
+and red-group eviction remain unverified. Do not read the old serial queue
+estimate as a measured speedup. Evidence, limits and return procedure:
+[`merge-queue-af-t3tm88.md`](verification/merge-queue-af-t3tm88.md) and
+`DELIVERY.md`, “Merge safety”.
+
 ### Keeping the lots even
 
 A run lasts as long as its longest lot (and, while the repository was
@@ -1188,6 +1199,13 @@ whose logins are the operator's. Two files of them matter: `~/.codex/config.toml
 `CLAUDE_CONFIG_DIR=~/.claude`, Claude's first-run state was copied from
 `~/.claude.json` to `~/.claude/.claude.json` before the start. Whether a
 session stalls without that second copy was not observed.
+
+One file that comes with `.gc/runtime` is per host and must be rewritten on
+the new one, not kept as copied: `cockpit-local.json` (`docs/COCKPIT.md`,
+"Local settings file"). Its `tailscale_bin`, `public_url`, `allowed_origin`
+and the two secret-file paths still name the old host. On 2026-10-11 it
+pointed at the PC after the start and was corrected by hand (handoff comment
+of af-9mq6x2); the two secret files themselves are the operator's to copy.
 
 ## Upgrade
 

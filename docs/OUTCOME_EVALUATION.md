@@ -31,7 +31,7 @@ and 5 of the end-of-Spec gate (`verdict`).
 
 | Step | Who | Command |
 | --- | --- | --- |
-| Launch the product from a clean copy of the commit of the gate, once per declared dataset; route the evaluation | code, in the pass | `settle` (`bin/project-launch`, `bin/dispatch-door` on the formula `mol-outcome-evaluation`, role `evaluator`) |
+| Open one product from a clean copy of the gate commit; route the evaluation | code, in the pass | `settle` (`bin/project-launch`, `bin/dispatch-door` on the formula `mol-outcome-evaluation`, role `evaluator`) |
 | Read what is to evaluate: the numbered user stories, the launched products, the findings to classify, the prototypes | Evaluator session | `brief` |
 | Classify each finding « hors ticket » | Evaluator session | `classify` |
 | Hand in the states, the two free sections and the drafted repairs | Evaluator session | `record` |
@@ -39,7 +39,19 @@ and 5 of the end-of-Spec gate (`verdict`).
 
 `brief`, `classify` and `record` are refused outside a session of the
 read-only Evaluator role. The session is given no repository: it sees the
-product through its addresses only.
+product through its addresses only. `brief.datasets` lists every declared
+game while `brief.environments` lists only the active product. `product
+CONVOY --dataset NAME` returns `ready=false` until the controller's next
+pass confirms the old product stopped and opens the requested one. `--fresh`
+revisits a game from its initial state at the same commit. Capture before
+switching. The sealed result includes one `coverage` entry (`dataset`,
+`evidence`) for each game; a missing game or wrong address refuses it.
+Historical addresses remain in the request and round for proof checks
+after their products stop. Ticket and Outcome Evaluation share two host
+slots, with one active product per evaluation. Startup and shutdown count;
+failed cleanup retains the slot. Product readiness uses the same
+controller attestation and live socket check as Ticket Evaluation
+(`docs/TICKET_EVALUATION.md`, af-bjvd8z).
 
 `record` takes one JSON file:
 
@@ -205,3 +217,5 @@ refusal writes nothing.
   the state writes of the evaluation and of the findings, and their
   refusals, on the real `gc`/`bd`; the user stories are read in a Spec bead
   of that tracker.
+
+Validated scalar expectations use the project-specific profile mapping and sealed comparison contract described in docs/TICKET_EVALUATION.md. The Outcome Evaluation applies it to frozen Spec stories; a contrary value drafts the existing one-story repair, while a missing validated expectation follows Planning Exception.

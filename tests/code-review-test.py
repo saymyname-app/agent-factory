@@ -236,6 +236,7 @@ class CodeReviewTest(unittest.TestCase):
         (config / "projects" / f"{RIG}.toml").write_text(f'rig_dir = "{self.repo}"\n')
         profile = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
         profile["rigs"] = [RIG]
+        profile["stacks"] = {RIG: ["fixture-stack"]}
         self.profile.write_text(json.dumps(profile))
 
     def settings(self, **code_review):
@@ -295,6 +296,33 @@ class CodeReviewTest(unittest.TestCase):
         if check:
             self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         return proc.stdout.strip()
+
+    def test_malformed_unfinished_ticket_is_still_refused(self):
+        tracker = json.loads(self.tracker.read_text())
+        tracker["beads"][SLICE]["metadata"]["gc.flow.code_review"] = "not-json"
+        self.tracker.write_text(json.dumps(tracker))
+        before = self.tracker.read_bytes()
+        result = self.run_cmd(TOOL, "settle", CONVOY, "--repo", self.repo)
+        self.assertNotEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertIn(SLICE, result.stdout)
+        self.assertEqual(before, self.tracker.read_bytes())
+        self.assertEqual([], self.launches())
+
+    def test_unfinished_tickets_need_only_the_initial_convoy_read(self):
+        calls = self.tmp / "tracker-reads"
+        gc = Path(self.env["GC_BIN"])
+        gc.write_text(
+            f'#!/bin/sh\nprintf "%s\\n" "$*" >> "{calls}"\n'
+            f'exec "{FAKE_GC}" "$@"\n')
+        before = self.tracker.read_bytes()
+        result = self.run_cmd(TOOL, "settle", CONVOY, "--repo", self.repo)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertTrue(json.loads(result.stdout)["ok"])
+        reads = [line for line in calls.read_text().splitlines()
+                 if f"bd show {CONVOY} --json" in line]
+        self.assertEqual(1, len(reads), reads)
+        self.assertEqual(before, self.tracker.read_bytes())
+        self.assertEqual([], self.launches())
 
     def run_cmd(self, tool, *args, env=None):
         return subprocess.run((str(tool), *[str(a) for a in args]), env={**self.env, **(env or {})},
@@ -649,6 +677,16 @@ class CodeReviewTest(unittest.TestCase):
         self.assertEqual(["standards", "spec"], brief["axes"])
         self.assertEqual(["spec", "ticket", "repo_rule"], brief["citation_sources"])
 
+    def test_the_brief_names_design_standards_at_the_reviewed_commit(self):
+        _, tip = self.finished_slice({NOTE: "le nombre est affiché\n", "DESIGN.md": "- Le focus reste visible.\n"})
+        self.reviewer("silent")
+        self.settle()
+
+        brief = json.loads(self.run_cmd(TOOL, "brief", CONVOY, SLICE, "--repo", self.repo).stdout)
+
+        self.assertEqual(tip, brief["commit"])
+        self.assertEqual([RULES, "DESIGN.md"], brief["standards"])
+
     def test_the_brief_holds_neither_the_handoff_nor_any_prose_of_the_author(self):
         red, _ = self.finished_slice()
         tip = self.commit_on(SLICE, {COUNT_FILE: "# le test de critère du nombre, amendé\n"})
@@ -665,8 +703,17 @@ class CodeReviewTest(unittest.TestCase):
         self.assertEqual(
             {"ok", "convoy", "ticket", "kind", "commit", "base", "repo", "diff", "spec", "ticket_text", "models",
              "independence", "skill", "axes", "citation_sources", "standards", "records", "tests", "questions",
-             "answers", "review_shape"}, set(brief))
+             "answers", "review_shape", "interface"}, set(brief))
+        self.assertFalse(brief["interface"])
         self.assertNotIn("sections", json.dumps(brief["records"]))
+
+    def test_brief_exposes_an_interface_ticket_to_the_reviewer_formula(self):
+        tracker = json.loads(self.tracker.read_text())
+        tracker["beads"][SLICE]["description"] += "\n\n## Validated Prototype\n\n- branche : prototype/interface\n- commit : " + self.base + "\n- chemin : prototype.html\n- états : accueil\n"
+        self.tracker.write_text(json.dumps(tracker))
+        self.finished_slice()
+        self.settle()
+        self.assertTrue(json.loads(self.brief_given())["interface"])
 
     def test_brief_is_refused_when_no_review_is_open(self):
         self.finished_slice()

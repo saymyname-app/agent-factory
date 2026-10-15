@@ -1,0 +1,11 @@
+{
+  "generated_at": "2026-10-12T12:00:00+02:00",
+  "synthetic": true,
+  "ui": {
+    "id": "ritual-review",
+    "page": "rituals",
+    "setup": "ritualId='incidents';ritualPhase='review';ritualChosen.add('alerts');render()"
+  },
+  "visible_text": "← Rituels\nRevue d’incidents\n\nUsine · données et avancement simulés\n\n1 · Revue\n2 · Ton choix\n3 · Travail précis\n4 · Réalisation\nRevue en cours\n\nL’agent examine les sources du périmètre Usine.\n\nVoir le run\n\nLes propositions apparaîtront dans « Pour moi » à la fin de la revue.",
+  "production_writes": 0
+}

@@ -55,6 +55,12 @@ was observed:
   `gc.step_id` and `gc.root_bead_id`; the root carries `gc.input_convoy_id`),
   and `GC_CITY_PATH`, the city root. Its working directory is the root of
   the store the bead lives in.
+- Its `HOME` is **the city root**, not the home of the account (seen on the
+  real city under Gas City 1.5.0, af-r35155: the `workspace` gate looked for
+  the work tree under the city root and refused three times a ticket whose
+  work tree was in place). `bin/ticket-author` therefore places the work
+  trees under the home of the account as the password database gives it,
+  the same for the author session and for the check.
 - Exit 0: the next step opens.
 - Any other exit: a new attempt of the same step goes back to the same
   session; the stderr of the check is kept in `gc.attempt_log`.

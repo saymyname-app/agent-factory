@@ -165,3 +165,58 @@ printf '%s\n' "$coverage_err" | grep -q "zz-fixture-project-c" \
   || fail "check_project_coverage's failure did not name the other of the two projects: $coverage_err"
 
 echo "OK lib/project_registry.sh: project_registry_check_project_coverage refuses a rig with no project and a rig declared in two projects"
+
+# TOML syntax is decoded by the standard parser for rows and optional fields.
+PARSER_DIR="$TMP/parser"
+mkdir -p "$PARSER_DIR"
+cat > "$PARSER_DIR/fixture.toml" <<'TOML'
+rig_dir = 'rigs/fixture'
+repo = "fixture/repo" # an inline comment is not part of the value
+protected_branch = 'dev'
+required_ci = "CI = \"green\""
+sling_target = 'fixture-worker' # optional fields use the same TOML semantics
+TOML
+[ "$(project_registry_rows "$PARSER_DIR")" = 'rigs/fixture|fixture/repo|dev|CI = "green"|fixture' ] \
+  || fail "rows did not decode TOML strings and comments"
+[ "$(project_registry_dispatch_target "$PARSER_DIR" fixture)" = fixture-worker ] \
+  || fail "optional field did not decode TOML"
+[ -z "$(project_registry_field "$PARSER_DIR" fixture absent)" ] || fail "absent optional key must stay empty"
+[ -z "$(project_registry_field "$PARSER_DIR" absent absent)" ] || fail "absent optional file must stay empty"
+[ -z "$(project_registry_rows "$TMP/absent")" ] || fail "absent registry directory must stay empty"
+
+# A file that declares none of the four rig fields is the file of a project
+# that spans several rigs (af-vx1tkf): it prints no row and names no rig, and
+# its own fields stay readable by its name.
+cat > "$PARSER_DIR/zz-fixture-project.toml" <<'TOML'
+human_approver = "zz-fixture-approver"
+TOML
+[ "$(project_registry_rows "$PARSER_DIR")" = 'rigs/fixture|fixture/repo|dev|CI = "green"|fixture' ] \
+  || fail "a project file with no rig field must print no row"
+[ "$(project_registry_rig_names "$PARSER_DIR")" = fixture ] \
+  || fail "a project file with no rig field must name no rig"
+[ "$(project_registry_field "$PARSER_DIR" zz-fixture-project human_approver)" = zz-fixture-approver ] \
+  || fail "a project file with no rig field must keep its own fields readable"
+if coverage_err=$(project_registry_check_coverage "$PARSER_DIR" rigs/zz-fixture-project 2>&1); then
+  fail "a project file with no rig field must not cover a registered rig"
+fi
+[[ "$coverage_err" == *"rigs/zz-fixture-project"* ]] \
+  || fail "the coverage refusal did not name the rig left without a file: $coverage_err"
+
+# Required fields and invalid TOML must fail even without the caller's pipefail.
+for invalid in missing empty number malformed; do
+  cp "$PARSER_DIR/fixture.toml" "$PARSER_DIR/invalid.toml"
+  case "$invalid" in
+    missing) sed -i '/^required_ci/d' "$PARSER_DIR/invalid.toml" ;;
+    empty) sed -i 's/^required_ci.*/required_ci = ""/' "$PARSER_DIR/invalid.toml" ;;
+    number) sed -i 's/^required_ci.*/required_ci = 42/' "$PARSER_DIR/invalid.toml" ;;
+    malformed) echo 'invalid = [' >> "$PARSER_DIR/invalid.toml" ;;
+  esac
+  if error=$(set +o pipefail; project_registry_rows "$PARSER_DIR" 2>&1); then
+    fail "$invalid registry should be refused"
+  fi
+  [[ "$error" == *invalid.toml* ]] || fail "refusal must name the invalid file: $error"
+done
+if project_registry_field "$PARSER_DIR" invalid sling_target >/dev/null 2>&1; then
+  fail "optional-field lookup must refuse malformed TOML"
+fi
+echo "OK project registry: TOML decoding, optional absence, project file with no rig field, and invalid-file refusal"

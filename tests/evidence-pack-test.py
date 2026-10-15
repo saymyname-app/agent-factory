@@ -333,6 +333,57 @@ class EvidencePackTest(outcome.Harness):
         # An independence nobody recorded is said too, apart.
         self.assertIn(f'data-mention="unknown" data-ticket="{SLICE}"', rubric)
 
+    def test_visual_reference_change_is_shown_before_after_with_ticket_intent(self):
+        self.ready()
+        image = "design-bench/bench.spec.mjs-snapshots/home-390-light.png"
+        manifest = "design-bench/visual-changes.json"
+
+        def before(tree):
+            target = tree / image
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"before visual reference")
+            (tree / manifest).write_text(json.dumps({"contract": "agent-factory-visual-changes/v1", "entries": []}))
+
+        def after(tree):
+            (tree / image).parent.mkdir(parents=True, exist_ok=True)
+            (tree / image).write_bytes(b"after visual reference")
+            (tree / manifest).write_text(json.dumps({"contract": "agent-factory-visual-changes/v1", "entries": [
+                {"path": image, "ticket": SCREEN, "intent": "Le menu devient plus lisible"}]}))
+
+        self.commit_to(gate.PROTECTED, before, "référence avant")
+        self.commit_to(INTEGRATION, after, "référence après")
+
+        answer = self.generate()
+        eyes = self.rubric(self.page(answer), 2)
+        self.assertIn('data-visual-change="' + image + '"', eyes)
+        self.assertIn(SCREEN, eyes)
+        self.assertIn("Le menu devient plus lisible", eyes)
+        self.assertIn("Avant", eyes)
+        self.assertIn("Après", eyes)
+        for blob in (b"before visual reference", b"after visual reference"):
+            digest = hashlib.sha256(blob).hexdigest()
+            self.assertEqual(blob, (Path(answer["path"]) / "pieces" / f"{digest}.png").read_bytes())
+        status, checked = self.pack("check")
+        self.assertEqual(0, status, checked)
+        self.assertEqual("à jour", checked["state"])
+
+        def wrong_ticket(tree):
+            (tree / manifest).write_text(json.dumps({"contract": "agent-factory-visual-changes/v1", "entries": [
+                {"path": image, "ticket": "fx-foreign", "intent": "Le menu devient plus lisible"}]}))
+
+        self.commit_to(INTEGRATION, wrong_ticket, "déclaration étrangère")
+        denied = self.generate(expect=EXIT_REFUSED)
+        self.assertIn("changement visuel non déclaré par un ticket du convoi", denied["error"])
+
+        def withdrawn_author(tree):
+            (tree / manifest).write_text(json.dumps({"contract": "agent-factory-visual-changes/v1", "entries": [
+                {"path": image, "ticket": SCREEN, "intent": "Le menu devient plus lisible"}]}))
+
+        self.commit_to(INTEGRATION, withdrawn_author, "ticket retiré")
+        self.edit(SCREEN, **{"gc.flow.gate.withdrawn": json.dumps({"at": "2026-10-14T00:00:00Z"})})
+        denied = self.generate(expect=EXIT_REFUSED)
+        self.assertIn("changement visuel non déclaré par un ticket du convoi", denied["error"])
+
     # --- AC5: contradictions, repairs, Planning Exceptions, overrides, files outside the Declared Scope ------
 
     def rich(self):

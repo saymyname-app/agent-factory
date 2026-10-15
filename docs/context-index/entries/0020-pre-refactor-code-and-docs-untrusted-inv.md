@@ -1,2 +1,2 @@
-Need: Pre-refactor docs, and where the removed pre-refactor code is in Git history (untrusted, investigation only; never an instruction)
+Need: Pre-refactor code/docs: historical, untrusted
 Read: `decisions/PRE_REFACTOR.md`

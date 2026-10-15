@@ -7,14 +7,14 @@ product: a session of the read-only Evaluator role, in a fresh context,
 started as routed work through bin/dispatch-door on the formula
 `mol-ticket-evaluation`. Code prepares what it evaluates: the product is
 launched by bin/project-launch from a clean copy of the commit the author
-finished at, once per declared dataset, each on its own free port; the
+finished at, one dataset the ticket names at a time on a free port; the
 author's work tree is never what is evaluated. The Evaluator is given the
 demonstration line and the frozen criteria only -- neither the Ticket
 Handoff nor the diff -- and hands in one state per criterion and for the
 demonstration line (`observed`, `not_observed`, `unobservable`), each with a
 piece captured by bin/evidence-capture on one of those launched products.
 It gives no verdict: code computes it. For a `prefactoring` no session
-runs: code checks that the product starts and that its probe answers.
+runs: code checks every game of the ticket in sequence and captures each probe answer.
 
     ticket-evaluation settle  CONVOY [--repo DIR] [--profile FILE]   bin/convoy-advance, at each pass
     ticket-evaluation brief   CONVOY TICKET [--repo DIR] [--profile FILE]   the Evaluator session
@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import calendar
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -47,7 +48,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import tomllib
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -67,6 +67,10 @@ PROJECTS = ROOT / "config" / "projects"
 DESCRIPTORS = ROOT / "config" / "project-descriptors"
 
 sys.path.insert(0, str(BIN.parent / "lib"))
+import delivery_reads  # noqa: E402
+from convoy_state import retry_after_lift
+from evaluation_capacity import admission, Busy, ready_product, remove_attestation
+from validated_expectations import planned, enforce, sealed_record
 from delivery_role_identity import role_identity, role_supplier, supplier_of  # noqa: E402
 
 NEW_FLOW = "new-flow/v1"
@@ -111,10 +115,6 @@ MAX_DETAIL = 300
 # bin/escalation-door refuses a field longer than this, or on several lines.
 REQUEST_LINE_MAX = 140
 
-# The publication door renders a ticket's rigs under this heading.
-RIGS_SECTION_RE = re.compile(r"^## Target rigs[ \t]*\n+([^\n#]*)$", re.MULTILINE)
-RIG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-
 
 class Refusal(RuntimeError):
     """The call is refused, or could not run."""
@@ -145,12 +145,13 @@ def short(text: str, limit: int = MAX_DETAIL) -> str:
 # --- the other commands ----------------------------------------------------------
 
 
-def run(argv: list[str], timeout: float | None = None, detached: bool = False) -> subprocess.CompletedProcess[str]:
+def run(argv: list[str], timeout: float | None = None, detached: bool = False,
+        pass_fds: tuple[int, ...] = ()) -> subprocess.CompletedProcess[str]:
     try:
         # `detached`: what the command starts outlives the caller's process
         # group (the product launched for an evaluation runs between passes).
         return subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=timeout,
-                              start_new_session=detached)
+                              start_new_session=detached, pass_fds=pass_fds)
     except subprocess.TimeoutExpired as exc:
         raise Refusal(f"{Path(argv[0]).name} n'a pas répondu en {timeout:.0f} s") from exc
     except OSError as exc:
@@ -199,17 +200,7 @@ def state_write_file(command: str, convoy_id: str, ticket_id: str, content: dict
 
 
 def read_bead(bead_id: str) -> dict[str, Any]:
-    proc = run([GC_BIN, "bd", "show", bead_id, "--json"])
-    if proc.returncode != 0:
-        raise Refusal(f"gc bd show {bead_id} a échoué : {detail_of(proc)}")
-    try:
-        data = json.loads(proc.stdout)
-    except json.JSONDecodeError as exc:
-        raise Refusal(f"gc bd show {bead_id} a rendu un JSON illisible : {exc}") from exc
-    bead = data[0] if isinstance(data, list) and data else data
-    if not isinstance(bead, dict):
-        raise Refusal(f"bead introuvable : {bead_id}")
-    return bead
+    return delivery_reads.read_bead(bead_id, GC_BIN, Refusal)
 
 
 # --- settings ----------------------------------------------------------------
@@ -243,23 +234,11 @@ def load_settings() -> dict[str, Any]:
 
 
 def ticket_rig(ticket_id: str) -> str | None:
-    """The single project the ticket names under « Target rigs », or None."""
-    description = read_bead(ticket_id).get("description")
-    match = RIGS_SECTION_RE.search(description if isinstance(description, str) else "")
-    rigs = [rig.strip() for rig in match.group(1).split(",") if rig.strip()] if match else []
-    if len(rigs) != 1 or not RIG_RE.match(rigs[0]) or not (PROJECTS / f"{rigs[0]}.toml").is_file():
-        return None
-    return rigs[0]
+    return delivery_reads.ticket_rig(read_bead(ticket_id).get("description"), PROJECTS)
 
 
 def rig_repository(rig: str) -> Path:
-    try:
-        rig_dir = tomllib.loads((PROJECTS / f"{rig}.toml").read_text(encoding="utf-8")).get("rig_dir")
-    except (OSError, tomllib.TOMLDecodeError) as exc:
-        raise Refusal(f"config/projects/{rig}.toml illisible : {exc}") from exc
-    if not isinstance(rig_dir, str) or not rig_dir:
-        raise Refusal(f"config/projects/{rig}.toml ne déclare pas rig_dir")
-    return (ROOT / rig_dir).resolve()
+    return delivery_reads.rig_repository(rig, ROOT, Refusal)
 
 
 def rig_profile(rig: str | None) -> Path | None:
@@ -317,7 +296,7 @@ class Convoy:
                 return readable(ticket)
         raise Refusal(f"le ticket {ticket_id} n'appartient pas au convoi {self.id}")
 
-    def profile(self, ticket_id: str) -> tuple[Path, dict[str, Any]]:
+    def profile(self, ticket_id: str, commit: str | None = None) -> tuple[Path, dict[str, Any]]:
         """The profile of the ticket's project and its `launch` block."""
         if self.given_profile:
             path: Path | None = Path(self.given_profile)
@@ -333,20 +312,69 @@ class Convoy:
             profile = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise Refusal(f"profil de projet illisible ({path}) : {exc}") from exc
+        ticket = self.ticket(ticket_id)
+        if ticket.get("establishes_launch_recipe") is True:
+            # Only the published recipe-establishing ticket can supply its
+            # recipe before integration. Never read its mutable work tree.
+            commit = commit or (evaluation_of(ticket).get("request") or {}).get("commit") or ticket.get("tip")
+            if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit):
+                raise Refusal("commit exact absent pour la recette du ticket")
+            try:
+                relative = path.resolve().relative_to(ROOT.resolve())
+            except ValueError as exc:
+                raise Refusal("le profil du ticket doit appartenir à la racine Factory") from exc
+            result = run(["git", "-C", str(self.repo), "show", f"{commit}:{relative.as_posix()}"])
+            if result.returncode:
+                raise Refusal(f"profil absent au commit évalué {commit} : {detail_of(result)}")
+            try:
+                candidate = json.loads(result.stdout)
+            except ValueError as exc:
+                raise Refusal(f"profil illisible au commit évalué {commit}") from exc
+            if not isinstance(candidate, dict) or any(candidate.get(key) != profile.get(key)
+                                                       for key in ("project_id", "rigs")):
+                raise Refusal("le profil du ticket change l'identité du projet ou ses rigs")
+            profile = {**profile, "launch": candidate.get("launch")}
+            folder = state_dir() / "profiles" / ticket_id
+            path = folder / f"{commit}.profile"
+            content = json.dumps(profile)
+            if path.exists():
+                if path.read_text(encoding="utf-8") != content:
+                    raise Refusal("le profil conservé de cette évaluation a changé")
+            else:
+                folder.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
+            checked = run([str(BIN / "project-planning-profile"), "describe", str(path)])
+            if checked.returncode:
+                raise Refusal(f"profil du ticket invalide : {detail_of(checked)}")
         launch = profile.get("launch") if isinstance(profile, dict) else None
         if not isinstance(launch, dict):
             raise Refusal(f"le profil {path} ne déclare pas de recette de lancement (launch) : rien à évaluer")
         return path, launch
 
     def datasets(self, ticket_id: str) -> list[str]:
-        """The named datasets the product is launched on: at least one."""
+        """The named datasets this ticket is evaluated on: at least one.
+
+        Only the declared datasets the ticket names -- in its frozen criteria,
+        its demonstration line or a validated expectation of its criteria --,
+        else the first declared one. Every declared dataset for every ticket
+        made one evaluation outlast its deadline (af-kdxk6k)."""
         path, launch = self.profile(ticket_id)
         declared = launch.get("datasets")
         if not isinstance(declared, dict) or not declared:
             raise Refusal(
                 f"le profil {path} ne déclare aucun jeu de données (launch.datasets) : le produit ne se lance "
                 "que sur un jeu de données nommé")
-        return sorted(declared)
+        declared = sorted(declared)
+        ticket = self.ticket(ticket_id)
+        criteria = [str(text) for text in ticket.get("criteria") or []]
+        texts = [*criteria, str(ticket.get("demonstration_line") or "")]
+        named = {name for name in declared
+                 if any(re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", text) for text in texts)}
+        expectations = planned(json.loads(path.read_text(encoding="utf-8")), "ticket",
+                               [{"number": n, "text": t} for n, t in enumerate(criteria, 1)],
+                               declared, "", ticket_id)
+        named.update(entry.get("dataset") for entry in expectations if entry.get("dataset") in declared)
+        return sorted(named) or declared[:1]
 
 
 def readable(ticket: dict[str, Any]) -> dict[str, Any]:
@@ -439,67 +467,211 @@ def state_dir() -> Path:
 
 def stop_product(state_file: str) -> None:
     if Path(state_file).is_file():
-        run([str(LAUNCH_TOOL), "stop", "--state-file", state_file], timeout=60)
+        stopped = run([str(LAUNCH_TOOL), "stop", "--state-file", state_file], timeout=60)
+        if stopped.returncode or Path(state_file).exists():
+            raise Refusal(f"produit non libéré ({state_file}) : {detail_of(stopped)}")
+        remove_attestation(state_file)
 
 
 def running(state_file: str) -> bool:
-    """Whether the product of that launch record still runs."""
     try:
-        pid = int(json.loads(Path(state_file).read_text(encoding="utf-8"))["pid"])
-        os.kill(pid, 0)
-    except (OSError, ValueError, KeyError, TypeError):
+        record = json.loads(Path(state_file).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
         return False
-    return True
+    return ready_product(state_file, record)
 
 
-def launch_products(convoy: Convoy, ticket_id: str, commit: str, settings: dict[str, Any]) -> list[dict[str, Any]]:
-    """Launch the product from a clean copy of `commit`, once per dataset
-    the profile declares, each on its own free port (bin/project-launch).
-    All of them, or none: a product that does not start stops the others."""
-    profile, _ = convoy.profile(ticket_id)
+def product_folder(convoy_id: str, ticket_id: str) -> Path:
+    return state_dir() / re.sub(r"[^A-Za-z0-9._-]", "_", convoy_id) / re.sub(r"[^A-Za-z0-9._-]", "_", ticket_id)
+
+
+def prepared_products(convoy: Convoy, ticket_id: str, commit: str) -> list[dict[str, Any]]:
+    """Launch records survive an interrupted pass; only this exact product is reusable."""
+    prepared = []
+    for path in sorted(product_folder(convoy.id, ticket_id).glob("*.json")):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if (record.get("started") is True and record.get("commit") == commit
+                and record.get("repo_root") == str(convoy.repo) and running(str(path))):
+            prepared.append({"dataset": record["dataset"], "address": record["address"], "state_file": str(path)})
+    return prepared
+
+
+def launch_products(convoy: Convoy, ticket_id: str, commit: str, settings: dict[str, Any],
+                    dataset: str | None = None, reuse: bool = True) -> list[dict[str, Any]]:
+    """Open one dataset of the ticket. Reopening it starts at the same clean commit."""
+    profile, _ = convoy.profile(ticket_id, commit)
     datasets = convoy.datasets(ticket_id)
-    folder = state_dir() / re.sub(r"[^A-Za-z0-9._-]", "_", convoy.id) / re.sub(r"[^A-Za-z0-9._-]", "_", ticket_id)
+    chosen = datasets[0] if dataset is None else dataset
+    if chosen not in datasets:
+        raise Refusal(f"jeu {chosen!r} absent du profil de ce ticket")
+    folder = product_folder(convoy.id, ticket_id)
     folder.mkdir(parents=True, exist_ok=True)
+    if reuse:
+        prepared = [entry for entry in prepared_products(convoy, ticket_id, commit)
+                    if entry["dataset"] == chosen]
+        if prepared:
+            return [prepared[-1]]
     stamp = f"{commit[:12]}-{int(time.time() * 1000)}"
-    launched: list[dict[str, Any]] = []
+    state_file = folder / f"{stamp}-{chosen}.json"
+    argv = [str(LAUNCH_TOOL), "--repo-root", str(convoy.repo), "start", str(profile), "--commit", commit,
+            "--timeout", str(settings["start_timeout_seconds"]), "--state-file", str(state_file),
+            "--dataset", chosen]
     try:
-        for dataset in datasets:
-            state_file = folder / f"{stamp}-{dataset}.json"
-            argv = [str(LAUNCH_TOOL), "--repo-root", str(convoy.repo), "start", str(profile), "--commit", commit,
-                    "--timeout", str(settings["start_timeout_seconds"]), "--state-file", str(state_file)]
-            argv += ["--dataset", dataset]
+        with admission(state_file) as lock_fd:
             for attempt in range(START_ATTEMPTS):
-                started = run(argv, timeout=settings["start_timeout_seconds"] + 60, detached=True)
+                started = run(argv, timeout=settings["start_timeout_seconds"] + 60,
+                              detached=True, pass_fds=(lock_fd,))
                 if started.returncode == 0 and state_file.is_file():
                     break
+                if state_file.exists():
+                    stop_product(str(state_file))
             else:
-                raise Refusal(
-                    f"le produit ne démarre pas depuis une copie propre du commit {commit[:12]}"
-                    f" sur le jeu {dataset} : {detail_of(started)}")
-            record = json.loads(state_file.read_text(encoding="utf-8"))
-            launched.append({"dataset": dataset, "address": record["address"], "state_file": str(state_file)})
-    except (Refusal, OSError, ValueError, KeyError):
-        for entry in launched:
-            stop_product(entry["state_file"])
-        raise
-    return launched
+                raise Refusal(f"le produit ne démarre pas depuis une copie propre du commit {commit[:12]} "
+                              f"sur le jeu {chosen} : {detail_of(started)}")
+    except Busy as exc:
+        raise Deferred(str(exc)) from exc
+    record = json.loads(state_file.read_text(encoding="utf-8"))
+    if not running(str(state_file)):
+        stop_product(str(state_file))
+        raise Refusal("identité du produit lancé non vérifiable")
+    return [{"dataset": chosen, "address": record["address"], "state_file": str(state_file)}]
 
 
-def reap(convoy: Convoy, ticket: dict[str, Any], keep: list[str], withdraw: bool = False) -> list[str]:
+def preflight_path(convoy: Convoy, ticket_id: str, commit: str) -> Path:
+    return product_folder(convoy.id, ticket_id) / f"{commit}.preflight"
+
+
+def observation_piece(entry: dict[str, Any]) -> str:
+    import hashlib
+    return "evaluation.controller." + hashlib.sha256(entry["state_file"].encode()).hexdigest()[:24]
+
+
+def controller_observation(convoy: Convoy, ticket_id: str, commit: str, entry: dict[str, Any], capture=False):
+    """An ordinary sealed command piece, scoped to this exact preparation.
+    No exception to commit/address verification or to Evaluator judgement."""
+    if not convoy.ticket(ticket_id).get("establishes_launch_recipe"):
+        return None
+    piece = observation_piece(entry)
+    argv = [str(BIN / PROGRAM), "observe", convoy.id, ticket_id, "--repo", str(convoy.repo),
+            "--commit", commit, "--launch-state", entry["state_file"],
+            "--preflight-path", str(preflight_path(convoy, ticket_id, commit))]
+    if convoy.given_profile:
+        argv += ["--profile", convoy.given_profile]
+    checked = run([str(CAPTURE_TOOL), "verify", convoy.id, ticket_id, "--piece", piece])
+    if checked.returncode and capture and piece not in (convoy.ticket(ticket_id).get("evidence") or {}):
+        made = run([str(CAPTURE_TOOL), "command", convoy.id, ticket_id, "--piece", piece,
+                    "--launch-state", entry["state_file"], "--timeout", "180", "--expect-exit", "0", "--", *argv], timeout=200)
+        if made.returncode:
+            raise Refusal(f"observation du contrôleur indisponible : {detail_of(made)}")
+        checked = run([str(CAPTURE_TOOL), "verify", convoy.id, ticket_id, "--piece", piece])
+    if checked.returncode:
+        raise Refusal(f"observation du contrôleur non vérifiable : {detail_of(checked)}")
+    report = json.loads(checked.stdout)["pieces"][0]
+    record = json.loads(Path(report["path"]).read_text())
+    if (record.get("commit") != commit or record.get("address") != entry["address"]
+            or record.get("command") != argv or record.get("exit_code") != 0):
+        raise Refusal("observation du contrôleur étrangère à cette préparation")
+    observation = json.loads(record["output"])
+    for reference in observation["references"]:
+        captured = reference["anchors"]
+        raw = captured.pop("output")
+        try:
+            captured["anchors_per_state"] = {name: len(anchors) for name, anchors in json.loads(raw).get("anchors", {}).items()}
+        except (ValueError, TypeError, AttributeError):
+            captured["output_summary"] = short(raw)
+        captured["full_output_in"] = report["path"]
+    return {"piece": piece, "path": report["path"], "digest": report["digest"], "observation": observation}
+
+
+def prepare_recipe_lifecycle(convoy: Convoy, ticket_id: str, commit: str, dataset: str) -> None:
+    """Prove start/stop before opening a product for a recipe-establishing ticket."""
+    if not convoy.ticket(ticket_id).get("establishes_launch_recipe"):
+        return
+    from evaluation_observations import lifecycle_preflight
+    trial = product_folder(convoy.id, ticket_id) / f"{commit}.trial"
+    trial.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        lifecycle = lifecycle_preflight(BIN, convoy.repo, convoy.profile(ticket_id, commit)[0],
+                                        commit, dataset, trial)
+    except Busy as exc:
+        raise Deferred(str(exc)) from exc
+    except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
+        raise Refusal(f"observation préalable interrompue : {exc}") from exc
+    preflight_path(convoy, ticket_id, commit).write_text(json.dumps({
+        "commit": commit, "dataset": dataset, "lifecycle": lifecycle}))
+
+
+def cmd_observe(args: argparse.Namespace) -> int:
+    if os.environ.get("DELIVERY_ROLE_READ_ONLY") or os.environ.get("GC_AGENT"):
+        raise Refusal("observations réservées au contrôleur, jamais à une session agent")
+    convoy = Convoy(args.convoy, args.repo, args.profile)
+    ticket = convoy.ticket(args.ticket)
+    if not ticket.get("establishes_launch_recipe") or ticket.get("tip") != args.commit:
+        raise Refusal("observation réservée à la recette au commit du ticket")
+    prepared = prepared_products(convoy, args.ticket, args.commit)
+    if not any(entry["state_file"] == args.launch_state for entry in prepared):
+        raise Refusal("le produit n'appartient pas à la préparation du contrôleur")
+    profile, _ = convoy.profile(args.ticket, args.commit)
+    references = {}
+    for other in convoy.tickets:
+        ref = other.get("validated_prototype")
+        if ref:
+            key = (ref["commit"], ref["path"])
+            if key not in references:
+                references[key] = {**ref, "states": []}
+            references[key]["states"] = sorted(set(references[key]["states"]) | set(ref["states"]))
+    if not args.preflight_path:
+        raise Refusal("preuve préalable de démarrage et d'arrêt absente")
+    try:
+        prepared_lifecycle = json.loads(Path(args.preflight_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise Refusal(f"preuve préalable illisible : {exc}") from exc
+    if not isinstance(prepared_lifecycle, dict) or not isinstance(prepared_lifecycle.get("lifecycle"), dict):
+        raise Refusal("preuve préalable mal formée")
+    if (prepared_lifecycle.get("commit") != args.commit or
+            prepared_lifecycle.get("dataset") != next(entry["dataset"] for entry in prepared
+                                                       if entry["state_file"] == args.launch_state)):
+        raise Refusal("preuve préalable étrangère à cette préparation")
+    from evaluation_observations import observe
+    try:
+        observation = observe(BIN, convoy.repo, profile, args.commit, args.launch_state,
+                              list(references.values()), prepared_lifecycle["lifecycle"])
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        raise Refusal(f"observation interrompue : {exc}") from exc
+    print(json.dumps(observation, ensure_ascii=False))
+    return 0
+
+
+def reap(convoy: Convoy, ticket: dict[str, Any], keep: list[str], withdraw: bool = False,
+         cancel: tuple[str, ...] = ()) -> list[str]:
     """Stop every launched product of the ticket that no open evaluation
     runs on (`keep`), and write that it is gone. Environment prepared and
     stopped by code (Spec §7). `withdraw`: the evaluation that was open on
     them is no longer due (a newer tip, a parked ticket) and is withdrawn
     with them."""
-    stale = [path for path in evaluation_of(ticket).get("live") or [] if path not in keep]
-    if not stale:
+    tracked = evaluation_of(ticket).get("live") or []
+    local = [str(path) for pattern in ("*.json", "*.trial")
+             for path in product_folder(convoy.id, ticket["id"]).glob(pattern)]
+    stale = [path for path in dict.fromkeys([*tracked, *local]) if path not in keep]
+    if not stale and not cancel and not (withdraw and evaluation_of(ticket).get("request")):
         return []
     for path in stale:
         stop_product(path)
-    args: list[str] = ["--withdraw"] if withdraw else []
+    launches = ((launched["bead"] for launched in (evaluation_of(ticket).get("request") or {}).get("launches", []))
+                if withdraw else cancel)
+    for bead in launches:
+        tool = os.environ.get("TICKET_EVALUATION_CANCEL_BIN") or str(BIN / "evaluation-launch-cancel")
+        cancelled = run([tool, bead], timeout=60)
+        if cancelled.returncode:
+            raise Refusal(f"lancement d'évaluation non libéré ({bead}) : {detail_of(cancelled)}")
+    args: list[str] = ["--withdraw"] if withdraw else (["--switch"] if cancel else [])
     for path in stale:
         args += ["--state-file", path]
-    state_write("release-evaluation", convoy.id, ticket["id"], *args)
+    if any(path in tracked for path in stale) or withdraw:
+        state_write("release-evaluation", convoy.id, ticket["id"], *args)
     return stale
 
 
@@ -549,7 +721,7 @@ def wanted(ticket: dict[str, Any]) -> tuple[str, Any]:
                            "l'évaluation porte sur un ticket vert")
     evaluation = evaluation_of(ticket)
     last = evaluation["rounds"][-1] if evaluation["rounds"] else None
-    if last is not None and last["commit"] == tip:
+    if last is not None and last["commit"] == tip and not retry_after_lift(last, ticket.get("park_lifts")):
         state = evaluation["state"]
         if last["outcome"] == FAVORABLE:
             return "evaluated", None
@@ -715,33 +887,42 @@ def probe_of(launch_block: dict[str, Any]) -> tuple[str, int]:
 
 
 def startup_control(convoy: Convoy, ticket_id: str, commit: str, settings: dict[str, Any]) -> dict[str, Any]:
-    """Spec §7, a prefactoring: no Evaluator session. Code launches the
-    product from a clean copy of the commit, captures the answer of its
-    probe, stops it, and records what it saw."""
-    try:
-        launched = launch_products(convoy, ticket_id, commit, settings)
-    except Refusal as exc:
-        written = state_write("record-startup", convoy.id, ticket_id, "--commit", commit, "--detail", short(str(exc), 240))
-        return {"ticket": ticket_id, "action": "refused_startup", "commit": commit, "verdict": written["verdict"]}
-    try:
-        path, status = probe_of(convoy.profile(ticket_id)[1])
-        first = launched[0]
-        captured = run([
-            str(CAPTURE_TOOL), "command", convoy.id, ticket_id, "--piece", STARTUP_PIECE,
-            "--launch-state", first["state_file"], "--expect-exit", "0", "--timeout", "60", "--",
-            sys.executable, "-c", PROBE, first["address"] + path, str(status)], timeout=120)
-    finally:
-        for entry in launched:
+    """A prefactoring must start and answer its probe on every game of the ticket."""
+    datasets = convoy.datasets(ticket_id)
+    path, status = probe_of(convoy.profile(ticket_id, commit)[1])
+    environment = []
+    coverage = []
+    for index, dataset in enumerate(datasets):
+        try:
+            launched = launch_products(convoy, ticket_id, commit, settings, dataset=dataset)
+        except Deferred:
+            raise
+        except Refusal as exc:
+            written = state_write("record-startup", convoy.id, ticket_id, "--commit", commit,
+                                  "--detail", short(str(exc), 240))
+            return {"ticket": ticket_id, "action": "refused_startup", "commit": commit,
+                    "verdict": written["verdict"]}
+        entry = launched[0]
+        piece = STARTUP_PIECE if index == 0 else f"{STARTUP_PIECE}.{index + 1}"
+        try:
+            captured = run([
+                str(CAPTURE_TOOL), "command", convoy.id, ticket_id, "--piece", piece,
+                "--launch-state", entry["state_file"], "--expect-exit", "0", "--timeout", "60", "--",
+                sys.executable, "-c", PROBE, entry["address"] + path, str(status)], timeout=120)
+        finally:
             stop_product(entry["state_file"])
-    environment = [{"dataset": entry["dataset"], "address": entry["address"]} for entry in launched]
-    if captured.returncode != 0:
-        written = state_write("record-startup", convoy.id, ticket_id, "--commit", commit, "--detail",
-                              short(f"la sonde du produit lancé ne répond pas comme attendu : {detail_of(captured)}", 240))
-        return {"ticket": ticket_id, "action": "refused_startup", "commit": commit, "verdict": written["verdict"]}
-    written = state_write_file("record-startup", convoy.id, ticket_id, {"environment": environment},
-                               "--commit", commit, "--piece", STARTUP_PIECE)
+        if captured.returncode != 0:
+            written = state_write("record-startup", convoy.id, ticket_id, "--commit", commit, "--detail",
+                                  short(f"la sonde du jeu {dataset} ne répond pas : {detail_of(captured)}", 240))
+            return {"ticket": ticket_id, "action": "refused_startup", "commit": commit,
+                    "verdict": written["verdict"]}
+        environment.append({"dataset": dataset, "address": entry["address"]})
+        coverage.append({"dataset": dataset, "evidence": piece})
+    written = state_write_file("record-startup", convoy.id, ticket_id,
+                               {"environment": environment, "coverage": coverage},
+                               "--commit", commit, "--piece", coverage[0]["evidence"])
     return {"ticket": ticket_id, "action": "started", "commit": commit, "verdict": written["verdict"],
-            "evidence": STARTUP_PIECE}
+            "evidence": coverage[0]["evidence"]}
 
 
 def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> dict[str, Any]:
@@ -758,10 +939,16 @@ def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> d
         request = evaluation_of(ticket).get("request")
         current = request if request and what == "open" and request["commit"] == detail else None
         # An evaluation left open on a ticket that is no longer to be
-        # evaluated at that commit is withdrawn with its products; the one
-        # of a stopped ticket stays, as what stopped it.
-        reap(convoy, ticket, [entry["state_file"] for entry in current["environment"]] if current else [],
-             withdraw=request is not None and current is None and not ticket.get("stop"))
+        # evaluated at that commit is withdrawn with its products. The
+        # launch history remains, but an open request must not survive a stop.
+        preparing = prepared_products(convoy, ticket_id, detail) if what in ("open", "startup") and not current else []
+        # A completed/outage round must get fresh products. Only records
+        # not yet attached to any evaluation represent partial preparation.
+        previous_live = evaluation_of(ticket).get("live") or []
+        preparing = [entry for entry in preparing if entry["state_file"] not in previous_live]
+        keep = current["environment"] if current else preparing
+        reap(convoy, ticket, [entry["state_file"] for entry in keep],
+             withdraw=request is not None and current is None)
         stop = own_stop(ticket)
         if stop:
             return {"ticket": ticket_id, "action": "escalated" if raise_stop(convoy.id, ticket, stop) else "none"}
@@ -786,6 +973,50 @@ def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> d
             return startup_control(convoy, ticket_id, commit, settings)
         launches = current["launches"] if current else []
         timeout = settings["timeout_seconds"]
+        timed_out = bool(launches and expired(launches[-1], timeout))
+        desired = current.get("wanted") if current else None
+        if timed_out:
+            live = set(evaluation_of(ticket).get("live") or [])
+            dataset = (desired or {}).get("dataset")
+            if dataset is None:
+                dataset = next((entry["dataset"] for entry in reversed(current["environment"])
+                                if entry["state_file"] in live), current["environment"][-1]["dataset"])
+            desired = {"dataset": dataset}
+            reap(convoy, ticket, [], cancel=(launches[-1]["bead"],))
+            convoy.load()
+            ticket = convoy.ticket(ticket_id)
+            current = evaluation_of(ticket)["request"]
+        if desired:
+            live = set(evaluation_of(ticket).get("live") or [])
+            active = [entry for entry in current["environment"] if entry["state_file"] in live]
+            if len(active) > 1:
+                raise Refusal("plusieurs produits historiques encore ouverts : changement de jeu impossible")
+            for old in active:
+                stop_product(old["state_file"])
+                state_write("release-evaluation", convoy.id, ticket_id,
+                            "--state-file", old["state_file"], "--switch")
+            if timed_out:
+                prepare_recipe_lifecycle(convoy, ticket_id, commit, desired["dataset"])
+            entry = launch_products(convoy, ticket_id, commit, settings,
+                                    dataset=desired["dataset"], reuse=False)[0]
+            try:
+                if timed_out:
+                    controller_observation(convoy, ticket_id, commit, entry, capture=True)
+                    preflight_path(convoy, ticket_id, commit).unlink(missing_ok=True)
+                state_write_file("append-evaluation-product", convoy.id, ticket_id, entry, "--commit", commit)
+                if timed_out:
+                    replacement = {"roles": current["roles"], "environment": [entry]}
+                    if "datasets" in current:
+                        replacement["datasets"] = current["datasets"]
+                    state_write_file("open-evaluation", convoy.id, ticket_id, replacement, "--commit", commit)
+            except (Refusal, NotNewFlow):
+                stop_product(entry["state_file"])
+                raise
+            if not timed_out:
+                return {"ticket": ticket_id, "action": "product_ready", "commit": commit,
+                        "dataset": entry["dataset"], "address": entry["address"]}
+            convoy.load()
+            current = evaluation_of(convoy.ticket(ticket_id))["request"]
         if launches and not expired(launches[-1], timeout):
             deadline = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(launched_at(launches[-1]) + timeout))
             return {"ticket": ticket_id, "action": "pending", "commit": commit, "launches": len(launches),
@@ -799,18 +1030,28 @@ def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> d
             reap(convoy, ticket, [])
             raise_stop(convoy.id, ticket, ticket["stop"])
             return {"ticket": ticket_id, "action": "stopped", "stop": STOP_NO_RESULT}
-        if current is None or not all(running(entry["state_file"]) for entry in current["environment"]):
+        if current is None:
             # The roles first: an evaluation that is deferred launches nothing.
             roles = record_evaluator(convoy.id, ticket)
+            if ticket.get("establishes_launch_recipe"):
+                for entry in preparing:
+                    stop_product(entry["state_file"])
+                prepare_recipe_lifecycle(convoy, ticket_id, commit, convoy.datasets(ticket_id)[0])
             try:
-                environment = launch_products(convoy, ticket_id, commit, settings)
+                environment = launch_products(convoy, ticket_id, commit, settings,
+                                              reuse=not ticket.get("establishes_launch_recipe"))
+            except Deferred:
+                raise
             except Refusal as exc:
                 # The clean copy does not start: nothing can be observed on it.
                 written = state_write("record-startup", convoy.id, ticket_id, "--commit", commit, "--detail",
                                       short(str(exc), 240))
                 return {"ticket": ticket_id, "action": "refused_startup", "commit": commit, "verdict": written["verdict"]}
+            controller_observation(convoy, ticket_id, commit, environment[0], capture=True)
+            preflight_path(convoy, ticket_id, commit).unlink(missing_ok=True)
             try:
-                state_write_file("open-evaluation", convoy.id, ticket_id, {"roles": roles, "environment": environment},
+                state_write_file("open-evaluation", convoy.id, ticket_id,
+                                 {"roles": roles, "environment": environment, "datasets": convoy.datasets(ticket_id)},
                                  "--commit", commit)
             except (Refusal, NotNewFlow):
                 for entry in environment:
@@ -832,7 +1073,7 @@ def cmd_settle(args: argparse.Namespace) -> int:
     convoy = Convoy(args.convoy, args.repo, args.profile)
     answer: dict[str, Any] = {"ok": True, "convoy": args.convoy, "launched": [], "relaunched": [], "pending": [],
                               "waiting": [], "started": [], "refused_startup": [], "planning_exception": [],
-                              "stopped": [], "escalated": [], "deferred": [], "refused": []}
+                              "stopped": [], "escalated": [], "deferred": [], "refused": [], "product_ready": []}
     for ticket_id in [ticket.get("id") for ticket in convoy.tickets]:
         try:
             done = settle_ticket(convoy, ticket_id, settings)
@@ -848,6 +1089,132 @@ def cmd_settle(args: argparse.Namespace) -> int:
     print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
     return 0 if answer["ok"] else EXIT_REFUSED
 
+
+def cmd_cleanup(args: argparse.Namespace) -> int:
+    """Reap only a stopped ticket's products before its stop is raised."""
+    convoy = Convoy(args.convoy, args.repo)
+    with ticket_lock(args.ticket):
+        convoy.load()
+        ticket = convoy.ticket(args.ticket)
+        if not ticket.get("stop"):
+            raise Refusal(f"le ticket {args.ticket} n'est pas arrêté")
+        stopped = reap(convoy, ticket, [])
+    print(json.dumps({"ok": True, "ticket": args.ticket, "stopped": stopped}, ensure_ascii=False))
+    return 0
+
+
+# --- one product at a time -----------------------------------------------------------
+
+
+def cmd_product(args: argparse.Namespace) -> int:
+    """Ask the controller for one dataset; never launch from the read-only role."""
+    if os.environ.get("DELIVERY_ROLE_READ_ONLY") != "1":
+        raise Refusal("un produit à la demande se demande depuis le rôle Evaluator")
+    convoy = Convoy(args.convoy, args.repo, args.profile)
+    ticket = convoy.ticket(args.ticket)
+    request = open_request(convoy, args.ticket)
+    if ticket.get("stop") or ticket.get("park") or ticket.get("tip") != request["commit"]:
+        raise Refusal("évaluation arrêtée, garée ou remplacée par un autre commit")
+    if args.dataset not in (request.get("datasets") or []):
+        raise Refusal("jeu absent de la demande d'évaluation")
+    live = set(evaluation_of(ticket).get("live") or [])
+    active = [entry for entry in request["environment"] if entry["state_file"] in live]
+    if len(active) > 1:
+        raise Refusal("plusieurs produits historiques encore ouverts : attendre leur arrêt")
+    wanted = request.get("wanted")
+    if (active and active[0]["dataset"] == args.dataset and running(active[0]["state_file"])
+            and not args.fresh and not wanted):
+        entry = active[0]
+        print(json.dumps({"ok": True, "ready": True, "dataset": entry["dataset"],
+                          "address": entry["address"], "launch_state": entry["state_file"],
+                          "commit": request["commit"]}, indent=2, sort_keys=True, ensure_ascii=False))
+        return 0
+    state_write("want-evaluation-product", args.convoy, args.ticket, "--commit", request["commit"],
+                "--dataset", args.dataset, *(["--fresh"] if args.fresh else []))
+    print(json.dumps({"ok": True, "ready": False, "dataset": args.dataset, "commit": request["commit"],
+                      "next": "réessayer après la prochaine passe du contrôleur"},
+                     indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+VISUAL_CHECK = "Le changement visuel correspond à l'intention déclarée"
+VISUAL_DIR = "design-bench/bench.spec.mjs-snapshots/"
+
+
+def visual_changes(convoy: Convoy, ticket: dict[str, Any], commit: str) -> list[dict[str, Any]]:
+    """Changed reference images from the ticket base, bound to its declared intent."""
+    integration = (convoy.state.get("integration") or {}).get("branch")
+    if not isinstance(integration, str):
+        raise Refusal("branche d'intégration absente pour la comparaison visuelle")
+    remote = run(["git", "-C", str(convoy.repo), "remote", "get-url", "origin"])
+    branch_ref = (f"refs/remotes/origin/{integration}" if remote.returncode == 0
+                  else f"refs/heads/{integration}")
+    base = run(["git", "-C", str(convoy.repo), "merge-base", commit, branch_ref])
+    if base.returncode or not base.stdout.strip():
+        raise Refusal("commit de base du ticket introuvable pour la comparaison visuelle")
+    before = base.stdout.strip()
+    diff = run(["git", "-C", str(convoy.repo), "diff", "--name-status", "--no-renames",
+                before, commit, "--", VISUAL_DIR])
+    if diff.returncode:
+        raise Refusal("captures de référence illisibles : " + detail_of(diff))
+    paths = [(line.split("\t", 1)[0], line.split("\t", 1)[1]) for line in diff.stdout.splitlines()
+             if "\t" in line and line.endswith(".png")]
+    paths = [(status, path) for status, path in paths if status != "A"]
+    if not paths:
+        return []
+    shown = run(["git", "-C", str(convoy.repo), "show", f"{commit}:design-bench/visual-changes.json"])
+    if shown.returncode:
+        raise Refusal("déclaration visuelle absente au commit évalué")
+    try:
+        manifest = json.loads(shown.stdout)
+        entries = manifest["entries"]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise Refusal("déclaration visuelle illisible au commit évalué") from exc
+    if not isinstance(manifest, dict) or manifest.get("contract") != "agent-factory-visual-changes/v1" or not isinstance(entries, list):
+        raise Refusal("déclaration visuelle mal formée au commit évalué")
+    declared = {entry.get("path"): entry for entry in entries if isinstance(entry, dict)}
+    previous = run(["git", "-C", str(convoy.repo), "show", f"{before}:design-bench/visual-changes.json"])
+    if previous.returncode == 0:
+        try:
+            old_manifest = json.loads(previous.stdout)
+            old_entries = old_manifest["entries"]
+        except (ValueError, KeyError, TypeError) as exc:
+            raise Refusal("ancienne déclaration visuelle illisible") from exc
+        if not isinstance(old_entries, list):
+            raise Refusal("ancienne déclaration visuelle mal formée")
+        old_declared = {entry.get("path"): entry for entry in old_entries if isinstance(entry, dict)}
+    else:
+        old_declared = {}
+    folder = product_folder(convoy.id, ticket["id"]) / "visual-references"
+    result = []
+    for status, path in paths:
+        if status == "A":
+            continue
+        entry = declared.get(path)
+        if not isinstance(entry, dict) or entry.get("ticket") != ticket["id"]:
+            raise Refusal(f"capture modifiée sans déclaration du ticket {ticket['id']} : {path}")
+        if entry == old_declared.get(path):
+            raise Refusal(f"déclaration visuelle périmée : {path}")
+        intent = entry.get("intent")
+        if not isinstance(intent, str) or not intent.strip() or intent not in read_bead(ticket["id"]).get("description", ""):
+            raise Refusal(f"intention visuelle absente du ticket {ticket['id']} : {path}")
+        def image(ref: str) -> str:
+            blob = subprocess.run(["git", "-C", str(convoy.repo), "show", f"{ref}:{path}"],
+                                  capture_output=True)
+            if blob.returncode:
+                raise Refusal(f"capture de référence illisible au commit {ref[:12]} : {path}")
+            folder.mkdir(parents=True, exist_ok=True)
+            target = folder / (hashlib.sha256(blob.stdout).hexdigest() + ".png")
+            if not target.is_file() or target.read_bytes() != blob.stdout:
+                target.write_bytes(blob.stdout)
+            return str(target)
+        result.append({"path": path, "intent": intent, "before": image(before),
+                       "after": image(commit) if status != "D" else None})
+    return result
+
+
+SCREEN_CHECKS = ("Tout se fait au clavier", "Le focus est visible",
+                 "Les images ont une description", "Le mouvement réduit est respecté", VISUAL_CHECK)
 
 # --- brief: what the Evaluator is given ----------------------------------------------
 
@@ -865,11 +1232,14 @@ def cmd_brief(args: argparse.Namespace) -> int:
     """What the Evaluator session is given, and nothing of the author: the
     demonstration line, the frozen criteria, the launched products, how a
     piece of evidence is captured on them, and the shape of what it hands
-    to `record`. Neither the Ticket Handoff, nor the diff, nor the
-    repository, nor the branch."""
+    to `record`. Neither the Ticket Handoff, nor the code diff, nor the
+    repository or branch; interface tickets may include exported visual
+    references tied to the ticket's declared intent."""
     convoy = Convoy(args.convoy, args.repo, args.profile)
     request = open_request(convoy, args.ticket)
-    _, launch_block = convoy.profile(args.ticket)
+    profile_path, launch_block = convoy.profile(args.ticket, request["commit"])
+    live = set(evaluation_of(convoy.ticket(args.ticket)).get("live") or [])
+    active = [entry for entry in request["environment"] if entry["state_file"] in live]
     capture = [str(CAPTURE_TOOL), "command", args.convoy, args.ticket, "--piece", "evaluation.<name>",
                "--launch-state", "<launch_state of the product>", "--"]
     brief = {
@@ -877,8 +1247,13 @@ def cmd_brief(args: argparse.Namespace) -> int:
         "demonstration_line": request["demonstration_line"],
         "criteria": [{"number": number, "text": text} for number, text in enumerate(request["criteria"], start=1)],
         "environments": [{"dataset": entry["dataset"], "address": entry["address"], "launch_state": entry["state_file"]}
-                         for entry in request["environment"]],
+                         for entry in active],
+        "datasets": request.get("datasets") or [entry["dataset"] for entry in request["environment"]],
+        "product": [str(BIN / PROGRAM), "product", args.convoy, args.ticket, "--dataset", "<declared dataset>"],
         "entry_points": launch_block.get("entry_points") or [],
+        "controller_observation": (controller_observation(
+            convoy, args.ticket, request["commit"], request["environment"][0])
+                                   if active else None),
         "states": list(STATES), "unobservable_causes": list(CAUSES),
         "capture": {
             "command": capture + ["<any command that uses the product at its address>"],
@@ -893,9 +1268,25 @@ def cmd_brief(args: argparse.Namespace) -> int:
                           "reason": "<required unless observed>", "cause": "|".join(CAUSES) + " (unobservable only)"}],
             "demonstration_line": {"text": "<the demonstration line, copied exactly>", "state": "|".join(STATES),
                                    "evidence": "<piece name>"},
+            "coverage": [{"dataset": "<each dataset of datasets>", "evidence": "<sealed piece from that dataset>"}],
+            "screen_findings": [{"check": "<one screen check from this brief>",
+                                 "rule": "<exact line of DESIGN.md>", "evidence": "<sealed piece>",
+                                 "reason": "<visible deviation>"}] if convoy.ticket(args.ticket).get("interface") else [],
         },
         "roles": request["roles"], "independence": independence(request["roles"]),
     }
+    brief["expectations"] = planned(json.loads(profile_path.read_text(encoding="utf-8")), "ticket",
+                                    brief["criteria"], brief["datasets"], request["commit"], args.ticket)
+    if convoy.ticket(args.ticket).get("interface"):
+        # The Evaluator has no repository access. Give it the rule text from
+        # the exact commit it evaluates, never from a mutable worktree.
+        design = run(["git", "-C", str(convoy.repo), "show", f"{request['commit']}:DESIGN.md"])
+        if design.returncode == 0:
+            brief["design"] = {"path": "DESIGN.md", "text": design.stdout}
+        changes = visual_changes(convoy, convoy.ticket(args.ticket), request["commit"])
+        if changes:
+            brief["visual_changes"] = changes
+        brief["screen_checks"] = [check for check in SCREEN_CHECKS if check != VISUAL_CHECK or changes]
     print(json.dumps(brief, indent=2, sort_keys=True, ensure_ascii=False))
     return 0
 
@@ -935,6 +1326,10 @@ def handed_pieces(given: dict[str, Any]) -> list[Any]:
         if isinstance(given.get("criteria"), list) else []
     if isinstance(given.get("demonstration_line"), dict):
         items.append(given["demonstration_line"])
+    if isinstance(given.get("coverage"), list):
+        items.extend(item for item in given["coverage"] if isinstance(item, dict))
+    if isinstance(given.get("screen_findings"), list):
+        items.extend(item for item in given["screen_findings"] if isinstance(item, dict))
     return list(dict.fromkeys(item.get("evidence") for item in items if isinstance(item.get("evidence"), str)))
 
 
@@ -957,14 +1352,64 @@ def cmd_record(args: argparse.Namespace) -> int:
     if request is None:
         raise Refusal(
             f"aucune évaluation n'est demandée sur le ticket {args.ticket} : des états répondent à une demande ouverte")
+    profile_path, _ = convoy.profile(args.ticket, request["commit"])
+    entries = planned(json.loads(profile_path.read_text(encoding="utf-8")), "ticket",
+                      [{"number": n, "text": t} for n, t in enumerate(request["criteria"], 1)],
+                      request.get("datasets") or [e["dataset"] for e in request["environment"]], request["commit"], args.ticket)
+    def verified(piece: str, dataset: str) -> dict[str, Any]:
+        addresses_for_game = [e["address"] for e in request["environment"] if e["dataset"] == dataset]
+        return sealed_record(str(CAPTURE_TOOL), args.convoy, args.ticket, piece, request["commit"],
+                             addresses_for_game)
+    try:
+        given, _ = enforce(entries, given, "criteria", verified, FETCH)
+    except (ValueError, KeyError, TypeError, StopIteration) as exc:
+        raise Refusal(f"comparaison validée impossible : {exc}") from exc
+    findings = given.get("screen_findings", [])
+    if not isinstance(findings, list):
+        raise Refusal("screen_findings doit être une liste")
+    if findings:
+        if any(isinstance(finding, dict) and finding.get("check") == VISUAL_CHECK for finding in findings):
+            if not visual_changes(convoy, convoy.ticket(args.ticket), request["commit"]):
+                raise Refusal("constat visuel hors de la liste à vérifier")
+        if not convoy.ticket(args.ticket).get("interface"):
+            raise Refusal("constat écran sur un ticket sans interface")
+        design = run(["git", "-C", str(convoy.repo), "show", f"{request['commit']}:DESIGN.md"])
+        if design.returncode != 0:
+            raise Refusal("constat écran sans DESIGN.md au commit évalué")
+        for finding in findings:
+            if not isinstance(finding, dict) or set(finding) != {"check", "rule", "evidence", "reason"}:
+                raise Refusal("constat écran mal formé")
+            if finding["check"] not in SCREEN_CHECKS:
+                raise Refusal("constat écran hors de la liste à vérifier")
+            if finding["rule"] not in design.stdout.splitlines() or not finding["rule"].startswith("- "):
+                raise Refusal("règle absente de DESIGN.md au commit évalué")
+            if not isinstance(finding["reason"], str) or not finding["reason"].strip() or "\n" in finding["reason"]:
+                raise Refusal("constat écran sans raison sur une ligne")
     addresses = [entry["address"] for entry in request["environment"]]
     refused = [reason for reason in (piece_refusal(args.convoy, args.ticket, piece, request["commit"], addresses)
                                      for piece in handed_pieces(given)) if reason]
+    declared = request.get("datasets") or list(dict.fromkeys(
+        entry["dataset"] for entry in request["environment"]))
+    if "datasets" in request or len(declared) > 1:
+        coverage = given.get("coverage")
+        if not isinstance(coverage, list) or len(coverage) != len(declared):
+            refused.append("une pièce de couverture par jeu déclaré est exigée")
+        else:
+            for item in coverage:
+                if not isinstance(item, dict) or item.get("dataset") not in declared:
+                    refused.append("jeu de couverture absent de la demande")
+                    continue
+                on_dataset = [entry["address"] for entry in request["environment"]
+                              if entry["dataset"] == item["dataset"]]
+                refused.extend(reason for reason in
+                               [piece_refusal(args.convoy, args.ticket, item.get("evidence"),
+                                              request["commit"], on_dataset)] if reason)
     if refused:
         raise Refusal("état sans Evidence Record valide : " + " ; ".join(refused))
     # Never GC_AGENT: it names a place in the pool of the agent, which the next session takes.
     session = os.environ.get("GC_SESSION_NAME") or os.environ.get("GC_SESSION_ID") or ""
-    written = state_write_file("record-evaluation", args.convoy, args.ticket, {**given, "recorded_by": session})
+    written = state_write_file("record-evaluation", args.convoy, args.ticket, {**given, "recorded_by": session},
+                               "--repo", str(convoy.repo))
     print(json.dumps({
         "ok": True, "convoy": args.convoy, "ticket": args.ticket, "commit": request["commit"],
         "outcome": written["outcome"], "verdict": written["verdict"], "state": written["state"],
@@ -1009,13 +1454,23 @@ def computed_verdict(convoy: Convoy, ticket: dict[str, Any]) -> dict[str, Any]:
             f" ({refusal_of(evaluation['state'])})" if refusal_of(evaluation["state"]) else ""))
     addresses = [entry["address"] for entry in last.get("environment") or []]
     if last["kind"] == STARTUP:
-        pieces = [last["evidence"]] if last.get("started") else []
+        pieces = ([last["evidence"]] + [item["evidence"] for item in last.get("coverage") or []]
+                  if last.get("started") else [])
     else:
-        pieces = list(dict.fromkeys([item["evidence"] for item in last["criteria"]] + [last["demonstration_line"]["evidence"]]))
+        pieces = list(dict.fromkeys([item["evidence"] for item in last["criteria"]] +
+                                   [last["demonstration_line"]["evidence"]] +
+                                   [item["evidence"] for item in last.get("coverage") or []] +
+                                   [item["evidence"] for item in last.get("screen_findings") or []]))
     for piece in pieces:
         refusal = piece_refusal(convoy.id, ticket["id"], piece, last["commit"], addresses)
         if refusal:
             answer["reasons"].append(f"preuve non recevable : {refusal}")
+    for item in last.get("coverage") or []:
+        on_dataset = [entry["address"] for entry in last.get("environment") or []
+                      if entry["dataset"] == item["dataset"]]
+        refusal = piece_refusal(convoy.id, ticket["id"], item["evidence"], last["commit"], on_dataset)
+        if refusal:
+            answer["reasons"].append(f"couverture du jeu {item['dataset']} non recevable : {refusal}")
     stored = (ticket.get("verdicts") or {}).get(EVALUATION) or {}
     if last["verdict"] is not None and (stored.get("state") != last["verdict"] or stored.get("commit") != last["commit"]):
         answer["reasons"].append("le verdict écrit sur le ticket n'est pas celui de sa dernière évaluation")
@@ -1067,10 +1522,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Required values are checked by the handlers, not by argparse: a
     # refusal is one JSON answer.
+    p = command("observe", cmd_observe)
+    p.add_argument("--profile")
+    p.add_argument("--commit", required=True)
+    p.add_argument("--launch-state", required=True)
+    p.add_argument("--preflight-path")
     command("brief", cmd_brief).add_argument("--profile")
+    p = command("product", cmd_product)
+    p.add_argument("--profile")
+    p.add_argument("--dataset", required=True)
+    p.add_argument("--fresh", action="store_true")
     command("record", cmd_record).add_argument("--file")
     command("verdict", cmd_verdict)
     command("show", cmd_show)
+    command("cleanup", cmd_cleanup)
     p = sub.add_parser("settle")
     p.add_argument("convoy")
     p.add_argument("--repo")

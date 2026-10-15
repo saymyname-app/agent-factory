@@ -1,2 +1,2 @@
-Need: Codex desktop, CLI, remote/mobile protocol and authority
+Need: Desktop, CLI and remote authority
 Read: `OPERATOR_BRIDGE.md`

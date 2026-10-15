@@ -995,23 +995,23 @@ class PatchDoorTest(Harness):
     SPEC_WITHOUT_STORY_3 = FIXTURE_SPEC.replace(
         "3. As an exploitant, I want une sonde de santé, so that je sache que le produit répond.\n", "")
 
-    def register(self, status):
+    def register(self, status, decision="pd-1", ticket="T4", filename="register.json"):
         """A Planning Exception register written by bin/planning-exception:
-        decision pd-1, open or resolved."""
-        path = self.tmp / "register.json"
+        one decision, open or resolved."""
+        path = self.tmp / filename
         graph = self.tmp / "graph.json"
-        graph.write_text(json.dumps({"beads": {self.ids["T4"]: {"blocked_by": []}}}))
+        graph.write_text(json.dumps({"beads": {self.ids[ticket]: {"blocked_by": []}}}))
 
         def run(*args):
             proc = subprocess.run((str(PLANNING_EXCEPTION), *args), text=True, capture_output=True)
             self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
 
         run("init", "--run", "run-fixture", "--out", str(path))
-        run("raise", str(path), "--graph", str(graph), "--bead", self.ids["T4"], "--kind", "topology",
-            "--run", "run-fixture", "--decision-id", "pd-1", "--summary", "la sonde n'est plus voulue",
+        run("raise", str(path), "--graph", str(graph), "--bead", self.ids[ticket], "--kind", "topology",
+            "--run", "run-fixture", "--decision-id", decision, "--summary", "la tranche n'est plus voulue",
             "--raised-by", "auteur-fixture")
         if status == "resolved":
-            run("resolve", str(path), "--decision", "pd-1", "--kind", "tactical", "--note", "Benjamin retire la sonde")
+            run("resolve", str(path), "--decision", decision, "--kind", "tactical", "--note", "Benjamin retire la tranche")
         return path
 
     def withdrawal(self):
@@ -1039,6 +1039,32 @@ class PatchDoorTest(Harness):
         # The withdrawn ticket is no longer named as a sibling.
         self.assertNotIn(T4_LINE, self.beads()[self.ids["T2"]]["description"])
 
+    def test_later_revision_preserves_historical_withdrawal_and_authorizes_only_new_one(self):
+        old_register = self.register("resolved")
+        self.amend_spec(self.SPEC_WITHOUT_STORY_3)
+        self.propose(self.withdrawal())
+        first_patch = self.patched(extra=("--planning-exception-register", str(old_register)))
+        withdrawn_before = copy.deepcopy(self.beads()[self.ids["T4"]])
+
+        current_register = self.register(
+            "resolved", decision="pd-2", ticket="T3", filename="current-register.json")
+        revision = self.revision(
+            keep=("T1", "T2"),
+            withdrawn=[
+                {"ticket": "T4", "planning_exception": "pd-1"},
+                {"ticket": "T3", "planning_exception": "pd-2"},
+            ],
+        )
+        self.propose(revision, draft_id="draft-3", revises=first_patch["graph_digest"])
+
+        result = self.patched(
+            "draft-3", extra=("--planning-exception-register", str(current_register)))
+
+        self.assertEqual({"T3": self.ids["T3"], "T4": self.ids["T4"]}, result["withdrawn"])
+        self.assertEqual(withdrawn_before, self.beads()[self.ids["T4"]])
+        self.assertEqual("closed", self.beads()[self.ids["T3"]]["status"])
+        self.assertIn("withdrawn", self.shown_ticket(self.convoy, self.ids["T3"])["gates"])
+
     def test_coverage_is_recomputed_when_another_slice_takes_the_story_over(self):
         register = self.register("resolved")
         taking_over = copy.deepcopy(self.SLICE)
@@ -1058,6 +1084,50 @@ class PatchDoorTest(Harness):
 
         proc = self.refused("pd-1", extra=("--planning-exception-register", str(register)))
         self.assertTrue(any("résolue" in line for line in self.refusal_lines(proc, "T4")), proc.stderr)
+
+    def test_open_decision_authorizes_only_its_exact_draft_and_ticket(self):
+        register = self.register("open")
+        self.amend_spec(self.SPEC_WITHOUT_STORY_3)
+        self.propose(self.withdrawal())
+        state = json.loads(register.read_text())
+        state["decisions"]["pd-1"]["patch_authorization"] = {
+            "draft": "other-draft", "bead": self.ids["T4"]}
+        register.write_text(json.dumps(state))
+        self.refused("pd-1", extra=("--planning-exception-register", str(register)))
+
+        state["decisions"]["pd-1"]["patch_authorization"] = {
+            "draft": "draft-2", "bead": self.ids["T3"]}
+        register.write_text(json.dumps(state))
+        self.refused("pd-1", extra=("--planning-exception-register", str(register)))
+
+        state["decisions"]["pd-1"]["patch_authorization"] = {
+            "draft": "draft-2", "bead": self.ids["T4"]}
+        register.write_text(json.dumps(state))
+        result = self.patched(extra=("--planning-exception-register", str(register)))
+        self.assertEqual({"T4": self.ids["T4"]}, result["withdrawn"])
+        self.assertEqual("open", json.loads(register.read_text())["decisions"]["pd-1"]["status"])
+
+    def test_resolve_topology_patches_then_unparks_with_the_live_door(self):
+        register = self.register("open")
+        self.amend_spec(self.SPEC_WITHOUT_STORY_3)
+        self.propose(self.withdrawal())
+        wrapper = self.tmp / "publish-fixture"
+        wrapper.write_text(
+            f"#!/bin/sh\nexec {PUBLISHER} \"$@\" --repo-root {self.repo_root} "
+            f"--config-dir {PROJECTS_CONFIG_DIR} --descriptors-dir {self.descriptors}\n")
+        wrapper.chmod(0o755)
+        proc = subprocess.run((
+            str(PLANNING_EXCEPTION), "resolve", str(register), "--decision", "pd-1",
+            "--kind", "topology", "--note", "approved revised graph",
+            "--patched-draft", "draft-2", "--project", "acme",
+        ), env={**self.env, "PLANNING_EXCEPTION_PUBLISH_BIN": str(wrapper)},
+            text=True, capture_output=True)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual("closed", self.beads()[self.ids["T4"]]["status"])
+        decision = json.loads(register.read_text())["decisions"]["pd-1"]
+        self.assertEqual("resolved", decision["status"])
+        self.assertEqual([], decision["parked"])
+        self.assertNotIn("patch_authorization", decision)
 
     def test_refuses_a_withdrawal_that_names_no_known_planning_exception(self):
         register = self.register("resolved")

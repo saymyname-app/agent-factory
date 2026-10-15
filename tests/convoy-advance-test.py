@@ -24,6 +24,7 @@ correction round and the test review (T14, T15, T17, T13) are in
 tests/convoy-advance-review-evaluation-correction-test.py."""
 
 import copy
+import fcntl
 import functools
 import hashlib
 import json
@@ -32,6 +33,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import time
 import sys
 import unittest
 from pathlib import Path
@@ -240,7 +242,9 @@ class ConvoyAdvanceHarness(unittest.TestCase):
         self.write_log.write_text("")
 
     def tracker_state(self):
-        return json.loads(self.tracker.read_text())
+        with self.tracker.open(encoding="utf-8") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
+            return json.load(handle)
 
     def bead(self, bead_id):
         return self.tracker_state()["beads"][bead_id]
@@ -267,7 +271,33 @@ class ConvoyAdvanceHarness(unittest.TestCase):
     def advance(self, *args, expect=0, env=None):
         proc = self.run_cmd(TOOL, *args, env=env)
         self.assertEqual(expect, proc.returncode, proc.stdout + proc.stderr)
-        return json.loads(proc.stdout)
+        answer = json.loads(proc.stdout)
+        # Multi-game fake sessions continue after dispatch returns. Advance
+        # their official controller until each requested game is available.
+        for program, name in (("ticket-evaluation", "TICKET_EVALUATION_FAKE_LOG"),
+                              ("outcome-evaluation", "OUTCOME_EVALUATION_FAKE_LOG")):
+            if name not in self.env:
+                continue
+            marker = Path(self.env[name] + ".pending")
+            done = Path(self.env[name] + ".done")
+            failed = Path(self.env[name] + ".failed")
+            if not marker.exists() and not failed.exists():
+                continue
+            deadline = time.monotonic() + 60
+            while marker.exists() and time.monotonic() < deadline:
+                bead = self.bead(marker.read_text())
+                convoy = next(line.removeprefix("convoy: ") for line in bead["description"].splitlines()
+                              if line.startswith("convoy: "))
+                settled = self.run_cmd(ROOT / "bin" / program, "settle", convoy, "--repo", self.root)
+                if settled.returncode:
+                    time.sleep(0.2)
+                    self.assertFalse(marker.exists(), settled.stdout + settled.stderr)
+                    break
+                time.sleep(0.1)
+            self.assertFalse(marker.exists(), f"fake {program} did not finish")
+            self.assertFalse(failed.exists(), f"fake {program} failed: {Path(self.env[name] + '.worker').read_text()}")
+            self.assertTrue(done.exists(), f"fake {program} did not close its bead")
+        return answer
 
     def slung(self):
         lines = [json.loads(line) for line in self.write_log.read_text().splitlines() if line]
@@ -325,6 +355,7 @@ class ConvoyAdvanceHarness(unittest.TestCase):
         self.env["SPEC_INTEGRATION_WORK_DIR"] = str(self.tmp / "work")
         descriptor = json.loads((ROOT / "tests" / "fixtures" / "delivery-fixture-city" / "descriptor.json").read_text())
         descriptor["rigs"] = ["fx-rig"]
+        descriptor["stacks"] = {"fx-rig": ["fixture-stack"]}
         descriptor["launch"]["regression_command"] = regression
         (self.root / "config" / "project-descriptors").mkdir()
         (self.root / "config" / "project-descriptors" / "fx.json").write_text(json.dumps(descriptor))
@@ -1512,13 +1543,20 @@ class ConvoyAdvanceTest(ConvoyAdvanceHarness):
         self.advance(CONVOY)
         tip = self.finished(T1)
 
-        answer = self.advance(CONVOY)
-
-        result = next(c for c in answer["convoys"] if c["id"] == CONVOY)
+        first = self.advance(CONVOY)
+        observed = next(c for c in first["convoys"] if c["id"] == CONVOY)
         self.assertEqual([(T1, tip, "vert")],
-                         [(entry["id"], entry["commit"], entry["result"]) for entry in result["fidelity"]["checked"]], result)
-        self.assertEqual([T1], [entry["id"] for entry in result["integration"]["merged"]], result)
-        self.assertEqual([T1], [entry["id"] for entry in result["ticket_end"]["closed"]], result)
+                         [(entry["id"], entry["commit"], entry["result"]) for entry in observed["fidelity"]["checked"]], observed)
+        # The ticket names one game (af-kdxk6k): the fixture Evaluator may
+        # finish within the first pass; a pass at most later, the recorded
+        # verdict is read and the ticket integrated and closed.
+        answer = self.advance(CONVOY)
+        result = next(c for c in answer["convoys"] if c["id"] == CONVOY)
+        passes = (observed, result)
+        self.assertEqual([T1], [entry["id"] for one in passes
+                                for entry in (one.get("integration") or {}).get("merged", [])], passes)
+        self.assertEqual([T1], [entry["id"] for one in passes
+                                for entry in (one.get("ticket_end") or {}).get("closed", [])], passes)
         shown = self.shown(T1)
         self.assertEqual((tip, "vert"), (shown["fidelity"]["commit"], shown["fidelity"]["state"]))
         fidelity = shown["gates"]["ticket_end"]["conditions"][3]

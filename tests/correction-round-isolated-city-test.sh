@@ -292,8 +292,24 @@ while true; do
     exit 0
   fi
   mv "$BRIEF.new" "$BRIEF"
-  ADDRESS=$(jq -r '.environments[] | select(.dataset == "content") | .address' "$BRIEF")
-  LAUNCH=$(jq -r '.environments[] | select(.dataset == "content") | .launch_state' "$BRIEF")
+  product_on() {
+    local answer deadline=$(( $(date +%s) + 300 ))
+    while true; do
+      answer=$("$BIN/ticket-evaluation" product "$CONVOY" "$TICKET" --dataset "$1" 2>>"$LOG") || return 1
+      if [ "$(printf '%s' "$answer" | jq -r '.ready')" = true ]; then
+        ADDRESS=$(printf '%s' "$answer" | jq -r '.address')
+        LAUNCH=$(printf '%s' "$answer" | jq -r '.launch_state')
+        return 0
+      fi
+      [ "$(date +%s)" -lt "$deadline" ] || return 1
+      sleep 2
+    done
+  }
+  covered() {
+    "$BIN/evidence-capture" command "$CONVOY" "$TICKET" --piece "evaluation.coverage.$1" --launch-state "$LAUNCH" -- curl -s "$ADDRESS/health" >/dev/null 2>>"$LOG" || return 1
+    jq -n --arg dataset "$1" '{dataset: $dataset, evidence: ("evaluation.coverage." + $dataset)}'
+  }
+  product_on content || OUTCOME=fail
   echo "$TICKET $EVALUATION_BEAD ${GC_SESSION_NAME:-?} $(jq -r '.commit' "$BRIEF") $(date -u +%H:%M:%S)" >> "$TRIAL/evaluation-sessions"
   state_of() { # <piece> <text>: capture the home page, print the state as JSON
     local captured page
@@ -313,7 +329,14 @@ while true; do
     CRITERIA=$(jq -c --argjson n "$NUMBER" --argjson s "${STATE:-null}" '. + [{number: $n} + $s]' <<< "$CRITERIA")
   done < <(jq -c '.criteria[]' "$BRIEF")
   LINE=$(state_of evaluation.demo "$(jq -r '.demonstration_line' "$BRIEF")") || OUTCOME=fail
-  jq --argjson criteria "$CRITERIA" --argjson line "${LINE:-null}" '{commit, criteria: $criteria, demonstration_line: $line}' "$BRIEF" > "$RESULT"
+  COVERAGE=$(covered content) || OUTCOME=fail
+  COVERAGE="[${COVERAGE:-null}]"
+  while IFS= read -r dataset; do
+    [ "$dataset" = content ] && continue
+    ENTRY=$(product_on "$dataset" && covered "$dataset") || OUTCOME=fail
+    COVERAGE=$(jq -c --argjson e "${ENTRY:-null}" '. + [$e]' <<< "$COVERAGE")
+  done < <(jq -r '.datasets[]' "$BRIEF")
+  jq --argjson criteria "$CRITERIA" --argjson line "${LINE:-null}" --argjson coverage "$COVERAGE" '{commit, criteria: $criteria, demonstration_line: $line, coverage: $coverage}' "$BRIEF" > "$RESULT"
   "$BIN/ticket-evaluation" record "$CONVOY" "$TICKET" --file "$RESULT" >> "$LOG" 2>&1 || OUTCOME=fail
   say "ticket $TICKET : états remis ($EVALUATION_BEAD, $OUTCOME)"
   gc bd update "$EVALUATION_BEAD" --set-metadata gc.outcome=$OUTCOME --status=closed --notes "évaluation $OUTCOME" >> "$LOG" 2>&1 || say "fermeture du bead d'évaluation refusée"
@@ -431,7 +454,7 @@ sling_target = "trial-reviewer"
 formulas = "mol-code-review,mol-ticket-evaluation,mol-ticket-correction"
 human_approver = "$APPROVER"
 TOML
-jq '.rigs = ["trial"]' "$ROOT/$FIXTURE/descriptor.json" > "$CITY/config/project-descriptors/trial.json"
+jq '.rigs = ["trial"] | .stacks = {"trial": ["fixture-stack"]}' "$ROOT/$FIXTURE/descriptor.json" > "$CITY/config/project-descriptors/trial.json"
 jq -n --argjson n "$CEILING" '{contract: "agent-factory-delivery-flow/v1", max_sessions: $n,
   start: {formula: "mol-ticket-author", role: "author"},
   code_review: {formula: "mol-code-review", role: "reviewer", rig: "trial", timeout_seconds: 600},
@@ -521,10 +544,10 @@ author_finishes() { # <ticket>: a slice finished at its tip with both defects; p
   state set-tdd "$CONVOY" "$t" --step red --commit "$red" --base "$BASE" >/dev/null
   jq -n --argjson files "$files" --arg id "$FIXTURE/tests/test_count_$t.py::CountTest.test_count" '{files: $files, criteria: {"1": [$id]}}' > "$TRIAL/request.$t.json"
   state open-test-review "$CONVOY" "$t" --commit "$red" --file "$TRIAL/request.$t.json" >/dev/null
-  jq -n --argjson files "$files" --arg commit "$red" --arg id "$FIXTURE/tests/test_count_$t.py::CountTest.test_count" \
-    '{commit: $commit, files: $files, tests: {($id): {state: "favorable"}}, recorded_by: "trial-test-reviewer"}' > "$TRIAL/verdict.$t.json"
-  state record-test-review "$CONVOY" "$t" --file "$TRIAL/verdict.$t.json" >/dev/null
-  state set-tdd "$CONVOY" "$t" --step freeze --commit "$red" >/dev/null
+  jq -n --argjson files "$files" --arg commit "$red" --arg id "$FIXTURE/tests/test_count_$t.py::CountTest.test_count" --arg reviewer "trial-test-reviewer-$t" \
+    '{commit: $commit, files: $files, tests: {($id): {state: "favorable"}}, recorded_by: $reviewer}' > "$TRIAL/verdict.$t.json"
+  state record-test-review "$CONVOY" "$t" --file "$TRIAL/verdict.$t.json" >/dev/null || fail "test review refused for $t"
+  state set-tdd "$CONVOY" "$t" --step freeze --commit "$red" >/dev/null || fail "test freeze refused for $t"
   finish "$CONVOY" "$t" "$tip" || fail "the first author could not finish $t"
   printf '%s' "$tip"
 }

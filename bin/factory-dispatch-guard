@@ -29,9 +29,13 @@
 # ladder's cadence, so a formula that legitimately self-claims within
 # seconds of dispatch, per af-pl39t, is never a false positive).
 #
-# Last progress = the newest *known* of updated_at / gc.last_heartbeat_at.
-# An empty or unparseable timestamp is unknown and contributes nothing (a
-# missing heartbeat falls back to updated_at). If neither is known there is
+# Last progress = the newest *known* of updated_at / heartbeat_at /
+# gc.last_heartbeat_at. heartbeat_at is the bead's own field, the one
+# `gc bd heartbeat` stamps when the holder refreshes its lease; until
+# 2026-10-12 only the metadata key was read, which that command never writes,
+# so a session heartbeating through a long trial lost its step after 15
+# minutes (af-r654ku). An empty or unparseable timestamp is unknown and
+# contributes nothing (a missing heartbeat falls back to updated_at). If neither is known there is
 # no evidence of progress at all, so the bead is treated as stale and its age
 # reported as unknown -- never invented. (Until 2026-09-29 an empty heartbeat
 # went through `date -d ""`, which silently answers midnight UTC today: a
@@ -67,6 +71,18 @@
 # (the session hasn't reached this step yet), not evidence of a stuck
 # dispatch. Once that session is gone (closed, or never existed), the bead
 # reverts to ordinary drift handling below.
+#
+# Claimed-step exception (2026-10-12, af-cdwo4z): a formula step claimed
+# through `gc hook --claim` has its assignee set to the claiming session's id
+# and carries that same id in `gc.session_id`, while `gc.routed_to` stays the
+# pool template (assignee=af-wisp-frrf2y3, routed_to=delivery-author). The
+# heartbeat signal above only helps a formula that asks for one, and a session
+# cannot heartbeat inside one long turn anyway: a live author session, 18
+# minutes into a single turn of mol-ticket-resume, lost its step this way
+# (af-tvnx85). So a bead whose assignee is its own `gc.session_id` is left
+# alone as long as that session is still alive, whatever its age. A sling
+# drift never matches: its assignee is a pre-existing value the claim did not
+# stamp. Once the session is gone the bead reverts to ordinary drift handling.
 #
 # --check-only reports without writing or paging anything.
 #
@@ -150,11 +166,18 @@ jq -e . >/dev/null 2>&1 <<<"$rows_json" || rows_json='[]'
 sessions_json=$(cd "$ROOT" && "$GC_BIN" --city "$ROOT" session list --state all --json 2>/dev/null)
 jq -e . >/dev/null 2>&1 <<<"$sessions_json" || sessions_json='{"sessions":[]}'
 ALIVE_SESSION_NAMES=$(jq -r '.sessions[]? | select(.closed != true) | .session_name // empty' <<<"$sessions_json")
+ALIVE_SESSION_IDS=$(jq -r '.sessions[]? | select(.closed != true) | .id // empty' <<<"$sessions_json")
 
 is_session_alive() {  # session_name
   local name=$1
   [ -n "$name" ] || return 1
   grep -qxF "$name" <<<"$ALIVE_SESSION_NAMES"
+}
+
+is_session_id_alive() {  # session_id
+  local sid=$1
+  [ -n "$sid" ] || return 1
+  grep -qxF "$sid" <<<"$ALIVE_SESSION_IDS"
 }
 
 # A field can legitimately be empty (assignee, heartbeat) and sit ahead of a
@@ -168,15 +191,17 @@ rows=$(jq -r '
     (.assignee // ""),
     (.metadata["gc.routed_to"] // ""),
     (.updated_at // ""),
+    (.heartbeat_at // ""),
     (.metadata["gc.last_heartbeat_at"] // ""),
-    (.metadata["gc.session_affinity"] // "")
+    (.metadata["gc.session_affinity"] // ""),
+    (.metadata["gc.session_id"] // "")
   ] | join("")
 ' <<<"$rows_json")
 
 NOW=$(now_epoch)
 STALE_SECONDS=$((STALE_MINUTES * 60))
 
-while IFS=$'\x1f' read -r id status assignee routed_to updated_at heartbeat_at session_affinity; do
+while IFS=$'\x1f' read -r id status assignee routed_to updated_at lease_heartbeat_at heartbeat_at session_affinity claim_session_id; do
   [ -z "$id" ] && continue
   CHECKED=$((CHECKED + 1))
   [ -n "$assignee" ] || continue
@@ -187,9 +212,14 @@ while IFS=$'\x1f' read -r id status assignee routed_to updated_at heartbeat_at s
   # that session is still alive, however stale it looks (af-7qxzh).
   [ "$session_affinity" = "require" ] && is_session_alive "$assignee" && continue
 
+  # assignee is the session that claimed this step through the hook
+  # (gc.session_id): the step is held, not drifted, as long as that session
+  # is still alive -- one long turn sends no heartbeat (af-cdwo4z).
+  [ "$assignee" = "$claim_session_id" ] && is_session_id_alive "$assignee" && continue
+
   # Newest KNOWN progress signal; an unknown one contributes nothing.
   last_progress=""
-  for e in "$(epoch_of "$updated_at")" "$(epoch_of "$heartbeat_at")"; do
+  for e in "$(epoch_of "$updated_at")" "$(epoch_of "$lease_heartbeat_at")" "$(epoch_of "$heartbeat_at")"; do
     [ -n "$e" ] || continue
     if [ -z "$last_progress" ] || [ "$e" -gt "$last_progress" ]; then last_progress=$e; fi
   done

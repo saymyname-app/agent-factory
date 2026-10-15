@@ -18,6 +18,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 import sys
 import unittest
 import urllib.request
@@ -62,6 +63,7 @@ NOTE = "docs/tranche.md"
 CRITERION = "Point d'entrée : GET / — Observable : ancre fixture-count — Faux si : le nombre d'éléments n'y est pas"
 SECOND_CRITERION = "Point d'entrée : GET /health — Observable : statut ok — Faux si : la sonde ne répond pas"
 DEMONSTRATION = "Sur le jeu content, la page d'accueil affiche 3 éléments"
+BOTH_GAMES = "Sur les jeux content et empty, la page d'accueil affiche ses éléments"
 TICKET_TEXT = f"""## What to build
 
 Le nombre d'éléments sur la page d'accueil.
@@ -181,7 +183,11 @@ class TicketEvaluationTest(unittest.TestCase):
             "SPEC_INTEGRATION_LOCK_DIR": str(self.tmp / "locks"),
             "SPEC_INTEGRATION_WORK_DIR": str(self.work),
             "TICKET_EVALUATION_DISPATCH_DOOR_BIN": str(FAKE_EVALUATOR),
+            "TICKET_EVALUATION_CANCEL_BIN": str(ROOT / "tests" / "fixtures" / "ticket-evaluation" / "cancel"),
+            "TICKET_EVALUATION_CANCEL_LOG": str(self.tmp / "cancel.log"),
             "TICKET_EVALUATION_STATE_DIR": str(self.launches_dir),
+            "OUTCOME_EVALUATION_STATE_DIR": str(self.tmp / "outcome-launches"),
+            "EVALUATION_CAPACITY_STATE_DIR": str(self.tmp / "capacity"),
             "TICKET_EVALUATION_FAKE_LOG": str(self.door_log),
             "TICKET_EVALUATION_FAKE_PLAN": str(self.plan),
             "TICKET_EVALUATION_FAKE_BRIEFS": str(self.briefs),
@@ -247,6 +253,10 @@ class TicketEvaluationTest(unittest.TestCase):
         (config / "projects" / f"{RIG}.toml").write_text(f'rig_dir = "{self.repo}"\n')
         profile = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
         profile["rigs"] = [RIG]
+        profile["stacks"] = {RIG: ["fixture-stack"]}
+        profile["launch"]["datasets"] = {"content": profile["launch"]["datasets"]["content"]}
+        for screen in profile["launch"]["screens"]:
+            screen["states"] = ["content"]
         self.profile.write_text(json.dumps(profile))
 
     def settings(self, **evaluation):
@@ -508,6 +518,12 @@ class TicketEvaluationTest(unittest.TestCase):
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         return piece
 
+    def cite(self, line=BOTH_GAMES, ticket=SLICE):
+        """The ticket names its games in its demonstration line (af-kdxk6k)."""
+        tracker = json.loads(self.tracker.read_text())
+        tracker["beads"][ticket]["metadata"]["gc.flow.demonstration_line"] = line
+        self.tracker.write_text(json.dumps(tracker))
+
     def handed(self, tip, request, **changes):
         """Every state « observed », each on a captured page of the first product."""
         product = request["environment"][0]
@@ -517,8 +533,9 @@ class TicketEvaluationTest(unittest.TestCase):
                           "evidence": self.capture("evaluation.c1", product)},
                          {"number": 2, "text": SECOND_CRITERION, "state": "observed",
                           "evidence": self.capture("evaluation.c2", product, "/health")}],
-            "demonstration_line": {"text": DEMONSTRATION, "state": "observed",
+            "demonstration_line": {"text": request.get("demonstration_line", DEMONSTRATION), "state": "observed",
                                    "evidence": self.capture("evaluation.demo", product)},
+            "coverage": [{"dataset": product["dataset"], "evidence": "evaluation.c1"}],
         }
         result.update(changes)
         return result
@@ -535,6 +552,205 @@ class TicketEvaluationTest(unittest.TestCase):
     def record_refused(self, content, mention, env=SESSION):
         return self.refused("record", CONVOY, SLICE, "--repo", self.repo, "--file",
                             self.json_file("handed.json", content), mention=mention, env=env)
+
+    def test_recipe_establishing_ticket_uses_its_committed_recipe_not_live_or_dirty_profile(self):
+        candidate = self.profile.read_text()
+        files = self.realized()
+        files["config/project-descriptors/fx.json"] = candidate
+        tip = self.finished_slice(files)
+        tracker = json.loads(self.tracker.read_text())
+        tracker["beads"][SLICE]["metadata"]["gc.flow.establishes_launch_recipe"] = True
+        tracker["beads"][OTHER_SLICE]["description"] += (
+            "\n\n## Validated Prototype\n\n- branche : main\n"
+            f"- commit : {self.base}\n- chemin : {FIXTURE}/prototype\n- états : empty, content\n")
+        self.tracker.write_text(json.dumps(tracker))
+        live = json.loads(candidate)
+        live["launch"] = None
+        self.profile.write_text(json.dumps(live))
+        # The author's checkout and the live profile cannot provide the recipe.
+        (self.repo / "config/project-descriptors").mkdir(parents=True, exist_ok=True)
+        (self.repo / "config/project-descriptors/fx.json").write_text("invalid dirty profile")
+        self.evaluator("silent")
+        settled = self.settle()
+        self.assertEqual([SLICE], [entry["ticket"] for entry in settled["launched"]])
+        brief = self.tool("brief")
+        self.assertEqual(tip, brief["commit"])
+        self.assertEqual(json.loads(candidate)["launch"]["entry_points"], brief["entry_points"])
+        self.assertIsNone(json.loads(self.profile.read_text())["launch"])
+        observation = brief["controller_observation"]
+        lifecycle = observation["observation"]["lifecycle"]
+        self.assertEqual(0, lifecycle["start"]["exit_code"])
+        self.assertEqual(0, lifecycle["stop"]["exit_code"])
+        self.assertTrue(lifecycle["port_open_before_stop"])
+        self.assertFalse(lifecycle["port_open_after_stop"])
+        self.assertFalse(lifecycle["process_alive_after_stop"])
+        self.assertEqual([], lifecycle["processes_after_stop"])
+        self.assertNotIn(int(brief["environments"][0]["address"].rsplit(":", 1)[1]), lifecycle["existing_ports_before"])
+        self.assertTrue(lifecycle["sentinel_survived"])
+        reference, = observation["observation"]["references"]
+        self.assertEqual(0, reference["anchors"]["exit_code"])
+        self.assertEqual(1, len(reference["datasets"]))
+        self.assertTrue(all(d["identical"] for d in reference["datasets"]))
+        self.assertEqual(observation, self.tool("brief", env=SESSION)["controller_observation"])
+        request = self.evaluation()["request"]
+        self.refused("observe", CONVOY, SLICE, "--repo", self.repo, "--commit", tip,
+                     "--launch-state", request["environment"][0]["state_file"],
+                     env=SESSION, mention="réservées au contrôleur")
+        verdict = self.tool("verdict")
+        self.assertFalse(verdict["favorable"])
+        request = self.evaluation()["request"]
+        handed = self.handed(tip, request)
+        handed["criteria"][1]["evidence"] = observation["piece"]
+        path = Path(observation["path"])
+        saved = path.read_bytes()
+        path.write_text('{}')
+        self.record_refused(handed, "ne correspond plus à l'empreinte")
+        path.write_bytes(saved)
+        self.recorded(handed)
+        self.assertTrue(self.tool("verdict")["favorable"])
+
+    def test_recipe_observation_remains_verifiable_after_dataset_switch(self):
+        candidate = json.loads(self.profile.read_text())
+        original = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
+        candidate["launch"]["datasets"]["empty"] = original["launch"]["datasets"]["empty"]
+        candidate["launch"]["screens"][0]["states"] = ["content", "empty"]
+        committed = json.dumps(candidate)
+        self.cite()
+        files = self.realized()
+        files["config/project-descriptors/fx.json"] = committed
+        self.finished_slice(files)
+        tracker = json.loads(self.tracker.read_text())
+        tracker["beads"][SLICE]["metadata"]["gc.flow.establishes_launch_recipe"] = True
+        self.tracker.write_text(json.dumps(tracker))
+        self.profile.write_text(committed)
+        self.evaluator("silent")
+        self.settle()
+        first = self.tool("brief")["controller_observation"]
+        self.assertFalse(self.tool("product", SLICE, "--dataset", "empty", env=SESSION)["ready"])
+        self.settle()
+        brief = self.tool("brief")
+        self.assertEqual("empty", brief["environments"][0]["dataset"])
+        self.assertEqual(first, brief["controller_observation"])
+
+    def test_recipe_observation_is_recaptured_when_timeout_replaces_product(self):
+        candidate = json.loads(self.profile.read_text())
+        original = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
+        candidate["launch"]["datasets"]["empty"] = original["launch"]["datasets"]["empty"]
+        candidate["launch"]["screens"][0]["states"] = ["content", "empty"]
+        committed = json.dumps(candidate)
+        self.cite()
+        files = self.realized()
+        files["config/project-descriptors/fx.json"] = committed
+        self.finished_slice(files)
+        tracker = json.loads(self.tracker.read_text())
+        tracker["beads"][SLICE]["metadata"]["gc.flow.establishes_launch_recipe"] = True
+        self.tracker.write_text(json.dumps(tracker))
+        self.profile.write_text(committed)
+        self.settings(timeout_seconds=0)
+        self.evaluator("silent")
+        self.settle()
+        first = self.tool("brief")["controller_observation"]
+        self.assertFalse(self.tool("product", SLICE, "--dataset", "empty", "--fresh", env=SESSION)["ready"])
+
+        settled = self.settle()
+
+        self.assertEqual([SLICE], [entry["ticket"] for entry in settled["relaunched"]])
+        brief = self.tool("brief")
+        second = brief["controller_observation"]
+        self.assertEqual("empty", brief["environments"][0]["dataset"])
+        self.assertNotEqual(first["piece"], second["piece"])
+
+    def test_inaccessible_reference_is_captured_as_failure_never_as_a_pass(self):
+        files = self.realized()
+        files["config/project-descriptors/fx.json"] = self.profile.read_text()
+        tip = self.finished_slice(files)
+        tracker = json.loads(self.tracker.read_text())
+        tracker["beads"][SLICE]["metadata"]["gc.flow.establishes_launch_recipe"] = True
+        tracker["beads"][OTHER_SLICE]["description"] += (
+            "\n\n## Validated Prototype\n\n- branche : main\n"
+            f"- commit : {'a' * 40}\n- chemin : absent\n- états : content\n")
+        self.tracker.write_text(json.dumps(tracker))
+        self.evaluator("silent")
+        self.settle()
+        report = self.tool("brief")["controller_observation"]
+        ref, = report["observation"]["references"]
+        self.assertNotEqual(0, ref["anchors"]["exit_code"])
+        self.assertIn("error", ref)
+        handed = self.handed(tip, self.evaluation()["request"])
+        handed["criteria"][1].update(state="not_observed", evidence=report["piece"], reason="référence inaccessible")
+        self.assertEqual("return_to_author", self.recorded(handed)["outcome"])
+        self.assertFalse(self.tool("verdict")["favorable"])
+
+    def test_recipe_establishing_ticket_refuses_failed_lifecycle_before_primary_launch(self):
+        files = self.realized()
+        files["config/project-descriptors/fx.json"] = self.profile.read_text()
+        files[APP] = "raise SystemExit('broken launch')\n"
+        self.finished_slice(files)
+        tracker = json.loads(self.tracker.read_text())
+        tracker["beads"][SLICE]["metadata"]["gc.flow.establishes_launch_recipe"] = True
+        self.tracker.write_text(json.dumps(tracker))
+
+        settled = self.settle(expect=1)
+
+        self.assertIn("lifecycle preflight failed", settled["refused"][0]["reason"])
+        self.assertEqual([], self.launches())
+
+    def test_recipe_establishing_ticket_refuses_missing_committed_profile(self):
+        self.finished_slice(self.realized())
+        tracker = json.loads(self.tracker.read_text())
+        tracker["beads"][SLICE]["metadata"]["gc.flow.establishes_launch_recipe"] = True
+        self.tracker.write_text(json.dumps(tracker))
+        settled = self.settle(expect=1)
+        self.assertIn("profil absent au commit évalué", settled["refused"][0]["reason"])
+        self.assertEqual([], self.launches())
+
+    def test_interrupted_preparation_reuses_exact_live_products_before_opening_evaluation(self):
+        tip = self.finished_slice(self.realized())
+        folder = self.launches_dir / CONVOY / SLICE
+        folder.mkdir(parents=True)
+        record = folder / "interrupted-content.json"
+        started = self.run_cmd(LAUNCH_TOOL, "--repo-root", self.repo, "start", self.profile,
+                               "--commit", tip, "--dataset", "content", "--state-file", record)
+        self.assertEqual(0, started.returncode, started.stdout + started.stderr)
+        original = json.loads(record.read_text())
+        self.assertIsNone((self.evaluation() or {}).get("request"))
+        self.evaluator("silent")
+        settled = self.settle()
+        self.assertEqual([SLICE], [entry["ticket"] for entry in settled["launched"]])
+        request = self.evaluation()["request"]
+        content = next(e for e in request["environment"] if e["dataset"] == "content")
+        self.assertEqual(str(record), content["state_file"])
+        self.assertEqual(original["address"], content["address"])
+        self.assertEqual(len(json.loads(self.profile.read_text())["launch"]["datasets"]),
+                         len(request["environment"]))
+        self.assertEqual(original["pid"], json.loads(record.read_text())["pid"])
+        self.assertFalse(self.tool("verdict")["favorable"])
+
+    def test_prepared_products_are_stopped_when_the_ticket_is_no_longer_due(self):
+        tip = self.finished_slice(self.realized())
+        folder = self.launches_dir / CONVOY / SLICE
+        folder.mkdir(parents=True)
+        record = folder / "interrupted-content.json"
+        started = self.run_cmd(LAUNCH_TOOL, "--repo-root", self.repo, "start", self.profile,
+                               "--commit", tip, "--dataset", "content", "--state-file", record)
+        self.assertEqual(0, started.returncode, started.stdout + started.stderr)
+        original = json.loads(record.read_text())
+        trial = record.with_suffix(".trial")
+        started = self.run_cmd(LAUNCH_TOOL, "--repo-root", self.repo, "start", self.profile,
+                               "--commit", tip, "--dataset", "content", "--state-file", trial)
+        self.assertEqual(0, started.returncode, started.stdout + started.stderr)
+        self.addCleanup(self.run_cmd, LAUNCH_TOOL, "stop", "--state-file", trial)
+        interrupted_trial = json.loads(trial.read_text())
+        tracker = json.loads(self.tracker.read_text())
+        tracker["beads"][SLICE]["status"] = "closed"
+        self.tracker.write_text(json.dumps(tracker))
+        self.settle()
+        self.assertEqual([], self.launches())
+        self.assertFalse(trial.exists())
+        with self.assertRaises(Exception):
+            urllib.request.urlopen(interrupted_trial["address"], timeout=1)
+        with self.assertRaises(Exception):
+            urllib.request.urlopen(original["address"], timeout=1)
 
     # --- the demonstration line of the ticket -----------------------------------
 
@@ -557,6 +773,30 @@ class TicketEvaluationTest(unittest.TestCase):
         self.assertIn("retour à l'auteur", verdict["consequence"])
         merged = self.merge()
         self.assertEqual(([], [SLICE]), (merged["merged"], [entry["id"] for entry in merged["waiting"]]))
+
+    def test_a_validated_true_value_served_false_refuses_an_observed_criterion(self):
+        tip, request = self.open_evaluation()
+        profile = json.loads(self.profile.read_text())
+        profile["validated_expectations"] = [{
+            "scope": "ticket", "number": 1, "text": CRITERION, "dataset": "content",
+            "source": {"reference": "validated factory-suspended scenario", "digest": sha256_of(b"approved scenario")},
+            "expected": True, "observation": {"path": "/status", "pointer": "/suspended"},
+        }]
+        self.profile.write_text(json.dumps(profile))
+        brief = self.tool("brief", env=SESSION)
+        self.assertEqual(tip, brief["expectations"][0]["commit"])
+        product = request["environment"][0]
+        piece = "evaluation.expected.suspended"
+        captured = self.run_cmd(CAPTURE_TOOL, "command", CONVOY, SLICE, "--piece", piece,
+                                "--launch-state", product["state_file"], "--", sys.executable, "-c",
+                                brief["capture"]["page"][-2], product["address"] + "/status", env=SESSION)
+        self.assertEqual(0, captured.returncode, captured.stdout + captured.stderr)
+        result = self.handed(tip, request, comparisons=[{"id": brief["expectations"][0]["id"], "evidence": piece}])
+        self.recorded(result)
+        round_ = self.evaluation()["rounds"][0]
+        self.assertEqual("return_to_author", round_["outcome"])
+        self.assertEqual("not_observed", round_["criteria"][0]["state"])
+        self.assertIn("servi False", round_["criteria"][0]["reason"])
 
     def test_the_corrected_ticket_has_every_state_observed_with_evidence_and_a_favorable_verdict(self):
         self.finished_slice()
@@ -589,7 +829,7 @@ class TicketEvaluationTest(unittest.TestCase):
         settled = self.settle()
 
         request = self.evaluation()["request"]
-        self.assertEqual(["content", "empty"], [entry["dataset"] for entry in request["environment"]])
+        self.assertEqual(["content"], [entry["dataset"] for entry in request["environment"]])
         self.assertEqual(request["environment"][0]["address"], settled["launched"][0]["environment"][0]["address"])
         for product in request["environment"]:
             launch = json.loads(Path(product["state_file"]).read_text())
@@ -600,6 +840,122 @@ class TicketEvaluationTest(unittest.TestCase):
             self.assertNotIn("fixture-uncommitted", page)
         captured = self.piece(self.capture("evaluation.c1", request["environment"][0]))
         self.assertEqual((request["environment"][0]["address"], tip), (captured["address"], captured["commit"]))
+
+    def test_datasets_open_on_demand_with_one_live_product_and_separate_proofs(self):
+        profile = json.loads(self.profile.read_text())
+        original = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
+        profile["launch"]["datasets"]["empty"] = original["launch"]["datasets"]["empty"]
+        profile["launch"]["screens"][0]["states"] = ["content", "empty"]
+        self.profile.write_text(json.dumps(profile))
+        self.cite()
+        tip = self.finished_slice(self.realized())
+        self.evaluator("silent")
+        self.settle()
+        request = self.evaluation()["request"]
+        self.assertEqual(["content"], [entry["dataset"] for entry in request["environment"]])
+        first = request["environment"][0]
+        handed = self.handed(tip, request)
+        asked = self.tool("product", SLICE, "--dataset", "empty", env=SESSION)
+        self.assertFalse(asked["ready"])
+        settled = self.settle()
+        self.assertEqual([SLICE], [entry["ticket"] for entry in settled["product_ready"]])
+        request = self.evaluation()["request"]
+        self.assertEqual(["content", "empty"], [entry["dataset"] for entry in request["environment"]])
+        self.assertFalse(Path(first["state_file"]).exists())
+        second = request["environment"][-1]
+        self.assertEqual([second["state_file"]], self.evaluation()["live"])
+        self.assertEqual(tip, json.loads(Path(second["state_file"]).read_text())["commit"])
+        self.assertTrue(self.tool("product", SLICE, "--dataset", "empty", env=SESSION)["ready"])
+        handed["coverage"].append({"dataset": "empty", "evidence": self.capture("evaluation.empty", second)})
+        self.recorded(handed)
+        self.assertTrue(self.tool("verdict")["favorable"])
+
+    def test_a_ticket_is_evaluated_only_on_the_games_it_names(self):
+        """af-kdxk6k: a second declared game the ticket does not name is
+        neither launched, nor requestable, nor required in coverage."""
+        profile = json.loads(self.profile.read_text())
+        original = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
+        profile["launch"]["datasets"]["empty"] = original["launch"]["datasets"]["empty"]
+        self.profile.write_text(json.dumps(profile))
+        tip = self.finished_slice(self.realized())
+        self.evaluator("silent")
+        self.settle()
+        request = self.evaluation()["request"]
+        self.assertEqual(["content"], request["datasets"])
+        self.refused("product", CONVOY, SLICE, "--repo", self.repo, "--dataset", "empty", env=SESSION)
+        self.recorded(self.handed(tip, request))
+        self.assertTrue(self.tool("verdict")["favorable"])
+
+    def test_a_game_named_only_by_a_validated_expectation_is_a_game_of_the_ticket(self):
+        profile = json.loads(self.profile.read_text())
+        original = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
+        profile["launch"]["datasets"]["empty"] = original["launch"]["datasets"]["empty"]
+        profile["validated_expectations"] = [{
+            "scope": "ticket", "number": 1, "text": CRITERION, "dataset": "empty",
+            "source": {"reference": "validated empty scenario", "digest": sha256_of(b"approved scenario")},
+            "expected": 0, "observation": {"path": "/status", "pointer": "/count"},
+        }]
+        self.profile.write_text(json.dumps(profile))
+        self.finished_slice(self.realized())
+        self.evaluator("silent")
+        self.settle()
+        self.assertEqual(["content", "empty"], self.evaluation()["request"]["datasets"])
+
+    def test_an_expired_launch_is_replaced_before_its_requested_dataset_is_opened(self):
+        profile = json.loads(self.profile.read_text())
+        original = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
+        profile["launch"]["datasets"]["empty"] = original["launch"]["datasets"]["empty"]
+        profile["launch"]["screens"][0]["states"] = ["content", "empty"]
+        self.profile.write_text(json.dumps(profile))
+        self.cite()
+        self.finished_slice(self.realized())
+        self.settings(timeout_seconds=0)
+        self.evaluator("silent")
+        self.settle()
+        first = self.evaluation()["request"]
+        first_product = first["environment"][0]
+        first_launch = first["launches"][0]["bead"]
+        asked = self.tool("product", SLICE, "--dataset", "empty", "--fresh", env=SESSION)
+        self.assertFalse(asked["ready"])
+
+        settled = self.settle()
+
+        self.assertEqual([SLICE], [entry["ticket"] for entry in settled["relaunched"]])
+        self.assertEqual([], settled["product_ready"])
+        request = self.evaluation()["request"]
+        self.assertEqual(2, len(request["launches"]))
+        self.assertEqual([first_launch], (self.tmp / "cancel.log").read_text().splitlines())
+        self.assertFalse(Path(first_product["state_file"]).exists())
+        replacement = request["environment"][-1]
+        self.assertEqual("empty", replacement["dataset"])
+        self.assertEqual([replacement], request["environment"])
+        self.assertEqual([replacement["state_file"]], self.evaluation()["live"])
+        self.assertTrue(Path(replacement["state_file"]).exists())
+
+    def test_open_legacy_multi_game_request_cannot_record_without_coverage(self):
+        profile = json.loads(self.profile.read_text())
+        original = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
+        profile["launch"]["datasets"]["empty"] = original["launch"]["datasets"]["empty"]
+        profile["launch"]["screens"][0]["states"] = ["content", "empty"]
+        self.profile.write_text(json.dumps(profile))
+        self.cite()
+        tip = self.finished_slice(self.realized())
+        self.evaluator("silent")
+        self.settle()
+        request = self.evaluation()["request"]
+        handed = self.handed(tip, request)
+        self.tool("product", SLICE, "--dataset", "empty", env=SESSION)
+        self.settle()
+        tracker = json.loads(self.tracker.read_text())
+        metadata = tracker["beads"][SLICE]["metadata"]
+        legacy = json.loads(metadata["gc.flow.evaluation"])
+        self.assertEqual(2, len(legacy["request"]["environment"]))
+        legacy["request"].pop("datasets")
+        metadata["gc.flow.evaluation"] = json.dumps(legacy)
+        self.tracker.write_text(json.dumps(tracker))
+        handed.pop("coverage")
+
+        self.record_refused(handed, "couverture")
 
     def test_settle_on_a_project_without_a_named_dataset_is_refused_and_launches_no_product(self):
         """T38 (af-8o4jcp): no dataset declared, so nothing is launched and
@@ -867,6 +1223,29 @@ class TicketEvaluationTest(unittest.TestCase):
         self.assertEqual([], again["planning_exception"])
         self.assertEqual(1, len(self.escalation_list()))
 
+    def test_resolved_evaluation_exception_replays_once_without_erasing_its_refusal(self):
+        tip, request = self.open_evaluation()
+        handed = self.handed(tip, request)
+        handed["criteria"][0].update(state="unobservable", cause="criterion", reason="commande inaccessible")
+        self.recorded(handed)
+        self.settle()
+        previous = self.evaluation()["rounds"]
+        time.sleep(1.1)  # Distinct event timestamps, as in the durable parking contract.
+        self.state("lift-park", CONVOY, SLICE, "--request", SLICE, "--option", "a")
+        self.evaluator("silent")
+        self.assertEqual([SLICE], [e["ticket"] for e in self.settle()["launched"]])
+        self.assertEqual(previous, self.evaluation()["rounds"])
+        self.assertFalse(self.tool("verdict")["favorable"])
+        request = self.evaluation()["request"]
+        handed = self.handed(tip, request)
+        handed["criteria"][0].update(state="unobservable", cause="criterion", reason="toujours inaccessible")
+        self.tool("record", SLICE, "--file", self.json_file("replay.json", handed),
+                  env={**SESSION, "GC_SESSION_NAME": "delivery-evaluator-fx-replay"})
+        self.assertEqual(2, len(self.evaluation()["rounds"]))
+        self.assertEqual([SLICE], [e["ticket"] for e in self.settle()["planning_exception"]])
+        self.assertFalse(self.tool("verdict")["favorable"])
+        self.assertEqual([], self.settle()["launched"])
+
     def test_an_unobservable_by_the_environment_is_an_outage_that_is_not_counted_as_a_refusal(self):
         tip, request = self.open_evaluation()
         handed = self.handed(tip, request)
@@ -926,6 +1305,29 @@ class TicketEvaluationTest(unittest.TestCase):
         # A second pass does nothing more.
         self.assertEqual([], self.settle()["started"])
 
+    def test_prefactoring_probes_only_the_first_declared_game(self):
+        """af-kdxk6k: a prefactoring names no game, so only the first declared
+        one is probed; a behaviour on every game belongs in a test."""
+        profile = json.loads(self.profile.read_text())
+        original = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
+        profile["launch"]["datasets"]["empty"] = original["launch"]["datasets"]["empty"]
+        profile["launch"]["screens"][0]["states"] = ["content", "empty"]
+        self.profile.write_text(json.dumps(profile))
+        tip = self.finished_prefactoring()
+
+        settled = self.settle()
+
+        self.assertEqual([PREFACTORING], [entry["ticket"] for entry in settled["started"]])
+        (round_,) = self.evaluation(PREFACTORING)["rounds"]
+        self.assertEqual(["content"], [entry["dataset"] for entry in round_["environment"]])
+        self.assertEqual(["content"], [entry["dataset"] for entry in round_["coverage"]])
+        for entry, coverage in zip(round_["environment"], round_["coverage"]):
+            piece = self.piece(coverage["evidence"], PREFACTORING)
+            self.assertEqual((tip, entry["address"], 0),
+                             (piece["commit"], piece["address"], piece["exit_code"]))
+        self.assertTrue(self.tool("verdict", PREFACTORING)["favorable"])
+        self.assertEqual([], self.launch_records())
+
     def test_a_prefactoring_whose_product_does_not_start_gets_an_unfavorable_verdict(self):
         tip = self.finished_prefactoring({APP: "raise SystemExit('le produit ne démarre plus')\n"})
         self.settings(timeout_seconds=3600, start_timeout_seconds=2)
@@ -975,11 +1377,258 @@ class TicketEvaluationTest(unittest.TestCase):
         self.assertEqual(DEMONSTRATION, brief["demonstration_line"])
         self.assertEqual([{"number": 1, "text": CRITERION}, {"number": 2, "text": SECOND_CRITERION}], brief["criteria"])
         self.assertEqual(tip, brief["commit"])
-        self.assertEqual(["content", "empty"], [entry["dataset"] for entry in brief["environments"]])
+        self.assertEqual(["content"], [entry["dataset"] for entry in brief["environments"]])
         for forbidden in (HANDOFF_PROSE, "PROSE-DU-HANDOFF", COMMIT_PROSE, "handoff", "diff", str(self.repo),
                           branch_of(SLICE), NOTE, self.base, "files_changed"):
             self.assertNotIn(forbidden, given)
         self.assertNotIn("repo", brief)
+
+    def test_interface_brief_includes_design_rules_and_screen_checks(self):
+        design = "# Design\n\n- Le focus reste visible.\n"
+        tip = self.finished_slice({**self.realized(), "DESIGN.md": design})
+        self.edit(SLICE, description=TICKET_TEXT + "\n\n## Validated Prototype\n"
+                  + "- branche : prototype/essai\n- commit : " + "a" * 40
+                  + "\n- chemin : /fixture\n- états : content\n")
+        self.evaluator("silent")
+        self.settle()
+        (self.repo / "DESIGN.md").write_text("- Règle du checkout mutable.\n")
+
+        brief = self.tool("brief")
+
+        self.assertEqual(tip, brief["commit"])
+        self.assertEqual({"path": "DESIGN.md", "text": design}, brief["design"])
+        self.assertEqual(["Tout se fait au clavier", "Le focus est visible",
+                          "Les images ont une description", "Le mouvement réduit est respecté"],
+                         brief["screen_checks"])
+
+    def test_interface_brief_shows_changed_reference_and_ticket_intent(self):
+        path = "design-bench/bench.spec.mjs-snapshots/home.png"
+        self.git("checkout", "-q", INTEGRATION)
+        baseline = self.repo / path
+        baseline.parent.mkdir(parents=True, exist_ok=True)
+        baseline.write_bytes(b"before image")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "visual baseline")
+        self.git("push", "-q", "origin", INTEGRATION)
+        self.git("checkout", "-q", "--detach", self.base)
+        intent = "La couleur primaire devient plus douce"
+        self.edit(SLICE, description=TICKET_TEXT + "\n\n## Changement visuel\n\n" + intent + "\n"
+                  + "\n## Validated Prototype\n- branche : prototype/essai\n- commit : " + "a" * 40
+                  + "\n- chemin : /fixture\n- états : content\n")
+        manifest = {"contract": "agent-factory-visual-changes/v1", "entries": [
+            {"path": path, "ticket": SLICE, "intent": intent}]}
+        self.finished_slice({**self.realized(), "DESIGN.md": "- Le changement visuel respecte l'intention du ticket.\n",
+                             path: "after image", "design-bench/visual-changes.json": json.dumps(manifest)})
+        self.evaluator("silent")
+        self.settle()
+
+        brief = self.tool("brief")
+
+        self.assertEqual(1, len(brief["visual_changes"]))
+        change = brief["visual_changes"][0]
+        self.assertEqual(path, change["path"])
+        self.assertEqual(intent, change["intent"])
+        self.assertEqual(b"before image", Path(change["before"]).read_bytes())
+        self.assertEqual(b"after image", Path(change["after"]).read_bytes())
+        self.assertIn("Le changement visuel correspond à l'intention déclarée", brief["screen_checks"])
+
+    def test_changed_reference_rejects_a_stale_visual_declaration(self):
+        path = "design-bench/bench.spec.mjs-snapshots/home.png"
+        intent = "La couleur primaire devient plus douce"
+        manifest = {"contract": "agent-factory-visual-changes/v1", "entries": [
+            {"path": path, "ticket": SLICE, "intent": intent}]}
+        self.git("checkout", "-q", INTEGRATION)
+        baseline = self.repo / path
+        baseline.parent.mkdir(parents=True, exist_ok=True)
+        baseline.write_bytes(b"before image")
+        declaration = self.repo / "design-bench/visual-changes.json"
+        declaration.write_text(json.dumps(manifest))
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "visual baseline and declaration")
+        self.git("push", "-q", "origin", INTEGRATION)
+        self.git("checkout", "-q", "--detach", self.base)
+        self.edit(SLICE, description=TICKET_TEXT + "\n\n## Changement visuel\n\n" + intent + "\n"
+                  + "\n## Validated Prototype\n- branche : prototype/essai\n- commit : " + "a" * 40
+                  + "\n- chemin : /fixture\n- états : content\n")
+        self.finished_slice({**self.realized(), "DESIGN.md": "- Le changement visuel respecte l'intention du ticket.\n",
+                             path: "after image"})
+        self.evaluator("silent")
+        self.settle()
+
+        self.refused("brief", CONVOY, SLICE, "--repo", self.repo,
+                     mention="déclaration visuelle périmée")
+
+    def test_initial_visual_reference_needs_no_change_declaration(self):
+        path = "design-bench/bench.spec.mjs-snapshots/home.png"
+        self.finished_slice({**self.realized(), "DESIGN.md": "- Le focus reste visible.\n",
+                             path: "initial image"})
+        self.edit(SLICE, description=TICKET_TEXT + "\n\n## Validated Prototype\n"
+                  + "- branche : prototype/essai\n- commit : " + "a" * 40
+                  + "\n- chemin : /fixture\n- états : content\n")
+        self.evaluator("silent")
+        self.settle()
+
+        brief = self.tool("brief")
+
+        self.assertNotIn("visual_changes", brief)
+        self.assertNotIn("Le changement visuel correspond à l'intention déclarée", brief["screen_checks"])
+
+    def test_interface_brief_without_origin_uses_local_integration_branch(self):
+        self.finished_slice({**self.realized(), "DESIGN.md": "- Le focus reste visible.\n"})
+        self.edit(SLICE, description=TICKET_TEXT + "\n\n## Validated Prototype\n"
+                  + "- branche : prototype/essai\n- commit : " + "a" * 40
+                  + "\n- chemin : /fixture\n- états : content\n")
+        self.evaluator("silent")
+        self.settle()
+        self.git("branch", INTEGRATION, f"origin/{INTEGRATION}")
+        self.git("remote", "remove", "origin")
+
+        brief = self.tool("brief")
+
+        self.assertIn("design", brief)
+        self.assertNotIn("visual_changes", brief)
+
+    def test_non_interface_brief_omits_design_even_if_the_repository_has_it(self):
+        self.finished_slice({**self.realized(), "DESIGN.md": "- Le focus reste visible.\n"})
+        self.evaluator("silent")
+        self.settle()
+
+        brief = self.tool("brief")
+
+        self.assertNotIn("design", brief)
+        self.assertNotIn("screen_checks", brief)
+
+    def test_cited_screen_finding_refuses_an_otherwise_favorable_interface_ticket(self):
+        rule = "- Le focus reste visible."
+        tip, request = self.open_evaluation({**self.realized(), "DESIGN.md": rule + "\n"})
+        self.edit(SLICE, description=TICKET_TEXT + "\n\n## Validated Prototype\n"
+                  + "- branche : prototype/essai\n- commit : " + "a" * 40
+                  + "\n- chemin : /fixture\n- états : content\n")
+        handed = self.handed(tip, request)
+        handed["screen_findings"] = [{"check": "Le focus est visible", "rule": rule,
+                                      "evidence": self.capture("evaluation.focus", request["environment"][0]),
+                                      "reason": "Le focus disparaît après Tab."}]
+
+        result = self.recorded(handed)
+
+        self.assertEqual(("return_to_author", "unfavorable"), (result["outcome"], result["verdict"]))
+        self.assertIn("écran : Le focus est visible", result["state"]["not_observed"])
+        self.assertFalse(self.tool("verdict")["favorable"])
+
+    def test_cited_visual_intent_finding_refuses_an_interface_ticket(self):
+        path = "design-bench/bench.spec.mjs-snapshots/home.png"
+        self.git("checkout", "-q", INTEGRATION)
+        baseline = self.repo / path
+        baseline.parent.mkdir(parents=True, exist_ok=True)
+        baseline.write_bytes(b"before image")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "visual baseline")
+        self.git("push", "-q", "origin", INTEGRATION)
+        self.git("checkout", "-q", "--detach", self.base)
+        intent = "La couleur primaire devient plus douce"
+        self.edit(SLICE, description=TICKET_TEXT + "\n\n## Changement visuel\n\n" + intent + "\n"
+                  + "\n## Validated Prototype\n- branche : prototype/essai\n- commit : " + "a" * 40
+                  + "\n- chemin : /fixture\n- états : content\n")
+        rule = "- Le changement visuel respecte l'intention du ticket."
+        manifest = {"contract": "agent-factory-visual-changes/v1", "entries": [
+            {"path": path, "ticket": SLICE, "intent": intent}]}
+        tip, request = self.open_evaluation({**self.realized(), "DESIGN.md": rule + "\n",
+                                             path: "after image",
+                                             "design-bench/visual-changes.json": json.dumps(manifest)})
+        handed = self.handed(tip, request)
+        handed["screen_findings"] = [{"check": "Le changement visuel correspond à l'intention déclarée",
+                                      "rule": rule,
+                                      "evidence": self.capture("evaluation.visual", request["environment"][0]),
+                                      "reason": "La référence montre un contraste réduit, contrairement à l'intention."}]
+
+        result = self.recorded(handed)
+
+        self.assertEqual(("return_to_author", "unfavorable"), (result["outcome"], result["verdict"]))
+        self.assertIn("écran : Le changement visuel correspond à l'intention déclarée",
+                      result["state"]["not_observed"])
+
+    def test_direct_state_write_refuses_stale_visual_declaration(self):
+        path = "design-bench/bench.spec.mjs-snapshots/home.png"
+        intent = "La couleur primaire devient plus douce"
+        manifest = {"contract": "agent-factory-visual-changes/v1", "entries": [
+            {"path": path, "ticket": SLICE, "intent": intent}]}
+        self.git("checkout", "-q", INTEGRATION)
+        baseline = self.repo / path
+        baseline.parent.mkdir(parents=True, exist_ok=True)
+        baseline.write_bytes(b"before image")
+        (self.repo / "design-bench/visual-changes.json").write_text(json.dumps(manifest))
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "visual baseline and declaration")
+        self.git("push", "-q", "origin", INTEGRATION)
+        self.git("checkout", "-q", "--detach", self.base)
+        self.edit(SLICE, description=TICKET_TEXT + "\n\n## Changement visuel\n\n" + intent + "\n"
+                  + "\n## Validated Prototype\n- branche : prototype/essai\n- commit : " + "a" * 40
+                  + "\n- chemin : /fixture\n- états : content\n")
+        rule = "- Le changement visuel respecte l'intention du ticket."
+        tip, request = self.open_evaluation({**self.realized(), "DESIGN.md": rule + "\n", path: "after image"})
+        handed = self.handed(tip, request)
+        handed["screen_findings"] = [{"check": "Le changement visuel correspond à l'intention déclarée",
+                                      "rule": rule,
+                                      "evidence": self.capture("evaluation.visual", request["environment"][0]),
+                                      "reason": "La couleur reste trop vive."}]
+        handed["recorded_by"] = "delivery-evaluator-fixture-1"
+        before = self.tracker.read_bytes()
+
+        direct = self.run_cmd(STATE_TOOL, "record-evaluation", CONVOY, SLICE,
+                              "--repo", self.repo, "--file", self.json_file("direct.json", handed))
+
+        self.assertEqual(EXIT_REFUSED, direct.returncode, direct.stdout + direct.stderr)
+        self.assertIn("déclaration visuelle périmée", direct.stdout)
+        self.assertEqual(before, self.tracker.read_bytes())
+
+    def test_visual_finding_without_changed_reference_is_refused_by_both_doors(self):
+        rule = "- Le changement visuel respecte l'intention du ticket."
+        tip, request = self.open_evaluation({**self.realized(), "DESIGN.md": rule + "\n"})
+        self.edit(SLICE, description=TICKET_TEXT + "\n\n## Validated Prototype\n"
+                  + "- branche : prototype/essai\n- commit : " + "a" * 40
+                  + "\n- chemin : /fixture\n- états : content\n")
+        self.assertNotIn("visual_changes", self.tool("brief"))
+        handed = self.handed(tip, request)
+        handed["screen_findings"] = [{"check": "Le changement visuel correspond à l'intention déclarée",
+                                      "rule": rule, "evidence": "evaluation.c1",
+                                      "reason": "Un écart visuel supposé."}]
+        self.record_refused(handed, "constat visuel hors de la liste à vérifier")
+        handed["recorded_by"] = "delivery-evaluator-fixture-1"
+        before = self.tracker.read_bytes()
+        direct = self.run_cmd(STATE_TOOL, "record-evaluation", CONVOY, SLICE,
+                              "--repo", self.repo, "--file", self.json_file("direct.json", handed))
+        self.assertEqual(EXIT_REFUSED, direct.returncode, direct.stdout + direct.stderr)
+        self.assertIn("constat visuel hors de la liste à vérifier", direct.stdout)
+        self.assertEqual(before, self.tracker.read_bytes())
+
+    def test_screen_finding_without_written_rule_is_refused(self):
+        tip, request = self.open_evaluation({**self.realized(), "DESIGN.md": "- Le focus reste visible.\n"})
+        self.edit(SLICE, description=TICKET_TEXT + "\n\n## Validated Prototype\n"
+                  + "- branche : prototype/essai\n- commit : " + "a" * 40
+                  + "\n- chemin : /fixture\n- états : content\n")
+        handed = self.handed(tip, request)
+        handed["screen_findings"] = [{"check": "Le focus est visible", "rule": "- Règle inventée.",
+                                      "evidence": "evaluation.c1", "reason": "Le focus disparaît."}]
+
+        self.record_refused(handed, "règle absente de DESIGN.md")
+
+    def test_direct_state_write_rejects_an_uncited_screen_finding(self):
+        tip, request = self.open_evaluation({**self.realized(), "DESIGN.md": "- Le focus reste visible.\n"})
+        self.edit(SLICE, description=TICKET_TEXT + "\n\n## Validated Prototype\n"
+                  + "- branche : prototype/essai\n- commit : " + "a" * 40
+                  + "\n- chemin : /fixture\n- états : content\n")
+        handed = self.handed(tip, request)
+        handed["recorded_by"] = "delivery-evaluator-fixture-1"
+        handed["screen_findings"] = [{"check": "Le focus est visible", "rule": "- Règle inventée.",
+                                      "evidence": "evaluation.c1", "reason": "Le focus disparaît."}]
+        before = self.tracker.read_bytes()
+
+        result = self.run_cmd(STATE_TOOL, "record-evaluation", CONVOY, SLICE,
+                              "--repo", self.repo, "--file", self.json_file("direct.json", handed))
+
+        self.assertEqual(EXIT_REFUSED, result.returncode, result.stdout + result.stderr)
+        self.assertIn("règle absente de DESIGN.md", result.stdout)
+        self.assertEqual(before, self.tracker.read_bytes())
 
     def test_a_brief_is_refused_when_no_evaluation_is_open(self):
         self.finished_slice(self.realized())
@@ -1111,6 +1760,51 @@ class TicketEvaluationTest(unittest.TestCase):
 
         self.assertTrue(settled["ok"])
         self.assertEqual(("request" in self.evaluation(), self.launch_records()), (False, []))
+
+    def test_a_stopped_ticket_with_an_open_evaluation_releases_its_request_and_product(self):
+        tip, request = self.open_evaluation()
+        handed = self.handed(tip, request)
+        self.state("stop-ticket", CONVOY, SLICE, "--reason", "evaluation_no_result",
+                   "--detail", "deux lancements sans résultat")
+
+        self.settle()
+
+        self.assertNotIn("request", self.evaluation())
+        self.assertNotIn("live", self.evaluation())
+        self.assertEqual([], self.launch_records())
+        self.assertNotIn("evaluation", self.shown()["verdicts"])
+        self.assertEqual([request["launches"][0]["bead"]],
+                         (self.tmp / "cancel.log").read_text().splitlines())
+        self.record_refused(handed, "aucune évaluation n'est demandée")
+
+    def test_a_stopped_ticket_with_no_live_product_still_releases_its_launch(self):
+        _, request = self.open_evaluation()
+        self.state("stop-ticket", CONVOY, SLICE, "--reason", "evaluation_no_result",
+                   "--detail", "deux lancements sans résultat")
+        self.tool("cleanup")
+        self.assertIn("request", self.evaluation())
+        self.assertNotIn("live", self.evaluation())
+
+        self.settle()
+
+        self.assertNotIn("request", self.evaluation())
+        self.assertEqual([request["launches"][0]["bead"]],
+                         (self.tmp / "cancel.log").read_text().splitlines())
+        self.assertNotIn("evaluation", self.shown()["verdicts"])
+
+    def test_a_withdrawn_ticket_with_an_open_evaluation_releases_its_request_and_product(self):
+        _, request = self.open_evaluation()
+        self.state("record-gate", CONVOY, SLICE, "--gate", "withdrawn")
+        self.edit(SLICE, status="closed")
+
+        self.settle()
+
+        self.assertNotIn("request", self.evaluation())
+        self.assertNotIn("live", self.evaluation())
+        self.assertEqual([], self.launch_records())
+        self.assertNotIn("evaluation", self.shown()["verdicts"])
+        self.assertEqual([request["launches"][0]["bead"]],
+                         (self.tmp / "cancel.log").read_text().splitlines())
 
     # --- an evaluation that gives no result ---------------------------------------------------
 

@@ -634,3 +634,40 @@ son champ `Baseline`.
 | Réversibilité bornée | Supprimer `bin/ci-test-ceiling`, son test, la liste connue et la section du document ; aucun autre outil ne les lit. Les lignes `# ci: over-ceiling` restent des commentaires sans effet. |
 | Point de revue | Limites : le verdict ne bouge qu'au rafraîchissement des durées, donc un fichier neuf n'a pas de plafond avant d'avoir été mesuré ; les durées dépendent de la charge de l'hôte, un fichier proche de 120 s peut franchir le plafond sans avoir changé ; la règle « un rouge en haut oblige un cas en bas » n'est tenue par aucun code. Les chiffres changent sur un mot de Benjamin ou par une Spec, sans révision programmée. |
 | Règle conserver / remplacer / supprimer | Conserver tant que la batterie tourne en entier sur chaque PR. Ne jamais ajouter une ligne à la liste connue ; une exception s'écrit dans le fichier de test, avec sa raison. Remplacer la lecture de `config/ci-test-seconds.tsv` si la CI enregistre ses durées ailleurs. |
+
+
+## AR-039 — Dérivation déléguée après choix et prototypes validés
+
+| Champ | Enregistrement |
+| --- | --- |
+| Statut | Implémentée, 2026-10-12; af-geznvb. |
+| Baseline | mattpocock/skills v1.3.1 : invocation humaine et approbations de Spec/graphe. Vendor inchangé. |
+| But | Éviter les validations de textes que Benjamin ne relit pas, sans perdre les décisions ni lui attribuer une fausse signature. |
+| Adaptation sélectionnée | Contrat externe `PLANNING_DELEGATION.md`, sources figées par `planning-delegation`, fidélité relue par le rôle reviewer existant; `spec-approve bd-derive` et publication reconnaissent `derived/v1`. |
+| Preuves | `tests/planning-delegation-test.py`, portes Spec/publication existantes; formule `mol-planning-fidelity`. La preuve de fidélité demeure un jugement LLM structuré, non une garantie sémantique. |
+| Réversibilité bornée | Révoquer avant nouvelle publication; le code ancien ne reconnaît pas cette provenance, donc un simple rollback de code n'invalide pas une Spec dérivée. Voir le contrat. |
+| Règle conserver / remplacer / supprimer | Garder si une dérivation complète respecte sources, compteurs et effets réservés. Ne pas contourner un refus; réparer la classe technique ou soumettre la nouvelle décision produit. |
+
+## AR-040 — Skills de design épinglés, copie textuelle d'impeccable (STANDARDS-01)
+
+| Champ | Enregistrement |
+| --- | --- |
+| Statut | **Adoptée** par la Spec af-t5cgg7, approuvée par Benjamin le 2026-10-13 à 13:49 Paris (« j'approuve »). |
+| Baseline | La Method Baseline mattpocock/skills v1.3.1 ne prescrit aucun skill de design. Les trois sources et leurs commits exacts sont dans `design-skills.json` ; aucune montée de version n'est automatique. |
+| But | Tenir une autorité de design par aspect sans prêter à un skill le pouvoir de refuser seul une livraison. La même copie épinglée est utilisable par les rôles de l'usine et les sessions d'opérateur. |
+| Adaptation sélectionnée | `design-skills/` contient les skills attribués et leurs dépendances textuelles ; `LICENSES/` garde une licence par dépôt amont. `bin/design-skills-check compare` compare chaque fichier au commit épinglé et refuse ajout, retrait ou modification. La copie d'impeccable omet `scripts/` et insère après son en-tête la note `docs/design-skills/ENGINE_ABSENT_NOTE.md` : le moteur est absent et ne se lance pas. Le contrôle compare ce sous-ensemble et la note ; aucun code d'impeccable n'est exécuté. |
+| Preuves | `tests/design-skills-check-test.py` vérifie copie identique, octet modifié, ajout et licence absente ; `bin/design-skills-check compare` est lancé contre les trois dépôts amont réels dans la CI. La distribution et l'essai des rôles complètent la tranche 8. |
+| Coût observé | Trois références figées à vérifier à chaque PR, douze dossiers textuels copiés. Les mises à jour sont proposées en fin de première Spec d'interface livrée, jamais appliquées d'elles-mêmes. |
+| Réversibilité bornée | Retirer la distribution des rôles, puis `design-skills/`, ses licences, le manifeste et le contrôle ; les standards écrits des projets restent l'autorité. |
+| Point de revue | Le comportement réel dans les sessions Claude et Codex et la qualité des constats en français sont inconnus avant la première Spec d'interface. L'installation du moteur d'impeccable reste un geste de Benjamin, hors de cette Spec. |
+| Règle conserver / remplacer / supprimer | À la fin de la première Spec d'interface livrée, lire les constats déjà enregistrés ; retirer un skill surtout contesté ou jamais cité. Aucun avis de skill ne bloque sans citation d'un standard écrit du projet. |
+
+### AR-041 — Invocation des deux skills de revue d’interface
+
+| Champ | Valeur |
+|---|---|
+| Source | Copies épinglées de `design-skills/interface-review` et `design-skills/review-animations`, PR de la tranche 8a de la Spec af-t5cgg7. |
+| Écart | Dans la seule copie du rôle `delivery-reviewer`, `disable-model-invocation: true` devient `false` dans `SKILL.md`. |
+| Cause | La formule de revue doit lancer ces skills explicitement pour les tickets d’interface ; avec le drapeau amont, Claude ne les liste pas et l’essai réel échoue. |
+| Limite | Les sources épinglées restent inchangées. `bin/role-adoption-trial verify-distribution` compare chaque octet de la copie avec cette unique substitution déclarée, puis l’essai réel vérifie le chargement. |
+| Retour | Supprimer l’adaptation et les appels de formule si la première Spec d’interface montre que ces skills n’apportent aucun constat utile. |

@@ -162,6 +162,34 @@ class ProjectPlanningProfileTest(unittest.TestCase):
         self.assertFalse(error["ok"])
         self.assertIn("no-such-project", error["error"])
 
+    def test_real_projects_declare_their_human_approver_by_project_and_by_rig(self):
+        # af-vx1tkf: bin/spec-approve names a project by its id, bin/owner-answer
+        # and bin/correction-round by the rig of a ticket; both must be answered,
+        # with the same name, for every project declared to the Factory.
+        declared = json.loads(
+            subprocess.run(
+                (str(TOOL), "list", "--descriptors-dir", str(REAL_DESCRIPTORS_DIR)),
+                cwd=ROOT, text=True, capture_output=True, check=True,
+            ).stdout
+        )["projects"]
+        approvers = {}
+        for project in declared:
+            for name in [project["project_id"], *project["rigs"]]:
+                proc = subprocess.run(
+                    (str(TOOL), "human-approver", "--project", name),
+                    cwd=ROOT, text=True, capture_output=True,
+                )
+                approvers[name] = json.loads(proc.stdout).get("human_approver", proc.stdout)
+        self.assertEqual(
+            {
+                "agent-factory": "benjamin-hurand",
+                "saymyname": "benjamin-hurand",
+                "saymyname-backend": "benjamin-hurand",
+                "saymyname-frontend": "benjamin-hurand",
+            },
+            approvers,
+        )
+
     # --- extended descriptor (T04, af-xqgvat: "un rig = un projet") --------
 
     def describe(self, path, check=False):
@@ -210,7 +238,7 @@ class ProjectPlanningProfileTest(unittest.TestCase):
 
     def test_descriptor_with_no_launch_block_describes_with_launch_null(self):
         result = json.loads(
-            self.describe(REAL_DESCRIPTORS_DIR / "agent-factory.json", check=True).stdout
+            self.describe(REAL_DESCRIPTORS_DIR / "saymyname.json", check=True).stdout
         )
         self.assertIsNone(result["launch"])
 

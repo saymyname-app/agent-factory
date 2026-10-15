@@ -92,7 +92,7 @@ session receives.
 | `diff` | the fixed point (`base`), the command `git diff <base>...<commit>`, the changed files, the SHAs of the commits |
 | `spec` | the id and the text of the Spec the convoy delivers |
 | `ticket_text` | the approved ticket: title, description, criteria, demonstration line, covered user stories, Declared Scope |
-| `standards` | the standards files found at the reviewed commit (`AGENTS.md`, `CONTRIBUTING.md`, `CODING_STANDARDS.md`, `docs/agents/*`, …): a hint, the skill looks for them itself |
+| `standards` | the standards files found at the reviewed commit (`AGENTS.md`, `CONTRIBUTING.md`, `CODING_STANDARDS.md`, `docs/agents/*`, `DESIGN.md`, …): a hint, the skill looks for them itself |
 | `records` | the records written by scripts: the proven TDD steps, the evidence fingerprints, the merge record, and the *records* of the Ticket Handoff |
 | `tests` | the test perimeter, the frozen harness, the frozen criterion tests with their fingerprints, the listed seams (the profile's entry points, and under `declared` the seams it names with the mode of each) |
 | `questions` | the closed questions on the tests (below) |
@@ -235,6 +235,16 @@ On the ticket, written by `bin/convoy-state` only (`docs/CONVOY_STATE.md`):
 | `gc.flow.verdict.code_review` | the verdict of the last round and the commit it judged |
 | `gc.flow.models` | per delivery role: `agent`, `provider`, `model`, `at` |
 | `gc.flow.stop` | reason `code_review_no_result`, a one-line detail, and `raised` once the escalation door accepted the request |
+
+## Avoiding reads for tickets with no work
+
+Intent (Benjamin, his words, 2026-10-12): « corriger le flow par tranches ordonnées et vérifiées ».
+Mechanism (agent interpretation): the initial convoy snapshot skips tickets
+with neither an exit nor a stop before settlement. Their malformed state is
+still refused. Every candidate is read again under its ticket lock before any
+action, and changes made by an author after the snapshot are seen on the next
+pass. This removes a full-convoy tracker read per unfinished ticket without
+caching a verdict or authorising an action from stale state (af-8cfygl).
 
 ## Limits
 

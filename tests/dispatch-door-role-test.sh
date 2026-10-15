@@ -22,6 +22,15 @@ FAKE="$TMP/root"
 mkdir -p "$FAKE/config/projects" "$FAKE/skills/engineering" "$FAKE/bin"
 cp "$REPO_ROOT/config/projects/agent-factory.toml" "$FAKE/config/projects/"
 cp "$REPO_ROOT/config/delivery-roles.json" "$FAKE/config/"
+# This fixture exercises the original Matt-only dispatch gate; the actual
+# design distribution is verified by design-role-distribution-test.sh.
+python3 - "$FAKE/config/delivery-roles.json" <<'PY'
+import json, pathlib, sys
+p = pathlib.Path(sys.argv[1]); data = json.loads(p.read_text())
+for entry in data["roles"].values():
+    entry["skills"] = [skill for skill in entry["skills"] if not skill.startswith("design:")]
+p.write_text(json.dumps(data) + "\n")
+PY
 cp "$REPO_ROOT/bin/delivery-role-sandbox" "$FAKE/bin/"
 for skill in tdd codebase-design code-review implement; do
   mkdir -p "$FAKE/skills/engineering/$skill"

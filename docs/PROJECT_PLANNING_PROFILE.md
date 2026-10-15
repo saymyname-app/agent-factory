@@ -110,7 +110,40 @@ written.
 
 ```bash
 ./bin/project-planning-profile human-approver --project agent-factory
+./bin/project-planning-profile human-approver --project saymyname
 ```
+
+### A project that spans several rigs (af-vx1tkf)
+
+The tools do not all name a project the same way: `bin/spec-approve`,
+`bin/ticket-graph-publish`, `bin/graph-review` and `bin/planning-delegation`
+pass the project id (`saymyname`); `bin/owner-answer` and
+`bin/correction-round` pass the rig a ticket names under « Target rigs »
+(`saymyname-frontend`). For the Factory itself the two are one name,
+`agent-factory`. For SayMyName they are three files, each declaring the same
+`human_approver`:
+
+| File | What it is | Who reads it |
+| --- | --- | --- |
+| `config/projects/saymyname.toml` | the project's own file: `human_approver` and none of the four rig fields | the tools that pass the project id |
+| `config/projects/saymyname-backend.toml`, `config/projects/saymyname-frontend.toml` | the rig files, unchanged but for the added `human_approver` | `lib/project_registry.sh` and `bin/dispatch-door` as before, and the tools that pass the rig |
+
+`lib/project_registry.sh` prints no row for a file that declares none of
+`rig_dir`, `repo`, `protected_branch`, `required_ci`: such a file is no rig,
+is protected by nothing and is no dispatch target. A file that declares some
+of the four and not all is still refused, and a rig Gas City has registered
+with no rig file still fails the coverage check by name.
+`test_real_projects_declare_their_human_approver_by_project_and_by_rig`
+(`tests/project-planning-profile-test.py`) reads the real files: every
+project `list` renders, and every rig of it, answers `human-approver` with
+the same name.
+
+Limits. The three declarations are kept equal by that test, not by one
+source. A project file with no rig field declares no `protected_branch`, so
+`bin/spec-approve` falls back to the default branch of the prototype's remote
+when it checks that a Validated Prototype was not merged
+(`docs/SPEC_APPROVE.md`); for SayMyName, whose rigs protect `dev`, that is
+not the protected branch.
 
 ## Extended descriptor (T04, af-xqgvat: "descripteur de projet", un rig = un projet)
 
@@ -161,6 +194,9 @@ holds it for Benjamin.
 - `config/project-descriptors/agent-factory.json`: rig `agent-factory`, no
   `promotion_branch` (the Factory has no Promotion Step), roadmap and
   rituals status from T03 (`docs/roadmap.toml`, `bin/rituals-status`).
+  It declares a `launch` block (Spec af-2zseit, T01; Factory tooling on
+  `main` since af-wv3qu2): the recipe of the isolated cockpit, its datasets,
+  screens and seams (`docs/COCKPIT.md`, « Isolated launch »).
 - `config/project-descriptors/saymyname.json`: rigs `saymyname-backend`
   and `saymyname-frontend`, each promoting `dev` → `main`, knowledge repo
   `saymyname-app/Say-my-name-product`, roadmap `knowledge/roadmap.toml`,
@@ -191,8 +227,8 @@ is missing:
 | Field | Meaning |
 | --- | --- |
 | `recipe` | argv tokens to launch the product; `{python}`, `{port}`, `{dataset}` are substituted by `project-launch`. |
-| `entry_points` | the product's public interfaces (`kind`, `method`, `path`), named so an Evaluator or criterion test knows where to look. |
-| `health_probe` | `{path, expect_status}` — polled by `project-launch start` until it answers or the timeout expires. |
+| `entry_points` | the product's public interfaces (`kind`, `method`, `path`), named so an Evaluator or criterion test knows where to look. `kind` `http`: `method` and `path` of a request — the only kind `bin/tdd-step` counts for a black-box seam. Any other kind is named for the reader, e.g. `command`: `path` the command, `method` its subcommand (the Factory's profile declares so the public commands of the Delivery Workflow, af-u2fa7b). |
+| `health_probe` | `{path, expect_status}` — polled by `project-launch start` until it answers or the timeout expires. An answer counts only when the process listening on the port is the launched one, one of its descendants or a process carrying its launch mark `FACTORY_LAUNCH_ID` (af-u2fa7b, on `main` since af-wv3qu2): a port another process took between its choice and the product's bind is given up, the attempt stopped and reaped, and the product launched again on another port, three times in all. |
 | `datasets` | named synthetic dataset files (fixed `generated_at` time included) a launch selects with `--dataset`. **At least one**: a launchable profile that names none is refused by `describe`/`list` and by every tool that loads the descriptor, the error naming `launch.datasets`. |
 | `test_perimeter` | paths a ticket's red step may write criterion tests under. |
 | `frozen_harness_paths` | test harness/config paths frozen at the ticket's freeze step. |
@@ -206,8 +242,8 @@ is missing:
 | `anchors` | **required when the profile declares no `screens`** — the key absent, or an empty list (T50) — (the error names `launch.anchors`), not needed otherwise — the equivalent of the anchors for an interface that is **not a web page** (a command line, an API; T35, spec af-wf4w5r §12). Exactly one of: `{"equivalent": [{name, entry_point, observable}]}`, what stands for the anchors of a screen — each a unique name, the declared entry point that answers it (`"METHOD path"`) and the observable read there (a field, an exit status, a line of output); or `{"not_applicable": "<reason>"}`. An empty list, a missing reason, both forms at once, an unknown field, a duplicate name or an entry point that is not declared is rejected. `describe` renders it. |
 | `import_rule` | optional, required by `bin/tdd-step` when a seam's mode is `import_rule` — `{product_import, entry_point_import}`, two regular expressions applied to each line of a test: a line that imports the product must import one of its entry points. |
 
-A descriptor with no `launch` block at all (e.g. the Factory's own
-`agent-factory.json`) is unaffected — `describe` reports `launch: null`,
+A descriptor with no `launch` block at all (e.g. `saymyname.json`) is
+unaffected — `describe` reports `launch: null`,
 and `bin/project-launch start` refuses that project outright, naming the
 missing declaration, before anything is spawned.
 
@@ -236,6 +272,18 @@ into `recipe`, and polls `health_probe` until it answers or `--timeout`
 `--state-file`, terminates the process, removes the worktree, and frees
 the port. Two concurrent launches each get their own port and worktree and
 do not disturb each other; stopping one leaves the other answering.
+
+Intent (Benjamin, his words, 2026-10-12): « corriger le flow par tranches ordonnées et vérifiées ».
+Mechanism (agent interpretation): on Linux, `stop` recognises an exited process still awaiting collection by
+its parent (a zombie) as terminated. `kill(pid, 0)` alone also succeeds for
+that state and used to spend the full five-second grace per product during
+serial evaluation cleanup (af-8cfygl). A live process still receives SIGTERM,
+keeps that grace, then receives SIGKILL if it has not exited. After verifying
+ownership of the isolated worktree, `stop` also terminates processes whose
+working directory remains inside that copy even if they cleared the launch
+marker; a failed health probe uses the same cleanup. It never kills a process
+outside the verified copy on that basis. This does not collect unrelated
+orphan processes (af-skz5cj).
 `tests/project-launch-test.py` and `tests/fixtures/delivery-fixture-city/`
 are the fixture project and its proof.
 
@@ -268,3 +316,55 @@ API to a prototype. The black-box seam of `bin/tdd-step` records
 HTTP entry points: a project whose only interface is a command line has no
 mechanical proof of its seam yet. A recipe names its interpreter itself
 (`node`); only `{python}` is substituted by the launcher.
+
+## Standards stack declaration
+
+Each `config/project-descriptors/<project>.json` declares `stacks` as an object
+with exactly one key per rig in `rigs`. Each value is a non-empty list of
+stack identifiers. The declaration describes the rig; it does not activate
+standards or reuse the Planning Profile's `checks` field. `bin/project-standards
+status` reads each rig's `STANDARDS.md` and `DESIGN.md` to report whether code
+and design standards are present. A rig without either file remains registered
+and is reported as `sans` for that domain.
+
+For a new Java/Maven rig, create a linked worktree of its own repository and
+run `bin/project-standards adopt --rig <rig> --stack java-spring-maven
+--target <worktree> --java-package <root.package>` from the Factory. The
+command copies the pinned defaults, renders the Java package in the Maven
+configuration and architecture test, and records the copied version in
+`.factory/standards-origin.json`. It refuses an unregistered stack, a main
+checkout, or any file that would be overwritten. The copied `pom.xml` runs
+format, bug-pattern, null-safety, naming and architecture checks; the copied
+workflow runs the build, changed-line coverage and security scans on PRs.
+It is a starting POM: integrate these plugin configurations into an existing
+POM in that project's own Planning Run, without overwriting its build.
+That Planning Run must also make the copied CI jobs required by the target
+branch's merge rule and verify them on a PR and merge queue. Until that gate
+is connected, the copied workflow is a proposed check, not a demonstrated
+merge guarantee. No existing project is activated by this Factory change.
+
+For a new React/TypeScript rig, use the same linked worktree command with
+`--stack react-typescript` and no Java package. The copied starter contains
+`package.json` and a lockfile, typed ESLint with file-and-rule suppressions,
+Prettier, a dependency rule for `src/domain`, Vitest coverage, and a PR/merge
+workflow for 80% changed-line coverage and security scans. In an existing
+React project, integrate those configurations into its own build and folder
+structure in that project's Planning Run. Make each copied job required by
+the target branch's merge rule and prove it on a PR and merge queue before
+calling the standards active. The Factory copy does not alter a product repo.
+
+For the first interface work of a React/TypeScript rig, present the proposed
+palette and tone on real screens, then run `bin/project-standards adopt --rig
+<rig> --stack react-typescript --domain design --target <linked-worktree>`.
+Code adoption skips the design subdirectory; this separate gesture copies
+`DESIGN.md`, light/dark role tokens, choice questions, static checks and one
+rendered browser bench, recording `.factory/design-standards-origin.json`. The
+first interface PR names real routes and ready selectors, measures its bundle
+budget, commits initial captures from the pinned browser image and supplies a
+`?lang=zz` pseudo-language route. `status` reports
+code and design origins separately. The copied design workflow checks theme
+contrast, CSS/TSX literals, visible JSX text and basic accessibility syntax.
+It becomes a merge guarantee only after the project integrates it, makes its
+job required and proves a PR and merge queue run. The first interface still
+needs Benjamin's visual judgement on a Validated Prototype before delivery;
+these code checks cannot judge taste, focus order or keyboard operation.

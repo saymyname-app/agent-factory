@@ -225,6 +225,7 @@ class TicketAuthorTest(unittest.TestCase):
             'sling_target = "fx-worker"\nformulas = "fx-start"\n')
         profile = json.loads(DESCRIPTOR.read_text())
         profile["rigs"] = ["fx-rig"]
+        profile["stacks"] = {"fx-rig": ["fixture-stack"]}
         self.profile.write_text(json.dumps(profile))
         (self.tmp / "proposal-door").write_text("#!/bin/sh\necho 0\n")
         (self.tmp / "proposal-door").chmod(0o755)
@@ -426,6 +427,13 @@ class TicketAuthorTest(unittest.TestCase):
         self.assertEqual("main", self.git("symbolic-ref", "--short", "HEAD"))
         self.assertEqual("La page d'accueil affiche 3", answer["demonstration_line"])
 
+    def test_start_exposes_an_interface_ticket_to_its_formula(self):
+        tracker = json.loads(self.tracker.read_text())
+        tracker["beads"][T1]["description"] += "\n\n## Validated Prototype\n\n- branche : prototype/interface\n- commit : " + self.main + "\n- chemin : prototype.html\n- états : accueil\n"
+        self.tracker.write_text(json.dumps(tracker))
+        answer, _ = self.start(real=True)
+        self.assertTrue(answer["interface"])
+
     def test_start_records_the_model_the_author_role_runs_on(self):
         # T14: the code review compares the model of its reviewer with it.
         shutil.copy(ROOT / "config" / "delivery-roles.json", self.root / "config" / "delivery-roles.json")
@@ -445,6 +453,28 @@ class TicketAuthorTest(unittest.TestCase):
         self.start(real=True)
 
         self.assertIsNone(self.shown()["models"])
+
+    def test_start_refuses_invalid_repository_configuration_without_writing(self):
+        config = self.root / "config" / "projects" / "fx-rig.toml"
+        for content, message in (("rig_dir = [", "illisible"), ("rig_dir = 7", "ne déclare pas rig_dir"),
+                                 ('rig_dir = ""', "ne déclare pas rig_dir")):
+            with self.subTest(content=content):
+                config.write_text(content)
+                self.refused("start", CONVOY, T1, session=SESSION, mention=message)
+
+    def test_check_preserves_bead_read_refusals(self):
+        fake = self.tmp / "gc-read-response"
+        fake.write_text("#!/bin/sh\nprintf '%s' \"$READ_RESPONSE\"\nexit \"$READ_STATUS\"\n")
+        fake.chmod(0o755)
+        cases = (("not json", "0", "JSON illisible"), ("[]", "0", "bead introuvable"),
+                 ('{"metadata": {}}', "0", "n'est pas une étape contrôlée"),
+                 ('[{"metadata": {}}]', "0", "n'est pas une étape contrôlée"),
+                 ("tracker unavailable", "1", "a échoué : tracker unavailable"))
+        for response, status, message in cases:
+            with self.subTest(response=response, status=status):
+                self.refused("check", mention=message,
+                             env={"GC_BIN": str(fake), "GC_BEAD_ID": "fx-step",
+                                  "READ_RESPONSE": response, "READ_STATUS": status})
 
     def test_start_is_refused_without_a_session(self):
         self.refused("start", CONVOY, T1, mention="session")
@@ -490,6 +520,15 @@ class TicketAuthorTest(unittest.TestCase):
         self.gate_refused("workspace", mention="session")
         self.start()
         self.assertTrue(self.gate("workspace")["passed"])
+
+    def test_gate_workspace_looks_for_the_worktree_in_the_same_place_whatever_home_is(self):
+        # Gas City runs the check with HOME set to the city root (af-r35155).
+        self.start()
+        named = [self.refused("gate", CONVOY, T1, "--step", "workspace", mention="worktree du ticket",
+                              env={"TICKET_AUTHOR_WORKTREES_DIR": "", "HOME": str(self.tmp / home)})
+                 for home in ("city-root", "elsewhere")]
+        self.assertEqual(named[0], named[1])
+        self.assertNotIn(str(self.tmp), named[0])
 
     def test_gate_workspace_refuses_a_branch_that_did_not_leave_from_the_integration_branch(self):
         self.start()

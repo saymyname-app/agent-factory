@@ -1,0 +1,32 @@
+name: Design Standards
+on:
+  pull_request:
+  merge_group:
+permissions:
+  contents: read
+jobs:
+  design:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check visual reference changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: python3 design-bench/check-visual-change.py --base "$BASE_SHA" --head HEAD
+      - run: npm ci
+      - run: python3 bin/check-design-tokens
+      - run: python3 bin/check-design-css
+      - run: node bin/check-design-source.mjs
+      - run: npm run build
+      - run: node design-bench/check-bundle.mjs
+      - run: npm ci --prefix design-bench
+      - run: docker run --rm --ipc=host -e CI=true -e DESIGN_PREVIEW_COMMAND -v "$PWD:/app" -w /app mcr.microsoft.com/playwright:v1.64.0-noble ./design-bench/node_modules/.bin/playwright test --config design-bench/playwright.config.mjs

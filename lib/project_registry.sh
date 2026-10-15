@@ -12,38 +12,36 @@
 # directory.
 
 # project_registry_rows <config_dir>
-#   Prints one row per config/projects/*.toml file, sorted by filename:
+#   Prints one row per config/projects/*.toml file, sorted by row:
 #     rig_dir|repo|protected_branch|required_ci|project_name
 #   Fails loudly (non-zero, message on stderr) if a project file is missing
-#   a required field.
+#   a required field. A file that declares none of the four fields describes
+#   no rig and prints no row: it is the file of a project that spans several
+#   rigs (config/projects/saymyname.toml, af-vx1tkf), read by its project id
+#   for human_approver only. A file that declares some of the four and not
+#   all is still refused.
 project_registry_rows() {
-  local config_dir="$1" file project_name rig_dir repo protected_branch required_ci key value
+  python3 - "$1" <<'PYTHON'
+import sys
+import tomllib
+from pathlib import Path
 
-  [ -d "$config_dir" ] || return 0
-
-  for file in "$config_dir"/*.toml; do
-    [ -e "$file" ] || continue
-    project_name="$(basename "$file" .toml)"
-    rig_dir="" repo="" protected_branch="" required_ci=""
-
-    while IFS='=' read -r key value; do
-      key="$(printf '%s' "$key" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-      value="$(printf '%s' "$value" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//')"
-      case "$key" in
-        rig_dir) rig_dir="$value" ;;
-        repo) repo="$value" ;;
-        protected_branch) protected_branch="$value" ;;
-        required_ci) required_ci="$value" ;;
-      esac
-    done < <(grep -E '^[a-zA-Z_]+[[:space:]]*=' "$file")
-
-    if [ -z "$rig_dir" ] || [ -z "$repo" ] || [ -z "$protected_branch" ] || [ -z "$required_ci" ]; then
-      echo "project_registry: $file is missing one of rig_dir/repo/protected_branch/required_ci" >&2
-      return 1
-    fi
-
-    printf '%s|%s|%s|%s|%s\n' "$rig_dir" "$repo" "$protected_branch" "$required_ci" "$project_name"
-  done | sort
+keys = ("rig_dir", "repo", "protected_branch", "required_ci")
+rows = []
+for file in Path(sys.argv[1]).glob("*.toml"):
+    try:
+        with file.open("rb") as handle:
+            data = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        sys.exit(f"project_registry: {file}: {error}")
+    if not any(key in data for key in keys):
+        continue
+    if any(not isinstance(data.get(key), str) or not data[key] for key in keys):
+        sys.exit(f"project_registry: {file} is missing one of {'/'.join(keys)} (non-empty strings required)")
+    rows.append("|".join([*(data[key] for key in keys), file.stem]))
+for row in sorted(rows):
+    print(row)
+PYTHON
 }
 
 # project_registry_rig_names <config_dir>
@@ -74,18 +72,24 @@ project_registry_ci_for_repo() {
 }
 
 # project_registry_field <config_dir> <project_name> <key>
-#   Prints the raw value of <key> from config_dir/<project_name>.toml, or
+#   Prints the decoded TOML value of <key> from config_dir/<project_name>.toml, or
 #   nothing if the file or the key is absent (returns 0 either way -- these
 #   are optional fields; project_registry_rows above already fails loudly
 #   on a missing required one). Used for the dispatch-door fields below,
 #   which not every project_registry consumer needs.
 project_registry_field() {
-  local config_dir="$1" project_name="$2" key="$3" file value
-  file="$config_dir/$project_name.toml"
+  local file="$1/$2.toml"
   [ -f "$file" ] || return 0
-  value=$(grep -E "^[[:space:]]*${key}[[:space:]]*=" "$file" | tail -1 | cut -d'=' -f2-)
-  value="$(printf '%s' "$value" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//')"
-  printf '%s\n' "$value"
+  python3 - "$file" "$3" <<'PYTHON'
+import sys
+import tomllib
+
+try:
+    with open(sys.argv[1], "rb") as handle:
+        print(tomllib.load(handle).get(sys.argv[2], ""))
+except (OSError, tomllib.TOMLDecodeError) as error:
+    sys.exit(f"project_registry: {sys.argv[1]}: {error}")
+PYTHON
 }
 
 # project_registry_dispatch_target <config_dir> <project_name>

@@ -1,2 +1,2 @@
-Need: How the publication door treats the interface tickets of a new-flow graph (which tickets are interface tickets, the `prototype_fold: true` slice required per Validated Prototype the Spec names, the `prototype` field that ties a ticket to its own when there are several, the refusal of an interface ticket that does not wait for it, the two cases that need no edge to the Fold), and where the Validated Prototype reference (branch, commit, path, states) shown in each interface ticket comes from (spec af-wf4w5r §2 and §3, user stories 16 and 17, T36, T46)
-Read: `ENTRY_CONTRACT.md` ("Interface tickets and the Prototype Fold"), `SPEC_APPROVE.md` (`outline`), `CONVOY_STATE.md` (`--prototype-fold`), `./bin/ticket-graph-publish`, `tests/ticket-graph-publish-prototype-fold-test.py`, `tests/ticket-graph-publish-new-flow-real-tracker-test.sh` (local-only)
+Need: Interface tickets and Prototype Fold
+Read: `ENTRY_CONTRACT.md` (Prototype Fold)

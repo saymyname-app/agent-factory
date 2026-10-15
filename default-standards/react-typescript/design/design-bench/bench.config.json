@@ -1,0 +1,8 @@
+{
+  "baseURL": "http://127.0.0.1:4173",
+  "screens": [],
+  "bundle": {
+    "directory": "dist/assets",
+    "maxBytes": 0
+  }
+}

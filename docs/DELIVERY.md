@@ -601,10 +601,36 @@ this is a local convenience gate, not a security boundary. See ADR-0020 for
 the full decision record and `tests/factory-main-gate-test.sh` for the proof
 that it actually blocks a broken push and never blocks anything else.
 
-## Merge safety — `main` requires up-to-date branches (P05, af-yl964)
+## Merge safety — GitHub merge queue trial on Factory `main` (af-t3tm88)
 
-**As of 2026-09-29, ruleset `AF-main-protection` on `saymyname-app/agent-factory`
-requires PRs to be up to date with `main` before merge**
+Intent (Benjamin, his words, 2026-10-11 20:06 Paris): « Pour le 3 j'ai
+deja réglé le ruleset, lance la suite » (`bd comments af-t3tm88`).
+Mechanism (agent interpretation): evaluate the already-enabled GitHub queue;
+this records its observed operation, not a new approval to keep the trial.
+
+Factory `main` requires GitHub's `merge_queue` and the `Tests` check;
+`strict_required_status_checks_policy` is false. The queue tests the
+combined commit through `merge_group` before merging. The workflow already
+handles that event with a full run and an independent concurrency group.
+`pr-autopilot`'s existing `gh pr merge --auto --squash --delete-branch`
+enters that queue; its direct fallback also uses the CLI without `--admin`
+and does not bypass the required queue. No product ruleset changed.
+
+The [evaluation](verification/merge-queue-af-t3tm88.md) records 13 successful
+single-PR groups (#539–#551), exact merged/group SHA agreement and timings.
+Simultaneous groups and eviction after a red group are **not yet proven**.
+Group limits do not mean one CI run for a batch. The check protecting the
+workflow trigger is `tests/ci-workflow-cost-test.sh`.
+
+Returning to the former mode is an ADMIN decision: restore strict
+up-to-date checks before removing the merge_queue rule. Do not run
+`bin/enable-strict-main-protection --rollback` as a queue rollback; that
+command disables strict and does not remove the queue rule.
+
+### Historical mode: up-to-date branches (P05, af-yl964)
+
+**From 2026-09-29 until the merge-queue trial on 2026-10-11, ruleset `AF-main-protection` on `saymyname-app/agent-factory`
+required PRs to be up to date with `main` before merge**
 (`strict_required_status_checks_policy: true`), and the repo setting
 `allow_update_branch: true` lets `gh pr update-branch` catch a PR up.
 Applied and read back once by `bin/enable-strict-main-protection`
@@ -662,17 +688,10 @@ Known limits:
 Proof: `tests/pr-autopilot-queue-head-test.sh`. Undo: revert the pull
 request of af-31t0y8; the previous rule (one BEHIND PR per tick) comes back.
 
-Replaced later by GitHub's own merge queue (one run for a batch of PRs), if
-it becomes available for this repository: it needs the `merge_group`
-trigger in `.github/workflows/ci.yml` and a ruleset rule, and makes this
-BEHIND logic useless for the repository that uses it.
-
-This is a poor-man's merge queue, not GitHub's merge queue: the org's plan
-does not confirm GitHub Enterprise Cloud, which the real merge queue
-requires on a private repo, so no spend was made (decision Q4). `main`
-going red from two independently-green-but-combined PRs stays possible only
-if pr-autopilot's update-branch step itself races a second
-concurrent merge — not addressed here.
+This historical mode is superseded for Factory `main` by the GitHub queue
+trial above. The shared BEHIND handling remains available to other targets.
+The public Factory repository is eligible for GitHub's queue; the old
+private-repository Enterprise limitation no longer describes it.
 
 **Scope:** `saymyname-app/agent-factory` only. `bin/enable-strict-main-protection`
 refuses any other `--repo` before making a single `gh api` call.
@@ -685,7 +704,7 @@ per the ticket's safety contract).
 setting first and only writes what is not already applied; a second run
 against an already-applied repo makes no write call.
 
-**Rollback (one command):**
+**Historical rollback only (not the merge-queue rollback):**
 
 ```
 bin/enable-strict-main-protection --rollback
@@ -942,3 +961,38 @@ PR, le retrait du worktree et l'absence de changement du drain séparé. Ce
 raccord supprime les reprises manuelles après l'erreur « source anchor has no
 work_dir metadata » et remplace jusqu'à N worktrees/PR par un seul pour N items,
 sans coût modèle supplémentaire pour le cycle Git.
+
+### Shared delivery reads
+
+Intent (Benjamin, his words, 2026-10-12): « Vas-y pour 1 et 2. » in reply
+to the review of repeated ticket reads and project repository lookups.
+Mechanism (agent interpretation): `lib/delivery_reads.py` owns the common
+bead read, Target rigs parsing and repository lookup. Commands pass their
+configured root and refusal type; their public arguments and failure behavior
+stay the same. The stricter list-only bead readers in `acceptance-session`
+and `owner-answer` stay local. Changes to these reads now have one place to
+land, exercised by the existing delivery command tests.
+
+### Merge queue: requesting is not completing
+
+`pr-autopilot` requests both automatic and direct merges without
+`--delete-branch`. On the VM GitHub CLI 2.45, that flag closed queued PR556
+and deleted its head before merge (2026-10-12, af-x2ozgs; upstream
+[cli/cli7011](https://github.com/cli/cli/issues/7011)). Newer CLI versions reject
+the flag with a queue. GitHub owns the queue; a successful CLI request is
+not evidence of a merged PR. Reconciliation uses GitHub `MERGED`; native
+branch deletion and `factory-maintain prune-merged-branches` handle cleanup
+after merge. No queue bypass or host installation is needed for this fix.
+
+### Registry and review cleanup
+
+Intent (Benjamin, his words, 2026-10-12): « vas y », following the proposal
+to apply review points 3 to 5.
+Mechanism (agent interpretation): the shell registry interface delegates
+TOML decoding to Python's standard-library `tomllib`, including optional
+fields. Required values remain non-empty strings; malformed files fail with
+their filename. No parser dependency is added. The unused cockpit
+`validity_window_for` wrapper is removed; the read model retains its validity
+window check. The fresh-session test also proves that another session's shared
+alias history cannot block it, so its identical second execution is removed;
+the distinct own-session alias check remains for all three delivery roles.

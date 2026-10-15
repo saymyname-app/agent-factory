@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
 from factory_watchdog import (  # noqa: E402
+    code_read_formulas,
     assess_gate,
     assess_gh_auth,
     assess_pr,
@@ -123,6 +124,32 @@ class WorkflowRules(unittest.TestCase):
         self.assertEqual("false_success_close", code)
         self.assertIn("af-g7ts", message)
         self.assertIn("gc.outcome=fail", message)
+
+    def test_a_failed_workflow_of_a_new_flow_formula_is_read_by_code_not_paged(self):
+        # af-yzo8fo.2: convoy-advance reads that outcome itself.
+        for formula in ("mol-ticket-author", "mol-ticket-evaluation", "mol-ticket-resume"):
+            with self.subTest(formula=formula):
+                bead = {
+                    "id": "af-icari7", "status": "closed", "title": formula,
+                    "metadata": {"gc.kind": "workflow", "gc.outcome": "fail", "gc.formula_name": formula},
+                }
+                self.assertIsNone(assess_workflow(bead))
+
+    def test_a_failed_workflow_of_any_other_formula_is_still_a_false_success(self):
+        bead = {
+            "id": "af-g7ts", "status": "closed", "title": "mol-do-work",
+            "metadata": {"gc.kind": "workflow", "gc.outcome": "fail", "gc.formula_name": "mol-do-work"},
+        }
+        self.assertEqual("false_success_close", assess_workflow(bead)[0])
+
+    def test_an_unreadable_flow_config_names_no_formula_so_everything_is_paged(self):
+        bead = {
+            "id": "af-icari7", "status": "closed", "title": "mol-ticket-author",
+            "metadata": {"gc.kind": "workflow", "gc.outcome": "fail", "gc.formula_name": "mol-ticket-author"},
+        }
+        missing = code_read_formulas(Path("/nonexistent/delivery-flow.json"))
+        self.assertEqual(frozenset(), missing)
+        self.assertEqual("false_success_close", assess_workflow(bead, missing)[0])
 
     def test_a_non_workflow_bead_is_out_of_scope(self):
         bead = {

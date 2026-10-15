@@ -18,8 +18,8 @@ STATE_PATH = Path(os.environ["SPEC_APPROVE_BD_STATE"])
 
 BOOLEAN_FLAGS = {"--no-inherit-labels", "--silent", "--json"}
 VALUE_FLAGS = {
-    "--parent", "--type", "--title", "--labels", "--metadata", "--body-file",
-    "--reason", "--if-assignee", "--assignee", "--append-notes",
+    "--parent", "--type", "--title", "--labels", "--metadata", "--body-file", "--id",
+    "--description", "--reason", "--if-assignee", "--assignee", "--append-notes",
 }
 REPEATABLE_VALUE_FLAGS = {"--set-metadata"}
 
@@ -87,7 +87,8 @@ def cmd_create(flags, repeated):
     n = state["next_id"]
     state["next_id"] = n + 1
     parent = flags.get("--parent")
-    new_id = f"{parent}.{n}" if parent else f"fk-{n}"
+    new_id = flags.get("--id") or (f"{parent}.{n}" if parent else f"fk-{n}")
+    fail(f"issue already exists: {new_id}") if new_id in state["beads"] else None
     labels = flags.get("--labels", "")
     labels_list = [label for label in labels.split(",") if label]
     metadata = json.loads(flags["--metadata"]) if "--metadata" in flags else {}
@@ -97,7 +98,7 @@ def cmd_create(flags, repeated):
     bead = {
         "id": new_id,
         "title": flags.get("--title", ""),
-        "description": read_body(flags.get("--body-file")) or "",
+        "description": read_body(flags.get("--body-file")) or flags.get("--description", ""),
         "status": "open",
         "labels": labels_list,
         "metadata": metadata,
@@ -187,6 +188,9 @@ def main(argv):
         cmd_create(flags, repeated)
     elif command == "show":
         cmd_show(positionals)
+    elif command == "comments":
+        state = load_state()
+        print(json.dumps(state["beads"][positionals[0]].get("comments", [])))
     elif command == "children":
         cmd_children(positionals)
     elif command == "update":

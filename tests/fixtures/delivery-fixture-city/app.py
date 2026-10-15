@@ -31,6 +31,9 @@ class FixtureHandler(BaseHTTPRequestHandler):
         if self.path == "/health":
             self._respond_json(200, {"status": "ok"})
             return
+        if self.path == "/status":
+            self._respond_json(200, {"suspended": self.dataset.get("suspended", False)})
+            return
         if self.path == "/":
             self._respond_html(200, self._render_page())
             return

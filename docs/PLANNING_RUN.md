@@ -130,6 +130,18 @@ Planning Run starts.
      `docs/DELIVERY.md` ("Marked convoys -- the delivery flow of a Planning
      Run (D01)").
 
+## Delegated continuation after validated choices (2026-10-12)
+
+`PLANNING_DELEGATION.md` is the operator's autonomous path from a finished,
+validated map through independent fidelity review, derived Spec, slicing,
+graph review and publication. It supersedes the routine human text/seam
+approvals of steps 3–6 for that authorized path only. Its `derived/v1`
+provenance never impersonates exact human approval. The existing gates,
+prototype validation, protected effects and final acceptance remain.
+There is no mandatory second slash command or launch question. The
+operator chooses the delivery path below within the delegated scope and
+records why; an existing owner's claim or halt remains in force.
+
 ## Delivery path of an approved Spec (a preference, not a gate)
 
 Intent (Benjamin, his words, live chat, 2026-10-10): « c'est possible
@@ -150,7 +162,8 @@ remove this section and its pointers (`AGENTS.md`, `docs/context-index/`,
 `GLOSSARY.md`).
 
 - **Offer it.** Once a Spec is approved, the operator session says in one
-  line which path it would take and why; Benjamin answers. Direct Delivery
+  line which path it would take and why; Benjamin answers on the human-led
+  path. Under `PLANNING_DELEGATION.md`, the agent chooses and records why. Direct Delivery
   tends to win when the slices are independent and the proof is mechanical;
   the Factory when the work should run unattended. (The agent's reading, to
   adjust with use.)
@@ -158,8 +171,21 @@ remove this section and its pointers (`AGENTS.md`, `docs/context-index/`,
   there his words and the pull requests it plans, and publishes no ticket
   graph for that Spec, so the Factory does not deliver it a second time.
 - **Same way to main.** Worktree, pull request, Factory CI (`AGENTS.md`,
-  "Invariants"). A fresh-context review before a pull request is worth its
-  minutes for what a green test cannot show.
+  "Invariants"). Intent (Benjamin, his words, 2026-10-13 13:49 Paris):
+  « j'approuve » la Spec af-t5cgg7, dont la règle Direct Delivery rend la
+  relecture obligatoire. Mechanism (agent interpretation): independent review
+  is required before each Direct Delivery pull request. A fresh reviewer
+  session reads the current diff, the approved Spec, and applicable written
+  standards (including `STANDARDS.md` and `DESIGN.md` when present). A finding
+  citing an applicable written standard blocks the pull request when its
+  citation is verified in that source. A verified citation to the approved
+  Spec also blocks. The author corrects it and obtains a
+  fresh favorable review, or contests it and obtains favorable judgement from
+  another fresh reviewer; the author cannot waive it alone. An unavailable
+  review is not favorable. If the diff changes after review, review the new
+  diff before the PR. Record uncited findings without treating them as a gate.
+  This review rule governs Direct Delivery even though choosing between the
+  two delivery paths remains a preference.
 - **Leave the comparison.** At the end, three lines as a comment on the Spec
   bead: clock time from Spec approval to last merge; number of pull requests;
   defects found afterwards (added when one shows). The same three lines can
@@ -197,6 +223,24 @@ other map ticket.
   `bin/ticket-graph-publish` (`bd-publish`, `bd-patch`) refuses a draft
   with a `kind: prototype` ticket before any write; a ticket already
   published that way (C01's T21) is left as it is.
+
+## Cause racine d'un standard récidivant
+
+À l'entrée d'une session d'opérateur qui prend du travail de planification,
+lire la file avec `gc bd list --status open --has-metadata-key
+gc.standard_recurrence --limit 0 --json`. Chaque tâche `ready-for-agent` y
+nomme deux refus enregistrés et une règle écrite encore présente. Prendre une
+tâche par `bd --actor po-agent/<session> update <id> --claim`, selon
+`docs/agents/issue-tracker.md` ; ne pas prendre celle qu'une autre session
+réserve. Cela reprend le travail technique sans nouveau choix de Benjamin :
+ajouter un refus par code pour le standard déjà accepté, ou préciser son texte
+sans changer son sens, puis livrer en worktree avec tests, revue et PR selon
+`docs/DELIVERY.md`. Le Bead reste sur le plan de planification et n'est pas
+dispatché par `bin/dispatch-door`. Si le sens doit changer, préparer l'avant,
+l'après et les effets pour l'Acceptance Session ; attendre l'accord de
+Benjamin avant d'appliquer la nouvelle règle. Cette file est reprise à la
+prochaine session d'opérateur : la création de la tâche ne lance pas une
+session immédiatement.
 
 ## Claims and concurrency
 

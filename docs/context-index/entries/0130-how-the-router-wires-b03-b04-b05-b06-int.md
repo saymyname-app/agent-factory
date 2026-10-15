@@ -1,2 +1,2 @@
-Need: How a Planning Run is chartered by `/wayfinder`, approved by `spec-approve`, sliced by `/to-tickets` and published by the publication door (`ticket-graph-publish`), the No-fog exit and overflow rule, and the C01/Cockpit V2 reservation gate
-Read: `PLANNING_RUN.md`, `./bin/spec-approve`, `./bin/ticket-graph-publish`, `.gc/runtime/planning-run-reservation.json` (seeded from `config/planning-run-reservation.json`), `tests/planning-run-lifecycle-test.py`
+Need: Planning Run: charter, No-fog, approval, graph publication
+Read: `PLANNING_RUN.md`

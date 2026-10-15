@@ -48,11 +48,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
+import pwd
 import subprocess
 import sys
 import tempfile
-import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -76,6 +75,7 @@ BRANCH_PREFIX = "ticket/"
 AUTHOR_ROLE = "author"
 
 sys.path.insert(0, str(BIN.parent / "lib"))
+import delivery_reads  # noqa: E402
 from delivery_role_identity import role_identity  # noqa: E402
 
 EXIT_REFUSED = 1
@@ -84,10 +84,6 @@ EXIT_NOT_NEW_FLOW = 4
 MAX_DETAIL = 300
 LAUNCH_TIMEOUT = 180
 CAPTURE_TIMEOUT = 600
-
-# The publication door renders a ticket's rigs under this heading.
-RIGS_SECTION_RE = re.compile(r"^## Target rigs[ \t]*\n+([^\n#]*)$", re.MULTILINE)
-RIG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 class Refusal(RuntimeError):
@@ -153,17 +149,7 @@ def state_write(*args: str) -> dict[str, Any]:
 
 
 def read_bead(bead_id: str) -> dict[str, Any]:
-    proc = run([GC_BIN, "bd", "show", bead_id, "--json"])
-    if proc.returncode != 0:
-        raise Refusal(f"gc bd show {bead_id} a échoué : {detail_of(proc)}")
-    try:
-        data = json.loads(proc.stdout)
-    except json.JSONDecodeError as exc:
-        raise Refusal(f"gc bd show {bead_id} a rendu un JSON illisible : {exc}") from exc
-    bead = data[0] if isinstance(data, list) and data else data
-    if not isinstance(bead, dict):
-        raise Refusal(f"bead introuvable : {bead_id}")
-    return bead
+    return delivery_reads.read_bead(bead_id, GC_BIN, Refusal)
 
 
 def git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -206,23 +192,16 @@ def show(convoy_id: str, repo: Path | None = None) -> dict[str, Any]:
 
 def ticket_rig(description: Any) -> str:
     """The single project a ticket names under « Target rigs »."""
-    match = RIGS_SECTION_RE.search(description if isinstance(description, str) else "")
-    rigs = [rig.strip() for rig in match.group(1).split(",") if rig.strip()] if match else []
-    if len(rigs) != 1 or not RIG_RE.match(rigs[0]) or not (PROJECTS / f"{rigs[0]}.toml").is_file():
+    rig = delivery_reads.ticket_rig(description, PROJECTS)
+    if rig is None:
         raise Refusal(
             "le ticket ne nomme pas un seul projet de config/projects sous « Target rigs » : "
             "son dépôt se donne par --repo")
-    return rigs[0]
+    return rig
 
 
 def rig_repository(rig: str) -> Path:
-    try:
-        rig_dir = tomllib.loads((PROJECTS / f"{rig}.toml").read_text(encoding="utf-8")).get("rig_dir")
-    except (OSError, tomllib.TOMLDecodeError) as exc:
-        raise Refusal(f"config/projects/{rig}.toml illisible : {exc}") from exc
-    if not isinstance(rig_dir, str) or not rig_dir:
-        raise Refusal(f"config/projects/{rig}.toml ne déclare pas rig_dir")
-    return (ROOT / rig_dir).resolve()
+    return delivery_reads.rig_repository(rig, ROOT, Refusal)
 
 
 def rig_profile(rig: str) -> Path | None:
@@ -237,8 +216,19 @@ def rig_profile(rig: str) -> Path | None:
     return None
 
 
+def account_home() -> Path:
+    """The home of the account, not $HOME: Gas City runs an exec check with
+    HOME set to the city root, so the gate looked for the work tree where the
+    author session, which keeps the home of the account, had not made it
+    (af-r35155)."""
+    try:
+        return Path(pwd.getpwuid(os.getuid()).pw_dir)
+    except KeyError:
+        return Path.home()
+
+
 def worktree_of(ticket_id: str) -> Path:
-    base = os.environ.get("TICKET_AUTHOR_WORKTREES_DIR") or Path.home() / ".local/share/agent-factory-runtime-worktrees"
+    base = os.environ.get("TICKET_AUTHOR_WORKTREES_DIR") or account_home() / ".local/share/agent-factory-runtime-worktrees"
     return Path(base) / ticket_id
 
 
@@ -471,6 +461,7 @@ def cmd_start(args: argparse.Namespace) -> int:
         "integration_branch": integration, "base": merge_base(repo, tip, base) or base,
         "profile": str(profile) if profile else None,
         "demonstration_line": ticket.state.get("demonstration_line"),
+        "interface": bool(ticket.state.get("interface")),
     }, indent=2, sort_keys=True, ensure_ascii=False))
     return 0
 

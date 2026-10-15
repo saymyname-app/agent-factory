@@ -278,7 +278,7 @@ required_ci = "CI"
 sling_target = "trial-author"
 formulas = "mol-ticket-author"
 TOML
-jq '.rigs = ["trial"]' "$ROOT/$FIXTURE/descriptor.json" > "$CITY/config/project-descriptors/trial.json"
+jq '.rigs = ["trial"] | .stacks = {"trial": ["fixture-stack"]}' "$ROOT/$FIXTURE/descriptor.json" > "$CITY/config/project-descriptors/trial.json"
 jq -n --argjson n "$CEILING" '{contract: "agent-factory-delivery-flow/v1", max_sessions: $n, start: {formula: "mol-ticket-author", role: null},
   test_review: {formula: "mol-test-review", role: "reviewer", rig: "trial", timeout_seconds: 600}}' \
   > "$CITY/config/delivery-flow.json"

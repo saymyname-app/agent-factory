@@ -502,6 +502,11 @@ def check_entry_contract(
         check_validated_prototype(reference, remote, repo_root, conformance_bin, protected)
 
 
+def derivation_check(spec_id: str, project: str) -> dict[str, Any]:
+    return run_subtool([tool_path("PLANNING_DELEGATION_BIN", "planning-delegation"),
+                       "check", "--artifact", spec_id, "--project", project])
+
+
 def cmd_bd_approve(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root)
     config_dir = Path(args.config_dir) if args.config_dir else repo_root / "config" / "projects"
@@ -513,11 +518,18 @@ def cmd_bd_approve(args: argparse.Namespace) -> int:
     try:
         spec_bead = bd_show(args.spec)
         metadata = spec_bead.get("metadata") or {}
+        derived = args.command == "bd-derive"
+        proof = derivation_check(args.spec, args.project) if derived else None
+        if derived and (proof.get("kind") != "spec" or proof.get("digest") != canonical_bead_digest(spec_bead.get("description") or "")
+                        or proof.get("project") != args.project):
+            raise SpecApproveError("refused: derivation proof does not match this Spec")
         # An amended Spec -- approved, its text changed since (`void` in
         # bd-status) -- is approved again, on fresh evidence and held to
         # every check below (T52, af-ezqgma; Spec af-wf4w5r section 11).
         amended = metadata.get("spec_state") == APPROVED_SPEC and metadata.get("approved_digest") \
             != canonical_bead_digest(spec_bead.get("description") or "")
+        if derived and metadata.get("spec_state") == APPROVED_SPEC and metadata.get("derived_authorization") != proof["authorization"]:
+            amended = True
         if metadata.get("spec_state") == APPROVED_SPEC and not amended:
             raise SpecApproveError(
                 f"cannot approve state={APPROVED_SPEC!r}: only a DRAFT_SPEC, or an APPROVED_SPEC amended since "
@@ -560,14 +572,18 @@ def cmd_bd_approve(args: argparse.Namespace) -> int:
                     "refused: the Spec names no map and carries no No-fog exit evidence"
                 )
 
-        human_approver = declared_human_approver(args.project, config_dir, profile_bin)
-        approved_by = required_string(args.approved_by, "--approved-by")
-        if approved_by != human_approver:
-            raise SpecApproveError(
-                f"refused: --approved-by {approved_by!r} is not the project's declared human "
-                f"approver {human_approver!r}"
-            )
-        evidence = required_string(args.evidence, "--evidence")
+        if derived:
+            approved_by = proof["derived_by"]
+            evidence = "Derived under delegation: " + proof["map"]
+        else:
+            human_approver = declared_human_approver(args.project, config_dir, profile_bin)
+            approved_by = required_string(args.approved_by, "--approved-by")
+            if approved_by != human_approver:
+                raise SpecApproveError(
+                    f"refused: --approved-by {approved_by!r} is not the project's declared human "
+                    f"approver {human_approver!r}"
+                )
+            evidence = required_string(args.evidence, "--evidence")
 
         check_entry_contract(
             spec_bead.get("description") or "", args.prototype_remote, repo_root, conformance_bin,
@@ -579,10 +595,13 @@ def cmd_bd_approve(args: argparse.Namespace) -> int:
         update_args = [
             "update", args.spec,
             "--set-metadata", "spec_state=" + APPROVED_SPEC,
+            "--set-metadata", "approval_mode=" + ("derived/v1" if derived else "human-exact"),
             "--set-metadata", f"approved_by={approved_by}",
             "--set-metadata", f"approved_evidence={evidence}",
             "--set-metadata", f"approved_digest={digest}",
         ]
+        if derived:
+            update_args += ["--set-metadata", "derived_authorization=" + proof["authorization"]]
         if project_id and metadata.get(PROJECT_METADATA_KEY) != project_id:
             update_args += ["--set-metadata", f"{PROJECT_METADATA_KEY}={project_id}"]
         run_bd(update_args)
@@ -590,7 +609,7 @@ def cmd_bd_approve(args: argparse.Namespace) -> int:
         map_closed = False
         # The map of an amended Spec was closed by its first approval.
         if planning_map is not None and not amended:
-            map_close(planning_map, f"Spec approved by {approved_by}: {args.spec}", map_bin)
+            map_close(planning_map, f"Spec {'derived by' if derived else 'approved by'} {approved_by}: {args.spec}", map_bin)
             map_closed = True
     except SpecApproveError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, indent=2, ensure_ascii=False))
@@ -603,6 +622,7 @@ def cmd_bd_approve(args: argparse.Namespace) -> int:
                 "state": APPROVED_SPEC,
                 "digest": digest,
                 "approved_by": approved_by,
+                "approval_mode": "derived/v1" if derived else "human-exact",
                 "map": planning_map,
                 "map_closed": map_closed,
                 "amended": amended,
@@ -626,12 +646,22 @@ def cmd_bd_status(args: argparse.Namespace) -> int:
     approved_digest = metadata.get("approved_digest")
     void = state == APPROVED_SPEC and approved_digest is not None and approved_digest != actual_digest
 
+    derivation_error = None
+    if metadata.get("approval_mode") == "derived/v1":
+        try:
+            proof = derivation_check(args.spec, metadata.get(PROJECT_METADATA_KEY) or "")
+            if metadata.get("derived_authorization") != proof["authorization"]:
+                raise SpecApproveError("derived Spec authorization changed since freeze")
+        except SpecApproveError as exc:
+            void, derivation_error = True, str(exc)
     print(
         json.dumps(
             {
                 "ok": True,
                 "spec": args.spec,
                 "state": state,
+                "approval_mode": metadata.get("approval_mode", "human-exact"),
+                "derivation_error": derivation_error,
                 "content_digest": actual_digest,
                 "approved_by": metadata.get("approved_by"),
                 "approved_evidence": metadata.get("approved_evidence"),
@@ -693,26 +723,25 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog=PROGRAM, description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    bd_approve = subparsers.add_parser(
-        "bd-approve", help="approve a planning-plane Spec bead by id, with or without a map"
-    )
-    bd_approve.add_argument("--spec", required=True, help="Spec bead id")
-    bd_approve.add_argument("--approved-by", required=True)
-    bd_approve.add_argument("--evidence", required=True)
-    bd_approve.add_argument(
-        "--project", required=True, help="project id whose config/projects/<id>.toml declares the human approver"
-    )
-    bd_approve.add_argument(
-        "--repo-root", default=str(repo_root_default()), help="repository root config/projects and the reservation live under"
-    )
-    bd_approve.add_argument(
-        "--config-dir", default=None, help="directory holding config/projects/*.toml files (default: <repo-root>/config/projects)"
-    )
-    bd_approve.add_argument(
-        "--prototype-remote", default=None,
-        help="repository the Spec's Validated Prototype branch lives on (default: <repo-root>'s origin remote)",
-    )
-    bd_approve.set_defaults(func=cmd_bd_approve)
+    for command in ("bd-approve", "bd-derive"):
+        bd_approve = subparsers.add_parser(command, help="freeze a Spec with exact approval or reviewed delegation")
+        bd_approve.add_argument("--spec", required=True, help="Spec bead id")
+        bd_approve.add_argument("--approved-by", required=command == "bd-approve")
+        bd_approve.add_argument("--evidence", required=command == "bd-approve")
+        bd_approve.add_argument(
+            "--project", required=True, help="project id whose config/projects/<id>.toml declares the human approver"
+        )
+        bd_approve.add_argument(
+            "--repo-root", default=str(repo_root_default()), help="repository root config/projects and the reservation live under"
+        )
+        bd_approve.add_argument(
+            "--config-dir", default=None, help="directory holding config/projects/*.toml files (default: <repo-root>/config/projects)"
+        )
+        bd_approve.add_argument(
+            "--prototype-remote", default=None,
+            help="repository the Spec's Validated Prototype branch lives on (default: <repo-root>'s origin remote)",
+        )
+        bd_approve.set_defaults(func=cmd_bd_approve)
 
     bd_status = subparsers.add_parser(
         "bd-status", help="report a Spec bead's state, digest, approval and whether it is void"

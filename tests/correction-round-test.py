@@ -234,6 +234,7 @@ class CorrectionRoundTest(unittest.TestCase):
         (config / "projects" / f"{RIG}.toml").write_text(f'rig_dir = "{self.repo}"\nhuman_approver = "{APPROVER}"\n')
         profile = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
         profile["rigs"] = [RIG]
+        profile["stacks"] = {RIG: ["fixture-stack"]}
         self.profile.write_text(json.dumps(profile))
 
     def author(self, *plan):
@@ -276,6 +277,33 @@ class CorrectionRoundTest(unittest.TestCase):
         if check:
             self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         return proc.stdout.strip()
+
+    def test_malformed_unfinished_ticket_is_still_refused(self):
+        tracker = json.loads(self.tracker.read_text())
+        tracker["beads"][SLICE]["metadata"]["gc.flow.code_review"] = "not-json"
+        self.tracker.write_text(json.dumps(tracker))
+        before = self.tracker.read_bytes()
+        result = self.run_cmd(TOOL, "settle", CONVOY, "--repo", self.repo)
+        self.assertNotEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertIn(SLICE, result.stdout)
+        self.assertEqual(before, self.tracker.read_bytes())
+        self.assertEqual([], self.launches())
+
+    def test_unfinished_tickets_need_only_the_initial_convoy_read(self):
+        calls = self.tmp / "tracker-reads"
+        gc = Path(self.env["GC_BIN"])
+        gc.write_text(
+            f'#!/bin/sh\nprintf "%s\\n" "$*" >> "{calls}"\n'
+            f'exec "{FAKE_GC}" "$@"\n')
+        before = self.tracker.read_bytes()
+        result = self.run_cmd(TOOL, "settle", CONVOY, "--repo", self.repo)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertTrue(json.loads(result.stdout)["ok"])
+        reads = [line for line in calls.read_text().splitlines()
+                 if f"bd show {CONVOY} --json" in line]
+        self.assertEqual(1, len(reads), reads)
+        self.assertEqual(before, self.tracker.read_bytes())
+        self.assertEqual([], self.launches())
 
     def run_cmd(self, tool, *args, env=None):
         return subprocess.run((str(tool), *[str(a) for a in args]), env={**self.env, **(env or {})},
@@ -369,10 +397,10 @@ class CorrectionRoundTest(unittest.TestCase):
         return self.state("record-code-review", CONVOY, ticket, "--file", self.json_file(
             {"commit": tip, "recorded_by": f"delivery-reviewer-second-{ticket}-{tip[:6]}", "judgements": judgements}))
 
-    def open_evaluation(self, tip, ticket=SLICE):
+    def open_evaluation(self, tip, ticket=SLICE, state_file="/launch.json"):
         self.state("open-evaluation", CONVOY, ticket, "--commit", tip, "--file", self.json_file({
             "roles": {"author": None, "evaluator": None, "same_provider": None, "other_declared": []},
-            "environment": [{"dataset": None, "address": "http://127.0.0.1:1", "state_file": "/launch.json"}]}))
+            "environment": [{"dataset": None, "address": "http://127.0.0.1:1", "state_file": state_file}]}))
 
     def evaluated(self, tip, observed=True, ticket=SLICE):
         """A Ticket Evaluation recorded at `tip`, as an Evaluator session
@@ -720,6 +748,86 @@ class CorrectionRoundTest(unittest.TestCase):
         self.assertEqual(before, self.integration_tip())
         self.assertEqual(1, len(self.launches()))
         self.assertEqual({"resumes": 1, "correction_rounds": 1}, self.shown()["counters"])
+
+    def test_after_the_round_a_review_refusal_stops_while_evaluation_is_pending(self):
+        tip = self.refused_by_both()
+        self.settle()
+        new_tip = self.corrected(tip)
+        self.judged(new_tip, tip, refused=("F1.1",))
+        self.open_evaluation(new_tip)
+        before = self.shown()
+
+        stopped = self.settle()
+
+        self.assertEqual([SLICE], self.tickets(stopped["stopped"]))
+        after = self.shown()
+        self.assertEqual("still_refused", after["stop"]["reason"])
+        self.assertEqual(before["evaluation"]["rounds"], after["evaluation"]["rounds"])
+        self.assertEqual(before["evaluation"].get("request"), after["evaluation"].get("request"))
+        self.assertEqual([], after["evaluation"].get("live", []))
+        self.assertEqual(before["code_review"], after["code_review"])
+        self.assertEqual(before["counters"], after["counters"])
+        self.assertEqual(1, len(self.launches()))
+        self.assertEqual([], self.merge()["merged"])
+
+    def test_an_old_review_refusal_cannot_stop_a_newer_tip(self):
+        tip = self.refused_by_both()
+        self.settle()
+        corrected = self.corrected(tip)
+        self.judged(corrected, tip, refused=("F1.1",))
+        latest = self.commit_on(SLICE, {NOTE: "nouvelle correction\n"})
+        self.finish(SLICE, latest)
+        self.open_evaluation(latest)
+
+        settled = self.settle()
+
+        self.assertEqual([], settled["stopped"])
+        self.assertEqual([SLICE], self.tickets(settled["pending"]))
+        self.assertIsNone(self.shown()["stop"])
+
+    def test_after_the_round_an_evaluation_refusal_stops_while_review_is_pending(self):
+        tip = self.refused_by_both()
+        self.settle()
+        new_tip = self.corrected(tip)
+        self.evaluated(new_tip, observed=False)
+        before = self.shown()
+
+        stopped = self.settle()
+
+        self.assertEqual([SLICE], self.tickets(stopped["stopped"]))
+        after = self.shown()
+        self.assertEqual("still_refused", after["stop"]["reason"])
+        self.assertEqual(before["evaluation"]["rounds"], after["evaluation"]["rounds"])
+        self.assertEqual(before["evaluation"].get("request"), after["evaluation"].get("request"))
+        self.assertEqual([], after["evaluation"].get("live", []))
+        self.assertEqual(before["code_review"], after["code_review"])
+        self.assertEqual(before["counters"], after["counters"])
+        self.assertEqual(1, len(self.launches()))
+        self.assertEqual([], self.merge()["merged"])
+
+    def test_failed_product_stop_keeps_the_live_record_and_retries_before_escalation(self):
+        tip = self.refused_by_both()
+        self.settle()
+        new_tip = self.corrected(tip)
+        self.judged(new_tip, tip, refused=("F1.1",))
+        launch = self.tmp / "broken-launch.json"
+        launch.write_text("{")
+        self.open_evaluation(new_tip, state_file=str(launch))
+
+        failed = self.settle(expect=EXIT_REFUSED)
+
+        self.assertEqual([SLICE], self.tickets(failed["refused"]))
+        self.assertIn("produit non libéré", failed["refused"][0]["reason"])
+        self.assertEqual("still_refused", self.shown()["stop"]["reason"])
+        self.assertIn(str(launch), self.shown()["evaluation"]["live"])
+        self.assertEqual([], self.escalation_list())
+
+        launch.unlink()
+        retried = self.settle()
+
+        self.assertEqual([SLICE], self.tickets(retried["escalated"]))
+        self.assertEqual([], self.shown()["evaluation"].get("live", []))
+        self.assertIn("raised", self.shown()["stop"])
 
     def test_a_ticket_still_not_observed_after_its_round_stops(self):
         tip = self.refused_by_both()

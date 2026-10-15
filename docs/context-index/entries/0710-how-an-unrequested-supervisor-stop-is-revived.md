@@ -1,2 +1,2 @@
-Need: What happens when the supervisor is stopped and no operator asked for it (how it is told from the runbook's deliberate stop, who restarts it and within what delay, who is told), why `bin/factory-boot` starts the supervisor through its systemd unit, why merged code does not reach the live root while the supervisor is down, and why a test may stop a city or a supervisor only through `isolated_city_stop`
-Read: `FACTORY_TOOLS.md` (`./bin/factory-revive`), `RUNBOOK_STOP_AND_RESTART.md` (§2.3, §3, §6), `./bin/factory-revive`, `./bin/factory-boot`, `tests/lib/isolated-city.sh`, `tests/factory-revive-test.sh`, `tests/factory-boot-supervisor-test.sh`, `tests/isolated-city-stop-guard-test.sh`
+Need: Recover from an unrequested supervisor stop
+Read: `FACTORY_TOOLS.md`

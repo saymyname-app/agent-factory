@@ -1,2 +1,2 @@
-Need: How a Validated Prototype is frozen and checked against its six properties and its never-merged `prototype/` branch reference, and what `spec-approve` reads in a Spec (numbered user stories, `[interface]` stories, prototype reference, state inventory, several Validated Prototypes) before it approves (spec af-wf4w5r .2/.3, T07, T46)
-Read: `VALIDATED_PROTOTYPE.md`, `SPEC_APPROVE.md` ("Entry contract"), `./bin/prototype-conformance`, `./bin/spec-approve`, `tests/fixtures/delivery-fixture-city/`, `tests/prototype-conformance-test.py`, `tests/spec-approve-test.py`
+Need: Validated Prototype freeze and conformance
+Read: `VALIDATED_PROTOTYPE.md`

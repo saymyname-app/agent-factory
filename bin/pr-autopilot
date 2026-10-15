@@ -297,15 +297,13 @@ repo_done() {
 # added -- this only removes the *repeated* cost, not the protection.
 RECONCILE_CACHE="${PR_AUTOPILOT_RECONCILE_CACHE:-$FACTORY/.gc/pr-autopilot-reconciled-cache.tsv}"
 
-# A first reconciliation is not automatically a useful wake. When closed
-# history became visible (af-6s0xy), old merges were backfilled correctly but
-# each one also mailed the Mayor. Keep the durable backfill, and wake only for
-# a merge fresh enough to belong to the current delivery loop or when live work
-# explicitly waits on the reconciled bead. The clock override keeps the policy
-# deterministic under test.
-RECONCILE_WAKE_WINDOW_SECONDS="${PR_AUTOPILOT_RECONCILE_WAKE_WINDOW_SECONDS:-3600}"
+# A reconciliation is not automatically a useful wake. When closed history
+# became visible (af-6s0xy), old merges were backfilled correctly but each one
+# also mailed the Mayor; then every merge of the last hour did, waited on or
+# not (af-yzo8fo.3). Keep the durable backfill, and wake only when live work
+# explicitly waits on the reconciled bead. The clock override keeps the
+# direct-merge delay deterministic under test.
 RECONCILE_NOW_EPOCH="${PR_AUTOPILOT_NOW_EPOCH:-$(date -u +%s)}"
-case "$RECONCILE_WAKE_WINDOW_SECONDS" in *[!0-9]*|'') log "invalid reconciliation wake window"; exit 2 ;; esac
 case "$RECONCILE_NOW_EPOCH" in *[!0-9]*|'') log "invalid reconciliation clock"; exit 2 ;; esac
 
 # af-n8gft2: armed is not merged. GitHub's auto-merge left PR #479 open for 17
@@ -320,7 +318,7 @@ case "$RECONCILE_NOW_EPOCH" in *[!0-9]*|'') log "invalid reconciliation clock"; 
 ARMED_MERGE_DELAY_SECONDS="${PR_AUTOPILOT_ARMED_MERGE_DELAY_SECONDS:-180}"
 case "$ARMED_MERGE_DELAY_SECONDS" in *[!0-9]*|'') log "invalid armed merge delay"; exit 2 ;; esac
 
-# The direct path: one squash merge, pinned to the head this tick read (GitHub
+# The direct path: one squash request, pinned to the head this tick read (GitHub
 # refuses it if the head moved). The caller has established that the required
 # check is green and the state CLEAN, which is the gate auto-merge waits for.
 # Hard rule (gastown land-and-deploy): never retry `gh pr merge` after a
@@ -328,13 +326,16 @@ case "$ARMED_MERGE_DELAY_SECONDS" in *[!0-9]*|'') log "invalid armed merge delay
 # when it merged fine but could not delete the local branch -- which is what
 # happens whenever a leftover worktree still pins it. Ask the server what
 # actually happened.
+# Branch deletion is separate: a queued request is not a merge (af-x2ozgs).
+# GitHub/native maintenance cleans branches only after confirmed merge.
 direct_merge() {  # repo num head_sha
   local repo=$1 num=$2 sha=$3 rc d_rc final
-  local -a args=(pr merge "$num" --repo "$repo" --squash --delete-branch)
+  local -a args=(pr merge "$num" --repo "$repo" --squash)
   [ "$sha" != "unknown" ] && args+=(--match-head-commit "$sha")
   if [ "$DRY_RUN" = "1" ]; then log "  DRY-RUN: gh ${args[*]}"; return 0; fi
   bounded "$AP_WRITE_CAP" gh "${args[@]}" >/dev/null 2>&1; d_rc=$?
-  if [ "$d_rc" = 0 ]; then log "    merged"; ARMED=$((ARMED+1)); return 0; fi
+  # A successful request may only enqueue the PR; read GitHub before claiming merge.
+  if [ "$d_rc" = 0 ]; then log "    merge requested (GitHub confirms completion)"; ARMED=$((ARMED+1)); return 0; fi
   final=$(bounded "$AP_READ_CAP" gh pr view "$num" --repo "$repo" --json state \
     --jq .state 2>/dev/null); rc=$?
   if [ "$final" = "MERGED" ]; then
@@ -345,15 +346,6 @@ direct_merge() {  # repo num head_sha
   else
     log "    direct merge failed — left for a human"; ERRORS=$((ERRORS+1))
   fi
-}
-
-merge_is_recent() {  # mergedAt -> 0 when within the bounded wake window
-  local merged_at=$1 merged_epoch age
-  [ -n "$merged_at" ] || return 1
-  merged_epoch=$(jq -nr --arg timestamp "$merged_at" '$timestamp|fromdateiso8601' 2>/dev/null) || return 1
-  case "$merged_epoch" in *[!0-9]*|'') return 1 ;; esac
-  age=$((RECONCILE_NOW_EPOCH - merged_epoch))
-  [ "$age" -ge 0 ] && [ "$age" -le "$RECONCILE_WAKE_WINDOW_SECONDS" ]
 }
 
 active_waiters_for() {  # bead -> comma-separated open/in_progress waiter ids
@@ -1062,10 +1054,10 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
 
     log "  PR #$num: arming auto-merge (squash, state=$state)"
     if [ "$DRY_RUN" = "1" ]; then
-      log "  DRY-RUN: gh pr merge $num --repo $repo --auto --squash --delete-branch"
+      log "  DRY-RUN: gh pr merge $num --repo $repo --auto --squash"
       ARMED=$((ARMED+1))
     else
-      bounded "$AP_WRITE_CAP" gh pr merge "$num" --repo "$repo" --auto --squash --delete-branch >/dev/null 2>&1; rc=$?
+      bounded "$AP_WRITE_CAP" gh pr merge "$num" --repo "$repo" --auto --squash >/dev/null 2>&1; rc=$?
       if [ "$rc" = 0 ]; then
         ARMED=$((ARMED+1))
       elif timed_out "$rc"; then
@@ -1271,13 +1263,14 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
       log "  PR #$num ($branch): snapshot said already-terminal but live bead $bead is '${live_status:-unknown}' -- reconciling for real"
     fi
     log "  PR #$num merged at ${sha:0:8} -> reconciling bead $bead"
+    # The Mayor is woken only when open work waits on this bead. A merge
+    # nothing waits behind used to wake it too (any merge of the last hour):
+    # 8 wakes in 42 hours answered "nothing to advance" (2026-10-13,
+    # af-yzo8fo.3). The delivery door already resolves the proposals the
+    # merge answers.
     waiters=$(active_waiters_for "$bead")
     wake_reason=""
-    if merge_is_recent "$merged_at"; then
-      wake_reason="merge $merged_at is within ${RECONCILE_WAKE_WINDOW_SECONDS}s"
-    elif [ -n "$waiters" ]; then
-      wake_reason="active waiter(s): $waiters"
-    fi
+    [ -n "$waiters" ] && wake_reason="active waiter(s): $waiters"
     finalize_delivery "$rig_path" "$bead" "$repo" "$num" "$required_workflow"; rc=$?
     if timed_out "$rc"; then
       log "    delivery door timed out for bead $bead -- outcome unknown, re-checked next tick"
@@ -1302,7 +1295,7 @@ NEXT: Mayor advances or finalizes work waiting on $bead.' >/dev/null 2>&1"; then
         log "    reconciliation wake failed for bead $bead"
         ERRORS=$((ERRORS+1))
       elif [ -z "$wake_reason" ]; then
-        vlog "PR #$num: historical reconciliation has no active waiter -> metadata only"
+        vlog "PR #$num: nothing waits on $bead -> metadata only, no wake"
       fi
       RECONCILED=$((RECONCILED+1))
     else
@@ -1332,11 +1325,7 @@ NEXT: Mayor advances or finalizes work waiting on $bead.' >/dev/null 2>&1"; then
       elif [ "$rc" = 0 ]; then
         via_waiters=$(active_waiters_for "$via_bead")
         via_wake_reason=""
-        if merge_is_recent "$merged_at"; then
-          via_wake_reason="merge $merged_at is within ${RECONCILE_WAKE_WINDOW_SECONDS}s"
-        elif [ -n "$via_waiters" ]; then
-          via_wake_reason="active waiter(s): $via_waiters"
-        fi
+        [ -n "$via_waiters" ] && via_wake_reason="active waiter(s): $via_waiters"
         if [ -n "$via_wake_reason" ] && ! run bash -c "cd '$rig_path' && gc mail send mayor --notify \
           --subject 'SHIPPED: $via_bead via PR #$num' \
           --message 'ACTION: pr-autopilot reconciled $via_bead from merged PR #$num (delivered via another ticket)

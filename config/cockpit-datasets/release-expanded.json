@@ -1,0 +1,12 @@
+{
+  "generated_at": "2026-10-12T12:00:00+02:00",
+  "synthetic": true,
+  "ui": {
+    "id": "release-expanded",
+    "page": "projects",
+    "selected": "Notes",
+    "setup": "releasePlans.Notes.decision='include';releasePlans.Notes.remaining.push(releasePlans.Notes.addition);releasePlans.Notes.history.push('Cible élargie : partage ajouté');render()"
+  },
+  "visible_text": "← Projets\nNotes\n\nRetrouver une note à partir de ses mots et de ses documents.\n\nEn cours\n3\nRésultats fusionnés · 7 jours\n7\nPR fusionnées · 7 jours\n96 %\nVérifications CI réussies · 7 jours\nProchaine release\nCible révisable · proposition\n\nPermettre à un nouvel utilisateur de retrouver et exporter ses notes sans aide.\n\n✓ Acquis vérifiés 2\nCréer et retrouver une note\nVoir la preuve\nConserver ses notes après reconnexion\nVoir la preuve\nReste connu 3\n\n○ Exporter les notes au format choisi\n\n○ Vérifier le parcours sans assistance\n\n○ Partager une note avec une autre personne\n\nPérimètre élargi\n\nPartager une note avec une autre personne ajouté à la cible.\n\nPROCHAIN JALON\nFaire essayer le parcours complet à trois utilisateurs\n\nTrois essais documentés ; blocages et réussites observés.\n\nÀ préparer · réalisation non lancée\nEstimation non disponible\n\nHistorique comparable insuffisant pour le périmètre élargi. Prochaine réévaluation après le jalon.\n\nÉvolution de la cible\nPréparer la prochaine release\nCHANTIER ACTUEL\nRecherche dans les notes\n\nAucune décision attendue\n\nVoir le run\nROADMAP\nRecherche et navigation\nImport des documents\nTerminé\nRecherche dans les notes\nEn cours\n\nProchain jalon proposé : Faire essayer le parcours complet à trois utilisateurs.\n\nDerniers changements\n\n● Import des documents\n\nDernier résultat fusionné · exemple\nVoir le journal\nRessources du projet\nObjectif et périmètre\nSources et mesures\nPréparer une revue",
+  "production_writes": 0
+}

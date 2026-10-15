@@ -1,2 +1,2 @@
-Need: What happens when the code meets a state it has no rule for in a convoy that carries the new-flow mark (ticket started or closed outside its door, evidence without fingerprint, incoherent counter): the convoy stops, one factory incident reaches `bin/escalation-door list`, code resumes it once the state is valid; and why the Mayor can no longer dispatch, close or modify the tickets of such a convoy (spec af-wf4w5r §0 rules 3 and 5, T34)
-Read: `CONVOY_ADVANCE.md` (« État sans règle », « Who may start a ticket »), `CONVOY_STATE.md`, `./bin/convoy-advance`, `./bin/dispatch-door`, `./bin/convoy-state`, `agents/mayor/prompt.template.md` (« New-flow convoys: hands off »), `orders/convoy-advance.toml`, `ADAPTATION_REGISTER.md` (AR-011), `tests/convoy-advance-test.py`, `tests/convoy-stop-mayor-isolated-city-test.sh` (local-only)
+Need: Unknown convoy states and Mayor hands-off boundary
+Read: `CONVOY_ADVANCE.md`

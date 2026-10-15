@@ -3,6 +3,7 @@
   "project_id": "saymyname",
   "display_name": "SayMyName",
   "rigs": ["saymyname-backend", "saymyname-frontend"],
+  "stacks": {"saymyname-backend": ["java-spring-maven"], "saymyname-frontend": ["react-typescript"]},
   "knowledge_repo": "saymyname-app/Say-my-name-product",
   "roadmap_path": "knowledge/roadmap.toml",
   "rituals_status_command": "tools/rituals-status.sh",

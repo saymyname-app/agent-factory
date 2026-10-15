@@ -3,6 +3,7 @@
   "project_id": "fixture-project",
   "display_name": "Fixture project",
   "rigs": ["fixture_city"],
+  "stacks": {"fixture_city": ["fixture-stack"]},
   "knowledge_repo": "fixture-org/fixture-repo",
   "roadmap_path": "docs/roadmap.toml",
   "rituals_status_command": "bin/rituals-status",

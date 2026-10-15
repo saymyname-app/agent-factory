@@ -294,6 +294,7 @@ class ConvoyStopsOnTheFixtureCity(Staged, publication.Harness):
         (config / "project-descriptors").mkdir(exist_ok=True)
         descriptor = json.loads((self.descriptors / f"{PROJECT}.json").read_text())
         descriptor["rigs"] = [RIG]
+        descriptor["stacks"] = {RIG: ["fixture-stack"]}
         descriptor["launch"]["regression_command"] = REGRESSION
         (config / "project-descriptors" / f"{PROJECT}.json").write_text(json.dumps(descriptor))
         shutil.copy(ROOT / "config" / "delivery-roles.json", config / "delivery-roles.json")
@@ -705,11 +706,13 @@ class ConvoyStopsOnTheFixtureCity(Staged, publication.Harness):
         mechanical verdicts are green: their record, and the Outcome
         Evaluation open at their commit on a launched product, sent to an
         Evaluator session. A process that does nothing stands for the product."""
-        product = subprocess.Popen(("sleep", "600"))
+        launch_id = os.urandom(16).hex()
+        product = subprocess.Popen(("sleep", "600"),
+                                   env={**os.environ, "FACTORY_LAUNCH_ID": launch_id})
         self.addCleanup(product.wait)
         self.addCleanup(product.kill)
         (self.tmp / "launches").mkdir()
-        (self.tmp / "launches" / "produit.json").write_text(json.dumps({"pid": product.pid}))
+        (self.tmp / "launches" / "produit.json").write_text(json.dumps({"pid": product.pid, "launch_id": launch_id}))
         names = ("registry", "tests", "fidelity")
         report = self.json_file("spec-end.json", {
             "version": "spec-end/v4",
@@ -930,12 +933,14 @@ class ConvoyStopsOnTheFixtureCity(Staged, publication.Harness):
         `not_observed`, each with its drafted repair. A process that does
         nothing stands for the launched product."""
         self.verdicts_at(commit)
-        product = subprocess.Popen(("sleep", "600"))
+        launch_id = os.urandom(16).hex()
+        product = subprocess.Popen(("sleep", "600"),
+                                   env={**os.environ, "FACTORY_LAUNCH_ID": launch_id})
         self.addCleanup(product.wait)
         self.addCleanup(product.kill)
         (self.tmp / "launches").mkdir(exist_ok=True)
         launch = self.tmp / "launches" / f"produit-{commit[:12]}.json"
-        launch.write_text(json.dumps({"pid": product.pid}))
+        launch.write_text(json.dumps({"pid": product.pid, "launch_id": launch_id}))
         request = self.json_file("outcome-request.json", {
             "roles": {"authors": [], "evaluator": None, "same_provider": None, "other_declared": []},
             "environment": [{"dataset": None, "address": "http://127.0.0.1:1", "state_file": str(launch)}]})

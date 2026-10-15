@@ -337,8 +337,24 @@ while true; do
     exit 0
   fi
   mv "$BRIEF.new" "$BRIEF"
-  ADDRESS=$(jq -r '.environments[] | select(.dataset == "content") | .address' "$BRIEF")
-  LAUNCH=$(jq -r '.environments[] | select(.dataset == "content") | .launch_state' "$BRIEF")
+  product_on() {
+    local answer deadline=$(( $(date +%s) + 300 ))
+    while true; do
+      answer=$("$BIN/ticket-evaluation" product "$CONVOY" "$TICKET" --dataset "$1" 2>>"$LOG") || return 1
+      if [ "$(printf '%s' "$answer" | jq -r '.ready')" = true ]; then
+        ADDRESS=$(printf '%s' "$answer" | jq -r '.address')
+        LAUNCH=$(printf '%s' "$answer" | jq -r '.launch_state')
+        return 0
+      fi
+      [ "$(date +%s)" -lt "$deadline" ] || return 1
+      sleep 2
+    done
+  }
+  covered() {
+    "$BIN/evidence-capture" command "$CONVOY" "$TICKET" --piece "evaluation.coverage.$1" --launch-state "$LAUNCH" -- curl -s "$ADDRESS/health" >/dev/null 2>>"$LOG" || return 1
+    jq -n --arg dataset "$1" '{dataset: $dataset, evidence: ("evaluation.coverage." + $dataset)}'
+  }
+  product_on content || OUTCOME=fail
   echo "$TICKET $EVALUATION_BEAD ${GC_SESSION_NAME:-?} $(jq -r '.commit' "$BRIEF")" >> "$TRIAL/evaluation-sessions"
   state_of() { # <piece> <text>: capture the answer of the entry point the text names, print the state as JSON
     local captured body path=/items field='"count":3'
@@ -360,7 +376,14 @@ while true; do
     CRITERIA=$(jq -c --argjson n "$NUMBER" --argjson s "${STATE:-null}" '. + [{number: $n} + $s]' <<< "$CRITERIA")
   done < <(jq -c '.criteria[]' "$BRIEF")
   LINE=$(state_of evaluation.demo "$(jq -r '.demonstration_line' "$BRIEF")") || OUTCOME=fail
-  jq --argjson criteria "$CRITERIA" --argjson line "${LINE:-null}" '{commit, criteria: $criteria, demonstration_line: $line}' "$BRIEF" > "$RESULT"
+  COVERAGE=$(covered content) || OUTCOME=fail
+  COVERAGE="[${COVERAGE:-null}]"
+  while IFS= read -r dataset; do
+    [ "$dataset" = content ] && continue
+    ENTRY=$(product_on "$dataset" && covered "$dataset") || OUTCOME=fail
+    COVERAGE=$(jq -c --argjson e "${ENTRY:-null}" '. + [$e]' <<< "$COVERAGE")
+  done < <(jq -r '.datasets[]' "$BRIEF")
+  jq --argjson criteria "$CRITERIA" --argjson line "${LINE:-null}" --argjson coverage "$COVERAGE" '{commit, criteria: $criteria, demonstration_line: $line, coverage: $coverage}' "$BRIEF" > "$RESULT"
   "$BIN/ticket-evaluation" record "$CONVOY" "$TICKET" --file "$RESULT" >> "$LOG" 2>&1 || OUTCOME=fail
   say "ticket $TICKET : états remis ($EVALUATION_BEAD, $OUTCOME)"
   gc bd update "$EVALUATION_BEAD" --set-metadata gc.outcome=$OUTCOME --status=closed --notes "évaluation $OUTCOME" >> "$LOG" 2>&1 || say "fermeture du bead d'évaluation refusée"
@@ -457,7 +480,7 @@ human_approver = "$APPROVER"
 TOML
 # The profile of the project is the descriptor of the fixture, whole: only
 # the rig it names is the one of this city.
-jq '.rigs = ["trial"]' "$ROOT/$FIXTURE/descriptor.json" > "$CITY/config/project-descriptors/trial.json"
+jq '.rigs = ["trial"] | .stacks = {"trial": ["fixture-stack"]}' "$ROOT/$FIXTURE/descriptor.json" > "$CITY/config/project-descriptors/trial.json"
 jq -n --argjson n "$CEILING" '{contract: "agent-factory-delivery-flow/v1", max_sessions: $n,
   start: {formula: "mol-ticket-author", role: "author"},
   test_review: {formula: "mol-test-review", role: "reviewer", rig: "trial", timeout_seconds: 600},
@@ -606,9 +629,11 @@ t=$(shown)
 grep -q "^$T .* review $TIP [1-9]" "$TRIAL/review-sessions" || fail "the reviewer session did not read the diff of the ticket: $(cat "$TRIAL/review-sessions")"
 [ "$(printf '%s' "$t" | jq -r '.evaluation.rounds[-1].outcome')" = favorable ] || fail "the ticket was not evaluated favorably"
 [ "$(printf '%s' "$t" | jq -r '.evaluation.state.commit')" = "$TIP" ] || fail "the evaluation is not on the tip of the ticket"
-for name in evaluation.c1 evaluation.c2 evaluation.demo; do
+for name in evaluation.c1 evaluation.c2 evaluation.demo evaluation.coverage.content evaluation.coverage.empty; do
   jq -e '.address != null' "$TRIAL/store/$SPEC/$T/$name.json" >/dev/null || fail "the piece $name was not captured on the launched product"
 done
+[ "$(jq -r '.address' "$TRIAL/store/$SPEC/$T/evaluation.coverage.content.json")" != "$(jq -r '.address' "$TRIAL/store/$SPEC/$T/evaluation.coverage.empty.json")" ] \
+  || fail "coverage of empty came from the content product"
 [ "$(printf '%s' "$t" | jq -r '.merge.outcome')" = merged ] || fail "the ticket is closed without being merged"
 git -C "$PRODUCT" merge-base --is-ancestor "$TIP" "$INTEGRATION" || fail "the tip of the ticket is not on the integration branch"
 jq -e '.exit_code == 0' "$TRIAL/store/$SPEC/$T/merged_tests.json" >/dev/null || fail "the regression command of the profile did not pass on the merged result"

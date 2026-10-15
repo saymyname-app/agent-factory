@@ -1,2 +1,2 @@
-Need: How T42 guarantees a fresh session per review of tests, code review and Ticket Evaluation (the work query of the reviewer and Evaluator agents, the refusal by `bin/convoy-state` of what a session that already served hands in, counted as a launch without result), which identifier signs a verdict, and why the cap of the author agent equals the ceiling N (spec af-wf4w5r §4, §5)
-Read: `TEST_REVIEW.md` (« A fresh session per review »), `CODE_REVIEW.md`, `TICKET_EVALUATION.md`, `CONVOY_STATE.md`, `TICKET_AUTHOR.md`, `agents/delivery-author/agent.toml`, `agents/delivery-reviewer/agent.toml`, `agents/delivery-evaluator/agent.toml`, `tests/delivery-agents-test.sh`, `tests/fresh-sessions-isolated-city-test.sh` (local-only)
+Need: Fresh test/code/evaluation sessions and author capacity
+Read: `TEST_REVIEW.md` (fresh sessions), `CODE_REVIEW.md`, `TICKET_EVALUATION.md`

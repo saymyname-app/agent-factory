@@ -78,10 +78,12 @@ For a change:
   --set-metadata gc.outcome=pass --status=closed --notes "..."` (`fail` if it
   failed). `gc bd close --reason` leaves no `gc.outcome`: the dispatcher reads
   `missing_outcome`, retries, hard-fails and skips the rest (af-ptx7).
-- **One escalation contract.** Only Benjamin can decide (ADR-0016 effect
-  tests): set `gc.needs_benjamin=true` AND mail `human` AND state the cause,
-  then keep working on what is eligible. Anything else: mail `mayor` BLOCKED,
-  `gc.outcome=fail`, drain. Never create a `human` gate: it notifies nobody.
+- **One escalation contract.** For a decision only Benjamin can make
+  (ADR-0016 effect tests), use `bin/escalation-door` with the cause; its
+  human route owns state and notification. Other blockers use
+  `bin/escalation-door mayor`. Never set `gc.needs_benjamin` manually or
+  create an unnotified `human` gate.
+  Keep working on eligible items; failed formula steps retain `gc.outcome=fail`.
 - **Standing ADMIN allowlist:** the routine upkeep gestures ADR-0016 §7
   exempts from the escalation contract run only through `bin/factory-maintain
   <gesture>` — `restart-service`, `prune-merged-branches`, `clean-worktrees`,
@@ -97,12 +99,11 @@ proven low-risk class; L2 one strong writer; L3 writer plus independent review f
 meaningful risk; L4 multi-agent only when decomposition has measured value. Never
 load whole backlogs or histories by default.
 
-Context discipline (write / select / compress / isolate): quality drops
-past about half the context window — that is the compaction/handoff
-trigger (Mayor session-budget guidance). Put load-bearing instructions at
-the start or end of prompts and docs; models attend to edges more than the
-middle. Give each role only the tools/skills its job needs: an unused tool
-still taxes every turn.
+Context discipline: select the relevant contract, save durable outcomes and
+isolate unrelated work. Follow the Mayor session-budget compaction/handoff
+threshold as an operating heuristic, not a universal model-quality law.
+Give each role only the tools/skills its job needs. Keep routing entries
+short; procedures and exceptions belong in their target contracts.
 
 ## Inter-agent mail format
 

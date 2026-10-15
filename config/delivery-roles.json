@@ -1,24 +1,51 @@
 {
   "contract": "agent-factory-delivery-roles/v1",
-  "description": "Les trois rôles de livraison (Spec af-wf4w5r §1, T03) : l'agent Gas City de chaque rôle, les skills de Matt qu'il reçoit (copies simples de skills/<chemin> sous agents/<agent>/skills/), ce qu'il lit sans le recevoir, s'il tourne en lecture seule, et s'il lui est interdit de déléguer l'écriture à un sous-agent (no_writing_subagent, T12 : le hook agents/<agent>/overlay/.claude/guards/author-subagent-guard bloque tout sous-agent qui n'est pas de lecture). Les fournisseurs déclarés d'un rôle sont la chaîne de sa cible dans config/provider-policy.json. bin/role-adoption-trial essaie cette distribution sur des sessions réelles ; bin/dispatch-door refuse un rôle sur un fournisseur sans essai réussi pour l'empreinte courante.",
+  "description": "Les trois rôles de livraison : les copies de skills de Matt viennent de skills/ et les copies de design de design-skills/ (préfixe design: dans skills). Chaque rôle reçoit uniquement ses skills ; role-adoption-trial vérifie les copies et les essaie sur des sessions réelles. Les chaînes de fournisseurs viennent de config/provider-policy.json.",
   "skills_dir": "skills",
   "roles": {
     "author": {
       "agent": "delivery-author",
-      "skills": ["engineering/tdd", "engineering/codebase-design"],
-      "reads": ["engineering/implement"],
+      "skills": [
+        "engineering/tdd",
+        "engineering/codebase-design",
+        "design:impeccable",
+        "design:better-writing",
+        "design:apple-design"
+      ],
+      "reads": [
+        "engineering/implement"
+      ],
       "read_only": false,
       "no_writing_subagent": true
     },
     "reviewer": {
       "agent": "delivery-reviewer",
-      "skills": ["engineering/code-review"],
+      "skills": [
+        "engineering/code-review",
+        "design:interface-review",
+        "design:review-animations",
+        "design:better-interface",
+        "design:better-accessibility",
+        "design:better-layout",
+        "design:better-writing",
+        "design:better-typography",
+        "design:better-colors",
+        "design:better-ui"
+      ],
       "reads": [],
       "read_only": true
     },
     "evaluator": {
       "agent": "delivery-evaluator",
-      "skills": [],
+      "skills": [
+        "design:better-interface",
+        "design:better-accessibility",
+        "design:better-layout",
+        "design:better-writing",
+        "design:better-typography",
+        "design:better-colors",
+        "design:better-ui"
+      ],
       "reads": [],
       "read_only": true
     }
