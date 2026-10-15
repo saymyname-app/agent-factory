@@ -1,0 +1,198 @@
+#!/usr/bin/env python3
+"""factory-metrics -- one JSON line of daily Factory metrics (af-lw581v).
+
+Run daily by orders/factory-metrics.toml. Appends ONE line to
+var/factory-metrics.jsonl covering one local calendar day (default: yesterday),
+computed only from records that already exist on this host. Read-only on
+everything else; L0, zero token.
+
+  tickets_merged / merged_tickets   tickets whose gc.flow.merge has outcome
+                                    `merged` and `at` in the day (HQ store, gc bd)
+  attempts_per_ticket / _mean       1 + gc.flow.counter.resumes of each merged
+                                    ticket (correction rounds are counted among
+                                    the resumes, docs/CONVOY_STATE.md)
+  evaluation_duration_seconds       always null: a recorded evaluation round
+                                    keeps only its end `at`; the request that
+                                    held its start is deleted on recording
+  tokens_total                      input+output+cache_read+cache_creation of
+                                    every assistant message (deduped by message
+                                    id) stamped in the day, in
+                                    ~/.claude/projects/*/*.jsonl -- ALL sessions,
+                                    not only ticket work
+  tokens_per_merged_ticket          tokens_total / tickets_merged (a day ratio,
+                                    not a per-ticket attribution)
+  order_runs / order_failure_rate   order.completed / order.failed events of the
+                                    day in .gc/events.jsonl; rate = failed /
+                                    (completed + failed)
+  sessions_over_150k                transcripts whose largest context (input +
+                                    cache_read + cache_creation) of a turn in
+                                    the day exceeds 150000
+
+A field whose source is missing (or undefined, e.g. no merged ticket) is null
+and named in `unavailable`, with its cause in `unavailable_reasons`.
+
+Usage: factory-metrics [--day YYYY-MM-DD] [--print]   # --print: stdout only, no append
+"""
+import glob
+import json
+import os
+import re
+import subprocess
+import sys
+from datetime import date, datetime, timedelta
+
+ROOT = os.environ.get("FACTORY_ROOT", "/home/benja/agent-factory")
+GC = os.environ.get("GC_BIN", "gc")
+TRANSCRIPTS = os.environ.get("FACTORY_METRICS_TRANSCRIPTS") or os.path.expanduser("~/.claude/projects")
+LOG = os.path.join(ROOT, "var/factory-metrics.jsonl")
+CONTEXT_LIMIT = 150000
+
+
+def epoch(ts):
+    # Trim nanoseconds (gc events) to what fromisoformat accepts.
+    ts = re.sub(r"(\.\d{1,6})\d*", r"\1", ts.replace("Z", "+00:00"))
+    return datetime.fromisoformat(ts).timestamp()
+
+
+def num(x):
+    return int(x) if x == int(x) else round(x, 4)
+
+
+def record(value):
+    return json.loads(value) if isinstance(value, str) else (value or {})
+
+
+def tickets(day, start, end):
+    run = subprocess.run([GC, "bd", "list", "--all", "--has-metadata-key", "gc.flow.merge",
+                          "--updated-after", day.isoformat(), "--limit", "0", "--brief", "--json"],
+                         cwd=ROOT, capture_output=True, text=True, timeout=120)
+    if run.returncode:
+        raise RuntimeError(f"gc bd list failed (rc {run.returncode})")
+    merged = {}
+    for bead in json.loads(run.stdout or "[]"):
+        meta = bead.get("metadata") or {}
+        merge = record(meta.get("gc.flow.merge"))
+        if merge.get("outcome") == "merged" and merge.get("at") and start <= epoch(merge["at"]) < end:
+            merged[bead["id"]] = 1 + int(meta.get("gc.flow.counter.resumes") or 0)
+    return dict(sorted(merged.items()))
+
+
+def orders(start, end):
+    runs = {}
+    with open(os.path.join(ROOT, ".gc/events.jsonl"), "rb") as fh:
+        for line in fh:
+            if b'"type":"order.completed"' not in line and b'"type":"order.failed"' not in line:
+                continue
+            try:
+                ev = json.loads(line)
+                at = epoch(ev["ts"])
+            except (ValueError, KeyError):
+                continue
+            if start <= at < end:
+                run = runs.setdefault(ev.get("subject") or "?", {"completed": 0, "failed": 0})
+                run[ev["type"].split(".", 1)[1]] += 1
+    for run in runs.values():
+        run["failure_rate"] = num(run["failed"] / (run["completed"] + run["failed"]))
+    return dict(sorted(runs.items()))
+
+
+def transcripts(start, end):
+    if not os.path.isdir(TRANSCRIPTS):
+        raise RuntimeError(f"no transcript directory {TRANSCRIPTS}")
+    total, over = 0, 0
+    for path in glob.glob(os.path.join(TRANSCRIPTS, "*", "*.jsonl")):
+        if os.path.getmtime(path) < start:
+            continue
+        usages, peak = {}, 0
+        with open(path, "rb") as fh:
+            for line in fh:
+                if b'"assistant"' not in line or b'"usage"' not in line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                    at = epoch(rec["timestamp"])
+                except (ValueError, KeyError):
+                    continue
+                msg = rec.get("message") or {}
+                if rec.get("type") != "assistant" or not msg.get("usage") or not start <= at < end:
+                    continue
+                u = {k: int(msg["usage"].get(k) or 0) for k in
+                     ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")}
+                usages[msg.get("id") or id(rec)] = u
+                peak = max(peak, u["input_tokens"] + u["cache_read_input_tokens"] + u["cache_creation_input_tokens"])
+        total += sum(sum(u.values()) for u in usages.values())
+        over += peak > CONTEXT_LIMIT
+    return total, over
+
+
+def main(argv):
+    day = None
+    if "--day" in argv:
+        i = argv.index("--day")
+        try:
+            day = date.fromisoformat(argv[i + 1])
+        except (IndexError, ValueError):
+            print("factory-metrics: --day takes YYYY-MM-DD", file=sys.stderr)
+            return 2
+    day = day or date.today() - timedelta(days=1)
+    # Local calendar day; computed from both midnights so a DST day stays correct.
+    start = datetime.combine(day, datetime.min.time()).astimezone().timestamp()
+    end = datetime.combine(day + timedelta(days=1), datetime.min.time()).astimezone().timestamp()
+
+    out = {"day": day.isoformat(), "generated_at": datetime.now().astimezone().isoformat(timespec="seconds")}
+    reasons = {}
+
+    def unavailable(fields, why):
+        for f in fields:
+            out[f] = None
+            reasons[f] = why
+
+    try:
+        attempts = tickets(day, start, end)
+        out.update(tickets_merged=len(attempts), merged_tickets=list(attempts), attempts_per_ticket=attempts)
+        if attempts:
+            out["attempts_mean"] = num(sum(attempts.values()) / len(attempts))
+        else:
+            unavailable(["attempts_mean"], "no ticket merged that day")
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        unavailable(["tickets_merged", "merged_tickets", "attempts_per_ticket", "attempts_mean"], str(exc))
+
+    unavailable(["evaluation_duration_seconds"],
+                "gc.flow.evaluation rounds record only their end `at`; the request holding the start is deleted")
+
+    try:
+        out["tokens_total"], out["sessions_over_150k"] = transcripts(start, end)
+    except (OSError, RuntimeError) as exc:
+        unavailable(["tokens_total", "sessions_over_150k"], str(exc))
+    if out["tokens_total"] is None:
+        unavailable(["tokens_per_merged_ticket"], "tokens_total unavailable")
+    elif not out.get("tickets_merged"):
+        unavailable(["tokens_per_merged_ticket"], "no merged ticket to divide by")
+    else:
+        out["tokens_per_merged_ticket"] = num(out["tokens_total"] / out["tickets_merged"])
+
+    try:
+        runs = orders(start, end)
+        out["order_runs"] = runs
+        completed = sum(r["completed"] for r in runs.values())
+        failed = sum(r["failed"] for r in runs.values())
+        if completed + failed:
+            out["order_failure_rate"] = num(failed / (completed + failed))
+        else:
+            unavailable(["order_failure_rate"], "no order run that day")
+    except OSError as exc:
+        unavailable(["order_runs", "order_failure_rate"], f"events unreadable: {exc.strerror}")
+
+    out["unavailable"] = sorted(reasons)
+    out["unavailable_reasons"] = reasons
+    line = json.dumps(out, sort_keys=True)
+    print(line)
+    if "--print" not in argv:
+        os.makedirs(os.path.dirname(LOG), exist_ok=True)
+        with open(LOG, "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
