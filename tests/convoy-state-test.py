@@ -3263,6 +3263,24 @@ class ConvoyStateTest(unittest.TestCase):
         self.assert_refused_and_nothing_written(
             "open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "d", mention="parqué")
 
+    def test_open_resume_lifts_a_stop_without_evaluation_result_only_and_keeps_it(self):
+        self.interrupted_ticket()
+        cause = "evaluation_no_result"
+        self.assert_refused_and_nothing_written(
+            "open-resume", CONVOY, T1, "--cause", cause, "--ref", "x", mention="pas arrêté")
+        self.ok("record-gate", CONVOY, "fx-t4", "--gate", "dispatch")
+        self.ok("stop-ticket", CONVOY, "fx-t4", "--reason", "still_refused", "--detail", "encore refusé")
+        self.assert_refused_and_nothing_written(
+            "open-resume", CONVOY, "fx-t4", "--cause", cause, "--ref", "x", mention="arrêté (still_refused)")
+        self.ok("stop-ticket", CONVOY, T1, "--reason", cause, "--detail", "aucun état en 2 lancements")
+
+        self.ok("open-resume", CONVOY, T1, "--cause", cause, "--ref", "integration:abc/stop:1")
+
+        shown = self.ticket(self.show(), T1)
+        self.assertEqual((None, 1), (shown["stop"], shown["counters"]["resumes"]))
+        self.assertEqual((cause, "aucun état en 2 lancements"),
+                         (shown["resume"]["entries"][-1]["stop"]["reason"], shown["resume"]["entries"][-1]["stop"]["detail"]))
+
     def test_launch_resume_records_the_one_session_a_resume_is_sent_to(self):
         self.interrupted_ticket()
         self.assert_refused_and_nothing_written("launch-resume", CONVOY, T1, "--bead", "fx-new1", mention="aucune reprise")

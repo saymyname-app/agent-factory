@@ -280,7 +280,10 @@ launch record before the new Evaluator receives its brief. The prior product's
 observation is not reused as the identity proof of its replacement. When that
 second launch gives no result either, the ticket is stopped
 (`evaluation_no_result`), its products are stopped, and it is raised once to
-the operator through `bin/escalation-door`.
+the operator through `bin/escalation-door`. That stop alone is lifted by
+code: `bin/convoy-advance` resumes the ticket itself, once per tip of the
+integration branch and within the bound K of the resumes, withdrawing the
+request (`docs/CONVOY_ADVANCE.md`, cause `evaluation_no_result`).
 
 An evaluation handed in by a session that already rendered a review of
 tests, a code review or a Ticket Evaluation of the convoy is refused the
@@ -362,7 +365,9 @@ reference receive neither brief field.
   `bin/prototype-fidelity` (`docs/PROTOTYPE_FIDELITY.md`); the gate that
   runs them for a ticket is T19's. The fresh author session after a refusal, its single
   correction round and the stop of a ticket still refused are
-  `bin/correction-round`'s (`docs/CORRECTION_ROUND.md`). Nothing lifts a stop yet.
+  `bin/correction-round`'s (`docs/CORRECTION_ROUND.md`). Nothing lifts a stop
+  but `evaluation_no_result`, resumed by `bin/convoy-advance`
+  (`docs/CONVOY_ADVANCE.md`).
 
 ## Proof
 

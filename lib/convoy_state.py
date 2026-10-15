@@ -436,9 +436,12 @@ BOUND_END_ROUNDS = "end_rounds"
 # Why code sends a ticket back to a fresh author session (T20): its session
 # was interrupted, the merge returned it, the repair it waited for is closed,
 # the request that parked it was answered, or its branch, finished, does not
-# contain the tip of the integration branch (T44). The correction round and a
-# commit after a verdict are counted where they are written.
-RESUME_CAUSES = ("interrupted", "returned", "unblocked", "answered", "behind")
+# contain the tip of the integration branch (T44), or its Ticket Evaluation
+# gave no result (af-xhc0sj): that resume lifts the stop. The correction round
+# and a commit after a verdict are counted where they are written.
+RESUME_CAUSES = ("interrupted", "returned", "unblocked", "answered", "behind", "evaluation_no_result")
+# The stops a resume lifts, each by the cause of the same name (af-xhc0sj).
+RESUMABLE_STOPS = ("evaluation_no_result",)
 RESUME_MAX_LAUNCHES = 1
 # What bin/spec-integration did of a ticket (Spec §4): merged into the
 # integration branch, or returned to its author by a conflict or by red tests
@@ -1750,14 +1753,18 @@ def launches_of(launches: Any, what: str) -> list[dict[str, Any]]:
 def resume_record(raw: Any) -> dict[str, Any]:
     """The resumes code opened on a ticket (T20), oldest first: why, the
     fact that asked for it (`ref`), the session and the Ticket Exit it
-    replaces, and the fresh author session it was sent to."""
+    replaces, the stop it lifted, and the fresh author session it was sent
+    to."""
     record = stored_record(raw, ("entries",))
     entries = record["entries"]
     if not isinstance(entries, list) or not entries:
         raise Refusal(f"reprises mal formées : {entries!r}")
     for entry in entries:
-        if not isinstance(entry, dict) or set(entry) != {"cause", "ref", "session", "exit", "launches", "at"}:
+        if not isinstance(entry, dict) or set(entry) - {"stop"} != {"cause", "ref", "session", "exit", "launches", "at"}:
             raise Refusal(f"reprise mal formée : {entry!r}")
+        if "stop" in entry and (entry["cause"] not in RESUMABLE_STOPS
+                                or stop_record(encode(entry["stop"]))["reason"] != entry["cause"]):
+            raise Refusal(f"arrêt levé par la reprise mal formé : {entry!r}")
         one_of(entry["cause"], RESUME_CAUSES, "cause de reprise")
         single_line(entry["ref"], "repère de la reprise")
         if entry["session"] is not None:
@@ -4814,8 +4821,10 @@ def cmd_open_resume(args: argparse.Namespace) -> int:
     the ticket back to a fresh author session, on the same branch. The
     resume, the counter and the removal of the Ticket Exit it replaces go in
     one tracker write. The same fact (`--cause`, `--ref`) again writes
-    nothing. Refused on a ticket that is stopped, parked, closed, or that
-    has no resume left: that one is parked."""
+    nothing. Refused on a ticket that is parked, closed, or that has no
+    resume left (that one is parked), and on a stopped ticket unless the
+    cause is its stop `evaluation_no_result`: that resume lifts the stop
+    and keeps it under the resume (af-xhc0sj)."""
     ticket = marked_ticket(args.convoy, args.ticket)
     metadata = metadata_of(ticket)
     cause = one_of(args.cause, RESUME_CAUSES, "cause de reprise")
@@ -4824,13 +4833,16 @@ def cmd_open_resume(args: argparse.Namespace) -> int:
         raise Refusal(f"le ticket {args.ticket} est fermé : il ne se reprend pas")
     if GATE_PREFIX + "dispatch" not in metadata:
         raise Refusal(f"le ticket {args.ticket} n'a pas été démarré par la porte de dispatch : rien à reprendre")
-    if KEY_STOP in metadata:
-        raise Refusal(f"ticket arrêté : {args.ticket} ne se reprend pas")
-    if KEY_PARK in metadata:
-        raise Refusal(f"ticket parqué : {args.ticket} ne se reprend pas tant que son parcage n'est pas levé")
+    lifted = stop_record(metadata[KEY_STOP]) if KEY_STOP in metadata else None
+    if lifted is not None and (cause not in RESUMABLE_STOPS or lifted["reason"] != cause):
+        raise Refusal(f"ticket arrêté ({lifted['reason']}) : {args.ticket} ne se reprend pas pour la cause {cause}")
     entries = resume_record(metadata[KEY_RESUME])["entries"] if KEY_RESUME in metadata else []
     if entries and (entries[-1]["cause"], entries[-1]["ref"]) == (cause, ref):
         return done(args.convoy, args.ticket, {})
+    if lifted is None and cause in RESUMABLE_STOPS:
+        raise Refusal(f"le ticket {args.ticket} n'est pas arrêté ({cause}) : aucun arrêt à lever")
+    if KEY_PARK in metadata:
+        raise Refusal(f"ticket parqué : {args.ticket} ne se reprend pas tant que son parcage n'est pas levé")
     if resumes_left(metadata) == 0:
         raise Refusal(
             f"reprises épuisées : le ticket {args.ticket} a pris ses {resumes_max()} reprises, toutes causes confondues ; "
@@ -4840,16 +4852,22 @@ def cmd_open_resume(args: argparse.Namespace) -> int:
     check_ticket_counters(counters)
     session = session_record(metadata[KEY_SESSION])["name"] if KEY_SESSION in metadata else None
     replaced = stored_record(metadata[KEY_EXIT], ("exit", "at")) if KEY_EXIT in metadata else None
-    entries.append({"cause": cause, "ref": ref, "session": session, "exit": replaced, "launches": [], "at": now()})
+    entry = {"cause": cause, "ref": ref, "session": session, "exit": replaced, "launches": [], "at": now()}
+    if lifted is not None:
+        # The stop is lifted, not erased: the resume keeps it.
+        entry["stop"] = lifted
+    entries.append(entry)
     values: dict[str, Any] = {KEY_RESUME: encode({"entries": entries}), COUNTER_PREFIX + "resumes": counters["resumes"]}
     update = ["bd", "update", args.ticket]
     for key, value in values.items():
         update += ["--set-metadata", f"{key}={value}"]
-    if replaced is not None:
-        # A resumed ticket is at work again: it exits again.
-        update += ["--unset-metadata", KEY_EXIT]
+    unset = {KEY_EXIT: replaced, KEY_STOP: lifted}
+    for key, was in unset.items():
+        if was is not None:
+            # A resumed ticket is at work again: it exits again.
+            update += ["--unset-metadata", key]
     run_gc(update)
-    return done(args.convoy, args.ticket, {**values, **({KEY_EXIT: None} if replaced is not None else {})})
+    return done(args.convoy, args.ticket, {**values, **{key: None for key, was in unset.items() if was is not None}})
 
 
 def cmd_launch_resume(args: argparse.Namespace) -> int:

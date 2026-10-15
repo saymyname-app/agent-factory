@@ -183,6 +183,100 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual([], self.of(answer, "resumed"))
         self.assertEqual(before, self.tickets_snapshot())
 
+    # --- a ticket stopped without an evaluation result is resumed on itself (af-xhc0sj) ---
+
+    NO_RESULT = "evaluation_no_result"
+
+    @first.staged
+    def evaluation_stopped(self):
+        """T1, a slice, finished on the integration branch, then stopped as
+        bin/ticket-evaluation stops it: its evaluation request left open
+        with two launches that gave no result, the stop raised to the
+        operator."""
+        self.integrated()
+        self.resumable()
+        self.code_reviewed("favorable")
+        self.evaluated()
+        self.env.update({
+            "TICKET_EVALUATION_CANCEL_BIN": str(first.ROOT / "tests" / "fixtures" / "ticket-evaluation" / "cancel"),
+            "TICKET_EVALUATION_CANCEL_LOG": str(self.tmp / "evaluation-cancel.log"),
+        })
+        self.advance(CONVOY)
+        tip = self.finished(T1)
+        bead = self.bead(T1)
+        self.edit(T1, metadata={**bead["metadata"], "gc.ticket_kind": "vertical_slice",
+                                "gc.flow.demonstration_line": "La page affiche 3",
+                                "gc.flow.user_stories": json.dumps({"stories": ["1"]})},
+                  description="## Acceptance criteria\n\n- [ ] La page affiche 3\n\n" + bead["description"])
+        request = self.tmp / "evaluation-request.json"
+        request.write_text(json.dumps({
+            "roles": {"author": None, "evaluator": None, "same_provider": None, "other_declared": []},
+            "environment": [{"dataset": None, "address": "http://127.0.0.1:9",
+                             "state_file": str(self.tmp / "launches" / "gone.json")}]}))
+        self.run_ok(STATE, "open-evaluation", CONVOY, T1, "--commit", tip, "--file", request)
+        for launch in ("fx-e1", "fx-e2"):
+            self.run_ok(STATE, "launch-evaluation", CONVOY, T1, "--bead", launch)
+        self.assertEqual(2, len(self.shown_state(T1)["evaluation"]["request"]["launches"]))
+        self.stop_without_result()
+        self.write_log.write_text("")
+
+    def stop_without_result(self):
+        self.run_ok(STATE, "stop-ticket", CONVOY, T1, "--reason", self.NO_RESULT,
+                    "--detail", "la Ticket Evaluation n'a rendu aucun état en 2 lancements")
+        request = {"quoi": f"Ticket {T1} arrêté : sa Ticket Evaluation n'a rendu aucun état",
+                   "pourquoi": "Une évaluation sans résultat n'est pas passée.",
+                   "que_faire": [{"option": "Laisser le ticket arrêté", "consequence": "Rien ne fusionne."}],
+                   "langue": "fr", "bloquant": True}
+        self.run_ok(ESCALATION, "benjamin", T1, json.dumps(request))
+        self.run_ok(STATE, "stop-raised", CONVOY, T1)
+
+    def test_a_ticket_stopped_without_an_evaluation_result_is_resumed_on_itself_once_per_integration_tip(self):
+        self.evaluation_stopped()
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, self.NO_RESULT)], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+        self.assertEqual(["sling", "fx-worker", self.of(answer, "resumed")[0]["bead"], "fx-resume"],
+                         self.resume_launches()[-1][:4])
+        shown = self.shown_state(T1)
+        self.assertEqual((1, None, None), (shown["counters"]["resumes"], shown["stop"], shown["exit"]))
+        # The stop is lifted, not erased: it is kept on the resume that lifted it.
+        self.assertEqual(self.NO_RESULT, shown["resume"]["entries"][-1]["stop"]["reason"])
+        self.assertEqual([], [line for line in self.needs() if T1 in line])
+        # The exit taken back, the evaluation left open on it is withdrawn in the same pass.
+        self.assertIsNone(shown["evaluation"].get("request"))
+        # Stopped again on the same integration tip: it stays with the operator.
+        self.stop_without_result()
+        self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
+        self.assertEqual(1, self.resumes())
+        self.assertEqual(self.NO_RESULT, self.shown_state(T1)["stop"]["reason"])
+        # The integration branch moved: once more, counted.
+        self.integration_moved()
+        again = self.advance(CONVOY)
+        self.assertEqual([(T1, self.NO_RESULT)], [(r["id"], r["cause"]) for r in self.of(again, "resumed")])
+        self.assertEqual(2, self.resumes())
+
+    def test_a_ticket_stopped_without_an_evaluation_result_at_its_third_resume_is_parked_not_restarted(self):
+        self.evaluation_stopped()
+        self.run_ok(STATE, "bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
+        self.run_ok(STATE, "bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "resumes_exhausted")], [(p["id"], p["cause"]) for p in self.of(answer, "parked")])
+        self.assertEqual(([], []), (self.of(answer, "resumed"), self.resume_launches()))
+        self.assertEqual((3, None), (self.resumes(), self.shown_state(T1)["stop"]))
+
+    def test_a_stop_without_evaluation_result_the_operator_answered_is_not_resumed(self):
+        self.evaluation_stopped()
+        self.env["ESCALATION_DOOR_NOW"] = "4102444800"  # the answer comes after the stop
+        self.run_ok(ESCALATION, "repondre", T1, "a")
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual(([], 0), (self.of(answer, "resumed"), self.resumes()))
+        self.assertEqual(self.NO_RESULT, self.shown_state(T1)["stop"]["reason"])
+
     # --- a ticket stopped for an exhausted amendment reaches the operator (T45) ---
 
     def test_a_pass_raises_a_ticket_stopped_for_an_exhausted_amendment_naming_it_and_the_cause(self):
