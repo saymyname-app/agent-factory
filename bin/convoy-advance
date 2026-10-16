@@ -284,7 +284,15 @@ TDD_STOPS = {"amendment_exhausted": "amendement épuisé",
              # flow are still raised once, here (bin/test-review settle no
              # longer runs).
              "test_review_refused": "relecture des tests refusée deux fois",
-             "test_review_no_result": "relecture des tests sans résultat"}
+             "test_review_no_result": "relecture des tests sans résultat",
+             # ADR-0030 L5: raised once the Planning Exception its author
+             # raised on it is answered and its parking lifted (tdd_stops_due).
+             "criterion_already_green": "critères tous déjà verts"}
+
+# ADR-0030 L5: a ticket whose criteria all pass at the start commit; its
+# author raises a Planning Exception first, the stop reaches the operator
+# only once that one is answered and no longer parks the ticket.
+ALREADY_GREEN = "criterion_already_green"
 
 # Spec §5: the exits that park their ticket; what the merge returns.
 PARKING_EXITS = ("planning_exception", "operator_request")
@@ -525,7 +533,8 @@ class Convoy:
         """Tickets a step of their TDD stopped without the stop having
         reached the operator."""
         return [t for t in self.tickets
-                if (t.get("stop") or {}).get("reason") in TDD_STOPS and "raised" not in t["stop"]]
+                if (t.get("stop") or {}).get("reason") in TDD_STOPS and "raised" not in t["stop"]
+                and (t["stop"]["reason"] != ALREADY_GREEN or (t.get("planning_exceptions") and not t.get("park")))]
 
     def corrections_due(self) -> list[str]:
         """Tickets whose author has finished and that are not merged yet --
@@ -2034,6 +2043,7 @@ def tdd_stop_request(ticket: dict[str, Any]) -> str:
     return json.dumps({
         "quoi": one_line(f"Ticket {ticket['id']} arrêté : {TDD_STOPS[stop['reason']]} — {stop.get('detail', '')}"),
         "pourquoi": ("Un test gelé ne s'amende qu'une fois par ticket" if stop["reason"] == "amendment_exhausted"
+                     else "Le code existant satisfait déjà ce ticket" if stop["reason"] == ALREADY_GREEN
                      else "La relecture des tests a arrêté ce ticket avant ADR-0030 L3")
                     + " : le travail de ce ticket ne reprend pas sans ta réponse.",
         "que_faire": [

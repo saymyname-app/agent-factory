@@ -249,7 +249,9 @@ class TicketExitTest(unittest.TestCase):
 
     def raise_exception(self, *args, **changes):
         """The exit « Planning Exception », with the Handoff it comes after:
-        the complete one, with some sections changed."""
+        the complete one, with some sections changed; its « Écarts »
+        describe the deviation it raises (ADR-0030 L5)."""
+        changes.setdefault("deviations", ["Le produit fait Y là où la Spec dit X."])
         return self.exited("--exit", "planning_exception", "--repo", self.repo, "--handoff", self.handoff(**changes),
                            *args)
 
@@ -587,6 +589,15 @@ class TicketExitTest(unittest.TestCase):
         self.assertEqual([], self.shown()["planning_exceptions"])
         self.assertEqual([], self.escalation_list())
 
+    def test_planning_exception_without_anchor_is_refused_when_the_deviations_are_empty(self):
+        # ADR-0030 L5: its « accept » option accepts the deviation the
+        # Handoff describes; without an anchor, « Écarts » must describe one.
+        self.assert_refused_and_nothing_written(
+            lambda: self.exit(*self.EXCEPTION, "--repo", self.repo, "--handoff", self.handoff(deviations="aucun")),
+            "Écarts", "--anchor")
+        self.assertEqual([], self.shown()["planning_exceptions"])
+        self.assertEqual([], self.escalation_list())
+
     def test_planning_exception_records_the_handoff_first_then_parks(self):
         # Demonstration line of T41: « aucun » stands for an empty section.
         head = self.code()
@@ -595,7 +606,9 @@ class TicketExitTest(unittest.TestCase):
                                       done="aucun", out_of_ticket="aucun")
 
         ticket = self.shown()
-        self.assertEqual({name: "aucun" for name in COMPLETE}, ticket["handoff"]["sections"])
+        # « Écarts » describes the deviation the exception raises (ADR-0030 L5).
+        self.assertEqual({**{name: "aucun" for name in COMPLETE}, "deviations": ["Le produit fait Y là où la Spec dit X."]},
+                         ticket["handoff"]["sections"])
         self.assertEqual(head, ticket["handoff"]["records"]["head"])
         self.assertEqual(["Question sur l'ordre"], [e["summary"] for e in ticket["planning_exceptions"]])
         handoff, raised = self.writes_of("gc.flow.handoff"), self.writes_of("gc.flow.planning_exceptions")

@@ -635,7 +635,8 @@ class TicketAuthorTest(unittest.TestCase):
     def test_an_exit_other_than_finished_closes_the_sequence_and_an_older_one_does_not(self):
         _, worktree = self.start()
         handoff = self.tmp / "handoff.json"
-        handoff.write_text(json.dumps(HANDOFF, ensure_ascii=False))
+        handoff.write_text(json.dumps({**HANDOFF, "deviations": ["Le libellé démontré n'est pas celui de la Spec."]},
+                                      ensure_ascii=False))
         proc = self.run_cmd(EXIT_TOOL, "exit", CONVOY, T1, "--exit", "planning_exception", "--kind", "semantic",
                             "--repo", worktree, "--handoff", handoff,
                             "--summary", "La Spec fixe le libellé, la démonstration en demande un autre")

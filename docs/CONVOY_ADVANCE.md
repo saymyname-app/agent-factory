@@ -619,6 +619,14 @@ in flight by the flow before L3, open or not, is ignored. A ticket a test
 review stopped before L3 (`test_review_refused`, `test_review_no_result`)
 and not yet raised is raised once with the TDD stops (`tdd_stops`).
 
+A ticket whose criteria are all already green at the red
+(`criterion_already_green`, ADR-0030 L5) is raised with the TDD stops too,
+« Ticket <id> arrêté : critères tous déjà verts — … », but only once its
+author's Planning Exception is answered and no longer parks it: the
+« accept » answer lifts the parking, not the stop, so this request keeps
+the convoy from stalling silently. While that exception parks it, or before
+its author raised one, nothing is posted.
+
 ## A ticket stopped at its second amendment reaches the operator (T45)
 
 `bin/tdd-step amend` stops a ticket at its second amendment

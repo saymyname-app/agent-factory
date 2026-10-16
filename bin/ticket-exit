@@ -29,8 +29,9 @@ Prototype names its anchors (`--anchor`), each of which the « Écarts » of
 the Handoff must mention, and the request then offers the operator to accept
 that deviation: the fidelity check reads it as « accepté par Benjamin » once
 answered so, never before (T16). Without an anchor, the last option accepts
-the deviation the Handoff describes (ADR-0030 L5): every Planning Exception
-has an accept path, and bin/convoy-advance lifts the parking it answers.
+the deviation the « Écarts » of the Handoff describe, which may not be empty
+(ADR-0030 L5): every Planning Exception has an accept path, and
+bin/convoy-advance lifts the parking it answers.
 `technically_blocked`: a `repair`
 ticket is drafted by code and published by the patch door
 (bin/ticket-graph-publish bd-patch); it blocks the ticket, the rest of the
@@ -626,7 +627,7 @@ def planning_exception_request(args: argparse.Namespace) -> dict[str, Any]:
         # ADR-0030 L5: no Planning Exception without an accept path.
         options.append({
             "option": "Accepter l'écart que décrit le Ticket Handoff",
-            "consequence": "Le ticket reprend avec cet écart ; un ticket arrêté (critères tous déjà verts) reste arrêté."})
+            "consequence": "Le ticket reprend avec cet écart ; arrêté (critères tous déjà verts), il te revient pour sa suite."})
     return {
         "quoi": head + short(summary, REQUEST_LINE_MAX - len(head)),
         "pourquoi": "L'auteur ne tranche pas une question d'intention, de comportement ou de découpage.",
@@ -646,9 +647,15 @@ def names_anchor(line: str, anchor: str) -> bool:
 def deviations_name(anchors: list[str], sections: dict[str, Any]) -> None:
     """A deviation from the Validated Prototype is written in the Handoff
     before it is raised (Spec §3): each anchor the Planning Exception names
-    is read under « Écarts »."""
+    is read under « Écarts », which is not empty when it names none."""
     deviations = sections.get("deviations")
     lines = deviations if isinstance(deviations, list) else []
+    if not anchors and not lines:
+        # ADR-0030 L5: the « accept » option accepts the deviation the
+        # Handoff describes; without an anchor it must describe one.
+        raise Refusal(
+            f"la rubrique « {SECTION_NAMES['deviations']} » (deviations) du Ticket Handoff est vide et la Planning "
+            "Exception ne nomme aucune ancre (--anchor) : l'option « accepter » n'aurait rien à accepter")
     missing = [anchor for anchor in anchors if not any(names_anchor(line, anchor) for line in lines)]
     if missing:
         named = "les ancres" if len(missing) > 1 else "l'ancre"

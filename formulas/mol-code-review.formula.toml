@@ -118,10 +118,6 @@ read its criterion tests before they were frozen (ADR-0030 L3). Read each
 test of `.tests.criterion_tests` at `.commit` with the criterion it proves
 (`.ticket_text.criteria`, numbered from 1), and ask:
 
-- a criterion listed in `.tests.satisfied` was never proven red: its tests
-  already passed before the code of the ticket (ADR-0030 L5). Check that
-  each of them really observes that criterion, not something always true.
-
 - does it observe its criterion — read the observable the criterion names,
   through the entry point it names — and would it fail on the observation
   that makes the criterion false (after « Faux si »)? A test that only
@@ -132,9 +128,12 @@ test of `.tests.criterion_tests` at `.commit` with the criterion it proves
   with `$FACTORY_ROOT`): is the criterion already proven by a lower test
   of the repository on the same tool or entry point, this test proving
   nothing more than the transmission (a double, `docs/TEST_GUIDELINE.md`)?
+- for a criterion listed in `.tests.satisfied` (its tests passed before the
+  code of the ticket, never proven red, ADR-0030 L5): would its test fail on
+  a product where that criterion is false, not pass on anything?
 
-A test that fails either question is a finding of axis `spec`. It is
-`blocking` with the same rule as any other finding: cite the criterion
+A test that fails any of these questions is a finding of axis `spec`. It
+is `blocking` with the same rule as any other finding: cite the criterion
 line of the ticket (`source: ticket`) or the rule of
 `docs/TEST_GUIDELINE.md` it breaks (`source: repo_rule`). Do not judge the
 style of a test.
