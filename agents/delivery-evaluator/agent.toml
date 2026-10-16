@@ -2,8 +2,6 @@ description = "Delivery role: Evaluator of the launched product, read-only, no M
 scope = "city"
 work_dir = ".gc/agents/delivery-evaluator"
 min_active_sessions = 0
-# The role's own ceiling: max_evaluator_sessions of config/delivery-flow.json (af-4xxlo7;
-# tests/delivery-agents-test.sh holds the two equal). It takes no author's place.
 max_active_sessions = 1
 idle_timeout = "2h"
 # gc 1.5.0 wakes a drained session again under the same name, resuming its
