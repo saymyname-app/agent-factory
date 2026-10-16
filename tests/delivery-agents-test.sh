@@ -27,8 +27,17 @@ setting() { # <agent> <key>
 import sys
 import tomllib
 
-with open(sys.argv[1], "rb") as handle:
-    print(tomllib.load(handle).get(sys.argv[2], ""))
+# The effective value: a city.toml patch of the agent (no dir) wins over its
+# agent.toml, as Gas City resolves it (gc config show).
+path, key = sys.argv[1], sys.argv[2]
+agent = path.split("/agents/", 1)[1].split("/", 1)[0]
+with open(path, "rb") as handle:
+    value = tomllib.load(handle).get(key, "")
+with open(path.split("/agents/", 1)[0] + "/city.toml", "rb") as handle:
+    for patch in tomllib.load(handle).get("patches", {}).get("agent", []):
+        if patch.get("name") == agent and "dir" not in patch and key in patch:
+            value = patch[key]
+print(value)
 PY
 }
 
