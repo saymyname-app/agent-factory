@@ -384,6 +384,27 @@ class GraphReviewTest(unittest.TestCase):
         self.assertEqual("favorable", result["tickets"]["T1"]["checks"]["evaluation_tenable"]["state"])
         self.assertEqual(["T2"], [refusal["target"] for refusal in result["refusals"]])
 
+    def test_datasets_listed_one_per_line_are_all_counted(self):
+        self.with_datasets(declared=30, cited=0)
+        draft = yaml.safe_load(self.beads()["draft-1"]["description"])
+        t2 = next(t for t in draft["tickets"] if t["id"] == "T2")
+        t2["acceptance_criteria"][0]["entry_point"] = "GET /, jeux :\n" + "\n".join(f"etat-{n:02d}" for n in range(16))
+        self.seed(draft)
+
+        result = self.reviewed()
+
+        self.assertIn("16 jeux de données", result["tickets"]["T2"]["checks"]["evaluation_tenable"]["reason"])
+
+    def test_the_reviewer_cannot_answer_the_evaluation_cost(self):
+        self.with_datasets(declared=30, cited=2)
+        self.requested()
+
+        refused = self.record(self.verdict_file(lambda verdict: verdict["tickets"]["T2"]["checks"].update(
+            {"evaluation_tenable": {"state": "favorable"}})))
+
+        self.assertEqual(1, refused.returncode, refused.stdout)
+        self.assertIn("question hors liste (evaluation_tenable)", refused.stderr)
+
     def test_a_ticket_within_the_evaluation_bound_passes_and_the_reviewer_is_not_asked(self):
         self.with_datasets(declared=30, cited=15)
         self.requested()

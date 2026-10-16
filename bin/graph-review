@@ -211,18 +211,15 @@ class Draft:
                 if name != EVALUATION_CHECK and (name != SCOPE_CHECK or self.declares_scope(ticket_id))]
 
     def declared_datasets(self) -> list[str]:
-        """The datasets the project's profile declares (launch.datasets),
-        read from config/project-descriptors; none when it has no profile."""
-        project = str(self.metadata.get("gc.project_id") or "").strip()
-        spec_id = str(self.metadata.get("spec_id") or "").strip()
-        if not project and spec_id:
-            try:
-                spec = json.loads(bd("show", spec_id, "--json"))
-            except ValueError:
-                spec = None
-            spec = spec[0] if isinstance(spec, list) and spec else spec
-            project = str(((spec if isinstance(spec, dict) else {}).get("metadata") or {}).get("gc.project_id") or "")
-        project = project.strip()
+        """The datasets the profile of the Spec's project declares
+        (launch.datasets, config/project-descriptors), as the publication
+        door finds it; none when the Spec or the profile cannot be read."""
+        try:
+            spec = json.loads(bd("show", str(self.metadata.get("spec_id") or ""), "--json"))
+        except (Refusal, ValueError):
+            return []
+        spec = spec[0] if isinstance(spec, list) and spec else spec
+        project = str(((spec if isinstance(spec, dict) else {}).get("metadata") or {}).get("gc.project_id") or "").strip()
         if not re.fullmatch(r"[A-Za-z0-9._-]+", project):
             return []
         try:
@@ -269,8 +266,12 @@ def evaluation_cost(ticket: dict[str, Any], declared: list[str]) -> dict[str, An
     """The declared datasets the ticket names in its criteria or its
     demonstration line -- those bin/ticket-evaluation launches one by one --
     against EVALUATION_DATASETS_MAX."""
-    text = json.dumps([ticket.get("acceptance_criteria"), ticket.get("demonstration_line")], ensure_ascii=False)
-    named = [name for name in declared if re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", text)]
+    criteria = ticket.get("acceptance_criteria") if isinstance(ticket.get("acceptance_criteria"), list) else []
+    texts = [str(value) for criterion in criteria
+             for value in (criterion.values() if isinstance(criterion, dict) else [criterion])]
+    texts.append(str(ticket.get("demonstration_line") or ""))
+    named = [name for name in declared
+             if any(re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", text) for text in texts)]
     reason = f"{len(named)} jeux de données à évaluer (au plus {EVALUATION_DATASETS_MAX}, environ 3 min chacun)"
     if len(named) <= EVALUATION_DATASETS_MAX:
         return {"state": FAVORABLE, "reason": reason}
