@@ -54,7 +54,7 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state set-handoff af-convoy af-t1 --file handoff.json                                   # bin/ticket-exit
 ./bin/convoy-state park        af-convoy af-t1 --cause planning_exception --detail "La Spec fixe X, …"  # bin/ticket-exit
 ./bin/convoy-state set-fidelity af-convoy af-t1 --commit <sha> --piece fidelity --file result.json   # bin/prototype-fidelity
-./bin/convoy-state raise-planning-exception af-convoy af-t1 --kind semantic --summary "…" [--anchor liste --accept-option c]   # bin/ticket-exit
+./bin/convoy-state raise-planning-exception af-convoy af-t1 --kind semantic --summary "…" [--anchor liste] --accept-option c   # bin/ticket-exit
 ./bin/convoy-state raise-planning-exception af-convoy af-t1 --kind semantic --summary "…" --item not_done.1 --accept-option b   # bin/spec-end: tracked elements left without a final state
 ./bin/convoy-state set-item-repair af-convoy af-t1 --repair af-r2   # bin/convoy-advance, once the patch door published the repair the operator asked for
 ./bin/convoy-state set-integration af-convoy --branch integration/af-spec --protected main --base <sha>   # bin/spec-integration open
@@ -896,8 +896,11 @@ that commit (`--piece`): it is written by code, never given.
 `raise-planning-exception` is called by `bin/ticket-exit` (T16,
 `docs/TICKET_EXIT.md`) before the request reaches the operator. It refuses a
 kind outside the list, a summary that is not one line, a malformed anchor
-name or one given twice, anchors without `--accept-option` and the reverse.
-The answer the operator gave to the previous exception is stored with it;
+name or one given twice, and anchors without `--accept-option`. An
+exception naming no anchor carries its `--accept-option` too (ADR-0030 L5,
+`bin/ticket-exit` always offers one): answered by that option it is
+`accepted`, which accepts no anchor but lets `bin/convoy-advance` lift its
+parking. One raised before L5 carries none. The answer the operator gave to the previous exception is stored with it;
 the same exception again writes nothing; another one replaces the one that
 was still open. **Nothing here resolves a Planning Exception**: the answer
 is the operator's, written by `bin/escalation-door repondre`.

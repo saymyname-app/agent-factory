@@ -449,7 +449,7 @@ def frozen_tests(convoy_id: str, ticket: dict[str, Any]) -> dict[str, Any]:
     before L3 is not read."""
     tdd = ticket.get("tdd") or {}
     if "freeze" not in tdd:
-        return {"files": {}, "criteria": {}, "amended": []}
+        return {"files": {}, "criteria": {}, "amended": [], "satisfied": []}
     registry = sealed_report(convoy_id, ticket["id"], "tdd_freeze", tdd["freeze"].get("commit"))
     files, criteria = registry.get("files"), registry.get("criteria")
     if not isinstance(files, dict) or not isinstance(criteria, dict):
@@ -461,7 +461,8 @@ def frozen_tests(convoy_id: str, ticket: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(changed, list):
             raise Refusal(f"amendement du ticket {ticket['id']} illisible (pièce tdd_amendment)")
         amended = sorted(path for path in changed if isinstance(path, str))
-    return {"files": dict(files), "criteria": dict(criteria), "amended": amended}
+    return {"files": dict(files), "criteria": dict(criteria), "amended": amended,
+            "satisfied": list(registry.get("satisfied") or [])}
 
 
 def closed_questions(convoy: Convoy, ticket: dict[str, Any], base: str, commit: str) -> list[dict[str, str]]:
@@ -883,6 +884,8 @@ def cmd_brief(args: argparse.Namespace) -> int:
                 # ADR-0030 L3: the criterion tests are read here, not
                 # before the freeze.
                 "frozen": frozen["files"], "criterion_tests": frozen["criteria"], "amended": frozen["amended"],
+                # ADR-0030 L5: criteria never proven red (green at the start commit).
+                "satisfied": frozen["satisfied"],
                 "seams": {"mode": launch_.get("seam_mode"), "declared": launch_.get("seams") or [],
                           "entry_points": launch_.get("entry_points") or []},
             },

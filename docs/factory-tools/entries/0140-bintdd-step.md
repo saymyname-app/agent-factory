@@ -20,8 +20,11 @@ du magasin de preuves, puis inscrit l'étape sur le ticket.
   refusé et nommé. Chaque test est prouvé selon le **mode du seam** par
   lequel il passe (boîte noire ou règle d'import, déclaré par seam dans le
   profil) ; le relevé nomme le seam et le mode de chaque test.
-- **Critère déjà vert** : le ticket est arrêté (sortie 5), le critère est
-  nommé, l'arrêt est écrit dans le tracker.
+- **Critère déjà vert** (ADR-0030 L5) : un critère dont tous les tests
+  passent au commit de départ est enregistré satisfait par le code existant
+  (`satisfied` dans la preuve du rouge, scellée avec ce commit) et le ticket
+  continue ; seul un ticket dont tous les critères sont déjà verts est
+  arrêté (sortie 5), les critères nommés, l'arrêt écrit dans le tracker.
 - **Gel** : suit la preuve du rouge au même commit, sans relecture des tests
   (ADR-0030 L3) ; les empreintes des tests, de la table et du harnais vont
   dans le magasin de preuves, hors de tout dépôt Git.

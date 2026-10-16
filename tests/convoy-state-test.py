@@ -2725,6 +2725,20 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertEqual({"liste": "accepté par Benjamin", "titre": "ouvert"},
                          {d["anchor"]: d["status"] for d in ticket["fidelity"]["deviations"]})
 
+    def test_planning_exception_naming_no_anchor_is_accepted_by_its_accepting_answer(self):
+        # ADR-0030 L5: every Planning Exception has an accept path.
+        self.measured_slice()
+        self.ok("raise-planning-exception", CONVOY, T1, "--kind", "semantic", "--summary", "Question sur l'ordre",
+                "--accept-option", "c")
+
+        self.answer("c")
+
+        ticket = self.ticket(self.show(), T1)
+        self.assertEqual([([], "c", "resolved", True)],
+                         [(e["anchors"], e["accept_option"], e["state"], e["accepted"])
+                          for e in ticket["planning_exceptions"]])
+        self.assertEqual([], ticket["accepted_anchors"])
+
     def test_an_answer_given_before_the_exception_was_raised_resolves_nothing(self):
         self.measured_slice()
         self.set_fidelity(deviations=[self.DEVIATION])
@@ -2770,7 +2784,6 @@ class ConvoyStateTest(unittest.TestCase):
             (("--kind", "semantic", "--summary", "x", "--anchor", "une ancre"), "ancre"),
             (("--kind", "semantic", "--summary", "x", "--anchor", "liste", "--anchor", "liste", "--accept-option", "c"), "deux fois"),
             (("--kind", "semantic", "--summary", "x", "--anchor", "liste"), "option"),
-            (("--kind", "semantic", "--summary", "x", "--accept-option", "c"), "option"),
             (("--kind", "semantic", "--summary", "x", "--anchor", "liste", "--accept-option", "oui"), "option"),
         ):
             with self.subTest(args=args):

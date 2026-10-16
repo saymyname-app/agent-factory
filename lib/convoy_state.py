@@ -1592,11 +1592,13 @@ def planning_exceptions_record(raw: Any) -> list[dict[str, Any]]:
         if not isinstance(items, list) or ("items" in entry and not items) or len(set(map(str, items))) != len(items) \
                 or any(not isinstance(item, str) or not ITEM_RE.match(item) for item in items):
             raise Refusal(f"éléments suivis de la Planning Exception mal formés : {items!r}")
-        if bool(anchors or items) != (option is not None) or (option is not None and not (
+        # ADR-0030 L5: an exception naming no anchor nor item may carry an
+        # accept option too (one raised before L5 carries none).
+        if (bool(anchors or items) and option is None) or (option is not None and not (
                 isinstance(option, str) and OPTION_LETTER_RE.match(option))):
             raise Refusal(
                 f"Planning Exception mal formée : ancres {anchors!r}, éléments suivis {items!r}, option d'acceptation "
-                f"{option!r} (l'option qui accepte l'écart va avec les ancres ou les éléments qu'elle nomme)")
+                f"{option!r} (des ancres ou des éléments nommés demandent l'option qui accepte leur écart)")
         resolution = entry.get("resolution")
         if resolution is not None and not (
                 isinstance(resolution, dict) and set(resolution) == {"option", "at"}
@@ -1632,7 +1634,7 @@ def planning_exceptions_rendered(entries: list[dict[str, Any]], metadata: dict[s
         rendered = {key: value for key, value in entry.items() if key not in ("resolution", "prior_response_at")}
         rendered["state"] = "resolved" if resolution else "open"
         rendered["response"] = resolution
-        rendered["accepted"] = (bool(resolution) and bool(entry["anchors"] or entry.get("items"))
+        rendered["accepted"] = (bool(resolution) and entry["accept_option"] is not None
                                 and resolution["option"] == entry["accept_option"])
         out.append(rendered)
     return out
