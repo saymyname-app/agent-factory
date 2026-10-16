@@ -28,6 +28,13 @@ open or was closed outside its commands. A convoy closed by command, on
 Benjamin's words (T30), is neither walked by `--all` nor a reason for the
 order to run.
 
+A pass that exits 1 or 3 prints its answer on stdout, then one last line on
+stderr: `convoy-advance: échec de la passe -- <convoy> <step>.<key>: <detail>
+; …`, each step that failed it (the « état sans règle » message first). The
+controller keeps only the tail of a failed order's output (af-ypj2g0), so
+this line is what the `order.failed` event and its `on-order-failed` bead
+show.
+
 ## What one pass does
 
 For each ticket of the convoy, in the convoy's own order, the pass starts it

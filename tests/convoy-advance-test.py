@@ -1053,6 +1053,17 @@ class ConvoyAdvanceTest(ConvoyAdvanceHarness):
         self.assertNotIn(DISPATCH_GATE, self.bead(T1)["metadata"])
         self.assertEqual([T2], self.started(answer))
 
+    def test_a_failed_pass_names_its_failing_step_on_the_last_line(self):
+        # af-ypj2g0: the order keeps only the tail of a failed pass's output.
+        env = {**self.env, "CONVOY_STATE_FAKE_SLING_FAIL": T1}
+
+        proc = self.run_cmd(TOOL, CONVOY, env=env)
+
+        self.assertEqual(EXIT_REFUSED, proc.returncode, proc.stdout + proc.stderr)
+        last = proc.stderr.strip().splitlines()[-1]
+        self.assertIn(f"{CONVOY} start.refused", last)
+        self.assertIn("gc sling failed", last)
+
     def test_a_ticket_that_is_not_open_does_not_start(self):
         self.edit(T1, status="blocked")
 
