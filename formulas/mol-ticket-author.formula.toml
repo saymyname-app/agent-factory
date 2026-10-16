@@ -121,7 +121,11 @@ gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --note
 Exit that fits through `bin/ticket-exit exit` (docs/TICKET_EXIT.md):
 `planning_exception` when the demonstration line would need a behaviour the
 Spec or another ticket fixes; `operator_request` when only the operator can
-answer; `technically_blocked` when a defect outside your ticket stops you;
+answer; `technically_blocked` when a defect outside your ticket stops you
+and its fix is product work of this Spec; `operator_request`, with
+`que_faire` « corriger par maintenance sur main », when the defect is in the
+Factory's own tools or tests (a file no ticket of the Spec delivers), never a
+`repair` (docs/TICKET_AUTHOR.md, « Factory defects »);
 `interrupted` when you must stop before the end. A `planning_exception`
 comes after your Ticket Handoff: commit your work, write the four sections
 (`"aucun"` for an empty one) and pass `--repo` and `--handoff`; a deviation

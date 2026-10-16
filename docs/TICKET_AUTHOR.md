@@ -147,6 +147,21 @@ stopped the ticket is what raises it to the operator.
   test at its start commit is refused by `bin/tdd-step prefactoring` until a
   first commit adds nothing but tests, green on the product as received
   (`docs/TDD_STEP.md`, « Prefactoring »).
+- **Factory defects are fixed on main.** When the defect that stops a
+  ticket, or that a `repair` is about, lies in the Factory's own tools or
+  tests — a file no ticket of the Spec delivers, such as
+  `tests/project-launch-test.py` for R1 and R2 of the Cockpit convoy —, the
+  author takes `operator_request` with `que_faire` « corriger par
+  maintenance sur main », not `technically_blocked`: the fix goes through
+  Factory maintenance (`docs/DELIVERY.md`, marked convoys, « Stops and
+  bounds »), and the ticket resumes once it is merged. No gate reads it:
+  the rule is the text of the author formulas, verified by reading.
+  Intent (Benjamin, his words, 2026-10-17 00:13 Paris): « Décision 2: ok
+  suivons ton avis ». Mechanism (agent interpretation, af-o40g5r): the
+  Cockpit lives in the Factory repository, so on 15 and 16/10 T01 carried
+  Factory tools and R1, R2 repaired a Factory test; the convoy stayed
+  blocked and asked Benjamin several decisions until maintenance fixed it
+  on main (#648).
 - **A behaviour the Spec fixes.** The author commits nothing that changes it
   and takes the exit `planning_exception`: the ticket is parked, its branch
   is not merged.
