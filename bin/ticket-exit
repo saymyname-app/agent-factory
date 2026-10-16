@@ -586,7 +586,7 @@ def operator_request(args: argparse.Namespace) -> dict[str, Any]:
             "que_faire": options}
 
 
-def planning_exception_request(args: argparse.Namespace) -> dict[str, Any]:
+def planning_exception_request(args: argparse.Namespace, ticket: Ticket) -> dict[str, Any]:
     """The request of a `planning_exception` exit: the question goes back to
     the Planning Run, so to the operator; the author decides nothing."""
     summary = args.summary
@@ -625,9 +625,12 @@ def planning_exception_request(args: argparse.Namespace) -> dict[str, Any]:
             "consequence": "Le contrôle de fidélité lit cet écart comme accepté par toi ; le prototype reste la cible ailleurs."})
     else:
         # ADR-0030 L5: no Planning Exception without an accept path.
+        # A ticket stopped all green does not resume: its stop comes next.
+        all_green = (ticket.state.get("stop") or {}).get("reason") == "criterion_already_green"
         options.append({
             "option": "Accepter l'écart que décrit le Ticket Handoff",
-            "consequence": "Le ticket reprend avec cet écart ; arrêté (critères tous déjà verts), il te revient pour sa suite."})
+            "consequence": ("Le parcage est levé, pas l'arrêt (critères tous déjà verts) : l'arrêt te revient pour "
+                            "le clore comme satisfait.") if all_green else "Le ticket reprend avec cet écart."})
     return {
         "quoi": head + short(summary, REQUEST_LINE_MAX - len(head)),
         "pourquoi": "L'auteur ne tranche pas une question d'intention, de comportement ou de découpage.",
@@ -823,7 +826,7 @@ def cmd_exit(args: argparse.Namespace) -> int:
     if args.exit == "operator_request":
         request = operator_request(args)
     elif args.exit == "planning_exception":
-        request = planning_exception_request(args)
+        request = planning_exception_request(args, ticket)
         deviations_name(args.anchor, sections)
     elif args.exit == "technically_blocked":
         repair = repair_of(args)
