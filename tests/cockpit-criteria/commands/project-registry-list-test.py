@@ -34,7 +34,7 @@ def descriptor(project_id: str, rigs: list[str]) -> dict:
         "stacks": {rig: ["fixture-stack"] for rig in rigs},
         "knowledge_repo": f"zz-fixture/{project_id}",
         "roadmap_path": "docs/roadmap.toml",
-        "rituals_status_command": "bin/rituals-status",
+        "rituals_status_command": "zz-fixture/rituals-status",
         "promotion_branch": {},
     }
 
