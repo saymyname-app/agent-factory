@@ -270,16 +270,6 @@ name = "claude"
 dir = "saymyname-frontend"
 max_active_sessions = 1
 
-# Stepped trial of the author ceiling (af-2se8y2 §11, docs/research/
-# 2026-10-15-capacite-plafond-n.md): 3 authors, on Benjamin's agreement.
-# A patch here, not in agents/delivery-author/agent.toml, whose files are
-# part of the role distribution an adoption trial vouches for
-# (bin/role-adoption-trial). Rollback: revert the pull request, then
-# bin/factory-maintain reload-city-config.
-[[patches.agent]]
-name = "delivery-author"
-max_active_sessions = 3
-
 # claude-reviewer retired 2026-09-28 (O14, F15): no formula or prompt ever
 # dispatched it (dispatch-door has no path for an ad-hoc named reviewer
 # session, only a rig's fixed sling_target); its patch went with it. See
