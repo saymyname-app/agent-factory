@@ -455,11 +455,10 @@ a_refused() { [ "$(evaluation_of "$A" | jq -r '.rounds[0].verdict // empty' 2>/d
 wait_for 600 a_refused || { dump; fail "the evaluation of A did not record its states within 600s"; }
 first=$(evaluation_of "$A" | jq -c '.rounds[0]')
 printf '%s' "$first" | jq -e --arg tip "$TIP_A" --arg text "$CRITERION" \
-  '.kind == "evaluation" and .commit == $tip and .outcome == "return_to_author" and (.criteria | length) == 1
-   and .criteria[0].state == "not_observed" and .criteria[0].text == $text and .criteria[0].evidence == "evaluation.c1"
-   and .demonstration_line.state == "not_observed"' >/dev/null \
-  || fail "the evaluation of A did not record « not_observed » on its unrealized criterion: $first"
-evidence_a=$(piece "$A" evaluation.c1)
+  '.kind == "evaluation" and .commit == $tip and .outcome == "return_to_author" and .criteria == []
+   and .demonstration_line.state == "not_observed" and .demonstration_line.evidence == "evaluation.demo"' >/dev/null \
+  || fail "the evaluation of A did not record « not_observed » on its unrealized demonstration line: $first"
+evidence_a=$(piece "$A" evaluation.demo)
 address_a=$(printf '%s' "$evidence_a" | jq -r '.address')
 printf '%s' "$evidence_a" | jq -e --arg tip "$TIP_A" '.commit == $tip and .exit_code == 0 and (.output | contains("fixture-count") | not) and (.seal | length) > 0' >/dev/null \
   || fail "the piece of evidence of A is not a capture of the product at its tip: $evidence_a"
@@ -488,7 +487,7 @@ on_integration "$TIP_A" && fail "the tip of A reached the integration branch"
 [ -z "$(find "$TRIAL/launches" -name '*.json' 2>/dev/null)" ] || fail "a pass left a launched product of A running: $(find "$TRIAL/launches" -name '*.json')"
 curl -s -m 2 "$address_a/health" >/dev/null 2>&1 && fail "the product launched for A still answers at $address_a"
 waiting=$(tail -1 "$TRIAL/passes.jsonl" | jq -r --arg a "$A" '[.convoys[].integration.waiting[]? | select(.id == $a) | .reason] | .[0] // empty')
-echo "$(date -u +%H:%M:%S) A : évaluée par la session $evaluator_a (auteur trial-author-$A), dans le bac à sable (${session_a#* * * * }) ; produit lancé par l'ordre depuis une copie propre du commit $TIP_A à $address_a ; critère 1 « non observé », preuve evaluation.c1 (commit et adresse scellés) ; verdict calculé défavorable, retour à l'auteur ; mention « $mention » ; produits arrêtés par la passe suivante ; fusion refusée : ${waiting:-ticket absent de la fusion}"
+echo "$(date -u +%H:%M:%S) A : évaluée par la session $evaluator_a (auteur trial-author-$A), dans le bac à sable (${session_a#* * * * }) ; produit lancé par l'ordre depuis une copie propre du commit $TIP_A à $address_a ; ligne de démonstration « non observée », preuve evaluation.demo (commit et adresse scellés) ; verdict calculé défavorable, retour à l'auteur ; mention « $mention » ; produits arrêtés par la passe suivante ; fusion refusée : ${waiting:-ticket absent de la fusion}"
 
 # --- P: a prefactoring -> no Evaluator session, the product starts, merged ------------
 wait_for 600 merged "$P" || { dump; fail "P was not merged within 600s"; }
@@ -508,9 +507,9 @@ wait_for 600 merged "$A" || { dump; fail "A was not merged within 600s once its 
 second=$(evaluation_of "$A" | jq -c '.rounds[1]')
 printf '%s' "$second" | jq -e --arg tip "$FIX_A" \
   '.kind == "evaluation" and .commit == $tip and .outcome == "favorable" and .verdict == "favorable"
-   and ([.criteria[].state] | all(. == "observed")) and .demonstration_line.state == "observed"' >/dev/null \
+   and .criteria == [] and .demonstration_line.state == "observed"' >/dev/null \
   || fail "the corrected A was not evaluated favorably at its new tip: $second"
-for name in evaluation.c1 evaluation.demo; do
+for name in evaluation.demo; do
   piece "$A" "$name" | jq -e --arg tip "$FIX_A" '.commit == $tip and (.output | contains("fixture-count"))' >/dev/null \
     || fail "the piece $name of the corrected A does not show the count at its tip"
 done
@@ -520,7 +519,7 @@ on_integration "$FIX_A" || fail "the corrected tip of A is not on the integratio
 no_product_left() { [ -z "$(find "$TRIAL/launches" -name '*.json' 2>/dev/null)" ]; }
 wait_for 120 no_product_left || fail "a launched product of A was never stopped: $(find "$TRIAL/launches" -name '*.json')"
 [ "$(evaluation_of "$A" | jq -r 'has("live")')" = false ] || fail "A still names a launched product to stop"
-echo "$(date -u +%H:%M:%S) A : corrigée au commit $FIX_A ; nouvelle session ($(printf '%s' "$second" | jq -r '.recorded_by')) sur un nouveau produit lancé à $(piece "$A" evaluation.c1 | jq -r '.address') ; tous les états « observé » avec preuve ; verdict calculé favorable ; ticket fusionné ; produits arrêtés"
+echo "$(date -u +%H:%M:%S) A : corrigée au commit $FIX_A ; nouvelle session ($(printf '%s' "$second" | jq -r '.recorded_by')) sur un nouveau produit lancé à $(piece "$A" evaluation.demo | jq -r '.address') ; ligne de démonstration « observée » avec preuve ; verdict calculé favorable ; ticket fusionné ; produits arrêtés"
 
 gc session list --state all --json | jq -e '[.sessions[] | select(.template | test("mayor"))] | length == 0' >/dev/null \
   || fail "a Mayor session exists in the trial city"

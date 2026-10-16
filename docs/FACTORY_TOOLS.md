@@ -1091,12 +1091,13 @@ convoi qui porte la **marque du nouveau flux**.
   merge` laisse le ticket dans `waiting` tant que son évaluation n'est pas
   favorable à la pointe. Une évaluation absente, en cours ou sans résultat
   ne vaut pas accord.
-- **Un état par critère et pour la ligne de démonstration** : « observé »
-  (`observed`), « non observé » (`not_observed`) ou « inobservable »
-  (`unobservable`), chacun avec une **preuve capturée** par
-  `./bin/evidence-capture` sur le produit lancé. Un état sans preuve
-  valide, une preuve prise ailleurs que sur ce produit, un critère
-  reformulé ou retiré : refusés.
+- **Un état pour la ligne de démonstration** (ADR-0030 L4 : les tests de
+  critère gelés prouvent les critères ; seul un critère qu'une attente
+  validée compare garde un état) : « observé » (`observed`), « non
+  observé » (`not_observed`) ou « inobservable » (`unobservable`), avec une
+  **preuve capturée** par `./bin/evidence-capture` sur le produit lancé. Un
+  état sans preuve valide, une preuve prise ailleurs que sur ce produit, une
+  ligne reformulée : refusés.
 - **Le verdict est calculé par du code** : l'Evaluator ne rend jamais de
   verdict global. Favorable seulement si tout est « observé » avec preuve
   au commit de tête.
@@ -1107,7 +1108,8 @@ convoi qui porte la **marque du nouveau flux**.
   - « inobservable » par l'environnement : panne, non comptée comme refus ;
     l'évaluation est refaite une fois, puis le ticket est arrêté.
 - **Ce que reçoit l'Evaluator** (`brief`) : la ligne de démonstration, les
-  critères gelés, les adresses des produits lancés. Ni le Handoff, ni le
+  seuls critères qu'une attente validée compare, les adresses des produits
+  lancés. Ni le Handoff, ni le
   diff, ni le dépôt.
 - **`prefactoring`** : aucune session d'Evaluator. Du code lance le
   produit, capture la réponse de sa sonde, et enregistre qu'il démarre.

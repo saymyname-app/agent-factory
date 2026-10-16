@@ -2154,6 +2154,19 @@ class ConvoyStateTest(unittest.TestCase):
         verdict = self.ticket(self.show(), T1)["verdicts"]["evaluation"]
         self.assertEqual(("favorable", self.REVIEWED), (verdict["state"], verdict["commit"]))
 
+    def test_record_evaluation_records_the_demonstration_line_alone_without_criteria_states(self):
+        # ADR-0030 L4: the frozen criterion tests prove the criteria; the
+        # Evaluator of an interface ticket judges the demonstration line.
+        self.opened_evaluation()
+        content = self.states()
+        del content["criteria"]
+
+        answer = self.record_evaluation(content)
+
+        self.assertEqual(("favorable", "favorable"), (answer["outcome"], answer["verdict"]))
+        (round_,) = self.evaluation()["rounds"]
+        self.assertEqual(([], "observed"), (round_["criteria"], round_["demonstration_line"]["state"]))
+
     def test_record_evaluation_computes_the_outcome_of_each_refusal(self):
         not_observed = {"state": "not_observed", "reason": "le nombre n'est pas sur la page"}
         by_criterion = {"state": "unobservable", "cause": "criterion", "reason": "aucun point d'entrée ne le sert"}
@@ -2199,8 +2212,6 @@ class ConvoyStateTest(unittest.TestCase):
 
         without_evidence = changed()
         del without_evidence["criteria"][0]["evidence"]
-        removed = json.loads(json.dumps(valid))
-        del removed["criteria"][1]
         twice = json.loads(json.dumps(valid))
         twice["criteria"].append(dict(twice["criteria"][0]))
         other_commit = self.captured("evaluation.other", commit=self.CORRECTED)
@@ -2215,7 +2226,6 @@ class ConvoyStateTest(unittest.TestCase):
             (changed(evidence="evaluation.absent"), "n'a pas d'empreinte sur le ticket"),
             (changed(evidence=other_commit), "non au commit évalué"),
             (changed(text="Le nombre est visible"), "critère 1 reformulé"),
-            (removed, "critère 2 retiré"),
             (twice, "deux états rendus"),
             ({**valid, "criteria": valid["criteria"] + [{"number": 3, "text": "x", "state": "observed",
                                                          "evidence": "evaluation.seen"}]},
