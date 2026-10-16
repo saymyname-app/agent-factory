@@ -236,7 +236,7 @@
       "job-user-prompt-rendered": "config/cockpit-datasets/job-user-prompt-rendered.json"
     },
     "test_perimeter": [
-      "tests/"
+      "tests/cockpit-criteria/"
     ],
     "frozen_harness_paths": [
       "tests/fixtures/delivery-fixture-city/tests/harness.py",
