@@ -287,10 +287,15 @@ in the round for the Evidence Pack. It is never left out.
 
 ## An evaluation that gives no result
 
-A launch gives no result when `timeout_seconds` passed since it was sent
-(`config/delivery-flow.json`, `evaluation`; 3600 s, a value without a
-measured base), or when its bead was closed while the request is still
-open. It is not a passed evaluation: no verdict is written and the merge
+A launch gives no result when its delay passed since it was sent, or when
+its bead was closed while the request is still open. The delay is
+`max(timeout_seconds, datasets × per_dataset_seconds)`
+(`config/delivery-flow.json`, `evaluation`): `timeout_seconds` (3600 s, a
+value without a measured base) is the floor, and an evaluation that covers
+many datasets gets `per_dataset_seconds` (240 s) for each one (af-vtg5kl).
+The 240 s come from T02 (`af-0gonc9`): about 3 min per dataset, at best 17
+of its 24 datasets in 3600 s (212 s each), plus a margin. Up to 15 datasets
+the delay stays 3600 s; 24 datasets get 5760 s. It is not a passed evaluation: no verdict is written and the merge
 stays refused. It is launched **once more**, on a new bead, for a new
 session (on products launched again if the first ones are gone). When that
 relaunch replaces the product of a ticket that establishes its launch recipe,

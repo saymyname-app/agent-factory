@@ -1874,6 +1874,31 @@ class TicketEvaluationTest(unittest.TestCase):
         self.assertNotIn("evaluation", self.shown()["verdicts"])
         self.assertEqual([], self.launch_records())
 
+    def test_the_launch_delay_grows_with_the_datasets_to_cover(self):
+        # af-vtg5kl: T02 (af-0gonc9) names 24 datasets at about 3 min each;
+        # cut at 3600 s four times, it never covered them all.
+        import importlib.util
+        from importlib.machinery import SourceFileLoader
+        loader = SourceFileLoader("ticket_evaluation_tool", str(TOOL))
+        module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+        loader.exec_module(module)
+        shipped = json.loads((ROOT / "config" / "delivery-flow.json").read_text())["evaluation"]
+        sent = time.time() - 3601
+
+        self.assertLess(time.time(), sent + module.launch_timeout(shipped, 24))
+        self.assertEqual(shipped["timeout_seconds"], module.launch_timeout(shipped, 1))
+
+    def test_a_launch_is_not_expired_while_its_datasets_still_have_time(self):
+        self.finished_slice(self.realized())
+        self.settings(timeout_seconds=0, per_dataset_seconds=3600)
+        self.evaluator("silent")
+
+        launched, second = self.settle(), self.settle()
+
+        self.assertEqual([SLICE], [entry["ticket"] for entry in launched["launched"]])
+        self.assertEqual([SLICE], [entry["ticket"] for entry in second["pending"]])
+        self.assertEqual(1, len(self.launches()))
+
     def test_a_session_that_closes_its_bead_without_states_counts_as_no_result(self):
         self.finished_slice(self.realized())
         self.evaluator("closed", {"look_for": COUNT_SHOWN, "dataset": "content"})
