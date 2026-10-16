@@ -58,6 +58,13 @@ pass, before both (cause `behind`, T44, `docs/CONVOY_ADVANCE.md`): its
 Ticket Exit is taken back, so no evaluation is sent on the old tip. The
 evaluation has no check of that tip of its own.
 
+A pass reads the convoy once, then skips without reading it again every
+ticket that has no Ticket Exit, no stop, no open evaluation, no tracked
+product and no launch record in its product folder: nothing can be due on
+it. Only the others are read again, under their lock, before anything is
+decided (af-x11w4x: reading the convoy again for each of 62 tickets made
+`settle` the first caller of `bin/convoy-state`, 34 reads a minute).
+
 | State of the evaluation | What `settle` does |
 |---|---|
 | none at the tip (none yet, or a commit was added after the last one) | launches the products at the tip and opens an **evaluation**: a commit added after a verdict has it replayed in full (Spec §8). For a `prefactoring`: the **startup control** |
