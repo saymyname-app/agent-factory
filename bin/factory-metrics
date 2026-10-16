@@ -33,6 +33,7 @@ and named in `unavailable`, with its cause in `unavailable_reasons`.
 
 Usage: factory-metrics [--day YYYY-MM-DD] [--print]   # --print: stdout only, no append
 """
+import argparse
 import glob
 import json
 import os
@@ -126,15 +127,17 @@ def transcripts(start, end):
 
 
 def main(argv):
-    day = None
-    if "--day" in argv:
-        i = argv.index("--day")
-        try:
-            day = date.fromisoformat(argv[i + 1])
-        except (IndexError, ValueError):
-            print("factory-metrics: --day takes YYYY-MM-DD", file=sys.stderr)
-            return 2
-    day = day or date.today() - timedelta(days=1)
+    # argparse: --help shows the usage and an unknown option is refused, both
+    # before anything is written (af-ufxzfz).
+    parser = argparse.ArgumentParser(
+        prog="factory-metrics",
+        description="One JSON line of daily Factory metrics, appended to var/factory-metrics.jsonl.")
+    parser.add_argument("--day", type=date.fromisoformat, metavar="YYYY-MM-DD",
+                        help="local calendar day to measure (default: yesterday)")
+    parser.add_argument("--print", action="store_true", dest="print_only",
+                        help="print the line without appending it to var/factory-metrics.jsonl")
+    args = parser.parse_args(argv)
+    day = args.day or date.today() - timedelta(days=1)
     # Local calendar day; computed from both midnights so a DST day stays correct.
     start = datetime.combine(day, datetime.min.time()).astimezone().timestamp()
     end = datetime.combine(day + timedelta(days=1), datetime.min.time()).astimezone().timestamp()
@@ -187,7 +190,7 @@ def main(argv):
     out["unavailable_reasons"] = reasons
     line = json.dumps(out, sort_keys=True)
     print(line)
-    if "--print" not in argv:
+    if not args.print_only:
         os.makedirs(os.path.dirname(LOG), exist_ok=True)
         with open(LOG, "a", encoding="utf-8") as fh:
             fh.write(line + "\n")

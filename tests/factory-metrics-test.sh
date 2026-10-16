@@ -112,4 +112,12 @@ out=$(run --day 2026-10-14 --print)
 # 5. bad --day is refused -------------------------------------------------------
 if run --day yesterday --print >/dev/null 2>&1; then fail "--day must be YYYY-MM-DD"; fi
 
+# 6. --help shows the usage and writes nothing; an unknown option is refused
+# and writes nothing (af-ufxzfz: --help used to append a line) ----------------
+before=$(wc -l < "$TMP/city/var/factory-metrics.jsonl")
+help=$(run --help) || fail "--help must succeed"
+grep -q -- '--print' <<<"$help" || fail "--help must name the options: $help"
+if run --bogus >/dev/null 2>&1; then fail "an unknown option must be refused"; fi
+[ "$(wc -l < "$TMP/city/var/factory-metrics.jsonl")" = "$before" ] || fail "--help or an unknown option appended a line"
+
 echo "PASS: factory-metrics"
