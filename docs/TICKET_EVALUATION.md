@@ -301,7 +301,14 @@ value without a measured base) is the floor, and an evaluation that covers
 many datasets gets `per_dataset_seconds` (240 s) for each one (af-vtg5kl).
 The 240 s come from T02 (`af-0gonc9`): about 3 min per dataset, at best 17
 of its 24 datasets in 3600 s (212 s each), plus a margin. Up to 15 datasets
-the delay stays 3600 s; 24 datasets get 5760 s. It is not a passed evaluation: no verdict is written and the merge
+the delay stays 3600 s; 24 datasets get 5760 s. The time a launch waits for
+a dataset it requested (`product`, until the controller has opened it) is
+added to its delay: it is the controller's time, not the Evaluator's
+(af-4nop0m; on 16/10 T02 waited up to 20 min per dataset while the passes
+stalled). `bin/convoy-state` adds each wait to the request (`waited`, in
+seconds) when the product is opened or another dataset is asked instead;
+a new launch starts at 0. The wait adds at most one more delay: a controller
+that never opens the dataset still lets the launch end. It is not a passed evaluation: no verdict is written and the merge
 stays refused. It is launched **once more**, on a new bead, for a new
 session (on products launched again if the first ones are gone). When that
 relaunch replaces the product of a ticket that establishes its launch recipe,
