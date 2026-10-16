@@ -332,8 +332,8 @@ and nothing else.
    branch that leaves from the integration branch of the Spec; the formula
    `mol-ticket-author` holds the sequence and `bin/ticket-author` its gates.
 3. **TDD.** `bin/tdd-step red` proves the criterion tests red;
-   `bin/test-review` has a test reviewer read them; `bin/tdd-step freeze`
-   refuses without its favorable verdict; `bin/tdd-step green` proves them
+   `bin/tdd-step freeze` seals them (no test review precedes it, ADR-0030
+   L3: the code review reads them); `bin/tdd-step green` proves them
    green, unchanged since the freeze.
 4. **Exit.** The author ends by `bin/ticket-exit`, with its Ticket Handoff
    and the demonstration captured on the launched product. It never closes
@@ -375,8 +375,11 @@ the owner's place, and a marked convoy never closes by itself.
 **Stops and bounds.** The bounds are set in `bounds` of
 `config/delivery-flow.json` and nowhere else.
 
-- A ticket is resumed at most 3 times, every cause together; at the third
-  it is parked with its descendants and raised to the operator.
+- A ticket is resumed at most 3 times for a same cause (interrupted,
+  returned, unblocked, answered, behind, evaluation without result, commit
+  after a verdict: one bound each, ADR-0030 L2; the correction round keeps
+  its own bound of one round); at the third of one cause it is parked with
+  its descendants and raised to the operator.
 - The convoy stops entirely while its integration branch is red (code
   publishes one `repair`) or while 2 Planning Exceptions are open on its
   Spec.
@@ -393,7 +396,7 @@ the owner's place, and a marked convoy never closes by itself.
 |---|---|
 | What must a draft hold to be published marked? Who reviews the graph? | `docs/ENTRY_CONTRACT.md`, `docs/GRAPH_REVIEW.md` |
 | Where does a convoy stand, and why does nothing start? | `docs/CONVOY_STATE.md`, `docs/CONVOY_ADVANCE.md` |
-| What does the author session do, step by step? | `docs/TICKET_AUTHOR.md`, `docs/TDD_STEP.md`, `docs/TEST_REVIEW.md`, `docs/TICKET_EXIT.md` |
+| What does the author session do, step by step? | `docs/TICKET_AUTHOR.md`, `docs/TDD_STEP.md`, `docs/TICKET_EXIT.md` |
 | Why was a ticket refused before its merge? | `docs/CODE_REVIEW.md`, `docs/TICKET_EVALUATION.md`, `docs/PROTOTYPE_FIDELITY.md`, `docs/VALIDATED_PROTOTYPE.md`, `docs/CORRECTION_ROUND.md` |
 | How is a ticket merged, and why is it still open? | `docs/SPEC_INTEGRATION.md`, `docs/TICKET_END.md` |
 | Why is the Spec not Delivered? | `docs/SPEC_END.md`, `docs/OUTCOME_EVALUATION.md`, `docs/SPEC_END_REVIEW.md` |

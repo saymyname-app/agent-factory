@@ -265,7 +265,6 @@ been written by its gate (T37):
 | --- | --- |
 | « rouge » | `tdd-step red` |
 | « gel » | `tdd-step freeze` |
-| « relecture des tests » | `test-review review` |
 | « vert » | `tdd-step green` |
 | « Handoff », « terminé » | `ticket-exit exit` |
 
@@ -498,15 +497,15 @@ observation added, the verdicts of the gate, the names of the verified
 pieces. It holds no path, commit or time.
 
 `interfaces.flow` lists the commands of the flow the oracle saw run, sorted
-and each once: `tool verb` for `tdd-step`, `test-review`, `ticket-author`,
+and each once: `tool verb` for `tdd-step`, `ticket-author`,
 `ticket-exit` and `convoy-state`, the name of the tool alone otherwise. On
 `one-ticket-end-to-end.json`: `convoy-advance`, `convoy-state mark`,
 `convoy-state show`, `project-launch`, `spec-integration`, `tdd-step
-freeze`, `tdd-step green`, `tdd-step red`, `test-review review`,
+freeze`, `tdd-step green`, `tdd-step red`,
 `ticket-author demonstrate`, `ticket-author start`, `ticket-exit exit`.
 `author_gates` is `{"tickets": N, "commands": [...]}`: the number of closed
 tickets that went through every gate of the author, and those gates
-(`tdd-step freeze`, `tdd-step green`, `tdd-step red`, `test-review review`,
+(`tdd-step freeze`, `tdd-step green`, `tdd-step red`,
 `ticket-author demonstrate`, `ticket-author start`, `ticket-exit exit`).
 
 Limits of the reference driver (`tests/fixtures/fixture-city/delivery-driver`):
@@ -519,9 +518,8 @@ Limits of the reference driver (`tests/fixtures/fixture-city/delivery-driver`):
   Of the author the driver writes only what a session leaves — the
   criterion test, the criteria table and the commits in the worktree of the
   ticket, the sections of the Ticket Handoff — and runs the real gates:
-  `ticket-author start`, `tdd-step red`, `test-review review` (answered by
-  the stand-in `tests/fixtures/test-review/reviewer` through the real
-  `test-review record`), `tdd-step freeze`, the product commit, `tdd-step
+  `ticket-author start`, `tdd-step red`, `tdd-step freeze` (no test review
+  precedes it, ADR-0030 L3), the product commit, `tdd-step
   green`, `ticket-author demonstrate`, `ticket-exit exit --exit finished`.
   It writes no state of the author through `bin/convoy-state`.
 - The criterion of the walked ticket is false at the start commit and made

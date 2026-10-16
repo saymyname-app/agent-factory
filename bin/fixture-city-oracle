@@ -1060,12 +1060,11 @@ def validate_delivery_scenario(scenario: dict[str, Any]) -> tuple[str, dict[str,
 # line also says which states of the ticket the gate wrote, read on
 # bin/convoy-state show before and after it ran.
 FLOW_BIN_VARIABLE = "FIXTURE_CITY_FLOW_BIN"
-FLOW_VERBS = ("tdd-step", "test-review", "ticket-author", "ticket-exit", "convoy-state")
+FLOW_VERBS = ("tdd-step", "ticket-author", "ticket-exit", "convoy-state")
 # Each state of the author's step: its name in the flow, and the gate that writes it.
 AUTHOR_STATES = {
     "red": ("rouge", "tdd-step red"),
     "freeze": ("gel", "tdd-step freeze"),
-    "test_review": ("relecture des tests", "test-review review"),
     "green": ("vert", "tdd-step green"),
     "handoff": ("Handoff", "ticket-exit exit"),
     "exit": ("terminé", "ticket-exit exit"),
@@ -1078,7 +1077,6 @@ def author_states(ticket: dict[str, Any]) -> dict[str, str]:
     digest of its public record."""
     tdd = ticket.get("tdd") or {}
     records = {step: tdd.get(step) for step in ("red", "freeze", "green")}
-    records["test_review"] = (ticket.get("test_review") or {}).get("rounds")
     handoff, exit_record = ticket.get("handoff") or {}, ticket.get("exit") or {}
     records["handoff"] = handoff if handoff.get("partial") is False else None
     records["exit"] = exit_record if exit_record.get("exit") == "finished" else None
@@ -1312,8 +1310,8 @@ def observe_delivery(target: DeliveryTarget, ticket_id: str | None = None) -> li
         reach("started", gates["dispatch"].get("at"))
     if tdd.get("red"):
         reach("red", tdd["red"].get("at"))
-    reviews = (ticket.get("test_review") or {}).get("rounds") or []
-    if tdd.get("freeze") and reviews and reviews[-1].get("verdict") == "favorable":
+    # ADR-0030 L3: no test review precedes the freeze.
+    if tdd.get("freeze"):
         reach("frozen", tdd["freeze"].get("at"))
     handoff, exit_record = ticket.get("handoff") or {}, ticket.get("exit") or {}
     if (tdd.get("green") and tdd["green"].get("commit") == tip and exit_record.get("exit") == "finished"

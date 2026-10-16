@@ -29,7 +29,8 @@ launch recipe), poses the pointers in each ticket, and applies all of it to
 the Validated Prototype reference in each interface ticket ("Interface
 tickets and the Prototype Fold"). The graph reviewer (T08) is delivered: once the entry contract is
 met, `bd-publish` also refuses a draft that declares the contract without a
-graph review that holds for its current digest (`docs/GRAPH_REVIEW.md`).
+graph review that holds for its current digest, and `bd-patch` an approved
+revision without one (`docs/GRAPH_REVIEW.md`).
 
 ```bash
 ./bin/ticket-graph-publish bd-publish af-draft --project agent-factory

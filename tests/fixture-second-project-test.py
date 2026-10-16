@@ -221,21 +221,6 @@ class SecondProjectTest(unittest.TestCase):
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         return json.loads(proc.stdout)
 
-    def reviewed(self):
-        """The favorable review of the criterion tests proven red at HEAD,
-        as bin/test-review records it, bound to what the freeze seals."""
-        _, proof = self.piece("tdd_red")
-        paths = [proof["table"], *(test["id"].partition("::")[0] for test in proof["tests"]),
-                 *proof["frozen_harness_paths"]]
-        fingerprints = {path: sha256_of(self.repo / path) for path in dict.fromkeys(paths)}
-        request, verdict = self.tmp / "review-request.json", self.tmp / "review-verdict.json"
-        request.write_text(json.dumps({"files": fingerprints, "criteria": proof["criteria"]}))
-        self.state("open-test-review", CONVOY, SLICE, "--commit", proof["commit"], "--file", request)
-        verdict.write_text(json.dumps({
-            "commit": proof["commit"], "files": fingerprints, "recorded_by": "delivery-reviewer-fx",
-            "tests": {test["id"]: {"state": "favorable"} for test in proof["tests"]}}))
-        self.state("record-test-review", CONVOY, SLICE, "--file", verdict)
-
     def store_files(self):
         if not self.store.exists():
             return {}
@@ -367,7 +352,6 @@ class SecondProjectTest(unittest.TestCase):
     def test_green_passes_on_a_ticket_of_the_second_project_k_times(self):
         self.commit_tests()
         self.red()
-        self.reviewed()
         frozen = self.ok("freeze")
         head = self.commit("code du ticket", {SERVER: self.green_server()})
 
@@ -389,7 +373,6 @@ class SecondProjectTest(unittest.TestCase):
     def test_green_reads_k_in_the_profile_of_the_second_project(self):
         self.commit_tests()
         self.red()
-        self.reviewed()
         self.ok("freeze")
         self.commit("code du ticket", {SERVER: self.green_server()})
 
@@ -402,7 +385,6 @@ class SecondProjectTest(unittest.TestCase):
     def test_green_refuses_a_ticket_of_the_second_project_whose_code_is_not_written(self):
         self.commit_tests()
         self.red()
-        self.reviewed()
         self.ok("freeze")
 
         error = self.refused("green")

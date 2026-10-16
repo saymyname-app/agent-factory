@@ -1,5 +1,12 @@
 # Review of the criterion tests before the freeze (T13, Spec af-wf4w5r §5, §8)
 
+> **Superseded by ADR-0030 L3** (`docs/decisions/ADR-0030-lightened-delivery-flow.md`).
+> The flow starts no test review any more: `bin/tdd-step freeze` asks for
+> none, and the one code review of the ticket reads its criterion tests
+> after the green (`docs/CODE_REVIEW.md`). A `gc.flow.test_review` left on a
+> ticket in flight is ignored. `bin/test-review` and `mol-test-review` stay
+> until their removal in L7; this page describes them as they were.
+
 ## Status and purpose
 
 `bin/tdd-step` proves that the criterion tests of a ticket were written

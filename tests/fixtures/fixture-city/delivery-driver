@@ -29,9 +29,8 @@ No agent runs here. The driver writes what an author session leaves (the
 criterion tests and their table, the commits, the Ticket Handoff it says),
 in the worktree of the ticket; each state of the author's step is written by
 the real gate that is responsible for it (T37, af-fg8lhx): bin/ticket-author
-start and demonstrate, bin/tdd-step red, freeze and green, bin/test-review
-review (answered by the stand-in of its suite, tests/fixtures/test-review/
-reviewer, through the real bin/test-review record) and bin/ticket-exit exit.
+start and demonstrate, bin/tdd-step red, freeze and green (no test review
+precedes the freeze, ADR-0030 L3) and bin/ticket-exit exit.
 The driver never writes one of these states through bin/convoy-state: the
 oracle refuses a walk where it does. The commands are the ones the oracle
 hands over in FIXTURE_CITY_FLOW_BIN, which it records. The code
@@ -109,7 +108,6 @@ BIN = Path(os.environ.get("FIXTURE_CITY_FLOW_BIN") or ROOT / "bin")
 FIXTURES = Path("tests") / "fixtures"
 FAKE_GC = ROOT / "tests" / "fixtures" / "convoy-state" / "gc"
 REVIEWER = ROOT / "tests" / "fixtures" / "code-review" / "reviewer"
-TEST_REVIEWER = ROOT / "tests" / "fixtures" / "test-review" / "reviewer"
 EVALUATOR = ROOT / "tests" / "fixtures" / "ticket-evaluation" / "evaluator"
 END_EVALUATOR = ROOT / "tests" / "fixtures" / "outcome-evaluation" / "evaluator"
 END_REVIEWER = ROOT / "tests" / "fixtures" / "spec-end-review" / "reviewer"
@@ -334,13 +332,8 @@ class City:
             "SPEC_END_REVIEW_FAKE_LOG": str(self.workspace / "end-review-door.log"),
             "SPEC_END_REVIEW_FAKE_PLAN": str(self.workspace / "end-review-plan.json"),
             "SPEC_END_REVIEW_FAKE_REPO": str(self.root),
-            # The author's step (T37): where its worktrees are, and the
-            # stand-in that answers the review of the criterion tests.
+            # The author's step (T37): where its worktrees are.
             "TICKET_AUTHOR_WORKTREES_DIR": str(self.workspace / "worktrees"),
-            "TEST_REVIEW_DISPATCH_DOOR_BIN": str(TEST_REVIEWER),
-            "TEST_REVIEW_POLL_SECONDS": "0",
-            "TEST_REVIEW_FAKE_LOG": str(self.workspace / "test-review-door.log"),
-            "TEST_REVIEW_FAKE_PLAN": str(self.workspace / "test-review-plan.json"),
             **more,
         }
 
@@ -406,8 +399,7 @@ class City:
                            "timeout_seconds": 3600, "start_timeout_seconds": 15},
             "outcome_evaluation": {"formula": "mol-outcome-evaluation", "role": "evaluator", "rig": RIG,
                                    "timeout_seconds": 3600, "start_timeout_seconds": 15},
-            "end_review": {"formula": "mol-end-review", "role": "reviewer", "rig": RIG, "timeout_seconds": 3600},
-            "test_review": {"formula": "mol-test-review", "role": "reviewer", "rig": RIG, "timeout_seconds": 3600}}))
+            "end_review": {"formula": "mol-end-review", "role": "reviewer", "rig": RIG, "timeout_seconds": 3600}}))
         descriptor = json.loads((ROOT / self.fixture / "descriptor.json").read_text())
         descriptor["rigs"] = [RIG]
         descriptor["stacks"] = {RIG: ["fixture-stack"]}
@@ -434,8 +426,6 @@ class City:
         self.git("commit", "-q", "-m", "base")
         self.tracker.write_text(json.dumps({"beads": {}, "sessions": []}))
         (self.workspace / "code-review-plan.json").write_text(json.dumps(["favorable"]))
-        # The reviewer of the criterion tests finds each of them favorable.
-        (self.workspace / "test-review-plan.json").write_text(json.dumps(["favorable"]))
         # The Evaluator of the end observes each user story on the home page;
         # with `story-not-observed`, the second one where the Spec says it is
         # served, on the product as it is launched: not at first.
@@ -649,8 +639,6 @@ class City:
                       "--base", started["base"], "--table", table)
             return "session:red"
         if not (shown.get("tdd") or {}).get("freeze"):
-            self.gate("test-review", "review", self.convoy, ticket, "--repo", worktree, "--wait", "0",
-                      TEST_REVIEW_FAKE_REPO=str(worktree))
             self.gate("tdd-step", "freeze", self.convoy, ticket, "--repo", worktree)
             return "session:freeze"
         product, before, after = work["product"]

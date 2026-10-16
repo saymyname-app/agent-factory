@@ -14,6 +14,12 @@ worktree down and frees the port.
     ./bin/project-launch [--repo-root <product repo>] start <descriptor.json> --commit <sha> --dataset <name> --state-file <path>
     ./bin/project-launch stop --state-file <path>
 
+A tool that starts a product passes `--owner-pid <its own pid>`: a guard
+then stops the launch as soon as that process ends, however it ends. A
+`finally` that would have stopped it does not run on SIGKILL, and the
+product, in its own session, lived on for days (af-f7x7w7). Without
+`--owner-pid` (a launch typed in a shell) the product lives until `stop`.
+
 `--repo-root` is the repository of the product (default: the Factory's own);
 the profile tool is always the one next to this launcher.
 
@@ -41,6 +47,32 @@ import urllib.request
 import uuid
 from pathlib import Path
 from types import ModuleType
+
+
+def process_identity(pid: int) -> str | None:
+    """The start time of a running `pid`: with the pid, it names one process
+    for its whole life, so a reused pid is not mistaken for the owner."""
+    try:
+        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+    except (OSError, IndexError):
+        return None
+    return None if fields[0] in {"Z", "X"} else fields[19]
+
+
+def guard(args: argparse.Namespace) -> int:
+    """Stop the launch of `--state-file` once its owner has ended, or once
+    `start` has ended before the product was healthy (killed while it
+    waited for the probe); leave when the record is gone."""
+    while Path(args.state_file).exists():
+        try:
+            started = json.loads(Path(args.state_file).read_text()).get("started")
+        except (OSError, ValueError):
+            started = False  # replaced at this instant: read it again next round
+        if (process_identity(args.owner_pid) != args.owner_start
+                or (not started and process_identity(args.start_pid) != args.start_start)):
+            return cmd_stop(argparse.Namespace(state_file=args.state_file, pid=None, worktree=None))
+        time.sleep(1)
+    return 0
 
 
 def write_record(path: str, record: dict) -> None:
@@ -268,12 +300,16 @@ def verify_worktree(repo_root: str, worktree: str, launch_id: str | None = None,
     if (not target.is_absolute() or target.parent != temporary or target.is_symlink()
             or not re.fullmatch(r"project-launch-[A-Za-z0-9_-]+", target.name)):
         raise RuntimeError(f"unexpected product worktree path: {worktree}")
-    listed = subprocess.run(["git", "-C", repo_root, "worktree", "list", "--porcelain"],
-                            text=True, capture_output=True)
-    if listed.returncode:
-        raise RuntimeError(f"cannot verify product worktree: {listed.stderr.strip()}")
-    registered = any(block.splitlines()[0] == f"worktree {target}"
-                     for block in listed.stdout.strip().split("\n\n") if block)
+    registered = False
+    # A removed product repository (a deleted ticket worktree) registers
+    # nothing: only the owner sidecar below can still vouch for the copy.
+    if Path(repo_root).exists():
+        listed = subprocess.run(["git", "-C", repo_root, "worktree", "list", "--porcelain"],
+                                text=True, capture_output=True)
+        if listed.returncode:
+            raise RuntimeError(f"cannot verify product worktree: {listed.stderr.strip()}")
+        registered = any(block.splitlines()[0] == f"worktree {target}"
+                         for block in listed.stdout.strip().split("\n\n") if block)
     owner = Path(f"{worktree}.owner")
     owned = False
     if launch_id and commit and owner.is_file():
@@ -301,10 +337,13 @@ def remove_worktree(repo_root: str, worktree: str, launch_id: str | None = None,
         # An interrupted git worktree add can leave an unregistered partial
         # checkout. Its owner sidecar was written before that operation.
         shutil.rmtree(worktree)
-    result = subprocess.run(["git", "-C", repo_root, "worktree", "prune"],
-                            capture_output=True, text=True)
-    if result.returncode or Path(worktree).exists():
-        raise RuntimeError(f"worktree was not released: {worktree}: {result.stderr.strip()}")
+    if Path(repo_root).exists():
+        result = subprocess.run(["git", "-C", repo_root, "worktree", "prune"],
+                                capture_output=True, text=True)
+        if result.returncode:
+            raise RuntimeError(f"worktree was not released: {worktree}: {result.stderr.strip()}")
+    if Path(worktree).exists():
+        raise RuntimeError(f"worktree was not released: {worktree}")
     if owner is not None:
         owner.unlink(missing_ok=True)
 
@@ -359,6 +398,13 @@ def cmd_start(args: argparse.Namespace) -> int:
     if args.state_file and Path(args.state_file).exists():
         print(json.dumps({"started": False, "error": "launch record still exists; stop it before retry"}, sort_keys=True))
         return 1
+    owner_start = None
+    if args.owner_pid is not None:
+        owner_start = process_identity(args.owner_pid)
+        if owner_start is None:
+            print(json.dumps({"started": False, "error": f"owner process {args.owner_pid} is not running"},
+                             sort_keys=True))
+            return 1
     descriptor_path = Path(args.descriptor).resolve()
     ppp = load_profile_module()
 
@@ -433,6 +479,15 @@ def cmd_start(args: argparse.Namespace) -> int:
     except OSError as exc:
         print(json.dumps({"started": False, "error": f"launch record could not be written: {exc}"}, sort_keys=True))
         return 1
+    if owner_start is not None:
+        # From the first record on: the owner can die while the product
+        # still answers its probe, and this start with it.
+        subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "guard",
+                          "--owner-pid", str(args.owner_pid), "--owner-start", owner_start,
+                          "--start-pid", str(os.getpid()), "--start-start", process_identity(os.getpid()),
+                          "--state-file", str(Path(args.state_file).resolve())],
+                         cwd="/", stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
     try:
         Path(f"{worktree}.owner").write_text(json.dumps({
             "launch_id": launch_id, "repo_root": str(repo_root), "commit": resolved_commit}))
@@ -584,7 +639,17 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--dataset", default=None, help="named synthetic dataset to launch on")
     start.add_argument("--timeout", type=float, default=15.0, help="seconds to wait for the health probe")
     start.add_argument("--state-file", required=True, help="where to write the recoverable launch record for stop")
+    start.add_argument("--owner-pid", type=int, default=None,
+                       help="process whose end stops the launch (the calling tool's own pid)")
     start.set_defaults(func=cmd_start)
+
+    watch = subparsers.add_parser("guard", help=argparse.SUPPRESS)
+    watch.add_argument("--owner-pid", type=int, required=True)
+    watch.add_argument("--owner-start", required=True)
+    watch.add_argument("--start-pid", type=int, required=True)
+    watch.add_argument("--start-start", required=True)
+    watch.add_argument("--state-file", required=True)
+    watch.set_defaults(func=guard)
 
     stop = subparsers.add_parser("stop", help="stop a launched product and release its port")
     stop.add_argument("--state-file", default=None, help="launch record written by `start --state-file`")
