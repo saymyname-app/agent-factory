@@ -649,11 +649,19 @@ stop stay, raised once with the TDD stops (`tdd_stops`) if it was not yet.
 
 A ticket whose criteria are all already green at the red
 (`criterion_already_green`, ADR-0030 L5) is raised with the TDD stops too,
-« Ticket <id> arrêté : critères tous déjà verts — … », but only once its
-author's Planning Exception is answered and no longer parks it: the
-« accept » answer lifts the parking, not the stop, so this request keeps
-the convoy from stalling silently. While that exception parks it, or before
-its author raised one, nothing is posted.
+« Ticket <id> arrêté : critères tous déjà verts — … », once its author
+settled it: the Planning Exception raised since the stop (its `at` not
+before the stop's) is answered and no longer parks the ticket — the
+« accept » answer lifts the parking, not the stop — or the author's session
+is over without raising one (af-npz9v1.9), so the convoy never stalls
+silently. While a parking holds its own request, while that exception is
+unanswered, or while the author's session is alive without one, nothing is
+posted; an exception raised before the stop does not count. This request
+offers « Clore ce ticket comme satisfait par le code existant » and
+« Laisser le ticket arrêté », not a second Planning Exception: one decision,
+one request. No door closes an unmerged ticket (`bin/ticket-end` closes on
+its nine conditions), so the close is done in the Planning Run, and the
+consequence says that this answer alone closes nothing.
 
 ## A ticket stopped at its second amendment reaches the operator (T45)
 

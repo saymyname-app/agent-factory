@@ -699,12 +699,28 @@ class TicketExitTest(unittest.TestCase):
         accepting = [o for o in options if o["lettre"] == raised[0]["accept_option"]]
         self.assertEqual(1, len(accepting))
         self.assertIn("Accepter", accepting[0]["option"])
+        # The general case: the ticket resumes; the stopped case is apart.
+        self.assertIn("reprend", accepting[0]["consequence"])
+        self.assertNotIn("déjà verts", accepting[0]["consequence"])
 
         proc = self.run_cmd(ESCALATION_TOOL, "repondre", T2, "c")
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
 
         self.assertTrue(self.shown()["planning_exceptions"][0]["accepted"])
         self.assertEqual([], self.shown()["accepted_anchors"])
+
+    def test_planning_exception_on_an_already_green_ticket_says_accepting_lifts_the_parking_not_the_stop(self):
+        # af-npz9v1.9: all criteria already green, the ticket does not resume.
+        self.state("stop-ticket", CONVOY, T2, "--reason", "criterion_already_green", "--detail", "critère 1 déjà vert")
+        self.raise_exception("--kind", "semantic", "--summary", "Critères tous déjà verts")
+
+        raised = self.shown()["planning_exceptions"]
+        options = json.loads(json.loads(self.tracker.read_text())["beads"][T2]["metadata"]["gc.escalation_que_faire"])
+        accepting = [o for o in options if o["lettre"] == raised[0]["accept_option"]]
+        self.assertEqual(1, len(accepting))
+        self.assertIn("arrêt", accepting[0]["consequence"])
+        self.assertIn("satisfait", accepting[0]["consequence"])
+        self.assertNotIn("reprend", accepting[0]["consequence"])
 
     def test_planning_exception_is_refused_with_a_malformed_anchor(self):
         self.assert_refused_and_nothing_written(
