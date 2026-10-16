@@ -2506,19 +2506,34 @@ class ConvoyStateTest(unittest.TestCase):
             with self.subTest(mention=mention):
                 self.assert_refused_and_nothing_written("record-startup", CONVOY, T1, *args, mention=mention)
 
-    def test_a_product_that_starts_is_not_the_evaluation_of_a_slice_but_one_that_does_not_start_refuses_it(self):
+    def test_a_product_that_starts_is_not_the_evaluation_of_an_interface_slice_but_one_that_does_not_start_refuses_it(self):
         self.opened_evaluation()
+        description = self.tracker_state()["beads"][T1]["description"]
+        self.edit_bead(T1, description=description + "\n\n" + self.prototype_section())
         piece = self.captured("evaluation.startup")
         self.assert_refused_and_nothing_written(
             "record-startup", CONVOY, T1, "--commit", self.REVIEWED, "--piece", piece, "--file",
             self.json_file("startup.json", {"environment": [{"dataset": None, "address": self.PRODUCT["address"]}]}),
-            mention="ne vaut évaluation que pour un prefactoring")
+            mention="ne vaut évaluation que pour un ticket sans interface")
 
         self.ok("record-startup", CONVOY, T1, "--commit", self.REVIEWED, "--detail", "la copie propre ne démarre pas")
 
         evaluation = self.evaluation()
         self.assertNotIn("request", evaluation)
         self.assertEqual("unfavorable", evaluation["state"]["verdict"])
+
+    def test_a_product_that_starts_is_the_evaluation_of_a_slice_without_interface_its_model_one_not_required(self):
+        """ADR-0030 L4: only an interface ticket is evaluated by a model."""
+        self.opened_evaluation()
+        piece = self.captured("evaluation.startup")
+
+        self.ok("record-startup", CONVOY, T1, "--commit", self.REVIEWED, "--piece", piece, "--file",
+                self.json_file("startup.json", {"environment": [{"dataset": None, "address": self.PRODUCT["address"]}]}))
+
+        evaluation = self.evaluation()
+        self.assertNotIn("request", evaluation)
+        self.assertEqual(("startup", "favorable", "not_required"),
+                         tuple(evaluation["rounds"][-1].get(name) for name in ("kind", "verdict", "model")))
 
     def test_release_evaluation_forgets_the_stopped_products_and_keeps_those_an_open_evaluation_runs_on(self):
         self.opened_evaluation()

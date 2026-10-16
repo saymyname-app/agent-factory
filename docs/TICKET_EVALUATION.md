@@ -17,8 +17,15 @@ author — has it evaluated on the **launched product**, before its merge:
   line** — `observed`, `not_observed`, `unobservable` — each resting on a
   piece captured by `bin/evidence-capture` on one of those products. It
   gives no verdict: code computes it.
-- For a **`prefactoring`** no session runs: code checks that the product
-  starts and that its probe answers.
+- Only an **interface ticket** (one whose publication posed a Validated
+  Prototype reference, `interface: true` in `convoy-state show`) gets an
+  Evaluator session (ADR-0030 L4): its frozen criteria are already proven by
+  the frozen criterion tests, and in 2026-10 model evaluation never found a
+  defect the code review missed. For a **`prefactoring`** and for **any
+  ticket without interface** no session runs: code checks that the product
+  starts and that its probe answers (the **startup control**, below); on a
+  ticket without interface the round records the model evaluation
+  `model: "not_required"`.
 - `bin/spec-integration` **merges nothing** without a favorable evaluation
   at the tip of the ticket branch. An evaluation that is absent, open or
   without result is not an agreement.
@@ -67,13 +74,13 @@ decided (af-x11w4x: reading the convoy again for each of 62 tickets made
 
 | State of the evaluation | What `settle` does |
 |---|---|
-| none at the tip (none yet, or a commit was added after the last one) | launches the products at the tip and opens an **evaluation**: a commit added after a verdict has it replayed in full (Spec §8). For a `prefactoring`: the **startup control** |
+| none at the tip (none yet, or a commit was added after the last one) | launches the products at the tip and opens an **evaluation**: a commit added after a verdict has it replayed in full (Spec §8). For a `prefactoring` or a ticket without interface (ADR-0030 L4): the **startup control**, no session. A startup control that stood for the evaluation (the product started) does not stand for a ticket that has since become interface: it gets its model evaluation at the same tip; a product that did not start stays the verdict at that tip |
 | favorable at the tip | nothing: the merge may follow |
 | `not_observed` at the tip | waits: back to the author, nothing merges before a new commit. `bin/correction-round settle` sends what was not observed, with the findings of the code review, to the one author session of the ticket's correction round, and stops the ticket still not observed after it (`docs/CORRECTION_ROUND.md`) |
 | `unobservable` by the criterion at the tip | **Planning Exception**: one request on the operator's list (`bin/escalation-door`), the ticket and those that wait for it are parked (`bin/convoy-state park`) |
 | `unobservable` by the environment only | an **outage**: no verdict, nothing counted as a refusal; the evaluation is made once more on products launched again. A second outage at the same commit stops the ticket (`evaluation_outage`) |
 | open, launched, within its time | waits |
-| open on a ticket that is no longer to be evaluated at that commit (its author added a commit, it was parked) | withdraws it and stops its products: what its session hands in later is refused |
+| open on a ticket that is no longer to be evaluated at that commit (its author added a commit, it was parked, or it has no interface: a model evaluation opened before ADR-0030 L4) | withdraws it and stops its products: what its session hands in later is refused |
 | any launched product that no open evaluation runs on | stops it (`bin/project-launch stop`) and records that it is gone |
 
 A second call on the same state does nothing.
@@ -233,10 +240,15 @@ evaluation is open, every piece it rests on is still a valid Evidence Record
 of one of its products, and the verdict stored on the ticket is the one of
 that round. Otherwise `reasons` says why.
 
-## A prefactoring: the startup control
+## A prefactoring or a ticket without interface: the startup control
 
-A `prefactoring` changes no behaviour: nothing new is to be observed. No
-Evaluator session is started. `settle` launches each game of the ticket (a
+A `prefactoring` changes no behaviour: nothing new is to be observed. A
+ticket without interface has its criteria proven by its frozen criterion
+tests and its code read by the code review; a model evaluation of it is not
+required (ADR-0030 L4), and its `startup` round says so (`model:
+"not_required"`). No Evaluator session is started. A ticket that
+establishes the launch recipe first proves that the product starts and
+stops (the lifecycle preflight, as before an evaluation). `settle` launches each game of the ticket (a
 prefactoring names none: the first declared dataset) in
 sequence from a clean copy of the tip, captures the answer of the profile's
 health probe with `bin/evidence-capture`, and confirms cleanup before opening
@@ -321,7 +333,7 @@ On the ticket, written by `bin/convoy-state` only (`docs/CONVOY_STATE.md`):
 
 | Key | Value |
 |---|---|
-| `gc.flow.evaluation` | `rounds`: each recorded round — an `evaluation` (`commit`, `criteria`: number, text, state, evidence, reason, cause; `demonstration_line`; optional `screen_findings`; `outcome`, `verdict`, `roles`, `environment`: dataset and address of each product, `recorded_by`, `conversation` when known, `at`) or a `startup` (`commit`, `started`, `evidence` and `environment`, or `detail`; `outcome`, `verdict`, `at`). `request`, while an evaluation is open — `commit`, `criteria`, `demonstration_line`, `roles`, `environment` (with `state_file`), `launches` (`bead`, `at`, and `refused`: `{session, at}` when the session that answered had already served), `at`. `live`: the launch records of the products still to stop |
+| `gc.flow.evaluation` | `rounds`: each recorded round — an `evaluation` (`commit`, `criteria`: number, text, state, evidence, reason, cause; `demonstration_line`; optional `screen_findings`; `outcome`, `verdict`, `roles`, `environment`: dataset and address of each product, `recorded_by`, `conversation` when known, `at`) or a `startup` (`commit`, `started`, `evidence` and `environment`, or `detail`; `model`: `not_required` on a started ticket without interface, ADR-0030 L4; `outcome`, `verdict`, `at`). `request`, while an evaluation is open — `commit`, `criteria`, `demonstration_line`, `roles`, `environment` (with `state_file`), `launches` (`bead`, `at`, and `refused`: `{session, at}` when the session that answered had already served), `at`. `live`: the launch records of the products still to stop |
 | `gc.flow.verdict.evaluation` | the verdict of the last round that gave one, and the commit it judged |
 | `gc.flow.models` | per delivery role: `agent`, `provider`, `model`, `at` |
 | `gc.flow.stop` | reason `evaluation_no_result` or `evaluation_outage`, a one-line detail, and `raised` once the escalation door accepted the request |

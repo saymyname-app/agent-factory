@@ -720,8 +720,16 @@ def wanted(ticket: dict[str, Any]) -> tuple[str, Any]:
     if not green_at(ticket, tip):
         return "waiting", (f"le ticket n'est pas prouvé vert à la pointe de sa branche ({tip[:12]}, bin/tdd-step) : "
                            "l'évaluation porte sur un ticket vert")
+    # Only an interface ticket is evaluated by a model (ADR-0030 L4); any
+    # other one gets the start control of a prefactoring: no session, a
+    # model evaluation recorded « not required ». A start that stood for the
+    # evaluation does not stand for a ticket that has since become
+    # interface; a product that did not start is still its verdict.
+    model = ticket.get("kind") != KIND_PREFACTORING and ticket.get("interface")
     evaluation = evaluation_of(ticket)
     last = evaluation["rounds"][-1] if evaluation["rounds"] else None
+    if model and last is not None and last.get("kind") == STARTUP and last.get("started"):
+        last = None
     if last is not None and last["commit"] == tip and not retry_after_lift(last, ticket.get("park_lifts")):
         state = evaluation["state"]
         if last["outcome"] == FAVORABLE:
@@ -735,7 +743,7 @@ def wanted(ticket: dict[str, Any]) -> tuple[str, Any]:
             return "outage", state
     # No evaluation at the tip yet (a commit added after a verdict has it
     # replayed in full, Spec §8), or one that the environment hid.
-    return ("startup" if ticket.get("kind") == KIND_PREFACTORING else "open"), tip
+    return ("open" if model else "startup"), tip
 
 
 # --- launching the Evaluator --------------------------------------------------------
@@ -888,8 +896,12 @@ def probe_of(launch_block: dict[str, Any]) -> tuple[str, int]:
 
 
 def startup_control(convoy: Convoy, ticket_id: str, commit: str, settings: dict[str, Any]) -> dict[str, Any]:
-    """A prefactoring must start and answer its probe on every game of the ticket."""
+    """A prefactoring, or a ticket without interface (ADR-0030 L4), must
+    start and answer its probe on every game of the ticket; a ticket that
+    establishes the launch recipe proves its start and stop first."""
     datasets = convoy.datasets(ticket_id)
+    prepare_recipe_lifecycle(convoy, ticket_id, commit, datasets[0])
+    preflight_path(convoy, ticket_id, commit).unlink(missing_ok=True)
     path, status = probe_of(convoy.profile(ticket_id, commit)[1])
     environment = []
     coverage = []

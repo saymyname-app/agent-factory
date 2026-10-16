@@ -180,8 +180,10 @@ did not reach the operator yet, to `bin/ticket-evaluation settle <convoy>
 --repo <project repository>` (`docs/TICKET_EVALUATION.md`). For each ticket
 finished and green at the tip of its branch, the command launches the
 product from a clean copy of that tip and sends the evaluation to a session
-of the Evaluator role (for a `prefactoring`: checks itself that the product
-starts, without a session); it sends an evaluation left without result once
+of the Evaluator role when the ticket is an interface ticket (ADR-0030 L4;
+for a `prefactoring` or any other ticket: checks itself that the product
+starts, without a session, and records the model evaluation « not
+required »); it sends an evaluation left without result once
 more, stops the ticket when the relaunch gave none either; it parks a ticket
 whose criterion cannot be observed and puts the Planning Exception on the
 operator's list; and it stops the products once the states are in. The
