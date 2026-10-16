@@ -1,0 +1,9 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/project-registry-list-test.py::ProjectRegistryList.test_a_registry_where_each_rig_has_one_project_is_listed",
+      "tests/cockpit-criteria/commands/project-registry-list-test.py::ProjectRegistryList.test_a_registered_rig_without_a_project_is_refused_by_that_cause",
+      "tests/cockpit-criteria/commands/project-registry-list-test.py::ProjectRegistryList.test_a_rig_declared_in_two_projects_is_refused_by_that_cause_naming_both"
+    ]
+  }
+}
