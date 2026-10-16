@@ -1524,6 +1524,9 @@ class ConvoyAdvanceTest(ConvoyAdvanceHarness):
             "EVIDENCE_CAPTURE_BROWSER": str(ROOT / "tests" / "fixtures" / "prototype-fidelity" / "browser"),
             "EVIDENCE_FAKE_BROWSER_LOG": str(self.tmp / "browser.log"),
             "TICKET_END_WORK_DIR": str(self.tmp / "gate-work"),
+            # The pass does not wait for the check (af-pxijl6): it outlives
+            # the pass that started it, as when the order kills a pass.
+            "CONVOY_ADVANCE_FIDELITY_WAIT": "0",
         })
         # An interface slice: the publication door posed the reference of
         # the Validated Prototype in it, before the convoy was marked.
@@ -1544,7 +1547,19 @@ class ConvoyAdvanceTest(ConvoyAdvanceHarness):
         tip = self.finished(T1)
 
         first = self.advance(CONVOY)
-        observed = next(c for c in first["convoys"] if c["id"] == CONVOY)
+        started = next(c for c in first["convoys"] if c["id"] == CONVOY)
+        self.assertEqual([T1], [entry["id"] for entry in started["fidelity"]["waiting"]], started)
+        self.assertEqual([], (started.get("integration") or {}).get("merged", []), started)
+        # A later pass reads the answer of the check left running, and no
+        # pass starts it again from zero meanwhile.
+        deadline = time.monotonic() + 120
+        while True:
+            later = self.advance(CONVOY)
+            observed = next(c for c in later["convoys"] if c["id"] == CONVOY)
+            if "checked" in observed.get("fidelity", {}) or time.monotonic() > deadline:
+                break
+            self.assertEqual([T1], [entry["id"] for entry in observed["fidelity"]["waiting"]], observed)
+            time.sleep(1)
         self.assertEqual([(T1, tip, "vert")],
                          [(entry["id"], entry["commit"], entry["result"]) for entry in observed["fidelity"]["checked"]], observed)
         # The ticket names one game (af-kdxk6k): the fixture Evaluator may

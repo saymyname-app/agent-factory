@@ -205,7 +205,14 @@ A ticket of a marked convoy is closed by the pass, through `bin/ticket-end`
   fidelity was not measured at its tip is handed to `bin/ticket-end fidelity
   <convoy> --repo <project repository> --profile <project profile> --limit
   1`, which runs the mechanical fidelity check on the commit that merges.
-  Reported under `fidelity` (`checked`, `waiting`, `refused`).
+  Reported under `fidelity` (`checked`, `waiting`, `refused`). The check
+  runs in its own session, under a lock per convoy in the directory of the
+  pass's lock (af-pxijl6): the pass waits for it 120 s at most, then leaves
+  it running, its tickets under `waiting`. The order's timeout kills the
+  pass, not the check; a pass that finds it running leaves it, and the
+  pass that finds it ended reports its answer. Before this, a check longer
+  than what was left of the 300 s was killed with its pass and started
+  again from zero by the next one: no pass ended any more.
 - **After the merge**, a convoy that has a merged ticket still open, or in
   which this pass merged one, is handed to `bin/ticket-end settle <convoy>
   --repo <project repository>`. Reported under `ticket_end`: `closed` (the
