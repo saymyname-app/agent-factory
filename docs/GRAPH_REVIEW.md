@@ -76,7 +76,7 @@ or the graph, is `unfavorable` as soon as one of its answers is.
 | ticket | `size_tenable` | one author session can deliver it |
 | ticket | `same_surface_ordered` | every other ticket that changes the same code or the same mechanism is ordered against it; the same screen alone is no dependency (ADR-0031) |
 | ticket | `declared_scope_includes_wiring` | the declared `scope.paths` include the files where the slice is wired in. Asked only of a ticket that declares a scope; code records `not_applicable` otherwise |
-| graph | `no_orphan_story` | every numbered user story of the Spec is covered by a ticket |
+| graph | `no_orphan_story` | every numbered user story of the Spec is covered by a ticket. Not asked of a revision (`revises_digest`): it carries only the tickets it changes, so code records `not_applicable` and `bd-patch` computes coverage on the resulting graph before it asks `check` (af-2zmznz) |
 | graph | `assembly_point_not_confiscated` | the ticket that establishes shared assembly points is ordered first; none keeps the wiring for itself |
 | graph | `prototype_fold_present_and_first` | a Prototype Fold exists and every other interface ticket depends on it; `not_applicable`, with a reason, when the graph has no interface ticket |
 | graph | `critical_path_bounded` | **answered by code, never by the reviewer**: the longest chain of `blocked_by` is at most max(4, ⌈n/3⌉) of the draft's n tickets; the reason names the chain and every link another link already implies (ADR-0031) |

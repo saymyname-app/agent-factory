@@ -100,6 +100,15 @@ GRAPH_CHECKS = {
     CRITICAL_PATH_CHECK: "chemin critique au plus d'un tiers des tickets",
 }
 REVIEWER_GRAPH_CHECKS = [name for name in GRAPH_CHECKS if name != CRITICAL_PATH_CHECK]
+# A revision carries only the tickets it adds or changes: its reviewer cannot
+# see the stories the convoy already covers, and bd-patch computes coverage on
+# the graph that results from the patch before it asks `check` (af-2zmznz).
+ORPHAN_CHECK = "no_orphan_story"
+REVISION_COVERAGE = {
+    "state": NOT_APPLICABLE,
+    "reason": "révision d'un graphe publié : la couverture des stories se calcule sur le graphe résultant, "
+              "par bin/ticket-graph-publish bd-patch, qui refuse toute story orpheline avant la relecture",
+}
 GRAPH_TARGET = "graphe"
 DECISIONS = {"publish": "publier tel quel", "rework": "à reprendre"}
 
@@ -191,6 +200,12 @@ class Draft:
         """The questions asked of one ticket: the Declared Scope one only
         when the ticket declares a scope (Spec §2: « quand il est déclaré »)."""
         return [name for name in TICKET_CHECKS if name != SCOPE_CHECK or self.declares_scope(ticket_id)]
+
+    def graph_checks(self) -> list[str]:
+        """The graph questions asked of the reviewer: not the coverage of a
+        revision, which only the resulting graph shows."""
+        revision = bool(str(self.metadata.get("revises_digest") or "").strip())
+        return [name for name in REVIEWER_GRAPH_CHECKS if not (revision and name == ORPHAN_CHECK)]
 
     @property
     def last(self) -> dict[str, Any] | None:
@@ -452,7 +467,7 @@ def cmd_brief(args: argparse.Namespace) -> dict[str, Any]:
             {"id": ticket_id, "checks": {name: TICKET_CHECKS[name] for name in draft.ticket_checks(ticket_id)}}
             for ticket_id in draft.tickets
         ],
-        "graph_checks": {name: GRAPH_CHECKS[name] for name in REVIEWER_GRAPH_CHECKS},
+        "graph_checks": {name: GRAPH_CHECKS[name] for name in draft.graph_checks()},
         "verdict_shape": {
             "digest": draft.digest,
             "tickets": {"<id>": {"checks": {"<check>": {"state": "favorable|unfavorable", "reason": "<required when unfavorable>"}}}},
@@ -520,8 +535,10 @@ def cmd_record(args: argparse.Namespace) -> dict[str, Any]:
         tickets[ticket_id] = judged(ticket_id, given[ticket_id], draft.ticket_checks(ticket_id), problems)
         if tickets[ticket_id] and not draft.declares_scope(ticket_id):
             tickets[ticket_id]["checks"][SCOPE_CHECK] = {"state": NOT_APPLICABLE, "reason": "aucun Declared Scope déclaré"}
-    graph = judged(GRAPH_TARGET, verdict.get("graph"), REVIEWER_GRAPH_CHECKS, problems)
+    graph = judged(GRAPH_TARGET, verdict.get("graph"), draft.graph_checks(), problems)
     if graph:
+        if ORPHAN_CHECK not in draft.graph_checks():
+            graph["checks"][ORPHAN_CHECK] = dict(REVISION_COVERAGE)
         graph["checks"][CRITICAL_PATH_CHECK] = critical_path(draft)
         if graph["checks"][CRITICAL_PATH_CHECK]["state"] == UNFAVORABLE:
             graph["verdict"] = UNFAVORABLE
