@@ -75,14 +75,16 @@ or the graph, is `unfavorable` as soon as one of its answers is.
 | ticket | `criteria_observable_falsifiable` | every criterion is an observation through a public interface, with what would make it false |
 | ticket | `size_tenable` | one author session can deliver it |
 | ticket | `same_surface_ordered` | every other ticket that changes the same code or the same mechanism is ordered against it; the same screen alone is no dependency (ADR-0031) |
+| ticket | `evaluation_tenable` | **answered by code, never by the reviewer**: the ticket names at most 15 of the datasets its project declares (`launch.datasets`) in its criteria or demonstration line, the ones `bin/ticket-evaluation` launches one by one; the reason gives the count, and the names when over (af-rmz8x2) |
 | ticket | `declared_scope_includes_wiring` | the declared `scope.paths` include the files where the slice is wired in. Asked only of a ticket that declares a scope; code records `not_applicable` otherwise |
 | graph | `no_orphan_story` | every numbered user story of the Spec is covered by a ticket. Not asked of a revision (`revises_digest`): it carries only the tickets it changes, so code records `not_applicable` and `bd-patch` computes coverage on the resulting graph before it asks `check` (af-2zmznz) |
 | graph | `assembly_point_not_confiscated` | the ticket that establishes shared assembly points is ordered first; none keeps the wiring for itself |
 | graph | `prototype_fold_present_and_first` | a Prototype Fold exists and every other interface ticket depends on it; `not_applicable`, with a reason, when the graph has no interface ticket |
 | graph | `critical_path_bounded` | **answered by code, never by the reviewer**: the longest chain of `blocked_by` is at most max(4, ⌈n/3⌉) of the draft's n tickets; the reason names the chain and every link another link already implies (ADR-0031) |
 
-`brief` does not ask `critical_path_bounded`; `record` computes it on the
-draft and a reviewer answer to it is refused as outside the list. An
+`brief` does not ask `critical_path_bounded` nor `evaluation_tenable`;
+`record` computes them on the draft and a reviewer answer to either is
+refused as outside the list. An
 unfavorable measure is a graph refusal like the others: correct the draft
 (keep a link only where the blocked ticket consumes a deliverable its text
 cites), ask the second pass, or let Benjamin rule `--graph`.
@@ -94,6 +96,19 @@ list; a state outside the list; an unfavorable answer without a reason; a
 verdict handed in outside a read-only reviewer session
 (`bin/delivery-role-sandbox`); a verdict when no pass is open, or when the
 draft changed since the pass was opened.
+
+Why 15 datasets: a Ticket Evaluation takes about 3 min per dataset (T02,
+af-0gonc9: at best 17 of its 24 datasets in 3600 s, 212 s each, four runs
+cut). Its delay is max(3600 s, 240 s × datasets) (af-vtg5kl,
+`config/delivery-flow.json`): up to 3600 / 240 = 15 datasets an evaluation
+keeps the default delay; beyond, one attempt holds the only Evaluator over
+an hour and a cut one is lost whole. Judging only the demonstration line
+(ADR-0030 L4, af-npz9v1.7) leaves the datasets launched unchanged, so it
+does not lower this cost. Split such a ticket by group of states. The count
+is the evaluation's own (declared names cited in the text), without the
+datasets a validated expectation adds; a ticket that is not an interface
+ticket is counted the same way, though only interface tickets are evaluated
+by a model.
 
 ## What the publication door refuses
 
