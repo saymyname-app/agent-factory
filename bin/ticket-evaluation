@@ -1069,14 +1069,30 @@ def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> d
                                 for entry in current["environment"]]}
 
 
+def launched_here(convoy_id: str, ticket_id: str) -> bool:
+    """A launch record of the ticket is left in its product folder: reap() has work."""
+    folder = product_folder(convoy_id, ticket_id)
+    return any(folder.glob("*.json")) or any(folder.glob("*.trial"))
+
+
 def cmd_settle(args: argparse.Namespace) -> int:
     settings = load_settings()
     convoy = Convoy(args.convoy, args.repo, args.profile)
     answer: dict[str, Any] = {"ok": True, "convoy": args.convoy, "launched": [], "relaunched": [], "pending": [],
                               "waiting": [], "started": [], "refused_startup": [], "planning_exception": [],
                               "stopped": [], "escalated": [], "deferred": [], "refused": [], "product_ready": []}
-    for ticket_id in [ticket.get("id") for ticket in convoy.tickets]:
+    for initial in list(convoy.tickets):
+        ticket_id = initial.get("id")
         try:
+            # Nothing can be due without a finished exit, a stop, an open
+            # evaluation or a launched product: skip such a ticket without
+            # reading the whole convoy again (af-x11w4x; bin/code-review
+            # settle does the same). Candidates still reload under their lock.
+            initial = readable(initial)
+            evaluation = evaluation_of(initial)
+            if not (initial.get("exit") or initial.get("stop") or evaluation.get("request")
+                    or evaluation.get("live") or launched_here(convoy.id, ticket_id)):
+                continue
             done = settle_ticket(convoy, ticket_id, settings)
         except Deferred as exc:
             answer["deferred"].append({"ticket": ticket_id, "reason": str(exc)})

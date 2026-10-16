@@ -752,6 +752,22 @@ class TicketEvaluationTest(unittest.TestCase):
         with self.assertRaises(Exception):
             urllib.request.urlopen(original["address"], timeout=1)
 
+    def test_a_pass_on_a_convoy_where_nothing_is_due_reads_the_convoy_once(self):
+        # af-x11w4x: settle read the whole convoy again before each ticket,
+        # one `convoy-state show` per ticket of the convoy on every pass of
+        # convoy-advance (34 a minute on a 62-ticket convoy, af-2se8y2).
+        calls = self.tmp / "gc-calls.log"
+        counting = self.tmp / "counting-gc"
+        counting.write_text(f'#!/bin/sh\necho "$*" >> "{calls}"\nexec "{self.env["GC_BIN"]}" "$@"\n')
+        counting.chmod(0o755)
+        env = {"GC_BIN": str(counting)}
+        shown = self.run_cmd(STATE_TOOL, "show", CONVOY, "--repo", self.repo, env=env)
+        self.assertEqual(0, shown.returncode, shown.stdout + shown.stderr)
+        one_read = len(calls.read_text().splitlines())
+        calls.write_text("")
+        self.settle(env=env)
+        self.assertEqual(one_read, len(calls.read_text().splitlines()), calls.read_text())
+
     # --- the demonstration line of the ticket -----------------------------------
 
     def test_an_unrealized_criterion_is_recorded_not_observed_with_its_evidence_and_the_verdict_is_unfavorable(self):
