@@ -16,11 +16,14 @@ before.
 
 One pass starts every ticket of the convoy that is open, not yet started
 through the door, and whose blockers are all closed, while a place is free
-under N. N (`max_sessions` in config/delivery-flow.json) is one setting for
-the whole Factory, shared between the Specs. A place is taken by:
+under N. N (`max_sessions` in config/delivery-flow.json) is the ceiling of
+the authors, one setting for the whole Factory, shared between the Specs
+(af-4xxlo7: the reviewer and the Evaluator have ceilings of their own,
+`max_reviewer_sessions` and `max_evaluator_sessions`, applied by Gas City).
+A place is taken by:
 
-  - each live session of a delivery role agent (author, reviewer, Evaluator:
-    config/delivery-roles.json), whatever the convoy;
+  - each live session of the author agent (config/delivery-roles.json),
+    whatever the convoy;
   - each ticket of a marked convoy started through the door that no session
     has picked yet (still open): its author session is on its way.
 
@@ -34,9 +37,9 @@ merges one ticket into the integration branch of the Spec, runs the tests on
 the merged result, and returns a ticket in conflict or red to its author. No
 agent decides when a ticket is merged.
 
-A pass no longer settles reviews of criterion tests (ADR-0030 L3): the
-code review reads those tests after the green, and no test-review session
-is started; a gc.flow.test_review left on a ticket in flight is ignored.
+A pass settles no review of criterion tests (ADR-0030 L3; bin/test-review
+removed in L7): the code review reads those tests after the green; a
+gc.flow.test_review left on a ticket in flight is ignored.
 
 A pass also raises a ticket bin/tdd-step stopped at its second amendment
 (T45, af-7y457s; Spec §8): one request through bin/escalation-door that
@@ -282,7 +285,7 @@ CORRECTION_STOP = "still_refused"
 TDD_STOPS = {"amendment_exhausted": "amendement épuisé",
              # ADR-0030 L3: the stops a test review wrote before it left the
              # flow are resumed (stage_removed); one with no resume left is
-             # still raised once, here (bin/test-review settle no longer runs).
+             # still raised once, here (bin/test-review was removed in L7).
              "test_review_refused": "relecture des tests refusée deux fois",
              "test_review_no_result": "relecture des tests sans résultat",
              # ADR-0030 L5: raised once the Planning Exception its author
@@ -2266,6 +2269,45 @@ def settle_ticket_end(convoy: Convoy, merge: dict[str, Any] | None) -> dict[str,
     return {name: answer[name] for name in kept if answer.get(name)}
 
 
+# What fails a pass, step by step: the keys of a step's answer that make it
+# a failure, not an outcome. A step whose answer is a list fails on an entry
+# carrying one of them.
+FAILING_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("incident", ("error",)), ("grouped_request", ("error",)), ("repair", ("error",)),
+    ("item_repairs", ("error",)), ("outcome_repairs", ("error",)), ("outcome_evaluation", ("error",)),
+    ("spec_end", ("error", "message")), ("end_review", ("error",)), ("evidence_pack", ("error",)),
+    ("non_conforme", ("error",)), ("acceptance", ("error",)), ("promotion", ("error", "message", "pending")),
+    ("integration", ("error", "message")), ("tdd_stops", ("error",)), ("code_review", ("error", "refused")),
+    ("standard_recurrence", ("error",)), ("evaluation", ("error", "refused")),
+    ("correction", ("error", "refused")), ("fidelity", ("error", "refused", "message")),
+    ("ticket_end", ("error", "message")),
+)
+FAILURE_DETAIL_CHARS = 300
+
+
+def pass_failures(result: dict[str, Any]) -> list[str]:
+    """Each step of one convoy's pass that failed it, as `convoy step.key: detail`."""
+    found: list[tuple[str, Any]] = []
+    if result.get("refused"):
+        found.append(("start.refused", result["refused"]))
+    for step, keys in FAILING_KEYS:
+        answer = result.get(step)
+        entries = answer if isinstance(answer, list) else [answer] if isinstance(answer, dict) else []
+        found += [(f"{step}.{key}", entry[key]) for entry in entries for key in keys if key in entry]
+    promotion_repair = (result.get("promotion") or {}).get("repair") or {}
+    if "error" in promotion_repair:
+        found.append(("promotion.repair.error", promotion_repair["error"]))
+    found += [("end_review.repairs.error", entry["error"])
+              for entry in (result.get("end_review") or {}).get("repairs", []) if "error" in entry]
+    return [f"{result['id']} {where}: {detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False)}"
+            [:FAILURE_DETAIL_CHARS] for where, detail in found]
+
+
+def failure_line(message: str | None, failed: list[str]) -> str:
+    """The one line, last of the output, that names why the pass failed."""
+    return f"{PROGRAM}: échec de la passe -- " + " ; ".join(([message] if message else []) + failed)
+
+
 def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
     """`targets` None: every marked convoy that is open or was closed outside its commands."""
     with advance_lock():
@@ -2277,7 +2319,9 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
         live = live_sessions()
         sessions = role_sessions(live)
         awaiting = sorted(ticket for convoy in convoys.values() for ticket in convoy.awaiting_a_session())
-        occupied = sum(sessions.values()) + len(awaiting)
+        # N counts authors only: a reviewer or Evaluator session, even idle
+        # until its idle_timeout, does not hold an author's place (af-4xxlo7).
+        occupied = sessions.get("author", 0) + len(awaiting)
         free = max(0, settings["ceiling"] - occupied)
 
         results = []
@@ -2368,30 +2412,8 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
     unruled = any("unruled" in result for result in results)
     # A ticket returned or refused by the merge is an outcome of the pass; a
     # merge pass that could not run is a failure of it.
-    refused = any(
-        result["refused"] or "error" in result.get("incident", {}) or "error" in result.get("grouped_request", {})
-        or "error" in result.get("repair", {})
-        or any("error" in entry for entry in result.get("item_repairs", []))
-        or any("error" in entry for entry in result.get("outcome_repairs", []))
-        or "error" in result.get("outcome_evaluation", {})
-        or any(key in result.get("spec_end", {}) for key in ("error", "message"))
-        or "error" in result.get("end_review", {})
-        or "error" in result.get("evidence_pack", {})
-        or "error" in result.get("non_conforme", {})
-        or "error" in result.get("acceptance", {})
-        or any(key in result.get("promotion", {}) for key in ("error", "message", "pending"))
-        or "error" in result.get("promotion", {}).get("repair", {})
-        or any("error" in entry for entry in result.get("end_review", {}).get("repairs", []))
-        or any(key in result.get("integration", {}) for key in ("error", "message"))
-        or "error" in result.get("tdd_stops", {})
-        or any(key in result.get("code_review", {}) for key in ("error", "refused"))
-        or "error" in result.get("standard_recurrence", {})
-        or any(key in result.get("evaluation", {}) for key in ("error", "refused"))
-        or any(key in result.get("correction", {}) for key in ("error", "refused"))
-        or any(key in result.get("fidelity", {}) for key in ("error", "refused", "message"))
-        or any(key in result.get("ticket_end", {}) for key in ("error", "message"))
-        for result in results
-    )
+    failed = [failure for result in results for failure in pass_failures(result)]
+    refused = bool(failed)
     answer: dict[str, Any] = {
         "ok": not (unruled or refused), "ceiling": settings["ceiling"], "sessions": sessions,
         "awaiting_a_session": awaiting, "occupied": occupied, "convoys": results,
@@ -2399,6 +2421,11 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
     if unruled:
         answer["message"] = f"{UNRULED} : rien n'est démarré dans le convoi concerné"
     print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
+    if unruled or refused:
+        # The order keeps only the tail of a failed pass's output (af-ypj2g0):
+        # what made it fail is named last, where that tail still reads it.
+        sys.stdout.flush()
+        print(failure_line(answer.get("message"), failed), file=sys.stderr)
     return EXIT_UNRULED if unruled and not stopped_ok else EXIT_REFUSED if refused else 0
 
 

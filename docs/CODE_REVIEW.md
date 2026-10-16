@@ -225,20 +225,33 @@ stopped (`code_review_no_result`) and raised once to the operator through
 `bin/escalation-door`; `bin/convoy-state stop-raised` records it, and a stop
 whose request could not be sent is raised by the next pass.
 
-A round handed in by a session that already rendered a review of tests, a
-code review or a Ticket Evaluation of the convoy is refused the same way
-(Spec §5, T42; a test review recorded before ADR-0030 L3 still counts): the
-launch it answered is marked `refused` and gave no result. That is also what
-holds the judgement to a second session: the conversation that reviewed
-cannot judge the answers (a session is its name and its conversation).
-`record` signs with `GC_SESSION_NAME`, else `GC_SESSION_ID`, and
-`"c:"` + `CLAUDE_CODE_SESSION_ID`, else `"g"` + `GC_RUNTIME_EPOCH` as
-`conversation` (`docs/CONVOY_STATE.md`).
-
 A dispatch the door refuses or defers launched nothing: it counts no launch
 and its bead is closed. A deferral is listed under `deferred` and tried
 again by the next pass; a refusal is listed under `refused` and makes
 `settle` exit 1.
+
+## A fresh session per review
+
+One reviewer session renders one round (Spec §5, T42). Two things hold it:
+
+- `agents/delivery-reviewer/agent.toml` carries the work query of the
+  author agent: a session that has ever been assigned a bead is offered, of
+  the unassigned work, only that of the workflows it already works. Once it
+  has rendered its round it is offered nothing and leaves; the next round
+  starts a new session, or wakes this one: gc 1.5.0 wakes a drained session
+  again under the same name, and the agent's `wake_mode = "fresh"` makes
+  that wake start a fresh conversation instead of resuming the last one.
+- A round handed in by a session that already rendered a code review or a
+  Ticket Evaluation of the convoy (or a review of tests recorded before
+  ADR-0030 L3) is refused: the launch it answered is marked `refused` and
+  gave no result, as above. That is also what holds the judgement to a
+  second session: the conversation that reviewed cannot judge the answers
+  (a session is its name and its conversation).
+
+`record` signs with `GC_SESSION_NAME`, else `GC_SESSION_ID` — never
+`GC_AGENT`, which names a place in the pool of the agent that the next
+session takes — and with `"c:"` + `CLAUDE_CODE_SESSION_ID`, else `"g"` +
+`GC_RUNTIME_EPOCH` as `conversation` (`docs/CONVOY_STATE.md`).
 
 ## Stored state
 

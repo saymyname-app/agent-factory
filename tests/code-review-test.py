@@ -402,11 +402,8 @@ class CodeReviewTest(unittest.TestCase):
         fingerprints = {path: sha256_of(self.blob(red, path)) for path in (TABLE, COUNT_FILE)}
         self.state("set-tdd", CONVOY, ticket, "--step", "red", "--commit", red, "--base", self.base)
         if test_reviewed:
-            self.state("open-test-review", CONVOY, ticket, "--commit", red, "--file",
-                       self.json_file("test-request.json", {"files": fingerprints, "criteria": {"1": [COUNT_ID]}}))
-            self.state("record-test-review", CONVOY, ticket, "--file", self.json_file("test-verdict.json", {
-                "commit": red, "files": fingerprints, "tests": {COUNT_ID: {"state": "favorable"}},
-                "recorded_by": "delivery-reviewer-tests"}))
+            ticket_proofs.pre_l3_test_review(self.env, ticket, red, fingerprints, {COUNT_ID: {"state": "favorable"}},
+                                             "delivery-reviewer-tests")
         self.state("set-tdd", CONVOY, ticket, "--step", "freeze", "--commit", red)
         # The registry the freeze seals (bin/tdd-step freeze).
         ticket_proofs.capture(self.env, self.repo, CONVOY, ticket, "tdd_freeze", red, {

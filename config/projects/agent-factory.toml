@@ -28,9 +28,6 @@ sling_target = "factory-worker"
 # mol-ticket-author (T12, af-i3q5a5) is the author formula of the new flow:
 # only bin/convoy-advance dispatches it, with --role author, on a ticket of a
 # convoy that carries the new-flow mark (docs/TICKET_AUTHOR.md).
-# mol-test-review (T13, af-nkpjpr) is not a delivery formula either: only
-# bin/test-review dispatches it, with --role reviewer, to have the criterion
-# tests of a ticket read before they are frozen (docs/TEST_REVIEW.md).
 # mol-code-review (T14, af-96cusm) is not a delivery formula either: only
 # bin/code-review dispatches it, with --role reviewer, to have the committed
 # diff of a finished ticket reviewed before its merge (docs/CODE_REVIEW.md).
@@ -55,7 +52,7 @@ sling_target = "factory-worker"
 # whose author must take it again (interrupted, returned by the merge,
 # unblocked, answered) to one fresh author session on the same branch; each
 # resume is counted, the third parks the ticket (docs/CONVOY_ADVANCE.md).
-formulas = "mol-do-work,mol-planning-fidelity,mol-graph-review,mol-ticket-author,mol-test-review,mol-code-review,mol-ticket-evaluation,mol-outcome-evaluation,mol-ticket-correction,mol-ticket-resume,mol-end-review"
+formulas = "mol-do-work,mol-planning-fidelity,mol-graph-review,mol-ticket-author,mol-code-review,mol-ticket-evaluation,mol-outcome-evaluation,mol-ticket-correction,mol-ticket-resume,mol-end-review"
 # human_approver (A6b W04) is this project's declared human approver:
 # bin/spec-approve refuses to approve a Spec bead whose --approved-by is
 # anyone else, read via `bin/project-planning-profile human-approver`.

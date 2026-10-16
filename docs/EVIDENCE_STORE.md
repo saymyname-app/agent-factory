@@ -34,6 +34,7 @@ is run, nothing is written.
     --reference-url http://127.0.0.1:<port>/states/content.html [--window-size 1280x800] [--color-scheme light|dark]
 
 ./bin/evidence-capture verify af-convoy af-t1 [--piece demo.page]   # the gates, before they accept a piece
+./bin/evidence-capture show af-convoy af-t1 [--piece merged_tests]  # read a piece: verify, then its record
 ./bin/evidence-capture purge --spec af-spec                         # after promotion, by code
 ```
 
@@ -173,7 +174,20 @@ fails, naming each reason, when:
 - (whole ticket) a file sits in the ticket's folder that no capture filed.
 
 `verify` writes nothing. A ticket without any piece verifies: which pieces a
-ticket must hold is the business of the gate that calls it.
+ticket must hold is the business of the gate that calls it. Its answer names
+the folder it read (`path`).
+
+## Reading a piece: `show`
+
+`show CONVOY TICKET [--piece NAME]` is `verify` followed by each record as
+filed, the real output of a command included: what an operator runs to read
+`merged_tests` or a demonstration. It takes the convoy, never the Spec: the
+Spec is read on the convoy, and the store is filed under
+`<store>/<spec id>/<ticket id>/` (a piece of the end of the Spec: the convoy
+twice). With no piece in that folder it refuses and names the folder; given
+something other than a convoy and one of its tickets, its refusal says how
+the store is filed (af-rt5a4h: `show <spec> <convoy>` once answered nothing
+while the pieces sat under the Spec's folder). `show` writes nothing.
 
 ## Purge
 

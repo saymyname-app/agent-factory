@@ -28,6 +28,13 @@ open or was closed outside its commands. A convoy closed by command, on
 Benjamin's words (T30), is neither walked by `--all` nor a reason for the
 order to run.
 
+A pass that exits 1 or 3 prints its answer on stdout, then one last line on
+stderr: `convoy-advance: échec de la passe -- <convoy> <step>.<key>: <detail>
+; …`, each step that failed it (the « état sans règle » message first). The
+controller keeps only the tail of a failed order's output (af-ypj2g0), so
+this line is what the `order.failed` event and its `on-order-failed` bead
+show.
+
 ## What one pass does
 
 For each ticket of the convoy, in the convoy's own order, the pass starts it
@@ -107,12 +114,18 @@ pass exits 1.
 
 ## The ceiling N
 
-N is `max_sessions` in `config/delivery-flow.json`: one setting for the
-whole Factory, shared between the Specs. A place is taken by:
+N is `max_sessions` in `config/delivery-flow.json`: the ceiling of the
+authors, one setting for the whole Factory, shared between the Specs. Each
+delivery role has its own ceiling (af-4xxlo7): N for the authors,
+`max_reviewer_sessions` for the reviewer and `max_evaluator_sessions` for the
+Evaluator. Gas City applies the last two through `max_active_sessions` of
+their agents (`tests/delivery-agents-test.sh` holds them equal). A review
+or an evaluation never waits for N, and a reviewer or Evaluator session,
+even idle until its `idle_timeout`, takes no author's place. A place under N
+is taken by:
 
-- each live session of a delivery role agent — author, reviewer, Evaluator
-  (`config/delivery-roles.json`) — read from `gc session list`, whatever the
-  convoy or the Spec;
+- each live session of the author agent (`config/delivery-roles.json`),
+  read from `gc session list`, whatever the convoy or the Spec;
 - each ticket of any open marked convoy that was started through the door
   and that no session has picked yet (still `open`): its author session is
   on its way;
@@ -622,7 +635,7 @@ repair is published (T26, below).
 A pass starts no review of criterion tests and settles none: no test review
 precedes the freeze, and the code review reads the criterion tests after
 the green (`docs/CODE_REVIEW.md`). A `gc.flow.test_review` left on a ticket
-in flight by the flow before L3, open or not, is ignored. A ticket a test
+in flight by the flow before L3, open or not, is ignored (`bin/test-review` was removed in L7). A ticket a test
 review stopped before L3 (`test_review_refused`, `test_review_no_result`) is
 resumed on itself (`stage_removed`, above, af-pjvsgo): its request is
 withdrawn through `bin/escalation-door clear` and a fresh author session

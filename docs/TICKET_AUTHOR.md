@@ -41,7 +41,7 @@ Ticket Evaluation without result, once per tip of the integration branch.
 | `bin/convoy-state set-session` | records which session took the ticket (`docs/CONVOY_STATE.md`) |
 | `bin/ticket-exit` | the exit; « terminé » now needs the demonstration proof (`docs/TICKET_EXIT.md`) |
 | `agents/delivery-author/agent.toml`, `work_query` | Gas City's default work query with one difference: a session that has ever been assigned a bead is offered, of the unassigned work, only that of its own workflow, so a session that holds a ticket never takes the first step of another one |
-| `agents/delivery-author/agent.toml`, `max_active_sessions` | N authors in parallel (Spec §4): equal to `max_sessions` of `config/delivery-flow.json`, the ceiling `bin/convoy-advance` enforces across the three roles. A lower cap leaves a started ticket waiting for the session of another one (`tests/delivery-agents-test.sh` holds the two equal; `tests/fresh-sessions-isolated-city-test.sh`, local-only, shows two author sessions alive at once) |
+| `agents/delivery-author/agent.toml`, `max_active_sessions` | N authors in parallel (Spec §4): equal to `max_sessions` of `config/delivery-flow.json`, the ceiling `bin/convoy-advance` enforces on the authors alone (af-4xxlo7). A lower cap leaves a started ticket waiting for the session of another one (`tests/delivery-agents-test.sh` holds the two equal; `tests/fresh-sessions-isolated-city-test.sh`, local-only, shows two author sessions alive at once) |
 | `agents/delivery-author/overlay/.claude/` | the settings and the guard that stop an author from handing the writing to a sub-agent, and the local settings that keep the operator's account plugins out of the session |
 
 ## How Gas City holds a step (tried on 1.4.1, isolated city, 2026-10-06)
