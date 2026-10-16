@@ -16,10 +16,12 @@ touché : il reste avancé par le Mayor.
 - **Personne ne la lance à la main** : l'ordre `orders/convoy-advance.toml` la
   lance à chaque tick du contrôleur (toutes les 20 à 30 secondes), seulement
   s'il existe un convoi marqué ouvert.
-- **Plafond N** : `max_sessions` dans `config/delivery-flow.json`, un seul
-  réglage pour toute l'usine, partagé entre les Specs. Comptent : chaque session
-  vivante d'un rôle de livraison (auteur, relecteur, Evaluator) et chaque ticket
-  démarré qu'aucune session n'a encore pris.
+- **Plafond N** : `max_sessions` dans `config/delivery-flow.json`, le plafond
+  des auteurs, un seul réglage pour toute l'usine, partagé entre les Specs.
+  Comptent : chaque session vivante d'auteur et chaque ticket démarré
+  qu'aucune session n'a encore pris. Le relecteur et l'Evaluator ont leurs
+  propres plafonds (`max_reviewer_sessions`, `max_evaluator_sessions`,
+  appliqués par Gas City) et ne prennent pas la place d'un auteur (af-4xxlo7).
 - **Formule de démarrage** : `start.formula` dans le même fichier, aujourd'hui
   `mol-ticket-author` (la formule de l'auteur, `docs/TICKET_AUTHOR.md`). À
   `null`, la commande refuse de démarrer quoi que ce soit (sortie 1).

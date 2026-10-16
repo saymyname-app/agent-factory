@@ -325,8 +325,9 @@ and nothing else.
 **The life of a ticket.**
 
 1. **Start.** `bin/convoy-advance` starts the ready tickets, in dependency
-   order, under the ceiling N (`max_sessions` of
-   `config/delivery-flow.json`), through `bin/dispatch-door`. The door
+   order, under the ceiling N of the authors (`max_sessions` of
+   `config/delivery-flow.json`; the reviewer and the Evaluator have their
+   own, `docs/CONVOY_ADVANCE.md`), through `bin/dispatch-door`. The door
    refuses a marked ticket to anyone else.
 2. **Author.** One fresh author session, in a work tree of its own, on a
    branch that leaves from the integration branch of the Spec; the formula
