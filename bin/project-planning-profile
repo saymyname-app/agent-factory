@@ -18,9 +18,10 @@ projet" (spec af-oohx2x .12, T04, one rig = one project): `describe` and
 `list` validate the extended descriptor shape -- project_id, display_name,
 rigs, knowledge_repo, roadmap_path, rituals_status_command, and an optional
 per-rig promotion_branch -- and never accept a production or language field.
-Given the rigs the City registers (`--city-registry`, spec af-2zseit story
-100), `list` also refuses a registered rig that no project declares or that
-two projects declare, naming the rig and its cause.
+`list` also refuses a rig that two projects declare and, given the rigs the
+City registers (`--city-registry`, spec af-2zseit story 100), a registered
+rig that no project declares, naming the rig and its cause through
+lib/project_registry.sh's project_registry_check_project_coverage.
 
 Spec af-wf4w5r .12 (D01, T01) extends the descriptor with one more optional
 block, `launch`: the Delivery Workflow's launch recipe, entry points, health
@@ -51,6 +52,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -720,25 +722,23 @@ def cmd_describe(args: argparse.Namespace) -> int:
     return 0
 
 
-def check_project_coverage(projects: list[dict[str, Any]], city_registry: Any) -> None:
-    """One rig belongs to exactly one project (spec af-2zseit, story 100):
-    every rig the City registers must be declared by one descriptor, never
-    by none and never by two. Raises naming each rig and its cause."""
-    owners: dict[str, list[str]] = {}
-    for project in projects:
-        for rig in project["rigs"]:
-            owners.setdefault(rig, []).append(project["project_id"])
-    problems = []
-    for rig in safe_id_list(city_registry, "city_registry"):
-        declared_by = owners.get(rig, [])
-        if not declared_by:
-            problems.append(f"rig {rig!r} belongs to no declared project")
-        elif len(declared_by) > 1:
-            problems.append(
-                f"rig {rig!r} is declared in more than one project: " + ", ".join(declared_by)
-            )
-    if problems:
-        raise ProfileError("; ".join(problems))
+def check_project_coverage(descriptors_dir: Path, projects: list[dict[str, Any]], registered: list[str]) -> None:
+    """One rig belongs to exactly one project (spec af-2zseit, story 100).
+    The rule has one copy, lib/project_registry.sh's
+    project_registry_check_project_coverage, the check CI already runs: it
+    is asked about every rig the City registers (none may lack a project)
+    and every rig a descriptor declares (none may have two), so a rig
+    declared twice is refused with or without a City registry. Raises
+    naming each rig and its cause."""
+    rigs = list(dict.fromkeys([*registered, *(rig for project in projects for rig in project["rigs"])]))
+    proc = subprocess.run(
+        ("bash", "-c", 'source "$1" && shift && project_registry_check_project_coverage "$@"', PROGRAM,
+         str(repo_root_default() / "lib" / "project_registry.sh"), str(descriptors_dir), *rigs),
+        text=True, capture_output=True,
+    )
+    if proc.returncode != 0:
+        problems = [line.removeprefix("project_registry: ").strip() for line in proc.stderr.splitlines() if line.strip()]
+        raise ProfileError("; ".join(problems) or f"project coverage check failed (exit {proc.returncode})")
 
 
 def cmd_list(args: argparse.Namespace) -> int:
@@ -755,12 +755,14 @@ def cmd_list(args: argparse.Namespace) -> int:
                     "stacks": descriptor["stacks"],
                 }
             )
+        registered: list[str] = []
         if args.city_registry:
             try:
                 city_registry = json.loads(Path(args.city_registry).read_text())
             except (OSError, json.JSONDecodeError) as exc:
                 raise ProfileError(f"cannot read city registry: {exc}") from exc
-            check_project_coverage(projects, city_registry)
+            registered = safe_id_list(city_registry, "city_registry")
+        check_project_coverage(directory, projects, registered)
     except ProfileError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
         return 1

@@ -479,6 +479,27 @@ class ProjectPlanningProfileTest(unittest.TestCase):
         project_ids = {project["project_id"] for project in result["projects"]}
         self.assertEqual({"fixture-project-a", "fixture-project-b"}, project_ids)
 
+    def test_list_refuses_a_rig_declared_in_two_projects_without_a_city_registry(self):
+        # One rig, one project (Spec af-2zseit, story 100): the descriptors
+        # alone show a rig declared twice, whatever the City registers.
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in ("fixture-project-a", "fixture-project-b"):
+                (Path(tmp) / f"{name}.json").write_text((DESCRIPTORS_LIST / f"{name}.json").read_text())
+            twin = json.loads((DESCRIPTORS_LIST / "fixture-project-a.json").read_text())
+            twin["project_id"] = "fixture-project-twin"
+            (Path(tmp) / "fixture-project-twin.json").write_text(json.dumps(twin))
+            proc = subprocess.run(
+                (str(TOOL), "list", "--descriptors-dir", tmp),
+                cwd=ROOT, text=True, capture_output=True,
+            )
+        self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
+        error = json.loads(proc.stdout)
+        self.assertFalse(error["ok"])
+        self.assertNotIn("projects", error)
+        self.assertIn("rig 'fixture-rig-a' is declared in more than one project", error["error"])
+        self.assertIn("fixture-project-a", error["error"])
+        self.assertIn("fixture-project-twin", error["error"])
+
     # --- real descriptors (acceptance criterion: agent-factory & saymyname) -
 
     def test_real_agent_factory_descriptor_has_no_promotion_branch(self):
