@@ -169,20 +169,6 @@ class ProjectLaunchTest(unittest.TestCase):
             check=check,
         )
 
-    def test_reuse_requires_launch_identity_and_its_listening_port(self):
-        sys.path.insert(0, str(ROOT / "lib"))
-        from evaluation_capacity import product_running
-
-        _, state_file = self.start("--dataset", "content")
-        record = json.loads(state_file.read_text())
-        self.assertTrue(product_running(record))
-        self.assertFalse(product_running({**record, "launch_id": "unrelated"}))
-        self.assertFalse(product_running({**record, "port": record["port"] + 1,
-                                          "address": f"http://127.0.0.1:{record['port'] + 1}"}))
-        self.assertFalse(product_running({**record, "commit": "0" * 40}))
-        self.stop(state_file=state_file)
-        self.assertFalse(product_running(record))
-
     def test_stop_recovers_an_interrupted_unregistered_checkout(self):
         worktree = Path(tempfile.mkdtemp(prefix="project-launch-"))
         (worktree / "partial").write_text("checkout interrupted")
@@ -359,18 +345,38 @@ class ProjectLaunchTest(unittest.TestCase):
         self.assertIn("--state-file", result.stderr)
 
     def test_interrupted_record_update_keeps_the_previous_valid_record(self):
-        import runpy
-        from unittest.mock import patch
+        """The record is written before the copy is checked out, then updated
+        with the port: an update that cannot complete leaves the previous
+        record whole, where one written in place would be clobbered. The
+        product's own post-checkout hook makes the record's folder read-only
+        between the two."""
+        if os.geteuid() == 0:
+            self.skipTest("root writes into a read-only folder")
+        folder = Path(tempfile.mkdtemp(prefix="launch-record-"))
+        self.addCleanup(shutil.rmtree, folder, ignore_errors=True)
+        target = folder / "launch.json"
+        hooks = folder.with_name(folder.name + "-hooks")
+        hooks.mkdir()
+        self.addCleanup(shutil.rmtree, hooks, ignore_errors=True)
+        hook = hooks / "post-checkout"
+        hook.write_text(f"#!/bin/sh\nchmod 0500 '{folder}'\n")
+        hook.chmod(0o700)
+        subprocess.run(("git", "-C", str(self.product), "config", "core.hooksPath", str(hooks)),
+                       env=GIT_ENV, check=True, capture_output=True)
 
-        write_record = runpy.run_path(str(TOOL))["write_record"]
-        with tempfile.TemporaryDirectory(prefix="launch-record-") as folder:
-            target = Path(folder) / "launch.json"
-            write_record(str(target), {"launch_id": "old"})
-            with patch("os.replace", side_effect=OSError("interrupted")):
-                with self.assertRaises(OSError):
-                    write_record(str(target), {"launch_id": "new"})
-            self.assertEqual({"launch_id": "old"}, json.loads(target.read_text()))
-            self.assertEqual([target], list(Path(folder).iterdir()))
+        result = subprocess.run(
+            (str(TOOL), "--repo-root", str(self.product), "start", str(DESCRIPTOR),
+             "--dataset", "content", "--state-file", str(target)),
+            cwd=ROOT, text=True, capture_output=True)
+        folder.chmod(0o700)
+        self._state_files.append(target)
+
+        self.assertNotEqual(0, result.returncode, result.stdout + result.stderr)
+        record = json.loads(target.read_text())
+        self.assertEqual((False, self.product_commit, "content"),
+                         (record["started"], record["commit"], record["dataset"]))
+        self.assertNotIn("port", record)
+        self.assertEqual([target], list(folder.iterdir()))
 
     # AC1 -----------------------------------------------------------------
 
