@@ -122,10 +122,12 @@ Exit that fits through `bin/ticket-exit exit` (docs/TICKET_EXIT.md):
 `planning_exception` when the demonstration line would need a behaviour the
 Spec or another ticket fixes; `operator_request` when only the operator can
 answer; `technically_blocked` when a defect outside your ticket stops you
-and its fix is product work of this Spec; `operator_request`, with
-`que_faire` « corriger par maintenance sur main », when the defect is in the
-Factory's own tools or tests (a file no ticket of the Spec delivers), never a
-`repair` (docs/TICKET_AUTHOR.md, « Factory defects »);
+and your Spec asks to change the faulty file; `operator_request` when the
+defect is in the Factory's own tools or tests, never a `repair`: a tool or
+test neither your ticket nor its Spec asks to change, or you are in doubt;
+one `que_faire` option « Corriger par maintenance sur main », its
+consequence « le ticket reprend sur la réponse, après la fusion »
+(docs/TICKET_AUTHOR.md, « Factory defects are fixed on main »);
 `interrupted` when you must stop before the end. A `planning_exception`
 comes after your Ticket Handoff: commit your work, write the four sections
 (`"aucun"` for an empty one) and pass `--repo` and `--handoff`; a deviation

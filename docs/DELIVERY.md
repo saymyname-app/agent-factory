@@ -387,8 +387,8 @@ the owner's place, and a marked convoy never closes by itself.
 - An author that meets a question about approved intent exits by a Planning
   Exception (`bin/ticket-exit`, `docs/PLANNING_EXCEPTION.md`); a ticket
   leaves the graph only by a resolved one.
-- A defect in the Factory's own tools or tests — a file no ticket of the
-  Spec delivers — is fixed by Factory maintenance on main, never by a
+- A defect in the Factory's own tools or tests — a tool or test neither
+  the ticket nor its Spec asks to change — is fixed by Factory maintenance on main, never by a
   ticket or a `repair` of the convoy, even when the Spec is the Factory's
   own (Cockpit): its author exits by `operator_request`
   (`docs/TICKET_AUTHOR.md`, « Factory defects are fixed on main »). Intent
