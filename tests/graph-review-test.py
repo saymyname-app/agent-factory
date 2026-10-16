@@ -324,6 +324,38 @@ class GraphReviewTest(unittest.TestCase):
         self.assertEqual(1, refused.returncode, refused.stdout)
         self.assertIn("question hors liste (critical_path_bounded)", refused.stderr)
 
+    # --- af-2zmznz: a revision is judged on the graph that results from it --
+
+    def as_revision(self):
+        """The draft revises a published graph: it carries only the tickets
+        it adds or changes, the others stay in the convoy."""
+        state = json.loads(self.state_path.read_text())
+        state["beads"]["draft-1"]["metadata"]["revises_digest"] = "sha256:published"
+        self.state_path.write_text(json.dumps(state))
+
+    def test_a_revision_is_not_asked_for_orphan_stories_it_cannot_see(self):
+        self.as_revision()
+        self.requested()
+
+        brief = self.tool("brief", "draft-1").json
+
+        self.assertNotIn("no_orphan_story", brief["graph_checks"])
+        refused = self.record(self.verdict_file(lambda verdict: verdict["graph"]["checks"].update(
+            {"no_orphan_story": {"state": "unfavorable", "reason": "les stories 1 à 19 n'ont aucun ticket"}})))
+        self.assertEqual(1, refused.returncode, refused.stdout)
+        self.assertIn("question hors liste (no_orphan_story)", refused.stderr)
+
+    def test_a_revision_leaves_story_coverage_to_the_graph_that_results_from_it(self):
+        self.as_revision()
+
+        result = self.reviewed()
+
+        check = result["graph"]["checks"]["no_orphan_story"]
+        self.assertEqual("not_applicable", check["state"])
+        self.assertIn("graphe résultant", check["reason"])
+        self.assertIn("bd-patch", check["reason"])
+        self.assertEqual("favorable", result["graph"]["verdict"])
+
     def test_review_is_routed_to_the_reviewer_role_as_a_fresh_piece_of_work(self):
         result = self.reviewed()
 
