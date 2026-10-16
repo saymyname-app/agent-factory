@@ -33,10 +33,11 @@ print(f"loadavg1 mean {sum(loads)/len(loads):.1f} max {max(loads):.1f}")
 mem = [r["mem_kb"]["MemAvailable"] / 1048576 for r in rows]
 print(f"MemAvailable GiB min {min(mem):.1f} mean {sum(mem)/len(mem):.1f}")
 
-cpu, spawn, callers, reaped = Counter(), Counter(), Counter(), Counter()
+cpu, spawn, callers, reaped, unseen = Counter(), Counter(), Counter(), Counter(), Counter()
 for r in rows[1:]:
     cpu.update(r["cpu_s"]); spawn.update(r["spawn"]); callers.update(r["callers"])
     reaped.update(r.get("reaped_cpu_s", {}))
+    unseen.update(r.get("unseen_cpu_s", {}))
 att = sum(cpu.values())
 print(f"\nCPU by family (cores, mean) — attributed {att/dur:.2f} of busy {busy_s/dur:.2f} cores; "
       f"rest = processes shorter than 2 s")
@@ -51,6 +52,12 @@ for k, v in callers.most_common(25):
 print("\nReaped-descendant CPU by waiting parent (cores; nested levels overlap)")
 for k, v in reaped.most_common(20):
     print(f"  {v/dur:5.2f}  {k}")
+
+if unseen:
+    print(f"\nShort-process CPU by waiting parent, no overlap (cores) — self {att/dur:.2f} + short "
+          f"{sum(unseen.values())/dur:.2f} vs busy {busy_s/dur:.2f}")
+    for k, v in unseen.most_common(25):
+        print(f"  {v/dur:5.2f}  {k}")
 
 d0, d1 = first["dolt"], last["dolt"]
 if "Questions" in d0 and "Questions" in d1:
