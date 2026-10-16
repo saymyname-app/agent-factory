@@ -145,7 +145,8 @@ class ProjectLaunchTest(unittest.TestCase):
         self._state_files.append(state_file)
         return state_file
 
-    def start(self, *extra_args: str, descriptor: Path = DESCRIPTOR, check: bool = True):
+    def start(self, *extra_args: str, descriptor: Path = DESCRIPTOR, check: bool = True,
+              env: dict | None = None):
         state_file = self.new_state_file()
         args = [
             str(TOOL),
@@ -157,7 +158,7 @@ class ProjectLaunchTest(unittest.TestCase):
             str(state_file),
             *extra_args,
         ]
-        result = subprocess.run(args, cwd=ROOT, text=True, capture_output=True, check=check)
+        result = subprocess.run(args, cwd=ROOT, env=env, text=True, capture_output=True, check=check)
         return result, state_file
 
     def stop(self, *, state_file: Path, check: bool = True):
@@ -592,16 +593,20 @@ class ProjectLaunchTest(unittest.TestCase):
 
     def test_a_recipe_that_cannot_be_started_is_refused_and_leaves_nothing(self):
         """A recipe whose program does not exist starts nothing: the copy of
-        the commit and the launch record are released (af-wv3qu2)."""
+        the commit and the launch record are released (af-wv3qu2). The copy
+        is made in a temporary folder of this test alone: another launch on
+        the same host makes its own in the shared one at the same moment."""
         descriptor = json.loads(DESCRIPTOR.read_text())
         descriptor["launch"]["recipe"] = ["no-such-program-af-wv3qu2", *descriptor["launch"]["recipe"][1:]]
         folder = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, folder, ignore_errors=True)
         path = Path(folder) / "descriptor.json"
         path.write_text(json.dumps(descriptor))
-        before = set(Path(tempfile.gettempdir()).glob("project-launch-*"))
+        copies = Path(tempfile.mkdtemp(prefix="launch-copies-")).resolve()
+        self.addCleanup(shutil.rmtree, copies, ignore_errors=True)
 
-        result, state_file = self.start("--commit", "HEAD", "--dataset", "content", descriptor=path, check=False)
+        result, state_file = self.start("--commit", "HEAD", "--dataset", "content", descriptor=path, check=False,
+                                        env={**os.environ, "TMPDIR": str(copies)})
 
         self.assertNotEqual(0, result.returncode)
         error = json.loads(result.stdout)
@@ -609,8 +614,7 @@ class ProjectLaunchTest(unittest.TestCase):
         self.assertIn("recipe could not be started", error["error"])
         self.assertTrue(error["cleanup_confirmed"])
         self.assertFalse(state_file.exists(), "the refused start kept its launch record")
-        self.assertEqual(set(), set(Path(tempfile.gettempdir()).glob("project-launch-*")) - before,
-                         "the refused start left its copy")
+        self.assertEqual([], list(copies.iterdir()), "the refused start left its copy")
 
     def test_start_on_a_project_with_no_launch_recipe_is_refused(self):
         # "Nothing was started" is read from what this test owns -- the
