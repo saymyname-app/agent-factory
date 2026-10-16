@@ -219,10 +219,11 @@ def load_settings() -> dict[str, Any]:
     if not isinstance(block, dict):
         raise Refusal("aucun réglage evaluation dans config/delivery-flow.json : la Ticket Evaluation n'est pas réglée")
     settings = {name: block.get(name) for name in ("formula", "role", "rig", "timeout_seconds", "start_timeout_seconds")}
+    settings["per_dataset_seconds"] = block.get("per_dataset_seconds", 0)
     for name in ("formula", "role", "rig"):
         if not isinstance(settings[name], str) or not settings[name]:
             raise Refusal(f"evaluation.{name} absent ou invalide dans config/delivery-flow.json : {settings[name]!r}")
-    for name in ("timeout_seconds", "start_timeout_seconds"):
+    for name in ("timeout_seconds", "start_timeout_seconds", "per_dataset_seconds"):
         value = settings[name]
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             raise Refusal(
@@ -808,6 +809,13 @@ def launched_at(launched: dict[str, Any]) -> int:
         raise Refusal(f"heure de lancement de l'évaluation illisible : {launched!r}") from exc
 
 
+def launch_timeout(settings: dict[str, Any], datasets: int) -> int:
+    """How long one launch may take: the floor `timeout_seconds`, or
+    `per_dataset_seconds` for each dataset the evaluation covers when that
+    is longer (af-vtg5kl)."""
+    return max(settings["timeout_seconds"], datasets * settings.get("per_dataset_seconds", 0))
+
+
 def expired(launched: dict[str, Any], timeout: int) -> bool:
     """A launch that gave no result: its time is over, its bead was
     closed without states (the record closes the request first),
@@ -981,11 +989,11 @@ def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> d
             return {"ticket": ticket_id, "action": "stopped", "stop": STOP_OUTAGE}
         commit = detail
         # Refused before anything is launched or recorded: no named dataset.
-        convoy.datasets(ticket_id)
+        datasets = convoy.datasets(ticket_id)
         if what == "startup":
             return startup_control(convoy, ticket_id, commit, settings)
         launches = current["launches"] if current else []
-        timeout = settings["timeout_seconds"]
+        timeout = launch_timeout(settings, len((current or {}).get("datasets") or datasets))
         timed_out = bool(launches and expired(launches[-1], timeout))
         desired = current.get("wanted") if current else None
         if timed_out:
