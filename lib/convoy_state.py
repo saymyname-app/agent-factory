@@ -439,11 +439,16 @@ BOUND_END_ROUNDS = "end_rounds"
 # was interrupted, the merge returned it, the repair it waited for is closed,
 # the request that parked it was answered, or its branch, finished, does not
 # contain the tip of the integration branch (T44), or its Ticket Evaluation
-# gave no result (af-xhc0sj): that resume lifts the stop. The correction round
+# gave no result (af-xhc0sj), or a stage the flow removed stopped it
+# (ADR-0030 L3, af-pjvsgo): those resumes lift the stop. The correction round
 # and a commit after a verdict are counted where they are written.
-RESUME_CAUSES = ("interrupted", "returned", "unblocked", "answered", "behind", "evaluation_no_result")
-# The stops a resume lifts, each by the cause of the same name (af-xhc0sj).
-RESUMABLE_STOPS = ("evaluation_no_result",)
+RESUME_CAUSES = ("interrupted", "returned", "unblocked", "answered", "behind", "evaluation_no_result",
+                 "stage_removed")
+# The stops a resume lifts, by the cause that lifts them: a Ticket Evaluation
+# without result (af-xhc0sj), and the stops of the test review, a stage
+# ADR-0030 L3 removed (af-pjvsgo).
+RESUMABLE_STOPS = {"evaluation_no_result": ("evaluation_no_result",),
+                   "stage_removed": ("test_review_refused", "test_review_no_result")}
 # A commit after a verdict counts a resume without an entry (T18): it is a
 # cause of its own. The correction round is not one: it has its own bound of
 # one round (CORRECTION_MAX_ROUNDS), held here, outside K.
@@ -1797,7 +1802,7 @@ def resume_record(raw: Any) -> dict[str, Any]:
         if not isinstance(entry, dict) or set(entry) - {"stop"} != {"cause", "ref", "session", "exit", "launches", "at"}:
             raise Refusal(f"reprise mal formée : {entry!r}")
         if "stop" in entry and (entry["cause"] not in RESUMABLE_STOPS
-                                or stop_record(encode(entry["stop"]))["reason"] != entry["cause"]):
+                                or stop_record(encode(entry["stop"]))["reason"] not in RESUMABLE_STOPS[entry["cause"]]):
             raise Refusal(f"arrêt levé par la reprise mal formé : {entry!r}")
         one_of(entry["cause"], RESUME_CAUSES, "cause de reprise")
         single_line(entry["ref"], "repère de la reprise")
@@ -4952,8 +4957,9 @@ def cmd_open_resume(args: argparse.Namespace) -> int:
     one tracker write. The same fact (`--cause`, `--ref`) again writes
     nothing. Refused on a ticket that is parked, closed, or that has no
     resume left for one cause (that one is parked), and on a stopped ticket unless the
-    cause is its stop `evaluation_no_result`: that resume lifts the stop
-    and keeps it under the resume (af-xhc0sj)."""
+    cause is one that lifts its stop (RESUMABLE_STOPS): `evaluation_no_result`
+    (af-xhc0sj), `stage_removed` for a stop of the removed test review
+    (af-pjvsgo); that resume keeps the stop under it."""
     ticket = marked_ticket(args.convoy, args.ticket)
     metadata = metadata_of(ticket)
     cause = one_of(args.cause, RESUME_CAUSES, "cause de reprise")
@@ -4963,7 +4969,7 @@ def cmd_open_resume(args: argparse.Namespace) -> int:
     if GATE_PREFIX + "dispatch" not in metadata:
         raise Refusal(f"le ticket {args.ticket} n'a pas été démarré par la porte de dispatch : rien à reprendre")
     lifted = stop_record(metadata[KEY_STOP]) if KEY_STOP in metadata else None
-    if lifted is not None and (cause not in RESUMABLE_STOPS or lifted["reason"] != cause):
+    if lifted is not None and (cause not in RESUMABLE_STOPS or lifted["reason"] not in RESUMABLE_STOPS[cause]):
         raise Refusal(f"ticket arrêté ({lifted['reason']}) : {args.ticket} ne se reprend pas pour la cause {cause}")
     entries = resume_record(metadata[KEY_RESUME])["entries"] if KEY_RESUME in metadata else []
     if entries and (entries[-1]["cause"], entries[-1]["ref"]) == (cause, ref):

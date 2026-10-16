@@ -281,8 +281,8 @@ CORRECTION_STOP = "still_refused"
 # or of an evaluation raises: this pass raises them itself (T45, Spec §8).
 TDD_STOPS = {"amendment_exhausted": "amendement épuisé",
              # ADR-0030 L3: the stops a test review wrote before it left the
-             # flow are still raised once, here (bin/test-review settle no
-             # longer runs).
+             # flow are resumed (stage_removed); one with no resume left is
+             # still raised once, here (bin/test-review settle no longer runs).
              "test_review_refused": "relecture des tests refusée deux fois",
              "test_review_no_result": "relecture des tests sans résultat",
              # ADR-0030 L5: raised once the Planning Exception its author
@@ -304,6 +304,10 @@ BEHIND = "behind"
 # that stop is lifted by a resume of the ticket itself, once per tip of the
 # integration branch (af-xhc0sj). Every other stop stays with the operator.
 NO_RESULT = "evaluation_no_result"
+# ADR-0030 L3 removed the test review: a ticket it stopped before is resumed
+# on itself, once per stop, its request withdrawn (af-pjvsgo).
+STAGE_REMOVED = "stage_removed"
+REMOVED_STAGE_STOPS = ("test_review_refused", "test_review_no_result")
 # Spec §8, K: a ticket out of resumes is parked for this cause (bin/convoy-state).
 PARK_EXHAUSTED = "resumes_exhausted"
 # The words of the operator for each cause of parking.
@@ -882,8 +886,8 @@ def at_work(ticket: dict[str, Any]) -> bool:
     """Started through the door, not closed, neither parked nor stopped:
     what a resume or the bound of the resumes may bear on. A stopped ticket
     is not at work: its sequence failed, it is with the operator, and only
-    its stop `evaluation_no_result` is lifted by a resume
-    (stopped_without_result)."""
+    its stop `evaluation_no_result`, or one a removed stage wrote, is lifted
+    by a resume (stopped_without_result)."""
     return started(ticket) and ticket.get("status") != "closed" and not ticket.get("park") and not ticket.get("stop")
 
 
@@ -1021,9 +1025,20 @@ def behind_due(convoy: Convoy, ticket: dict[str, Any]) -> tuple[str, str, str] |
 
 def stopped_without_result(ticket: dict[str, Any]) -> bool:
     """Started, not closed nor parked, and stopped because its Ticket
-    Evaluation gave no result: the one stop a resume may lift."""
+    Evaluation gave no result or by a stage the flow removed: the stops a
+    resume may lift."""
     return started(ticket) and ticket.get("status") != "closed" and not ticket.get("park") \
-        and (ticket.get("stop") or {}).get("reason") == NO_RESULT
+        and (ticket.get("stop") or {}).get("reason") in (NO_RESULT, *REMOVED_STAGE_STOPS)
+
+
+def removed_stage_due(ticket: dict[str, Any]) -> tuple[str, str, str] | None:
+    """The resume a stop of a removed stage asks for: once per stop, none
+    once the operator answered it, none when the ticket has no resume left
+    (its stop stays with the operator). The fact is `stop:<reason>/<time>`."""
+    stop = ticket["stop"]
+    if ticket.get("resumes_left") == 0 or request_answer(read_bead(ticket["id"]), stop["at"]) is not None:
+        return None
+    return "new", STAGE_REMOVED, f"stop:{stop['reason']}/{stop['at']}"
 
 
 def no_result_due(convoy: Convoy, ticket: dict[str, Any]) -> tuple[str, str, str] | None:
@@ -1066,7 +1081,12 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
                 out["parked"].append(park_exhausted(convoy, ticket))
                 convoy.load()
                 continue
-            due = no_result_due(convoy, ticket) if stopped else resume_due(ticket, alive) or behind_due(convoy, ticket)
+            if not stopped:
+                due = resume_due(ticket, alive) or behind_due(convoy, ticket)
+            elif ticket["stop"]["reason"] in REMOVED_STAGE_STOPS:
+                due = removed_stage_due(ticket)
+            else:
+                due = no_result_due(convoy, ticket)
             if due is None:
                 continue
             what, cause, ref = due
