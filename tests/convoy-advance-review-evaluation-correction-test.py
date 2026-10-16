@@ -219,11 +219,12 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
 
     def test_a_pass_starts_no_test_review_even_on_one_left_open_before_l3(self):
         self.review_open(launches=1)
+        before = self.bead(self.R1)["metadata"]["gc.flow.test_review"]
 
         answer = self.advance(self.REVIEWED)
 
         self.assertIsNone(self.review_of(answer))
-        self.assertEqual([], self.review_launches())
+        self.assertEqual(before, self.bead(self.R1)["metadata"]["gc.flow.test_review"])
         self.assertNotIn("gc.flow.stop", self.bead(self.R1)["metadata"])
 
 

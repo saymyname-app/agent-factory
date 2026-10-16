@@ -296,11 +296,6 @@ class TicketEndTest(unittest.TestCase):
                                                         "entry_points": ["GET /"]}]})
             self.state("set-tdd", CONVOY, ticket, "--step", "red", "--commit", red_commit, "--base", start)
             files = {test: "sha256:" + hashlib.sha256((self.worktree(ticket) / test).read_bytes()).hexdigest()}
-            self.state("open-test-review", CONVOY, ticket, "--commit", red_commit, "--file", self.json_file(
-                f"request-{ticket}.json", {"files": files, "criteria": {"1": [f"{test}::T::test"]}}))
-            self.state("record-test-review", CONVOY, ticket, "--file", self.json_file(f"verdict-{ticket}.json", {
-                "commit": red_commit, "files": files, "tests": {f"{test}::T::test": {"state": "favorable"}},
-                "recorded_by": f"delivery-test-reviewer-{ticket}"}))
             self.capture(ticket, "tdd_freeze", {"files": files})
             self.state("set-tdd", CONVOY, ticket, "--step", "freeze", "--commit", red_commit)
             tip = self.commit_on(ticket, {f"docs/{ticket}.md": "la tranche\n"})

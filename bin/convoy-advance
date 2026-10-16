@@ -37,9 +37,9 @@ merges one ticket into the integration branch of the Spec, runs the tests on
 the merged result, and returns a ticket in conflict or red to its author. No
 agent decides when a ticket is merged.
 
-A pass no longer settles reviews of criterion tests (ADR-0030 L3): the
-code review reads those tests after the green, and no test-review session
-is started; a gc.flow.test_review left on a ticket in flight is ignored.
+A pass settles no review of criterion tests (ADR-0030 L3; bin/test-review
+removed in L7): the code review reads those tests after the green; a
+gc.flow.test_review left on a ticket in flight is ignored.
 
 A pass also raises a ticket bin/tdd-step stopped at its second amendment
 (T45, af-7y457s; Spec §8): one request through bin/escalation-door that
@@ -285,7 +285,7 @@ CORRECTION_STOP = "still_refused"
 TDD_STOPS = {"amendment_exhausted": "amendement épuisé",
              # ADR-0030 L3: the stops a test review wrote before it left the
              # flow are resumed (stage_removed); one with no resume left is
-             # still raised once, here (bin/test-review settle no longer runs).
+             # still raised once, here (bin/test-review was removed in L7).
              "test_review_refused": "relecture des tests refusée deux fois",
              "test_review_no_result": "relecture des tests sans résultat",
              # ADR-0030 L5: raised once the Planning Exception its author

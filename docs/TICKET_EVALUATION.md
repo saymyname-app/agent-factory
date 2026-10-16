@@ -311,7 +311,7 @@ request (`docs/CONVOY_ADVANCE.md`, cause `evaluation_no_result`).
 
 An evaluation handed in by a session that already rendered a review of
 tests, a code review or a Ticket Evaluation of the convoy is refused the
-same way (Spec §5, T42; `docs/TEST_REVIEW.md`, « A fresh session per
+same way (Spec §5, T42; `docs/CODE_REVIEW.md`, « A fresh session per
 review »): the launch it answered is marked `refused` and gave no result.
 `agents/delivery-evaluator/agent.toml` carries the same work query as the
 reviewer and `wake_mode = "fresh"`, and `record` signs with

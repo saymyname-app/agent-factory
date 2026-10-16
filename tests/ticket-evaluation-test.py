@@ -401,7 +401,7 @@ class TicketEvaluationTest(unittest.TestCase):
     @staged
     def finished_slice(self, files=None, ticket=SLICE):
         """A slice whose criterion test was proven red, read by the test
-        reviewer and frozen, whose code is green at the tip, and whose
+        reviewer before ADR-0030 L3 and frozen, whose code is green at the tip, and whose
         author has finished there. Without `files` the criterion is not
         realized: the commit changes nothing of the product. Returns the tip."""
         self.started(ticket)
@@ -410,11 +410,10 @@ class TicketEvaluationTest(unittest.TestCase):
         tip = self.commit_on(ticket, files or {NOTE: "le nombre sera affiché plus tard\n"})
         fingerprints = {path: sha256_of(self.blob(red, path)) for path in (TABLE, COUNT_FILE)}
         self.state("set-tdd", CONVOY, ticket, "--step", "red", "--commit", red, "--base", self.base)
-        self.state("open-test-review", CONVOY, ticket, "--commit", red, "--file",
-                   self.json_file("test-request.json", {"files": fingerprints, "criteria": {"1": [COUNT_ID]}}))
-        self.state("record-test-review", CONVOY, ticket, "--file", self.json_file("test-verdict.json", {
-            "commit": red, "files": fingerprints, "tests": {COUNT_ID: {"state": "favorable"}},
-            "recorded_by": "delivery-reviewer-tests"}))
+        # Recorded before ADR-0030 L3, as on a ticket in flight: the session
+        # that rendered it has served the convoy (T42, served_session).
+        ticket_proofs.pre_l3_test_review(self.env, ticket, red, fingerprints, {COUNT_ID: {"state": "favorable"}},
+                                         "delivery-reviewer-tests")
         self.state("set-tdd", CONVOY, ticket, "--step", "freeze", "--commit", red)
         self.state("set-tdd", CONVOY, ticket, "--step", "green", "--commit", tip)
         self.finish(ticket, tip)

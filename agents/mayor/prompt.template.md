@@ -263,8 +263,7 @@ flagged `review-required` routes to `build-basic` regardless of tier.
 The `build-basic` row assumes the target rig allows it: `agent-factory`'s own
 project file (`config/projects/agent-factory.toml`) currently allows only
 `mol-do-work` for work (its `mol-graph-review` is dispatched by
-`bin/graph-review` alone, its `mol-test-review` by `bin/test-review` alone,
-its `mol-code-review` by `bin/code-review` alone, its
+`bin/graph-review` alone, its `mol-code-review` by `bin/code-review` alone, its
 `mol-ticket-evaluation` by `bin/ticket-evaluation` alone, its
 `mol-outcome-evaluation` by `bin/outcome-evaluation` alone, its
 `mol-ticket-correction` by `bin/correction-round` alone, its

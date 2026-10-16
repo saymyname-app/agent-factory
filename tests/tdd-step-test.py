@@ -263,25 +263,22 @@ class TddStepTest(unittest.TestCase):
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         return json.loads(proc.stdout)
 
-    def reviewed(self, refused=None, files=None, ticket=SLICE):
-        """The review of the criterion tests proven red at HEAD (T13), as
-        bin/test-review records it: every test favorable, except those of
-        `refused`; bound to the fingerprints of what the freeze seals, or to
-        `files`."""
+    def reviewed_before_l3(self, refused, ticket=SLICE):
+        """The review of the criterion tests proven red at HEAD as
+        bin/test-review recorded it before ADR-0030 L3 (removed in L7): every
+        test favorable, except those of `refused`. Written on the tracker:
+        no command writes one any more."""
         _, proof = self.piece("tdd_red", ticket)
         paths = [proof["table"], *(test["id"].partition("::")[0] for test in proof["tests"]),
                  *proof["frozen_harness_paths"]]
-        fingerprints = {path: sha256_of(self.repo / path) for path in dict.fromkeys(paths)}
-        fingerprints.update(files or {})
-        request, verdict = self.tmp / "review-request.json", self.tmp / "review-verdict.json"
-        request.write_text(json.dumps({"files": fingerprints, "criteria": proof["criteria"]}))
-        self.state("open-test-review", CONVOY, ticket, "--commit", proof["commit"], "--file", request)
-        answers = {test["id"]: {"state": "unfavorable", "reason": refused[test["id"]]} if test["id"] in (refused or {})
+        answers = {test["id"]: {"state": "unfavorable", "reason": refused[test["id"]]} if test["id"] in refused
                    else {"state": "favorable"} for test in proof["tests"]}
-        self.reviews = getattr(self, "reviews", 0) + 1
-        verdict.write_text(json.dumps({"commit": proof["commit"], "files": fingerprints, "tests": answers,
-                                       "recorded_by": f"delivery-reviewer-fx-{self.reviews}"}))
-        return self.state("record-test-review", CONVOY, ticket, "--file", verdict)
+        state = json.loads(self.tracker.read_text())
+        state["beads"][ticket].setdefault("metadata", {})["gc.flow.test_review"] = json.dumps({"rounds": [{
+            "commit": proof["commit"], "files": {path: sha256_of(self.repo / path) for path in dict.fromkeys(paths)},
+            "verdict": "unfavorable" if refused else "favorable", "tests": answers,
+            "recorded_by": "delivery-reviewer-fx", "at": "2026-10-15T00:00:00Z"}]})
+        self.tracker.write_text(json.dumps(state))
 
     def store_files(self):
         if not self.store.exists():
@@ -625,7 +622,7 @@ class TddStepTest(unittest.TestCase):
         """A ticket in flight keeps its recorded review; the freeze does not read it."""
         head = self.commit_tests()
         self.red()
-        self.reviewed(refused={COUNT_ID: "le test ne vérifie qu'un statut 200"})
+        self.reviewed_before_l3(refused={COUNT_ID: "le test ne vérifie qu'un statut 200"})
 
         self.ok("freeze")
 
