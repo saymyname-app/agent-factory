@@ -360,6 +360,11 @@ review nor the Ticket Evaluation is sent on the old tip meanwhile. Its
 author merges the integration branch into the ticket branch, corrects,
 commits and finishes again; the review then runs on the new tip.
 
+An `unblocked` resume brings the integration branch into the ticket branch
+too: the repair the ticket waited for landed there, not on the ticket's
+branch, and without it the ticket meets the same defect again (af-m4np8z;
+T59 met the regression its repair had fixed).
+
 A ticket to resume that names no single known project, or when the
 settings have no `resume` entry, is listed under `refused` (exit 1) before
 anything is counted or written. A resume the door deferred is listed under
