@@ -289,6 +289,18 @@ out=$(watchdog)
 [ "$(mails)" = "0" ] || fail "the legacy-flagged bead's now-known state must be throttled on the next run"
 printf '[]' > "$WORKFLOWS"
 
+# ...a failed workflow whose new-flow ticket code already stopped is not paged
+# (af-it6qbk): root -> input convoy -> ticket, read through gc bd show.
+jq -n '[{"id":"af-pau68a","status":"closed","title":"mol-test-review","metadata":{"gc.kind":"workflow","gc.outcome":"fail","gc.formula_name":"mol-test-review","gc.input_convoy_id":"af-tzx0my"}}]' > "$WORKFLOWS"
+cp "$WORKFLOWS" "$BEADS_DIR/af-pau68a.json"
+jq -n '[{"id":"af-tzx0my","issue_type":"convoy","dependencies":[{"id":"af-d0o8ae","dependency_type":"tracks","metadata":{},"description":"convoy: af-pqfxmd\nticket: af-qjq1t6\n"}]}]' > "$BEADS_DIR/af-tzx0my.json"
+jq -n '[{"id":"af-qjq1t6","status":"in_progress","metadata":{"gc.flow.mark":"new-flow/v1","gc.flow.stop":"{\"reason\":\"test_review_no_result\",\"detail\":\"2 launches\",\"at\":\"2026-10-15T22:20:23Z\"}"}}]' > "$BEADS_DIR/af-qjq1t6.json"
+reset_logs
+out=$(watchdog)
+grep -q "af-pau68a failed, ticket af-qjq1t6 already stopped (test_review_no_result) by code — not paged" <<<"$out" || { echo "$out" >&2; fail "a failure code already stopped should be named as not paged"; }
+[ "$(mails)" = "0" ] || fail "a failure whose ticket code already stopped must not be paged"
+printf '[]' > "$WORKFLOWS"
+
 # 7. a failing gh auth is filed as one shared bead and paged once ------------
 printf '1' > "$GH_AUTH_RC"
 printf 'You are not logged into any GitHub hosts' > "$GH_AUTH_OUT"

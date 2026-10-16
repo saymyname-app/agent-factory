@@ -14,7 +14,9 @@ failure behind a CLOSED status":
   workflows  a molecule/workflow bead can close CLOSED while gc.outcome=fail
              (downstream steps skipped by on_fail=abort_scope) and look
              identical to a real success unless something reads the nested
-             metadata (incident gap 6).
+             metadata (incident gap 6). A failure whose new-flow ticket
+             already carries a stop or a resume is code's, not paged
+             (af-it6qbk).
   gh-auth    `gh auth status` failing (expired/invalid token) is invisible to
              every one of the ten gh-dependent scripts, each of which just
              fails its own way with no shared signal (Incident 2026-09-18).
@@ -210,6 +212,54 @@ def assess_workflow(
     )
 
 
+def convoy_ticket_id(convoy: dict[str, Any]) -> str | None:
+    """The new-flow ticket a workflow's input convoy works for: the tracked
+    bead itself when it carries the new-flow mark (an author run), otherwise
+    the `ticket: <id>` line its launcher wrote in the tracked bead's
+    description (a review or evaluation launch)."""
+    for dep in convoy.get("dependencies") or []:
+        if not isinstance(dep, dict) or dep.get("dependency_type") != "tracks":
+            continue
+        metadata = dep.get("metadata") or {}
+        if isinstance(metadata, dict) and metadata.get("gc.flow.mark"):
+            return str(dep.get("id") or "") or None
+        for line in str(dep.get("description") or "").splitlines():
+            if line.startswith("ticket: ") and line[len("ticket: "):].strip():
+                return line[len("ticket: "):].strip()
+    return None
+
+
+def _flow_record(raw: Any) -> Any:
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except ValueError:
+            return None
+    return raw
+
+
+def ticket_handled(ticket: dict[str, Any]) -> str | None:
+    """Why a failed workflow of this ticket is already in code's hands: the
+    ticket carries a stop (gc.flow.stop) or a resume (gc.flow.resume), both
+    written by bin/convoy-state once code has read the failure and raised or
+    acted on it. Paging the Mayor for it asked an agent to confirm what code
+    had already done: 7 pages on mol-test-review, mol-ticket-author and
+    mol-ticket-evaluation roots, the last two after ADR-0030 L7 retired
+    mol-test-review from config/delivery-flow.json (af-it6qbk). A ticket
+    with neither is still paged: that failure may be a real false success."""
+    metadata = ticket.get("metadata") or {}
+    if not isinstance(metadata, dict) or not metadata.get("gc.flow.mark"):
+        return None
+    stop = _flow_record(metadata.get("gc.flow.stop"))
+    if isinstance(stop, dict) and stop.get("reason"):
+        return f"stopped ({stop['reason']})"
+    resume = _flow_record(metadata.get("gc.flow.resume"))
+    entries = resume.get("entries") if isinstance(resume, dict) else None
+    if isinstance(entries, list) and entries:
+        return f"resumed ({len(entries)} resume(s))"
+    return None
+
+
 def assess_gh_auth(returncode: int, output: str) -> tuple[str, str] | None:
     """`gh auth status` exiting nonzero -> every gh-dependent script fails the
     same silent way (Incident 2026-09-18: WSL's gh token expired; pr-autopilot
@@ -332,7 +382,26 @@ def _cli_quarantine(argv: list[str]) -> int:
     return 0
 
 
+def _cli_show_row(argv: list[str]) -> int:
+    """ticket-of / ticket-handled: one `gc bd show <id> --json` on stdin,
+    one line out or nothing (an unreadable row answers nothing, so the
+    watchdog pages as before)."""
+    try:
+        rows = json.loads(sys.stdin.read() or "[]")
+    except json.JSONDecodeError:
+        return 0
+    row = rows[0] if isinstance(rows, list) and rows else rows
+    if not isinstance(row, dict):
+        return 0
+    answer = convoy_ticket_id(row) if argv[0] == "ticket-of" else ticket_handled(row)
+    if answer:
+        print(answer)
+    return 0
+
+
 def main() -> int:
+    if len(sys.argv) == 2 and sys.argv[1] in ("ticket-of", "ticket-handled"):
+        return _cli_show_row(sys.argv[1:])
     if len(sys.argv) >= 2 and sys.argv[1] == "gh-auth":
         return _cli_gh_auth(sys.argv[1:])
     if len(sys.argv) >= 2 and sys.argv[1] == "quarantine":
@@ -341,7 +410,8 @@ def main() -> int:
         print(
             "usage: factory_watchdog.py <gates|prs|workflows>  (reads JSON array on stdin)\n"
             "       factory_watchdog.py gh-auth <returncode>  (reads `gh auth status` output on stdin)\n"
-            "       factory_watchdog.py quarantine <rig>  (reads gc:control-quarantined bd list --json on stdin)",
+            "       factory_watchdog.py quarantine <rig>  (reads gc:control-quarantined bd list --json on stdin)\n"
+            "       factory_watchdog.py <ticket-of|ticket-handled>  (reads one gc bd show --json on stdin)",
             file=sys.stderr,
         )
         return 2
