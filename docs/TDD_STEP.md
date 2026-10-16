@@ -9,9 +9,10 @@ pass. The author writes the tests and the code; no sentence of the author is
 a proof. A convoy without the mark is not touched (exit 4).
 
 The author formula calls it at its red and code steps, and its gates read
-what it proved (`docs/TICKET_AUTHOR.md`). Between `red` and `freeze` the
-test reviewer reads the tests (`bin/test-review`, `docs/TEST_REVIEW.md`):
-`freeze` refuses without its favorable verdict.
+what it proved (`docs/TICKET_AUTHOR.md`). No test review stands between
+`red` and `freeze` (ADR-0030 L3): the code review reads the criterion tests
+after the green (`docs/CODE_REVIEW.md`); a `gc.flow.test_review` left on a
+ticket in flight is not read.
 
 ```bash
 ./bin/tdd-step red          af-convoy af-t1 --repo <ticket worktree> --profile <descriptor.json> --dataset content \
@@ -45,9 +46,9 @@ order of the steps under its lock.
 
 | Step | Piece | Report (`output` of the piece, JSON) |
 |---|---|---|
-| `red` | `tdd_red` | `verdict: red`, `base`, `table`, `criteria` {number: [test id]}, `tests` [{`id`, `outcome`, `seam`, `seam_mode`, `entry_points` for a black-box test}], `seam_mode` (the modes the tests went through, joined by `+`: `black_box`, `black_box+import_rule`), `launch.healthy` |
-| `freeze` | `tdd_freeze` | `files` {path: `sha256:`}, `table`, `criteria`: the **registry of fingerprints** |
-| `green` | `tdd_green` | `verdict: green`, `k`, `tests` [{`id`, `runs`: k outcomes, `seam`, `seam_mode`}], `frozen` (the commit of the freeze) |
+| `red` | `tdd_red` | `verdict: red`, `base`, `table`, `criteria` {number: [test id]}, `satisfied` [the numbers of the criteria already green at `base`], `tests` [{`id`, `outcome`, `seam`, `seam_mode`, `entry_points` for a black-box test}], `seam_mode` (the modes the tests went through, joined by `+`: `black_box`, `black_box+import_rule`), `launch.healthy` |
+| `freeze` | `tdd_freeze` | `files` {path: `sha256:`}, `table`, `criteria`, `satisfied` (from the red): the **registry of fingerprints** |
+| `green` | `tdd_green` | `verdict: green`, `k`, `satisfied` (from the registry), `tests` [{`id`, `runs`: k outcomes, `seam`, `seam_mode`}], `frozen` (the commit of the freeze), `regression` [{`commit`, `exit_code`}] at HEAD |
 | `amend` | `tdd_amendment` | the red report of the amended tests, plus `amendment` {`reason`, `diff`, `files`, `previous_freeze`} |
 | `prefactoring` | `tdd_prefactoring` | `verdict: unchanged`, `regression` [{`commit`, `exit_code`}] before and after |
 
@@ -93,11 +94,20 @@ Two declared cases accept an error as the red: on the slice that
 (`launch.healthy` is `false` in the report); an error whose type is listed
 in the profile's `red_error_types` (a missing symbol on a library seam).
 
-**A criterion already green stops the ticket**: if every test is otherwise
-valid and one passes at the start commit, the answer names the criterion
-(« critère 2 déjà vert »), `bin/convoy-state stop-ticket` writes the stop
-(`criterion_already_green`) and the exit status is 5. A stopped ticket is
-refused by every step.
+**A criterion already green is satisfied by the existing code** (ADR-0030
+L5): if every test is otherwise valid and every test of a criterion passes
+at the start commit, the red is proven for the other criteria and the report
+names that criterion in `satisfied` (its tests carry `outcome: passed`; the
+piece is sealed with the start commit `base`, so the evidence is the
+criterion test passing there). The freeze and the green carry `satisfied`
+on; its tests stay frozen and must pass at the green like the others. A
+test green at the start commit in a criterion that another of its tests
+keeps red is a plain refusal, no stop (« test vert au commit de départ : …
+(critère N encore rouge) »): the author fixes the table or the test.
+**Only a ticket whose criteria are all already green stops**: the answer
+names them (« critère 2 déjà vert »), `bin/convoy-state stop-ticket` writes
+the stop (`criterion_already_green`) and the exit status is 5. A stopped
+ticket is refused by every step.
 
 ### Proof of the seam
 
@@ -129,15 +139,6 @@ tree (a store inside a Git repository is refused) and sealed. It is refused
 without a red proof at the same commit: a commit added after the red means
 the red is replayed first.
 
-It is also refused without a favorable verdict of the test reviewer on these
-very tests (T13, `docs/TEST_REVIEW.md`): no verdict recorded for the ticket
-(« aucun verdict n'est enregistré »), a review still open, a last verdict
-that refuses a test (each named with its reason), a verdict given at another
-commit, or a verdict bound to other fingerprints than those of the files to
-freeze (« d'autres empreintes de tests », each differing file named). The
-freeze that ends an amendment asks for none: an amended test is read by the
-code review.
-
 ## Green
 
 `green` verifies the registry through `evidence-capture verify` (a registry
@@ -149,14 +150,21 @@ test ids of the frozen table, from the files of the frozen commit, against
 the product launched at HEAD, each in the tree of its seam's mode, `k` times
 in a row (3 when the profile declares no `k`): a test that never passes
 is « test en échec », a mixed result is « test instable », a skipped test is
-refused.
+refused. Last, the profile's `regression_command` runs once in a clean tree
+of HEAD (ADR-0030 L1): a non-zero exit is « commande de régression en échec
+à la pointe du ticket », a plain refusal — no stop, no resume — so the author
+fixes the code in the same session and runs `green` again. A change that
+keeps its criterion tests green but breaks existing tests is caught at the
+author's handoff (the `code` gate of `bin/ticket-author` asks for `green` at
+the tip), not only at the merged regression of `bin/spec-integration`.
 
 ## Amendment
 
 One path changes a frozen test, once per ticket. The author commits the
 change, then `amend --reason`: the amended tests are proven red again against
 the product at the start commit recorded by `red` (a test that passes there
-is refused, without stopping the ticket), the piece `tdd_amendment` records
+is refused, without stopping the ticket, unless its criterion was recorded
+`satisfied` by the first red), the piece `tdd_amendment` records
 the reason and the diff of the frozen files since the freeze, and the new
 state is frozen. The ticket then carries `tdd.amendment` (commit, reason):
 this is the deviation the Ticket Handoff reports (`records.amendment`,
@@ -197,8 +205,8 @@ The control is on the files, not on what the command runs: a
 ## Limits
 
 - The scripts prove the order and the outcomes, not that a test observes its
-  criterion: that is the test reviewer's question, asked between red and
-  freeze (`docs/TEST_REVIEW.md`).
+  criterion: that is the code reviewer's question, asked after the green
+  (`docs/CODE_REVIEW.md`, ADR-0030 L3).
 - `amend` proves the amended tests red at the start commit; it does not
   re-check that only the test perimeter changed, since the code of the
   ticket is written by then.

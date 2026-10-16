@@ -20,12 +20,14 @@ du magasin de preuves, puis inscrit l'étape sur le ticket.
   refusé et nommé. Chaque test est prouvé selon le **mode du seam** par
   lequel il passe (boîte noire ou règle d'import, déclaré par seam dans le
   profil) ; le relevé nomme le seam et le mode de chaque test.
-- **Critère déjà vert** : le ticket est arrêté (sortie 5), le critère est
-  nommé, l'arrêt est écrit dans le tracker.
-- **Gel** : refusé tant que le relecteur de tests n'a pas passé chaque test
-  de critère, au même commit et sur les mêmes empreintes
-  (`./bin/test-review`) ; ensuite les empreintes des tests, de la table et
-  du harnais vont dans le magasin de preuves, hors de tout dépôt Git.
+- **Critère déjà vert** (ADR-0030 L5) : un critère dont tous les tests
+  passent au commit de départ est enregistré satisfait par le code existant
+  (`satisfied` dans la preuve du rouge, scellée avec ce commit) et le ticket
+  continue ; seul un ticket dont tous les critères sont déjà verts est
+  arrêté (sortie 5), les critères nommés, l'arrêt écrit dans le tracker.
+- **Gel** : suit la preuve du rouge au même commit, sans relecture des tests
+  (ADR-0030 L3) ; les empreintes des tests, de la table et du harnais vont
+  dans le magasin de preuves, hors de tout dépôt Git.
 - **Vert** : refus si un fichier gelé a été modifié, supprimé ou déplacé ;
   sinon les tests gelés passent k fois de suite (k du profil ; 3 s'il n'en
   déclare pas). Un résultat mixte nomme le test instable.
@@ -40,8 +42,8 @@ du magasin de preuves, puis inscrit l'étape sur le ticket.
 - **Sorties** : 0 étape prouvée ; 1 refus, rien n'est écrit ; 4 « pas un
   convoi du nouveau flux » ; 5 ticket arrêté.
 - **Limite** : le script prouve l'ordre et les résultats, pas qu'un test
-  observe bien son critère : c'est la question du relecteur de tests, posée
-  entre le rouge et le gel (`./bin/test-review`). Lever un arrêt n'est pas
+  observe bien son critère : c'est la question de la revue de code, posée
+  après le vert (`./bin/code-review`, ADR-0030 L3). Lever un arrêt n'est pas
   dans cette commande.
 
 Détail : `docs/TDD_STEP.md`.

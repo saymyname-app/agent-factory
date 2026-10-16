@@ -11,7 +11,9 @@
 # the live Factory: its own GC_HOME, runtime directory, supervisor port,
 # controller, evidence store, launch records and work trees. The product is a
 # copy of the second project, committed in the city root. The city has no
-# Mayor.
+# Mayor. A project without a screen has no interface ticket: its evaluation
+# is the start control by code, no Evaluator session is opened (ADR-0030 L4),
+# and the trial checks that none was.
 #
 # Nothing of the flow is told which project it works on: every tool reads the
 # profile of the project (config/project-descriptors/trial.json, the
@@ -628,15 +630,19 @@ t=$(shown)
 [ "$(printf '%s' "$t" | jq -r '.code_review.rounds[-1].verdict')" = favorable ] || fail "the ticket was not reviewed favorably"
 [ "$(printf '%s' "$t" | jq -r '.code_review.state.commit')" = "$TIP" ] || fail "the review is not on the tip of the ticket"
 grep -q "^$T .* review $TIP [1-9]" "$TRIAL/review-sessions" || fail "the reviewer session did not read the diff of the ticket: $(cat "$TRIAL/review-sessions")"
-[ "$(printf '%s' "$t" | jq -r '.evaluation.rounds[-1].outcome')" = favorable ] || fail "the ticket was not evaluated favorably"
+# A ticket of a project without a screen is no interface ticket: no model
+# evaluates it, code checks that its product starts (ADR-0030 L4).
+printf '%s' "$t" | jq -e --arg tip "$TIP" '.evaluation.rounds[-1] | .kind == "startup" and .started == true and .model == "not_required"
+  and .commit == $tip and .outcome == "favorable" and .evidence == "evaluation.startup"' >/dev/null \
+  || fail "the ticket did not get the start control of a ticket without interface: $(printf '%s' "$t" | jq -c '.evaluation.rounds[-1]')"
 [ "$(printf '%s' "$t" | jq -r '.evaluation.state.commit')" = "$TIP" ] || fail "the evaluation is not on the tip of the ticket"
-for name in evaluation.c1 evaluation.c2 evaluation.demo evaluation.coverage.content; do
-  jq -e '.address != null' "$TRIAL/store/$SPEC/$T/$name.json" >/dev/null || fail "the piece $name was not captured on the launched product"
-done
-# The ticket names the dataset content only: it is evaluated on that one, not
-# on every declared dataset (af-kdxk6k, docs/TICKET_EVALUATION.md).
-[ ! -e "$TRIAL/store/$SPEC/$T/evaluation.coverage.empty.json" ] \
-  || fail "the ticket was evaluated on the dataset empty, which it does not name"
+[ ! -s "$TRIAL/evaluation-sessions" ] || fail "an Evaluator session was started for a ticket without interface: $(cat "$TRIAL/evaluation-sessions")"
+jq -e '.address != null and .exit_code == 0' "$TRIAL/store/$SPEC/$T/evaluation.startup.json" >/dev/null \
+  || fail "the piece evaluation.startup was not captured on the launched product"
+# The ticket names the dataset content only: its product is started on that
+# one, not on every declared dataset (af-kdxk6k, docs/TICKET_EVALUATION.md).
+[ ! -e "$TRIAL/store/$SPEC/$T/evaluation.startup.2.json" ] \
+  || fail "the product of the ticket was started on a dataset it does not name"
 [ "$(printf '%s' "$t" | jq -r '.merge.outcome')" = merged ] || fail "the ticket is closed without being merged"
 git -C "$PRODUCT" merge-base --is-ancestor "$TIP" "$INTEGRATION" || fail "the tip of the ticket is not on the integration branch"
 jq -e '.exit_code == 0' "$TRIAL/store/$SPEC/$T/merged_tests.json" >/dev/null || fail "the regression command of the profile did not pass on the merged result"
@@ -659,7 +665,7 @@ closing_pass=$(closing_line)
 "$ROOT/bin/evidence-capture" verify "$CONVOY" "$T" >/dev/null || fail "the evidence of the ticket does not verify"
 [ "$(printf '%s' "$t" | jq -c '.unruled')" = '[]' ] || fail "the ticket, closed by its gate, reads as an anomaly: $(printf '%s' "$t" | jq -c '.unruled')"
 [ "$(printf '%s' "$t" | jq -r '.fidelity')" = null ] || fail "a fidelity check was recorded on a ticket of a project without a screen"
-echo "$(date -u +%H:%M:%S) revue : $(printf '%s' "$t" | jq -r '.code_review.rounds[-1].verdict') à $TIP ; évaluation : $(printf '%s' "$t" | jq -r '.evaluation.rounds[-1].outcome') à $TIP, états $(jq -c '[.criteria[] | "critère \(.number) \(.state)"] + ["ligne de démonstration \(.demonstration_line.state)"]' "$TRIAL"/evaluation-result.*.json | tail -1)"
+echo "$(date -u +%H:%M:%S) revue : $(printf '%s' "$t" | jq -r '.code_review.rounds[-1].verdict') à $TIP ; contrôle de démarrage (sans interface, aucune session d'Evaluator) : $(printf '%s' "$t" | jq -r '.evaluation.rounds[-1].outcome') à $TIP, sonde à $(jq -r '.address' "$TRIAL/store/$SPEC/$T/evaluation.startup.json")"
 echo "$(date -u +%H:%M:%S) fusion : dans $INTEGRATION ($(printf '%s' "$t" | jq -r '.merge.commit')), commande de régression du profil verte sur le résultat fusionné"
 echo "$(date -u +%H:%M:%S) fermé par la porte de fin de ticket, par l'ordre (passe de $(printf '%s' "$closing_pass" | jq -r '.at')) ; statut relu sur le tracker : $(status_of "$T") ; relevé de la porte relu : version $(printf '%s' "$record" | jq -r '.version'), commit $(printf '%s' "$record" | jq -r '.commit'), verdicts $(printf '%s' "$record" | jq -c '[.conditions[] | "\(.number) \(.name) \(.verdict)"]')"
 printf '%s' "$record" | jq -r '.conditions[] | "    condition \(.number) (\(.name)) : \(.detail)"'

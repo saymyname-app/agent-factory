@@ -40,7 +40,6 @@ Ticket Evaluation without result, once per tip of the integration branch.
 | `bin/ticket-author` | `start`, `demonstrate`, `gate`, `check`, `release`, `locate` |
 | `bin/convoy-state set-session` | records which session took the ticket (`docs/CONVOY_STATE.md`) |
 | `bin/ticket-exit` | the exit; « terminé » now needs the demonstration proof (`docs/TICKET_EXIT.md`) |
-| `bin/test-review review` | inside the red step, between the red proof and the freeze: the criterion tests are read by a session of the reviewer role (T13, `docs/TEST_REVIEW.md`) |
 | `agents/delivery-author/agent.toml`, `work_query` | Gas City's default work query with one difference: a session that has ever been assigned a bead is offered, of the unassigned work, only that of its own workflow, so a session that holds a ticket never takes the first step of another one |
 | `agents/delivery-author/agent.toml`, `max_active_sessions` | N authors in parallel (Spec §4): equal to `max_sessions` of `config/delivery-flow.json`, the ceiling `bin/convoy-advance` enforces across the three roles. A lower cap leaves a started ticket waiting for the session of another one (`tests/delivery-agents-test.sh` holds the two equal; `tests/fresh-sessions-isolated-city-test.sh`, local-only, shows two author sessions alive at once) |
 | `agents/delivery-author/overlay/.claude/` | the settings and the guard that stop an author from handing the writing to a sub-agent, and the local settings that keep the operator's account plugins out of the session |
@@ -117,8 +116,8 @@ through `bin/evidence-capture verify`, and the tip of the ticket branch.
 | Step | Proven when |
 |---|---|
 | `workspace` | the session and the branch are recorded on the ticket, the work tree is on that branch, the branch leaves from the integration branch |
-| `red` | the red is proven and the criterion tests frozen (`bin/tdd-step`), which the freeze refuses until the test reviewer passed every one of them (`bin/test-review`); nothing asked of a `prefactoring` |
-| `code` | the criterion tests are green at the tip; for a `prefactoring`, its regression at the tip |
+| `red` | the red is proven and the criterion tests frozen (`bin/tdd-step`); no test review precedes the freeze, the code review reads them after the green (ADR-0030 L3); nothing asked of a `prefactoring` |
+| `code` | the criterion tests and the profile's regression are green at the tip (`bin/tdd-step green`, ADR-0030 L1); for a `prefactoring`, its regression at the tip |
 | `demonstration` | the piece `demonstration` verifies, was captured on the launched product, and is at the tip; nothing asked of a `prefactoring` |
 | `exit` | a Ticket Exit is recorded; « terminé » is at the tip, with its Handoff |
 
@@ -128,11 +127,10 @@ them and leaves. The destination of that exit is fixed by `bin/ticket-exit`
 (parking, repair, push), and such a ticket is never merged.
 
 A **stopped** ticket (`bin/convoy-state`, `stop`: a criterion already green,
-a second amendment, a second refusal of the test review, a test review
-without result) is refused by every gate: the step comes back, its attempts
-are spent, and the sequence ends failed with the remaining steps skipped.
-The code that stopped the ticket is what raises it to the operator
-(`docs/TEST_REVIEW.md` for the test review).
+a second amendment, or a stop a test review wrote before ADR-0030 L3) is
+refused by every gate: the step comes back, its attempts are spent, and the
+sequence ends failed with the remaining steps skipped. The code that
+stopped the ticket is what raises it to the operator.
 
 ## What bounds the author
 

@@ -37,9 +37,10 @@ mechanisms: consult `decisions/PRE_REFACTOR.md` before relying on them.
 | External evidence and research format | `DELIVERY.md`, `RESEARCH_BRIEF.md` |
 | Multi-repo delivery proof | `DELIVERY.md` |
 | Secrets, trust boundaries and concurrency | `SECURITY.md` |
-| Structural decisions and historical ADR status | `decisions/ADR-0009-integrated-po-and-product-map.md` through `decisions/ADR-0030-lightened-delivery-flow.md`; `decisions/PRE_REFACTOR.md` |
+| Structural decisions and historical ADR status | `decisions/ADR-0009-integrated-po-and-product-map.md` through `decisions/ADR-0031-serialized-graph-refused.md`; `decisions/PRE_REFACTOR.md` |
 | Decision versus maintenance proposals | `decisions/ADR-0029-proposal-classes.md` |
 | Why the D01 delivery flow was lightened (one review, regression before handoff, resumes per cause, model evaluation for interface tickets only) | `decisions/ADR-0030-lightened-delivery-flow.md` |
+| Why the graph review refuses a ticket graph whose critical path is too long (parallelism of the slicing) | `decisions/ADR-0031-serialized-graph-refused.md` |
 | Delivery-proof writes through doors | `../bin/deliver-close`, `decisions/ADR-0023-coordination-state-write-door.md` (delivery-proof half) |
 | Escalation door, Mayor-first and human notification | `../bin/escalation-door`, `../tests/escalation-door-test.sh` |
 | Proposal resolution from merge proof | `COCKPIT.md` |
@@ -73,7 +74,7 @@ mechanisms: consult `decisions/PRE_REFACTOR.md` before relying on them.
 | Ticket Exits, handoffs and parked descendants | `TICKET_EXIT.md` |
 | Spec integration branch, serial merges and invalidation | `SPEC_INTEGRATION.md` |
 | Author session, worktree and ticket sequence | `TICKET_AUTHOR.md` |
-| Independent criterion-test review before freeze | `TEST_REVIEW.md` |
+| Independent criterion-test review before freeze (superseded by ADR-0030 L3: the code review reads them) | `TEST_REVIEW.md`, `CODE_REVIEW.md` |
 | Code review before ticket merge | `CODE_REVIEW.md` |
 | Evaluate the launched product before ticket merge | `TICKET_EVALUATION.md` |
 | Screen-to-prototype fidelity, anchors and evidence | `PROTOTYPE_FIDELITY.md` |
@@ -107,6 +108,7 @@ mechanisms: consult `decisions/PRE_REFACTOR.md` before relying on them.
 | Test-writing guideline and test-file ceilings | `TEST_GUIDELINE.md` |
 | Claude MCP/tool profiles and context floor | `../city.toml` ([providers.claude]) |
 | Launch the cockpit isolated at a commit on a named synthetic dataset: recipe, datasets, screens, seams, regression command | `COCKPIT.md` (« Isolated launch »), `PROJECT_PLANNING_PROFILE.md` (« Launch declarations »), `../config/project-descriptors/agent-factory.json` (`launch`), `../bin/cockpit-isolated`, `../lib/synthetic_city.py` |
+| Where a running convoy stands: active sessions, ready tickets, critical path and width per level (not `gc status`) | `FACTORY_TOOLS.md` (convoy-graph), `../bin/convoy-graph`, `../lib/ticket_graph.py` |
 
 ## Authority and minimal retrieval
 

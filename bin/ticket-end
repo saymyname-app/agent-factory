@@ -65,7 +65,7 @@ VERSION = "ticket-end/v1"
 CONDITIONS = (
     ("criteria", "Critères évalués identiques au digest approuvé"),
     ("handoff", "Ticket Handoff valide, avec preuve du rouge et preuve de démonstration"),
-    ("evaluation", "Ticket Evaluation : tout « observé avec preuve » ; prefactoring : le produit démarre"),
+    ("evaluation", "Ticket Evaluation : tout « observé avec preuve » ; prefactoring ou sans interface : le produit démarre"),
     ("fidelity", "Contrôles mécaniques de fidélité verts si le ticket touche un écran"),
     ("deferral", "Détecteur de report passé"),
     ("merge", "Fusionné dans la branche d'intégration, tests verts sur le résultat fusionné"),
@@ -341,15 +341,19 @@ def condition_evaluation(ticket: dict[str, Any], tip: str, evidence: Evidence, r
     verdict = (ticket.get("verdicts") or {}).get("evaluation") or {}
     if verdict.get("state") != "favorable" or verdict.get("commit") != tip or "invalidated" in verdict:
         return False, f"verdict de la Ticket Evaluation absent ou invalide à la pointe {sha(tip)}"
-    if ticket.get("kind") == KIND_PREFACTORING:
+    # ADR-0030 L4: a ticket without interface gets the start control of a
+    # prefactoring; its model evaluation is « not required ».
+    startup = ticket.get("kind") == KIND_PREFACTORING or (not ticket.get("interface") and last.get("kind") == "startup")
+    if startup:
+        what = "prefactoring" if ticket.get("kind") == KIND_PREFACTORING else "sans interface"
         if last.get("kind") != "startup" or last.get("started") is not True:
-            return False, "prefactoring : aucun relevé du démarrage du produit"
+            return False, f"{what} : aucun relevé du démarrage du produit"
         problem = evidence.at(str(last.get("evidence")), tip, "démarrage du produit")
         if problem:
             return False, problem
-        return True, f"prefactoring : le produit démarre à {sha(tip)} (pièce {last.get('evidence')})"
+        return True, f"{what} : le produit démarre à {sha(tip)} (pièce {last.get('evidence')})"
     if last.get("kind", "evaluation") != "evaluation":
-        return False, "le démarrage du produit ne vaut évaluation que pour un prefactoring"
+        return False, "le démarrage du produit ne vaut évaluation que pour un prefactoring ou un ticket sans interface"
     items = [*(last.get("criteria") or []), last.get("demonstration_line") or {}]
     for item in items:
         if item.get("state") != "observed":

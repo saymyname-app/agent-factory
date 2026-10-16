@@ -34,7 +34,9 @@
 #      verdict on B anyway: bin/test-review refuses it, the launch is counted
 #      as one without result and nothing else is written. It then asks Gas
 #      City for more work and is offered none.
-#   4. A second reviewer session renders the review of B.
+#   4. A second reviewer session renders the review of B: a new session, or
+#      the first one woken again under its name in a fresh conversation
+#      (gc 1.5.0, wake_mode = "fresh").
 #
 # The trial prints its record (« relevé d'essai ») on stdout.
 
@@ -195,6 +197,11 @@ cat > "$TRIAL/stub-reviewer" <<STUB
 #!/bin/bash
 . "$TRIAL/env"
 export DELIVERY_ROLE_READ_ONLY=1
+# As Claude Code does: each process start is a conversation of its own, even
+# a relaunch in the warm tmux box under the same generation (af-bb69uq). gc
+# 1.5.0 wakes the drained reviewer under its name and GC_RUNTIME_EPOCH, and
+# without this its second start is refused as the session that served A.
+export CLAUDE_CODE_SESSION_ID=\$(cat /proc/sys/kernel/random/uuid)
 BIN="$ROOT/bin"
 LOG="$TRIAL/reviewer.log"
 say() { echo "\$(date -u +%H:%M:%S) \${GC_SESSION_NAME:-?} \$*" >> "\$LOG"; }
@@ -461,10 +468,15 @@ echo "$(date -u +%H:%M:%S)    verdict sur B remis par $first : refusé (« $refu
 b_reviewed() { [ -n "$(round_session "$B")" ]; }
 wait_for 900 b_reviewed || { dump; fail "the review of the tests of B was not rendered within 900s"; }
 second=$(round_session "$B")
-[ "$second" != "$first" ] || fail "the two reviews were rendered by one session: $first"
+# A session is its name and its conversation (T42): gc 1.5.0 wakes the drained
+# reviewer again under the same name, in a fresh conversation
+# (wake_mode = "fresh").
+conversation_of() { review_of "$1" | jq -r '.rounds[0].conversation // ""'; }
+[ "$second $(conversation_of "$B")" != "$first $(conversation_of "$A")" ] \
+  || fail "the two reviews were rendered by one conversation: $first $(conversation_of "$A")"
 known=$(gc session list --state all --json | jq -c '[.sessions[] | select((.template | split("/") | last) == "delivery-reviewer") | .session_name]')
 # $first was read alive among the sessions of that agent at step 2; it has
-# left since, and Gas City no longer lists it.
+# left since, or was woken again under its name.
 printf '%s' "$known" | jq -e --arg s "$second" 'index($s) != null' >/dev/null \
   || fail "$second is not a session of the delivered reviewer agent: $known"
 [ "$(review_of "$A" | jq -c '[.rounds[].recorded_by]')" = "[\"$first\"]" ] || fail "A does not carry exactly the review of $first"
@@ -476,4 +488,4 @@ echo "$(date -u +%H:%M:%S) 4. relecture de B rendue par $second ($(review_of "$B
 
 gc session list --state all --json | jq -e '[.sessions[] | select(.template | test("mayor"))] | length == 0' >/dev/null \
   || fail "a Mayor session exists in the trial city"
-echo "PASS: two author sessions worked two tickets at the same time under N=$CEILING, two successive reviews were rendered by two reviewer sessions, and a verdict from a session that had already served was refused"
+echo "PASS: two author sessions worked two tickets at the same time under N=$CEILING, two successive reviews were rendered by two reviewer conversations, and a verdict from a session that had already served was refused"

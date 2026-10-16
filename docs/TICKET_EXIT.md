@@ -91,6 +91,16 @@ Benjamin » (`docs/PROTOTYPE_FIDELITY.md`); any other answer leaves it red.
 The option must fit one line of 140 characters: a long list of anchors is
 several Planning Exceptions.
 
+**Every Planning Exception has an accept path** (ADR-0030 L5). Without an
+anchor, the request carries a third option too, « Accepter l'écart que
+décrit le Ticket Handoff », and the ticket records its letter: answered by
+it, the exception is `accepted` (no anchor is) and `bin/convoy-advance`
+lifts the parking and resumes the ticket, like any accepted deviation.
+Without an anchor, an empty « Écarts » refuses the exit: the option would
+accept nothing. A ticket stopped by a script (`criterion_already_green`:
+all its criteria already green) stays stopped: the answer lifts no stop,
+and `bin/convoy-advance` then raises that stop to the operator.
+
 **Operator request.** The file is the request the operator reads, as the
 escalation door takes it: `quoi` and `pourquoi` on one line of at most 140
 characters each, `que_faire` a non-empty list of `{option, consequence}`.
@@ -214,9 +224,9 @@ writes nothing.
   convoy yet.
 - Nothing here resumes a ticket, lifts a parking, or counts a resume:
   `bin/convoy-advance` does, from the exit recorded here (T20,
-  `docs/CONVOY_ADVANCE.md`). A Planning Exception that names no anchor has
-  no option the code reads as accepting it: its parking is not lifted by
-  the pass.
+  `docs/CONVOY_ADVANCE.md`). Every Planning Exception has an option the
+  code reads as accepting it (ADR-0030 L5); one raised before L5 without an
+  anchor has none, and its parking is not lifted by the pass.
 
 ## Proof
 

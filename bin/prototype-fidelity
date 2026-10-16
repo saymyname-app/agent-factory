@@ -311,7 +311,7 @@ def serve_prototype(prototype: Path) -> tuple[http.server.ThreadingHTTPServer, s
 def launch(descriptor: Path, repo_root: Path, commit: str, state: str, work: Path) -> tuple[Path, dict[str, Any]]:
     state_file = work / f"launch-{len(list(work.glob('launch-*.json')))}.json"
     status, answer = run_json([
-        str(LAUNCH_TOOL), "--repo-root", str(repo_root), "start", str(descriptor), "--commit", commit,
+        str(LAUNCH_TOOL), "--repo-root", str(repo_root), "start", "--owner-pid", str(os.getpid()), str(descriptor), "--commit", commit,
         "--dataset", state, "--timeout", str(LAUNCH_TIMEOUT), "--state-file", str(state_file)])
     if status != 0 or not isinstance(answer, dict) or not answer.get("started"):
         raise Refusal(f"le produit n'a pas démarré sur le jeu de données « {state} » : {refusal_text(answer)}")

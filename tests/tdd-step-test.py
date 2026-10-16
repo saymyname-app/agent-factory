@@ -253,10 +253,9 @@ class TddStepTest(unittest.TestCase):
         return self.refused("red", ticket, "--base", self.base, "--table", TABLE, **kwargs)
 
     def frozen(self):
-        """A ticket whose criterion tests are proven red, reviewed and frozen."""
+        """A ticket whose criterion tests are proven red and frozen."""
         self.commit_tests()
         self.red()
-        self.reviewed()
         return self.ok("freeze")
 
     def state(self, *args):
@@ -363,8 +362,54 @@ class TddStepTest(unittest.TestCase):
         self.assertIn(APP, error)
         self.assertIn("périmètre de test", error)
 
-    def test_red_stops_the_ticket_on_a_criterion_already_green(self):
-        self.commit_tests({HEALTH_FILE: HEALTH_TEST_ALREADY_GREEN})
+    def test_red_records_a_criterion_already_green_as_satisfied_and_the_ticket_goes_on(self):
+        # ADR-0030 L5: criterion 2 holds at the start commit, criterion 1 is red.
+        head = self.commit_tests({HEALTH_FILE: HEALTH_TEST_ALREADY_GREEN})
+
+        answer = self.red()
+
+        self.assertEqual(("red", head), (answer["step"], answer["commit"]))
+        state = self.ticket_state()
+        self.assertIsNone(state["stop"])
+        self.assertEqual((head, self.base), (state["tdd"]["red"]["commit"], state["tdd"]["red"]["base"]))
+        _, proof = self.piece("tdd_red")
+        self.assertEqual(("red", self.base), (proof["verdict"], proof["base"]))
+        self.assertEqual(["2"], proof["satisfied"])
+        self.assertEqual({COUNT_ID: "failure", HEALTH_ID: "passed"},
+                         {test["id"]: test["outcome"] for test in proof["tests"]})
+        self.ok("freeze")
+        _, frozen = self.piece("tdd_freeze")
+        self.assertEqual(["2"], frozen["satisfied"])
+        self.commit("code du ticket", {APP: self.green_app()})
+        self.ok("green")
+        _, green = self.piece("tdd_green")
+        self.assertEqual(["2"], green["satisfied"])
+
+    def test_red_refuses_without_stopping_a_test_already_green_in_a_criterion_still_red(self):
+        self.commit_tests({HEALTH_FILE: HEALTH_TEST_ALREADY_GREEN},
+                          table=self.table({"1": [COUNT_ID], "2": [COUNT_ID, HEALTH_ID]}))
+
+        error = self.red_refused()
+
+        self.assertIn(f"test vert au commit de départ : {HEALTH_ID}", error)
+        self.assertIn("critère 2", error)
+        self.assertIsNone(self.ticket_state()["stop"])
+
+    def test_red_refuses_a_green_test_shared_by_a_satisfied_criterion_and_one_still_red(self):
+        # Criterion 1 is satisfied by HEALTH_ID; criterion 2 is red by COUNT_ID
+        # only, its HEALTH_ID passing without the code of the ticket.
+        self.commit_tests({HEALTH_FILE: HEALTH_TEST_ALREADY_GREEN},
+                          table=self.table({"1": [HEALTH_ID], "2": [HEALTH_ID, COUNT_ID]}))
+
+        error = self.red_refused()
+
+        self.assertIn(f"test vert au commit de départ : {HEALTH_ID}", error)
+        self.assertIn("critère 2", error)
+        self.assertIsNone(self.ticket_state()["stop"])
+
+    def test_red_stops_the_ticket_when_every_criterion_is_already_green(self):
+        self.commit_tests({HEALTH_FILE: HEALTH_TEST_ALREADY_GREEN},
+                          table=self.table({"1": [HEALTH_ID], "2": [HEALTH_ID]}))
         store_before = self.store_files()
 
         proc = self.run_tool("red", SLICE, "--base", self.base, "--table", TABLE)
@@ -373,8 +418,8 @@ class TddStepTest(unittest.TestCase):
         answer = json.loads(proc.stdout)
         self.assertFalse(answer["ok"])
         self.assertTrue(answer["stopped"])
+        self.assertIn("critère 1 déjà vert", answer["error"])
         self.assertIn("critère 2 déjà vert", answer["error"])
-        self.assertNotIn("critère 1", answer["error"])
         state = self.ticket_state()
         self.assertEqual("criterion_already_green", state["stop"]["reason"])
         self.assertIn("critère 2", state["stop"]["detail"])
@@ -382,9 +427,10 @@ class TddStepTest(unittest.TestCase):
         self.assertEqual(store_before, self.store_files())
 
     def test_a_stopped_ticket_is_refused_by_every_step(self):
-        self.commit_tests({HEALTH_FILE: HEALTH_TEST_ALREADY_GREEN})
+        self.commit_tests({HEALTH_FILE: HEALTH_TEST_ALREADY_GREEN},
+                          table=self.table({"1": [HEALTH_ID], "2": [HEALTH_ID]}))
         self.run_tool("red", SLICE, "--base", self.base, "--table", TABLE)
-        self.commit("test corrigé", {HEALTH_FILE: HEALTH_TEST})
+        self.commit("test corrigé", {HEALTH_FILE: HEALTH_TEST, TABLE: self.table()})
 
         self.assertIn("ticket arrêté", self.red_refused())
         self.assertIn("ticket arrêté", self.refused("freeze"))
@@ -538,7 +584,6 @@ class TddStepTest(unittest.TestCase):
     def test_freeze_records_the_fingerprints_of_tests_table_and_harness_outside_the_work_tree(self):
         head = self.commit_tests()
         self.red()
-        self.reviewed()
 
         answer = self.ok("freeze")
 
@@ -565,53 +610,31 @@ class TddStepTest(unittest.TestCase):
 
         self.assertIn("rouge", self.refused("freeze"))
 
-    def test_freeze_refused_without_a_review_of_the_criterion_tests(self):
-        """T13: the freeze follows a favorable verdict of the test reviewer."""
-        self.commit_tests()
+    def test_freeze_needs_no_review_of_the_criterion_tests(self):
+        """ADR-0030 L3: the criterion tests are read by the code review
+        after the green; the freeze follows the red proof alone."""
+        head = self.commit_tests()
         self.red()
 
-        error = self.refused("freeze")
+        self.ok("freeze")
 
-        self.assertIn("relecture", error)
-        self.assertIn("aucun verdict", error)
+        self.assertEqual(head, self.ticket_state()["tdd"]["freeze"]["commit"])
+        self.assertIsNone(self.ticket_state()["test_review"])
 
-    def test_freeze_refused_when_the_review_refuses_a_criterion_test(self):
-        self.commit_tests()
+    def test_freeze_ignores_a_test_review_recorded_before_the_flow_dropped_it(self):
+        """A ticket in flight keeps its recorded review; the freeze does not read it."""
+        head = self.commit_tests()
         self.red()
         self.reviewed(refused={COUNT_ID: "le test ne vérifie qu'un statut 200"})
 
-        error = self.refused("freeze")
+        self.ok("freeze")
 
-        self.assertIn("relecture", error)
-        self.assertIn(COUNT_ID, error)
-        self.assertIn("statut 200", error)
-
-    def test_freeze_refused_when_the_verdict_is_bound_to_other_fingerprints_of_tests(self):
-        """A verdict given on other tests than the ones about to be frozen."""
-        self.commit_tests()
-        self.red()
-        self.reviewed(files={COUNT_FILE: "sha256:" + "0" * 64})
-
-        error = self.refused("freeze")
-
-        self.assertIn("empreintes", error)
-        self.assertIn(COUNT_FILE, error)
-        self.assertNotIn(HEALTH_FILE, error)
-
-    def test_freeze_refused_when_the_tests_changed_since_their_review(self):
-        self.commit_tests()
-        self.red()
-        self.reviewed()
-        self.commit_tests({COUNT_FILE: COUNT_TEST.replace("fixture-count", "fixture-total")})
-        self.red()
-
-        self.assertIn("relecture", self.refused("freeze"))
+        self.assertEqual(head, self.ticket_state()["tdd"]["freeze"]["commit"])
 
     def test_freeze_refused_when_the_registry_would_sit_in_a_work_tree(self):
         """The registry of fingerprints is never a file of the branch."""
         self.commit_tests()
         self.red()
-        self.reviewed()
 
         error = self.refused("freeze", env={**self.env, "EVIDENCE_STORE_DIR": str(self.repo / "registre")})
 
@@ -632,6 +655,19 @@ class TddStepTest(unittest.TestCase):
         self.assertEqual({COUNT_ID: ["passed"] * 3, HEALTH_ID: ["passed"] * 3},
                          {test["id"]: test["runs"] for test in proof["tests"]})
         self.assertEqual({"tdd_red", "tdd_freeze", "tdd_green"}, self.verified())
+        self.assertEqual([(head, 0)], [(run["commit"], run["exit_code"]) for run in proof["regression"]])
+
+    def test_green_refuses_a_tip_that_breaks_the_regression_command(self):
+        """ADR-0030 L1: the criterion tests are green but the change breaks
+        the profile's regression: the handoff is refused -- nothing written,
+        no stop -- and the author keeps working."""
+        self.frozen()
+        self.commit("code qui casse l'existant",
+                    {APP: self.green_app().replace("fixture-items", "fixture-list")})
+
+        error = self.refused("green")
+
+        self.assertIn("commande de régression en échec", error)
 
     def test_green_runs_the_tests_3_times_when_the_profile_declares_no_k(self):
         self.frozen()
@@ -830,6 +866,19 @@ class TddStepTest(unittest.TestCase):
         self.assertIn("amendement épuisé", listed[0])
         self.assertIn("raised", self.ticket_state()["stop"])
         self.assertEqual("open", json.loads(self.tracker.read_text())["beads"][SLICE]["status"])
+
+    def test_amendment_keeps_a_criterion_satisfied_by_the_existing_code(self):
+        self.commit_tests({HEALTH_FILE: HEALTH_TEST_ALREADY_GREEN})
+        self.red()
+        self.ok("freeze")
+        amended = COUNT_TEST.replace("""'<p data-anchor="fixture-count">3</p>'""", """'data-anchor="fixture-count">3<'""")
+        self.commit("code et test corrigé", {APP: self.green_app(), COUNT_FILE: amended})
+
+        self.ok("amend", SLICE, "--reason", "le nombre suffit, pas la balise")
+
+        _, proof = self.piece("tdd_amendment")
+        self.assertEqual(["2"], proof["satisfied"])
+        self.ok("green")
 
     def test_amendment_refused_without_a_reason(self):
         self.frozen()

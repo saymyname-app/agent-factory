@@ -27,7 +27,10 @@
 #
 # Two tickets of the fixture, each finished by its author with the same two
 # defects: its diff contradicts a line of the Spec, and its product does not
-# show what its criterion asks.
+# show what its criterion asks. Both are interface tickets (their description
+# carries the reference of the Validated Prototype of the fixture, as the
+# publication door poses it): only an interface ticket is evaluated by a
+# model (ADR-0030 L4).
 #   A  review and evaluation start on the same commit, by the same pass; both
 #      refuse; one author session starts, and its brief holds the Blocking
 #      Finding of the one and the states not observed of the other. That
@@ -501,7 +504,14 @@ Le nombre d'éléments sur la page d'accueil.
 
 ## Target rigs
 
-trial" 2>/dev/null
+trial
+
+## Validated Prototype
+
+- branche : main
+- commit : $BASE
+- chemin : $FIXTURE/prototype
+- états : content" 2>/dev/null
 }
 SPEC=$(gc bd create --title "Spec d'essai" --type task --silent --description "## User Stories
 

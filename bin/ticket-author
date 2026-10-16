@@ -512,7 +512,7 @@ def cmd_demonstrate(args: argparse.Namespace) -> int:
 
     with tempfile.TemporaryDirectory(prefix="ticket-author-") as scratch:
         launch_state = Path(scratch) / "launch.json"
-        launched = run([str(LAUNCH_TOOL), "--repo-root", str(repo), "start", str(profile), "--commit", head,
+        launched = run([str(LAUNCH_TOOL), "--repo-root", str(repo), "start", "--owner-pid", str(os.getpid()), str(profile), "--commit", head,
                         "--dataset", args.dataset, "--state-file", str(launch_state)], timeout=LAUNCH_TIMEOUT)
         try:
             if launched.returncode != 0 or not launch_state.is_file():
@@ -577,8 +577,8 @@ def gate_red(ticket: Ticket) -> str:
     freeze = tdd.get("freeze")
     if not isinstance(freeze, dict) or "commit" not in freeze:
         raise Refusal(
-            f"les tests de critère du ticket {ticket.id} sont rouges mais pas gelés : leur relecture "
-            "(bin/test-review review) puis le gel (bin/tdd-step freeze) précèdent le code")
+            f"les tests de critère du ticket {ticket.id} sont rouges mais pas gelés : le gel "
+            "(bin/tdd-step freeze) précède le code")
     ticket.verified("tdd_freeze", "registre du gel")
     return f"rouge prouvé au commit {red['commit']}, tests gelés au commit {freeze['commit']}"
 

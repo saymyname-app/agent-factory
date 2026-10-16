@@ -23,7 +23,10 @@
 # their tools would (their formulas have their own trials).
 #
 # Two tickets of the fixture, each finished by its author:
-#   A  a slice whose criterion is not realized: the evaluation records
+#   A  an interface slice (its description carries the reference of the
+#      Validated Prototype of the fixture, as the publication door poses it:
+#      only an interface ticket is evaluated by a model, ADR-0030 L4) whose
+#      criterion is not realized: the evaluation records
 #      « non observé » with its piece of evidence, the computed verdict is
 #      unfavorable, and nothing is merged. The author commits the correction:
 #      every state is « observé » with evidence, the verdict is favorable, and
@@ -332,7 +335,14 @@ Le nombre d'éléments sur la page d'accueil.
 
 ## Target rigs
 
-trial" 2>/dev/null)
+trial
+
+## Validated Prototype
+
+- branche : main
+- commit : $BASE
+- chemin : $FIXTURE/prototype
+- états : content" 2>/dev/null)
 P=$(gc bd create --title "ticket P, prefactoring" --type task --silent --description "## What to build
 
 Ranger le rendu de la page.

@@ -1,0 +1,200 @@
+#!/usr/bin/env python3
+"""convoy-graph — the live shape of a Spec's convoy, read-only.
+
+    convoy-graph <spec> [--json]
+
+What an operator asks of a running convoy, from one read of the tracker and
+one of the sessions: the sessions really active, the tickets ready to
+start, the critical path of the work left and its width per level.
+
+- Sessions come from `gc session list`, not `gc status`: `gc status` shows a
+  pool slot « stopped » while sessions of its template run (2026-10-15, an
+  agent announced « agents arrêtés » from it).
+- A ticket waits for the keys in its `gc.blocked_by`. A blocker delivered
+  (closed) or withdrawn no longer holds it; a key no ticket of the Spec
+  carries holds it, and is named.
+- Ready: open, not withdrawn, never started (no dispatch gate, no exit),
+  nothing left to wait for -- the frontier bin/convoy-advance starts from,
+  before its capacity ceiling.
+- The critical path and the levels are those of the work left (tickets
+  neither closed nor withdrawn), computed by lib/ticket_graph.py, the code
+  of the graph review's critical-path bound (ADR-0031).
+
+Writes nothing. Exit 0; 1 when the tracker or the sessions cannot be read,
+or the Spec has no ticket; 2 usage.
+
+Environment: GC_BIN (default `gc`), CONVOY_GRAPH_CITY (the city `gc` reads;
+default this repository's root).
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+from ticket_graph import critical_path, levels  # noqa: E402
+
+PROGRAM = "convoy-graph"
+GC_BIN = os.environ.get("GC_BIN") or "gc"
+CITY = os.environ.get("CONVOY_GRAPH_CITY") or str(Path(__file__).resolve().parents[1])
+
+
+class Unreadable(Exception):
+    pass
+
+
+def gc_json(*argv: str) -> Any:
+    try:
+        proc = subprocess.run([GC_BIN, "--city", CITY, *argv], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    except OSError as exc:
+        raise Unreadable(f"{GC_BIN} : {exc}") from exc
+    if proc.returncode != 0:
+        raise Unreadable(f"{GC_BIN} {' '.join(argv[:3])} : {(proc.stderr or proc.stdout).strip()[-300:]}")
+    try:
+        return json.loads(proc.stdout)
+    except ValueError as exc:
+        raise Unreadable(f"{GC_BIN} {' '.join(argv[:3])} n'a pas rendu de JSON : {exc}") from exc
+
+
+def meta(bead: dict[str, Any], key: str) -> Any:
+    value = (bead.get("metadata") or {}).get(key)
+    if isinstance(value, str) and value[:1] in "{[":
+        try:
+            return json.loads(value)
+        except ValueError:
+            return value
+    return value
+
+
+def active_sessions() -> list[dict[str, Any]]:
+    answer = gc_json("session", "list", "--json")
+    sessions = answer.get("sessions") if isinstance(answer, dict) else None
+    if not isinstance(sessions, list):
+        raise Unreadable("gc session list n'a pas rendu de liste de sessions")
+    return [s for s in sessions if isinstance(s, dict) and s.get("state") == "active" and not s.get("closed")]
+
+
+def session_names(session: dict[str, Any]) -> set[str]:
+    return {str(session[key]) for key in ("id", "name", "session_name", "alias") if session.get(key)}
+
+
+def view(spec: str) -> dict[str, Any]:
+    beads = gc_json("bd", "list", "--all", "--metadata-field", f"gc.spec_id={spec}", "--limit", "0", "--json")
+    if not isinstance(beads, list):
+        raise Unreadable("gc bd list n'a pas rendu de liste")
+    convoys = [b for b in beads if b.get("issue_type") == "convoy"]
+    convoy = next((c for c in convoys if c.get("status") != "closed"), convoys[0] if convoys else None)
+    tickets: dict[str, dict[str, Any]] = {}
+    for bead in beads:
+        key = str(meta(bead, "gc.ticket_id") or "")
+        if not key or meta(bead, "gc.plane") not in (None, "delivery") or bead.get("issue_type") == "convoy":
+            continue
+        withdrawn = meta(bead, "gc.flow.gate.withdrawn") is not None
+        # A key carried twice: the ticket that still counts is the one not withdrawn.
+        if key in tickets and not tickets[key]["withdrawn"]:
+            continue
+        exit_ = meta(bead, "gc.flow.exit")
+        session = meta(bead, "gc.flow.session")
+        tickets[key] = {
+            "key": key, "id": bead.get("id"), "title": bead.get("title") or "", "status": bead.get("status"),
+            "withdrawn": withdrawn,
+            "blocked_by": [b.strip() for b in str(meta(bead, "gc.blocked_by") or "").split(",") if b.strip()],
+            "started": meta(bead, "gc.flow.gate.dispatch") is not None,
+            "exit": exit_.get("exit") if isinstance(exit_, dict) else None,
+            "session": (session.get("name") if isinstance(session, dict) else None) or meta(bead, "gc.session_name"),
+        }
+    if not tickets:
+        raise Unreadable(f"aucun ticket ne porte gc.spec_id={spec}")
+
+    sessions = active_sessions()
+    alive = set().union(*(session_names(s) for s in sessions)) if sessions else set()
+    left = {k: t for k, t in tickets.items() if t["status"] != "closed" and not t["withdrawn"]}
+    resolved = {k for k, t in tickets.items() if t["status"] == "closed" or t["withdrawn"]}
+
+    ready, running, finished, unknown = [], [], [], {}
+    for key, ticket in left.items():
+        missing = [b for b in ticket["blocked_by"] if b not in tickets]
+        if missing:
+            unknown[key] = missing
+        if ticket["exit"]:
+            finished.append(key)
+        elif ticket["started"] or ticket["status"] == "in_progress":
+            running.append(key)
+        elif ticket["status"] == "open" and all(b in resolved for b in ticket["blocked_by"]):
+            ready.append(key)
+    waits = {key: [b for b in t["blocked_by"] if b in left] for key, t in left.items()}
+    path = critical_path(waits)
+    by_level = levels(waits)
+    working_on = {t["session"]: key for key, t in left.items() if t["session"]}
+    return {
+        "ok": True, "spec": spec,
+        "convoy": {"id": convoy.get("id"), "status": convoy.get("status"), "title": convoy.get("title")} if convoy else None,
+        "counts": {
+            "tickets": sum(1 for t in tickets.values() if not t["withdrawn"]),
+            "delivered": sum(1 for t in tickets.values() if t["status"] == "closed" and not t["withdrawn"]),
+            "withdrawn": sum(1 for t in tickets.values() if t["withdrawn"]),
+            "left": len(left),
+        },
+        "sessions": [{
+            "name": s.get("name") or s.get("id"), "template": s.get("template"), "title": s.get("title"),
+            "last_active": s.get("last_active"),
+            "ticket": next((working_on[n] for n in session_names(s) if n in working_on), None),
+        } for s in sessions],
+        "ready": [{"key": k, "id": left[k]["id"], "title": left[k]["title"]} for k in ready],
+        "running": [{"key": k, "id": left[k]["id"], "session": left[k]["session"],
+                     "session_active": left[k]["session"] in alive} for k in running],
+        "finished_unmerged": [{"key": k, "id": left[k]["id"], "exit": left[k]["exit"]} for k in finished],
+        "unknown_blockers": unknown,
+        "critical_path": {"length": len(path), "chain": path},
+        "width_per_level": {str(n): len(keys) for n, keys in by_level.items()},
+        "levels": {str(n): keys for n, keys in by_level.items()},
+    }
+
+
+def text(state: dict[str, Any]) -> str:
+    c, convoy = state["counts"], state["convoy"]
+    lines = [
+        f"Spec {state['spec']} — convoi {convoy['id']} ({convoy['status']})" if convoy else f"Spec {state['spec']} — aucun convoi",
+        f"Tickets : {c['tickets']}, dont {c['delivered']} livrés et {c['left']} restants ; {c['withdrawn']} retirés",
+        "",
+        f"Sessions actives (gc session list) : {len(state['sessions'])}",
+    ]
+    lines += [f"  {s['name']}  [{s['template']}]" + (f"  → {s['ticket']}" if s["ticket"] else "") for s in state["sessions"]]
+    lines += ["", f"Prêts à démarrer : {len(state['ready'])}"]
+    lines += [f"  {t['key']}  {t['id']}  {t['title']}" for t in state["ready"]]
+    lines += ["", f"En cours : {len(state['running'])}"]
+    lines += [f"  {t['key']}  {t['id']}  session {t['session'] or '?'} "
+              f"({'active' if t['session_active'] else 'pas active'})" for t in state["running"]]
+    if state["finished_unmerged"]:
+        lines += ["", f"Sortis, pas encore fermés : {len(state['finished_unmerged'])}"]
+        lines += [f"  {t['key']}  {t['id']}  sortie {t['exit']}" for t in state["finished_unmerged"]]
+    if state["unknown_blockers"]:
+        lines += ["", "Attentes sur une clé qu'aucun ticket ne porte :"]
+        lines += [f"  {k} attend {', '.join(v)}" for k, v in state["unknown_blockers"].items()]
+    path = state["critical_path"]
+    lines += ["", f"Chemin critique du reste : {path['length']} — {' → '.join(path['chain'])}",
+              "Largeur par niveau : " + "  ".join(f"{n}:{w}" for n, w in state["width_per_level"].items())]
+    return "\n".join(lines)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog=PROGRAM, description="Live shape of a Spec's convoy, read-only.")
+    parser.add_argument("spec", help="Spec bead id (the tickets' gc.spec_id)")
+    parser.add_argument("--json", action="store_true", help="one JSON object instead of the text")
+    args = parser.parse_args()
+    try:
+        state = view(args.spec)
+    except Unreadable as exc:
+        print(f"{PROGRAM}: {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps(state, ensure_ascii=False, sort_keys=True) if args.json else text(state))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

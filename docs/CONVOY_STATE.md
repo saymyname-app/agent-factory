@@ -54,7 +54,7 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state set-handoff af-convoy af-t1 --file handoff.json                                   # bin/ticket-exit
 ./bin/convoy-state park        af-convoy af-t1 --cause planning_exception --detail "La Spec fixe X, …"  # bin/ticket-exit
 ./bin/convoy-state set-fidelity af-convoy af-t1 --commit <sha> --piece fidelity --file result.json   # bin/prototype-fidelity
-./bin/convoy-state raise-planning-exception af-convoy af-t1 --kind semantic --summary "…" [--anchor liste --accept-option c]   # bin/ticket-exit
+./bin/convoy-state raise-planning-exception af-convoy af-t1 --kind semantic --summary "…" [--anchor liste] --accept-option c   # bin/ticket-exit
 ./bin/convoy-state raise-planning-exception af-convoy af-t1 --kind semantic --summary "…" --item not_done.1 --accept-option b   # bin/spec-end: tracked elements left without a final state
 ./bin/convoy-state set-item-repair af-convoy af-t1 --repair af-r2   # bin/convoy-advance, once the patch door published the repair the operator asked for
 ./bin/convoy-state set-integration af-convoy --branch integration/af-spec --protected main --base <sha>   # bin/spec-integration open
@@ -65,7 +65,7 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state override-finding  af-convoy af-t1 --finding F1.1 --approver <human approver> --words "…"   # bin/correction-round override
 ./bin/convoy-state open-resume   af-convoy af-t1 --cause interrupted --ref "session:<session name>"   # bin/convoy-advance: one resume counted, before the fresh author session is sent
 ./bin/convoy-state launch-resume af-convoy af-t1 --bead af-resume        # bin/convoy-advance, once the author session is sent
-./bin/convoy-state park          af-convoy af-t1 --cause resumes_exhausted --detail "3 reprises, …"   # bin/convoy-advance, at the third resume
+./bin/convoy-state park          af-convoy af-t1 --cause resumes_exhausted --detail "reprises épuisées pour la cause …"   # bin/convoy-advance, at the third resume of a same cause
 ./bin/convoy-state lift-park     af-convoy af-t1 --request <answered request bead> [--option a]   # bin/convoy-advance, on the operator's answer
 ./bin/convoy-state record-grouped-request af-convoy --bead af-request [--signature sha256:<hex>] [--lift-option a --lifts af-t1]   # bin/convoy-advance
 ./bin/convoy-state clear-grouped-request  af-convoy     # bin/convoy-advance, once a ticket may advance again
@@ -148,7 +148,7 @@ Every answer is one JSON object on stdout.
 | Correction round | `gc.flow.correction` | ticket | `commit` (the full SHA both the code review and the evaluation answered at), `blocking_findings` (the ids of the Blocking Findings of that review), `not_observed` (what the evaluation did not observe there), at least one of the two not empty; `launches`: at most one `{bead, at}`; `at` |
 | Overrides | `gc.flow.overrides` | ticket | `entries`, oldest first, one per overridden Blocking Finding: `finding`, `approver`, `words` (not empty, as given), `commit` (the one of the review), `at` |
 | Parking | `gc.flow.park` | ticket | cause: `planning_exception`, `operator_request`, `resumes_exhausted` (T20); the ticket that caused it (`origin`: the one whose Ticket Exit parked it, or that is out of resumes); a one-line detail |
-| Resumes | `gc.flow.resume` | ticket | `entries`, oldest first, one per resume code opened (T20): `cause` (`interrupted`, `returned`, `unblocked`, `answered`, `behind`, `evaluation_no_result`), `ref` (the one-line fact that asked for it), `session` (the author session it takes over from, or null), `exit` (the Ticket Exit it replaced, `{exit, at}`, or null), `stop` (only for `evaluation_no_result`: the stop it lifted, as it was), `launches`: at most one `{bead, at}`; `at` |
+| Resumes | `gc.flow.resume` | ticket | `entries`, oldest first, one per resume code opened (T20): `cause` (`interrupted`, `returned`, `unblocked`, `answered`, `behind`, `evaluation_no_result`, `stage_removed`), `ref` (the one-line fact that asked for it), `session` (the author session it takes over from, or null), `exit` (the Ticket Exit it replaced, `{exit, at}`, or null), `stop` (only for `evaluation_no_result`, and for `stage_removed` a stop `test_review_refused` or `test_review_no_result`: the stop it lifted, as it was), `launches`: at most one `{bead, at}`; `at` |
 | Parkings lifted | `gc.flow.park_lifts` | ticket | `entries`, oldest first, one per parking lifted on the ticket that caused it (T20): `cause`, `detail`, `parked_at`, `request` (the bead of the answered request), `option` (the letter taken, or null), `resumes` (the counter at that moment), `at` |
 | Grouped request | `gc.flow.grouped_request` | convoy | the bead that carries the one request of a convoy in which nothing but parked tickets is left (T20) and, once it reached the escalation door, the `sha256:` signature of the parkings it names, with `lift_option` (a letter) and `lifts` (the tickets that option lifts), both or neither |
 | Fidelity result | `gc.flow.fidelity` | ticket | `commit`, `verdict` (`favorable` / `unfavorable`, computed), `piece` (the sealed record), `screens`, `states` (state → `viewports`, `anchors` compared), `deviations`: each `state`, `viewport`, `anchor`, `kind` (`absent`, `structure`, `style`, `token`), `property`; a `token` deviation has neither viewport nor anchor |
@@ -219,8 +219,10 @@ a second amendment); a stopped ticket takes no further step, and a second
 stop is refused. Nothing here lifts a stop.
 
 `open-test-review`, `launch-test-review` and `record-test-review` are called
-by `bin/test-review` (T13, `docs/TEST_REVIEW.md`), which holds the review of
-a ticket's criterion tests between red and freeze. `open-test-review` opens
+by `bin/test-review` (T13, `docs/TEST_REVIEW.md`), which the flow no longer
+starts (ADR-0030 L3, removed in L7): the freeze does not read
+`gc.flow.test_review`, and a record left on a ticket in flight is kept and
+ignored. `open-test-review` opens
 a review of the tests proven red at `--commit`, with the fingerprints the
 freeze will seal and the criterion → test table (`--file`, a JSON object
 `{files, criteria}`); the same request again writes nothing, another one
@@ -392,7 +394,7 @@ same call completes an interrupted one. A descendant that is closed or
 already parked is left as it is. It refuses a cause outside the list, a
 missing detail, a closed ticket and a ticket already parked. The cause
 `resumes_exhausted` (T20) is accepted only on a ticket that has no resume
-left (`resumes_left` 0, below). `lift-park` is what lifts a parking.
+left for one cause (`resumes_left` 0, below). `lift-park` is what lifts a parking.
 
 `open-resume`, `launch-resume`, `lift-park`, `record-grouped-request` and
 `clear-grouped-request` are called by `bin/convoy-advance` (T20,
@@ -410,21 +412,34 @@ again) go in **one tracker write**. The same cause and `--ref` as the last
 resume write nothing and count nothing. It refuses a cause outside the list,
 a missing `--ref`, a closed ticket, a ticket the dispatch door did not
 start, a stopped ticket, a parked ticket, and a ticket that has no resume
-left: that one is parked. `launch-resume` records the bead of the author
+left for one cause: that one is parked. `launch-resume` records the bead of the author
 session the last resume was sent to: one per resume, a second is refused, as
 is a launch on a stopped or a parked ticket or with no resume open.
 
-The bound is K (Spec §8: a starting value, not a measure), every cause
-together: `resumes` is the one counter that `open-resume`, `open-correction`
-and `invalidate-verdicts` add to. K is not held in this command: it is
-`bounds.resumes` of `config/delivery-flow.json` (3), the one place the
+The bound is K (Spec §8: a starting value, not a measure), **per cause**
+(ADR-0030 L2): each cause of `open-resume`, and `commit_after_verdict` (a
+commit after a verdict, which `invalidate-verdicts` counts without an
+entry), has its own bound, and the ticket is out of resumes once one cause
+reaches its bound. `resumes` stays the one counter that `open-resume`,
+`open-correction` and `invalidate-verdicts` add to; the count per cause is
+derived, never stored apart: the resume entries by their cause, and
+`commit_after_verdict` the rest of the counter once the entries and
+`correction_rounds` are taken out. The correction round counts against no
+cause: its own bound is one round, held by `open-correction`. K is not held
+in this command: it is `bounds.resumes` of `config/delivery-flow.json`
+(3 for each cause; an object naming exactly the seven causes, or one
+integer for every cause, as a trial root may set), the one place the
 bounds of the flow are set (T21, `docs/CONVOY_ADVANCE.md`), read under
 `FACTORY_ROOT` (default: the repository of the command) and, when that root
 sets no `bounds`, in the Factory's own file. A missing or malformed value
 is a refusal (« bounds.resumes absent ou invalide »), of `show` too: never
-a default. `show` renders `resumes_left`: K minus the resumes counted since
-the last lift of a `resumes_exhausted` parking of the ticket (since the
-start when there is none), never below 0.
+a default. `show` renders `resumes_left_by_cause`: for each cause, its
+bound minus the resumes of that cause counted since the last lift of a
+`resumes_exhausted` parking of the ticket (since the start when there is
+none), never below 0; and `resumes_left`, the fewest of them. `lift-park`
+keeps on the lift what the ticket had taken per cause (`taken`); a lift
+written before L2 has none, and what it had taken is read from the entries
+older than the lift and the counter it kept.
 
 **The red of the integration branch (T21).** `record-integration-red`
 writes that the integration branch of the convoy is red: the control,
@@ -881,8 +896,11 @@ that commit (`--piece`): it is written by code, never given.
 `raise-planning-exception` is called by `bin/ticket-exit` (T16,
 `docs/TICKET_EXIT.md`) before the request reaches the operator. It refuses a
 kind outside the list, a summary that is not one line, a malformed anchor
-name or one given twice, anchors without `--accept-option` and the reverse.
-The answer the operator gave to the previous exception is stored with it;
+name or one given twice, and anchors without `--accept-option`. An
+exception naming no anchor carries its `--accept-option` too (ADR-0030 L5,
+`bin/ticket-exit` always offers one): answered by that option it is
+`accepted`, which accepts no anchor but lets `bin/convoy-advance` lift its
+parking. One raised before L5 carries none. The answer the operator gave to the previous exception is stored with it;
 the same exception again writes nothing; another one replaces the one that
 was still open. **Nothing here resolves a Planning Exception**: the answer
 is the operator's, written by `bin/escalation-door repondre`.
@@ -965,7 +983,7 @@ version, in order, all passing, each with a one-line detail, or that names
 no full commit SHA, or on a ticket already closed or carrying a closing
 gate record; a TDD step outside its closed
 list, without a full commit SHA, out of order, or on a stopped ticket; a
-freeze without a favorable test review at the same commit; a request, a
+request, a
 launch or a verdict of the test review as described above, or on a stopped
 ticket; a request, a launch, a record or an answer of the code review as
 described above, or on a stopped ticket; a model for a role outside the
@@ -1028,8 +1046,8 @@ deviation a resolved one accepts (`accepted_anchors`) and the result of its
 fidelity check (`fidelity`, `null` before the first one), the resumes code
 opened (`resume`, `null` while there is none), the parkings lifted
 (`park_lifts`, an empty list when none) and the resumes it may still take
-(`resumes_left`; `null` when the counter or the lifts cannot be read, which
-is flagged on its own); and for the convoy the Spec it
+(`resumes_left`, and per cause `resumes_left_by_cause`; `null` when the
+counter or the lifts cannot be read, which is flagged on its own); and for the convoy the Spec it
 delivers (`spec`, `null` when it names none), its counters, its open factory
 incident (`incident`, `null` when there is none), the integration branch
 of its Spec (`integration`, `null` before it is opened), the red of that
