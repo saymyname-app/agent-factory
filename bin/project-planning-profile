@@ -18,6 +18,9 @@ projet" (spec af-oohx2x .12, T04, one rig = one project): `describe` and
 `list` validate the extended descriptor shape -- project_id, display_name,
 rigs, knowledge_repo, roadmap_path, rituals_status_command, and an optional
 per-rig promotion_branch -- and never accept a production or language field.
+Given the rigs the City registers (`--city-registry`, spec af-2zseit story
+100), `list` also refuses a registered rig that no project declares or that
+two projects declare, naming the rig and its cause.
 
 Spec af-wf4w5r .12 (D01, T01) extends the descriptor with one more optional
 block, `launch`: the Delivery Workflow's launch recipe, entry points, health
@@ -717,6 +720,27 @@ def cmd_describe(args: argparse.Namespace) -> int:
     return 0
 
 
+def check_project_coverage(projects: list[dict[str, Any]], city_registry: Any) -> None:
+    """One rig belongs to exactly one project (spec af-2zseit, story 100):
+    every rig the City registers must be declared by one descriptor, never
+    by none and never by two. Raises naming each rig and its cause."""
+    owners: dict[str, list[str]] = {}
+    for project in projects:
+        for rig in project["rigs"]:
+            owners.setdefault(rig, []).append(project["project_id"])
+    problems = []
+    for rig in safe_id_list(city_registry, "city_registry"):
+        declared_by = owners.get(rig, [])
+        if not declared_by:
+            problems.append(f"rig {rig!r} belongs to no declared project")
+        elif len(declared_by) > 1:
+            problems.append(
+                f"rig {rig!r} is declared in more than one project: " + ", ".join(declared_by)
+            )
+    if problems:
+        raise ProfileError("; ".join(problems))
+
+
 def cmd_list(args: argparse.Namespace) -> int:
     directory = Path(args.descriptors_dir)
     projects = []
@@ -731,6 +755,12 @@ def cmd_list(args: argparse.Namespace) -> int:
                     "stacks": descriptor["stacks"],
                 }
             )
+        if args.city_registry:
+            try:
+                city_registry = json.loads(Path(args.city_registry).read_text())
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ProfileError(f"cannot read city registry: {exc}") from exc
+            check_project_coverage(projects, city_registry)
     except ProfileError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
         return 1
@@ -782,6 +812,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--descriptors-dir",
         default=str(repo_root_default() / "config" / "project-descriptors"),
         help="directory holding config/project-descriptors/*.json files",
+    )
+    list_parser.add_argument(
+        "--city-registry",
+        help="path to a JSON array of the City's registered rig ids: each must belong to exactly one project",
     )
     list_parser.set_defaults(func=cmd_list)
 
