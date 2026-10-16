@@ -74,7 +74,7 @@ decided (af-x11w4x: reading the convoy again for each of 62 tickets made
 
 | State of the evaluation | What `settle` does |
 |---|---|
-| none at the tip (none yet, or a commit was added after the last one) | launches the products at the tip and opens an **evaluation**: a commit added after a verdict has it replayed in full (Spec §8). For a `prefactoring` or a ticket without interface (ADR-0030 L4): the **startup control**, no session |
+| none at the tip (none yet, or a commit was added after the last one) | launches the products at the tip and opens an **evaluation**: a commit added after a verdict has it replayed in full (Spec §8). For a `prefactoring` or a ticket without interface (ADR-0030 L4): the **startup control**, no session. A startup control that stood for the evaluation (the product started) does not stand for a ticket that has since become interface: it gets its model evaluation at the same tip; a product that did not start stays the verdict at that tip |
 | favorable at the tip | nothing: the merge may follow |
 | `not_observed` at the tip | waits: back to the author, nothing merges before a new commit. `bin/correction-round settle` sends what was not observed, with the findings of the code review, to the one author session of the ticket's correction round, and stops the ticket still not observed after it (`docs/CORRECTION_ROUND.md`) |
 | `unobservable` by the criterion at the tip | **Planning Exception**: one request on the operator's list (`bin/escalation-door`), the ticket and those that wait for it are parked (`bin/convoy-state park`) |

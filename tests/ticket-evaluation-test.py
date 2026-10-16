@@ -1396,6 +1396,17 @@ class TicketEvaluationTest(unittest.TestCase):
                          tuple(round_[name] for name in ("kind", "started", "verdict", "commit")))
         self.assertEqual([], self.launches())
 
+    def test_an_interface_slice_that_did_not_start_is_not_launched_again_at_the_same_tip(self):
+        tip = self.finished_slice({APP: "raise SystemExit('le produit ne démarre plus')\n"})
+        self.settings(timeout_seconds=3600, start_timeout_seconds=2)
+        self.settle()
+
+        settled = self.settle()
+
+        self.assertEqual([], settled["refused_startup"] + settled["launched"])
+        (round_,) = self.evaluation()["rounds"]
+        self.assertEqual(("startup", False, tip), (round_["kind"], round_["started"], round_["commit"]))
+
     # --- what the Evaluator is given ----------------------------------------------------
 
     def test_what_the_evaluator_is_given_holds_neither_the_handoff_nor_the_diff(self):
@@ -1969,6 +1980,19 @@ class TicketEvaluationTest(unittest.TestCase):
         self.assertEqual([SLICE], [entry["ticket"] for entry in settled["launched"]])
         self.assertEqual([], settled["started"])
         self.assertEqual(1, len(self.launches()))
+        self.assertEqual(tip, self.evaluation()["request"]["commit"])
+
+    def test_a_start_verdict_does_not_stand_for_a_ticket_that_became_interface(self):
+        tip = self.finished_slice(self.realized())
+        self.edit(SLICE, description=TICKET_TEXT)
+        self.settle()
+        self.assertEqual("startup", self.evaluation()["rounds"][-1]["kind"])
+        self.edit(SLICE, description=INTERFACE_TEXT)
+        self.evaluator("silent")
+
+        settled = self.settle()
+
+        self.assertEqual([SLICE], [entry["ticket"] for entry in settled["launched"]])
         self.assertEqual(tip, self.evaluation()["request"]["commit"])
 
     def test_an_open_model_evaluation_of_a_ticket_without_interface_is_withdrawn_for_the_start_probe(self):

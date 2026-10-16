@@ -4211,7 +4211,12 @@ def cmd_open_evaluation(args: argparse.Namespace) -> int:
     datasets = evaluation_datasets(given["datasets"]) if "datasets" in given else None
     last = record["rounds"][-1] if record["rounds"] else None
     lifts = park_lifts_record(metadata[KEY_PARK_LIFTS]) if KEY_PARK_LIFTS in metadata else []
-    if last and last["commit"] == commit and last["verdict"] is not None and not retry_after_lift(last, lifts):
+    # A start that stood for the evaluation of a ticket without interface
+    # does not stand for it once the ticket is interface (ADR-0030 L4).
+    stood_for = (last is not None and last["kind"] == "startup" and last.get("started") is True
+                 and validated_prototype(ticket.get("description")) is not None)
+    if (last and last["commit"] == commit and last["verdict"] is not None and not stood_for
+            and not retry_after_lift(last, lifts)):
         raise Refusal(f"le ticket {args.ticket} est déjà évalué au commit {commit} ({last['outcome']})")
     request = record.get("request")
     wanted = {"commit": commit, "criteria": criteria, "demonstration_line": line}
