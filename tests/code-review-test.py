@@ -389,7 +389,7 @@ class CodeReviewTest(unittest.TestCase):
         self.state("set-tdd", CONVOY, ticket, "--step", "green", "--commit", tip)
 
     @staged
-    def finished_slice(self, files=None, ticket=SLICE, green=True, test_reviewed=False):
+    def finished_slice(self, files=None, ticket=SLICE, green=True, test_reviewed=False, satisfied=None):
         """A slice whose criterion test was proven red and frozen (no test
         review precedes the freeze, ADR-0030 L3), whose code is green at the
         tip, and whose author has finished there. `test_reviewed` leaves on
@@ -411,7 +411,8 @@ class CodeReviewTest(unittest.TestCase):
         # The registry the freeze seals (bin/tdd-step freeze).
         ticket_proofs.capture(self.env, self.repo, CONVOY, ticket, "tdd_freeze", red, {
             "step": "freeze", "verdict": "frozen", "commit": red, "base": self.base, "table": TABLE,
-            "criteria": {"1": [COUNT_ID]}, "files": fingerprints})
+            "criteria": {"1": [COUNT_ID]}, "files": fingerprints,
+            **({"satisfied": satisfied} if satisfied is not None else {})})
         self.finish(ticket, tip, green=green)
         return red, tip
 
@@ -775,6 +776,15 @@ class CodeReviewTest(unittest.TestCase):
         self.assertEqual({"1": [COUNT_ID]}, tests["criterion_tests"])
         self.assertEqual(sorted([TABLE, COUNT_FILE]), sorted(tests["frozen"]))
         self.assertEqual([], tests["amended"])
+
+    def test_the_brief_names_the_criteria_satisfied_by_the_existing_code(self):
+        """ADR-0030 L5: a satisfied criterion was never proven red; the
+        reviewer is told which, to check its test really observes it."""
+        self.finished_slice(satisfied=["1"])
+
+        self.settle()
+
+        self.assertEqual(["1"], json.loads(self.brief_given())["tests"]["satisfied"])
 
     def test_a_ticket_whose_tests_are_the_frozen_ones_is_asked_no_closed_question(self):
         self.finished_slice()

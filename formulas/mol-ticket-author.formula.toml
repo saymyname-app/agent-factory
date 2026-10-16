@@ -194,7 +194,9 @@ A criterion whose tests all pass already at the start commit is recorded as
 satisfied by the existing code (`satisfied` in the red proof): go on with
 the other criteria, and keep its tests in the table. Only a ticket whose
 criteria are all already green stops (exit status 5); then take the Ticket
-Exit `planning_exception`.
+Exit `planning_exception`. Its « accept » answer lifts the parking but not
+the stop: the ticket stays stopped, and closing it as satisfied is a
+separate decision.
 
 **Then freeze them.** No reviewer reads them before the freeze: the code
 review reads them with your code after the green, against the criteria of

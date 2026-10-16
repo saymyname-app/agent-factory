@@ -95,7 +95,9 @@ several Planning Exceptions.
 anchor, the request carries a third option too, « Accepter l'écart que
 décrit le Ticket Handoff », and the ticket records its letter: answered by
 it, the exception is `accepted` (no anchor is) and `bin/convoy-advance`
-lifts the parking and resumes the ticket, like any accepted deviation.
+lifts the parking and resumes the ticket, like any accepted deviation. A
+ticket stopped by a script (`criterion_already_green`: all its criteria
+already green) stays stopped: the answer lifts no stop.
 
 **Operator request.** The file is the request the operator reads, as the
 escalation door takes it: `quoi` and `pourquoi` on one line of at most 140

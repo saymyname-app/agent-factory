@@ -21,7 +21,10 @@ findings; code decides what they are worth.
   false; on the Factory's repository, is it a double of a lower test
   (`docs/TEST_GUIDELINE.md`)? Such a finding blocks under the same citation
   rule (the criterion line of the ticket, or that guideline). A
-  `gc.flow.test_review` left on a ticket in flight is not read.
+  `gc.flow.test_review` left on a ticket in flight is not read. The brief
+  names under `.tests.satisfied` the criteria whose tests already passed at
+  the start commit (ADR-0030 L5): never proven red, so the reviewer checks
+  that their test really observes the criterion.
 - A **closed question** on the tests answered « non » is a Blocking Finding.
 - Each **Blocking Finding** is answered « corrigé » or « contesté », and a
   **second reviewer session** judges that closed list.

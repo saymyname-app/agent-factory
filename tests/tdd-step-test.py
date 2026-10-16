@@ -395,6 +395,18 @@ class TddStepTest(unittest.TestCase):
         self.assertIn("critère 2", error)
         self.assertIsNone(self.ticket_state()["stop"])
 
+    def test_red_refuses_a_green_test_shared_by_a_satisfied_criterion_and_one_still_red(self):
+        # Criterion 1 is satisfied by HEALTH_ID; criterion 2 is red by COUNT_ID
+        # only, its HEALTH_ID passing without the code of the ticket.
+        self.commit_tests({HEALTH_FILE: HEALTH_TEST_ALREADY_GREEN},
+                          table=self.table({"1": [HEALTH_ID], "2": [HEALTH_ID, COUNT_ID]}))
+
+        error = self.red_refused()
+
+        self.assertIn(f"test vert au commit de départ : {HEALTH_ID}", error)
+        self.assertIn("critère 2", error)
+        self.assertIsNone(self.ticket_state()["stop"])
+
     def test_red_stops_the_ticket_when_every_criterion_is_already_green(self):
         self.commit_tests({HEALTH_FILE: HEALTH_TEST_ALREADY_GREEN},
                           table=self.table({"1": [HEALTH_ID], "2": [HEALTH_ID]}))

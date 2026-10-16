@@ -119,7 +119,11 @@ ticket records the letter of that option (`accept_option`,
 parking and resumes the ticket. The other options stay « Trancher dans le
 Planning Run » and « Retirer le ticket du graphe ». A criterion already
 green at the red no longer stops a ticket unless all its criteria are
-(`docs/TDD_STEP.md`), so it is no longer a reason to raise one. What
+(`docs/TDD_STEP.md`), so it is no longer a reason to raise one. When all
+are, the author still raises one after the `criterion_already_green` stop;
+there « accept » lifts the parking but not the stop: the ticket stays
+stopped, and closing it as satisfied by the existing code is a separate
+decision (no automatic path). What
 Benjamin approves (Spec, ticket graph, Acceptance Session) is unchanged.
 
 ## Lifecycle

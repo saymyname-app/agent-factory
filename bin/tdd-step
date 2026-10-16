@@ -660,7 +660,9 @@ def red_proof(check: Check, base: str, table_path: str | None, amendment: bool,
         ), stop=STOP_ALREADY_GREEN)
     if amendment:
         satisfied = [number for number in satisfied if number in (satisfied_before or [])]
-    stray = [t for t in green if not any(t in criteria[number] for number in satisfied)]
+    # A green test of any criterion still red is stray, even if it also
+    # belongs to a satisfied one: it does not prove that criterion red.
+    stray = [t for t in green if any(t in criteria[number] for number in criteria if number not in satisfied)]
     if stray and amendment:
         raise Refusal(" ; ".join(
             f"test vert au commit de départ après amendement : {test_id} (un test amendé échoue encore sans le code du ticket)"
@@ -668,7 +670,7 @@ def red_proof(check: Check, base: str, table_path: str | None, amendment: bool,
     if stray:
         raise Refusal(" ; ".join(
             f"test vert au commit de départ : {test_id} (critère "
-            f"{', '.join(n for n in criteria if test_id in criteria[n])} encore rouge par ses autres tests ; "
+            f"{', '.join(n for n in criteria if test_id in criteria[n] and n not in satisfied)} encore rouge par ses autres tests ; "
             "un test de critère échoue sans le code du ticket)" for test_id in stray))
     return {
         "verdict": "red", "commit": check.head, "base": base, "table": table_path, "criteria": criteria,

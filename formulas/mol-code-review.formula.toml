@@ -118,6 +118,10 @@ read its criterion tests before they were frozen (ADR-0030 L3). Read each
 test of `.tests.criterion_tests` at `.commit` with the criterion it proves
 (`.ticket_text.criteria`, numbered from 1), and ask:
 
+- a criterion listed in `.tests.satisfied` was never proven red: its tests
+  already passed before the code of the ticket (ADR-0030 L5). Check that
+  each of them really observes that criterion, not something always true.
+
 - does it observe its criterion — read the observable the criterion names,
   through the entry point it names — and would it fail on the observation
   that makes the criterion false (after « Faux si »)? A test that only

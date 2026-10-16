@@ -626,7 +626,7 @@ def planning_exception_request(args: argparse.Namespace) -> dict[str, Any]:
         # ADR-0030 L5: no Planning Exception without an accept path.
         options.append({
             "option": "Accepter l'écart que décrit le Ticket Handoff",
-            "consequence": "Le ticket reprend avec cet écart ; la Spec reste la cible ailleurs."})
+            "consequence": "Le ticket reprend avec cet écart ; un ticket arrêté (critères tous déjà verts) reste arrêté."})
     return {
         "quoi": head + short(summary, REQUEST_LINE_MAX - len(head)),
         "pourquoi": "L'auteur ne tranche pas une question d'intention, de comportement ou de découpage.",
