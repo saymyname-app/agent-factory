@@ -111,7 +111,7 @@ la fenêtre, un relecteur par intermittence (deux sessions courtes vues à
 | Poste | Cœurs | Part du CPU occupé | Nature |
 |---|---|---|---|
 | Cockpits isolés orphelins (`cockpit run` + `fake-bd`) | 2,6 | 34–38 % | **Gaspillage** (af-f7x7w7) |
-| Processus détachés récoltés par `systemd --user` | 1,8 | ≈ 24 % | Non identifié (processus dont le lanceur est mort avant eux ; à suivre dans af-f7x7w7) |
+| ~~Processus détachés récoltés par `systemd --user`~~ | ~~1,8~~ | — | **Artefact de mesure** (§10) : CPU de toute la vie de processus détachés qui meurent, déjà dépensé et en partie déjà compté |
 | Dolt (`dolt sql-server`) | 1,3 | 17 % | Plan de contrôle (polling) |
 | Ordres lancés par `gc supervisor` (descendants) | 1,0 | 13 % | Plan de contrôle, dont `convoy-advance` 0,32 |
 | Sessions Claude (outils : tests, git, bd) | 0,9 | 11 % | Travail des agents (auteurs, Mayor, night) |
@@ -255,10 +255,47 @@ seul. Dépense : décision de Benjamin.
 
 - Débit réel à N=2 : nul pendant la fenêtre, faute de ticket arrivé au
   bout. À remesurer quand T02 et ses 8 successeurs tourneront.
-- Origine des 1,8 cœur récoltés par `systemd --user` : processus détachés
-  dont le lanceur est mort, sans nom attribué par l'échantillonneur.
+- ~~Origine des 1,8 cœur récoltés par `systemd --user`~~ : artefact de
+  mesure, voir §10.
 - L4 de l'allègement D01 (évaluation réduite) n'avait pas fusionné à la fin
   de la fenêtre (`origin/main` = 7edf692 ; #621 = L3, af-npz9v1.3, fusionnée
   à 21:41 Paris). Quand il
   fusionnera, la charge des évaluations changera : la référence est à
   refaire.
+
+## 10. Suite du 16/10/2026 : correctifs et remesure
+
+Intent (Benjamin, ses mots, chat opérateur, 2026-10-16 02:49 Paris) : « la
+session de l'étude identifie les 3,2 cœurs détachés et la hausse des appels
+de convoy-state, corrige ce qui est une fuite ou une régression, puis
+remesure. Pas de changement de plafond d'ici là. »
+
+| Fenêtre (Paris) | CPU | PSI CPU | Charge moy. | Dolt | `convoy-state` ← `ticket-evaluation` |
+|---|---|---|---|---|---|
+| Référence 15/10 20:46–22:45 | 96,8 % | 67,8 % | 21,6 | 1,32 cœur | — |
+| Après la fuite (#624, #628), 16/10 01:26–02:28 | 91,9 % | 69,1 % | 32,1 | 1,28 | 34/min |
+| Après #631, 16/10 04:06–05:06 | 88,9 % | 51,9 % | 17,0 | 1,60 | 3,8/min |
+
+- **Fuite des produits lancés** (af-f7x7w7, #624 puis #628) : plus de
+  cockpit orphelin ; le plancher continu de ≈ 2,6 cœurs a disparu.
+- **« Cœurs détachés »** : ce n'était pas une consommation. Quand un
+  processus détaché meurt (batterie `setsid nohup`, cockpit arrêté,
+  `bd db-proxy-child`), le compteur `cutime` de `systemd --user` reçoit d'un
+  coup le CPU de toute sa vie : jusqu'à 2 587 s dans une fenêtre de 30 s,
+  quand 8 cœurs en fournissent 240. L'échantillonneur v4 compte le CPU des
+  processus courts par parent sans recouvrement : il retire ce qui était
+  déjà vu des enfants disparus.
+- **`convoy-state`** : `ticket-evaluation settle` relisait tout le convoi
+  avant chacun de ses 62 tickets ; ce coût ne joue que depuis qu'un ticket
+  fini attend son évaluation. Corrigé par af-x11w4x (#631) : 34 → 3,8
+  lectures par minute.
+- La hausse des appels `bd` du superviseur vers 02:00 venait des tests en
+  cité isolée de la boucle night, avec leurs propres superviseur et Dolt.
+  C'est du travail légitime.
+
+Lecture : la pression CPU passe de 68 % à 52 %, mais les fenêtres ne sont
+pas contrôlées (L3 et L4 de la boucle night ont fusionné entre-temps, et
+ses tests tournaient encore). Dolt devient le premier poste (1,6 cœur). La
+VM sort de la saturation continue sans avoir de marge large. La
+recommandation du §1 tient : plafonds séparés, puis essai par paliers,
+sur décision de Benjamin.

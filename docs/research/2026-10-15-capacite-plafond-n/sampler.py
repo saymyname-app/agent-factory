@@ -148,12 +148,25 @@ def dolt_status():
 def main():
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     prev = read_proc()
-    win = {"cpu": {}, "spawn": {}, "callers": {}, "reaped": {}}
+    win = {"cpu": {}, "spawn": {}, "callers": {}, "reaped": {}, "unseen": {}}
     t_win = time.time()
     while not os.path.exists(os.path.join(os.path.dirname(OUT), "STOP")):
         time.sleep(TICK)
         cur = read_proc()
         by_pid = {k[0]: v for k, v in cur.items()}
+        # Children seen last tick and gone now: what they had already been
+        # counted for, by their parent, so a parent's cutime delta minus this
+        # is CPU never seen (short processes, last-tick tail) — no overlap.
+        gone = {}
+        for key, (ppid, cpu, args, ccpu) in prev.items():
+            if key not in cur:
+                gone[ppid] = gone.get(ppid, 0) + cpu + ccpu
+        for key, (ppid, cpu, args, ccpu) in cur.items():
+            if key in prev:
+                unseen = (ccpu - prev[key][3]) - gone.get(key[0], 0)
+                if unseen > 0:
+                    lab = label(args)
+                    win["unseen"][lab] = win["unseen"].get(lab, 0) + unseen
         for key, (ppid, cpu, args, ccpu) in cur.items():
             fam = family(args)
             if key in prev:
@@ -166,9 +179,9 @@ def main():
             else:
                 delta = cpu
                 win["spawn"][fam] = win["spawn"].get(fam, 0) + 1
-                if fam in ("bd", "gc-bd", "gc-other", "dolt-client", "fake-bd"):
+                if fam in ("bd", "gc-bd", "gc-other", "dolt-client", "fake-bd", "factory-bin"):
                     c = caller_of(by_pid, ppid)
-                    ck = fam + " <- " + c
+                    ck = (label(args) if fam == "factory-bin" else fam) + " <- " + c
                     win["callers"][ck] = win["callers"].get(ck, 0) + 1
             if delta > 0:
                 win["cpu"][fam] = win["cpu"].get(fam, 0) + delta
@@ -182,6 +195,7 @@ def main():
                 "spawn": win["spawn"],
                 "callers": win["callers"],
                 "reaped_cpu_s": {k: round(v / HZ, 2) for k, v in win["reaped"].items() if v >= HZ // 10},
+                "unseen_cpu_s": {k: round(v / HZ, 2) for k, v in win["unseen"].items() if v >= HZ // 10},
                 "stat_cpu": stat_cpu(),
                 "psi": psi(),
                 "loadavg": read_file("/proc/loadavg").split()[:4],
@@ -191,7 +205,7 @@ def main():
             }
             with open(OUT, "a") as f:
                 f.write(json.dumps(rec, sort_keys=True) + "\n")
-            win = {"cpu": {}, "spawn": {}, "callers": {}, "reaped": {}}
+            win = {"cpu": {}, "spawn": {}, "callers": {}, "reaped": {}, "unseen": {}}
             t_win = now
 
 
