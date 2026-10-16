@@ -117,6 +117,21 @@
         "kind": "command",
         "method": "run",
         "path": "bin/outcome-promote"
+      },
+      {
+        "kind": "command",
+        "method": "benjamin",
+        "path": "bin/escalation-door"
+      },
+      {
+        "kind": "command",
+        "method": "create",
+        "path": "bin/proposal-door"
+      },
+      {
+        "kind": "command",
+        "method": "bd-publish",
+        "path": "bin/ticket-graph-publish"
       }
     ],
     "health_probe": {
@@ -221,7 +236,7 @@
       "job-user-prompt-rendered": "config/cockpit-datasets/job-user-prompt-rendered.json"
     },
     "test_perimeter": [
-      "tests/"
+      "tests/cockpit-criteria/"
     ],
     "frozen_harness_paths": [
       "tests/fixtures/delivery-fixture-city/tests/harness.py",
@@ -247,7 +262,7 @@
     ],
     "import_rule": {
       "product_import": "(?<![\\w/.-])bin/[a-z]|^\\s*(?:from|import)\\s+(?:cockpit|convoy_state|factory_[a-z_]+|delivery_role_identity|overlap_conflict_log|provider_failover|reversibility)\\b",
-      "entry_point_import": "(?<![\\w/.-])bin/(?:project-launch|project-planning-profile|prototype-conformance|acceptance-session|owner-answer|outcome-promote)(?![\\w-])"
+      "entry_point_import": "(?<![\\w/.-])bin/(?:project-launch|project-planning-profile|prototype-conformance|acceptance-session|owner-answer|outcome-promote|escalation-door|proposal-door|ticket-graph-publish)(?![\\w-])"
     },
     "regression_command": "python3 tests/cockpit-criteria/regression.py",
     "k": 3,

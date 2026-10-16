@@ -28,6 +28,13 @@ open or was closed outside its commands. A convoy closed by command, on
 Benjamin's words (T30), is neither walked by `--all` nor a reason for the
 order to run.
 
+A pass that exits 1 or 3 prints its answer on stdout, then one last line on
+stderr: `convoy-advance: échec de la passe -- <convoy> <step>.<key>: <detail>
+; …`, each step that failed it (the « état sans règle » message first). The
+controller keeps only the tail of a failed order's output (af-ypj2g0), so
+this line is what the `order.failed` event and its `on-order-failed` bead
+show.
+
 ## What one pass does
 
 For each ticket of the convoy, in the convoy's own order, the pass starts it
@@ -37,7 +44,7 @@ when all of this holds:
   Ticket Exit yet (it was never started);
 - the ticket is not parked (T11: a Ticket Exit `planning_exception` or
   `operator_request` parks its ticket and every ticket that waits for it,
-  `docs/TICKET_EXIT.md`; T20: so does the third resume of a ticket, below);
+  `docs/TICKET_EXIT.md`; T20: so does the last resume (its bound) of a same cause, below);
   a parked ticket is listed under `waiting`, with its cause and the ticket
   that parked it, and the tickets that wait for none of them keep starting;
 - the convoy is not stopped (T21, « The two stops of a convoy » below): its
@@ -107,12 +114,18 @@ pass exits 1.
 
 ## The ceiling N
 
-N is `max_sessions` in `config/delivery-flow.json`: one setting for the
-whole Factory, shared between the Specs. A place is taken by:
+N is `max_sessions` in `config/delivery-flow.json`: the ceiling of the
+authors, one setting for the whole Factory, shared between the Specs. Each
+delivery role has its own ceiling (af-4xxlo7): N for the authors,
+`max_reviewer_sessions` for the reviewer and `max_evaluator_sessions` for the
+Evaluator. Gas City applies the last two through `max_active_sessions` of
+their agents (`tests/delivery-agents-test.sh` holds them equal). A review
+or an evaluation never waits for N, and a reviewer or Evaluator session,
+even idle until its `idle_timeout`, takes no author's place. A place under N
+is taken by:
 
-- each live session of a delivery role agent — author, reviewer, Evaluator
-  (`config/delivery-roles.json`) — read from `gc session list`, whatever the
-  convoy or the Spec;
+- each live session of the author agent (`config/delivery-roles.json`),
+  read from `gc session list`, whatever the convoy or the Spec;
 - each ticket of any open marked convoy that was started through the door
   and that no session has picked yet (still `open`): its author session is
   on its way;
@@ -180,8 +193,10 @@ did not reach the operator yet, to `bin/ticket-evaluation settle <convoy>
 --repo <project repository>` (`docs/TICKET_EVALUATION.md`). For each ticket
 finished and green at the tip of its branch, the command launches the
 product from a clean copy of that tip and sends the evaluation to a session
-of the Evaluator role (for a `prefactoring`: checks itself that the product
-starts, without a session); it sends an evaluation left without result once
+of the Evaluator role when the ticket is an interface ticket (ADR-0030 L4;
+for a `prefactoring` or any other ticket: checks itself that the product
+starts, without a session, and records the model evaluation « not
+required »); it sends an evaluation left without result once
 more, stops the ticket when the relaunch gave none either; it parks a ticket
 whose criterion cannot be observed and puts the Planning Exception on the
 operator's list; and it stops the products once the states are in. The
@@ -205,7 +220,14 @@ A ticket of a marked convoy is closed by the pass, through `bin/ticket-end`
   fidelity was not measured at its tip is handed to `bin/ticket-end fidelity
   <convoy> --repo <project repository> --profile <project profile> --limit
   1`, which runs the mechanical fidelity check on the commit that merges.
-  Reported under `fidelity` (`checked`, `waiting`, `refused`).
+  Reported under `fidelity` (`checked`, `waiting`, `refused`). The check
+  runs in its own session, under a lock per convoy in the directory of the
+  pass's lock (af-pxijl6): the pass waits for it 120 s at most, then leaves
+  it running, its tickets under `waiting`. The order's timeout kills the
+  pass, not the check; a pass that finds it running leaves it, and the
+  pass that finds it ended reports its answer. Before this, a check longer
+  than what was left of the 300 s was killed with its pass and started
+  again from zero by the next one: no pass ended any more.
 - **After the merge**, a convoy that has a merged ticket still open, or in
   which this pass merged one, is handed to `bin/ticket-end settle <convoy>
   --repo <project repository>`. Reported under `ticket_end`: `closed` (the
@@ -256,24 +278,28 @@ the parking only):
 | Parked for | Lifted by |
 |---|---|
 | `operator_request` (its own Ticket Exit) | any answer given to the request of that ticket (`bin/escalation-door repondre`) after the parking |
-| `planning_exception` (its own Ticket Exit) | only the option that accepts the deviation: the last Planning Exception of the ticket is `accepted` (it names anchors and was answered by its `accept_option`, `docs/CONVOY_STATE.md`). Any other answer leaves the ticket parked |
+| `planning_exception` (its own Ticket Exit) | only the option that accepts the deviation: the last Planning Exception of the ticket is `accepted` (it was answered by its `accept_option`, `docs/CONVOY_STATE.md`; every exception raised since ADR-0030 L5 has one, with or without anchors). Any other answer leaves the ticket parked |
 | `resumes_exhausted` | option `a` of the convoy's grouped request (below), for the tickets that request names as lifted |
 
 The lift is `bin/convoy-state lift-park <convoy> <ticket> --request <bead>
 --option <letter>`: the parking is removed from the ticket and from those
 parked behind it — a ticket that still waits for another parked ticket is
 parked behind that one instead — and kept on the ticket under `park_lifts`.
-An exhausted ticket takes its three resumes again, counted from the lift;
-the counter itself is never reset. No hand is put on a ticket.
+An exhausted ticket takes its resumes again, three per cause, counted from
+the lift; the counter itself is never reset. No hand is put on a ticket.
 
 **2. It parks the ticket that is out of resumes.** A ticket at work (started
 through the door, not closed, neither parked nor stopped) whose
 `resumes_left` is 0 is parked with every ticket that waits for it, directly
 or not: `bin/convoy-state park --cause resumes_exhausted`. The bound is K
 (Spec §8), `bounds.resumes` of `config/delivery-flow.json` (3), read by
-`bin/convoy-state` (T21, « The bounds are set in one place » below), **every
-cause together**: the resumes of this section, the correction round (T17),
-and a commit added after a verdict (T18). Its value is a starting one with
+`bin/convoy-state` (T21, « The bounds are set in one place » below), **per
+cause** (ADR-0030 L2): each cause of a resume of this section, and a commit
+added after a verdict (T18), counts against its own bound; the correction
+round (T17) is not one of them, it keeps its own bound of one round. A red
+merge returned to its author takes nothing of the interruptions' bound, and
+`resumes_left` is the fewest any one cause has left (`resumes_left_by_cause`
+of `bin/convoy-state show` names each). Its value is a starting one with
 no measured basis. The park detail names the cause of the last resume
 recorded (`dernière reprise enregistrée : <cause>`; T17/T18 count without an
 entry) and, when it is `returned` by a red merge, the merged commit and the
@@ -293,6 +319,7 @@ ticket:
 | `answered` | the Ticket Exit is `planning_exception` or `operator_request` and the ticket is no longer parked: its parking was lifted |
 | `behind` | the Ticket Exit is `finished`, the ticket is not merged, and `bin/code-review show <convoy> <ticket> --repo` reports `behind`: its branch does not contain the tip of the integration branch, so no reviewer is sent on it (T44, `docs/CODE_REVIEW.md`). The fact is `integration:<tip>/exit:<exit time>`: once per Ticket Exit |
 | `evaluation_no_result` | the ticket is stopped `evaluation_no_result` (its Ticket Evaluation gave no result, relaunch included, `docs/TICKET_EVALUATION.md`), it is neither parked nor closed, it has a resume left, the operator has not answered the request of that stop, and no resume of this cause was opened yet on the current tip of the integration branch (on `origin` when it is there, else local). The fact is `integration:<tip>/stop:<stop time>`: once per tip of the integration branch (af-xhc0sj) |
+| `stage_removed` | the ticket is stopped by a stage ADR-0030 L3 removed from the flow, the test review (`test_review_refused`, `test_review_no_result`), it is neither parked nor closed, it has a resume left, and the operator has not answered the request of that stop. The fact is `stop:<reason>/<stop time>`: once per stop; the stage that wrote it no longer runs, so it cannot stop the ticket again (af-pjvsgo) |
 
 The pass counts the resume first — `bin/convoy-state open-resume <convoy>
 <ticket> --cause <cause> --ref <fact>`: one more `resumes`, the record under
@@ -307,7 +334,7 @@ launch-resume`): one session per resume. The session takes the ticket with
 `bin/ticket-author start`, does only what is missing, and leaves by a Ticket
 Exit (`formulas/mol-ticket-resume.formula.toml`).
 
-An `evaluation_no_result` resume lifts the stop in that same write: the stop
+An `evaluation_no_result` or `stage_removed` resume lifts the stop in that same write: the stop
 leaves the ticket and is kept on its resume (`resume.entries[].stop`), never
 erased; the request the stop raised is withdrawn first (`bin/escalation-door
 clear <ticket>`). A Ticket Evaluation without result is most often a defect
@@ -316,9 +343,13 @@ elsewhere; the fresh author session brings the integration branch into the
 ticket branch and finishes again, and the next passes withdraw the
 evaluation left open on the old exit and send a new one. Stopped again on
 the same integration tip, the ticket stays with the operator; once the tip
-moves, it is resumed once more, always within K: the third resume parks it
-(its stop lifted) and the grouped request follows. Every other stop —
-`evaluation_outage`, `amendment_exhausted`, a review without result, a
+moves, it is resumed once more, always within K: the last resume (its
+bound) of that cause parks it
+(its stop lifted) and the grouped request follows. A `stage_removed` resume
+sends the ticket back to its author past a stage that no longer exists: the
+session finishes the ticket on the current flow, and the code review reads
+its criterion tests (below, « No test review »). Every other stop —
+`evaluation_outage`, `amendment_exhausted`, a code review without result, a
 ticket still refused — is never resumed.
 
 A `behind` resume is counted like the others (K; the third parks the
@@ -373,7 +404,10 @@ Two decisions taken here:
 
 ### What is not resumed
 
-- **A stopped ticket**, but for its stop `evaluation_no_result` (above).
+- **A stopped ticket**, but for its stop `evaluation_no_result` and the
+  stops of the removed test review (`stage_removed`, above). Nor is a
+  ticket stopped by the removed test review whose request the operator
+  answered or that is out of resumes.
   Its sequence failed and it is with the operator; it is never read as
   interrupted, and nothing else lifts a stop. Nor is a ticket stopped
   `evaluation_no_result` whose request the operator answered, that is out
@@ -479,7 +513,7 @@ delivered so far (Spec §8), and no command holds one in its code:
 
 | Bound | Setting | Value | Read by | Effect |
 |---|---|---|---|---|
-| K, resumes of a ticket, every cause together | `bounds.resumes` | 3 | `bin/convoy-state` | at the last one the ticket is parked with its descendants |
+| K, resumes of a ticket, per cause (ADR-0030 L2) | `bounds.resumes` | 3 per cause | `bin/convoy-state` | at the last one of a same cause the ticket is parked with its descendants |
 | Planning Exceptions open on a Spec | `bounds.open_planning_exceptions` | 2 | `bin/convoy-advance` | no new ticket of its convoy starts |
 | Repair rounds at the end of a Spec, every source of findings together | `bounds.end_rounds` | 2 | `bin/convoy-state`, in the write that would count one more round | a refusal more counts no round and publishes no repair: the rounds are stopped and a « non conforme » request goes to the operator (T26) |
 
@@ -596,21 +630,25 @@ mechanical verdicts again and the product is evaluated again. The round is
 counted when the evaluation that refuses the tip is recorded, not when its
 repair is published (T26, below).
 
-## Test reviews left without result (T13)
+## No test review (ADR-0030 L3)
 
-Once the starts are made, and before the merge, the pass hands each convoy that has
-a review of criterion tests open, or a ticket that review stopped and that
-did not reach the operator yet, to `bin/test-review settle`
-(`docs/TEST_REVIEW.md`): a review whose launch gave no result in
-`test_review.timeout_seconds` is launched once more, the ticket is stopped
-when the relaunch gave none either, and the stop is raised through
-`bin/escalation-door`. No author session has to be alive for that. The
-convoy's entry then carries `test_review` (`launched`, `relaunched`,
-`pending`, `stopped`, `escalated`, `deferred`, `refused`); a launch the
-door deferred is retried by the next pass, while a settlement that could
-not run, or a launch the door refused, fails the pass (exit 1). A
-convoy with nothing due is not handed over, and a stopped convoy (« état
-sans règle ») is settled no more than it is started.
+A pass starts no review of criterion tests and settles none: no test review
+precedes the freeze, and the code review reads the criterion tests after
+the green (`docs/CODE_REVIEW.md`). A `gc.flow.test_review` left on a ticket
+in flight by the flow before L3, open or not, is ignored (`bin/test-review` was removed in L7). A ticket a test
+review stopped before L3 (`test_review_refused`, `test_review_no_result`) is
+resumed on itself (`stage_removed`, above, af-pjvsgo): its request is
+withdrawn through `bin/escalation-door clear` and a fresh author session
+finishes it on the current flow. Only when it has no resume left does its
+stop stay, raised once with the TDD stops (`tdd_stops`) if it was not yet.
+
+A ticket whose criteria are all already green at the red
+(`criterion_already_green`, ADR-0030 L5) is raised with the TDD stops too,
+« Ticket <id> arrêté : critères tous déjà verts — … », but only once its
+author's Planning Exception is answered and no longer parks it: the
+« accept » answer lifts the parking, not the stop, so this request keeps
+the convoy from stalling silently. While that exception parks it, or before
+its author raised one, nothing is posted.
 
 ## A ticket stopped at its second amendment reaches the operator (T45)
 
@@ -688,8 +726,7 @@ two stops (T21: `{reason: integration_red, control, repair}` or `{reason:
 planning_exceptions, open, bound}`), `repair` when the pass published the
 repair of a red (`{id, key, draft, published}`, or `error`),
 `integration` when the pass ran a merge, `tdd_stops` when it raised a ticket
-stopped at its second amendment (T45), `test_review` when it settled
-reviews of criterion tests, `code_review` when it settled code reviews,
+stopped at its second amendment (T45), `code_review` when it settled code reviews,
 `evaluation` when it settled Ticket Evaluations, `correction` when a
 correction round was opened, awaited or ended in a stop, `fidelity` when it
 measured an interface ticket, `ticket_end` when the gate settled merged
@@ -713,7 +750,7 @@ it is named as CONVOY, carries `closed`, the record of its closing.
 | Exit | Meaning |
 |---|---|
 | 0 | the pass is done; what it started is listed, possibly nothing |
-| 1 | refused or could not run (settings, a bound, tracker), the door refused a ticket or a resume (named under `refused`), a ticket to resume has no `resume` setting or no project, a parking could not be lifted, an incident or a grouped request could not be raised or withdrawn, the repair of a red integration branch or of tracked elements could not be published, or the merge pass, the settlement of the test reviews, of the code reviews, of the evaluations or of the correction rounds, a fidelity check, the ticket-end gate, the end-of-Spec gate, the Outcome Evaluation or the settlement of the end code review could not run, a repair the Evaluator of the end drafted could not be published, the Evidence Pack could not be generated, the « non conforme » request of stopped rounds could not be raised or recorded, the Acceptance Request of a Delivered Outcome or the repair of an Acceptance Session's outage could not be sent, published or recorded, or the merge or the closing that follows the operator's answer could not be made (`promotion.error`, `promotion.message`, `promotion.pending`, or the `repair` of a voided acceptance that could not be published) |
+| 1 | refused or could not run (settings, a bound, tracker), the door refused a ticket or a resume (named under `refused`), a ticket to resume has no `resume` setting or no project, a parking could not be lifted, an incident or a grouped request could not be raised or withdrawn, the repair of a red integration branch or of tracked elements could not be published, or the merge pass, the settlement of the code reviews, of the evaluations or of the correction rounds, a fidelity check, the ticket-end gate, the end-of-Spec gate, the Outcome Evaluation or the settlement of the end code review could not run, a repair the Evaluator of the end drafted could not be published, the Evidence Pack could not be generated, the « non conforme » request of stopped rounds could not be raised or recorded, the Acceptance Request of a Delivered Outcome or the repair of an Acceptance Session's outage could not be sent, published or recorded, or the merge or the closing that follows the operator's answer could not be made (`promotion.error`, `promotion.message`, `promotion.pending`, or the `repair` of a voided acceptance that could not be published) |
 | 3 | a convoy is in an « état sans règle »: none of its tickets is started, the anomalies are listed (0 with `--stopped-ok` once its incident is raised) |
 | 4 | the convoy does not carry the mark: « pas un convoi du nouveau flux » |
 
@@ -857,8 +894,8 @@ sent by the next pass), no `resume` setting, the ceiling, a stopped ticket
 never resumed, a ticket stopped without evaluation result resumed on
 itself once per integration tip, its stop kept, its request and its open
 evaluation withdrawn, and left stopped once its request is answered, the
-third resume parking the ticket and its descendants
-whatever the causes, the unrelated tickets still starting, exactly one
+the last resume (its bound) of a same cause parking the ticket and its descendants,
+three different causes leaving it at work (ADR-0030 L2), the unrelated tickets still starting, exactly one
 grouped request naming each parked ticket and its cause, none while a
 ticket that is not parked is left, one for several passes, the answer that
 lifts and the one that leaves the tickets parked, and the answer to the
@@ -874,7 +911,7 @@ the city's own order counts one resume, routes one bead « Reprise — »
 through the real dispatch door on the real `mol-ticket-resume`, sends no
 second one at the next passes and counts its place under N. The agent of
 that trial is a stub: no session runs the step of the formula, and the
-third resume, the lift of a parking and the grouped request are not part
+last resume (its bound) of a same cause, the lift of a parking and the grouped request are not part
 of it.
 
 T21: the same file covers the two stops on a fake tracker state: tests

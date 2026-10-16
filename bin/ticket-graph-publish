@@ -38,9 +38,10 @@ ticket names its own by path (`prototype: <chemin>`) and waits for the Fold
 of that one (T46, af-lb9zkz). `bd-patch` applies all of it to the
 graph that results from the patch, tickets added or withdrawn included, and
 publishes without a new approval a patch that only adds `repair` tickets.
-A first publication is also refused without a graph review that holds for
-the draft's current digest (T08, `bin/graph-review check`,
-docs/GRAPH_REVIEW.md). A draft that does not declare the contract is
+A first publication, and an approved revision alike (af-8mbftn), is also
+refused without a graph review that holds for the draft's current digest
+(T08, `bin/graph-review check`, docs/GRAPH_REVIEW.md), critical-path bound
+included (ADR-0031). A draft that does not declare the contract is
 published exactly as before.
 docs/ENTRY_CONTRACT.md has the fields and the refusals.
 
@@ -2427,6 +2428,7 @@ def cmd_bd_patch_new_flow(args: argparse.Namespace, bead: dict[str, Any], human_
     } if resumed and isinstance(parsed.get("withdrawn"), list) else {}
     result: dict[str, Any]
     scope_edges: list[dict[str, str]] = []
+    graph_review: dict[str, Any] = {}
 
     if resumed:
         result = {
@@ -2473,6 +2475,11 @@ def cmd_bd_patch_new_flow(args: argparse.Namespace, bead: dict[str, Any], human_
         ]
         refusals += graph_refusals(graph, spec, launch, project_id, descriptor)
         refuse_unless_contract_met(draft_id, refusals)
+        # An approved revision is a new graph Benjamin signs: it passes the
+        # same graph review as a first publication (af-8mbftn). A patch that
+        # only adds `repair` tickets, written by code, needs none.
+        if approved:
+            graph_review = {"graph_review": graph_review_of(draft_id)}
 
         scope_edges = add_scope_overlap_edges(tickets)
         record_scope_overlaps(scope_edges, tickets, digest)
@@ -2510,6 +2517,7 @@ def cmd_bd_patch_new_flow(args: argparse.Namespace, bead: dict[str, Any], human_
         "approved": approved,
         "mayor_notified": None,
         **result,
+        **graph_review,
     }, ensure_ascii=False, sort_keys=True))
     return 0
 
@@ -2618,7 +2626,7 @@ def parser() -> argparse.ArgumentParser:
         help="Mayor reslice without a fresh Planning Run: refuse and escalate any acceptance-criteria change",
     )
     value.add_argument(
-        "--project",
+        "--project", required=True,
         help="project id whose config/projects/<id>.toml declares the human approver",
     )
     value.add_argument(

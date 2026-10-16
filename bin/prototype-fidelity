@@ -20,6 +20,9 @@ prototype (`--prototype`, the directory `bin/prototype-conformance` checks):
   enclosing anchor, another number of occurrences, or another computed value
   of a compared property, is a deviation.
 
+The states are compared one at a time (af-6xjghg): the product of a state
+is stopped before that of the next is launched.
+
 Any deviation is red and is named by state, viewport, anchor and property. A
 state that could not be compared is never green: the command refuses.
 
@@ -34,7 +37,7 @@ lifted here: it reads « accepté par Benjamin » only once a Planning Exception
 that names its anchor (bin/ticket-exit --anchor) was answered so by the
 operator (bin/escalation-door repondre).
 
-Before anything is compared, a delivered page or a file it links from its
+Before a state is compared, a delivered page or a file it links from its
 own address that has the digest of a file of the prototype is refused, file
 named (T46, af-lb9zkz): the prototype file is not promoted as is.
 
@@ -67,6 +70,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from html.parser import HTMLParser
 from pathlib import Path
 from types import ModuleType
@@ -309,9 +313,9 @@ def serve_prototype(prototype: Path) -> tuple[http.server.ThreadingHTTPServer, s
 
 
 def launch(descriptor: Path, repo_root: Path, commit: str, state: str, work: Path) -> tuple[Path, dict[str, Any]]:
-    state_file = work / f"launch-{len(list(work.glob('launch-*.json')))}.json"
+    state_file = work / f"launch-{uuid.uuid4().hex}.json"
     status, answer = run_json([
-        str(LAUNCH_TOOL), "--repo-root", str(repo_root), "start", str(descriptor), "--commit", commit,
+        str(LAUNCH_TOOL), "--repo-root", str(repo_root), "start", "--owner-pid", str(os.getpid()), str(descriptor), "--commit", commit,
         "--dataset", state, "--timeout", str(LAUNCH_TIMEOUT), "--state-file", str(state_file)])
     if status != 0 or not isinstance(answer, dict) or not answer.get("started"):
         raise Refusal(f"le produit n'a pas démarré sur le jeu de données « {state} » : {refusal_text(answer)}")
@@ -321,6 +325,16 @@ def launch(descriptor: Path, repo_root: Path, commit: str, state: str, work: Pat
 def stop(state_file: Path) -> None:
     if state_file.exists():
         subprocess.run([str(LAUNCH_TOOL), "stop", "--state-file", str(state_file)], capture_output=True, text=True)
+
+
+def launch_state(plan: dict[str, Any], state: dict[str, Any]) -> Path:
+    """The product launched on the dataset of one state, its page address set
+    on the state; a state `check` already launched is not launched again."""
+    if state.get("state_file"):
+        return Path(state["state_file"])
+    state_file, record = launch(Path(plan["descriptor"]), Path(plan["repo_root"]), plan["commit"], state["id"], Path(plan["work"]))
+    state["delivered_url"] = record["address"] + state["path"]
+    return state_file
 
 
 # --- tokens, on the sources ------------------------------------------------------
@@ -399,10 +413,11 @@ def served_digests(page_url: str, what: str) -> dict[str, str]:
     return found
 
 
-def refuse_promoted_prototype(prototype: Path, manifest: dict[str, Any], states: list[dict[str, Any]]) -> None:
+def frozen_files(prototype: Path, manifest: dict[str, Any]) -> dict[str, str]:
     """Spec section 3, « Prototype Fold »: the prototype file is not promoted
-    as is. The manifest and the example datasets are not prototype pages: the
-    product is launched on the same data."""
+    as is. The files of the prototype by digest; the manifest and the example
+    datasets are not prototype pages: the product is launched on the same
+    data."""
     kept = {MANIFEST} | {
         urllib.parse.urlsplit(state["dataset"]).path.lstrip("/")
         for state in manifest.get("states") or [] if isinstance(state, dict) and isinstance(state.get("dataset"), str)
@@ -412,16 +427,14 @@ def refuse_promoted_prototype(prototype: Path, manifest: dict[str, Any], states:
         relative = path.relative_to(prototype).as_posix()
         if path.is_file() and relative not in kept:
             frozen.setdefault(hashlib.sha256(path.read_bytes()).hexdigest(), relative)
-    promoted = []
-    for state in states:
-        for served, digest in served_digests(state["delivered_url"], f"le produit lancé (état {state['id']})").items():
-            if digest in frozen:
-                promoted.append(f"{served} (état {state['id']}) a la même empreinte que {frozen[digest]}")
-    if promoted:
-        raise Refusal(
-            "prototype promu tel quel : un fichier servi par le livré est un fichier du Validated Prototype, "
-            "recopié sans être replié dans le vrai code — " + " ; ".join(promoted)
-        )
+    return frozen
+
+
+def promoted_files(frozen: dict[str, str], state: dict[str, Any]) -> list[str]:
+    """The files the launched product of a state serves as a prototype file."""
+    return [f"{served} (état {state['id']}) a la même empreinte que {frozen[digest]}"
+            for served, digest in served_digests(state["delivered_url"], f"le produit lancé (état {state['id']})").items()
+            if digest in frozen]
 
 
 def css_rules(css: str, context: str = "") -> list[tuple[str, str, str]]:
@@ -567,44 +580,67 @@ def compare_anchors(prototype: list[dict[str, Any]], delivered: list[dict[str, A
 
 
 def measure(plan: dict[str, Any]) -> dict[str, Any]:
-    """Compare every state of the plan; the two sides are rendered here, now."""
-    browser, attribute = plan["browser"], plan["anchor_attribute"]
+    """Compare every state of the plan; the two sides are rendered here, now.
+    The product runs on one state at a time (af-6xjghg): launched, compared,
+    stopped before the next one is launched."""
+    prototype = Path(plan["prototype"])
+    frozen = frozen_files(prototype, read_manifest(prototype))
     states: dict[str, Any] = {}
     deviations: list[dict[str, Any]] = []
+    promoted: list[str] = []
     for state in plan["states"]:
-        reference_tokens = tokens_of(state["prototype_url"], f"la page du prototype (état {state['id']})")
-        delivered_tokens = tokens_of(state["delivered_url"], f"la page livrée (état {state['id']})")
-        for name, value in reference_tokens.items():
-            if delivered_tokens.get(name) != value:
-                deviations.append({
-                    "state": state["id"], "viewport": None, "anchor": None, "kind": "token", "property": name,
-                    "prototype": value, "delivered": delivered_tokens.get(name)})
-        records, anchors, extra = [], [], {}
-        for rendering in plan["renderings"]:
-            prototype = measure_page(browser, plan["measure_url"], state["prototype_url"], attribute, rendering, "le prototype")
-            if not prototype:
-                raise Refusal(
-                    f"aucune ancre mesurée sur le prototype pour l'état {state['id']} ({rendering['label']}) : "
-                    "rien à comparer n'est pas une fidélité prouvée")
-            delivered = measure_page(browser, plan["measure_url"], state["delivered_url"], attribute, rendering, "le livré")
-            compared, only_delivered = compare_anchors(prototype, delivered)
-            for record in compared:
-                records.append({"viewport": rendering["label"], **record})
-                if record["anchor"] not in anchors:
-                    anchors.append(record["anchor"])
-                deviations += [
-                    {"state": state["id"], "viewport": rendering["label"], "anchor": record["anchor"], **deviation}
-                    for deviation in record["deviations"]]
-            if only_delivered:
-                extra[rendering["label"]] = only_delivered
-        states[state["id"]] = {
-            "screen": state["screen"], "path": state["path"], "viewports": [r["label"] for r in plan["renderings"]],
-            "anchors": anchors, "records": records,
-            "tokens": {"compared": len(reference_tokens),
-                       "only_delivered": sorted(name for name in delivered_tokens if name not in reference_tokens)},
-            "anchors_only_delivered": extra,
-        }
+        state_file = launch_state(plan, state)
+        try:
+            promoted += promoted_files(frozen, state)
+            # Once a state is refused nothing more is compared; the other
+            # states are still read, so that the refusal names every file.
+            if not promoted:
+                states[state["id"]] = measure_state(plan, state, deviations)
+        finally:
+            stop(state_file)
+    if promoted:
+        raise Refusal(
+            "prototype promu tel quel : un fichier servi par le livré est un fichier du Validated Prototype, "
+            "recopié sans être replié dans le vrai code — " + " ; ".join(promoted)
+        )
     return {"commit": plan["commit"], "screens": plan["screens"], "states": states, "deviations": deviations}
+
+
+def measure_state(plan: dict[str, Any], state: dict[str, Any], deviations: list[dict[str, Any]]) -> dict[str, Any]:
+    """The records of one launched state; its deviations are added to `deviations`."""
+    browser, attribute = plan["browser"], plan["anchor_attribute"]
+    reference_tokens = tokens_of(state["prototype_url"], f"la page du prototype (état {state['id']})")
+    delivered_tokens = tokens_of(state["delivered_url"], f"la page livrée (état {state['id']})")
+    for name, value in reference_tokens.items():
+        if delivered_tokens.get(name) != value:
+            deviations.append({
+                "state": state["id"], "viewport": None, "anchor": None, "kind": "token", "property": name,
+                "prototype": value, "delivered": delivered_tokens.get(name)})
+    records, anchors, extra = [], [], {}
+    for rendering in plan["renderings"]:
+        prototype = measure_page(browser, plan["measure_url"], state["prototype_url"], attribute, rendering, "le prototype")
+        if not prototype:
+            raise Refusal(
+                f"aucune ancre mesurée sur le prototype pour l'état {state['id']} ({rendering['label']}) : "
+                "rien à comparer n'est pas une fidélité prouvée")
+        delivered = measure_page(browser, plan["measure_url"], state["delivered_url"], attribute, rendering, "le livré")
+        compared, only_delivered = compare_anchors(prototype, delivered)
+        for record in compared:
+            records.append({"viewport": rendering["label"], **record})
+            if record["anchor"] not in anchors:
+                anchors.append(record["anchor"])
+            deviations += [
+                {"state": state["id"], "viewport": rendering["label"], "anchor": record["anchor"], **deviation}
+                for deviation in record["deviations"]]
+        if only_delivered:
+            extra[rendering["label"]] = only_delivered
+    return {
+        "screen": state["screen"], "path": state["path"], "viewports": [r["label"] for r in plan["renderings"]],
+        "anchors": anchors, "records": records,
+        "tokens": {"compared": len(reference_tokens),
+                   "only_delivered": sorted(name for name in delivered_tokens if name not in reference_tokens)},
+        "anchors_only_delivered": extra,
+    }
 
 
 def cmd_measure(args: argparse.Namespace) -> int:
@@ -641,14 +677,22 @@ def piece_name(*parts: str) -> str:
     return ".".join(re.sub(r"[^A-Za-z0-9_]", "_", part) for part in parts)
 
 
-def sealed_measure(args: argparse.Namespace, plan: dict[str, Any], state_file: Path, work: Path) -> dict[str, Any]:
+def sealed_measure(args: argparse.Namespace, plan: dict[str, Any], work: Path) -> dict[str, Any]:
     """The same measure, run by the capture tool: the record is a sealed
-    piece of the evidence store at the commit of the launched product."""
+    piece of the evidence store at the commit of the launched product. The
+    piece is tied to the launch of the first state, which the measure stops
+    once that state is compared."""
+    first = plan["states"][0]
+    state_file, record = launch(Path(plan["descriptor"]), Path(plan["repo_root"]), plan["commit"], first["id"], work)
+    plan = {**plan, "states": [{**first, "state_file": str(state_file), "delivered_url": record["address"] + first["path"]},
+                               *plan["states"][1:]]}
     plan_file = work / "plan.json"
     plan_file.write_text(json.dumps(plan), encoding="utf-8")
+    # Every state is launched inside the measure: its launch time is added to the default budget.
+    timeout = 600 + LAUNCH_TIMEOUT * len(plan["states"])
     status, answer = run_json([
         str(CAPTURE_TOOL), "command", args.convoy, args.ticket, "--piece", PIECE, "--launch-state", str(state_file),
-        "--expect-exit", "0", "--", sys.executable, str(Path(__file__).resolve()), "measure", "--plan", str(plan_file)])
+        "--timeout", str(timeout), "--expect-exit", "0", "--", sys.executable, str(Path(__file__).resolve()), "measure", "--plan", str(plan_file)])
     if status != 0:
         output = answer.get("output") if isinstance(answer, dict) else None
         try:
@@ -711,30 +755,29 @@ def cmd_check(args: argparse.Namespace) -> int:
 
     work = Path(tempfile.mkdtemp(prefix="prototype-fidelity-"))
     server, prototype_address = serve_prototype(prototype)
-    launched: list[Path] = []
     written: list[str] = []
     try:
         for state in selected:
-            state_file, record = launch(Path(args.descriptor).resolve(), repo_root, commit, state["id"], work)
-            launched.append(state_file)
-            state["state_file"] = str(state_file)
-            state["delivered_url"] = record["address"] + state["path"]
             state["prototype_url"] = f"{prototype_address}/{state['address'].lstrip('/')}"
-        refuse_promoted_prototype(prototype, manifest, selected)
         plan = {
             "browser": browser, "anchor_attribute": manifest["anchor_attribute"], "commit": commit,
             "screens": compared_screens, "renderings": renderings(manifest), "states": selected,
-            "measure_url": prototype_address + MEASURE_PATH,
+            "measure_url": prototype_address + MEASURE_PATH, "prototype": str(prototype),
+            "descriptor": str(Path(args.descriptor).resolve()), "repo_root": str(repo_root), "work": str(work),
         }
         try:
             if args.ticket:
-                result = sealed_measure(args, plan, launched[0], work)
+                result = sealed_measure(args, plan, work)
                 written.append(f"pièce {PIECE}")
                 for state in selected:
                     captures = result["states"][state["id"]]["captures"] = {}
-                    for rendering in plan["renderings"]:
-                        captures[rendering["label"]] = capture(args, state, rendering, Path(state["state_file"]))
-                        written.append(f"pièce {captures[rendering['label']]['piece']}")
+                    state_file = launch_state(plan, state)
+                    try:
+                        for rendering in plan["renderings"]:
+                            captures[rendering["label"]] = capture(args, state, rendering, state_file)
+                            written.append(f"pièce {captures[rendering['label']]['piece']}")
+                    finally:
+                        stop(state_file)
             else:
                 result = measure(plan)
                 for state in selected:
@@ -762,7 +805,8 @@ def cmd_check(args: argparse.Namespace) -> int:
         except Refusal as exc:
             raise Refusal(str(exc), written + exc.written) from exc
     finally:
-        for state_file in launched:
+        # A launch a refused or interrupted measure left behind.
+        for state_file in work.glob("launch-*.json"):
             stop(state_file)
         server.shutdown()
         server.server_close()

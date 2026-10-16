@@ -180,7 +180,6 @@ tests/spec-end-test.py	115
 tests/spec-integration-test.py	282
 tests/tdd-step-test.py	244
 tests/test-cases-compare-test.py	0
-tests/test-review-test.py	189
 tests/ticket-author-test.py	90
 tests/ticket-end-test.py	142
 tests/ticket-evaluation-test.py	239

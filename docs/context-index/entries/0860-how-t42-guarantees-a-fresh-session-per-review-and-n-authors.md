@@ -1,2 +1,2 @@
-Need: Fresh test/code/evaluation sessions and author capacity
-Read: `TEST_REVIEW.md` (fresh sessions), `CODE_REVIEW.md`, `TICKET_EVALUATION.md`
+Need: Fresh code/evaluation sessions and author capacity
+Read: `CODE_REVIEW.md` (fresh sessions), `TICKET_EVALUATION.md`, `TICKET_AUTHOR.md`

@@ -15,12 +15,15 @@ checked out in `--repo`, at its HEAD:
 `red`: only the test perimeter of the profile changed since the start commit
 `--base`, the criterion -> test table is complete, the product launched at the
 start commit is healthy, and every criterion test fails there by assertion
-and goes through an entry point of the product. A criterion already green
-stops the ticket. `freeze`: a reviewer has read these very tests and refused
-none (bin/test-review, T13), and the fingerprints of the table, of the
-criterion test files and of the frozen harness paths go into a registry of
-the Spec, outside any work tree. `green`: the frozen files are unchanged and the frozen
-tests pass k times in a row against the product at HEAD. `amend`: the one
+and goes through an entry point of the product. A criterion whose tests
+all pass at the start commit is recorded as satisfied by the existing code
+(`satisfied`, ADR-0030 L5); only a ticket whose criteria are all already
+green stops. `freeze`: the fingerprints of the table, of the criterion
+test files and of the frozen harness paths go into a registry of the Spec,
+outside any work tree; no test review precedes it, the code review reads
+the criterion tests after the green (ADR-0030 L3). `green`: the frozen
+files are unchanged and the frozen tests pass k times in a row against the product at HEAD, then the regression
+command of the profile passes at HEAD (ADR-0030 L1). `amend`: the one
 change of frozen tests a ticket is allowed, with its reason, a new red and a
 new freeze, recorded with its diff. `prefactoring`: the regression command of
 the profile passes before and after, and no existing test was touched; with
@@ -346,7 +349,7 @@ class Check:
         address, or None and why it did not become healthy."""
         self._counter += 1
         state = self.work / f"launch-{self._counter}.json"
-        argv = [str(LAUNCH_TOOL), "--repo-root", str(self.repo), "start", str(Path(self.args.profile).resolve()),
+        argv = [str(LAUNCH_TOOL), "--repo-root", str(self.repo), "start", "--owner-pid", str(os.getpid()), str(Path(self.args.profile).resolve()),
                 "--commit", commit, "--state-file", str(state)]
         if self.args.dataset:
             argv += ["--dataset", self.args.dataset]
@@ -577,9 +580,13 @@ def import_rule_problems(check: Check, ids: list[str], base: str) -> list[str]:
     return problems
 
 
-def red_proof(check: Check, base: str, table_path: str | None, amendment: bool) -> dict[str, Any]:
+def red_proof(check: Check, base: str, table_path: str | None, amendment: bool,
+              satisfied_before: list[str] | None = None) -> dict[str, Any]:
     """Every criterion test fails by assertion against the product at the
-    start commit, and goes through an entry point of it."""
+    start commit, and goes through an entry point of it; but those of a
+    criterion whose tests all pass there, recorded as satisfied by the
+    existing code (ADR-0030 L5). An amendment keeps only the criteria the
+    first red recorded so (`satisfied_before`)."""
     launch = check.launch
     check.test_command()
     declared = check.entry_points()
@@ -643,17 +650,31 @@ def red_proof(check: Check, base: str, table_path: str | None, amendment: bool) 
             green.append(test_id)
     if problems:
         raise Refusal(" ; ".join(problems))
-    if green and amendment:
-        raise Refusal(" ; ".join(
-            f"test vert au commit de départ après amendement : {test_id} (un test amendé échoue encore sans le code du ticket)"
-            for test_id in green))
-    if green:
+    # ADR-0030 L5: a criterion whose tests all pass at the start commit is
+    # satisfied by the existing code; only a ticket with nothing left red stops.
+    satisfied = [number for number in sorted(criteria, key=int) if all(t in green for t in criteria[number])]
+    if not amendment and green and len(satisfied) == len(criteria):
         raise Refusal(" ; ".join(
             f"critère {number} déjà vert : {test_id} passe au commit de départ"
             for number in criteria for test_id in criteria[number] if test_id in green
         ), stop=STOP_ALREADY_GREEN)
+    if amendment:
+        satisfied = [number for number in satisfied if number in (satisfied_before or [])]
+    # A green test of any criterion still red is stray, even if it also
+    # belongs to a satisfied one: it does not prove that criterion red.
+    stray = [t for t in green if any(t in criteria[number] for number in criteria if number not in satisfied)]
+    if stray and amendment:
+        raise Refusal(" ; ".join(
+            f"test vert au commit de départ après amendement : {test_id} (un test amendé échoue encore sans le code du ticket)"
+            for test_id in stray))
+    if stray:
+        raise Refusal(" ; ".join(
+            f"test vert au commit de départ : {test_id} (critère "
+            f"{', '.join(n for n in criteria if test_id in criteria[n] and n not in satisfied)} encore rouge par ses autres tests ; "
+            "un test de critère échoue sans le code du ticket)" for test_id in stray))
     return {
         "verdict": "red", "commit": check.head, "base": base, "table": table_path, "criteria": criteria,
+        "satisfied": satisfied,
         "tests": tests, "seam_mode": check.seam_modes(seams), "launch": {"healthy": address is not None, "commit": base},
         "frozen_harness_paths": launch["frozen_harness_paths"],
     }
@@ -695,40 +716,29 @@ def check_freeze(check: Check) -> dict[str, Any]:
         if data is None:
             raise Refusal(f"fichier à geler absent du commit {check.head} : {path}")
         files[path] = digest_of(data)
-    if not amended:
-        # An amended test is read by the code review instead (Spec §6).
-        require_test_review(check, files)
+    # ADR-0030 L3: no test review before the freeze; the code review reads
+    # the criterion tests after the green.
     return {"step": "freeze", "verdict": "frozen", "commit": check.head, "base": proof["base"],
-            "table": proof["table"], "criteria": proof["criteria"], "files": files}
+            "table": proof["table"], "criteria": proof["criteria"], "satisfied": proof.get("satisfied", []),
+            "files": files}
 
 
-def require_test_review(check: Check, files: dict[str, str]) -> None:
-    """Spec §5, « Relecture avant gel »: the freeze follows a favorable
-    verdict of the test reviewer (bin/test-review) on every criterion test,
-    given on the very files about to be frozen."""
-    refusal = "gel sans verdict favorable de la relecture des tests de critère"
-    review = check.ticket.get("test_review")
-    if isinstance(review, dict) and "unruled" in review:
-        raise Refusal(f"état sans règle : {review['unruled']}")
-    rounds = review.get("rounds") if isinstance(review, dict) else None
-    if isinstance(review, dict) and review.get("request"):
-        raise Refusal(f"{refusal} : une relecture est demandée et n'a pas rendu son verdict (test-review review)")
-    if not rounds:
-        raise Refusal(f"{refusal} : aucun verdict n'est enregistré pour ce ticket (test-review review)")
-    last = rounds[-1]
-    refused = [f"{test_id} ({answer.get('reason')})" for test_id, answer in last["tests"].items()
-               if answer.get("state") != "favorable"]
-    if last["verdict"] != "favorable" or refused:
-        raise Refusal(f"{refusal} : la relecture refuse {' ; '.join(refused)}")
-    if last["commit"] != check.head:
+def regression_run(check: Check, commit: str, moment: str) -> dict[str, Any]:
+    """One run of the profile's regression command on a clean tree of
+    `commit`; refused unless it exits 0."""
+    command = shlex.split(check.launch["regression_command"])
+    try:
+        proc = subprocess.run(command, cwd=check.export(commit), stdin=subprocess.DEVNULL, capture_output=True,
+                              timeout=COMMAND_TIMEOUT, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+    except subprocess.TimeoutExpired as exc:
+        raise Refusal(f"la commande de régression n'a pas fini en {COMMAND_TIMEOUT} s {moment}") from exc
+    except OSError as exc:
+        raise Refusal(f"commande de régression impossible à exécuter : {command[0]} ({exc.strerror or exc})") from exc
+    output = (proc.stdout + proc.stderr).decode(errors="replace")
+    if proc.returncode != 0:
         raise Refusal(
-            f"{refusal} : la relecture porte sur le commit {last['commit']}, les tests à geler sont au commit "
-            f"{check.head} (test-review review)")
-    differing = sorted(path for path in {*files, *last["files"]} if files.get(path) != last["files"].get(path))
-    if differing:
-        raise Refusal(
-            f"{refusal} : le verdict de relecture porte sur d'autres empreintes de tests que celles à geler "
-            f"({', '.join(differing)})")
+            f"commande de régression en échec {moment} (commit {commit}, exit {proc.returncode}) : {short(output)}")
+    return {"commit": commit, "exit_code": proc.returncode, "output": short(output)}
 
 
 def check_green(check: Check) -> dict[str, Any]:
@@ -777,11 +787,16 @@ def check_green(check: Check) -> dict[str, Any]:
             problems.append(f"test en échec : {test_id} ({', '.join(runs[test_id])} sur {k} exécutions)")
     if problems:
         raise Refusal(" ; ".join(problems))
+    # ADR-0030 L1: the handoff also proves the regression of the profile at
+    # the tip, so a change that breaks existing tests never reaches a merge.
+    regression = [regression_run(check, check.head, "à la pointe du ticket")]
     tests = [{"id": test_id, "runs": runs[test_id], "entry_points": list(dict.fromkeys(asked[test_id])),
               "seam": seams[test_id]["name"], "seam_mode": seams[test_id]["mode"]} for test_id in ids]
     return {"step": "green", "verdict": "green", "commit": check.head, "k": k, "criteria": registry["criteria"],
+            "satisfied": registry.get("satisfied", []),
             "tests": tests, "seam_mode": check.seam_modes(seams), "frozen": frozen_commit,
-            "launch": {"healthy": True, "commit": check.head}}
+            "launch": {"healthy": True, "commit": check.head},
+            "command": check.launch["regression_command"], "regression": regression}
 
 
 def check_amend(check: Check) -> dict[str, Any]:
@@ -801,7 +816,8 @@ def check_amend(check: Check) -> dict[str, Any]:
     changed = check.changed_frozen(registry["files"])
     if not changed:
         raise Refusal("aucun fichier gelé n'a changé depuis le gel : il n'y a rien à amender")
-    proof = red_proof(check, check.tdd["red"]["base"], registry["table"], amendment=True)
+    proof = red_proof(check, check.tdd["red"]["base"], registry["table"], amendment=True,
+                      satisfied_before=registry.get("satisfied", []))
     frozen_commit = check.tdd["freeze"]["commit"]
     paths = sorted({*registry["files"], *(test_id.partition("::")[0] for test_id in unique_ids(proof["criteria"]))})
     diff = git(check.repo, "diff", "--no-renames", frozen_commit, check.head, "--", *paths)
@@ -828,24 +844,8 @@ def check_prefactoring(check: Check) -> dict[str, Any]:
     touched = [path for status, path in check.changes(before, check.head) if status != "A" and in_paths(path, scope)]
     if touched:
         raise Refusal(" ; ".join(f"test existant modifié : {path}" for path in touched))
-    command = shlex.split(check.launch["regression_command"])
-    regression = []
-    for commit, moment in ((before, "avant"), (check.head, "après")):
-        tree = check.export(commit)
-        try:
-            proc = subprocess.run(command, cwd=tree, stdin=subprocess.DEVNULL, capture_output=True, timeout=COMMAND_TIMEOUT,
-                                  env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
-        except subprocess.TimeoutExpired as exc:
-            raise Refusal(f"la commande de régression n'a pas fini en {COMMAND_TIMEOUT} s {moment} le changement") from exc
-        except OSError as exc:
-            raise Refusal(f"commande de régression impossible à exécuter : {command[0]} ({exc.strerror or exc})") from exc
-        output = (proc.stdout + proc.stderr).decode(errors="replace")
-        if proc.returncode != 0:
-            raise Refusal(
-                f"commande de régression en échec {moment} le changement (commit {commit}, exit {proc.returncode}) : "
-                f"{short(output)}"
-            )
-        regression.append({"commit": commit, "exit_code": proc.returncode, "output": short(output)})
+    regression = [regression_run(check, before, "avant le changement"),
+                  regression_run(check, check.head, "après le changement")]
     proof = {"step": "prefactoring", "verdict": "unchanged", "commit": check.head, "base": base,
              "command": check.launch["regression_command"], "regression": regression}
     if before != base:

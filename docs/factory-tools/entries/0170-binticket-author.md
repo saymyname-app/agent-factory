@@ -18,8 +18,8 @@ City lance un contrôle, et c'est lui qui laisse démarrer la suivante.
 - **Personne ne lance la formule à la main** : `./bin/convoy-advance` démarre
   chaque ticket prêt (`start.formula` dans `config/delivery-flow.json`).
 - **Étapes et contrôles** : prise du ticket (worktree, branche, session) ;
-  rouge prouvé, tests relus par le relecteur de tests (`./bin/test-review`)
-  puis gelés ; tests verts à la pointe de la branche ; ligne
+  rouge prouvé puis tests gelés (sans relecture : la revue de code les lit,
+  ADR-0030 L3) ; tests verts à la pointe de la branche ; ligne
   de démonstration capturée sur le produit lancé, au commit de tête ; sortie
   de ticket enregistrée.
 - **Contrôle refusé** : l'étape revient à la session avec le motif. Au bout

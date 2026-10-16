@@ -393,6 +393,8 @@ printf '{"beads": {"%s": {"blocked_by": []}}}' "$T4" >"$TRIAL/graph.json"
 # repair is before the Fold or after it, never beside it).
 WITHDRAWAL=$(revision "$(edited 'd["tickets"] = [t["T1"], t["T2"], repair]; t["T2"]["blocked_by"] = ["T1", "R1"]; d["withdrawn"] = [{"ticket": "T4", "planning_exception": "pd-1"}]')" \
   "$(jq -r .graph_digest <<<"$patched")" approved)
+# An approved revision is reviewed like a first publication (af-8mbftn).
+review_favorably "$WITHDRAWAL"
 before=$(tracker)
 set +e
 refusal=$(patch "$WITHDRAWAL" --planning-exception-register "$REGISTER" 2>&1 >/dev/null); rc=$?

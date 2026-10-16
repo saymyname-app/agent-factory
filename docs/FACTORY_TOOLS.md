@@ -227,9 +227,8 @@ fermé hors porte fait échouer l'oracle.
 Pendant ce parcours l'oracle enregistre lui-même les commandes du flux
 exécutées : le driver les lance depuis le répertoire reçu dans
 `FIXTURE_CITY_FLOW_BIN`, rien de ce qu'il déclare n'est utilisé. Chaque état
-de l'étape d'auteur (rouge, gel, relecture des tests, vert, Handoff,
-terminé) doit avoir été écrit par sa porte (`tdd-step`, `test-review
-review`, `ticket-exit exit`) ; un état écrit hors de sa porte, ou un ticket
+de l'étape d'auteur (rouge, gel, vert, Handoff, terminé) doit avoir été
+écrit par sa porte (`tdd-step`, `ticket-exit exit`) ; un état écrit hors de sa porte, ou un ticket
 fermé sans être passé par les portes de l'auteur, fait échouer l'oracle
 (T37). Le résultat nomme les commandes vues (`interfaces.flow`) et le nombre
 de tickets passés par toutes les portes (`author_gates`).
@@ -533,10 +532,12 @@ touché : il reste avancé par le Mayor.
 - **Personne ne la lance à la main** : l'ordre `orders/convoy-advance.toml` la
   lance à chaque tick du contrôleur (toutes les 20 à 30 secondes), seulement
   s'il existe un convoi marqué ouvert.
-- **Plafond N** : `max_sessions` dans `config/delivery-flow.json`, un seul
-  réglage pour toute l'usine, partagé entre les Specs. Comptent : chaque session
-  vivante d'un rôle de livraison (auteur, relecteur, Evaluator) et chaque ticket
-  démarré qu'aucune session n'a encore pris.
+- **Plafond N** : `max_sessions` dans `config/delivery-flow.json`, le plafond
+  des auteurs, un seul réglage pour toute l'usine, partagé entre les Specs.
+  Comptent : chaque session vivante d'auteur et chaque ticket démarré
+  qu'aucune session n'a encore pris. Le relecteur et l'Evaluator ont leurs
+  propres plafonds (`max_reviewer_sessions`, `max_evaluator_sessions`,
+  appliqués par Gas City) et ne prennent pas la place d'un auteur (af-4xxlo7).
 - **Formule de démarrage** : `start.formula` dans le même fichier, aujourd'hui
   `mol-ticket-author` (la formule de l'auteur, `docs/TICKET_AUTHOR.md`). À
   `null`, la commande refuse de démarrer quoi que ce soit (sortie 1).
@@ -592,9 +593,10 @@ touché : il reste avancé par le Mayor.
   réponse), `behind` (terminé sur une branche qui ne contient pas la pointe
   de la branche d'intégration : `bin/code-review` n'y envoie aucun
   relecteur, T44). Chaque reprise est comptée et prend une place sous N. À la
-  troisième, toutes causes confondues (celles-ci, le tour de correction, un
-  commit après verdict), le ticket est parqué avec ceux qui l'attendent et
-  n'est pas relancé ; les autres continuent. Listes `resumed`, `parked`,
+  troisième d'une même cause (`bounds.resumes`, une borne par cause :
+  celles-ci et un commit après verdict ; le tour de correction garde sa
+  propre borne d'un tour, ADR-0030 L2), le ticket est parqué avec ceux qui
+  l'attendent et n'est pas relancé ; les autres continuent. Listes `resumed`, `parked`,
   `lifted` dans la réponse.
 - **Une seule demande groupée** (T20) : quand il ne reste dans un convoi que
   des tickets parqués, la passe lève **une** ligne pour le convoi dans
@@ -694,10 +696,8 @@ touché : il reste avancé par le Mayor.
   (2), `end_rounds` (tours de réparation de fin de Spec, 2). Changer une valeur change le comportement à la passe suivante ; une
   valeur absente ou mal formée est un refus. k (exécutions au vert) se règle
   par projet, dans son profil (`launch.k`).
-- **Relecture des tests restée sans résultat** : la même passe la relance une
-  fois, puis arrête le ticket et le fait remonter dans
-  `./bin/escalation-door list` (`./bin/test-review settle`), sans qu'aucune
-  session d'auteur ait à vivre.
+- **Aucune relecture des tests** (ADR-0030 L3) : la passe n'en lance ni
+  n'en règle aucune ; la revue de code lit les tests de critère.
 - **Seule cette commande démarre un ticket d'un convoi marqué** :
   `./bin/dispatch-door` le refuse sans `--convoy` et le refuse à toute session
   d'agent, Mayor compris.
@@ -823,12 +823,14 @@ du magasin de preuves, puis inscrit l'étape sur le ticket.
   refusé et nommé. Chaque test est prouvé selon le **mode du seam** par
   lequel il passe (boîte noire ou règle d'import, déclaré par seam dans le
   profil) ; le relevé nomme le seam et le mode de chaque test.
-- **Critère déjà vert** : le ticket est arrêté (sortie 5), le critère est
-  nommé, l'arrêt est écrit dans le tracker.
-- **Gel** : refusé tant que le relecteur de tests n'a pas passé chaque test
-  de critère, au même commit et sur les mêmes empreintes
-  (`./bin/test-review`) ; ensuite les empreintes des tests, de la table et
-  du harnais vont dans le magasin de preuves, hors de tout dépôt Git.
+- **Critère déjà vert** (ADR-0030 L5) : un critère dont tous les tests
+  passent au commit de départ est enregistré satisfait par le code existant
+  (`satisfied` dans la preuve du rouge, scellée avec ce commit) et le ticket
+  continue ; seul un ticket dont tous les critères sont déjà verts est
+  arrêté (sortie 5), les critères nommés, l'arrêt écrit dans le tracker.
+- **Gel** : suit la preuve du rouge au même commit, sans relecture des tests
+  (ADR-0030 L3) ; les empreintes des tests, de la table et du harnais vont
+  dans le magasin de preuves, hors de tout dépôt Git.
 - **Vert** : refus si un fichier gelé a été modifié, supprimé ou déplacé ;
   sinon les tests gelés passent k fois de suite (k du profil ; 3 s'il n'en
   déclare pas). Un résultat mixte nomme le test instable.
@@ -843,8 +845,8 @@ du magasin de preuves, puis inscrit l'étape sur le ticket.
 - **Sorties** : 0 étape prouvée ; 1 refus, rien n'est écrit ; 4 « pas un
   convoi du nouveau flux » ; 5 ticket arrêté.
 - **Limite** : le script prouve l'ordre et les résultats, pas qu'un test
-  observe bien son critère : c'est la question du relecteur de tests, posée
-  entre le rouge et le gel (`./bin/test-review`). Lever un arrêt n'est pas
+  observe bien son critère : c'est la question de la revue de code, posée
+  après le vert (`./bin/code-review`, ADR-0030 L3). Lever un arrêt n'est pas
   dans cette commande.
 
 Détail : `docs/TDD_STEP.md`.
@@ -983,8 +985,8 @@ City lance un contrôle, et c'est lui qui laisse démarrer la suivante.
 - **Personne ne lance la formule à la main** : `./bin/convoy-advance` démarre
   chaque ticket prêt (`start.formula` dans `config/delivery-flow.json`).
 - **Étapes et contrôles** : prise du ticket (worktree, branche, session) ;
-  rouge prouvé, tests relus par le relecteur de tests (`./bin/test-review`)
-  puis gelés ; tests verts à la pointe de la branche ; ligne
+  rouge prouvé puis tests gelés (sans relecture : la revue de code les lit,
+  ADR-0030 L3) ; tests verts à la pointe de la branche ; ligne
   de démonstration capturée sur le produit lancé, au commit de tête ; sortie
   de ticket enregistrée.
 - **Contrôle refusé** : l'étape revient à la session avec le motif. Au bout
@@ -1015,52 +1017,6 @@ City lance un contrôle, et c'est lui qui laisse démarrer la suivante.
 Détail : `docs/TICKET_AUTHOR.md`.
 
 ---
-## `./bin/test-review` — un test de critère observe-t-il vraiment son critère ?
-
-Un **relecteur**, pas l'auteur, répond (Spec af-wf4w5r §5 « Relecture avant
-gel », §8, T13). Entre le rouge prouvé et le gel, une session neuve du rôle
-relecteur, en lecture seule, répond à une seule question par test de
-critère : observe-t-il son critère, et échouerait-il sur l'observation qui
-le rend faux ? Un test qui ne vérifie qu'un statut 200 est refusé. Ne
-concerne qu'un ticket d'un convoi qui porte la **marque du nouveau flux**.
-
-```bash
-./bin/test-review review <convoi> <ticket> --repo <worktree>      # l'auteur, après tdd-step red
-./bin/test-review show <convoi> <ticket>                          # les passes, la demande ouverte, l'arrêt
-./bin/test-review settle <convoi>                                 # lancé par ./bin/convoy-advance à chaque passe
-./bin/test-review brief <convoi> <ticket>                         # la session relecteur (formule mol-test-review)
-./bin/test-review record <convoi> <ticket> --verdict-file <f>     # la session relecteur
-```
-
-- **Sans verdict favorable, pas de gel** : `./bin/tdd-step freeze` refuse
-  tant que chaque test de critère n'a pas passé la relecture, au même commit
-  et sur les mêmes empreintes de fichiers. Sans gel, le code ne commence pas.
-- **Un refus** : le relecteur donne une raison par test refusé. Le ticket
-  retourne **une fois** à son auteur, qui corrige ses tests, les fait
-  reprouver rouges et redemande la relecture.
-- **Second refus** : le ticket est arrêté. Il apparaît **une seule fois**
-  dans `./bin/escalation-door list`, avec le test et la raison.
-- **Relecture plantée ou sans sortie** : elle n'est pas passée. Une relance,
-  puis le ticket est arrêté et remonte de la même façon. Le délai d'un
-  lancement est `test_review.timeout_seconds` dans
-  `config/delivery-flow.json` (1800 s, valeur sans base mesurée).
-- **Le verdict est calculé par du code** : le relecteur donne un état par
-  test (`favorable` ou `unfavorable` avec sa raison), jamais un verdict
-  global. Il ne reçoit que les critères du ticket et les tests ; rien
-  d'autre de l'auteur.
-- **Sans session d'auteur** : la relance, l'arrêt et la remontée sont aussi
-  faits par `./bin/convoy-advance`, à partir du tracker seul.
-- **Ne jamais dispatcher `mol-test-review` à la main** ni écrire
-  `gc.flow.test_review` : seul `./bin/test-review` le fait, par
-  `./bin/dispatch-door` et `./bin/convoy-state`.
-- **Sorties de `review`** : 0 tests relus favorablement ; 2 refus, retour à
-  l'auteur ; 5 ticket arrêté ; 6 pas encore de verdict, relancer la même
-  commande ; 1 refus ou échec ; 4 « pas un convoi du nouveau flux ».
-- **Limites** : rien ne lève encore un arrêt. Un test amendé après le gel
-  n'est pas relu ici : la revue de code du ticket le relit
-  (`./bin/code-review`).
-
-Détail : `docs/TEST_REVIEW.md`.
 ## `./bin/code-review` — qui relit le code d'un ticket avant sa fusion ?
 
 Un **relecteur**, jamais l'auteur (Spec af-wf4w5r §6, §8, T14). Dès qu'un
@@ -1341,7 +1297,8 @@ ticket.
 - **Les neuf conditions** (liste `ticket-end/v1`), lues à la pointe de la
   branche du ticket : 1 critères identiques au digest approuvé ; 2 Handoff
   valide avec preuve du rouge et de démonstration ; 3 Ticket Evaluation
-  favorable (prefactoring : le produit démarre) ; 4 fidélité verte si le
+  favorable (prefactoring ou ticket sans interface, ADR-0030 L4 : le produit
+  démarre) ; 4 fidélité verte si le
   ticket touche un écran ; 5 détecteur de report passé ; 6 fusionné dans la
   branche d'intégration, tests verts sur le résultat ; 7 preuves scellées,
   liées à la pointe fusionnée ; 8 preuve TDD enregistrée ; 9 revue favorable
@@ -2082,3 +2039,36 @@ au-dessus du plafond est rouge.
 Détail : `docs/TEST_GUIDELINE.md`.
 
 ---
+## `./bin/convoy-graph` — où en est le convoi d'une Spec ?
+
+**La forme vivante du convoi d'une Spec, en lecture seule.** Il répond à ce
+qu'un opérateur demande d'un convoi qui tourne, d'une lecture du tracker et
+d'une des sessions : les sessions réellement actives, les tickets prêts à
+démarrer, le chemin critique du travail restant et la largeur par niveau.
+
+```bash
+./bin/convoy-graph af-2zseit          # texte
+./bin/convoy-graph af-2zseit --json   # un objet JSON
+```
+
+- **Sessions** : `gc session list`, pas `gc status`. `gc status` affiche
+  « stopped » pour un emplacement de pool alors que des sessions de son
+  modèle tournent ; un agent en a conclu à tort « agents arrêtés »
+  (2026-10-15). Chaque session active nomme le ticket qu'elle porte.
+- **Dépendances** : `gc.blocked_by` de chaque ticket (clés de ticket). Un
+  bloqueur livré ou retiré ne retient plus ; une clé qu'aucun ticket de la
+  Spec ne porte retient, et elle est nommée.
+- **Prêt** : ouvert, non retiré, jamais démarré (ni porte `dispatch` ni
+  sortie), plus rien à attendre — la frontière d'où part
+  `bin/convoy-advance`, avant son plafond de sessions.
+- **Chemin critique et niveaux** : ceux du travail restant (ni fermé ni
+  retiré), calculés par `lib/ticket_graph.py`, le code de la borne de chemin
+  critique de la relecture de graphe (ADR-0031). Niveau 1 : n'attend rien ;
+  la largeur d'un niveau dit combien d'auteurs il peut occuper à la fois.
+- **Sorties** : 0 ; 1 si le tracker ou les sessions ne se lisent pas, ou si
+  aucun ticket ne porte la Spec ; 2, usage. N'écrit rien.
+- **Limites** : un instantané, pas une surveillance ; le plafond N de
+  `bin/convoy-advance` et ses arrêts (rouge d'intégration, Planning
+  Exceptions) ne sont pas appliqués ici : `docs/CONVOY_ADVANCE.md`.
+
+Preuve : `tests/convoy-graph-test.py`.

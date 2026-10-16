@@ -13,6 +13,19 @@ findings; code decides what they are worth.
 - A finding **blocks only if it cites** a line of the Spec, a line of the
   ticket, or a written rule of the repository, and the cited line is found
   in that source. Anything else is recorded and blocks nothing.
+- It is the **one review of the ticket** (ADR-0030 L3): no test review
+  precedes the freeze, so the reviewer also reads the criterion tests the
+  freeze sealed (`.tests.criterion_tests`, `.tests.frozen` of the brief,
+  read from the registry `tdd_freeze`) against the ticket's criteria — does
+  each observe its criterion and fail on the observation that makes it
+  false; on the Factory's repository, is it a double of a lower test
+  (`docs/TEST_GUIDELINE.md`)? Such a finding blocks under the same citation
+  rule (the criterion line of the ticket, or that guideline). A
+  `gc.flow.test_review` left on a ticket in flight is not read. The brief
+  names under `.tests.satisfied` the criteria whose tests already passed at
+  the start commit (ADR-0030 L5), never proven red: for each, the closed
+  question « would its test fail on a product where that criterion is
+  false? » is asked, and a « non » blocks under the same citation rule.
 - A **closed question** on the tests answered « non » is a Blocking Finding.
 - Each **Blocking Finding** is answered « corrigé » or « contesté », and a
   **second reviewer session** judges that closed list.
@@ -141,7 +154,7 @@ code, not found by the reviewer:
 | Kind | Asked for | Question |
 |---|---|---|
 | `internal_test` | each file of the diff that sits in the test perimeter of the profile, or looks like a test file, and is neither a frozen criterion test nor a frozen harness path | does it go through a listed seam? |
-| `amended_test` | each frozen criterion test file whose content at the tip is no longer the one the test reviewer read (`bin/test-review`) | does the amended test still observe its criterion? |
+| `amended_test` | each frozen criterion test file the one amendment changed (`amendment.files` of the piece `tdd_amendment`, `bin/tdd-step amend`) | does the amended test still observe its criterion? |
 
 Each takes `oui` or `non` (with a reason). A « non » becomes a Blocking
 Finding of axis `tests`, written by code. An answer left out, or to a
@@ -212,20 +225,33 @@ stopped (`code_review_no_result`) and raised once to the operator through
 `bin/escalation-door`; `bin/convoy-state stop-raised` records it, and a stop
 whose request could not be sent is raised by the next pass.
 
-A round handed in by a session that already rendered a review of tests, a
-code review or a Ticket Evaluation of the convoy is refused the same way
-(Spec §5, T42; `docs/TEST_REVIEW.md`, « A fresh session per review »): the
-launch it answered is marked `refused` and gave no result. That is also what
-holds the judgement to a second session: the conversation that reviewed
-cannot judge the answers (a session is its name and its conversation).
-`record` signs with `GC_SESSION_NAME`, else `GC_SESSION_ID`, and
-`"c:"` + `CLAUDE_CODE_SESSION_ID`, else `"g"` + `GC_RUNTIME_EPOCH` as
-`conversation` (`docs/CONVOY_STATE.md`).
-
 A dispatch the door refuses or defers launched nothing: it counts no launch
 and its bead is closed. A deferral is listed under `deferred` and tried
 again by the next pass; a refusal is listed under `refused` and makes
 `settle` exit 1.
+
+## A fresh session per review
+
+One reviewer session renders one round (Spec §5, T42). Two things hold it:
+
+- `agents/delivery-reviewer/agent.toml` carries the work query of the
+  author agent: a session that has ever been assigned a bead is offered, of
+  the unassigned work, only that of the workflows it already works. Once it
+  has rendered its round it is offered nothing and leaves; the next round
+  starts a new session, or wakes this one: gc 1.5.0 wakes a drained session
+  again under the same name, and the agent's `wake_mode = "fresh"` makes
+  that wake start a fresh conversation instead of resuming the last one.
+- A round handed in by a session that already rendered a code review or a
+  Ticket Evaluation of the convoy (or a review of tests recorded before
+  ADR-0030 L3) is refused: the launch it answered is marked `refused` and
+  gave no result, as above. That is also what holds the judgement to a
+  second session: the conversation that reviewed cannot judge the answers
+  (a session is its name and its conversation).
+
+`record` signs with `GC_SESSION_NAME`, else `GC_SESSION_ID` — never
+`GC_AGENT`, which names a place in the pool of the agent that the next
+session takes — and with `"c:"` + `CLAUDE_CODE_SESSION_ID`, else `"g"` +
+`GC_RUNTIME_EPOCH` as `conversation` (`docs/CONVOY_STATE.md`).
 
 ## Stored state
 
