@@ -219,10 +219,11 @@ def load_settings() -> dict[str, Any]:
     if not isinstance(block, dict):
         raise Refusal("aucun réglage evaluation dans config/delivery-flow.json : la Ticket Evaluation n'est pas réglée")
     settings = {name: block.get(name) for name in ("formula", "role", "rig", "timeout_seconds", "start_timeout_seconds")}
+    settings["per_dataset_seconds"] = block.get("per_dataset_seconds", 0)
     for name in ("formula", "role", "rig"):
         if not isinstance(settings[name], str) or not settings[name]:
             raise Refusal(f"evaluation.{name} absent ou invalide dans config/delivery-flow.json : {settings[name]!r}")
-    for name in ("timeout_seconds", "start_timeout_seconds"):
+    for name in ("timeout_seconds", "start_timeout_seconds", "per_dataset_seconds"):
         value = settings[name]
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             raise Refusal(
@@ -720,8 +721,16 @@ def wanted(ticket: dict[str, Any]) -> tuple[str, Any]:
     if not green_at(ticket, tip):
         return "waiting", (f"le ticket n'est pas prouvé vert à la pointe de sa branche ({tip[:12]}, bin/tdd-step) : "
                            "l'évaluation porte sur un ticket vert")
+    # Only an interface ticket is evaluated by a model (ADR-0030 L4); any
+    # other one gets the start control of a prefactoring: no session, a
+    # model evaluation recorded « not required ». A start that stood for the
+    # evaluation does not stand for a ticket that has since become
+    # interface; a product that did not start is still its verdict.
+    model = ticket.get("kind") != KIND_PREFACTORING and ticket.get("interface")
     evaluation = evaluation_of(ticket)
     last = evaluation["rounds"][-1] if evaluation["rounds"] else None
+    if model and last is not None and last.get("kind") == STARTUP and last.get("started"):
+        last = None
     if last is not None and last["commit"] == tip and not retry_after_lift(last, ticket.get("park_lifts")):
         state = evaluation["state"]
         if last["outcome"] == FAVORABLE:
@@ -735,7 +744,7 @@ def wanted(ticket: dict[str, Any]) -> tuple[str, Any]:
             return "outage", state
     # No evaluation at the tip yet (a commit added after a verdict has it
     # replayed in full, Spec §8), or one that the environment hid.
-    return ("startup" if ticket.get("kind") == KIND_PREFACTORING else "open"), tip
+    return ("open" if model else "startup"), tip
 
 
 # --- launching the Evaluator --------------------------------------------------------
@@ -798,6 +807,13 @@ def launched_at(launched: dict[str, Any]) -> int:
         return calendar.timegm(time.strptime(launched["at"], "%Y-%m-%dT%H:%M:%SZ"))
     except (KeyError, TypeError, ValueError) as exc:
         raise Refusal(f"heure de lancement de l'évaluation illisible : {launched!r}") from exc
+
+
+def launch_timeout(settings: dict[str, Any], datasets: int) -> int:
+    """How long one launch may take: the floor `timeout_seconds`, or
+    `per_dataset_seconds` for each dataset the evaluation covers when that
+    is longer (af-vtg5kl)."""
+    return max(settings["timeout_seconds"], datasets * settings.get("per_dataset_seconds", 0))
 
 
 def expired(launched: dict[str, Any], timeout: int) -> bool:
@@ -888,8 +904,12 @@ def probe_of(launch_block: dict[str, Any]) -> tuple[str, int]:
 
 
 def startup_control(convoy: Convoy, ticket_id: str, commit: str, settings: dict[str, Any]) -> dict[str, Any]:
-    """A prefactoring must start and answer its probe on every game of the ticket."""
+    """A prefactoring, or a ticket without interface (ADR-0030 L4), must
+    start and answer its probe on every game of the ticket; a ticket that
+    establishes the launch recipe proves its start and stop first."""
     datasets = convoy.datasets(ticket_id)
+    prepare_recipe_lifecycle(convoy, ticket_id, commit, datasets[0])
+    preflight_path(convoy, ticket_id, commit).unlink(missing_ok=True)
     path, status = probe_of(convoy.profile(ticket_id, commit)[1])
     environment = []
     coverage = []
@@ -969,11 +989,11 @@ def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> d
             return {"ticket": ticket_id, "action": "stopped", "stop": STOP_OUTAGE}
         commit = detail
         # Refused before anything is launched or recorded: no named dataset.
-        convoy.datasets(ticket_id)
+        datasets = convoy.datasets(ticket_id)
         if what == "startup":
             return startup_control(convoy, ticket_id, commit, settings)
         launches = current["launches"] if current else []
-        timeout = settings["timeout_seconds"]
+        timeout = launch_timeout(settings, len((current or {}).get("datasets") or datasets))
         timed_out = bool(launches and expired(launches[-1], timeout))
         desired = current.get("wanted") if current else None
         if timed_out:
@@ -1069,14 +1089,30 @@ def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> d
                                 for entry in current["environment"]]}
 
 
+def launched_here(convoy_id: str, ticket_id: str) -> bool:
+    """A launch record of the ticket is left in its product folder: reap() has work."""
+    folder = product_folder(convoy_id, ticket_id)
+    return any(folder.glob("*.json")) or any(folder.glob("*.trial"))
+
+
 def cmd_settle(args: argparse.Namespace) -> int:
     settings = load_settings()
     convoy = Convoy(args.convoy, args.repo, args.profile)
     answer: dict[str, Any] = {"ok": True, "convoy": args.convoy, "launched": [], "relaunched": [], "pending": [],
                               "waiting": [], "started": [], "refused_startup": [], "planning_exception": [],
                               "stopped": [], "escalated": [], "deferred": [], "refused": [], "product_ready": []}
-    for ticket_id in [ticket.get("id") for ticket in convoy.tickets]:
+    for initial in list(convoy.tickets):
+        ticket_id = initial.get("id")
         try:
+            # Nothing can be due without a finished exit, a stop, an open
+            # evaluation or a launched product: skip such a ticket without
+            # reading the whole convoy again (af-x11w4x; bin/code-review
+            # settle does the same). Candidates still reload under their lock.
+            initial = readable(initial)
+            evaluation = evaluation_of(initial)
+            if not (initial.get("exit") or initial.get("stop") or evaluation.get("request")
+                    or evaluation.get("live") or launched_here(convoy.id, ticket_id)):
+                continue
             done = settle_ticket(convoy, ticket_id, settings)
         except Deferred as exc:
             answer["deferred"].append({"ticket": ticket_id, "reason": str(exc)})

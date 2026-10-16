@@ -119,24 +119,18 @@ def prove_red(env, repo, convoy, ticket, commit, base):
 
 
 def prove_freeze(env, repo, convoy, ticket):
-    """The criterion tests of a slice read favorably by their reviewer at
-    the red commit (bin/test-review), then frozen there (bin/tdd-step
-    freeze), each with what the ticket does not carry yet."""
+    """The criterion tests of a slice frozen at the red commit (bin/tdd-step
+    freeze; no test review precedes it, ADR-0030 L3), with the registry its
+    sealed report carries, each with what the ticket does not carry yet."""
     shown = _ticket(env, repo, convoy, ticket)
     known, filed = shown.get("tdd") or {}, shown.get("evidence") or {}
     red = known["red"]["commit"]
     if not known.get("freeze"):
-        files = {"tests/test_critere.py": DIGEST}
-        with tempfile.TemporaryDirectory(prefix="ticket-proofs-") as holder:
-            state(env, "open-test-review", convoy, ticket, "--commit", red, "--file",
-                  _json_file(holder, {"files": files, "criteria": {"1": [TEST_ID]}}))
-            state(env, "record-test-review", convoy, ticket, "--file", _json_file(holder, {
-                "commit": red, "files": files, "tests": {TEST_ID: {"state": "favorable"}},
-                "recorded_by": f"delivery-test-reviewer-{ticket}"}))
         state(env, "set-tdd", convoy, ticket, "--step", "freeze", "--commit", red)
     frozen = (known.get("freeze") or {}).get("commit") or red
     if "tdd_freeze" not in filed:
-        capture(env, repo, convoy, ticket, "tdd_freeze", frozen, {"frozen": frozen})
+        capture(env, repo, convoy, ticket, "tdd_freeze", frozen, {
+            "frozen": frozen, "criteria": {"1": [TEST_ID]}, "files": {"tests/test_critere.py": DIGEST}})
     return frozen
 
 
@@ -144,8 +138,7 @@ def prove_tdd(env, repo, convoy, ticket, tip, base, green=True):
     """The TDD of a ticket proven up to `tip`, each step with its sealed
     report: for a prefactoring the unchanged regression at the tip; for a
     slice whatever the ticket does not carry yet of the red (at the tip
-    when no red is recorded), the favorable review of its criterion tests,
-    the freeze and the piece of an amendment, then, unless `green` is false,
+    when no red is recorded), the freeze and the piece of an amendment, then, unless `green` is false,
     the green at the tip and the demonstration. Returns the red proof and
     the demonstration proof the Handoff carries."""
     shown = _ticket(env, repo, convoy, ticket)
@@ -166,7 +159,8 @@ def prove_tdd(env, repo, convoy, ticket, tip, base, green=True):
             "tests": [{"id": TEST_ID, "outcome": "failed", "entry_points": ["GET /"]}]})
     frozen = prove_freeze(env, repo, convoy, ticket)
     if known.get("amendment") and "tdd_amendment" not in filed:
-        capture(env, repo, convoy, ticket, "tdd_amendment", known["amendment"]["commit"], {"amended": True})
+        capture(env, repo, convoy, ticket, "tdd_amendment", known["amendment"]["commit"],
+                {"amended": True, "amendment": {"files": []}})
     proof = {"step": "red", "base": start, "commit": red, "piece": "tdd_red"}
     if not green:
         return proof, None

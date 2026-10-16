@@ -249,7 +249,9 @@ class TicketExitTest(unittest.TestCase):
 
     def raise_exception(self, *args, **changes):
         """The exit « Planning Exception », with the Handoff it comes after:
-        the complete one, with some sections changed."""
+        the complete one, with some sections changed; its « Écarts »
+        describe the deviation it raises (ADR-0030 L5)."""
+        changes.setdefault("deviations", ["Le produit fait Y là où la Spec dit X."])
         return self.exited("--exit", "planning_exception", "--repo", self.repo, "--handoff", self.handoff(**changes),
                            *args)
 
@@ -587,6 +589,15 @@ class TicketExitTest(unittest.TestCase):
         self.assertEqual([], self.shown()["planning_exceptions"])
         self.assertEqual([], self.escalation_list())
 
+    def test_planning_exception_without_anchor_is_refused_when_the_deviations_are_empty(self):
+        # ADR-0030 L5: its « accept » option accepts the deviation the
+        # Handoff describes; without an anchor, « Écarts » must describe one.
+        self.assert_refused_and_nothing_written(
+            lambda: self.exit(*self.EXCEPTION, "--repo", self.repo, "--handoff", self.handoff(deviations="aucun")),
+            "Écarts", "--anchor")
+        self.assertEqual([], self.shown()["planning_exceptions"])
+        self.assertEqual([], self.escalation_list())
+
     def test_planning_exception_records_the_handoff_first_then_parks(self):
         # Demonstration line of T41: « aucun » stands for an empty section.
         head = self.code()
@@ -595,7 +606,9 @@ class TicketExitTest(unittest.TestCase):
                                       done="aucun", out_of_ticket="aucun")
 
         ticket = self.shown()
-        self.assertEqual({name: "aucun" for name in COMPLETE}, ticket["handoff"]["sections"])
+        # « Écarts » describes the deviation the exception raises (ADR-0030 L5).
+        self.assertEqual({**{name: "aucun" for name in COMPLETE}, "deviations": ["Le produit fait Y là où la Spec dit X."]},
+                         ticket["handoff"]["sections"])
         self.assertEqual(head, ticket["handoff"]["records"]["head"])
         self.assertEqual(["Question sur l'ordre"], [e["summary"] for e in ticket["planning_exceptions"]])
         handoff, raised = self.writes_of("gc.flow.handoff"), self.writes_of("gc.flow.planning_exceptions")
@@ -675,13 +688,22 @@ class TicketExitTest(unittest.TestCase):
 
         self.assertEqual(["fixture-items"], self.shown()["accepted_anchors"])
 
-    def test_planning_exception_without_anchor_offers_no_acceptance(self):
+    def test_planning_exception_without_anchor_offers_an_accept_option(self):
+        """ADR-0030 L5: every Planning Exception request has an accept path;
+        accepting it accepts no anchor of the Validated Prototype."""
         self.raise_exception("--kind", "semantic", "--summary", "Question sur l'ordre")
 
         raised = self.shown()["planning_exceptions"]
-        self.assertEqual([([], None)], [(e["anchors"], e["accept_option"]) for e in raised])
-        proc = self.run_cmd(ESCALATION_TOOL, "repondre", T2, "a")
+        self.assertEqual([([], "c", False)], [(e["anchors"], e["accept_option"], e["accepted"]) for e in raised])
+        options = json.loads(json.loads(self.tracker.read_text())["beads"][T2]["metadata"]["gc.escalation_que_faire"])
+        accepting = [o for o in options if o["lettre"] == raised[0]["accept_option"]]
+        self.assertEqual(1, len(accepting))
+        self.assertIn("Accepter", accepting[0]["option"])
+
+        proc = self.run_cmd(ESCALATION_TOOL, "repondre", T2, "c")
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+
+        self.assertTrue(self.shown()["planning_exceptions"][0]["accepted"])
         self.assertEqual([], self.shown()["accepted_anchors"])
 
     def test_planning_exception_is_refused_with_a_malformed_anchor(self):

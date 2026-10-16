@@ -27,6 +27,8 @@ ROOT = Path(__file__).resolve().parents[1]
 OWNER = ROOT / "bin" / "owner-answer"
 SPEC_APPROVE = ROOT / "bin" / "spec-approve"
 PUBLISHER = ROOT / "bin" / "ticket-graph-publish"
+GRAPH_REVIEW = ROOT / "bin" / "graph-review"
+REVIEW_FAILOVER = ROOT / "tests" / "fixtures" / "graph-review" / "provider-failover"
 FAKE_BD = ROOT / "tests" / "fixtures" / "ticket-graph-publish" / "bd-bead-mode"
 EXIT_REFUSED = 1
 
@@ -185,6 +187,38 @@ class AmendedSpecResolvesTheBatchException(walks.FixtureCityWalk):
                 "approved_by": APPROVER, "approved_evidence": "« j'approuve le graphe révisé » (Benjamin, fixture)",
                 "approved_digest": digest_of(text)}}
         self.tracker.write_text(json.dumps(state), encoding="utf-8")
+        self.review_the_revised_graph()
+
+    def review_the_revised_graph(self):
+        """An approved revision is reviewed like a first publication
+        (af-8mbftn): a favorable pass on its digest, as the driver gives
+        the first draft."""
+        factory = self.workspace / "revised-graph-review-factory"
+        (factory / "config").mkdir(parents=True, exist_ok=True)
+        (factory / "config" / "delivery-roles.json").write_text(
+            json.dumps({"roles": {"reviewer": {"agent": "delivery-reviewer"}}}))
+        (factory / "city.toml").write_text('[providers.reviewer-profile]\nargs_append = ["--model", "modele-relecteur"]\n')
+        reviewing = {"FACTORY_ROOT": str(factory), "DELIVERY_ROLE_READ_ONLY": "1",
+                     "GRAPH_REVIEW_PROVIDER_FAILOVER_BIN": str(REVIEW_FAILOVER)}
+        before = {key: self.env.get(key) for key in reviewing}
+        self.env.update(reviewing)
+        try:
+            self.door_ok(GRAPH_REVIEW, "request", REVISED_DRAFT, "--author-model", "modele-auteur")
+            brief = self.door_ok(GRAPH_REVIEW, "brief", REVISED_DRAFT)
+            answers = lambda checks: {"checks": {
+                name: {"state": "not_applicable", "reason": "aucun ticket d'interface"}
+                if name == "prototype_fold_present_and_first" else {"state": "favorable"} for name in checks}}
+            verdict = self.workspace / "revised-graph-verdict.json"
+            verdict.write_text(json.dumps({
+                "digest": brief["digest"], "graph": answers(brief["graph_checks"]),
+                "tickets": {ticket["id"]: answers(ticket["checks"]) for ticket in brief["tickets"]}}))
+            self.door_ok(GRAPH_REVIEW, "record", REVISED_DRAFT, "--verdict-file", str(verdict))
+        finally:
+            for key, value in before.items():
+                if value is None:
+                    self.env.pop(key, None)
+                else:
+                    self.env[key] = value
 
 
 if __name__ == "__main__":

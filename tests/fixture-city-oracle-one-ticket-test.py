@@ -109,16 +109,22 @@ class FixtureCityOracleTest(first.FixtureCityOracleHarness):
                          [(entry["number"], entry["name"], entry["verdict"]) for entry in gate["conditions"]])
         self.assertTrue(result["evidence"]["verified"])
         for piece in ("tdd_red", "tdd_freeze", "tdd_green", "demonstration", "handoff_records", "merged_tests",
-                      "evaluation.c1", "evaluation.demo"):
+                      "evaluation.startup"):
             self.assertIn(piece, result["evidence"]["pieces"])
-        # Its interface is not a web page: no screen was compared to a prototype.
-        self.assertNotIn("fidelity", result["evidence"]["pieces"])
-        # The same flow as the first project: same states, observed at the
-        # same events, and the same list of conditions with the same verdicts.
+        # Its interface is not a web page: no screen was compared to a prototype,
+        # and a ticket without interface gets only the start control (ADR-0030 L4).
+        for piece in ("fidelity", "evaluation.c1", "evaluation.demo"):
+            self.assertNotIn(piece, result["evidence"]["pieces"])
+        # The same flow as the first project: same states in the same order,
+        # and the same list of conditions with the same verdicts. Only the
+        # events differ: without a model evaluation to wait for, the start
+        # control is evaluated in the same event as the review (ADR-0030 L4).
         first = json.loads(self.deliver("one-ticket-end-to-end.json").stdout)
         self.assertNotIn("project", first)
-        for same in ("lifecycle", "observations", "closed", "ticket_end", "interfaces"):
+        for same in ("lifecycle", "closed", "ticket_end", "interfaces"):
             self.assertEqual(first[same], result[same], same)
+        self.assertEqual([state for seen in first["observations"] for state in seen],
+                         [state for seen in result["observations"] for state in seen])
 
     def test_a_delivery_scenario_naming_a_project_the_driver_does_not_know_fails_the_oracle(self):
         scenario = json.loads((FIXTURES / "one-ticket-second-project.json").read_text())

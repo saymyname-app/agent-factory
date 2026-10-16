@@ -67,9 +67,12 @@ Per ticket:
   product that serves nothing could satisfy is unfavorable.
 - `size_tenable` — can one author session deliver it: one slice, not
   several features or screens under one title?
-- `same_surface_ordered` — is every other ticket that works on the same
-  surface (same route, screen, command or files) ordered against this one
-  by `blocked_by`, directly or through other tickets?
+- `same_surface_ordered` — is every other ticket that changes the same code
+  or the same mechanism as this one (same route handler, same command, same
+  shared component or files) ordered against it by `blocked_by`, directly or
+  through other tickets? Two tickets that only appear on the same screen,
+  each wiring its own code, need no order: leave them parallel (ADR-0031).
+  Quote the shared code or mechanism when unfavorable.
 - `declared_scope_includes_wiring` (asked only of a ticket that declares
   `scope.paths`) — do the declared paths include the files where the slice
   is wired into the product (routes, registrations, entry points), not only

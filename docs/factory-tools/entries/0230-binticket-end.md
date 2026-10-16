@@ -16,7 +16,8 @@ ticket.
 - **Les neuf conditions** (liste `ticket-end/v1`), lues à la pointe de la
   branche du ticket : 1 critères identiques au digest approuvé ; 2 Handoff
   valide avec preuve du rouge et de démonstration ; 3 Ticket Evaluation
-  favorable (prefactoring : le produit démarre) ; 4 fidélité verte si le
+  favorable (prefactoring ou ticket sans interface, ADR-0030 L4 : le produit
+  démarre) ; 4 fidélité verte si le
   ticket touche un écran ; 5 détecteur de report passé ; 6 fusionné dans la
   branche d'intégration, tests verts sur le résultat ; 7 preuves scellées,
   liées à la pointe fusionnée ; 8 preuve TDD enregistrée ; 9 revue favorable
