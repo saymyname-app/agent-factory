@@ -74,6 +74,33 @@ echo "ok   a failing rule check fails the run; an unreadable commit runs nothing
   || fail "without --rule-checks the run is no longer every discovered test"
 echo "ok   without --rule-checks every discovered test still runs"
 
+# --- a changed tool brings the tests that name it (af-awyj8z, PR #602) -------
+# PR #602 changed bin/ticket-evaluation; tests/convoy-advance-test.py, a long
+# test, runs tests/fixtures/ticket-evaluation/evaluator and went red in CI.
+REPO="$TMP/repo602"
+mkdir -p "$REPO/bin" "$REPO/lib" "$REPO/tests/fixtures/ticket-evaluation" "$REPO/config"
+g init -q -b main
+printf 'tests/short-test.sh\t1\ntests/convoy-advance-test.py\t200\ntests/other-test.py\t200\ntests/lib-user-test.py\t200\n' >"$REPO/config/ci-test-seconds.tsv"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$REPO/tests/short-test.sh"
+printf '# EVALUATOR = "tests/fixtures/ticket-evaluation/evaluator"\n' >"$REPO/tests/convoy-advance-test.py"
+printf '# reaches bin/ticket-evaluations-report, not the tool\n' >"$REPO/tests/other-test.py"
+printf '# from ticket_graph import load\n' >"$REPO/tests/lib-user-test.py"
+for f in bin/ticket-evaluation lib/ticket_graph.py tests/fixtures/ticket-evaluation/evaluator docs.md; do echo v1 >"$REPO/$f"; done
+g add -A && g commit -q -m base
+BASE=$(g rev-parse HEAD)
+echo v2 >>"$REPO/bin/ticket-evaluation" && g commit -qam "change the tool"
+[ "$(listed --rule-checks --changed-since "$BASE")" = "tests/convoy-advance-test.py tests/short-test.sh " ] \
+  || fail "a change to bin/ticket-evaluation listed '$(listed --rule-checks --changed-since "$BASE")', not the test that runs its fixture"
+out=$(runner --rule-checks --changed-since "$BASE") || { echo "$out" >&2; fail "the run failed"; }
+grep -Fq '1 test file(s) naming a changed file' <<<"$out" || { echo "$out" >&2; fail "the run does not count the test naming the tool"; }
+g reset -q --hard "$BASE"
+echo v2 >>"$REPO/tests/fixtures/ticket-evaluation/evaluator"
+echo v2 >>"$REPO/lib/ticket_graph.py"
+echo v2 >>"$REPO/docs.md"
+[ "$(listed --rule-checks --changed-since "$BASE")" = "tests/convoy-advance-test.py tests/lib-user-test.py tests/short-test.sh " ] \
+  || fail "an uncommitted change to a fixture and a library listed '$(listed --rule-checks --changed-since "$BASE")', not the two tests naming them"
+echo "ok   a changed tool, fixture or library brings the tests that name it, not those naming a longer name"
+
 # --- on the real list ---------------------------------------------------------
 expected=$(cd "$ROOT" && comm -12 <("$RUNNER" --list | sort) \
   <(awk -F'\t' '$2 ~ /^[0-9]+$/ && $2 <= 5 { print $1 }' config/ci-test-seconds.tsv | sort))
