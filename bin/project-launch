@@ -300,12 +300,16 @@ def verify_worktree(repo_root: str, worktree: str, launch_id: str | None = None,
     if (not target.is_absolute() or target.parent != temporary or target.is_symlink()
             or not re.fullmatch(r"project-launch-[A-Za-z0-9_-]+", target.name)):
         raise RuntimeError(f"unexpected product worktree path: {worktree}")
-    listed = subprocess.run(["git", "-C", repo_root, "worktree", "list", "--porcelain"],
-                            text=True, capture_output=True)
-    if listed.returncode:
-        raise RuntimeError(f"cannot verify product worktree: {listed.stderr.strip()}")
-    registered = any(block.splitlines()[0] == f"worktree {target}"
-                     for block in listed.stdout.strip().split("\n\n") if block)
+    registered = False
+    # A removed product repository (a deleted ticket worktree) registers
+    # nothing: only the owner sidecar below can still vouch for the copy.
+    if Path(repo_root).exists():
+        listed = subprocess.run(["git", "-C", repo_root, "worktree", "list", "--porcelain"],
+                                text=True, capture_output=True)
+        if listed.returncode:
+            raise RuntimeError(f"cannot verify product worktree: {listed.stderr.strip()}")
+        registered = any(block.splitlines()[0] == f"worktree {target}"
+                         for block in listed.stdout.strip().split("\n\n") if block)
     owner = Path(f"{worktree}.owner")
     owned = False
     if launch_id and commit and owner.is_file():
@@ -333,10 +337,13 @@ def remove_worktree(repo_root: str, worktree: str, launch_id: str | None = None,
         # An interrupted git worktree add can leave an unregistered partial
         # checkout. Its owner sidecar was written before that operation.
         shutil.rmtree(worktree)
-    result = subprocess.run(["git", "-C", repo_root, "worktree", "prune"],
-                            capture_output=True, text=True)
-    if result.returncode or Path(worktree).exists():
-        raise RuntimeError(f"worktree was not released: {worktree}: {result.stderr.strip()}")
+    if Path(repo_root).exists():
+        result = subprocess.run(["git", "-C", repo_root, "worktree", "prune"],
+                                capture_output=True, text=True)
+        if result.returncode:
+            raise RuntimeError(f"worktree was not released: {worktree}: {result.stderr.strip()}")
+    if Path(worktree).exists():
+        raise RuntimeError(f"worktree was not released: {worktree}")
     if owner is not None:
         owner.unlink(missing_ok=True)
 

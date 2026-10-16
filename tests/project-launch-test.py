@@ -400,6 +400,46 @@ class ProjectLaunchTest(unittest.TestCase):
         self.assertEqual(str(product.resolve()), record["repo_root"])
         self.assertEqual(200, _fetch(record["address"] + "/health")[0])
 
+    def test_stop_ends_a_launch_whose_product_repository_was_removed(self):
+        """A ticket's runtime worktree can be deleted while its product still
+        runs: the owner sidecar alone vouches for the copy (2026-10-15)."""
+        fixture = Path("tests") / "fixtures" / "delivery-fixture-city"
+        product = Path(tempfile.mkdtemp(prefix="project-launch-product-"))
+        self.addCleanup(shutil.rmtree, product, ignore_errors=True)
+        shutil.copytree(ROOT / fixture, product / fixture)
+        env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
+        for args in (("init", "-q", "-b", "main"), ("add", "-A"),
+                     ("-c", "user.name=essai", "-c", "user.email=essai@example.invalid", "commit", "-q", "-m", "produit")):
+            subprocess.run(("git", "-C", str(product), *args), env=env, check=True, capture_output=True)
+        state_file = self.new_state_file()
+        started = subprocess.run(
+            (str(TOOL), "--repo-root", str(product), "start", str(DESCRIPTOR), "--dataset", "content",
+             "--state-file", str(state_file)),
+            cwd=product, env=env, text=True, capture_output=True)
+        self.assertEqual(0, started.returncode, started.stdout + started.stderr)
+        record = json.loads(started.stdout)
+        shutil.rmtree(product)
+
+        result = self.stop(state_file=state_file, check=False)
+
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertFalse(Path(record["worktree"]).exists())
+        self.assertFalse(Path(record["worktree"] + ".owner").exists())
+        self.assertFalse(Path(f"/proc/{record['pid']}").exists())
+        self.assertTrue(_port_is_free(record["port"]))
+
+    def test_a_copy_of_a_removed_repository_without_its_owner_is_kept(self):
+        worktree = Path(tempfile.mkdtemp(prefix="project-launch-"))
+        self.addCleanup(shutil.rmtree, worktree, ignore_errors=True)
+        state_file = self.new_state_file()
+        state_file.write_text(json.dumps({"launch_id": "no-owner", "worktree": str(worktree),
+                                          "repo_root": str(worktree) + "-gone", "commit": "0" * 40}))
+        result = self.stop(state_file=state_file, check=False)
+        self.assertEqual(1, result.returncode)
+        self.assertIn("unverified product worktree kept", result.stdout)
+        self.assertTrue(worktree.exists())
+        state_file.unlink()
+
     # AC2 -------------------------------------------------------------------
 
     def test_named_dataset_renders_and_two_launches_render_identically(self):
