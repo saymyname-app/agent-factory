@@ -8,7 +8,11 @@ before Benjamin approves it: a session of the read-only reviewer role, in a
 fresh context, that did not write the graph. It answers closed questions per
 ticket and on the graph; code computes the verdicts and binds them to the
 digest of the draft. `bin/ticket-graph-publish bd-publish` refuses a draft
-without a review that holds for its current digest.
+without a review that holds for its current digest, and so does `bd-patch`
+for an approved revision of a published graph (af-8mbftn): the revision is
+reviewed, critical path included (ADR-0031), before it reaches the convoy.
+A revision that only adds `repair` tickets, drafted and published by code
+without approval, is not reviewed.
 
 `bin/graph-review` is the only reader and writer of that state. A draft that
 does not declare the contract is not touched (exit 4) and is published
@@ -70,11 +74,18 @@ or the graph, is `unfavorable` as soon as one of its answers is.
 | ticket | `demonstrable_alone` | once this ticket and its blockers are merged, and nothing later, its demonstration line is observed on the launched product |
 | ticket | `criteria_observable_falsifiable` | every criterion is an observation through a public interface, with what would make it false |
 | ticket | `size_tenable` | one author session can deliver it |
-| ticket | `same_surface_ordered` | every other ticket on the same surface is ordered against it |
+| ticket | `same_surface_ordered` | every other ticket that changes the same code or the same mechanism is ordered against it; the same screen alone is no dependency (ADR-0031) |
 | ticket | `declared_scope_includes_wiring` | the declared `scope.paths` include the files where the slice is wired in. Asked only of a ticket that declares a scope; code records `not_applicable` otherwise |
 | graph | `no_orphan_story` | every numbered user story of the Spec is covered by a ticket |
 | graph | `assembly_point_not_confiscated` | the ticket that establishes shared assembly points is ordered first; none keeps the wiring for itself |
 | graph | `prototype_fold_present_and_first` | a Prototype Fold exists and every other interface ticket depends on it; `not_applicable`, with a reason, when the graph has no interface ticket |
+| graph | `critical_path_bounded` | **answered by code, never by the reviewer**: the longest chain of `blocked_by` is at most max(4, ⌈n/3⌉) of the draft's n tickets; the reason names the chain and every link another link already implies (ADR-0031) |
+
+`brief` does not ask `critical_path_bounded`; `record` computes it on the
+draft and a reviewer answer to it is refused as outside the list. An
+unfavorable measure is a graph refusal like the others: correct the draft
+(keep a link only where the blocked ticket consumes a deliverable its text
+cites), ask the second pass, or let Benjamin rule `--graph`.
 
 `record` refuses, before any write and with every reason listed: a verdict
 on another digest than the draft's; a ticket of the draft without answers, or

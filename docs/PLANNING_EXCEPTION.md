@@ -107,6 +107,29 @@ Every cited equality is checked before the sole `bd create`; missing or stale
 evidence refuses with no write. The resulting draft remains only an input to
 the existing Planning Exception and `bd-patch` doors.
 
+### Every request has an accept path (ADR-0030 L5)
+
+The Planning Exception an author raises on a ticket of a marked convoy
+(`bin/ticket-exit exit --exit planning_exception`, `docs/TICKET_EXIT.md`)
+always offers the operator an « accept » option, with or without anchors:
+« Accepter l'écart sur l'ancre … » when it names anchors of the Validated
+Prototype, « Accepter l'écart que décrit le Ticket Handoff » otherwise. The
+ticket records the letter of that option (`accept_option`,
+`docs/CONVOY_STATE.md`); answered by it, `bin/convoy-advance` lifts the
+parking and resumes the ticket. The other options stay « Trancher dans le
+Planning Run » and « Retirer le ticket du graphe ». A criterion already
+green at the red no longer stops a ticket unless all its criteria are
+(`docs/TDD_STEP.md`), so it is no longer a reason to raise one. Without an
+anchor, the « Écarts » of the Handoff must describe the deviation the
+option accepts: an empty one refuses the exit. When all criteria are
+already green, the author still raises one after the
+`criterion_already_green` stop; there « accept » lifts the parking but not
+the stop, and `bin/convoy-advance` then raises that stop to the operator
+(« critères tous déjà verts », `docs/CONVOY_ADVANCE.md`) instead of letting
+the convoy stall. Closing the ticket as satisfied by the existing code is
+that decision, taken in the Planning Run (no automatic close). What
+Benjamin approves (Spec, ticket graph, Acceptance Session) is unchanged.
+
 ## Lifecycle
 
 | Subcommand | Effect |

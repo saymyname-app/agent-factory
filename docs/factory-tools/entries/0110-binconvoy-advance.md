@@ -16,10 +16,12 @@ touché : il reste avancé par le Mayor.
 - **Personne ne la lance à la main** : l'ordre `orders/convoy-advance.toml` la
   lance à chaque tick du contrôleur (toutes les 20 à 30 secondes), seulement
   s'il existe un convoi marqué ouvert.
-- **Plafond N** : `max_sessions` dans `config/delivery-flow.json`, un seul
-  réglage pour toute l'usine, partagé entre les Specs. Comptent : chaque session
-  vivante d'un rôle de livraison (auteur, relecteur, Evaluator) et chaque ticket
-  démarré qu'aucune session n'a encore pris.
+- **Plafond N** : `max_sessions` dans `config/delivery-flow.json`, le plafond
+  des auteurs, un seul réglage pour toute l'usine, partagé entre les Specs.
+  Comptent : chaque session vivante d'auteur et chaque ticket démarré
+  qu'aucune session n'a encore pris. Le relecteur et l'Evaluator ont leurs
+  propres plafonds (`max_reviewer_sessions`, `max_evaluator_sessions`,
+  appliqués par Gas City) et ne prennent pas la place d'un auteur (af-4xxlo7).
 - **Formule de démarrage** : `start.formula` dans le même fichier, aujourd'hui
   `mol-ticket-author` (la formule de l'auteur, `docs/TICKET_AUTHOR.md`). À
   `null`, la commande refuse de démarrer quoi que ce soit (sortie 1).
@@ -75,9 +77,10 @@ touché : il reste avancé par le Mayor.
   réponse), `behind` (terminé sur une branche qui ne contient pas la pointe
   de la branche d'intégration : `bin/code-review` n'y envoie aucun
   relecteur, T44). Chaque reprise est comptée et prend une place sous N. À la
-  troisième, toutes causes confondues (celles-ci, le tour de correction, un
-  commit après verdict), le ticket est parqué avec ceux qui l'attendent et
-  n'est pas relancé ; les autres continuent. Listes `resumed`, `parked`,
+  troisième d'une même cause (`bounds.resumes`, une borne par cause :
+  celles-ci et un commit après verdict ; le tour de correction garde sa
+  propre borne d'un tour, ADR-0030 L2), le ticket est parqué avec ceux qui
+  l'attendent et n'est pas relancé ; les autres continuent. Listes `resumed`, `parked`,
   `lifted` dans la réponse.
 - **Une seule demande groupée** (T20) : quand il ne reste dans un convoi que
   des tickets parqués, la passe lève **une** ligne pour le convoi dans
@@ -177,10 +180,8 @@ touché : il reste avancé par le Mayor.
   (2), `end_rounds` (tours de réparation de fin de Spec, 2). Changer une valeur change le comportement à la passe suivante ; une
   valeur absente ou mal formée est un refus. k (exécutions au vert) se règle
   par projet, dans son profil (`launch.k`).
-- **Relecture des tests restée sans résultat** : la même passe la relance une
-  fois, puis arrête le ticket et le fait remonter dans
-  `./bin/escalation-door list` (`./bin/test-review settle`), sans qu'aucune
-  session d'auteur ait à vivre.
+- **Aucune relecture des tests** (ADR-0030 L3) : la passe n'en lance ni
+  n'en règle aucune ; la revue de code lit les tests de critère.
 - **Seule cette commande démarre un ticket d'un convoi marqué** :
   `./bin/dispatch-door` le refuse sans `--convoy` et le refuse à toute session
   d'agent, Mayor compris.

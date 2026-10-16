@@ -22,12 +22,15 @@
 # spends nothing: the reviewer, the Evaluator and the author of the
 # correction round, three stubs that claim the step Gas City routes to them
 # and run the real tools the step names; and the first author of each ticket,
-# whose finished ticket is written through bin/convoy-state as bin/tdd-step,
-# bin/test-review and bin/ticket-exit would (tests/ticket-author-isolated-city-test.sh).
+# whose finished ticket is written through bin/convoy-state as bin/tdd-step
+# and bin/ticket-exit would (tests/ticket-author-isolated-city-test.sh).
 #
 # Two tickets of the fixture, each finished by its author with the same two
 # defects: its diff contradicts a line of the Spec, and its product does not
-# show what its criterion asks.
+# show what its criterion asks. Both are interface tickets (their description
+# carries the reference of the Validated Prototype of the fixture, as the
+# publication door poses it): only an interface ticket is evaluated by a
+# model (ADR-0030 L4).
 #   A  review and evaluation start on the same commit, by the same pass; both
 #      refuse; one author session starts, and its brief holds the Blocking
 #      Finding of the one and the states not observed of the other. That
@@ -105,7 +108,7 @@ trap cleanup EXIT
 
 # Nothing of the live Factory may reach this city (same recipe as
 # tests/ticket-evaluation-isolated-city-test.sh).
-while IFS= read -r name; do unset "$name"; done < <(compgen -e | grep -E '^(GC_|BEADS_|BD_BIN$|GH_BIN$|FACTORY_ROOT$|CONVOY_|DISPATCH_DOOR_|ESCALATION_DOOR_|EVIDENCE_|TICKET_AUTHOR_|SPEC_INTEGRATION_|TEST_REVIEW_|CODE_REVIEW_(DISPATCH|FAKE)|TICKET_EVALUATION_(DISPATCH|FAKE|STATE)|CORRECTION_ROUND_(DISPATCH|FAKE)|PROJECT_PLANNING_PROFILE_BIN$|DELIVERY_ROLE_)' || true)
+while IFS= read -r name; do unset "$name"; done < <(compgen -e | grep -E '^(GC_|BEADS_|BD_BIN$|GH_BIN$|FACTORY_ROOT$|CONVOY_|DISPATCH_DOOR_|ESCALATION_DOOR_|EVIDENCE_|TICKET_AUTHOR_|SPEC_INTEGRATION_|CODE_REVIEW_(DISPATCH|FAKE)|TICKET_EVALUATION_(DISPATCH|FAKE|STATE)|CORRECTION_ROUND_(DISPATCH|FAKE)|PROJECT_PLANNING_PROFILE_BIN$|DELIVERY_ROLE_)' || true)
 export GC_HOME="$TRIAL/h" XDG_RUNTIME_DIR="$TRIAL/r" GC_DISABLE_USAGE_METRICS=1
 unset DBUS_SESSION_BUS_ADDRESS
 export PATH="/usr/local/bin:$HOME/.local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -501,7 +504,14 @@ Le nombre d'éléments sur la page d'accueil.
 
 ## Target rigs
 
-trial" 2>/dev/null
+trial
+
+## Validated Prototype
+
+- branche : main
+- commit : $BASE
+- chemin : $FIXTURE/prototype
+- états : content" 2>/dev/null
 }
 SPEC=$(gc bd create --title "Spec d'essai" --type task --silent --description "## User Stories
 
@@ -534,20 +544,14 @@ printf '%s' "$INTEGRATION" > "$TRIAL/integration"
 # --- the first author of each ticket, written as its tools would ---------------------
 field() { gc bd show "$1" --json | jq -r --arg k "$2" '.[0].metadata[$k] // empty'; }
 author_finishes() { # <ticket>: a slice finished at its tip with both defects; prints the tip
-  local t=$1 red tip files
+  local t=$1 red tip
   state record-gate "$CONVOY" "$t" --gate dispatch >/dev/null
   state set-branch "$CONVOY" "$t" --branch "ticket/$t" >/dev/null
   state set-session "$CONVOY" "$t" --session "trial-author-$t" >/dev/null
   state set-model "$CONVOY" "$t" --role author --agent trial-author --provider stub-author --model modele-auteur >/dev/null
   red=$(commit_on "$t" "$FIXTURE/tests/test_count_$t.py" "# test de critère du ticket $t" "tests de critère")
   tip=$(commit_on "$t" "docs/$t.md" "Le nombre d'éléments n'est pas affiché sur la page d'accueil." "la tranche")
-  files=$(jq -n --arg p "$FIXTURE/tests/test_count_$t.py" --arg d "sha256:$(git -C "$PRODUCT" show "$red:$FIXTURE/tests/test_count_$t.py" | sha256sum | cut -d' ' -f1)" '{($p): $d}')
   state set-tdd "$CONVOY" "$t" --step red --commit "$red" --base "$BASE" >/dev/null
-  jq -n --argjson files "$files" --arg id "$FIXTURE/tests/test_count_$t.py::CountTest.test_count" '{files: $files, criteria: {"1": [$id]}}' > "$TRIAL/request.$t.json"
-  state open-test-review "$CONVOY" "$t" --commit "$red" --file "$TRIAL/request.$t.json" >/dev/null
-  jq -n --argjson files "$files" --arg commit "$red" --arg id "$FIXTURE/tests/test_count_$t.py::CountTest.test_count" --arg reviewer "trial-test-reviewer-$t" \
-    '{commit: $commit, files: $files, tests: {($id): {state: "favorable"}}, recorded_by: $reviewer}' > "$TRIAL/verdict.$t.json"
-  state record-test-review "$CONVOY" "$t" --file "$TRIAL/verdict.$t.json" >/dev/null || fail "test review refused for $t"
   state set-tdd "$CONVOY" "$t" --step freeze --commit "$red" >/dev/null || fail "test freeze refused for $t"
   finish "$CONVOY" "$t" "$tip" || fail "the first author could not finish $t"
   printf '%s' "$tip"

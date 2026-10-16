@@ -389,22 +389,27 @@ class CodeReviewTest(unittest.TestCase):
         self.state("set-tdd", CONVOY, ticket, "--step", "green", "--commit", tip)
 
     @staged
-    def finished_slice(self, files=None, ticket=SLICE, green=True):
-        """A slice whose criterion test was proven red, read by the test
-        reviewer and frozen, whose code is green at the tip, and whose
-        author has finished there. Returns (red commit, tip)."""
+    def finished_slice(self, files=None, ticket=SLICE, green=True, test_reviewed=False, satisfied=None):
+        """A slice whose criterion test was proven red and frozen (no test
+        review precedes the freeze, ADR-0030 L3), whose code is green at the
+        tip, and whose author has finished there. `test_reviewed` leaves on
+        it the review of its tests the flow recorded before L3, as on a
+        ticket in flight. Returns (red commit, tip)."""
         self.started(ticket)
         table = json.dumps({"criteria": {"1": [COUNT_ID]}})
         red = self.commit_on(ticket, {COUNT_FILE: "# le test de critère du nombre\n", TABLE: table})
         tip = self.commit_on(ticket, files or {NOTE: "le nombre est affiché\n"})
         fingerprints = {path: sha256_of(self.blob(red, path)) for path in (TABLE, COUNT_FILE)}
         self.state("set-tdd", CONVOY, ticket, "--step", "red", "--commit", red, "--base", self.base)
-        self.state("open-test-review", CONVOY, ticket, "--commit", red, "--file",
-                   self.json_file("test-request.json", {"files": fingerprints, "criteria": {"1": [COUNT_ID]}}))
-        self.state("record-test-review", CONVOY, ticket, "--file", self.json_file("test-verdict.json", {
-            "commit": red, "files": fingerprints, "tests": {COUNT_ID: {"state": "favorable"}},
-            "recorded_by": "delivery-reviewer-tests"}))
+        if test_reviewed:
+            ticket_proofs.pre_l3_test_review(self.env, ticket, red, fingerprints, {COUNT_ID: {"state": "favorable"}},
+                                             "delivery-reviewer-tests")
         self.state("set-tdd", CONVOY, ticket, "--step", "freeze", "--commit", red)
+        # The registry the freeze seals (bin/tdd-step freeze).
+        ticket_proofs.capture(self.env, self.repo, CONVOY, ticket, "tdd_freeze", red, {
+            "step": "freeze", "verdict": "frozen", "commit": red, "base": self.base, "table": TABLE,
+            "criteria": {"1": [COUNT_ID]}, "files": fingerprints,
+            **({"satisfied": satisfied} if satisfied is not None else {})})
         self.finish(ticket, tip, green=green)
         return red, tip
 
@@ -741,6 +746,8 @@ class CodeReviewTest(unittest.TestCase):
         self.finished_slice()
         tip = self.commit_on(SLICE, {COUNT_FILE: "# le test ne lit plus l'ancre fixture-count\n"})
         self.state("set-tdd", CONVOY, SLICE, "--step", "amendment", "--commit", tip, "--reason", "test trop strict")
+        ticket_proofs.capture(self.env, self.repo, CONVOY, SLICE, "tdd_amendment", tip, {
+            "step": "amend", "amendment": {"reason": "test trop strict", "files": [COUNT_FILE]}})
         self.green(SLICE, tip)
         self.finish(SLICE, tip, amendment=tip)
         reason = "le test amendé ne lit plus l'ancre fixture-count"
@@ -753,6 +760,28 @@ class CodeReviewTest(unittest.TestCase):
         review = self.review()
         self.assertEqual(("unfavorable", ["F1.1"]), (review["state"]["verdict"], review["state"]["unsettled"]))
         self.assertEqual(question["id"], review["rounds"][0]["findings"][0]["question"])
+
+    def test_the_one_review_reads_the_criterion_tests_the_freeze_sealed_without_any_test_review(self):
+        """ADR-0030 L3: no test review before the freeze; the code review is
+        given the criterion tests, their table and their criteria."""
+        self.finished_slice()
+
+        self.settle()
+
+        self.assertIsNone(self.shown()["test_review"])
+        tests = json.loads(self.brief_given())["tests"]
+        self.assertEqual({"1": [COUNT_ID]}, tests["criterion_tests"])
+        self.assertEqual(sorted([TABLE, COUNT_FILE]), sorted(tests["frozen"]))
+        self.assertEqual([], tests["amended"])
+
+    def test_the_brief_names_the_criteria_satisfied_by_the_existing_code(self):
+        """ADR-0030 L5: a satisfied criterion was never proven red; the
+        reviewer is told which, to check its test really observes it."""
+        self.finished_slice(satisfied=["1"])
+
+        self.settle()
+
+        self.assertEqual(["1"], json.loads(self.brief_given())["tests"]["satisfied"])
 
     def test_a_ticket_whose_tests_are_the_frozen_ones_is_asked_no_closed_question(self):
         self.finished_slice()
@@ -1127,7 +1156,7 @@ class CodeReviewTest(unittest.TestCase):
         """The code review of SLICE launched and left without an answer:
         what a session would hand in, and the session that rendered the
         review of the tests of that ticket."""
-        _, tip = self.finished_slice()
+        _, tip = self.finished_slice(test_reviewed=True)
         self.reviewer("silent")
         self.settle()
         (served,) = [round_["recorded_by"] for round_ in self.shown()["test_review"]["rounds"]]

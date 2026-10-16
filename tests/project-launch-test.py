@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
+import functools
 import json
 import os
 import shutil
@@ -33,7 +34,15 @@ DESCRIPTOR = ROOT / "tests" / "fixtures" / "delivery-fixture-city" / "descriptor
 # A real project whose profile declares no launch recipe (the Factory's own
 # declares one since af-6a98ip).
 NO_LAUNCH_DESCRIPTOR = ROOT / "config" / "project-descriptors" / "saymyname.json"
-MUTATED_DATASET = ROOT / "tests" / "fixtures" / "delivery-fixture-city" / "datasets" / "content.json"
+FIXTURE = Path("tests") / "fixtures" / "delivery-fixture-city"
+GIT_ENV = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
+
+
+def _commit_product(product: Path) -> None:
+    """Make `product` a Git repository whose one commit holds what it holds."""
+    for args in (("init", "-q", "-b", "main"), ("add", "-A"),
+                 ("-c", "user.name=essai", "-c", "user.email=essai@example.invalid", "commit", "-q", "-m", "produit")):
+        subprocess.run(("git", "-C", str(product), *args), env=GIT_ENV, check=True, capture_output=True)
 
 
 def _fetch(url: str, timeout: float = 5.0) -> tuple[int, str]:
@@ -103,6 +112,24 @@ class ProjectLaunchTest(unittest.TestCase):
     def setUp(self) -> None:
         self._state_files: list[Path] = []
 
+    @functools.cached_property
+    def product(self) -> Path:
+        """A throwaway product repository holding the fixture, whose commit
+        the launches of this test name: the tree these tests run in is not
+        one -- the regression command runs them on a tree extracted by
+        `git archive` (af-qsloqo). Its name stays out of the launcher's
+        `project-launch-*` copies, which a test counts."""
+        product = Path(tempfile.mkdtemp(prefix="launched-product-")).resolve()
+        self.addCleanup(shutil.rmtree, product, ignore_errors=True)
+        shutil.copytree(ROOT / FIXTURE, product / FIXTURE)
+        _commit_product(product)
+        return product
+
+    @functools.cached_property
+    def product_commit(self) -> str:
+        return subprocess.run(["git", "-C", str(self.product), "rev-parse", "HEAD"],
+                              text=True, capture_output=True, check=True).stdout.strip()
+
     def tearDown(self) -> None:
         for state_file in self._state_files:
             if state_file.exists():
@@ -118,17 +145,20 @@ class ProjectLaunchTest(unittest.TestCase):
         self._state_files.append(state_file)
         return state_file
 
-    def start(self, *extra_args: str, descriptor: Path = DESCRIPTOR, check: bool = True):
+    def start(self, *extra_args: str, descriptor: Path = DESCRIPTOR, check: bool = True,
+              env: dict | None = None):
         state_file = self.new_state_file()
         args = [
             str(TOOL),
+            "--repo-root",
+            str(self.product),
             "start",
             str(descriptor),
             "--state-file",
             str(state_file),
             *extra_args,
         ]
-        result = subprocess.run(args, cwd=ROOT, text=True, capture_output=True, check=check)
+        result = subprocess.run(args, cwd=ROOT, env=env, text=True, capture_output=True, check=check)
         return result, state_file
 
     def stop(self, *, state_file: Path, check: bool = True):
@@ -141,11 +171,14 @@ class ProjectLaunchTest(unittest.TestCase):
         )
 
     def test_reuse_requires_launch_identity_and_its_listening_port(self):
+        """The launch is made from this test's own product repository
+        (`start` names it), so the case holds outside any Git tree too."""
         sys.path.insert(0, str(ROOT / "lib"))
         from evaluation_capacity import product_running
 
         _, state_file = self.start("--dataset", "content")
         record = json.loads(state_file.read_text())
+        self.assertEqual(str(self.product), record["repo_root"])
         self.assertTrue(product_running(record))
         self.assertFalse(product_running({**record, "launch_id": "unrelated"}))
         self.assertFalse(product_running({**record, "port": record["port"] + 1,
@@ -158,13 +191,12 @@ class ProjectLaunchTest(unittest.TestCase):
         worktree = Path(tempfile.mkdtemp(prefix="project-launch-"))
         (worktree / "partial").write_text("checkout interrupted")
         launch_id = "interrupted-checkout"
-        commit = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"],
-                                text=True, capture_output=True, check=True).stdout.strip()
+        commit = self.product_commit
         owner = Path(f"{worktree}.owner")
-        owner.write_text(json.dumps({"launch_id": launch_id, "repo_root": str(ROOT), "commit": commit}))
+        owner.write_text(json.dumps({"launch_id": launch_id, "repo_root": str(self.product), "commit": commit}))
         state_file = self.new_state_file()
         state_file.write_text(json.dumps({"started": False, "launch_id": launch_id,
-                                          "worktree": str(worktree), "repo_root": str(ROOT),
+                                          "worktree": str(worktree), "repo_root": str(self.product),
                                           "commit": commit, "dataset": "content"}))
         stopped = self.stop(state_file=state_file)
         self.assertTrue(json.loads(stopped.stdout)["stopped"])
@@ -293,13 +325,12 @@ class ProjectLaunchTest(unittest.TestCase):
                 env={**os.environ, "FACTORY_LAUNCH_ID": launch_id})
             child = int(proc.stdout.readline().strip())
             state_file = self.new_state_file()
-            commit = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"],
-                                    text=True, capture_output=True, check=True).stdout.strip()
+            commit = self.product_commit
             Path(f"{worktree}.owner").write_text(json.dumps({
-                "launch_id": launch_id, "repo_root": str(ROOT), "commit": commit}))
+                "launch_id": launch_id, "repo_root": str(self.product), "commit": commit}))
             state_file.write_text(json.dumps({
                 "pid": proc.pid, "process_group": proc.pid, "launch_id": launch_id,
-                "worktree": str(worktree), "repo_root": str(ROOT), "commit": commit,
+                "worktree": str(worktree), "repo_root": str(self.product), "commit": commit,
             }))
             try:
                 result = self.stop(state_file=state_file, check=False)
@@ -332,18 +363,39 @@ class ProjectLaunchTest(unittest.TestCase):
         self.assertIn("--state-file", result.stderr)
 
     def test_interrupted_record_update_keeps_the_previous_valid_record(self):
-        import runpy
-        from unittest.mock import patch
+        """The record is written before the copy is checked out, then updated
+        with the port: an update that cannot complete leaves the previous
+        record whole, where one written in place would be clobbered. The
+        product's own post-checkout hook makes the record's folder read-only
+        between the two."""
+        if os.geteuid() == 0:
+            self.skipTest("root writes into a read-only folder")
+        folder = Path(tempfile.mkdtemp(prefix="launch-record-"))
+        self.addCleanup(shutil.rmtree, folder, ignore_errors=True)
+        self.addCleanup(folder.chmod, 0o700)  # before the removal, whatever fails
+        target = folder / "launch.json"
+        hooks = folder.with_name(folder.name + "-hooks")
+        hooks.mkdir()
+        self.addCleanup(shutil.rmtree, hooks, ignore_errors=True)
+        hook = hooks / "post-checkout"
+        hook.write_text(f"#!/bin/sh\nchmod 0500 '{folder}'\n")
+        hook.chmod(0o700)
+        subprocess.run(("git", "-C", str(self.product), "config", "core.hooksPath", str(hooks)),
+                       env=GIT_ENV, check=True, capture_output=True)
 
-        write_record = runpy.run_path(str(TOOL))["write_record"]
-        with tempfile.TemporaryDirectory(prefix="launch-record-") as folder:
-            target = Path(folder) / "launch.json"
-            write_record(str(target), {"launch_id": "old"})
-            with patch("os.replace", side_effect=OSError("interrupted")):
-                with self.assertRaises(OSError):
-                    write_record(str(target), {"launch_id": "new"})
-            self.assertEqual({"launch_id": "old"}, json.loads(target.read_text()))
-            self.assertEqual([target], list(Path(folder).iterdir()))
+        result = subprocess.run(
+            (str(TOOL), "--repo-root", str(self.product), "start", str(DESCRIPTOR),
+             "--dataset", "content", "--state-file", str(target)),
+            cwd=ROOT, text=True, capture_output=True)
+        folder.chmod(0o700)
+        self._state_files.append(target)
+
+        self.assertNotEqual(0, result.returncode, result.stdout + result.stderr)
+        record = json.loads(target.read_text())
+        self.assertEqual((False, self.product_commit, "content"),
+                         (record["started"], record["commit"], record["dataset"]))
+        self.assertNotIn("port", record)
+        self.assertEqual([target], list(folder.iterdir()))
 
     # AC1 -----------------------------------------------------------------
 
@@ -358,47 +410,67 @@ class ProjectLaunchTest(unittest.TestCase):
         self.assertEqual({"status": "ok"}, json.loads(body))
 
     def test_start_launches_a_clean_copy_of_the_named_commit_not_the_cwd(self):
-        original = MUTATED_DATASET.read_text()
-        try:
-            mutated = json.loads(original)
-            mutated["state"] = "MUTATED-UNCOMMITTED"
-            MUTATED_DATASET.write_text(json.dumps(mutated))
+        dataset = self.product / FIXTURE / "datasets" / "content.json"
+        mutated = json.loads(dataset.read_text())
+        mutated["state"] = "MUTATED-UNCOMMITTED"
+        dataset.write_text(json.dumps(mutated))
 
-            result, state_file = self.start("--commit", "HEAD", "--dataset", "content")
-            record = json.loads(result.stdout)
-            self.assertTrue(record["started"])
+        result, state_file = self.start("--commit", "HEAD", "--dataset", "content")
+        record = json.loads(result.stdout)
+        self.assertTrue(record["started"])
 
-            _, body = _fetch(record["address"] + "/")
-            self.assertIn('data-anchor="fixture-state">content<', body)
-            self.assertNotIn("MUTATED-UNCOMMITTED", body)
-        finally:
-            MUTATED_DATASET.write_text(original)
+        _, body = _fetch(record["address"] + "/")
+        self.assertIn('data-anchor="fixture-state">content<', body)
+        self.assertNotIn("MUTATED-UNCOMMITTED", body)
 
     def test_start_launches_a_product_that_lives_in_another_repository(self):
         """`--repo-root` names the repository of the product; the profile
         tool stays the Factory's (T10, af-j8jo02)."""
-        import os
-        import shutil
-
-        fixture = Path("tests") / "fixtures" / "delivery-fixture-city"
-        product = Path(tempfile.mkdtemp(prefix="project-launch-product-"))
-        self.addCleanup(shutil.rmtree, product, ignore_errors=True)
-        shutil.copytree(ROOT / fixture, product / fixture)
-        env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
-        for args in (("init", "-q", "-b", "main"), ("add", "-A"),
-                     ("-c", "user.name=essai", "-c", "user.email=essai@example.invalid", "commit", "-q", "-m", "produit")):
-            subprocess.run(("git", "-C", str(product), *args), env=env, check=True, capture_output=True)
+        product = self.product
         state_file = self.new_state_file()
 
         result = subprocess.run(
             (str(TOOL), "--repo-root", str(product), "start", str(DESCRIPTOR), "--dataset", "content",
              "--state-file", str(state_file)),
-            cwd=product, env=env, text=True, capture_output=True)
+            cwd=product, env=GIT_ENV, text=True, capture_output=True)
 
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         record = json.loads(result.stdout)
         self.assertEqual(str(product.resolve()), record["repo_root"])
         self.assertEqual(200, _fetch(record["address"] + "/health")[0])
+
+    def test_stop_ends_a_launch_whose_product_repository_was_removed(self):
+        """A ticket's runtime worktree can be deleted while its product still
+        runs: the owner sidecar alone vouches for the copy (2026-10-15)."""
+        product = self.product
+        state_file = self.new_state_file()
+        started = subprocess.run(
+            (str(TOOL), "--repo-root", str(product), "start", str(DESCRIPTOR), "--dataset", "content",
+             "--state-file", str(state_file)),
+            cwd=product, env=GIT_ENV, text=True, capture_output=True)
+        self.assertEqual(0, started.returncode, started.stdout + started.stderr)
+        record = json.loads(started.stdout)
+        shutil.rmtree(product)
+
+        result = self.stop(state_file=state_file, check=False)
+
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertFalse(Path(record["worktree"]).exists())
+        self.assertFalse(Path(record["worktree"] + ".owner").exists())
+        self.assertFalse(Path(f"/proc/{record['pid']}").exists())
+        self.assertTrue(_port_is_free(record["port"]))
+
+    def test_a_copy_of_a_removed_repository_without_its_owner_is_kept(self):
+        worktree = Path(tempfile.mkdtemp(prefix="project-launch-"))
+        self.addCleanup(shutil.rmtree, worktree, ignore_errors=True)
+        state_file = self.new_state_file()
+        state_file.write_text(json.dumps({"launch_id": "no-owner", "worktree": str(worktree),
+                                          "repo_root": str(worktree) + "-gone", "commit": "0" * 40}))
+        result = self.stop(state_file=state_file, check=False)
+        self.assertEqual(1, result.returncode)
+        self.assertIn("unverified product worktree kept", result.stdout)
+        self.assertTrue(worktree.exists())
+        state_file.unlink()
 
     # AC2 -------------------------------------------------------------------
 
@@ -452,14 +524,12 @@ class ProjectLaunchTest(unittest.TestCase):
         binds it. The first `taken` ports given are answered here, 200 to
         everything, and the product then fails to bind them. Returns the
         launcher's answer, the ports given, and the impostors' addresses."""
-        import shutil
         import threading
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
         product = Path(tempfile.mkdtemp(prefix="project-launch-contested-"))
         self.addCleanup(shutil.rmtree, product, ignore_errors=True)
-        fixture = Path("tests") / "fixtures" / "delivery-fixture-city"
-        shutil.copytree(ROOT / fixture, product / fixture)
+        shutil.copytree(ROOT / FIXTURE, product / FIXTURE)
         (product / "contested.py").write_text(
             "import os, sys, time\n"
             "port, contest = sys.argv[1], os.environ['CONTEST_DIR']\n"
@@ -473,10 +543,7 @@ class ProjectLaunchTest(unittest.TestCase):
         descriptor = json.loads(DESCRIPTOR.read_text())
         descriptor["launch"]["recipe"] = ["{python}", "contested.py", "{port}", *descriptor["launch"]["recipe"]]
         (product / "descriptor.json").write_text(json.dumps(descriptor))
-        env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
-        for args in (("init", "-q", "-b", "main"), ("add", "-A"),
-                     ("-c", "user.name=essai", "-c", "user.email=essai@example.invalid", "commit", "-q", "-m", "produit")):
-            subprocess.run(("git", "-C", str(product), *args), env=env, check=True, capture_output=True)
+        _commit_product(product)
 
         class Impostor(BaseHTTPRequestHandler):
             def log_message(self, *args):
@@ -516,7 +583,7 @@ class ProjectLaunchTest(unittest.TestCase):
             result = subprocess.run(
                 (str(TOOL), "--repo-root", str(product), "start", str(product / "descriptor.json"),
                  "--dataset", "content", "--state-file", str(state_file), "--timeout", "15"),
-                cwd=product, env={**env, "CONTEST_DIR": str(contest)}, text=True, capture_output=True)
+                cwd=product, env={**GIT_ENV, "CONTEST_DIR": str(contest)}, text=True, capture_output=True)
             record = json.loads(result.stdout)
             left = [] if record.get("started") else _children()
             _end(left)
@@ -577,16 +644,20 @@ class ProjectLaunchTest(unittest.TestCase):
 
     def test_a_recipe_that_cannot_be_started_is_refused_and_leaves_nothing(self):
         """A recipe whose program does not exist starts nothing: the copy of
-        the commit and the launch record are released (af-wv3qu2)."""
+        the commit and the launch record are released (af-wv3qu2). The copy
+        is made in a temporary folder of this test alone: another launch on
+        the same host makes its own in the shared one at the same moment."""
         descriptor = json.loads(DESCRIPTOR.read_text())
         descriptor["launch"]["recipe"] = ["no-such-program-af-wv3qu2", *descriptor["launch"]["recipe"][1:]]
         folder = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, folder, ignore_errors=True)
         path = Path(folder) / "descriptor.json"
         path.write_text(json.dumps(descriptor))
-        before = set(Path(tempfile.gettempdir()).glob("project-launch-*"))
+        copies = Path(tempfile.mkdtemp(prefix="launch-copies-")).resolve()
+        self.addCleanup(shutil.rmtree, copies, ignore_errors=True)
 
-        result, state_file = self.start("--commit", "HEAD", "--dataset", "content", descriptor=path, check=False)
+        result, state_file = self.start("--commit", "HEAD", "--dataset", "content", descriptor=path, check=False,
+                                        env={**os.environ, "TMPDIR": str(copies)})
 
         self.assertNotEqual(0, result.returncode)
         error = json.loads(result.stdout)
@@ -594,8 +665,7 @@ class ProjectLaunchTest(unittest.TestCase):
         self.assertIn("recipe could not be started", error["error"])
         self.assertTrue(error["cleanup_confirmed"])
         self.assertFalse(state_file.exists(), "the refused start kept its launch record")
-        self.assertEqual(set(), set(Path(tempfile.gettempdir()).glob("project-launch-*")) - before,
-                         "the refused start left its copy")
+        self.assertEqual([], list(copies.iterdir()), "the refused start left its copy")
 
     def test_start_on_a_project_with_no_launch_recipe_is_refused(self):
         # "Nothing was started" is read from what this test owns -- the
@@ -627,6 +697,118 @@ class ProjectLaunchTest(unittest.TestCase):
         self.assertEqual([], started, "the refused start left a process behind")
         self.assertFalse(state_file.exists(), "the refused start wrote a launch record")
 
+
+    def _owned_launch(self, state_file: Path) -> subprocess.Popen:
+        """A launcher that starts the product as its own (`--owner-pid`),
+        then waits, as tdd-step does while its tests run."""
+        owner = subprocess.Popen(
+            [sys.executable, "-c",
+             "import os, subprocess, sys, time; "
+             "r = subprocess.run([sys.argv[1], '--repo-root', sys.argv[4], 'start', sys.argv[2], '--dataset', 'content', "
+             "'--state-file', sys.argv[3], '--owner-pid', str(os.getpid())], capture_output=True, text=True); "
+             "print(r.stdout.strip(), flush=True); time.sleep(120)",
+             str(TOOL), str(DESCRIPTOR), str(state_file), str(self.product)],
+            cwd=ROOT, stdout=subprocess.PIPE, text=True)
+        self.addCleanup(owner.stdout.close)
+        self.addCleanup(lambda: owner.poll() is None and owner.kill())
+        self.assertTrue(json.loads(owner.stdout.readline())["started"])
+        return owner
+
+    def _until_no_children(self, seconds: float = 20.0) -> list[int]:
+        deadline = time.monotonic() + seconds
+        while (left := _children()) and time.monotonic() < deadline:
+            time.sleep(0.2)
+        return left
+
+    def test_a_launch_ends_when_its_owner_is_killed(self):
+        # af-f7x7w7: tdd-step stopped its product in a `finally`, which a
+        # SIGTERM or SIGKILL (evidence-capture's timeout) never runs; the
+        # product, in its own session, outlived it for days.
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            with self.subTest(signal=sig.name), _adopting_orphans():
+                state_file = self.new_state_file()
+                owner = self._owned_launch(state_file)
+                record = json.loads(state_file.read_text())
+                owner.send_signal(sig)
+                owner.wait(timeout=5)
+                left = self._until_no_children()
+                _end(left)
+                self.assertEqual([], left, "a process of the launch outlived its owner")
+                self.assertFalse(state_file.exists(), "the launch record outlived its owner")
+                self.assertFalse(Path(record["worktree"]).exists(), "the launch copy outlived its owner")
+                self.assertTrue(_port_is_free(record["port"]))
+
+    def test_a_launch_ends_when_its_owner_is_killed_before_it_is_healthy(self):
+        # af-f7x7w7, second measure: an agent's tool timeout killed
+        # prototype-fidelity, and project-launch start with it, while the
+        # product was still answering its probe; the record said
+        # started=false and the product lived on.
+        descriptor = json.loads(DESCRIPTOR.read_text())
+        descriptor["launch"]["recipe"] = ["{python}", "-c", "import time; time.sleep(120)"]
+        slow = Path(tempfile.mkdtemp(prefix="project-launch-slow-")) / "descriptor.json"
+        self.addCleanup(shutil.rmtree, slow.parent, True)
+        slow.write_text(json.dumps(descriptor))
+        with _adopting_orphans():
+            state_file = self.new_state_file()
+            owner = subprocess.Popen(
+                [sys.executable, "-c",
+                 "import os, subprocess, sys, time; "
+                 "subprocess.Popen([sys.argv[1], '--repo-root', sys.argv[4], 'start', sys.argv[2], '--dataset', 'content', '--timeout', '60', "
+                 "'--state-file', sys.argv[3], '--owner-pid', str(os.getpid())]); time.sleep(120)",
+                 str(TOOL), str(slow), str(state_file), str(self.product)],
+                cwd=ROOT, start_new_session=True)
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                with contextlib.suppress(OSError, ValueError):
+                    if "pid" in json.loads(state_file.read_text()):
+                        break
+                time.sleep(0.2)
+            record = json.loads(state_file.read_text())
+            self.assertFalse(record["started"])
+            os.killpg(owner.pid, signal.SIGKILL)  # as evidence-capture's timeout does
+            owner.wait(timeout=5)
+            left = self._until_no_children()
+            _end(left)
+        self.assertEqual([], left, "a process of the launch outlived its killed owner")
+        self.assertFalse(state_file.exists(), "the launch record outlived its owner")
+        self.assertFalse(Path(record["worktree"]).exists(), "the launch copy outlived its owner")
+
+    def test_an_owned_launch_stopped_normally_leaves_no_guard(self):
+        with _adopting_orphans():
+            state_file = self.new_state_file()
+            owner = self._owned_launch(state_file)
+            self.stop(state_file=state_file)
+            owner.kill()
+            owner.wait(timeout=5)
+            left = self._until_no_children()
+            _end(left)
+        self.assertEqual([], left, "the guard outlived a normal stop")
+
+    def test_start_refuses_an_owner_that_is_not_running(self):
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        result, state_file = self.start("--dataset", "content", "--owner-pid", str(dead.pid), check=False)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("owner", json.loads(result.stdout)["error"])
+        self.assertFalse(state_file.exists())
+
+    def test_every_factory_launcher_owns_what_it_starts(self):
+        # The class, not tdd-step alone: each tool that starts a product
+        # names itself its owner, so the product ends with it.
+        callers = [path for path in sorted((ROOT / "bin").iterdir())
+                   if path.name != "project-launch" and path.is_file()
+                   and "LAUNCH_TOOL" in path.read_text(errors="replace")
+                   and '"start"' in path.read_text(errors="replace")]
+        # Their products outlive the command on purpose: an open Acceptance
+        # Session, or products prepared for reuse, ended by their own records.
+        detached = {"acceptance-session", "ticket-evaluation", "outcome-evaluation"}
+        self.assertTrue(detached <= {path.name for path in callers})
+        owners = [path for path in callers if path.name not in detached]
+        self.assertGreaterEqual(len(owners), 4)
+        for path in owners:
+            with self.subTest(caller=path.name):
+                self.assertTrue('"--owner-pid", str(os.getpid())' in path.read_text(),
+                                f"{path.name} starts a product it does not own")
 
 if __name__ == "__main__":
     unittest.main()

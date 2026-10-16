@@ -76,6 +76,10 @@ Le nombre d'éléments sur la page d'accueil.
 ## Target rigs
 
 {RIG}"""
+# Only an interface ticket is evaluated by a model (ADR-0030 L4): the slices
+# of the convoy carry the reference of a Validated Prototype.
+INTERFACE_TEXT = (TICKET_TEXT + "\n\n## Validated Prototype\n\n- branche : prototype/essai\n- commit : " + "a" * 40
+                  + "\n- chemin : prototype\n- états : content\n")
 # What the realized ticket makes the launched product show.
 COUNT_SHOWN = 'data-anchor="fixture-count">3<'
 
@@ -285,7 +289,7 @@ class TicketEvaluationTest(unittest.TestCase):
         self.plan.write_text(json.dumps(list(plan), ensure_ascii=False))
 
     def seed_tracker(self):
-        def ticket(kind, description=TICKET_TEXT, **more):
+        def ticket(kind, description=INTERFACE_TEXT, **more):
             return {"title": "ticket d'essai", "status": "open", "issue_type": "task",
                     "description": description, "metadata": {"gc.ticket_kind": kind}, **more}
 
@@ -397,7 +401,7 @@ class TicketEvaluationTest(unittest.TestCase):
     @staged
     def finished_slice(self, files=None, ticket=SLICE):
         """A slice whose criterion test was proven red, read by the test
-        reviewer and frozen, whose code is green at the tip, and whose
+        reviewer before ADR-0030 L3 and frozen, whose code is green at the tip, and whose
         author has finished there. Without `files` the criterion is not
         realized: the commit changes nothing of the product. Returns the tip."""
         self.started(ticket)
@@ -406,11 +410,10 @@ class TicketEvaluationTest(unittest.TestCase):
         tip = self.commit_on(ticket, files or {NOTE: "le nombre sera affiché plus tard\n"})
         fingerprints = {path: sha256_of(self.blob(red, path)) for path in (TABLE, COUNT_FILE)}
         self.state("set-tdd", CONVOY, ticket, "--step", "red", "--commit", red, "--base", self.base)
-        self.state("open-test-review", CONVOY, ticket, "--commit", red, "--file",
-                   self.json_file("test-request.json", {"files": fingerprints, "criteria": {"1": [COUNT_ID]}}))
-        self.state("record-test-review", CONVOY, ticket, "--file", self.json_file("test-verdict.json", {
-            "commit": red, "files": fingerprints, "tests": {COUNT_ID: {"state": "favorable"}},
-            "recorded_by": "delivery-reviewer-tests"}))
+        # Recorded before ADR-0030 L3, as on a ticket in flight: the session
+        # that rendered it has served the convoy (T42, served_session).
+        ticket_proofs.pre_l3_test_review(self.env, ticket, red, fingerprints, {COUNT_ID: {"state": "favorable"}},
+                                         "delivery-reviewer-tests")
         self.state("set-tdd", CONVOY, ticket, "--step", "freeze", "--commit", red)
         self.state("set-tdd", CONVOY, ticket, "--step", "green", "--commit", tip)
         self.finish(ticket, tip)
@@ -560,9 +563,12 @@ class TicketEvaluationTest(unittest.TestCase):
         tip = self.finished_slice(files)
         tracker = json.loads(self.tracker.read_text())
         tracker["beads"][SLICE]["metadata"]["gc.flow.establishes_launch_recipe"] = True
-        tracker["beads"][OTHER_SLICE]["description"] += (
-            "\n\n## Validated Prototype\n\n- branche : main\n"
-            f"- commit : {self.base}\n- chemin : {FIXTURE}/prototype\n- états : empty, content\n")
+        # One reference, the slice's own (an interface ticket, ADR-0030 L4).
+        for ticket in (SLICE, OTHER_SLICE):
+            tracker["beads"][ticket]["description"] = TICKET_TEXT + (
+                "\n\n## Validated Prototype\n\n- branche : main\n"
+                f"- commit : {self.base}\n- chemin : {FIXTURE}/prototype\n- états : empty, content\n")
+        tracker["beads"][WAITING_SLICE]["description"] = TICKET_TEXT
         self.tracker.write_text(json.dumps(tracker))
         live = json.loads(candidate)
         live["launch"] = None
@@ -666,9 +672,12 @@ class TicketEvaluationTest(unittest.TestCase):
         tip = self.finished_slice(files)
         tracker = json.loads(self.tracker.read_text())
         tracker["beads"][SLICE]["metadata"]["gc.flow.establishes_launch_recipe"] = True
-        tracker["beads"][OTHER_SLICE]["description"] += (
-            "\n\n## Validated Prototype\n\n- branche : main\n"
-            f"- commit : {'a' * 40}\n- chemin : absent\n- états : content\n")
+        # One reference, the slice's own (an interface ticket, ADR-0030 L4).
+        for ticket in (SLICE, OTHER_SLICE):
+            tracker["beads"][ticket]["description"] = TICKET_TEXT + (
+                "\n\n## Validated Prototype\n\n- branche : main\n"
+                f"- commit : {'a' * 40}\n- chemin : absent\n- états : content\n")
+        tracker["beads"][WAITING_SLICE]["description"] = TICKET_TEXT
         self.tracker.write_text(json.dumps(tracker))
         self.evaluator("silent")
         self.settle()
@@ -752,6 +761,22 @@ class TicketEvaluationTest(unittest.TestCase):
         with self.assertRaises(Exception):
             urllib.request.urlopen(original["address"], timeout=1)
 
+    def test_a_pass_on_a_convoy_where_nothing_is_due_reads_the_convoy_once(self):
+        # af-x11w4x: settle read the whole convoy again before each ticket,
+        # one `convoy-state show` per ticket of the convoy on every pass of
+        # convoy-advance (34 a minute on a 62-ticket convoy, af-2se8y2).
+        calls = self.tmp / "gc-calls.log"
+        counting = self.tmp / "counting-gc"
+        counting.write_text(f'#!/bin/sh\necho "$*" >> "{calls}"\nexec "{self.env["GC_BIN"]}" "$@"\n')
+        counting.chmod(0o755)
+        env = {"GC_BIN": str(counting)}
+        shown = self.run_cmd(STATE_TOOL, "show", CONVOY, "--repo", self.repo, env=env)
+        self.assertEqual(0, shown.returncode, shown.stdout + shown.stderr)
+        one_read = len(calls.read_text().splitlines())
+        calls.write_text("")
+        self.settle(env=env)
+        self.assertEqual(one_read, len(calls.read_text().splitlines()), calls.read_text())
+
     # --- the demonstration line of the ticket -----------------------------------
 
     def test_an_unrealized_criterion_is_recorded_not_observed_with_its_evidence_and_the_verdict_is_unfavorable(self):
@@ -815,7 +840,11 @@ class TicketEvaluationTest(unittest.TestCase):
         self.assertEqual(("favorable", "favorable", tip), (last["outcome"], last["verdict"], last["commit"]))
         verdict = self.tool("verdict")
         self.assertEqual((True, "favorable", []), (verdict["favorable"], verdict["verdict"], verdict["reasons"]))
-        self.assertEqual([SLICE], [entry["id"] for entry in self.merge()["merged"]])
+        # Without interface, no fidelity to measure: a model evaluation
+        # recorded before ADR-0030 L4 still counts at the merge.
+        self.edit(SLICE, description=TICKET_TEXT)
+        merged = self.merge()
+        self.assertEqual([SLICE], [entry["id"] for entry in merged["merged"]], merged)
 
     # --- the product that is evaluated ---------------------------------------------
 
@@ -1366,6 +1395,17 @@ class TicketEvaluationTest(unittest.TestCase):
                          tuple(round_[name] for name in ("kind", "started", "verdict", "commit")))
         self.assertEqual([], self.launches())
 
+    def test_an_interface_slice_that_did_not_start_is_not_launched_again_at_the_same_tip(self):
+        tip = self.finished_slice({APP: "raise SystemExit('le produit ne démarre plus')\n"})
+        self.settings(timeout_seconds=3600, start_timeout_seconds=2)
+        self.settle()
+
+        settled = self.settle()
+
+        self.assertEqual([], settled["refused_startup"] + settled["launched"])
+        (round_,) = self.evaluation()["rounds"]
+        self.assertEqual(("startup", False, tip), (round_["kind"], round_["started"], round_["commit"]))
+
     # --- what the Evaluator is given ----------------------------------------------------
 
     def test_what_the_evaluator_is_given_holds_neither_the_handoff_nor_the_diff(self):
@@ -1488,16 +1528,6 @@ class TicketEvaluationTest(unittest.TestCase):
 
         self.assertIn("design", brief)
         self.assertNotIn("visual_changes", brief)
-
-    def test_non_interface_brief_omits_design_even_if_the_repository_has_it(self):
-        self.finished_slice({**self.realized(), "DESIGN.md": "- Le focus reste visible.\n"})
-        self.evaluator("silent")
-        self.settle()
-
-        brief = self.tool("brief")
-
-        self.assertNotIn("design", brief)
-        self.assertNotIn("screen_checks", brief)
 
     def test_cited_screen_finding_refuses_an_otherwise_favorable_interface_ticket(self):
         rule = "- Le focus reste visible."
@@ -1843,6 +1873,31 @@ class TicketEvaluationTest(unittest.TestCase):
         self.assertNotIn("evaluation", self.shown()["verdicts"])
         self.assertEqual([], self.launch_records())
 
+    def test_the_launch_delay_grows_with_the_datasets_to_cover(self):
+        # af-vtg5kl: T02 (af-0gonc9) names 24 datasets at about 3 min each;
+        # cut at 3600 s four times, it never covered them all.
+        import importlib.util
+        from importlib.machinery import SourceFileLoader
+        loader = SourceFileLoader("ticket_evaluation_tool", str(TOOL))
+        module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+        loader.exec_module(module)
+        shipped = json.loads((ROOT / "config" / "delivery-flow.json").read_text())["evaluation"]
+        sent = time.time() - 3601
+
+        self.assertLess(time.time(), sent + module.launch_timeout(shipped, 24))
+        self.assertEqual(shipped["timeout_seconds"], module.launch_timeout(shipped, 1))
+
+    def test_a_launch_is_not_expired_while_its_datasets_still_have_time(self):
+        self.finished_slice(self.realized())
+        self.settings(timeout_seconds=0, per_dataset_seconds=3600)
+        self.evaluator("silent")
+
+        launched, second = self.settle(), self.settle()
+
+        self.assertEqual([SLICE], [entry["ticket"] for entry in launched["launched"]])
+        self.assertEqual([SLICE], [entry["ticket"] for entry in second["pending"]])
+        self.assertEqual(1, len(self.launches()))
+
     def test_a_session_that_closes_its_bead_without_states_counts_as_no_result(self):
         self.finished_slice(self.realized())
         self.evaluator("closed", {"look_for": COUNT_SHOWN, "dataset": "content"})
@@ -1902,6 +1957,82 @@ class TicketEvaluationTest(unittest.TestCase):
 
         self.assertEqual([], merged["merged"])
         self.assertIn("aucune Ticket Evaluation rendue", merged["waiting"][0]["reason"])
+
+    # --- L4 (ADR-0030): a model evaluates only an interface ticket -------------------------
+
+    def test_a_ticket_without_interface_gets_no_model_evaluation_and_merges_once_its_product_starts(self):
+        tip = self.finished_slice(self.realized())
+        self.edit(SLICE, description=TICKET_TEXT)
+        self.code_reviewed(tip)
+
+        settled = self.settle()
+
+        self.assertEqual([SLICE], [entry["ticket"] for entry in settled["started"]])
+        self.assertEqual([], settled["launched"])
+        self.assertEqual([], self.launches())
+        (round_,) = self.evaluation()["rounds"]
+        self.assertEqual(("startup", True, "favorable", "not_required", tip),
+                         tuple(round_.get(name) for name in ("kind", "started", "verdict", "model", "commit")))
+        self.assertEqual((tip, 0), tuple(self.piece(round_["evidence"])[name] for name in ("commit", "exit_code")))
+        self.assertTrue(self.tool("verdict")["favorable"])
+        self.assertEqual([], self.launch_records())
+        merged = self.merge()
+        self.assertEqual([SLICE], [entry["id"] for entry in merged["merged"]], merged)
+
+    def test_a_ticket_without_interface_that_establishes_the_recipe_proves_its_start_and_stop_first(self):
+        files = self.realized()
+        files["config/project-descriptors/fx.json"] = self.profile.read_text()
+        files[APP] = "raise SystemExit('broken launch')\n"
+        self.finished_slice(files)
+        tracker = json.loads(self.tracker.read_text())
+        tracker["beads"][SLICE]["metadata"]["gc.flow.establishes_launch_recipe"] = True
+        tracker["beads"][SLICE]["description"] = TICKET_TEXT
+        self.tracker.write_text(json.dumps(tracker))
+
+        settled = self.settle(expect=1)
+
+        self.assertIn("lifecycle preflight failed", settled["refused"][0]["reason"])
+        self.assertEqual(([], []), (settled["started"], self.launches()))
+
+    def test_an_interface_ticket_is_still_evaluated_by_a_model(self):
+        tip = self.finished_slice(self.realized())
+        self.assertTrue(self.shown()["interface"])
+        self.evaluator("silent")
+
+        settled = self.settle()
+
+        self.assertEqual([SLICE], [entry["ticket"] for entry in settled["launched"]])
+        self.assertEqual([], settled["started"])
+        self.assertEqual(1, len(self.launches()))
+        self.assertEqual(tip, self.evaluation()["request"]["commit"])
+
+    def test_a_start_verdict_does_not_stand_for_a_ticket_that_became_interface(self):
+        tip = self.finished_slice(self.realized())
+        self.edit(SLICE, description=TICKET_TEXT)
+        self.settle()
+        self.assertEqual("startup", self.evaluation()["rounds"][-1]["kind"])
+        self.edit(SLICE, description=INTERFACE_TEXT)
+        self.evaluator("silent")
+
+        settled = self.settle()
+
+        self.assertEqual([SLICE], [entry["ticket"] for entry in settled["launched"]])
+        self.assertEqual(tip, self.evaluation()["request"]["commit"])
+
+    def test_an_open_model_evaluation_of_a_ticket_without_interface_is_withdrawn_for_the_start_probe(self):
+        tip = self.finished_slice(self.realized())
+        self.evaluator("silent")
+        self.settle()
+        bead = self.launches()[0]
+        self.edit(SLICE, description=TICKET_TEXT)
+
+        settled = self.settle()
+
+        self.assertEqual([SLICE], [entry["ticket"] for entry in settled["started"]])
+        self.assertNotIn("request", self.evaluation())
+        self.assertEqual("favorable", self.evaluation()["rounds"][-1]["verdict"])
+        self.assertIn(bead[0], (self.tmp / "cancel.log").read_text())
+        self.assertEqual(tip, self.evaluation()["rounds"][-1]["commit"])
 
     def test_a_prefactoring_is_merged_once_its_product_starts(self):
         tip = self.finished_prefactoring()

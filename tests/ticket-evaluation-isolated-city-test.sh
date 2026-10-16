@@ -23,7 +23,10 @@
 # their tools would (their formulas have their own trials).
 #
 # Two tickets of the fixture, each finished by its author:
-#   A  a slice whose criterion is not realized: the evaluation records
+#   A  an interface slice (its description carries the reference of the
+#      Validated Prototype of the fixture, as the publication door poses it:
+#      only an interface ticket is evaluated by a model, ADR-0030 L4) whose
+#      criterion is not realized: the evaluation records
 #      « non observé » with its piece of evidence, the computed verdict is
 #      unfavorable, and nothing is merged. The author commits the correction:
 #      every state is « observé » with evidence, the verdict is favorable, and
@@ -97,7 +100,7 @@ trap cleanup EXIT
 
 # Nothing of the live Factory may reach this city (same recipe as
 # tests/code-review-isolated-city-test.sh).
-while IFS= read -r name; do unset "$name"; done < <(compgen -e | grep -E '^(GC_|BEADS_|BD_BIN$|GH_BIN$|FACTORY_ROOT$|CONVOY_|DISPATCH_DOOR_|ESCALATION_DOOR_|EVIDENCE_|TICKET_AUTHOR_|SPEC_INTEGRATION_|TEST_REVIEW_|CODE_REVIEW_(DISPATCH|FAKE)|TICKET_EVALUATION_(DISPATCH|FAKE|STATE)|DELIVERY_ROLE_)' || true)
+while IFS= read -r name; do unset "$name"; done < <(compgen -e | grep -E '^(GC_|BEADS_|BD_BIN$|GH_BIN$|FACTORY_ROOT$|CONVOY_|DISPATCH_DOOR_|ESCALATION_DOOR_|EVIDENCE_|TICKET_AUTHOR_|SPEC_INTEGRATION_|CODE_REVIEW_(DISPATCH|FAKE)|TICKET_EVALUATION_(DISPATCH|FAKE|STATE)|DELIVERY_ROLE_)' || true)
 export GC_HOME="$TRIAL/h" XDG_RUNTIME_DIR="$TRIAL/r" GC_DISABLE_USAGE_METRICS=1
 unset DBUS_SESSION_BUS_ADDRESS
 export PATH="/usr/local/bin:$HOME/.local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -332,7 +335,14 @@ Le nombre d'éléments sur la page d'accueil.
 
 ## Target rigs
 
-trial" 2>/dev/null)
+trial
+
+## Validated Prototype
+
+- branche : main
+- commit : $BASE
+- chemin : $FIXTURE/prototype
+- états : content" 2>/dev/null)
 P=$(gc bd create --title "ticket P, prefactoring" --type task --silent --description "## What to build
 
 Ranger le rendu de la page.
@@ -410,13 +420,7 @@ started() { # <ticket>
 started "$A"
 red=$(commit_on "$A" "$FIXTURE/tests/test_count_$A.py" "# test de critère du ticket $A" "PROSE-DU-COMMIT : tests de critère")
 TIP_A=$(commit_on "$A" "docs/$A.md" "Le nombre d'éléments sera affiché plus tard." "PROSE-DU-COMMIT : la tranche")
-files=$(jq -n --arg p "$FIXTURE/tests/test_count_$A.py" --arg d "sha256:$(git -C "$PRODUCT" show "$red:$FIXTURE/tests/test_count_$A.py" | sha256sum | cut -d' ' -f1)" '{($p): $d}')
 state set-tdd "$CONVOY" "$A" --step red --commit "$red" --base "$BASE" >/dev/null
-jq -n --argjson files "$files" --arg id "$FIXTURE/tests/test_count_$A.py::CountTest.test_count" '{files: $files, criteria: {"1": [$id]}}' > "$TRIAL/request.$A.json"
-state open-test-review "$CONVOY" "$A" --commit "$red" --file "$TRIAL/request.$A.json" >/dev/null
-jq -n --argjson files "$files" --arg commit "$red" --arg session "trial-test-reviewer-$A" --arg id "$FIXTURE/tests/test_count_$A.py::CountTest.test_count" \
-  '{commit: $commit, files: $files, tests: {($id): {state: "favorable"}}, recorded_by: $session}' > "$TRIAL/verdict.$A.json"
-state record-test-review "$CONVOY" "$A" --file "$TRIAL/verdict.$A.json" >/dev/null
 state set-tdd "$CONVOY" "$A" --step freeze --commit "$red" >/dev/null
 finish "$A" "$TIP_A" green
 

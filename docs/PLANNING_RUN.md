@@ -62,7 +62,11 @@ Planning Run starts.
 5. **`/to-tickets` slices the approved Spec.** Benjamin approves the exact
    breakdown once -- title, blocked-by, what it delivers, acceptance
    criteria, target rig, scope paths if any -- exactly as it will be
-   published. The approved breakdown is published as a Ticket Graph Draft
+   published. A ticket is `blocked_by` only the tickets whose deliverable
+   it consumes, cited in its text; the same surface is not a dependency.
+   Keep the critical path short: the graph review refuses a chain longer
+   than max(4, ⌈n/3⌉) tickets (`docs/GRAPH_REVIEW.md`, ADR-0031).
+   The approved breakdown is published as a Ticket Graph Draft
    bead linked to the Spec bead; target rigs and scope paths live in its
    metadata, never in ticket text. `/to-tickets` never creates a prototype
    ticket: every prototype is built during the Planning Run, as a map

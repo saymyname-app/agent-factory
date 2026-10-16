@@ -229,7 +229,7 @@ class ConvoyStateTest(unittest.TestCase):
     def test_show_renders_mark_exit_verdicts_counters_evidence_and_gate_records(self):
         tip = self.started_ticket()
         self.ok("set-exit", CONVOY, T1, "--exit", "finished")
-        for kind in ("test_review", "code_review", "evaluation", "fidelity"):
+        for kind in ("code_review", "evaluation", "fidelity"):
             self.ok("set-verdict", CONVOY, T1, "--kind", kind, "--state", "favorable", "--commit", tip)
         self.ok("set-verdict", CONVOY, T1, "--kind", "evaluation", "--state", "unfavorable", "--commit", tip)
         self.ok("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes", "--counter", "correction_rounds")
@@ -250,8 +250,8 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertEqual("ticket/t1", t1["branch"])
         self.assertEqual(tip, t1["tip"])
         self.assertEqual("finished", t1["exit"]["exit"])
-        self.assertEqual({"test_review", "code_review", "evaluation", "fidelity"}, set(t1["verdicts"]))
-        for kind, state in (("test_review", "favorable"), ("code_review", "favorable"),
+        self.assertEqual({"code_review", "evaluation", "fidelity"}, set(t1["verdicts"]))
+        for kind, state in (("code_review", "favorable"),
                             ("evaluation", "unfavorable"), ("fidelity", "favorable")):
             self.assertEqual(state, t1["verdicts"][kind]["state"])
             self.assertEqual(tip, t1["verdicts"][kind]["commit"])
@@ -980,7 +980,6 @@ class ConvoyStateTest(unittest.TestCase):
     def frozen_slice(self):
         self.marked_slice()
         self.set_tdd("red", self.RED, "--base", self.BASE)
-        self.reviewed()
         self.set_tdd("freeze", self.RED)
 
     def test_show_renders_the_acceptance_criteria_of_a_ticket_in_order(self):
@@ -1467,244 +1466,50 @@ class ConvoyStateTest(unittest.TestCase):
             self.assertEqual(EXIT_NOT_NEW_FLOW, proc.returncode, proc.stdout + proc.stderr)
             self.assertEqual(before, self.tracker.read_text())
 
-    # --- review of the criterion tests before the freeze (T13) -----------------
+    # --- a review of the criterion tests recorded before ADR-0030 L3 ------------
+    # bin/test-review and the commands that wrote gc.flow.test_review left in
+    # L7; a ticket in flight may still carry its record or its stop.
 
     COUNT_TEST = "tests/test_count.py::CountTest.test_count_is_shown"
-    HEALTH_TEST = "tests/test_health.py::HealthTest.test_dataset_is_named"
-    REVIEW_FILES = {"tests/criteria.json": "sha256:" + "c1" * 32, "tests/test_count.py": "sha256:" + "c2" * 32,
-                    "tests/test_health.py": "sha256:" + "c3" * 32}
-    REVIEW_CRITERIA = {"1": [COUNT_TEST], "2": [HEALTH_TEST]}
-    STATUS_ONLY = "le test ne vérifie qu'un statut 200 : il passerait sans le nombre d'éléments"
 
     def json_file(self, name, content):
         path = self.tmp / name
         path.write_text(json.dumps(content, ensure_ascii=False))
         return path
 
-    def open_review(self, commit=None, files=None, criteria=None, ticket=T1):
-        request = self.json_file("request.json", {"files": files or self.REVIEW_FILES,
-                                                  "criteria": criteria or self.REVIEW_CRITERIA})
-        return self.ok("open-test-review", CONVOY, ticket, "--commit", commit or self.RED, "--file", request)
-
-    def verdict_file(self, refused=None, commit=None, files=None, tests=None):
-        """The answers of a reviewer: every test favorable, except those of
-        `refused` ({test id: reason})."""
-        refused = refused or {}
-        answers = {test: ({"state": "unfavorable", "reason": refused[test]} if test in refused
-                          else {"state": "favorable"}) for test in (self.COUNT_TEST, self.HEALTH_TEST)}
-        self.verdicts = getattr(self, "verdicts", 0) + 1
-        return self.json_file(f"verdict-{self.verdicts}.json", {
-            "commit": commit or self.RED, "files": files or self.REVIEW_FILES,
-            "tests": answers if tests is None else tests, "recorded_by": f"delivery-reviewer-tests-{self.verdicts}"})
-
-    def record_review(self, refused=None, **given):
-        return self.ok("record-test-review", CONVOY, T1, "--file", self.verdict_file(refused, **given))
-
-    def reviewed(self, commit=None):
-        """A favorable review of the criterion tests proven red at `commit`."""
-        self.open_review(commit=commit)
-        return self.record_review(commit=commit)
-
     def red_slice(self):
         self.marked_slice()
         self.set_tdd("red", self.RED, "--base", self.BASE)
 
-    def review_state(self, ticket=T1, expect=0):
-        return self.ticket(self.show(expect=expect), ticket)["test_review"]
-
-    def test_open_test_review_records_the_request_with_its_commit_and_fingerprints(self):
+    def test_freeze_needs_no_review_of_the_criterion_tests(self):
+        """ADR-0030 L3: the code review reads the criterion tests after the green."""
         self.red_slice()
-        self.assertIsNone(self.review_state())
 
-        self.open_review()
-
-        review = self.review_state()
-        self.assertEqual([], review["rounds"])
-        self.assertEqual((self.RED, self.REVIEW_FILES, self.REVIEW_CRITERIA, []),
-                         tuple(review["request"][name] for name in ("commit", "files", "criteria", "launches")))
-        self.assertIsNone(self.review_state(T2))
-
-    def test_the_same_request_opened_twice_writes_nothing_more(self):
-        self.red_slice()
-        self.open_review()
-        self.ok("launch-test-review", CONVOY, T1, "--bead", "fx-r1")
-        before = self.tracker.read_bytes()
-
-        self.assertEqual({}, self.open_review()["written"])
-
-        self.assertEqual(before, self.tracker.read_bytes())
-
-    def test_open_test_review_is_refused_without_a_red_at_that_commit(self):
-        self.marked_slice()
-        request = self.json_file("request.json", {"files": self.REVIEW_FILES, "criteria": self.REVIEW_CRITERIA})
-        self.assert_refused_and_nothing_written(
-            "open-test-review", CONVOY, T1, "--commit", self.RED, "--file", request, mention="rouge")
-        self.set_tdd("red", self.RED, "--base", self.BASE)
-        self.assert_refused_and_nothing_written(
-            "open-test-review", CONVOY, T1, "--commit", self.AMENDED, "--file", request, mention="rouge")
-
-    def test_open_test_review_is_refused_on_a_prefactoring_a_frozen_or_a_stopped_ticket(self):
-        self.frozen_slice()
-        request = self.json_file("request.json", {"files": self.REVIEW_FILES, "criteria": self.REVIEW_CRITERIA})
-        self.assert_refused_and_nothing_written(
-            "open-test-review", CONVOY, T1, "--commit", self.RED, "--file", request, mention="gelés")
-        self.assert_refused_and_nothing_written(
-            "open-test-review", CONVOY, T2, "--commit", self.RED, "--file", request, mention="prefactoring")
-
-        self.red_slice()
-        self.ok("stop-ticket", CONVOY, T1, "--reason", "criterion_already_green", "--detail", "critère 2 déjà vert")
-        self.assert_refused_and_nothing_written(
-            "open-test-review", CONVOY, T1, "--commit", self.RED, "--file", request, mention="arrêté")
-
-    def test_open_test_review_refuses_a_request_without_fingerprints_or_a_test_without_one(self):
-        self.red_slice()
-        for name, content, mention in (
-            ("vide", {"files": {}, "criteria": self.REVIEW_CRITERIA}, "empreintes"),
-            ("digest", {"files": {"tests/test_count.py": "abc"}, "criteria": self.REVIEW_CRITERIA}, "digest"),
-            ("criteres", {"files": self.REVIEW_FILES, "criteria": {"1": []}}, "critère 1"),
-            ("fichier", {"files": {"tests/criteria.json": DIGEST}, "criteria": self.REVIEW_CRITERIA}, "sans empreinte"),
-            ("inconnu", {"files": self.REVIEW_FILES, "criteria": self.REVIEW_CRITERIA, "note": "x"}, "inconnus"),
-        ):
-            self.assert_refused_and_nothing_written(
-                "open-test-review", CONVOY, T1, "--commit", self.RED, "--file", self.json_file(f"{name}.json", content),
-                mention=mention)
-        self.assert_refused_and_nothing_written(
-            "open-test-review", CONVOY, T1, "--commit", self.RED, "--file", self.tmp / "absent.json", mention="illisible")
-
-    def test_launches_of_a_review_are_recorded_and_a_third_one_is_refused(self):
-        self.red_slice()
-        self.assert_refused_and_nothing_written(
-            "launch-test-review", CONVOY, T1, "--bead", "fx-r1", mention="aucune relecture")
-        self.open_review()
-
-        self.ok("launch-test-review", CONVOY, T1, "--bead", "fx-r1")
-        self.ok("launch-test-review", CONVOY, T1, "--bead", "fx-r2")
-
-        self.assertEqual(["fx-r1", "fx-r2"], [launch["bead"] for launch in self.review_state()["request"]["launches"]])
-        self.assert_refused_and_nothing_written(
-            "launch-test-review", CONVOY, T1, "--bead", "fx-r3", mention="une seule relance")
-        self.assert_refused_and_nothing_written(
-            "launch-test-review", CONVOY, T1, "--bead", "pas un bead", mention="bead")
-
-    def test_a_favorable_review_is_recorded_per_test_and_lets_the_freeze_through(self):
-        self.red_slice()
-        self.open_review()
-
-        answer = self.record_review()
-
-        self.assertEqual(("favorable", 0, False), (answer["verdict"], answer["refusals"], answer["stopped"]))
-        review = self.review_state()
-        self.assertNotIn("request", review)
-        (round_,) = review["rounds"]
-        self.assertEqual(("favorable", self.RED, self.REVIEW_FILES, "delivery-reviewer-tests-1"),
-                         tuple(round_[name] for name in ("verdict", "commit", "files", "recorded_by")))
-        self.assertEqual({self.COUNT_TEST: {"state": "favorable"}, self.HEALTH_TEST: {"state": "favorable"}},
-                         round_["tests"])
         self.set_tdd("freeze", self.RED)
+
         self.assertEqual(self.RED, self.ticket(self.show(), T1)["tdd"]["freeze"]["commit"])
+        self.assertIsNone(self.ticket(self.show(), T1).get("test_review"))
 
-    def test_a_refusal_is_recorded_per_test_with_its_reason_and_the_freeze_is_refused(self):
+    def test_a_review_recorded_before_l3_is_still_read_and_holds_nothing(self):
         self.red_slice()
-        self.open_review()
+        record = {"rounds": [{"commit": self.RED, "files": {"tests/test_count.py": DIGEST}, "verdict": "unfavorable",
+                              "tests": {self.COUNT_TEST: {"state": "unfavorable", "reason": "statut 200 seul"}},
+                              "recorded_by": "delivery-reviewer-tests", "at": "2026-10-15T00:00:00Z"}],
+                  "request": {"commit": self.RED, "files": {"tests/test_count.py": DIGEST},
+                              "criteria": {"1": [self.COUNT_TEST]},
+                              "launches": [{"bead": "fx-r1", "at": "2026-10-15T00:00:00Z"}],
+                              "at": "2026-10-15T00:00:00Z"}}
+        self.edit_tracker(T1, **{"gc.flow.test_review": json.dumps(record)})
 
-        answer = self.record_review({self.COUNT_TEST: self.STATUS_ONLY})
+        self.set_tdd("freeze", self.RED)
 
-        self.assertEqual(("unfavorable", 1, False), (answer["verdict"], answer["refusals"], answer["stopped"]))
-        (round_,) = self.review_state()["rounds"]
-        self.assertEqual("unfavorable", round_["verdict"])
-        self.assertEqual({"state": "unfavorable", "reason": self.STATUS_ONLY}, round_["tests"][self.COUNT_TEST])
-        self.assertEqual({"state": "favorable"}, round_["tests"][self.HEALTH_TEST])
-        self.assertIsNone(self.ticket(self.show(), T1)["stop"])
-        self.assert_refused_and_nothing_written(
-            "set-tdd", CONVOY, T1, "--step", "freeze", "--commit", self.RED, mention="relecture")
-
-    def test_freeze_is_refused_without_a_review_or_with_one_given_on_another_commit(self):
-        self.red_slice()
-        self.assert_refused_and_nothing_written(
-            "set-tdd", CONVOY, T1, "--step", "freeze", "--commit", self.RED, mention="relecture")
-        self.reviewed()
-        self.set_tdd("red", self.AMENDED, "--base", self.BASE)
-
-        self.assert_refused_and_nothing_written(
-            "set-tdd", CONVOY, T1, "--step", "freeze", "--commit", self.AMENDED, mention="relecture")
-
-    def test_freeze_is_refused_while_a_review_is_open(self):
-        self.red_slice()
-        self.reviewed()
-        self.set_tdd("red", self.AMENDED, "--base", self.BASE)
-        self.open_review(commit=self.AMENDED, files={**self.REVIEW_FILES, "tests/test_count.py": DIGEST})
-
-        self.assert_refused_and_nothing_written(
-            "set-tdd", CONVOY, T1, "--step", "freeze", "--commit", self.AMENDED, mention="relecture")
-
-    def test_record_test_review_refuses_a_verdict_outside_its_request(self):
-        self.red_slice()
-        self.assert_refused_and_nothing_written(
-            "record-test-review", CONVOY, T1, "--file", self.verdict_file(), mention="aucune relecture")
-        self.open_review()
-        other_files = {**self.REVIEW_FILES, "tests/test_count.py": DIGEST}
-        for verdict, mention in (
-            (self.verdict_file(commit=self.AMENDED), "commit"),
-            (self.verdict_file(files=other_files), "empreintes"),
-            (self.verdict_file(tests={self.COUNT_TEST: {"state": "favorable"}}), self.HEALTH_TEST),
-            (self.verdict_file(tests={self.COUNT_TEST: {"state": "favorable"}, self.HEALTH_TEST: {"state": "favorable"},
-                                      "tests/autre.py::T.t": {"state": "favorable"}}), "inconnu"),
-            (self.verdict_file(tests={self.COUNT_TEST: {"state": "approuvé"}, self.HEALTH_TEST: {"state": "favorable"}}),
-             "état"),
-            (self.verdict_file(tests={self.COUNT_TEST: {"state": "unfavorable"}, self.HEALTH_TEST: {"state": "favorable"}}),
-             "sans raison"),
-            (self.tmp / "absent.json", "illisible"),
-        ):
-            self.assert_refused_and_nothing_written("record-test-review", CONVOY, T1, "--file", verdict, mention=mention)
-
-    def test_refused_tests_cannot_be_reviewed_again_unchanged(self):
-        self.red_slice()
-        self.open_review()
-        self.record_review({self.COUNT_TEST: self.STATUS_ONLY})
-        request = self.json_file("request.json", {"files": self.REVIEW_FILES, "criteria": self.REVIEW_CRITERIA})
-
-        self.assert_refused_and_nothing_written(
-            "open-test-review", CONVOY, T1, "--commit", self.RED, "--file", request, mention="n'ont pas changé")
-
-    def test_corrected_tests_reviewed_favorably_after_a_refusal_can_be_frozen(self):
-        self.red_slice()
-        self.open_review()
-        self.record_review({self.COUNT_TEST: self.STATUS_ONLY})
-        corrected = {**self.REVIEW_FILES, "tests/test_count.py": DIGEST}
-        self.set_tdd("red", self.AMENDED, "--base", self.BASE)
-        self.open_review(commit=self.AMENDED, files=corrected)
-
-        answer = self.record_review(commit=self.AMENDED, files=corrected)
-
-        self.assertEqual(("favorable", 1, False), (answer["verdict"], answer["refusals"], answer["stopped"]))
-        self.assertEqual(["unfavorable", "favorable"], [r["verdict"] for r in self.review_state()["rounds"]])
-        self.set_tdd("freeze", self.AMENDED)
-
-    def test_a_second_refusal_stops_the_ticket_in_the_same_write(self):
-        self.red_slice()
-        self.open_review()
-        self.record_review({self.COUNT_TEST: self.STATUS_ONLY})
-        corrected = {**self.REVIEW_FILES, "tests/test_count.py": DIGEST}
-        self.set_tdd("red", self.AMENDED, "--base", self.BASE)
-        self.open_review(commit=self.AMENDED, files=corrected)
-        self.write_log.write_text("")
-
-        answer = self.record_review({self.COUNT_TEST: self.STATUS_ONLY}, commit=self.AMENDED, files=corrected)
-
-        self.assertEqual(("unfavorable", 2, True), (answer["verdict"], answer["refusals"], answer["stopped"]))
-        self.assertEqual(1, len(self.write_log.read_text().splitlines()))
-        stop = self.ticket(self.show(), T1)["stop"]
-        self.assertEqual("test_review_refused", stop["reason"])
-        self.assertIn(self.COUNT_TEST, stop["detail"])
-        request = self.json_file("request.json", {"files": self.REVIEW_FILES, "criteria": self.REVIEW_CRITERIA})
-        self.assert_refused_and_nothing_written(
-            "open-test-review", CONVOY, T1, "--commit", self.AMENDED, "--file", request, mention="arrêté")
-        self.assert_refused_and_nothing_written(
-            "set-tdd", CONVOY, T1, "--step", "freeze", "--commit", self.AMENDED, mention="arrêté")
+        shown = self.show()
+        self.assertEqual(record, self.ticket(shown, T1)["test_review"])
+        self.assertEqual(self.RED, self.ticket(shown, T1)["tdd"]["freeze"]["commit"])
 
     def test_a_review_without_result_is_a_reason_to_stop_a_ticket(self):
+        """A stop the test review wrote before L3 is still read (a ticket in flight carries one)."""
         self.red_slice()
-        self.open_review()
 
         self.ok("stop-ticket", CONVOY, T1, "--reason", "test_review_no_result",
                 "--detail", "la relecture des tests n'a rendu aucun verdict, relance comprise")
@@ -1734,19 +1539,6 @@ class ConvoyStateTest(unittest.TestCase):
 
         self.assertIn("unruled", self.ticket(shown, T1)["test_review"])
         self.assertEqual(["gc.flow.test_review"], [entry["field"] for entry in self.ticket(shown, T1)["unruled"]])
-        self.assert_refused_and_nothing_written(
-            "set-tdd", CONVOY, T1, "--step", "freeze", "--commit", self.RED, mention="relecture")
-
-    def test_test_review_on_an_unmarked_convoy_writes_nothing(self):
-        before = self.tracker.read_text()
-        request = self.json_file("request.json", {"files": self.REVIEW_FILES, "criteria": self.REVIEW_CRITERIA})
-        for command in (("open-test-review", CONVOY, T1, "--commit", self.RED, "--file", request),
-                        ("launch-test-review", CONVOY, T1, "--bead", "fx-r1"),
-                        ("record-test-review", CONVOY, T1, "--file", self.verdict_file())):
-            proc = self.run_tool(*command)
-            self.assertEqual(EXIT_NOT_NEW_FLOW, proc.returncode, proc.stdout + proc.stderr)
-            self.assertEqual(before, self.tracker.read_text())
-
 
     # --- code review of a ticket, models per role (T14) -------------------------
 
@@ -2509,19 +2301,34 @@ class ConvoyStateTest(unittest.TestCase):
             with self.subTest(mention=mention):
                 self.assert_refused_and_nothing_written("record-startup", CONVOY, T1, *args, mention=mention)
 
-    def test_a_product_that_starts_is_not_the_evaluation_of_a_slice_but_one_that_does_not_start_refuses_it(self):
+    def test_a_product_that_starts_is_not_the_evaluation_of_an_interface_slice_but_one_that_does_not_start_refuses_it(self):
         self.opened_evaluation()
+        description = self.tracker_state()["beads"][T1]["description"]
+        self.edit_bead(T1, description=description + "\n\n" + self.prototype_section())
         piece = self.captured("evaluation.startup")
         self.assert_refused_and_nothing_written(
             "record-startup", CONVOY, T1, "--commit", self.REVIEWED, "--piece", piece, "--file",
             self.json_file("startup.json", {"environment": [{"dataset": None, "address": self.PRODUCT["address"]}]}),
-            mention="ne vaut évaluation que pour un prefactoring")
+            mention="ne vaut évaluation que pour un ticket sans interface")
 
         self.ok("record-startup", CONVOY, T1, "--commit", self.REVIEWED, "--detail", "la copie propre ne démarre pas")
 
         evaluation = self.evaluation()
         self.assertNotIn("request", evaluation)
         self.assertEqual("unfavorable", evaluation["state"]["verdict"])
+
+    def test_a_product_that_starts_is_the_evaluation_of_a_slice_without_interface_its_model_one_not_required(self):
+        """ADR-0030 L4: only an interface ticket is evaluated by a model."""
+        self.opened_evaluation()
+        piece = self.captured("evaluation.startup")
+
+        self.ok("record-startup", CONVOY, T1, "--commit", self.REVIEWED, "--piece", piece, "--file",
+                self.json_file("startup.json", {"environment": [{"dataset": None, "address": self.PRODUCT["address"]}]}))
+
+        evaluation = self.evaluation()
+        self.assertNotIn("request", evaluation)
+        self.assertEqual(("startup", "favorable", "not_required"),
+                         tuple(evaluation["rounds"][-1].get(name) for name in ("kind", "verdict", "model")))
 
     def test_release_evaluation_forgets_the_stopped_products_and_keeps_those_an_open_evaluation_runs_on(self):
         self.opened_evaluation()
@@ -2713,6 +2520,20 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertEqual({"liste": "accepté par Benjamin", "titre": "ouvert"},
                          {d["anchor"]: d["status"] for d in ticket["fidelity"]["deviations"]})
 
+    def test_planning_exception_naming_no_anchor_is_accepted_by_its_accepting_answer(self):
+        # ADR-0030 L5: every Planning Exception has an accept path.
+        self.measured_slice()
+        self.ok("raise-planning-exception", CONVOY, T1, "--kind", "semantic", "--summary", "Question sur l'ordre",
+                "--accept-option", "c")
+
+        self.answer("c")
+
+        ticket = self.ticket(self.show(), T1)
+        self.assertEqual([([], "c", "resolved", True)],
+                         [(e["anchors"], e["accept_option"], e["state"], e["accepted"])
+                          for e in ticket["planning_exceptions"]])
+        self.assertEqual([], ticket["accepted_anchors"])
+
     def test_an_answer_given_before_the_exception_was_raised_resolves_nothing(self):
         self.measured_slice()
         self.set_fidelity(deviations=[self.DEVIATION])
@@ -2758,7 +2579,6 @@ class ConvoyStateTest(unittest.TestCase):
             (("--kind", "semantic", "--summary", "x", "--anchor", "une ancre"), "ancre"),
             (("--kind", "semantic", "--summary", "x", "--anchor", "liste", "--anchor", "liste", "--accept-option", "c"), "deux fois"),
             (("--kind", "semantic", "--summary", "x", "--anchor", "liste"), "option"),
-            (("--kind", "semantic", "--summary", "x", "--accept-option", "c"), "option"),
             (("--kind", "semantic", "--summary", "x", "--anchor", "liste", "--accept-option", "oui"), "option"),
         ):
             with self.subTest(args=args):
@@ -3229,7 +3049,8 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertEqual(before, self.tracker.read_text())
         self.assertEqual(1, self.resumes())
 
-    def test_every_cause_of_resume_adds_to_the_same_counter(self):
+    def test_each_cause_of_resume_is_bounded_on_its_own_and_all_add_to_the_counter(self):
+        # ADR-0030 L2: three different causes are not three of the same.
         self.interrupted_ticket()
         self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "session:auteur-1")
         self.ok("open-resume", CONVOY, T1, "--cause", "returned", "--ref", "merge:1")
@@ -3238,8 +3059,55 @@ class ConvoyStateTest(unittest.TestCase):
         ticket = self.ticket(self.show(), T1)
 
         self.assertEqual(3, ticket["counters"]["resumes"])
-        self.assertEqual(0, ticket["resumes_left"])
+        self.assertEqual(2, ticket["resumes_left"])
+        self.assertEqual({"interrupted": 2, "returned": 2, "unblocked": 2, "answered": 3, "behind": 3,
+                          "evaluation_no_result": 3, "stage_removed": 3, "commit_after_verdict": 3},
+                         ticket["resumes_left_by_cause"])
         self.assertEqual(["interrupted", "returned", "unblocked"], [e["cause"] for e in ticket["resume"]["entries"]])
+
+    def test_an_interruption_a_correction_round_and_a_red_merge_do_not_park_the_ticket(self):
+        # The af-ltchro case: interrupted, corrected, returned by a red merge.
+        self.interrupted_ticket()
+        self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "session:auteur-1")
+        self.ok("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes", "--counter", "correction_rounds")
+        self.ok("open-resume", CONVOY, T1, "--cause", "returned", "--ref", "merge:1")
+
+        ticket = self.ticket(self.show(), T1)
+
+        self.assertEqual((3, 2), (ticket["counters"]["resumes"], ticket["resumes_left"]))
+        self.assert_refused_and_nothing_written(
+            "park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "x", mention="reprises")
+        self.ok("open-resume", CONVOY, T1, "--cause", "returned", "--ref", "merge:2")
+
+    def test_the_same_cause_at_its_bound_exhausts_the_ticket_whatever_the_others(self):
+        self.interrupted_ticket()
+        self.ok("open-resume", CONVOY, T1, "--cause", "returned", "--ref", "merge:1")
+        for ref in ("a", "b", "c"):
+            self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", ref)
+
+        ticket = self.ticket(self.show(), T1)
+
+        self.assertEqual((0, 0, 2), (ticket["resumes_left"], ticket["resumes_left_by_cause"]["interrupted"],
+                                     ticket["resumes_left_by_cause"]["returned"]))
+        self.assert_refused_and_nothing_written(
+            "open-resume", CONVOY, T1, "--cause", "returned", "--ref", "merge:2", mention="cause interrupted")
+        self.ok("park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "3 reprises interrupted")
+
+    def test_commits_after_a_verdict_are_a_cause_of_their_own(self):
+        # Counted without an entry: what the counter holds beyond the
+        # entries and the correction round.
+        self.interrupted_ticket()
+        self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "a")
+        self.ok("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes", "--counter", "correction_rounds")
+        for _ in range(2):
+            self.ok("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
+        self.assertEqual(1, self.ticket(self.show(), T1)["resumes_left_by_cause"]["commit_after_verdict"])
+        self.ok("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
+
+        ticket = self.ticket(self.show(), T1)
+
+        self.assertEqual((0, 2), (ticket["resumes_left"], ticket["resumes_left_by_cause"]["interrupted"]))
+        self.ok("park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "3 commits après verdict")
 
     def test_the_commit_of_a_returned_ticket_resumed_by_code_invalidates_its_verdicts_without_a_second_resume(self):
         judged, base = self.integrated()
@@ -3327,10 +3195,12 @@ class ConvoyStateTest(unittest.TestCase):
     def test_a_ticket_is_parked_for_exhausted_resumes_only_once_they_are(self):
         self.interrupted_ticket()
         self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "a")
-        self.assert_refused_and_nothing_written(
-            "park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "x", mention="reprises")
         self.ok("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes", "--counter", "correction_rounds")
         self.ok("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
+        self.assert_refused_and_nothing_written(
+            "park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "x", mention="reprises")
+        for ref in ("b", "c"):
+            self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", ref)
 
         answer = self.ok("park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "3 reprises")
 
@@ -3367,8 +3237,55 @@ class ConvoyStateTest(unittest.TestCase):
         ticket = self.ticket(self.show(), T1)
         self.assertEqual(3, ticket["counters"]["resumes"])
         self.assertEqual(3, ticket["resumes_left"])
+        self.assertEqual({3}, set(ticket["resumes_left_by_cause"].values()))
+        self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "d")
+        self.ok("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
+        ticket = self.ticket(self.show(), T1)
+        self.assertEqual((2, 2, 2), (ticket["resumes_left"], ticket["resumes_left_by_cause"]["interrupted"],
+                                     ticket["resumes_left_by_cause"]["commit_after_verdict"]))
+
+    def test_a_lift_recorded_before_the_bounds_per_cause_still_gives_the_resumes_back(self):
+        # A lift written before ADR-0030 L2 carries no per-cause count: what
+        # was taken before it is read from the entries older than the lift.
+        self.interrupted_ticket()
+        for ref in ("a", "b", "c"):
+            self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", ref)
+        self.ok("park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "3 reprises")
+        self.ok("lift-park", CONVOY, T1, "--request", "fx-new1", "--option", "a")
+        metadata = self.tracker_state()["beads"][T1]["metadata"]
+        resume = json.loads(metadata["gc.flow.resume"])
+        for entry in resume["entries"]:
+            entry["at"] = "2000-01-01T00:00:00Z"
+        lifts = json.loads(metadata["gc.flow.park_lifts"])
+        for lift in lifts["entries"]:
+            lift.pop("taken")
+        self.edit_tracker(T1, **{"gc.flow.resume": json.dumps(resume), "gc.flow.park_lifts": json.dumps(lifts)})
+
+        self.assertEqual(3, self.ticket(self.show(), T1)["resumes_left"])
         self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "d")
         self.assertEqual(2, self.ticket(self.show(), T1)["resumes_left"])
+
+    def test_an_old_lift_takes_out_only_the_correction_round_recorded_before_it(self):
+        # Three commits after a verdict exhausted the ticket; the lift, written
+        # before ADR-0030 L2, carries no per-cause count; the correction round
+        # came after it and takes nothing back from what was taken before.
+        self.interrupted_ticket()
+        for _ in range(3):
+            self.ok("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
+        self.ok("park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "3 commits après verdict")
+        self.ok("lift-park", CONVOY, T1, "--request", "fx-new1", "--option", "a")
+        metadata = self.tracker_state()["beads"][T1]["metadata"]
+        lifts = json.loads(metadata["gc.flow.park_lifts"])
+        for lift in lifts["entries"]:
+            lift.pop("taken")
+        correction = {"commit": "c" * 40, "blocking_findings": ["F1.1"], "not_observed": [], "launches": [],
+                      "at": "2999-01-01T00:00:00Z"}
+        self.edit_tracker(T1, **{"gc.flow.park_lifts": json.dumps(lifts), "gc.flow.correction": json.dumps(correction)})
+        self.ok("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes", "--counter", "correction_rounds")
+
+        ticket = self.ticket(self.show(), T1)
+
+        self.assertEqual((3, 3), (ticket["resumes_left"], ticket["resumes_left_by_cause"]["commit_after_verdict"]))
 
     def test_a_ticket_that_still_waits_for_another_parked_one_stays_parked_behind_it(self):
         self.seed(tickets=(T1, T2, "fx-t3"))
@@ -3643,9 +3560,29 @@ class ConvoyStateTest(unittest.TestCase):
         self.assert_refused_and_nothing_written(
             "park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "x", mention="reprises")
 
+    def test_the_bound_of_the_resumes_may_be_set_per_cause(self):
+        self.interrupted_ticket()
+        per_cause = {"interrupted": 1, "returned": 2, "unblocked": 3, "answered": 3, "behind": 3,
+                     "evaluation_no_result": 3, "stage_removed": 3, "commit_after_verdict": 3}
+        self.bounds(resumes=per_cause, open_planning_exceptions=2)
+
+        self.ok("open-resume", CONVOY, T1, "--cause", "returned", "--ref", "merge:1")
+        self.assertEqual(1, self.ticket(self.show(), T1)["resumes_left"])
+        self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "a")
+
+        ticket = self.ticket(self.show(), T1)
+        self.assertEqual((0, 1), (ticket["resumes_left"], ticket["resumes_left_by_cause"]["returned"]))
+        self.assert_refused_and_nothing_written(
+            "open-resume", CONVOY, T1, "--cause", "returned", "--ref", "merge:2", mention="ses 1 reprises")
+
     def test_a_malformed_bound_of_the_resumes_is_refused_and_nothing_is_written(self):
         self.interrupted_ticket()
-        for value in (0, "trois", True, None):
+        all_causes = ("interrupted", "returned", "unblocked", "answered", "behind", "evaluation_no_result",
+                      "stage_removed", "commit_after_verdict")
+        missing = {cause: 3 for cause in all_causes[1:]}
+        unknown = {**missing, "interrupted": 3, "fatigue": 3}
+        zero = {**missing, "interrupted": 0}
+        for value in (0, "trois", True, None, {}, missing, unknown, zero):
             with self.subTest(value=value):
                 self.bounds(resumes=value, open_planning_exceptions=2)
                 before = self.tracker.read_bytes()
