@@ -379,7 +379,7 @@ the owner's place, and a marked convoy never closes by itself.
 - A ticket is resumed at most 3 times for a same cause (interrupted,
   returned, unblocked, answered, behind, evaluation without result, commit
   after a verdict: one bound each, ADR-0030 L2; the correction round keeps
-  its own bound of one round); at the third of one cause it is parked with
+  its own bound of one round); at the bound of one cause it is parked with
   its descendants and raised to the operator.
 - The convoy stops entirely while its integration branch is red (code
   publishes one `repair`) or while 2 Planning Exceptions are open on its

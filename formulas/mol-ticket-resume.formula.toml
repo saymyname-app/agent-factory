@@ -10,8 +10,8 @@ and the cause. The pass counted the resume before it sent it
 (`bin/convoy-state open-resume`): a ticket is resumed for an interrupted
 session, a ticket the merge returned, a repair that is closed, a request
 that was answered, a branch behind the integration tip, or a stop of its
-Ticket Evaluation without result, and at its third resume, every cause together, it is
-parked with every ticket that waits for it instead of being sent here.
+Ticket Evaluation without result, and once a same cause reaches its bound
+(`bounds.resumes`, one per cause, ADR-0030 L2) it is parked with every ticket that waits for it instead of being sent here.
 
 The session is new: it knows of the ticket only what the tracker and the
 branch hold. It works in the work tree of the ticket, on the ticket branch,
@@ -61,7 +61,7 @@ PROFILE=$(printf '%s' "$START" | jq -r '.profile')
 INTEGRATION=$(printf '%s' "$START" | jq -r '.integration_branch')
 "$FACTORY_ROOT/bin/ticket-exit" read "$CONVOY" "$TICKET"
 "$FACTORY_ROOT/bin/convoy-state" show "$CONVOY" --repo "$WORKTREE" | jq --arg t "$TICKET" \\
-  '.tickets[] | select(.id == $t) | {resume, resumes_left, park_lifts, merge, tdd, verdicts, handoff, tip}'
+  '.tickets[] | select(.id == $t) | {resume, resumes_left, resumes_left_by_cause, park_lifts, merge, tdd, verdicts, handoff, tip}'
 for STEP in workspace red code demonstration exit; do
   "$FACTORY_ROOT/bin/ticket-author" gate "$CONVOY" "$TICKET" --step "$STEP"
 done
@@ -140,8 +140,8 @@ outside the work tree:
 
 If you cannot finish, take the exit that fits instead: `planning_exception`,
 `operator_request`, `technically_blocked`, or `interrupted` when you must
-stop before the end. Each resume is counted: at the third the ticket is
-parked with those that wait for it (`.resumes_left`), so do not leave a
+stop before the end. Each resume is counted per cause: at the bound of a cause the ticket
+is parked with those that wait for it (`.resumes_left_by_cause`), so do not leave a
 ticket `interrupted` that you could finish.
 
 You do not close the ticket, open a pull request or merge anything: review,
