@@ -36,6 +36,16 @@ CEILING=$(jq -r '.max_sessions' "$REPO_ROOT/config/delivery-flow.json")
 cap=$(setting delivery-author max_active_sessions)
 [ "$cap" = "$CEILING" ] \
   || fail "delivery-author runs at most $cap session(s) while N (config/delivery-flow.json max_sessions) is $CEILING"
+# af-4xxlo7: one ceiling per delivery role. N above counts authors only;
+# the verifier roles are capped by Gas City from their own agent.toml, which
+# must say what config/delivery-flow.json says.
+for pair in delivery-reviewer:max_reviewer_sessions delivery-evaluator:max_evaluator_sessions; do
+  agent=${pair%%:*} key=${pair#*:}
+  want=$(jq -r --arg k "$key" '.[$k]' "$REPO_ROOT/config/delivery-flow.json")
+  case "$want" in ''|null|*[!0-9]*|0) fail "config/delivery-flow.json $key must be a positive integer, got '$want'" ;; esac
+  cap=$(setting "$agent" max_active_sessions)
+  [ "$cap" = "$want" ] || fail "$agent runs at most $cap session(s) while config/delivery-flow.json $key is $want"
+done
 
 # --- a fake tracker: what `bd` answers to the four reads of the query ------------
 mkdir -p "$TMP/bin"

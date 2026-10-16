@@ -16,11 +16,14 @@ before.
 
 One pass starts every ticket of the convoy that is open, not yet started
 through the door, and whose blockers are all closed, while a place is free
-under N. N (`max_sessions` in config/delivery-flow.json) is one setting for
-the whole Factory, shared between the Specs. A place is taken by:
+under N. N (`max_sessions` in config/delivery-flow.json) is the ceiling of
+the authors, one setting for the whole Factory, shared between the Specs
+(af-4xxlo7: the reviewer and the Evaluator have ceilings of their own,
+`max_reviewer_sessions` and `max_evaluator_sessions`, applied by Gas City).
+A place is taken by:
 
-  - each live session of a delivery role agent (author, reviewer, Evaluator:
-    config/delivery-roles.json), whatever the convoy;
+  - each live session of the author agent (config/delivery-roles.json),
+    whatever the convoy;
   - each ticket of a marked convoy started through the door that no session
     has picked yet (still open): its author session is on its way.
 
@@ -2257,7 +2260,9 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
         live = live_sessions()
         sessions = role_sessions(live)
         awaiting = sorted(ticket for convoy in convoys.values() for ticket in convoy.awaiting_a_session())
-        occupied = sum(sessions.values()) + len(awaiting)
+        # N counts authors only: a reviewer or Evaluator session, even idle
+        # until its idle_timeout, does not hold an author's place (af-4xxlo7).
+        occupied = sessions.get("author", 0) + len(awaiting)
         free = max(0, settings["ceiling"] - occupied)
 
         results = []

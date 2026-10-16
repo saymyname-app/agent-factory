@@ -249,5 +249,7 @@ agents as they are delivered, caps and work queries untouched, on a real
 controller: two ready tickets held by two author sessions alive at the same
 moment under N = 2, two reviews one after the other rendered by two distinct
 sessions, and the verdict of a session that already served refused.
-`tests/delivery-agents-test.sh` holds, in CI, the cap of the author agent
-equal to `max_sessions` and the work query of each delivery agent.
+`tests/delivery-agents-test.sh` holds, in CI, the cap of each delivery
+agent equal to its ceiling in `config/delivery-flow.json` (`max_sessions`,
+`max_reviewer_sessions`, `max_evaluator_sessions`) and the work query of
+each delivery agent.

@@ -879,35 +879,35 @@ class ConvoyAdvanceTest(ConvoyAdvanceHarness):
 
         self.assertEqual([T2], self.started(answer))
 
-    def test_a_reviewer_session_counts_in_the_ceiling(self):
+    def test_a_reviewer_session_does_not_take_an_author_place(self):
+        # af-4xxlo7: N counts authors only; the reviewer role has its own
+        # ceiling (max_reviewer_sessions, applied by Gas City).
         self.settings(ceiling=2)
         self.edit(sessions=[session("delivery-reviewer")])
 
         answer = self.advance(CONVOY)
 
-        self.assertEqual([T1], self.started(answer))
-        self.assert_not_started(T2)
+        self.assertEqual([T1, T2], self.started(answer))
         self.assertEqual(1, answer["sessions"]["reviewer"])
+        self.assertEqual(0, answer["occupied"])
 
-    def test_an_evaluator_session_counts_in_the_ceiling(self):
+    def test_an_evaluator_session_does_not_take_an_author_place(self):
         self.settings(ceiling=2)
         self.edit(sessions=[session("delivery-evaluator")])
 
         answer = self.advance(CONVOY)
 
-        self.assertEqual([T1], self.started(answer))
-        self.assert_not_started(T2)
+        self.assertEqual([T1, T2], self.started(answer))
         self.assertEqual(1, answer["sessions"]["evaluator"])
 
-    def test_reviewer_and_evaluator_sessions_alone_can_fill_the_ceiling(self):
-        self.settings(ceiling=2)
+    def test_reviewer_and_evaluator_sessions_alone_leave_every_author_place_free(self):
+        self.settings(ceiling=1)
         self.edit(sessions=[session("delivery-reviewer"), session("delivery-evaluator")])
 
         answer = self.advance(CONVOY)
 
-        self.assertEqual([], self.started(answer))
-        self.assert_not_started(T1)
-        self.assertEqual([], self.slung())
+        self.assertEqual([T1], self.started(answer))
+        self.assertEqual(0, answer["occupied"])
 
     def test_an_author_session_on_a_ticket_in_progress_counts_once(self):
         self.settings(ceiling=1)

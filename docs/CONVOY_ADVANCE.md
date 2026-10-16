@@ -107,12 +107,18 @@ pass exits 1.
 
 ## The ceiling N
 
-N is `max_sessions` in `config/delivery-flow.json`: one setting for the
-whole Factory, shared between the Specs. A place is taken by:
+N is `max_sessions` in `config/delivery-flow.json`: the ceiling of the
+authors, one setting for the whole Factory, shared between the Specs. Each
+delivery role has its own ceiling (af-4xxlo7): N for the authors,
+`max_reviewer_sessions` for the reviewer and `max_evaluator_sessions` for the
+Evaluator. Gas City applies the last two through `max_active_sessions` of
+their agents (`tests/delivery-agents-test.sh` holds them equal). A review
+or an evaluation never waits for N, and a reviewer or Evaluator session,
+even idle until its `idle_timeout`, takes no author's place. A place under N
+is taken by:
 
-- each live session of a delivery role agent — author, reviewer, Evaluator
-  (`config/delivery-roles.json`) — read from `gc session list`, whatever the
-  convoy or the Spec;
+- each live session of the author agent (`config/delivery-roles.json`),
+  read from `gc session list`, whatever the convoy or the Spec;
 - each ticket of any open marked convoy that was started through the door
   and that no session has picked yet (still `open`): its author session is
   on its way;
