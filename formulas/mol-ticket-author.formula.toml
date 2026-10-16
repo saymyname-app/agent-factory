@@ -190,7 +190,10 @@ Commit, then have the red proven:
 ```
 
 A refusal names what is wrong: fix the tests, commit, run the step again.
-A criterion already green stops the ticket (exit status 5): take the Ticket
+A criterion whose tests all pass already at the start commit is recorded as
+satisfied by the existing code (`satisfied` in the red proof): go on with
+the other criteria, and keep its tests in the table. Only a ticket whose
+criteria are all already green stops (exit status 5); then take the Ticket
 Exit `planning_exception`.
 
 **Then freeze them.** No reviewer reads them before the freeze: the code

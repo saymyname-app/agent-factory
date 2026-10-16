@@ -46,7 +46,7 @@ order of the steps under its lock.
 
 | Step | Piece | Report (`output` of the piece, JSON) |
 |---|---|---|
-| `red` | `tdd_red` | `verdict: red`, `base`, `table`, `criteria` {number: [test id]}, `tests` [{`id`, `outcome`, `seam`, `seam_mode`, `entry_points` for a black-box test}], `seam_mode` (the modes the tests went through, joined by `+`: `black_box`, `black_box+import_rule`), `launch.healthy` |
+| `red` | `tdd_red` | `verdict: red`, `base`, `table`, `criteria` {number: [test id]}, `satisfied` [the numbers of the criteria already green at `base`], `tests` [{`id`, `outcome`, `seam`, `seam_mode`, `entry_points` for a black-box test}], `seam_mode` (the modes the tests went through, joined by `+`: `black_box`, `black_box+import_rule`), `launch.healthy` |
 | `freeze` | `tdd_freeze` | `files` {path: `sha256:`}, `table`, `criteria`: the **registry of fingerprints** |
 | `green` | `tdd_green` | `verdict: green`, `k`, `tests` [{`id`, `runs`: k outcomes, `seam`, `seam_mode`}], `frozen` (the commit of the freeze), `regression` [{`commit`, `exit_code`}] at HEAD |
 | `amend` | `tdd_amendment` | the red report of the amended tests, plus `amendment` {`reason`, `diff`, `files`, `previous_freeze`} |
@@ -94,11 +94,20 @@ Two declared cases accept an error as the red: on the slice that
 (`launch.healthy` is `false` in the report); an error whose type is listed
 in the profile's `red_error_types` (a missing symbol on a library seam).
 
-**A criterion already green stops the ticket**: if every test is otherwise
-valid and one passes at the start commit, the answer names the criterion
-(« critère 2 déjà vert »), `bin/convoy-state stop-ticket` writes the stop
-(`criterion_already_green`) and the exit status is 5. A stopped ticket is
-refused by every step.
+**A criterion already green is satisfied by the existing code** (ADR-0030
+L5): if every test is otherwise valid and every test of a criterion passes
+at the start commit, the red is proven for the other criteria and the report
+names that criterion in `satisfied` (its tests carry `outcome: passed`; the
+piece is sealed with the start commit `base`, so the evidence is the
+criterion test passing there). The freeze and the green carry `satisfied`
+on; its tests stay frozen and must pass at the green like the others. A
+test green at the start commit in a criterion that another of its tests
+keeps red is a plain refusal, no stop (« test vert au commit de départ : …
+(critère N encore rouge) »): the author fixes the table or the test.
+**Only a ticket whose criteria are all already green stops**: the answer
+names them (« critère 2 déjà vert »), `bin/convoy-state stop-ticket` writes
+the stop (`criterion_already_green`) and the exit status is 5. A stopped
+ticket is refused by every step.
 
 ### Proof of the seam
 
@@ -154,7 +163,8 @@ the tip), not only at the merged regression of `bin/spec-integration`.
 One path changes a frozen test, once per ticket. The author commits the
 change, then `amend --reason`: the amended tests are proven red again against
 the product at the start commit recorded by `red` (a test that passes there
-is refused, without stopping the ticket), the piece `tdd_amendment` records
+is refused, without stopping the ticket, unless its criterion was recorded
+`satisfied` by the first red), the piece `tdd_amendment` records
 the reason and the diff of the frozen files since the freeze, and the new
 state is frozen. The ticket then carries `tdd.amendment` (commit, reason):
 this is the deviation the Ticket Handoff reports (`records.amendment`,

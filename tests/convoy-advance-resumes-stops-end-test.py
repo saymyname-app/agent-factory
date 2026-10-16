@@ -652,6 +652,29 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertIsNone(self.park_of(T3))
         self.assertEqual(1, self.resumes())
 
+    def test_the_accepting_answer_to_a_planning_exception_naming_no_anchor_lifts_it_and_resumes_it(self):
+        # ADR-0030 L5: every Planning Exception has an accept path.
+        self.started_convoy()
+        self.taken(T1, "auteur-1")
+        request = {"quoi": f"Planning Exception (semantic) sur {T1} : la Spec dit X, le produit fait Y",
+                   "pourquoi": "L'auteur ne tranche pas une question d'intention.",
+                   "que_faire": [{"option": "Trancher dans le Planning Run", "consequence": "Le ticket reste parqué."},
+                                 {"option": "Retirer le ticket du graphe", "consequence": "La couverture est recalculée."},
+                                 {"option": "Accepter l'écart décrit", "consequence": "Le ticket reprend."}],
+                   "langue": "fr", "bloquant": True}
+        self.run_ok(STATE, "raise-planning-exception", CONVOY, T1, "--kind", "semantic",
+                    "--summary", "la Spec dit X, le produit fait Y", "--accept-option", "c")
+        self.run_ok(ESCALATION, "benjamin", T1, json.dumps(request))
+        self.run_ok(STATE, "park", CONVOY, T1, "--cause", "planning_exception", "--detail", request["quoi"])
+        self.run_ok(STATE, "set-exit", CONVOY, T1, "--exit", "planning_exception")
+        self.env["ESCALATION_DOOR_NOW"] = "4102444800"  # the answer comes after the parking
+        self.run_ok(ESCALATION, "repondre", T1, "c")
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, [T1, T3])], [(entry["id"], entry["lifted"]) for entry in self.of(answer, "lifted")])
+        self.assertEqual([(T1, "answered")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+
     # --- the stops of the convoy: red integration branch, open Planning Exceptions (T21, af-cbp84n) ---
 
     def test_a_red_integration_branch_starts_no_ticket_but_its_repair(self):

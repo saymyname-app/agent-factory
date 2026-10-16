@@ -28,7 +28,9 @@ the exception is. A Planning Exception about a deviation from the Validated
 Prototype names its anchors (`--anchor`), each of which the « Écarts » of
 the Handoff must mention, and the request then offers the operator to accept
 that deviation: the fidelity check reads it as « accepté par Benjamin » once
-answered so, never before (T16).
+answered so, never before (T16). Without an anchor, the last option accepts
+the deviation the Handoff describes (ADR-0030 L5): every Planning Exception
+has an accept path, and bin/convoy-advance lifts the parking it answers.
 `technically_blocked`: a `repair`
 ticket is drafted by code and published by the patch door
 (bin/ticket-graph-publish bd-patch); it blocks the ticket, the rest of the
@@ -620,6 +622,11 @@ def planning_exception_request(args: argparse.Namespace) -> dict[str, Any]:
         options.append({
             "option": accept,
             "consequence": "Le contrôle de fidélité lit cet écart comme accepté par toi ; le prototype reste la cible ailleurs."})
+    else:
+        # ADR-0030 L5: no Planning Exception without an accept path.
+        options.append({
+            "option": "Accepter l'écart que décrit le Ticket Handoff",
+            "consequence": "Le ticket reprend avec cet écart ; la Spec reste la cible ailleurs."})
     return {
         "quoi": head + short(summary, REQUEST_LINE_MAX - len(head)),
         "pourquoi": "L'auteur ne tranche pas une question d'intention, de comportement ou de découpage.",
@@ -653,12 +660,12 @@ def deviations_name(anchors: list[str], sections: dict[str, Any]) -> None:
 def record_planning_exception(args: argparse.Namespace, request: dict[str, Any]) -> None:
     """Write the Planning Exception on the ticket before the request leaves:
     its anchors, and the letter the escalation door will give the option
-    that accepts their deviation (it letters the options in order)."""
+    that accepts the deviation, the last one (it letters the options in
+    order)."""
     command = ["raise-planning-exception", args.convoy, args.ticket, "--kind", args.kind, "--summary", " ".join(args.summary.split())]
     for anchor in args.anchor:
         command += ["--anchor", anchor]
-    if args.anchor:
-        command += ["--accept-option", "abcdefghijklmnopqrstuvwxyz"[len(request["que_faire"]) - 1]]
+    command += ["--accept-option", "abcdefghijklmnopqrstuvwxyz"[len(request["que_faire"]) - 1]]
     state_write(*command)
 
 

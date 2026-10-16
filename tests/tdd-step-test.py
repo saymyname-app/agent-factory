@@ -362,8 +362,42 @@ class TddStepTest(unittest.TestCase):
         self.assertIn(APP, error)
         self.assertIn("périmètre de test", error)
 
-    def test_red_stops_the_ticket_on_a_criterion_already_green(self):
-        self.commit_tests({HEALTH_FILE: HEALTH_TEST_ALREADY_GREEN})
+    def test_red_records_a_criterion_already_green_as_satisfied_and_the_ticket_goes_on(self):
+        # ADR-0030 L5: criterion 2 holds at the start commit, criterion 1 is red.
+        head = self.commit_tests({HEALTH_FILE: HEALTH_TEST_ALREADY_GREEN})
+
+        answer = self.red()
+
+        self.assertEqual(("red", head), (answer["step"], answer["commit"]))
+        state = self.ticket_state()
+        self.assertIsNone(state["stop"])
+        self.assertEqual((head, self.base), (state["tdd"]["red"]["commit"], state["tdd"]["red"]["base"]))
+        _, proof = self.piece("tdd_red")
+        self.assertEqual(("red", self.base), (proof["verdict"], proof["base"]))
+        self.assertEqual(["2"], proof["satisfied"])
+        self.assertEqual({COUNT_ID: "failure", HEALTH_ID: "passed"},
+                         {test["id"]: test["outcome"] for test in proof["tests"]})
+        self.ok("freeze")
+        _, frozen = self.piece("tdd_freeze")
+        self.assertEqual(["2"], frozen["satisfied"])
+        self.commit("code du ticket", {APP: self.green_app()})
+        self.ok("green")
+        _, green = self.piece("tdd_green")
+        self.assertEqual(["2"], green["satisfied"])
+
+    def test_red_refuses_without_stopping_a_test_already_green_in_a_criterion_still_red(self):
+        self.commit_tests({HEALTH_FILE: HEALTH_TEST_ALREADY_GREEN},
+                          table=self.table({"1": [COUNT_ID], "2": [COUNT_ID, HEALTH_ID]}))
+
+        error = self.red_refused()
+
+        self.assertIn(f"test vert au commit de départ : {HEALTH_ID}", error)
+        self.assertIn("critère 2", error)
+        self.assertIsNone(self.ticket_state()["stop"])
+
+    def test_red_stops_the_ticket_when_every_criterion_is_already_green(self):
+        self.commit_tests({HEALTH_FILE: HEALTH_TEST_ALREADY_GREEN},
+                          table=self.table({"1": [HEALTH_ID], "2": [HEALTH_ID]}))
         store_before = self.store_files()
 
         proc = self.run_tool("red", SLICE, "--base", self.base, "--table", TABLE)
@@ -372,8 +406,8 @@ class TddStepTest(unittest.TestCase):
         answer = json.loads(proc.stdout)
         self.assertFalse(answer["ok"])
         self.assertTrue(answer["stopped"])
+        self.assertIn("critère 1 déjà vert", answer["error"])
         self.assertIn("critère 2 déjà vert", answer["error"])
-        self.assertNotIn("critère 1", answer["error"])
         state = self.ticket_state()
         self.assertEqual("criterion_already_green", state["stop"]["reason"])
         self.assertIn("critère 2", state["stop"]["detail"])
@@ -381,9 +415,10 @@ class TddStepTest(unittest.TestCase):
         self.assertEqual(store_before, self.store_files())
 
     def test_a_stopped_ticket_is_refused_by_every_step(self):
-        self.commit_tests({HEALTH_FILE: HEALTH_TEST_ALREADY_GREEN})
+        self.commit_tests({HEALTH_FILE: HEALTH_TEST_ALREADY_GREEN},
+                          table=self.table({"1": [HEALTH_ID], "2": [HEALTH_ID]}))
         self.run_tool("red", SLICE, "--base", self.base, "--table", TABLE)
-        self.commit("test corrigé", {HEALTH_FILE: HEALTH_TEST})
+        self.commit("test corrigé", {HEALTH_FILE: HEALTH_TEST, TABLE: self.table()})
 
         self.assertIn("ticket arrêté", self.red_refused())
         self.assertIn("ticket arrêté", self.refused("freeze"))
@@ -819,6 +854,19 @@ class TddStepTest(unittest.TestCase):
         self.assertIn("amendement épuisé", listed[0])
         self.assertIn("raised", self.ticket_state()["stop"])
         self.assertEqual("open", json.loads(self.tracker.read_text())["beads"][SLICE]["status"])
+
+    def test_amendment_keeps_a_criterion_satisfied_by_the_existing_code(self):
+        self.commit_tests({HEALTH_FILE: HEALTH_TEST_ALREADY_GREEN})
+        self.red()
+        self.ok("freeze")
+        amended = COUNT_TEST.replace("""'<p data-anchor="fixture-count">3</p>'""", """'data-anchor="fixture-count">3<'""")
+        self.commit("code et test corrigé", {APP: self.green_app(), COUNT_FILE: amended})
+
+        self.ok("amend", SLICE, "--reason", "le nombre suffit, pas la balise")
+
+        _, proof = self.piece("tdd_amendment")
+        self.assertEqual(["2"], proof["satisfied"])
+        self.ok("green")
 
     def test_amendment_refused_without_a_reason(self):
         self.frozen()

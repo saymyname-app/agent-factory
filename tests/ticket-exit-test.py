@@ -675,13 +675,22 @@ class TicketExitTest(unittest.TestCase):
 
         self.assertEqual(["fixture-items"], self.shown()["accepted_anchors"])
 
-    def test_planning_exception_without_anchor_offers_no_acceptance(self):
+    def test_planning_exception_without_anchor_offers_an_accept_option(self):
+        """ADR-0030 L5: every Planning Exception request has an accept path;
+        accepting it accepts no anchor of the Validated Prototype."""
         self.raise_exception("--kind", "semantic", "--summary", "Question sur l'ordre")
 
         raised = self.shown()["planning_exceptions"]
-        self.assertEqual([([], None)], [(e["anchors"], e["accept_option"]) for e in raised])
-        proc = self.run_cmd(ESCALATION_TOOL, "repondre", T2, "a")
+        self.assertEqual([([], "c", False)], [(e["anchors"], e["accept_option"], e["accepted"]) for e in raised])
+        options = json.loads(json.loads(self.tracker.read_text())["beads"][T2]["metadata"]["gc.escalation_que_faire"])
+        accepting = [o for o in options if o["lettre"] == raised[0]["accept_option"]]
+        self.assertEqual(1, len(accepting))
+        self.assertIn("Accepter", accepting[0]["option"])
+
+        proc = self.run_cmd(ESCALATION_TOOL, "repondre", T2, "c")
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+
+        self.assertTrue(self.shown()["planning_exceptions"][0]["accepted"])
         self.assertEqual([], self.shown()["accepted_anchors"])
 
     def test_planning_exception_is_refused_with_a_malformed_anchor(self):

@@ -265,7 +265,7 @@ the parking only):
 | Parked for | Lifted by |
 |---|---|
 | `operator_request` (its own Ticket Exit) | any answer given to the request of that ticket (`bin/escalation-door repondre`) after the parking |
-| `planning_exception` (its own Ticket Exit) | only the option that accepts the deviation: the last Planning Exception of the ticket is `accepted` (it names anchors and was answered by its `accept_option`, `docs/CONVOY_STATE.md`). Any other answer leaves the ticket parked |
+| `planning_exception` (its own Ticket Exit) | only the option that accepts the deviation: the last Planning Exception of the ticket is `accepted` (it was answered by its `accept_option`, `docs/CONVOY_STATE.md`; every exception raised since ADR-0030 L5 has one, with or without anchors). Any other answer leaves the ticket parked |
 | `resumes_exhausted` | option `a` of the convoy's grouped request (below), for the tickets that request names as lifted |
 
 The lift is `bin/convoy-state lift-park <convoy> <ticket> --request <bead>
