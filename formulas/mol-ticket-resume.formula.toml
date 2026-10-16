@@ -139,8 +139,9 @@ outside the work tree:
 ```
 
 If you cannot finish, take the exit that fits instead: `planning_exception`,
-`operator_request`, `technically_blocked`, or `interrupted` when you must
-stop before the end. Each resume is counted per cause: at the bound of a cause the ticket
+`operator_request` (a defect in the Factory's own tools or tests goes there,
+never a `repair`: fixed by maintenance on main), `technically_blocked`, or
+`interrupted` when you must stop before the end. Each resume is counted per cause: at the bound of a cause the ticket
 is parked with those that wait for it (`.resumes_left_by_cause`), so do not leave a
 ticket `interrupted` that you could finish.
 

@@ -102,4 +102,16 @@ cause = re.search(r"^- `unblocked` (.*?)(?=^- `|\n\n)", text, re.MULTILINE | re.
 sys.exit(0 if cause and 'git merge "origin/$INTEGRATION"' in cause.group(1) else 1)
 PY
 
+# af-o40g5r: a defect in the Factory's own tools or tests is fixed by
+# maintenance on main; an author never turns it into a `repair` of the convoy.
+for formula in mol-ticket-author mol-ticket-resume; do
+  python3 - "$ROOT/formulas/$formula.formula.toml" <<'PY' \
+    || fail "$formula does not send a Factory defect to operator_request, never a repair"
+import re, sys
+text = " ".join(open(sys.argv[1], encoding="utf-8").read().split())
+rule = re.search(r"`operator_request`[^;]*?Factory's own tools or tests[^;]*?never a `repair`", text)
+sys.exit(0 if rule else 1)
+PY
+done
+
 echo "PASS: PR formulas wait and deliver-close owns merge+exact-head-CI completion"

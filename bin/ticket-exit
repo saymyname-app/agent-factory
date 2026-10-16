@@ -600,7 +600,8 @@ def planning_exception_request(args: argparse.Namespace, ticket: Ticket) -> dict
     if proc.returncode != 0 or needed is not True:
         raise Refusal(
             f"--kind {args.kind!r} n'est pas une Planning Exception (attendu : semantic ou topology) ; un défaut "
-            "technique hors du ticket sort par « bloqué technique »")
+            "technique hors du ticket sort par « bloqué technique », un défaut des outils ou des tests de l'usine "
+            "par « demande opérateur » (docs/TICKET_AUTHOR.md)")
     head = f"Planning Exception ({args.kind}) sur {args.ticket} : "
     options = [
         {"option": "Trancher dans le Planning Run",
