@@ -372,6 +372,7 @@ class ProjectLaunchTest(unittest.TestCase):
             self.skipTest("root writes into a read-only folder")
         folder = Path(tempfile.mkdtemp(prefix="launch-record-"))
         self.addCleanup(shutil.rmtree, folder, ignore_errors=True)
+        self.addCleanup(folder.chmod, 0o700)  # before the removal, whatever fails
         target = folder / "launch.json"
         hooks = folder.with_name(folder.name + "-hooks")
         hooks.mkdir()
