@@ -62,7 +62,9 @@ before anything is written.
 
 **Planning Exception.** `--kind` is what `bin/planning-exception classify`
 calls a Planning Exception (`semantic`, `topology`); `repair` is refused: a
-technical defect outside the ticket exits by `technically_blocked`. The
+technical defect outside the ticket exits by `technically_blocked`, and a
+defect in the Factory's own tools or tests by `operator_request`
+(`docs/TICKET_AUTHOR.md`, « Factory defects are fixed on main »). The
 request on the operator's list reads « Planning Exception (kind) sur
 <ticket> : <summary> ». It is written on the ticket before the request
 leaves (`bin/convoy-state raise-planning-exception`, `docs/CONVOY_STATE.md`).
