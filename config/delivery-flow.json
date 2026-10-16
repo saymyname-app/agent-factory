@@ -10,6 +10,7 @@
       "answered": 3,
       "behind": 3,
       "evaluation_no_result": 3,
+      "stage_removed": 3,
       "commit_after_verdict": 3
     },
     "open_planning_exceptions": 2,

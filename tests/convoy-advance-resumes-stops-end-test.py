@@ -289,6 +289,68 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual(([], 0), (self.of(answer, "resumed"), self.resumes()))
         self.assertEqual(self.NO_RESULT, self.shown_state(T1)["stop"]["reason"])
 
+    # --- a ticket stopped by a stage the flow removed is resumed on itself (ADR-0030 L3, af-pjvsgo) ---
+
+    def stopped_by_the_test_review(self, raised=True):
+        """T1 at work under an author session that is over, then stopped as
+        the test review stopped it before L3 removed that stage, its
+        request raised to the operator (T59, af-qjq1t6) when `raised`."""
+        self.resumable()
+        self.advance(CONVOY)
+        self.edit(T1, status="in_progress")
+        self.taken(T1, "auteur-1")
+        self.run_ok(STATE, "stop-ticket", CONVOY, T1, "--reason", "test_review_no_result",
+                    "--detail", "la relecture des tests n'a rendu aucun verdict en 2 lancements")
+        self.write_log.write_text("")
+        if not raised:
+            return
+        request = {"quoi": f"Ticket {T1} arrêté : relecture des tests sans résultat",
+                   "pourquoi": "La relecture des tests n'a rendu aucun verdict.",
+                   "que_faire": [{"option": "Laisser le ticket arrêté", "consequence": "Rien ne fusionne."}],
+                   "langue": "fr", "bloquant": True}
+        self.run_ok(ESCALATION, "benjamin", T1, json.dumps(request))
+        self.run_ok(STATE, "stop-raised", CONVOY, T1)
+        self.write_log.write_text("")
+
+    def test_a_ticket_the_removed_test_review_stopped_is_resumed_once_and_its_request_withdrawn(self):
+        self.stopped_by_the_test_review()
+        self.assertEqual(1, len([line for line in self.needs() if T1 in line]))
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "stage_removed")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+        shown = self.shown_state(T1)
+        self.assertEqual((1, None, None), (shown["counters"]["resumes"], shown["stop"], shown["exit"]))
+        # The stop is lifted, not erased: it is kept on the resume that lifted it.
+        self.assertEqual("test_review_no_result", shown["resume"]["entries"][-1]["stop"]["reason"])
+        self.assertEqual([], [line for line in self.needs() if T1 in line])
+        # The next pass counts and sends nothing more.
+        self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
+        self.assertEqual(1, self.resumes())
+
+    def test_a_stop_of_the_removed_test_review_the_operator_answered_is_not_resumed(self):
+        self.stopped_by_the_test_review()
+        self.env["ESCALATION_DOOR_NOW"] = "4102444800"  # the answer comes after the stop
+        self.run_ok(ESCALATION, "repondre", T1, "a")
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual(([], 0), (self.of(answer, "resumed"), self.resumes()))
+        self.assertEqual("test_review_no_result", self.shown_state(T1)["stop"]["reason"])
+
+    def test_a_ticket_the_removed_test_review_stopped_without_a_resume_left_stays_stopped_and_is_raised_once(self):
+        self.stopped_by_the_test_review(raised=False)
+        self.earlier_resumes("stage_removed", 3)
+
+        first_pass, second_pass = self.advance(CONVOY), self.advance(CONVOY)
+
+        self.assertEqual([], self.of(first_pass, "resumed"))
+        self.assertEqual([{"ticket": T1, "reason": "test_review_no_result"}],
+                         self.of(first_pass, "tdd_stops")["escalated"])
+        self.assertEqual([], self.of(second_pass, "tdd_stops"))
+        self.assertEqual("test_review_no_result", self.shown_state(T1)["stop"]["reason"])
+        self.assertEqual(1, len([line for line in self.needs() if T1 in line]))
+
     # --- a ticket stopped for an exhausted amendment reaches the operator (T45) ---
 
     def test_a_pass_raises_a_ticket_stopped_for_an_exhausted_amendment_naming_it_and_the_cause(self):

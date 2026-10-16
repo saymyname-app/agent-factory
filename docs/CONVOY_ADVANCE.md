@@ -306,6 +306,7 @@ ticket:
 | `answered` | the Ticket Exit is `planning_exception` or `operator_request` and the ticket is no longer parked: its parking was lifted |
 | `behind` | the Ticket Exit is `finished`, the ticket is not merged, and `bin/code-review show <convoy> <ticket> --repo` reports `behind`: its branch does not contain the tip of the integration branch, so no reviewer is sent on it (T44, `docs/CODE_REVIEW.md`). The fact is `integration:<tip>/exit:<exit time>`: once per Ticket Exit |
 | `evaluation_no_result` | the ticket is stopped `evaluation_no_result` (its Ticket Evaluation gave no result, relaunch included, `docs/TICKET_EVALUATION.md`), it is neither parked nor closed, it has a resume left, the operator has not answered the request of that stop, and no resume of this cause was opened yet on the current tip of the integration branch (on `origin` when it is there, else local). The fact is `integration:<tip>/stop:<stop time>`: once per tip of the integration branch (af-xhc0sj) |
+| `stage_removed` | the ticket is stopped by a stage ADR-0030 L3 removed from the flow, the test review (`test_review_refused`, `test_review_no_result`), it is neither parked nor closed, it has a resume left, and the operator has not answered the request of that stop. The fact is `stop:<reason>/<stop time>`: once per stop; the stage that wrote it no longer runs, so it cannot stop the ticket again (af-pjvsgo) |
 
 The pass counts the resume first — `bin/convoy-state open-resume <convoy>
 <ticket> --cause <cause> --ref <fact>`: one more `resumes`, the record under
@@ -320,7 +321,7 @@ launch-resume`): one session per resume. The session takes the ticket with
 `bin/ticket-author start`, does only what is missing, and leaves by a Ticket
 Exit (`formulas/mol-ticket-resume.formula.toml`).
 
-An `evaluation_no_result` resume lifts the stop in that same write: the stop
+An `evaluation_no_result` or `stage_removed` resume lifts the stop in that same write: the stop
 leaves the ticket and is kept on its resume (`resume.entries[].stop`), never
 erased; the request the stop raised is withdrawn first (`bin/escalation-door
 clear <ticket>`). A Ticket Evaluation without result is most often a defect
@@ -331,8 +332,11 @@ evaluation left open on the old exit and send a new one. Stopped again on
 the same integration tip, the ticket stays with the operator; once the tip
 moves, it is resumed once more, always within K: the last resume (its
 bound) of that cause parks it
-(its stop lifted) and the grouped request follows. Every other stop —
-`evaluation_outage`, `amendment_exhausted`, a review without result, a
+(its stop lifted) and the grouped request follows. A `stage_removed` resume
+sends the ticket back to its author past a stage that no longer exists: the
+session finishes the ticket on the current flow, and the code review reads
+its criterion tests (below, « No test review »). Every other stop —
+`evaluation_outage`, `amendment_exhausted`, a code review without result, a
 ticket still refused — is never resumed.
 
 A `behind` resume is counted like the others (K; the third parks the
@@ -387,7 +391,10 @@ Two decisions taken here:
 
 ### What is not resumed
 
-- **A stopped ticket**, but for its stop `evaluation_no_result` (above).
+- **A stopped ticket**, but for its stop `evaluation_no_result` and the
+  stops of the removed test review (`stage_removed`, above). Nor is a
+  ticket stopped by the removed test review whose request the operator
+  answered or that is out of resumes.
   Its sequence failed and it is with the operator; it is never read as
   interrupted, and nothing else lifts a stop. Nor is a ticket stopped
   `evaluation_no_result` whose request the operator answered, that is out
@@ -616,8 +623,11 @@ A pass starts no review of criterion tests and settles none: no test review
 precedes the freeze, and the code review reads the criterion tests after
 the green (`docs/CODE_REVIEW.md`). A `gc.flow.test_review` left on a ticket
 in flight by the flow before L3, open or not, is ignored. A ticket a test
-review stopped before L3 (`test_review_refused`, `test_review_no_result`)
-and not yet raised is raised once with the TDD stops (`tdd_stops`).
+review stopped before L3 (`test_review_refused`, `test_review_no_result`) is
+resumed on itself (`stage_removed`, above, af-pjvsgo): its request is
+withdrawn through `bin/escalation-door clear` and a fresh author session
+finishes it on the current flow. Only when it has no resume left does its
+stop stay, raised once with the TDD stops (`tdd_stops`) if it was not yet.
 
 A ticket whose criteria are all already green at the red
 (`criterion_already_green`, ADR-0030 L5) is raised with the TDD stops too,

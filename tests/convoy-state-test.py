@@ -3266,7 +3266,8 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertEqual(3, ticket["counters"]["resumes"])
         self.assertEqual(2, ticket["resumes_left"])
         self.assertEqual({"interrupted": 2, "returned": 2, "unblocked": 2, "answered": 3, "behind": 3,
-                          "evaluation_no_result": 3, "commit_after_verdict": 3}, ticket["resumes_left_by_cause"])
+                          "evaluation_no_result": 3, "stage_removed": 3, "commit_after_verdict": 3},
+                         ticket["resumes_left_by_cause"])
         self.assertEqual(["interrupted", "returned", "unblocked"], [e["cause"] for e in ticket["resume"]["entries"]])
 
     def test_an_interruption_a_correction_round_and_a_red_merge_do_not_park_the_ticket(self):
@@ -3767,7 +3768,7 @@ class ConvoyStateTest(unittest.TestCase):
     def test_the_bound_of_the_resumes_may_be_set_per_cause(self):
         self.interrupted_ticket()
         per_cause = {"interrupted": 1, "returned": 2, "unblocked": 3, "answered": 3, "behind": 3,
-                     "evaluation_no_result": 3, "commit_after_verdict": 3}
+                     "evaluation_no_result": 3, "stage_removed": 3, "commit_after_verdict": 3}
         self.bounds(resumes=per_cause, open_planning_exceptions=2)
 
         self.ok("open-resume", CONVOY, T1, "--cause", "returned", "--ref", "merge:1")
@@ -3782,7 +3783,7 @@ class ConvoyStateTest(unittest.TestCase):
     def test_a_malformed_bound_of_the_resumes_is_refused_and_nothing_is_written(self):
         self.interrupted_ticket()
         all_causes = ("interrupted", "returned", "unblocked", "answered", "behind", "evaluation_no_result",
-                      "commit_after_verdict")
+                      "stage_removed", "commit_after_verdict")
         missing = {cause: 3 for cause in all_causes[1:]}
         unknown = {**missing, "interrupted": 3, "fatigue": 3}
         zero = {**missing, "interrupted": 0}
