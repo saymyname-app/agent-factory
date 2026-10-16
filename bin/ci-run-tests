@@ -77,7 +77,8 @@
 #                            # RULE_CHECK_SECONDS or less (catalogues,
 #                            # registration, lints), and with --changed-since
 #                            # the test files changed since REF, committed or
-#                            # not. What a change to docs, CI or tests alone
+#                            # not, and the test files that name another
+#                            # changed file (af-awyj8z).What a change to docs, CI or tests alone
 #                            # runs before its pull request; a delivery runs
 #                            # the whole battery, and CI runs it in every case
 #                            # (af-66bfyx, docs/DELIVERY.md).
@@ -262,25 +263,53 @@ fi
 # generated catalogue), each seen after about 37 billed minutes. The files
 # measured at RULE_CHECK_SECONDS or less were 105 of 150 and 107 s together.
 # A file not measured yet is not one of them, unless it changed.
+#
+# A changed tool, library, configuration or fixture also brings the test
+# files that name it (af-awyj8z): PR #602 changed bin/ticket-evaluation, its
+# check was green, and CI went red in tests/convoy-advance-test.py, which
+# runs the fixture tests/fixtures/ticket-evaluation/evaluator. The name is
+# the file's own name without its extension, or the fixture directory's
+# (fixtures/<name>), matched as a whole word; names under 4 characters and
+# Markdown files name nothing. A test reaching a file under another name is
+# still seen only in CI.
 RULE_CHECK_SECONDS=5
 touched=()
+naming=()
 if [ "$RULE_CHECKS" -eq 1 ]; then
-  declare -A CHANGED_TESTS=()
+  declare -A CHANGED_TESTS=() NAMING_TESTS=()
   if [ -n "$CHANGED_SINCE" ]; then
     if ! base=$(git merge-base --end-of-options "$CHANGED_SINCE" HEAD 2>/dev/null); then
       echo "ci-run-tests: --rule-checks: what changed since $CHANGED_SINCE cannot be read" >&2; exit 2
     fi
+    names=()
     while IFS= read -r f; do
-      [ -n "$f" ] && CHANGED_TESTS[$f]=1
+      case "$f" in
+        '') ;;
+        tests/*/*) # a fixture or helper: its fixture directory, or its own name
+          if [[ "$f" == tests/fixtures/*/* ]]; then f=${f#tests/fixtures/}; names+=("fixtures/${f%%/*}")
+          else f=${f##*/}; names+=("${f%.*}"); fi ;;
+        tests/*) CHANGED_TESTS[$f]=1 ;;
+        *.md) ;;
+        *) f=${f##*/}; names+=("${f%.*}") ;;
+      esac
     done < <(
-      git diff --name-only --no-renames "$base" -- tests 2>/dev/null
-      git ls-files --others --exclude-standard -- tests 2>/dev/null
+      git diff --name-only --no-renames "$base" 2>/dev/null
+      git ls-files --others --exclude-standard 2>/dev/null
     )
+    patterns=()
+    for f in "${names[@]}"; do [ "${#f}" -ge 4 ] && patterns+=(-e "$f"); done
+    if [ "${#patterns[@]}" -gt 0 ] && [ "${#files[@]}" -gt 0 ]; then
+      while IFS= read -r f; do
+        NAMING_TESTS[$f]=1
+      done < <(grep -lwF "${patterns[@]}" -- "${files[@]}" 2>/dev/null)
+    fi
   fi
   kept=()
   for f in "${files[@]}"; do
     if [ -n "${CHANGED_TESTS[$f]:-}" ]; then
       kept+=("$f"); touched+=("$f")
+    elif [ -n "${NAMING_TESTS[$f]:-}" ]; then
+      kept+=("$f"); naming+=("$f")
     elif [ -n "${MEASURED[$f]:-}" ] && [ "${MEASURED[$f]}" -le "$RULE_CHECK_SECONDS" ]; then
       kept+=("$f")
     fi
@@ -307,7 +336,7 @@ if [ "$MODE" = "list" ]; then
 fi
 
 if [ "$RULE_CHECKS" -eq 1 ]; then
-  echo "ci-run-tests: NOT the battery: the rule checks ($(( ${#files[@]} - ${#touched[@]} )) file(s) of ${RULE_CHECK_SECONDS}s or less in config/ci-test-seconds.tsv) and ${#touched[@]} changed test file(s). Enough before a pull request that changes docs, CI or tests alone; a delivery runs the whole battery (docs/DELIVERY.md)."
+  echo "ci-run-tests: NOT the battery: the rule checks ($(( ${#files[@]} - ${#touched[@]} - ${#naming[@]} )) file(s) of ${RULE_CHECK_SECONDS}s or less in config/ci-test-seconds.tsv), ${#touched[@]} changed test file(s) and ${#naming[@]} test file(s) naming a changed file.Enough before a pull request that changes docs, CI or tests alone; a delivery runs the whole battery (docs/DELIVERY.md)."
 elif [ -n "$CHANGED_SINCE" ]; then
   if [ "$SKIP_LONG" -eq 1 ]; then
     echo "ci-run-tests: ${#skipped[@]} long test(s) NOT run: $SELECTION. CI_RUN_TESTS_FULL=1 runs them."

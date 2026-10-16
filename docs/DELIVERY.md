@@ -520,8 +520,11 @@ seconds or less: catalogues, registration, lints (105 files, 107 s together
 on 2026-10-08). Of those 6 failed files, 5 were rule checks of 1 second or
 less, a stale generated catalogue most often, and each was seen only after
 about 37 billed minutes of a run. `--changed-since` adds the test files the
-branch changes, committed or not; the run starts with `NOT the battery` and
-counts both. It waits its turn on the host like a battery
+branch changes, committed or not, and the test files that name another
+changed file: a tool, library or configuration by its own name, a fixture by
+its directory (af-awyj8z: PR #602 changed `bin/ticket-evaluation`, and
+`tests/convoy-advance-test.py`, which runs its fixture, was red only in CI).
+The run starts with `NOT the battery` and counts each kind. It waits its turn on the host like a battery
 (`tests/ci-run-tests-rule-checks-test.sh`, `tests/ci-runner-test.sh`).
 
 On GitHub's runners Factory CI runs the rule checks first in every lot
