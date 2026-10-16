@@ -299,3 +299,46 @@ ses tests tournaient encore). Dolt devient le premier poste (1,6 cœur). La
 VM sort de la saturation continue sans avoir de marge large. La
 recommandation du §1 tient : plafonds séparés, puis essai par paliers,
 sur décision de Benjamin.
+
+## 11. Essai par paliers à 3 auteurs : protocole prêt, pas lancé
+
+Intent (Benjamin, ses mots, 2026-10-16) : 11:54 Paris « […] puis prépare
+l'essai N=3 par paliers avec les critères d'arrêt de l'étude, à lancer
+seulement sur mon accord. » ; 12:04 « ok pour le maximum d'auteurs
+possiblement tenus, 1 relecteur, 1 evaluateur. »
+
+Mechanism (agent interpretation) : depuis af-4xxlo7 (#638), chaque rôle a
+son plafond, et N ne compte que les auteurs. L'essai monte les auteurs de
+2 à 3. Relecteur et évaluateur restent à 1. Le palier suivant (4) ne se
+tente que si celui-ci tient.
+
+**Préalables** (vérifiés au lancement) :
+- #638 fusionnée et en service dans la racine live ;
+- au moins 3 tickets prêts ou en cours dans le convoi. Le 16/10 à 12:08, T02
+  et T59 sont arrêtés pour délai : sans ticket prêt, l'essai ne mesure
+  rien ;
+- l'échantillonneur tourne (tmux `capacity`).
+
+**Déroulé :**
+1. Référence N=2 : la dernière heure de l'échantillonneur, et une sonde
+   `tests/project-launch-test.py` chronométrée au lancement. Le 16/10 à
+   12:08, la VM étant presque au repos (PSI 15 %), elle durait 38,9 s.
+2. Fusion de la PR d'essai, en brouillon jusqu'à l'accord de Benjamin :
+   `max_sessions` 3 et `agents/delivery-author/agent.toml`
+   `max_active_sessions` 3. Puis `bin/factory-maintain reload-city-config`
+   pour que Gas City lise le nouveau plafond de l'agent.
+3. Fenêtre fixe de 3 h. Toutes les 30 min :
+   `python3 ~/capacity-af-2se8y2/trial_check.py ~/capacity-af-2se8y2/samples.jsonl <début> <sonde N=2> --probe`
+   ([`trial_check.py`](2026-10-15-capacite-plafond-n/trial_check.py)).
+4. **Arrêt et retour à 2** dès qu'un critère tombe, par un revert de la
+   PR d'essai puis `reload-city-config` :
+   - PSI CPU moyen > 75 % sur les 30 dernières minutes ;
+   - sonde > 1,5 × sa durée à N=2 ;
+   - un ticket arrêté pour délai (`*_no_result`) depuis le début de
+     l'essai ;
+   - un conflit Git consigné dans `.gc/runtime/overlap-conflict-log.jsonl`
+     depuis le début (critère prudent : il compte aussi un conflit
+     absorbé par le tour de correction).
+5. Résultat, ajouté à cette étude : débit (tickets fusionnés), durée par
+   étape, PSI et échecs à N=2 et à N=3. Cela donne un point (N, X) de plus
+   pour l'USL et la décision de tenter 4 ou de rester à 3.
