@@ -1920,6 +1920,38 @@ class TicketEvaluationTest(unittest.TestCase):
         self.assertEqual([SLICE], [entry["ticket"] for entry in second["pending"]])
         self.assertEqual(1, len(self.launches()))
 
+    def test_the_wait_for_a_requested_dataset_is_not_counted_against_the_launch(self):
+        # af-4nop0m: T02 (af-0gonc9) waited up to 20 min for each requested
+        # dataset while the controller's passes stalled; that wait used up
+        # its launches (evaluation_no_result). Only the Evaluator's time counts.
+        profile = json.loads(self.profile.read_text())
+        original = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
+        profile["launch"]["datasets"]["empty"] = original["launch"]["datasets"]["empty"]
+        profile["launch"]["screens"][0]["states"] = ["content", "empty"]
+        self.profile.write_text(json.dumps(profile))
+        self.cite()
+        self.finished_slice(self.realized())
+        self.settings(timeout_seconds=600, per_dataset_seconds=0)
+        self.evaluator("silent")
+        self.settle()
+        self.assertFalse(self.tool("product", SLICE, "--dataset", "empty", env=SESSION)["ready"])
+        # 900 s since the launch, 800 of them waiting for the dataset.
+        stamp = lambda ago: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - ago))
+        state = json.loads(self.tracker.read_text())
+        metadata = state["beads"][SLICE]["metadata"]
+        record = json.loads(metadata["gc.flow.evaluation"])
+        record["request"]["launches"][-1]["at"] = stamp(900)
+        record["request"]["wanted"]["at"] = stamp(800)
+        metadata["gc.flow.evaluation"] = json.dumps(record)
+        self.tracker.write_text(json.dumps(state))
+
+        switched, after = self.settle(), self.settle()
+
+        self.assertEqual([SLICE], [entry["ticket"] for entry in switched["product_ready"]])
+        self.assertEqual([], switched["relaunched"])
+        self.assertEqual([SLICE], [entry["ticket"] for entry in after["pending"]])
+        self.assertEqual(1, len(self.evaluation()["request"]["launches"]))
+
     def test_a_session_that_closes_its_bead_without_states_counts_as_no_result(self):
         self.finished_slice(self.realized())
         self.evaluator("closed", {"look_for": COUNT_SHOWN, "dataset": "content"})

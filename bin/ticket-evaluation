@@ -817,14 +817,28 @@ def launch_timeout(settings: dict[str, Any], datasets: int) -> int:
     return max(settings["timeout_seconds"], datasets * settings.get("per_dataset_seconds", 0))
 
 
-def expired(launched: dict[str, Any], timeout: int) -> bool:
-    """A launch that gave no result: its time is over, its bead was
-    closed without states (the record closes the request first),
-    or the session that answered it had already rendered another review of
-    the convoy (`refused`, set by bin/convoy-state)."""
+def waited(request: dict[str, Any], launched: dict[str, Any]) -> int:
+    """Seconds this launch spent waiting for a dataset it requested: the
+    controller's time, not the Evaluator's (af-4nop0m)."""
+    wanted = request.get("wanted")
+    pending = 0
+    if wanted:
+        since = max(launched_at(wanted), launched_at(launched))
+        pending = max(0, int(time.time()) - since)
+    return int(request.get("waited", 0)) + pending
+
+
+def expired(launched: dict[str, Any], timeout: int, waited_seconds: int = 0) -> bool:
+    """A launch that gave no result: its time, less what it waited for a
+    requested dataset, is over; its bead was closed without states (the
+    record closes the request first), or the session that answered it had
+    already rendered another review of the convoy (`refused`, set by
+    bin/convoy-state)."""
     if launched.get("refused"):
         return True
-    if time.time() >= launched_at(launched) + timeout:
+    # At most one more delay: a controller that never opens the dataset
+    # still lets the launch end.
+    if time.time() >= launched_at(launched) + timeout + min(waited_seconds, timeout):
         return True
     try:
         return read_bead(launched["bead"]).get("status") == "closed"
@@ -995,7 +1009,7 @@ def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> d
             return startup_control(convoy, ticket_id, commit, settings)
         launches = current["launches"] if current else []
         timeout = launch_timeout(settings, len((current or {}).get("datasets") or datasets))
-        timed_out = bool(launches and expired(launches[-1], timeout))
+        timed_out = bool(launches and expired(launches[-1], timeout, waited(current, launches[-1])))
         desired = current.get("wanted") if current else None
         if timed_out:
             live = set(evaluation_of(ticket).get("live") or [])
@@ -1039,8 +1053,9 @@ def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> d
                         "dataset": entry["dataset"], "address": entry["address"]}
             convoy.load()
             current = evaluation_of(convoy.ticket(ticket_id))["request"]
-        if launches and not expired(launches[-1], timeout):
-            deadline = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(launched_at(launches[-1]) + timeout))
+        if launches and not expired(launches[-1], timeout, waited(current, launches[-1])):
+            deadline = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(
+                launched_at(launches[-1]) + timeout + min(waited(current, launches[-1]), timeout)))
             return {"ticket": ticket_id, "action": "pending", "commit": commit, "launches": len(launches),
                     "deadline": deadline}
         if len(launches) >= MAX_LAUNCHES:

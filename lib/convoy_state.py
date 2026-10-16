@@ -151,6 +151,7 @@ docs/CONVOY_STATE.md.
 from __future__ import annotations
 
 import argparse
+import calendar
 import fcntl
 import functools
 import hashlib
@@ -595,6 +596,11 @@ def convoy_lock(convoy_id: str) -> Iterator[None]:
 
 def now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def stamp_seconds(stamp: str) -> int:
+    """A date written by now(), in seconds since the epoch."""
+    return calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ"))
 
 
 def encode(record: dict[str, Any]) -> str:
@@ -1284,8 +1290,10 @@ def evaluation_launches(value: Any) -> list[dict[str, Any]]:
 
 def evaluation_request(value: Any) -> dict[str, Any]:
     required = {"commit", "criteria", "demonstration_line", "roles", "environment", "launches", "at"}
-    if not isinstance(value, dict) or not required <= set(value) or set(value) - required - {"datasets", "wanted"}:
+    if not isinstance(value, dict) or not required <= set(value) or set(value) - required - {"datasets", "wanted", "waited"}:
         raise Refusal(f"demande d'évaluation mal formée : {value!r}")
+    if "waited" in value and (type(value["waited"]) is not int or value["waited"] < 0):
+        raise Refusal(f"attente des jeux mal formée : {value['waited']!r}")
     if "datasets" in value:
         evaluation_datasets(value["datasets"])
     if "wanted" in value:
@@ -4125,6 +4133,10 @@ def cmd_want_evaluation_product(args: argparse.Namespace) -> int:
     wanted = request.get("wanted")
     if wanted and wanted["dataset"] == args.dataset:
         return done(args.convoy, args.ticket, {})
+    if wanted and request["launches"]:
+        # The wait for the dataset it replaces is the controller's time too (af-4nop0m).
+        since = max(stamp_seconds(wanted["at"]), stamp_seconds(request["launches"][-1]["at"]))
+        request["waited"] = request.get("waited", 0) + max(0, int(time.time()) - since)
     request["wanted"] = {"dataset": args.dataset, "fresh": args.fresh, "at": now()}
     values = {KEY_EVALUATION: encode(evaluation_record(encode(record)))}
     write_metadata(args.ticket, values)
@@ -4149,7 +4161,12 @@ def cmd_append_evaluation_product(args: argparse.Namespace) -> int:
            for old in request["environment"]):
         raise Refusal("produit déjà inscrit dans cette évaluation")
     request["environment"].append(entry)
-    request.pop("wanted", None)
+    wanted = request.pop("wanted", None)
+    if wanted and request["launches"]:
+        # The wait of the current launch for this dataset: bin/ticket-evaluation
+        # does not count it against the launch (af-4nop0m).
+        since = max(stamp_seconds(wanted["at"]), stamp_seconds(request["launches"][-1]["at"]))
+        request["waited"] = request.get("waited", 0) + max(0, int(time.time()) - since)
     record["live"] = [entry["state_file"]]
     values = {KEY_EVALUATION: encode(evaluation_record(encode(record)))}
     write_metadata(args.ticket, values)
@@ -4169,6 +4186,8 @@ def cmd_launch_evaluation(args: argparse.Namespace) -> int:
         raise Refusal(
             f"une seule relance par évaluation : {args.ticket} en a déjà lancé {len(request['launches'])} sans résultat")
     request["launches"].append({"bead": args.bead, "at": now()})
+    # A new launch has its own time: the waits of the previous one are spent.
+    request.pop("waited", None)
     values = {KEY_EVALUATION: encode(record)}
     write_metadata(args.ticket, values)
     return done(args.convoy, args.ticket, values)
