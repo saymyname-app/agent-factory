@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
+import functools
 import json
 import os
 import shutil
@@ -33,7 +34,15 @@ DESCRIPTOR = ROOT / "tests" / "fixtures" / "delivery-fixture-city" / "descriptor
 # A real project whose profile declares no launch recipe (the Factory's own
 # declares one since af-6a98ip).
 NO_LAUNCH_DESCRIPTOR = ROOT / "config" / "project-descriptors" / "saymyname.json"
-MUTATED_DATASET = ROOT / "tests" / "fixtures" / "delivery-fixture-city" / "datasets" / "content.json"
+FIXTURE = Path("tests") / "fixtures" / "delivery-fixture-city"
+GIT_ENV = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
+
+
+def _commit_product(product: Path) -> None:
+    """Make `product` a Git repository whose one commit holds what it holds."""
+    for args in (("init", "-q", "-b", "main"), ("add", "-A"),
+                 ("-c", "user.name=essai", "-c", "user.email=essai@example.invalid", "commit", "-q", "-m", "produit")):
+        subprocess.run(("git", "-C", str(product), *args), env=GIT_ENV, check=True, capture_output=True)
 
 
 def _fetch(url: str, timeout: float = 5.0) -> tuple[int, str]:
@@ -103,6 +112,24 @@ class ProjectLaunchTest(unittest.TestCase):
     def setUp(self) -> None:
         self._state_files: list[Path] = []
 
+    @functools.cached_property
+    def product(self) -> Path:
+        """A throwaway product repository holding the fixture, whose commit
+        the launches of this test name: the tree these tests run in is not
+        one -- the regression command runs them on a tree extracted by
+        `git archive` (af-qsloqo). Its name stays out of the launcher's
+        `project-launch-*` copies, which a test counts."""
+        product = Path(tempfile.mkdtemp(prefix="launched-product-")).resolve()
+        self.addCleanup(shutil.rmtree, product, ignore_errors=True)
+        shutil.copytree(ROOT / FIXTURE, product / FIXTURE)
+        _commit_product(product)
+        return product
+
+    @functools.cached_property
+    def product_commit(self) -> str:
+        return subprocess.run(["git", "-C", str(self.product), "rev-parse", "HEAD"],
+                              text=True, capture_output=True, check=True).stdout.strip()
+
     def tearDown(self) -> None:
         for state_file in self._state_files:
             if state_file.exists():
@@ -122,6 +149,8 @@ class ProjectLaunchTest(unittest.TestCase):
         state_file = self.new_state_file()
         args = [
             str(TOOL),
+            "--repo-root",
+            str(self.product),
             "start",
             str(descriptor),
             "--state-file",
@@ -158,13 +187,12 @@ class ProjectLaunchTest(unittest.TestCase):
         worktree = Path(tempfile.mkdtemp(prefix="project-launch-"))
         (worktree / "partial").write_text("checkout interrupted")
         launch_id = "interrupted-checkout"
-        commit = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"],
-                                text=True, capture_output=True, check=True).stdout.strip()
+        commit = self.product_commit
         owner = Path(f"{worktree}.owner")
-        owner.write_text(json.dumps({"launch_id": launch_id, "repo_root": str(ROOT), "commit": commit}))
+        owner.write_text(json.dumps({"launch_id": launch_id, "repo_root": str(self.product), "commit": commit}))
         state_file = self.new_state_file()
         state_file.write_text(json.dumps({"started": False, "launch_id": launch_id,
-                                          "worktree": str(worktree), "repo_root": str(ROOT),
+                                          "worktree": str(worktree), "repo_root": str(self.product),
                                           "commit": commit, "dataset": "content"}))
         stopped = self.stop(state_file=state_file)
         self.assertTrue(json.loads(stopped.stdout)["stopped"])
@@ -293,13 +321,12 @@ class ProjectLaunchTest(unittest.TestCase):
                 env={**os.environ, "FACTORY_LAUNCH_ID": launch_id})
             child = int(proc.stdout.readline().strip())
             state_file = self.new_state_file()
-            commit = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"],
-                                    text=True, capture_output=True, check=True).stdout.strip()
+            commit = self.product_commit
             Path(f"{worktree}.owner").write_text(json.dumps({
-                "launch_id": launch_id, "repo_root": str(ROOT), "commit": commit}))
+                "launch_id": launch_id, "repo_root": str(self.product), "commit": commit}))
             state_file.write_text(json.dumps({
                 "pid": proc.pid, "process_group": proc.pid, "launch_id": launch_id,
-                "worktree": str(worktree), "repo_root": str(ROOT), "commit": commit,
+                "worktree": str(worktree), "repo_root": str(self.product), "commit": commit,
             }))
             try:
                 result = self.stop(state_file=state_file, check=False)
@@ -358,42 +385,29 @@ class ProjectLaunchTest(unittest.TestCase):
         self.assertEqual({"status": "ok"}, json.loads(body))
 
     def test_start_launches_a_clean_copy_of_the_named_commit_not_the_cwd(self):
-        original = MUTATED_DATASET.read_text()
-        try:
-            mutated = json.loads(original)
-            mutated["state"] = "MUTATED-UNCOMMITTED"
-            MUTATED_DATASET.write_text(json.dumps(mutated))
+        dataset = self.product / FIXTURE / "datasets" / "content.json"
+        mutated = json.loads(dataset.read_text())
+        mutated["state"] = "MUTATED-UNCOMMITTED"
+        dataset.write_text(json.dumps(mutated))
 
-            result, state_file = self.start("--commit", "HEAD", "--dataset", "content")
-            record = json.loads(result.stdout)
-            self.assertTrue(record["started"])
+        result, state_file = self.start("--commit", "HEAD", "--dataset", "content")
+        record = json.loads(result.stdout)
+        self.assertTrue(record["started"])
 
-            _, body = _fetch(record["address"] + "/")
-            self.assertIn('data-anchor="fixture-state">content<', body)
-            self.assertNotIn("MUTATED-UNCOMMITTED", body)
-        finally:
-            MUTATED_DATASET.write_text(original)
+        _, body = _fetch(record["address"] + "/")
+        self.assertIn('data-anchor="fixture-state">content<', body)
+        self.assertNotIn("MUTATED-UNCOMMITTED", body)
 
     def test_start_launches_a_product_that_lives_in_another_repository(self):
         """`--repo-root` names the repository of the product; the profile
         tool stays the Factory's (T10, af-j8jo02)."""
-        import os
-        import shutil
-
-        fixture = Path("tests") / "fixtures" / "delivery-fixture-city"
-        product = Path(tempfile.mkdtemp(prefix="project-launch-product-"))
-        self.addCleanup(shutil.rmtree, product, ignore_errors=True)
-        shutil.copytree(ROOT / fixture, product / fixture)
-        env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
-        for args in (("init", "-q", "-b", "main"), ("add", "-A"),
-                     ("-c", "user.name=essai", "-c", "user.email=essai@example.invalid", "commit", "-q", "-m", "produit")):
-            subprocess.run(("git", "-C", str(product), *args), env=env, check=True, capture_output=True)
+        product = self.product
         state_file = self.new_state_file()
 
         result = subprocess.run(
             (str(TOOL), "--repo-root", str(product), "start", str(DESCRIPTOR), "--dataset", "content",
              "--state-file", str(state_file)),
-            cwd=product, env=env, text=True, capture_output=True)
+            cwd=product, env=GIT_ENV, text=True, capture_output=True)
 
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         record = json.loads(result.stdout)
@@ -452,14 +466,12 @@ class ProjectLaunchTest(unittest.TestCase):
         binds it. The first `taken` ports given are answered here, 200 to
         everything, and the product then fails to bind them. Returns the
         launcher's answer, the ports given, and the impostors' addresses."""
-        import shutil
         import threading
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
         product = Path(tempfile.mkdtemp(prefix="project-launch-contested-"))
         self.addCleanup(shutil.rmtree, product, ignore_errors=True)
-        fixture = Path("tests") / "fixtures" / "delivery-fixture-city"
-        shutil.copytree(ROOT / fixture, product / fixture)
+        shutil.copytree(ROOT / FIXTURE, product / FIXTURE)
         (product / "contested.py").write_text(
             "import os, sys, time\n"
             "port, contest = sys.argv[1], os.environ['CONTEST_DIR']\n"
@@ -473,10 +485,7 @@ class ProjectLaunchTest(unittest.TestCase):
         descriptor = json.loads(DESCRIPTOR.read_text())
         descriptor["launch"]["recipe"] = ["{python}", "contested.py", "{port}", *descriptor["launch"]["recipe"]]
         (product / "descriptor.json").write_text(json.dumps(descriptor))
-        env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
-        for args in (("init", "-q", "-b", "main"), ("add", "-A"),
-                     ("-c", "user.name=essai", "-c", "user.email=essai@example.invalid", "commit", "-q", "-m", "produit")):
-            subprocess.run(("git", "-C", str(product), *args), env=env, check=True, capture_output=True)
+        _commit_product(product)
 
         class Impostor(BaseHTTPRequestHandler):
             def log_message(self, *args):
@@ -516,7 +525,7 @@ class ProjectLaunchTest(unittest.TestCase):
             result = subprocess.run(
                 (str(TOOL), "--repo-root", str(product), "start", str(product / "descriptor.json"),
                  "--dataset", "content", "--state-file", str(state_file), "--timeout", "15"),
-                cwd=product, env={**env, "CONTEST_DIR": str(contest)}, text=True, capture_output=True)
+                cwd=product, env={**GIT_ENV, "CONTEST_DIR": str(contest)}, text=True, capture_output=True)
             record = json.loads(result.stdout)
             left = [] if record.get("started") else _children()
             _end(left)
