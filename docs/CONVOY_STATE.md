@@ -62,7 +62,7 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state override-finding  af-convoy af-t1 --finding F1.1 --approver <human approver> --words "…"   # bin/correction-round override
 ./bin/convoy-state open-resume   af-convoy af-t1 --cause interrupted --ref "session:<session name>"   # bin/convoy-advance: one resume counted, before the fresh author session is sent
 ./bin/convoy-state launch-resume af-convoy af-t1 --bead af-resume        # bin/convoy-advance, once the author session is sent
-./bin/convoy-state park          af-convoy af-t1 --cause resumes_exhausted --detail "reprises épuisées pour la cause …"   # bin/convoy-advance, at the third resume of a same cause
+./bin/convoy-state park          af-convoy af-t1 --cause resumes_exhausted --detail "reprises épuisées pour la cause …"   # bin/convoy-advance, at the bound of a same cause
 ./bin/convoy-state lift-park     af-convoy af-t1 --request <answered request bead> [--option a]   # bin/convoy-advance, on the operator's answer
 ./bin/convoy-state record-grouped-request af-convoy --bead af-request [--signature sha256:<hex>] [--lift-option a --lifts af-t1]   # bin/convoy-advance
 ./bin/convoy-state clear-grouped-request  af-convoy     # bin/convoy-advance, once a ticket may advance again

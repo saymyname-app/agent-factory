@@ -319,7 +319,7 @@ With `--inject three-failures` the reference driver adds the two tickets to
 the convoy and plays, for the first, an author session that takes it and
 ends without a Ticket Exit, three times, each once the order has sent the
 resume of the failure before. The order itself — the real
-`bin/convoy-advance` — counts the resumes, parks at the third and raises
+`bin/convoy-advance` — counts the resumes, parks at the bound of a cause and raises
 the request.
 
 ### A story not observed at the end is repaired, then Delivered (T26)
