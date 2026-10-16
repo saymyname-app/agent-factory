@@ -147,18 +147,6 @@ jq -e --arg t1 "$T1" --arg t2 "$T2" --arg t4 "$T4" --arg tip "$TIP" '
 # --- acceptance criteria, steps of the TDD and stop of a ticket (T10) ---------
 BASE=$(git -C "$REPO" rev-parse main)
 state set-tdd "$CONVOY" "$T4" --step red --commit "$TIP" --base "$BASE"
-# A freeze follows a favorable review of the criterion tests, given at the
-# commit of the red (Spec §5): the trial records both as bin/test-review does.
-REVIEWED='{"tests/test_probe.py": "sha256:'$(printf 'test de critère' | sha256sum | cut -d' ' -f1)'"}'
-jq -n --argjson files "$REVIEWED" \
-  '{files: $files, criteria: {"1": ["tests/test_probe.py::test_count"], "2": ["tests/test_probe.py::test_dataset"]}}' \
-  >"$TRIAL/test-review-request.json"
-state open-test-review "$CONVOY" "$T4" --commit "$TIP" --file "$TRIAL/test-review-request.json"
-jq -n --argjson files "$REVIEWED" --arg commit "$TIP" \
-  '{commit: $commit, files: $files, recorded_by: "trial-test-reviewer",
-    tests: {"tests/test_probe.py::test_count": {state: "favorable"}, "tests/test_probe.py::test_dataset": {state: "favorable"}}}' \
-  >"$TRIAL/test-review-verdict.json"
-state record-test-review "$CONVOY" "$T4" --file "$TRIAL/test-review-verdict.json"
 state set-tdd "$CONVOY" "$T4" --step freeze --commit "$TIP"
 state set-tdd "$CONVOY" "$T4" --step amendment --commit "$TIP" --reason "le champ s'appelle « dataset_name » dans la Spec"
 state set-tdd "$CONVOY" "$T4" --step green --commit "$TIP"

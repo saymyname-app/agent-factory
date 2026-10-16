@@ -26,7 +26,7 @@
 # mol-code-review and mol-ticket-evaluation; the check of each step of the
 # author formula (bin/ticket-author check, materialised by
 # bin/factory-build-gates); bin/ticket-author, bin/tdd-step (red, freeze,
-# green, on tests written in JavaScript), bin/test-review, bin/ticket-exit,
+# green, on tests written in JavaScript), bin/ticket-exit,
 # bin/code-review, bin/ticket-evaluation, bin/project-launch,
 # bin/evidence-capture, bin/convoy-state, bin/spec-integration (the merge,
 # with the regression command of the profile run on the merged result),
@@ -35,10 +35,8 @@
 # author, the reviewer and the Evaluator, three stubs that claim the step Gas
 # City routes to them and run the real tools the step names (those of
 # tests/ticket-author-isolated-city-test.sh and
-# tests/ticket-end-isolated-city-test.sh); and the reviewer of the criterion
-# tests between red and freeze, for which tests/fixtures/test-review/reviewer
-# stands in for the dispatch door and the session (that role on a real
-# controller is tried by tests/test-review-isolated-city-test.sh).
+# tests/ticket-end-isolated-city-test.sh). No review of the criterion tests
+# precedes the freeze (ADR-0030 L3): the code review reads them.
 #
 # The trial prints its record (« relevé d'essai ») on stdout.
 
@@ -101,7 +99,7 @@ trap cleanup EXIT
 
 # Nothing of the live Factory may reach this city (same recipe as
 # tests/ticket-end-isolated-city-test.sh).
-while IFS= read -r name; do unset "$name"; done < <(compgen -e | grep -E '^(GC_|BEADS_|BD_BIN$|GH_BIN$|FACTORY_ROOT$|CONVOY_|DISPATCH_DOOR_|ESCALATION_DOOR_|EVIDENCE_|TICKET_AUTHOR_|SPEC_INTEGRATION_|TEST_REVIEW_|CODE_REVIEW_(DISPATCH|FAKE)|TICKET_EVALUATION_(DISPATCH|FAKE|STATE)|CORRECTION_ROUND_(DISPATCH|FAKE)|PROJECT_PLANNING_PROFILE_BIN$|DELIVERY_ROLE_)' || true)
+while IFS= read -r name; do unset "$name"; done < <(compgen -e | grep -E '^(GC_|BEADS_|BD_BIN$|GH_BIN$|FACTORY_ROOT$|CONVOY_|DISPATCH_DOOR_|ESCALATION_DOOR_|EVIDENCE_|TICKET_AUTHOR_|SPEC_INTEGRATION_|CODE_REVIEW_(DISPATCH|FAKE)|TICKET_EVALUATION_(DISPATCH|FAKE|STATE)|CORRECTION_ROUND_(DISPATCH|FAKE)|PROJECT_PLANNING_PROFILE_BIN$|DELIVERY_ROLE_)' || true)
 export GC_HOME="$TRIAL/h" XDG_RUNTIME_DIR="$TRIAL/r" GC_DISABLE_USAGE_METRICS=1
 unset DBUS_SESSION_BUS_ADDRESS
 export PATH="/usr/local/bin:$HOME/.local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -132,8 +130,7 @@ export TICKET_AUTHOR_WORKTREES_DIR="$TRIAL/wt"
 export ESCALATION_DOOR_LOCK_FILE="$TRIAL/escalation-door.lock" PROPOSAL_DOOR_BIN="$TRIAL/proposal-door"
 export DISPATCH_DOOR_PROVIDER_FAILOVER_BIN="$TRIAL/provider-failover" DISPATCH_DOOR_ROLE_TRIAL_BIN="$TRIAL/role-adoption-trial"
 export DELIVERY_ROLE_PROVIDER_FAILOVER_BIN="$TRIAL/provider-failover"
-export GC_BIN=gc TEST_REVIEW_DISPATCH_DOOR_BIN="$ROOT/tests/fixtures/test-review/reviewer" TEST_REVIEW_POLL_SECONDS=1
-export TEST_REVIEW_FAKE_LOG="$TRIAL/review-door.log" TEST_REVIEW_FAKE_PLAN="$TRIAL/review-plan.json" TEST_REVIEW_FAKE_REPO="$CITY"
+export GC_BIN=gc
 export GIT_AUTHOR_NAME=essai GIT_AUTHOR_EMAIL=essai@example.invalid GIT_COMMITTER_NAME=essai GIT_COMMITTER_EMAIL=essai@example.invalid
 ENV
 printf '#!/bin/sh\necho 0\n' > "$TRIAL/proposal-door"
@@ -143,7 +140,6 @@ printf '%s\n' '{"total_exhaustion": {"active": false}, "targets": {"trial-author
 SH
 printf '#!/bin/sh\nexit 0\n' > "$TRIAL/role-adoption-trial"
 chmod +x "$TRIAL/proposal-door" "$TRIAL/provider-failover" "$TRIAL/role-adoption-trial"
-echo '["favorable"]' > "$TRIAL/review-plan.json"
 # shellcheck disable=SC1091
 . "$TRIAL/env"
 
@@ -239,7 +235,6 @@ while true; do
         cp "$TRIAL/tests/"* "$WT/$FIXTURE/tests/"
         git -C "$WT" add -A; git -C "$WT" commit -q -m "tests de critère"
         tool "$BIN/tdd-step" red "$CONVOY" "$TICKET" --repo "$WT" --profile "$PROFILE" --dataset content --base "$BASE" --table "$FIXTURE/tests/criteria.json"
-        tool "$BIN/test-review" review "$CONVOY" "$TICKET" --repo "$WT" --wait 60
         tool "$BIN/tdd-step" freeze "$CONVOY" "$TICKET" --repo "$WT" ;;
       code)
         cp "$TRIAL/code/server.js" "$WT/$FIXTURE/server.js"
@@ -486,7 +481,6 @@ TOML
 jq '.rigs = ["trial"] | .stacks = {"trial": ["fixture-stack"]}' "$ROOT/$FIXTURE/descriptor.json" > "$CITY/config/project-descriptors/trial.json"
 jq -n --argjson n "$CEILING" '{contract: "agent-factory-delivery-flow/v1", max_sessions: $n,
   start: {formula: "mol-ticket-author", role: "author"},
-  test_review: {formula: "mol-test-review", role: "reviewer", rig: "trial", timeout_seconds: 600},
   code_review: {formula: "mol-code-review", role: "reviewer", rig: "trial", timeout_seconds: 600},
   evaluation: {formula: "mol-ticket-evaluation", role: "evaluator", rig: "trial", timeout_seconds: 600, start_timeout_seconds: 30},
   correction: {formula: "mol-ticket-correction", role: "author", rig: "trial"}}' \
@@ -611,7 +605,6 @@ printf '%s' "$red" | jq -e --arg base "$INTEGRATION_BASE" --arg t "$FIXTURE/test
     [$t + "/count.test.js::count_is_answered", "failure", ["GET /items"]],
     [$t + "/health.test.js::dataset_is_named", "failure", ["GET /health"]]])' >/dev/null \
   || fail "the red proof is not one assertion failure per criterion test, each through its entry point: $red"
-[ "$(printf '%s' "$t" | jq -c '[.test_review.rounds[].verdict]')" = '["favorable"]' ] || fail "the criterion tests were frozen without a favorable review"
 piece tdd_freeze | jq -e --arg t "$FIXTURE/tests" '.verdict == "frozen" and (.files | keys | sort) == ([$t + "/count.test.js", $t + "/criteria.json", $t + "/harness.js", $t + "/health.test.js"])' >/dev/null \
   || fail "the freeze does not hold the criterion tests, their table and the harness of the profile: $(piece tdd_freeze)"
 printf '%s' "$green" | jq -e --arg tip "$TIP" '.verdict == "green" and .commit == $tip and .k == 3 and .seam_mode == "black_box"
@@ -620,7 +613,7 @@ printf '%s' "$green" | jq -e --arg tip "$TIP" '.verdict == "green" and .commit =
 jq -e '.address != null and .exit_code == 0 and (.output | contains("\"count\":3"))' "$TRIAL/store/$SPEC/$T/demonstration.json" >/dev/null \
   || fail "the demonstration piece was not captured on the launched product"
 echo "$(date -u +%H:%M:%S) rouge : $(printf '%s' "$red" | jq -c '[.tests[] | "\(.id | split("/") | last) → \(.outcome) par \(.entry_points | join(","))"]') au commit de départ $INTEGRATION_BASE (seam $(printf '%s' "$red" | jq -r '.seam_mode'), produit lancé en bonne santé)"
-echo "$(date -u +%H:%M:%S) gel : relecture des tests $(printf '%s' "$t" | jq -r '.test_review.rounds[-1].verdict') ; empreintes de $(piece tdd_freeze | jq -c '.files | keys | map(split("/") | last)')"
+echo "$(date -u +%H:%M:%S) gel : empreintes de $(piece tdd_freeze | jq -c '.files | keys | map(split("/") | last)')"
 echo "$(date -u +%H:%M:%S) code : vert au commit de tête $TIP, k=$(printf '%s' "$green" | jq -r '.k'), exécutions $(printf '%s' "$green" | jq -c '[.tests[] | .runs]') ; démonstration capturée sur le produit lancé ; sortie « terminé »"
 
 # --- review, evaluation, merge, closed by the ticket-end gate, by the order ------------

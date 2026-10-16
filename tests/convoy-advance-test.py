@@ -518,7 +518,7 @@ class ConvoyAdvanceHarness(unittest.TestCase):
         self.advance(CONVOY)
         return base, self.finished(T1)
 
-    # --- review of the criterion tests left without result (T13) ---------------
+    # --- a review of the criterion tests left by the flow before ADR-0030 L3 -----
 
     REVIEWED = "fx-review"
     R1 = "fx-r1"
@@ -540,31 +540,19 @@ class ConvoyAdvanceHarness(unittest.TestCase):
         self.run_ok(STATE, "record-gate", self.REVIEWED, self.R1, "--gate", "dispatch")
         self.edit(self.R1, status="in_progress")
         self.run_ok(STATE, "set-tdd", self.REVIEWED, self.R1, "--step", "red", "--commit", self.RED, "--base", COMMIT)
-        request = self.tmp / "request.json"
-        request.write_text(json.dumps({"files": {"tests/test_count.py": "sha256:" + "c1" * 32},
-                                       "criteria": {"1": ["tests/test_count.py::CountTest.test_count"]}}))
-        self.run_ok(STATE, "open-test-review", self.REVIEWED, self.R1, "--commit", self.RED, "--file", request)
-        for number in range(launches):
-            self.run_ok(STATE, "launch-test-review", self.REVIEWED, self.R1, "--bead", f"fx-old{number + 1}")
-        # The reviewer never answers, and a launch is over at once.
-        (self.tmp / "plan.json").write_text(json.dumps(["silent"]))
-        self.env.update({
-            "TEST_REVIEW_DISPATCH_DOOR_BIN": str(ROOT / "tests" / "fixtures" / "test-review" / "reviewer"),
-            "TEST_REVIEW_FAKE_LOG": str(self.tmp / "review-door.log"),
-            "TEST_REVIEW_FAKE_PLAN": str(self.tmp / "plan.json"),
-            "TEST_REVIEW_FAKE_REPO": str(self.tmp),
-        })
-        settings = json.loads((self.root / "config" / "delivery-flow.json").read_text())
-        settings["test_review"] = {"formula": "mol-test-review", "role": "reviewer", "rig": "fx-rig", "timeout_seconds": 0}
-        (self.root / "config" / "delivery-flow.json").write_text(json.dumps(settings))
+        # Left by bin/test-review before ADR-0030 L3 (removed in L7): no
+        # command writes it any more.
+        state = self.tracker_state()
+        state["beads"][self.R1]["metadata"]["gc.flow.test_review"] = json.dumps({"rounds": [], "request": {
+            "commit": self.RED, "files": {"tests/test_count.py": "sha256:" + "c1" * 32},
+            "criteria": {"1": ["tests/test_count.py::CountTest.test_count"]},
+            "launches": [{"bead": f"fx-old{number + 1}", "at": "2026-10-15T00:00:00Z"} for number in range(launches)],
+            "at": "2026-10-15T00:00:00Z"}})
+        self.tracker.write_text(json.dumps(state))
         self.write_log.write_text("")
 
     def review_of(self, answer):
         return next(c for c in answer["convoys"] if c["id"] == self.REVIEWED).get("test_review")
-
-    def review_launches(self):
-        log = self.tmp / "review-door.log"
-        return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 
     # --- resumes counted and bounded, parked tickets, one grouped request (T20) ---
 

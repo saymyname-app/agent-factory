@@ -74,7 +74,6 @@ mechanisms: consult `decisions/PRE_REFACTOR.md` before relying on them.
 | Ticket Exits, handoffs and parked descendants | `TICKET_EXIT.md` |
 | Spec integration branch, serial merges and invalidation | `SPEC_INTEGRATION.md` |
 | Author session, worktree and ticket sequence | `TICKET_AUTHOR.md` |
-| Independent criterion-test review before freeze (superseded by ADR-0030 L3: the code review reads them) | `TEST_REVIEW.md`, `CODE_REVIEW.md` |
 | Code review before ticket merge | `CODE_REVIEW.md` |
 | Evaluate the launched product before ticket merge | `TICKET_EVALUATION.md` |
 | Screen-to-prototype fidelity, anchors and evidence | `PROTOTYPE_FIDELITY.md` |
@@ -101,7 +100,7 @@ mechanisms: consult `decisions/PRE_REFACTOR.md` before relying on them.
 | Owner answer, findings and routing | `OWNER_ANSWER.md` |
 | Promotion after acceptance/abandonment and convoy closure | `OUTCOME_PROMOTE.md` |
 | Requirement-to-mechanism proof and adaptation checks | `REQUIREMENT_TABLE.md` |
-| Fresh test/code/evaluation sessions and author capacity | `TEST_REVIEW.md` (fresh sessions), `CODE_REVIEW.md`, `TICKET_EVALUATION.md` |
+| Fresh code/evaluation sessions and author capacity | `CODE_REVIEW.md` (fresh sessions), `TICKET_EVALUATION.md`, `TICKET_AUTHOR.md` |
 | CI syntax-check failures | `../.github/workflows/ci.yml` |
 | D01 accepted limits and final verification | `verification/D01-verification-finale.md` (§6, 7, 10, 12); `bd comments af-m23wru` |
 | Preserve cases/assertions when optimizing tests | `FACTORY_TOOLS.md` (test-cases-compare) |

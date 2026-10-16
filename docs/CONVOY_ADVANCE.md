@@ -628,7 +628,7 @@ repair is published (T26, below).
 A pass starts no review of criterion tests and settles none: no test review
 precedes the freeze, and the code review reads the criterion tests after
 the green (`docs/CODE_REVIEW.md`). A `gc.flow.test_review` left on a ticket
-in flight by the flow before L3, open or not, is ignored. A ticket a test
+in flight by the flow before L3, open or not, is ignored (`bin/test-review` was removed in L7). A ticket a test
 review stopped before L3 (`test_review_refused`, `test_review_no_result`) is
 resumed on itself (`stage_removed`, above, af-pjvsgo): its request is
 withdrawn through `bin/escalation-door clear` and a fresh author session
