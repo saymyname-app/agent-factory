@@ -1553,21 +1553,26 @@ class ConvoyAdvanceTest(ConvoyAdvanceHarness):
         # A later pass reads the answer of the check left running, and no
         # pass starts it again from zero meanwhile.
         deadline = time.monotonic() + 120
+        waited = []
         while True:
             later = self.advance(CONVOY)
             observed = next(c for c in later["convoys"] if c["id"] == CONVOY)
             if "checked" in observed.get("fidelity", {}) or time.monotonic() > deadline:
                 break
             self.assertEqual([T1], [entry["id"] for entry in observed["fidelity"]["waiting"]], observed)
+            waited.append(observed)
             time.sleep(1)
         self.assertEqual([(T1, tip, "vert")],
                          [(entry["id"], entry["commit"], entry["result"]) for entry in observed["fidelity"]["checked"]], observed)
         # The ticket names one game (af-kdxk6k): the fixture Evaluator may
         # finish within the first pass; a pass at most later, the recorded
-        # verdict is read and the ticket integrated and closed.
+        # verdict is read and the ticket integrated and closed. A pass that
+        # still reported the check waiting may already have merged: the
+        # check left running can record its answer during that pass, before
+        # the merge reads it (af-i0b07d).
         answer = self.advance(CONVOY)
         result = next(c for c in answer["convoys"] if c["id"] == CONVOY)
-        passes = (observed, result)
+        passes = (*waited, observed, result)
         self.assertEqual([T1], [entry["id"] for one in passes
                                 for entry in (one.get("integration") or {}).get("merged", [])], passes)
         self.assertEqual([T1], [entry["id"] for one in passes
