@@ -1,0 +1,7 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/regression-outside-git-test.py::RegressionOutsideGit.test_the_isolated_launcher_tests_of_the_regression_pass_on_a_clean_tree_outside_git"
+    ]
+  }
+}
