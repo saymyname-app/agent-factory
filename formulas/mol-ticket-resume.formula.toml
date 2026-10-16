@@ -102,7 +102,12 @@ Work only in the work tree.
   anything, prove the ticket at the tip and finish again: the evaluation is
   sent again on that tip.
 - `unblocked` — the repair the ticket waited for is closed: its Ticket
-  Handoff is among `.blocker_handoffs`. Go on as for `interrupted`.
+  Handoff is among `.blocker_handoffs`. The repair landed on the integration
+  branch, not on yours: bring the integration branch into your branch
+  (`git fetch origin && git merge "origin/$INTEGRATION"`), resolve what
+  conflicts, commit, then go on as for `interrupted`. If the repair changed
+  a frozen harness file, `bin/tdd-step green` sees it as modified: record
+  it with `bin/tdd-step amend` (once, docs/TDD_STEP.md).
 - `answered` — the operator answered the request that parked the ticket:
   `.park_lifts` names the request (`request`) and the letter of the option
   taken (`option`); read the request and its answer with
