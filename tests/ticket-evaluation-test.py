@@ -528,17 +528,15 @@ class TicketEvaluationTest(unittest.TestCase):
         self.tracker.write_text(json.dumps(tracker))
 
     def handed(self, tip, request, **changes):
-        """Every state « observed », each on a captured page of the first product."""
+        """The demonstration line « observed » on a captured page of the first
+        product, and its coverage: no state per criterion, the frozen criterion
+        tests prove them (ADR-0030 L4)."""
         product = request["environment"][0]
         result = {
             "commit": tip,
-            "criteria": [{"number": 1, "text": CRITERION, "state": "observed",
-                          "evidence": self.capture("evaluation.c1", product)},
-                         {"number": 2, "text": SECOND_CRITERION, "state": "observed",
-                          "evidence": self.capture("evaluation.c2", product, "/health")}],
             "demonstration_line": {"text": request.get("demonstration_line", DEMONSTRATION), "state": "observed",
                                    "evidence": self.capture("evaluation.demo", product)},
-            "coverage": [{"dataset": product["dataset"], "evidence": "evaluation.c1"}],
+            "coverage": [{"dataset": product["dataset"], "evidence": self.capture("evaluation.c1", product)}],
         }
         result.update(changes)
         return result
@@ -606,7 +604,7 @@ class TicketEvaluationTest(unittest.TestCase):
         self.assertFalse(verdict["favorable"])
         request = self.evaluation()["request"]
         handed = self.handed(tip, request)
-        handed["criteria"][1]["evidence"] = observation["piece"]
+        handed["demonstration_line"]["evidence"] = observation["piece"]
         path = Path(observation["path"])
         saved = path.read_bytes()
         path.write_text('{}')
@@ -686,7 +684,7 @@ class TicketEvaluationTest(unittest.TestCase):
         self.assertNotEqual(0, ref["anchors"]["exit_code"])
         self.assertIn("error", ref)
         handed = self.handed(tip, self.evaluation()["request"])
-        handed["criteria"][1].update(state="not_observed", evidence=report["piece"], reason="référence inaccessible")
+        handed["demonstration_line"].update(state="not_observed", evidence=report["piece"], reason="référence inaccessible")
         self.assertEqual("return_to_author", self.recorded(handed)["outcome"])
         self.assertFalse(self.tool("verdict")["favorable"])
 
@@ -779,7 +777,7 @@ class TicketEvaluationTest(unittest.TestCase):
 
     # --- the demonstration line of the ticket -----------------------------------
 
-    def test_an_unrealized_criterion_is_recorded_not_observed_with_its_evidence_and_the_verdict_is_unfavorable(self):
+    def test_an_unrealized_demonstration_line_is_recorded_not_observed_with_its_evidence_and_the_verdict_is_unfavorable(self):
         tip = self.finished_slice()
         self.code_reviewed(tip)
 
@@ -787,8 +785,9 @@ class TicketEvaluationTest(unittest.TestCase):
 
         self.assertEqual([SLICE], [entry["ticket"] for entry in settled["launched"]])
         (round_,) = self.evaluation()["rounds"]
-        first = round_["criteria"][0]
-        self.assertEqual(("not_observed", CRITERION), (first["state"], first["text"]))
+        self.assertEqual([], round_["criteria"])
+        first = round_["demonstration_line"]
+        self.assertEqual(("not_observed", DEMONSTRATION), (first["state"], first["text"]))
         evidence = self.piece(first["evidence"])
         self.assertEqual((tip, 0), (evidence["commit"], evidence["exit_code"]))
         self.assertNotIn("fixture-count", evidence["output"])
@@ -810,13 +809,17 @@ class TicketEvaluationTest(unittest.TestCase):
         self.profile.write_text(json.dumps(profile))
         brief = self.tool("brief", env=SESSION)
         self.assertEqual(tip, brief["expectations"][0]["commit"])
+        # Only the criterion a validated expectation compares is still handed in (ADR-0030 L4).
+        self.assertEqual([{"number": 1, "text": CRITERION}], brief["criteria"])
         product = request["environment"][0]
         piece = "evaluation.expected.suspended"
         captured = self.run_cmd(CAPTURE_TOOL, "command", CONVOY, SLICE, "--piece", piece,
                                 "--launch-state", product["state_file"], "--", sys.executable, "-c",
                                 brief["capture"]["page"][-2], product["address"] + "/status", env=SESSION)
         self.assertEqual(0, captured.returncode, captured.stdout + captured.stderr)
-        result = self.handed(tip, request, comparisons=[{"id": brief["expectations"][0]["id"], "evidence": piece}])
+        result = self.handed(tip, request, comparisons=[{"id": brief["expectations"][0]["id"], "evidence": piece}],
+                             criteria=[{"number": 1, "text": CRITERION, "state": "observed",
+                                        "evidence": "evaluation.c1"}])
         self.recorded(result)
         round_ = self.evaluation()["rounds"][0]
         self.assertEqual("return_to_author", round_["outcome"])
@@ -832,11 +835,9 @@ class TicketEvaluationTest(unittest.TestCase):
         self.settle()
 
         last = self.evaluation()["rounds"][-1]
-        states = [item["state"] for item in last["criteria"]] + [last["demonstration_line"]["state"]]
-        self.assertEqual(["observed"] * 3, states)
-        for item in (*last["criteria"], last["demonstration_line"]):
-            self.assertEqual(tip, self.piece(item["evidence"])["commit"])
-        self.assertIn(COUNT_SHOWN, self.piece(last["criteria"][0]["evidence"])["output"])
+        self.assertEqual(([], "observed"), (last["criteria"], last["demonstration_line"]["state"]))
+        self.assertEqual(tip, self.piece(last["demonstration_line"]["evidence"])["commit"])
+        self.assertIn(COUNT_SHOWN, self.piece(last["demonstration_line"]["evidence"])["output"])
         self.assertEqual(("favorable", "favorable", tip), (last["outcome"], last["verdict"], last["commit"]))
         verdict = self.tool("verdict")
         self.assertEqual((True, "favorable", []), (verdict["favorable"], verdict["verdict"], verdict["reasons"]))
@@ -1032,7 +1033,7 @@ class TicketEvaluationTest(unittest.TestCase):
                         capture_output=True)
         author = json.loads(own.read_text())
         handed = self.handed(tip, request)
-        handed["criteria"][0]["evidence"] = self.capture(
+        handed["demonstration_line"]["evidence"] = self.capture(
             "evaluation.own", {"state_file": str(own), "address": author["address"]})
 
         self.record_refused(handed, ("évaluation", "n'est jamais celui qui est évalué", author["address"]))
@@ -1057,9 +1058,9 @@ class TicketEvaluationTest(unittest.TestCase):
     def test_a_state_without_a_piece_of_evidence_is_refused(self):
         tip, request = self.open_evaluation()
         handed = self.handed(tip, request)
-        del handed["criteria"][1]["evidence"]
+        del handed["demonstration_line"]["evidence"]
 
-        self.record_refused(handed, ("critère 2", "état sans Evidence Record valide"))
+        self.record_refused(handed, ("ligne de démonstration", "état sans Evidence Record valide"))
 
     def test_a_state_whose_evidence_was_not_captured_by_the_tool_is_refused(self):
         tip, request = self.open_evaluation()
@@ -1080,15 +1081,15 @@ class TicketEvaluationTest(unittest.TestCase):
         handed = self.handed(tip, request)
         # What the first evaluation captured, at the commit before the correction.
         self.capture("evaluation.c2", request["environment"][0], "/health")
-        stale = self.evaluation()["rounds"][0]["criteria"][0]["evidence"]
-        self.assertEqual("evaluation.c1", stale)
+        stale = self.evaluation()["rounds"][0]["demonstration_line"]["evidence"]
+        self.assertEqual("evaluation.demo", stale)
         old = self.tmp / "old-launch.json"
         launched = self.run_cmd(LAUNCH_TOOL, "--repo-root", self.repo, "start", self.profile, "--commit",
                                 self.evaluation()["rounds"][0]["commit"], "--dataset", "content", "--state-file", old)
         self.assertEqual(0, launched.returncode, launched.stdout + launched.stderr)
         self.addCleanup(subprocess.run, (str(LAUNCH_TOOL), "stop", "--state-file", str(old)), env=self.env,
                         capture_output=True)
-        handed["criteria"][0]["evidence"] = self.capture(
+        handed["demonstration_line"]["evidence"] = self.capture(
             "evaluation.old", {"state_file": str(old), "address": json.loads(old.read_text())["address"]})
 
         self.record_refused(handed, ("évaluation.old".replace("é", "e"), "non au commit évalué"))
@@ -1102,45 +1103,67 @@ class TicketEvaluationTest(unittest.TestCase):
     def test_a_state_outside_the_three_is_refused(self):
         tip, request = self.open_evaluation()
         handed = self.handed(tip, request)
-        handed["criteria"][0]["state"] = "partially_observed"
+        handed["demonstration_line"]["state"] = "partially_observed"
 
-        self.record_refused(handed, ("critère 1", "hors de la liste fermée", "observed, not_observed, unobservable"))
+        self.record_refused(handed, ("ligne de démonstration", "hors de la liste fermée", "observed, not_observed, unobservable"))
 
     def test_a_state_that_is_not_observed_without_a_reason_is_refused(self):
         tip, request = self.open_evaluation()
         handed = self.handed(tip, request)
-        handed["criteria"][0]["state"] = "not_observed"
+        handed["demonstration_line"]["state"] = "not_observed"
 
-        self.record_refused(handed, ("critère 1", "sans raison"))
+        self.record_refused(handed, ("ligne de démonstration", "sans raison"))
 
     def test_an_unobservable_without_its_cause_is_refused(self):
         tip, request = self.open_evaluation()
         handed = self.handed(tip, request)
-        handed["criteria"][0].update(state="unobservable", reason="rien à voir")
+        handed["demonstration_line"].update(state="unobservable", reason="rien à voir")
 
-        self.record_refused(handed, ("critère 1", "sans cause", "criterion, environment"))
+        self.record_refused(handed, ("ligne de démonstration", "sans cause", "criterion, environment"))
 
-    def test_a_reworded_criterion_is_refused(self):
+    def test_the_brief_asks_for_the_demonstration_line_only(self):
+        self.open_evaluation()
+
+        brief = self.tool("brief", env=SESSION)
+
+        # ADR-0030 L4: the frozen criterion tests prove the criteria.
+        self.assertEqual(([], DEMONSTRATION), (brief["criteria"], brief["demonstration_line"]))
+        self.assertNotIn("criteria", brief["result_shape"])
+        self.assertIn("demonstration_line", brief["result_shape"])
+
+    def test_an_interface_ticket_is_favorable_on_its_demonstration_line_alone(self):
         tip, request = self.open_evaluation()
-        handed = self.handed(tip, request)
-        handed["criteria"][0]["text"] = "La page d'accueil répond"
 
-        self.record_refused(handed, ("critère 1 reformulé", CRITERION))
+        recorded = self.recorded(self.handed(tip, request))
 
-    def test_a_removed_criterion_is_refused(self):
+        self.assertEqual(("favorable", "favorable"), (recorded["outcome"], recorded["verdict"]))
+        (round_,) = self.evaluation()["rounds"]
+        self.assertEqual(([], "observed"), (round_["criteria"], round_["demonstration_line"]["state"]))
+        self.assertTrue(self.tool("verdict")["favorable"])
+
+    def test_criteria_states_of_an_evaluator_briefed_before_adr_0030_l4_are_not_recorded(self):
         tip, request = self.open_evaluation()
-        handed = self.handed(tip, request)
-        del handed["criteria"][1]
+        handed = self.handed(tip, request, criteria=[
+            {"number": 1, "text": CRITERION, "state": "not_observed", "evidence": "evaluation.c1",
+             "reason": "le nombre n'est pas sur la page"},
+            {"number": 2, "text": "La sonde répond vite", "state": "observed", "evidence": "evaluation.c1"}])
 
-        self.record_refused(handed, ("critère 2 retiré", SECOND_CRITERION))
+        recorded = self.recorded(handed)
 
-    def test_a_criterion_the_approved_ticket_does_not_have_is_refused(self):
+        self.assertEqual(("favorable", "favorable"), (recorded["outcome"], recorded["verdict"]))
+        self.assertEqual([], self.evaluation()["rounds"][0]["criteria"])
+
+    def test_a_criterion_compared_by_a_validated_expectation_is_still_required(self):
         tip, request = self.open_evaluation()
-        handed = self.handed(tip, request)
-        handed["criteria"].append({"number": 3, "text": "La page est jolie", "state": "observed",
-                                   "evidence": "evaluation.c1"})
+        profile = json.loads(self.profile.read_text())
+        profile["validated_expectations"] = [{
+            "scope": "ticket", "number": 1, "text": CRITERION, "dataset": "content",
+            "source": {"reference": "validated count scenario", "digest": sha256_of(b"approved scenario")},
+            "expected": True, "observation": {"path": "/status", "pointer": "/suspended"},
+        }]
+        self.profile.write_text(json.dumps(profile))
 
-        self.record_refused(handed, "un critère que le ticket approuvé n'a pas : 3")
+        self.record_refused(self.handed(tip, request), ("critère 1", "attente validée"))
 
     def test_a_reworded_demonstration_line_is_refused(self):
         tip, request = self.open_evaluation()
@@ -1153,7 +1176,6 @@ class TicketEvaluationTest(unittest.TestCase):
         tip, request = self.open_evaluation()
         handed = self.handed(tip, request)
         self.edit(SLICE, description=TICKET_TEXT.replace(SECOND_CRITERION, "La sonde répond vite"))
-        handed["criteria"][1]["text"] = "La sonde répond vite"
 
         self.record_refused(handed, "ne sont plus ceux de la demande d'évaluation")
 
@@ -1199,12 +1221,12 @@ class TicketEvaluationTest(unittest.TestCase):
         tip, request = self.open_evaluation()
         self.recorded(self.handed(tip, request))
 
-        (self.store / SPEC / SLICE / "evaluation.c2.json").unlink()
+        (self.store / SPEC / SLICE / "evaluation.demo.json").unlink()
 
         verdict = self.tool("verdict")
         self.assertFalse(verdict["favorable"])
         self.assertIn("preuve non recevable", " ".join(verdict["reasons"]))
-        self.assertIn("evaluation.c2", " ".join(verdict["reasons"]))
+        self.assertIn("evaluation.demo", " ".join(verdict["reasons"]))
 
     def test_no_evaluation_is_not_a_favorable_verdict(self):
         self.finished_slice(self.realized())
@@ -1233,7 +1255,7 @@ class TicketEvaluationTest(unittest.TestCase):
     def test_an_unobservable_by_the_criterion_is_a_planning_exception_and_parks_the_ticket(self):
         tip, request = self.open_evaluation()
         handed = self.handed(tip, request)
-        handed["criteria"][0].update(state="unobservable", cause="criterion",
+        handed["demonstration_line"].update(state="unobservable", cause="criterion",
                                      reason="le critère nomme une ancre qu'aucun point d'entrée ne sert")
         recorded = self.recorded(handed)
         self.assertEqual(("planning_exception", "unfavorable"), (recorded["outcome"], recorded["verdict"]))
@@ -1256,7 +1278,7 @@ class TicketEvaluationTest(unittest.TestCase):
     def test_resolved_evaluation_exception_replays_once_without_erasing_its_refusal(self):
         tip, request = self.open_evaluation()
         handed = self.handed(tip, request)
-        handed["criteria"][0].update(state="unobservable", cause="criterion", reason="commande inaccessible")
+        handed["demonstration_line"].update(state="unobservable", cause="criterion", reason="commande inaccessible")
         self.recorded(handed)
         self.settle()
         previous = self.evaluation()["rounds"]
@@ -1268,7 +1290,7 @@ class TicketEvaluationTest(unittest.TestCase):
         self.assertFalse(self.tool("verdict")["favorable"])
         request = self.evaluation()["request"]
         handed = self.handed(tip, request)
-        handed["criteria"][0].update(state="unobservable", cause="criterion", reason="toujours inaccessible")
+        handed["demonstration_line"].update(state="unobservable", cause="criterion", reason="toujours inaccessible")
         self.tool("record", SLICE, "--file", self.json_file("replay.json", handed),
                   env={**SESSION, "GC_SESSION_NAME": "delivery-evaluator-fx-replay"})
         self.assertEqual(2, len(self.evaluation()["rounds"]))
@@ -1279,7 +1301,7 @@ class TicketEvaluationTest(unittest.TestCase):
     def test_an_unobservable_by_the_environment_is_an_outage_that_is_not_counted_as_a_refusal(self):
         tip, request = self.open_evaluation()
         handed = self.handed(tip, request)
-        handed["criteria"][1].update(state="unobservable", cause="environment", reason="le produit lancé ne répond plus")
+        handed["demonstration_line"].update(state="unobservable", cause="environment", reason="le produit lancé ne répond plus")
 
         recorded = self.recorded(handed)
 
@@ -1297,7 +1319,7 @@ class TicketEvaluationTest(unittest.TestCase):
 
     def test_a_second_outage_at_the_same_commit_stops_the_ticket_as_a_breakdown_raised_once(self):
         self.finished_slice(self.realized())
-        self.evaluator({"states": {"2": {"state": "unobservable", "cause": "environment", "reason": "plus de réponse"}}})
+        self.evaluator({"states": {"demo": {"state": "unobservable", "cause": "environment", "reason": "plus de réponse"}}})
         self.settle()
         self.settle()
         self.assertEqual(["environment_outage"] * 2, [r["outcome"] for r in self.evaluation()["rounds"]])
@@ -1416,7 +1438,7 @@ class TicketEvaluationTest(unittest.TestCase):
         given = self.brief_given()
         brief = json.loads(given)
         self.assertEqual(DEMONSTRATION, brief["demonstration_line"])
-        self.assertEqual([{"number": 1, "text": CRITERION}, {"number": 2, "text": SECOND_CRITERION}], brief["criteria"])
+        self.assertEqual([], brief["criteria"])
         self.assertEqual(tip, brief["commit"])
         self.assertEqual(["content"], [entry["dataset"] for entry in brief["environments"]])
         for forbidden in (HANDOFF_PROSE, "PROSE-DU-HANDOFF", COMMIT_PROSE, "handoff", "diff", str(self.repo),

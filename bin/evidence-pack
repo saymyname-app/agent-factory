@@ -784,7 +784,9 @@ class Page:
                 self.judged(owner, evaluation["demonstration_line"]) if evaluation else "aucune évaluation rendue") + "</p>"
         states = {entry["number"]: entry for entry in (evaluation or {}).get("criteria") or []}
         criteria = items(
-            li(f"Critère {number} : {e(text)}<br>" + (self.judged(owner, states[number]) if number in states else "non évalué"))
+            li(f"Critère {number} : {e(text)}<br>" + (self.judged(owner, states[number]) if number in states
+                                                   else "prouvé par son test de critère gelé, non jugé par l'Evaluator (ADR-0030 L4)"
+                                                   if evaluation else "non évalué"))
             for number, text in enumerate(ticket.get("criteria") or [], start=1))
         record = (ticket.get("gates") or {}).get("ticket_end") or {}
         gate = items(li(f"{entry['number']}. {e(entry['name'])} : {e(VERDICTS.get(entry['verdict'], entry['verdict']))} — "

@@ -1385,11 +1385,16 @@ def evaluation_round(value: Any) -> dict[str, Any]:
     if not required <= set(value) or set(value) - required - {"coverage", "screen_findings", "conversation"}:
         raise Refusal(f"passe d'évaluation mal formée : {value!r}")
     stored_conversation(value)
-    if not isinstance(value["criteria"], list) or not value["criteria"]:
-        raise Refusal(f"passe d'évaluation sans état par critère : {value['criteria']!r}")
-    for position, item in enumerate(value["criteria"], start=1):
-        if evaluation_item(item, f"critère {position}").get("number") != position:
-            raise Refusal(f"critère {position} : numéro absent ou hors de l'ordre des critères")
+    # ADR-0030 L4: no state per criterion (empty), or only those a validated
+    # expectation compares; a round recorded before holds one per criterion.
+    if not isinstance(value["criteria"], list):
+        raise Refusal(f"passe d'évaluation aux états par critère mal formés : {value['criteria']!r}")
+    previous = 0
+    for item in value["criteria"]:
+        number = evaluation_item(item, "critère").get("number")
+        if isinstance(number, bool) or not isinstance(number, int) or number <= previous:
+            raise Refusal(f"critère {number!r} : numéro absent ou hors de l'ordre des critères")
+        previous = number
     if "number" in evaluation_item(value["demonstration_line"], "ligne de démonstration"):
         raise Refusal("ligne de démonstration : numéro inattendu")
     evaluation_roles(value["roles"])
@@ -4271,10 +4276,12 @@ def visual_reference_changed(repo: str | None, convoy_id: str, commit: str, tick
 
 def cmd_record_evaluation(args: argparse.Namespace) -> int:
     """Record what an Evaluator session hands in for the open evaluation,
-    and compute the verdict (T15, Spec §7): one state per approved criterion
-    and one for the demonstration line, each with a captured piece of
-    evidence. The verdict of the family `evaluation` is written in the same
-    tracker write; an outage of the environment writes none."""
+    and compute the verdict (T15, Spec §7): one state for the demonstration
+    line and, only where a validated expectation compares one, for an
+    approved criterion (ADR-0030 L4: the frozen criterion tests prove the
+    others), each with a captured piece of evidence. The verdict of the
+    family `evaluation` is written in the same tracker write; an outage of
+    the environment writes none."""
     ticket, metadata, record = evaluation_target(args)
     request = record.get("request")
     if not request:
@@ -4296,9 +4303,9 @@ def cmd_record_evaluation(args: argparse.Namespace) -> int:
         problems.append(
             "les critères ou la ligne de démonstration du ticket ne sont plus ceux de la demande d'évaluation : "
             "ils sont gelés avec le graphe approuvé")
-    handed = given.get("criteria")
+    handed = given.get("criteria", [])
     if not isinstance(handed, list):
-        problems.append("criteria mal formé : une liste d'états, un par critère, est attendue")
+        problems.append("criteria mal formé : une liste d'états de critères est attendue")
         handed = []
     by_number: dict[Any, Any] = {}
     for item in handed:
@@ -4309,13 +4316,9 @@ def cmd_record_evaluation(args: argparse.Namespace) -> int:
             problems.append(f"critère {number} : deux états rendus")
         else:
             by_number[number] = item
-    criteria = []
-    for number, text in enumerate(request["criteria"], start=1):
-        if number not in by_number:
-            problems.append(f"critère {number} retiré : aucun état rendu pour « {text} »")
-            continue
-        criteria.append({"number": number, **given_state(
-            by_number[number], f"critère {number}", text, metadata, request["commit"], problems)})
+    criteria = [{"number": number, **given_state(by_number[number], f"critère {number}",
+                                                 request["criteria"][number - 1], metadata, request["commit"], problems)}
+                for number in sorted(by_number)]
     line = given_state(given.get("demonstration_line"), "ligne de démonstration", request["demonstration_line"],
                        metadata, request["commit"], problems)
     coverage = None

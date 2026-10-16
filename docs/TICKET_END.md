@@ -34,9 +34,9 @@ that is, or was, merged.
 
 | # | Name | Met when |
 | --- | --- | --- |
-| 1 | `criteria` | The acceptance criteria on the ticket have the fingerprint `bin/convoy-state mark` froze with the approved graph, under the same graph digest; the criteria the Ticket Evaluation recorded are those. |
+| 1 | `criteria` | The acceptance criteria on the ticket have the fingerprint `bin/convoy-state mark` froze with the approved graph, under the same graph digest; the demonstration line the Ticket Evaluation judged is the ticket's (ADR-0030 L4: the frozen criterion tests prove the criteria). |
 | 2 | `handoff` | Exit « terminé », a complete Ticket Handoff at the tip, its records sealed there; the Handoff names the red proof recorded on the ticket, sealed at its commit; the demonstration is sealed at the tip. A prefactoring: its regression instead of the red and of the demonstration. |
-| 3 | `evaluation` | The last Ticket Evaluation is favorable at the tip, no evaluation is in progress, every criterion and the demonstration line are « observed », each with a sealed piece captured at the tip. A prefactoring: the product started at the tip, with its piece. |
+| 3 | `evaluation` | The last Ticket Evaluation is favorable at the tip, no evaluation is in progress, the demonstration line is « observed » with a sealed piece captured at the tip (a round recorded before ADR-0030 L4 with a state per criterion is read the same way). A prefactoring: the product started at the tip, with its piece. |
 | 4 | `fidelity` | The ticket touches no screen; or the mechanical fidelity check ran **at the tip**, its result is « vert » or « accepté par Benjamin », and its piece is sealed there. |
 | 5 | `deferral` | The deferral detector has a result at the tip (`deferral_markers` in the records of the Handoff) and every marker it found is declared under « non fait ». |
 | 6 | `merge` | Merged into the integration branch at the tip; the merge commit is on that branch; the tests on the merged result are sealed at the merge commit and green. |

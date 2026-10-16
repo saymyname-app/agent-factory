@@ -290,10 +290,10 @@ def condition_criteria(ticket: dict[str, Any], tip: str, evidence: Evidence, rep
                        f"gelés sous {frozen.get('graph_digest')} : à regeler par la porte de publication")
     rounds = (ticket.get("evaluation") or {}).get("rounds") or []
     evaluated = next((r for r in reversed(rounds) if r.get("kind", "evaluation") == "evaluation"), None)
-    if evaluated is not None:
-        texts = [entry.get("text") for entry in evaluated.get("criteria") or []]
-        if texts != criteria:
-            return False, "les critères évalués par la Ticket Evaluation ne sont pas ceux du graphe approuvé"
+    # ADR-0030 L4: the frozen criterion tests prove the criteria; the Ticket
+    # Evaluation judged the demonstration line, which must be the ticket's.
+    if evaluated is not None and (evaluated.get("demonstration_line") or {}).get("text") != ticket.get("demonstration_line"):
+        return False, "la ligne de démonstration évaluée par la Ticket Evaluation n'est pas celle du ticket"
     return True, f"{len(criteria)} critère(s) identiques à l'empreinte gelée avec le graphe approuvé ({frozen['digest'][:19]}…)"
 
 
@@ -354,14 +354,14 @@ def condition_evaluation(ticket: dict[str, Any], tip: str, evidence: Evidence, r
         return True, f"{what} : le produit démarre à {sha(tip)} (pièce {last.get('evidence')})"
     if last.get("kind", "evaluation") != "evaluation":
         return False, "le démarrage du produit ne vaut évaluation que pour un prefactoring ou un ticket sans interface"
-    items = [*(last.get("criteria") or []), last.get("demonstration_line") or {}]
-    for item in items:
-        if item.get("state") != "observed":
-            return False, f"état « {item.get('state')} » : {short(item.get('text'), 80)}"
-        problem = evidence.at(str(item.get("evidence")), tip, "preuve d'un état observé")
-        if problem:
-            return False, problem
-    return True, f"{len(items) - 1} critère(s) et la ligne de démonstration observés avec preuve à {sha(tip)}"
+    # ADR-0030 L4: the demonstration line; the criteria are proven by the frozen tests.
+    line = last.get("demonstration_line") or {}
+    if line.get("state") != "observed":
+        return False, f"état « {line.get('state')} » : {short(line.get('text'), 80)}"
+    problem = evidence.at(str(line.get("evidence")), tip, "preuve d'un état observé")
+    if problem:
+        return False, problem
+    return True, f"la ligne de démonstration observée avec preuve à {sha(tip)}"
 
 
 def condition_fidelity(ticket: dict[str, Any], tip: str, evidence: Evidence, repo: Path, convoy: dict[str, Any]) -> Verdict:

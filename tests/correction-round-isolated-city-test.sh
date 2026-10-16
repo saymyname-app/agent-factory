@@ -604,19 +604,19 @@ review_started=$(grep "^$A .* review " "$TRIAL/review-sessions" | head -1 | awk 
 evaluation_started=$(grep "^$A " "$TRIAL/evaluation-sessions" | head -1 | awk '{print $NF}')
 printf '%s' "$review_a" | jq -e --arg line "$SPEC_LINE" '.kind == "review" and (.findings | length) == 1 and .findings[0].blocking and .findings[0].citation.quote == $line' >/dev/null \
   || fail "the review of A did not record its Blocking Finding: $review_a"
-printf '%s' "$evaluation_a" | jq -e '.outcome == "return_to_author" and .criteria[0].state == "not_observed" and .demonstration_line.state == "not_observed"' >/dev/null \
+printf '%s' "$evaluation_a" | jq -e '.outcome == "return_to_author" and .criteria == [] and .demonstration_line.state == "not_observed"' >/dev/null \
   || fail "the evaluation of A did not record « not_observed »: $evaluation_a"
-echo "$(date -u +%H:%M:%S) A : revue et évaluation envoyées par la même passe (${same_pass//\"/}), sur le même commit $TIP_A ; session relecteur démarrée à $review_started, session Evaluator à $evaluation_started, sans attendre l'autre ; revue défavorable (F1.1, cite « $SPEC_LINE »), évaluation défavorable (critère 1 et ligne de démonstration non observés)"
+echo "$(date -u +%H:%M:%S) A : revue et évaluation envoyées par la même passe (${same_pass//\"/}), sur le même commit $TIP_A ; session relecteur démarrée à $review_started, session Evaluator à $evaluation_started, sans attendre l'autre ; revue défavorable (F1.1, cite « $SPEC_LINE »), évaluation défavorable (ligne de démonstration non observée)"
 
 # --- A: one author session, whose inputs hold the findings of both -------------------
 a_round_sent() { [ "$(correction_sessions "$A")" -ge 1 ]; }
 wait_for 600 a_round_sent || { dump; fail "no correction session started for A within 600s"; }
 brief_a=$(ls "$TRIAL"/correction-brief."$A".*.json | head -1)
-jq -e --arg tip "$TIP_A" --arg line "$SPEC_LINE" --arg criterion "$CRITERION" '
+jq -e --arg tip "$TIP_A" --arg line "$SPEC_LINE" --arg demo "$LINE" '
   .commit == $tip
   and ([.code_review.blocking_findings[].id] == ["F1.1"]) and .code_review.blocking_findings[0].citation.quote == $line
-  and ([.evaluation.not_observed[].what] == ["critère 1", "ligne de démonstration"])
-  and .evaluation.not_observed[0].text == $criterion and (.evaluation.not_observed[0].reason | length) > 0' "$brief_a" >/dev/null \
+  and ([.evaluation.not_observed[].what] == ["ligne de démonstration"])
+  and .evaluation.not_observed[0].text == $demo and (.evaluation.not_observed[0].reason | length) > 0' "$brief_a" >/dev/null \
   || fail "the brief of the correction session of A does not hold the findings of both: $(jq -c '{commit, code_review, evaluation}' "$brief_a")"
 author_a=$(grep "^$A " "$TRIAL/correction-sessions" | head -1 | cut -d' ' -f3)
 [ "$author_a" != "trial-author-$A" ] || fail "the correction session of A is the session that wrote it"
@@ -624,7 +624,7 @@ a_taken() { [ "$(field "$A" gc.flow.session | jq -r '.name // empty')" = "$autho
 wait_for 60 a_taken || fail "the correction session of A did not take the ticket (bin/ticket-author start): $(field "$A" gc.flow.session)"
 [ "$(shown "$A" | jq -c '.counters')" = '{"correction_rounds":1,"resumes":1}' ] \
   || fail "the correction round of A is not counted among its resumes: $(shown "$A" | jq -c '.counters')"
-echo "$(date -u +%H:%M:%S) A : une session neuve d'auteur ($author_a, ≠ trial-author-$A) a pris le ticket par la vraie porte de dispatch ; son brief contient F1.1 (revue) et critère 1 + ligne de démonstration (évaluation) ; compteurs relus : $(shown "$A" | jq -c '.counters')"
+echo "$(date -u +%H:%M:%S) A : une session neuve d'auteur ($author_a, ≠ trial-author-$A) a pris le ticket par la vraie porte de dispatch ; son brief contient F1.1 (revue) et la ligne de démonstration (évaluation) ; compteurs relus : $(shown "$A" | jq -c '.counters')"
 
 # --- A: still refused after its round -> stopped, one item, nothing merged ------------
 a_stopped() { [ "$(field "$A" gc.flow.stop | jq -r '.reason // empty' 2>/dev/null)" = still_refused ]; }
