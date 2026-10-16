@@ -570,6 +570,27 @@ class EvidenceCaptureTest(unittest.TestCase):
         message = self.refused("verify", PLAIN_CONVOY, P1, status=EXIT_NOT_NEW_FLOW)
         self.assertIn("pas un convoi du nouveau flux", message)
 
+    # --- show (af-rt5a4h) ---------------------------------------------------
+
+    def test_show_prints_each_verified_record_with_its_output_and_the_folder_read(self):
+        self.capture_command()
+
+        answer = self.ok("show", CONVOY, T1, "--piece", "demo.commande")
+        self.assertEqual(str(self.store / SPEC / T1), answer["path"])
+        [piece] = answer["pieces"]
+        self.assertEqual(self.record("demo.commande"), piece["record"])
+        self.assertIn("bonjour", json.dumps(piece["record"]))
+        self.assertEqual(str(self.store / SPEC / T1), self.ok("verify", CONVOY, T1)["path"])
+
+    def test_show_without_any_piece_refuses_and_names_the_folder_read(self):
+        error = self.refused("show", CONVOY, T1)
+        self.assertIn(str(self.store / SPEC / T1), error)
+
+    def test_show_given_the_spec_in_place_of_the_convoy_says_how_the_store_is_filed(self):
+        self.capture_command()
+        error = self.refused("show", SPEC, CONVOY, "--piece", "demo.commande")
+        self.assertIn("<magasin>/<Spec>/<ticket>/", error)
+
     # --- outside Git history ------------------------------------------------
 
     def test_no_piece_reaches_the_git_history_of_the_product_or_the_factory(self):
