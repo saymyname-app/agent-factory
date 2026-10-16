@@ -448,7 +448,7 @@ RESUME_CAUSES = ("interrupted", "returned", "unblocked", "answered", "behind", "
 # without result (af-xhc0sj), and the stops of the test review, a stage
 # ADR-0030 L3 removed (af-pjvsgo).
 RESUMABLE_STOPS = {"evaluation_no_result": ("evaluation_no_result",),
-                   "stage_removed": (STOP_TEST_REVIEW_REFUSED, "test_review_no_result")}
+                   "stage_removed": ("test_review_refused", "test_review_no_result")}
 # A commit after a verdict counts a resume without an entry (T18): it is a
 # cause of its own. The correction round is not one: it has its own bound of
 # one round (CORRECTION_MAX_ROUNDS), held here, outside K.
