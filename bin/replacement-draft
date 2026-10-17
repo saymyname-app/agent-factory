@@ -264,9 +264,17 @@ def create(args: argparse.Namespace) -> dict[str, Any]:
     # tickets that wait for the replaced one; the rest of the graph stays as published.
     draft["tickets"] = [replacement] + [ticket for ticket in tickets
                                         if isinstance(ticket, dict) and ticket.get("id") in waiters]
+    drafted = {args.replacement_id, *waiters}
     for ticket in draft["tickets"]:
         if isinstance(ticket, dict) and isinstance(ticket.get("blocked_by"), list):
-            ticket["blocked_by"] = [args.replacement_id if item == old_key else item for item in ticket["blocked_by"]]
+            blockers = [args.replacement_id if item == old_key else item for item in ticket["blocked_by"]]
+            # bd-patch accepts only blockers the draft carries, and keeps the
+            # delivered ones on the tickets it patches: drop those, refuse open ones.
+            outside = [item for item in blockers if item not in drafted
+                       and (graph.get(str(item)) or {}).get("status") != "closed"]
+            require(not outside, f"{ticket.get('id')} waits for {', '.join(map(str, outside))}, "
+                                 "open and outside the replacement revision")
+            ticket["blocked_by"] = [item for item in blockers if item in drafted]
     withdrawn = draft.get("withdrawn") or []
     require(isinstance(withdrawn, list) and not any(isinstance(item, dict) and item.get("ticket") == old_key
                                                     for item in withdrawn),

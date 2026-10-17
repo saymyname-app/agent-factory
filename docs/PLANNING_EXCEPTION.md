@@ -62,7 +62,10 @@ preserves the stopped ticket's criteria and declared scope, replaces only its
 graph key and the edges of the open tickets that wait for it (each must come
 from the same source draft, or it refuses), and creates one immutable partial
 revision in a single tracker write: the replacement, those waiting tickets and
-the withdrawal, with `revises_digest` the convoy's current digest. The draft
+the withdrawal, with `revises_digest` the convoy's current digest. As
+`bd-patch` accepts only blockers the draft carries, a delivered (closed)
+blocker outside it is dropped (`bd-patch` keeps it on the tickets it patches;
+the new replacement does not get it back) and an open one refuses. The draft
 cites the decision, stopped ticket, convoy, approved Spec/digest, criteria,
 scope and useful commit. It never edits or closes the stopped ticket, never
 removes `gc.flow.stop`, never publishes the patch and never launches work.

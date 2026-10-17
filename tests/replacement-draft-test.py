@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Public-command regression for the bounded stopped-ticket replacement draft door."""
 import hashlib
+import importlib.machinery
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -14,6 +16,14 @@ ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT / "bin/replacement-draft"
 FAKE_BD = ROOT / "tests/fixtures/spec-approve/bd"
 COMMIT = "4bf4fbf3ba28ba502bbf1dc014a63ae259b2f9f1"
+
+
+def publish_gate():
+    """bin/ticket-graph-publish as a module: the ticket validation bd-patch applies first."""
+    loader = importlib.machinery.SourceFileLoader("ticket_graph_publish", str(ROOT / "bin/ticket-graph-publish"))
+    module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+    loader.exec_module(module)
+    return module
 
 
 def digest(text):
@@ -178,7 +188,7 @@ class ReplacementDraftTest(unittest.TestCase):
 
     LATER = "sha256:" + "c" * 64
 
-    def later_revision(self, waiter_digest=None, untrack=False):
+    def later_revision(self, waiter_digest=None, untrack=False, blocker_status="closed"):
         """A later partial revision (another ticket only) moved the convoy to
         LATER; the stopped ticket stays at the digest of the source draft."""
         state = json.loads(self.state_path.read_text())
@@ -189,6 +199,22 @@ class ReplacementDraftTest(unittest.TestCase):
                      "metadata": {"gc.ticket_id": "T03", "gc.graph_digest": self.LATER}})
         if waiter_digest:
             deps[1]["metadata"]["gc.graph_digest"] = waiter_digest
+        # Both tickets also wait for T00, published outside the source revision.
+        source = state["beads"]["source"]
+        parsed = yaml.safe_load(source["description"])
+        for ticket in parsed["tickets"]:
+            ticket["blocked_by"].append("T00")
+        source["description"] = yaml.safe_dump(parsed, allow_unicode=True, sort_keys=False)
+        source["metadata"]["approved_digest"] = digest(source["description"])
+        for dep in deps[:2]:
+            dep["metadata"]["gc.graph_digest"] = (dep["metadata"]["gc.graph_digest"] if dep is deps[1] and waiter_digest
+                                                  else digest(source["description"]))
+        deps[1]["metadata"]["gc.blocked_by"] = "T01R2,T00"
+        stopped = state["beads"]["stopped"]["metadata"]
+        stopped["gc.graph_digest"] = digest(source["description"])
+        stopped["gc.flow.criteria"] = json.dumps({"graph_digest": digest(source["description"]), "digest": "sha256:criteria"})
+        deps.append({"id": "first", "dependency_type": "tracks", "status": blocker_status,
+                     "metadata": {"gc.ticket_id": "T00", "gc.graph_digest": self.LATER}})
         if untrack:
             del deps[0]
         self.state_path.write_text(json.dumps(state))
@@ -201,8 +227,16 @@ class ReplacementDraftTest(unittest.TestCase):
         parsed = yaml.safe_load(draft["description"])
         self.assertEqual(self.LATER, draft["metadata"]["revises_digest"])
         self.assertEqual(["T01R3", "T02"], [ticket["id"] for ticket in parsed["tickets"]])
+        # A delivered blocker outside the revision is dropped: bd-patch keeps it on
+        # the tickets it patches, and refuses any blocker the draft does not carry.
+        self.assertEqual([], parsed["tickets"][0]["blocked_by"])
         self.assertEqual(["T01R3"], parsed["tickets"][1]["blocked_by"])
         self.assertEqual([{"ticket": "T01R2", "planning_exception": "pe-replacement"}], parsed["withdrawn"])
+        publish_gate().validate_tickets(parsed["tickets"])
+
+    def test_refuses_an_open_blocker_outside_the_revision(self):
+        self.later_revision(blocker_status="open")
+        self.assert_refused_unwritten("waits for T00")
 
     def test_refuses_a_ticket_the_convoy_does_not_track(self):
         self.later_revision(untrack=True)
