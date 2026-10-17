@@ -413,6 +413,23 @@ class PrototypeFidelityTest(unittest.TestCase):
                                    anchor="fixture-items", kind="absent", status="ouvert"))
         self.assertEqual("unfavorable", ticket["verdicts"]["fidelity"]["state"])
 
+    def test_measure_beyond_what_the_store_keeps_of_an_output_is_read_back_whole(self):
+        # af-2cpwkh: a 12 MB measure was kept as its first and last 500 kB,
+        # and the check refused on a JSON error.
+        self.styled()
+        long_value = "#" + "a" * 600_000
+        self.edit_product("--fixture-accent:#0b5fff", f"--fixture-accent:{long_value}", "token très long")
+
+        answer = self.red("--convoy", CONVOY, "--ticket", T1)
+
+        for state in STATES:
+            found = self.named(answer["deviations"], state=state, kind="token", property="--fixture-accent")
+            self.assertEqual([long_value], [deviation["delivered"] for deviation in found], state)
+        self.assertTrue(self.named(self.shown()["fidelity"]["deviations"], state="empty", kind="token",
+                                   property="--fixture-accent"))
+        record = json.loads(next(self.store.rglob("fidelity.json")).read_text())
+        self.assertFalse(record["output_truncated"])
+
     def test_named_ticket_compares_only_the_anchors_of_the_screen_it_touches(self):
         two_screens = self.descriptor_with_screens([
             {"name": "accueil-vide", "path": "/", "states": ["empty"]},

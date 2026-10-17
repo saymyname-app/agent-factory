@@ -91,9 +91,14 @@ the end of a Spec asks.
 
 With `--convoy` and `--ticket`, on a convoy that carries the new-flow mark:
 
-1. the measure is run by `bin/evidence-capture command`, so the full record
-   is a sealed piece of the evidence store (`fidelity`) at the commit of the
-   launched product (`docs/EVIDENCE_STORE.md`);
+1. the measure is run by `bin/evidence-capture command`, so its record is a
+   sealed piece of the evidence store (`fidelity`) at the commit of the
+   launched product (`docs/EVIDENCE_STORE.md`). The full measure runs to
+   megabytes on a real screen, beyond what the store keeps of an output
+   (1 MB): it is written to a file of the work directory, and the piece seals
+   its path, size and SHA-256 (af-2cpwkh). The command reads that file back
+   only when it matches the sealed fingerprint, and refuses a record the
+   store truncated, or a file that differs from it;
 2. one comparison piece per state and rendering is filed by
    `bin/evidence-capture comparison` (`fidelity.<state>.<viewport>`): the two
    pages side by side, the prototype on the left, and the image of their
