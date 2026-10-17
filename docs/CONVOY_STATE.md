@@ -37,9 +37,6 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state close-ticket af-convoy af-t1 --commit <merged tip> --file report.json   # bin/ticket-end: the record of the gate and the closed status, in one write
 ./bin/convoy-state set-tdd      af-convoy af-t1 --step red --commit <sha> --base <start sha>   # bin/tdd-step, once a step is proven
 ./bin/convoy-state stop-ticket  af-convoy af-t1 --reason criterion_already_green --detail "critère 2 déjà vert : …"   # bin/tdd-step
-./bin/convoy-state open-test-review   af-convoy af-t1 --commit <sha> --file request.json   # bin/test-review review
-./bin/convoy-state launch-test-review af-convoy af-t1 --bead af-review                     # bin/test-review, once the reviewer is sent
-./bin/convoy-state record-test-review af-convoy af-t1 --file verdict.json                  # bin/test-review record
 ./bin/convoy-state stop-raised af-convoy af-t1                                              # once the escalation door accepted the stop
 ./bin/convoy-state set-model af-convoy af-t1 --role reviewer --agent delivery-reviewer --provider codex --model gpt-5.6-sol   # bin/ticket-author start (author), bin/code-review (reviewer)
 ./bin/convoy-state open-code-review    af-convoy af-t1 --kind review --commit <tip> --base <fixed point> [--file questions.json]   # bin/code-review settle
@@ -65,7 +62,7 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state override-finding  af-convoy af-t1 --finding F1.1 --approver <human approver> --words "…"   # bin/correction-round override
 ./bin/convoy-state open-resume   af-convoy af-t1 --cause interrupted --ref "session:<session name>"   # bin/convoy-advance: one resume counted, before the fresh author session is sent
 ./bin/convoy-state launch-resume af-convoy af-t1 --bead af-resume        # bin/convoy-advance, once the author session is sent
-./bin/convoy-state park          af-convoy af-t1 --cause resumes_exhausted --detail "reprises épuisées pour la cause …"   # bin/convoy-advance, at the third resume of a same cause
+./bin/convoy-state park          af-convoy af-t1 --cause resumes_exhausted --detail "reprises épuisées pour la cause …"   # bin/convoy-advance, at the bound of a same cause
 ./bin/convoy-state lift-park     af-convoy af-t1 --request <answered request bead> [--option a]   # bin/convoy-advance, on the operator's answer
 ./bin/convoy-state record-grouped-request af-convoy --bead af-request [--signature sha256:<hex>] [--lift-option a --lifts af-t1]   # bin/convoy-advance
 ./bin/convoy-state clear-grouped-request  af-convoy     # bin/convoy-advance, once a ticket may advance again
@@ -133,22 +130,22 @@ Every answer is one JSON object on stdout.
 | Ticket branch | `gc.flow.branch` | ticket | branch name |
 | Author session | `gc.flow.session` | ticket | `name`, `at`; the same write puts the ticket `in_progress` with `gc.session_name`. Refused for a session that already took another ticket of the convoy, for a ticket the dispatch door did not start, for a closed ticket |
 | Ticket Exit | `gc.flow.exit` | ticket | `finished`, `planning_exception`, `operator_request`, `technically_blocked`, `interrupted` |
-| Verdict | `gc.flow.verdict.<kind>` | ticket | kind: `test_review`, `code_review`, `evaluation`, `fidelity`; state: `favorable`, `unfavorable`; always with the full commit SHA it judged; `invalidated` (`tip`, `at`) once `invalidate-verdicts` wrote that a newer commit outdated it |
+| Verdict | `gc.flow.verdict.<kind>` | ticket | kind: `code_review`, `evaluation`, `fidelity`; state: `favorable`, `unfavorable`; always with the full commit SHA it judged; `invalidated` (`tip`, `at`) once `invalidate-verdicts` wrote that a newer commit outdated it |
 | Counter | `gc.flow.counter.<name>` | ticket: `resumes`, `correction_rounds`; convoy: `end_rounds` | integer ≥ 0 |
 | Evidence fingerprint | `gc.flow.evidence.<piece>` | ticket | `sha256:<64 hex>` and the commit of the piece |
 | Gate record | `gc.flow.gate.<gate>` | ticket | `dispatch`, `ticket_end` (written only by `close-ticket`, with the closing: the merged commit, the version of the list `ticket-end/v1` and its nine passing verdicts; T19, `docs/TICKET_END.md`), `withdrawn` (removed from the graph by a resolved Planning Exception) |
 | Frozen criteria | `gc.flow.criteria` | ticket | `{digest, graph_digest, at}`: the fingerprint of the acceptance criteria of the ticket, in order, and the digest of the approved graph it was published under (`gc.graph_digest`, read only; null when the door wrote none). Written by `mark`; written again only when `gc.graph_digest` has changed since (a patch of the graph went through the publication door), never on a closed ticket (T19) |
 | TDD step | `gc.flow.tdd.<step>` | ticket | step: `red`, `freeze`, `green`, `amendment`, `prefactoring`; always with the full commit SHA it was proven at; `red` and `prefactoring` with their start commit (`base`), `amendment` with its one-line reason |
-| Stop | `gc.flow.stop` | ticket | reason: `criterion_already_green`, `amendment_exhausted`, `test_review_refused`, `test_review_no_result`, `code_review_no_result`, `evaluation_no_result`, `evaluation_outage`, `still_refused`; with a one-line detail, and `raised` once `stop-raised` wrote that the escalation door accepted it |
+| Stop | `gc.flow.stop` | ticket | reason: `criterion_already_green`, `amendment_exhausted`, `test_review_no_result` (written before ADR-0030 L3, read only), `code_review_no_result`, `evaluation_no_result`, `evaluation_outage`, `still_refused`; with a one-line detail, and `raised` once `stop-raised` wrote that the escalation door accepted it |
 | Code review | `gc.flow.code_review` | ticket | `rounds`: each recorded round (`kind`: `review` / `judgement`, `commit`, `base`, `verdict`, `models`, `recorded_by`, `conversation` when known, `at`; a review with `findings` — `id`, `axis`: `standards` / `spec` / `tests`, `blocking`, `summary`, and `citation` (`source`: `spec` / `ticket` / `repo_rule`, `quote`, `path`), `demoted` or `question` — its `answers` (question id → `oui` / `non` and a reason) and its `responses` (finding id → `fixed` with a commit, or `contested` with a reason); a judgement with `judgements`: finding id → `favorable` / `unfavorable` and a reason); `request` while a round is open (`kind`, `commit`, `base`, `questions`, `models`, `launches`: at most two `{bead, at}`, each with `refused`: `{session, at}` once a session that already served answered it, `at`) |
 | Ticket Evaluation | `gc.flow.evaluation` | ticket | `rounds`: each recorded round — kind `evaluation` (`commit`, `criteria`: one `{number, text, state, evidence, reason, cause}` per approved criterion, in order; `demonstration_line`: `{text, state, evidence, reason, cause}`; state: `observed` / `not_observed` / `unobservable`, a `reason` unless observed, a `cause` (`criterion` / `environment`) for an unobservable; `outcome`: `favorable` / `return_to_author` / `planning_exception` / `environment_outage`; `verdict`: `favorable`, `unfavorable`, or `null` for an outage; `roles`; `environment`: `{dataset, address}` per launched product; `recorded_by`, `conversation` when known, `at`) or kind `startup` (`commit`, `started`, then `evidence` and `environment`, or `detail`; `outcome`, `verdict`, `at`); `request` while an evaluation is open (`commit`, `criteria`, `demonstration_line`, `roles`: `{author, evaluator: {provider, supplier} or null, same_provider, other_declared}`, `environment`: `{dataset, address, state_file}` per launched product, `launches`: at most two `{bead, at}`, each with `refused`: `{session, at}` once a session that already served answered it, `at`); `live`: the launch records of the products still to stop |
 | Models per role | `gc.flow.models` | ticket | role: `author`, `reviewer`, `evaluator`; each with `agent`, `provider`, `model`, `at` |
-| Test review | `gc.flow.test_review` | ticket (`vertical_slice`, `repair`) | `rounds`: each recorded pass (`commit`, `files`: path → `sha256:`, `verdict`: `favorable` / `unfavorable`, `tests`: test id → `state` and, when unfavorable, `reason`, `recorded_by`, `conversation` when known, `at`); `request` while a review is open (`commit`, `files`, `criteria`: the criterion → test table, `launches`: at most two `{bead, at}`, each with `refused`: `{session, at}` once a session that already served answered it, `at`) |
+| Test review | `gc.flow.test_review` | ticket (`vertical_slice`, `repair`) | written before ADR-0030 L3 only, now read only: `rounds`: each recorded pass (`commit`, `files`: path → `sha256:`, `verdict`: `favorable` / `unfavorable`, `tests`: test id → `state` and, when unfavorable, `reason`, `recorded_by`, `conversation` when known, `at`); `request` while a review is open (`commit`, `files`, `criteria`: the criterion → test table, `launches`: at most two `{bead, at}`, each with `refused`: `{session, at}` once a session that already served answered it, `at`) |
 | Ticket Handoff | `gc.flow.handoff` | ticket | `sections` (`done`, `deviations`, `not_done`, `out_of_ticket`: each `aucun` or a non-empty list of one-line items; an item of `not_done` may be `{what, paths}`), `partial`, the full commit SHA it was taken at, and the `records` written by code |
 | Correction round | `gc.flow.correction` | ticket | `commit` (the full SHA both the code review and the evaluation answered at), `blocking_findings` (the ids of the Blocking Findings of that review), `not_observed` (what the evaluation did not observe there), at least one of the two not empty; `launches`: at most one `{bead, at}`; `at` |
 | Overrides | `gc.flow.overrides` | ticket | `entries`, oldest first, one per overridden Blocking Finding: `finding`, `approver`, `words` (not empty, as given), `commit` (the one of the review), `at` |
 | Parking | `gc.flow.park` | ticket | cause: `planning_exception`, `operator_request`, `resumes_exhausted` (T20); the ticket that caused it (`origin`: the one whose Ticket Exit parked it, or that is out of resumes); a one-line detail |
-| Resumes | `gc.flow.resume` | ticket | `entries`, oldest first, one per resume code opened (T20): `cause` (`interrupted`, `returned`, `unblocked`, `answered`, `behind`, `evaluation_no_result`, `stage_removed`), `ref` (the one-line fact that asked for it), `session` (the author session it takes over from, or null), `exit` (the Ticket Exit it replaced, `{exit, at}`, or null), `stop` (only for `evaluation_no_result`, and for `stage_removed` a stop `test_review_refused` or `test_review_no_result`: the stop it lifted, as it was), `launches`: at most one `{bead, at}`; `at` |
+| Resumes | `gc.flow.resume` | ticket | `entries`, oldest first, one per resume code opened (T20): `cause` (`interrupted`, `returned`, `unblocked`, `answered`, `behind`, `evaluation_no_result`, `stage_removed`, `code_review_no_result`), `ref` (the one-line fact that asked for it), `session` (the author session it takes over from, or null), `exit` (the Ticket Exit it replaced, `{exit, at}`, or null), `stop` (only for `evaluation_no_result`, and for `stage_removed` a stop `test_review_refused` or `test_review_no_result`, and for `code_review_no_result`, whose resume also drops the `request` of `gc.flow.code_review`: the stop it lifted, as it was), `launches`: at most one `{bead, at}`; `at` |
 | Parkings lifted | `gc.flow.park_lifts` | ticket | `entries`, oldest first, one per parking lifted on the ticket that caused it (T20): `cause`, `detail`, `parked_at`, `request` (the bead of the answered request), `option` (the letter taken, or null), `resumes` (the counter at that moment), `at` |
 | Grouped request | `gc.flow.grouped_request` | convoy | the bead that carries the one request of a convoy in which nothing but parked tickets is left (T20) and, once it reached the escalation door, the `sha256:` signature of the parkings it names, with `lift_option` (a letter) and `lifts` (the tickets that option lifts), both or neither |
 | Fidelity result | `gc.flow.fidelity` | ticket | `commit`, `verdict` (`favorable` / `unfavorable`, computed), `piece` (the sealed record), `screens`, `states` (state → `viewports`, `anchors` compared), `deviations`: each `state`, `viewport`, `anchor`, `kind` (`absent`, `structure`, `style`, `token`), `property`; a `token` deviation has neither viewport nor anchor |
@@ -218,24 +215,16 @@ writes why a script stopped the ticket (Spec §5: a criterion already green,
 a second amendment); a stopped ticket takes no further step, and a second
 stop is refused. Nothing here lifts a stop.
 
-`open-test-review`, `launch-test-review` and `record-test-review` are called
-by `bin/test-review` (T13, `docs/TEST_REVIEW.md`), which the flow no longer
-starts (ADR-0030 L3, removed in L7): the freeze does not read
-`gc.flow.test_review`, and a record left on a ticket in flight is kept and
-ignored. `open-test-review` opens
-a review of the tests proven red at `--commit`, with the fingerprints the
-freeze will seal and the criterion → test table (`--file`, a JSON object
-`{files, criteria}`); the same request again writes nothing, another one
-replaces the request that was open. It refuses a `prefactoring`, a ticket
-already frozen, a commit that is not the one of the `red` step, a request
-without fingerprints or with a test whose file has none, tests a pass
-refused and that did not change, and tests already reviewed favorably at
-that commit. `launch-test-review` records each reviewer bead sent for the
-open request: the first, then one relaunch; a third is refused.
-`record-test-review`, `record-code-review` and `record-evaluation` first
-refuse what a session hands in when that session already rendered a
-review of tests, a code review or a Ticket Evaluation on a ticket of the
-convoy (Spec §5, T42). A session is its name (`recorded_by`) and its
+The review of the criterion tests before the freeze (T13) left the flow in
+ADR-0030 L3, and `bin/test-review` with the commands that wrote it in L7:
+nothing writes `gc.flow.test_review` any more. A record left on a ticket in
+flight is still read (`show`, the fresh-session check below, the Evidence
+Pack) and holds nothing: the freeze does not read it.
+
+`record-code-review` and `record-evaluation` first refuse what a session
+hands in when that session already rendered a code review or a Ticket
+Evaluation on a ticket of the convoy, or a review of tests recorded before
+L3 (Spec §5, T42). A session is its name (`recorded_by`) and its
 conversation (`conversation`): `c:` + the `CLAUDE_CODE_SESSION_ID` Claude
 Code exports to its child processes — the conversation itself, new for a
 fresh one, kept by a resumed one. A provider that does not set it (Codex,
@@ -252,20 +241,9 @@ before carry the epoch, which no `c:` or `g` value equals. A round without
 `conversation` (recorded before it was, or by a session that does not know
 it) is recognized by the name alone. The last launch of the open request is marked
 `refused` — the only write — and counts as a launch without result for
-`bin/test-review`, `bin/code-review` and `bin/ticket-evaluation`.
-`record-test-review` takes the answers of the reviewer (`--file`: `commit`,
-`files`, `tests`, `recorded_by`) and refuses, with every reason listed, a
-verdict when no review is open, on another commit or other fingerprints
-than the request, with a test left out or unknown, a state outside the
-closed list, or a refusal without a reason. The verdict is computed here:
-`unfavorable` as soon as one test is. The pass is appended and the request
-closed in one tracker write; a **second** unfavorable pass writes the stop
-(`test_review_refused`) in that same write (Spec §8: one return to the
-author). `set-tdd --step freeze` is refused unless the last pass is
-favorable, was given at the commit being frozen, and no review is open; the
-freeze that ends an amendment is exempt (Spec §6: the code review reads an
-amended test). `stop-raised` records that the stop of a ticket reached the
-operator, so the code that stopped it raises it once (`bin/convoy-advance`
+`bin/code-review` and `bin/ticket-evaluation`.
+
+`stop-raised` records that the stop of a ticket reached the operator, so the code that stopped it raises it once (`bin/convoy-advance`
 itself for `amendment_exhausted`, which `bin/tdd-step` writes from the
 author's session); it refuses a ticket
 that is not stopped, and the same record again writes nothing.
@@ -371,11 +349,6 @@ is no longer to be evaluated at that commit).
 `outcome` and the `commit` of the last round, `not_observed` (what was not
 observed) and `unobservable` (what could not be, with its cause). It is
 what `bin/spec-integration` reads to refuse a merge.
-
-The verdict of the test review is not a `gc.flow.verdict.test_review`: a
-verdict of that family holds only while its commit is the tip of the branch,
-and this one holds for the frozen tests. The kind stays in the closed list
-of `set-verdict`, unused by the flow.
 
 `set-handoff` is called by `bin/ticket-exit` (T11, `docs/TICKET_EXIT.md`)
 with the Handoff it built, as a JSON file: the sections of the author and
@@ -1026,8 +999,8 @@ branch and its tip, Ticket Exit, verdicts, counters, evidence fingerprints
 and gate records, its acceptance criteria (`criteria`, the lines of its
 description, numbered from 1 by `bin/tdd-step`), the proven steps of its
 TDD (`tdd`, `{step: {commit, at, base?, reason?}}`), its stop (`stop`,
-`null` when it is not stopped), the review of its criterion tests
-(`test_review`, `null` before the first request), its code review
+`null` when it is not stopped), the review of its criterion tests recorded
+before ADR-0030 L3 (`test_review`, `null` on any other ticket), its code review
 (`code_review`, `null` before the first request), its Ticket Evaluation
 (`evaluation`, `null` before the first request) and the models per role
 (`models`), its correction round (`correction`, `null` while none is

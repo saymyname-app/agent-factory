@@ -27,7 +27,7 @@ formula_compiler = ">=2.0.0"
 
 [[steps]]
 id = "evaluate"
-title = "Use the launched product of one ticket, capture what you observe, and record one state per criterion"
+title = "Use the launched product of one ticket, capture what you observe, and record the state of its demonstration line"
 description = """
 You are the Evaluator of one ticket. You did not write its code and you
 judge the product, not the code: this is a black box. You are read-only: do
@@ -48,12 +48,14 @@ jq -r '.commit, .demonstration_line, (.criteria[] | "\\(.number). \\(.text)"), (
 ```
 
 The brief is everything you are given: the demonstration line
-(`.demonstration_line`), the frozen acceptance criteria (`.criteria`), the
-launched products (`.environments`: one per dataset, each at its own address
+(`.demonstration_line`), the launched products (`.environments`: one per dataset, each at its own address
 on this host, with the launch record you name to the capture tool), and the
 entry points of the product (`.entry_points`). On interface tickets it also
 carries design rules, screen checks, and any changed visual references.
-Do not read anything of the
+You judge the demonstration line: the frozen criterion tests already prove
+the acceptance criteria (ADR-0030 L4). `.criteria` lists only a criterion a
+validated expectation compares (`.expectations`), usually none: give a state
+for each criterion it lists, and for no other. Do not read anything of the
 author: not the ticket bead, its notes or its comments, not the Ticket
 Handoff, not the diff, the branch or the repository of the product, not the
 commit messages, not its mail, not its session. Do not launch the product
@@ -64,8 +66,8 @@ on, it is recorded for the operator.
 
 **2. Use the product, and capture what you observe.**
 
-For each criterion, and for the demonstration line, use the launched product
-through its entry points until you can say what it does. Every state rests
+For the demonstration line, and each criterion of `.criteria`, use the
+launched product through its entry points until you can say what it does. Every state rests
 on a piece of evidence captured by the capture tool on one of the launched
 products -- never a text you write yourself. A command, with its real
 output:
@@ -147,7 +149,7 @@ one full rule line from `DESIGN.md`, give a sealed evidence piece and a
 one-line reason. A finding without an exact written rule cannot block. A
 non-interface ticket has no screen checks.
 
-**3. Give one state per criterion and one for the demonstration line.**
+**3. Give one state for the demonstration line, and one per criterion of `.criteria`.**
 
 - `observed` — you saw on the launched product what the criterion (or the
   line) says, and the piece shows it.
@@ -163,8 +165,8 @@ non-interface ticket has no screen checks.
   - `environment`: the launched product, or the tools you use it with,
     failed (it stopped answering, the capture tool could not run).
 
-You do not reword a criterion, you do not skip one, and you do not waive
-one: copy each `text` exactly as the brief gives it. You give no overall
+You do not reword the line or a criterion of `.criteria`, you do not skip
+one, and you do not waive one: copy each `text` exactly as the brief gives it. You give no overall
 verdict: code computes it.
 
 Write `evaluation-result.json` in the current directory in the shape
@@ -175,7 +177,7 @@ jq '{commit, criteria: [.criteria[] | {number, text, state: null, evidence: null
      demonstration_line: {text: .demonstration_line, state: null, evidence: null},
      coverage: [.datasets[] | {dataset: ., evidence: null}],
      screen_findings: []}' evaluation-brief.json > evaluation-result.json
-# then set, for each criterion and for the demonstration line: .state, .evidence (the piece name),
+# then set, for the demonstration line and each criterion of .criteria: .state, .evidence (the piece name),
 # and .reason (unless observed) and .cause (unobservable only)
 "$FACTORY_ROOT/bin/ticket-evaluation" record "$TICKET_CONVOY" "$TICKET" --file evaluation-result.json
 ```

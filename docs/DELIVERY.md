@@ -325,8 +325,9 @@ and nothing else.
 **The life of a ticket.**
 
 1. **Start.** `bin/convoy-advance` starts the ready tickets, in dependency
-   order, under the ceiling N (`max_sessions` of
-   `config/delivery-flow.json`), through `bin/dispatch-door`. The door
+   order, under the ceiling N of the authors (`max_sessions` of
+   `config/delivery-flow.json`; the reviewer and the Evaluator have their
+   own, `docs/CONVOY_ADVANCE.md`), through `bin/dispatch-door`. The door
    refuses a marked ticket to anyone else.
 2. **Author.** One fresh author session, in a work tree of its own, on a
    branch that leaves from the integration branch of the Spec; the formula
@@ -378,7 +379,7 @@ the owner's place, and a marked convoy never closes by itself.
 - A ticket is resumed at most 3 times for a same cause (interrupted,
   returned, unblocked, answered, behind, evaluation without result, commit
   after a verdict: one bound each, ADR-0030 L2; the correction round keeps
-  its own bound of one round); at the third of one cause it is parked with
+  its own bound of one round); at the bound of one cause it is parked with
   its descendants and raised to the operator.
 - The convoy stops entirely while its integration branch is red (code
   publishes one `repair`) or while 2 Planning Exceptions are open on its
@@ -386,6 +387,15 @@ the owner's place, and a marked convoy never closes by itself.
 - An author that meets a question about approved intent exits by a Planning
   Exception (`bin/ticket-exit`, `docs/PLANNING_EXCEPTION.md`); a ticket
   leaves the graph only by a resolved one.
+- A defect in the Factory's own tools or tests — a tool or test neither
+  the ticket nor its Spec asks to change — is fixed by Factory maintenance on main, never by a
+  ticket or a `repair` of the convoy, even when the Spec is the Factory's
+  own (Cockpit): its author exits by `operator_request`
+  (`docs/TICKET_AUTHOR.md`, « Factory defects are fixed on main »). Intent
+  (Benjamin, his words, 2026-10-17 00:13 Paris): « Décision 2: ok suivons
+  ton avis ». Mechanism (agent interpretation, af-o40g5r): T01, R1 and R2
+  of the Cockpit convoy carried Factory fixes and blocked it on 15-16/10;
+  the real fix came by maintenance (#648).
 - A state the code has no rule for — a ticket started outside the dispatch
   door or closed outside its gate, evidence without a fingerprint — stops
   the convoy and raises one factory incident. The repair is Factory
@@ -520,8 +530,11 @@ seconds or less: catalogues, registration, lints (105 files, 107 s together
 on 2026-10-08). Of those 6 failed files, 5 were rule checks of 1 second or
 less, a stale generated catalogue most often, and each was seen only after
 about 37 billed minutes of a run. `--changed-since` adds the test files the
-branch changes, committed or not; the run starts with `NOT the battery` and
-counts both. It waits its turn on the host like a battery
+branch changes, committed or not, and the test files that name another
+changed file: a tool, library or configuration by its own name, a fixture by
+its directory (af-awyj8z: PR #602 changed `bin/ticket-evaluation`, and
+`tests/convoy-advance-test.py`, which runs its fixture, was red only in CI).
+The run starts with `NOT the battery` and counts each kind. It waits its turn on the host like a battery
 (`tests/ci-run-tests-rule-checks-test.sh`, `tests/ci-runner-test.sh`).
 
 On GitHub's runners Factory CI runs the rule checks first in every lot

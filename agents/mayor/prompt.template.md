@@ -104,7 +104,7 @@ On a ticket of a marked convoy, and on the convoy itself, you never:
   approver, never yours;
 - **resume it or lift its parking** — a ticket that needs its author again
   is sent to a fresh session by `bin/convoy-advance` on a bead titled
-  « Reprise — <ticket> »; at its third resume it is parked with the tickets
+  « Reprise — <ticket> »; once a same cause reaches its bound it is parked with the tickets
   behind it, and a convoy left with parked tickets only raises one bead
   titled « Demande groupée : convoi … » to the operator, whose answer alone
   lifts a parking. Neither bead is a ticket to dispatch, close or answer.
@@ -263,8 +263,7 @@ flagged `review-required` routes to `build-basic` regardless of tier.
 The `build-basic` row assumes the target rig allows it: `agent-factory`'s own
 project file (`config/projects/agent-factory.toml`) currently allows only
 `mol-do-work` for work (its `mol-graph-review` is dispatched by
-`bin/graph-review` alone, its `mol-test-review` by `bin/test-review` alone,
-its `mol-code-review` by `bin/code-review` alone, its
+`bin/graph-review` alone, its `mol-code-review` by `bin/code-review` alone, its
 `mol-ticket-evaluation` by `bin/ticket-evaluation` alone, its
 `mol-outcome-evaluation` by `bin/outcome-evaluation` alone, its
 `mol-ticket-correction` by `bin/correction-round` alone, its

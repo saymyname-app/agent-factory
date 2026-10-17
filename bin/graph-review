@@ -85,6 +85,13 @@ FOLD_CHECK = "prototype_fold_present_and_first"
 # chain of blocked_by exceeds a third of its tickets keeps two authors idle.
 CRITICAL_PATH_CHECK = "critical_path_bounded"
 CRITICAL_PATH_FLOOR = 4
+# Answered by code too (af-rmz8x2): a Ticket Evaluation launches the product
+# once per declared dataset the ticket names, about 3 min each (T02, af-0gonc9:
+# 212 s measured, 4 runs cut at 3600 s). Up to 3600 // 240 = 15 datasets it
+# keeps the default delay (config/delivery-flow.json, evaluation); beyond, one
+# attempt holds the only Evaluator over an hour and a cut one is lost whole.
+EVALUATION_CHECK = "evaluation_tenable"
+EVALUATION_DATASETS_MAX = 15
 # The closed questions of Spec §2, with what each one asks.
 TICKET_CHECKS = {
     "demonstrable_alone": "démontrable seul",
@@ -92,6 +99,7 @@ TICKET_CHECKS = {
     "size_tenable": "taille tenable",
     "same_surface_ordered": "tickets qui modifient le même code ou le même mécanisme ordonnés",
     SCOPE_CHECK: "Declared Scope qui inclut les fichiers de branchement",
+    EVALUATION_CHECK: f"évaluation tenable : au plus {EVALUATION_DATASETS_MAX} jeux de données à évaluer",
 }
 GRAPH_CHECKS = {
     "no_orphan_story": "aucune story orpheline",
@@ -100,6 +108,15 @@ GRAPH_CHECKS = {
     CRITICAL_PATH_CHECK: "chemin critique au plus d'un tiers des tickets",
 }
 REVIEWER_GRAPH_CHECKS = [name for name in GRAPH_CHECKS if name != CRITICAL_PATH_CHECK]
+# A revision carries only the tickets it adds or changes: its reviewer cannot
+# see the stories the convoy already covers, and bd-patch computes coverage on
+# the graph that results from the patch before it asks `check` (af-2zmznz).
+ORPHAN_CHECK = "no_orphan_story"
+REVISION_COVERAGE = {
+    "state": NOT_APPLICABLE,
+    "reason": "révision d'un graphe publié : la couverture des stories se calcule sur le graphe résultant, "
+              "par bin/ticket-graph-publish bd-patch, qui refuse toute story orpheline avant la relecture",
+}
 GRAPH_TARGET = "graphe"
 DECISIONS = {"publish": "publier tel quel", "rework": "à reprendre"}
 
@@ -190,7 +207,33 @@ class Draft:
     def ticket_checks(self, ticket_id: str) -> list[str]:
         """The questions asked of one ticket: the Declared Scope one only
         when the ticket declares a scope (Spec §2: « quand il est déclaré »)."""
-        return [name for name in TICKET_CHECKS if name != SCOPE_CHECK or self.declares_scope(ticket_id)]
+        return [name for name in TICKET_CHECKS
+                if name != EVALUATION_CHECK and (name != SCOPE_CHECK or self.declares_scope(ticket_id))]
+
+    def declared_datasets(self) -> list[str]:
+        """The datasets the profile of the Spec's project declares
+        (launch.datasets, config/project-descriptors), as the publication
+        door finds it; none when the Spec or the profile cannot be read."""
+        try:
+            spec = json.loads(bd("show", str(self.metadata.get("spec_id") or ""), "--json"))
+        except (Refusal, ValueError):
+            return []
+        spec = spec[0] if isinstance(spec, list) and spec else spec
+        project = str(((spec if isinstance(spec, dict) else {}).get("metadata") or {}).get("gc.project_id") or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", project):
+            return []
+        try:
+            profile = json.loads((ROOT / "config" / "project-descriptors" / f"{project}.json").read_text())
+        except (OSError, ValueError):
+            return []
+        datasets = (profile.get("launch") or {}).get("datasets") if isinstance(profile, dict) else None
+        return sorted(datasets) if isinstance(datasets, dict) else []
+
+    def graph_checks(self) -> list[str]:
+        """The graph questions asked of the reviewer: not the coverage of a
+        revision, which only the resulting graph shows."""
+        revision = bool(str(self.metadata.get("revises_digest") or "").strip())
+        return [name for name in REVIEWER_GRAPH_CHECKS if not (revision and name == ORPHAN_CHECK)]
 
     @property
     def last(self) -> dict[str, Any] | None:
@@ -217,6 +260,23 @@ def critical_path(draft: Draft) -> dict[str, Any]:
     return {"state": UNFAVORABLE, "reason": reason + (
         " ; un ticket n'attend que les tickets dont il consomme un livrable cité dans son texte : "
         "une même surface n'est pas une dépendance")}
+
+
+def evaluation_cost(ticket: dict[str, Any], declared: list[str]) -> dict[str, Any]:
+    """The declared datasets the ticket names in its criteria or its
+    demonstration line -- those bin/ticket-evaluation launches one by one --
+    against EVALUATION_DATASETS_MAX."""
+    criteria = ticket.get("acceptance_criteria") if isinstance(ticket.get("acceptance_criteria"), list) else []
+    texts = [str(value) for criterion in criteria
+             for value in (criterion.values() if isinstance(criterion, dict) else [criterion])]
+    texts.append(str(ticket.get("demonstration_line") or ""))
+    named = [name for name in declared
+             if any(re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", text) for text in texts)]
+    reason = f"{len(named)} jeux de données à évaluer (au plus {EVALUATION_DATASETS_MAX}, environ 3 min chacun)"
+    if len(named) <= EVALUATION_DATASETS_MAX:
+        return {"state": FAVORABLE, "reason": reason}
+    return {"state": UNFAVORABLE, "reason": reason + (
+        f" : {', '.join(named)} ; découper le ticket en tickets d'au plus {EVALUATION_DATASETS_MAX} jeux")}
 
 
 # --- verdicts ----------------------------------------------------------------
@@ -452,7 +512,7 @@ def cmd_brief(args: argparse.Namespace) -> dict[str, Any]:
             {"id": ticket_id, "checks": {name: TICKET_CHECKS[name] for name in draft.ticket_checks(ticket_id)}}
             for ticket_id in draft.tickets
         ],
-        "graph_checks": {name: GRAPH_CHECKS[name] for name in REVIEWER_GRAPH_CHECKS},
+        "graph_checks": {name: GRAPH_CHECKS[name] for name in draft.graph_checks()},
         "verdict_shape": {
             "digest": draft.digest,
             "tickets": {"<id>": {"checks": {"<check>": {"state": "favorable|unfavorable", "reason": "<required when unfavorable>"}}}},
@@ -513,6 +573,7 @@ def cmd_record(args: argparse.Namespace) -> dict[str, Any]:
     for ticket_id in sorted(set(given) - set(draft.tickets)):
         problems.append(f"{ticket_id} : ticket inconnu du brouillon")
     tickets = {}
+    declared = draft.declared_datasets()
     for ticket_id in draft.tickets:
         if ticket_id not in given:
             problems.append(f"{ticket_id} : pas de verdict")
@@ -520,8 +581,15 @@ def cmd_record(args: argparse.Namespace) -> dict[str, Any]:
         tickets[ticket_id] = judged(ticket_id, given[ticket_id], draft.ticket_checks(ticket_id), problems)
         if tickets[ticket_id] and not draft.declares_scope(ticket_id):
             tickets[ticket_id]["checks"][SCOPE_CHECK] = {"state": NOT_APPLICABLE, "reason": "aucun Declared Scope déclaré"}
-    graph = judged(GRAPH_TARGET, verdict.get("graph"), REVIEWER_GRAPH_CHECKS, problems)
+        if tickets[ticket_id]:
+            cost = evaluation_cost(draft.tickets[ticket_id], declared)
+            tickets[ticket_id]["checks"][EVALUATION_CHECK] = cost
+            if cost["state"] == UNFAVORABLE:
+                tickets[ticket_id]["verdict"] = UNFAVORABLE
+    graph = judged(GRAPH_TARGET, verdict.get("graph"), draft.graph_checks(), problems)
     if graph:
+        if ORPHAN_CHECK not in draft.graph_checks():
+            graph["checks"][ORPHAN_CHECK] = dict(REVISION_COVERAGE)
         graph["checks"][CRITICAL_PATH_CHECK] = critical_path(draft)
         if graph["checks"][CRITICAL_PATH_CHECK]["state"] == UNFAVORABLE:
             graph["verdict"] = UNFAVORABLE

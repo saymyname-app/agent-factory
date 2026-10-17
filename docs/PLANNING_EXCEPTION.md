@@ -126,8 +126,10 @@ already green, the author still raises one after the
 `criterion_already_green` stop; there « accept » lifts the parking but not
 the stop, and `bin/convoy-advance` then raises that stop to the operator
 (« critères tous déjà verts », `docs/CONVOY_ADVANCE.md`) instead of letting
-the convoy stall. Closing the ticket as satisfied by the existing code is
-that decision, taken in the Planning Run (no automatic close). What
+the convoy stall; that request offers to close the ticket as satisfied by
+the existing code, a decision carried out in the Planning Run (no automatic
+close). An author whose session ends without raising one has its stop
+raised all the same (af-npz9v1.9). What
 Benjamin approves (Spec, ticket graph, Acceptance Session) is unchanged.
 
 ## Lifecycle

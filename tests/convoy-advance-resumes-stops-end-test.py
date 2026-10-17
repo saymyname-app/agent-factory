@@ -737,11 +737,12 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual([(T1, [T1, T3])], [(entry["id"], entry["lifted"]) for entry in self.of(answer, "lifted")])
         self.assertEqual([(T1, "answered")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
 
-    def test_a_ticket_whose_criteria_are_all_already_green_reaches_the_operator_once_its_exception_is_accepted(self):
-        # ADR-0030 L5: « accept » lifts the parking, not the stop; the stop
-        # then reaches the operator instead of stalling the convoy.
+    def already_green_excepted(self):
+        """T1 stopped with all its criteria already green while its author
+        session is alive; the author raises its Planning Exception, the
+        request parks T1, then the session is over (ADR-0030 L5)."""
         self.started_convoy()
-        self.taken(T1, "auteur-1")
+        self.taken(T1, "auteur-1", alive=True)
         self.run_ok(STATE, "stop-ticket", CONVOY, T1, "--reason", "criterion_already_green", "--detail", "critère 1 déjà vert")
         before_exception = self.advance(CONVOY)
         self.assertEqual([], self.of(before_exception, "tdd_stops"))
@@ -755,9 +756,19 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.run_ok(ESCALATION, "benjamin", T1, json.dumps(request))
         self.run_ok(STATE, "park", CONVOY, T1, "--cause", "planning_exception", "--detail", request["quoi"])
         self.run_ok(STATE, "set-exit", CONVOY, T1, "--exit", "planning_exception")
+        self.edit(sessions=[])
         parked = self.advance(CONVOY)
         self.assertEqual([], self.of(parked, "tdd_stops"))
         self.env["ESCALATION_DOOR_NOW"] = "4102444800"  # the answer comes after the parking
+
+    def escalation_options(self, ticket_id):
+        metadata = self.bead(ticket_id)["metadata"]
+        return [entry["option"] for entry in json.loads(metadata["gc.escalation_que_faire"])]
+
+    def test_a_ticket_whose_criteria_are_all_already_green_reaches_the_operator_once_its_exception_is_accepted(self):
+        # ADR-0030 L5: « accept » lifts the parking, not the stop; the stop
+        # then reaches the operator, once, instead of stalling the convoy.
+        self.already_green_excepted()
         self.run_ok(ESCALATION, "repondre", T1, "b")
 
         answer = self.advance(CONVOY)
@@ -768,6 +779,58 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         needs = [line for line in self.needs() if T1 in line]
         self.assertEqual(1, len(needs), needs)
         self.assertIn("critères tous déjà verts", needs[0])
+        # One decision, one request: close it as satisfied, or leave it
+        # stopped; no second Planning Exception is offered (af-npz9v1.9).
+        options = self.escalation_options(T1)
+        self.assertTrue(any("satisfait" in option for option in options), options)
+        self.assertFalse(any("Planning Exception" in option for option in options), options)
+
+        again = self.advance(CONVOY)
+
+        self.assertEqual([], self.of(again, "tdd_stops"))
+        self.assertEqual(1, len([line for line in self.needs() if T1 in line]))
+
+    def test_an_already_green_ticket_whose_exception_is_answered_otherwise_stays_parked_and_its_stop_is_not_raised(self):
+        self.already_green_excepted()
+        self.run_ok(ESCALATION, "repondre", T1, "a")
+
+        for _ in range(2):
+            answer = self.advance(CONVOY)
+            self.assertEqual(([], []), (self.of(answer, "lifted"), self.of(answer, "tdd_stops")))
+        self.assertEqual("planning_exception", self.park_of(T1)["cause"])
+        self.assertNotIn("raised", self.shown_state(T1)["stop"])
+
+    def test_an_already_green_ticket_whose_author_ended_without_an_exception_reaches_the_operator_once(self):
+        # af-npz9v1.9: no silent block when the author never raises one.
+        self.started_convoy()
+        self.taken(T1, "auteur-1")
+        self.run_ok(STATE, "stop-ticket", CONVOY, T1, "--reason", "criterion_already_green", "--detail", "critère 1 déjà vert")
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([{"ticket": T1, "reason": "criterion_already_green"}], self.of(answer, "tdd_stops")["escalated"])
+        self.assertEqual(1, len([line for line in self.needs() if T1 in line]))
+        again = self.advance(CONVOY)
+        self.assertEqual([], self.of(again, "tdd_stops"))
+        self.assertEqual(1, len([line for line in self.needs() if T1 in line]))
+
+    def test_an_exception_raised_before_the_already_green_stop_does_not_raise_it(self):
+        # af-npz9v1.9: only an exception raised after the stop settles it.
+        self.started_convoy()
+        self.taken(T1, "auteur-1", alive=True)
+        self.run_ok(STATE, "raise-planning-exception", CONVOY, T1, "--kind", "semantic",
+                    "--summary", "une question plus ancienne", "--accept-option", "c")
+        metadata = self.bead(T1)["metadata"]
+        record = json.loads(metadata["gc.flow.planning_exceptions"])
+        record["entries"][-1]["at"] = "2000-01-01T00:00:00Z"
+        metadata["gc.flow.planning_exceptions"] = json.dumps(record)
+        self.edit(T1, metadata=metadata)
+        self.run_ok(STATE, "stop-ticket", CONVOY, T1, "--reason", "criterion_already_green", "--detail", "critère 1 déjà vert")
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([], self.of(answer, "tdd_stops"))
+        self.assertNotIn("raised", self.shown_state(T1)["stop"])
 
     # --- the stops of the convoy: red integration branch, open Planning Exceptions (T21, af-cbp84n) ---
 

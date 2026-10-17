@@ -134,6 +134,20 @@ def prove_freeze(env, repo, convoy, ticket):
     return frozen
 
 
+def pre_l3_test_review(env, ticket, commit, files, tests, recorded_by):
+    """The review of a ticket's criterion tests as bin/test-review recorded
+    it before ADR-0030 L3, one round. No command writes one any more (L7),
+    but a ticket in flight may carry one: written straight on the fake
+    tracker for a suite that reads it."""
+    verdict = "unfavorable" if any(answer["state"] == "unfavorable" for answer in tests.values()) else "favorable"
+    record = {"rounds": [{"commit": commit, "files": files, "verdict": verdict, "tests": tests,
+                          "recorded_by": recorded_by, "at": "2026-10-15T00:00:00Z"}]}
+    tracker = pathlib.Path(env["CONVOY_STATE_FAKE_TRACKER"])
+    content = json.loads(tracker.read_text())
+    content["beads"][ticket].setdefault("metadata", {})["gc.flow.test_review"] = json.dumps(record)
+    tracker.write_text(json.dumps(content))
+
+
 def prove_tdd(env, repo, convoy, ticket, tip, base, green=True):
     """The TDD of a ticket proven up to `tip`, each step with its sealed
     report: for a prefactoring the unchanged regression at the tip; for a

@@ -352,6 +352,24 @@ class PrototypeFidelityTest(unittest.TestCase):
         proc = subprocess.run((str(CAPTURE_TOOL), "verify", CONVOY, T1), env=self.env, text=True, capture_output=True)
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
 
+    def test_one_launched_product_at_a_time_while_measuring_and_capturing(self):
+        # af-6xjghg: 24 states launched together saturated the host. A
+        # browser that counts the product copies (one worktree each, next to
+        # the main one) every time it renders a page.
+        copies = self.tmp / "copies.log"
+        browser = self.tmp / "counting-browser"
+        browser.write_text(
+            "#!/bin/sh\n"
+            f"git -C '{self.repo}' worktree list --porcelain | grep -c '^worktree ' >> '{copies}'\n"
+            f"exec '{FAKE_BROWSER}' \"$@\"\n")
+        browser.chmod(0o755)
+
+        self.green("--convoy", CONVOY, "--ticket", T1, env={**self.env, "EVIDENCE_CAPTURE_BROWSER": str(browser)})
+
+        seen = [int(count) - 1 for count in copies.read_text().split()]
+        self.assertTrue(seen, "aucune page rendue")
+        self.assertEqual({1}, set(seen), seen)
+
     def test_no_pixel_threshold_fails_the_command(self):
         # The fake browser draws each page from its bytes: the prototype page
         # and the delivered page differ on every pixel, and the command is green.

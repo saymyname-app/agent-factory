@@ -38,7 +38,9 @@ For each prototyped state, the product is launched by `bin/project-launch`
 from a clean copy of `--commit`, on the dataset that carries the name of the
 state, and the page of its screen is read **at its real address** (the path
 the profile declares). The page of the prototype is served from the frozen
-directory by a throwaway server on this host.
+directory by a throwaway server on this host. The states are compared one
+after the other: the product of a state is stopped before that of the next
+is launched, so a single copy of the product runs at a time (af-6xjghg).
 
 | Control | Read on | A deviation is |
 |---|---|---|
@@ -67,7 +69,7 @@ the prototype declares a theme the browser cannot render; the product does
 not start on the dataset of a state; a page does not answer; the browser
 returns no measure; or the prototype shows no anchor in a state.
 
-**Never the prototype promoted as is (T46, af-lb9zkz).** Before anything is
+**Never the prototype promoted as is (T46, af-lb9zkz).** Before a state is
 compared, the command refuses (exit 2, nothing written or filed) a delivered
 page of a compared state, or a file that page links from its own address
 (`href` of a `<link>`, `src` of any element, same origin), whose sha256 is

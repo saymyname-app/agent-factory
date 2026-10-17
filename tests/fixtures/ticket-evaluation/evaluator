@@ -176,7 +176,7 @@ else:
         "criteria": [{"number": item["number"], **state_of(f"c{item['number']}", item["text"], product)}
                      for item in brief["criteria"]],
         "demonstration_line": state_of("demo", brief["demonstration_line"], product),
-        "coverage": [{"dataset": product["dataset"], "evidence": "evaluation.c1"}],
+        "coverage": [{"dataset": product["dataset"], "evidence": "evaluation.demo"}],
     }
 handed["comparisons"] = comparisons
 with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as handle:

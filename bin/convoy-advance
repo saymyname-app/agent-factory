@@ -16,11 +16,14 @@ before.
 
 One pass starts every ticket of the convoy that is open, not yet started
 through the door, and whose blockers are all closed, while a place is free
-under N. N (`max_sessions` in config/delivery-flow.json) is one setting for
-the whole Factory, shared between the Specs. A place is taken by:
+under N. N (`max_sessions` in config/delivery-flow.json) is the ceiling of
+the authors, one setting for the whole Factory, shared between the Specs
+(af-4xxlo7: the reviewer and the Evaluator have ceilings of their own,
+`max_reviewer_sessions` and `max_evaluator_sessions`, applied by Gas City).
+A place is taken by:
 
-  - each live session of a delivery role agent (author, reviewer, Evaluator:
-    config/delivery-roles.json), whatever the convoy;
+  - each live session of the author agent (config/delivery-roles.json),
+    whatever the convoy;
   - each ticket of a marked convoy started through the door that no session
     has picked yet (still open): its author session is on its way.
 
@@ -34,9 +37,9 @@ merges one ticket into the integration branch of the Spec, runs the tests on
 the merged result, and returns a ticket in conflict or red to its author. No
 agent decides when a ticket is merged.
 
-A pass no longer settles reviews of criterion tests (ADR-0030 L3): the
-code review reads those tests after the green, and no test-review session
-is started; a gc.flow.test_review left on a ticket in flight is ignored.
+A pass settles no review of criterion tests (ADR-0030 L3; bin/test-review
+removed in L7): the code review reads those tests after the green; a
+gc.flow.test_review left on a ticket in flight is ignored.
 
 A pass also raises a ticket bin/tdd-step stopped at its second amendment
 (T45, af-7y457s; Spec §8): one request through bin/escalation-door that
@@ -282,16 +285,16 @@ CORRECTION_STOP = "still_refused"
 TDD_STOPS = {"amendment_exhausted": "amendement épuisé",
              # ADR-0030 L3: the stops a test review wrote before it left the
              # flow are resumed (stage_removed); one with no resume left is
-             # still raised once, here (bin/test-review settle no longer runs).
+             # still raised once, here (bin/test-review was removed in L7).
              "test_review_refused": "relecture des tests refusée deux fois",
              "test_review_no_result": "relecture des tests sans résultat",
-             # ADR-0030 L5: raised once the Planning Exception its author
-             # raised on it is answered and its parking lifted (tdd_stops_due).
+             # ADR-0030 L5: raised once settled by its author (already_green_due).
              "criterion_already_green": "critères tous déjà verts"}
 
 # ADR-0030 L5: a ticket whose criteria all pass at the start commit; its
 # author raises a Planning Exception first, the stop reaches the operator
-# only once that one is answered and no longer parks the ticket.
+# once that one is answered and no longer parks the ticket, or once the
+# author's session is over without raising one (af-npz9v1.9).
 ALREADY_GREEN = "criterion_already_green"
 
 # Spec §5: the exits that park their ticket; what the merge returns.
@@ -305,7 +308,9 @@ BEHIND = "behind"
 # integration branch (af-xhc0sj). Every other stop stays with the operator.
 NO_RESULT = "evaluation_no_result"
 # ADR-0030 L3 removed the test review: a ticket it stopped before is resumed
-# on itself, once per stop, its request withdrawn (af-pjvsgo).
+# on itself, once per stop, its request withdrawn (af-pjvsgo). A code review
+# without result is resumed the same way (af-wu6xj7): most often a defect of
+# the factory (a reviewer seat held, a launch), its round dropped.
 STAGE_REMOVED = "stage_removed"
 REMOVED_STAGE_STOPS = ("test_review_refused", "test_review_no_result")
 # Spec §8, K: a ticket out of resumes is parked for this cause (bin/convoy-state).
@@ -533,12 +538,12 @@ class Convoy:
                 due.append(t["id"])
         return due
 
-    def tdd_stops_due(self) -> list[dict[str, Any]]:
+    def tdd_stops_due(self, alive: set[str]) -> list[dict[str, Any]]:
         """Tickets a step of their TDD stopped without the stop having
         reached the operator."""
         return [t for t in self.tickets
                 if (t.get("stop") or {}).get("reason") in TDD_STOPS and "raised" not in t["stop"]
-                and (t["stop"]["reason"] != ALREADY_GREEN or (t.get("planning_exceptions") and not t.get("park")))]
+                and (t["stop"]["reason"] != ALREADY_GREEN or already_green_due(t, alive))]
 
     def corrections_due(self) -> list[str]:
         """Tickets whose author has finished and that are not merged yet --
@@ -886,8 +891,8 @@ def at_work(ticket: dict[str, Any]) -> bool:
     """Started through the door, not closed, neither parked nor stopped:
     what a resume or the bound of the resumes may bear on. A stopped ticket
     is not at work: its sequence failed, it is with the operator, and only
-    its stop `evaluation_no_result`, or one a removed stage wrote, is lifted
-    by a resume (stopped_without_result)."""
+    its stop `evaluation_no_result` or `code_review_no_result`, or one a
+    removed stage wrote, is lifted by a resume (stopped_without_result)."""
     return started(ticket) and ticket.get("status") != "closed" and not ticket.get("park") and not ticket.get("stop")
 
 
@@ -1025,20 +1030,21 @@ def behind_due(convoy: Convoy, ticket: dict[str, Any]) -> tuple[str, str, str] |
 
 def stopped_without_result(ticket: dict[str, Any]) -> bool:
     """Started, not closed nor parked, and stopped because its Ticket
-    Evaluation gave no result or by a stage the flow removed: the stops a
-    resume may lift."""
+    Evaluation or its code review gave no result, or by a stage the flow
+    removed: the stops a resume may lift."""
     return started(ticket) and ticket.get("status") != "closed" and not ticket.get("park") \
-        and (ticket.get("stop") or {}).get("reason") in (NO_RESULT, *REMOVED_STAGE_STOPS)
+        and (ticket.get("stop") or {}).get("reason") in (NO_RESULT, CODE_REVIEW_STOP, *REMOVED_STAGE_STOPS)
 
 
-def removed_stage_due(ticket: dict[str, Any]) -> tuple[str, str, str] | None:
-    """The resume a stop of a removed stage asks for: once per stop, none
-    once the operator answered it, none when the ticket has no resume left
-    (its stop stays with the operator). The fact is `stop:<reason>/<time>`."""
+def once_per_stop_due(ticket: dict[str, Any], cause: str) -> tuple[str, str, str] | None:
+    """The resume a stop of a removed stage, or of a code review without
+    result, asks for: once per stop, none once the operator answered it,
+    none when the ticket has no resume left (its stop stays with the
+    operator). The fact is `stop:<reason>/<time>`."""
     stop = ticket["stop"]
     if ticket.get("resumes_left") == 0 or request_answer(read_bead(ticket["id"]), stop["at"]) is not None:
         return None
-    return "new", STAGE_REMOVED, f"stop:{stop['reason']}/{stop['at']}"
+    return "new", cause, f"stop:{stop['reason']}/{stop['at']}"
 
 
 def no_result_due(convoy: Convoy, ticket: dict[str, Any]) -> tuple[str, str, str] | None:
@@ -1084,7 +1090,9 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
             if not stopped:
                 due = resume_due(ticket, alive) or behind_due(convoy, ticket)
             elif ticket["stop"]["reason"] in REMOVED_STAGE_STOPS:
-                due = removed_stage_due(ticket)
+                due = once_per_stop_due(ticket, STAGE_REMOVED)
+            elif ticket["stop"]["reason"] == CODE_REVIEW_STOP:
+                due = once_per_stop_due(ticket, CODE_REVIEW_STOP)
             else:
                 due = no_result_due(convoy, ticket)
             if due is None:
@@ -2056,6 +2064,19 @@ def merge_finished(convoy: Convoy) -> dict[str, Any] | None:
     return result
 
 
+def already_green_due(ticket: dict[str, Any], alive: set[str]) -> bool:
+    """An all-green stop is the operator's once its author settled it: the
+    Planning Exception raised since the stop is answered and parks the
+    ticket no more, or the author's session is over without raising one.
+    Never while a parking holds its own request (af-npz9v1.9)."""
+    if ticket.get("park"):
+        return False
+    since = [e for e in ticket.get("planning_exceptions") or [] if e.get("at", "") >= ticket["stop"].get("at", "")]
+    if since:
+        return since[-1].get("state") != "open"
+    return (ticket.get("session") or {}).get("name") not in alive
+
+
 def tdd_stop_request(ticket: dict[str, Any]) -> str:
     """What the operator reads on the escalation door's list: the ticket and
     the cause of its stop."""
@@ -2067,6 +2088,10 @@ def tdd_stop_request(ticket: dict[str, Any]) -> str:
                      else "La relecture des tests a arrêté ce ticket avant ADR-0030 L3")
                     + " : le travail de ce ticket ne reprend pas sans ta réponse.",
         "que_faire": [
+            # af-npz9v1.9: no door closes an unmerged ticket; the Planning Run does.
+            {"option": "Clore ce ticket comme satisfait par le code existant",
+             "consequence": "La clôture se fait dans le Planning Run ; cette réponse seule ne ferme pas le ticket."}
+            if stop["reason"] == ALREADY_GREEN else
             {"option": "Faire reprendre ce ticket ou ses tests de critère par une Planning Exception",
              "consequence": "Le ticket reste arrêté tant que son arrêt n'est pas levé."},
             {"option": "Laisser le ticket arrêté",
@@ -2077,11 +2102,11 @@ def tdd_stop_request(ticket: dict[str, Any]) -> str:
     }, ensure_ascii=False)
 
 
-def settle_tdd_stops(convoy: Convoy) -> dict[str, Any] | None:
+def settle_tdd_stops(convoy: Convoy, alive: set[str]) -> dict[str, Any] | None:
     """Spec §8: a ticket bin/tdd-step stopped at its second amendment reaches
     the operator through bin/escalation-door, once per stop: bin/convoy-state
     records that it did. None when the convoy has no such stop to raise."""
-    due = convoy.tdd_stops_due()
+    due = convoy.tdd_stops_due(alive)
     if not due:
         return None
     result: dict[str, Any] = {"escalated": []}
@@ -2266,23 +2291,67 @@ def settle_ticket_end(convoy: Convoy, merge: dict[str, Any] | None) -> dict[str,
     return {name: answer[name] for name in kept if answer.get(name)}
 
 
+# What fails a pass, step by step: the keys of a step's answer that make it
+# a failure, not an outcome. A step whose answer is a list fails on an entry
+# carrying one of them.
+FAILING_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("incident", ("error",)), ("grouped_request", ("error",)), ("repair", ("error",)),
+    ("item_repairs", ("error",)), ("outcome_repairs", ("error",)), ("outcome_evaluation", ("error",)),
+    ("spec_end", ("error", "message")), ("end_review", ("error",)), ("evidence_pack", ("error",)),
+    ("non_conforme", ("error",)), ("acceptance", ("error",)), ("promotion", ("error", "message", "pending")),
+    ("integration", ("error", "message")), ("tdd_stops", ("error",)), ("code_review", ("error", "refused")),
+    ("standard_recurrence", ("error",)), ("evaluation", ("error", "refused")),
+    ("correction", ("error", "refused")), ("fidelity", ("error", "refused", "message")),
+    ("ticket_end", ("error", "message")),
+)
+FAILURE_DETAIL_CHARS = 300
+
+
+def pass_failures(result: dict[str, Any]) -> list[str]:
+    """Each step of one convoy's pass that failed it, as `convoy step.key: detail`."""
+    found: list[tuple[str, Any]] = []
+    if result.get("refused"):
+        found.append(("start.refused", result["refused"]))
+    for step, keys in FAILING_KEYS:
+        answer = result.get(step)
+        entries = answer if isinstance(answer, list) else [answer] if isinstance(answer, dict) else []
+        found += [(f"{step}.{key}", entry[key]) for entry in entries for key in keys if key in entry]
+    promotion_repair = (result.get("promotion") or {}).get("repair") or {}
+    if "error" in promotion_repair:
+        found.append(("promotion.repair.error", promotion_repair["error"]))
+    found += [("end_review.repairs.error", entry["error"])
+              for entry in (result.get("end_review") or {}).get("repairs", []) if "error" in entry]
+    return [f"{result['id']} {where}: {detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False)}"
+            [:FAILURE_DETAIL_CHARS] for where, detail in found]
+
+
+def failure_line(message: str | None, failed: list[str]) -> str:
+    """The one line, last of the output, that names why the pass failed."""
+    return f"{PROGRAM}: échec de la passe -- " + " ; ".join(([message] if message else []) + failed)
+
+
 def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
     """`targets` None: every marked convoy that is open or was closed outside its commands."""
     with advance_lock():
+        # Sessions are listed before the state is read: a session that ends
+        # between the two reads is then still seen alive, and nothing it wrote
+        # before ending is missed (a stop raised before its exception).
+        live = live_sessions()
         convoys = {convoy_id: Convoy(convoy_id) for convoy_id in targets or []}
         settings = load_settings()
         for convoy_id in marked_convoys():
             if convoy_id not in convoys:
                 convoys[convoy_id] = Convoy(convoy_id)
-        live = live_sessions()
         sessions = role_sessions(live)
         awaiting = sorted(ticket for convoy in convoys.values() for ticket in convoy.awaiting_a_session())
-        occupied = sum(sessions.values()) + len(awaiting)
+        # N counts authors only: a reviewer or Evaluator session, even idle
+        # until its idle_timeout, does not hold an author's place (af-4xxlo7).
+        occupied = sessions.get("author", 0) + len(awaiting)
         free = max(0, settings["ceiling"] - occupied)
 
-        results = []
+        results, alive = [], session_names(live)
         for convoy_id in targets if targets is not None else sorted(convoys):
-            result = advance_convoy(convoys[convoy_id], settings, free, session_names(live))
+            result = advance_convoy(convoys[convoy_id], settings, free, alive)
             free -= len(result["started"]) + len(result["resumed"])
             results.append(result)
 
@@ -2299,7 +2368,7 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
             result["promotion"] = promotion
             continue
         # A ticket a step of its TDD stopped reaches the operator.
-        tdd_stops = settle_tdd_stops(convoys[result["id"]])
+        tdd_stops = settle_tdd_stops(convoys[result["id"]], alive)
         if tdd_stops is not None:
             result["tdd_stops"] = tdd_stops
         # The reviews first: a ticket whose verdict is already there is
@@ -2368,30 +2437,8 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
     unruled = any("unruled" in result for result in results)
     # A ticket returned or refused by the merge is an outcome of the pass; a
     # merge pass that could not run is a failure of it.
-    refused = any(
-        result["refused"] or "error" in result.get("incident", {}) or "error" in result.get("grouped_request", {})
-        or "error" in result.get("repair", {})
-        or any("error" in entry for entry in result.get("item_repairs", []))
-        or any("error" in entry for entry in result.get("outcome_repairs", []))
-        or "error" in result.get("outcome_evaluation", {})
-        or any(key in result.get("spec_end", {}) for key in ("error", "message"))
-        or "error" in result.get("end_review", {})
-        or "error" in result.get("evidence_pack", {})
-        or "error" in result.get("non_conforme", {})
-        or "error" in result.get("acceptance", {})
-        or any(key in result.get("promotion", {}) for key in ("error", "message", "pending"))
-        or "error" in result.get("promotion", {}).get("repair", {})
-        or any("error" in entry for entry in result.get("end_review", {}).get("repairs", []))
-        or any(key in result.get("integration", {}) for key in ("error", "message"))
-        or "error" in result.get("tdd_stops", {})
-        or any(key in result.get("code_review", {}) for key in ("error", "refused"))
-        or "error" in result.get("standard_recurrence", {})
-        or any(key in result.get("evaluation", {}) for key in ("error", "refused"))
-        or any(key in result.get("correction", {}) for key in ("error", "refused"))
-        or any(key in result.get("fidelity", {}) for key in ("error", "refused", "message"))
-        or any(key in result.get("ticket_end", {}) for key in ("error", "message"))
-        for result in results
-    )
+    failed = [failure for result in results for failure in pass_failures(result)]
+    refused = bool(failed)
     answer: dict[str, Any] = {
         "ok": not (unruled or refused), "ceiling": settings["ceiling"], "sessions": sessions,
         "awaiting_a_session": awaiting, "occupied": occupied, "convoys": results,
@@ -2399,6 +2446,11 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
     if unruled:
         answer["message"] = f"{UNRULED} : rien n'est démarré dans le convoi concerné"
     print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
+    if unruled or refused:
+        # The order keeps only the tail of a failed pass's output (af-ypj2g0):
+        # what made it fail is named last, where that tail still reads it.
+        sys.stdout.flush()
+        print(failure_line(answer.get("message"), failed), file=sys.stderr)
     return EXIT_UNRULED if unruled and not stopped_ok else EXIT_REFUSED if refused else 0
 
 

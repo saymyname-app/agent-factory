@@ -518,7 +518,7 @@ class ConvoyAdvanceHarness(unittest.TestCase):
         self.advance(CONVOY)
         return base, self.finished(T1)
 
-    # --- review of the criterion tests left without result (T13) ---------------
+    # --- a review of the criterion tests left by the flow before ADR-0030 L3 -----
 
     REVIEWED = "fx-review"
     R1 = "fx-r1"
@@ -540,31 +540,19 @@ class ConvoyAdvanceHarness(unittest.TestCase):
         self.run_ok(STATE, "record-gate", self.REVIEWED, self.R1, "--gate", "dispatch")
         self.edit(self.R1, status="in_progress")
         self.run_ok(STATE, "set-tdd", self.REVIEWED, self.R1, "--step", "red", "--commit", self.RED, "--base", COMMIT)
-        request = self.tmp / "request.json"
-        request.write_text(json.dumps({"files": {"tests/test_count.py": "sha256:" + "c1" * 32},
-                                       "criteria": {"1": ["tests/test_count.py::CountTest.test_count"]}}))
-        self.run_ok(STATE, "open-test-review", self.REVIEWED, self.R1, "--commit", self.RED, "--file", request)
-        for number in range(launches):
-            self.run_ok(STATE, "launch-test-review", self.REVIEWED, self.R1, "--bead", f"fx-old{number + 1}")
-        # The reviewer never answers, and a launch is over at once.
-        (self.tmp / "plan.json").write_text(json.dumps(["silent"]))
-        self.env.update({
-            "TEST_REVIEW_DISPATCH_DOOR_BIN": str(ROOT / "tests" / "fixtures" / "test-review" / "reviewer"),
-            "TEST_REVIEW_FAKE_LOG": str(self.tmp / "review-door.log"),
-            "TEST_REVIEW_FAKE_PLAN": str(self.tmp / "plan.json"),
-            "TEST_REVIEW_FAKE_REPO": str(self.tmp),
-        })
-        settings = json.loads((self.root / "config" / "delivery-flow.json").read_text())
-        settings["test_review"] = {"formula": "mol-test-review", "role": "reviewer", "rig": "fx-rig", "timeout_seconds": 0}
-        (self.root / "config" / "delivery-flow.json").write_text(json.dumps(settings))
+        # Left by bin/test-review before ADR-0030 L3 (removed in L7): no
+        # command writes it any more.
+        state = self.tracker_state()
+        state["beads"][self.R1]["metadata"]["gc.flow.test_review"] = json.dumps({"rounds": [], "request": {
+            "commit": self.RED, "files": {"tests/test_count.py": "sha256:" + "c1" * 32},
+            "criteria": {"1": ["tests/test_count.py::CountTest.test_count"]},
+            "launches": [{"bead": f"fx-old{number + 1}", "at": "2026-10-15T00:00:00Z"} for number in range(launches)],
+            "at": "2026-10-15T00:00:00Z"}})
+        self.tracker.write_text(json.dumps(state))
         self.write_log.write_text("")
 
     def review_of(self, answer):
         return next(c for c in answer["convoys"] if c["id"] == self.REVIEWED).get("test_review")
-
-    def review_launches(self):
-        log = self.tmp / "review-door.log"
-        return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 
     # --- resumes counted and bounded, parked tickets, one grouped request (T20) ---
 
@@ -879,35 +867,35 @@ class ConvoyAdvanceTest(ConvoyAdvanceHarness):
 
         self.assertEqual([T2], self.started(answer))
 
-    def test_a_reviewer_session_counts_in_the_ceiling(self):
+    def test_a_reviewer_session_does_not_take_an_author_place(self):
+        # af-4xxlo7: N counts authors only; the reviewer role has its own
+        # ceiling (max_reviewer_sessions, applied by Gas City).
         self.settings(ceiling=2)
         self.edit(sessions=[session("delivery-reviewer")])
 
         answer = self.advance(CONVOY)
 
-        self.assertEqual([T1], self.started(answer))
-        self.assert_not_started(T2)
+        self.assertEqual([T1, T2], self.started(answer))
         self.assertEqual(1, answer["sessions"]["reviewer"])
+        self.assertEqual(0, answer["occupied"])
 
-    def test_an_evaluator_session_counts_in_the_ceiling(self):
+    def test_an_evaluator_session_does_not_take_an_author_place(self):
         self.settings(ceiling=2)
         self.edit(sessions=[session("delivery-evaluator")])
 
         answer = self.advance(CONVOY)
 
-        self.assertEqual([T1], self.started(answer))
-        self.assert_not_started(T2)
+        self.assertEqual([T1, T2], self.started(answer))
         self.assertEqual(1, answer["sessions"]["evaluator"])
 
-    def test_reviewer_and_evaluator_sessions_alone_can_fill_the_ceiling(self):
-        self.settings(ceiling=2)
+    def test_reviewer_and_evaluator_sessions_alone_leave_every_author_place_free(self):
+        self.settings(ceiling=1)
         self.edit(sessions=[session("delivery-reviewer"), session("delivery-evaluator")])
 
         answer = self.advance(CONVOY)
 
-        self.assertEqual([], self.started(answer))
-        self.assert_not_started(T1)
-        self.assertEqual([], self.slung())
+        self.assertEqual([T1], self.started(answer))
+        self.assertEqual(0, answer["occupied"])
 
     def test_an_author_session_on_a_ticket_in_progress_counts_once(self):
         self.settings(ceiling=1)
@@ -1052,6 +1040,17 @@ class ConvoyAdvanceTest(ConvoyAdvanceHarness):
         self.assertIn("gc sling failed", refused[0]["reason"])
         self.assertNotIn(DISPATCH_GATE, self.bead(T1)["metadata"])
         self.assertEqual([T2], self.started(answer))
+
+    def test_a_failed_pass_names_its_failing_step_on_the_last_line(self):
+        # af-ypj2g0: the order keeps only the tail of a failed pass's output.
+        env = {**self.env, "CONVOY_STATE_FAKE_SLING_FAIL": T1}
+
+        proc = self.run_cmd(TOOL, CONVOY, env=env)
+
+        self.assertEqual(EXIT_REFUSED, proc.returncode, proc.stdout + proc.stderr)
+        last = proc.stderr.strip().splitlines()[-1]
+        self.assertIn(f"{CONVOY} start.refused", last)
+        self.assertIn("gc sling failed", last)
 
     def test_a_ticket_that_is_not_open_does_not_start(self):
         self.edit(T1, status="blocked")

@@ -257,21 +257,24 @@ class TicketEndTest(unittest.TestCase):
         return self.state("record-code-review", CONVOY, ticket, "--file", self.json_file(f"review-{ticket}.json", {
             "commit": commit, "recorded_by": f"delivery-reviewer-{ticket}-{commit[:6]}", "findings": list(findings), "answers": {}}))
 
-    def evaluated(self, ticket, commit):
+    def evaluated(self, ticket, commit, legacy=False):
+        """The demonstration line observed at `commit` (ADR-0030 L4); with
+        `legacy`, also one state per criterion, as a round recorded before."""
         shown = self.shown(ticket)
         self.state("open-evaluation", CONVOY, ticket, "--commit", commit, "--file", self.json_file(
             f"evaluation-request-{ticket}.json", {
                 "roles": {"author": None, "evaluator": None, "same_provider": None, "other_declared": []},
                 "environment": [{"dataset": None, "address": "http://127.0.0.1:1", "state_file": "/launch.json"}]}))
         self.capture(ticket, "evaluation.seen")
-        return self.state("record-evaluation", CONVOY, ticket, "--file", self.json_file(f"evaluation-{ticket}.json", {
-            "commit": commit, "recorded_by": f"delivery-evaluator-{ticket}-{commit[:6]}",
-            "criteria": [{"number": number, "text": text, "state": "observed", "evidence": "evaluation.seen"}
-                         for number, text in enumerate(shown["criteria"], start=1)],
-            "demonstration_line": {"text": shown["demonstration_line"], "state": "observed",
-                                   "evidence": "evaluation.seen"}}))
+        handed = {"commit": commit, "recorded_by": f"delivery-evaluator-{ticket}-{commit[:6]}",
+                  "demonstration_line": {"text": shown["demonstration_line"], "state": "observed",
+                                         "evidence": "evaluation.seen"}}
+        if legacy:
+            handed["criteria"] = [{"number": number, "text": text, "state": "observed", "evidence": "evaluation.seen"}
+                                  for number, text in enumerate(shown["criteria"], start=1)]
+        return self.state("record-evaluation", CONVOY, ticket, "--file", self.json_file(f"evaluation-{ticket}.json", handed))
 
-    def finished(self, ticket, findings=(), markers=()):
+    def finished(self, ticket, findings=(), markers=(), legacy=False):
         """A ticket walked by its author to the exit « terminé », then
         reviewed and evaluated at its tip: every step proven by a sealed
         piece, as bin/tdd-step, bin/ticket-author and bin/ticket-exit file
@@ -296,11 +299,6 @@ class TicketEndTest(unittest.TestCase):
                                                         "entry_points": ["GET /"]}]})
             self.state("set-tdd", CONVOY, ticket, "--step", "red", "--commit", red_commit, "--base", start)
             files = {test: "sha256:" + hashlib.sha256((self.worktree(ticket) / test).read_bytes()).hexdigest()}
-            self.state("open-test-review", CONVOY, ticket, "--commit", red_commit, "--file", self.json_file(
-                f"request-{ticket}.json", {"files": files, "criteria": {"1": [f"{test}::T::test"]}}))
-            self.state("record-test-review", CONVOY, ticket, "--file", self.json_file(f"verdict-{ticket}.json", {
-                "commit": red_commit, "files": files, "tests": {f"{test}::T::test": {"state": "favorable"}},
-                "recorded_by": f"delivery-test-reviewer-{ticket}"}))
             self.capture(ticket, "tdd_freeze", {"files": files})
             self.state("set-tdd", CONVOY, ticket, "--step", "freeze", "--commit", red_commit)
             tip = self.commit_on(ticket, {f"docs/{ticket}.md": "la tranche\n"})
@@ -322,7 +320,7 @@ class TicketEndTest(unittest.TestCase):
                        self.json_file("startup.json", {"environment": [{"dataset": "content",
                                                                          "address": "http://127.0.0.1:1"}]}))
         else:
-            self.evaluated(ticket, tip)
+            self.evaluated(ticket, tip, legacy)
         return tip
 
     def gate(self, command, *args, env=None):
@@ -414,6 +412,24 @@ class TicketEndTest(unittest.TestCase):
         self.assertEqual([], shown["unruled"])
         self.assertFalse(self.show()["unruled"])
 
+    def test_a_round_on_the_demonstration_line_alone_passes_the_nine_conditions(self):
+        self.merged(SLICE)
+        self.assertEqual([], self.shown(SLICE)["evaluation"]["rounds"][-1]["criteria"])
+
+        status, answer = self.check(SLICE)
+
+        self.assertEqual((0, []), (status, answer["missing"]), answer)
+
+    def test_a_round_recorded_with_a_state_per_criterion_before_adr_0030_l4_still_closes_the_ticket(self):
+        self.finished(SLICE, legacy=True)
+        self.assertEqual(0, self.merge()[0])
+        self.assertEqual(["observed"], [item["state"] for item in
+                                        self.shown(SLICE)["evaluation"]["rounds"][-1]["criteria"]])
+
+        status, answer = self.close(SLICE)
+
+        self.assertEqual(0, status, answer)
+
     def test_closing_is_one_tracker_write_that_carries_the_record_and_the_status(self):
         self.merged(SLICE)
         self.write_log.write_text("")
@@ -468,6 +484,12 @@ class TicketEndTest(unittest.TestCase):
         self.edit(SLICE, description=bead["description"].replace("une ligne manque", "la page répond 200"))
 
         self.assert_left_open(SLICE, 1, "Critères évalués identiques au digest approuvé")
+
+    def test_condition_1_demonstration_line_changed_since_its_evaluation_leaves_the_ticket_open(self):
+        self.merged(SLICE)
+        self.edit(SLICE, **{"gc.flow.demonstration_line": "La page d'accueil affiche autre chose"})
+
+        self.assert_left_open(SLICE, 1, "ligne de démonstration")
 
     def test_condition_2_handoff_without_demonstration_proof_leaves_the_ticket_open(self):
         self.merged(SLICE)

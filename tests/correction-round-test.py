@@ -46,7 +46,6 @@ APPROVER = "benjamin-hurand"
 
 EXIT_REFUSED = 1
 EXIT_NOT_NEW_FLOW = 4
-DIGEST = "sha256:" + "ab" * 32
 
 SESSION_IDENTITY = ("GC_AGENT", "GC_SESSION_NAME", "GC_SESSION_ID", "BEADS_ACTOR", "GC_TEMPLATE", "GC_BEAD_ID",
                     "DELIVERY_ROLE_READ_ONLY")
@@ -368,13 +367,7 @@ class CorrectionRoundTest(unittest.TestCase):
         table = json.dumps({"criteria": {"1": [COUNT_ID]}})
         red = self.commit_on(ticket, {COUNT_FILE: "# le test de critère du nombre\n", TABLE: table})
         tip = self.commit_on(ticket, {NOTE: "le nombre est affiché\n"})
-        fingerprints = {path: DIGEST for path in (TABLE, COUNT_FILE)}
         self.state("set-tdd", CONVOY, ticket, "--step", "red", "--commit", red, "--base", self.base)
-        self.state("open-test-review", CONVOY, ticket, "--commit", red, "--file",
-                   self.json_file({"files": fingerprints, "criteria": {"1": [COUNT_ID]}}))
-        self.state("record-test-review", CONVOY, ticket, "--file", self.json_file({
-            "commit": red, "files": fingerprints, "tests": {COUNT_ID: {"state": "favorable"}},
-            "recorded_by": f"delivery-reviewer-tests-{ticket}"}))
         self.state("set-tdd", CONVOY, ticket, "--step", "freeze", "--commit", red)
         self.finish(ticket, tip)
         return tip

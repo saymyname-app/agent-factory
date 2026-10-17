@@ -59,9 +59,6 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state set-tdd      CONVOY TICKET --step STEP --commit SHA [--base SHA] [--reason TEXT]
     convoy-state stop-ticket  CONVOY TICKET --reason REASON --detail LINE
     convoy-state stop-raised  CONVOY TICKET
-    convoy-state open-test-review   CONVOY TICKET --commit SHA --file PATH
-    convoy-state launch-test-review CONVOY TICKET --bead BEAD
-    convoy-state record-test-review CONVOY TICKET --file PATH
     convoy-state set-model    CONVOY TICKET --role ROLE --agent NAME --provider NAME --model NAME
     convoy-state open-code-review    CONVOY TICKET --kind review|judgement --commit SHA --base SHA [--file PATH]
     convoy-state launch-code-review  CONVOY TICKET --bead BEAD
@@ -154,6 +151,7 @@ docs/CONVOY_STATE.md.
 from __future__ import annotations
 
 import argparse
+import calendar
 import fcntl
 import functools
 import hashlib
@@ -285,7 +283,7 @@ TICKET_KINDS = ("vertical_slice", "prefactoring", "repair")
 KINDS_WITH_DEMONSTRATION = ("vertical_slice", "repair")
 KIND_COVERING_STORIES = "vertical_slice"
 EXITS = ("finished", "planning_exception", "operator_request", "technically_blocked", "interrupted")
-VERDICT_KINDS = ("test_review", "code_review", "evaluation", "fidelity")
+VERDICT_KINDS = ("code_review", "evaluation", "fidelity")
 VERDICT_STATES = ("favorable", "unfavorable")
 TICKET_COUNTERS = ("resumes", "correction_rounds")
 CONVOY_COUNTERS = ("end_rounds",)
@@ -375,8 +373,10 @@ ITEM_ACCEPTED = "accepté par Benjamin"
 TDD_STEPS = ("red", "freeze", "green", "amendment", "prefactoring")
 TDD_STEPS_WITH_BASE = ("red", "prefactoring")
 KIND_WITHOUT_RED = "prefactoring"
-STOP_TEST_REVIEW_REFUSED = "test_review_refused"
-STOP_REASONS = ("criterion_already_green", "amendment_exhausted", STOP_TEST_REVIEW_REFUSED, "test_review_no_result",
+# test_review_refused, test_review_no_result: written by the test review
+# before ADR-0030 L3; read only (a ticket in flight may still carry them, and
+# bin/convoy-advance resumes them as stage_removed).
+STOP_REASONS = ("criterion_already_green", "amendment_exhausted", "test_review_refused", "test_review_no_result",
                 "code_review_no_result", "evaluation_no_result", "evaluation_outage", "still_refused")
 # The correction round of a ticket (T17, Spec §8): one for its code review
 # and its Ticket Evaluation together, worked by one fresh author session. A
@@ -386,10 +386,9 @@ STOP_REASONS = ("criterion_already_green", "amendment_exhausted", STOP_TEST_REVI
 CORRECTION_MAX_ROUNDS = 1
 CORRECTION_MAX_LAUNCHES = 1
 OVERRIDE_RECORDED = "dérogation enregistrée"
-# The review of the criterion tests between red and freeze (Spec §5, §8): a
-# refusal returns once to the author, the second one stops the ticket; a
-# review that gives no result is launched once more, no further.
-TEST_REVIEW_MAX_REFUSALS = 2
+# The review of the criterion tests between red and freeze, removed by
+# ADR-0030 L3/L7: its record (gc.flow.test_review) is still read on tickets
+# that carry one, never written; it was launched once more, no further.
 TEST_REVIEW_MAX_LAUNCHES = 2
 # The code review of a ticket (T14, Spec §6). A round is the review itself,
 # or the judgement a second reviewer session gives of the answers to its
@@ -440,15 +439,18 @@ BOUND_END_ROUNDS = "end_rounds"
 # the request that parked it was answered, or its branch, finished, does not
 # contain the tip of the integration branch (T44), or its Ticket Evaluation
 # gave no result (af-xhc0sj), or a stage the flow removed stopped it
-# (ADR-0030 L3, af-pjvsgo): those resumes lift the stop. The correction round
-# and a commit after a verdict are counted where they are written.
+# (ADR-0030 L3, af-pjvsgo), or its code review gave no result (af-wu6xj7):
+# those resumes lift the stop. The correction round and a commit after a
+# verdict are counted where they are written.
 RESUME_CAUSES = ("interrupted", "returned", "unblocked", "answered", "behind", "evaluation_no_result",
-                 "stage_removed")
+                 "stage_removed", "code_review_no_result")
 # The stops a resume lifts, by the cause that lifts them: a Ticket Evaluation
-# without result (af-xhc0sj), and the stops of the test review, a stage
-# ADR-0030 L3 removed (af-pjvsgo).
+# without result (af-xhc0sj), the stops of the test review, a stage
+# ADR-0030 L3 removed (af-pjvsgo), and a code review without result
+# (af-wu6xj7).
 RESUMABLE_STOPS = {"evaluation_no_result": ("evaluation_no_result",),
-                   "stage_removed": ("test_review_refused", "test_review_no_result")}
+                   "stage_removed": ("test_review_refused", "test_review_no_result"),
+                   "code_review_no_result": ("code_review_no_result",)}
 # A commit after a verdict counts a resume without an entry (T18): it is a
 # cause of its own. The correction round is not one: it has its own bound of
 # one round (CORRECTION_MAX_ROUNDS), held here, outside K.
@@ -597,6 +599,11 @@ def convoy_lock(convoy_id: str) -> Iterator[None]:
 
 def now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def stamp_seconds(stamp: str) -> int:
+    """A date written by now(), in seconds since the epoch."""
+    return calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ"))
 
 
 def encode(record: dict[str, Any]) -> str:
@@ -942,10 +949,6 @@ def review_criteria(value: Any, files: dict[str, str]) -> dict[str, list[str]]:
     return value
 
 
-def review_tests(criteria: dict[str, list[str]]) -> list[str]:
-    return list(dict.fromkeys(test_id for number in sorted(criteria, key=int) for test_id in criteria[number]))
-
-
 def review_launch(launch: Any) -> bool:
     """One launch of a review, a code review or a Ticket Evaluation: the bead
     sent to the role, and `refused` when the session that answered it had
@@ -1005,10 +1008,6 @@ def test_review_record(raw: Any) -> dict[str, Any]:
     if "request" in record:
         review_request(record["request"])
     return record
-
-
-def review_refusals(record: dict[str, Any]) -> int:
-    return sum(1 for value in record["rounds"] if value["verdict"] == "unfavorable")
 
 
 def normalized_model(model: str) -> str:
@@ -1294,8 +1293,10 @@ def evaluation_launches(value: Any) -> list[dict[str, Any]]:
 
 def evaluation_request(value: Any) -> dict[str, Any]:
     required = {"commit", "criteria", "demonstration_line", "roles", "environment", "launches", "at"}
-    if not isinstance(value, dict) or not required <= set(value) or set(value) - required - {"datasets", "wanted"}:
+    if not isinstance(value, dict) or not required <= set(value) or set(value) - required - {"datasets", "wanted", "waited"}:
         raise Refusal(f"demande d'évaluation mal formée : {value!r}")
+    if "waited" in value and (type(value["waited"]) is not int or value["waited"] < 0):
+        raise Refusal(f"attente des jeux mal formée : {value['waited']!r}")
     if "datasets" in value:
         evaluation_datasets(value["datasets"])
     if "wanted" in value:
@@ -1395,11 +1396,16 @@ def evaluation_round(value: Any) -> dict[str, Any]:
     if not required <= set(value) or set(value) - required - {"coverage", "screen_findings", "conversation"}:
         raise Refusal(f"passe d'évaluation mal formée : {value!r}")
     stored_conversation(value)
-    if not isinstance(value["criteria"], list) or not value["criteria"]:
-        raise Refusal(f"passe d'évaluation sans état par critère : {value['criteria']!r}")
-    for position, item in enumerate(value["criteria"], start=1):
-        if evaluation_item(item, f"critère {position}").get("number") != position:
-            raise Refusal(f"critère {position} : numéro absent ou hors de l'ordre des critères")
+    # ADR-0030 L4: no state per criterion (empty), or only those a validated
+    # expectation compares; a round recorded before holds one per criterion.
+    if not isinstance(value["criteria"], list):
+        raise Refusal(f"passe d'évaluation aux états par critère mal formés : {value['criteria']!r}")
+    previous = 0
+    for item in value["criteria"]:
+        number = evaluation_item(item, "critère").get("number")
+        if isinstance(number, bool) or not isinstance(number, int) or number <= previous:
+            raise Refusal(f"critère {number!r} : numéro absent ou hors de l'ordre des critères")
+        previous = number
     if "number" in evaluation_item(value["demonstration_line"], "ligne de démonstration"):
         raise Refusal("ligne de démonstration : numéro inattendu")
     evaluation_roles(value["roles"])
@@ -3629,17 +3635,6 @@ def cmd_set_tdd(args: argparse.Namespace) -> int:
     return done(args.convoy, args.ticket, values)
 
 
-def review_target(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-    """The ticket a review write lands on, its metadata and its review
-    record so far."""
-    ticket = marked_ticket(args.convoy, args.ticket)
-    metadata = metadata_of(ticket)
-    if KEY_STOP in metadata:
-        raise Refusal(f"ticket arrêté : aucune relecture ne s'enregistre sur {args.ticket} tant que l'arrêt n'est pas levé")
-    record = test_review_record(metadata[KEY_TEST_REVIEW]) if KEY_TEST_REVIEW in metadata else {"rounds": []}
-    return ticket, metadata, record
-
-
 def json_argument(path: Any, what: str) -> dict[str, Any]:
     try:
         given = json.loads(Path(path or "").read_text(encoding="utf-8"))
@@ -3736,119 +3731,6 @@ def refuse_served_session(args: argparse.Namespace, key: str, record: dict[str, 
         f"la session {name}{f' (conversation {conversation})' if conversation else ''} a déjà rendu {served} : "
         "une session neuve par relecture, revue ou évaluation ; "
         "ce lancement est compté sans résultat (une relance, puis l'arrêt), rien d'autre n'est écrit")
-
-
-def cmd_open_test_review(args: argparse.Namespace) -> int:
-    """Open the review of a ticket's criterion tests (T13): the tests proven
-    red at `--commit`, with the fingerprints the freeze will seal. The same
-    request again writes nothing; tests a reviewer refused are not reviewed
-    again unchanged."""
-    _, metadata, record = review_target(args)
-    commit = valid_commit(args.commit, "commit de la relecture")
-    kind = valid_kind(metadata.get(KEY_KIND))
-    if kind == KIND_WITHOUT_RED:
-        raise Refusal(f"un {kind} n'a pas de tests de critère à relire : il n'a pas d'étape rouge")
-    known = {name: tdd_record(name, metadata[TDD_PREFIX + name]) for name in TDD_STEPS if TDD_PREFIX + name in metadata}
-    if "freeze" in known:
-        raise Refusal(f"les tests de {args.ticket} sont gelés : la relecture précède le gel")
-    if known.get("red", {}).get("commit") != commit:
-        raise Refusal(f"relecture sans preuve du rouge au même commit ({commit}) : elle suit l'étape rouge")
-    given = json_argument(args.file, "demande de relecture")
-    unknown = sorted(set(given) - {"files", "criteria"})
-    if unknown:
-        raise Refusal(f"champs inconnus dans la demande de relecture : {', '.join(unknown)}")
-    files = review_fingerprints(given.get("files"))
-    criteria = review_criteria(given.get("criteria"), files)
-    request = record.get("request")
-    if request and (request["commit"], request["files"], request["criteria"]) == (commit, files, criteria):
-        return done(args.convoy, args.ticket, {})
-    for value in record["rounds"]:
-        if value["files"] != files:
-            continue
-        if value["verdict"] == "unfavorable":
-            raise Refusal(
-                f"les tests refusés par la relecture n'ont pas changé ({args.ticket}) : "
-                "un test refusé est corrigé avant d'être relu")
-        if value["commit"] == commit and value is record["rounds"][-1]:
-            raise Refusal(f"ces tests sont déjà relus favorablement au commit {commit} : il reste à les geler")
-    record["request"] = {"commit": commit, "files": files, "criteria": criteria, "launches": [], "at": now()}
-    values = {KEY_TEST_REVIEW: encode(record)}
-    write_metadata(args.ticket, values)
-    return done(args.convoy, args.ticket, values)
-
-
-def cmd_launch_test_review(args: argparse.Namespace) -> int:
-    """Record that a reviewer session was sent the open review: the first
-    launch, then one relaunch when the first gave no result."""
-    _, _, record = review_target(args)
-    request = record.get("request")
-    if not request:
-        raise Refusal(f"aucune relecture n'est demandée sur {args.ticket} : rien à lancer")
-    if not isinstance(args.bead, str) or not BEAD_ID_RE.match(args.bead):
-        raise Refusal(f"bead de relecture absent ou mal formé : {args.bead!r}")
-    if len(request["launches"]) >= TEST_REVIEW_MAX_LAUNCHES:
-        raise Refusal(
-            f"une seule relance par relecture : {args.ticket} en a déjà lancé {len(request['launches'])} "
-            "sans résultat")
-    request["launches"].append({"bead": args.bead, "at": now()})
-    values = {KEY_TEST_REVIEW: encode(record)}
-    write_metadata(args.ticket, values)
-    return done(args.convoy, args.ticket, values)
-
-
-def cmd_record_test_review(args: argparse.Namespace) -> int:
-    """Record the answers of a reviewer to the open review, one per
-    criterion test, and compute the verdict. A second refusal stops the
-    ticket in the same tracker write (Spec §8: one return to the author)."""
-    _, _, record = review_target(args)
-    request = record.get("request")
-    if not request:
-        raise Refusal(f"aucune relecture n'est demandée sur {args.ticket} : un verdict répond à une demande ouverte")
-    given = json_argument(args.file, "verdict de relecture")
-    refuse_served_session(args, KEY_TEST_REVIEW, record, given)
-    problems = [f"champ inconnu : {name}" for name in sorted(set(given) - {"commit", "files", "tests", "recorded_by", "conversation"})]
-    if given.get("commit") != request["commit"]:
-        problems.append(f"le verdict porte sur le commit {given.get('commit')!r}, la demande sur {request['commit']}")
-    if given.get("files") != request["files"]:
-        problems.append("le verdict porte sur d'autres empreintes de tests que la demande")
-    recorded_by = given.get("recorded_by")
-    if not isinstance(recorded_by, str) or not recorded_by.strip() or "\n" in recorded_by:
-        problems.append(f"session du relecteur absente ou mal formée : {recorded_by!r}")
-    answers = given.get("tests") if isinstance(given.get("tests"), dict) else {}
-    expected = review_tests(request["criteria"])
-    problems += [f"test inconnu de la demande : {test_id}" for test_id in sorted(set(answers) - set(expected))]
-    tests: dict[str, dict[str, str]] = {}
-    for test_id in expected:
-        answer = answers.get(test_id)
-        state = answer.get("state") if isinstance(answer, dict) else None
-        reason = " ".join(str(answer.get("reason") or "").split()) if isinstance(answer, dict) else ""
-        if answer is None:
-            problems.append(f"pas de verdict pour le test {test_id}")
-        elif state not in VERDICT_STATES:
-            problems.append(f"état hors de la liste fermée pour {test_id} : {state!r} (attendu : {', '.join(VERDICT_STATES)})")
-        elif state == "unfavorable" and not reason:
-            problems.append(f"refus sans raison pour {test_id}")
-        else:
-            tests[test_id] = {"state": state, "reason": reason} if state == "unfavorable" else {"state": state}
-    if problems:
-        raise Refusal("verdict de relecture hors contrat : " + " ; ".join(problems))
-    refused = [test_id for test_id in expected if tests[test_id]["state"] == "unfavorable"]
-    verdict = "unfavorable" if refused else "favorable"
-    record["rounds"].append({
-        "commit": request["commit"], "files": request["files"], "verdict": verdict, "tests": tests,
-        "recorded_by": recorded_by.strip(), **conversation_of(given), "at": now()})
-    del record["request"]
-    refusals = review_refusals(record)
-    values = {KEY_TEST_REVIEW: encode(record)}
-    stopped = bool(refused) and refusals >= TEST_REVIEW_MAX_REFUSALS
-    if stopped:
-        detail = f"second refus de la relecture des tests de critère : {', '.join(refused)}"
-        values[KEY_STOP] = encode({"reason": STOP_TEST_REVIEW_REFUSED, "detail": detail, "at": now()})
-    write_metadata(args.ticket, values)
-    print(json.dumps({"ok": True, "convoy": args.convoy, "bead": args.ticket, "verdict": verdict, "refused": refused,
-                      "refusals": refusals, "stopped": stopped, "written": values},
-                     indent=2, sort_keys=True, ensure_ascii=False))
-    return 0
 
 
 def cmd_set_model(args: argparse.Namespace) -> int:
@@ -4254,6 +4136,10 @@ def cmd_want_evaluation_product(args: argparse.Namespace) -> int:
     wanted = request.get("wanted")
     if wanted and wanted["dataset"] == args.dataset:
         return done(args.convoy, args.ticket, {})
+    if wanted and request["launches"]:
+        # The wait for the dataset it replaces is the controller's time too (af-4nop0m).
+        since = max(stamp_seconds(wanted["at"]), stamp_seconds(request["launches"][-1]["at"]))
+        request["waited"] = request.get("waited", 0) + max(0, int(time.time()) - since)
     request["wanted"] = {"dataset": args.dataset, "fresh": args.fresh, "at": now()}
     values = {KEY_EVALUATION: encode(evaluation_record(encode(record)))}
     write_metadata(args.ticket, values)
@@ -4278,7 +4164,12 @@ def cmd_append_evaluation_product(args: argparse.Namespace) -> int:
            for old in request["environment"]):
         raise Refusal("produit déjà inscrit dans cette évaluation")
     request["environment"].append(entry)
-    request.pop("wanted", None)
+    wanted = request.pop("wanted", None)
+    if wanted and request["launches"]:
+        # The wait of the current launch for this dataset: bin/ticket-evaluation
+        # does not count it against the launch (af-4nop0m).
+        since = max(stamp_seconds(wanted["at"]), stamp_seconds(request["launches"][-1]["at"]))
+        request["waited"] = request.get("waited", 0) + max(0, int(time.time()) - since)
     record["live"] = [entry["state_file"]]
     values = {KEY_EVALUATION: encode(evaluation_record(encode(record)))}
     write_metadata(args.ticket, values)
@@ -4298,6 +4189,8 @@ def cmd_launch_evaluation(args: argparse.Namespace) -> int:
         raise Refusal(
             f"une seule relance par évaluation : {args.ticket} en a déjà lancé {len(request['launches'])} sans résultat")
     request["launches"].append({"bead": args.bead, "at": now()})
+    # A new launch has its own time: the waits of the previous one are spent.
+    request.pop("waited", None)
     values = {KEY_EVALUATION: encode(record)}
     write_metadata(args.ticket, values)
     return done(args.convoy, args.ticket, values)
@@ -4405,10 +4298,12 @@ def visual_reference_changed(repo: str | None, convoy_id: str, commit: str, tick
 
 def cmd_record_evaluation(args: argparse.Namespace) -> int:
     """Record what an Evaluator session hands in for the open evaluation,
-    and compute the verdict (T15, Spec §7): one state per approved criterion
-    and one for the demonstration line, each with a captured piece of
-    evidence. The verdict of the family `evaluation` is written in the same
-    tracker write; an outage of the environment writes none."""
+    and compute the verdict (T15, Spec §7): one state for the demonstration
+    line and, only where a validated expectation compares one, for an
+    approved criterion (ADR-0030 L4: the frozen criterion tests prove the
+    others), each with a captured piece of evidence. The verdict of the
+    family `evaluation` is written in the same tracker write; an outage of
+    the environment writes none."""
     ticket, metadata, record = evaluation_target(args)
     request = record.get("request")
     if not request:
@@ -4430,9 +4325,9 @@ def cmd_record_evaluation(args: argparse.Namespace) -> int:
         problems.append(
             "les critères ou la ligne de démonstration du ticket ne sont plus ceux de la demande d'évaluation : "
             "ils sont gelés avec le graphe approuvé")
-    handed = given.get("criteria")
+    handed = given.get("criteria", [])
     if not isinstance(handed, list):
-        problems.append("criteria mal formé : une liste d'états, un par critère, est attendue")
+        problems.append("criteria mal formé : une liste d'états de critères est attendue")
         handed = []
     by_number: dict[Any, Any] = {}
     for item in handed:
@@ -4443,13 +4338,9 @@ def cmd_record_evaluation(args: argparse.Namespace) -> int:
             problems.append(f"critère {number} : deux états rendus")
         else:
             by_number[number] = item
-    criteria = []
-    for number, text in enumerate(request["criteria"], start=1):
-        if number not in by_number:
-            problems.append(f"critère {number} retiré : aucun état rendu pour « {text} »")
-            continue
-        criteria.append({"number": number, **given_state(
-            by_number[number], f"critère {number}", text, metadata, request["commit"], problems)})
+    criteria = [{"number": number, **given_state(by_number[number], f"critère {number}",
+                                                 request["criteria"][number - 1], metadata, request["commit"], problems)}
+                for number in sorted(by_number)]
     line = given_state(given.get("demonstration_line"), "ligne de démonstration", request["demonstration_line"],
                        metadata, request["commit"], problems)
     coverage = None
@@ -4959,7 +4850,9 @@ def cmd_open_resume(args: argparse.Namespace) -> int:
     resume left for one cause (that one is parked), and on a stopped ticket unless the
     cause is one that lifts its stop (RESUMABLE_STOPS): `evaluation_no_result`
     (af-xhc0sj), `stage_removed` for a stop of the removed test review
-    (af-pjvsgo); that resume keeps the stop under it."""
+    (af-pjvsgo), `code_review_no_result` (af-wu6xj7); that resume keeps the
+    stop under it. A code review without result also loses its spent round:
+    the next finished exit is reviewed afresh."""
     ticket = marked_ticket(args.convoy, args.ticket)
     metadata = metadata_of(ticket)
     cause = one_of(args.cause, RESUME_CAUSES, "cause de reprise")
@@ -4996,6 +4889,11 @@ def cmd_open_resume(args: argparse.Namespace) -> int:
     update = ["bd", "update", args.ticket]
     for key, value in values.items():
         update += ["--set-metadata", f"{key}={value}"]
+    if lifted is not None and lifted["reason"] == "code_review_no_result" and KEY_CODE_REVIEW in metadata:
+        review = code_review_record(metadata[KEY_CODE_REVIEW])
+        if review.pop("request", None) is not None:
+            values[KEY_CODE_REVIEW] = encode(review)
+            update += ["--set-metadata", f"{KEY_CODE_REVIEW}={values[KEY_CODE_REVIEW]}"]
     unset = {KEY_EXIT: replaced, KEY_STOP: lifted}
     for key, was in unset.items():
         if was is not None:
@@ -7155,11 +7053,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reason")
     p.add_argument("--detail")
     command("stop-raised", cmd_stop_raised)
-    p = command("open-test-review", cmd_open_test_review)
-    p.add_argument("--commit")
-    p.add_argument("--file")
-    command("launch-test-review", cmd_launch_test_review).add_argument("--bead")
-    command("record-test-review", cmd_record_test_review).add_argument("--file")
     command("set-handoff", cmd_set_handoff).add_argument("--file")
     p = command("set-model", cmd_set_model)
     p.add_argument("--role")

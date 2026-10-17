@@ -14,8 +14,8 @@
 # role) and bin/escalation-door. What is scripted, and spends nothing: the
 # reviewer, a stub that claims the step Gas City routes to it and runs the
 # real tools the step names; and the author, whose finished tickets are
-# written through bin/convoy-state as bin/tdd-step, bin/test-review and
-# bin/ticket-exit would (the author formula has its own trial,
+# written through bin/convoy-state as bin/tdd-step and bin/ticket-exit
+# would (the author formula has its own trial,
 # tests/ticket-author-isolated-city-test.sh), each with the favorable Ticket
 # Evaluation the merge also asks for, written as bin/ticket-evaluation would
 # (its own trial: tests/ticket-evaluation-isolated-city-test.sh).
@@ -86,8 +86,8 @@ cleanup() {
 trap cleanup EXIT
 
 # Nothing of the live Factory may reach this city (same recipe as
-# tests/test-review-isolated-city-test.sh).
-while IFS= read -r name; do unset "$name"; done < <(compgen -e | grep -E '^(GC_|BEADS_|BD_BIN$|GH_BIN$|FACTORY_ROOT$|CONVOY_|DISPATCH_DOOR_|ESCALATION_DOOR_|EVIDENCE_|TICKET_AUTHOR_|SPEC_INTEGRATION_|TEST_REVIEW_|CODE_REVIEW_(DISPATCH|FAKE)|DELIVERY_ROLE_)' || true)
+# tests/ticket-author-isolated-city-test.sh).
+while IFS= read -r name; do unset "$name"; done < <(compgen -e | grep -E '^(GC_|BEADS_|BD_BIN$|GH_BIN$|FACTORY_ROOT$|CONVOY_|DISPATCH_DOOR_|ESCALATION_DOOR_|EVIDENCE_|TICKET_AUTHOR_|SPEC_INTEGRATION_|CODE_REVIEW_(DISPATCH|FAKE)|DELIVERY_ROLE_)' || true)
 export GC_HOME="$TRIAL/h" XDG_RUNTIME_DIR="$TRIAL/r" GC_DISABLE_USAGE_METRICS=1
 unset DBUS_SESSION_BUS_ADDRESS
 export PATH="/usr/local/bin:$HOME/.local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -352,20 +352,14 @@ finish() { # <ticket> <tip>: every step of the TDD with its sealed report, the d
   evaluated "$1" "$2" "$PRODUCT"
 }
 author_finishes() { # <ticket> <author model> <what the slice says>
-  local t=$1 red tip files
+  local t=$1 red tip
   state record-gate "$CONVOY" "$t" --gate dispatch >/dev/null
   state set-branch "$CONVOY" "$t" --branch "ticket/$t" >/dev/null
   state set-session "$CONVOY" "$t" --session "trial-author-$t" >/dev/null
   state set-model "$CONVOY" "$t" --role author --agent trial-author --provider stub-author --model "$2" >/dev/null
   red=$(commit_on "$t" "$FIXTURE/tests/test_count_$t.py" "# test de critère du ticket $t" "PROSE-DU-COMMIT : tests de critère")
   tip=$(commit_on "$t" "docs/$t.md" "$3" "PROSE-DU-COMMIT : la tranche")
-  files=$(jq -n --arg p "$FIXTURE/tests/test_count_$t.py" --arg d "sha256:$(git -C "$PRODUCT" show "$red:$FIXTURE/tests/test_count_$t.py" | sha256sum | cut -d' ' -f1)" '{($p): $d}')
   state set-tdd "$CONVOY" "$t" --step red --commit "$red" --base "$BASE" >/dev/null
-  jq -n --argjson files "$files" --arg id "$FIXTURE/tests/test_count_$t.py::CountTest.test_count" '{files: $files, criteria: {"1": [$id]}}' > "$TRIAL/request.$t.json"
-  state open-test-review "$CONVOY" "$t" --commit "$red" --file "$TRIAL/request.$t.json" >/dev/null
-  jq -n --argjson files "$files" --arg commit "$red" --arg session "trial-test-reviewer-$t" --arg id "$FIXTURE/tests/test_count_$t.py::CountTest.test_count" \
-    '{commit: $commit, files: $files, tests: {($id): {state: "favorable"}}, recorded_by: $session}' > "$TRIAL/verdict.$t.json"
-  state record-test-review "$CONVOY" "$t" --file "$TRIAL/verdict.$t.json" >/dev/null
   state set-tdd "$CONVOY" "$t" --step freeze --commit "$red" >/dev/null
   finish "$t" "$tip"
   printf '%s' "$tip"

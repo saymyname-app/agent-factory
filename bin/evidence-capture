@@ -18,6 +18,7 @@ it. A piece this tool did not produce is refused by `verify`.
     evidence-capture comparison CONVOY TICKET --piece NAME --launch-state FILE --reference-url URL
                                               [--path /PATH] [--window-size WIDTHxHEIGHT] [--color-scheme light|dark]
     evidence-capture verify     CONVOY TICKET [--piece NAME]
+    evidence-capture show       CONVOY TICKET [--piece NAME]
     evidence-capture purge      --spec SPEC
 
 `command` runs COMMAND with no input and records its argv, its real output
@@ -33,7 +34,9 @@ product. `comparison` captures that address and a reference page served on
 this host (a state of the Validated Prototype) at the same moment, and
 records them side by side with an image of their difference; it counts the
 differing pixels and judges nothing (bin/prototype-fidelity, T16). `verify` fails if a piece of the store no longer matches the
-fingerprint of the tracker, or was not produced by this tool. `purge` removes
+fingerprint of the tracker, or was not produced by this tool. `show` verifies
+the same way and prints each record, the output of a command included; with
+no piece it refuses and names the folder it read. `purge` removes
 the pieces of one Spec and no other.
 
 Every answer is one JSON object on stdout. Exit status: 0 done; 1 refused
@@ -741,10 +744,22 @@ def check_piece(
     return out
 
 
-def cmd_verify(args: argparse.Namespace) -> int:
+LAYOUT_HINT = (
+    "attendu : CONVOY TICKET (l'identifiant du convoi, puis celui du ticket, ou le convoi deux fois pour "
+    "une pièce de fin de Spec) ; le magasin range sous <magasin>/<Spec>/<ticket>/, la Spec étant lue sur le convoi"
+)
+
+
+def verified_pieces(args: argparse.Namespace) -> tuple[str, Path, list[dict[str, Any]]]:
+    """The Spec, the folder read and every piece checked; refuses with every
+    problem at once."""
     if args.piece is not None:
         valid_piece(args.piece)
-    spec, ticket = read_ticket(args.convoy, args.ticket)
+    try:
+        spec, ticket = read_ticket(args.convoy, args.ticket)
+    except Refusal as exc:
+        # `show <spec> <convoy>` was the guess of an operator (af-rt5a4h).
+        raise Refusal(f"{exc} ; {LAYOUT_HINT}") from exc
     store = store_dir().absolute()
     key = seal_key(store, create=False)
     fingerprints = ticket.get("evidence") or {}
@@ -767,9 +782,27 @@ def cmd_verify(args: argparse.Namespace) -> int:
             Path(entry[field]).name for entry in verified for field in ("image", "difference") if field in entry}
         problems += [f"fichier sans empreinte dans le magasin : {ticket_dir / name}" for name in stored if name not in known]
     if problems:
-        raise Refusal(" ; ".join(problems))
-    print(json.dumps({"ok": True, "spec": spec, "convoy": args.convoy, "ticket": args.ticket, "pieces": verified},
-                     indent=2, sort_keys=True, ensure_ascii=False))
+        raise Refusal(" ; ".join(problems), path=str(ticket_dir))
+    return spec, ticket_dir, verified
+
+
+def cmd_verify(args: argparse.Namespace) -> int:
+    spec, ticket_dir, verified = verified_pieces(args)
+    print(json.dumps({"ok": True, "spec": spec, "convoy": args.convoy, "ticket": args.ticket, "path": str(ticket_dir),
+                      "pieces": verified}, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+def cmd_show(args: argparse.Namespace) -> int:
+    """`verify`, then each record as filed: an empty answer is a refusal that
+    names the folder read (af-rt5a4h)."""
+    spec, ticket_dir, verified = verified_pieces(args)
+    if not verified:
+        raise Refusal(f"aucune pièce pour le ticket {args.ticket} dans {ticket_dir} (Spec {spec})", path=str(ticket_dir))
+    for entry in verified:
+        entry["record"] = json.loads(Path(entry["path"]).read_text(encoding="utf-8"))
+    print(json.dumps({"ok": True, "spec": spec, "convoy": args.convoy, "ticket": args.ticket, "path": str(ticket_dir),
+                      "pieces": verified}, indent=2, sort_keys=True, ensure_ascii=False))
     return 0
 
 
@@ -828,6 +861,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reference-url")
     p.add_argument("--color-scheme", default="light")
     mode("verify", cmd_verify)
+    mode("show", cmd_show)
     p = sub.add_parser("purge")
     p.add_argument("--spec")
     p.set_defaults(handler=cmd_purge)
