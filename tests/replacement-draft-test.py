@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Public-command regression for the bounded stopped-ticket replacement draft door."""
 import hashlib
+import importlib.machinery
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -14,6 +16,14 @@ ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT / "bin/replacement-draft"
 FAKE_BD = ROOT / "tests/fixtures/spec-approve/bd"
 COMMIT = "4bf4fbf3ba28ba502bbf1dc014a63ae259b2f9f1"
+
+
+def publish_gate():
+    """bin/ticket-graph-publish as a module: the ticket validation bd-patch applies first."""
+    loader = importlib.machinery.SourceFileLoader("ticket_graph_publish", str(ROOT / "bin/ticket-graph-publish"))
+    module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+    loader.exec_module(module)
+    return module
 
 
 def digest(text):
@@ -60,8 +70,15 @@ class ReplacementDraftTest(unittest.TestCase):
                 "spec_state": "APPROVED_SPEC", "approved_digest": digest(spec_body)}),
             "source": bead("source", source, {"gc.plane": "planning", "gc.project_id": "agent-factory",
                 "spec_id": "spec", "approved_by": "benjamin", "approved_digest": graph_digest}),
-            "convoy": bead("convoy", metadata={"gc.flow.mark": "new-flow/v1", "gc.project_id": "agent-factory",
+            "convoy": {**bead("convoy", metadata={"gc.flow.mark": "new-flow/v1", "gc.project_id": "agent-factory",
                 "gc.spec_id": "spec", "gc.spec_digest": digest(spec_body), "gc.graph_digest": graph_digest}),
+                # What the convoy tracks, as `bd show --json` lists it: the resulting graph.
+                "dependencies": [
+                    {"id": "stopped", "dependency_type": "tracks", "status": "in_progress",
+                     "metadata": {"gc.ticket_id": "T01R2", "gc.graph_digest": graph_digest}},
+                    {"id": "next", "dependency_type": "tracks", "status": "open",
+                     "metadata": {"gc.ticket_id": "T02", "gc.graph_digest": graph_digest, "gc.blocked_by": "T01R2"}},
+                ]},
             "stopped": bead("stopped", metadata={"gc.ticket_id": "T01R2", "gc.ticket_kind": "vertical_slice",
                 "gc.spec_id": "spec", "gc.spec_digest": digest(spec_body), "gc.graph_digest": graph_digest,
                 "gc.flow.stop": json.dumps({"reason": "evaluation_no_result"}),
@@ -166,6 +183,68 @@ class ReplacementDraftTest(unittest.TestCase):
             self.assertNotEqual(0, proc.returncode, revision)
             self.assertIn("refused: revision", json.loads(proc.stdout)["error"])
             self.assertEqual(before, json.loads(self.state_path.read_text()))
+
+    # --- the resulting graph: a ticket published by an earlier revision (af-k08bi1) ----
+
+    LATER = "sha256:" + "c" * 64
+
+    def later_revision(self, waiter_digest=None, untrack=False, blocker_status="closed"):
+        """A later partial revision (another ticket only) moved the convoy to
+        LATER; the stopped ticket stays at the digest of the source draft."""
+        state = json.loads(self.state_path.read_text())
+        convoy = state["beads"]["convoy"]
+        convoy["metadata"]["gc.graph_digest"] = self.LATER
+        deps = convoy["dependencies"]
+        deps.append({"id": "other", "dependency_type": "tracks", "status": "open",
+                     "metadata": {"gc.ticket_id": "T03", "gc.graph_digest": self.LATER}})
+        if waiter_digest:
+            deps[1]["metadata"]["gc.graph_digest"] = waiter_digest
+        # Both tickets also wait for T00, published outside the source revision.
+        source = state["beads"]["source"]
+        parsed = yaml.safe_load(source["description"])
+        for ticket in parsed["tickets"]:
+            ticket["blocked_by"].append("T00")
+        source["description"] = yaml.safe_dump(parsed, allow_unicode=True, sort_keys=False)
+        source["metadata"]["approved_digest"] = digest(source["description"])
+        for dep in deps[:2]:
+            dep["metadata"]["gc.graph_digest"] = (dep["metadata"]["gc.graph_digest"] if dep is deps[1] and waiter_digest
+                                                  else digest(source["description"]))
+        deps[1]["metadata"]["gc.blocked_by"] = "T01R2,T00"
+        stopped = state["beads"]["stopped"]["metadata"]
+        stopped["gc.graph_digest"] = digest(source["description"])
+        stopped["gc.flow.criteria"] = json.dumps({"graph_digest": digest(source["description"]), "digest": "sha256:criteria"})
+        deps.append({"id": "first", "dependency_type": "tracks", "status": blocker_status,
+                     "metadata": {"gc.ticket_id": "T00", "gc.graph_digest": self.LATER}})
+        if untrack:
+            del deps[0]
+        self.state_path.write_text(json.dumps(state))
+
+    def test_replaces_a_ticket_published_by_an_earlier_revision_still_in_force(self):
+        self.later_revision()
+        proc = self.run_create()
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        draft = json.loads(self.state_path.read_text())["beads"][json.loads(proc.stdout)["draft"]]
+        parsed = yaml.safe_load(draft["description"])
+        self.assertEqual(self.LATER, draft["metadata"]["revises_digest"])
+        self.assertEqual(["T01R3", "T02"], [ticket["id"] for ticket in parsed["tickets"]])
+        # A delivered blocker outside the revision is dropped: bd-patch keeps it on
+        # the tickets it patches, and refuses any blocker the draft does not carry.
+        self.assertEqual([], parsed["tickets"][0]["blocked_by"])
+        self.assertEqual(["T01R3"], parsed["tickets"][1]["blocked_by"])
+        self.assertEqual([{"ticket": "T01R2", "planning_exception": "pe-replacement"}], parsed["withdrawn"])
+        publish_gate().validate_tickets(parsed["tickets"])
+
+    def test_refuses_an_open_blocker_outside_the_revision(self):
+        self.later_revision(blocker_status="open")
+        self.assert_refused_unwritten("waits for T00")
+
+    def test_refuses_a_ticket_the_convoy_does_not_track(self):
+        self.later_revision(untrack=True)
+        self.assert_refused_unwritten("does not track")
+
+    def test_refuses_a_waiting_ticket_published_by_another_revision(self):
+        self.later_revision(waiter_digest=self.LATER)
+        self.assert_refused_unwritten("waits for T01R2")
 
     # --- a ticket parked by its own answered Planning Exception (af-6854ef) ----
 
