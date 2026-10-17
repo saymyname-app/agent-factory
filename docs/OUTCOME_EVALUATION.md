@@ -39,8 +39,9 @@ and 5 of the end-of-Spec gate (`verdict`).
 
 `brief`, `classify` and `record` are refused outside a session of the
 read-only Evaluator role. The session is given no repository: it sees the
-product through its addresses only. `brief.datasets` lists every declared
-game while `brief.environments` lists only the active product. `product
+product through its addresses only. `brief.datasets` lists the datasets the
+evaluation covers (« Which datasets », below) while `brief.environments`
+lists only the active product. `product
 CONVOY --dataset NAME` returns `ready=false` until the controller's next
 pass confirms the old product stopped and opens the requested one;
 `--wait SECONDS` blocks for that inside one call (af-oowsc2). `--fresh`
@@ -53,6 +54,41 @@ slots, with one active product per evaluation. Startup and shutdown count;
 failed cleanup retains the slot. Product readiness uses the same
 controller attestation and live socket check as Ticket Evaluation
 (`docs/TICKET_EVALUATION.md`, af-bjvd8z).
+
+## Which datasets
+
+Intent (Benjamin, his words, operator chat, 2026-10-17 around 11:40 Paris,
+recorded on `af-npz9v1`): to « En fin de Spec, l'évaluation du produit
+assemblé (Outcome Evaluation) est prévue sur les 95 jeux de données :
+plusieurs heures, et un risque d'échec par délai comme pour T02. On la
+réduit ? » he answered « Réduire aux jeux cités ».
+Mechanism (agent interpretation, `af-npz9v1.11`): the rule of the Ticket
+Evaluation (`af-kdxk6k`) applied to the Spec.
+
+- **Covered:** the declared datasets of the project's profile
+  (`launch.datasets`) that a numbered user story of the Spec, the
+  demonstration line of a ticket of the convoy, or a validated expectation of
+  a story names, by their exact name. The Spec carries no demonstration line
+  of its own: those of its tickets are what demonstrate it.
+- **Fallback:** none named, the first declared dataset (in name order) alone.
+- **Asked for another one:** `product --dataset` refuses a declared dataset
+  outside that list (« jeu absent de la demande »), and the sealed result
+  carries one `coverage` entry per covered dataset only.
+- **The delay of one launch:** `max(timeout_seconds, datasets ×
+  per_dataset_seconds)`, the very function of the Ticket Evaluation
+  (`launch_timeout`, `lib/evaluation_capacity.py`, `af-vtg5kl`); the datasets
+  counted are those of the request, ready or not yet opened.
+- **An evaluation opened before this rule** keeps the datasets of its
+  request until it is replayed (a new commit at the gate); its delay is
+  computed on them from the next pass (95 datasets: 22 800 s).
+
+**What this changes before Benjamin's Acceptance Session.** Until
+2026-10-17 every declared dataset (95 on the Cockpit) was walked by the
+Evaluator of the end before the Acceptance Request. Now only the covered
+ones are: a story that holds on a covered dataset and fails on another one
+is no longer caught by this evaluation, nor by the condition 4 of the gate;
+it is found in the Acceptance Session or not at all. The Acceptance Session
+itself is unchanged (`docs/ACCEPTANCE_SESSION.md`).
 
 `record` takes one JSON file:
 
@@ -142,7 +178,7 @@ contradiction.
 
 | Reason | When |
 | --- | --- |
-| `outcome_evaluation_no_result` | Two launches, each left without states past `timeout_seconds` |
+| `outcome_evaluation_no_result` | Two launches, each left without states past the delay of one launch (« Which datasets ») |
 | `outcome_evaluation_outage` | The clean copy does not start, or two outages in a row at the same commit |
 | `story_unobservable` | A story handed in as `unobservable` |
 
@@ -157,7 +193,9 @@ record says so (`independence`).
 ## Settings
 
 `config/delivery-flow.json`, block `outcome_evaluation`: `formula`, `role`,
-`rig`, `timeout_seconds`, `start_timeout_seconds`. Without the block,
+`rig`, `timeout_seconds` (the floor of the delay of one launch),
+`per_dataset_seconds` (optional, 0 by default; 240 like the Ticket
+Evaluation), `start_timeout_seconds`. Without the block,
 `settle` refuses and the pass fails, naming it.
 
 ## Refusals and exit status
@@ -168,6 +206,9 @@ refusal writes nothing.
 
 ## Limits
 
+- **The wait for a requested dataset counts against the launch.** Unlike the
+  Ticket Evaluation (`af-4nop0m`, #657), the time the controller takes to
+  open a dataset the Evaluator asked for is not given back to the launch.
 - **The rounds of the end are bounded (T26).** An evaluation that leaves a
   story not observed, or a finding « hors ticket » still « à réparer »,
   refuses its tip: `record-outcome-evaluation` counts one round of the end

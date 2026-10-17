@@ -70,7 +70,7 @@ DESCRIPTORS = ROOT / "config" / "project-descriptors"
 sys.path.insert(0, str(BIN.parent / "lib"))
 import delivery_reads  # noqa: E402
 from convoy_state import retry_after_lift, session_conversation
-from evaluation_capacity import admission, Busy, ready_product, remove_attestation
+from evaluation_capacity import admission, Busy, launch_timeout, ready_product, remove_attestation
 from validated_expectations import planned, enforce, sealed_record
 from delivery_role_identity import role_identity, role_supplier, supplier_of  # noqa: E402
 
@@ -808,13 +808,6 @@ def launched_at(launched: dict[str, Any]) -> int:
         return calendar.timegm(time.strptime(launched["at"], "%Y-%m-%dT%H:%M:%SZ"))
     except (KeyError, TypeError, ValueError) as exc:
         raise Refusal(f"heure de lancement de l'évaluation illisible : {launched!r}") from exc
-
-
-def launch_timeout(settings: dict[str, Any], datasets: int) -> int:
-    """How long one launch may take: the floor `timeout_seconds`, or
-    `per_dataset_seconds` for each dataset the evaluation covers when that
-    is longer (af-vtg5kl)."""
-    return max(settings["timeout_seconds"], datasets * settings.get("per_dataset_seconds", 0))
 
 
 def waited(request: dict[str, Any], launched: dict[str, Any]) -> int:

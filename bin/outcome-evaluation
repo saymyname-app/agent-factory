@@ -73,7 +73,8 @@ DESCRIPTORS = ROOT / "config" / "project-descriptors"
 
 sys.path.insert(0, str(BIN.parent / "lib"))
 import delivery_reads  # noqa: E402
-from evaluation_capacity import admission, Busy, ready_product, remove_attestation
+from evaluation_capacity import admission, Busy, launch_timeout, ready_product, remove_attestation
+from convoy_state import KEY_SPEC, Refusal as StateRefusal, spec_of  # noqa: E402
 from validated_expectations import planned, enforce, sealed_record
 from delivery_role_identity import role_supplier, supplier_of  # noqa: E402
 
@@ -228,10 +229,11 @@ def load_settings() -> dict[str, Any]:
         raise Refusal(
             "aucun réglage outcome_evaluation dans config/delivery-flow.json : l'Outcome Evaluation n'est pas réglée")
     settings = {name: block.get(name) for name in ("formula", "role", "rig", "timeout_seconds", "start_timeout_seconds")}
+    settings["per_dataset_seconds"] = block.get("per_dataset_seconds", 0)
     for name in ("formula", "role", "rig"):
         if not isinstance(settings[name], str) or not settings[name]:
             raise Refusal(f"outcome_evaluation.{name} absent ou invalide dans config/delivery-flow.json : {settings[name]!r}")
-    for name in ("timeout_seconds", "start_timeout_seconds"):
+    for name in ("timeout_seconds", "start_timeout_seconds", "per_dataset_seconds"):
         value = settings[name]
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             raise Refusal(
@@ -426,6 +428,30 @@ def product_folder(convoy_id: str) -> Path:
 def declared_datasets(convoy: Convoy) -> list[str | None]:
     _, launch = convoy.profile()
     return sorted(launch.get("datasets") or {}) or [None]
+
+
+def evaluated_datasets(convoy: Convoy) -> list[str | None]:
+    """The declared datasets the assembled product is evaluated on: at
+    least one. Only those the numbered user stories of the Spec, the
+    demonstration lines of the convoy's tickets or a validated expectation
+    of the stories name, else the first declared one (Benjamin, 2026-10-17:
+    « Réduire aux jeux cités »; the same rule as the Ticket Evaluation,
+    af-kdxk6k)."""
+    path, launch = convoy.profile()
+    declared = declared_datasets(convoy)
+    if declared == [None]:
+        return declared
+    try:
+        stories = spec_of({"id": convoy.id, "metadata": {KEY_SPEC: convoy.state.get("spec")}})["stories"]
+    except StateRefusal as exc:
+        raise Refusal(str(exc)) from exc
+    texts = [story["text"] for story in stories] + [str(ticket.get("demonstration_line") or "")
+                                                    for ticket in convoy.tickets]
+    named = {name for name in declared
+             if any(re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", text) for text in texts)}
+    expectations = planned(json.loads(path.read_text(encoding="utf-8")), "outcome", stories, declared, "", convoy.id)
+    named.update(entry.get("dataset") for entry in expectations if entry.get("dataset") in declared)
+    return sorted(named) or declared[:1]
 
 
 def prepared_products(convoy: Convoy, commit: str) -> list[dict[str, Any]]:
@@ -704,7 +730,7 @@ def settle(convoy: Convoy, settings: dict[str, Any]) -> dict[str, Any]:
         return {"action": "product_ready", "commit": commit, "dataset": entry["dataset"],
                 "address": entry["address"]}
     launches = current["launches"] if current else []
-    timeout = settings["timeout_seconds"]
+    timeout = launch_timeout(settings, len((current or {}).get("datasets") or [None]))
     if launches and not expired(launches[-1], timeout):
         deadline = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(launched_at(launches[-1]) + timeout))
         return {"action": "pending", "commit": commit, "launches": len(launches), "deadline": deadline}
@@ -722,14 +748,15 @@ def settle(convoy: Convoy, settings: dict[str, Any]) -> dict[str, Any]:
     if current is None:
         # The roles first: an evaluation that is deferred launches nothing.
         roles = roles_of_launch(convoy)
+        datasets = evaluated_datasets(convoy)
         try:
-            environment = launch_products(convoy, commit, settings)
+            environment = launch_products(convoy, commit, settings, dataset=datasets[0])
         except Refusal as exc:
             # The clean copy does not start: an outage, nothing can be observed.
             return stop_evaluation(convoy, commit, STOP_OUTAGE, str(exc))
         try:
             state_write_file("open-outcome-evaluation",
-                             {"roles": roles, "environment": environment, "datasets": declared_datasets(convoy)},
+                             {"roles": roles, "environment": environment, "datasets": datasets},
                              convoy.id, "--commit", commit)
         except (Refusal, NotNewFlow):
             for entry in environment:
@@ -881,7 +908,7 @@ def cmd_brief(args: argparse.Namespace) -> int:
         "repair_shape": repair_shape,
         "result_shape": {
             "commit": request["commit"],
-            "coverage": [{"dataset": "<each declared dataset>", "evidence": "<sealed piece from that dataset>"}],
+            "coverage": [{"dataset": "<each dataset of datasets>", "evidence": "<sealed piece from that dataset>"}],
             "stories": [{"number": "<story number>", "text": "<the story, copied exactly>", "state": "|".join(STATES),
                          "evidence": "<piece name>", "reason": "<required unless observed>",
                          "cause": "|".join(CAUSES) + " (unobservable only)"}],
