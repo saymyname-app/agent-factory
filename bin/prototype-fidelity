@@ -105,6 +105,8 @@ PROPERTIES = (
 # (observed on chrome-headless-shell 1243, 2026-10-07: 0 is dark, 1 is light).
 COLOUR_SCHEMES = {"light": "1", "dark": "0"}
 PIECE = "fidelity"
+# The full measure, in the work directory; the piece seals its fingerprint (af-2cpwkh).
+MEASURE_FILE = "measure.json"
 MEASURE_PATH = "/__fidelity__/measure.html"
 MEASURE_RE = re.compile(r'<pre id="fidelity-measure">(.*?)</pre>', re.S)
 BROWSER_TIMEOUT = 60
@@ -646,12 +648,25 @@ def measure_state(plan: dict[str, Any], state: dict[str, Any], deviations: list[
 def cmd_measure(args: argparse.Namespace) -> int:
     """Run inside bin/evidence-capture command: its output is the record. It
     exits 0 once everything was compared, red or green, so that only a
-    complete record becomes a piece."""
+    complete record becomes a piece.
+
+    The full measure is written to a file of the work directory and the
+    output carries its fingerprint (af-2cpwkh): a measure of a real screen
+    runs to megabytes, beyond what the store keeps of an output (1 MB, then
+    its first and last 500 kB), and a truncated record cannot be read back."""
     try:
         plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise Refusal(f"plan de mesure illisible ({args.plan}) : {exc}") from exc
-    print(json.dumps(measure(plan), indent=2, sort_keys=True, ensure_ascii=False))
+    result = measure(plan)
+    content = json.dumps(result, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    measure_file = Path(plan["work"]) / MEASURE_FILE
+    measure_file.write_bytes(content)
+    print(json.dumps({
+        "commit": result["commit"], "measure": str(measure_file),
+        "measure_digest": "sha256:" + hashlib.sha256(content).hexdigest(), "measure_bytes": len(content),
+        "deviations": len(result["deviations"]),
+    }, indent=2, sort_keys=True, ensure_ascii=False))
     return 0
 
 
@@ -701,8 +716,19 @@ def sealed_measure(args: argparse.Namespace, plan: dict[str, Any], work: Path) -
             inner = None
         raise Refusal(refusal_text(inner) if isinstance(inner, dict) and inner.get("error") else refusal_text(answer))
     try:
-        return json.loads(json.loads(Path(answer["path"]).read_text(encoding="utf-8"))["output"])
-    except (OSError, KeyError, json.JSONDecodeError) as exc:
+        record = json.loads(Path(answer["path"]).read_text(encoding="utf-8"))
+        if record.get("output_truncated"):
+            raise Refusal(
+                f"relevé de fidélité tronqué dans le magasin de preuves ({record.get('output_bytes')} octets) : "
+                "la mesure ne se relit pas", [f"pièce {PIECE}"])
+        sealed = json.loads(record["output"])
+        content = Path(sealed["measure"]).read_bytes()
+        if "sha256:" + hashlib.sha256(content).hexdigest() != sealed["measure_digest"]:
+            raise Refusal(
+                f"mesure de fidélité {sealed['measure']} différente de l'empreinte scellée dans le magasin de preuves",
+                [f"pièce {PIECE}"])
+        return json.loads(content)
+    except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
         raise Refusal(f"relevé de fidélité illisible dans le magasin de preuves : {exc}", [f"pièce {PIECE}"]) from exc
 
 
