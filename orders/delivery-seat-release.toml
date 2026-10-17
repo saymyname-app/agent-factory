@@ -1,0 +1,12 @@
+# af-epkrcv: a reviewer or Evaluator session that has served its workflow
+# keeps the role's one seat when Gas City binds it to work of another
+# workflow (its drain-ack is cancelled, its work query offers it nothing):
+# close it so a fresh session takes the waiting work. Stagger as in
+# orders/escalation-door-sweep.toml.
+[order]
+description = "Close a reviewer or Evaluator session that has served its workflow, holds nothing and keeps the role's one seat while routed work of another workflow waits (af-epkrcv)"
+trigger = "condition"
+interval = "2m"
+check = "/home/benja/agent-factory/orders/lib/orders-restart-stagger.sh delivery-seat-release 120"
+exec = "/home/benja/agent-factory/bin/delivery-seat-release"
+timeout = "60s"
