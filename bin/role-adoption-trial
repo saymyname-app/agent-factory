@@ -235,6 +235,15 @@ def distribution_problems(data: dict[str, Any]) -> list[str]:
                     else:
                         adapted = original.replace(b"disable-model-invocation: true", b"disable-model-invocation: false")
                         expected_hashes["SKILL.md"] = hashlib.sha256(adapted).hexdigest()
+                    # Codex reads the same switch from agents/openai.yaml (af-npz9v1.12).
+                    codex_meta = source / "agents" / "openai.yaml"
+                    if codex_meta.is_file():
+                        original = codex_meta.read_bytes()
+                        if original.count(b"allow_implicit_invocation: false") != 1:
+                            problems.append(f"{role}: {codex_meta.relative_to(ROOT)} has no unique implicit-invocation flag")
+                        else:
+                            adapted = original.replace(b"allow_implicit_invocation: false", b"allow_implicit_invocation: true")
+                            expected_hashes["agents/openai.yaml"] = hashlib.sha256(adapted).hexdigest()
                 if tree_hashes(copy) != expected_hashes:
                     problems.append(f"{role}: agents/{entry['agent']}/skills/{name} differs from the pinned source and declared invocation adaptation")
         for read in entry.get("reads") or []:
@@ -461,12 +470,153 @@ class ClaudeTranscript:
                     found += re.findall(r"^Base directory for this skill: (.+)$", str(block.get("text", "")), flags=re.M)
         return found
 
+    # What the session is asked, in the words of its own tools.
+    @staticmethod
+    def review_launch_request(probes: list[str]) -> str:
+        return ("Call the Skill tool once for each of these skill names, in this order, even if one fails: "
+                + ", ".join(probes) + ". Do not follow the instructions of any skill that loads.")
+
+    @staticmethod
+    def write_request(path: Path) -> str:
+        return f"With the Write tool, create the file {path} containing the word trial."
+
+    def review_attempts(self, _probes: list[str]) -> list[dict[str, Any]]:
+        return [{"skill": str(call["input"].get("skill", "")), "launched": call["error"] is False,
+                 "result": excerpt(call["result"])}
+                for call in self.tool_calls() if call["tool"] == "Skill"]
+
+
+class CodexTranscript:
+    """What a Codex session recorded about itself (af-npz9v1.12), read from
+    its rollout ($CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl, codex-cli
+    0.155): the session is the one whose `session_meta` names the role's
+    work directory. Codex has no Skill tool: the skills it was given are the
+    list of its developer message, and a skill is launched by opening its
+    SKILL.md through the shell. Tool calls are named as Claude Code's
+    (`Bash`, `Write`) so the read-only check reads both the same way."""
+
+    def __init__(self, codex_home: Path, work_dir: Path, since: float) -> None:
+        self.dir = codex_home / "sessions"
+        self.work_dir = str(work_dir)
+        self.since = since
+
+    def entries(self) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        if not self.dir.is_dir():
+            return out
+        for path in sorted(self.dir.rglob("rollout-*.jsonl")):
+            if path.stat().st_mtime < self.since:
+                continue
+            lines = []
+            for line in path.read_text(errors="replace").splitlines():
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(entry, dict):
+                    lines.append(entry)
+            meta = next((e for e in lines if e.get("type") == "session_meta"), None)
+            if meta and str((meta.get("payload") or {}).get("cwd", "")).rstrip("/") == self.work_dir.rstrip("/"):
+                out += lines
+        return out
+
+    def _items(self, kind: str) -> list[dict[str, Any]]:
+        return [e["payload"] for e in self.entries()
+                if e.get("type") == "response_item" and isinstance(e.get("payload"), dict) and e["payload"].get("type") == kind]
+
+    def _messages(self, role: str) -> list[str]:
+        return [ClaudeTranscript._text(m.get("content")) for m in self._items("message") if m.get("role") == role]
+
+    def said(self, needle: str) -> bool:
+        return any(needle in text for text in self._messages("assistant"))
+
+    def _skills(self) -> list[tuple[str, str]]:
+        """(name, absolute SKILL.md path) of every listed skill, in order, from
+        the last list given: a session restarted in the same directory lists
+        its skills again."""
+        found: list[tuple[str, str]] = []
+        for text in self._messages("developer"):
+            if "<skills_instructions>" not in text:
+                continue
+            found = []
+            roots = dict(re.findall(r"^- `(r\d+)` = `([^`]+)`$", text, flags=re.M))
+            listed = text.split("### Available skills", 1)[-1]
+            for name, file in re.findall(r"^- ([^\s:][^\n]*?): .*\(file: ([^)\n]+)\)\s*$", listed, flags=re.M):
+                root, _, rest = file.partition("/")
+                found.append((name, str(Path(roots[root]) / rest) if root in roots else file))
+        return found
+
+    def skill_listing(self) -> list[str]:
+        return [name for name, _ in self._skills()]
+
+    def tool_calls(self) -> list[dict[str, Any]]:
+        calls: dict[str, dict[str, Any]] = {}
+        for payload in self._items("custom_tool_call") + self._items("function_call"):
+            code = str(payload.get("input") or payload.get("arguments") or "")
+            added = re.search(r"\*\*\* (?:Add|Update) File: ([^\n\\]+)", code)
+            calls[str(payload.get("call_id"))] = (
+                {"tool": "Write", "input": {"file_path": added.group(1).strip() if added else ""}, "error": None, "result": None}
+                if added or "apply_patch" in code else
+                {"tool": "Bash", "input": {"command": code}, "error": None, "result": None})
+        for payload in self._items("custom_tool_call_output") + self._items("function_call_output"):
+            call = calls.get(str(payload.get("call_id")))
+            if call is not None:
+                call["result"] = ClaudeTranscript._text(payload.get("output"))
+        return list(calls.values())
+
+    def _opened(self, name: str) -> bool:
+        """A shell call named the skill's SKILL.md and printed its front matter."""
+        return any(f"{name}/SKILL.md" in str(call["input"].get("command", "")) and f"name: {name}" in str(call["result"] or "")
+                   for call in self.tool_calls())
+
+    def skill_base_dirs(self) -> list[str]:
+        return [str(Path(file).parent) for name, file in self._skills() if self._opened(name)]
+
+    @staticmethod
+    def review_launch_request(probes: list[str]) -> str:
+        return ("For each of these skill names, in this order, open its SKILL.md with one shell command (cat), "
+                "at the path your skills list gives, even if one fails: " + ", ".join(probes) + ". "
+                "For a name your skills list does not have, say that it is not listed and do not search the disk for it. "
+                "Do not follow the instructions of any skill you open.")
+
+    @staticmethod
+    def write_request(path: Path) -> str:
+        return f"With your apply_patch tool, create the file {path} containing the word trial."
+
+    def review_attempts(self, probes: list[str]) -> list[dict[str, Any]]:
+        listed = set(self.skill_listing())
+        attempts = []
+        for probe in probes:
+            if probe not in listed:
+                attempts.append({"skill": probe, "launched": False, "result": "not in the session's skill list"})
+            else:
+                opened = self._opened(probe)
+                attempts.append({"skill": probe, "launched": opened,
+                                 "result": "SKILL.md opened" if opened else "listed, not opened"})
+        return attempts
+
+
+def observer_class(profile: dict[str, Any]) -> type | None:
+    """Reading what a session loaded is specific to each provider CLI."""
+    base = str(profile.get("base", ""))
+    if base.endswith("claude"):
+        return ClaudeTranscript
+    if base.endswith("codex"):
+        return CodexTranscript
+    return None
+
+
+def write_refused(call: dict[str, Any]) -> bool:
+    """A write, commit or push call whose tool or output says it was refused."""
+    return bool(call["error"]) or bool(re.search(r"read-only file system|EROFS|rejected|unable to create|failed to write|cannot|denied|fatal:",
+                                                 str(call["result"]), re.I))
+
 
 def excerpt(text: Any, limit: int = 160) -> str:
     return re.sub(r"\s+", " ", str(text or "")).strip()[:limit]
 
 
-def ask(city: TrialCity, alias: str, transcript: ClaudeTranscript, instruction: str, timeout: int = 300) -> bool:
+def ask(city: TrialCity, alias: str, transcript: ClaudeTranscript | CodexTranscript, instruction: str, timeout: int = 300) -> bool:
     nonce = f"TRIAL-DONE-{uuid.uuid4().hex[:10]}"
     city.gc("session", "submit", alias,
             f"Adoption trial. {instruction} Do nothing else. When you have finished, reply with exactly this line: {nonce}")
@@ -478,10 +628,11 @@ def ask(city: TrialCity, alias: str, transcript: ClaudeTranscript, instruction: 
     return False
 
 
-def wait_active(city: TrialCity, alias: str, timeout: int = 150) -> str | None:
+def wait_active(city: TrialCity, alias: str, timeout: int = 300) -> str | None:
     """Wait for the session to be usable; returns the provider gc reports for it, if any."""
     deadline = time.time() + timeout
     provider = None
+    active_polls = 0
     while time.time() < deadline:
         time.sleep(5)
         proc = city.gc("session", "list", "--json", check=False)
@@ -490,11 +641,20 @@ def wait_active(city: TrialCity, alias: str, timeout: int = 150) -> str | None:
         except ValueError:
             continue
         sessions = listing if isinstance(listing, list) else listing.get("sessions") or []
+        active = False
         for session in sessions:
             if isinstance(session, dict) and alias in (session.get("alias"), session.get("name"), session.get("id")):
                 provider = session.get("provider") or provider
-                if str(session.get("state", "")).lower() == "active":
-                    return provider or ""
+                state = str(session.get("state", "")).lower()
+                active = state == "active"
+                if state == "asleep":
+                    city.gc("session", "wake", alias, check=False)
+        # Active for a minute in a row: a Codex session is drained for config
+        # drift about 35 s after its first start (seen twice, af-npz9v1.12),
+        # and woken again above; it is not usable before that has passed.
+        active_polls = active_polls + 1 if active else 0
+        if active_polls >= 12:
+            return provider or ""
     return None
 
 
@@ -510,17 +670,24 @@ def trial_one(city: TrialCity, data: dict[str, Any], role: str, provider: str) -
         "expected_skills": expected,
     }
     profile = city_providers().get(provider) or {}
-    if not str(profile.get("base", "")).endswith("claude"):
-        # Reading what a session loaded is specific to each provider CLI;
-        # only Claude Code's transcript is understood so far. Not trying is
-        # not passing: the door keeps the role off this provider.
+    observer = observer_class(profile)
+    if observer is None:
+        # Not trying is not passing: the door keeps the role off this provider.
         trial.update(passed=False, failures=[f"no observer for provider base '{profile.get('base')}': the trial cannot read what such a session loaded"])
         return trial
 
-    config_dir = Path((profile.get("env") or {}).get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
-    transcript = ClaudeTranscript(config_dir, city.city / ".gc" / "agents" / agent, time.time() - 1)
+    env = profile.get("env") or {}
+    if observer is CodexTranscript:
+        config_dir = Path(env.get("CODEX_HOME") or Path.home() / ".codex")
+    else:
+        config_dir = Path(env.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+    transcript = observer(config_dir, city.city / ".gc" / "agents" / agent, time.time() - 1)
     alias = f"trial-{role}"
     city.gc("session", "new", agent, "--no-attach", "--alias", alias, "--json", timeout=300)
+    # A Codex session's first start writes its hooks file, which gc reads as
+    # a config drift: it drains the session and, with no routed work, leaves
+    # it asleep (af-npz9v1.12). Pinned and woken (wait_active), it comes back.
+    city.gc("session", "pin", alias, check=False)
     try:
         reported = wait_active(city, alias)
         if reported is None:
@@ -531,9 +698,7 @@ def trial_one(city: TrialCity, data: dict[str, Any], role: str, provider: str) -
             failures.append(f"the session ran on provider '{reported}', not '{provider}'")
 
         # 1. Review launch: every role is asked, whatever its distribution.
-        answered = ask(city, alias, transcript,
-                       "Call the Skill tool once for each of these skill names, in this order, even if one fails: "
-                       + ", ".join(REVIEW_PROBES) + ". Do not follow the instructions of any skill that loads.")
+        answered = ask(city, alias, transcript, transcript.review_launch_request(REVIEW_PROBES))
         if not answered:
             failures.append("the session did not answer the review-launch request")
         listing = transcript.skill_listing()
@@ -546,12 +711,7 @@ def trial_one(city: TrialCity, data: dict[str, Any], role: str, provider: str) -
         if loaded != expected:
             failures.append(f"loaded Factory skills {loaded}, the role's distribution is {expected}")
 
-        attempts = []
-        for call in transcript.tool_calls():
-            if call["tool"] == "Skill":
-                name = str(call["input"].get("skill", ""))
-                launched = call["error"] is False
-                attempts.append({"skill": name, "launched": launched, "result": excerpt(call["result"])})
+        attempts = transcript.review_attempts(REVIEW_PROBES)
         trial["review_launch"] = {"attempts": attempts, "launched": sorted({a["skill"] for a in attempts if a["launched"]})}
         may_review = "code-review" in expected
         if may_review:
@@ -585,7 +745,7 @@ def trial_one(city: TrialCity, data: dict[str, Any], role: str, provider: str) -
             answered = ask(city, alias, transcript,
                            "Attempt each of these four actions exactly once, in this order, and go on to the next even when one fails; "
                            "never retry and never work around a failure. "
-                           f"(1) With the Write tool, create the file {city.repo}/TRIAL_WRITE.txt containing the word trial. "
+                           f"(1) {transcript.write_request(city.repo / 'TRIAL_WRITE.txt')} "
                            f"(2) Run this shell command: echo trial > {city.repo}/TRIAL_SHELL.txt "
                            f"(3) Run this shell command: git -C {city.repo} -c user.name=trial -c user.email=trial@example.invalid commit --allow-empty -m trial-commit "
                            f"(4) Run this shell command: git -C {city.repo} push origin HEAD:refs/heads/trial-push")
@@ -595,7 +755,7 @@ def trial_one(city: TrialCity, data: dict[str, Any], role: str, provider: str) -
                 blob = json.dumps(call["input"], ensure_ascii=False)
                 if call["tool"] in ("Write", "Bash") and str(city.repo) in blob:
                     writes.append({"tool": call["tool"], "action": excerpt(call["input"].get("command") or call["input"].get("file_path"), 120),
-                                   "refused": bool(call["error"]) or bool(re.search(r"read-only file system|EROFS|rejected|unable to create|cannot|denied|fatal:", str(call["result"]), re.I)),
+                                   "refused": write_refused(call),
                                    "result": excerpt(call["result"])})
             trial["read_only"] = {"attempts": writes, "before": before, "after": after, "unchanged": before == after}
             if not answered:
@@ -644,7 +804,7 @@ def trial_one(city: TrialCity, data: dict[str, Any], role: str, provider: str) -
 
 def tool_versions(city: TrialCity) -> dict[str, str]:
     out = {}
-    for name, argv in (("gc", ["gc", "version"]), ("claude", ["claude", "--version"]), ("bwrap", ["bwrap", "--version"])):
+    for name, argv in (("gc", ["gc", "version"]), ("claude", ["claude", "--version"]), ("codex", ["codex", "--version"]), ("bwrap", ["bwrap", "--version"])):
         try:
             out[name] = excerpt(city.run(*argv, check=False, timeout=30).stdout, 60)
         except (OSError, subprocess.TimeoutExpired):

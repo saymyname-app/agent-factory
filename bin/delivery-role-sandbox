@@ -53,6 +53,10 @@ fi
 rw "${GC_HOME:-$HOME/.gc}/cache/repos/.packman-cache.lock"
 [ -d "$HOME/.config/gh" ] && args+=(--tmpfs "$HOME/.config/gh")
 [ -d "$HOME/.ssh" ] && args+=(--tmpfs "$HOME/.ssh")
+# Codex lists the user skills of ~/.agents/skills on top of the role's own
+# copies (af-npz9v1.12: tdd, codebase-design, ponytail-review seen on a
+# reviewer): a role sees its distribution only.
+[ -d "$HOME/.agents/skills" ] && args+=(--tmpfs "$HOME/.agents/skills")
 unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN
 export DELIVERY_ROLE_READ_ONLY=1 DELIVERY_ROLE_SANDBOXED=1
 exec bwrap "${args[@]}" -- "$DELIVERY_ROLE_SANDBOX_EXEC" "$@"
