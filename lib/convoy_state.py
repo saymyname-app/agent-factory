@@ -3821,7 +3821,12 @@ def cmd_open_code_review(args: argparse.Namespace) -> int:
         request["models"] = models
     else:
         last = record["rounds"][-1] if record["rounds"] else None
-        if last and last["verdict"] == "unfavorable":
+        # A review outdated by commits made outside the correction round
+        # (a resume) is replayed in full at the new tip: no session will
+        # answer its findings (af-s31cvi).
+        replayed = (kind == "review" and last is not None and last["kind"] == "review"
+                    and last["commit"] != commit and not last.get("responses") and KEY_CORRECTION not in metadata)
+        if last and last["verdict"] == "unfavorable" and not replayed:
             if last["kind"] == "judgement":
                 raise Refusal(
                     f"le ticket {args.ticket} est encore refusé après son tour de correction : aucune revue ne s'ouvre")

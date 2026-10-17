@@ -49,7 +49,7 @@ two controls says:
 
 | Control | `accepted` | `refused` | `pending` |
 |---|---|---|---|
-| code review | last round favorable at the tip | an unfavorable review at the tip (its Blocking Findings), or answers judged unfavorably | a round open, none yet, or a favorable one at an older commit |
+| code review | last round favorable at the tip | an unfavorable review at the tip (its Blocking Findings), or answers judged unfavorably | a round open, none yet, or one at an older commit: `bin/code-review` replays it at the tip, an unfavorable one too while no round is taken (af-s31cvi) |
 | Ticket Evaluation (for a `prefactoring`, the startup control) | last round favorable at the tip | `return_to_author` at the tip (what was not observed, or a product that does not start) | open, none at the tip, an outage, or an unobservable criterion (a Planning Exception, `docs/TICKET_EVALUATION.md`) |
 
 | At the tip, no round taken yet | What `settle` does |
