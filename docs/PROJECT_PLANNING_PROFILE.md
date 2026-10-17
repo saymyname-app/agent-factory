@@ -171,20 +171,23 @@ A descriptor carries no production/deployment field and no language field
 ```bash
 ./bin/project-planning-profile describe config/project-descriptors/agent-factory.json
 ./bin/project-planning-profile describe config/project-descriptors/saymyname.json
-./bin/project-planning-profile list
+./bin/project-planning-profile list --city-registry <rigs.json>
 ```
 
 `describe` validates one descriptor and prints it as JSON, or
 `{"valid": false, "error": "..."}` naming the exact field at fault.
 `list` validates every `config/project-descriptors/*.json` file (or
 `--descriptors-dir`) and prints the declared projects — `project_id`,
-`display_name`, `rigs` — as JSON.
+`display_name`, `rigs` — as JSON. It refuses (`{"ok": false, "error":
+"..."}`, exit 1) a rig declared in more than one project and, given
+`--city-registry <JSON array of the rigs the City registers>`, a registered
+rig that belongs to no project, naming each rig and its cause (Spec
+af-2zseit, story 100).
 
 `lib/project_registry.sh`'s `project_registry_check_project_coverage
-<descriptors_dir> <rig...>` is the CI-run check that a rig belongs to
-exactly one project: it fails loudly, naming the rig, if a rig Gas City
-has registered belongs to no descriptor's `rigs` or to more than one
-(`tests/project-registry-test.sh`). Adding a project is a new
+<descriptors_dir> <rig...>` is the one copy of that rule, run by `list` and
+by CI: it fails loudly, naming the rig, if a rig belongs to no descriptor's
+`rigs` or to more than one (`tests/project-registry-test.sh`). Adding a project is a new
 `config/project-descriptors/*.json` file plus a PR; per `AGENTS.md`, a PR
 that adds or removes a project does not merge itself — `pr-autopilot`
 holds it for Benjamin.

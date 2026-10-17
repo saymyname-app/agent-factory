@@ -18,6 +18,10 @@ projet" (spec af-oohx2x .12, T04, one rig = one project): `describe` and
 `list` validate the extended descriptor shape -- project_id, display_name,
 rigs, knowledge_repo, roadmap_path, rituals_status_command, and an optional
 per-rig promotion_branch -- and never accept a production or language field.
+`list` also refuses a rig that two projects declare and, given the rigs the
+City registers (`--city-registry`, spec af-2zseit story 100), a registered
+rig that no project declares, naming the rig and its cause through
+lib/project_registry.sh's project_registry_check_project_coverage.
 
 Spec af-wf4w5r .12 (D01, T01) extends the descriptor with one more optional
 block, `launch`: the Delivery Workflow's launch recipe, entry points, health
@@ -48,6 +52,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -717,6 +722,25 @@ def cmd_describe(args: argparse.Namespace) -> int:
     return 0
 
 
+def check_project_coverage(descriptors_dir: Path, projects: list[dict[str, Any]], registered: list[str]) -> None:
+    """One rig belongs to exactly one project (spec af-2zseit, story 100).
+    The rule has one copy, lib/project_registry.sh's
+    project_registry_check_project_coverage, the check CI already runs: it
+    is asked about every rig the City registers (none may lack a project)
+    and every rig a descriptor declares (none may have two), so a rig
+    declared twice is refused with or without a City registry. Raises
+    naming each rig and its cause."""
+    rigs = list(dict.fromkeys([*registered, *(rig for project in projects for rig in project["rigs"])]))
+    proc = subprocess.run(
+        ("bash", "-c", 'source "$1" && shift && project_registry_check_project_coverage "$@"', PROGRAM,
+         str(repo_root_default() / "lib" / "project_registry.sh"), str(descriptors_dir), *rigs),
+        text=True, capture_output=True,
+    )
+    if proc.returncode != 0:
+        problems = [line.removeprefix("project_registry: ").strip() for line in proc.stderr.splitlines() if line.strip()]
+        raise ProfileError("; ".join(problems) or f"project coverage check failed (exit {proc.returncode})")
+
+
 def cmd_list(args: argparse.Namespace) -> int:
     directory = Path(args.descriptors_dir)
     projects = []
@@ -731,6 +755,14 @@ def cmd_list(args: argparse.Namespace) -> int:
                     "stacks": descriptor["stacks"],
                 }
             )
+        registered: list[str] = []
+        if args.city_registry:
+            try:
+                city_registry = json.loads(Path(args.city_registry).read_text())
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ProfileError(f"cannot read city registry: {exc}") from exc
+            registered = safe_id_list(city_registry, "city_registry")
+        check_project_coverage(directory, projects, registered)
     except ProfileError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
         return 1
@@ -782,6 +814,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--descriptors-dir",
         default=str(repo_root_default() / "config" / "project-descriptors"),
         help="directory holding config/project-descriptors/*.json files",
+    )
+    list_parser.add_argument(
+        "--city-registry",
+        help="path to a JSON array of the City's registered rig ids: each must belong to exactly one project",
     )
     list_parser.set_defaults(func=cmd_list)
 
