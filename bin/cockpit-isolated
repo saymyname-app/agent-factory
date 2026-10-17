@@ -143,9 +143,8 @@ def write_tracker_and_projects(city: synthetic_city.SyntheticCity, home: str) ->
         # The tracker fails for as long as this file exists: always.
         env["FAKE_BD_FAIL_FLAG_FILE"] = str(beads)
     if city.reading == synthetic_city.UNANSWERED:
-        # The tracker answers no read for as long as this file exists, and
-        # the cockpit waits for its answer.
-        env["FAKE_BD_SILENT_FLAG_FILE"] = str(beads)
+        # A tracker that answers no read, and a cockpit that waits for it.
+        env["COCKPIT_BD_BIN"] = str(FIXTURES / "requests" / "silent-bd")
         env["COCKPIT_BEADS_READ_TIMEOUT_SECONDS"] = UNANSWERED_READ_TIMEOUT_SECONDS
     return env
 

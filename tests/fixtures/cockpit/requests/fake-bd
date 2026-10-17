@@ -8,10 +8,7 @@ proposal across polls the way FakeGc.push_event() does for gc (Testing
 Decisions: "faux bd"). Missing/unset state, or the presence of the file named by
 $FAKE_BD_FAIL_FLAG_FILE (toggle-able mid-test, unlike an env var fixed at
 process start), simulates an unreadable source (spec .16: "Inconnu :
-illisible ...") without killing the cockpit process under test. The presence
-of the file named by $FAKE_BD_SILENT_FLAG_FILE simulates a source that never
-answers: the call waits, and ends without an answer when the process that
-made it ends.
+illisible ...") without killing the cockpit process under test.
 
 It keeps the two read shapes the real `bd` has (af-1al0t1): plain
 `list` hides closed beads, `list --all --limit 0 --has-metadata-key K`
@@ -25,20 +22,9 @@ failure, not a false green from a silent no-op.
 import json
 import os
 import sys
-import time
-
-
-def _wait_while_silent():
-    silent_flag = os.environ.get("FAKE_BD_SILENT_FLAG_FILE")
-    caller = os.getppid()
-    while silent_flag and os.path.exists(silent_flag):
-        if os.getppid() != caller:
-            sys.exit(1)
-        time.sleep(0.5)
 
 
 def _read_state():
-    _wait_while_silent()
     fail_flag = os.environ.get("FAKE_BD_FAIL_FLAG_FILE")
     if fail_flag and os.path.exists(fail_flag):
         sys.stderr.write("fake bd (cockpit-requests): forced failure\n")
