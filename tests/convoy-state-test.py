@@ -1859,6 +1859,33 @@ class ConvoyStateTest(unittest.TestCase):
             "open-code-review", CONVOY, T1, "--kind", "judgement", "--commit", self.REVIEWED, "--base", self.REVIEWED,
             mention="réponse")
 
+    def test_a_review_outdated_before_any_correction_round_is_replayed_at_the_new_tip(self):
+        # af-s31cvi: the author finished again at a new tip outside the round.
+        self.refused_review()
+        self.finished_slice(self.CORRECTED)
+
+        self.open_code_review("review", self.CORRECTED)
+
+        request = self.code_review()["request"]
+        self.assertEqual(("review", self.CORRECTED), (request["kind"], request["commit"]))
+
+    def test_a_review_whose_findings_were_answered_is_judged_not_replayed(self):
+        self.corrected_review()
+
+        self.assert_refused_and_nothing_written(
+            "open-code-review", CONVOY, T1, "--kind", "review", "--commit", self.CORRECTED, "--base", self.REVIEW_BASE,
+            mention="Blocking Finding")
+
+    def test_a_review_is_not_replayed_while_the_correction_round_answers_its_findings(self):
+        self.refused_review()
+        self.evaluated(**self.NOT_OBSERVED)
+        self.ok("open-correction", CONVOY, T1, "--commit", self.REVIEWED)
+        self.finished_slice(self.CORRECTED)
+
+        self.assert_refused_and_nothing_written(
+            "open-code-review", CONVOY, T1, "--kind", "review", "--commit", self.CORRECTED, "--base", self.REVIEW_BASE,
+            mention="Blocking Finding")
+
     def test_the_judgement_is_opened_on_the_answered_list_against_the_correction(self):
         self.corrected_review()
 

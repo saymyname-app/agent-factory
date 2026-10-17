@@ -587,6 +587,25 @@ class CorrectionRoundTest(unittest.TestCase):
         self.assertIn("revue de code", settled["waiting"][0]["reason"])
         self.assertEqual(([], writes), (self.launches(), self.write_log.read_text()))
 
+    def test_a_review_outdated_before_the_round_is_replayed_and_the_round_opens_once_both_answer_at_the_tip(self):
+        # af-s31cvi (T02, 17/10): an author resumed outside the round
+        # finished again; the evaluation refused the new tip.
+        first = self.finished_slice()
+        self.reviewed(first, CONTRADICTS)
+        latest = self.commit_on(SLICE, {NOTE: "reprise hors tour de correction\n"})
+        self.finish(SLICE, latest)
+        self.evaluated(latest, observed=False)
+
+        waiting = self.settle()
+        self.assertEqual([SLICE], self.tickets(waiting["waiting"]))
+        self.assertIsNone(self.shown()["correction"])
+
+        self.reviewed(latest, CONTRADICTS)
+        settled = self.settle()
+
+        self.assertEqual([SLICE], self.tickets(settled["launched"]))
+        self.assertEqual(latest, self.shown()["correction"]["commit"])
+
     def test_a_ticket_refused_by_the_review_alone_gets_its_round_with_nothing_from_the_evaluation(self):
         tip = self.finished_slice()
         self.reviewed(tip, CONTRADICTS)
