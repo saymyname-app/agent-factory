@@ -81,11 +81,9 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
 
         relaunched = self.advance(CONVOY)
         stopped = self.advance(CONVOY)
-        after = self.advance(CONVOY)
 
         self.assertEqual([T1], [entry["ticket"] for entry in self.code_review_of(relaunched)["relaunched"]])
         self.assertEqual([T1], [entry["ticket"] for entry in self.code_review_of(stopped)["stopped"]])
-        self.assertIsNone(self.code_review_of(after))
         self.assertEqual(2, len(self.code_review_launches()))
         stop = json.loads(self.bead(T1)["metadata"]["gc.flow.stop"])
         self.assertEqual("code_review_no_result", stop["reason"])
@@ -93,6 +91,56 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         listed = self.run_ok(ESCALATION, "list").stdout
         self.assertEqual(1, listed.count(f"{T1} — "), listed)
         self.assertEqual(base, self.git("rev-parse", self.INTEGRATION))
+
+    def review_stopped(self):
+        """T1 finished, its code review silent twice: stopped
+        `code_review_no_result` and raised; then the settings of a resume
+        (T59 and T62R, af-wu6xj7: the reviewer seat was held by a zombie)."""
+        self.integrated()
+        self.code_reviewed("silent", "silent", "favorable", timeout_seconds=0)
+        self.advance(CONVOY)
+        self.finished(T1)
+        for _ in range(3):
+            self.advance(CONVOY)
+        self.assertEqual("code_review_no_result", self.shown(T1)["stop"]["reason"])
+        project = self.root / "config" / "projects" / "fx-rig.toml"
+        project.write_text(project.read_text().replace('formulas = "fx-start"', 'formulas = "fx-start,fx-resume"'))
+        settings = json.loads((self.root / "config" / "delivery-flow.json").read_text())
+        settings["resume"] = {"formula": "fx-resume", "role": None}
+        (self.root / "config" / "delivery-flow.json").write_text(json.dumps(settings))
+
+    def test_a_ticket_whose_code_review_gave_no_result_is_resumed_once_per_stop_and_reviewed_afresh(self):
+        self.review_stopped()
+        self.assertEqual(1, len([line for line in self.needs() if T1 in line]))
+
+        resumed = self.advance(CONVOY)
+        again = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "code_review_no_result")], [(r["id"], r["cause"]) for r in self.of(resumed, "resumed")])
+        self.assertEqual([], self.of(again, "resumed"))
+        shown = self.shown(T1)
+        self.assertEqual((1, None, None), (shown["counters"]["resumes"], shown["stop"], shown["exit"]))
+        # The stop is lifted, not erased; its request leaves the operator's list.
+        self.assertEqual("code_review_no_result", shown["resume"]["entries"][-1]["stop"]["reason"])
+        self.assertEqual([], [line for line in self.needs() if T1 in line])
+        # The spent round is dropped: the next finished exit is reviewed afresh.
+        self.assertNotIn("request", json.loads(self.bead(T1)["metadata"]["gc.flow.code_review"]))
+        self.run_ok(STATE, "set-exit", CONVOY, T1, "--exit", "finished")
+
+        reviewed = self.advance(CONVOY)
+
+        self.assertEqual([T1], [entry["ticket"] for entry in self.code_review_of(reviewed)["launched"]])
+        self.assertEqual("favorable", self.shown(T1)["code_review"]["state"]["verdict"])
+
+    def test_a_code_review_stop_the_operator_answered_is_not_resumed(self):
+        self.review_stopped()
+        self.env["ESCALATION_DOOR_NOW"] = "4102444800"  # the answer comes after the stop
+        self.run_ok(ESCALATION, "repondre", T1, "a")
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([], self.of(answer, "resumed"))
+        self.assertEqual("code_review_no_result", self.shown(T1)["stop"]["reason"])
 
     def test_a_code_review_that_cannot_be_sent_fails_the_pass_and_merges_nothing(self):
         base = self.integrated()

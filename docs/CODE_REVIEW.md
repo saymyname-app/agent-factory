@@ -223,7 +223,11 @@ stays refused. The round is launched **once more**, on a new bead, for a new
 session. When that second launch gives no result either, the ticket is
 stopped (`code_review_no_result`) and raised once to the operator through
 `bin/escalation-door`; `bin/convoy-state stop-raised` records it, and a stop
-whose request could not be sent is raised by the next pass.
+whose request could not be sent is raised by the next pass. `bin/convoy-advance`
+then resumes the ticket once per stop, within K (cause `code_review_no_result`,
+`docs/CONVOY_ADVANCE.md`, af-wu6xj7): the request is withdrawn, the stop kept
+on the resume, the spent round dropped, and the next finished exit is
+reviewed afresh. An answer of the operator to that request leaves it stopped.
 
 A dispatch the door refuses or defers launched nothing: it counts no launch
 and its bead is closed. A deferral is listed under `deferred` and tried
