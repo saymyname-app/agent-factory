@@ -469,6 +469,11 @@ MERGE_OUTCOMES_WITH_COMMIT = ("merged", "red")
 # the anchor turns it « accepté par Benjamin ».
 DEVIATION_KINDS = ("absent", "structure", "style", "token")
 DEVIATION_KIND_WITHOUT_ANCHOR = "token"
+# How many deviations of a fidelity result the ticket keeps, in the order
+# measured; the full list stays in the sealed piece. A tracker write is one
+# command line, and one argument cannot pass 128 KiB (af-m0hvif: 22,313
+# deviations on af-0gonc9, a 2.7 MB result).
+FIDELITY_DEVIATIONS_KEPT = 100
 FIDELITY_GREEN = "vert"
 FIDELITY_RED = "rouge"
 FIDELITY_ACCEPTED = "accepté par Benjamin"
@@ -1540,7 +1545,8 @@ def fidelity_record(raw: Any, metadata: dict[str, Any] | None = None) -> dict[st
     anchor and property. The verdict is the one the deviations give. With
     `metadata` (at a write), the full record must be a piece of the evidence
     store captured at that commit: the result is written by code."""
-    record = stored_record(raw, ("commit", "verdict", "piece", "screens", "states", "deviations", "at"))
+    record = stored_record(raw, ("commit", "verdict", "piece", "screens", "states", "deviations", "at"),
+                           ("deviation_count", "deviation_anchors"))
     commit = valid_commit(record["commit"], "commit du contrôle de fidélité")
     names_of(record["screens"], "écrans comparés")
     states = record["states"]
@@ -1567,9 +1573,20 @@ def fidelity_record(raw: Any, metadata: dict[str, Any] | None = None) -> dict[st
                 raise Refusal(f"écart de token mal formé : {deviation!r} (un token se lit sur les sources, sans ancre)")
         elif any(not isinstance(name, str) or not name for name in located):
             raise Refusal(f"écart sans ancre ou sans taille d'écran : {deviation!r}")
-    expected = "unfavorable" if deviations else "favorable"
+    count = len(deviations)
+    if "deviation_count" in record or "deviation_anchors" in record:
+        count, anchors = record.get("deviation_count"), record.get("deviation_anchors")
+        if not isinstance(count, int) or isinstance(count, bool) or count <= len(deviations) \
+                or len(deviations) != FIDELITY_DEVIATIONS_KEPT:
+            raise Refusal(f"nombre d'écarts mal formé : {count!r} pour {len(deviations)} écart(s) gardé(s)")
+        if not isinstance(anchors, list) \
+                or any(anchor is not None and not isinstance(anchor, str) for anchor in anchors) \
+                or len(set(anchors)) != len(anchors) \
+                or any(deviation["anchor"] not in anchors for deviation in deviations):
+            raise Refusal(f"ancres des écarts mal formées : {anchors!r}")
+    expected = "unfavorable" if count else "favorable"
     if record["verdict"] != expected:
-        raise Refusal(f"verdict de fidélité incohérent : {record['verdict']!r} avec {len(deviations)} écart(s)")
+        raise Refusal(f"verdict de fidélité incohérent : {record['verdict']!r} avec {count} écart(s)")
     if not isinstance(record["piece"], str) or not PIECE_RE.match(record["piece"]):
         raise Refusal(f"pièce du relevé de fidélité absente ou mal formée : {record['piece']!r}")
     if metadata is not None:
@@ -1696,14 +1713,16 @@ def tracked_items(ticket: dict[str, Any], by_id: dict[str, dict[str, Any]]) -> l
 
 def fidelity_rendered(record: dict[str, Any], accepted_anchors: list[str]) -> dict[str, Any]:
     """The result with its computed state: green without deviation; else red,
-    unless a resolved Planning Exception names the anchor of each one."""
+    unless a resolved Planning Exception names the anchor of each one. A
+    result cut to its first deviations is judged on the anchors of all."""
     deviations = [
         {**deviation, "status": FIDELITY_ACCEPTED if deviation["anchor"] in accepted_anchors else DEVIATION_OPEN}
         for deviation in record["deviations"]
     ]
-    if not deviations:
+    anchors = record.get("deviation_anchors", [deviation["anchor"] for deviation in deviations])
+    if not anchors:
         state = FIDELITY_GREEN
-    elif all(deviation["status"] == FIDELITY_ACCEPTED for deviation in deviations):
+    elif all(anchor in accepted_anchors for anchor in anchors):
         state = FIDELITY_ACCEPTED
     else:
         state = FIDELITY_RED
@@ -4577,9 +4596,10 @@ def cmd_set_handoff(args: argparse.Namespace) -> int:
 def cmd_set_fidelity(args: argparse.Namespace) -> int:
     """Record the result of the mechanical fidelity check of a ticket, as
     bin/prototype-fidelity measured it at `--commit`: what it compared and
-    every deviation. The verdict is computed here and written with it, in
-    one tracker write; the full record must be a piece of the evidence store
-    at that commit."""
+    every deviation, or past FIDELITY_DEVIATIONS_KEPT the first ones, their
+    count and the anchors of all. The verdict is computed here and written
+    with it, in one tracker write; the full record must be a piece of the
+    evidence store at that commit."""
     ticket = marked_ticket(args.convoy, args.ticket)
     given = json_argument(args.file, "résultat du contrôle de fidélité")
     unknown = sorted(set(given) - {"screens", "states", "deviations"})
@@ -4594,6 +4614,14 @@ def cmd_set_fidelity(args: argparse.Namespace) -> int:
         "commit": commit, "verdict": verdict, "piece": args.piece, "screens": given.get("screens"),
         "states": given.get("states"), "deviations": given.get("deviations"), "at": at,
     }), metadata_of(ticket))
+    deviations = record["deviations"]
+    if len(deviations) > FIDELITY_DEVIATIONS_KEPT:
+        anchors = {deviation["anchor"] for deviation in deviations}
+        record = fidelity_record(encode({
+            **record, "deviations": deviations[:FIDELITY_DEVIATIONS_KEPT], "deviation_count": len(deviations),
+            "deviation_anchors": sorted(anchor for anchor in anchors if anchor is not None)
+            + ([None] if None in anchors else []),
+        }))
     values = {KEY_FIDELITY: encode(record),
               VERDICT_PREFIX + "fidelity": encode({"state": verdict, "commit": commit, "at": at})}
     write_metadata(args.ticket, values)

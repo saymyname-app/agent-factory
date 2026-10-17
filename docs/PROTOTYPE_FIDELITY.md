@@ -106,7 +106,8 @@ With `--convoy` and `--ticket`, on a convoy that carries the new-flow mark:
    exists**, and it changes neither the result nor the exit code;
 3. the result is written on the ticket by `bin/convoy-state set-fidelity`
    (`docs/CONVOY_STATE.md`): the commit, the screens, per state the
-   viewports and anchors compared, every deviation, and the verdict
+   viewports and anchors compared, every deviation — past 100, the first
+   100, their count and the anchors of all (af-m0hvif) —, and the verdict
    `gc.flow.verdict.fidelity` at that commit, in one tracker write. Like any
    verdict it stops being valid when a commit is added to the branch.
 

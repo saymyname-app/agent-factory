@@ -148,7 +148,7 @@ Every answer is one JSON object on stdout.
 | Resumes | `gc.flow.resume` | ticket | `entries`, oldest first, one per resume code opened (T20): `cause` (`interrupted`, `returned`, `unblocked`, `answered`, `behind`, `evaluation_no_result`, `stage_removed`, `code_review_no_result`), `ref` (the one-line fact that asked for it), `session` (the author session it takes over from, or null), `exit` (the Ticket Exit it replaced, `{exit, at}`, or null), `stop` (only for `evaluation_no_result`, and for `stage_removed` a stop `test_review_refused` or `test_review_no_result`, and for `code_review_no_result`, whose resume also drops the `request` of `gc.flow.code_review`: the stop it lifted, as it was), `launches`: at most one `{bead, at}`; `at` |
 | Parkings lifted | `gc.flow.park_lifts` | ticket | `entries`, oldest first, one per parking lifted on the ticket that caused it (T20): `cause`, `detail`, `parked_at`, `request` (the bead of the answered request), `option` (the letter taken, or null), `resumes` (the counter at that moment), `at` |
 | Grouped request | `gc.flow.grouped_request` | convoy | the bead that carries the one request of a convoy in which nothing but parked tickets is left (T20) and, once it reached the escalation door, the `sha256:` signature of the parkings it names, with `lift_option` (a letter) and `lifts` (the tickets that option lifts), both or neither |
-| Fidelity result | `gc.flow.fidelity` | ticket | `commit`, `verdict` (`favorable` / `unfavorable`, computed), `piece` (the sealed record), `screens`, `states` (state → `viewports`, `anchors` compared), `deviations`: each `state`, `viewport`, `anchor`, `kind` (`absent`, `structure`, `style`, `token`), `property`; a `token` deviation has neither viewport nor anchor |
+| Fidelity result | `gc.flow.fidelity` | ticket | `commit`, `verdict` (`favorable` / `unfavorable`, computed), `piece` (the sealed record), `screens`, `states` (state → `viewports`, `anchors` compared), `deviations`: each `state`, `viewport`, `anchor`, `kind` (`absent`, `structure`, `style`, `token`), `property`; a `token` deviation has neither viewport nor anchor; past 100 deviations, the first 100 only, with `deviation_count` (all of them) and `deviation_anchors` (the anchors of all, `null` for a token deviation) |
 | Planning Exceptions | `gc.flow.planning_exceptions` | ticket | `entries`, oldest first: `kind` (`semantic`, `topology`), `summary`, `anchors` (the anchors whose deviation it asks to accept, possibly none), `accept_option` (the letter of the request's option that accepts it; with anchors or items only), `prior_response_at`, `at`, and `resolution` (`option`, `at`) once a later one was raised; T23: `items` (the tracked elements of the Ticket Handoff it names, `deviations.N` / `not_done.N`; absent when none) and `repair` (the `repair` ticket code published once the operator asked for one, with the answer frozen beside it) |
 | Operator's answer | `gc.needs_benjamin`, `gc.escalation_response_option`, `gc.escalation_response_at` (read only: written by `bin/escalation-door`) | ticket | what resolves the last Planning Exception |
 | Integration branch | `gc.flow.integration` | convoy | `branch`, the `protected` branch it takes up, and `base`, the full commit SHA of the protected branch it left from; written once |
@@ -864,7 +864,12 @@ without screen, without state, or with a state without viewport or anchor (a
 result that compared nothing); a deviation outside its shape, of a kind
 outside the list, on a state that was not compared, or without its anchor;
 and a result whose record is not a piece of the evidence store captured at
-that commit (`--piece`): it is written by code, never given.
+that commit (`--piece`): it is written by code, never given. Every deviation
+is checked, but the ticket keeps the first 100 only, with
+`deviation_count` and `deviation_anchors`; the full list stays in the
+sealed piece. A tracker write is one command line, and the kernel refuses
+one argument above 128 KiB (af-m0hvif: 22,313 deviations on one ticket, a
+2.7 MB result; `gc bd` refuses `--metadata @file`).
 
 `raise-planning-exception` is called by `bin/ticket-exit` (T16,
 `docs/TICKET_EXIT.md`) before the request reaches the operator. It refuses a
@@ -901,7 +906,8 @@ open (`gc.needs_benjamin` is `none`). `accepted_anchors` is the union of the
 anchors of the accepted ones. `fidelity` is rendered with each deviation's
 `status` — `accepté par Benjamin` when its anchor is one of them, else
 `ouvert` — and a computed `state`: `vert` without deviation, `accepté par
-Benjamin` when every deviation is, else `rouge`. The stored verdict is not
+Benjamin` when every deviation is — for a cut result, when every anchor of
+`deviation_anchors` is accepted —, else `rouge`. The stored verdict is not
 rewritten: a gate reads `fidelity.state`.
 
 T23: `show` renders `tracked_items` on each ticket: one entry per deviation
