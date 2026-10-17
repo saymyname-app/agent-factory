@@ -2445,6 +2445,42 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertEqual([{**self.DEVIATION, "status": "ouvert"}], ticket["fidelity"]["deviations"])
         self.assertEqual("unfavorable", ticket["verdicts"]["fidelity"]["state"])
 
+    def test_set_fidelity_keeps_the_first_deviations_of_a_result_longer_than_one_command_line_argument(self):
+        # af-m0hvif: 22,313 deviations on one ticket, a result no single
+        # argument of a tracker write can carry (128 KiB on Linux).
+        anchors = [f"ancre_{n:02}" for n in range(30)]
+        deviations = [{"state": "empty", "viewport": "desktop", "anchor": anchors[n % 30], "kind": "style",
+                       "property": f"propriété-{n}"} for n in range(3000)]
+        deviations.append({"state": "empty", "viewport": None, "anchor": None, "kind": "token", "property": "--bg"})
+        self.measured_slice()
+
+        self.set_fidelity(states={"empty": {"viewports": ["desktop"], "anchors": anchors}}, deviations=deviations)
+
+        fidelity = self.ticket(self.show(expect=EXIT_UNRULED), T1)["fidelity"]
+        self.assertGreater(len(json.dumps(deviations)), 128 * 1024)
+        self.assertEqual(("unfavorable", "rouge", 3001, [*anchors, None]),
+                         (fidelity["verdict"], fidelity["state"], fidelity["deviation_count"],
+                          fidelity["deviation_anchors"]))
+        self.assertEqual([{**d, "status": "ouvert"} for d in deviations[:100]], fidelity["deviations"])
+
+    def test_a_cut_fidelity_result_is_accepted_only_when_every_anchor_of_it_is(self):
+        anchors = [f"ancre_{n:02}" for n in range(30)]
+        # ancre_29 is named only past the first 100 deviations, the ones the ticket keeps.
+        deviations = [{"state": "empty", "viewport": "desktop", "anchor": anchors[n % (29 if n < 100 else 30)],
+                       "kind": "absent", "property": "présence"} for n in range(300)]
+        self.measured_slice()
+        self.set_fidelity(states={"empty": {"viewports": ["desktop"], "anchors": anchors}}, deviations=deviations)
+
+        self.raise_exception(*anchors[:-1])
+        self.answer("c")
+        fidelity = self.ticket(self.show(expect=EXIT_UNRULED), T1)["fidelity"]
+        self.assertEqual({"accepté par Benjamin"}, {d["status"] for d in fidelity["deviations"]})
+        self.assertEqual("rouge", fidelity["state"])
+
+        self.raise_exception(*anchors)
+        self.answer("c", at="2099-01-02T00:00:00Z")
+        self.assertEqual("accepté par Benjamin", self.ticket(self.show(expect=EXIT_UNRULED), T1)["fidelity"]["state"])
+
     def test_set_fidelity_refuses_a_result_that_code_did_not_measure(self):
         self.marked_slice()
         # No piece of the evidence store at that commit.
