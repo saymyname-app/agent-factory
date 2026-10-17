@@ -60,8 +60,15 @@ class ReplacementDraftTest(unittest.TestCase):
                 "spec_state": "APPROVED_SPEC", "approved_digest": digest(spec_body)}),
             "source": bead("source", source, {"gc.plane": "planning", "gc.project_id": "agent-factory",
                 "spec_id": "spec", "approved_by": "benjamin", "approved_digest": graph_digest}),
-            "convoy": bead("convoy", metadata={"gc.flow.mark": "new-flow/v1", "gc.project_id": "agent-factory",
+            "convoy": {**bead("convoy", metadata={"gc.flow.mark": "new-flow/v1", "gc.project_id": "agent-factory",
                 "gc.spec_id": "spec", "gc.spec_digest": digest(spec_body), "gc.graph_digest": graph_digest}),
+                # What the convoy tracks, as `bd show --json` lists it: the resulting graph.
+                "dependencies": [
+                    {"id": "stopped", "dependency_type": "tracks", "status": "in_progress",
+                     "metadata": {"gc.ticket_id": "T01R2", "gc.graph_digest": graph_digest}},
+                    {"id": "next", "dependency_type": "tracks", "status": "open",
+                     "metadata": {"gc.ticket_id": "T02", "gc.graph_digest": graph_digest, "gc.blocked_by": "T01R2"}},
+                ]},
             "stopped": bead("stopped", metadata={"gc.ticket_id": "T01R2", "gc.ticket_kind": "vertical_slice",
                 "gc.spec_id": "spec", "gc.spec_digest": digest(spec_body), "gc.graph_digest": graph_digest,
                 "gc.flow.stop": json.dumps({"reason": "evaluation_no_result"}),
@@ -166,6 +173,44 @@ class ReplacementDraftTest(unittest.TestCase):
             self.assertNotEqual(0, proc.returncode, revision)
             self.assertIn("refused: revision", json.loads(proc.stdout)["error"])
             self.assertEqual(before, json.loads(self.state_path.read_text()))
+
+    # --- the resulting graph: a ticket published by an earlier revision (af-k08bi1) ----
+
+    LATER = "sha256:" + "c" * 64
+
+    def later_revision(self, waiter_digest=None, untrack=False):
+        """A later partial revision (another ticket only) moved the convoy to
+        LATER; the stopped ticket stays at the digest of the source draft."""
+        state = json.loads(self.state_path.read_text())
+        convoy = state["beads"]["convoy"]
+        convoy["metadata"]["gc.graph_digest"] = self.LATER
+        deps = convoy["dependencies"]
+        deps.append({"id": "other", "dependency_type": "tracks", "status": "open",
+                     "metadata": {"gc.ticket_id": "T03", "gc.graph_digest": self.LATER}})
+        if waiter_digest:
+            deps[1]["metadata"]["gc.graph_digest"] = waiter_digest
+        if untrack:
+            del deps[0]
+        self.state_path.write_text(json.dumps(state))
+
+    def test_replaces_a_ticket_published_by_an_earlier_revision_still_in_force(self):
+        self.later_revision()
+        proc = self.run_create()
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        draft = json.loads(self.state_path.read_text())["beads"][json.loads(proc.stdout)["draft"]]
+        parsed = yaml.safe_load(draft["description"])
+        self.assertEqual(self.LATER, draft["metadata"]["revises_digest"])
+        self.assertEqual(["T01R3", "T02"], [ticket["id"] for ticket in parsed["tickets"]])
+        self.assertEqual(["T01R3"], parsed["tickets"][1]["blocked_by"])
+        self.assertEqual([{"ticket": "T01R2", "planning_exception": "pe-replacement"}], parsed["withdrawn"])
+
+    def test_refuses_a_ticket_the_convoy_does_not_track(self):
+        self.later_revision(untrack=True)
+        self.assert_refused_unwritten("does not track")
+
+    def test_refuses_a_waiting_ticket_published_by_another_revision(self):
+        self.later_revision(waiter_digest=self.LATER)
+        self.assert_refused_unwritten("waits for T01R2")
 
     # --- a ticket parked by its own answered Planning Exception (af-6854ef) ----
 

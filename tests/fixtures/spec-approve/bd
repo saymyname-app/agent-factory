@@ -74,6 +74,7 @@ def public_view(bead):
         "metadata": bead["metadata"],
         "parent": bead["parent"],
         "assignee": bead.get("assignee", ""),
+        **({"dependencies": bead["dependencies"]} if "dependencies" in bead else {}),
     }
 
 

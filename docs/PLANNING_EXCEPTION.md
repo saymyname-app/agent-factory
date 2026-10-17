@@ -53,9 +53,16 @@ python3 tests/planning-exception-test.py
 `bin/replacement-draft create` is the bounded entry before `planning-exception
 resolve` and `ticket-graph-publish bd-patch` when the project owner has already
 authorized exactly one replacement for an already stopped `vertical_slice`.
-It clones the approved source graph, preserves the stopped ticket's criteria
-and declared scope, replaces only its graph key and dependent edges, and creates
-one immutable revised Ticket Graph Draft in a single tracker write. The draft
+It reads the convoy's resulting graph, what the convoy tracks after every
+approved revision, as `bd-patch` does (af-k08bi1). `--source-draft` is the
+draft approved at the stopped ticket's digest: the convoy's current draft, or an
+earlier revision still in force (a later partial revision left the ticket at
+its digest). The ticket must be tracked by the convoy and open. The tool
+preserves the stopped ticket's criteria and declared scope, replaces only its
+graph key and the edges of the open tickets that wait for it (each must come
+from the same source draft, or it refuses), and creates one immutable partial
+revision in a single tracker write: the replacement, those waiting tickets and
+the withdrawal, with `revises_digest` the convoy's current digest. The draft
 cites the decision, stopped ticket, convoy, approved Spec/digest, criteria,
 scope and useful commit. It never edits or closes the stopped ticket, never
 removes `gc.flow.stop`, never publishes the patch and never launches work.

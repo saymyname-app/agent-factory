@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Create one immutable revised graph draft for an authorized replacement of a stopped ticket, or of a
-ticket parked by its own Planning Exception once the operator answered it."""
+ticket parked by its own Planning Exception once the operator answered it. It reads the convoy's
+resulting graph: the ticket may come from an earlier revision still in force (docs/PLANNING_EXCEPTION.md)."""
 from __future__ import annotations
 
 import argparse
@@ -176,10 +177,17 @@ def create(args: argparse.Namespace) -> dict[str, Any]:
     graph_digest = digest(source_text)
     require(source_meta.get("approved_digest") == graph_digest,
             f"source draft {args.source_draft} changed after approval")
-    require(convoy_meta.get("gc.graph_digest") == graph_digest,
-            f"convoy {args.convoy} does not carry source draft {args.source_draft}")
+    # The convoy's resulting graph (af-k08bi1): what it tracks after every
+    # revision, as bd-patch reads it. The source draft is the one that
+    # published the stopped ticket, possibly an earlier revision still in force.
+    current_digest = str(convoy_meta.get("gc.graph_digest") or "")
+    require(current_digest, f"convoy {args.convoy} carries no graph digest")
+    tracked = {str(dep.get("id")): dep for dep in convoy.get("dependencies") or []
+               if isinstance(dep, dict) and dep.get("dependency_type") == "tracks"}
+    require(args.stopped_ticket in tracked,
+            f"convoy {args.convoy} does not track stopped ticket {args.stopped_ticket}")
     require(stopped_meta.get("gc.graph_digest") == graph_digest,
-            f"stopped ticket {args.stopped_ticket} does not belong to convoy {args.convoy}")
+            f"stopped ticket {args.stopped_ticket} was not published by source draft {args.source_draft}")
 
     spec_id = str(convoy_meta.get("gc.spec_id") or "")
     require(spec_id and spec_id == source_meta.get("spec_id") == stopped_meta.get("gc.spec_id"),
@@ -212,6 +220,14 @@ def create(args: argparse.Namespace) -> dict[str, Any]:
     require(len(originals) == 1, f"source draft does not contain exactly one {old_key}")
     require(not any(isinstance(ticket, dict) and ticket.get("id") == args.replacement_id for ticket in tickets),
             f"source draft already contains {args.replacement_id}")
+    graph = {str((dep.get("metadata") or {}).get("gc.ticket_id") or ""): dep for dep in tracked.values()}
+    require(args.replacement_id not in graph, f"convoy {args.convoy} already tracks {args.replacement_id}")
+    waiters = {key for key, dep in graph.items() if dep.get("status") != "closed"
+               and old_key in str((dep.get("metadata") or {}).get("gc.blocked_by") or "").split(",")}
+    for key in sorted(waiters):
+        require((graph[key].get("metadata") or {}).get("gc.graph_digest") == graph_digest
+                and sum(isinstance(t, dict) and t.get("id") == key for t in tickets) == 1,
+                f"{key} waits for {old_key} and was not published by source draft {args.source_draft}")
     original = originals[0]
     require(original.get("kind") == "vertical_slice", f"source ticket {old_key} is not a vertical_slice")
     criteria = copy.deepcopy(original.get("acceptance_criteria"))
@@ -244,7 +260,10 @@ def create(args: argparse.Namespace) -> dict[str, Any]:
                 f"scope {scope_digest}{revised_note}; useful commit {args.useful_commit}. The replaced ticket, its stop or parking, "
                 "evidence, refusals and counters remain untouched.")
     replacement["what_it_delivers"] = str(replacement.get("what_it_delivers") or "").rstrip() + citation
-    draft["tickets"] = [replacement if ticket is original else ticket for ticket in tickets]
+    # A partial revision, as bd-patch applies it: the replacement and the open
+    # tickets that wait for the replaced one; the rest of the graph stays as published.
+    draft["tickets"] = [replacement] + [ticket for ticket in tickets
+                                        if isinstance(ticket, dict) and ticket.get("id") in waiters]
     for ticket in draft["tickets"]:
         if isinstance(ticket, dict) and isinstance(ticket.get("blocked_by"), list):
             ticket["blocked_by"] = [args.replacement_id if item == old_key else item for item in ticket["blocked_by"]]
@@ -252,14 +271,14 @@ def create(args: argparse.Namespace) -> dict[str, Any]:
     require(isinstance(withdrawn, list) and not any(isinstance(item, dict) and item.get("ticket") == old_key
                                                     for item in withdrawn),
             f"source draft already withdraws {old_key}")
-    draft["withdrawn"] = [*withdrawn, {"ticket": old_key, "planning_exception": args.planning_exception}]
+    draft["withdrawn"] = [{"ticket": old_key, "planning_exception": args.planning_exception}]
     body = yaml.safe_dump(draft, allow_unicode=True, sort_keys=False)
     body_digest = digest(body)
     identifier = "af-r" + hashlib.sha256((args.decision + "\0" + args.stopped_ticket + "\0" +
                                              args.replacement_id + "\0" + body_digest).encode()).hexdigest()[:8]
     draft_meta = {
         "gc.plane": "planning", "gc.project_id": project, "spec_id": spec_id,
-        "revises_digest": graph_digest, "approved_by": args.approved_by,
+        "revises_digest": current_digest, "approved_by": args.approved_by,
         "approved_evidence": f"{args.decision}: {evidence}", "approved_digest": body_digest,
         "replacement_decision": args.decision, "replacement_of": args.stopped_ticket,
         "replacement_convoy": args.convoy, "replacement_commit": args.useful_commit,
