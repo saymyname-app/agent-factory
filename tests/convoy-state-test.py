@@ -2154,6 +2154,19 @@ class ConvoyStateTest(unittest.TestCase):
         verdict = self.ticket(self.show(), T1)["verdicts"]["evaluation"]
         self.assertEqual(("favorable", self.REVIEWED), (verdict["state"], verdict["commit"]))
 
+    def test_record_evaluation_records_the_demonstration_line_alone_without_criteria_states(self):
+        # ADR-0030 L4: the frozen criterion tests prove the criteria; the
+        # Evaluator of an interface ticket judges the demonstration line.
+        self.opened_evaluation()
+        content = self.states()
+        del content["criteria"]
+
+        answer = self.record_evaluation(content)
+
+        self.assertEqual(("favorable", "favorable"), (answer["outcome"], answer["verdict"]))
+        (round_,) = self.evaluation()["rounds"]
+        self.assertEqual(([], "observed"), (round_["criteria"], round_["demonstration_line"]["state"]))
+
     def test_record_evaluation_computes_the_outcome_of_each_refusal(self):
         not_observed = {"state": "not_observed", "reason": "le nombre n'est pas sur la page"}
         by_criterion = {"state": "unobservable", "cause": "criterion", "reason": "aucun point d'entrée ne le sert"}
@@ -2199,8 +2212,6 @@ class ConvoyStateTest(unittest.TestCase):
 
         without_evidence = changed()
         del without_evidence["criteria"][0]["evidence"]
-        removed = json.loads(json.dumps(valid))
-        del removed["criteria"][1]
         twice = json.loads(json.dumps(valid))
         twice["criteria"].append(dict(twice["criteria"][0]))
         other_commit = self.captured("evaluation.other", commit=self.CORRECTED)
@@ -2215,7 +2226,6 @@ class ConvoyStateTest(unittest.TestCase):
             (changed(evidence="evaluation.absent"), "n'a pas d'empreinte sur le ticket"),
             (changed(evidence=other_commit), "non au commit évalué"),
             (changed(text="Le nombre est visible"), "critère 1 reformulé"),
-            (removed, "critère 2 retiré"),
             (twice, "deux états rendus"),
             ({**valid, "criteria": valid["criteria"] + [{"number": 3, "text": "x", "state": "observed",
                                                          "evidence": "evaluation.seen"}]},
@@ -3061,7 +3071,8 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertEqual(3, ticket["counters"]["resumes"])
         self.assertEqual(2, ticket["resumes_left"])
         self.assertEqual({"interrupted": 2, "returned": 2, "unblocked": 2, "answered": 3, "behind": 3,
-                          "evaluation_no_result": 3, "stage_removed": 3, "commit_after_verdict": 3},
+                          "evaluation_no_result": 3, "stage_removed": 3, "code_review_no_result": 3,
+                          "commit_after_verdict": 3},
                          ticket["resumes_left_by_cause"])
         self.assertEqual(["interrupted", "returned", "unblocked"], [e["cause"] for e in ticket["resume"]["entries"]])
 
@@ -3563,7 +3574,8 @@ class ConvoyStateTest(unittest.TestCase):
     def test_the_bound_of_the_resumes_may_be_set_per_cause(self):
         self.interrupted_ticket()
         per_cause = {"interrupted": 1, "returned": 2, "unblocked": 3, "answered": 3, "behind": 3,
-                     "evaluation_no_result": 3, "stage_removed": 3, "commit_after_verdict": 3}
+                     "evaluation_no_result": 3, "stage_removed": 3, "code_review_no_result": 3,
+                     "commit_after_verdict": 3}
         self.bounds(resumes=per_cause, open_planning_exceptions=2)
 
         self.ok("open-resume", CONVOY, T1, "--cause", "returned", "--ref", "merge:1")
@@ -3578,7 +3590,7 @@ class ConvoyStateTest(unittest.TestCase):
     def test_a_malformed_bound_of_the_resumes_is_refused_and_nothing_is_written(self):
         self.interrupted_ticket()
         all_causes = ("interrupted", "returned", "unblocked", "answered", "behind", "evaluation_no_result",
-                      "stage_removed", "commit_after_verdict")
+                      "stage_removed", "code_review_no_result", "commit_after_verdict")
         missing = {cause: 3 for cause in all_causes[1:]}
         unknown = {**missing, "interrupted": 3, "fatigue": 3}
         zero = {**missing, "interrupted": 0}

@@ -191,8 +191,23 @@ workflows_json=$(gc bd list --status closed --metadata-field gc.kind=workflow \
 [ -n "$workflows_json" ] || workflows_json='[]'
 while IFS=$'\t' read -r bead_id code msg; do
   [ -z "$bead_id" ] && continue
-  bad "false-success close — $msg"
   bead_json=$(gc bd show "$bead_id" --json 2>/dev/null)
+  # af-it6qbk: a failure whose new-flow ticket already carries a stop or a
+  # resume was read and acted on by code -- root -> input convoy -> ticket.
+  # Any lookup that fails answers nothing, and the close is paged as before.
+  convoy_id=$(printf '%s' "$bead_json" | jq -r '(.[0].metadata["gc.input_convoy_id"] // .[0].metadata["gc.var.convoy_id"] // empty)' 2>/dev/null)
+  ticket_id=""; handled=""
+  if [ -n "$convoy_id" ]; then
+    ticket_id=$(gc bd show "$convoy_id" --json 2>/dev/null | python3 "$LIB/factory_watchdog.py" ticket-of 2>/dev/null)
+  fi
+  if [ -n "$ticket_id" ]; then
+    handled=$(gc bd show "$ticket_id" --json 2>/dev/null | python3 "$LIB/factory_watchdog.py" ticket-handled 2>/dev/null)
+  fi
+  if [ -n "$handled" ]; then
+    say "· false-success close — $bead_id failed, ticket $ticket_id already $handled by code — not paged"
+    continue
+  fi
+  bad "false-success close — $msg"
   current_status=$(printf '%s' "$bead_json" | jq -r '(.[0].status // "")')
   current_outcome=$(printf '%s' "$bead_json" | jq -r '(.[0].metadata["gc.outcome"] // "")')
   current_fp="${current_status}:${current_outcome}"

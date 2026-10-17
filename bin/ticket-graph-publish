@@ -2191,11 +2191,16 @@ def unapproved_patch_refusals(
     repair needs no new approval. Mechanically: the patch only adds repair
     tickets -- each naming what it restores, as any repair -- to a graph it
     otherwise leaves as published; a published ticket may only gain an added
-    repair among its blockers. A blocker already delivered cannot be carried
+    repair among its blockers, or an open repair of the convoy (bin/ticket-exit
+    puts there the one that already restores its defect, af-q6j79b: one
+    defect, one repair; the door does not judge the defect). A blocker
+    already delivered cannot be carried
     by a revision: leaving it out is not a reordering, the ticket keeps it
     (a ticket blocked technically has every blocker closed, T11)."""
     refusals: list[tuple[str, str]] = []
     added = {str(ticket["id"]) for ticket in tickets if str(ticket["id"]) not in members}
+    open_repairs = {key for key, member in members.items()
+                    if (member.get("metadata") or {}).get("gc.ticket_kind") == "repair" and member["status"] != "closed"}
     if parsed.get("withdrawn"):
         refusals.append((WHERE_DRAFT, "retire un ticket (withdrawn) : un retrait demande l'approbation du graphe révisé"))
     for ticket in tickets:
@@ -2217,10 +2222,10 @@ def unapproved_patch_refusals(
             if blocker and members.get(blocker, {}).get("status") != "closed"
         }
         drafted = {str(blocker) for blocker in ticket["blocked_by"]}
-        if not published <= drafted or not drafted - published <= added:
+        if not published <= drafted or not drafted - published <= added | open_repairs:
             refusals.append((
                 key,
-                "réordonné : un ticket publié ne peut que gagner un repair ajouté parmi ses bloqueurs "
+                "réordonné : un ticket publié ne peut que gagner un repair ajouté ou ouvert parmi ses bloqueurs "
                 f"(publié : {', '.join(sorted(published)) or 'aucun'} ; brouillon : {', '.join(sorted(drafted)) or 'aucun'})",
             ))
     if refusals:

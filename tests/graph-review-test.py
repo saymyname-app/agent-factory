@@ -258,7 +258,7 @@ class GraphReviewTest(unittest.TestCase):
         result = self.reviewed()
 
         asked = {"demonstrable_alone", "criteria_observable_falsifiable", "size_tenable", "same_surface_ordered",
-                 "declared_scope_includes_wiring"}
+                 "declared_scope_includes_wiring", "evaluation_tenable"}
         for ticket in ("T1", "T2", "T3"):
             self.assertEqual(asked, set(result["tickets"][ticket]["checks"]), ticket)
         # Only T3 declares a scope: the question is asked of it alone.
@@ -323,6 +323,98 @@ class GraphReviewTest(unittest.TestCase):
             {"critical_path_bounded": {"state": "favorable"}})))
         self.assertEqual(1, refused.returncode, refused.stdout)
         self.assertIn("question hors liste (critical_path_bounded)", refused.stderr)
+
+    # --- af-2zmznz: a revision is judged on the graph that results from it --
+
+    def as_revision(self):
+        """The draft revises a published graph: it carries only the tickets
+        it adds or changes, the others stay in the convoy."""
+        state = json.loads(self.state_path.read_text())
+        state["beads"]["draft-1"]["metadata"]["revises_digest"] = "sha256:published"
+        self.state_path.write_text(json.dumps(state))
+
+    def test_a_revision_is_not_asked_for_orphan_stories_it_cannot_see(self):
+        self.as_revision()
+        self.requested()
+
+        brief = self.tool("brief", "draft-1").json
+
+        self.assertNotIn("no_orphan_story", brief["graph_checks"])
+        refused = self.record(self.verdict_file(lambda verdict: verdict["graph"]["checks"].update(
+            {"no_orphan_story": {"state": "unfavorable", "reason": "les stories 1 à 19 n'ont aucun ticket"}})))
+        self.assertEqual(1, refused.returncode, refused.stdout)
+        self.assertIn("question hors liste (no_orphan_story)", refused.stderr)
+
+    def test_a_revision_leaves_story_coverage_to_the_graph_that_results_from_it(self):
+        self.as_revision()
+
+        result = self.reviewed()
+
+        check = result["graph"]["checks"]["no_orphan_story"]
+        self.assertEqual("not_applicable", check["state"])
+        self.assertIn("graphe résultant", check["reason"])
+        self.assertIn("bd-patch", check["reason"])
+        self.assertEqual("favorable", result["graph"]["verdict"])
+
+    # --- af-rmz8x2: a ticket's size counts the cost of its evaluation -------
+
+    def with_datasets(self, declared, cited):
+        """The project declares `declared` datasets; T2 names the first
+        `cited` of them at its entry point, as T02 (af-0gonc9) named 24."""
+        names = [f"etat-{n:02d}" for n in range(declared)]
+        folder = Path(self.env["FACTORY_ROOT"]) / "config" / "project-descriptors"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "delivery-fixture-city.json").write_text(json.dumps(
+            {"launch": {"datasets": {name: f"datasets/{name}.json" for name in names}}}))
+        draft = self.draft()
+        t2 = next(t for t in draft["tickets"] if t["id"] == "T2")
+        t2["acceptance_criteria"][0]["entry_point"] = "GET /, datasets : " + ", ".join(names[:cited])
+        self.seed(draft)
+
+    def test_a_ticket_that_names_more_datasets_than_one_evaluation_holds_is_refused_by_code(self):
+        self.with_datasets(declared=30, cited=16)
+
+        result = self.reviewed()
+
+        check = result["tickets"]["T2"]["checks"]["evaluation_tenable"]
+        self.assertEqual("unfavorable", check["state"])
+        self.assertIn("16 jeux de données", check["reason"])
+        self.assertIn("au plus 15", check["reason"])
+        self.assertEqual("unfavorable", result["tickets"]["T2"]["verdict"])
+        self.assertEqual("favorable", result["tickets"]["T1"]["checks"]["evaluation_tenable"]["state"])
+        self.assertEqual(["T2"], [refusal["target"] for refusal in result["refusals"]])
+
+    def test_datasets_listed_one_per_line_are_all_counted(self):
+        self.with_datasets(declared=30, cited=0)
+        draft = yaml.safe_load(self.beads()["draft-1"]["description"])
+        t2 = next(t for t in draft["tickets"] if t["id"] == "T2")
+        t2["acceptance_criteria"][0]["entry_point"] = "GET /, jeux :\n" + "\n".join(f"etat-{n:02d}" for n in range(16))
+        self.seed(draft)
+
+        result = self.reviewed()
+
+        self.assertIn("16 jeux de données", result["tickets"]["T2"]["checks"]["evaluation_tenable"]["reason"])
+
+    def test_the_reviewer_cannot_answer_the_evaluation_cost(self):
+        self.with_datasets(declared=30, cited=2)
+        self.requested()
+
+        refused = self.record(self.verdict_file(lambda verdict: verdict["tickets"]["T2"]["checks"].update(
+            {"evaluation_tenable": {"state": "favorable"}})))
+
+        self.assertEqual(1, refused.returncode, refused.stdout)
+        self.assertIn("question hors liste (evaluation_tenable)", refused.stderr)
+
+    def test_a_ticket_within_the_evaluation_bound_passes_and_the_reviewer_is_not_asked(self):
+        self.with_datasets(declared=30, cited=15)
+        self.requested()
+
+        brief = self.tool("brief", "draft-1").json
+
+        self.assertNotIn("evaluation_tenable", brief["tickets"][1]["checks"])
+        recorded = self.record(self.verdict_file())
+        self.assertEqual(0, recorded.returncode, recorded.stdout + recorded.stderr)
+        self.assertEqual("favorable", recorded.json["tickets"]["T2"]["checks"]["evaluation_tenable"]["state"])
 
     def test_review_is_routed_to_the_reviewer_role_as_a_fresh_piece_of_work(self):
         result = self.reviewed()

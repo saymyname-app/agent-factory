@@ -107,7 +107,7 @@ Plusieurs signaux peuvent rester muets sans que rien ne casse visiblement
 |---|---|
 | `gates` | une « Gate: human » ouverte depuis plus de 30 min (réglable) est re-signalée au Mayor, pas seulement laissée dans la file — sauf si l'attente est déjà une demande active dans la liste de l'opérateur (`gc.needs_benjamin` sur le bead que la porte bloque, ou sur le convoi qui le suit) : elle est alors affichée, jamais paginée (af-brjmv6) |
 | `prs` | une PR du dépôt Factory en `CONFLICTING`, ou dont aucun contrôle CI n'a jamais démarré, après 30 min — distincte d'une PR qui attend simplement son tour |
-| `workflows` | un bead molécule/workflow fermé `CLOSED` avec `gc.outcome` ≠ `pass` (le cas `on_fail=abort_scope` : chaque étape en aval passe `outcome=skipped` en silence) — sauf le workflow d'une formule du nouveau flux, nommée dans `config/delivery-flow.json` : son résultat est lu par `bin/convoy-advance`, qui reprend, relance ou arrête le ticket lui-même (af-yzo8fo.2) |
+| `workflows` | un bead molécule/workflow fermé `CLOSED` avec `gc.outcome` ≠ `pass` (le cas `on_fail=abort_scope` : chaque étape en aval passe `outcome=skipped` en silence) — sauf le workflow d'une formule du nouveau flux, nommée dans `config/delivery-flow.json` : son résultat est lu par `bin/convoy-advance`, qui reprend, relance ou arrête le ticket lui-même (af-yzo8fo.2) ; sauf aussi un échec dont le ticket du nouveau flux porte déjà un arrêt (`gc.flow.stop`) ou une reprise (`gc.flow.resume`), retrouvé par le convoi d'entrée du workflow : le code l'a déjà lu et traité, même pour une formule retirée de ce fichier (af-it6qbk) |
 | `gh-auth` | `gh auth status` échoue (token WSL périmé/invalide) — neuf scripts en dépendent (`reversibility-check`, `factory-guard`, `pr-autopilot`, `factory-do-work-workspace`, `factory-gh-rollup`, `factory-delivery-guard`, `deliver-close`, `factory-watchdog`, `factory-main-gate`) et échouaient chacun silencieusement de son côté (af-539b0, 2026-09-18) ; **un seul** bead partagé nommant les neuf scripts, **un seul** mail au Mayor par cooldown, et auto-résolu dès que `gh auth` revient — jamais un bead par script, jamais un par passage |
 
 **Observe et page seulement** (ADR-0016 §7) : il ne résout jamais une porte,
@@ -1091,12 +1091,13 @@ convoi qui porte la **marque du nouveau flux**.
   merge` laisse le ticket dans `waiting` tant que son évaluation n'est pas
   favorable à la pointe. Une évaluation absente, en cours ou sans résultat
   ne vaut pas accord.
-- **Un état par critère et pour la ligne de démonstration** : « observé »
-  (`observed`), « non observé » (`not_observed`) ou « inobservable »
-  (`unobservable`), chacun avec une **preuve capturée** par
-  `./bin/evidence-capture` sur le produit lancé. Un état sans preuve
-  valide, une preuve prise ailleurs que sur ce produit, un critère
-  reformulé ou retiré : refusés.
+- **Un état pour la ligne de démonstration** (ADR-0030 L4 : les tests de
+  critère gelés prouvent les critères ; seul un critère qu'une attente
+  validée compare garde un état) : « observé » (`observed`), « non
+  observé » (`not_observed`) ou « inobservable » (`unobservable`), avec une
+  **preuve capturée** par `./bin/evidence-capture` sur le produit lancé. Un
+  état sans preuve valide, une preuve prise ailleurs que sur ce produit, une
+  ligne reformulée : refusés.
 - **Le verdict est calculé par du code** : l'Evaluator ne rend jamais de
   verdict global. Favorable seulement si tout est « observé » avec preuve
   au commit de tête.
@@ -1107,7 +1108,8 @@ convoi qui porte la **marque du nouveau flux**.
   - « inobservable » par l'environnement : panne, non comptée comme refus ;
     l'évaluation est refaite une fois, puis le ticket est arrêté.
 - **Ce que reçoit l'Evaluator** (`brief`) : la ligne de démonstration, les
-  critères gelés, les adresses des produits lancés. Ni le Handoff, ni le
+  seuls critères qu'une attente validée compare, les adresses des produits
+  lancés. Ni le Handoff, ni le
   diff, ni le dépôt.
 - **`prefactoring`** : aucune session d'Evaluator. Du code lance le
   produit, capture la réponse de sa sonde, et enregistre qu'il démarre.
@@ -2072,3 +2074,31 @@ démarrer, le chemin critique du travail restant et la largeur par niveau.
   Exceptions) ne sont pas appliqués ici : `docs/CONVOY_ADVANCE.md`.
 
 Preuve : `tests/convoy-graph-test.py`.
+## `./bin/delivery-seat-release` — libérer le siège d'un vérificateur qui a servi
+
+**Ferme une session de relecteur ou d'Evaluator qui a rendu son travail et
+garde le seul siège de son rôle pendant que du travail d'un autre flux
+attend** (af-epkrcv). Gas City 1.5.0 garde ce siège chaud pour le travail en
+attente et annule son drain-ack ; la requête de travail du rôle ne lui offre
+plus rien (une session par revue, `docs/CODE_REVIEW.md`). Sans cette
+fermeture, le siège restait tenu jusqu'à `idle_timeout` (2 h) et les
+lancements en attente expiraient sans résultat (17/10, T59).
+
+```bash
+./bin/delivery-seat-release --check-only   # nomme les sièges, ne ferme rien
+./bin/delivery-seat-release                # ferme (ordre delivery-seat-release, toutes les 2 min)
+```
+
+- **Fermée** : session active de `delivery-reviewer` ou `delivery-evaluator`,
+  qui a déjà eu des beads assignés, tous fermés, alors que du
+  travail prêt, non assigné, routé vers son rôle attend dans un autre flux.
+- **Laissée** : une session qui n'a jamais servi (celle que Gas City démarre
+  pour le travail en attente), une session au travail, une session dont le
+  propre flux a le travail prêt, et tout autre modèle de session.
+- **Sorties** : 0 ; 1 si la liste des sessions ou le tracker ne se lit pas
+  (rien n'est fermé) ; 2, usage. Chaque fermeture : une ligne de
+  `var/delivery-seat-release.log`.
+- **Réversible** : la session fermée ne tenait aucun travail ; Gas City en
+  démarre une neuve pour le travail en attente.
+
+Preuve : `tests/delivery-seat-release-test.sh` ; l'ordre : `tests/delivery-seat-release-order-test.sh` (local-only).

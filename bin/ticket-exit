@@ -586,7 +586,7 @@ def operator_request(args: argparse.Namespace) -> dict[str, Any]:
             "que_faire": options}
 
 
-def planning_exception_request(args: argparse.Namespace) -> dict[str, Any]:
+def planning_exception_request(args: argparse.Namespace, ticket: Ticket) -> dict[str, Any]:
     """The request of a `planning_exception` exit: the question goes back to
     the Planning Run, so to the operator; the author decides nothing."""
     summary = args.summary
@@ -600,7 +600,8 @@ def planning_exception_request(args: argparse.Namespace) -> dict[str, Any]:
     if proc.returncode != 0 or needed is not True:
         raise Refusal(
             f"--kind {args.kind!r} n'est pas une Planning Exception (attendu : semantic ou topology) ; un défaut "
-            "technique hors du ticket sort par « bloqué technique »")
+            "technique hors du ticket sort par « bloqué technique », un défaut des outils ou des tests de l'usine "
+            "par « demande opérateur » (docs/TICKET_AUTHOR.md)")
     head = f"Planning Exception ({args.kind}) sur {args.ticket} : "
     options = [
         {"option": "Trancher dans le Planning Run",
@@ -625,9 +626,12 @@ def planning_exception_request(args: argparse.Namespace) -> dict[str, Any]:
             "consequence": "Le contrôle de fidélité lit cet écart comme accepté par toi ; le prototype reste la cible ailleurs."})
     else:
         # ADR-0030 L5: no Planning Exception without an accept path.
+        # A ticket stopped all green does not resume: its stop comes next.
+        all_green = (ticket.state.get("stop") or {}).get("reason") == "criterion_already_green"
         options.append({
             "option": "Accepter l'écart que décrit le Ticket Handoff",
-            "consequence": "Le ticket reprend avec cet écart ; arrêté (critères tous déjà verts), il te revient pour sa suite."})
+            "consequence": ("Le parcage est levé, pas l'arrêt (critères tous déjà verts) : l'arrêt te revient pour "
+                            "le clore comme satisfait.") if all_green else "Le ticket reprend avec cet écart."})
     return {
         "quoi": head + short(summary, REQUEST_LINE_MAX - len(head)),
         "pourquoi": "L'auteur ne tranche pas une question d'intention, de comportement ou de découpage.",
@@ -714,11 +718,24 @@ def draft_of(bead_id: str) -> dict[str, Any]:
     return parsed
 
 
+def same_defect(restores: Any, other: Any) -> bool:
+    """Two repairs restore the same thing: the same citation, or for a rule
+    of the repository, a rule of the same file (af-q6j79b)."""
+    if not (isinstance(restores, dict) and isinstance(other, dict)) or restores.get("kind") != other.get("kind"):
+        return False
+    ref, other_ref = str(restores.get("ref") or "").strip(), str(other.get("ref") or "").strip()
+    if restores.get("kind") == "repo_rule":
+        return ref.split(" : ", 1)[0].strip() == other_ref.split(" : ", 1)[0].strip()
+    return ref == other_ref
+
+
 def publish_repair(args: argparse.Namespace, ticket: Ticket, repair: dict[str, Any]) -> dict[str, Any]:
     """Draft the revision that adds the `repair` in front of the ticket, and
     send it through the patch door. The revision carries the ticket as it
     was published, with the repair among its blockers, and the blockers of
-    the ticket that are still open; nothing else of the graph."""
+    the ticket that are still open; nothing else of the graph. When an open
+    repair of the convoy already restores the same thing, the ticket waits
+    for it instead: one defect, one repair (af-q6j79b)."""
     convoy = read_bead(args.convoy)
     convoy_meta = convoy.get("metadata") or {}
     members = {
@@ -760,15 +777,48 @@ def publish_repair(args: argparse.Namespace, ticket: Ticket, repair: dict[str, A
         for blocker in entry["blocked_by"]:
             carry(blocker)
 
-    carry(own_key)
-    carried[own_key]["blocked_by"] = sorted([*carried[own_key]["blocked_by"], repair_key])
-    rigs = carried[own_key].get("target_rigs")
-    added = {"id": repair_key, "kind": "repair", "blocked_by": [],
-             "target_rigs": list(rigs) if isinstance(rigs, list) else rigs, **repair}
-    description = yaml.safe_dump(
-        {"flow_contract": NEW_FLOW, "operator_needs": [], "tickets": [added, *carried.values()]}, allow_unicode=True, sort_keys=False)
+    def waits_for(key: str, target: str, seen: set[str]) -> bool:
+        """`key` waits for `target` through open blockers, directly or not."""
+        for blocker in str((members.get(key, {}).get("metadata") or {}).get("gc.blocked_by") or "").split(","):
+            if blocker in members and members[blocker].get("status") != "closed" and blocker not in seen:
+                seen.add(blocker)
+                if blocker == target or waits_for(blocker, target, seen):
+                    return True
+        return False
 
-    title = f"Révision : repair {repair_key} devant {own_key} (bloqué technique, {ticket.id})"
+    # Neither the ticket itself nor a repair that waits for it: that would be a cycle.
+    open_repairs = [key for key, member in members.items()
+                    if (member.get("metadata") or {}).get("gc.ticket_kind") == "repair" and member.get("status") != "closed"
+                    and key != own_key and not waits_for(key, own_key, set())]
+    existing = None
+    for key in open_repairs:
+        source = str((members[key].get("metadata") or {}).get("gc.artifact_id") or "")
+        if source not in drafts:
+            drafts[source] = draft_of(source)
+        entry = next((t for t in drafts[source]["tickets"] if isinstance(t, dict) and str(t.get("id")) == key), None)
+        if entry is not None and same_defect(entry.get("restores"), repair.get("restores")):
+            existing = key
+            break
+
+    carry(own_key)
+    if existing is not None:
+        attached = {"key": existing, "id": members[existing]["id"], "blocks": ticket.id, "attached": True}
+        if existing in carried[own_key]["blocked_by"]:
+            return attached
+        carry(existing)
+        carried[own_key]["blocked_by"] = sorted([*carried[own_key]["blocked_by"], existing])
+        tickets = list(carried.values())
+        title = f"Révision : {own_key} attend le repair {existing} du même défaut (bloqué technique, {ticket.id})"
+    else:
+        carried[own_key]["blocked_by"] = sorted([*carried[own_key]["blocked_by"], repair_key])
+        rigs = carried[own_key].get("target_rigs")
+        added = {"id": repair_key, "kind": "repair", "blocked_by": [],
+                 "target_rigs": list(rigs) if isinstance(rigs, list) else rigs, **repair}
+        tickets = [added, *carried.values()]
+        title = f"Révision : repair {repair_key} devant {own_key} (bloqué technique, {ticket.id})"
+    description = yaml.safe_dump(
+        {"flow_contract": NEW_FLOW, "operator_needs": [], "tickets": tickets}, allow_unicode=True, sort_keys=False)
+
     created = gc_json("bd", "create", title, "-t", "task", "-d", description, "--json")
     draft_id = created.get("id") if isinstance(created, dict) else None
     if not draft_id:
@@ -795,6 +845,8 @@ def publish_repair(args: argparse.Namespace, ticket: Ticket, repair: dict[str, A
         reason = proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}"
         abandon(reason)
         raise Refusal(f"la porte de patch a refusé le ticket repair : {reason}")
+    if existing is not None:
+        return {**attached, "draft": draft_id}
     return {"key": repair_key, "id": result["ids"][repair_key], "draft": draft_id, "blocks": ticket.id}
 
 
@@ -823,7 +875,7 @@ def cmd_exit(args: argparse.Namespace) -> int:
     if args.exit == "operator_request":
         request = operator_request(args)
     elif args.exit == "planning_exception":
-        request = planning_exception_request(args)
+        request = planning_exception_request(args, ticket)
         deviations_name(args.anchor, sections)
     elif args.exit == "technically_blocked":
         repair = repair_of(args)

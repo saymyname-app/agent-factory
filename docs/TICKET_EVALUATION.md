@@ -11,12 +11,14 @@ author — has it evaluated on the **launched product**, before its merge:
   the project's profile, a free port, synthetic datasets). The author's work
   tree is never what is evaluated.
 - An **Evaluator** uses it: a session of the read-only Evaluator role, in a
-  fresh context, as a black box. It is given the demonstration line and the
-  frozen criteria only — neither the Ticket Handoff nor the diff.
-- It hands in **one state per criterion and one for the demonstration
-  line** — `observed`, `not_observed`, `unobservable` — each resting on a
-  piece captured by `bin/evidence-capture` on one of those products. It
-  gives no verdict: code computes it.
+  fresh context, as a black box. It is given the demonstration line only —
+  neither the Ticket Handoff nor the diff. The frozen criterion tests prove
+  the criteria (ADR-0030 L4, `af-npz9v1.7`).
+- It hands in **one state for the demonstration line** — `observed`,
+  `not_observed`, `unobservable` — resting on a piece captured by
+  `bin/evidence-capture` on one of those products; and one for each
+  criterion a validated expectation compares (below), whose state code
+  computes from the capture. It gives no verdict: code computes it.
 - Only an **interface ticket** (one whose publication posed a Validated
   Prototype reference, `interface: true` in `convoy-state show`) gets an
   Evaluator session (ADR-0030 L4): its frozen criteria are already proven by
@@ -144,7 +146,7 @@ declared game.
 The request retains historical addresses for Evidence Record verification
 after a switch; `live` names only the product still running. A favorable
 result requires a sealed `coverage` piece for every game of the ticket as well
-as one state and proof for every criterion and the demonstration line.
+as a state and proof for the demonstration line.
 The result carries `coverage: [{"dataset": NAME, "evidence": PIECE}, ...]`.
 A missing game or a piece captured on another game's address is refused.
 After the result, stop or withdrawal, the controller stops the remaining
@@ -171,7 +173,7 @@ session receives.
 | Field | Content |
 |---|---|
 | `demonstration_line` | the demonstration line of the approved ticket |
-| `criteria` | the acceptance criteria of the approved ticket, numbered in order |
+| `criteria` | only the acceptance criteria a validated expectation compares, with their number (usually none) |
 | `environments` | the active product: `dataset`, `address`, and `launch_state`, the launch record to name to the capture tool |
 | `datasets`, `product` | the games of the ticket (below) and the command to request one |
 | `entry_points` | the entry points the profile declares |
@@ -192,11 +194,15 @@ set by `bin/delivery-role-sandbox`).
 
 ```json
 {"commit": "<evaluated commit>",
- "criteria": [{"number": 1, "text": "<the criterion, copied exactly>", "state": "observed", "evidence": "evaluation.c1"},
-              {"number": 2, "text": "…", "state": "not_observed", "evidence": "evaluation.c2", "reason": "…"}],
  "demonstration_line": {"text": "<the line, copied exactly>", "state": "unobservable", "cause": "environment",
                         "evidence": "evaluation.demo", "reason": "…"}}
 ```
+
+`criteria` is given only for the criteria of `brief.criteria`, in the same
+state shape with their `number`. A state handed in for any other criterion
+(an Evaluator briefed before ADR-0030 L4) is not recorded. The round keeps
+the key `criteria`: empty, or the compared criteria; a round recorded
+before holds one state per criterion and still reads as before.
 
 Refused, with nothing written:
 
@@ -212,10 +218,10 @@ Refused, with nothing written:
   products launched for this evaluation** — a capture on a product the
   author, or anybody else, launched is not evidence;
 - criteria that are **not those of the approved ticket**: a criterion whose
-  `text` is not the approved one (« reformulé »), a criterion left out
-  (« retiré »), one the ticket does not have, two states for one criterion,
-  a demonstration line reworded; and criteria that changed on the ticket
-  since the request was opened;
+  `text` is not the approved one (« reformulé »), one the ticket does not
+  have, two states for one criterion, a criterion a validated expectation
+  compares left out, a demonstration line reworded; and criteria that
+  changed on the ticket since the request was opened;
 - states for another commit than the evaluated one, states when no
   evaluation is open, states on a `prefactoring`, states on a stopped
   ticket.
@@ -225,7 +231,7 @@ as the round:
 
 | States | Outcome | Verdict `gc.flow.verdict.evaluation` | What follows |
 |---|---|---|---|
-| every criterion and the demonstration line `observed` | `favorable` | favorable | the merge may follow |
+| the demonstration line (and every compared criterion) `observed` | `favorable` | favorable | the merge may follow |
 | a `not_observed` (and no `unobservable` by the criterion) | `return_to_author` | unfavorable | back to the author |
 | an `unobservable` by the **criterion** | `planning_exception` | unfavorable | Planning Exception: request to the operator, ticket parked |
 | an `unobservable` by the **environment**, nothing else refused | `environment_outage` | none written | an outage, not counted as a refusal: evaluated once more |
@@ -295,7 +301,14 @@ value without a measured base) is the floor, and an evaluation that covers
 many datasets gets `per_dataset_seconds` (240 s) for each one (af-vtg5kl).
 The 240 s come from T02 (`af-0gonc9`): about 3 min per dataset, at best 17
 of its 24 datasets in 3600 s (212 s each), plus a margin. Up to 15 datasets
-the delay stays 3600 s; 24 datasets get 5760 s. It is not a passed evaluation: no verdict is written and the merge
+the delay stays 3600 s; 24 datasets get 5760 s. The time a launch waits for
+a dataset it requested (`product`, until the controller has opened it) is
+added to its delay: it is the controller's time, not the Evaluator's
+(af-4nop0m; on 16/10 T02 waited up to 20 min per dataset while the passes
+stalled). `bin/convoy-state` adds each wait to the request (`waited`, in
+seconds) when the product is opened or another dataset is asked instead;
+a new launch starts at 0. The wait adds at most one more delay: a controller
+that never opens the dataset still lets the launch end. It is not a passed evaluation: no verdict is written and the merge
 stays refused. It is launched **once more**, on a new bead, for a new
 session (on products launched again if the first ones are gone). When that
 relaunch replaces the product of a ticket that establishes its launch recipe,
@@ -338,7 +351,7 @@ On the ticket, written by `bin/convoy-state` only (`docs/CONVOY_STATE.md`):
 
 | Key | Value |
 |---|---|
-| `gc.flow.evaluation` | `rounds`: each recorded round — an `evaluation` (`commit`, `criteria`: number, text, state, evidence, reason, cause; `demonstration_line`; optional `screen_findings`; `outcome`, `verdict`, `roles`, `environment`: dataset and address of each product, `recorded_by`, `conversation` when known, `at`) or a `startup` (`commit`, `started`, `evidence` and `environment`, or `detail`; `model`: `not_required` on a started ticket without interface, ADR-0030 L4; `outcome`, `verdict`, `at`). `request`, while an evaluation is open — `commit`, `criteria`, `demonstration_line`, `roles`, `environment` (with `state_file`), `launches` (`bead`, `at`, and `refused`: `{session, at}` when the session that answered had already served), `at`. `live`: the launch records of the products still to stop |
+| `gc.flow.evaluation` | `rounds`: each recorded round — an `evaluation` (`commit`, `criteria`: number, text, state, evidence, reason, cause, only for a criterion a validated expectation compares since ADR-0030 L4, one per criterion before; `demonstration_line`; optional `screen_findings`; `outcome`, `verdict`, `roles`, `environment`: dataset and address of each product, `recorded_by`, `conversation` when known, `at`) or a `startup` (`commit`, `started`, `evidence` and `environment`, or `detail`; `model`: `not_required` on a started ticket without interface, ADR-0030 L4; `outcome`, `verdict`, `at`). `request`, while an evaluation is open — `commit`, `criteria`, `demonstration_line`, `roles`, `environment` (with `state_file`), `launches` (`bead`, `at`, and `refused`: `{session, at}` when the session that answered had already served), `at`. `live`: the launch records of the products still to stop |
 | `gc.flow.verdict.evaluation` | the verdict of the last round that gave one, and the commit it judged |
 | `gc.flow.models` | per delivery role: `agent`, `provider`, `model`, `at` |
 | `gc.flow.stop` | reason `evaluation_no_result` or `evaluation_outage`, a one-line detail, and `raised` once the escalation door accepted the request |
@@ -365,7 +378,7 @@ reference receive neither brief field.
 
 - The states are an agent's judgement. Code bounds them (closed states, a
   sealed piece captured on the launched product at the evaluated commit,
-  criteria that are the approved ones, verdict computed); it does not check
+  a demonstration line that is the approved one, verdict computed); it does not check
   that the piece really shows what the state says. The captures are not
   replayed by code (Spec §0): the criterion tests are what code replays.
 - « The criteria of the approved digest » is held by the text: the criteria

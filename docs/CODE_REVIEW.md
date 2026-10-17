@@ -223,7 +223,11 @@ stays refused. The round is launched **once more**, on a new bead, for a new
 session. When that second launch gives no result either, the ticket is
 stopped (`code_review_no_result`) and raised once to the operator through
 `bin/escalation-door`; `bin/convoy-state stop-raised` records it, and a stop
-whose request could not be sent is raised by the next pass.
+whose request could not be sent is raised by the next pass. `bin/convoy-advance`
+then resumes the ticket once per stop, within K (cause `code_review_no_result`,
+`docs/CONVOY_ADVANCE.md`, af-wu6xj7): the request is withdrawn, the stop kept
+on the resume, the spent round dropped, and the next finished exit is
+reviewed afresh. An answer of the operator to that request leaves it stopped.
 
 A dispatch the door refuses or defers launched nothing: it counts no launch
 and its bead is closed. A deferral is listed under `deferred` and tried
@@ -241,6 +245,16 @@ One reviewer session renders one round (Spec §5, T42). Two things hold it:
   starts a new session, or wakes this one: gc 1.5.0 wakes a drained session
   again under the same name, and the agent's `wake_mode = "fresh"` makes
   that wake start a fresh conversation instead of resuming the last one.
+- When routed work of another workflow already waits as the session ends,
+  Gas City 1.5.0 keeps the warm seat for it and cancels the drain-ack: the
+  seat answers no_work and kept the role's one seat until `idle_timeout`
+  (2 h) while the waiting launches expired (17/10, T59; af-epkrcv).
+  `bin/delivery-seat-release`, run every 2 min by
+  `orders/delivery-seat-release.toml`, closes a reviewer or Evaluator
+  session that has served, holds no open bead, while ready routed
+  work of another workflow waits; Gas City then starts a fresh session for
+  it. A seat that never served, or whose own workflow has the ready work,
+  is left alone. Each close is a line of `var/delivery-seat-release.log`.
 - A round handed in by a session that already rendered a code review or a
   Ticket Evaluation of the convoy (or a review of tests recorded before
   ADR-0030 L3) is refused: the launch it answered is marked `refused` and
@@ -323,6 +337,7 @@ merge control, `tests/convoy-advance-test.py` the settlement by the pass,
 `tests/code-review-spec-scope-test.sh` runs the formula's own lines on a
 sample brief: the reviewer is handed the ticket and the « Testing Decisions »
 of the Spec, not the whole Spec.
+`tests/delivery-seat-release-test.sh` holds the seat release.
 `tests/code-review-isolated-city-test.sh` (local-only) replays the
 demonstration line on a real controller, with the real order, the real
 formula, the real dispatch door and merge command, and a scripted reviewer.

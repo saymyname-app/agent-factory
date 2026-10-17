@@ -9,10 +9,11 @@ started as routed work through bin/dispatch-door on the formula
 launched by bin/project-launch from a clean copy of the commit the author
 finished at, one dataset the ticket names at a time on a free port; the
 author's work tree is never what is evaluated. The Evaluator is given the
-demonstration line and the frozen criteria only -- neither the Ticket
-Handoff nor the diff -- and hands in one state per criterion and for the
-demonstration line (`observed`, `not_observed`, `unobservable`), each with a
-piece captured by bin/evidence-capture on one of those launched products.
+demonstration line only -- neither the Ticket Handoff nor the diff; the
+frozen criterion tests prove the criteria (ADR-0030 L4) -- and hands in its
+state (`observed`, `not_observed`, `unobservable`), with a piece captured by
+bin/evidence-capture on one of those launched products; a criterion a
+validated expectation compares keeps a state too.
 It gives no verdict: code computes it. For a `prefactoring` no session
 runs: code checks every game of the ticket in sequence and captures each probe answer.
 
@@ -816,14 +817,28 @@ def launch_timeout(settings: dict[str, Any], datasets: int) -> int:
     return max(settings["timeout_seconds"], datasets * settings.get("per_dataset_seconds", 0))
 
 
-def expired(launched: dict[str, Any], timeout: int) -> bool:
-    """A launch that gave no result: its time is over, its bead was
-    closed without states (the record closes the request first),
-    or the session that answered it had already rendered another review of
-    the convoy (`refused`, set by bin/convoy-state)."""
+def waited(request: dict[str, Any], launched: dict[str, Any]) -> int:
+    """Seconds this launch spent waiting for a dataset it requested: the
+    controller's time, not the Evaluator's (af-4nop0m)."""
+    wanted = request.get("wanted")
+    pending = 0
+    if wanted:
+        since = max(launched_at(wanted), launched_at(launched))
+        pending = max(0, int(time.time()) - since)
+    return int(request.get("waited", 0)) + pending
+
+
+def expired(launched: dict[str, Any], timeout: int, waited_seconds: int = 0) -> bool:
+    """A launch that gave no result: its time, less what it waited for a
+    requested dataset, is over; its bead was closed without states (the
+    record closes the request first), or the session that answered it had
+    already rendered another review of the convoy (`refused`, set by
+    bin/convoy-state)."""
     if launched.get("refused"):
         return True
-    if time.time() >= launched_at(launched) + timeout:
+    # At most one more delay: a controller that never opens the dataset
+    # still lets the launch end.
+    if time.time() >= launched_at(launched) + timeout + min(waited_seconds, timeout):
         return True
     try:
         return read_bead(launched["bead"]).get("status") == "closed"
@@ -994,7 +1009,7 @@ def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> d
             return startup_control(convoy, ticket_id, commit, settings)
         launches = current["launches"] if current else []
         timeout = launch_timeout(settings, len((current or {}).get("datasets") or datasets))
-        timed_out = bool(launches and expired(launches[-1], timeout))
+        timed_out = bool(launches and expired(launches[-1], timeout, waited(current, launches[-1])))
         desired = current.get("wanted") if current else None
         if timed_out:
             live = set(evaluation_of(ticket).get("live") or [])
@@ -1038,8 +1053,9 @@ def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> d
                         "dataset": entry["dataset"], "address": entry["address"]}
             convoy.load()
             current = evaluation_of(convoy.ticket(ticket_id))["request"]
-        if launches and not expired(launches[-1], timeout):
-            deadline = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(launched_at(launches[-1]) + timeout))
+        if launches and not expired(launches[-1], timeout, waited(current, launches[-1])):
+            deadline = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(
+                launched_at(launches[-1]) + timeout + min(waited(current, launches[-1]), timeout)))
             return {"ticket": ticket_id, "action": "pending", "commit": commit, "launches": len(launches),
                     "deadline": deadline}
         if len(launches) >= MAX_LAUNCHES:
@@ -1279,7 +1295,8 @@ def open_request(convoy: Convoy, ticket_id: str) -> dict[str, Any]:
 
 def cmd_brief(args: argparse.Namespace) -> int:
     """What the Evaluator session is given, and nothing of the author: the
-    demonstration line, the frozen criteria, the launched products, how a
+    demonstration line (and only the frozen criteria a validated expectation
+    compares, ADR-0030 L4), the launched products, how a
     piece of evidence is captured on them, and the shape of what it hands
     to `record`. Neither the Ticket Handoff, nor the code diff, nor the
     repository or branch; interface tickets may include exported visual
@@ -1291,13 +1308,21 @@ def cmd_brief(args: argparse.Namespace) -> int:
     active = [entry for entry in request["environment"] if entry["state_file"] in live]
     capture = [str(CAPTURE_TOOL), "command", args.convoy, args.ticket, "--piece", "evaluation.<name>",
                "--launch-state", "<launch_state of the product>", "--"]
+    datasets = request.get("datasets") or [entry["dataset"] for entry in request["environment"]]
+    expectations = planned(json.loads(profile_path.read_text(encoding="utf-8")), "ticket",
+                           [{"number": n, "text": t} for n, t in enumerate(request["criteria"], start=1)],
+                           datasets, request["commit"], args.ticket)
+    # ADR-0030 L4: the frozen criterion tests prove the criteria; a state is
+    # asked only for one a validated expectation compares.
+    compared = {entry.get("number") for entry in expectations}
+    criteria = [{"number": n, "text": t} for n, t in enumerate(request["criteria"], start=1) if n in compared]
     brief = {
         "ok": True, "convoy": args.convoy, "ticket": args.ticket, "commit": request["commit"],
         "demonstration_line": request["demonstration_line"],
-        "criteria": [{"number": number, "text": text} for number, text in enumerate(request["criteria"], start=1)],
+        "criteria": criteria,
         "environments": [{"dataset": entry["dataset"], "address": entry["address"], "launch_state": entry["state_file"]}
                          for entry in active],
-        "datasets": request.get("datasets") or [entry["dataset"] for entry in request["environment"]],
+        "datasets": datasets,
         "product": [str(BIN / PROGRAM), "product", args.convoy, args.ticket, "--dataset", "<declared dataset>", "--wait", "540"],
         "entry_points": launch_block.get("entry_points") or [],
         "controller_observation": (controller_observation(
@@ -1312,20 +1337,21 @@ def cmd_brief(args: argparse.Namespace) -> int:
         },
         "result_shape": {
             "commit": request["commit"],
-            "criteria": [{"number": "<criterion number>", "text": "<the criterion, copied exactly>",
-                          "state": "|".join(STATES), "evidence": "<piece name>",
-                          "reason": "<required unless observed>", "cause": "|".join(CAUSES) + " (unobservable only)"}],
+            **({"criteria": [{"number": "<number of a criterion of criteria>", "text": "<the criterion, copied exactly>",
+                              "state": "|".join(STATES), "evidence": "<piece name>",
+                              "reason": "<required unless observed>",
+                              "cause": "|".join(CAUSES) + " (unobservable only)"}]} if criteria else {}),
             "demonstration_line": {"text": "<the demonstration line, copied exactly>", "state": "|".join(STATES),
-                                   "evidence": "<piece name>"},
+                                   "evidence": "<piece name>", "reason": "<required unless observed>",
+                                   "cause": "|".join(CAUSES) + " (unobservable only)"},
             "coverage": [{"dataset": "<each dataset of datasets>", "evidence": "<sealed piece from that dataset>"}],
             "screen_findings": [{"check": "<one screen check from this brief>",
                                  "rule": "<exact line of DESIGN.md>", "evidence": "<sealed piece>",
                                  "reason": "<visible deviation>"}] if convoy.ticket(args.ticket).get("interface") else [],
         },
         "roles": request["roles"], "independence": independence(request["roles"]),
+        "expectations": expectations,
     }
-    brief["expectations"] = planned(json.loads(profile_path.read_text(encoding="utf-8")), "ticket",
-                                    brief["criteria"], brief["datasets"], request["commit"], args.ticket)
     if convoy.ticket(args.ticket).get("interface"):
         # The Evaluator has no repository access. Give it the rule text from
         # the exact commit it evaluates, never from a mutable worktree.
@@ -1405,6 +1431,17 @@ def cmd_record(args: argparse.Namespace) -> int:
     entries = planned(json.loads(profile_path.read_text(encoding="utf-8")), "ticket",
                       [{"number": n, "text": t} for n, t in enumerate(request["criteria"], 1)],
                       request.get("datasets") or [e["dataset"] for e in request["environment"]], request["commit"], args.ticket)
+    # ADR-0030 L4: a state is kept only for a criterion a validated expectation
+    # compares; those an Evaluator briefed before hands in for the others are not recorded.
+    compared = {entry.get("number") for entry in entries}
+    if isinstance(given.get("criteria"), list):
+        given["criteria"] = [item for item in given["criteria"]
+                             if isinstance(item, dict) and item.get("number") in compared]
+    handed_numbers = {item.get("number") for item in given.get("criteria") or [] if isinstance(item, dict)}
+    missing = sorted(number for number in compared if number not in handed_numbers)
+    if missing:
+        raise Refusal(" ; ".join(f"critère {number} : aucun état rendu alors qu'une attente validée le compare"
+                                 for number in missing))
     def verified(piece: str, dataset: str) -> dict[str, Any]:
         addresses_for_game = [e["address"] for e in request["environment"] if e["dataset"] == dataset]
         return sealed_record(str(CAPTURE_TOOL), args.convoy, args.ticket, piece, request["commit"],
@@ -1472,7 +1509,7 @@ def cmd_record(args: argparse.Namespace) -> int:
 
 
 CONSEQUENCES = {
-    FAVORABLE: "favorable : chaque critère et la ligne de démonstration sont observés avec preuve au commit de tête",
+    FAVORABLE: "favorable : la ligne de démonstration (et tout critère comparé à une attente validée) est observée avec preuve au commit de tête",
     RETURN_TO_AUTHOR: "défavorable : retour à l'auteur",
     PLANNING_EXCEPTION: "défavorable : Planning Exception, un critère inobservable ne se dispense ni ne se reformule",
     OUTAGE: "panne de l'environnement : non comptée comme refus, l'évaluation est à refaire",

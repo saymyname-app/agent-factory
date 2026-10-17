@@ -104,7 +104,7 @@ On a ticket of a marked convoy, and on the convoy itself, you never:
   approver, never yours;
 - **resume it or lift its parking** — a ticket that needs its author again
   is sent to a fresh session by `bin/convoy-advance` on a bead titled
-  « Reprise — <ticket> »; at its third resume it is parked with the tickets
+  « Reprise — <ticket> »; once a same cause reaches its bound it is parked with the tickets
   behind it, and a convoy left with parked tickets only raises one bead
   titled « Demande groupée : convoi … » to the operator, whose answer alone
   lifts a parking. Neither bead is a ticket to dispatch, close or answer.

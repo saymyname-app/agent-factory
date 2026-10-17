@@ -62,7 +62,9 @@ before anything is written.
 
 **Planning Exception.** `--kind` is what `bin/planning-exception classify`
 calls a Planning Exception (`semantic`, `topology`); `repair` is refused: a
-technical defect outside the ticket exits by `technically_blocked`. The
+technical defect outside the ticket exits by `technically_blocked`, and a
+defect in the Factory's own tools or tests by `operator_request`
+(`docs/TICKET_AUTHOR.md`, « Factory defects are fixed on main »). The
 request on the operator's list reads « Planning Exception (kind) sur
 <ticket> : <summary> ». It is written on the ticket before the request
 leaves (`bin/convoy-state raise-planning-exception`, `docs/CONVOY_STATE.md`).
@@ -95,11 +97,14 @@ several Planning Exceptions.
 anchor, the request carries a third option too, « Accepter l'écart que
 décrit le Ticket Handoff », and the ticket records its letter: answered by
 it, the exception is `accepted` (no anchor is) and `bin/convoy-advance`
-lifts the parking and resumes the ticket, like any accepted deviation.
+lifts the parking and resumes the ticket, like any accepted deviation;
+the option's consequence says so (« Le ticket reprend avec cet écart. »).
 Without an anchor, an empty « Écarts » refuses the exit: the option would
 accept nothing. A ticket stopped by a script (`criterion_already_green`:
 all its criteria already green) stays stopped: the answer lifts no stop,
-and `bin/convoy-advance` then raises that stop to the operator.
+and `bin/convoy-advance` then raises that stop to the operator; on such a
+ticket the consequence says that instead (« Le parcage est levé, pas
+l'arrêt … : l'arrêt te revient pour le clore comme satisfait. »).
 
 **Operator request.** The file is the request the operator reads, as the
 escalation door takes it: `quoi` and `pourquoi` on one line of at most 140
@@ -130,6 +135,14 @@ carries the blocked ticket as published, with the repair among its blockers,
 and its blockers still open; the patch door holds the repair to the entry
 contract and publishes it, marked and tracked by the convoy. If the door
 refuses, the revision bead is closed and the exit is refused.
+
+One defect, one repair (af-q6j79b). When an open repair of the convoy
+already restores what this one restores (the same `restores`, or for a
+`repo_rule` a rule of the same file), no repair is added: the revision only
+puts that repair among the ticket's blockers, and the answer names it with
+`"attached": true`. A ticket it already blocks gets nothing new. On 16/10,
+T59 published R2 (af-q8a2oe) for the defect R1 (af-qsloqo) was repairing;
+R2 then reached Benjamin as a Planning Exception.
 
 The door reads what the repair cites against its source
 (`docs/ENTRY_CONTRACT.md`, T40): a user story or a line in the Spec, an

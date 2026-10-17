@@ -278,6 +278,50 @@ class Cli(unittest.TestCase):
                   "metadata": {"gc.kind": "workflow", "gc.outcome": "pass"}}]
         self.assertEqual([], self._run("workflows", json.dumps(beads)))
 
+    def test_ticket_of_names_the_ticket_a_review_launch_was_for(self):
+        convoy = [{"id": "af-tzx0my", "issue_type": "convoy", "dependencies": [
+            {"id": "af-d0o8ae", "dependency_type": "tracks", "metadata": {},
+             "description": "Review of the criterion tests.\n\nconvoy: af-pqfxmd\nticket: af-qjq1t6\n"},
+        ]}]
+        self.assertEqual(["af-qjq1t6"], self._run("ticket-of", json.dumps(convoy)))
+
+    def test_ticket_of_names_the_tracked_bead_when_it_is_the_marked_ticket(self):
+        convoy = [{"id": "af-xmm2qb", "issue_type": "convoy", "dependencies": [
+            {"id": "af-qjq1t6", "dependency_type": "tracks",
+             "metadata": {"gc.flow.mark": "new-flow/v1"}, "description": "T59"},
+        ]}]
+        self.assertEqual(["af-qjq1t6"], self._run("ticket-of", json.dumps(convoy)))
+
+    def test_ticket_of_names_nothing_for_a_convoy_of_ordinary_work(self):
+        convoy = [{"id": "af-oy0ngr", "issue_type": "convoy", "dependencies": [
+            {"id": "af-it6qbk", "dependency_type": "tracks", "metadata": {}, "description": "a bug"},
+        ]}]
+        self.assertEqual([], self._run("ticket-of", json.dumps(convoy)))
+
+    def test_a_stopped_ticket_is_already_handled_by_code(self):
+        ticket = [{"id": "af-qjq1t6", "metadata": {
+            "gc.flow.mark": "new-flow/v1",
+            "gc.flow.stop": json.dumps({"reason": "test_review_no_result", "detail": "2 launches", "at": "2026-10-15T22:20:23Z"}),
+        }}]
+        self.assertEqual(["stopped (test_review_no_result)"], self._run("ticket-handled", json.dumps(ticket)))
+
+    def test_a_resumed_ticket_is_already_handled_by_code(self):
+        ticket = [{"id": "af-qjq1t6", "metadata": {
+            "gc.flow.mark": "new-flow/v1",
+            "gc.flow.resume": json.dumps({"entries": [{"at": "2026-10-16T10:49:37Z", "cause": "stage_removed"}]}),
+        }}]
+        self.assertEqual(["resumed (1 resume(s))"], self._run("ticket-handled", json.dumps(ticket)))
+
+    def test_a_ticket_with_neither_stop_nor_resume_is_not_handled(self):
+        for metadata in (
+            {"gc.flow.mark": "new-flow/v1"},
+            {"gc.flow.mark": "new-flow/v1", "gc.flow.resume": json.dumps({"entries": []})},
+            {"gc.flow.stop": json.dumps({"reason": "test_review_no_result"})},  # not a marked ticket
+        ):
+            with self.subTest(metadata=metadata):
+                ticket = [{"id": "af-qjq1t6", "metadata": metadata}]
+                self.assertEqual([], self._run("ticket-handled", json.dumps(ticket)))
+
     def test_an_empty_array_is_silent_not_an_error(self):
         self.assertEqual([], self._run("gates", "[]"))
         self.assertEqual([], self._run("prs", "[]"))

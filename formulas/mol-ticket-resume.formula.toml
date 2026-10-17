@@ -10,8 +10,8 @@ and the cause. The pass counted the resume before it sent it
 (`bin/convoy-state open-resume`): a ticket is resumed for an interrupted
 session, a ticket the merge returned, a repair that is closed, a request
 that was answered, a branch behind the integration tip, or a stop of its
-Ticket Evaluation without result, and at its third resume, every cause together, it is
-parked with every ticket that waits for it instead of being sent here.
+Ticket Evaluation without result, and once a same cause reaches its bound
+(`bounds.resumes`, one per cause, ADR-0030 L2) it is parked with every ticket that waits for it instead of being sent here.
 
 The session is new: it knows of the ticket only what the tracker and the
 branch hold. It works in the work tree of the ticket, on the ticket branch,
@@ -61,7 +61,7 @@ PROFILE=$(printf '%s' "$START" | jq -r '.profile')
 INTEGRATION=$(printf '%s' "$START" | jq -r '.integration_branch')
 "$FACTORY_ROOT/bin/ticket-exit" read "$CONVOY" "$TICKET"
 "$FACTORY_ROOT/bin/convoy-state" show "$CONVOY" --repo "$WORKTREE" | jq --arg t "$TICKET" \\
-  '.tickets[] | select(.id == $t) | {resume, resumes_left, park_lifts, merge, tdd, verdicts, handoff, tip}'
+  '.tickets[] | select(.id == $t) | {resume, resumes_left, resumes_left_by_cause, park_lifts, merge, tdd, verdicts, handoff, tip}'
 for STEP in workspace red code demonstration exit; do
   "$FACTORY_ROOT/bin/ticket-author" gate "$CONVOY" "$TICKET" --step "$STEP"
 done
@@ -101,8 +101,18 @@ Work only in the work tree.
   and correct what the merged result breaks, commit when it changed
   anything, prove the ticket at the tip and finish again: the evaluation is
   sent again on that tip.
+- `code_review_no_result` — you finished, and the code review of your tip
+  gave no verdict twice: the stop is lifted and kept under `.resume`.
+  Nothing is refused in your code. Change nothing unless the tip no longer
+  proves: prove the ticket at the tip and finish again; a fresh reviewer is
+  sent on it.
 - `unblocked` — the repair the ticket waited for is closed: its Ticket
-  Handoff is among `.blocker_handoffs`. Go on as for `interrupted`.
+  Handoff is among `.blocker_handoffs`. The repair landed on the integration
+  branch, not on yours: bring the integration branch into your branch
+  (`git fetch origin && git merge "origin/$INTEGRATION"`), resolve what
+  conflicts, commit, then go on as for `interrupted`. If the repair changed
+  a frozen harness file, `bin/tdd-step green` sees it as modified: record
+  it with `bin/tdd-step amend` (once, docs/TDD_STEP.md).
 - `answered` — the operator answered the request that parked the ticket:
   `.park_lifts` names the request (`request`) and the letter of the option
   taken (`option`); read the request and its answer with
@@ -134,9 +144,10 @@ outside the work tree:
 ```
 
 If you cannot finish, take the exit that fits instead: `planning_exception`,
-`operator_request`, `technically_blocked`, or `interrupted` when you must
-stop before the end. Each resume is counted: at the third the ticket is
-parked with those that wait for it (`.resumes_left`), so do not leave a
+`operator_request` (a defect in the Factory's own tools or tests goes there,
+never a `repair`: fixed by maintenance on main), `technically_blocked`, or
+`interrupted` when you must stop before the end. Each resume is counted per cause: at the bound of a cause the ticket
+is parked with those that wait for it (`.resumes_left_by_cause`), so do not leave a
 ticket `interrupted` that you could finish.
 
 You do not close the ticket, open a pull request or merge anything: review,

@@ -1,0 +1,128 @@
+#!/usr/bin/env python3
+"""delivery-seat-release — free a verification seat held by a session that has served (af-epkrcv).
+
+The reviewer and the Evaluator have one seat each (max_active_sessions = 1,
+#638). Their work query offers a session that has served one workflow only
+the work of that workflow (T42, docs/CODE_REVIEW.md "A fresh session per
+review"). When routed work of another workflow is already waiting as the
+session finishes, Gas City 1.5.0 binds the warm seat to it and cancels the
+seat's drain-ack: the seat answers no_work, is never stopped, and holds the
+role until idle_timeout (2 h) while the waiting launches expire (17/10,
+af-wisp-clbc8c; T59 stopped with code_review_no_result).
+
+This closes such a seat, as an honoured drain-ack would: an active session of
+a verification role that has served (beads assigned to it), holds no bead in
+progress or assigned, while ready unassigned work routed to its role waits,
+none of it in a workflow it served. Gas City then starts a fresh session for that work. A seat that never
+served, one at work, or one whose own workflow has the ready work is left
+alone. Deterministic, no model; run by orders/delivery-seat-release.toml.
+
+usage: delivery-seat-release [--check-only]
+Exit 0; 1 when the session list or the tracker cannot be read (nothing closed).
+"""
+import datetime
+import json
+import os
+import subprocess
+import sys
+
+ROLES = ("delivery-reviewer", "delivery-evaluator")
+GC = os.environ.get("GC_BIN", "gc")
+ROOT = os.environ.get("FACTORY_ROOT", "/home/benja/agent-factory")
+CWD = ROOT if os.path.isdir(ROOT) else None  # gc finds its city from the working directory
+LOG = os.environ.get("DELIVERY_SEAT_RELEASE_LOG", os.path.join(ROOT, "var", "delivery-seat-release.log"))
+
+
+class Unreadable(Exception):
+    pass
+
+
+def gc_json(*args):
+    proc = subprocess.run([GC, *args], capture_output=True, text=True, cwd=CWD)
+    if proc.returncode != 0:
+        raise Unreadable(f"gc {' '.join(args)}: exit {proc.returncode}")
+    try:
+        return json.loads(proc.stdout or "null")
+    except ValueError:
+        raise Unreadable(f"gc {' '.join(args)}: not JSON")
+
+
+def served_beads(session):
+    """The beads ever assigned to this session, by the spellings its work query uses."""
+    found = {}
+    queries = [["--assignee=" + session["id"]]]
+    if session.get("session_name"):
+        queries.append(["--assignee=" + session["session_name"]])
+    if session.get("alias"):
+        queries.append(["--assignee=" + session["alias"], "--metadata-field", "gc.session_id=" + session["id"]])
+    for query in queries:
+        rows = gc_json("bd", "list", "--all", *query, "--json", "--limit=0")
+        if not isinstance(rows, list):
+            raise Unreadable("bd list: not a list")
+        for row in rows:
+            found[row["id"]] = row
+    return list(found.values())
+
+
+def root(bead):
+    return (bead.get("metadata") or {}).get("gc.root_bead_id", "")
+
+
+def stranded_seats():
+    listing = gc_json("session", "list", "--json")
+    sessions = listing.get("sessions") if isinstance(listing, dict) else None
+    if not isinstance(sessions, list):
+        raise Unreadable("session list: no sessions")
+    seats = []
+    for session in sessions:
+        role = session.get("template")
+        if role not in ROLES or session.get("state") != "active" or not session.get("id"):
+            continue
+        served = served_beads(session)
+        if not served or any(b.get("status") != "closed" for b in served):
+            continue  # never served, or still holds a bead (in progress, or assigned and ready)
+        own_roots = {root(b) for b in served} - {""}
+        ready = gc_json("bd", "ready", "--metadata-field", "gc.routed_to=" + role, "--unassigned",
+                        "--exclude-type=epic", "--json", "--limit=20")
+        if not isinstance(ready, list):
+            raise Unreadable("bd ready: not a list")
+        if any(root(b) in own_roots for b in ready):
+            continue  # its work query offers it this ready work of its own workflow
+        waiting = [b["id"] for b in ready]
+        if waiting:
+            seats.append((session, waiting))
+    return seats
+
+
+def main(argv):
+    check_only = argv[1:] == ["--check-only"]
+    if argv[1:] and not check_only:
+        print(__doc__.split("usage: ")[1].split("\n")[0], file=sys.stderr)
+        return 2
+    try:
+        seats = stranded_seats()
+    except Unreadable as error:
+        print(f"delivery-seat-release: {error}; nothing closed", file=sys.stderr)
+        return 1
+    for session, waiting in seats:
+        line = f"{session['id']} ({session['template']}) served and holds nothing; waiting: {' '.join(waiting)}"
+        if check_only:
+            print("would close " + line)
+            continue
+        try:  # a claim may have landed since the read: read the seat again
+            if any(b.get("status") != "closed" for b in served_beads(session)):
+                continue
+        except Unreadable:
+            continue
+        closed = subprocess.run([GC, "session", "close", session["id"]], capture_output=True, text=True, cwd=CWD).returncode == 0
+        status = "closed" if closed else "close-failed"
+        os.makedirs(os.path.dirname(LOG) or ".", exist_ok=True)
+        now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with open(LOG, "a", encoding="utf-8") as log:
+            log.write(f"{now}\t{status}\t{line}\n")
+        print(f"{status} {line}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
