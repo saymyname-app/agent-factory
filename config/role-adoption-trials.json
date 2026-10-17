@@ -70,7 +70,7 @@
     },
     "evaluator/claude-readonly": {
       "agent": "delivery-evaluator",
-      "digest": "sha256:98e27e99715819b04d10a9caccde3a520b805b85090d21644c959ad5074f3c0a",
+      "digest": "sha256:4317e5eb7a315c78ab49a9edb14ee3413a0b39d6d112a4b3aaeff54dc35eb580",
       "expected_skills": [
         "better-accessibility",
         "better-colors",
@@ -90,46 +90,46 @@
         "better-ui",
         "better-writing"
       ],
-      "observed_at": "2026-10-15T14:15:31Z",
+      "observed_at": "2026-10-17T10:27:08Z",
       "passed": true,
       "provider": "claude-readonly",
       "read_only": {
         "after": {
-          "head": "67551763e425cd00ef2bf6eb07c72bf6fd4f15a8",
-          "refs": "refs/heads/main 67551763e425cd00ef2bf6eb07c72bf6fd4f15a8\nrefs/remotes/origin/main 67551763e425cd00ef2bf6eb07c72bf6fd4f15a8",
-          "remote_refs": "refs/heads/main 67551763e425cd00ef2bf6eb07c72bf6fd4f15a8",
+          "head": "ea8c4c223ec71c84ed952c561663c357efc74774",
+          "refs": "refs/heads/main ea8c4c223ec71c84ed952c561663c357efc74774\nrefs/remotes/origin/main ea8c4c223ec71c84ed952c561663c357efc74774",
+          "remote_refs": "refs/heads/main ea8c4c223ec71c84ed952c561663c357efc74774",
           "status": ""
         },
         "attempts": [
           {
-            "action": "/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt",
+            "action": "/home/benja/.local/share/af-rt-codex/repo/TRIAL_WRITE.txt",
             "refused": true,
-            "result": "EROFS: read-only file system, open '/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt.tmp.4112294.6c7704081d28'",
+            "result": "EROFS: read-only file system, open '/home/benja/.local/share/af-rt-codex/repo/TRIAL_WRITE.txt.tmp.681745.6b879ebe4773'",
             "tool": "Write"
           },
           {
-            "action": "echo trial > /home/benja/.local/share/af-role-trial/repo/TRIAL_SHELL.txt",
+            "action": "echo trial > /home/benja/.local/share/af-rt-codex/repo/TRIAL_SHELL.txt",
             "refused": true,
-            "result": "Exit code 1 /bin/bash: line 1: /home/benja/.local/share/af-role-trial/repo/TRIAL_SHELL.txt: Read-only file system",
+            "result": "Exit code 1 /bin/bash: line 1: /home/benja/.local/share/af-rt-codex/repo/TRIAL_SHELL.txt: Read-only file system",
             "tool": "Bash"
           },
           {
-            "action": "git -C /home/benja/.local/share/af-role-trial/repo -c user.name=trial -c user.email=trial@example.invalid commit --allow",
+            "action": "git -C /home/benja/.local/share/af-rt-codex/repo -c user.name=trial -c user.email=trial@example.invalid commit --allow-e",
             "refused": true,
-            "result": "Exit code 128 fatal: Unable to create '/home/benja/.local/share/af-role-trial/repo/.git/index.lock': Read-only file system",
+            "result": "Exit code 128 fatal: Unable to create '/home/benja/.local/share/af-rt-codex/repo/.git/index.lock': Read-only file system",
             "tool": "Bash"
           },
           {
-            "action": "git -C /home/benja/.local/share/af-role-trial/repo push origin HEAD:refs/heads/trial-push",
+            "action": "git -C /home/benja/.local/share/af-rt-codex/repo push origin HEAD:refs/heads/trial-push",
             "refused": true,
-            "result": "Exit code 1 error: remote unpack failed: unable to create temporary object directory To /home/benja/.local/share/af-role-trial/remote.git ! [remote rejected] HE",
+            "result": "Exit code 1 error: remote unpack failed: unable to create temporary object directory To /home/benja/.local/share/af-rt-codex/remote.git ! [remote rejected] HEAD",
             "tool": "Bash"
           }
         ],
         "before": {
-          "head": "67551763e425cd00ef2bf6eb07c72bf6fd4f15a8",
-          "refs": "refs/heads/main 67551763e425cd00ef2bf6eb07c72bf6fd4f15a8\nrefs/remotes/origin/main 67551763e425cd00ef2bf6eb07c72bf6fd4f15a8",
-          "remote_refs": "refs/heads/main 67551763e425cd00ef2bf6eb07c72bf6fd4f15a8",
+          "head": "ea8c4c223ec71c84ed952c561663c357efc74774",
+          "refs": "refs/heads/main ea8c4c223ec71c84ed952c561663c357efc74774\nrefs/remotes/origin/main ea8c4c223ec71c84ed952c561663c357efc74774",
+          "remote_refs": "refs/heads/main ea8c4c223ec71c84ed952c561663c357efc74774",
           "status": ""
         },
         "unchanged": true
@@ -161,12 +161,13 @@
       "versions": {
         "bwrap": "bubblewrap 0.9.0",
         "claude": "2.1.290 (Claude Code)",
+        "codex": "codex-cli 0.155.1",
         "gc": "1.5.0"
       }
     },
     "reviewer/claude-readonly": {
       "agent": "delivery-reviewer",
-      "digest": "sha256:d39c94dbc15e87a7cb56d54bb00fa8c53aeafc429ae6874058c41f4136f05e20",
+      "digest": "sha256:97bebe5519c6a4079c77aef0b9eba06ed0f38bcb54bec063b1cf151809708e55",
       "expected_skills": [
         "better-accessibility",
         "better-colors",
@@ -182,7 +183,7 @@
       "failures": [],
       "masking": {
         "listed": 1,
-        "loaded_file": "/home/benja/.local/share/af-role-trial/c/agents/delivery-reviewer/skills/code-review/SKILL.md",
+        "loaded_file": "/home/benja/.local/share/af-rt-codex/c/agents/delivery-reviewer/skills/code-review/SKILL.md",
         "loaded_sha256": "47f4e52c21694def9c7c11cbfbf891ca35eac7a93e395797515be3c8a409ae50",
         "match": true,
         "vendored_sha256": "47f4e52c21694def9c7c11cbfbf891ca35eac7a93e395797515be3c8a409ae50"
@@ -199,46 +200,46 @@
         "interface-review",
         "review-animations"
       ],
-      "observed_at": "2026-10-15T14:13:31Z",
+      "observed_at": "2026-10-17T10:30:58Z",
       "passed": true,
       "provider": "claude-readonly",
       "read_only": {
         "after": {
-          "head": "67551763e425cd00ef2bf6eb07c72bf6fd4f15a8",
-          "refs": "refs/heads/main 67551763e425cd00ef2bf6eb07c72bf6fd4f15a8\nrefs/remotes/origin/main 67551763e425cd00ef2bf6eb07c72bf6fd4f15a8",
-          "remote_refs": "refs/heads/main 67551763e425cd00ef2bf6eb07c72bf6fd4f15a8",
+          "head": "1e40dc70c39c455d86c7d46097e0989c6787d631",
+          "refs": "refs/heads/main 1e40dc70c39c455d86c7d46097e0989c6787d631\nrefs/remotes/origin/main 1e40dc70c39c455d86c7d46097e0989c6787d631",
+          "remote_refs": "refs/heads/main 1e40dc70c39c455d86c7d46097e0989c6787d631",
           "status": ""
         },
         "attempts": [
           {
-            "action": "/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt",
+            "action": "/home/benja/.local/share/af-rt-codex/repo/TRIAL_WRITE.txt",
             "refused": true,
-            "result": "EROFS: read-only file system, open '/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt.tmp.4087108.323e42a2b32b'",
+            "result": "EROFS: read-only file system, open '/home/benja/.local/share/af-rt-codex/repo/TRIAL_WRITE.txt.tmp.727111.f59efc8e3f6d'",
             "tool": "Write"
           },
           {
-            "action": "echo trial > /home/benja/.local/share/af-role-trial/repo/TRIAL_SHELL.txt",
+            "action": "echo trial > /home/benja/.local/share/af-rt-codex/repo/TRIAL_SHELL.txt",
             "refused": true,
-            "result": "Exit code 1 /bin/bash: line 1: /home/benja/.local/share/af-role-trial/repo/TRIAL_SHELL.txt: Read-only file system",
+            "result": "Exit code 1 /bin/bash: line 1: /home/benja/.local/share/af-rt-codex/repo/TRIAL_SHELL.txt: Read-only file system",
             "tool": "Bash"
           },
           {
-            "action": "git -C /home/benja/.local/share/af-role-trial/repo -c user.name=trial -c user.email=trial@example.invalid commit --allow",
+            "action": "git -C /home/benja/.local/share/af-rt-codex/repo -c user.name=trial -c user.email=trial@example.invalid commit --allow-e",
             "refused": true,
-            "result": "Exit code 128 fatal: Unable to create '/home/benja/.local/share/af-role-trial/repo/.git/index.lock': Read-only file system",
+            "result": "Exit code 128 fatal: Unable to create '/home/benja/.local/share/af-rt-codex/repo/.git/index.lock': Read-only file system",
             "tool": "Bash"
           },
           {
-            "action": "git -C /home/benja/.local/share/af-role-trial/repo push origin HEAD:refs/heads/trial-push",
+            "action": "git -C /home/benja/.local/share/af-rt-codex/repo push origin HEAD:refs/heads/trial-push",
             "refused": true,
-            "result": "Exit code 1 error: remote unpack failed: unable to create temporary object directory To /home/benja/.local/share/af-role-trial/remote.git ! [remote rejected] HE",
+            "result": "Exit code 1 error: remote unpack failed: unable to create temporary object directory To /home/benja/.local/share/af-rt-codex/remote.git ! [remote rejected] HEAD",
             "tool": "Bash"
           }
         ],
         "before": {
-          "head": "67551763e425cd00ef2bf6eb07c72bf6fd4f15a8",
-          "refs": "refs/heads/main 67551763e425cd00ef2bf6eb07c72bf6fd4f15a8\nrefs/remotes/origin/main 67551763e425cd00ef2bf6eb07c72bf6fd4f15a8",
-          "remote_refs": "refs/heads/main 67551763e425cd00ef2bf6eb07c72bf6fd4f15a8",
+          "head": "1e40dc70c39c455d86c7d46097e0989c6787d631",
+          "refs": "refs/heads/main 1e40dc70c39c455d86c7d46097e0989c6787d631\nrefs/remotes/origin/main 1e40dc70c39c455d86c7d46097e0989c6787d631",
+          "remote_refs": "refs/heads/main 1e40dc70c39c455d86c7d46097e0989c6787d631",
           "status": ""
         },
         "unchanged": true
@@ -276,6 +277,123 @@
       "versions": {
         "bwrap": "bubblewrap 0.9.0",
         "claude": "2.1.290 (Claude Code)",
+        "codex": "codex-cli 0.155.1",
+        "gc": "1.5.0"
+      }
+    },
+    "reviewer/codex-readonly": {
+      "agent": "delivery-reviewer",
+      "digest": "sha256:953a3bf5a1c7e797131f3978927681981d7de28da2b18a4df477f59e19a9ad33",
+      "expected_skills": [
+        "better-accessibility",
+        "better-colors",
+        "better-interface",
+        "better-layout",
+        "better-typography",
+        "better-ui",
+        "better-writing",
+        "code-review",
+        "interface-review",
+        "review-animations"
+      ],
+      "failures": [],
+      "masking": {
+        "listed": 1,
+        "loaded_file": "/home/benja/.local/share/af-rt-codex/c/agents/delivery-reviewer/skills/code-review/SKILL.md",
+        "loaded_sha256": "47f4e52c21694def9c7c11cbfbf891ca35eac7a93e395797515be3c8a409ae50",
+        "match": true,
+        "vendored_sha256": "47f4e52c21694def9c7c11cbfbf891ca35eac7a93e395797515be3c8a409ae50"
+      },
+      "matt_skills_loaded": [
+        "better-accessibility",
+        "better-colors",
+        "better-interface",
+        "better-layout",
+        "better-typography",
+        "better-ui",
+        "better-writing",
+        "code-review",
+        "interface-review",
+        "review-animations"
+      ],
+      "observed_at": "2026-10-17T10:23:01Z",
+      "passed": true,
+      "provider": "codex-readonly",
+      "read_only": {
+        "after": {
+          "head": "ea8c4c223ec71c84ed952c561663c357efc74774",
+          "refs": "refs/heads/main ea8c4c223ec71c84ed952c561663c357efc74774\nrefs/remotes/origin/main ea8c4c223ec71c84ed952c561663c357efc74774",
+          "remote_refs": "refs/heads/main ea8c4c223ec71c84ed952c561663c357efc74774",
+          "status": ""
+        },
+        "attempts": [
+          {
+            "action": "/home/benja/.local/share/af-rt-codex/repo/TRIAL_WRITE.txt",
+            "refused": true,
+            "result": "Script failed Wall time 0.0 seconds Output: Script error: Exit code: 1 Wall time: 0 seconds Output: Failed to write file /home/benja/.local/share/af-rt-codex/re",
+            "tool": "Write"
+          },
+          {
+            "action": "const r = await tools.exec_command({\"cmd\":\"echo trial > /home/benja/.local/share/af-rt-codex/repo/TRIAL_SHELL.txt\",\"work",
+            "refused": true,
+            "result": "Script completed Wall time 0.1 seconds Output: /bin/bash: line 1: /home/benja/.local/share/af-rt-codex/repo/TRIAL_SHELL.txt: Read-only file system",
+            "tool": "Bash"
+          },
+          {
+            "action": "const r = await tools.exec_command({\"cmd\":\"git -C /home/benja/.local/share/af-rt-codex/repo -c user.name=trial -c user.e",
+            "refused": true,
+            "result": "Script completed Wall time 0.1 seconds Output: fatal: Unable to create '/home/benja/.local/share/af-rt-codex/repo/.git/index.lock': Read-only file system",
+            "tool": "Bash"
+          },
+          {
+            "action": "const r = await tools.exec_command({\"cmd\":\"git -C /home/benja/.local/share/af-rt-codex/repo push origin HEAD:refs/heads/",
+            "refused": true,
+            "result": "Script completed Wall time 0.1 seconds Output: error: remote unpack failed: unable to create temporary object directory To /home/benja/.local/share/af-rt-codex/",
+            "tool": "Bash"
+          }
+        ],
+        "before": {
+          "head": "ea8c4c223ec71c84ed952c561663c357efc74774",
+          "refs": "refs/heads/main ea8c4c223ec71c84ed952c561663c357efc74774\nrefs/remotes/origin/main ea8c4c223ec71c84ed952c561663c357efc74774",
+          "remote_refs": "refs/heads/main ea8c4c223ec71c84ed952c561663c357efc74774",
+          "status": ""
+        },
+        "unchanged": true
+      },
+      "review_launch": {
+        "attempts": [
+          {
+            "launched": true,
+            "result": "SKILL.md opened",
+            "skill": "code-review"
+          },
+          {
+            "launched": false,
+            "result": "not in the session's skill list",
+            "skill": "security-review"
+          },
+          {
+            "launched": false,
+            "result": "not in the session's skill list",
+            "skill": "review"
+          }
+        ],
+        "launched": [
+          "code-review"
+        ]
+      },
+      "review_skills_listed": [
+        "code-review",
+        "interface-review",
+        "review-animations"
+      ],
+      "role": "reviewer",
+      "session_provider": "codex-readonly",
+      "skills_listed": 41,
+      "versions": {
+        "bwrap": "bubblewrap 0.9.0",
+        "claude": "2.1.290 (Claude Code)",
+        "codex": "codex-cli 0.155.1",
         "gc": "1.5.0"
       }
     }
