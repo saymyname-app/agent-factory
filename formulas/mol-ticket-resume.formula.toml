@@ -101,6 +101,11 @@ Work only in the work tree.
   and correct what the merged result breaks, commit when it changed
   anything, prove the ticket at the tip and finish again: the evaluation is
   sent again on that tip.
+- `code_review_no_result` — you finished, and the code review of your tip
+  gave no verdict twice: the stop is lifted and kept under `.resume`.
+  Nothing is refused in your code. Change nothing unless the tip no longer
+  proves: prove the ticket at the tip and finish again; a fresh reviewer is
+  sent on it.
 - `unblocked` — the repair the ticket waited for is closed: its Ticket
   Handoff is among `.blocker_handoffs`. The repair landed on the integration
   branch, not on yours: bring the integration branch into your branch

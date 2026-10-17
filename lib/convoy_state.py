@@ -439,15 +439,18 @@ BOUND_END_ROUNDS = "end_rounds"
 # the request that parked it was answered, or its branch, finished, does not
 # contain the tip of the integration branch (T44), or its Ticket Evaluation
 # gave no result (af-xhc0sj), or a stage the flow removed stopped it
-# (ADR-0030 L3, af-pjvsgo): those resumes lift the stop. The correction round
-# and a commit after a verdict are counted where they are written.
+# (ADR-0030 L3, af-pjvsgo), or its code review gave no result (af-wu6xj7):
+# those resumes lift the stop. The correction round and a commit after a
+# verdict are counted where they are written.
 RESUME_CAUSES = ("interrupted", "returned", "unblocked", "answered", "behind", "evaluation_no_result",
-                 "stage_removed")
+                 "stage_removed", "code_review_no_result")
 # The stops a resume lifts, by the cause that lifts them: a Ticket Evaluation
-# without result (af-xhc0sj), and the stops of the test review, a stage
-# ADR-0030 L3 removed (af-pjvsgo).
+# without result (af-xhc0sj), the stops of the test review, a stage
+# ADR-0030 L3 removed (af-pjvsgo), and a code review without result
+# (af-wu6xj7).
 RESUMABLE_STOPS = {"evaluation_no_result": ("evaluation_no_result",),
-                   "stage_removed": ("test_review_refused", "test_review_no_result")}
+                   "stage_removed": ("test_review_refused", "test_review_no_result"),
+                   "code_review_no_result": ("code_review_no_result",)}
 # A commit after a verdict counts a resume without an entry (T18): it is a
 # cause of its own. The correction round is not one: it has its own bound of
 # one round (CORRECTION_MAX_ROUNDS), held here, outside K.
@@ -4847,7 +4850,9 @@ def cmd_open_resume(args: argparse.Namespace) -> int:
     resume left for one cause (that one is parked), and on a stopped ticket unless the
     cause is one that lifts its stop (RESUMABLE_STOPS): `evaluation_no_result`
     (af-xhc0sj), `stage_removed` for a stop of the removed test review
-    (af-pjvsgo); that resume keeps the stop under it."""
+    (af-pjvsgo), `code_review_no_result` (af-wu6xj7); that resume keeps the
+    stop under it. A code review without result also loses its spent round:
+    the next finished exit is reviewed afresh."""
     ticket = marked_ticket(args.convoy, args.ticket)
     metadata = metadata_of(ticket)
     cause = one_of(args.cause, RESUME_CAUSES, "cause de reprise")
@@ -4884,6 +4889,11 @@ def cmd_open_resume(args: argparse.Namespace) -> int:
     update = ["bd", "update", args.ticket]
     for key, value in values.items():
         update += ["--set-metadata", f"{key}={value}"]
+    if lifted is not None and lifted["reason"] == "code_review_no_result" and KEY_CODE_REVIEW in metadata:
+        review = code_review_record(metadata[KEY_CODE_REVIEW])
+        if review.pop("request", None) is not None:
+            values[KEY_CODE_REVIEW] = encode(review)
+            update += ["--set-metadata", f"{KEY_CODE_REVIEW}={values[KEY_CODE_REVIEW]}"]
     unset = {KEY_EXIT: replaced, KEY_STOP: lifted}
     for key, was in unset.items():
         if was is not None:
