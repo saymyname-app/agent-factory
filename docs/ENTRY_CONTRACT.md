@@ -299,7 +299,10 @@ write it also refuses:
 published only if it adds nothing but `repair` tickets -- each held to the
 contract, so each naming what it restores -- to a graph it otherwise leaves
 as published: the text of a carried ticket is unchanged, and it may only
-gain an added repair among its blockers. A blocker that is already delivered
+gain among its blockers an added repair, or an open repair of the convoy
+(`bin/ticket-exit` puts there the one that already restores the ticket's
+defect: one defect, one repair, af-q6j79b; the door does not judge the
+defect, a cycle stays refused). A blocker that is already delivered
 cannot be carried (a patch never takes a closed ticket), so leaving it out
 is not a reordering: the ticket keeps it, in `gc.blocked_by` and as a
 tracker edge, under an approved revision as well (T11: a ticket at work has

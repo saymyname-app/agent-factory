@@ -136,6 +136,14 @@ and its blockers still open; the patch door holds the repair to the entry
 contract and publishes it, marked and tracked by the convoy. If the door
 refuses, the revision bead is closed and the exit is refused.
 
+One defect, one repair (af-q6j79b). When an open repair of the convoy
+already restores what this one restores (the same `restores`, or for a
+`repo_rule` a rule of the same file), no repair is added: the revision only
+puts that repair among the ticket's blockers, and the answer names it with
+`"attached": true`. A ticket it already blocks gets nothing new. On 16/10,
+T59 published R2 (af-q8a2oe) for the defect R1 (af-qsloqo) was repairing;
+R2 then reached Benjamin as a Planning Exception.
+
 The door reads what the repair cites against its source
 (`docs/ENTRY_CONTRACT.md`, T40): a user story or a line in the Spec, an
 anchor in its Validated Prototype, a rule in its file at the commit of the

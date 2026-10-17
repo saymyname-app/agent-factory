@@ -952,11 +952,11 @@ class TechnicallyBlockedTest(publication.Harness):
         self.state_tool("record-gate", self.convoy, self.ids["T2"], "--gate", "dispatch")
         self.edit_bead(self.ids["T2"], status="in_progress")
 
-    def exit(self, repair, *extra):
+    def exit(self, repair, *extra, ticket="T2"):
         path = self.tmp / "repair.json"
         path.write_text(json.dumps(repair, ensure_ascii=False))
         return subprocess.run(
-            (str(TOOL), "exit", self.convoy, self.ids["T2"], "--exit", "technically_blocked", "--repair", str(path), *extra),
+            (str(TOOL), "exit", self.convoy, self.ids[ticket], "--exit", "technically_blocked", "--repair", str(path), *extra),
             env=self.env, text=True, capture_output=True)
 
     def test_technically_blocked_publishes_a_repair_that_blocks_the_ticket(self):
@@ -1009,12 +1009,52 @@ class TechnicallyBlockedTest(publication.Harness):
         self.assertEqual(before, {bead_id: beads[bead_id] for bead_id in before})
         self.assertEqual([], self.convoy_state(self.convoy)["convoy"]["red_checks"])
 
-    def test_a_second_technical_block_adds_a_second_repair(self):
-        self.assertEqual(0, self.exit(self.REPAIR).returncode)
-        proc = self.exit({**self.REPAIR, "title": "Le harnais retrouve son port"})
+    def test_a_block_on_a_defect_an_open_repair_restores_waits_for_that_repair(self):
+        # af-q6j79b: on 16/10 T59 published R2 (af-q8a2oe) for the defect R1
+        # (af-qsloqo, open, blocking T62R) already repaired; R2 then went to
+        # Benjamin as a Planning Exception. One defect, one repair.
+        first = json.loads(self.exit(self.REPAIR).stdout)["repair"]
+        self.state_tool("record-gate", self.convoy, self.ids["T4"], "--gate", "dispatch")
+        self.edit_bead(self.ids["T4"], status="in_progress")
+        before = set(self.beads())
+
+        proc = self.exit({**self.REPAIR, "title": "Le harnais recharge le jeu « contenu »"}, ticket="T4")
+
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        repair = json.loads(proc.stdout)["repair"]
+        self.assertEqual(("R1", first["id"], self.ids["T4"], True),
+                         (repair["key"], repair["id"], repair["blocks"], repair["attached"]))
+        beads = self.beads()
+        added = [bead for bead_id, bead in beads.items() if bead_id not in before]
+        self.assertEqual([], [bead for bead in added if (bead.get("metadata") or {}).get("gc.ticket_kind") == "repair"])
+        self.assertEqual("R1", beads[self.ids["T4"]]["metadata"]["gc.blocked_by"])
+        self.assertEqual("technically_blocked", self.shown_ticket(self.convoy, self.ids["T4"])["exit"]["exit"])
+        self.assertFalse(self.convoy_state(self.convoy)["unruled"])
+
+    def test_a_repair_blocked_on_its_own_defect_gets_a_repair_of_its_own(self):
+        # Neither itself nor a repair that waits for it: that would be a cycle.
+        first = json.loads(self.exit(self.REPAIR).stdout)["repair"]
+        self.ids["R1"] = first["id"]
+        self.state_tool("record-gate", self.convoy, first["id"], "--gate", "dispatch")
+        self.edit_bead(first["id"], status="in_progress")
+
+        proc = self.exit({**self.REPAIR, "title": "Le harnais recharge le jeu « contenu »"}, ticket="R1")
+
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         self.assertEqual("R2", json.loads(proc.stdout)["repair"]["key"])
-        self.assertEqual("R1,R2,T1", self.beads()[self.ids["T2"]]["metadata"]["gc.blocked_by"])
+        self.assertNotIn("attached", json.loads(proc.stdout)["repair"])
+
+    def test_a_second_block_of_a_ticket_on_the_same_defect_adds_nothing(self):
+        first = json.loads(self.exit(self.REPAIR).stdout)["repair"]
+        before = self.beads()
+
+        proc = self.exit({**self.REPAIR, "title": "Le harnais recharge le jeu « contenu »"})
+
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual((first["id"], True), (json.loads(proc.stdout)["repair"]["id"],
+                                               json.loads(proc.stdout)["repair"]["attached"]))
+        self.assertEqual(sorted(before), sorted(self.beads()))
+        self.assertEqual("R1,T1", self.beads()[self.ids["T2"]]["metadata"]["gc.blocked_by"])
 
     def test_technically_blocked_is_refused_when_the_repair_breaks_the_entry_contract(self):
         repair = {**self.REPAIR, "restores": {"kind": "user_story", "ref": "user story 99"}}
