@@ -242,9 +242,10 @@ the read model, never from the frozen page:
   own Fold.
 - `ui/home/overview.py` — `overview_view` reads the state of the
   destination from the snapshot and the requests; `render_overview` draws
-  it. Loading while the tracker has not answered, then « Cette vue est
-  indisponible » with « Réessayer » (`POST /api/health/recheck`) once it has
-  not answered within `COCKPIT_READ_GIVE_UP_SECONDS` (60 s) of the start;
+  it. Loading while the tracker has not answered and no read of it ended,
+  « Cette vue est indisponible » with « Réessayer » (`POST /api/health/recheck`)
+  once a read of it failed (`ReadModel.fail`, from the poller; a `bd` call
+  fails after `COCKPIT_BEADS_READ_TIMEOUT_SECONDS`, 10 s);
   « Rien à afficher ici » when nothing waits and nothing is declared;
   otherwise four indicators (« Décisions à prendre » counts the requests;
   the three others are what the tracker keeps as said of them, or « Non
@@ -263,6 +264,12 @@ the read model, never from the frozen page:
   options of a decision or their confirmation on this destination: they
   are drawn disabled and the panel says so; nothing shows a command done
   that no door recorded.
+- `result-findings`, `result-outdated` and `result-outage` are drawn as
+  `result-ready`, because the reference draws them so: their frozen pages
+  at 632deea (`prototypes/c01-complete/frozen-panorama-home/states/`) are
+  one and the same file (sha256 `843362d4…cb06253`), and their datasets say
+  the same text. An outdated dossier and an outage of Essai are told
+  apart from the judgment by T08 (af-2zseit), not by this Fold.
 - The zones of variant D that no destination of Panorama holds yet -- the
   inbox with its actions, the projects with their chantiers, the stop,
   the access and the health zones -- are kept, whole and working, folded
@@ -970,7 +977,8 @@ ways:
 | « Rituels »: each ritual (a line in capitals says how it is launched, then its title) | one bead per ritual under its title: how it is launched, what it is for, when it last ran | `beads.value` |
 | the page of a ritual (« ← Rituels », its title, « projet · … ») | one bead under the title of the ritual, its project declared; its steps and what the step it is at shows | `beads.value` |
 | « Analyses »: « Résultats fusionnés » or « Où passe le temps ? »; a merged result (« projet · hier ») | one bead kept as said for the view; the project of each merged result is declared | `beads.value`; `projets.value.projects` |
-| nothing read: `ui.state` is `loading` or `error` | a supervisor and a tracker that never answer | every source `unknown`, without value; `GET /` says it is reading, then, 8 s after the start (`COCKPIT_READ_GIVE_UP_SECONDS`, 60 s in service), that the view is unavailable |
+| nothing read yet: `ui.state` is `loading` | a supervisor that never answers, and a tracker whose read never ends (the cockpit waits a day for it, `COCKPIT_BEADS_READ_TIMEOUT_SECONDS`) | every source `unknown`, without value, `beads.failed_at` empty; `GET /` says it is reading, however late it is looked at |
+| nothing readable: `ui.state` is `error` | a supervisor that never answers, and a tracker whose read fails | every source `unknown`, without value, `beads.failed_at` set; `GET /` says the view is unavailable as soon as the first read failed |
 | a reading that is no longer current: `ui.state` is `stale` or `offline`, or `ui.stale` is true (Runs) | a supervisor that is read once, then answers no more | `gc.freshness` leaves `fresh` within seconds (a 2 s Validity window instead of 2 min), the last `gc.value` kept |
 | the runs of a Runs state | one bead per run under its title, open while the run has no end, with its type, status, start and elapsed time | `beads.value` (the open ones: the cockpit reads the open work of a tracker) |
 | the jobs of a run | one bead per job under its name, child of its run, assigned to the name of its lane, in progress while it has no end; its prompt and result, its start and end, the role of its lane | `beads.value` (those in progress) |

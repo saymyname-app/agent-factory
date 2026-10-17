@@ -18,7 +18,7 @@ _STATE_LABELS = {STALE: "périmé", UNKNOWN: "inconnu"}
 
 
 class _Source:
-    __slots__ = ("display_name", "value", "read_at", "last_attempt_at", "registered_at")
+    __slots__ = ("display_name", "value", "read_at", "last_attempt_at", "registered_at", "failed_at")
 
     def __init__(self, display_name, registered_at=None):
         self.display_name = display_name
@@ -26,6 +26,7 @@ class _Source:
         self.value = None
         self.read_at = None
         self.last_attempt_at = None
+        self.failed_at = None
 
 
 class ReadModel:
@@ -59,6 +60,16 @@ class ReadModel:
             if complete:
                 source.value = value
                 source.read_at = now
+            source.failed_at = None
+
+    def fail(self, name, at=None):
+        """Record a read that failed: the source did not answer, or answered
+        nothing a reading can be made of. The value already held is kept."""
+        now = self._clock.now() if at is None else at
+        with self._lock:
+            source = self._sources.setdefault(name, _Source(name, registered_at=now))
+            source.last_attempt_at = now
+            source.failed_at = now
 
     def snapshot(self, now=None):
         """{"gc": {"value": ..., "read_at": ..., "freshness": "fresh"}, ...}"""
@@ -81,6 +92,10 @@ class ReadModel:
                 # Since when the cockpit has been trying to read it: dates a
                 # source that never answered (spec .17).
                 "registered_at": source.registered_at,
+                # When its last read failed, None once a read succeeds: a
+                # source never read whose read failed is unreadable, one
+                # whose read has not ended yet is still being read.
+                "failed_at": source.failed_at,
                 "freshness": classify(source.read_at, now, validity_seconds),
             }
         return out

@@ -32,9 +32,10 @@ from datetime import datetime, timedelta
 # How the supervisor and the tracker are read during the launch.
 READ = "read"            # they answer
 READ_ONCE = "read_once"  # the supervisor answers once, then no more
-UNREAD = "unread"        # neither ever answers
+UNANSWERED = "unanswered"  # neither answers: the tracker's read never ends
+FAILING = "failing"        # neither answers: the tracker's read fails
 # The views of a Panorama state (`ui.state`) that fix the reading.
-UNREAD_VIEWS = ("loading", "error")
+UNREAD_VIEWS = {"loading": UNANSWERED, "error": FAILING}
 READ_ONCE_VIEWS = ("stale", "offline")
 # The other views: what they show is in the text of the page. Any other
 # `ui.state` is the state of the result whose dossier the overview opens.
@@ -157,7 +158,7 @@ def _panorama_city(name, at, ui, text) -> SyntheticCity:
         raise DatasetRefused("a Panorama state without the text of its page (visible_text)")
     lines = [line.strip() for line in text.split("\n") if line.strip()]
     view = ui.get("state")
-    reading = UNREAD if view in UNREAD_VIEWS else READ_ONCE if view in READ_ONCE_VIEWS else READ
+    reading = UNREAD_VIEWS.get(view) or (READ_ONCE if view in READ_ONCE_VIEWS else READ)
     if reading == READ_ONCE and lines[0] not in SCREENS:
         # The banner of a reading that is no longer current, above the title.
         lines = lines[1:]

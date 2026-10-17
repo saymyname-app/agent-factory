@@ -3,7 +3,7 @@ result (T02 Prototype Fold, af-0gonc9; Spec af-2zseit, user stories 111,
 124, 147 and 175; Validated Prototype prototype/cockpit-b-zones-20261012 at
 632deea, prototypes/c01-complete/frozen-panorama-home).
 
-    view = overview_view(snapshot, requests, now, give_up_seconds)
+    view = overview_view(snapshot, requests)
     main_html = render_overview(view, anchors, details_html)
 
 :func:`overview_view` reads, from the read model's snapshot and the
@@ -13,9 +13,9 @@ what it shows; :func:`render_overview` draws it, inside the shell of
 
 The states:
 
-- ``loading``: the tracker has not answered yet; ``error``: it has not
-  answered within ``give_up_seconds`` of the cockpit's start -- the page
-  says the real state is unknown and offers to read again;
+- ``loading``: the tracker has not answered yet; ``error``: it was never
+  read and its last read failed -- the page says the real state is unknown
+  and offers to read again;
 - ``empty``: nothing waits, no project, no result, no indicator;
 - ``content``: four indicators, the activity, the last runs, what waits
   (« Ce qui t’attend ») beside the result open under it, the projects. A
@@ -39,9 +39,6 @@ from cockpit.projects.source import from_value as projects_from_value
 from cockpit.ui.panorama.shell import anchor_slug
 
 LOADING, ERROR, EMPTY, CONTENT = "loading", "error", "empty", "content"
-# How long the tracker may stay unread, from the cockpit's start, before the
-# page says the view is unavailable rather than being read.
-READ_GIVE_UP_SECONDS = 60
 RESULT_DOSSIER = "gc.result_dossier"
 PROJECT_CARD = "gc.project_card"
 SAID = "said"
@@ -60,7 +57,7 @@ NOT_GIVEN = "Contenu non fourni par la source."
 LEGACY_SUMMARY = "Détails techniques et actions"
 
 
-def overview_view(snapshot, requests, now, give_up_seconds):
+def overview_view(snapshot, requests):
     """What the destination shows: ``state`` (see the module), ``stale``,
     ``checked`` (HH:MM of the reading shown), ``requests``, ``indicators``,
     ``dossier``, ``projects``."""
@@ -68,9 +65,7 @@ def overview_view(snapshot, requests, now, give_up_seconds):
     view = {"state": CONTENT, "stale": False, "checked": None, "requests": [], "indicators": [],
             "dossier": None, "projects": []}
     if beads_row is None or beads_row["value"] is None:
-        started = (beads_row or {}).get("registered_at")
-        waited = now - started if started is not None else give_up_seconds
-        view["state"] = LOADING if waited < give_up_seconds else ERROR
+        view["state"] = ERROR if (beads_row or {}).get("failed_at") is not None else LOADING
         return view
     beads = [bead for bead in beads_row["value"] if isinstance(bead, dict)]
     rows = [snapshot[name] for name in ("gc", "beads") if snapshot.get(name)]

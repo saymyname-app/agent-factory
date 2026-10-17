@@ -72,7 +72,7 @@ def build(config, clock=None):
             PollingSource(
                 read_model,
                 "beads",
-                lambda: read_operator_beads(bd_bin=config.bd_bin),
+                lambda: read_operator_beads(bd_bin=config.bd_bin, timeout=config.beads_read_timeout_seconds),
                 config.beads_poll_seconds,
             )
         )
@@ -145,7 +145,6 @@ def build(config, clock=None):
         supervisor_unreachable_after_seconds=config.supervisor_unreachable_after_seconds,
         factory_stalled_after_seconds=config.factory_stalled_after_seconds,
         illisible_after_seconds=config.illisible_after_seconds,
-        read_give_up_seconds=config.read_give_up_seconds,
     )
 
     # Clean stop (T23, T24) -- read side only (af-mjfvwx 7a): the driver keeps

@@ -165,6 +165,49 @@ def free_port():
 class TheRecipe(unittest.TestCase):
     """bin/cockpit-isolated, run as bin/project-launch runs it."""
 
+    def launch(self, dataset, env=None):
+        """The address of the cockpit the recipe serves on `dataset`, once
+        it answers."""
+        port = free_port()
+        proc = subprocess.Popen(
+            [sys.executable, str(RECIPE), "--port", str(port), "--dataset",
+             str(ROOT / "config" / "cockpit-datasets" / f"{dataset}.json")],
+            env={**os.environ, **(env or {})}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(proc.wait, 30)
+        self.addCleanup(proc.terminate)
+        address = f"http://127.0.0.1:{port}"
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                with urllib.request.urlopen(address + "/api/status", timeout=2) as response:
+                    if response.status == 200:
+                        return proc, address
+            except (urllib.error.URLError, ConnectionError, OSError):
+                pass
+            self.assertLess(time.monotonic(), deadline, "the cockpit never answered")
+            time.sleep(0.2)
+
+    def page(self, address):
+        with urllib.request.urlopen(address + "/", timeout=10) as response:
+            return response.read().decode("utf-8")
+
+    def test_home_loading_stays_a_reading_under_way_however_late_it_is_looked_at(self):
+        # Seen by the Ticket Evaluation of af-0gonc9 at 8fcd48a: looked at
+        # some seconds after the launch, home-loading was home-error.
+        _, address = self.launch("home-loading")
+        time.sleep(15)
+        page = self.page(address)
+        self.assertIn("Lecture en cours…", page)
+        self.assertNotIn("Cette vue est indisponible", page)
+
+    def test_home_error_says_the_view_is_unavailable_as_soon_as_the_tracker_failed(self):
+        _, address = self.launch("home-error")
+        deadline = time.monotonic() + 5
+        while "Cette vue est indisponible" not in (page := self.page(address)):
+            self.assertLess(time.monotonic(), deadline, "home-error is still a reading under way 5 s after the launch")
+            time.sleep(0.2)
+        self.assertNotIn("Lecture en cours…", page)
+
     def test_the_cockpit_that_listens_carries_the_mark_of_its_launch(self):
         port, mark = free_port(), "FACTORY_LAUNCH_ID=recipe-test-launch"
         proc = subprocess.Popen(

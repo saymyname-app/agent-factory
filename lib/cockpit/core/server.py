@@ -32,7 +32,7 @@ from cockpit.ui.base.page import render_document, render_fresh, render_home_zone
 from cockpit.ui.health.page import render_health_zone, render_status_line
 from cockpit.ui.access.page import render_access_zone
 from cockpit.ui.home.overview import CSS as OVERVIEW_CSS
-from cockpit.ui.home.overview import READ_GIVE_UP_SECONDS, overview_view, render_overview
+from cockpit.ui.home.overview import overview_view, render_overview
 from cockpit.ui.home.page import render_requests_section
 from cockpit.ui.panorama.shell import CSS as PANORAMA_CSS
 from cockpit.ui.panorama.shell import HOME, NAVIGATION, Anchors, render_not_folded, render_shell
@@ -191,7 +191,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             status_html=render_status_line(snapshot.get("gc"), health),
         )
         anchors = Anchors()
-        view = overview_view(snapshot, requests if beads_known else [], now, self.server.read_give_up_seconds)
+        view = overview_view(snapshot, requests if beads_known else [])
         main_html = render_overview(view, anchors, zones_html)
         # T13, af-cx20q9: the SameSite=Strict cookie an action POST must
         # echo back -- a cross-site POST never carries it, so its presence
@@ -511,7 +511,6 @@ def make_server(
     supervisor_unreachable_after_seconds=None,
     factory_stalled_after_seconds=None,
     illisible_after_seconds=None,
-    read_give_up_seconds=None,
 ):
     if host not in ALLOWED_HOSTS:
         raise ValueError(
@@ -555,7 +554,6 @@ def make_server(
     server.illisible_after_seconds = (
         ILLISIBLE_THRESHOLD_SECONDS if illisible_after_seconds is None else illisible_after_seconds
     )
-    server.read_give_up_seconds = READ_GIVE_UP_SECONDS if read_give_up_seconds is None else read_give_up_seconds
     return server
 
 
