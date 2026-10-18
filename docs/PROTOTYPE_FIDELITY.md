@@ -154,8 +154,12 @@ anchor: it is repaired, never accepted.
   dataset, and a difference shows in the captures.
 - A product that forbids being framed (`X-Frame-Options`, `frame-ancestors`)
   cannot be measured this way: the measure fails and the command refuses.
-- A theme switched by an attribute instead of the preferred colour scheme is
-  not rendered as dark by the browser.
+- A theme switched by a class or an attribute instead of the preferred colour
+  scheme is not rendered by the browser. When the prototype measures the same
+  in every theme of a viewport, only the theme its root's `color-scheme`
+  names is compared; each other one is a `theme` deviation « non mesurable »,
+  with its reason, never green and never accepted (af-yw9awk). The tokens
+  are still read by selector, not by theme.
 - The answer of the operator is read from what `bin/escalation-door` wrote
   on the ticket. The door is the operator's; a process that calls it in his
   name is not detected here.
@@ -187,4 +191,5 @@ with the real Chromium.
 | Side-by-side captures and a difference image per state, Evidence Records of the capture tool; no pixel threshold | `test_named_ticket_files_side_by_side_and_difference_captures_per_state`, `test_no_pixel_threshold_fails_the_command` |
 | A named ticket: only the anchors of its screen; the result on the ticket by the state command, tied to the commit | `test_named_ticket_compares_only_the_anchors_of_the_screen_it_touches`, `test_named_ticket_records_the_result_on_the_ticket_tied_to_the_commit`, `test_red_result_is_recorded_on_the_ticket_with_the_anchor_state_and_property` |
 | A deviation declared in the Handoff stays red; a resolved Planning Exception that names the anchor turns it « accepté par Benjamin »; no author command lifts the red | `test_deviation_declared_in_the_handoff_stays_red`, `test_resolved_planning_exception_naming_the_anchor_turns_it_accepted_by_benjamin`, `test_planning_exception_answered_otherwise_or_naming_another_anchor_leaves_it_red`, `test_no_option_of_the_command_lifts_a_red` |
+| A theme the preferred colour scheme does not reach on the prototype is reported « non mesurable », not compared, and never green (af-yw9awk) | `test_theme_the_prototype_reaches_only_by_a_class_is_unmeasured_not_compared`, `test_prototype_that_follows_the_preferred_colour_scheme_is_measured_in_both_themes` |
 | T46: a delivered file with the digest of a prototype file is refused and named, before anything is filed | `test_delivered_file_with_the_digest_of_a_prototype_file_is_refused_and_named`, `test_named_ticket_serving_a_prototype_file_as_is_is_refused_before_anything_is_filed` |

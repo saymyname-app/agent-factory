@@ -467,8 +467,10 @@ MERGE_OUTCOMES_WITH_COMMIT = ("merged", "red")
 # §3): what a deviation is, and the three states of a result. A deviation is
 # never lifted by its author: only a resolved Planning Exception that names
 # the anchor turns it « accepté par Benjamin ».
-DEVIATION_KINDS = ("absent", "structure", "style", "token")
+DEVIATION_KINDS = ("absent", "structure", "style", "token", "theme")
 DEVIATION_KIND_WITHOUT_ANCHOR = "token"
+# A theme the prototype cannot be measured in: a rendering, no anchor (af-yw9awk).
+DEVIATION_KIND_THEME = "theme"
 # How many deviations of a fidelity result the ticket keeps, in the order
 # measured; the full list stays in the sealed piece. A tracker write is one
 # command line, and one argument cannot pass 128 KiB (af-m0hvif: 22,313
@@ -1571,6 +1573,9 @@ def fidelity_record(raw: Any, metadata: dict[str, Any] | None = None) -> dict[st
         if kind == DEVIATION_KIND_WITHOUT_ANCHOR:
             if located != (None, None):
                 raise Refusal(f"écart de token mal formé : {deviation!r} (un token se lit sur les sources, sans ancre)")
+        elif kind == DEVIATION_KIND_THEME:
+            if not isinstance(deviation["viewport"], str) or not deviation["viewport"] or deviation["anchor"] is not None:
+                raise Refusal(f"écart de thème mal formé : {deviation!r} (un rendu, sans ancre)")
         elif any(not isinstance(name, str) or not name for name in located):
             raise Refusal(f"écart sans ancre ou sans taille d'écran : {deviation!r}")
     count = len(deviations)
