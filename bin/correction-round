@@ -16,7 +16,9 @@ A ticket still refused after that round -- its answers judged unfavorably, a
 criterion still not observed, a review replayed in full that blocks again, a
 session that ended without correcting -- is stopped: no second round starts,
 nothing of it is merged, and it is raised once to the operator through
-bin/escalation-door, as one item.
+bin/escalation-door, as one item. So is a finished ticket both accept at its
+tip whose mechanical fidelity is red there, before or after the round: no
+round takes a fidelity deviation up (af-ckbood).
 
 On a stopped ticket the declared human approver of the project may override
 a Blocking Finding of the code review, with their words (`override`); it is
@@ -72,6 +74,8 @@ KIND_PREFACTORING = "prefactoring"
 FAVORABLE = "favorable"
 STOP_STILL_REFUSED = "still_refused"
 OVERRIDE_RECORDED = "dérogation enregistrée"
+# What lets the mechanical fidelity of a ticket pass (bin/convoy-state `fidelity.state`).
+FIDELITY_PASSING = ("vert", "accepté par Benjamin")
 # What the code review or the evaluation says of a ticket at its tip.
 PENDING, ACCEPTED, REFUSED, WITH_AUTHOR = "pending", "accepted", "refused", "with_author"
 
@@ -331,9 +335,22 @@ def finished_at(ticket: dict[str, Any], tip: str) -> bool:
     return handoff.get("partial") is False and handoff.get("commit") == tip and green_at(ticket, tip)
 
 
-def still_refused(review: tuple[str, list[str], str], evaluation: tuple[str, list[str], str], unfinished: bool) -> str:
+def fidelity_red(ticket: dict[str, Any], tip: str) -> str | None:
+    """The mechanical fidelity (bin/ticket-end fidelity) measured red at the
+    tip, as one part of a stop; None when it was not measured there or passes.
+    No round takes its deviations up: only a Planning Exception accepts one
+    (af-ckbood; af-vbb4ol, accepted by both and red there, waited unraised)."""
+    fidelity = ticket.get("fidelity") or {}
+    if fidelity.get("commit") != tip or fidelity.get("state") in FIDELITY_PASSING:
+        return None
+    count = fidelity.get("deviation_count") or len(fidelity.get("deviations") or [])
+    return f"fidélité au Validated Prototype rouge ({count} écart(s))"
+
+
+def still_refused(review: tuple[str, list[str], str], evaluation: tuple[str, list[str], str], unfinished: bool,
+                  fidelity: str | None = None) -> str:
     """The one-line detail of the stop: what the ticket is still refused for."""
-    parts = []
+    parts = [fidelity] if fidelity else []
     if review[0] in (REFUSED, WITH_AUTHOR) and review[1]:
         parts.append(f"revue de code ({', '.join(review[1])})")
     if evaluation[0] in (REFUSED, WITH_AUTHOR) and evaluation[1]:
@@ -414,7 +431,9 @@ def raise_stop(convoy_id: str, ticket: dict[str, Any], stop: dict[str, Any]) -> 
     head = f"Ticket {ticket['id']} arrêté : "
     payload = {
         "quoi": head + short(stop["detail"], REQUEST_LINE_MAX - len(head)),
-        "pourquoi": "Un ticket n'a qu'un tour de correction : aucun second tour ne démarre, rien de ce ticket ne fusionne.",
+        "pourquoi": ("Un ticket n'a qu'un tour de correction : aucun second tour ne démarre, rien de ce ticket ne fusionne."
+                     if ticket.get("correction") else
+                     "Aucun tour de correction ne reprend un écart de fidélité au prototype : rien de ce ticket ne fusionne."),
         "que_faire": [
             {"option": "Passer outre un Blocking Finding de la revue de code, avec tes mots",
              "consequence": f"bin/{PROGRAM} override l'enregistre comme dérogation ; jamais un critère non observé."},
@@ -476,11 +495,14 @@ def settle_ticket(convoy: Convoy, ticket_id: str) -> dict[str, Any]:
         finished = finished_at(ticket, tip)
         review, evaluation = review_position(ticket, tip), evaluation_position(ticket, tip)
         positions = (review[0], evaluation[0])
+        fidelity = fidelity_red(ticket, tip)
 
         if correction is None:
             if review[0] == REFUSED and review_of(ticket)["rounds"][-1]["kind"] != "review":
                 # Answers already judged unfavorably: that judgement was its round.
                 return stop_ticket(convoy, ticket_id, still_refused(review, evaluation, False))
+            if finished and fidelity and positions == (ACCEPTED, ACCEPTED):
+                return stop_ticket(convoy, ticket_id, short(f"{fidelity} à la pointe, revue et évaluation favorables"))
             if not finished or REFUSED not in positions:
                 return {"ticket": ticket_id, "action": "none"}
             if PENDING in positions:
@@ -511,6 +533,8 @@ def settle_ticket(convoy: Convoy, ticket_id: str) -> dict[str, Any]:
         if PENDING in positions:
             return {"ticket": ticket_id, "action": "pending", "commit": correction["commit"],
                     "reason": review[2] if review[0] == PENDING else evaluation[2]}
+        if fidelity:
+            return stop_ticket(convoy, ticket_id, still_refused(review, evaluation, False, fidelity))
         return {"ticket": ticket_id, "action": "none"}
 
 
