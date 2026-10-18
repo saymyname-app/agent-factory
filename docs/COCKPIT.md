@@ -236,10 +236,14 @@ the read model, never from the frozen page:
   « Vue d’ensemble » carries how many requests wait. Its parts carry the
   anchors of the reference (`data-anchor`), numbered by `Anchors` as the
   frozen pages number them, so each Prototype Fold draws its destination
-  inside it. `/journal` and `/projet/<key>` are served in it; `/projets`,
+  inside it. `/journal` and `/projet/<key>` are served in it, and
+  `/projets`: the declared projects, each with its « Page projet » (the
+  « Projets » zone of the home screen), until the Fold of « Projets »;
   `/runs`, `/runs/run`, `/runs/job`, `/usine`, `/rituels` and `/analyses`
   answer, in it, that the destination is not served here yet, until their
-  own Fold.
+  own Fold. `--pn-control-line` is the box of a control, at 3:1 at least
+  on the surface and the background in both themes, where the reference's
+  `--pn-line` is not.
 - `ui/home/overview.py` — `overview_view` reads the state of the
   destination from the snapshot and the requests; `render_overview` draws
   it. Loading while the tracker has not answered and no read of it ended,
@@ -252,24 +256,22 @@ the read model, never from the frozen page:
   collecté »), the activity of seven days (no source of daily volumes yet:
   drawn empty and said so), the last runs (their cards are not wired to
   this destination yet: said so), « Ce qui t’attend » beside the result
-  open under it, and the projects, those something waits for first.
+  open under it, and the projects, those something waits for first. An
+  indicator and a project's card are links (to `/analyses`, to the
+  requests, to `/projet/<key>`), so the keyboard opens them as a click
+  does; the line of the request open carries `aria-current` and an
+  accent mark, not only its background.
   A supervisor or tracker reading that is no longer current keeps the
   last values under « Lecture périmée · état actuel inconnu. »
-- The result open is the record a bead carries under `gc.result_dossier`
-  (a result to judge, its dossier, the follow-up of a result already
-  judged, a decision and its options); without one, the first request and
-  the way to its detail. A project's card reads its current chantier's
-  `gc.project_card` (stage, figures, release line) when the tracker holds
-  one, its computed stage otherwise. No door is wired to Essai, Avis, the
-  options of a decision or their confirmation on this destination: they
-  are drawn disabled and the panel says so; nothing shows a command done
-  that no door recorded.
-- `result-findings`, `result-outdated` and `result-outage` are drawn as
-  `result-ready`, because the reference draws them so: their frozen pages
-  at 632deea (`prototypes/c01-complete/frozen-panorama-home/states/`) are
-  one and the same file (sha256 `843362d4…cb06253`), and their datasets say
-  the same text. An outdated dossier and an outage of Essai are told
-  apart from the judgment by T08 (af-2zseit), not by this Fold.
+- The result open is the record of a result to judge a bead carries
+  under `gc.result_dossier`; without one, the first request and the way
+  to its detail. The panels of a result in its other states (its dossier,
+  its follow-up, a decision and its options) are T02S's. A project's card
+  reads its current chantier's `gc.project_card` (stage, figures, release
+  line) when the tracker holds one, its computed stage otherwise. No door
+  is wired to Essai or Avis on this destination: they are drawn disabled
+  and the panel says so; nothing shows a command done that no door
+  recorded.
 - The zones of variant D that no destination of Panorama holds yet -- the
   inbox with its actions, the projects with their chantiers, the stop,
   the access and the health zones -- are kept, whole and working, folded
@@ -278,8 +280,9 @@ the read model, never from the frozen page:
   leave it as the Folds of their destinations take them.
 
 `tests/cockpit-criteria/commands/home-destination-*-test.py` launch the
-real cockpit on each of the 24 states of the reference and read the page in
-a headless Chromium at 1440 and 390 px, light and dark.
+real cockpit on each of the 10 home states of the reference and read the
+page in a headless Chromium at 1440 and 390 px, light and dark; the 14
+result states are T02S's.
 
 ## Home screen, as the validated prototype shows it (af-mjfvwx)
 
@@ -968,7 +971,7 @@ ways:
 |---|---|---|
 | the state it is: `ui.id` (Panorama), `state` (Runs) | the supervisor's city bears that name | `GET /api/status`, `gc.value.city` |
 | « Vue d’ensemble »: « Décisions à prendre N », then N lines under « Ce qui t’attend », each with « projet · nature » | one open bead per line that asks the operator (title, project, nature, the fixed time of the dataset) | `beads.value`; `GET /api/requests` |
-| « Vue d’ensemble »: the dossier open under those lines (« projet · sujet », its title, what it shows), and the state of the result when `ui.state` names one (`ready`, `findings`, `merged`, `abandoned`…) | one bead `synthetic-dossier` under the title of the dossier, of that project; its lines; `synthetic.result_state`; its record `gc.result_dossier`: a result to judge (its resources: label, detail and « ↗ » open, a label alone unfolds, and says open its lines in `folded`), its dossier (`dossier`: heading, version, checks as label and status, what unfolds), the follow-up of a result judged (`returned`, `repairing`, `accepted`, `merging`, `merged`, `conflict`, `abandoned`), a decision (`request`, `confirmation`: its options, and the one prepared) -- Essai and Avis are the cockpit's own | `beads.value`; `GET /` |
+| « Vue d’ensemble »: the dossier open under those lines (« projet · sujet », its title, what it shows), and the state of the result when `ui.state` names one (`ready`, `findings`, `merged`, `abandoned`…) | one bead `synthetic-dossier` under the title of the dossier, of that project; its lines; with no state of a result, its record `gc.result_dossier`, a result to judge (its resources: label, detail and « ↗ » open, a label alone unfolds, and says open its lines in `folded`) -- Essai and Avis are the cockpit's own; with one, `synthetic.result_state` alone (the panels of a result in its states are T02S's) | `beads.value`; `GET /` |
 | « Vue d’ensemble »: the cards under « Projets » (name, « chantier · étape », then the figures of the card) | one declared project per name; one open chantier per project, under its title, whose description is the stage and the other lines of the card, and whose `gc.project_card` is the stage, the figures and, last, the line of the release | `projets.value.projects`; `GET /api/projects`; `beads.value`; `GET /` |
 | « Vue d’ensemble »: the four indicators | one bead kept as said per indicator (value, period) | `beads.value` |
 | the page of a project (« ← Projets »): its name, what is said above the first section; « CHANTIER ACTUEL »; « Prochaine release », « PROCHAIN JALON », « ROADMAP », « Derniers changements » | the project is declared; one bead under its name (purpose, stage, indicators); its open chantier; one bead kept as said per section, of that project | `projets.value.projects`, `GET /projet/<key>`; `beads.value` |

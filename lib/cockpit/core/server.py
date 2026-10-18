@@ -52,7 +52,7 @@ ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
 # The destinations of Panorama whose Prototype Fold is not done yet: their
 # address answers, in the shell, that they are not served here yet.
 NOT_FOLDED = {
-    href: (key, label) for key, label, href in NAVIGATION if key not in (HOME, "journal")
+    href: (key, label) for key, label, href in NAVIGATION if key not in (HOME, "projets", "journal")
 }
 NOT_FOLDED.update({"/runs/run": NOT_FOLDED["/runs"], "/runs/job": NOT_FOLDED["/runs"]})
 
@@ -108,6 +108,9 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             guard_result = self.server.action_guard.check("GET", self.headers)
             self._send_json({"error": guard_result.reason}, status=403)
             return
+        if self.path == "/projets":
+            self._send_projects_page(read_model)
+            return
         if self.path.startswith("/projet/"):
             self._send_project_page(read_model)
             return
@@ -134,7 +137,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             # project's page.
             referer_path = urllib.parse.urlsplit(self.headers.get("Referer") or "").path
             location = "/"
-            if referer_path.startswith("/projet/") or referer_path == "/journal":
+            if referer_path.startswith("/projet/") or referer_path in ("/projets", "/journal"):
                 location = urllib.parse.quote(urllib.parse.unquote(referer_path), safe="/-_.~")
             self.send_response(303)
             self.send_header("Location", location)
@@ -379,6 +382,15 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             sans_projet,
             stale_since=None if row["freshness"] == FRESH else row["read_at"],
         )
+
+    def _send_projects_page(self, read_model):
+        """GET /projets: the declared projects, each with its link « Page
+        projet » -- where the entry « Projets » of the navigation leads
+        until the Prototype Fold of its destination."""
+        fresh_html = render_fresh(read_model.headline(), not read_model.stale_or_unknown())
+        inner = '<div class="pn-head"><h1>Projets</h1></div>%s%s' % (
+            fresh_html, self._render_projects_zone(read_model.snapshot()) or render_projects_unknown())
+        self._send_page(read_model, "projets", inner, extra_css=PROJECT_PAGE_CSS)
 
     def _send_project_page(self, read_model):
         """GET /projet/<id> (spec .49): one declared project's chantiers by

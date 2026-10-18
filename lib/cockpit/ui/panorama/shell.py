@@ -94,19 +94,22 @@ def render_not_folded(label):
 
 
 # The tokens of the reference, light when the browser prefers it, dark
-# otherwise; the shell's layout: the navigation beside the destination,
+# otherwise (--pn-control-line, the box of a control: 3:1 at least on the
+# surface and the background, where --pn-line is not); the shell's layout: the navigation beside the destination,
 # above it under 800 px. A rule of a destination reuses these tokens.
 CSS = """
 :root{
   color-scheme:light;
   --pn-bg:#F3F5F9; --pn-surface:#FFFFFF; --pn-surface-2:#E6EBFB; --pn-line:#D2D8E2; --pn-ink:#17202E;
   --pn-muted:#566175; --pn-accent:#3653C2; --pn-accent-ink:#FFFFFF; --pn-ok:#17704C; --pn-warn:#85590F;
+  --pn-control-line:#788396;
 }
 @media (prefers-color-scheme: dark){
   :root{
     color-scheme:dark;
     --pn-bg:#0D1015; --pn-surface:#161B23; --pn-surface-2:#222D46; --pn-line:#2A3240; --pn-ink:#ECEDF3;
     --pn-muted:#9AA6B9; --pn-accent:#99AAFF; --pn-accent-ink:#101526; --pn-ok:#55C89D; --pn-warn:#EFC778;
+    --pn-control-line:#707C91;
   }
 }
 body{padding:0;background:var(--pn-bg);color:var(--pn-ink);font-size:15px}
