@@ -184,7 +184,10 @@ def _panorama_city(name, at, ui, text, folded) -> SyntheticCity:
     dossier = next((bead for bead in tracker.beads if bead["id"] == DOSSIER), None)
     if result_state and dossier is None:
         raise DatasetRefused(f"« {lines[0]} » opens no dossier to be in the state {result_state!r} (ui.state)")
-    record = dossier and _dossier_record(dossier["title"], dossier["description"].split("\n"), result_state)
+    # A result in one of its states (`ui.state`) is the panels of T02S: its
+    # dossier is only marked with that state.
+    record = None if dossier is None or result_state else _dossier_record(
+        dossier["title"], dossier["description"].split("\n"))
     unfolding = [resource for resource in (record or {}).get("resources", []) if not resource["opens"]]
     unread = sorted(set(folded) - {resource["label"] for resource in unfolding})
     if unread:
@@ -192,9 +195,9 @@ def _panorama_city(name, at, ui, text, folded) -> SyntheticCity:
     for resource in unfolding:
         if resource["label"] in folded:
             resource["said"] = folded[resource["label"]]
-    if dossier is not None:
-        if result_state:
-            dossier["metadata"][RESULT_STATE] = result_state
+    if result_state:
+        dossier["metadata"][RESULT_STATE] = result_state
+    if record is not None:
         dossier["metadata"][RESULT_DOSSIER] = json.dumps(record, ensure_ascii=False)
     return SyntheticCity(
         name=name, reading=reading,
@@ -285,63 +288,30 @@ def _chantier(tracker, project: str, title: str, said, card=None) -> None:
                 labels=["approved-ticket-graph"], metadata=metadata)
 
 
-# The states of a result whose dossier the overview opens (`ui.state`), by
-# what its panel shows: a result already judged is followed, a decision
-# request offers its options; any other state is a result to judge.
-FOLLOW_UP_STATES = ("returned", "repairing", "accepted", "merging", "merged", "conflict", "abandoned")
-DECISION_STATES = ("request", "confirmation")
 # The bar of a result to judge: the cockpit draws it, the record does not
 # carry it.
 RESULT_BAR = ("Essai ↗", "Avis")
 OPENS = "↗"
-# « Choix CSV préparé. ConfirmerAnnuler »: an option prepared, to confirm.
-PREPARED = re.compile(r"^(?P<said>.+?)\s*Confirmer\s*Annuler$")
 
 
-def _dossier_record(title: str, lines, state) -> dict:
-    """The record of the dossier open under « Ce qui t’attend »: what it is
-    about (« projet · sujet »), its title, what its panel says (`summary`)
-    and holds -- resources that open (label, detail, « ↗ ») or that unfold
-    (a label alone; what they say open is added from the dataset's
-    `folded`), the checks of a dossier (label, status), the options
-    of a decision and the one prepared."""
+def _dossier_record(title: str, lines) -> dict:
+    """The record of the result to judge open under « Ce qui t’attend »:
+    what it is about (« projet · sujet »), its title, what its panel says
+    (`summary`) and its resources -- that open (label, detail, « ↗ ») or
+    that unfold (a label alone; what they say open is added from the
+    dataset's `folded`)."""
     about, *lines = [line for line in lines if line not in RESULT_BAR]
     if not lines:
         raise DatasetRefused(f"a dossier that says nothing under its title: « {title} »")
-    record = {"about": about, "title": title, "state": state, "summary": lines[0], "resources": [],
-              "checks": [], "options": [], "prepared": None}
-    rest = lines[1:]
-    if state in DECISION_STATES:
-        record["kind"] = "decision"
-        record["resources"] = [{"label": label, "opens": False} for label in rest[:1]]
-        for line in rest[1:]:
-            prepared = PREPARED.match(line)
-            if prepared:
-                record["prepared"] = prepared["said"]
-            else:
-                record["options"].append(line)
-    elif state in FOLLOW_UP_STATES:
-        record["kind"] = "follow_up"
-        record["resources"] = [{"label": label, "opens": False} for label in rest]
-    elif state == "dossier":
-        # « Dossier du résultat », its version, its checks (label, status)
-        # and, last, what unfolds.
-        record.update(kind="dossier", heading=lines[0], summary=rest[0] if rest else "")
-        checks, unfolds = rest[1:-1], rest[-1:]
-        if len(checks) % 2:
-            raise DatasetRefused(f"a dossier whose checks are not label and status: {checks}")
-        record["checks"] = [{"label": label, "status": status} for label, status in zip(checks[0::2], checks[1::2])]
-        record["resources"] = [{"label": label, "opens": False} for label in unfolds]
-    else:
-        record["kind"] = "judge"
-        at = 0
-        while at < len(rest):
-            if rest[at + 2:at + 3] == [OPENS]:
-                record["resources"].append({"label": rest[at], "detail": rest[at + 1], "opens": True})
-                at += 3
-            else:
-                record["resources"].append({"label": rest[at], "opens": False})
-                at += 1
+    record = {"about": about, "title": title, "summary": lines[0], "resources": []}
+    rest, at = lines[1:], 0
+    while at < len(rest):
+        if rest[at + 2:at + 3] == [OPENS]:
+            record["resources"].append({"label": rest[at], "detail": rest[at + 1], "opens": True})
+            at += 3
+        else:
+            record["resources"].append({"label": rest[at], "opens": False})
+            at += 1
     return record
 
 

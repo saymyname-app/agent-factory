@@ -22,14 +22,14 @@ The states:
   reading of the supervisor or the tracker that is no longer current keeps
   the last values under a notice that says so.
 
-The result open is the record a bead carries under ``gc.result_dossier``
-(a result to judge, its dossier, the follow-up of a result already judged,
-or a decision with its options); without one, the first request. A part
-of it that unfolds says, open, the lines its record gives it (« Compte
-rendu long » its findings), or that the source gave none. Its
-commands are not wired to a door here: Essai, Avis, the options and their
-confirmation are drawn disabled, and the panel says so -- nothing on the
-page shows a command done that no door recorded.
+The result open is the record of a result to judge a bead carries under
+``gc.result_dossier``; without one, the first request. The panels of a
+result in its other states (its dossier, its follow-up, a decision) are
+T02S's. A part of it that unfolds says, open, the lines its record gives it
+(« Compte rendu long » its findings), or that the source gave none. Its
+commands are not wired to a door here: Essai and Avis are drawn disabled,
+and the panel says so -- nothing on the page shows a command done that no
+door recorded.
 """
 import html
 import json
@@ -39,6 +39,7 @@ from cockpit.core.freshness import FRESH
 from cockpit.core.readmodel import PARIS
 from cockpit.projects.source import from_value as projects_from_value
 from cockpit.ui.panorama.shell import anchor_slug
+from cockpit.ui.projects.project_page import project_page_url
 
 LOADING, ERROR, EMPTY, CONTENT = "loading", "error", "empty", "content"
 RESULT_DOSSIER = "gc.result_dossier"
@@ -54,7 +55,6 @@ CHART_LABEL = ("Volumes quotidiens comparés sur sept jours : PR fusionnées, ti
                "exécutions CI réussies")
 CHART_SERIES = (("PR fusionnées", "#91a7ff"), ("Tickets livrés", "#52c9b1"), ("CI réussies", "#e6ba70"))
 UNWIRED_RESULT = "Essai et Avis ne sont pas encore raccordés à cette vue : rien n’est lancé ni préparé d’ici."
-UNWIRED_DECISION = "Répondre depuis cette vue est indisponible : aucun choix n’est transmis à l’usine."
 NOT_GIVEN = "Contenu non fourni par la source."
 LEGACY_SUMMARY = "Détails techniques et actions"
 
@@ -188,9 +188,9 @@ def _render_content(view, anchors):
     metrics = []
     for number, (label, value, caption, href) in enumerate(view["indicators"]):
         metrics.append(
-            '<div class="pn-metric%s" role="link" tabindex="0" data-href="%s" %s>'
-            '<span class="pn-metric-label" %s>%s</span><strong>%s</strong><small>%s</small></div>'
-            % (" pn-emphasis" if number == 0 else "", _e(href), anchors("metric"), anchors("metric-label"),
+            '<div class="pn-metric%s" %s><a href="%s">'
+            '<span class="pn-metric-label" %s>%s</span><strong>%s</strong><small>%s</small></a></div>'
+            % (" pn-emphasis" if number == 0 else "", anchors("metric"), _e(href), anchors("metric-label"),
                _e(label), _e(value), _e(caption)))
     parts.append('<div class="pn-metric-grid" %s>%s</div>' % (anchors("metric-grid"), "".join(metrics)))
     parts.append(_render_activity(anchors))
@@ -201,8 +201,8 @@ def _render_content(view, anchors):
         % (anchors("panel"), anchors("section-heading"), _e(RUNS_DOC), anchors("overview-runs")))
     requests = view["requests"]
     lines = "".join(
-        '<button type="button" class="pn-request%s" data-request="%s" %s><strong>%s</strong>%s<small>%s</small></button>'
-        % (" pn-chosen" if number == 0 else "", _e(request["id"]), anchors("request"), _e(request["quoi"]),
+        '<button type="button" class="pn-request"%s data-request="%s" %s><strong>%s</strong>%s<small>%s</small></button>'
+        % (' aria-current="true"' if number == 0 else "", _e(request["id"]), anchors("request"), _e(request["quoi"]),
            # A title its producer wrote outside the contract of the text:
            # the cockpit's label, then what was written, whole.
            '<span class="pn-origin">Texte écrit : « %s »</span>' % _e(request["origine"]) if request["origine"] else "",
@@ -235,33 +235,14 @@ def _render_result(view, anchors):
     record = view["dossier"]
     if record is None:
         return _render_request_panel(view["requests"], anchors)
-    kind = record.get("kind")
-    parts = ['<small>%s</small><h2>%s</h2>' % (_e(record.get("about") or ""), _e(record.get("title") or ""))]
-    if kind == "dossier":
-        parts.append('<h3>%s</h3>' % _e(record.get("heading") or "Dossier du résultat"))
-    parts.append("<p>%s</p>" % _e(record.get("summary") or ""))
-    resources = record.get("resources") or []
-    if kind == "judge":
-        parts.append('<div class="pn-resources" %s>%s</div>' % (anchors("resource-list"), _render_resources(resources)))
-    else:
-        for check in record.get("checks") or []:
-            parts.append('<div class="pn-row pn-check" %s><span>%s</span><span class="pn-tag" %s>%s</span></div>'
-                         % (anchors("row"), _e(check.get("label")), anchors("tag"), _e(check.get("status"))))
-        parts.append(_render_resources(resources))
-    if kind in ("judge", "dossier"):
-        parts.append(
-            '<div class="pn-dock" role="group" aria-label="Actions possibles" %s>'
-            '<button type="button" disabled>Essai ↗</button><button type="button" disabled>Avis</button>'
-            '<p class="pn-unwired">%s</p></div>' % (anchors("actions-possibles"), UNWIRED_RESULT))
-    elif kind == "decision":
-        parts.append('<div class="pn-dock" role="group" aria-label="Options" %s>%s</div>' % (
-            anchors("actions"),
-            "".join('<button type="button" disabled>%s</button>' % _e(option) for option in record.get("options") or [])))
-        if record.get("prepared"):
-            parts.append('<div class="pn-notice" %s>%s <button type="button" disabled>Confirmer</button>'
-                         '<button type="button" disabled>Annuler</button></div>'
-                         % (anchors("notice"), _e(record["prepared"])))
-        parts.append('<p class="pn-unwired">%s</p>' % UNWIRED_DECISION)
+    parts = [
+        '<small>%s</small><h2>%s</h2><p>%s</p>'
+        % (_e(record.get("about") or ""), _e(record.get("title") or ""), _e(record.get("summary") or "")),
+        '<div class="pn-resources" %s>%s</div>' % (anchors("resource-list"), _render_resources(record.get("resources") or [])),
+        '<div class="pn-dock" role="group" aria-label="Actions possibles" %s>'
+        '<button type="button" disabled>Essai ↗</button><button type="button" disabled>Avis</button>'
+        '<p class="pn-unwired">%s</p></div>' % (anchors("actions-possibles"), UNWIRED_RESULT),
+    ]
     return '<article class="pn-panel pn-result" %s>%s</article>' % (anchors("panel"), "".join(parts))
 
 
@@ -300,10 +281,10 @@ def _render_projects(projects, anchors):
         figures = "".join("<span>%s</span>" % _e(figure) for figure in project["figures"]) or \
             "<span>Volumes non collectés</span>"
         rows.append(
-            '<div class="pn-row pn-project" role="link" tabindex="0" data-href="/projet/%s" %s>'
+            '<div class="pn-row pn-project" %s><a href="%s">'
             '<div><strong>%s</strong><small>%s</small><div class="pn-stats" %s>%s</div>'
-            '<div class="pn-release" %s>%s</div></div><span aria-hidden="true">→</span></div>'
-            % (_e(project["id"]), anchors("row"), _e(project["name"]), _e(project["chantier"]),
+            '<div class="pn-release" %s>%s</div></div><span aria-hidden="true">→</span></a></div>'
+            % (anchors("row"), _e(project_page_url(project["id"])), _e(project["name"]), _e(project["chantier"]),
                anchors("small-stats"), figures, anchors("release-info"),
                _e(project["release"] or "Release non cadrée")))
     body = "".join(rows) or "<p>Aucun projet déclaré.</p>"
@@ -327,7 +308,7 @@ CSS = """
 .pn-overview-head small{display:block;margin-bottom:20px;color:var(--pn-muted);font-size:12px}
 .pn-overview-head h1{font-size:27px;margin:0 0 6px}
 .pn-overview small{color:var(--pn-muted);font-size:12px}
-.pn-overview button{font:inherit;color:var(--pn-ink);background:var(--pn-surface);border:1px solid var(--pn-line);
+.pn-overview button{font:inherit;color:var(--pn-ink);background:var(--pn-surface);border:1px solid var(--pn-control-line);
   border-radius:8px;padding:10px 14px;cursor:pointer}
 .pn-overview button:hover{border-color:var(--pn-accent)}
 .pn-overview button:disabled{opacity:.5;cursor:not-allowed}
@@ -336,9 +317,9 @@ CSS = """
 .pn-notice{padding:12px;border:1px solid var(--pn-line);border-radius:6px;color:var(--pn-warn);margin-bottom:18px;
   overflow-wrap:anywhere}
 .pn-metric-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px}
-.pn-metric{border:1px solid var(--pn-line);border-radius:10px;padding:18px;background:var(--pn-surface);min-width:0;cursor:pointer}
+.pn-metric{border:1px solid var(--pn-line);border-radius:10px;background:var(--pn-surface);min-width:0}
+.pn-metric>a{display:block;padding:18px;border-radius:10px;color:inherit;text-decoration:none}
 .pn-metric:hover{border-color:var(--pn-accent)}
-.pn-metric:focus-visible,.pn-project:focus-visible{outline:2px solid var(--pn-accent);outline-offset:3px}
 .pn-metric.pn-emphasis{border-color:var(--pn-accent)}
 .pn-metric strong{display:block;font-size:28px;margin:7px 0}
 .pn-metric small{display:block}
@@ -359,12 +340,11 @@ CSS = """
 .pn-requests>p{padding:0 20px 20px}
 .pn-overview .pn-request{display:block;width:100%;text-align:left;border:0;border-top:1px solid var(--pn-line);
   border-radius:0;padding:20px;background:transparent}
-.pn-overview .pn-request.pn-chosen{background:var(--pn-surface-2)}
+.pn-overview .pn-request[aria-current=true]{background:var(--pn-surface-2);box-shadow:inset 4px 0 0 var(--pn-accent)}
 .pn-request strong{display:block;margin-bottom:8px;overflow-wrap:anywhere}
 .pn-request small{display:block;overflow-wrap:anywhere}
 .pn-origin{display:block;margin-bottom:8px;font-size:14px;overflow-wrap:anywhere}
 .pn-result h2{margin-top:12px;overflow-wrap:anywhere}
-.pn-result h3{font-size:16px;margin:16px 0 8px}
 .pn-result>p{margin:0 0 8px}
 .pn-resources{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:22px}
 .pn-resource{display:flex;flex-direction:column;justify-content:start;gap:4px;padding:15px;min-height:95px;
@@ -377,16 +357,16 @@ CSS = """
   padding-top:18px;margin-top:22px}
 .pn-dock>button{flex:1;min-height:54px;font-size:16px;font-weight:650}
 .pn-unwired{flex-basis:100%;margin:0;font-size:13px;color:var(--pn-muted)}
-.pn-result>.pn-unwired{margin-top:12px}
-.pn-result .pn-notice{margin:16px 0 0;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
 .pn-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:17px 0;
   border-bottom:1px solid var(--pn-line)}
 .pn-row:last-child{border-bottom:0}
 .pn-row>*{min-width:0}
 .pn-row strong{display:block;margin-bottom:5px;overflow-wrap:anywhere}
 .pn-row small{display:block;overflow-wrap:anywhere}
-.pn-tag{border:1px solid var(--pn-line);border-radius:24px;padding:4px 9px;font-size:12px;color:var(--pn-ok)}
-.pn-project{cursor:pointer}
+.pn-project{display:block;padding:0}
+.pn-project>a{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:17px 0;
+  color:inherit;text-decoration:none}
+.pn-project>a>*{min-width:0}
 .pn-project:hover strong{color:var(--pn-accent)}
 .pn-rows{display:grid}
 .pn-stats{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:12px;font-size:12px;color:var(--pn-muted)}
@@ -404,27 +384,19 @@ CSS = """
 @media (max-width:1100px){.pn-inbox{grid-template-columns:minmax(0,1fr)}}
 @media (max-width:800px){
   .pn-metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .pn-metric{padding:13px}
+  .pn-metric>a{padding:13px}
   .pn-metric strong{font-size:24px}
   .pn-overview-head h1{font-size:24px}
   .pn-resources{grid-template-columns:minmax(0,1fr)}
-  .pn-row{align-items:flex-start}
+  .pn-row,.pn-project>a{align-items:flex-start}
 }
 """
 
-# A part that reads as a link goes to its address (click, Enter, Space); a
-# request opens its detail and its actions, under « Détails techniques et
+# A request opens its detail and its actions, under « Détails techniques et
 # actions ».
 SCRIPT = """
 <script>
 (function () {
-  function go(element) {
-    var href = element.getAttribute('data-href');
-    if (href.charAt(0) === '#') {
-      var target = document.querySelector(href);
-      if (target) { target.scrollIntoView({block: 'start'}); }
-    } else { location.href = href; }
-  }
   function openRequest(id) {
     var legacy = document.getElementById('pn-legacy');
     if (!legacy) { return; }
@@ -435,14 +407,8 @@ SCRIPT = """
     (detail || legacy).scrollIntoView({block: 'start'});
   }
   document.addEventListener('click', function (event) {
-    var link = event.target.closest('[role=link][data-href]');
-    if (link) { go(link); return; }
     var request = event.target.closest('[data-request]');
     if (request) { openRequest(request.getAttribute('data-request')); }
-  });
-  document.addEventListener('keydown', function (event) {
-    var link = event.target.closest && event.target.closest('[role=link][data-href]');
-    if (link && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); go(link); }
   });
 })();
 </script>

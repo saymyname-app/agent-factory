@@ -113,12 +113,6 @@ class TheOverview(Refusals):
                            "Le cockpit attend ton avis", "Essai ↗", "Avis")
         self.assertRefused(dataset, r"a dossier that says nothing under its title")
 
-    def test_a_dossier_whose_checks_are_not_label_and_status_is_refused(self):
-        dataset = overview("Décisions à prendre", "0", "Ce qui t’attend", "Usine · Reprise du cockpit",
-                           "Le cockpit attend ton avis", "Dossier du résultat", "Version 1", "Parcours",
-                           "Pièces et version", state="dossier")
-        self.assertRefused(dataset, r"a dossier whose checks are not label and status")
-
     def test_a_project_card_that_names_no_chantier_is_refused(self):
         self.assertRefused(overview("Projets", "Notes", "→"), r"a project card that names no project and chantier")
 
