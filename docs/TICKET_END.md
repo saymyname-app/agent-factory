@@ -62,7 +62,9 @@ it knows, all passing.
    whose fidelity was not measured at its tip, it extracts the Validated
    Prototype named by the ticket (path at commit, read in the project
    repository) and runs `bin/prototype-fidelity check` at the tip, on the
-   screens of the profile that serve a state of that prototype. The result
+   screens of the profile that serve a state of that prototype. Only the
+   states of the reference the ticket names in its criteria or demonstration
+   line are measured, every one when it names none (af-lvhakk). The result
    is recorded on the ticket by that command (`docs/PROTOTYPE_FIDELITY.md`).
    One ticket per pass (`--limit 1`).
 2. **The merge asks `check --before-merge`.** `bin/spec-integration merge`
