@@ -740,6 +740,49 @@ class CorrectionRoundTest(unittest.TestCase):
         self.assertEqual([SLICE], [entry["id"] for entry in self.merge()["merged"]])
         self.assertEqual([], self.escalation_list())
 
+    def red_fidelity(self, tip, ticket=SLICE):
+        """The mechanical fidelity, red at `tip`, as bin/prototype-fidelity
+        records it (its sealed piece, then bin/convoy-state set-fidelity)."""
+        ticket_proofs.capture(self.env, self.repo, CONVOY, ticket, "fidelity", tip)
+        self.state("set-fidelity", CONVOY, ticket, "--commit", tip, "--piece", "fidelity", "--file", self.json_file({
+            "screens": ["accueil"], "states": {"content": {"viewports": ["desktop"], "anchors": ["fixture-count"]}},
+            "deviations": [{"state": "content", "viewport": "desktop", "anchor": "fixture-count", "kind": "absent",
+                            "property": "présence"}]}))
+
+    def test_a_ticket_accepted_by_both_after_its_round_but_red_on_fidelity_stops_and_reaches_the_operator(self):
+        # af-vbb4ol (T02R, 2026-10-18): review and evaluation favorable after
+        # the round, fidelity red at the same tip, and nothing ever followed.
+        tip = self.refused_by_both()
+        self.settle()
+        new_tip = self.corrected(tip)
+        self.judged(new_tip, tip)
+        self.evaluated(new_tip)
+        self.red_fidelity(new_tip)
+
+        settled = self.settle()
+
+        self.assertEqual([SLICE], self.tickets(settled["stopped"]))
+        stop = self.shown()["stop"]
+        self.assertEqual("still_refused", stop["reason"])
+        self.assertIn("fidélité", stop["detail"])
+        self.assertEqual(1, len(self.escalation_list()))
+        self.assertEqual([], self.merge()["merged"])
+        self.assertEqual(1, len(self.launches()))
+
+    def test_a_ticket_accepted_by_both_but_red_on_fidelity_before_any_round_stops_and_reaches_the_operator(self):
+        tip = self.finished_slice()
+        self.reviewed(tip, TASTE)
+        self.evaluated(tip)
+        self.red_fidelity(tip)
+
+        settled = self.settle()
+
+        self.assertEqual([SLICE], self.tickets(settled["stopped"]))
+        self.assertIn("fidélité", self.shown()["stop"]["detail"])
+        self.assertEqual(1, len(self.escalation_list()))
+        self.assertEqual([], self.launches())
+        self.assertEqual([], self.merge()["merged"])
+
     def test_a_ticket_whose_answers_are_judged_unfavorably_stops_without_second_round_or_merge(self):
         tip = self.refused_by_both()
         self.settle()
