@@ -630,6 +630,7 @@ class TicketEndTest(unittest.TestCase):
         shown = self.shown(SCREEN)
         self.assertEqual((tip, "vert"), (shown["fidelity"]["commit"], shown["fidelity"]["state"]))
         self.assertEqual(["accueil"], shown["fidelity"]["screens"])
+        self.assertEqual(["content", "empty"], sorted(shown["fidelity"]["states"]))
         self.assertEqual(tip, shown["evidence"]["fidelity"]["commit"])
         self.assertEqual((0, []), (lambda s, a: (s, a["missing"]))(*self.check(SCREEN, "--before-merge")))
 
@@ -649,6 +650,20 @@ class TicketEndTest(unittest.TestCase):
 
         self.assertEqual([], answer["checked"])
         self.assertEqual(before, self.snapshot())
+
+    def test_fidelity_measures_only_the_states_of_its_reference_the_ticket_names(self):
+        """Faux si un ticket qui nomme dans ses critères une partie des états
+        de sa référence est mesuré sur tous : les autres sont livrés par un
+        autre ticket (T02R, af-lvhakk). Un ticket qui n'en nomme aucun reste
+        mesuré sur tous (test ci-dessus)."""
+        tip = self.finished(SCREEN)
+        description = json.loads(self.tracker.read_text())["beads"][SCREEN]["description"]
+        self.edit(SCREEN, description=description.replace("GET /", "GET /, datasets : content", 1))
+
+        answer = self.fidelity()
+
+        self.assertEqual([(SCREEN, tip)], [(e["id"], e["commit"]) for e in answer["checked"]], answer)
+        self.assertEqual(["content"], sorted(self.shown(SCREEN)["fidelity"]["states"]))
 
     def test_condition_4_is_not_green_on_a_fidelity_result_of_another_commit(self):
         """Faux si la condition 4 peut être verte sans que la commande ait

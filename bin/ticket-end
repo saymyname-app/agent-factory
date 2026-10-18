@@ -664,22 +664,34 @@ def extract_prototype(repo: Path, reference: dict[str, Any], into: Path) -> Path
     return into / path
 
 
+def named_states(ticket: dict[str, Any], states: list[str]) -> list[str]:
+    """The states of the reference the ticket names in its criteria or its
+    demonstration line -- a state is launched on the dataset of its name, read
+    as bin/ticket-evaluation reads datasets --, else every state: a ticket
+    that cuts a prototype by groups of states is measured on its own (af-lvhakk)."""
+    texts = [*(str(text) for text in ticket.get("criteria") or []), str(ticket.get("demonstration_line") or "")]
+    named = [state for state in states
+             if any(re.search(rf"(?<![\w-]){re.escape(state)}(?![\w-])", text) for text in texts)]
+    return named or list(states)
+
+
 def measure(convoy_id: str, ticket: dict[str, Any], repo: Path, profile: str, screens: list[dict[str, Any]]) -> dict[str, Any]:
     """Run the mechanical fidelity check of one interface ticket at its tip,
-    on the screens that serve the states of its Validated Prototype."""
+    on the screens that serve the states of its Validated Prototype it names."""
     reference, tip = ticket["validated_prototype"], ticket["tip"]
+    states = named_states(ticket, reference["states"])
     touched = [screen["name"] for screen in screens
-               if set(screen.get("states") or []) & set(reference["states"]) and isinstance(screen.get("name"), str)]
+               if set(screen.get("states") or []) & set(states) and isinstance(screen.get("name"), str)]
     if not touched:
         raise Refusal(
-            f"aucun écran du profil ne sert un état du Validated Prototype du ticket ({', '.join(reference['states'])}) : "
+            f"aucun écran du profil ne sert un état du Validated Prototype du ticket ({', '.join(states)}) : "
             "rien à comparer")
     tmp = Path(tempfile.mkdtemp(prefix="ticket-end-prototype-", dir=work_dir()))
     try:
         prototype = extract_prototype(repo, reference, tmp)
         status, answer = tool(
             FIDELITY_TOOL, "check", profile, "--prototype", str(prototype), "--commit", tip, "--repo-root", str(repo),
-            "--states", ",".join(reference["states"]), "--convoy", convoy_id, "--ticket", ticket["id"],
+            "--states", ",".join(states), "--convoy", convoy_id, "--ticket", ticket["id"],
             *(arg for name in touched for arg in ("--screen", name)))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
