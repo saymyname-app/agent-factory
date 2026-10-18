@@ -23,6 +23,7 @@ screen or a state no rule reads is refused, never served in part.
 
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -31,9 +32,10 @@ from datetime import datetime, timedelta
 # How the supervisor and the tracker are read during the launch.
 READ = "read"            # they answer
 READ_ONCE = "read_once"  # the supervisor answers once, then no more
-UNREAD = "unread"        # neither ever answers
+UNANSWERED = "unanswered"  # neither answers: the tracker's read never ends
+FAILING = "failing"        # neither answers: the tracker's read fails
 # The views of a Panorama state (`ui.state`) that fix the reading.
-UNREAD_VIEWS = ("loading", "error")
+UNREAD_VIEWS = {"loading": UNANSWERED, "error": FAILING}
 READ_ONCE_VIEWS = ("stale", "offline")
 # The other views: what they show is in the text of the page. Any other
 # `ui.state` is the state of the result whose dossier the overview opens.
@@ -43,6 +45,10 @@ DESCRIPTOR_CONTRACT = "agent-factory-project-descriptor/v1"
 NEEDS_BENJAMIN = "gc.needs_benjamin"
 PROJECT_KEY = "gc.project_id"
 RESULT_STATE = "synthetic.result_state"
+# The record of the result open under « Ce qui t’attend », and the card of a
+# chantier, as the overview reads them (cockpit.ui.home.overview).
+RESULT_DOSSIER = "gc.result_dossier"
+PROJECT_CARD = "gc.project_card"
 # The label of a bead that keeps one section of a screen as it is said.
 SAID = "said"
 # What an event bead meant for the journal carries (cockpit.ui.journal.entries).
@@ -93,7 +99,19 @@ def from_dataset(dataset) -> SyntheticCity:
         raise DatasetRefused("names no state (ui.id, or state)")
     if "fixtures" in dataset:
         return _runs_city(name, at, ui, dataset["fixtures"])
-    return _panorama_city(name, _fixed_time(at), ui, dataset.get("visible_text"))
+    return _panorama_city(name, _fixed_time(at), ui, dataset.get("visible_text"), _folded(dataset.get("folded")))
+
+
+def _folded(folded) -> dict:
+    """What the parts of the page that unfold say (`folded`: the label of
+    each part, the lines it shows open), which its text leaves out."""
+    if folded is None:
+        return {}
+    if not isinstance(folded, dict) or not all(
+            isinstance(label, str) and isinstance(lines, list) and lines and all(isinstance(l, str) for l in lines)
+            for label, lines in folded.items()):
+        raise DatasetRefused("its folded parts (folded) are not each a label and the lines it shows open")
+    return folded
 
 
 def _fixed_time(at: str) -> datetime:
@@ -147,12 +165,12 @@ class _Tracker:
                          project=project, labels=[SAID])
 
 
-def _panorama_city(name, at, ui, text) -> SyntheticCity:
+def _panorama_city(name, at, ui, text, folded) -> SyntheticCity:
     if not isinstance(text, str) or not text.strip():
         raise DatasetRefused("a Panorama state without the text of its page (visible_text)")
     lines = [line.strip() for line in text.split("\n") if line.strip()]
     view = ui.get("state")
-    reading = UNREAD if view in UNREAD_VIEWS else READ_ONCE if view in READ_ONCE_VIEWS else READ
+    reading = UNREAD_VIEWS.get(view) or (READ_ONCE if view in READ_ONCE_VIEWS else READ)
     if reading == READ_ONCE and lines[0] not in SCREENS:
         # The banner of a reading that is no longer current, above the title.
         lines = lines[1:]
@@ -163,11 +181,21 @@ def _panorama_city(name, at, ui, text) -> SyntheticCity:
     stop_step = STOP_STEP.search(ui.get("setup") or "")
     tracker = _Tracker(at)
     read_screen(lines, tracker)
-    if result_state:
-        dossier = [bead for bead in tracker.beads if bead["id"] == DOSSIER]
-        if not dossier:
-            raise DatasetRefused(f"« {lines[0]} » opens no dossier to be in the state {result_state!r} (ui.state)")
-        dossier[0]["metadata"][RESULT_STATE] = result_state
+    dossier = next((bead for bead in tracker.beads if bead["id"] == DOSSIER), None)
+    if result_state and dossier is None:
+        raise DatasetRefused(f"« {lines[0]} » opens no dossier to be in the state {result_state!r} (ui.state)")
+    record = dossier and _dossier_record(dossier["title"], dossier["description"].split("\n"), result_state)
+    unfolding = [resource for resource in (record or {}).get("resources", []) if not resource["opens"]]
+    unread = sorted(set(folded) - {resource["label"] for resource in unfolding})
+    if unread:
+        raise DatasetRefused(f"folded parts that no part of the dossier unfolds: {unread}")
+    for resource in unfolding:
+        if resource["label"] in folded:
+            resource["said"] = folded[resource["label"]]
+    if dossier is not None:
+        if result_state:
+            dossier["metadata"][RESULT_STATE] = result_state
+        dossier["metadata"][RESULT_DOSSIER] = json.dumps(record, ensure_ascii=False)
     return SyntheticCity(
         name=name, reading=reading,
         suspended=bool(stop_step) and stop_step.group(1) == "suspended",
@@ -213,7 +241,10 @@ def _overview(lines, tracker) -> None:
         chantier = CHANTIER.match(card[1]) if len(card) > 1 else None
         if not chantier:
             raise DatasetRefused(f"a project card that names no project and chantier: {card}")
-        _chantier(tracker, tracker.declare(card[0]), chantier["title"], [chantier["stage"], *card[2:]])
+        figures = card[2:]
+        _chantier(tracker, tracker.declare(card[0]), chantier["title"], [chantier["stage"], *figures], card={
+            "stage": chantier["stage"], "figures": figures[:-1], "release": figures[-1] if figures else None,
+        })
         card = []
     if card:
         raise DatasetRefused(f"lines under « {PROJECTS} » that belong to no card: {card}")
@@ -243,10 +274,75 @@ def _awaited(sections, tracker) -> list:
     return rows[2 * found:]
 
 
-def _chantier(tracker, project: str, title: str, said) -> None:
-    """The open chantier of `project`, and what the screen says of it."""
+def _chantier(tracker, project: str, title: str, said, card=None) -> None:
+    """The open chantier of `project`, and what the screen says of it; with
+    `card`, its card on the overview: its stage, its figures and the line of
+    its release."""
+    metadata = {"gc.graph_digest": f"synthetic:{project}"}
+    if card is not None:
+        metadata[PROJECT_CARD] = json.dumps(card, ensure_ascii=False)
     tracker.add(f"synthetic-chantier-{project}", title, said=said, project=project, issue_type="convoy",
-                labels=["approved-ticket-graph"], metadata={"gc.graph_digest": f"synthetic:{project}"})
+                labels=["approved-ticket-graph"], metadata=metadata)
+
+
+# The states of a result whose dossier the overview opens (`ui.state`), by
+# what its panel shows: a result already judged is followed, a decision
+# request offers its options; any other state is a result to judge.
+FOLLOW_UP_STATES = ("returned", "repairing", "accepted", "merging", "merged", "conflict", "abandoned")
+DECISION_STATES = ("request", "confirmation")
+# The bar of a result to judge: the cockpit draws it, the record does not
+# carry it.
+RESULT_BAR = ("Essai ↗", "Avis")
+OPENS = "↗"
+# « Choix CSV préparé. ConfirmerAnnuler »: an option prepared, to confirm.
+PREPARED = re.compile(r"^(?P<said>.+?)\s*Confirmer\s*Annuler$")
+
+
+def _dossier_record(title: str, lines, state) -> dict:
+    """The record of the dossier open under « Ce qui t’attend »: what it is
+    about (« projet · sujet »), its title, what its panel says (`summary`)
+    and holds -- resources that open (label, detail, « ↗ ») or that unfold
+    (a label alone; what they say open is added from the dataset's
+    `folded`), the checks of a dossier (label, status), the options
+    of a decision and the one prepared."""
+    about, *lines = [line for line in lines if line not in RESULT_BAR]
+    if not lines:
+        raise DatasetRefused(f"a dossier that says nothing under its title: « {title} »")
+    record = {"about": about, "title": title, "state": state, "summary": lines[0], "resources": [],
+              "checks": [], "options": [], "prepared": None}
+    rest = lines[1:]
+    if state in DECISION_STATES:
+        record["kind"] = "decision"
+        record["resources"] = [{"label": label, "opens": False} for label in rest[:1]]
+        for line in rest[1:]:
+            prepared = PREPARED.match(line)
+            if prepared:
+                record["prepared"] = prepared["said"]
+            else:
+                record["options"].append(line)
+    elif state in FOLLOW_UP_STATES:
+        record["kind"] = "follow_up"
+        record["resources"] = [{"label": label, "opens": False} for label in rest]
+    elif state == "dossier":
+        # « Dossier du résultat », its version, its checks (label, status)
+        # and, last, what unfolds.
+        record.update(kind="dossier", heading=lines[0], summary=rest[0] if rest else "")
+        checks, unfolds = rest[1:-1], rest[-1:]
+        if len(checks) % 2:
+            raise DatasetRefused(f"a dossier whose checks are not label and status: {checks}")
+        record["checks"] = [{"label": label, "status": status} for label, status in zip(checks[0::2], checks[1::2])]
+        record["resources"] = [{"label": label, "opens": False} for label in unfolds]
+    else:
+        record["kind"] = "judge"
+        at = 0
+        while at < len(rest):
+            if rest[at + 2:at + 3] == [OPENS]:
+                record["resources"].append({"label": rest[at], "detail": rest[at + 1], "opens": True})
+                at += 3
+            else:
+                record["resources"].append({"label": rest[at], "opens": False})
+                at += 1
+    return record
 
 
 # The page of one project (« ← Projets »): what it is and its indicators

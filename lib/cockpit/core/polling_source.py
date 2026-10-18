@@ -62,6 +62,7 @@ class PollingSource:
         try:
             value = self._read_fn()
         except Exception:
+            self._read_model.fail(self._source)
             return False
         self._read_model.ingest(self._source, value)
         return True

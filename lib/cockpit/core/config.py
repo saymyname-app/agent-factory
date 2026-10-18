@@ -6,6 +6,7 @@ at fake sources and shrunk Validity windows without writing a temp file.
 import json
 import os
 
+from cockpit.core.beads_source import READ_TIMEOUT_SECONDS as BEADS_READ_TIMEOUT_SECONDS
 from cockpit.core.freshness import VALIDITY_WINDOWS_SECONDS
 from cockpit.core.gc_client import (
     RECONNECT_SECONDS,
@@ -63,6 +64,12 @@ class Config:
         # spec .17: a source unreadable for longer than this is itself a request.
         self.illisible_after_seconds = float(
             env.get("COCKPIT_ILLISIBLE_SECONDS", str(ILLISIBLE_THRESHOLD_SECONDS))
+        )
+        # How long one read of the tracker may take before it counts as
+        # failed (T02, af-0gonc9: « Vue d’ensemble » says it is reading until
+        # a read ends, and unavailable when the read failed).
+        self.beads_read_timeout_seconds = float(
+            env.get("COCKPIT_BEADS_READ_TIMEOUT_SECONDS", str(BEADS_READ_TIMEOUT_SECONDS))
         )
         self.pid_file = env.get("COCKPIT_PID_FILE") or _default_pid_file(env)
         # What only this machine knows -- where the secret files are, the

@@ -72,7 +72,7 @@ def build(config, clock=None):
             PollingSource(
                 read_model,
                 "beads",
-                lambda: read_operator_beads(bd_bin=config.bd_bin),
+                lambda: read_operator_beads(bd_bin=config.bd_bin, timeout=config.beads_read_timeout_seconds),
                 config.beads_poll_seconds,
             )
         )
