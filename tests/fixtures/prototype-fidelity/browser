@@ -13,8 +13,10 @@ give a Chromium (observed on chrome-headless-shell 1243, 2026-10-07):
   id="fidelity-measure">`. This fake fetches the target for real and answers
   the same JSON from a small model of CSS: the `<style>` blocks of the page,
   rules whose selector is `:root`, a tag name or `[attribute="value"]`,
-  `var(--token)`, `@media (max-width: Npx)` against `--window-size`, and
-  inheritance of the text properties. It is enough to tell two pages apart;
+  `var(--token)`, `@media (max-width: Npx)` against `--window-size`,
+  `@media (prefers-color-scheme: dark|light)` against the preferred colour
+  scheme of `--blink-settings`, the `color-scheme` of the root (`scheme`),
+  and inheritance of the text properties. It is enough to tell two pages apart;
   it is not a rendering engine.
 
 Each fetched URL is appended to EVIDENCE_FAKE_BROWSER_LOG when set.
@@ -70,13 +72,17 @@ class Page(HTMLParser):
             self.css.append(data)
 
 
-def rules_of(css, width):
+def rules_of(css, width, scheme):
     css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
 
     def media(match):
         return match.group(2) if width <= int(match.group(1)) else ""
 
+    def colour(match):
+        return match.group(2) if match.group(1) == scheme else ""
+
     css = re.sub(r"@media\s*\(\s*max-width\s*:\s*(\d+)px\s*\)\s*\{((?:[^{}]*\{[^{}]*\})*[^{}]*)\}", media, css)
+    css = re.sub(r"@media\s*\(\s*prefers-color-scheme\s*:\s*(\w+)\s*\)\s*\{((?:[^{}]*\{[^{}]*\})*[^{}]*)\}", colour, css)
     out = []
     for selectors, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css):
         declarations = {}
@@ -96,16 +102,17 @@ def matches(selector, tag, attributes):
     return bool(found) and attributes.get(found.group(1)) == found.group(2)
 
 
-def measure(target, attribute, properties, width):
+def measure(target, attribute, properties, width, scheme):
     with urllib.request.urlopen(target, timeout=5) as response:
         source = response.read().decode("utf-8", errors="replace")
     page = Page(attribute)
     page.feed(source)
-    rules = rules_of("\n".join(page.css), width)
-    tokens = {}
+    rules = rules_of("\n".join(page.css), width, scheme)
+    tokens, root_scheme = {}, "normal"
     for selector, declarations in rules:
         if selector in (":root", "html"):
             tokens.update({name: value for name, value in declarations.items() if name.startswith("--")})
+            root_scheme = declarations.get("color-scheme", root_scheme)
 
     def resolved(value):
         return re.sub(r"var\(\s*(--[\w-]+)\s*\)", lambda found: tokens.get(found.group(1), ""), value)
@@ -128,7 +135,7 @@ def measure(target, attribute, properties, width):
             "name": attributes[attribute], "tag": tag, "parent": parent,
             "styles": {name: styles.get(name, "") for name in properties},
         })
-    return {"ok": True, "anchors": anchors}
+    return {"ok": True, "anchors": anchors, "scheme": root_scheme}
 
 
 def main(args):
@@ -149,7 +156,10 @@ def main(args):
     if log:
         with open(log, "a", encoding="utf-8") as handle:
             handle.write(target + "\n")
-    result = measure(target, query["attr"][0], query["props"][0].split(","), int(size.split(",")[0]))
+    # As bin/prototype-fidelity gives it: 0 is dark, 1 is light.
+    preferred = next((arg.rsplit("=", 1)[1] for arg in args if arg.startswith("--blink-settings=preferredColorScheme=")), "1")
+    result = measure(target, query["attr"][0], query["props"][0].split(","), int(size.split(",")[0]),
+                     "dark" if preferred == "0" else "light")
     print(f'<html><body><pre id="fidelity-measure">{html.escape(json.dumps(result))}</pre></body></html>')
     return 0
 

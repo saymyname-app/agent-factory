@@ -18,7 +18,9 @@ prototype (`--prototype`, the directory `bin/prototype-conformance` checks):
   at every reference viewport and theme the prototype declares: an anchor of
   the prototype absent from the delivered page, another element, another
   enclosing anchor, another number of occurrences, or another computed value
-  of a compared property, is a deviation.
+  of a compared property, is a deviation. A theme the preferred colour
+  scheme does not reach on the prototype (it renders the same in every
+  theme) is not compared but reported « non mesurable » (af-yw9awk).
 
 The states are compared one at a time (af-6xjghg): the product of a state
 is stopped before that of the next is launched.
@@ -141,7 +143,8 @@ MEASURE_PAGE = """<!doctype html>
           parent: up ? up.getAttribute(attribute) : null, styles: styles
         });
       });
-      out.textContent = JSON.stringify({ok: true, anchors: anchors});
+      var scheme = view.getComputedStyle(frame.contentDocument.documentElement).getPropertyValue('color-scheme');
+      out.textContent = JSON.stringify({ok: true, anchors: anchors, scheme: scheme});
     } catch (error) {
       out.textContent = JSON.stringify({ok: false, error: String(error)});
     }
@@ -243,7 +246,7 @@ def renderings(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     keeps the name of the viewport; another one is named after it."""
     return [
         {"label": viewport["name"] if theme == "light" else f"{viewport['name']}@{theme}",
-         "width": viewport["width"], "height": viewport["height"], "theme": theme}
+         "viewport": viewport["name"], "width": viewport["width"], "height": viewport["height"], "theme": theme}
         for theme in manifest["themes"] for viewport in manifest["viewports"]
     ]
 
@@ -528,9 +531,10 @@ def dump_dom(browser: str, url: str, rendering: dict[str, Any]) -> str:
             time.sleep(0.1)
 
 
-def measure_page(browser: str, measure_url: str, target: str, attribute: str, rendering: dict[str, Any], what: str) -> list[dict[str, Any]]:
-    """The anchors of one page, in document order: name, element, enclosing
-    anchor and computed styles."""
+def measure_page(browser: str, measure_url: str, target: str, attribute: str, rendering: dict[str, Any], what: str) -> dict[str, Any]:
+    """The anchors of one page, in document order (name, element, enclosing
+    anchor and computed styles), and the computed `color-scheme` of its root
+    (`scheme`)."""
     query = urllib.parse.urlencode({
         "target": target, "attr": attribute, "props": ",".join(PROPERTIES),
         "w": rendering["width"], "h": rendering["height"]})
@@ -543,7 +547,32 @@ def measure_page(browser: str, measure_url: str, target: str, attribute: str, re
         raise Refusal(f"aucune mesure rendue par le navigateur pour {what} ({target}, {rendering['label']})")
     if measured.get("ok") is not True or not isinstance(measured.get("anchors"), list):
         raise Refusal(f"mesure impossible pour {what} ({target}, {rendering['label']}) : {measured.get('error')}")
-    return measured["anchors"]
+    return {"anchors": measured["anchors"], "scheme": str(measured.get("scheme") or "").strip()}
+
+
+def unmeasured_themes(renderings_: list[dict[str, Any]], prototype: dict[str, dict[str, Any]]) -> dict[str, str]:
+    """The renderings of a theme the preferred colour scheme does not reach on
+    the prototype, each with its reason (af-yw9awk). When the prototype
+    measures the same in every theme of a viewport, the emulation changed
+    nothing there: it shows one theme only, the one the `color-scheme` of its
+    root names (none when it names no declared theme), and every other theme
+    of that viewport is not measurable on it."""
+    by_viewport: dict[str, list[dict[str, Any]]] = {}
+    for rendering in renderings_:
+        by_viewport.setdefault(rendering["viewport"], []).append(rendering)
+    out: dict[str, str] = {}
+    for group in by_viewport.values():
+        first = prototype[group[0]["label"]]
+        if len(group) < 2 or any(prototype[r["label"]] != first for r in group[1:]):
+            continue
+        themes = ", ".join(r["theme"] for r in group)
+        for rendering in group:
+            if rendering["theme"] != first["scheme"]:
+                out[rendering["label"]] = (
+                    f"le prototype mesure à l'identique en {themes} : l'émulation de prefers-color-scheme ne change "
+                    f"pas son thème (color-scheme de sa racine : {first['scheme'] or 'aucun'}) ; son thème "
+                    f"{rendering['theme']} passe par un autre mécanisme, que le manifeste ne déclare pas")
+    return out
 
 
 def by_name(anchors: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
@@ -619,13 +648,26 @@ def measure_state(plan: dict[str, Any], state: dict[str, Any], deviations: list[
                 "state": state["id"], "viewport": None, "anchor": None, "kind": "token", "property": name,
                 "prototype": value, "delivered": delivered_tokens.get(name)})
     records, anchors, extra = [], [], {}
+    measured = {}
     for rendering in plan["renderings"]:
-        prototype = measure_page(browser, plan["measure_url"], state["prototype_url"], attribute, rendering, "le prototype")
-        if not prototype:
+        measured[rendering["label"]] = measure_page(
+            browser, plan["measure_url"], state["prototype_url"], attribute, rendering, "le prototype")
+        if not measured[rendering["label"]]["anchors"]:
             raise Refusal(
                 f"aucune ancre mesurée sur le prototype pour l'état {state['id']} ({rendering['label']}) : "
                 "rien à comparer n'est pas une fidélité prouvée")
-        delivered = measure_page(browser, plan["measure_url"], state["delivered_url"], attribute, rendering, "le livré")
+    # A theme not measurable on the prototype is not compared: it is one
+    # deviation of its own, never green and never accepted (af-yw9awk).
+    unmeasured = unmeasured_themes(plan["renderings"], measured)
+    for rendering in plan["renderings"]:
+        if rendering["label"] in unmeasured:
+            deviations.append({
+                "state": state["id"], "viewport": rendering["label"], "anchor": None, "kind": "theme",
+                "property": f"thème {rendering['theme']}", "prototype": unmeasured[rendering["label"]],
+                "delivered": "non mesurable"})
+            continue
+        prototype = measured[rendering["label"]]["anchors"]
+        delivered = measure_page(browser, plan["measure_url"], state["delivered_url"], attribute, rendering, "le livré")["anchors"]
         compared, only_delivered = compare_anchors(prototype, delivered)
         for record in compared:
             records.append({"viewport": rendering["label"], **record})
@@ -637,8 +679,9 @@ def measure_state(plan: dict[str, Any], state: dict[str, Any], deviations: list[
         if only_delivered:
             extra[rendering["label"]] = only_delivered
     return {
-        "screen": state["screen"], "path": state["path"], "viewports": [r["label"] for r in plan["renderings"]],
-        "anchors": anchors, "records": records,
+        "screen": state["screen"], "path": state["path"],
+        "viewports": [r["label"] for r in plan["renderings"] if r["label"] not in unmeasured],
+        "unmeasured": unmeasured, "anchors": anchors, "records": records,
         "tokens": {"compared": len(reference_tokens),
                    "only_delivered": sorted(name for name in delivered_tokens if name not in reference_tokens)},
         "anchors_only_delivered": extra,

@@ -279,6 +279,65 @@ class PrototypeFidelityTest(unittest.TestCase):
         found = self.named(answer["deviations"], state="empty", viewport="desktop", anchor="fixture-state", kind="structure")
         self.assertEqual([("tag", "h1", "h2")], [(d["property"], d["prototype"], d["delivered"]) for d in found])
 
+    # --- a theme the preferred colour scheme does not reach (af-yw9awk) ---------
+
+    def themed(self, prototype_style, delivered_style):
+        """Both themes declared; each side gets its own style sheet."""
+        manifest_path = self.prototype / "validated-prototype.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["themes"] = ["dark", "light"]
+        manifest_path.write_text(json.dumps(manifest))
+        for page in sorted((self.prototype / "states").glob("*.html")):
+            page.write_text(page.read_text().replace("</head>", prototype_style + "\n</head>"))
+        self.edit_product("</title></head>", "</title>" + delivered_style + "</head>", "thèmes")
+
+    def test_theme_the_prototype_reaches_only_by_a_class_is_unmeasured_not_compared(self):
+        # The prototype is dark on :root and turns light only by a class
+        # (the Cockpit's, Spec af-2zseit); the product follows the preferred
+        # colour scheme, light by default.
+        self.themed(
+            "<style>:root{color-scheme:dark}h1{color:rgb(236, 237, 243)}"
+            ".theme-light{color-scheme:light}.theme-light h1{color:rgb(23, 32, 46)}</style>",
+            "<style>:root{color-scheme:light}h1{color:rgb(23, 32, 46)}"
+            "@media (prefers-color-scheme: dark){:root{color-scheme:dark}h1{color:rgb(236, 237, 243)}}</style>")
+
+        answer = self.red("--convoy", CONVOY, "--ticket", T1)
+
+        # No anchor is compared in the light theme: a dark prototype against a
+        # light product would only count false deviations.
+        self.assertEqual([], [d for d in answer["deviations"] if d["kind"] != "theme"])
+        for state in STATES:
+            self.assertEqual(["desktop@dark", "narrow@dark"], answer["states"][state]["viewports"])
+            self.assertEqual({"desktop@dark", "narrow@dark"}, {r["viewport"] for r in answer["states"][state]["records"]})
+            unmeasured = answer["states"][state]["unmeasured"]
+            self.assertEqual(["desktop", "narrow"], sorted(unmeasured))
+            self.assertIn("prefers-color-scheme", unmeasured["desktop"])
+            for viewport in VIEWPORTS:
+                found = self.named(answer["deviations"], state=state, viewport=viewport, kind="theme")
+                self.assertEqual([("thème light", None, "non mesurable")],
+                                 [(d["property"], d["anchor"], d["delivered"]) for d in found], (state, viewport))
+        # Never green on a theme it did not measure, on the ticket either.
+        fidelity = self.shown()["fidelity"]
+        self.assertEqual(("unfavorable", "rouge"), (fidelity["verdict"], fidelity["state"]))
+
+        # The dark theme is still compared: a real deviation there is named.
+        self.edit_product("h1{color:rgb(236, 237, 243)}}", "h1{color:rgb(200, 200, 200)}}", "titre sombre")
+        answer = self.red()
+        found = self.named(answer["deviations"], state="empty", viewport="desktop@dark", anchor="fixture-state")
+        self.assertEqual([("style", "color", "rgb(236, 237, 243)", "rgb(200, 200, 200)")],
+                         [(d["kind"], d["property"], d["prototype"], d["delivered"]) for d in found])
+
+    def test_prototype_that_follows_the_preferred_colour_scheme_is_measured_in_both_themes(self):
+        style = ("<style>:root{color-scheme:light}h1{color:rgb(23, 32, 46)}"
+                 "@media (prefers-color-scheme: dark){:root{color-scheme:dark}h1{color:rgb(236, 237, 243)}}</style>")
+        self.themed(style, style)
+
+        answer = self.green()
+
+        for state in STATES:
+            self.assertEqual({}, answer["states"][state]["unmeasured"])
+            self.assertEqual(["desktop@dark", "narrow@dark", "desktop", "narrow"], answer["states"][state]["viewports"])
+
     def test_never_green_on_a_state_it_did_not_compare(self):
         # A prototyped state the prototype does not hold.
         message = self.refused("--states", "empty,content,error")
