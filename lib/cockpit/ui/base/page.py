@@ -169,8 +169,17 @@ def render_home(
     (:func:`cockpit.ui.health.page.render_status_line`).
     ``requests_section_html``: the pre-rendered "Ce qui t'attend" inbox.
     ``extra_sections_html``: zones under the inbox."""
+    inner = render_home_zones(headline_text, stale_rows, requests_section_html, extra_sections_html, status_html)
+    return render_document(inner, disconnected_since=disconnected_since, extra_css=extra_css)
+
+
+def render_home_zones(headline_text, stale_rows, requests_section_html="", extra_sections_html="", status_html=""):
+    """The zones of the home screen of variant D, without the document: the
+    status line, the inbox and the zones below it -- what
+    « Vue d’ensemble » folds under « Détails techniques et actions » until
+    the destinations of Panorama take them (T02, af-0gonc9)."""
     status = (status_html + '<span class="sep"></span>') if status_html else ""
-    inner = (
+    return (
         '<div class="vd">\n'
         '<div class="vc" id="inbox">\n'
         '<header class="topbar"><div class="brand"><h1>Cockpit</h1>'
@@ -181,4 +190,3 @@ def render_home(
         '<div class="va">%s</div>\n'
         "</div>\n"
     ) % (status, render_fresh(headline_text, not stale_rows), requests_section_html, extra_sections_html)
-    return render_document(inner, disconnected_since=disconnected_since, extra_css=extra_css)
