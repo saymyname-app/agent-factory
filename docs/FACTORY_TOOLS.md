@@ -1430,7 +1430,10 @@ réactive ensuite et qui redémarre alors en échec toutes les 5 secondes.
 
 Côté tests : aucun test n'arrête une cité ou un superviseur autrement que par
 `isolated_city_stop` (`tests/lib/isolated-city.sh`), qui refuse si `GC_HOME`
-n'est pas dans le répertoire de l'essai.
+n'est pas dans le répertoire de l'essai. Le même fichier efface ce répertoire
+(`isolated_city_remove`) : il réessaie en tuant les processus dont le
+répertoire courant ou l'environnement y pointe encore, faute de quoi un essai
+réussi échouait sur « Directory not empty » (af-foq4t7).
 
 Tests : `tests/factory-revive-test.sh`, `tests/factory-boot-supervisor-test.sh`,
 `tests/isolated-city-stop-guard-test.sh`. Runbook :

@@ -50,3 +50,35 @@ isolated_city_stop() {
   fi
   gc supervisor stop
 }
+
+# isolated_city_remove <trial-dir>
+#   Removes the trial directory once its processes are stopped (af-foq4t7).
+#   A process still writing in it -- one whose command line does not name the
+#   trial, so `pkill -f "$TRIAL/"` missed it -- makes `rm -rf` fail with
+#   "Directory not empty"; under `set -e` in the EXIT trap that failed a
+#   trial that had passed (2026-10-18 nightly,
+#   tests/ticket-author-isolated-city-test.sh: a gc run under the trial's
+#   GC_HOME was refilling $TRIAL/h/cache). Each retry kills the processes
+#   whose working directory or environment points inside the trial, never
+#   this shell itself, which first leaves for /. Refuses an empty path or /.
+isolated_city_remove() {
+  local trial=${1:-} proc cwd _
+  [ -n "$trial" ] && [ "$(realpath -m -- "$trial" 2>/dev/null)" != / ] || return 1
+  trial=$(realpath -m -- "$trial")
+  cd / || return 1
+  for _ in 1 2 3 4 5; do
+    rm -rf -- "$trial" 2>/dev/null && return 0
+    for proc in /proc/[0-9]*; do
+      [ "${proc#/proc/}" != "$$" ] && [ "${proc#/proc/}" != "${BASHPID:-$$}" ] || continue
+      cwd=$(readlink -- "$proc/cwd" 2>/dev/null) || continue
+      case "$cwd" in
+        "$trial"|"$trial"/*) kill -9 "${proc#/proc/}" 2>/dev/null || true ;;
+        *) grep -qF -- "=$trial/" <<<"$(tr '\0' '\n' 2>/dev/null <"$proc/environ")" \
+             && kill -9 "${proc#/proc/}" 2>/dev/null || true ;;
+      esac
+    done
+    pkill -9 -f -- "$trial/" >/dev/null 2>&1 || true
+    sleep 1
+  done
+  rm -rf -- "$trial"
+}

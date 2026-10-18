@@ -96,7 +96,7 @@ cleanup() {
   if [ "${KEEP_TEST_CITY:-0}" = 1 ]; then
     echo "trial preserved at $TRIAL" >&2
   else
-    rm -rf -- "$TRIAL"
+    isolated_city_remove "$TRIAL"
   fi
   exit "$status"
 }
