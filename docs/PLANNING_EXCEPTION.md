@@ -149,7 +149,7 @@ Benjamin approves (Spec, ticket graph, Acceptance Session) is unchanged.
 | `classify --kind repair\|semantic\|topology` | Read-only. Reports whether the signal requires a Planning Exception (`repair`: no; `semantic`/`topology`: yes). |
 | `init --run --out` | Creates a new empty register bound to a Planning/Wayfinding Run id. |
 | `raise <register> --graph --bead --kind semantic\|topology --run --decision-id --summary --raised-by` | Refuses `repair`. Computes the affected bead's descendants from the graph snapshot and parks `{bead} ∪ descendants`. If an open decision already covers that bead, records a `duplicate_detected` history event and returns the existing decision id instead of creating a second one. |
-| `resolve <register> --decision --kind tactical\|behavioral\|topology --note [--patched-draft <bead-id> --project <id>]` | Requires the decision to be `open`. `tactical` unparks immediately. `behavioral`/`topology` require `--patched-draft` and authorize only that draft for `ticket-graph-publish bd-patch`; on failure the decision stays open and parked, on success it resolves and unparks. |
+| `resolve <register> --decision [--decision ...] --kind tactical\|behavioral\|topology --note [--patched-draft <bead-id> --project <id>]` | Requires each decision to be `open`; a repeated `--decision` resolves together the decisions of the tickets one revised draft withdraws. `tactical` unparks immediately. `behavioral`/`topology` require `--patched-draft` and authorize only that draft for `ticket-graph-publish bd-patch`; on failure the decision stays open and parked, on success it resolves and unparks. |
 | `status <register>` | Reports each decision's status and the union of all currently parked beads. |
 
 ## Acceptance mapping
@@ -163,7 +163,9 @@ Benjamin approves (Spec, ticket graph, Acceptance Session) is unchanged.
 | Classification and duplicate-escalation evidence is recorded in the Adaptation Register. | `test_raise_on_an_already_open_bead_is_detected_as_duplicate_not_double_parked` proves a second raise on covered work is detected as a duplicate and recorded in register history instead of double-parking; `docs/ADAPTATION_REGISTER.md` AR-003 cites this evidence. |
 
 The live `bd-patch` gate accepts a resolved decision or a temporary authorization
-for this exact revised draft and withdrawn bead. During `resolve`, the decision
+for this exact revised draft and withdrawn bead. A draft that withdraws two
+tickets needs both decisions, so one `resolve` names both (`--decision pd-1
+--decision pd-2`): each authorizes only its own ticket. During `resolve`, the decision
 remains open and its descendants parked while the patch runs. Failure removes
 that authorization; an interrupted attempt remains parked and must be
 reconciled or retried. The gate still validates the revised graph, Spec,
