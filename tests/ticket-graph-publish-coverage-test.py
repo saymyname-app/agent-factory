@@ -1260,6 +1260,54 @@ class PatchDoorTest(Harness):
         self.assertEqual([], decision["parked"])
         self.assertNotIn("patch_authorization", decision)
 
+    def test_resolve_of_two_decisions_withdraws_their_two_tickets_in_one_revision(self):
+        """A revision that withdraws two tickets, each behind its own open
+        Planning Exception: resolving one alone authorizes only its ticket,
+        so the door refuses; resolving both together patches once."""
+        register = self.register("open")
+        graph = self.tmp / "graph-t3.json"
+        graph.write_text(json.dumps({"beads": {self.ids["T3"]: {"blocked_by": []}}}))
+        raised = subprocess.run((
+            str(PLANNING_EXCEPTION), "raise", str(register), "--graph", str(graph), "--bead", self.ids["T3"],
+            "--kind", "topology", "--run", "run-fixture", "--decision-id", "pd-2",
+            "--summary", "la réparation n'a plus d'objet", "--raised-by", "auteur-fixture",
+        ), text=True, capture_output=True)
+        self.assertEqual(0, raised.returncode, raised.stdout + raised.stderr)
+        self.amend_spec(self.SPEC_WITHOUT_STORY_3)
+        self.propose(self.revision(keep=("T1", "T2"), withdrawn=[
+            {"ticket": "T4", "planning_exception": "pd-1"},
+            {"ticket": "T3", "planning_exception": "pd-2"},
+        ]))
+        wrapper = self.tmp / "publish-fixture"
+        wrapper.write_text(
+            f"#!/bin/sh\nexec {PUBLISHER} \"$@\" --repo-root {self.repo_root} "
+            f"--config-dir {PROJECTS_CONFIG_DIR} --descriptors-dir {self.descriptors}\n")
+        wrapper.chmod(0o755)
+
+        def resolve(*decisions):
+            return subprocess.run((
+                str(PLANNING_EXCEPTION), "resolve", str(register),
+                *(arg for decision in decisions for arg in ("--decision", decision)),
+                "--kind", "topology", "--note", "approved revised graph",
+                "--patched-draft", "draft-2", "--project", "acme",
+            ), env={**self.env, "PLANNING_EXCEPTION_PUBLISH_BIN": str(wrapper)},
+                text=True, capture_output=True)
+
+        alone = resolve("pd-1")
+        self.assertNotEqual(0, alone.returncode, alone.stdout)
+        self.assertIn("pd-2", alone.stdout)
+        self.assertEqual("open", self.beads()[self.ids["T4"]]["status"])
+
+        proc = resolve("pd-1", "pd-2")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual("closed", self.beads()[self.ids["T3"]]["status"])
+        self.assertEqual("closed", self.beads()[self.ids["T4"]]["status"])
+        decisions = json.loads(register.read_text())["decisions"]
+        for decision in ("pd-1", "pd-2"):
+            self.assertEqual("resolved", decisions[decision]["status"])
+            self.assertEqual([], decisions[decision]["parked"])
+            self.assertNotIn("patch_authorization", decisions[decision])
+
     def test_refuses_a_withdrawal_that_names_no_known_planning_exception(self):
         register = self.register("resolved")
         self.amend_spec(self.SPEC_WITHOUT_STORY_3)
