@@ -15,18 +15,27 @@
 //           summary, an element with a role of control or a tabindex):
 //           its accessible name, disabled or not, reachable by the
 //           keyboard or not, and whether focusing it changes its outline,
-//           shadow, border or background (a visible focus)
+//           shadow, border or background (a visible focus); `native`, a
+//           control the browser itself activates with the keyboard (a link,
+//           a button, a field, a summary) -- any other one is activated by
+//           a script, or not at all; `state`, its aria-current,
+//           aria-selected and aria-pressed; `shape`, how it is drawn without
+//           its colours (borders, shadows, outline, weight, decoration);
+//           `boundary`, for a button or a field drawn as a box (a border on
+//           its four sides), the contrast of that box with what is behind
+//           it: the larger of its border's and its fill's
 // overflow  how far the document is wider than the frame
 // clipped   texts cut by a box that hides what overflows it, or pushed out
 //           of the frame, outside any box that scrolls
-// overlaps  two texts drawn on each other
+// overlaps  two texts drawn on each other, wherever they are placed
 // contrast  texts whose contrast with their background is under 4.5:1
 //           (3:1 when large), disabled controls apart
 // background the relative luminance of the page's background
 // after     with `click`: the frame read again (the same record, its
 //           address and text included) two seconds after the control named
 //           `click` was activated, with `found` and `disabled` for that
-//           control
+//           control; with `keys` too, activated by the keyboard -- focused,
+//           then Enter pressed on it -- rather than by a click
 (function () {
   var query = new URLSearchParams(location.search);
   var out = document.getElementById('measure');
@@ -34,6 +43,7 @@
   var widths = query.get('widths').split(',').map(Number);
   var height = Number(query.get('height'));
   var click = query.get('click');
+  var keys = query.get('keys') === '1';
   var SETTLE_MS = 2500;
 
   function visible(element, view) {
@@ -70,6 +80,10 @@
 
   var CONTROLS = 'a[href], button, input:not([type=hidden]), select, textarea, summary, [tabindex], ' +
     '[role=button], [role=link], [role=tab], [role=menuitem], [role=checkbox], [role=switch], [contenteditable=true]';
+  // The controls the browser activates by itself when Enter is pressed on
+  // them.
+  var NATIVE = 'a[href], button, input:not([type=hidden]), select, textarea, summary';
+  var BOXED = 'button, input:not([type=hidden]), select, textarea';
 
   function focusStyle(element, view) {
     var s = view.getComputedStyle(element);
@@ -102,10 +116,45 @@
         disabled: disabled,
         reachable: !element.disabled && element.tabIndex >= 0,
         focused: focused,
-        focus_visible: focused && (after !== before || outline !== 'none')
+        focus_visible: focused && (after !== before || outline !== 'none'),
+        native: element.matches(NATIVE),
+        state: {current: element.getAttribute('aria-current'), selected: element.getAttribute('aria-selected'),
+                pressed: element.getAttribute('aria-pressed')},
+        shape: shape(element, view),
+        boundary: disabled ? null : boundary(element, view, doc)
       });
     });
     return found;
+  }
+
+  function shape(element, view) {
+    var s = view.getComputedStyle(element);
+    var colourless = function (value) { return value.replace(/rgba?\([^)]*\)/g, ''); };
+    return [s.borderTopWidth, s.borderRightWidth, s.borderBottomWidth, s.borderLeftWidth,
+            s.borderTopStyle, s.borderRightStyle, s.borderBottomStyle, s.borderLeftStyle,
+            colourless(s.boxShadow), s.outlineStyle, s.outlineWidth, s.fontWeight, s.textDecorationLine].join('|');
+  }
+
+  function ratio(a, b) {
+    var l1 = luminance(a), l2 = luminance(b);
+    return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+  }
+
+  function boundary(element, view, doc) {
+    if (!element.matches(BOXED)) { return null; }
+    var s = view.getComputedStyle(element);
+    var sides = ['Top', 'Right', 'Bottom', 'Left'];
+    var boxed = sides.every(function (side) {
+      var colour = rgba(s['border' + side + 'Color']);
+      return parseFloat(s['border' + side + 'Width']) >= 1 && s['border' + side + 'Style'] !== 'none' &&
+        colour && colour.a > 0;
+    });
+    if (!boxed) { return null; }
+    var behind = element.parentElement ? backgroundOf(element.parentElement, view, doc) : null;
+    var fill = backgroundOf(element, view, doc);
+    if (!behind || !fill) { return null; }
+    var border = rgba(s.borderTopColor);
+    return Math.max(ratio(over(border, behind), behind), ratio(fill, behind));
   }
 
   function textRects(doc, view) {
@@ -167,20 +216,11 @@
     return cut;
   }
 
-  function pinned(element, view) {
-    for (var up = element; up; up = up.parentElement) {
-      var position = view.getComputedStyle(up).position;
-      if (position === 'fixed' || position === 'sticky') { return true; }
-    }
-    return false;
-  }
-
-  function overlaps(records, view) {
+  function overlaps(records) {
     var found = [];
-    var free = records.filter(function (r) { return !pinned(r.element, view); });
-    for (var i = 0; i < free.length; i++) {
-      for (var j = i + 1; j < free.length; j++) {
-        var a = free[i], b = free[j];
+    for (var i = 0; i < records.length; i++) {
+      for (var j = i + 1; j < records.length; j++) {
+        var a = records[i], b = records[j];
         if (a.element === b.element || a.element.contains(b.element) || b.element.contains(a.element)) { continue; }
         var hit = a.rects.some(function (ra) {
           return b.rects.some(function (rb) {
@@ -280,7 +320,7 @@
       anchors: anchors, texts: texts, nav: nav,
       overflow: Math.max(0, doc.documentElement.scrollWidth - view.innerWidth),
       clipped: clipped(records, view, width),
-      overlaps: overlaps(records, view),
+      overlaps: overlaps(records),
       contrast: contrast(records, view, doc),
       background: bg ? luminance(bg) : null
     };
@@ -316,8 +356,22 @@
       done(page);
     }
     frame.addEventListener('load', function () { setTimeout(report, SETTLE_MS); }, {once: true});
-    target.click();
+    if (!keys) { target.click(); } else { press(target); }
     setTimeout(report, SETTLE_MS + 1500);
+  }
+
+  // Enter pressed on `target`, focused: what a script does of the key, then,
+  // when nothing prevented it, what the browser does of it by itself on a
+  // control of its own (HTML: Enter on a link or a button activates it) --
+  // on another element, nothing.
+  function press(target) {
+    var view = target.ownerDocument.defaultView;
+    target.focus();
+    var options = {key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true};
+    var down = new view.KeyboardEvent('keydown', options);
+    var handled = !target.dispatchEvent(down);
+    target.dispatchEvent(new view.KeyboardEvent('keyup', options));
+    if (!handled && target.matches(NATIVE) && !target.disabled) { target.click(); }
   }
 
   var results = new Array(widths.length), pending = widths.length;

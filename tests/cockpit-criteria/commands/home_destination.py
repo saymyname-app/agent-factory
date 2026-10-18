@@ -217,15 +217,16 @@ def _measure_url() -> str:
 
 
 def measure(address: str, path: str = "/", *, theme: str = "dark", widths: tuple[int, ...] = (1440,),
-            click: str | None = None) -> list[dict]:
+            click: str | None = None, keys: bool = False) -> list[dict]:
     """How the page at `address` + `path` renders in `theme`, one record per
     frame width: see home_destination_measure.js for what a record holds.
     With `click`, the control whose accessible name is `click` (or starts
-    with it) is activated in each frame, and the record holds, under
+    with it) is activated in each frame -- with `keys`, by the keyboard:
+    focused, then Enter pressed on it --, and the record holds, under
     `after`, the frame read again two seconds later."""
     query = urllib.parse.urlencode({
         "target": address + path, "widths": ",".join(str(w) for w in widths),
-        "height": FRAME_HEIGHT, "click": click or "",
+        "height": FRAME_HEIGHT, "click": click or "", "keys": "1" if keys else "",
     })
     work = tempfile.mkdtemp(prefix="cockpit-home-browser-")
     argv = [
@@ -407,8 +408,12 @@ def problems(frames: list[dict], theme: str, panels: tuple[str, ...]) -> dict[st
     """What makes a measured page unreadable or unusable, by frame: a panel
     of the destination missing, the document wider than the frame, a text
     cut or drawn on another, a contrast under 4.5:1, a control without a
-    name, out of reach of the keyboard or without a visible focus, a page
-    that is not in the theme the browser asked for. Empty when none."""
+    name, out of reach of the keyboard, that the keyboard cannot activate
+    (reached, but neither a link, a button, a field nor a summary: Enter
+    does what a script makes of it, if anything) or without a visible
+    focus, a button or a field whose box stands out from what is behind it
+    under 3:1, a page that is not in the theme the browser asked for.
+    Empty when none."""
     found = {}
     for frame in frames:
         names = {anchor["name"] for anchor in frame["anchors"]}
@@ -424,7 +429,11 @@ def problems(frames: list[dict], theme: str, panels: tuple[str, ...]) -> dict[st
             "controls without a name": [c["tag"] + " in " + str(c["anchor"]) for c in controls if not c["name"]],
             "controls out of reach of the keyboard": [c["name"] for c in controls
                                                       if not c["disabled"] and not c["reachable"]],
+            "controls the keyboard cannot activate": [c["name"] for c in controls
+                                                      if c["reachable"] and not c["native"]],
             "controls without a visible focus": [c["name"] for c in controls if c["reachable"] and not c["focus_visible"]],
+            "control boxes under 3:1": [f"{c['name']} : {c['boundary']:.2f}:1" for c in controls
+                                        if c["boundary"] is not None and c["boundary"] < 3 - 0.01],
             f"not a {theme} page (background luminance)": [background] if wrong_theme else [],
         }
         frame_problems = {what: items for what, items in frame_problems.items() if items}

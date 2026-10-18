@@ -15,8 +15,10 @@ B with this destination open, and what the reference says there.
 
 False if a state is omitted (its parts or its words missing), if the page
 is an artificial one distinct from the product (served elsewhere than at
-GET /, or not following the data the cockpit serves), or if the
-destination cannot be reached from its own navigation.
+GET /, or not following the data the cockpit serves), if a command not
+wired to a door is offered or answers as if it were done, or if the
+destination cannot be reached from its own navigation or does not lead to
+the destinations it names.
 
 The result states result-* are the panels of T02S, not of this ticket;
 criterion 2 is in home-destination-layout-test.py.
@@ -114,6 +116,26 @@ class HomeDestinationStates(unittest.TestCase):
              sum(c["name"] == "Avis" for c in page["controls"])),
             "the page has not exactly one Essai and one Avis",
         )
+        # No door records Essai or Avis from this destination: both are
+        # drawn unavailable, and the result says they are not wired.
+        self.assertEqual(
+            [True, True],
+            [c["disabled"] for c in page["controls"] if c["name"].startswith("Essai") or c["name"] == "Avis"],
+            "Essai or Avis is offered on this destination as if a door recorded it",
+        )
+        assert_says(self, page, "actions-possibles-1", "pas encore raccordés")
+        # The request whose result is open is said to be the one open -- a
+        # state a screen reader reads, and a mark the other line has not,
+        # not only another colour.
+        lines = {c["anchor"]: c for c in page["controls"] if c["anchor"] in ("request-1", "request-2")}
+        self.assertEqual(
+            [True, False],
+            [any(value not in (None, "false") for value in lines[line]["state"].values())
+             for line in ("request-1", "request-2")],
+            "the request open is not marked as the one open",
+        )
+        self.assertNotEqual(lines["request-1"]["shape"], lines["request-2"]["shape"],
+                            "the request open is told from the other one by its colour alone")
         assert_says(self, page, "panel-4", "Projets")
         assert_says(self, page, "row-1", "Usine", "Reprise du cockpit · À juger")
         assert_says(self, page, "small-stats-1", "6 résultats fusionnés", "12 PR · 7 jours")
@@ -131,6 +153,11 @@ class HomeDestinationStates(unittest.TestCase):
         assert_destination(self, page, CONTENT_PARTS)
         self.assert_content(address, page)
         self.assert_theme(page, "dark")
+        # Pressed, Avis does nothing: the page stays where it is, and the
+        # result says what it said -- no command shown done.
+        after = measure(address, click="Avis")[0]["after"]
+        self.assertEqual((True, True, "/"), (after["found"], after["disabled"], after["path"]))
+        self.assertEqual(says(page, "panel-3"), says(after, "panel-3"), "pressing Avis changed the result")
 
     def test_home_content_full_is_the_destination_with_its_whole_content(self):
         # The reference draws home-content-full dark, at 1440 px.
@@ -247,14 +274,21 @@ class HomeDestinationStates(unittest.TestCase):
         reached = {}
         for entry in ("Projets", "Runs", "Journal", "Usine", "Rituels", "Analyses"):
             after = measure(address, click=entry)[0]["after"]
-            path = after["path"] if after["found"] else None
-            # The projects open under /projet: their list or the page of one.
-            reached[entry] = "/projet…" if entry == "Projets" and str(path).startswith("/projet") else path
+            reached[entry] = after["path"] if after["found"] else None
         self.assertEqual(
-            {"Projets": "/projet…", "Runs": "/runs", "Journal": "/journal", "Usine": "/usine",
+            {"Projets": "/projets", "Runs": "/runs", "Journal": "/journal", "Usine": "/usine",
              "Rituels": "/rituels", "Analyses": "/analyses"},
             reached,
         )
+        # « Projets » leads to the projects the cockpit serves, each with
+        # the way to its page -- not to a destination that is not there.
+        projects = measure(address, "/projets", click="Page projet")[0]
+        self.assertEqual(["Projets"], [entry["label"] for entry in projects["nav"] if entry["current"]])
+        self.assertNotIn("pas encore raccordée", projects["text"])
+        self.assertEqual([], [name for name in ("Usine", "Notes", "Portfolio") if name not in projects["text"]],
+                         "the projects are not listed under « Projets »")
+        self.assertTrue(projects["after"]["found"], "no link « Page projet » under « Projets »")
+        self.assertTrue(projects["after"]["path"].startswith("/projet/"), projects["after"]["path"])
 
     def test_the_destination_follows_the_data_the_cockpit_serves_not_a_page_of_its_own(self):
         # The same dataset, at another commit, where one request has

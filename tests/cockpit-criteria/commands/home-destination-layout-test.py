@@ -18,7 +18,8 @@ unreadable or unusable (home_destination.problems):
   inside a box that scrolls is not cut: a useful local scroll is kept --,
   two texts drawn on each other, a contrast under 4.5:1 (3:1 when large);
 - a control without a name, a control enabled but out of reach of the
-  keyboard, a control whose focus is not visible;
+  keyboard or that the keyboard cannot activate, a control whose focus is
+  not visible, a button whose box stands out under 3:1;
 - a page that is not in the theme the browser asked for.
 
 The reference draws some of these defects itself (a control without a
@@ -84,6 +85,15 @@ class HomeDestinationLayout(unittest.TestCase):
 
     def test_home_content_is_readable_and_usable_at_both_widths_in_both_themes(self):
         self.assert_readable("home-content", CONTENT_PANELS)
+        # Activated by the keyboard -- focused, then Enter --, an indicator,
+        # a project and an entry of the navigation lead where a click does.
+        address = self.tree.launch("home-content")
+        for control, where in (("Décisions à prendre", r"/"), ("Notes", r"/projet/.+"), ("Journal", r"/journal")):
+            for frame in measure(address, theme="dark", widths=WIDTHS, click=control, keys=True):
+                after = frame["after"]
+                self.assertTrue(after["found"], f"no control « {control} » at {frame['width']} px")
+                self.assertRegex(after["path"], f"^{where}$",
+                                 f"Enter on « {control} » did not lead where it goes at {frame['width']} px")
 
     def test_home_content_full_is_readable_and_usable_at_both_widths_in_both_themes(self):
         self.assert_readable("home-content-full", CONTENT_PANELS)
