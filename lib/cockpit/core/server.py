@@ -31,6 +31,7 @@ from cockpit.requests.defects import DefectCounter
 from cockpit.requests.journal import entries_from_value as journal_entries_from_value
 from cockpit.requests.sources.readability import ILLISIBLE_THRESHOLD_SECONDS
 from cockpit.runs.derive import runs_from_beads
+from cockpit.ui.analyses.page import CSS as ANALYSES_CSS, render_analyses
 from cockpit.ui.base.page import render_document, render_fresh, render_home_zones
 from cockpit.ui.health.page import render_health_zone, render_status_line
 from cockpit.ui.access.page import render_access_zone
@@ -59,7 +60,7 @@ ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
 # The destinations of Panorama whose Prototype Fold is not done yet: their
 # address answers, in the shell, that they are not served here yet.
 NOT_FOLDED = {
-    href: (key, label) for key, label, href in NAVIGATION if key not in (HOME, "projets", "journal", "runs", "usine")
+    href: (key, label) for key, label, href in NAVIGATION if key not in (HOME, "projets", "journal", "runs", "usine", "analyses")
 }
 NOT_FOLDED.update({"/runs/job": ("runs", "Runs")})
 
@@ -123,6 +124,9 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             return
         if path.startswith("/projet/"):
             self._send_project_page(read_model)
+            return
+        if path == "/analyses":
+            self._send_analyses_page(read_model)
             return
         if path == "/usine":
             self._send_factory_page(read_model)
@@ -452,6 +456,17 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             return None, bool(row and row.get("failed_at") is not None), None
         checked = datetime.fromtimestamp(row["read_at"], tz=PARIS).strftime("%H:%M") if row["read_at"] else None
         return runs_from_beads(row["value"], read_model.now()), False, checked
+
+    def _send_analyses_page(self, read_model):
+        """GET /analyses?vue=&periode=: the numbers of the runs, by day."""
+        runs, _, checked = self._runs(read_model)
+        row = read_model.snapshot().get("journal")
+        entries = (journal_entries_from_value(row["value"])
+                   if row and row["value"] is not None and row["freshness"] != UNKNOWN else [])
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        main = render_analyses(runs or [], journal_items(entries, []), read_model.now(),
+                               (query.get("vue") or ["resultats"])[0], (query.get("periode") or ["7"])[0], checked=checked)
+        self._send_page(read_model, "analyses", main, extra_css=ANALYSES_CSS)
 
     def _send_factory_page(self, read_model):
         """GET /usine: the machine, the sources, the agents seen at work,

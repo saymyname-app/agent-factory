@@ -24,7 +24,7 @@ from cockpit.core.readmodel import PARIS
 
 MODELS = "gc.flow.models"
 # How many runs the cockpit keeps: the most recently updated.
-RUNS_LIMIT = 24
+RUNS_LIMIT = 200
 READ_TIMEOUT_SECONDS = 20
 
 HUMAN, CODE, AGENT = "human", "code", "agent"

@@ -1200,3 +1200,14 @@ deliveries of the runs (launched, stopped, merged) with their link. Filters
 `decisions`, `propositions`, `livraisons`, `evenements`, `effacees`, `tout`.
 The notification sends follow, folded. Tests:
 `tests/cockpit-journal-test.py`, `tests/cockpit-journal-panorama-test.py`.
+
+## « Analyses » (direct build, 2026-10-19)
+
+`GET /analyses?vue=resultats|delais|verifications|activite&periode=7|30`
+(`lib/cockpit/ui/analyses/page.py`): runs merged per day and which;
+median lead time from dispatch to merge and median wait for a decision;
+code reviews (with or without blocking findings), evaluations and fidelity
+measures per day; runs launched, stops and Benjamin's decisions per day.
+Every number comes from the runs (now the 200 most recently updated; the
+Runs page draws 48) and the journal; each view says its definition. GitHub
+CI is not read yet. Test: `tests/cockpit-analyses-test.py`.
