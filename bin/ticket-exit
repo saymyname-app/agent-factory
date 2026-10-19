@@ -20,9 +20,8 @@ with content or « aucun » --, without the proof of the demonstration line
 captured on the launched product at the head commit (bin/ticket-author
 demonstrate; a `prefactoring` has no such line), and while the diff of the ticket carries a
 deferral marker (TODO, FIXME, « not wired », « à brancher ») that no declared
-« non fait » covers; on a ticket that carries a Validated Prototype, also while
-the mechanical fidelity check (bin/ticket-end measure) is red at the head
-commit: the answer lists the open deviations (af-r2c0tx). `planning_exception` and `operator_request`: the ticket
+« non fait » covers. The fidelity to the Validated Prototype refuses nothing
+(ADR-0032). `planning_exception` and `operator_request`: the ticket
 and every ticket that waits for it are parked, and the request reaches the
 operator through bin/escalation-door. A Planning Exception comes after the
 Ticket Handoff (Spec §3; T41, af-rqgtpi): it is refused without a Handoff
@@ -53,7 +52,7 @@ through bin/convoy-state.
 Exit, and the Ticket Handoff of each of its direct blockers that is closed.
 A started ticket whose session ended without an exit is read as
 `interrupted`. `deferral` runs the detector alone and `fidelity` the fidelity
-check alone, at HEAD; neither writes anything.
+check alone, at HEAD, for information (ADR-0032); neither writes anything.
 
 Every answer is one JSON object on stdout. Exit status: 0 done; 1 refused
 (nothing was written, unless the answer says what was); 4 the convoy does
@@ -886,17 +885,17 @@ def fidelity_at(ticket: Ticket, repo: Path, head: str) -> dict[str, Any]:
 
 
 def red_fidelity(measured: dict[str, Any]) -> str | None:
-    """Why a red fidelity refuses « terminé »: the open deviations, the most
-    repeated first, and the two ways out (docs/PROTOTYPE_FIDELITY.md)."""
+    """What a red fidelity is, for information: the open deviations, the most
+    repeated first. It refuses nothing (ADR-0032, af-hcriwn): the deviations
+    are joined for the visual finishing pass at the end of the Spec."""
     if measured["result"] != "rouge":
         return None
     open_ = [d for d in measured["deviations"] if d.get("status") == "ouvert"]
     named = ", ".join(f"{d.get('anchor') or d.get('property')} ({d.get('property')} : {d.get('prototype')} → "
                       f"{d.get('delivered')})" for d in open_[:NAMED_DEVIATIONS])
-    return (f"fidélité au Validated Prototype rouge au commit {measured['commit']} : {len(open_)} écart(s) ouvert(s) "
-            f"sur {len({d.get('anchor') for d in open_})} ancre(s), dont {named} ; la liste entière est sous "
-            "« fidelity ». Répare-les et ressors, ou fais accepter un écart d'ancre par la sortie "
-            "planning_exception --anchor <ancre> (un écart de token se répare)")
+    return (f"non bloquante (ADR-0032) : fidélité au Validated Prototype rouge au commit {measured['commit']} : "
+            f"{len(open_)} écart(s) ouvert(s) sur {len({d.get('anchor') for d in open_})} ancre(s), dont {named} ; "
+            "la liste entière est sous « deviations », jointe pour la passe de finition")
 
 
 def cmd_exit(args: argparse.Namespace) -> int:
@@ -927,15 +926,8 @@ def cmd_exit(args: argparse.Namespace) -> int:
         repair = repair_of(args)
     if args.repo:
         repo = Path(args.repo).resolve()
-        head = clean_head(repo)
+        clean_head(repo)
         branch = checked_out_branch(repo, ticket)
-    if finished:
-        # Seen by its author before the review and the evaluation, not after (af-r2c0tx).
-        measured = fidelity_at(ticket, repo, head)
-        reason = red_fidelity(measured)
-        if reason:
-            raise Refusal(reason, extra={"fidelity": measured})
-
     try:
         if args.exit == "interrupted":
             push = git(repo, "push", "--quiet", "origin", f"HEAD:refs/heads/{branch}")
@@ -1053,18 +1045,19 @@ def cmd_read(args: argparse.Namespace) -> int:
 
 
 def cmd_fidelity(args: argparse.Namespace) -> int:
-    """The fidelity check alone, at HEAD: what `finished` will measure."""
+    """The fidelity check alone, at HEAD, for information (ADR-0032): it
+    refuses nothing and writes nothing."""
     if not args.repo:
         raise Refusal("mesure de fidélité sans dépôt (--repo) : la tête de la branche du ticket y est lue")
     repo = Path(args.repo).resolve()
     ticket = Ticket(args.convoy, args.ticket, repo)
     measured = {**fidelity_at(ticket, repo, clean_head(repo)), "convoy": args.convoy, "ticket": args.ticket}
     reason = red_fidelity(measured)
-    measured["ok"] = reason is None
+    measured["ok"] = True
     if reason:
-        measured["error"] = f"refus : {reason}"
+        measured["note"] = reason
     print(json.dumps(measured, indent=2, sort_keys=True, ensure_ascii=False))
-    return EXIT_REFUSED if reason else 0
+    return 0
 
 
 def cmd_deferral(args: argparse.Namespace) -> int:

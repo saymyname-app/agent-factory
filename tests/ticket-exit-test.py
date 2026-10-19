@@ -555,21 +555,16 @@ class TicketExitTest(unittest.TestCase):
         app.write_text(source.replace('<ul data-anchor="fixture-items">', "<ul>"))
         return self.code()
 
-    def test_finished_on_an_interface_ticket_is_refused_while_its_fidelity_is_red(self):
-        """Faux si l'auteur sort « terminé » sans avoir vu ses écarts au
-        Validated Prototype : T02R et T02R2 ont épuisé leur tour de correction
-        avant que ticket-end ne les mesure (af-r2c0tx)."""
+    def test_finished_on_an_interface_ticket_is_recorded_without_measuring_its_fidelity(self):
+        """Faux si une fidélité rouge refuse encore « terminé », ou si la
+        sortie la mesure encore (ADR-0032, af-hcriwn)."""
         self.touches_the_screen()
         head = self.without_anchor()
 
-        proc = self.assert_refused_and_nothing_written(lambda: self.finish(self.handoff()),
-                                                       "fidélité", "fixture-items", "planning_exception")
+        self.exited("--exit", "finished", "--repo", self.repo, "--handoff", self.handoff())
 
-        answer = json.loads(proc.stdout)
-        self.assertEqual((head, "rouge"), (answer["fidelity"]["commit"], answer["fidelity"]["result"]))
-        self.assertEqual({("fixture-items", "absent")},
-                         {(d["anchor"], d["kind"]) for d in answer["fidelity"]["deviations"]})
-        self.assertIsNone(self.shown()["exit"])
+        self.assertEqual(("finished", head), (self.shown()["exit"]["exit"], self.shown()["handoff"]["commit"]))
+        self.assertFalse((self.tmp / "browser.log").exists())
 
     def test_finished_on_an_interface_ticket_whose_fidelity_is_green_is_recorded(self):
         self.touches_the_screen()
@@ -592,14 +587,16 @@ class TicketExitTest(unittest.TestCase):
 
         self.assertEqual("finished", self.shown()["exit"]["exit"])
 
-    def test_the_measure_alone_lists_the_deviations_and_writes_nothing(self):
+    def test_the_measure_alone_lists_the_deviations_for_information_and_writes_nothing(self):
         self.touches_the_screen()
         self.without_anchor()
 
         proc = self.assert_refused_and_nothing_written(
-            lambda: self.run_cmd(TOOL, "fidelity", CONVOY, T2, "--repo", self.repo), status=EXIT_REFUSED)
+            lambda: self.run_cmd(TOOL, "fidelity", CONVOY, T2, "--repo", self.repo), status=0)
 
         answer = json.loads(proc.stdout)
+        self.assertEqual(("rouge", True), (answer["result"], answer["ok"]))
+        self.assertIn("non bloquante", answer["note"])
         self.assertEqual(["fixture-items"], sorted({d["anchor"] for d in answer["deviations"]}))
         self.assertEqual(["content", "empty"], sorted(answer["states"]))
 

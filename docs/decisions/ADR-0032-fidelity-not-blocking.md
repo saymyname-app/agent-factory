@@ -35,7 +35,10 @@ d'un état faux (9 %) : aucun seuil de code ne remplace l'œil.
 2. `bin/correction-round` n'arrête plus un ticket pour une fidélité rouge.
 3. `bin/spec-end` condition 3 est toujours remplie ; une mesure impossible
    est dite, pas rouge.
-4. `bin/prototype-fidelity` et ses captures ne changent pas : les écarts sont
+4. `bin/ticket-exit` ne refuse plus « terminé » sur une fidélité rouge et ne
+   la mesure plus à la sortie (refus de `af-fho3ka`, PR #681, retiré le même
+   jour) ; `bin/ticket-exit fidelity` la mesure pour information, code 0.
+5. `bin/prototype-fidelity` et ses captures ne changent pas : les écarts sont
    lus dans le dossier de fin pour la passe de finition.
 
 ## Conséquences
