@@ -41,6 +41,16 @@
 #                        pages once per group with the count and the first
 #                        controller error, and auto-resolves once no new
 #                        quarantine lands in the window.
+#   9. TICKET SANS SUITE  a started ticket of a marked convoy that nobody
+#                        moves: no live session, no open launch, no request
+#                        of it or of its convoy on Benjamin's list, nothing
+#                        recorded for 30 min. T02R (18/10, #673) and T02R2
+#                        (19/10, #687) sat so for hours; only an operator's
+#                        own watcher saw it (af-1fvzns). The Mayor keeps its
+#                        hands off marked convoys, so this one goes to the
+#                        operator's list as a factory incident, like an
+#                        « état sans règle » (docs/CONVOY_ADVANCE.md, T34),
+#                        and is withdrawn once the ticket moves again.
 #
 # This is observe-and-page ONLY (ADR-0016 section 7: a local reason may never
 # produce a global stop). It never resolves a gate, merges/holds a PR, reopens
@@ -62,13 +72,16 @@ PR_MINUTES="${FACTORY_WATCHDOG_PR_MINUTES:-30}"
 RENUDGE_MINUTES="${FACTORY_WATCHDOG_RENUDGE_MINUTES:-30}"
 WORKFLOW_LOOKBACK_HOURS="${FACTORY_WATCHDOG_WORKFLOW_LOOKBACK_HOURS:-24}"
 QUARANTINE_WINDOW_HOURS="${FACTORY_WATCHDOG_QUARANTINE_WINDOW_HOURS:-24}"
+TICKET_MINUTES="${FACTORY_WATCHDOG_TICKET_MINUTES:-30}"
+CONVOY_STATE="${FACTORY_WATCHDOG_CONVOY_STATE_BIN:-$(dirname "${BASH_SOURCE[0]}")/convoy-state}"
+OPERATOR_CONFIG="${OPERATOR_CONFIG_BIN:-$(dirname "${BASH_SOURCE[0]}")/operator-config}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --check-only) CHECK_ONLY=1 ;;
     --quiet) QUIET=1 ;;
     -h|--help)
-      sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+      sed -n '2,39p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -353,6 +366,74 @@ Detected by factory-watchdog from $rig_name's gc:control-quarantined beads. Obse
   rm -f "$quarantine_active_titles"
 else
   say "· control-quarantine — not checked (gc unavailable)"
+fi
+
+# --- 9. tickets of a marked convoy that nobody moves --------------------------
+# af-1fvzns: one bead and one request on the operator's list per ticket, kept
+# while the ticket stays without a next step, withdrawn once it moves again.
+STALL_PREFIX="[watchdog] ticket sans suite :"
+stall_request() {  # stall_request <ticket> <message> -> the escalation-door benjamin JSON
+  local since=${2#*sans suite depuis } language
+  since=${since%% (*}
+  language=$("$OPERATOR_CONFIG" language 2>/dev/null || echo fr)
+  jq -cn --arg l "$language" --arg quoi "Incident d'usine : ticket $1 sans suite depuis $since" --arg pourquoi "Aucune session, aucun lancement ni aucune demande ne le fait avancer : un défaut du code de l'usine" --arg repair "Faire corriger le défaut par la maintenance de l'usine" '{
+    quoi: $quoi, pourquoi: $pourquoi,
+    que_faire: [
+      {option: $repair,
+       consequence: "Le ticket repart seul une fois le correctif chargé ; cette demande se retire alors seule.",
+       recommande: true, raison: "Rien ne le fera avancer avant."},
+      {option: "Laisser le ticket en attente",
+       consequence: "Le ticket reste sans suite ; cette demande reste dans la liste."}],
+    langue: $l, bloquant: true}'
+}
+if [ -x "$CONVOY_STATE" ]; then
+  # A convoy-state show runs to megabytes: kept in files, never in an argument.
+  stall_active=$(mktemp); stall_show=$(mktemp); stall_payload=$(mktemp)
+  alive_json=$(gc session list --json 2>/dev/null | jq -c '[.sessions[]? | select((.closed | not) and .state != "closed") | (.id, .name, .session_name, .alias) | select(. != null) | tostring]' 2>/dev/null)
+  [ -n "$alive_json" ] || alive_json='[]'
+  stall_ok=1
+  for convoy_id in $("$CONVOY_STATE" list 2>/dev/null | jq -r '.convoys[]?' 2>/dev/null); do
+    "$CONVOY_STATE" show "$convoy_id" > "$stall_show" 2>/dev/null || { stall_ok=0; continue; }
+    open_ids=(); listed_ids=()
+    while IFS= read -r bead_id; do
+      [ -z "$bead_id" ] && continue
+      row=$(gc bd show "$bead_id" --json 2>/dev/null) || { stall_ok=0; continue; }
+      [ "$(jq -r '(.[0].status // "closed")' <<<"$row")" != "closed" ] && open_ids+=("$bead_id")
+      if [ -n "$(jq -r "$ON_OPERATOR_LIST" <<<"$row" 2>/dev/null)" ]; then listed_ids+=("$bead_id"); fi
+    done < <(python3 "$LIB/factory_watchdog.py" ticket-lookups < "$stall_show" 2>/dev/null)
+    jq -c --argjson alive "$alive_json" --arg open "${open_ids[*]:-}" --arg listed "${listed_ids[*]:-}" '{show: ., alive: $alive, open: ($open | split(" ") | map(select(. != ""))), listed: ($listed | split(" ") | map(select(. != "")))}' "$stall_show" > "$stall_payload"
+    while IFS=$'\t' read -r ticket_id code msg; do
+      [ -z "$ticket_id" ] && continue
+      bad "ticket sans suite — $msg"
+      title="$STALL_PREFIX $ticket_id"
+      printf '%s\n' "$title" >> "$stall_active"
+      [ "$CHECK_ONLY" = "1" ] && continue
+      existing=$(gc bd list --status open --title-contains "$title" --json 2>/dev/null | jq -r '(.[0].id // empty)')
+      [ -n "$existing" ] && continue
+      created=$(gc bd create "$title" -p 1 -t bug -d "$msg
+
+Detected by factory-watchdog (af-1fvzns): the ticket is started and not closed, no live session holds it, no launch of it is open, and no request of it or of convoy $convoy_id is on Benjamin's list. The repair is Factory maintenance: give code the rule that moves the ticket on (bin/convoy-state show $convoy_id). It never consists in advancing or closing the ticket by hand. Observe-and-page only (ADR-0016 section 7): the watchdog withdraws this request and closes this bead once the ticket moves again." --set-metadata "gc.source=factory-watchdog" --set-metadata "gc.ticket=$ticket_id" --json 2>/dev/null | jq -r '(.[0]?.id // .id // empty)')
+      if [ -n "$created" ] && "$ESCALATION_DOOR" benjamin "$created" "$(stall_request "$ticket_id" "$msg")" >/tmp/edoor-out.log 2>&1; then
+        did "flagged ticket $ticket_id without a next step as $created on the operator's list"
+      else
+        bad "could not raise ticket $ticket_id without a next step on the operator's list"
+      fi
+    done < <(FACTORY_WATCHDOG_TICKET_MINUTES="$TICKET_MINUTES" python3 "$LIB/factory_watchdog.py" tickets < "$stall_payload" 2>/dev/null)
+  done
+  # Withdrawn only on a complete reading: an unreadable convoy or bead keeps the request.
+  if [ "$CHECK_ONLY" != "1" ] && [ "$stall_ok" = "1" ]; then
+    while IFS=$'\t' read -r existing_id existing_title; do
+      [ -z "$existing_id" ] && continue
+      grep -Fxq "$existing_title" "$stall_active" 2>/dev/null && continue
+      "$ESCALATION_DOOR" clear "$existing_id" >/tmp/edoor-out.log 2>&1 \
+        && gc bd update "$existing_id" --set-metadata gc.outcome=pass --status=closed \
+          --notes "the ticket moves again; auto-resolved by factory-watchdog" >/tmp/edoor-out.log 2>&1 \
+        && did "auto-resolved ticket without a next step $existing_id"
+    done < <(gc bd list --status open --title-contains "$STALL_PREFIX" --json 2>/dev/null | jq -r '.[] | [.id, .title] | @tsv')
+  fi
+  rm -f "$stall_active" "$stall_show" "$stall_payload"
+else
+  say "· ticket sans suite — not checked (convoy-state unavailable)"
 fi
 
 # --- report --------------------------------------------------------------------

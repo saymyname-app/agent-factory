@@ -800,6 +800,14 @@ mark or field. On such a convoy the pass:
    clear`), closes its bead, removes the record and starts the ready
    tickets. No agent advances or closes a ticket to resume the convoy.
 
+A state the command has a rule for can still leave a ticket that no pass
+moves on: T02R (#673) and T02R2 (#687) each sat so for hours. That one is
+caught outside the pass, by `bin/factory-watchdog` (`tickets`,
+`docs/FACTORY_TOOLS.md`): a started ticket with no live session, no open
+launch, no request on the operator's list and nothing recorded for 30 min
+raises the same kind of « Incident d'usine », withdrawn once the ticket
+moves again (af-1fvzns).
+
 The repair is Factory maintenance: bring the tracker back to a state the
 command has a rule for (`bin/convoy-state show <convoy>` lists what is
 wrong). It never consists in advancing or closing the convoy's tickets by
