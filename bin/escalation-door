@@ -65,9 +65,16 @@
 #                              pending Mayor-first state, and mails the
 #                              escalation recipient ($GC_ESCALATION_RECIPIENT,
 #                              default human).
-#   repondre <bead> <lettre>  Pure-code response: writes the chosen option
+#   repondre <bead> <lettre> [--actor <qui>]
+#                              Pure-code response: writes the chosen option
 #                              (comment + metadata: option, quand, acteur)
-#                              on <bead>, clears its NEEDS BENJAMIN and any
+#                              on <bead>. The acteur is --actor, else the
+#                              session's BEADS_ACTOR (bd's own signature),
+#                              GC_SESSION_NAME or GC_AGENT; with none the
+#                              door refuses. --actor benjamin only on
+#                              Benjamin's own words or gesture (the Cockpit
+#                              click), never a delegated answer (af-zkdvur).
+#                              Then it clears its NEEDS BENJAMIN and any
 #                              Mayor-first paging state, and wakes the Mayor
 #                              with "<Operator> a répondu <lettre> sur
 #                              <bead>". Refuses an option <bead> never
@@ -293,8 +300,18 @@ is_parked_blocked() {  # $1 = bead JSON
 
 cmd_repondre() {
   local bead=${1:-} lettre=${2:-}
-  [[ -n $bead && -n $lettre ]] || die "Usage: $PROGRAM_NAME repondre <bead> <lettre>"
+  [[ -n $bead && -n $lettre ]] || die "Usage: $PROGRAM_NAME repondre <bead> <lettre> [--actor <qui>]"
   valid_bead_id "$bead" || die "'$bead' is not a Bead id."
+  local actor=${BEADS_ACTOR:-${GC_SESSION_NAME:-${GC_AGENT:-}}} qui
+  if [[ ${3:-} == --actor ]]; then
+    actor=${4:-}
+  elif [[ -n ${3:-} ]]; then
+    die "Usage: $PROGRAM_NAME repondre <bead> <lettre> [--actor <qui>]"
+  fi
+  [[ -n $actor && $actor != *[[:space:]]* ]] \
+    || die "qui répond ? --actor benjamin sur ses mots, sinon l'acteur de la session (--actor ou BEADS_ACTOR) ; rien n'est écrit."
+  qui=$actor
+  [[ $actor == benjamin ]] && qui=$OPERATOR_NAME
   local issue que_faire_raw chosen option_texte now reopen_note=""
   local -a reopen_args=()
   issue=$(show_bead "$bead")
@@ -313,7 +330,7 @@ cmd_repondre() {
   "$GC_BIN" bd update "$bead" \
     --set-metadata "gc.escalation_response_option=$lettre" \
     --set-metadata "gc.escalation_response_at=$now" \
-    --set-metadata "gc.escalation_response_actor=benjamin" \
+    --set-metadata "gc.escalation_response_actor=$actor" \
     --set-metadata "gc.needs_benjamin=none" \
     --set-metadata "gc.escalation_mayor_paged_at=none" \
     --set-metadata "gc.escalation_mayor_reason=none" \
@@ -321,9 +338,9 @@ cmd_repondre() {
     --append-notes "RÉPONSE: $lettre — $option_texte$reopen_note" \
     >/dev/null || die "Beads write failed for $bead."
   "$GC_BIN" mail send mayor --notify \
-    -s "Réponse de $OPERATOR_NAME: $bead" \
-    -m "ACTION: escalation-door recorded $OPERATOR_NAME's answer
-STATE: $OPERATOR_NAME a répondu $lettre sur $bead — $option_texte$reopen_note
+    -s "Réponse de $qui: $bead" \
+    -m "ACTION: escalation-door recorded $qui's answer
+STATE: $qui a répondu $lettre sur $bead — $option_texte$reopen_note
 EVIDENCE: gc bd show $bead
 NEXT: resume work using option $lettre" \
     >/dev/null || die "Could not mail mayor; the response is recorded on $bead but the wake-up mail failed -- retry."

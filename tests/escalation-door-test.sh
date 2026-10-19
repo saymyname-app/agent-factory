@@ -35,6 +35,8 @@ seed() {  # id json
 
 bead() { jq -c '.' "$TEST_TMP/beads/$1.json"; }
 
+# No ambient identity: who answers comes from each test (af-zkdvur).
+unset BEADS_ACTOR GC_SESSION_NAME GC_AGENT
 door() {
   GC_BIN="$FIXTURE" ED_BEAD_DIR="$TEST_TMP/beads" ED_CALL_LOG="$TEST_TMP/calls.log" \
     ESCALATION_DOOR_LOCK_FILE="$TEST_TMP/lock" "$SCRIPT" "$@"
@@ -182,14 +184,14 @@ grep -Fq "DOSSIER:" "$TEST_TMP/calls.log" && fail "the mail of a request without
 # --- repondre writes the chosen option, clears, and wakes the Mayor --------
 TESTS_RUN=$((TESTS_RUN + 1))
 : >"$TEST_TMP/calls.log"
-door repondre af-blocker a >/dev/null || fail "repondre should succeed for a known option"
+door repondre af-blocker a --actor benjamin >/dev/null || fail "repondre should succeed for a known option"
 written=$(bead af-blocker)
 [[ $(jq -r '.metadata["gc.escalation_response_option"]' <<<"$written") == a ]] \
   || fail "repondre did not write the chosen option"
 [[ -n $(jq -r '.metadata["gc.escalation_response_at"]' <<<"$written") ]] \
   || fail "repondre did not write when it happened"
 [[ $(jq -r '.metadata["gc.escalation_response_actor"]' <<<"$written") == benjamin ]] \
-  || fail "repondre did not write the acting actor"
+  || fail "repondre did not write the actor given with --actor"
 [[ $(jq -r '.metadata["gc.needs_benjamin"]' <<<"$written") == none ]] \
   || fail "repondre did not clear NEEDS BENJAMIN"
 [[ $(jq -r '.notes' <<<"$written") == *"RÉPONSE"* ]] \
@@ -199,16 +201,48 @@ grep -Fq "répondu a sur af-blocker" "$TEST_TMP/calls.log" \
   || fail "repondre's wake-up mail did not name the fixed phrase 'répondu <lettre> sur <bead>'"
 
 TESTS_RUN=$((TESTS_RUN + 1))
-if door repondre af-blocker z >/dev/null 2>&1; then
+if door repondre af-blocker z --actor test-session >/dev/null 2>&1; then
   fail "repondre with an option that was never offered must refuse"
 fi
 
 TESTS_RUN=$((TESTS_RUN + 1))
 reset_beads
 seed af-no-options '{"id":"af-no-options","status":"open","metadata":{},"notes":"","labels":[]}'
-if door repondre af-no-options a >/dev/null 2>&1; then
+if door repondre af-no-options a --actor test-session >/dev/null 2>&1; then
   fail "repondre on a bead with no recorded options must refuse"
 fi
+
+# af-zkdvur: an answer is Benjamin's only when he gave it. With no --actor
+# the door takes the session's own identity (BEADS_ACTOR, the actor bd itself
+# signs with, then Gas City's session name), and refuses rather than guess.
+TESTS_RUN=$((TESTS_RUN + 1))
+reset_beads
+seed af-blocker '{"id":"af-blocker","status":"open","metadata":{},"notes":"","labels":[]}'
+door benjamin af-blocker "$COMPLETE_REQUEST" >/dev/null || fail "a complete request should be accepted"
+before=$(bead af-blocker)
+if door repondre af-blocker a >/dev/null 2>&1; then
+  fail "repondre with no actor must refuse instead of signing for Benjamin"
+fi
+[[ $(bead af-blocker) == "$before" ]] || fail "a refused repondre (no actor) wrote onto the bead"
+
+TESTS_RUN=$((TESTS_RUN + 1))
+: >"$TEST_TMP/calls.log"
+BEADS_ACTOR=po-factory-vm door repondre af-blocker a >/dev/null \
+  || fail "repondre should take the session's BEADS_ACTOR"
+[[ $(jq -r '.metadata["gc.escalation_response_actor"]' <<<"$(bead af-blocker)") == po-factory-vm ]] \
+  || fail "repondre did not record the session that answered"
+grep -Fq "po-factory-vm a répondu a sur af-blocker" "$TEST_TMP/calls.log" \
+  || fail "the wake-up mail did not name the session that answered"
+grep -Fq "Benjamin" "$TEST_TMP/calls.log" && fail "the wake-up mail of a session's answer names Benjamin"
+
+TESTS_RUN=$((TESTS_RUN + 1))
+reset_beads
+seed af-blocker '{"id":"af-blocker","status":"open","metadata":{},"notes":"","labels":[]}'
+door benjamin af-blocker "$COMPLETE_REQUEST" >/dev/null || fail "a complete request should be accepted"
+GC_SESSION_NAME=worker-7 door repondre af-blocker a >/dev/null \
+  || fail "repondre should fall back on the Gas City session name"
+[[ $(jq -r '.metadata["gc.escalation_response_actor"]' <<<"$(bead af-blocker)") == worker-7 ]] \
+  || fail "repondre did not record the Gas City session that answered"
 
 # --- list (read-only CLI) ---------------------------------------------------
 TESTS_RUN=$((TESTS_RUN + 1))
@@ -260,7 +294,7 @@ for status in blocked closed; do
                 "gc.outcome": (if $s == "closed" then "pass" else "blocked" end),
                 "gc.work_outcome": "blocked", "gc.blocked_classification": "repair"},
      notes: "", labels: []}')"
-  door repondre af-t21 b >/dev/null || fail "repondre on a $status-blocked ticket should succeed"
+  door repondre af-t21 b --actor test-session >/dev/null || fail "repondre on a $status-blocked ticket should succeed"
   written=$(bead af-t21)
   [[ $(jq -r '.status' <<<"$written") == open ]] \
     || fail "repondre did not reopen a $status ticket with gc.work_outcome=blocked: $written"
@@ -279,7 +313,7 @@ seed af-shipped "$(jq -nc --arg q "$ANSWERABLE_QUE_FAIRE" '
   {id: "af-shipped", status: "closed",
    metadata: {"gc.needs_benjamin": "Vieille question", "gc.escalation_que_faire": $q,
               "gc.work_outcome": "shipped"}, notes: "", labels: []}')"
-door repondre af-shipped b >/dev/null || fail "repondre on a shipped bead should succeed"
+door repondre af-shipped b --actor test-session >/dev/null || fail "repondre on a shipped bead should succeed"
 [[ $(jq -r '.status' "$TEST_TMP/beads/af-shipped.json") == closed ]] \
   || fail "repondre reopened a bead that was delivered, not blocked"
 [[ $(jq -r '.metadata["gc.work_outcome"]' "$TEST_TMP/beads/af-shipped.json") == shipped ]] \
