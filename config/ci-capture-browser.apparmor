@@ -1,0 +1,13 @@
+# GitHub's Ubuntu 24.04 runner restricts unprivileged user namespaces through
+# AppArmor: the sandbox of Playwright's headless shell needs one and ends on
+# « No usable sandbox! » without it (af-wplvhs). The profile the hosts get
+# from bin/factory-host-install, for the runner's home: the restriction
+# stays for everything else.
+
+abi <abi/4.0>,
+
+include <tunables/global>
+
+profile factory-capture-browser /home/runner/.cache/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-*/chrome-headless-shell flags=(unconfined) {
+  userns,
+}

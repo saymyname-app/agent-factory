@@ -392,4 +392,51 @@ out=$(watchdog)
 grep -q "control quarantine —" <<<"$out" && fail "a recovered control-quarantine group must not still be reported as a problem"
 grep -q -- '--status=closed' "$CALLS" || fail "control-quarantine recovery should auto-resolve the bead"
 
-printf 'PASS: factory-watchdog pages aged gates, stuck PRs, false-success closes, broken gh auth, aggregated control-step quarantines, and open liveness defects, all throttled and silent under --check-only\n'
+# 9. a started ticket of a marked convoy that nobody moves goes to the
+# operator's list once, and is withdrawn once it moves again (af-1fvzns) ------
+CONVOY_SHOW="$TMP/convoy-show.json"
+cat > "$TMP/bin/convoy-state" <<STUB
+#!/usr/bin/env bash
+case "\$1" in
+  list) echo '{"ok":true,"convoys":["af-cv1"],"closed":[],"closed_outside":[]}' ;;
+  show) cat "$CONVOY_SHOW" ;;
+esac
+STUB
+chmod +x "$TMP/bin/convoy-state"
+export FACTORY_WATCHDOG_CONVOY_STATE_BIN="$TMP/bin/convoy-state"
+stalled_show() {  # stalled_show <status> -> a convoy with one ticket left since 50 min
+  jq -n --arg s "$1" --arg at "$(iso $((NOW - 3000)))" '{convoy:{id:"af-cv1"},tickets:[{id:"af-t9",title:"T09",status:$s,
+    gates:{dispatch:{at:$at}},session:{at:$at,name:"delivery-author-gone"},exit:{at:$at,exit:"finished"},
+    stop:{at:$at,raised:$at,reason:"still_refused"}}]}' > "$CONVOY_SHOW"
+}
+stalled_show in_progress
+reset_logs
+out=$(watchdog --check-only)
+grep -q "ticket sans suite — af-t9 (T09) du convoi af-cv1 : sans suite depuis" <<<"$out" \
+  || { echo "$out" >&2; fail "--check-only should still report a ticket without a next step"; }
+[ "$(creates)" = "0" ] || fail "--check-only must never file a bead for a ticket without a next step"
+
+reset_logs
+out=$(watchdog)
+grep -q "flagged ticket af-t9 without a next step" <<<"$out" || { echo "$out" >&2; fail "a ticket without a next step was not paged"; }
+[ "$(creates)" = "1" ] || fail "a ticket without a next step should be filed exactly once"
+stall_bead=$(grep -l '\[watchdog\] ticket sans suite : af-t9' "$BEADS_DIR"/*.json | head -1)
+jq -e '.[0].metadata["gc.needs_benjamin"] | startswith("Incident d'"'"'usine : ticket af-t9 sans suite")' "$stall_bead" >/dev/null \
+  || { cat "$stall_bead" >&2; fail "the ticket without a next step is not on the operator's list"; }
+grep -q '^mail send' "$MAIL" || fail "the operator was not mailed about the ticket without a next step"
+
+reset_logs
+out=$(watchdog)
+[ "$(creates)" = "0" ] || fail "a ticket without a next step must not be filed twice"
+
+# ...moving again (here: closed through its gate) withdraws the request.
+stalled_show closed
+reset_logs
+out=$(watchdog)
+grep -q "ticket sans suite —" <<<"$out" && fail "a ticket that moved must not be reported any more"
+grep -q "auto-resolved ticket without a next step" <<<"$out" || { echo "$out" >&2; fail "the request was not withdrawn"; }
+jq -e '(.[0].metadata["gc.needs_benjamin"] // "none") == "none"' "$stall_bead" >/dev/null \
+  || { cat "$stall_bead" >&2; fail "the withdrawn request is still on the operator's list"; }
+unset FACTORY_WATCHDOG_CONVOY_STATE_BIN
+
+printf 'PASS: factory-watchdog pages aged gates, stuck PRs, false-success closes, broken gh auth, aggregated control-step quarantines, tickets without a next step, and open liveness defects, all throttled and silent under --check-only\n'

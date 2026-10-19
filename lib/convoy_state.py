@@ -383,6 +383,7 @@ STOP_REASONS = ("criterion_already_green", "amendment_exhausted", "test_review_r
 # ticket still refused after it is stopped (`still_refused`); on a stopped
 # ticket the operator may override a Blocking Finding of the review, never a
 # criterion that was not observed.
+STOP_STILL_REFUSED = "still_refused"
 CORRECTION_MAX_ROUNDS = 1
 CORRECTION_MAX_LAUNCHES = 1
 OVERRIDE_RECORDED = "dérogation enregistrée"
@@ -4055,12 +4056,45 @@ def cmd_respond_code_review(args: argparse.Namespace) -> int:
     return done(args.convoy, args.ticket, values)
 
 
+def review_overridden(reason: Any, unsettled: list[str], overridden: list[Any]) -> bool:
+    """A ticket stopped still refused, every Blocking Finding its code review
+    left without a favorable verdict overridden by the operator (Spec §8).
+    The override stands for that review only: the ticket is still evaluated
+    at its tip, and merged once the ticket-end gate agrees (af-ppdbza)."""
+    return reason == STOP_STILL_REFUSED and bool(unsettled) and set(unsettled) <= set(overridden)
+
+
+def overridden_ticket(ticket: dict[str, Any]) -> bool:
+    """review_overridden, on a ticket as `show` renders it."""
+    stop = ticket.get("stop") if isinstance(ticket.get("stop"), dict) else {}
+    review = ticket.get("code_review") if isinstance(ticket.get("code_review"), dict) else {}
+    state = review.get("state") if isinstance(review.get("state"), dict) else {}
+    overrides = ticket.get("overrides") if isinstance(ticket.get("overrides"), list) else []
+    return review_overridden(stop.get("reason"), state.get("unsettled") or [],
+                             [entry.get("finding") for entry in overrides if isinstance(entry, dict)])
+
+
+def stopped_for_evaluation(metadata: dict[str, Any]) -> bool:
+    """The ticket is stopped and its evaluation does not go on: any stop but
+    the one review_overridden reads."""
+    if KEY_STOP not in metadata:
+        return False
+    try:
+        reason = stop_record(metadata[KEY_STOP])["reason"]
+        review = code_review_record(metadata[KEY_CODE_REVIEW]) if KEY_CODE_REVIEW in metadata else {"rounds": []}
+        overridden = [entry["finding"] for entry in overrides_record(metadata[KEY_OVERRIDES])] \
+            if KEY_OVERRIDES in metadata else []
+    except Refusal:
+        return True
+    return not review_overridden(reason, code_review_state(review)["unsettled"], overridden)
+
+
 def evaluation_target(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """The ticket an evaluation write lands on, its metadata, and its
     Ticket Evaluation so far."""
     ticket = marked_ticket(args.convoy, args.ticket)
     metadata = metadata_of(ticket)
-    if KEY_STOP in metadata:
+    if stopped_for_evaluation(metadata):
         raise Refusal(f"ticket arrêté : aucune évaluation ne s'enregistre sur {args.ticket} tant que l'arrêt n'est pas levé")
     record = evaluation_record(metadata[KEY_EVALUATION]) if KEY_EVALUATION in metadata else {"rounds": []}
     return ticket, metadata, record
@@ -4160,7 +4194,7 @@ def cmd_want_evaluation_product(args: argparse.Namespace) -> int:
     request = record.get("request")
     if not request or "datasets" not in request or request["commit"] != args.commit:
         raise Refusal("aucune évaluation à la pointe déclarée pour ce jeu")
-    if KEY_STOP in metadata or KEY_PARK in metadata or args.dataset not in request["datasets"]:
+    if stopped_for_evaluation(metadata) or KEY_PARK in metadata or args.dataset not in request["datasets"]:
         raise Refusal("ticket arrêté, garé ou jeu absent de la demande")
     wanted = request.get("wanted")
     if wanted and wanted["dataset"] == args.dataset:
@@ -4181,7 +4215,7 @@ def cmd_append_evaluation_product(args: argparse.Namespace) -> int:
     request = record.get("request")
     if not request or "datasets" not in request or request["commit"] != args.commit:
         raise Refusal("aucune évaluation à la pointe déclarée pour ce produit")
-    if KEY_STOP in metadata or KEY_PARK in metadata:
+    if stopped_for_evaluation(metadata) or KEY_PARK in metadata:
         raise Refusal("le ticket est arrêté ou garé : aucun produit nouveau")
     if record.get("live"):
         raise Refusal("un produit de cette évaluation occupe encore son créneau")
@@ -4543,7 +4577,7 @@ def cmd_release_evaluation(args: argparse.Namespace) -> int:
     held = [path for path in args.state_file if path in used]
     if args.withdraw and record.get("request") and not (set(live) - set(args.state_file)):
         del record["request"]
-    elif held and not args.switch and KEY_STOP not in metadata:
+    elif held and not args.switch and not stopped_for_evaluation(metadata):
         raise Refusal(f"une évaluation est ouverte sur ce produit lancé : il ne se libère pas ({', '.join(held)})")
     if args.switch and (args.withdraw or any(Path(path).exists() for path in args.state_file)):
         raise Refusal("changement de jeu impossible : arrêt du produit non confirmé")

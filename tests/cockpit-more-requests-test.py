@@ -70,6 +70,19 @@ class SpecsAndGraphsTest(unittest.TestCase):
         beads[0]["labels"].append("approved-ticket-graph")
         self.assertEqual([], build_specs_and_graphs_requests(beads, verifie_a=1000.0))
 
+    def test_draft_graph_exits_once_approval_is_recorded(self):
+        """bd-approve writes metadata, not the label: an approved draft is
+        no longer Benjamin's to approve (19/10/2026, 11 stale rows)."""
+        for key in ("approved_by", "approved_evidence", "approved_digest"):
+            beads = load_fixture("graph-draft.json")
+            beads[0]["metadata"][key] = "x"
+            self.assertEqual([], build_specs_and_graphs_requests(beads, verifie_a=1000.0), key)
+
+    def test_convoy_carrying_the_draft_label_is_not_a_draft(self):
+        beads = load_fixture("graph-draft.json")
+        beads[0]["issue_type"] = "convoy"
+        self.assertEqual([], build_specs_and_graphs_requests(beads, verifie_a=1000.0))
+
     def test_no_execute_button_for_a_benjamin_level_decision(self):
         """Spec .37: approving a Spec, approving or publishing a graph
         (a Benjamin-level decision) never gets an execute button in the
