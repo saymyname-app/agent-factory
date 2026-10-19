@@ -21,6 +21,11 @@
       "pool": "openai",
       "tier": "premium"
     },
+    "codex-readonly": {
+      "label": "GPT-5.6 Sol (Codex) · lecture seule",
+      "pool": "openai",
+      "tier": "premium"
+    },
     "claude": {
       "label": "Claude Opus 5.5 · effort élevé",
       "pool": "anthropic",
@@ -71,8 +76,9 @@
     },
     "delivery-reviewer": {
       "label": "Relecteur de code (rôle de livraison, lecture seule)",
-      "why": "T03 (af-pbxbgj) : même règle que delivery-author. Lecture seule : seul un profil lancé par bin/delivery-role-sandbox convient.",
+      "why": "T03 (af-pbxbgj) : même règle que delivery-author. Lecture seule : seul un profil lancé par bin/delivery-role-sandbox convient. Codex en tête (af-npz9v1.12, Benjamin 2026-10-17 « Essayer un autre fournisseur ») : la revue tourne sur un autre modèle que l'auteur (Claude), après son essai d'adoption ; Claude lecture seule en repli quand le pool openai est épuisé ou en erreur.",
       "chain": [
+        "codex-readonly",
         "claude-readonly"
       ]
     },

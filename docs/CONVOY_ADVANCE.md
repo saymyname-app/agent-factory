@@ -188,8 +188,9 @@ sans règle ») is settled no more than it is started.
 
 In the same pass as the code review — the two run in parallel, on the same
 tip — the pass hands each convoy that has a finished ticket not merged yet,
-a launched product left to stop, or a ticket its evaluation stopped and that
-did not reach the operator yet, to `bin/ticket-evaluation settle <convoy>
+a launched product left to stop, a ticket its evaluation stopped and that
+did not reach the operator yet, or a finished ticket stopped `still_refused`
+whose every Blocking Finding is overridden (af-ppdbza), to `bin/ticket-evaluation settle <convoy>
 --repo <project repository>` (`docs/TICKET_EVALUATION.md`). For each ticket
 finished and green at the tip of its branch, the command launches the
 product from a clean copy of that tip and sends the evaluation to a session

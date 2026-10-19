@@ -92,7 +92,7 @@ cleanup() {
     echo "trial preserved at $TRIAL" >&2
   else
     git -C "$PRODUCT" worktree prune >/dev/null 2>&1 || true
-    rm -rf -- "$TRIAL"
+    isolated_city_remove "$TRIAL"
   fi
   exit "$status"
 }

@@ -24,6 +24,12 @@ store, captured on the launched product at the head commit of the ticket
 branch (`bin/ticket-author demonstrate`). The records of the Handoff carry
 it as `demonstration_proof`.
 
+The fidelity to the Validated Prototype refuses no exit (ADR-0032,
+af-hcriwn, 2026-10-19; it replaced the refusal of af-r2c0tx the same day):
+« terminé » does not measure it. `fidelity` below measures it at HEAD for
+information; its deviations are joined for the visual finishing pass at the
+end of the Spec.
+
 ```bash
 ./bin/ticket-exit exit af-convoy af-t1 --exit finished --repo <ticket worktree> --handoff handoff.json
 ./bin/ticket-exit exit af-convoy af-t1 --exit planning_exception --repo <ticket worktree> --handoff handoff.json --kind semantic --summary "La Spec fixe X, la démonstration demande Y" [--anchor liste]
@@ -32,6 +38,7 @@ it as `demonstration_proof`.
 ./bin/ticket-exit exit af-convoy af-t1 --exit interrupted --repo <ticket worktree> [--handoff partial.json]
 ./bin/ticket-exit read af-convoy af-t2                       # the ticket as its author receives it
 ./bin/ticket-exit deferral af-convoy af-t1 --repo <ticket worktree> [--handoff handoff.json]
+./bin/ticket-exit fidelity af-convoy af-t1 --repo <ticket worktree>   # the fidelity at HEAD, for information
 ```
 
 Every answer is one JSON object on stdout.
@@ -218,7 +225,9 @@ exit the markers are recorded and refuse nothing.
 
 `deferral` runs the detector alone, against `--handoff` or the Handoff on
 the ticket: exit 0 when it passes, 1 with the markers when it refuses. It
-writes nothing.
+writes nothing. `fidelity` does the same for the fidelity check at HEAD:
+always exit 0, its result (« vert », « rouge », « accepté par Benjamin » or
+« sans objet ») and, when red, the deviations and a `note` (ADR-0032).
 
 ## Limits
 
@@ -249,7 +258,9 @@ tracker, the evidence store and the remote to prove nothing was written. The
 records are sealed by the real `bin/evidence-capture`, the requests go
 through the real `bin/escalation-door`, the parked convoy is advanced by the
 real `bin/convoy-advance`, and the repair is published by the real patch
-door on the graph of the Fixture City. `tests/convoy-state-test.py` covers
+door on the graph of the Fixture City. The fidelity at HEAD (`fidelity`) is measured by the real `bin/ticket-end` and
+`bin/prototype-fidelity` on the launched Fixture City, with the fake browser
+of `tests/fixtures/prototype-fidelity`. `tests/convoy-state-test.py` covers
 `set-handoff` and `park`. On the real `gc`/`bd`, in a disposable city
 (local-only): `tests/convoy-state-real-tracker-test.sh` (a 20 kB Handoff
 read back as written, a parking that follows real `blocks` edges) and

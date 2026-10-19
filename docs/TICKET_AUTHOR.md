@@ -60,7 +60,10 @@ was observed:
   the work tree under the city root and refused three times a ticket whose
   work tree was in place). `bin/ticket-author` therefore places the work
   trees under the home of the account as the password database gives it,
-  the same for the author session and for the check.
+  the same for the author session and for the check. It hands
+  `bin/evidence-capture` the evidence store from that same home when
+  `EVIDENCE_STORE_DIR` is not set (af-i4d833: the `red` gate looked for
+  `tdd_red` under the city root and refused it although it was captured).
 - Exit 0: the next step opens.
 - Any other exit: a new attempt of the same step goes back to the same
   session; the stderr of the check is kept in `gc.attempt_log`.

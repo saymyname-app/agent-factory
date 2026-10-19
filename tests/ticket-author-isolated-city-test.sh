@@ -74,7 +74,7 @@ cleanup() {
   if [ "${KEEP_TEST_CITY:-0}" = 1 ]; then
     echo "trial preserved at $TRIAL" >&2
   else
-    rm -rf -- "$TRIAL"
+    isolated_city_remove "$TRIAL"
   fi
   exit "$status"
 }
@@ -158,7 +158,7 @@ while true; do
         say "ferme l'étape rouge sans rien prouver" ;;
       red:exception)
         tool "\$BIN/ticket-exit" exit "\$CONVOY" "\$TICKET" --exit planning_exception --kind semantic \\
-          --repo "\$WT" --handoff "$TRIAL/handoff.json" \\
+          --repo "\$WT" --handoff "$TRIAL/handoff-exception.json" \\
           --summary "La Spec fixe le libellé de la page, la ligne de démonstration en demande un autre" ;;
       code:honest)
         cp "$TRIAL/code/app.py" "\$WT/$FIXTURE/app.py"
@@ -221,6 +221,10 @@ open(sys.argv[2], "w", encoding="utf-8").write(green)
 PY
 jq -n '{done: ["Critères 1 et 2 observés ; la ligne se voit par GET / sur le jeu content."], deviations: "aucun", not_done: "aucun", out_of_ticket: "aucun"}' \
   > "$TRIAL/handoff.json"
+# A Planning Exception without an anchor describes, under « Écarts », the
+# deviation its accept option would accept (bin/ticket-exit, ADR-0030 L5).
+jq -n '{done: "aucun", deviations: ["La Spec fixe le libellé de la page ; la ligne de démonstration en demande un autre."], not_done: ["Le ticket entier : il attend la décision sur le libellé."], out_of_ticket: "aucun"}' \
+  > "$TRIAL/handoff-exception.json"
 
 # --- the city: one author agent on the stub, the real formula, the real order ---
 cat > "$CITY/city.toml" <<TOML

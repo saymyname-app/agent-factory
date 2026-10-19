@@ -11,12 +11,14 @@ states (``docs/SPEC_APPROVE.md``, ``bin/spec-approve``,
     matching the moment ``spec-approve bd-approve`` sets
     ``spec_state=APPROVED_SPEC`` — exit is at-source, same rule as
     escalations and proposals (spec .15).
-  * a **Ticket Graph Draft bead**: label ``ticket-graph-draft`` present
-    and ``approved-ticket-graph`` absent. ``ticket-graph-publish`` never
-    removes the draft label on publish, so the absence of
-    ``approved-ticket-graph`` is what actually marks "still a draft" —
-    the same bead id keeps its draft label once published, but it now
-    also carries the approved label and so stops matching here.
+  * a **Ticket Graph Draft bead**: label ``ticket-graph-draft`` present,
+    no approval recorded, and not the convoy itself. Approval is the
+    metadata ``bd-approve`` writes (``approved_by``, ``approved_evidence``,
+    ``approved_digest``), the same rule ``ticket-graph-publish`` reads;
+    ``ticket-graph-publish`` puts ``approved-ticket-graph`` on the tickets
+    it creates, never on the draft bead, so the label alone left every
+    approved and published draft in the inbox (19/10/2026: 11 of them).
+    A published convoy keeps the draft label; it is not a draft either.
 
 This is a fixed-phrase type (spec: "des phrases fixes dans le code pour
 chaque type d'événement machine") — the cockpit invents nothing beyond
@@ -39,9 +41,17 @@ def _is_draft_spec(bead):
     return metadata.get("spec_state") == "DRAFT_SPEC"
 
 
+APPROVAL_KEYS = ("approved_by", "approved_evidence", "approved_digest")
+
+
 def _is_draft_graph(bead):
     labels = bead.get("labels") or []
-    return DRAFT_GRAPH_LABEL in labels and APPROVED_GRAPH_LABEL not in labels
+    if DRAFT_GRAPH_LABEL not in labels or APPROVED_GRAPH_LABEL in labels:
+        return False
+    if bead.get("issue_type") == "convoy":
+        return False
+    metadata = bead.get("metadata") or {}
+    return not any(str(metadata.get(key) or "").strip() for key in APPROVAL_KEYS)
 
 
 def _request_for(bead, req_type, quoi, pourquoi, prompt_label, verifie_a):

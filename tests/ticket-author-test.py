@@ -513,6 +513,18 @@ class TicketAuthorTest(unittest.TestCase):
         self.assertEqual(named[0], named[1])
         self.assertNotIn(str(self.tmp), named[0])
 
+    def test_gate_red_reads_the_evidence_store_in_the_same_place_whatever_home_is(self):
+        # Gas City runs the check with HOME set to the city root (af-i4d833).
+        answer, worktree = self.start()
+        head = self.commit("tests de critère", {COUNT_FILE: COUNT_TEST}, repo=worktree)
+        self.state("add-evidence", CONVOY, T1, "--piece", "tdd_red", "--digest", "sha256:" + "ab" * 32, "--commit", head)
+        self.state("set-tdd", CONVOY, T1, "--step", "red", "--commit", head, "--base", answer["base"])
+        named = [self.refused("gate", CONVOY, T1, "--step", "red", mention="absente du magasin",
+                              env={"EVIDENCE_STORE_DIR": "", "HOME": str(self.tmp / home)})
+                 for home in ("city-root", "elsewhere")]
+        self.assertEqual(named[0], named[1])
+        self.assertNotIn(str(self.tmp), named[0])
+
     def test_gate_workspace_refuses_a_branch_that_did_not_leave_from_the_integration_branch(self):
         self.start()
         # The same ticket branch, rebuilt from a commit the integration branch does not hold.

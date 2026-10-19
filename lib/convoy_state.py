@@ -383,6 +383,7 @@ STOP_REASONS = ("criterion_already_green", "amendment_exhausted", "test_review_r
 # ticket still refused after it is stopped (`still_refused`); on a stopped
 # ticket the operator may override a Blocking Finding of the review, never a
 # criterion that was not observed.
+STOP_STILL_REFUSED = "still_refused"
 CORRECTION_MAX_ROUNDS = 1
 CORRECTION_MAX_LAUNCHES = 1
 OVERRIDE_RECORDED = "dérogation enregistrée"
@@ -467,8 +468,15 @@ MERGE_OUTCOMES_WITH_COMMIT = ("merged", "red")
 # §3): what a deviation is, and the three states of a result. A deviation is
 # never lifted by its author: only a resolved Planning Exception that names
 # the anchor turns it « accepté par Benjamin ».
-DEVIATION_KINDS = ("absent", "structure", "style", "token")
+DEVIATION_KINDS = ("absent", "structure", "style", "token", "theme")
 DEVIATION_KIND_WITHOUT_ANCHOR = "token"
+# A theme the prototype cannot be measured in: a rendering, no anchor (af-yw9awk).
+DEVIATION_KIND_THEME = "theme"
+# How many deviations of a fidelity result the ticket keeps, in the order
+# measured; the full list stays in the sealed piece. A tracker write is one
+# command line, and one argument cannot pass 128 KiB (af-m0hvif: 22,313
+# deviations on af-0gonc9, a 2.7 MB result).
+FIDELITY_DEVIATIONS_KEPT = 100
 FIDELITY_GREEN = "vert"
 FIDELITY_RED = "rouge"
 FIDELITY_ACCEPTED = "accepté par Benjamin"
@@ -1540,7 +1548,8 @@ def fidelity_record(raw: Any, metadata: dict[str, Any] | None = None) -> dict[st
     anchor and property. The verdict is the one the deviations give. With
     `metadata` (at a write), the full record must be a piece of the evidence
     store captured at that commit: the result is written by code."""
-    record = stored_record(raw, ("commit", "verdict", "piece", "screens", "states", "deviations", "at"))
+    record = stored_record(raw, ("commit", "verdict", "piece", "screens", "states", "deviations", "at"),
+                           ("deviation_count", "deviation_anchors"))
     commit = valid_commit(record["commit"], "commit du contrôle de fidélité")
     names_of(record["screens"], "écrans comparés")
     states = record["states"]
@@ -1565,11 +1574,25 @@ def fidelity_record(raw: Any, metadata: dict[str, Any] | None = None) -> dict[st
         if kind == DEVIATION_KIND_WITHOUT_ANCHOR:
             if located != (None, None):
                 raise Refusal(f"écart de token mal formé : {deviation!r} (un token se lit sur les sources, sans ancre)")
+        elif kind == DEVIATION_KIND_THEME:
+            if not isinstance(deviation["viewport"], str) or not deviation["viewport"] or deviation["anchor"] is not None:
+                raise Refusal(f"écart de thème mal formé : {deviation!r} (un rendu, sans ancre)")
         elif any(not isinstance(name, str) or not name for name in located):
             raise Refusal(f"écart sans ancre ou sans taille d'écran : {deviation!r}")
-    expected = "unfavorable" if deviations else "favorable"
+    count = len(deviations)
+    if "deviation_count" in record or "deviation_anchors" in record:
+        count, anchors = record.get("deviation_count"), record.get("deviation_anchors")
+        if not isinstance(count, int) or isinstance(count, bool) or count <= len(deviations) \
+                or len(deviations) != FIDELITY_DEVIATIONS_KEPT:
+            raise Refusal(f"nombre d'écarts mal formé : {count!r} pour {len(deviations)} écart(s) gardé(s)")
+        if not isinstance(anchors, list) \
+                or any(anchor is not None and not isinstance(anchor, str) for anchor in anchors) \
+                or len(set(anchors)) != len(anchors) \
+                or any(deviation["anchor"] not in anchors for deviation in deviations):
+            raise Refusal(f"ancres des écarts mal formées : {anchors!r}")
+    expected = "unfavorable" if count else "favorable"
     if record["verdict"] != expected:
-        raise Refusal(f"verdict de fidélité incohérent : {record['verdict']!r} avec {len(deviations)} écart(s)")
+        raise Refusal(f"verdict de fidélité incohérent : {record['verdict']!r} avec {count} écart(s)")
     if not isinstance(record["piece"], str) or not PIECE_RE.match(record["piece"]):
         raise Refusal(f"pièce du relevé de fidélité absente ou mal formée : {record['piece']!r}")
     if metadata is not None:
@@ -1696,14 +1719,16 @@ def tracked_items(ticket: dict[str, Any], by_id: dict[str, dict[str, Any]]) -> l
 
 def fidelity_rendered(record: dict[str, Any], accepted_anchors: list[str]) -> dict[str, Any]:
     """The result with its computed state: green without deviation; else red,
-    unless a resolved Planning Exception names the anchor of each one."""
+    unless a resolved Planning Exception names the anchor of each one. A
+    result cut to its first deviations is judged on the anchors of all."""
     deviations = [
         {**deviation, "status": FIDELITY_ACCEPTED if deviation["anchor"] in accepted_anchors else DEVIATION_OPEN}
         for deviation in record["deviations"]
     ]
-    if not deviations:
+    anchors = record.get("deviation_anchors", [deviation["anchor"] for deviation in deviations])
+    if not anchors:
         state = FIDELITY_GREEN
-    elif all(deviation["status"] == FIDELITY_ACCEPTED for deviation in deviations):
+    elif all(anchor in accepted_anchors for anchor in anchors):
         state = FIDELITY_ACCEPTED
     else:
         state = FIDELITY_RED
@@ -3802,7 +3827,12 @@ def cmd_open_code_review(args: argparse.Namespace) -> int:
         request["models"] = models
     else:
         last = record["rounds"][-1] if record["rounds"] else None
-        if last and last["verdict"] == "unfavorable":
+        # A review outdated by commits made outside the correction round
+        # (a resume) is replayed in full at the new tip: no session will
+        # answer its findings (af-s31cvi).
+        replayed = (kind == "review" and last is not None and last["kind"] == "review"
+                    and last["commit"] != commit and not last.get("responses") and KEY_CORRECTION not in metadata)
+        if last and last["verdict"] == "unfavorable" and not replayed:
             if last["kind"] == "judgement":
                 raise Refusal(
                     f"le ticket {args.ticket} est encore refusé après son tour de correction : aucune revue ne s'ouvre")
@@ -4026,12 +4056,45 @@ def cmd_respond_code_review(args: argparse.Namespace) -> int:
     return done(args.convoy, args.ticket, values)
 
 
+def review_overridden(reason: Any, unsettled: list[str], overridden: list[Any]) -> bool:
+    """A ticket stopped still refused, every Blocking Finding its code review
+    left without a favorable verdict overridden by the operator (Spec §8).
+    The override stands for that review only: the ticket is still evaluated
+    at its tip, and merged once the ticket-end gate agrees (af-ppdbza)."""
+    return reason == STOP_STILL_REFUSED and bool(unsettled) and set(unsettled) <= set(overridden)
+
+
+def overridden_ticket(ticket: dict[str, Any]) -> bool:
+    """review_overridden, on a ticket as `show` renders it."""
+    stop = ticket.get("stop") if isinstance(ticket.get("stop"), dict) else {}
+    review = ticket.get("code_review") if isinstance(ticket.get("code_review"), dict) else {}
+    state = review.get("state") if isinstance(review.get("state"), dict) else {}
+    overrides = ticket.get("overrides") if isinstance(ticket.get("overrides"), list) else []
+    return review_overridden(stop.get("reason"), state.get("unsettled") or [],
+                             [entry.get("finding") for entry in overrides if isinstance(entry, dict)])
+
+
+def stopped_for_evaluation(metadata: dict[str, Any]) -> bool:
+    """The ticket is stopped and its evaluation does not go on: any stop but
+    the one review_overridden reads."""
+    if KEY_STOP not in metadata:
+        return False
+    try:
+        reason = stop_record(metadata[KEY_STOP])["reason"]
+        review = code_review_record(metadata[KEY_CODE_REVIEW]) if KEY_CODE_REVIEW in metadata else {"rounds": []}
+        overridden = [entry["finding"] for entry in overrides_record(metadata[KEY_OVERRIDES])] \
+            if KEY_OVERRIDES in metadata else []
+    except Refusal:
+        return True
+    return not review_overridden(reason, code_review_state(review)["unsettled"], overridden)
+
+
 def evaluation_target(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """The ticket an evaluation write lands on, its metadata, and its
     Ticket Evaluation so far."""
     ticket = marked_ticket(args.convoy, args.ticket)
     metadata = metadata_of(ticket)
-    if KEY_STOP in metadata:
+    if stopped_for_evaluation(metadata):
         raise Refusal(f"ticket arrêté : aucune évaluation ne s'enregistre sur {args.ticket} tant que l'arrêt n'est pas levé")
     record = evaluation_record(metadata[KEY_EVALUATION]) if KEY_EVALUATION in metadata else {"rounds": []}
     return ticket, metadata, record
@@ -4131,7 +4194,7 @@ def cmd_want_evaluation_product(args: argparse.Namespace) -> int:
     request = record.get("request")
     if not request or "datasets" not in request or request["commit"] != args.commit:
         raise Refusal("aucune évaluation à la pointe déclarée pour ce jeu")
-    if KEY_STOP in metadata or KEY_PARK in metadata or args.dataset not in request["datasets"]:
+    if stopped_for_evaluation(metadata) or KEY_PARK in metadata or args.dataset not in request["datasets"]:
         raise Refusal("ticket arrêté, garé ou jeu absent de la demande")
     wanted = request.get("wanted")
     if wanted and wanted["dataset"] == args.dataset:
@@ -4152,7 +4215,7 @@ def cmd_append_evaluation_product(args: argparse.Namespace) -> int:
     request = record.get("request")
     if not request or "datasets" not in request or request["commit"] != args.commit:
         raise Refusal("aucune évaluation à la pointe déclarée pour ce produit")
-    if KEY_STOP in metadata or KEY_PARK in metadata:
+    if stopped_for_evaluation(metadata) or KEY_PARK in metadata:
         raise Refusal("le ticket est arrêté ou garé : aucun produit nouveau")
     if record.get("live"):
         raise Refusal("un produit de cette évaluation occupe encore son créneau")
@@ -4514,7 +4577,7 @@ def cmd_release_evaluation(args: argparse.Namespace) -> int:
     held = [path for path in args.state_file if path in used]
     if args.withdraw and record.get("request") and not (set(live) - set(args.state_file)):
         del record["request"]
-    elif held and not args.switch and KEY_STOP not in metadata:
+    elif held and not args.switch and not stopped_for_evaluation(metadata):
         raise Refusal(f"une évaluation est ouverte sur ce produit lancé : il ne se libère pas ({', '.join(held)})")
     if args.switch and (args.withdraw or any(Path(path).exists() for path in args.state_file)):
         raise Refusal("changement de jeu impossible : arrêt du produit non confirmé")
@@ -4577,9 +4640,10 @@ def cmd_set_handoff(args: argparse.Namespace) -> int:
 def cmd_set_fidelity(args: argparse.Namespace) -> int:
     """Record the result of the mechanical fidelity check of a ticket, as
     bin/prototype-fidelity measured it at `--commit`: what it compared and
-    every deviation. The verdict is computed here and written with it, in
-    one tracker write; the full record must be a piece of the evidence store
-    at that commit."""
+    every deviation, or past FIDELITY_DEVIATIONS_KEPT the first ones, their
+    count and the anchors of all. The verdict is computed here and written
+    with it, in one tracker write; the full record must be a piece of the
+    evidence store at that commit."""
     ticket = marked_ticket(args.convoy, args.ticket)
     given = json_argument(args.file, "résultat du contrôle de fidélité")
     unknown = sorted(set(given) - {"screens", "states", "deviations"})
@@ -4594,6 +4658,14 @@ def cmd_set_fidelity(args: argparse.Namespace) -> int:
         "commit": commit, "verdict": verdict, "piece": args.piece, "screens": given.get("screens"),
         "states": given.get("states"), "deviations": given.get("deviations"), "at": at,
     }), metadata_of(ticket))
+    deviations = record["deviations"]
+    if len(deviations) > FIDELITY_DEVIATIONS_KEPT:
+        anchors = {deviation["anchor"] for deviation in deviations}
+        record = fidelity_record(encode({
+            **record, "deviations": deviations[:FIDELITY_DEVIATIONS_KEPT], "deviation_count": len(deviations),
+            "deviation_anchors": sorted(anchor for anchor in anchors if anchor is not None)
+            + ([None] if None in anchors else []),
+        }))
     values = {KEY_FIDELITY: encode(record),
               VERDICT_PREFIX + "fidelity": encode({"state": verdict, "commit": commit, "at": at})}
     write_metadata(args.ticket, values)

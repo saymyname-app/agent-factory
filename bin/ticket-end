@@ -13,6 +13,7 @@ are refused from an agent session.
     ticket-end close    CONVOY TICKET --repo DIR
     ticket-end settle   CONVOY --repo DIR
     ticket-end fidelity CONVOY --repo DIR --profile DESCRIPTOR [--limit N]
+    ticket-end measure  CONVOY TICKET --repo DIR --profile DESCRIPTOR --commit SHA
 
 `check` lists the verdict of each condition and writes nothing. With
 `--before-merge` it asks conditions 1 to 5 and 7 to 9: what the merge command
@@ -27,7 +28,9 @@ left open is an outcome of it, not a failure. `fidelity` runs the mechanical
 fidelity check (bin/prototype-fidelity) of each finished interface ticket at
 the tip of its branch, before its merge, on the screens that serve the
 states of the Validated Prototype the publication door posed in the ticket;
-the result is written on the ticket by that command.
+the result is written on the ticket by that command. `measure` runs the same
+check on one ticket at a commit and writes nothing: bin/ticket-exit runs it
+before an author leaves by « terminé » (af-r2c0tx).
 
 Called by bin/convoy-advance on each of its passes (`fidelity` before the
 merge, `settle` after it). Every answer is one JSON object on stdout. Exit
@@ -66,7 +69,7 @@ CONDITIONS = (
     ("criteria", "Critères évalués identiques au digest approuvé"),
     ("handoff", "Ticket Handoff valide, avec preuve du rouge et preuve de démonstration"),
     ("evaluation", "Ticket Evaluation : tout « observé avec preuve » ; prefactoring ou sans interface : le produit démarre"),
-    ("fidelity", "Contrôles mécaniques de fidélité verts si le ticket touche un écran"),
+    ("fidelity", "Fidélité au Validated Prototype mesurée et jointe, non bloquante (af-hcriwn)"),
     ("deferral", "Détecteur de report passé"),
     ("merge", "Fusionné dans la branche d'intégration, tests verts sur le résultat fusionné"),
     ("evidence", "Preuves recevables, liées à la pointe exacte de la branche du ticket au moment de la fusion"),
@@ -271,6 +274,16 @@ class Evidence:
         return report if isinstance(report, dict) else {}
 
 
+def red_piece(tdd: dict[str, Any], step: str) -> str:
+    """The piece that proves the red recorded on the ticket. After an
+    amendment the red is recorded at its commit and proven by
+    `tdd_amendment`; `tdd_red` stays the first red (docs/TDD_STEP.md)."""
+    amendment = tdd.get("amendment") or {}
+    if step == "red" and amendment.get("commit") and amendment.get("commit") == (tdd.get("red") or {}).get("commit"):
+        return TDD_PIECES["amendment"]
+    return TDD_PIECES[step]
+
+
 # --- the nine conditions ---------------------------------------------------------------
 # Each returns (met, detail): one line that says what was read.
 
@@ -313,7 +326,7 @@ def condition_handoff(ticket: dict[str, Any], tip: str, evidence: Evidence, repo
     red = (handoff.get("records") or {}).get("red_proof") or {}
     if not proven or red.get("step") != step or red.get("commit") != proven.get("commit"):
         return False, f"le Handoff ne porte pas la preuve du rouge ({step}) prouvée sur le ticket"
-    problem = evidence.at(TDD_PIECES[step], proven["commit"], "preuve du rouge")
+    problem = evidence.at(red_piece(ticket.get("tdd") or {}, step), proven["commit"], "preuve du rouge")
     if problem:
         return False, problem
     if ticket.get("kind") == KIND_PREFACTORING:
@@ -365,21 +378,18 @@ def condition_evaluation(ticket: dict[str, Any], tip: str, evidence: Evidence, r
 
 
 def condition_fidelity(ticket: dict[str, Any], tip: str, evidence: Evidence, repo: Path, convoy: dict[str, Any]) -> Verdict:
+    """Informative, never blocking (Benjamin, 2026-10-19, af-hcriwn): the
+    measure is joined for the visual finishing pass Benjamin judges at the
+    end of the Spec. The verdict always passes and says what was measured."""
     if not ticket.get("interface"):
         return True, "sans objet : le ticket ne touche aucun écran (aucune référence de Validated Prototype posée à la publication)"
     fidelity = ticket.get("fidelity")
-    if not fidelity:
-        return False, f"aucun contrôle de fidélité sur ce ticket d'interface : la commande n'a pas tourné à la pointe {sha(tip)}"
-    if fidelity.get("commit") != tip:
-        return False, (f"contrôle de fidélité fait au commit {sha(fidelity.get('commit'))} et non à la pointe "
-                       f"{sha(tip)} : à refaire sur le commit qui fusionne")
+    if not fidelity or fidelity.get("commit") != tip:
+        return True, f"non bloquante (af-hcriwn) : aucune mesure de fidélité à la pointe {sha(tip)}"
     if fidelity.get("state") not in FIDELITY_PASSING:
-        open_ = [f"{d.get('state')}/{d.get('anchor') or d.get('property')}" for d in fidelity.get("deviations") or []
-                 if d.get("status") != FIDELITY_PASSING[1]]
-        return False, f"fidélité {fidelity.get('state')} : écart ouvert ({', '.join(open_[:5])})"
-    problem = evidence.at(str(fidelity.get("piece")), tip, "relevé de fidélité")
-    if problem:
-        return False, problem
+        count = fidelity.get("deviation_count") or len(fidelity.get("deviations") or [])
+        return True, (f"non bloquante (af-hcriwn) : fidélité {fidelity.get('state')} à {sha(tip)}, {count} écart(s) "
+                      f"joint(s) pour la passe de finition (pièce {fidelity.get('piece')})")
     return True, (f"fidélité {fidelity['state']} à {sha(tip)} sur {', '.join(fidelity.get('screens') or [])} "
                   f"(pièce {fidelity.get('piece')})")
 
@@ -432,7 +442,9 @@ def condition_evidence(ticket: dict[str, Any], tip: str, evidence: Evidence, rep
         last = rounds[-1]
         at_tip += [str(item["evidence"]) for item in [*(last.get("criteria") or []), last.get("demonstration_line") or {},
                                                       last] if item.get("evidence")]
-    if ticket.get("fidelity"):
+    # A fidelity measure of another commit is not merged evidence: it is not
+    # required (condition 4 informs only, af-hcriwn).
+    if (ticket.get("fidelity") or {}).get("commit") == tip:
         at_tip.append(str(ticket["fidelity"].get("piece")))
     elsewhere = [f"{name} ({sha(evidence.pieces[name].get('commit'))})" for name in dict.fromkeys(at_tip)
                  if name in evidence.pieces and evidence.pieces[name].get("commit") != tip]
@@ -459,7 +471,7 @@ def condition_tdd(ticket: dict[str, Any], tip: str, evidence: Evidence, repo: Pa
         record = tdd.get(step)
         if not record:
             return False, f"étape « {said} » ({step}) non enregistrée sur le ticket"
-        problem = evidence.at(TDD_PIECES[step], record.get("commit"), f"preuve de l'étape « {said} »")
+        problem = evidence.at(red_piece(tdd, step), record.get("commit"), f"preuve de l'étape « {said} »")
         if problem:
             return False, problem
     if "amendment" in tdd:
@@ -468,7 +480,7 @@ def condition_tdd(ticket: dict[str, Any], tip: str, evidence: Evidence, repo: Pa
             return False, problem
     if tdd["green"].get("commit") != tip:
         return False, f"vert prouvé à {sha(tdd['green'].get('commit'))} et non à la pointe {sha(tip)}"
-    red, green = evidence.report(TDD_PIECES["red"]), evidence.report(TDD_PIECES["green"])
+    red, green = evidence.report(red_piece(tdd, "red")), evidence.report(TDD_PIECES["green"])
     if red.get("verdict") != "red":
         return False, "le relevé de l'étape rouge ne dit pas « red »"
     if not red.get("seam_mode"):
@@ -664,29 +676,59 @@ def extract_prototype(repo: Path, reference: dict[str, Any], into: Path) -> Path
     return into / path
 
 
-def measure(convoy_id: str, ticket: dict[str, Any], repo: Path, profile: str, screens: list[dict[str, Any]]) -> dict[str, Any]:
-    """Run the mechanical fidelity check of one interface ticket at its tip,
-    on the screens that serve the states of its Validated Prototype."""
-    reference, tip = ticket["validated_prototype"], ticket["tip"]
+def named_states(ticket: dict[str, Any], states: list[str]) -> list[str]:
+    """The states of the reference the ticket names in its criteria or its
+    demonstration line -- a state is launched on the dataset of its name, read
+    as bin/ticket-evaluation reads datasets --, else every state: a ticket
+    that cuts a prototype by groups of states is measured on its own (af-lvhakk)."""
+    texts = [*(str(text) for text in ticket.get("criteria") or []), str(ticket.get("demonstration_line") or "")]
+    named = [state for state in states
+             if any(re.search(rf"(?<![\w-]){re.escape(state)}(?![\w-])", text) for text in texts)]
+    return named or list(states)
+
+
+def measure(convoy_id: str, ticket: dict[str, Any], repo: Path, profile: str, screens: list[dict[str, Any]],
+            commit: str | None = None, record: bool = True) -> dict[str, Any]:
+    """Run the mechanical fidelity check of one interface ticket at its tip
+    (or at `commit`), on the screens that serve the states of its Validated
+    Prototype it names. Without `record`, nothing is filed nor written: the
+    deviations are returned, each once with the number of its renderings."""
+    reference, tip = ticket["validated_prototype"], commit or ticket["tip"]
+    states = named_states(ticket, reference["states"])
     touched = [screen["name"] for screen in screens
-               if set(screen.get("states") or []) & set(reference["states"]) and isinstance(screen.get("name"), str)]
+               if set(screen.get("states") or []) & set(states) and isinstance(screen.get("name"), str)]
     if not touched:
         raise Refusal(
-            f"aucun écran du profil ne sert un état du Validated Prototype du ticket ({', '.join(reference['states'])}) : "
+            f"aucun écran du profil ne sert un état du Validated Prototype du ticket ({', '.join(states)}) : "
             "rien à comparer")
     tmp = Path(tempfile.mkdtemp(prefix="ticket-end-prototype-", dir=work_dir()))
     try:
         prototype = extract_prototype(repo, reference, tmp)
         status, answer = tool(
             FIDELITY_TOOL, "check", profile, "--prototype", str(prototype), "--commit", tip, "--repo-root", str(repo),
-            "--states", ",".join(reference["states"]), "--convoy", convoy_id, "--ticket", ticket["id"],
+            "--states", ",".join(states), *(("--convoy", convoy_id, "--ticket", ticket["id"]) if record else ()),
             *(arg for name in touched for arg in ("--screen", name)))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     if status not in (0, FIDELITY_RED) or "result" not in answer:
         raise Refusal(f"contrôle de fidélité impossible : {refusal_text(answer)}")
-    return {"id": ticket["id"], "commit": tip, "result": answer["result"], "screens": touched,
-            "deviations": len(answer.get("deviations") or [])}
+    if record:
+        return {"id": ticket["id"], "commit": tip, "result": answer["result"], "screens": touched,
+                "deviations": len(answer.get("deviations") or [])}
+    # Unrecorded, the check knows no accepted anchor: read them on the ticket.
+    accepted = set(ticket.get("accepted_anchors") or [])
+    distinct: dict[tuple[Any, ...], dict[str, Any]] = {}
+    for deviation in answer.get("deviations") or []:
+        key = tuple(deviation.get(name) for name in ("anchor", "kind", "property", "prototype", "delivered"))
+        entry = distinct.setdefault(key, {**dict(zip(("anchor", "kind", "property", "prototype", "delivered"), key)),
+                                          "status": "accepté par Benjamin" if key[0] in accepted else "ouvert",
+                                          "renderings": 0})
+        entry["renderings"] += 1
+    deviations = sorted(distinct.values(), key=lambda d: (d["status"] != "ouvert", -d["renderings"], str(d["anchor"])))
+    result = ("vert" if not deviations else "rouge" if any(d["status"] == "ouvert" for d in deviations)
+              else "accepté par Benjamin")
+    return {"id": ticket["id"], "commit": tip, "result": result, "screens": touched, "states": states,
+            "deviations": deviations}
 
 
 def cmd_fidelity(args: argparse.Namespace) -> int:
@@ -723,6 +765,31 @@ def cmd_fidelity(args: argparse.Namespace) -> int:
     return EXIT_REFUSED if refused else 0
 
 
+def cmd_measure(args: argparse.Namespace) -> int:
+    """The fidelity of one ticket at a commit, written nowhere: what its
+    author sees before leaving by « terminé » (af-r2c0tx)."""
+    repo = require_repo(args.repo)
+    if not args.commit or run(["git", "-C", str(repo), "cat-file", "-e", f"{args.commit}^{{commit}}"]).returncode != 0:
+        raise Refusal(f"--commit absent ou inconnu dans {repo} : {args.commit!r}")
+    # The ticket alone is read: an anomaly elsewhere in the convoy does not hide its deviations.
+    status, state = tool(STATE_TOOL, "show", args.convoy, "--repo", str(repo))
+    if status == EXIT_NOT_NEW_FLOW:
+        raise NotNewFlow(state)
+    if status not in (0, EXIT_UNRULED) or not isinstance(state.get("tickets"), list):
+        raise Refusal(f"lecture de l'état du convoi {args.convoy} impossible : {refusal_text(state)}")
+    ticket = ticket_of(state, args.convoy, args.ticket)
+    reference = ticket.get("validated_prototype")
+    if isinstance(reference, dict) and "unruled" in reference:
+        raise Refusal(f"référence du Validated Prototype illisible sur le ticket {args.ticket} : {reference['unruled']}")
+    if not ticket.get("interface") or not isinstance(reference, dict):
+        answer = {"ok": True, "id": args.ticket, "commit": args.commit, "result": "sans objet", "deviations": []}
+    else:
+        answer = {"ok": True, **measure(args.convoy, ticket, repo, args.profile, profile_screens(args.profile),
+                                        commit=args.commit, record=False)}
+    print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
 # --- command line ------------------------------------------------------------------------------
 
 
@@ -752,6 +819,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--profile")
     p.add_argument("--limit")
     p.set_defaults(handler=cmd_fidelity)
+    p = sub.add_parser("measure")
+    p.add_argument("convoy")
+    p.add_argument("ticket")
+    p.add_argument("--repo")
+    p.add_argument("--profile")
+    p.add_argument("--commit")
+    p.set_defaults(handler=cmd_measure)
     return parser
 
 

@@ -49,7 +49,7 @@ two controls says:
 
 | Control | `accepted` | `refused` | `pending` |
 |---|---|---|---|
-| code review | last round favorable at the tip | an unfavorable review at the tip (its Blocking Findings), or answers judged unfavorably | a round open, none yet, or a favorable one at an older commit |
+| code review | last round favorable at the tip | an unfavorable review at the tip (its Blocking Findings), or answers judged unfavorably | a round open, none yet, or one at an older commit: `bin/code-review` replays it at the tip, an unfavorable one too while no round is taken (af-s31cvi) |
 | Ticket Evaluation (for a `prefactoring`, the startup control) | last round favorable at the tip | `return_to_author` at the tip (what was not observed, or a product that does not start) | open, none at the tip, an outage, or an unobservable criterion (a Planning Exception, `docs/TICKET_EVALUATION.md`) |
 
 | At the tip, no round taken yet | What `settle` does |
@@ -99,9 +99,15 @@ closes nothing: code decides what follows.
 |---|---|
 | the author session is at work (its bead is open): the ticket is not finished at the tip, a Blocking Finding has no answer, or the evaluation refused at the commit of the round | waits (`pending`) |
 | the answers wait for their judgement, or the ticket waits for its evaluation at the new tip | waits (`pending`): `bin/code-review` sends the judgement to a second reviewer session, `bin/ticket-evaluation` evaluates the new tip |
-| both accepted at the tip | nothing: the merge follows |
+| both accepted at the tip | nothing: the merge follows, whatever the fidelity (below) |
 | a review judgement or replay blocks, or an evaluation remains not observed at the new tip, even while the other control is pending | **stops the ticket**; the pending control cannot lift the stop |
 | the author session ended (its bead is closed) without finishing the ticket at the tip, or leaving a Blocking Finding unanswered or the refused evaluation as it was | **stops the ticket** |
+
+**A red fidelity never stops a ticket** (ADR-0032, af-hcriwn, 2026-10-19;
+it replaced af-ckbood). The fidelity to the Validated Prototype is still
+measured at the tip (`bin/ticket-end fidelity`) and joined for the visual
+finishing pass Benjamin judges at the end of the Spec; it is not part of a
+stop, nor of the « ne suffit pas » of an override request.
 
 Before raising the stop, `bin/ticket-evaluation cleanup` reaps only this
 ticket's products. A failed cleanup leaves the stop recorded and is retried on
@@ -110,8 +116,12 @@ readable, and a late result is refused by the stopped-ticket gate.
 
 The stop is `bin/convoy-state stop-ticket --reason still_refused`, with one
 line that names everything still refused (« revue de code (F1.1) ; Ticket
-Evaluation (critère 1) »). A stopped ticket takes no further step: no
-review, no evaluation, no round, no merge (`docs/SPEC_INTEGRATION.md`). It is
+Evaluation (critère 1) »), and every other condition of the merge still red
+at the tip: a review or evaluation with no favorable verdict there, a red
+fidelity. When the fidelity is red or no evaluation is favorable at the tip,
+the request says the override alone « ne suffit pas » (T02R2, af-r2c0tx). A stopped ticket takes no further step: no
+review, no evaluation, no round, no merge (`docs/SPEC_INTEGRATION.md`),
+but the evaluation of a ticket whose findings are all overridden (below). It is
 raised **once** through `bin/escalation-door benjamin`: one line for the
 ticket in `bin/escalation-door list`, whether one control or both refused
 it. `bin/convoy-state stop-raised` records it; a stop whose request could
@@ -155,8 +165,15 @@ out: a Planning Exception (`bin/planning-exception`,
 The override records a decision; it lifts nothing by itself. The finding
 keeps its unfavorable verdict (`code_review.state.unsettled`), the ticket
 stays stopped. Once **every** Blocking Finding left unsettled is overridden,
+the override stands for the code review and for nothing else: the ticket
+is still evaluated at its tip. When no evaluation is favorable there — the
+stop withdrew the one that was open — `bin/ticket-evaluation settle` opens
+and launches it at the next pass, once (its relaunch rule unchanged), and
+`cleanup` no longer releases its products (af-ppdbza, T02R2). Favorable,
 the next pass merges the ticket and the ticket-end gate closes it: its
-condition 9 reads `overrides` (`docs/TICKET_END.md`).
+condition 9 reads `overrides` (`docs/TICKET_END.md`). Unfavorable, or
+without a result after its relaunch, the ticket stays stopped and nothing
+of it is merged.
 
 ## Stored state
 

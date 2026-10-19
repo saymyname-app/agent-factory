@@ -397,7 +397,7 @@ class EvidencePackTest(outcome.Harness):
             self.verified()
             self.declare(SLICE, not_done=[NOT_DONE])
             self.assertEqual(EXIT_REFUSED, self.run_gate()[0])
-            self.door("repondre", SLICE, self.shown(SLICE)["planning_exceptions"][-1]["accept_option"])
+            self.door("repondre", SLICE, self.shown(SLICE)["planning_exceptions"][-1]["accept_option"], "--actor", "operateur-test")
             self.unserved()
             self.evaluator(outcome.UNSERVED_PLAN)
             self.settle()

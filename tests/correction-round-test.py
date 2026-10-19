@@ -587,6 +587,25 @@ class CorrectionRoundTest(unittest.TestCase):
         self.assertIn("revue de code", settled["waiting"][0]["reason"])
         self.assertEqual(([], writes), (self.launches(), self.write_log.read_text()))
 
+    def test_a_review_outdated_before_the_round_is_replayed_and_the_round_opens_once_both_answer_at_the_tip(self):
+        # af-s31cvi (T02, 17/10): an author resumed outside the round
+        # finished again; the evaluation refused the new tip.
+        first = self.finished_slice()
+        self.reviewed(first, CONTRADICTS)
+        latest = self.commit_on(SLICE, {NOTE: "reprise hors tour de correction\n"})
+        self.finish(SLICE, latest)
+        self.evaluated(latest, observed=False)
+
+        waiting = self.settle()
+        self.assertEqual([SLICE], self.tickets(waiting["waiting"]))
+        self.assertIsNone(self.shown()["correction"])
+
+        self.reviewed(latest, CONTRADICTS)
+        settled = self.settle()
+
+        self.assertEqual([SLICE], self.tickets(settled["launched"]))
+        self.assertEqual(latest, self.shown()["correction"]["commit"])
+
     def test_a_ticket_refused_by_the_review_alone_gets_its_round_with_nothing_from_the_evaluation(self):
         tip = self.finished_slice()
         self.reviewed(tip, CONTRADICTS)
@@ -720,6 +739,84 @@ class CorrectionRoundTest(unittest.TestCase):
         self.assertIsNone(self.shown()["stop"])
         self.assertEqual([SLICE], [entry["id"] for entry in self.merge()["merged"]])
         self.assertEqual([], self.escalation_list())
+
+    def red_fidelity(self, tip, ticket=SLICE):
+        """The mechanical fidelity, red at `tip`, as bin/prototype-fidelity
+        records it (its sealed piece, then bin/convoy-state set-fidelity)."""
+        ticket_proofs.capture(self.env, self.repo, CONVOY, ticket, "fidelity", tip)
+        self.state("set-fidelity", CONVOY, ticket, "--commit", tip, "--piece", "fidelity", "--file", self.json_file({
+            "screens": ["accueil"], "states": {"content": {"viewports": ["desktop"], "anchors": ["fixture-count"]}},
+            "deviations": [{"state": "content", "viewport": "desktop", "anchor": "fixture-count", "kind": "absent",
+                            "property": "présence"}]}))
+
+    def test_a_ticket_accepted_by_both_after_its_round_but_red_on_fidelity_is_not_stopped(self):
+        # ADR-0032 (af-hcriwn, 2026-10-19): the fidelity is joined for the
+        # finishing pass, never a stop (it replaced af-ckbood).
+        tip = self.refused_by_both()
+        self.settle()
+        new_tip = self.corrected(tip)
+        self.judged(new_tip, tip)
+        self.evaluated(new_tip)
+        self.red_fidelity(new_tip)
+
+        settled = self.settle()
+
+        self.assertEqual([], self.tickets(settled.get("stopped") or []))
+        self.assertIsNone(self.shown()["stop"])
+        self.assertEqual([], self.escalation_list())
+
+    def test_a_ticket_accepted_by_both_but_red_on_fidelity_before_any_round_is_not_stopped(self):
+        tip = self.finished_slice()
+        self.reviewed(tip, TASTE)
+        self.evaluated(tip)
+        self.red_fidelity(tip)
+
+        settled = self.settle()
+
+        self.assertEqual([], self.tickets(settled.get("stopped") or []))
+        self.assertIsNone(self.shown()["stop"])
+        self.assertEqual([], self.escalation_list())
+        self.assertEqual([], self.launches())
+
+    def override_consequence(self, ticket=SLICE):
+        """The consequence the request raised for a stop gives its first
+        option, the override of a Blocking Finding."""
+        metadata = json.loads(self.tracker.read_text())["beads"][ticket]["metadata"]
+        return json.loads(metadata["gc.escalation_que_faire"])[0]["consequence"]
+
+    def test_a_stop_names_every_condition_still_red_and_says_an_override_alone_merges_nothing(self):
+        # T02R2 (af-r2c0tx, 2026-10-19): F1.2 refused after the round, no
+        # evaluation favorable at the new tip, fidelity red there; the stop
+        # and the request named F1.2 alone.
+        tip = self.refused_by_both()
+        self.settle()
+        new_tip = self.corrected(tip)
+        self.judged(new_tip, tip, refused=("F1.1",))
+        self.open_evaluation(new_tip)
+        self.red_fidelity(new_tip)
+
+        self.assertEqual([SLICE], self.tickets(self.settle()["stopped"]))
+
+        detail = self.shown()["stop"]["detail"]
+        for named in ("F1.1", "Ticket Evaluation"):
+            self.assertIn(named, detail)
+        # The fidelity is no part of a stop any more (ADR-0032).
+        self.assertNotIn("fidélité", detail)
+        consequence = self.override_consequence()
+        self.assertIn("ne suffit pas", consequence)
+        self.assertNotIn("fidélité rouge", consequence)
+        self.assertIn("pas d'évaluation favorable à la pointe", consequence)
+
+    def test_a_stop_the_override_lifts_does_not_say_it_is_not_enough(self):
+        tip = self.refused_by_both()
+        self.settle()
+        new_tip = self.corrected(tip)
+        self.judged(new_tip, tip, refused=("F1.1",))
+        self.evaluated(new_tip)
+
+        self.assertEqual([SLICE], self.tickets(self.settle()["stopped"]))
+
+        self.assertNotIn("ne suffit pas", self.override_consequence())
 
     def test_a_ticket_whose_answers_are_judged_unfavorably_stops_without_second_round_or_merge(self):
         tip = self.refused_by_both()

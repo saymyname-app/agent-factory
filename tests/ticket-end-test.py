@@ -274,7 +274,7 @@ class TicketEndTest(unittest.TestCase):
                                   for number, text in enumerate(shown["criteria"], start=1)]
         return self.state("record-evaluation", CONVOY, ticket, "--file", self.json_file(f"evaluation-{ticket}.json", handed))
 
-    def finished(self, ticket, findings=(), markers=(), legacy=False):
+    def finished(self, ticket, findings=(), markers=(), legacy=False, amended=False):
         """A ticket walked by its author to the exit « terminé », then
         reviewed and evaluated at its tip: every step proven by a sealed
         piece, as bin/tdd-step, bin/ticket-author and bin/ticket-exit file
@@ -301,6 +301,21 @@ class TicketEndTest(unittest.TestCase):
             files = {test: "sha256:" + hashlib.sha256((self.worktree(ticket) / test).read_bytes()).hexdigest()}
             self.capture(ticket, "tdd_freeze", {"files": files})
             self.state("set-tdd", CONVOY, ticket, "--step", "freeze", "--commit", red_commit)
+            if amended:
+                # bin/tdd-step amend: the red of the amended tests is its own
+                # piece, recorded as the red at the commit of the amendment.
+                red_commit = self.commit_on(ticket, {test: f"# test de critère amendé du ticket {ticket}\n"},
+                                            "tests de critère amendés")
+                self.capture(ticket, "tdd_amendment", {
+                    "verdict": "red", "base": start, "seam_mode": "black_box",
+                    "tests": [{"id": f"{test}::T::test", "outcome": "failed", "entry_points": ["GET /"]}],
+                    "amendment": {"reason": "revue de code", "files": [test]}})
+                self.state("set-tdd", CONVOY, ticket, "--step", "amendment", "--commit", red_commit,
+                           "--reason", "revue de code")
+                self.state("set-tdd", CONVOY, ticket, "--step", "red", "--commit", red_commit, "--base", start)
+                files = {test: "sha256:" + hashlib.sha256((self.worktree(ticket) / test).read_bytes()).hexdigest()}
+                self.capture(ticket, "tdd_freeze", {"files": files})
+                self.state("set-tdd", CONVOY, ticket, "--step", "freeze", "--commit", red_commit)
             tip = self.commit_on(ticket, {f"docs/{ticket}.md": "la tranche\n"})
             self.capture(ticket, "tdd_green", {"verdict": "green", "k": 3, "frozen": red_commit, "seam_mode": "black_box"})
             self.state("set-tdd", CONVOY, ticket, "--step", "green", "--commit", tip)
@@ -412,6 +427,19 @@ class TicketEndTest(unittest.TestCase):
         self.assertEqual([], shown["unruled"])
         self.assertFalse(self.show()["unruled"])
 
+    def test_an_amended_ticket_is_closed_on_the_red_proof_of_its_amendment(self):
+        # T02R2 (af-r2c0tx, af-9cjg26): after bin/tdd-step amend, the red is
+        # recorded at the commit of the amendment and proven by tdd_amendment;
+        # tdd_red stays the first red, at an older commit.
+        tip = self.finished(SLICE, amended=True)
+        status, answer = self.merge()
+        self.assertEqual((0, [SLICE]), (status, [entry["id"] for entry in answer["merged"]]), answer)
+
+        status, answer = self.close(SLICE)
+
+        self.assertEqual(0, status, answer)
+        self.assertEqual((True, tip), (answer["closed"], answer["commit"]))
+
     def test_a_round_on_the_demonstration_line_alone_passes_the_nine_conditions(self):
         self.merged(SLICE)
         self.assertEqual([], self.shown(SLICE)["evaluation"]["rounds"][-1]["criteria"])
@@ -504,12 +532,39 @@ class TicketEndTest(unittest.TestCase):
 
         self.assert_left_open(SLICE, 3, "Ticket Evaluation")
 
-    def test_condition_4_interface_ticket_without_fidelity_result_leaves_the_ticket_open(self):
+    def test_condition_4_interface_ticket_without_fidelity_result_closes_and_says_so(self):
+        """Faux si une fidélité absente ferme encore la porte : elle ne
+        bloque plus (ADR-0032, af-hcriwn)."""
         self.measured()
         self.assertEqual([SCREEN], [entry["id"] for entry in self.merge()[1]["merged"]])
         self.edit(SCREEN, unset=("gc.flow.fidelity", "gc.flow.verdict.fidelity"))
 
-        self.assert_left_open(SCREEN, 4, "fidélité")
+        status, answer = self.close(SCREEN)
+
+        self.assertEqual(0, status, answer)
+        condition = self.shown(SCREEN)["gates"]["ticket_end"]["conditions"][3]
+        self.assertEqual((4, "pass"), (condition["number"], condition["verdict"]))
+        self.assertIn("non bloquante", condition["detail"])
+
+    def test_condition_4_red_fidelity_at_the_tip_passes_and_names_the_deviations_joined(self):
+        """Faux si une fidélité rouge à la pointe bloque encore la fusion
+        (ADR-0032, af-hcriwn)."""
+        tip = self.measured()
+        red = self.tmp / "red-fidelity.json"
+        red.write_text(json.dumps({
+            "screens": ["accueil"], "states": {"content": {"viewports": ["desktop"], "anchors": ["fixture-count"]}},
+            "deviations": [{"state": "content", "viewport": "desktop", "anchor": "fixture-count", "kind": "absent",
+                            "property": "présence"}]}), encoding="utf-8")
+        self.state("set-fidelity", CONVOY, SCREEN, "--commit", tip, "--piece", "fidelity", "--file", str(red))
+        self.assertEqual("rouge", self.shown(SCREEN)["fidelity"]["state"])
+
+        status, answer = self.check(SCREEN, "--before-merge")
+
+        self.assertEqual((0, []), (status, answer["missing"]), answer)
+        detail = answer["conditions"][3]["detail"]
+        self.assertIn("non bloquante", detail)
+        self.assertIn("1 écart", detail)
+        self.assertEqual([SCREEN], [entry["id"] for entry in self.merge()[1]["merged"]])
 
     def test_condition_5_undeclared_deferral_marker_leaves_the_ticket_open(self):
         self.merged(SLICE)
@@ -618,11 +673,8 @@ class TicketEndTest(unittest.TestCase):
     def test_interface_ticket_is_measured_by_code_before_its_merge_and_condition_4_reads_that_result(self):
         tip = self.finished(SCREEN)
         status, answer = self.check(SCREEN, "--before-merge")
-        self.assertEqual((EXIT_REFUSED, [4]), (status, answer["missing"]), answer)
-        status, answer = self.merge()
-        self.assertEqual([], answer["merged"], answer)
-        self.assertEqual([SCREEN], [entry["id"] for entry in answer["waiting"]])
-        self.assertIn("condition 4", answer["waiting"][0]["reason"])
+        self.assertEqual((0, []), (status, answer["missing"]), answer)
+        self.assertIn("aucune mesure", answer["conditions"][3]["detail"])
 
         answer = self.fidelity()
 
@@ -630,6 +682,7 @@ class TicketEndTest(unittest.TestCase):
         shown = self.shown(SCREEN)
         self.assertEqual((tip, "vert"), (shown["fidelity"]["commit"], shown["fidelity"]["state"]))
         self.assertEqual(["accueil"], shown["fidelity"]["screens"])
+        self.assertEqual(["content", "empty"], sorted(shown["fidelity"]["states"]))
         self.assertEqual(tip, shown["evidence"]["fidelity"]["commit"])
         self.assertEqual((0, []), (lambda s, a: (s, a["missing"]))(*self.check(SCREEN, "--before-merge")))
 
@@ -650,19 +703,33 @@ class TicketEndTest(unittest.TestCase):
         self.assertEqual([], answer["checked"])
         self.assertEqual(before, self.snapshot())
 
-    def test_condition_4_is_not_green_on_a_fidelity_result_of_another_commit(self):
-        """Faux si la condition 4 peut être verte sans que la commande ait
-        tourné sur le commit fusionné."""
+    def test_fidelity_measures_only_the_states_of_its_reference_the_ticket_names(self):
+        """Faux si un ticket qui nomme dans ses critères une partie des états
+        de sa référence est mesuré sur tous : les autres sont livrés par un
+        autre ticket (T02R, af-lvhakk). Un ticket qui n'en nomme aucun reste
+        mesuré sur tous (test ci-dessus)."""
+        tip = self.finished(SCREEN)
+        description = json.loads(self.tracker.read_text())["beads"][SCREEN]["description"]
+        self.edit(SCREEN, description=description.replace("GET /", "GET /, datasets : content", 1))
+
+        answer = self.fidelity()
+
+        self.assertEqual([(SCREEN, tip)], [(e["id"], e["commit"]) for e in answer["checked"]], answer)
+        self.assertEqual(["content"], sorted(self.shown(SCREEN)["fidelity"]["states"]))
+
+    def test_condition_4_says_when_the_fidelity_was_measured_on_another_commit(self):
+        """Faux si la condition 4 se dit mesurée à la pointe quand la mesure
+        est d'un autre commit ; elle ne bloque pas pour autant (ADR-0032)."""
         first = self.measured()
         tip = self.commit_on(SCREEN, {"docs/suite.md": "un commit de plus\n"})
 
         status, answer = self.check(SCREEN, "--before-merge")
 
-        self.assertEqual(EXIT_REFUSED, status, answer)
-        self.assertIn(4, answer["missing"])
+        self.assertNotIn(4, answer["missing"], answer)
         detail = answer["conditions"][3]["detail"]
-        self.assertIn(first[:12], detail)
+        self.assertIn("aucune mesure", detail)
         self.assertIn(tip[:12], detail)
+        self.assertNotIn(first[:12], detail)
 
     def test_ticket_that_touches_no_screen_passes_condition_4_without_any_measure(self):
         self.finished(SLICE)
@@ -688,7 +755,6 @@ class TicketEndTest(unittest.TestCase):
             1: lambda: self.edit(SCREEN, description=description.replace("une ligne manque", "autre chose")),
             2: lambda: self.edit(SCREEN, unset=("gc.flow.evidence.handoff_records",)),
             3: lambda: self.edit(SCREEN, unset=("gc.flow.evaluation", "gc.flow.verdict.evaluation")),
-            4: lambda: self.edit(SCREEN, unset=("gc.flow.fidelity", "gc.flow.verdict.fidelity")),
             5: lambda: self.edit(SCREEN, **{"gc.flow.handoff": json.dumps(handoff)}),
             7: lambda: self.state("add-evidence", CONVOY, SCREEN, "--piece", "piece.redigee",
                                   "--digest", "sha256:" + "cd" * 32, "--commit", tip),

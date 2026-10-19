@@ -53,9 +53,19 @@ python3 tests/planning-exception-test.py
 `bin/replacement-draft create` is the bounded entry before `planning-exception
 resolve` and `ticket-graph-publish bd-patch` when the project owner has already
 authorized exactly one replacement for an already stopped `vertical_slice`.
-It clones the approved source graph, preserves the stopped ticket's criteria
-and declared scope, replaces only its graph key and dependent edges, and creates
-one immutable revised Ticket Graph Draft in a single tracker write. The draft
+It reads the convoy's resulting graph, what the convoy tracks after every
+approved revision, as `bd-patch` does (af-k08bi1). `--source-draft` is the
+draft approved at the stopped ticket's digest: the convoy's current draft, or an
+earlier revision still in force (a later partial revision left the ticket at
+its digest). The ticket must be tracked by the convoy and open. The tool
+preserves the stopped ticket's criteria and declared scope, replaces only its
+graph key and the edges of the open tickets that wait for it (each must come
+from the same source draft, or it refuses), and creates one immutable partial
+revision in a single tracker write: the replacement, those waiting tickets and
+the withdrawal, with `revises_digest` the convoy's current digest. As
+`bd-patch` accepts only blockers the draft carries, a delivered (closed)
+blocker outside it is dropped (`bd-patch` keeps it on the tickets it patches;
+the new replacement does not get it back) and an open one refuses. The draft
 cites the decision, stopped ticket, convoy, approved Spec/digest, criteria,
 scope and useful commit. It never edits or closes the stopped ticket, never
 removes `gc.flow.stop`, never publishes the patch and never launches work.
@@ -139,7 +149,7 @@ Benjamin approves (Spec, ticket graph, Acceptance Session) is unchanged.
 | `classify --kind repair\|semantic\|topology` | Read-only. Reports whether the signal requires a Planning Exception (`repair`: no; `semantic`/`topology`: yes). |
 | `init --run --out` | Creates a new empty register bound to a Planning/Wayfinding Run id. |
 | `raise <register> --graph --bead --kind semantic\|topology --run --decision-id --summary --raised-by` | Refuses `repair`. Computes the affected bead's descendants from the graph snapshot and parks `{bead} ∪ descendants`. If an open decision already covers that bead, records a `duplicate_detected` history event and returns the existing decision id instead of creating a second one. |
-| `resolve <register> --decision --kind tactical\|behavioral\|topology --note [--patched-draft <bead-id> --project <id>]` | Requires the decision to be `open`. `tactical` unparks immediately. `behavioral`/`topology` require `--patched-draft` and authorize only that draft for `ticket-graph-publish bd-patch`; on failure the decision stays open and parked, on success it resolves and unparks. |
+| `resolve <register> --decision [--decision ...] --kind tactical\|behavioral\|topology --note [--patched-draft <bead-id> --project <id>]` | Requires each decision to be `open`; a repeated `--decision` resolves together the decisions of the tickets one revised draft withdraws. `tactical` unparks immediately. `behavioral`/`topology` require `--patched-draft` and authorize only that draft for `ticket-graph-publish bd-patch`; on failure the decision stays open and parked, on success it resolves and unparks. |
 | `status <register>` | Reports each decision's status and the union of all currently parked beads. |
 
 ## Acceptance mapping
@@ -153,7 +163,9 @@ Benjamin approves (Spec, ticket graph, Acceptance Session) is unchanged.
 | Classification and duplicate-escalation evidence is recorded in the Adaptation Register. | `test_raise_on_an_already_open_bead_is_detected_as_duplicate_not_double_parked` proves a second raise on covered work is detected as a duplicate and recorded in register history instead of double-parking; `docs/ADAPTATION_REGISTER.md` AR-003 cites this evidence. |
 
 The live `bd-patch` gate accepts a resolved decision or a temporary authorization
-for this exact revised draft and withdrawn bead. During `resolve`, the decision
+for this exact revised draft and withdrawn bead. A draft that withdraws two
+tickets needs both decisions, so one `resolve` names both (`--decision pd-1
+--decision pd-2`): each authorizes only its own ticket. During `resolve`, the decision
 remains open and its descendants parked while the patch runs. Failure removes
 that authorization; an interrupted attempt remains parked and must be
 reconciled or retried. The gate still validates the revised graph, Spec,

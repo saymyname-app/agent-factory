@@ -93,7 +93,7 @@ cleanup() {
   if [ "${KEEP_TEST_CITY:-0}" = 1 ]; then
     echo "trial preserved at $TRIAL" >&2
   else
-    rm -rf -- "$TRIAL"
+    isolated_city_remove "$TRIAL"
   fi
   exit "$status"
 }
@@ -142,21 +142,29 @@ required_ci = "CI"
 sling_target = "delivery-reviewer"
 formulas = "mol-graph-review"
 TOML
-python3 - "$ROOT" "$CITY" "$REVIEWER_PROVIDER" > "$CITY/city.toml" <<'PY'
+# Every provider of the reviewer's chain, not its head alone: the agent's
+# own fallback provider (claude-readonly) is the chain's second since #668,
+# and gc refuses a city whose agent names a provider it does not define
+# (af-foq4t7).
+python3 - "$ROOT" "$CITY" "$(jq -c --arg a "$REVIEWER_AGENT" '.targets[$a].chain' "$ROOT/config/provider-policy.json")" \
+  > "$CITY/city.toml" <<'PY'
 import json, sys, tomllib
-root, city, provider = sys.argv[1:]
-profile = tomllib.load(open(f"{root}/city.toml", "rb"))["providers"][provider]
-profile["command"] = f"{root}/bin/delivery-role-sandbox"
-profile.setdefault("env", {})["FACTORY_ROOT"] = city
-print(f'[workspace]\nprovider = "{provider}"\n\n[providers.{provider}]')
-tables = {k: v for k, v in profile.items() if isinstance(v, dict)}
-for key, value in profile.items():
-    if key not in tables:
-        print(f"{key} = {json.dumps(value)}")
-for name, table in tables.items():
-    print(f"\n[providers.{provider}.{name}]")
-    for key, value in table.items():
-        print(f"{key} = {json.dumps(value)}")
+root, city, chain = sys.argv[1], sys.argv[2], json.loads(sys.argv[3])
+providers = tomllib.load(open(f"{root}/city.toml", "rb"))["providers"]
+print(f'[workspace]\nprovider = "{chain[0]}"')
+for provider in chain:
+    profile = providers[provider]
+    profile["command"] = f"{root}/bin/delivery-role-sandbox"
+    profile.setdefault("env", {})["FACTORY_ROOT"] = city
+    print(f"\n[providers.{provider}]")
+    tables = {k: v for k, v in profile.items() if isinstance(v, dict)}
+    for key, value in profile.items():
+        if key not in tables:
+            print(f"{key} = {json.dumps(value)}")
+    for name, table in tables.items():
+        print(f"\n[providers.{provider}.{name}]")
+        for key, value in table.items():
+            print(f"{key} = {json.dumps(value)}")
 PY
 cat > "$TRIAL/provider-failover" <<SH
 #!/bin/sh

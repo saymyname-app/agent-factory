@@ -2,6 +2,13 @@
 
 ## Status and purpose
 
+**Not blocking since 2026-10-19** (ADR-0032, Benjamin, af-hcriwn). The
+command runs and records exactly as below, but no gate stops on its result:
+condition 4 of `bin/ticket-end`, condition 3 of `bin/spec-end` and the stop of
+`bin/correction-round` only report it. The deviations are joined for one
+visual finishing pass Benjamin judges at the end of the Spec. Where this page
+says « blocking » or « red stops », read « reported ».
+
 `bin/prototype-fidelity` compares a delivered screen to its **Validated
 Prototype** (`docs/VALIDATED_PROTOTYPE.md`), state by state, by code. It is
 the blocking half of the fidelity proof Benjamin chose (Spec §3,
@@ -44,7 +51,7 @@ is launched, so a single copy of the product runs at a time (af-6xjghg).
 
 | Control | Read on | A deviation is |
 |---|---|---|
-| Tokens (`kind: token`) | the sources of the page, without a browser: its `<style>` blocks and the style sheets it links from its own address. A token is a custom property declared on `:root`, `html` or a `[data-theme…]` selector; one declared for the dark theme (`… (dark)`) is another token | a token of the prototype the delivered page lacks or gives another value |
+| Tokens (`kind: token`) | the sources of the page, without a browser: its `<style>` blocks and the style sheets it links from its own address. A token is a custom property declared on `:root`, `html`, a `[data-theme…]` or a `.theme-<name>` selector, resolved per reference theme (those of no theme, then those of `prefers-color-scheme`, `[data-theme=<name>]` or `.theme-<name>`); the dark theme's is named `… (dark)`, so each theme is compared to the same theme | a token of the prototype the delivered page lacks or gives another value |
 | Presence (`kind: absent`) | every element carrying the prototype's `anchor_attribute`, in a headless Chromium | an anchor of the prototype absent from the delivered page |
 | Structure (`kind: structure`) | the same | another element (`tag`), another enclosing anchor (`parent`), another number of `occurrences` |
 | Computed styles (`kind: style`) | `getComputedStyle` on each anchor | another computed value of `font-family`, `font-size`, `font-weight`, `line-height`, `color`, `background-color`, `border-radius`, `padding`, `display`, `box-shadow` |
@@ -91,9 +98,17 @@ the end of a Spec asks.
 
 With `--convoy` and `--ticket`, on a convoy that carries the new-flow mark:
 
-1. the measure is run by `bin/evidence-capture command`, so the full record
-   is a sealed piece of the evidence store (`fidelity`) at the commit of the
-   launched product (`docs/EVIDENCE_STORE.md`);
+1. the measure is run by `bin/evidence-capture command`, so its record is a
+   sealed piece of the evidence store (`fidelity`) at the commit of the
+   launched product (`docs/EVIDENCE_STORE.md`). The full measure runs to
+   megabytes on a real screen, beyond what the store keeps of an output
+   (1 MB): it is written to a file of the work directory, and the piece seals
+   its path, size and SHA-256 (af-2cpwkh). The capture tool files that file
+   beside the piece (`fidelity--attachment`, `command --attach`), so the full
+   measure, every deviation with its values, stays readable once the work
+   directory is gone (T02R2, af-r2c0tx). The command reads that copy back
+   only when it matches the sealed fingerprint, and refuses a record the
+   store truncated, or a file that differs from it;
 2. one comparison piece per state and rendering is filed by
    `bin/evidence-capture comparison` (`fidelity.<state>.<viewport>`): the two
    pages side by side, the prototype on the left, and the image of their
@@ -101,7 +116,8 @@ With `--convoy` and `--ticket`, on a convoy that carries the new-flow mark:
    exists**, and it changes neither the result nor the exit code;
 3. the result is written on the ticket by `bin/convoy-state set-fidelity`
    (`docs/CONVOY_STATE.md`): the commit, the screens, per state the
-   viewports and anchors compared, every deviation, and the verdict
+   viewports and anchors compared, every deviation — past 100, the first
+   100, their count and the anchors of all (af-m0hvif) —, and the verdict
    `gc.flow.verdict.fidelity` at that commit, in one tracker write. Like any
    verdict it stops being valid when a commit is added to the branch.
 
@@ -136,19 +152,28 @@ anchor: it is repaired, never accepted.
   the screen (`--screen`). For a ticket, the caller is `bin/ticket-end
   fidelity`, run by `bin/convoy-advance` before the merge: it extracts the
   Validated Prototype the ticket names and compares every screen of the
-  profile that serves one of its states (`docs/TICKET_END.md`). At the end
+  profile that serves one of its states (`docs/TICKET_END.md`), on the states
+  the ticket names in its criteria or demonstration line (all when none). At the end
   of a Spec the caller is `bin/spec-end run` (T23, `docs/SPEC_END.md`): no
   ticket and no `--screen`, every screen of the profile on the states each
   Validated Prototype of the convoy lists, at the tip of the integration
-  branch; nothing is filed in the evidence store there.
+  branch; nothing is filed in the evidence store there. The author may run
+  `bin/ticket-end measure` (through `bin/ticket-exit fidelity`), the ticket's
+  check without `--convoy`, for information: nothing written, nothing refused.
 - A state is launched on the dataset of the same name; the profile has no
   other mapping.
 - Text content is not compared: both sides render the same synthetic
   dataset, and a difference shows in the captures.
 - A product that forbids being framed (`X-Frame-Options`, `frame-ancestors`)
   cannot be measured this way: the measure fails and the command refuses.
-- A theme switched by an attribute instead of the preferred colour scheme is
-  not rendered as dark by the browser.
+- When the prototype measures the same in every theme of a viewport, the
+  theme its body's `color-scheme` names is compared as rendered; each other
+  one is put on both sides by the common convention (class `theme-<name>` on
+  `<html>` and `<body>`, other `theme-*` of the manifest removed,
+  `data-theme="<name>"` on `<html>`) and compared only if the prototype then
+  measures differently (`themed_by_convention`); otherwise it is a `theme`
+  deviation « non mesurable », never green and never accepted (af-yw9awk).
+  The side-by-side captures do not apply the convention.
 - The answer of the operator is read from what `bin/escalation-door` wrote
   on the ticket. The door is the operator's; a process that calls it in his
   name is not detected here.
@@ -180,4 +205,6 @@ with the real Chromium.
 | Side-by-side captures and a difference image per state, Evidence Records of the capture tool; no pixel threshold | `test_named_ticket_files_side_by_side_and_difference_captures_per_state`, `test_no_pixel_threshold_fails_the_command` |
 | A named ticket: only the anchors of its screen; the result on the ticket by the state command, tied to the commit | `test_named_ticket_compares_only_the_anchors_of_the_screen_it_touches`, `test_named_ticket_records_the_result_on_the_ticket_tied_to_the_commit`, `test_red_result_is_recorded_on_the_ticket_with_the_anchor_state_and_property` |
 | A deviation declared in the Handoff stays red; a resolved Planning Exception that names the anchor turns it « accepté par Benjamin »; no author command lifts the red | `test_deviation_declared_in_the_handoff_stays_red`, `test_resolved_planning_exception_naming_the_anchor_turns_it_accepted_by_benjamin`, `test_planning_exception_answered_otherwise_or_naming_another_anchor_leaves_it_red`, `test_no_option_of_the_command_lifts_a_red` |
+| A theme the preferred colour scheme does not reach on the prototype is reported « non mesurable », not compared, and never green (af-yw9awk) | `test_theme_the_prototype_reaches_only_by_another_class_is_unmeasured_not_compared`, `test_prototype_that_follows_the_preferred_colour_scheme_is_measured_in_both_themes` |
+| A theme reached by the class `theme-<name>` or `data-theme` is measured on both sides, and its tokens compared to the same theme | `test_theme_the_prototype_reaches_by_the_theme_class_is_measured_in_both_themes`, `test_theme_the_prototype_reaches_by_the_data_theme_attribute_is_measured` |
 | T46: a delivered file with the digest of a prototype file is refused and named, before anything is filed | `test_delivered_file_with_the_digest_of_a_prototype_file_is_refused_and_named`, `test_named_ticket_serving_a_prototype_file_as_is_is_refused_before_anything_is_filed` |

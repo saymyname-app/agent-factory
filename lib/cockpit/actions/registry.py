@@ -184,7 +184,9 @@ def build_action_handlers(
         _require_confirm(payload)
         bead_id = _require(payload, "bead_id")
         lettre = _require(payload, "lettre")
-        _run_door([escalation_door_bin, "repondre", bead_id, lettre])
+        # The click is Benjamin's own, confirmed gesture: the door records
+        # him as the one who answered (af-zkdvur).
+        _run_door([escalation_door_bin, "repondre", bead_id, lettre, "--actor", "benjamin"])
         bead = _show_bead(bd_bin, bead_id)
         metadata = bead.get("metadata") or {}
         option = metadata.get("gc.escalation_response_option", lettre)

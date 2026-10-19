@@ -1394,6 +1394,29 @@ class ConvoyAdvanceTest(ConvoyAdvanceHarness):
         self.assertEqual(base, self.git("rev-parse", "main"))
         self.assertIsNone(self.integration_of(self.advance(CONVOY)))
 
+    def test_a_ticket_stopped_still_refused_whose_every_finding_is_overridden_is_evaluated_then_merged(self):
+        # T02R2 (af-r2c0tx, af-ppdbza): the stop withdrew the evaluation that
+        # was open at the tip; once every Blocking Finding left is overridden,
+        # the pass has it evaluated again at that tip, then merges it.
+        base = self.integrated()
+        self.advance(CONVOY)
+        tip = self.finished(T1)
+        self.run_ok(STATE, "open-code-review", CONVOY, T1, "--kind", "review", "--commit", tip, "--base", base)
+        review = self.tmp / "review-t1.json"
+        review.write_text(json.dumps({"commit": tip, "answers": {}, "recorded_by": "delivery-reviewer-fx",
+                                      **self.BLOCKS}))
+        self.run_ok(STATE, "record-code-review", CONVOY, T1, "--file", review)
+        self.run_ok(STATE, "stop-ticket", CONVOY, T1, "--reason", "still_refused", "--detail", "revue de code (F1.1)")
+        self.run_ok(STATE, "stop-raised", CONVOY, T1)
+        self.run_ok(STATE, "override-finding", CONVOY, T1, "--finding", "F1.1", "--approver", "benjamin-hurand",
+                    "--words", "Je passe outre F1.1.")
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual(tip, self.shown(T1)["evaluation"]["state"]["commit"], answer)
+        self.assertEqual([T1], [entry["id"] for entry in (self.integration_of(answer) or {}).get("merged", [])], answer)
+        self.assertEqual("still_refused", self.shown(T1)["stop"]["reason"])
+
     def test_a_pass_with_no_finished_ticket_runs_no_merge(self):
         self.integrated()
         # No profile at all: a merge pass would refuse.
@@ -1517,7 +1540,7 @@ class ConvoyAdvanceTest(ConvoyAdvanceHarness):
         self.assertIsNone(self.ticket_end_of(answer))
         self.assertEqual("in_progress", self.shown(T1)["status"])
 
-    def test_a_pass_measures_the_fidelity_of_an_interface_ticket_before_its_merge_and_the_gate_reads_it(self):
+    def test_a_pass_starts_the_fidelity_check_and_merges_an_interface_ticket_without_waiting_for_it(self):
         base = self.integrated()
         self.env.update({
             "EVIDENCE_CAPTURE_BROWSER": str(ROOT / "tests" / "fixtures" / "prototype-fidelity" / "browser"),
@@ -1545,40 +1568,22 @@ class ConvoyAdvanceTest(ConvoyAdvanceHarness):
         self.advance(CONVOY)
         tip = self.finished(T1)
 
+        # ADR-0032 (af-hcriwn): the fidelity is measured and joined, never
+        # waited for: the pass starts the check and the merge follows.
         first = self.advance(CONVOY)
         started = next(c for c in first["convoys"] if c["id"] == CONVOY)
         self.assertEqual([T1], [entry["id"] for entry in started["fidelity"]["waiting"]], started)
-        self.assertEqual([], (started.get("integration") or {}).get("merged", []), started)
-        # A later pass reads the answer of the check left running, and no
-        # pass starts it again from zero meanwhile.
+        passes = [started]
         deadline = time.monotonic() + 120
-        waited = []
-        while True:
-            later = self.advance(CONVOY)
-            observed = next(c for c in later["convoys"] if c["id"] == CONVOY)
-            if "checked" in observed.get("fidelity", {}) or time.monotonic() > deadline:
-                break
-            self.assertEqual([T1], [entry["id"] for entry in observed["fidelity"]["waiting"]], observed)
-            waited.append(observed)
+        while not any((one.get("ticket_end") or {}).get("closed") for one in passes) and time.monotonic() < deadline:
             time.sleep(1)
-        self.assertEqual([(T1, tip, "vert")],
-                         [(entry["id"], entry["commit"], entry["result"]) for entry in observed["fidelity"]["checked"]], observed)
-        # The ticket names one game (af-kdxk6k): the fixture Evaluator may
-        # finish within the first pass; a pass at most later, the recorded
-        # verdict is read and the ticket integrated and closed. A pass that
-        # still reported the check waiting may already have merged: the
-        # check left running can record its answer during that pass, before
-        # the merge reads it (af-i0b07d).
-        answer = self.advance(CONVOY)
-        result = next(c for c in answer["convoys"] if c["id"] == CONVOY)
-        passes = (*waited, observed, result)
+            answer = self.advance(CONVOY)
+            passes.append(next(c for c in answer["convoys"] if c["id"] == CONVOY))
         self.assertEqual([T1], [entry["id"] for one in passes
                                 for entry in (one.get("integration") or {}).get("merged", [])], passes)
         self.assertEqual([T1], [entry["id"] for one in passes
                                 for entry in (one.get("ticket_end") or {}).get("closed", [])], passes)
-        shown = self.shown(T1)
-        self.assertEqual((tip, "vert"), (shown["fidelity"]["commit"], shown["fidelity"]["state"]))
-        fidelity = shown["gates"]["ticket_end"]["conditions"][3]
+        fidelity = self.shown(T1)["gates"]["ticket_end"]["conditions"][3]
         self.assertEqual(("fidelity", "pass"), (fidelity["name"], fidelity["verdict"]))
         self.assertIn(tip[:12], fidelity["detail"])
 
