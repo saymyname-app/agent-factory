@@ -246,14 +246,43 @@ the read model, never from the frozen page:
   normal leading, a paragraph at 1.5. `/journal` and `/projet/<key>` are served in it, and
   `/projets`: the declared projects, each with its « Page projet » (the
   « Projets » zone of the home screen), until the Fold of « Projets »;
-  `/runs`, `/runs/run`, `/runs/job`, `/usine`, `/rituels` and `/analyses`
+  `/runs`, `/runs/job`, `/usine`, `/rituels` and `/analyses`
   answer, in it, that the destination is not served here yet, until their
-  own Fold. The shell's own tokens: `--pn-control-line`, the box of a
+  own Fold. `/runs/run` is served in it with a `<main>` of its own
+  (`render_shell(..., own_main=True)`), whose anchors are those of the Runs
+  reference. The shell's own tokens: `--pn-control-line`, the box of a
   control, at 3:1 at least on the surface and the background in both
   themes, where the reference's `--line` is not; `--pn-muted-text` and
   `--pn-warn-text`, the muted and the warning text, darker in the light
   theme, where the reference's `--muted` and `--warn` are under 4.5:1 on
   `--bg`.
+- `ui/runs/timeline.py` — the timeline of a run, `GET /runs/run` (T03R,
+  af-hd8wzb; Validated Prototype prototype/c01-parcours-20261011 at
+  d8cb462, `prototypes/c01-flow/frozen-runs`). `timeline_view` reads the
+  traces of the runs the tracker keeps (an open bead per run, its record
+  `gc.run_trace`) and picks the run shown: `?run=` (the id of its trace),
+  else the trace marked `open`, else the last one started. `render_timeline`
+  draws, as the reference does, the workflow, title and summary of the run,
+  then one lane for the human, one for the code and one per agent with a
+  job (the context of its last session, or « non collecté »), each job at
+  its start for as long as it lasted -- an open one up to the horizon the
+  trace observed, nothing added by a clock -- with a mark per event,
+  coloured by type, and the tokens and cost the jobs say. A trace marked
+  `stale`, or a supervisor or tracker reading no longer current, keeps the
+  last observation under « Lecture périmée ». Each job and each mark is a
+  button of a form sent by GET (`?run=…&job=…`): the page drawn again marks
+  the job selected (`aria-current`), scrolls the timeline to it and focuses
+  it, so a refresh keeps it. Its anchors are named and numbered as the
+  frozen Runs pages are (`RunAnchors`: `lane`, then `lane-2`), and its
+  tokens are the Runs reference's (`--bg`, `--surface`, `--line`, `--ink`,
+  `--muted`, `--accent`, `--human`, `--code`, `--agent`, `--ok`), after the
+  shell's. Corrections of the reference's rendering accidents: a job's
+  title and duration are said whole, never cut by « … » -- a job whose
+  title would reach the next job of its lane is drawn on a row below
+  (`lane_rows`, measured on the narrowest track) --; the box of the
+  timeline does not hide what its local scroll shows; the muted text, the
+  text of a decision awaited and the box of « ← Runs » are darker in the
+  light theme, where the reference's are under 4.5:1 or 3:1.
 - `ui/home/overview.py` — `overview_view` reads the state of the
   destination from the snapshot and the requests; `render_overview` draws
   it. Loading while the tracker has not answered and no read of it ended,
@@ -1017,6 +1046,7 @@ ways:
 | nothing readable: `ui.state` is `error` | a supervisor that never answers, and a tracker whose read fails | every source `unknown`, without value, `beads.failed_at` set; `GET /` says the view is unavailable as soon as the first read failed |
 | a reading that is no longer current: `ui.state` is `stale` or `offline`, or `ui.stale` is true (Runs) | a supervisor that is read once, then answers no more | `gc.freshness` leaves `fresh` within seconds (a 2 s Validity window instead of 2 min), the last `gc.value` kept |
 | the runs of a Runs state | one bead per run under its title, open while the run has no end, with its type, status, start and elapsed time | `beads.value` (the open ones: the cockpit reads the open work of a tracker) |
+| the trace of each run: its type, title, status, start, elapsed time and end, the lanes, and each job with its lane, start, end, `events`, `sessions` and `usage`; `ui.run`, the run the state shows; `ui.stale`, an observation not confirmed | one open bead `synthetic-run-trace-<run>` per run, finished or not, under its title, whose `gc.run_trace` is that trace, `open` for the run of `ui.run`, `stale` when `ui.stale` is true | `beads.value`; `GET /runs/run` (`lib/cockpit/ui/runs/timeline.py`, T03R af-hd8wzb) |
 | the jobs of a run | one bead per job under its name, child of its run, assigned to the name of its lane, in progress while it has no end; its prompt and result, its start and end, the role of its lane | `beads.value` (those in progress) |
 | the agent lanes | one session per agent lane, running on the job without an end it holds | `sessions.value.sessions`, `gc.value.agents_running` |
 
@@ -1038,16 +1068,26 @@ What is left out, and why:
   `ui.width`): they belong to the browser that looks, no source answers
   them. `home-light` and `home-narrow` are served the state of
   `home-content`; the same holds for each screen;
-- what a Runs state selects (`ui.run`, `ui.selected_job`,
-  `ui.selected_event`, `ui.filter`): the 19 Runs datasets carry the same
-  fixtures, byte for byte, and are served the same lanes, runs and jobs;
+- what a Runs state selects, but the run it shows and whether its
+  observation is stale (`ui.selected_job`, `ui.selected_event`,
+  `ui.filter`): the 19 Runs datasets carry the same fixtures, byte for
+  byte, and are served the same lanes, runs and jobs. A job is selected at
+  the address of the timeline (`?job=`), not by the dataset;
 - the lines of a page above its first section (title, subtitle, tabs, the
   banner of a reading that is no longer current, « Rien à afficher ici »)
   and the sections that hold links only (« Ressources du projet »);
   « Activité sur 7 jours » holds only what its `drawn` says, « Derniers
   runs » only what its `runs` says;
 - the finished runs and jobs are in the tracker, closed: the cockpit reads
-  the open work of a tracker, and does not show them yet.
+  the open work of a tracker; a finished run is seen through its trace,
+  which stays open.
+
+The events, sessions and usage of each job are written in the Runs
+datasets as the frozen pages draw them: computed once (T03R, af-hd8wzb)
+with the rules of the prototype's own page (prototype/c01-parcours-20261011
+at d8cb462, `prototypes/c01-flow/index.html`, `eventsOf`, `sessionsOf`,
+`usage`), so that the cockpit draws what a source says and computes none of
+them.
 
 The criterion tests of the cockpit (its T01 ticket) launch the 95 states
 and hold the list of those that are served the same tracker and projects:

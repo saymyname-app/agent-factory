@@ -36,6 +36,9 @@ from cockpit.ui.home.overview import overview_view, render_overview
 from cockpit.ui.home.page import render_requests_section
 from cockpit.ui.panorama.shell import CSS as PANORAMA_CSS
 from cockpit.ui.panorama.shell import HOME, NAVIGATION, render_not_folded, render_shell
+from cockpit.ui.runs.timeline import CSS as TIMELINE_CSS
+from cockpit.ui.runs.timeline import SCRIPT as TIMELINE_SCRIPT
+from cockpit.ui.runs.timeline import TIMELINE, render_timeline, timeline_query, timeline_view
 from cockpit.ui.stop.render import render_stop_section
 from cockpit.ui.journal.render import CSS as JOURNAL_CSS
 from cockpit.ui.journal.render import render_journal_page, render_journal_section, render_journal_unknown
@@ -54,7 +57,7 @@ ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
 NOT_FOLDED = {
     href: (key, label) for key, label, href in NAVIGATION if key not in (HOME, "projets", "journal")
 }
-NOT_FOLDED.update({"/runs/run": NOT_FOLDED["/runs"], "/runs/job": NOT_FOLDED["/runs"]})
+NOT_FOLDED.update({"/runs/job": NOT_FOLDED["/runs"]})
 
 
 
@@ -119,6 +122,9 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/":
             self._send_home(read_model)
+            return
+        if path == TIMELINE:
+            self._send_run_timeline(read_model)
             return
         if path in NOT_FOLDED:
             key, label = NOT_FOLDED[path]
@@ -206,7 +212,18 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                         headers={"Set-Cookie": session_cookie_header(self.server.session_token)},
                         snapshot=snapshot)
 
-    def _send_page(self, read_model, destination, main, extra_css="", status=200, headers=None, snapshot=None):
+    def _send_run_timeline(self, read_model):
+        """GET /runs/run: the timeline of a run (T03R, af-hd8wzb), the one
+        ``?run=`` names or the one its trace marks open, with the job
+        ``?job=`` selected."""
+        snapshot = read_model.snapshot()
+        run, job = timeline_query(self.path)
+        view = timeline_view(snapshot, run=run, job=job)
+        self._send_page(read_model, "runs", render_timeline(view) + TIMELINE_SCRIPT, extra_css=TIMELINE_CSS,
+                        snapshot=snapshot, own_main=True)
+
+    def _send_page(self, read_model, destination, main, extra_css="", status=200, headers=None, snapshot=None,
+                   own_main=False):
         """One page of Panorama: the navigation B with ``destination`` open,
         how many requests wait and the state of the factory, ``main`` beside
         it (its HTML, or a function that draws it with the anchors of the
@@ -216,7 +233,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         requests, _, beads_known = self._assemble_requests(snapshot, read_model.now())
         body = render_document(
             render_shell(destination, main, waiting=len(requests) if beads_known else None,
-                         live=_live_line(snapshot.get("gc"))),
+                         live=_live_line(snapshot.get("gc")), own_main=own_main),
             extra_css=PANORAMA_CSS + extra_css,
         ).encode("utf-8")
         self.send_response(status)

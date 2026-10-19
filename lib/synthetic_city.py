@@ -51,6 +51,8 @@ RESULT_DOSSIER = "gc.result_dossier"
 PROJECT_CARD = "gc.project_card"
 # The card of a run among the last runs of the overview.
 RUN_CARD = "gc.run_card"
+# The trace of a run its timeline draws (cockpit.ui.runs.timeline).
+RUN_TRACE = "gc.run_trace"
 # The label of a bead that keeps one section of a screen as it is said.
 SAID = "said"
 # What an event bead meant for the journal carries (cockpit.ui.journal.entries).
@@ -486,6 +488,13 @@ def _runs_city(name, at, ui, fixtures) -> SyntheticCity:
                 "metadata": {"synthetic.run_type": run["type"], "synthetic.run_status": run["status"],
                              "synthetic.run_started": run["started"], "synthetic.run_elapsed": run["elapsed"]},
             })
+            # Its trace, an open record of what was observed of it, finished
+            # or not: the cockpit reads the open beads of a tracker.
+            beads.append({
+                "id": f"synthetic-run-trace-{run['id']}", "title": run["title"], "issue_type": "task",
+                "created_at": at, "status": "open",
+                "metadata": {RUN_TRACE: json.dumps(_run_trace(run, fixtures["lanes"], ui), ensure_ascii=False)},
+            })
             for job in run["jobs"]:
                 lane, job_id = lanes[job["lane"]], f"{run_id}-{job['id']}"
                 running = job["end"] is None
@@ -509,3 +518,19 @@ def _runs_city(name, at, ui, fixtures) -> SyntheticCity:
         name=name, reading=READ_ONCE if ui.get("stale") is True else READ,
         beads=beads, sessions=[sessions[lane] for lane in lanes if lane in sessions],
     )
+
+
+def _run_trace(run, lanes, ui) -> dict:
+    """The trace of `run` its timeline draws: its workflow, title, status,
+    start (HH:MM, Paris), elapsed seconds and end, the lanes of the state
+    and each job with its lane, start, end, events, sessions and usage, as
+    the dataset says them. `open`: the run the state shows (`ui.run`);
+    `stale`: the state's last observation is not confirmed (`ui.stale`)."""
+    return {
+        "type": run["type"], "title": run["title"], "status": run["status"], "started": run["started"],
+        "elapsed": run["elapsed"], "end": run["end"], "open": ui.get("run") == run["id"],
+        "stale": ui.get("stale") is True,
+        "lanes": [{key: lane[key] for key in ("id", "name", "role", "kind")} for lane in lanes],
+        "jobs": [{key: job.get(key) for key in ("id", "lane", "name", "start", "end", "events", "sessions", "usage")}
+                 for job in run["jobs"]],
+    }

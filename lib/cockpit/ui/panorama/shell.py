@@ -50,12 +50,15 @@ class Anchors:
         return 'data-anchor="%s-%d"' % (html.escape(name), self._counts[name])
 
 
-def render_shell(destination, main, waiting=None, live=None, anchors=None):
+def render_shell(destination, main, waiting=None, live=None, anchors=None, own_main=False):
     """The navigation B, then the destination in ``<main>``. ``main``: its
     HTML, or a function that draws it with the numbering of the page, once
     the shell has numbered its own parts. ``waiting``: how many requests
     wait for the operator, shown on « Vue d’ensemble » (None: unknown,
-    nothing shown); ``live``: the state of the factory, one line."""
+    nothing shown); ``live``: the state of the factory, one line.
+    ``own_main``: ``main`` is a ``<main>`` of its own, with the anchors of
+    its own reference (the Runs pages), placed beside the navigation as it
+    is."""
     anchors = anchors or Anchors()
     shell = (anchors("shell-nav"), anchors("brand"), anchors("div"), anchors("strong"), anchors("small"),
              anchors("live"))
@@ -71,8 +74,8 @@ def render_shell(destination, main, waiting=None, live=None, anchors=None):
                            % (anchors("selected"), html.escape(label), badge))
         else:
             entries.append(open_button(href, html.escape(label) + badge, anchors("button"), escaped=True))
-    main_anchor = anchors("main")
     main_html = main(anchors) if callable(main) else main
+    main_part = main_html if own_main else '<main class="pn-main" %s>%s</main>' % (anchors("main"), main_html)
     return (
         '<div class="pn-layout">'
         '<aside class="pn-shell" %s>'
@@ -80,10 +83,10 @@ def render_shell(destination, main, waiting=None, live=None, anchors=None):
         '<span class="pn-live" %s>%s</span></header>'
         '<nav aria-label="Destinations" %s>%s</nav>'
         "</aside>"
-        '<main class="pn-main" %s>%s</main>'
+        "%s"
         "</div>"
     ) % (
-        *shell, html.escape(live or "● État actuel inconnu"), nav, "".join(entries), main_anchor, main_html,
+        *shell, html.escape(live or "● État actuel inconnu"), nav, "".join(entries), main_part,
     )
 
 
