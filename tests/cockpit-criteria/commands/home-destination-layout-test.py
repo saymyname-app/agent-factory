@@ -15,12 +15,21 @@ unreadable or unusable (home_destination.problems):
 
 - the document wider than the frame (a global overflow), a text cut by a
   box that hides what overflows it or pushed out of the frame -- a text
-  inside a box that scrolls is not cut: a useful local scroll is kept --,
-  two texts drawn on each other, a contrast under 4.5:1 (3:1 when large);
+  inside a box that scrolls is not cut --, two texts drawn on each other,
+  a contrast under 4.5:1 (3:1 when large);
+- a useful local scroll lost: a box that scrolls on its own, or a frame,
+  whose content larger than it is hidden rather than scrolled, or that
+  the keyboard cannot reach -- what is larger than its box is kept
+  reachable there, never cut;
 - a control without a name, a control enabled but out of reach of the
-  keyboard or that the keyboard cannot activate, a control whose focus is
-  not visible, a button whose box stands out under 3:1;
+  keyboard or that the keyboard cannot activate, a control whose focus a
+  person does not see (an outline, a shadow, a border or a background
+  that focusing draws at 3:1 at least, or an underline), a button whose
+  box stands out under 3:1;
 - a page that is not in the theme the browser asked for.
+
+The document the frame « Derniers runs » shows is read with the page: its
+texts and its controls are held to the same.
 
 The reference draws some of these defects itself (a control without a
 visible focus, among others): they are measured on the product, not
@@ -99,7 +108,18 @@ class HomeDestinationLayout(unittest.TestCase):
         self.assert_readable("home-content-full", CONTENT_PANELS)
 
     def test_home_narrow_is_readable_and_usable_at_both_widths_in_both_themes(self):
-        self.assert_readable("home-narrow", CONTENT_PANELS)
+        renderings = self.assert_readable("home-narrow", CONTENT_PANELS)
+        # The cards of « Derniers runs », one under the other on a phone,
+        # are all within reach: the frame shows them whole, or scrolls to
+        # them -- its local scroll is kept, not cut.
+        for theme, frames in renderings.items():
+            for frame in frames:
+                inside = frame["inside"].get("overview-runs-1")
+                self.assertIsNotNone(inside, f"no document in « Derniers runs » at {frame['width']} px, {theme}")
+                within_reach = inside["content_height"] <= inside["height"] + 1 or any(
+                    box["name"] == "overview-runs-1" and box["scrolls"] and box["keyboard"] for box in frame["scrolls"])
+                self.assertTrue(within_reach,
+                                f"the cards of « Derniers runs » are cut at {frame['width']} px, {theme}: {inside}")
 
     def test_home_light_is_readable_and_usable_at_both_widths_in_both_themes(self):
         self.assert_readable("home-light", CONTENT_PANELS)

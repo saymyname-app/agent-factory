@@ -14,9 +14,9 @@ test file: the three criterion test files of the destination load it.
   and, when asked, what the page shows after one control was activated;
 - `tokens_of`: the custom properties the style sources of a served page
   declare, per theme;
-- the reference: every anchor of each home state of the Validated Prototype
-  and its tokens (home_reference.json), and what a served page is held to
-  against them.
+- what a served page is held to: `anchor_deviations` against the anchors a
+  case writes (`outline`), `token_deviations` against the tokens it writes;
+  the values themselves are written in the cases.
 
 Nothing here reads the code of the cockpit: the launcher is an entry point
 of the profile, the page is read where the browser renders it.
@@ -364,13 +364,24 @@ SHELL_PARTS = {name: CONTENT_PARTS[name] for name in (
     "shell-nav-1", "brand-1", "live-1", "nav-1", "selected-1", "badge-count-1", "main-1", "overview-head-1")}
 
 
-# Every anchor of each home state and the tokens of the reference, read from
-# the frozen pages (see `source` and `how` in the file).
-REFERENCE = json.loads((Path(__file__).with_name("home_reference.json")).read_text(encoding="utf-8"))
-REFERENCE_STATES = tuple(REFERENCE["anchors"])
 # The computed styles of an anchor held to the reference: the type of the
 # page, its family and its leading.
 TYPE_PROPERTIES = ("font-family", "line-height")
+
+
+def outline(text: str, family: str = "system-ui") -> list[tuple[str, str, str | None, str, str]]:
+    """The anchors a case writes as an outline, one per line in the order
+    of the page -- « name element line-height », indented under the anchor
+    that holds it, two spaces a level, all in the type `family` --, as
+    (anchor, element, the anchor that holds it, font-family, line-height)."""
+    anchors, holders = [], []
+    for line in text.strip("\n").split("\n"):
+        depth = (len(line) - len(line.lstrip(" "))) // 2
+        name, tag, leading = line.split()
+        del holders[depth:]
+        anchors.append((name, tag, holders[-1] if holders else None, family, leading))
+        holders.append(name)
+    return anchors
 
 
 # --- tokens, on the sources of the page ----------------------------------------
@@ -510,10 +521,13 @@ def problems(frames: list[dict], theme: str, panels: tuple[str, ...]) -> dict[st
     cut or drawn on another, a contrast under 4.5:1, a control without a
     name, out of reach of the keyboard, that the keyboard cannot activate
     (reached, but neither a link, a button, a field nor a summary: Enter
-    does what a script makes of it, if anything) or without a visible
-    focus, a button or a field whose box stands out from what is behind it
-    under 3:1, a page that is not in the theme the browser asked for.
-    Empty when none."""
+    does what a script makes of it, if anything) or without a focus a
+    person sees, a button or a field whose box stands out from what is
+    behind it under 3:1, a box that scrolls on its own whose content
+    larger than it is hidden rather than scrolled (a local scroll lost) or
+    that the keyboard cannot reach, a page that is not in the theme the
+    browser asked for. The texts and controls of the documents the frames
+    of the page show are counted with the page's. Empty when none."""
     found = {}
     for frame in frames:
         names = {anchor["name"] for anchor in frame["anchors"]}
@@ -532,6 +546,10 @@ def problems(frames: list[dict], theme: str, panels: tuple[str, ...]) -> dict[st
             "controls the keyboard cannot activate": [c["name"] for c in controls
                                                       if c["reachable"] and not c["native"]],
             "controls without a visible focus": [c["name"] for c in controls if c["reachable"] and not c["focus_visible"]],
+            "local scroll lost (content hidden by its box)": [box["name"] for box in frame["scrolls"]
+                                                              if not box["scrolls"]],
+            "local scroll out of reach of the keyboard": [box["name"] for box in frame["scrolls"]
+                                                          if box["scrolls"] and not box["keyboard"]],
             "control boxes under 3:1": [f"{c['name']} : {c['boundary']:.2f}:1" for c in controls
                                         if c["boundary"] is not None and c["boundary"] < 3 - 0.01],
             f"not a {theme} page (background luminance)": [background] if wrong_theme else [],
@@ -542,17 +560,17 @@ def problems(frames: list[dict], theme: str, panels: tuple[str, ...]) -> dict[st
     return found
 
 
-def anchor_deviations(frame: dict, state: str) -> list[str]:
-    """How the anchors of a measured page differ from those of `state` in
-    the reference, one line each: an anchor of the reference absent, or
-    present more than once, drawn by another element, inside another
-    anchor, or in another font-family or line-height. Anchors only the
-    page has are not counted: nothing of the reference is missing there."""
+def anchor_deviations(frame: dict, expected: list[tuple]) -> list[str]:
+    """How the anchors of a measured page differ from those `expected`
+    (`outline`), one line each: an anchor expected absent, or present more
+    than once, drawn by another element, inside another anchor, or in
+    another font-family or line-height. Anchors only the page has are not
+    counted: nothing of the reference is missing there."""
     served: dict[str, list[dict]] = {}
     for anchor in frame["anchors"]:
         served.setdefault(anchor["name"], []).append(anchor)
     found = []
-    for name, tag, parent, *styles in REFERENCE["anchors"][state]:
+    for name, tag, parent, *styles in expected:
         occurrences = served.get(name, [])
         if len(occurrences) != 1:
             found.append(f"{name} : {len(occurrences)} occurrence(s), the reference has 1")
@@ -569,12 +587,13 @@ def anchor_deviations(frame: dict, state: str) -> list[str]:
     return found
 
 
-def token_deviations(address: str) -> list[str]:
-    """How the tokens the page at GET / declares differ from those of the
-    reference, one line per token and theme: absent, or another value."""
+def token_deviations(address: str, expected: dict[str, dict[str, str]]) -> list[str]:
+    """How the tokens the page at GET / declares differ from those
+    `expected` (theme -> token -> value), one line per token and theme:
+    absent, or another value."""
     served = tokens_of(address)
     return [
         f"{name} ({theme}) : {served[theme].get(name)!r}, the reference has {value!r}"
-        for theme, tokens in REFERENCE["tokens"].items() for name, value in tokens.items()
+        for theme, tokens in expected.items() for name, value in tokens.items()
         if served[theme].get(name) != value
     ]

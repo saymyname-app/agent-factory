@@ -10,13 +10,24 @@
 // anchors   every element carrying data-anchor: name, element, the
 //           anchors that hold it, nearest first, and its computed
 //           font-family and line-height (`styles`)
-// texts     the rendered text of each anchor
+// texts     the rendered text of each anchor; of a frame (an iframe
+//           carrying data-anchor), the text of the document it shows
+// inside    for each frame carrying data-anchor, what the document it
+//           shows holds: its anchors (name, element, chain, text on one
+//           line), and its
+//           height against the frame's (`content_height`, `height`); its
+//           texts and controls are read with the page's, under the
+//           clipped, overlaps, contrast and controls below
 // nav       the entries of the navigation: label, current or not
 // controls  every control a person can reach (link, button, field,
 //           summary, an element with a role of control or a tabindex):
 //           its accessible name, disabled or not, reachable by the
-//           keyboard or not, and whether focusing it changes its outline,
-//           shadow, border or background (a visible focus); `native`, a
+//           keyboard or not, and whether focusing it draws a focus a
+//           person sees (`focus_visible`): an outline, a shadow, a border
+//           that focusing adds or changes, at 3:1 at least against what is
+//           behind the control (its border against the border it had), a
+//           background that changes at 3:1 at least, or an underline added
+//           -- another change of style is not a focus one sees; `native`, a
 //           control the browser itself activates with the keyboard (a link,
 //           a button, a field, a summary) -- any other one is activated by
 //           a script, or not at all; `state`, its aria-current,
@@ -32,6 +43,11 @@
 // contrast  texts whose contrast with their background is under 4.5:1
 //           (3:1 when large), disabled controls apart
 // background the relative luminance of the page's background
+// scrolls   every box that scrolls on its own (overflow auto or scroll, or
+//           a frame) whose content is larger than it: `name`, whether its
+//           content can be scrolled into view (`scrolls`: a frame whose
+//           document hides what overflows it cannot) and whether the
+//           keyboard reaches it or a control inside it (`keyboard`)
 // after     with `click`: the frame read again (the same record, its
 //           address and text included) two seconds after the control named
 //           `click` was activated, with `found` and `disabled` for that
@@ -88,8 +104,27 @@
 
   function focusStyle(element, view) {
     var s = view.getComputedStyle(element);
-    return [s.outlineStyle, s.outlineWidth, s.outlineColor, s.boxShadow, s.borderColor, s.backgroundColor,
-            s.textDecorationLine].join('|');
+    return {outline: [s.outlineStyle, s.outlineWidth, s.outlineColor].join('|'), outlineStyle: s.outlineStyle,
+            outlineWidth: s.outlineWidth, outlineColor: s.outlineColor, boxShadow: s.boxShadow,
+            borderColor: s.borderTopColor, borderWidth: s.borderTopWidth, borderStyle: s.borderTopStyle,
+            textDecorationLine: s.textDecorationLine};
+  }
+
+  // Whether the style `after` the control was focused draws a focus a
+  // person sees, against the style `before` and what is behind it.
+  function focusSeen(element, before, after, fillBefore, fillAfter, view, doc) {
+    var behind = backgroundOf(element.parentElement || element, view, doc);
+    if (!behind) { return true; }  // an image or a gradient behind: not computed
+    var seen = function (colour) { var c = rgba(colour); return c && c.a > 0 && ratio(over(c, behind), behind) >= 3; };
+    if (after.outline !== before.outline && after.outlineStyle !== 'none' && parseFloat(after.outlineWidth) >= 1 &&
+        seen(after.outlineColor)) { return true; }
+    if (after.boxShadow !== before.boxShadow && after.boxShadow !== 'none' && seen(after.boxShadow)) { return true; }
+    if (after.borderColor !== before.borderColor && parseFloat(after.borderWidth) >= 1 && after.borderStyle !== 'none') {
+      var was = rgba(before.borderColor), is = rgba(after.borderColor);
+      if (was && is && ratio(over(is, behind), over(was, behind)) >= 3) { return true; }
+    }
+    if (fillBefore && fillAfter && ratio(fillAfter, fillBefore) >= 3) { return true; }
+    return after.textDecorationLine !== before.textDecorationLine && /underline/.test(after.textDecorationLine);
   }
 
   function controls(doc, view) {
@@ -97,15 +132,14 @@
     doc.querySelectorAll(CONTROLS).forEach(function (element) {
       if (!visible(element, view)) { return; }
       var disabled = element.disabled === true || element.getAttribute('aria-disabled') === 'true';
-      var before = focusStyle(element, view);
-      var focused = false, after = before, outline = view.getComputedStyle(element).outlineStyle;
+      var before = focusStyle(element, view), fillBefore = backgroundOf(element, view, doc);
+      var focused = false, seen = false;
       if (!element.disabled) {
         try { element.focus({focusVisible: true, preventScroll: true}); } catch (e) { element.focus(); }
         focused = doc.activeElement === element;
         if (focused) {
-          var s = view.getComputedStyle(element);
-          after = focusStyle(element, view);
-          outline = s.outlineStyle !== 'none' && parseFloat(s.outlineWidth) >= 1 ? s.outlineStyle : 'none';
+          seen = focusSeen(element, before, focusStyle(element, view), fillBefore, backgroundOf(element, view, doc),
+                           view, doc);
         }
         element.blur();
       }
@@ -117,7 +151,7 @@
         disabled: disabled,
         reachable: !element.disabled && element.tabIndex >= 0,
         focused: focused,
-        focus_visible: focused && (after !== before || outline !== 'none'),
+        focus_visible: focused && seen,
         native: element.matches(NATIVE),
         state: {current: element.getAttribute('aria-current'), selected: element.getAttribute('aria-selected'),
                 pressed: element.getAttribute('aria-pressed')},
@@ -321,15 +355,71 @@
     var measured = {
       width: width, path: view.location.pathname,
       text: doc.body ? doc.body.innerText : '',
-      anchors: anchors, texts: texts, nav: nav,
+      anchors: anchors, texts: texts, nav: nav, inside: {},
       overflow: Math.max(0, doc.documentElement.scrollWidth - view.innerWidth),
       clipped: clipped(records, view, width),
       overlaps: overlaps(records),
       contrast: contrast(records, view, doc),
-      background: bg ? luminance(bg) : null
+      background: bg ? luminance(bg) : null,
+      scrolls: scrolls(doc, view)
     };
     measured.controls = controls(doc, view);
+    // The documents the frames of the page show: their texts and controls
+    // are the page's too.
+    doc.querySelectorAll('iframe[data-anchor]').forEach(function (frame) {
+      var name = frame.getAttribute('data-anchor'), inner = null;
+      try { inner = frame.contentDocument; } catch (error) { inner = null; }
+      if (!inner || !inner.body || !visible(frame, view)) { measured.inside[name] = null; return; }
+      var innerView = frame.contentWindow, innerAnchors = [];
+      inner.querySelectorAll('[data-anchor]').forEach(function (element) {
+        var chain = [];
+        for (var up = element.parentElement; up; up = up.parentElement) {
+          if (up.hasAttribute('data-anchor')) { chain.push(up.getAttribute('data-anchor')); }
+        }
+        innerAnchors.push({name: element.getAttribute('data-anchor'), tag: element.tagName.toLowerCase(), chain: chain,
+                           text: (element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim()});
+      });
+      texts[name] = (inner.body.innerText || '').split('\n').map(function (l) { return l.trim(); })
+        .filter(Boolean).join('\n');
+      var contentHeight = inner.documentElement.scrollHeight, height = innerView.innerHeight;
+      measured.inside[name] = {anchors: innerAnchors, height: height, content_height: contentHeight};
+      var innerRecords = textRects(inner, innerView);
+      var mark = function (line) { return name + ' › ' + line; };
+      measured.clipped = measured.clipped.concat(clipped(innerRecords, innerView, innerView.innerWidth).map(mark));
+      measured.overlaps = measured.overlaps.concat(overlaps(innerRecords).map(mark));
+      measured.contrast = measured.contrast.concat(contrast(innerRecords, innerView, inner).map(mark));
+      measured.controls = measured.controls.concat(controls(inner, innerView).map(function (control) {
+        control.frame = name; return control;
+      }));
+      measured.scrolls = measured.scrolls.concat(scrolls(inner, innerView).map(function (box) {
+        box.name = mark(box.name); return box;
+      }));
+      if (contentHeight > height + 1) {
+        var root = innerView.getComputedStyle(inner.documentElement), body = innerView.getComputedStyle(inner.body);
+        var hides = frame.getAttribute('scrolling') === 'no' || /hidden|clip/.test(root.overflowY) ||
+          /hidden|clip/.test(body.overflowY);
+        measured.scrolls.push({name: name, scrolls: !hides,
+                               keyboard: !!inner.querySelector(CONTROLS) || frame.tabIndex >= 0});
+      }
+    });
     return measured;
+  }
+
+  // The boxes of a document that scroll on their own and whose content is
+  // larger than them (the document itself apart: its overflow is `overflow`).
+  function scrolls(doc, view) {
+    var found = [];
+    doc.querySelectorAll('body *').forEach(function (element) {
+      if (!visible(element, view)) { return; }
+      var s = view.getComputedStyle(element);
+      var x = /auto|scroll/.test(s.overflowX) && element.scrollWidth > element.clientWidth + 1;
+      var y = /auto|scroll/.test(s.overflowY) && element.scrollHeight > element.clientHeight + 1;
+      if (x || y) {
+        found.push({name: describe(element).slice(0, 60), scrolls: true,
+                    keyboard: element.tabIndex >= 0 || !!element.querySelector(CONTROLS)});
+      }
+    });
+    return found;
   }
 
   function activate(frame, name, done) {
