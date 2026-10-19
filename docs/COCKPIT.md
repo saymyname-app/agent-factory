@@ -1189,3 +1189,14 @@ ticket was dispatched to, `gc.dispatch_rig`), its link « Page projet ».
 the chantiers by stage, actions and history the page already drew. The
 release target, estimate and roadmap of the reference have no source yet
 and are left out. Test: `tests/cockpit-projects-panorama-test.py`.
+
+## « Journal » in Panorama (direct build, 2026-10-19)
+
+`GET /journal` (`lib/cockpit/ui/journal/panorama.py`) is now one timeline
+by day (Paris): the requests answered or cleared, each drawn as the
+journal always drew it (what, when, by whom, which way, details), and the
+deliveries of the runs (launched, stopped, merged) with their link. Filters
+`?filtre=utiles` (default: everything but the cleared requests),
+`decisions`, `propositions`, `livraisons`, `evenements`, `effacees`, `tout`.
+The notification sends follow, folded. Tests:
+`tests/cockpit-journal-test.py`, `tests/cockpit-journal-panorama-test.py`.
