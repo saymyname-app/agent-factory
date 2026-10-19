@@ -199,7 +199,9 @@ class StopAndAccessTest(unittest.TestCase):
     # ------------------------------------------------------------------
     def test_stop_zone_shows_state_and_work_in_flight_and_cannot_stop_anything(self):
         self.start_cockpit()
-        body = wait_until(lambda: self.get("/") if "Export des listes · dernier" in self.get("/") else None)
+        # The sessions and the supervisor's state are read apart: wait for both.
+        read = lambda page: "Export des listes · dernier" in page and "cockpit-stop-label\">En marche<" in page  # noqa: E731
+        body = wait_until(lambda: (lambda page: page if read(page) else None)(self.get("/")))
         stop = self.zone(body, "cockpit-stop")
         self.assertIn('data-state="en_marche" data-enabled="false"', stop)
         self.assertIn('<span class="cockpit-stop-label">En marche</span>', stop)
