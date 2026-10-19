@@ -22,7 +22,7 @@ of the ticket, in a single tracker write.
 ./bin/ticket-end settle   af-convoy --repo <project repository>                        # bin/convoy-advance, after the merge
 ./bin/ticket-end fidelity af-convoy --repo <project repository> --profile <descriptor> [--limit N]   # bin/convoy-advance, before the merge
 ./bin/ticket-end close    af-convoy af-t1 --repo <project repository>                  # one ticket; refused from an agent session
-./bin/ticket-end measure  af-convoy af-t1 --repo <repository> --profile <descriptor> --commit <sha>   # bin/ticket-exit, before « terminé »; writes nothing
+./bin/ticket-end measure  af-convoy af-t1 --repo <repository> --profile <descriptor> --commit <sha>   # bin/ticket-exit fidelity, for information; writes nothing
 ```
 
 To know why a ticket is still open, run `check`: each condition has a
@@ -38,7 +38,7 @@ that is, or was, merged.
 | 1 | `criteria` | The acceptance criteria on the ticket have the fingerprint `bin/convoy-state mark` froze with the approved graph, under the same graph digest; the demonstration line the Ticket Evaluation judged is the ticket's (ADR-0030 L4: the frozen criterion tests prove the criteria). |
 | 2 | `handoff` | Exit « terminé », a complete Ticket Handoff at the tip, its records sealed there; the Handoff names the red proof recorded on the ticket, sealed at its commit; the demonstration is sealed at the tip. A prefactoring: its regression instead of the red and of the demonstration. |
 | 3 | `evaluation` | The last Ticket Evaluation is favorable at the tip, no evaluation is in progress, the demonstration line is « observed » with a sealed piece captured at the tip (a round recorded before ADR-0030 L4 with a state per criterion is read the same way). A prefactoring: the product started at the tip, with its piece. |
-| 4 | `fidelity` | The ticket touches no screen; or the mechanical fidelity check ran **at the tip**, its result is « vert » or « accepté par Benjamin », and its piece is sealed there. |
+| 4 | `fidelity` | **Informative, never blocking** (ADR-0032, af-hcriwn): always met. Its detail says what was measured at the tip — « vert », or the count of deviations joined for the visual finishing pass, or that no measure was made there. |
 | 5 | `deferral` | The deferral detector has a result at the tip (`deferral_markers` in the records of the Handoff) and every marker it found is declared under « non fait ». |
 | 6 | `merge` | Merged into the integration branch at the tip; the merge commit is on that branch; the tests on the merged result are sealed at the merge commit and green. |
 | 7 | `evidence` | Every piece of the ticket verifies (`bin/evidence-capture verify`: filed and sealed by the capture tool, matching its fingerprint), and the pieces that prove the merged state are tied to the tip. |
@@ -111,10 +111,9 @@ Every answer is one JSON object on stdout.
 
 ## Limits
 
-- **The author sees the fidelity first.** `bin/ticket-exit` refuses
-  « terminé » while `measure` (the same check at the head commit, without
-  captures, written nowhere) is red (af-r2c0tx, `docs/TICKET_EXIT.md`); the
-  recorded check above stays the final control of condition 4.
+- **The author may see the fidelity first.** `bin/ticket-exit fidelity`
+  runs `measure` (the same check at the head commit, without captures,
+  written nowhere) for information; nothing refuses on it (ADR-0032).
 - **A red fidelity is not run again at the same tip**, and nothing sends the
   ticket back to its author: the resumes of T20 (`docs/CONVOY_ADVANCE.md`)
   do not cover a ticket this gate leaves waiting. Once its code review and

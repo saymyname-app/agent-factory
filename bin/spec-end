@@ -112,7 +112,7 @@ CONDITIONS = (
     ("registry", "Registre : tickets fermés par la porte ou retirés, aucun parqué ; écarts et « non faits » dans un "
                  "état final ; aucune Planning Exception ouverte"),
     ("tests", "Tests verts sur la pointe de la branche d'intégration, la branche protégée reprise"),
-    ("fidelity", "Fidélité mécanique verte sur toutes les ancres de tous les états prototypés"),
+    ("fidelity", "Fidélité au Validated Prototype mesurée et jointe pour la passe de finition, non bloquante (af-hcriwn)"),
     ("outcome_evaluation", "Outcome Evaluation : chaque user story observée avec preuve sur le produit assemblé ; "
                            "constats hors ticket classés"),
     ("findings", "Constats hors ticket tous dans un état final"),
@@ -531,7 +531,12 @@ def fidelity(repo: Path, profile: str, tip: str, state: dict[str, Any]) -> tuple
         return True, ("sans objet : aucun ticket du convoi ne touche un écran (aucune référence de Validated "
                       "Prototype posée à la publication)"), {"prototypes": []}
     accepted = {anchor for ticket in state["tickets"] for anchor in ticket.get("accepted_anchors") or []}
-    measured = [measure(repo, profile, tip, reference, accepted) for reference in references]
+    try:
+        measured = [measure(repo, profile, tip, reference, accepted) for reference in references]
+    except Refusal as exc:
+        # Not blocking (af-hcriwn): a measure that could not run is said, not the red of the branch.
+        return True, f"non bloquante (af-hcriwn) : mesure de fidélité impossible ({short(str(exc))})", {
+            "commit": tip, "prototypes": [], "error": str(exc)}
     record = {"commit": tip, "prototypes": measured}
     opened = [deviation for entry in measured for deviation in entry["deviations"] if deviation["status"] == ITEM_OPEN]
     taken = sum(len(entry["deviations"]) for entry in measured) - len(opened)
@@ -541,9 +546,12 @@ def fidelity(repo: Path, profile: str, tip: str, state: dict[str, Any]) -> tuple
     compared = (f"{len(anchors)} ancre(s) de {len(states)} état(s) prototypé(s) ({', '.join(states)}) sur "
                 f"{', '.join(screens)} à {sha(tip)}")
     if opened:
+        # Benjamin, 2026-10-19 (af-hcriwn): joined for the visual finishing
+        # pass he judges on the Evidence Pack, never the red of the branch.
         named = ", ".join(f"{d['state']}/{d['anchor'] or 'token'}/{d['property']} ({d['kind']})" for d in opened[:MAX_NAMED])
         more = f", et {len(opened) - MAX_NAMED} autre(s)" if len(opened) > MAX_NAMED else ""
-        return False, f"{len(opened)} écart(s) ouvert(s) : {named}{more} ; comparé : {compared}", record
+        return True, (f"non bloquante (af-hcriwn) : {len(opened)} écart(s) joint(s) pour la passe de finition : "
+                      f"{named}{more} ; comparé : {compared}"), record
     return True, (f"aucun écart ouvert sur {compared}"
                   + (f" ; {taken} écart(s) {FIDELITY_ACCEPTED}" if taken else "")), record
 

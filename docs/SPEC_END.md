@@ -40,7 +40,7 @@ verdict and one line that says what was read.
 | --- | --- | --- |
 | 1 | `registry` | Every ticket is closed by the ticket-end gate (`docs/TICKET_END.md`) or withdrawn from the graph by a resolved Planning Exception; none is parked; every deviation and every « non fait » of a Ticket Handoff is in a final state, « réparé » or « accepté par Benjamin »; no Planning Exception is open. |
 | 2 | `tests` | The integration branch has taken up the protected branch and the regression command of the project's profile ends with code 0 on that tip (`bin/spec-integration take-up`, `docs/SPEC_INTEGRATION.md`). |
-| 3 | `fidelity` | On that same tip, the mechanical fidelity check is green on every anchor of every prototyped state, for every screen of the profile (`bin/prototype-fidelity check`, `docs/PROTOTYPE_FIDELITY.md`). A deviation on an anchor a resolved Planning Exception accepted is not an open one. A convoy none of whose tickets names a Validated Prototype passes with « sans objet ». |
+| 3 | `fidelity` | **Informative, never blocking** (ADR-0032, af-hcriwn): always met; its detail names the deviations joined for the visual finishing pass, or a measure that could not run. On that same tip, the mechanical fidelity check is measured on every anchor of every prototyped state, for every screen of the profile (`bin/prototype-fidelity check`, `docs/PROTOTYPE_FIDELITY.md`). A deviation on an anchor a resolved Planning Exception accepted is not an open one. A convoy none of whose tickets names a Validated Prototype passes with « sans objet ». |
 | 4 | `outcome_evaluation` | Once 1 to 3 are green: every numbered user story of the Spec is « observée avec preuve » on the assembled product at that commit (`bin/outcome-evaluation verdict`), and no finding « hors ticket » is left unclassified. |
 | 5 | `findings` | Every finding « hors ticket » of a Ticket Handoff is in a final state: « réparé », « proposition pour Benjamin » or « écarté ». |
 | 6 | `end_review` | Once 1 to 3 are green, on that same commit: the end code review of the whole diff of the integration branch against the protected branch is complete and favorable (`bin/spec-end-review`, `docs/SPEC_END_REVIEW.md`). Read in the tracker, not rendered by the gate. Absent, running, stopped without a verdict, made on another commit, or with a Blocking Finding: not met, and the detail says which. |
@@ -96,6 +96,7 @@ closed.
 
 ## A mechanical red: one repair by code, one round
 
+Since ADR-0032 only red tests reach this path: condition 3 is never red.
 Red tests (condition 2) or a red fidelity (condition 3) are recorded as the
 **red of the integration branch** (`bin/convoy-state record-integration-red`,
 with `check: fidelity` for the second), and one round of the end of the Spec

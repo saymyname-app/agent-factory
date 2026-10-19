@@ -286,13 +286,6 @@ Commit, then have the code proven at the tip of your branch:
 
 **Close this step:**
 
-If `INTERFACE` is `true`, measure your fidelity to the Validated Prototype
-yourself as you work, on a committed HEAD (a few minutes; it writes
-nothing; give the call a timeout of 10 minutes):
-`"$FACTORY_ROOT/bin/ticket-exit" fidelity "$CONVOY" "$TICKET" --repo "$WORKTREE"`.
-« terminé » is refused while it is red: repair each open deviation, or
-leave by `planning_exception --anchor <anchor>` for one to have accepted.
-
 ```bash
 "$FACTORY_ROOT/bin/ticket-author" gate "$CONVOY" "$TICKET" --step code
 gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "Code prouvé à la pointe."
@@ -378,9 +371,7 @@ leave by the exit « terminé »:
 ```
 
 It is refused without the red proof, without the demonstration proof at the
-head commit, on a deferral marker you did not declare, and on an interface
-ticket while its fidelity is red at the head commit (it measures it: give the
-call a timeout of 10 minutes). You do not close
+head commit, and on a deferral marker you did not declare. You do not close
 the ticket, open a pull request or merge anything: review, evaluation and
 the merge into the integration branch follow, by code.
 

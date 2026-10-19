@@ -749,9 +749,9 @@ class CorrectionRoundTest(unittest.TestCase):
             "deviations": [{"state": "content", "viewport": "desktop", "anchor": "fixture-count", "kind": "absent",
                             "property": "présence"}]}))
 
-    def test_a_ticket_accepted_by_both_after_its_round_but_red_on_fidelity_stops_and_reaches_the_operator(self):
-        # af-vbb4ol (T02R, 2026-10-18): review and evaluation favorable after
-        # the round, fidelity red at the same tip, and nothing ever followed.
+    def test_a_ticket_accepted_by_both_after_its_round_but_red_on_fidelity_is_not_stopped(self):
+        # ADR-0032 (af-hcriwn, 2026-10-19): the fidelity is joined for the
+        # finishing pass, never a stop (it replaced af-ckbood).
         tip = self.refused_by_both()
         self.settle()
         new_tip = self.corrected(tip)
@@ -761,15 +761,11 @@ class CorrectionRoundTest(unittest.TestCase):
 
         settled = self.settle()
 
-        self.assertEqual([SLICE], self.tickets(settled["stopped"]))
-        stop = self.shown()["stop"]
-        self.assertEqual("still_refused", stop["reason"])
-        self.assertIn("fidélité", stop["detail"])
-        self.assertEqual(1, len(self.escalation_list()))
-        self.assertEqual([], self.merge()["merged"])
-        self.assertEqual(1, len(self.launches()))
+        self.assertEqual([], self.tickets(settled.get("stopped") or []))
+        self.assertIsNone(self.shown()["stop"])
+        self.assertEqual([], self.escalation_list())
 
-    def test_a_ticket_accepted_by_both_but_red_on_fidelity_before_any_round_stops_and_reaches_the_operator(self):
+    def test_a_ticket_accepted_by_both_but_red_on_fidelity_before_any_round_is_not_stopped(self):
         tip = self.finished_slice()
         self.reviewed(tip, TASTE)
         self.evaluated(tip)
@@ -777,11 +773,10 @@ class CorrectionRoundTest(unittest.TestCase):
 
         settled = self.settle()
 
-        self.assertEqual([SLICE], self.tickets(settled["stopped"]))
-        self.assertIn("fidélité", self.shown()["stop"]["detail"])
-        self.assertEqual(1, len(self.escalation_list()))
+        self.assertEqual([], self.tickets(settled.get("stopped") or []))
+        self.assertIsNone(self.shown()["stop"])
+        self.assertEqual([], self.escalation_list())
         self.assertEqual([], self.launches())
-        self.assertEqual([], self.merge()["merged"])
 
     def override_consequence(self, ticket=SLICE):
         """The consequence the request raised for a stop gives its first
@@ -803,11 +798,13 @@ class CorrectionRoundTest(unittest.TestCase):
         self.assertEqual([SLICE], self.tickets(self.settle()["stopped"]))
 
         detail = self.shown()["stop"]["detail"]
-        for named in ("F1.1", "Ticket Evaluation", "fidélité"):
+        for named in ("F1.1", "Ticket Evaluation"):
             self.assertIn(named, detail)
+        # The fidelity is no part of a stop any more (ADR-0032).
+        self.assertNotIn("fidélité", detail)
         consequence = self.override_consequence()
         self.assertIn("ne suffit pas", consequence)
-        self.assertIn("fidélité rouge", consequence)
+        self.assertNotIn("fidélité rouge", consequence)
         self.assertIn("pas d'évaluation favorable à la pointe", consequence)
 
     def test_a_stop_the_override_lifts_does_not_say_it_is_not_enough(self):
