@@ -40,6 +40,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 import ticket_proofs  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+import factory_watchdog  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1597,6 +1599,82 @@ class ConvoyAdvanceTest(ConvoyAdvanceHarness):
 
         self.assertFalse(answer["ok"])
         self.assertEqual("in_progress", self.shown(T1)["status"])
+
+    # --- no pass leaves a ticket nobody moves (af-1fvzns) -----------------------
+    # T02R (18/10, #673) and T02R2 (19/10, #687) each sat for hours in a state
+    # the pass had no rule to move on. Each row is a way an author's work can
+    # end; once the passes no longer change it, the ticket is merged, held by a
+    # live session or an open launch, or its request is on the operator's list:
+    # what bin/factory-watchdog checks on the live Factory.
+
+    def next_step_missing(self, ticket_id):
+        """What bin/factory-watchdog would page about the ticket, read a day
+        after the pass: None when the ticket has a next step."""
+        shown = self.shown(ticket_id)
+        if (shown.get("merge") or {}).get("outcome") == "merged":
+            return None
+        state = self.tracker_state()
+        alive = {str(entry[key]) for entry in state.get("sessions", [])
+                 if not entry.get("closed") and entry.get("state") != "closed"
+                 for key in ("id", "name", "session_name", "alias") if entry.get(key)}
+        open_beads = {bead_id for bead_id, bead in state["beads"].items() if bead.get("status") != "closed"}
+        listed = {bead_id for bead_id in open_beads
+                  if str((state["beads"][bead_id].get("metadata") or {}).get("gc.needs_benjamin") or "none")
+                  not in ("", "none")}
+        return factory_watchdog.assess_ticket(shown, CONVOY, time.time() + 86400, alive, open_beads, listed)
+
+    def author_finished(self):
+        self.integrated()
+        self.advance(CONVOY)
+        self.finished(T1)
+
+    def author_corrected(self):
+        self.refused_by_its_review("works")
+
+    def author_still_refused(self):
+        self.refused_by_its_review("leaves")
+
+    def author_overridden(self):
+        # T02R2 (af-ppdbza): stopped still refused, its one Blocking Finding overridden.
+        base = self.integrated()
+        self.advance(CONVOY)
+        tip = self.finished(T1)
+        self.run_ok(STATE, "open-code-review", CONVOY, T1, "--kind", "review", "--commit", tip, "--base", base)
+        review = self.tmp / "review-t1.json"
+        review.write_text(json.dumps({"commit": tip, "answers": {}, "recorded_by": "delivery-reviewer-fx",
+                                      **self.BLOCKS}))
+        self.run_ok(STATE, "record-code-review", CONVOY, T1, "--file", review)
+        self.run_ok(STATE, "stop-ticket", CONVOY, T1, "--reason", "still_refused", "--detail", "revue de code (F1.1)")
+        self.run_ok(STATE, "stop-raised", CONVOY, T1)
+        self.run_ok(STATE, "override-finding", CONVOY, T1, "--finding", "F1.1", "--approver", "benjamin-hurand",
+                    "--words", "Je passe outre F1.1.")
+
+    AUTHOR_ENDS = ("finished", "corrected", "still_refused", "overridden")
+
+
+def _a_next_step_after_every_pass(end):
+    def case(self):
+        getattr(self, f"author_{end}")()
+        # A launch can end within the pass that sent it: the next pass acts on
+        # it, minutes later. What the watchdog pages is a state passes no
+        # longer change, so the passes run until the ticket stays the same.
+        before, answer = None, None
+        for _ in range(6):
+            answer = self.advance(CONVOY)
+            after = json.dumps(self.shown(T1), sort_keys=True)
+            if after == before:
+                break
+            before = after
+        else:
+            self.fail(f"le ticket change encore après 6 passes : {json.dumps(answer, ensure_ascii=False)}")
+        self.assertIsNone(self.next_step_missing(T1), json.dumps(answer, ensure_ascii=False))
+    case.__doc__ = f"af-1fvzns: the author's work ends « {end} »; the passes leave the ticket with a next step."
+    return case
+
+
+for _end in ConvoyAdvanceTest.AUTHOR_ENDS:
+    setattr(ConvoyAdvanceTest, f"test_no_pass_leaves_a_ticket_without_a_next_step_{_end}",
+            _a_next_step_after_every_pass(_end))
 
 
 if __name__ == "__main__":

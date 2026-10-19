@@ -17,7 +17,9 @@ from factory_watchdog import (  # noqa: E402
     assess_gh_auth,
     assess_pr,
     assess_quarantine,
+    assess_ticket,
     assess_workflow,
+    stalled_lookups,
 )
 
 NOW = 1789555200.0  # 2026-09-16T10:40:00Z
@@ -253,6 +255,92 @@ class QuarantineRules(unittest.TestCase):
         self.assertIn("67 control step(s)", verdicts[0][2])
 
 
+def _started_ticket(**fields):
+    """A ticket of a marked convoy as bin/convoy-state show renders it:
+    started through the door, its author gone, nothing recorded since."""
+    ticket = {"id": "af-r2c0tx", "title": "T02R2 Vue d'ensemble", "status": "in_progress",
+              "gates": {"dispatch": {"at": "2026-09-16T08:00:00Z"}},
+              "session": {"at": "2026-09-16T08:05:00Z", "name": "delivery-author-af-wisp-0bb22f"},
+              "exit": {"at": "2026-09-16T09:00:00Z", "exit": "finished"},
+              "stop": None, "park": None, "merge": None}
+    ticket.update(fields)
+    return ticket
+
+
+def _stalled(ticket, alive=(), open_beads=(), listed=(), minutes=30):
+    return assess_ticket(ticket, "af-pqfxmd", NOW, set(alive), set(open_beads), set(listed), minutes)
+
+
+class StalledTicketRules(unittest.TestCase):
+    """af-1fvzns: twice a ticket of convoy af-pqfxmd sat with nobody to move
+    it and nothing told anyone -- T02R (18/10, fidelity red, review and
+    evaluation favorable, #673) and T02R2 (19/10, override recorded, its
+    evaluation withdrawn, #687). A started, unclosed ticket is paged when no
+    live session holds it, no launch of it is open, no request of it or of
+    its convoy is on Benjamin's list, and nothing was recorded for it within
+    the threshold."""
+
+    def test_a_ticket_nobody_moves_past_the_threshold_is_flagged(self):
+        # T02R2 at 20:56 Paris: stopped, override recorded at 18:54, nothing since.
+        ticket = _started_ticket(
+            stop={"at": "2026-09-16T08:30:00Z", "raised": "2026-09-16T08:31:00Z", "reason": "still_refused"},
+            overrides=[{"at": "2026-09-16T09:10:00Z", "finding": "F1.2"}],
+            correction={"at": "2026-09-16T08:10:00Z", "launches": [{"at": "2026-09-16T08:10:00Z", "bead": "af-co0ee2"}]})
+        code, message = _stalled(ticket)
+        self.assertEqual("stalled_ticket", code)
+        self.assertIn("af-r2c0tx", message)
+        self.assertIn("af-pqfxmd", message)
+        self.assertIn("2026-09-16 09:10Z", message)  # the last record, not the first
+        self.assertIn("still_refused", message)
+
+    def test_a_ticket_recorded_within_the_threshold_is_not_yet_flagged(self):
+        self.assertIsNone(_stalled(_started_ticket(exit={"at": "2026-09-16T10:20:00Z", "exit": "finished"})))
+
+    def test_the_threshold_is_configurable(self):
+        ticket = _started_ticket(exit={"at": "2026-09-16T10:20:00Z", "exit": "finished"})
+        self.assertIsNotNone(_stalled(ticket, minutes=10))
+
+    def test_a_ticket_its_live_session_holds_is_not_flagged(self):
+        self.assertIsNone(_stalled(_started_ticket(exit=None), alive={"delivery-author-af-wisp-0bb22f"}))
+
+    def test_a_ticket_with_an_open_launch_is_not_flagged(self):
+        # T02R2 after #687: its evaluation launched again, the evaluator works on it.
+        ticket = _started_ticket(evaluation={"request": {"at": "2026-09-16T09:00:00Z", "launches": [
+            {"at": "2026-09-16T09:00:00Z", "bead": "af-gze1xf"}]}})
+        self.assertIsNone(_stalled(ticket, open_beads={"af-gze1xf"}))
+        self.assertIsNotNone(_stalled(ticket, open_beads={"af-other"}))
+
+    def test_a_ticket_whose_request_is_on_the_operator_list_is_not_flagged(self):
+        ticket = _started_ticket(stop={"at": "2026-09-16T08:30:00Z", "raised": "2026-09-16T08:31:00Z",
+                                       "reason": "still_refused"})
+        self.assertIsNone(_stalled(ticket, listed={"af-r2c0tx"}))
+        # A parking's grouped request sits on the convoy.
+        self.assertIsNone(_stalled(ticket, listed={"af-pqfxmd"}))
+
+    def test_a_ticket_waiting_for_its_blockers_is_not_flagged(self):
+        ticket = _started_ticket(exit={"at": "2026-09-16T08:00:00Z", "exit": "technically_blocked"})
+        self.assertIsNone(_stalled(ticket))
+
+    def test_a_ticket_never_started_or_closed_is_out_of_scope(self):
+        self.assertIsNone(_stalled(_started_ticket(gates={})))
+        self.assertIsNone(_stalled(_started_ticket(status="closed")))
+        self.assertIsNone(_stalled(_started_ticket(gates={"dispatch": {"at": "2026-09-16T08:00:00Z"},
+                                                          "ticket_end": {"at": "2026-09-16T09:00:00Z"}})))
+
+    def test_a_started_ticket_no_session_ever_took_is_flagged(self):
+        # Dispatched through the door, and nobody picked it up.
+        self.assertIsNotNone(_stalled(_started_ticket(status="open", session=None, exit=None)))
+
+    def test_the_lookups_name_the_convoy_the_tickets_at_stake_and_their_launches(self):
+        show = {"convoy": {"id": "af-pqfxmd"}, "tickets": [
+            _started_ticket(correction={"launches": [{"at": "2026-09-16T08:10:00Z", "bead": "af-co0ee2"}]}),
+            _started_ticket(id="af-closed", status="closed",
+                            correction={"launches": [{"at": "2026-09-16T08:10:00Z", "bead": "af-skip"}]}),
+            _started_ticket(id="af-new", gates={}),
+        ]}
+        self.assertEqual(["af-pqfxmd", "af-r2c0tx", "af-co0ee2"], stalled_lookups(show))
+
+
 class Cli(unittest.TestCase):
     def _run(self, subcommand: str, payload: str) -> list[str]:
         result = subprocess.run(
@@ -321,6 +409,20 @@ class Cli(unittest.TestCase):
             with self.subTest(metadata=metadata):
                 ticket = [{"id": "af-qjq1t6", "metadata": metadata}]
                 self.assertEqual([], self._run("ticket-handled", json.dumps(ticket)))
+
+    def test_tickets_cli_prints_one_line_per_ticket_without_a_next_step(self):
+        show = {"convoy": {"id": "af-pqfxmd"}, "tickets": [
+            _started_ticket(),
+            _started_ticket(id="af-held", session={"at": "2026-09-16T08:05:00Z", "name": "author-held"}),
+        ]}
+        payload = {"show": show, "alive": ["author-held"], "open": [], "listed": []}
+        lines = self._run("tickets", json.dumps(payload))
+        self.assertEqual(1, len(lines))
+        self.assertTrue(lines[0].startswith("af-r2c0tx\tstalled_ticket\t"))
+
+    def test_tickets_lookups_cli_prints_one_id_per_line(self):
+        show = {"convoy": {"id": "af-pqfxmd"}, "tickets": [_started_ticket()]}
+        self.assertEqual(["af-pqfxmd", "af-r2c0tx"], self._run("ticket-lookups", json.dumps(show)))
 
     def test_an_empty_array_is_silent_not_an_error(self):
         self.assertEqual([], self._run("gates", "[]"))

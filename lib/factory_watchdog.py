@@ -27,6 +27,12 @@ failure behind a CLOSED status":
              signal until a human review looked (af-uxz57, af-1maov). Groups
              by (rig, failure_reason) over a rolling window so one root cause
              pages once, not once per bead.
+  tickets    a started ticket of a marked convoy that nobody moves: no live
+             session holds it, no launch of it is open, no request of it or
+             of its convoy is on Benjamin's list, and nothing was recorded
+             for it within the threshold. Twice in two days a ticket sat so
+             for hours -- T02R (#673), T02R2 (#687) -- and only an operator's
+             own watcher noticed (af-1fvzns).
 
 Each assessor is a pure function over already-fetched JSON, so it is
 unit-testable without gc/gh. bin/factory-watchdog does the fetching, paging,
@@ -53,6 +59,9 @@ from typing import Any, Iterable
 GATE_AGE_MINUTES_DEFAULT = 30
 PR_STUCK_MINUTES_DEFAULT = 30
 QUARANTINE_WINDOW_HOURS_DEFAULT = 24
+TICKET_STALL_MINUTES_DEFAULT = 30
+# The gates a closed or withdrawn ticket carries (lib/convoy_state.py).
+CLOSING_GATES = ("ticket_end", "withdrawn")
 
 
 def _epoch(value: Any) -> float | None:
@@ -260,6 +269,72 @@ def ticket_handled(ticket: dict[str, Any]) -> str | None:
     return None
 
 
+def _records(value: Any) -> Iterable[tuple[str, Any]]:
+    """Every (key, value) pair of a convoy-state ticket record, nested ones included."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            yield key, item
+            yield from _records(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _records(item)
+
+
+def _launch_beads(ticket: dict[str, Any]) -> list[str]:
+    """The beads code launched for the ticket: correction, resume, evaluation, review."""
+    return [str(entry["bead"]) for key, launches in _records(ticket) if key == "launches" and isinstance(launches, list)
+            for entry in launches if isinstance(entry, dict) and entry.get("bead")]
+
+
+def _at_stake(ticket: dict[str, Any]) -> bool:
+    """Started through the dispatch door, and neither closed nor withdrawn."""
+    gates = ticket.get("gates") or {}
+    return ticket.get("status") != "closed" and "dispatch" in gates and not any(g in gates for g in CLOSING_GATES)
+
+
+def stalled_lookups(show: dict[str, Any]) -> list[str]:
+    """The beads bin/factory-watchdog reads before assess_ticket: the convoy,
+    then each ticket at stake followed by its launches."""
+    ids = [str((show.get("convoy") or {}).get("id") or "")]
+    for ticket in show.get("tickets") or []:
+        if isinstance(ticket, dict) and _at_stake(ticket):
+            ids += [str(ticket.get("id") or ""), *_launch_beads(ticket)]
+    return [bead_id for bead_id in ids if bead_id]
+
+
+def assess_ticket(
+    ticket: dict[str, Any], convoy_id: str, now: float, alive: set[str], open_beads: set[str],
+    listed: set[str], minutes: int = TICKET_STALL_MINUTES_DEFAULT,
+) -> tuple[str, str] | None:
+    """A ticket at stake that nobody moves (af-1fvzns): no live session holds
+    it, no launch of it is open, neither it nor its convoy has a request on
+    Benjamin's list, it does not wait for its blockers, and its last record is
+    older than `minutes`. The record times are those convoy-state writes
+    (`at`, `raised`): the pass acts within minutes of any of them."""
+    if not _at_stake(ticket):
+        return None
+    ticket_id = str(ticket.get("id") or "")
+    if ticket_id in listed or convoy_id in listed:
+        return None
+    if (ticket.get("session") or {}).get("name") in alive:
+        return None
+    if any(bead in open_beads for bead in _launch_beads(ticket)):
+        return None
+    exit_name = (ticket.get("exit") or {}).get("exit")
+    if exit_name == "technically_blocked":
+        return None
+    times = [t for key, value in _records(ticket) if key in ("at", "raised") for t in [_epoch(value)] if t]
+    latest = max(times) if times else None
+    if latest is not None and now - latest < minutes * 60:
+        return None
+    stop = (ticket.get("stop") or {}).get("reason")
+    state = f"arrêt {stop}" if stop else f"sortie {exit_name}" if exit_name else str(ticket.get("status") or "?")
+    since = _hhmm(latest) if latest is not None else "toujours"
+    return ("stalled_ticket", _truncate(
+        f"{ticket_id} ({ticket.get('title') or '?'}) du convoi {convoy_id} : sans suite depuis {since} ({state}) "
+        "-- aucune session, aucun lancement ouvert, aucune demande", 300))
+
+
 def assess_gh_auth(returncode: int, output: str) -> tuple[str, str] | None:
     """`gh auth status` exiting nonzero -> every gh-dependent script fails the
     same silent way (Incident 2026-09-18: WSL's gh token expired; pr-autopilot
@@ -399,7 +474,35 @@ def _cli_show_row(argv: list[str]) -> int:
     return 0
 
 
+def _cli_tickets(argv: list[str]) -> int:
+    """tickets: {"show": convoy-state show, "alive": [...], "open": [...],
+    "listed": [...]} on stdin; ticket-lookups: one convoy-state show on
+    stdin, the ids to read, one per line."""
+    try:
+        payload = json.loads(sys.stdin.read() or "{}")
+    except json.JSONDecodeError:
+        return 0
+    if not isinstance(payload, dict):
+        return 0
+    if argv[0] == "ticket-lookups":
+        print("\n".join(stalled_lookups(payload)))
+        return 0
+    show = payload.get("show") or {}
+    convoy_id = str((show.get("convoy") or {}).get("id") or "")
+    now = float(os.environ.get("FACTORY_GUARD_NOW") or time.time())
+    minutes = int(os.environ.get("FACTORY_WATCHDOG_TICKET_MINUTES") or TICKET_STALL_MINUTES_DEFAULT)
+    sets = [set(map(str, payload.get(key) or [])) for key in ("alive", "open", "listed")]
+    for ticket in show.get("tickets") or []:
+        if isinstance(ticket, dict):
+            found = assess_ticket(ticket, convoy_id, now, *sets, minutes)
+            if found:
+                print(f"{ticket.get('id')}\t{found[0]}\t{found[1]}")
+    return 0
+
+
 def main() -> int:
+    if len(sys.argv) == 2 and sys.argv[1] in ("tickets", "ticket-lookups"):
+        return _cli_tickets(sys.argv[1:])
     if len(sys.argv) == 2 and sys.argv[1] in ("ticket-of", "ticket-handled"):
         return _cli_show_row(sys.argv[1:])
     if len(sys.argv) >= 2 and sys.argv[1] == "gh-auth":
@@ -411,7 +514,9 @@ def main() -> int:
             "usage: factory_watchdog.py <gates|prs|workflows>  (reads JSON array on stdin)\n"
             "       factory_watchdog.py gh-auth <returncode>  (reads `gh auth status` output on stdin)\n"
             "       factory_watchdog.py quarantine <rig>  (reads gc:control-quarantined bd list --json on stdin)\n"
-            "       factory_watchdog.py <ticket-of|ticket-handled>  (reads one gc bd show --json on stdin)",
+            "       factory_watchdog.py <ticket-of|ticket-handled>  (reads one gc bd show --json on stdin)\n"
+            "       factory_watchdog.py tickets  (reads {show, alive, open, listed} on stdin)\n"
+            "       factory_watchdog.py ticket-lookups  (reads one convoy-state show on stdin)",
             file=sys.stderr,
         )
         return 2
