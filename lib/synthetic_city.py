@@ -99,18 +99,22 @@ def from_dataset(dataset) -> SyntheticCity:
         raise DatasetRefused("names no state (ui.id, or state)")
     if "fixtures" in dataset:
         return _runs_city(name, at, ui, dataset["fixtures"])
-    return _panorama_city(name, _fixed_time(at), ui, dataset.get("visible_text"), _folded(dataset.get("folded")))
+    return _panorama_city(name, _fixed_time(at), ui, dataset.get("visible_text"), _folded(dataset.get("folded")),
+                          _folded(dataset.get("drawn"), "drawn"))
 
 
-def _folded(folded) -> dict:
+def _folded(folded, key="folded") -> dict:
     """What the parts of the page that unfold say (`folded`: the label of
-    each part, the lines it shows open), which its text leaves out."""
+    each part, the lines it shows open), or what its drawings say (`drawn`:
+    the heading of each drawing, the lines its marks say -- the titles of
+    the points of a chart), which its text leaves out."""
     if folded is None:
         return {}
     if not isinstance(folded, dict) or not all(
             isinstance(label, str) and isinstance(lines, list) and lines and all(isinstance(l, str) for l in lines)
             for label, lines in folded.items()):
-        raise DatasetRefused("its folded parts (folded) are not each a label and the lines it shows open")
+        raise DatasetRefused("its folded parts (folded) are not each a label and the lines it shows open" if key == "folded"
+                             else f"its drawings ({key}) are not each a heading and the lines it says")
     return folded
 
 
@@ -165,7 +169,7 @@ class _Tracker:
                          project=project, labels=[SAID])
 
 
-def _panorama_city(name, at, ui, text, folded) -> SyntheticCity:
+def _panorama_city(name, at, ui, text, folded, drawn) -> SyntheticCity:
     if not isinstance(text, str) or not text.strip():
         raise DatasetRefused("a Panorama state without the text of its page (visible_text)")
     lines = [line.strip() for line in text.split("\n") if line.strip()]
@@ -181,6 +185,13 @@ def _panorama_city(name, at, ui, text, folded) -> SyntheticCity:
     stop_step = STOP_STEP.search(ui.get("setup") or "")
     tracker = _Tracker(at)
     read_screen(lines, tracker)
+    # A drawing is kept as it is said, under its heading, on the screen that
+    # shows that heading.
+    undrawn = sorted(set(drawn) - set(lines))
+    if undrawn:
+        raise DatasetRefused(f"drawings under no heading of the screen: {undrawn}")
+    for heading, said in drawn.items():
+        tracker.add(f"synthetic-said-{project_id(heading)}", heading, said=said, labels=[SAID])
     dossier = next((bead for bead in tracker.beads if bead["id"] == DOSSIER), None)
     if result_state and dossier is None:
         raise DatasetRefused(f"« {lines[0]} » opens no dossier to be in the state {result_state!r} (ui.state)")
@@ -188,7 +199,8 @@ def _panorama_city(name, at, ui, text, folded) -> SyntheticCity:
     # dossier is only marked with that state.
     record = None if dossier is None or result_state else _dossier_record(
         dossier["title"], dossier["description"].split("\n"))
-    unfolding = [resource for resource in (record or {}).get("resources", []) if not resource["opens"]]
+    unfolding = [resource for resource in (record or {}).get("resources", []) if not resource["opens"]] + \
+        (record or {}).get("reports", [])
     unread = sorted(set(folded) - {resource["label"] for resource in unfolding})
     if unread:
         raise DatasetRefused(f"folded parts that no part of the dossier unfolds: {unread}")
@@ -220,11 +232,14 @@ def _sections(lines, headings) -> dict:
 
 
 # « Vue d’ensemble »: four indicators, what waits for the operator and the
-# dossier open under it, the cards of the projects. The activity chart and
-# the last runs show nothing in a Panorama state.
+# dossier open under it, the cards of the projects. The activity chart says
+# what the dataset's `drawn` says under its heading; the last runs show
+# nothing in a Panorama state.
 INDICATORS = ("Décisions à prendre", "Résultats fusionnés", "Délai de livraison", "Vérifications CI réussies")
 AWAITING, PROJECTS = "Ce qui t’attend", "Projets"
 DOSSIER = "synthetic-dossier"
+# A part of a dossier that unfolds and is its report, not one of its resources.
+REPORT = "Compte rendu"
 
 
 def _overview(lines, tracker) -> None:
@@ -297,20 +312,22 @@ OPENS = "↗"
 def _dossier_record(title: str, lines) -> dict:
     """The record of the result to judge open under « Ce qui t’attend »:
     what it is about (« projet · sujet »), its title, what its panel says
-    (`summary`) and its resources -- that open (label, detail, « ↗ ») or
-    that unfold (a label alone; what they say open is added from the
-    dataset's `folded`)."""
+    (`summary`), its resources -- that open (label, detail, « ↗ ») or that
+    unfold (a label alone; what they say open is added from the dataset's
+    `folded`) -- and its reports (`reports`, a part that unfolds named
+    « Compte rendu … »)."""
     about, *lines = [line for line in lines if line not in RESULT_BAR]
     if not lines:
         raise DatasetRefused(f"a dossier that says nothing under its title: « {title} »")
-    record = {"about": about, "title": title, "summary": lines[0], "resources": []}
+    record = {"about": about, "title": title, "summary": lines[0], "resources": [], "reports": []}
     rest, at = lines[1:], 0
     while at < len(rest):
         if rest[at + 2:at + 3] == [OPENS]:
             record["resources"].append({"label": rest[at], "detail": rest[at + 1], "opens": True})
             at += 3
         else:
-            record["resources"].append({"label": rest[at], "opens": False})
+            part = {"label": rest[at], "opens": False}
+            record["reports" if rest[at].startswith(REPORT) else "resources"].append(part)
             at += 1
     return record
 

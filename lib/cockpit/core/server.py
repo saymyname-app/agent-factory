@@ -35,7 +35,7 @@ from cockpit.ui.home.overview import CSS as OVERVIEW_CSS
 from cockpit.ui.home.overview import overview_view, render_overview
 from cockpit.ui.home.page import render_requests_section
 from cockpit.ui.panorama.shell import CSS as PANORAMA_CSS
-from cockpit.ui.panorama.shell import HOME, NAVIGATION, Anchors, render_not_folded, render_shell
+from cockpit.ui.panorama.shell import HOME, NAVIGATION, render_not_folded, render_shell
 from cockpit.ui.stop.render import render_stop_section
 from cockpit.ui.journal.render import CSS as JOURNAL_CSS
 from cockpit.ui.journal.render import render_journal_page, render_journal_section, render_journal_unknown
@@ -73,13 +73,16 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         read_model = self.server.read_model
-        if self.path == "/api/status":
+        # A page is the path of its address: a query (« /runs? », which a
+        # button of the navigation sends) names the same page.
+        path = urllib.parse.urlsplit(self.path).path
+        if path == "/api/status":
             self._send_json(read_model.snapshot())
             return
-        if self.path == "/api/requests":
+        if path == "/api/requests":
             self._send_json(self._requests_payload(read_model.snapshot(), read_model.now()))
             return
-        if self.path == "/api/notifications":
+        if path == "/api/notifications":
             notify = self.server.notify
             self._send_json(
                 {
@@ -89,36 +92,36 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                 }
             )
             return
-        if self.path == "/api/journal":
+        if path == "/api/journal":
             self._send_json(self._journal_payload(read_model.snapshot()))
             return
-        if self.path == "/journal":
+        if path == "/journal":
             self._send_journal_page(read_model)
             return
-        if self.path == "/api/projects":
+        if path == "/api/projects":
             self._send_json(self._projects_payload(read_model.snapshot()))
             return
-        if self.path == "/api/health":
+        if path == "/api/health":
             self._send_json(self._compute_health(read_model))
             return
-        if self.path.startswith("/api/actions/"):
+        if path.startswith("/api/actions/"):
             # T13, af-cx20q9 AC1: an action in GET is refused the same
             # way as any other guard failure, not a bare 404 — the guard
             # itself rejects on method before anything else is checked.
             guard_result = self.server.action_guard.check("GET", self.headers)
             self._send_json({"error": guard_result.reason}, status=403)
             return
-        if self.path == "/projets":
+        if path == "/projets":
             self._send_projects_page(read_model)
             return
-        if self.path.startswith("/projet/"):
+        if path.startswith("/projet/"):
             self._send_project_page(read_model)
             return
-        if self.path == "/":
+        if path == "/":
             self._send_home(read_model)
             return
-        if self.path in NOT_FOLDED:
-            key, label = NOT_FOLDED[self.path]
+        if path in NOT_FOLDED:
+            key, label = NOT_FOLDED[path]
             self._send_page(read_model, key, render_not_folded(label))
             return
         self.send_response(404)
@@ -193,28 +196,27 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             ),
             status_html=render_status_line(snapshot.get("gc"), health),
         )
-        anchors = Anchors()
         view = overview_view(snapshot, requests if beads_known else [])
-        main_html = render_overview(view, anchors, zones_html)
         # T13, af-cx20q9: the SameSite=Strict cookie an action POST must
         # echo back -- a cross-site POST never carries it, so its presence
         # alone proves this request came from a page the cockpit itself
         # served (cockpit.access.guard.ActionGuard).
-        self._send_page(read_model, HOME, main_html, anchors=anchors, extra_css=OVERVIEW_CSS,
+        self._send_page(read_model, HOME, lambda anchors: render_overview(view, anchors, zones_html),
+                        extra_css=OVERVIEW_CSS,
                         headers={"Set-Cookie": session_cookie_header(self.server.session_token)},
                         snapshot=snapshot)
 
-    def _send_page(self, read_model, destination, main_html, anchors=None, extra_css="", status=200, headers=None,
-                   snapshot=None):
+    def _send_page(self, read_model, destination, main, extra_css="", status=200, headers=None, snapshot=None):
         """One page of Panorama: the navigation B with ``destination`` open,
-        how many requests wait and the state of the factory, ``main_html``
-        beside it -- read from ``snapshot`` when the page was drawn from
-        one, so the page says one count."""
+        how many requests wait and the state of the factory, ``main`` beside
+        it (its HTML, or a function that draws it with the anchors of the
+        page, numbered after the shell's) -- read from ``snapshot`` when the
+        page was drawn from one, so the page says one count."""
         snapshot = snapshot or read_model.snapshot()
         requests, _, beads_known = self._assemble_requests(snapshot, read_model.now())
         body = render_document(
-            render_shell(destination, main_html, waiting=len(requests) if beads_known else None,
-                         live=_live_line(snapshot.get("gc")), anchors=anchors),
+            render_shell(destination, main, waiting=len(requests) if beads_known else None,
+                         live=_live_line(snapshot.get("gc"))),
             extra_css=PANORAMA_CSS + extra_css,
         ).encode("utf-8")
         self.send_response(status)

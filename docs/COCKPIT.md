@@ -232,18 +232,28 @@ the read model, never from the frozen page:
   served in: the navigation B (Vue d’ensemble, Projets, Runs, Journal,
   Usine, Rituels, Analyses) beside the page on a PC, above it under 800 px,
   light or dark as the browser prefers. The destination open is a button
-  marked `aria-current="page"`, every other one a link to its address;
+  marked `aria-current="page"`, every other one a button that opens its
+  address (a form of its own sent by GET: Enter or a click, no script);
   « Vue d’ensemble » carries how many requests wait. Its parts carry the
-  anchors of the reference (`data-anchor`), numbered by `Anchors` as the
-  frozen pages number them, so each Prototype Fold draws its destination
-  inside it. `/journal` and `/projet/<key>` are served in it, and
+  anchors of the reference (`data-anchor`), the generic ones too
+  (`div-1`, `strong-1`, `button-3`), numbered by `Anchors` as the frozen
+  pages number them -- the shell's first, then those of the destination,
+  which `render_shell` draws with the same numbering -- so each Prototype
+  Fold draws its destination inside it. Its stylesheet follows the variant
+  D one and declares the reference's tokens under its names and with its
+  values (`--bg`, `--surface`, `--line`, `--ink`, `--muted`, `--accent`,
+  `--ok`, `--warn`, light and dark), and its type: 15 px `system-ui`,
+  normal leading, a paragraph at 1.5. `/journal` and `/projet/<key>` are served in it, and
   `/projets`: the declared projects, each with its « Page projet » (the
   « Projets » zone of the home screen), until the Fold of « Projets »;
   `/runs`, `/runs/run`, `/runs/job`, `/usine`, `/rituels` and `/analyses`
   answer, in it, that the destination is not served here yet, until their
-  own Fold. `--pn-control-line` is the box of a control, at 3:1 at least
-  on the surface and the background in both themes, where the reference's
-  `--pn-line` is not.
+  own Fold. The shell's own tokens: `--pn-control-line`, the box of a
+  control, at 3:1 at least on the surface and the background in both
+  themes, where the reference's `--line` is not; `--pn-muted-text` and
+  `--pn-warn-text`, the muted and the warning text, darker in the light
+  theme, where the reference's `--muted` and `--warn` are under 4.5:1 on
+  `--bg`.
 - `ui/home/overview.py` — `overview_view` reads the state of the
   destination from the snapshot and the requests; `render_overview` draws
   it. Loading while the tracker has not answered and no read of it ended,
@@ -253,8 +263,11 @@ the read model, never from the frozen page:
   « Rien à afficher ici » when nothing waits and nothing is declared;
   otherwise four indicators (« Décisions à prendre » counts the requests;
   the three others are what the tracker keeps as said of them, or « Non
-  collecté »), the activity of seven days (no source of daily volumes yet:
-  drawn empty and said so), the last runs (their cards are not wired to
+  collecté »), the activity of seven days (the daily volumes of its three
+  series the tracker keeps as said under « Activité sur 7 jours », one
+  line a day and a series, « PR fusionnées · Lundi : 1 », drawn as the
+  reference draws them; without them, an empty grid and the volumes said
+  not collected), the last runs (their cards are not wired to
   this destination yet: said so), « Ce qui t’attend » beside the result
   open under it, and the projects, those something waits for first. An
   indicator and a project's card are links (to `/analyses`, to the
@@ -268,10 +281,11 @@ the read model, never from the frozen page:
   to its detail. The panels of a result in its other states (its dossier,
   its follow-up, a decision and its options) are T02S's. A project's card
   reads its current chantier's `gc.project_card` (stage, figures, release
-  line) when the tracker holds one, its computed stage otherwise. No door
-  is wired to Essai or Avis on this destination: they are drawn disabled
-  and the panel says so; nothing shows a command done that no door
-  recorded.
+  line) when the tracker holds one, its computed stage otherwise. The
+  record's resources are listed together; its reports (`reports`, « Compte
+  rendu long ») unfold after them. No door is wired to Essai, Avis or a
+  resource that opens on this destination: they are drawn unavailable and
+  the panel says so; nothing shows a command done that no door recorded.
 - The zones of variant D that no destination of Panorama holds yet -- the
   inbox with its actions, the projects with their chantiers, the stop,
   the access and the health zones -- are kept, whole and working, folded
@@ -281,8 +295,11 @@ the read model, never from the frozen page:
 
 `tests/cockpit-criteria/commands/home-destination-*-test.py` launch the
 real cockpit on each of the 10 home states of the reference and read the
-page in a headless Chromium at 1440 and 390 px, light and dark; the 14
-result states are T02S's.
+page in a headless Chromium at 1440 and 390 px, light and dark -- every
+anchor of the reference with its element, its enclosing anchor, its
+font-family and line-height, and the tokens of the page
+(`home_reference.json`, read from the frozen pages); the 14 result states
+are T02S's.
 
 ## Home screen, as the validated prototype shows it (af-mjfvwx)
 
@@ -953,7 +970,9 @@ cockpit reads those sources as it reads the real ones.
 A Runs dataset carries `fixtures` (lanes, runs, jobs). A Panorama dataset
 carries the text of one screen (`visible_text`), how the state is set
 (`ui`) and, when the screen has parts that unfold, what each says open
-(`folded`: its label, its lines), which the text of a page leaves out. Its screen is known by the first line of the page, and read in two
+(`folded`: its label, its lines), and, when it has a drawing, what its
+marks say (`drawn`: its heading, its lines -- the titles of the points of a
+chart), which the text of a page leaves out. Its screen is known by the first line of the page, and read in two
 ways:
 
 - what the cockpit has a record for is read into that record: a request, a
@@ -971,9 +990,10 @@ ways:
 |---|---|---|
 | the state it is: `ui.id` (Panorama), `state` (Runs) | the supervisor's city bears that name | `GET /api/status`, `gc.value.city` |
 | « Vue d’ensemble »: « Décisions à prendre N », then N lines under « Ce qui t’attend », each with « projet · nature » | one open bead per line that asks the operator (title, project, nature, the fixed time of the dataset) | `beads.value`; `GET /api/requests` |
-| « Vue d’ensemble »: the dossier open under those lines (« projet · sujet », its title, what it shows), and the state of the result when `ui.state` names one (`ready`, `findings`, `merged`, `abandoned`…) | one bead `synthetic-dossier` under the title of the dossier, of that project; its lines; with no state of a result, its record `gc.result_dossier`, a result to judge (its resources: label, detail and « ↗ » open, a label alone unfolds, and says open its lines in `folded`) -- Essai and Avis are the cockpit's own; with one, `synthetic.result_state` alone (the panels of a result in its states are T02S's) | `beads.value`; `GET /` |
+| « Vue d’ensemble »: the dossier open under those lines (« projet · sujet », its title, what it shows), and the state of the result when `ui.state` names one (`ready`, `findings`, `merged`, `abandoned`…) | one bead `synthetic-dossier` under the title of the dossier, of that project; its lines; with no state of a result, its record `gc.result_dossier`, a result to judge (its resources: label, detail and « ↗ » open, a label alone unfolds, and says open its lines in `folded`; a part named « Compte rendu … » is its report, `reports`) -- Essai and Avis are the cockpit's own; with one, `synthetic.result_state` alone (the panels of a result in its states are T02S's) | `beads.value`; `GET /` |
 | « Vue d’ensemble »: the cards under « Projets » (name, « chantier · étape », then the figures of the card) | one declared project per name; one open chantier per project, under its title, whose description is the stage and the other lines of the card, and whose `gc.project_card` is the stage, the figures and, last, the line of the release | `projets.value.projects`; `GET /api/projects`; `beads.value`; `GET /` |
 | « Vue d’ensemble »: the four indicators | one bead kept as said per indicator (value, period) | `beads.value` |
+| a drawing of the screen: `drawn` under « Activité sur 7 jours », one line a day and a series | one bead kept as said under that heading, whose description is those lines | `beads.value`; `GET /` |
 | the page of a project (« ← Projets »): its name, what is said above the first section; « CHANTIER ACTUEL »; « Prochaine release », « PROCHAIN JALON », « ROADMAP », « Derniers changements » | the project is declared; one bead under its name (purpose, stage, indicators); its open chantier; one bead kept as said per section, of that project | `projets.value.projects`, `GET /projet/<key>`; `beads.value` |
 | « Journal »: each event, « HH:MM (Paris) · projet · nature » or « HH:MM (Paris) · source », under « Aujourd’hui » or « Hier », its title and what follows | one bead of type `event` per event, as `bd create --type event` writes it: its title, its nature or source as `event_kind`, as label and as `gc.journal_event`, its project (declared), `created_at` the day of the dataset or the day before at that time, the other lines | `beads.value`; `projets.value.projects`; `GET /api/journal` `entries`: one entry per event, its title as `quoi`, its `created_at` as `quand`, its nature or source as `voie`, newest first (`lib/cockpit/ui/journal/entries.py`, T01R6 af-ltchro) |
 | « Usine »: « Machine d’exécution », « Connexions », « Fournisseurs et accès API », « Agents dans le workflow », « Auteur livraison », « Autres rôles », « Suspension, reprise et arrêt », « Nettoyer les espaces inutilisés », « Ressources et libellés longs » | one bead kept as said per section | `beads.value` |
@@ -995,7 +1015,8 @@ that many lines, a project card without its chantier, an event or a ritual
 without a title, a `ui.state` that names the state of a result on a page
 that opens no dossier, or a Runs state whose fixtures cannot be read, is
 refused, as is a `folded` that is not a label and its lines for each part
-or that names a part the dossier does not unfold. Each refusal, and that of
+or that names a part the dossier does not unfold, and a `drawn` that names a
+heading the screen does not show. Each refusal, and that of
 a file that is no dataset at all, is proven once by
 `tests/cockpit-isolated-recipe-test.py`, at the recipe.
 
@@ -1010,8 +1031,8 @@ What is left out, and why:
   fixtures, byte for byte, and are served the same lanes, runs and jobs;
 - the lines of a page above its first section (title, subtitle, tabs, the
   banner of a reading that is no longer current, « Rien à afficher ici »)
-  and the sections that hold links only (« Activité sur 7 jours »,
-  « Derniers runs », « Ressources du projet »);
+  and the sections that hold links only (« Derniers runs », « Ressources du
+  projet »); « Activité sur 7 jours » holds only what its `drawn` says;
 - the finished runs and jobs are in the tracker, closed: the cockpit reads
   the open work of a tracker, and does not show them yet.
 
@@ -1034,7 +1055,10 @@ the frozen prototype, byte for byte (Panorama at `632deea`, Runs at
 the `home-*` states that open a result: the parts of « Ce qui t’attend »
 that unfold, copied from the frozen state drawn (`states/<state>.html`),
 since the prototype's dataset keeps only the text of the page (T02R,
-af-vbb4ol: « Compte rendu long » and its eighteen findings). A state is launched with
+af-vbb4ol: « Compte rendu long » and its eighteen findings), and for the
+`drawn` of the seven `home-*` states that show the activity chart: the
+titles of its 21 points, copied from the frozen state drawn (T02R2,
+af-r2c0tx). A state is launched with
 `--dataset <state>`.
 
 **Screens.** `launch.screens` gives each screen of the Spec its address and

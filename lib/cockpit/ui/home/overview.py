@@ -26,10 +26,15 @@ The result open is the record of a result to judge a bead carries under
 ``gc.result_dossier``; without one, the first request. The panels of a
 result in its other states (its dossier, its follow-up, a decision) are
 T02S's. A part of it that unfolds says, open, the lines its record gives it
-(« Compte rendu long » its findings), or that the source gave none. Its
-commands are not wired to a door here: Essai and Avis are drawn disabled,
-and the panel says so -- nothing on the page shows a command done that no
-door recorded.
+(a report, « Compte rendu long », its findings), or that the source gave
+none. Its commands are not wired to a door here: Essai, Avis and the
+resources that open are drawn unavailable, and the panel says so -- nothing
+on the page shows a command done that no door recorded.
+
+Every part carries the anchor of the reference (``data-anchor``), numbered
+by the :class:`~cockpit.ui.panorama.shell.Anchors` of the page as the frozen
+pages number them: the generic ones too (``div-3``, ``strong-8``,
+``circle-7``), in the order the reference draws them.
 """
 import html
 import json
@@ -38,7 +43,7 @@ from datetime import datetime
 from cockpit.core.freshness import FRESH
 from cockpit.core.readmodel import PARIS
 from cockpit.projects.source import from_value as projects_from_value
-from cockpit.ui.panorama.shell import anchor_slug
+from cockpit.ui.panorama.shell import anchor_slug, open_button
 from cockpit.ui.projects.project_page import project_page_url
 
 LOADING, ERROR, EMPTY, CONTENT = "loading", "error", "empty", "content"
@@ -54,6 +59,7 @@ SAID_INDICATORS = ("Résultats fusionnés", "Délai de livraison", "Vérificatio
 CHART_LABEL = ("Volumes quotidiens comparés sur sept jours : PR fusionnées, tickets livrés, "
                "exécutions CI réussies")
 CHART_SERIES = (("PR fusionnées", "#91a7ff"), ("Tickets livrés", "#52c9b1"), ("CI réussies", "#e6ba70"))
+ACTIVITY = "Activité sur 7 jours"
 UNWIRED_RESULT = "Essai et Avis ne sont pas encore raccordés à cette vue : rien n’est lancé ni préparé d’ici."
 NOT_GIVEN = "Contenu non fourni par la source."
 LEGACY_SUMMARY = "Détails techniques et actions"
@@ -65,7 +71,7 @@ def overview_view(snapshot, requests):
     ``dossier``, ``projects``."""
     beads_row = snapshot.get("beads")
     view = {"state": CONTENT, "stale": False, "checked": None, "requests": [], "indicators": [],
-            "dossier": None, "projects": []}
+            "activity": {}, "dossier": None, "projects": []}
     if beads_row is None or beads_row["value"] is None:
         view["state"] = ERROR if (beads_row or {}).get("failed_at") is not None else LOADING
         return view
@@ -86,11 +92,30 @@ def overview_view(snapshot, requests):
         else (label, "—", "Non collecté", "/analyses")
         for label in SAID_INDICATORS
     ]
+    view["activity"] = _activity(said.get(ACTIVITY) or [])
     view["projects"] = _projects(snapshot.get("projets"), beads, view["requests"])
-    if not (view["requests"] or view["dossier"] or view["projects"]
+    if not (view["requests"] or view["dossier"] or view["projects"] or view["activity"]
             or any(said.get(label) for label in SAID_INDICATORS)):
         view["state"] = EMPTY
     return view
+
+
+def _activity(lines):
+    """The daily volumes the tracker keeps as said under « Activité sur 7
+    jours », one line a day and a series (« PR fusionnées · Lundi : 1 »):
+    series -> its seven volumes, Monday first. A series without its seven
+    days is left out: no line is drawn of a day no source gave."""
+    days = [day for _, day in CHART_DAYS]
+    said = {}
+    for line in lines:
+        series, _, rest = line.partition(" · ")
+        day, _, volume = rest.partition(" : ")
+        try:
+            said.setdefault(series, {})[day] = float(volume.replace(",", "."))
+        except ValueError:
+            continue
+    return {series: [volumes[day] for day in days] for series, volumes in said.items()
+            if series in dict(CHART_SERIES) and set(days) <= set(volumes)}
 
 
 def _hhmm(epoch):
@@ -144,8 +169,9 @@ def _e(text):
 
 
 def render_overview(view, anchors, details_html=""):
-    """The ``main`` of the destination for ``view``; ``details_html``, the
-    zones of the cockpit not folded into Panorama yet, folded under it."""
+    """The ``main`` of the destination for ``view``, numbered by ``anchors``
+    as the reference numbers its parts; ``details_html``, the zones of the
+    cockpit not folded into Panorama yet, folded under it."""
     state = view["state"]
     if state == LOADING:
         checked = "Lecture des sources en cours"
@@ -155,28 +181,29 @@ def render_overview(view, anchors, details_html=""):
         checked = "Dernière observation · %s (Paris)" % view["checked"]
     else:
         checked = "Vérifié à %s (Paris)" % view["checked"]
-    parts = ['<div class="pn-overview-head" %s><div><h1>Vue d’ensemble</h1><small>%s</small></div></div>'
-             % (anchors("overview-head"), _e(checked))]
+    parts = ['<div class="pn-overview-head" %s><div %s><h1 %s>Vue d’ensemble</h1><small %s>%s</small></div></div>'
+             % (anchors("overview-head"), anchors("div"), anchors("h1"), anchors("small"), _e(checked))]
     if state == LOADING:
         parts.append(
-            '<section class="pn-panel" role="status" %s><h2>Lecture en cours…</h2>%s</section>'
-            % (anchors("panel"), "".join('<div class="pn-skeleton" %s></div>' % anchors("skeleton")
-                                         for _ in range(3))))
+            '<section class="pn-panel" role="status" %s><h2 %s>Lecture en cours…</h2>%s</section>'
+            % (anchors("panel"), anchors("h2"), "".join('<div class="pn-skeleton" %s></div>' % anchors("skeleton")
+                                                         for _ in range(3))))
     elif state == ERROR:
         parts.append(
-            '<section class="pn-error" role="alert" %s><h2>Cette vue est indisponible</h2>'
-            "<p>L’état réel est inconnu. Les sources de l’usine n’ont pas répondu.</p>"
-            '<form method="post" action="/api/health/recheck"><button type="submit">Réessayer</button></form>'
-            "</section>" % anchors("error"))
+            '<section class="pn-error" role="alert" %s><h2 %s>Cette vue est indisponible</h2>'
+            "<p %s>L’état réel est inconnu. Les sources de l’usine n’ont pas répondu.</p>"
+            '<form method="post" action="/api/health/recheck"><button type="submit" %s>Réessayer</button></form>'
+            "</section>" % (anchors("error"), anchors("h2"), anchors("p"), anchors("button")))
     elif state == EMPTY:
-        parts.append('<section class="pn-panel pn-empty" %s><h2>Rien à afficher ici</h2>'
-                     "<p>Aucun élément dans cette vue.</p></section>" % anchors("panel"))
+        parts.append('<section class="pn-panel pn-empty" %s><h2 %s>Rien à afficher ici</h2>'
+                     "<p %s>Aucun élément dans cette vue.</p></section>"
+                     % (anchors("panel"), anchors("h2"), anchors("p")))
     else:
         parts.append(_render_content(view, anchors))
+    legacy = ""
     if details_html:
-        parts.append('<details class="pn-legacy" id="pn-legacy"><summary>%s</summary><div class="pn-legacy-body">%s</div></details>'
-                     % (LEGACY_SUMMARY, details_html))
-    legacy = parts.pop() if details_html else ""
+        legacy = ('<details class="pn-legacy" id="pn-legacy"><summary>%s</summary>'
+                  '<div class="pn-legacy-body">%s</div></details>' % (LEGACY_SUMMARY, details_html))
     return '<div class="pn-overview">%s</div>%s%s' % ("".join(parts), legacy, SCRIPT)
 
 
@@ -186,48 +213,98 @@ def _render_content(view, anchors):
         parts.append('<div class="pn-notice" role="status" %s>Lecture périmée · état actuel inconnu. '
                      "Dernières valeurs conservées ; actions indisponibles.</div>" % anchors("notice"))
     metrics = []
+    grid = anchors("metric-grid")
     for number, (label, value, caption, href) in enumerate(view["indicators"]):
         metrics.append(
             '<div class="pn-metric%s" %s><a href="%s">'
-            '<span class="pn-metric-label" %s>%s</span><strong>%s</strong><small>%s</small></a></div>'
+            '<span class="pn-metric-label" %s>%s</span><strong %s>%s</strong><small %s>%s</small></a></div>'
             % (" pn-emphasis" if number == 0 else "", anchors("metric"), _e(href), anchors("metric-label"),
-               _e(label), _e(value), _e(caption)))
-    parts.append('<div class="pn-metric-grid" %s>%s</div>' % (anchors("metric-grid"), "".join(metrics)))
-    parts.append(_render_activity(anchors))
+               _e(label), anchors("strong"), _e(value), anchors("small"), _e(caption)))
+    parts.append('<div class="pn-metric-grid" %s>%s</div>' % (grid, "".join(metrics)))
+    parts.append(_render_activity(view["activity"], anchors))
+    panel, heading = anchors("panel"), anchors("section-heading")
     parts.append(
-        '<section class="pn-panel" %s><div class="pn-section-heading" %s><h2>Derniers runs</h2>'
-        '<a class="pn-link" href="/runs">Tout voir</a></div>'
+        '<section class="pn-panel" %s><div class="pn-section-heading" %s><h2 %s>Derniers runs</h2>%s</div>'
         '<iframe class="pn-runs" title="Cartes des derniers runs" srcdoc="%s" %s></iframe></section>'
-        % (anchors("panel"), anchors("section-heading"), _e(RUNS_DOC), anchors("overview-runs")))
-    requests = view["requests"]
+        % (panel, heading, anchors("h2"), open_button("/runs", "Tout voir", anchors("link"), "pn-link"),
+           _e(RUNS_DOC), anchors("overview-runs")))
+    inbox, requests_panel = anchors("inbox"), anchors("panel")
+    title = '<h2 %s>Ce qui t’attend</h2>' % anchors("h2")
     lines = "".join(
-        '<button type="button" class="pn-request"%s data-request="%s" %s><strong>%s</strong>%s<small>%s</small></button>'
-        % (' aria-current="true"' if number == 0 else "", _e(request["id"]), anchors("request"), _e(request["quoi"]),
+        '<button type="button" class="pn-request"%s data-request="%s" %s><strong %s>%s</strong>%s<small %s>%s</small>'
+        "</button>"
+        % (' aria-current="true"' if number == 0 else "", _e(request["id"]), anchors("request"), anchors("strong"),
+           _e(request["quoi"]),
            # A title its producer wrote outside the contract of the text:
            # the cockpit's label, then what was written, whole.
            '<span class="pn-origin">Texte écrit : « %s »</span>' % _e(request["origine"]) if request["origine"] else "",
-           _e(" · ".join(filter(None, (request["projet"], request["pourquoi"])))))
-        for number, request in enumerate(requests)
+           anchors("small"), _e(" · ".join(filter(None, (request["projet"], request["pourquoi"])))))
+        for number, request in enumerate(view["requests"])
     ) or "<p>Rien ne t’attend.</p>"
-    parts.append('<div class="pn-inbox" id="pn-inbox" %s><div class="pn-panel pn-requests" %s><h2>Ce qui t’attend</h2>%s</div>%s</div>'
-                 % (anchors("inbox"), anchors("panel"), lines, _render_result(view, anchors)))
+    parts.append('<div class="pn-inbox" id="pn-inbox" %s><div class="pn-panel pn-requests" %s>%s%s</div>%s</div>'
+                 % (inbox, requests_panel, title, lines, _render_result(view, anchors)))
     parts.append(_render_projects(view["projects"], anchors))
     return "".join(parts)
 
 
-def _render_activity(anchors):
-    """« Activité sur 7 jours », folded: the key of the three series and
-    their chart, drawn empty -- no source of daily volumes is read yet."""
-    key = "".join('<span style="--series:%s">%s</span>' % (colour, _e(label)) for label, colour in CHART_SERIES)
-    grid = "".join('<line x1="40" y1="%d" x2="695" y2="%d"></line>' % (y, y) for y in (195, 141, 87, 33))
+# The frame of the chart of the reference: the days along x, 105 px apart
+# from x 55; the volumes along y, from y 195 (none) up to 162 px higher, with
+# four lines of the grid at a quarter, a half and three quarters of the top.
+CHART_DAYS = (("Lun", "Lundi"), ("Mar", "Mardi"), ("Mer", "Mercredi"), ("Jeu", "Jeudi"), ("Ven", "Vendredi"),
+              ("Sam", "Samedi"), ("Dim", "Dimanche"))
+CHART_ZERO, CHART_HEIGHT, CHART_STEP = 195, 162, 105
+
+
+def _render_activity(activity, anchors):
+    """« Activité sur 7 jours », folded: the key of the three series, then
+    their chart, the volumes a source said of each day (``activity``:
+    series -> seven volumes, Monday first), or, without one, that they are
+    not collected -- no line is drawn of a volume no source gave."""
+    bilan, summary, chart_key = anchors("bilan"), anchors("summary"), anchors("chart-key")
+    key = "".join('<span style="--series:%s" %s>%s</span>' % (colour, anchors("span"), _e(label))
+                  for label, colour in CHART_SERIES)
+    if activity:
+        top = max(3, -(-max(max(volumes) for volumes in activity.values()) // 3) * 3)
+        scale = CHART_HEIGHT / top
+        lines = "".join('<line x1="40" y1="%s" x2="695" y2="%s" %s></line>'
+                        % (_n(CHART_ZERO - tick * scale), _n(CHART_ZERO - tick * scale), anchors("line"))
+                        for tick in (0, top / 3, 2 * top / 3, top))
+        grid = '<g stroke="var(--line)" %s>%s</g>' % (anchors("g"), lines)
+        g = anchors("g")
+        labels = "".join('<text x="20" y="%s" %s>%s</text>' % (_n(CHART_ZERO + 4 - tick * scale), anchors("text"),
+                                                               _n(tick))
+                         for tick in (0, top / 3, 2 * top / 3, top))
+        labels += "".join('<text x="%d" y="222" %s>%s</text>' % (45 + CHART_STEP * day, anchors("text"), short)
+                          for day, (short, _) in enumerate(CHART_DAYS))
+        series = []
+        for label, colour in CHART_SERIES:
+            volumes = activity.get(label)
+            if not volumes:
+                continue
+            points = [(55 + CHART_STEP * day, _n(CHART_ZERO - volume * scale)) for day, volume in enumerate(volumes)]
+            series.append('<polyline fill="none" stroke="%s" stroke-width="2.5" stroke-linejoin="round" points="%s" %s>'
+                          "</polyline>" % (colour, " ".join("%d,%s" % point for point in points), anchors("polyline")))
+            for (x, y), volume, (_, day) in zip(points, volumes, CHART_DAYS):
+                series.append('<circle cx="%d" cy="%s" r="4" fill="%s" %s><title %s>%s · %s : %s</title></circle>'
+                              % (x, y, colour, anchors("circle"), anchors("title"), _e(label), day, _n(volume)))
+        chart = grid + '<g fill="var(--muted)" font-size="11" %s>%s</g>%s' % (g, labels, "".join(series))
+        note = ""
+    else:
+        chart = '<g stroke="var(--line)">%s</g>' % "".join(
+            '<line x1="40" y1="%d" x2="695" y2="%d"></line>' % (y, y) for y in (195, 141, 87, 33))
+        note = "<p>Volumes quotidiens non collectés : aucune source ne les fournit encore au cockpit.</p>"
     return (
-        '<details class="pn-panel pn-activity" %s><summary>Activité sur 7 jours</summary>'
+        '<details class="pn-panel pn-activity" %s><summary %s>Activité sur 7 jours</summary>'
         '<div class="pn-chart-key" %s>%s</div>'
-        '<svg class="pn-chart" viewBox="0 0 720 235" role="img" aria-label="%s" data-anchor="%s-1">'
-        '<g stroke="var(--pn-line)">%s</g></svg>'
-        "<p>Volumes quotidiens non collectés : aucune source ne les fournit encore au cockpit.</p>"
-        '<a class="pn-link" href="/analyses">Explorer les métriques</a></details>'
-    ) % (anchors("bilan"), anchors("chart-key"), key, _e(CHART_LABEL), anchor_slug(CHART_LABEL), grid)
+        '<svg class="pn-chart" viewBox="0 0 720 235" role="img" aria-label="%s" data-anchor="%s-1">%s</svg>'
+        "%s%s</details>"
+    ) % (bilan, summary, chart_key, key, _e(CHART_LABEL), anchor_slug(CHART_LABEL), chart, note,
+         open_button("/analyses", "Explorer les métriques", anchors("link"), "pn-link"))
+
+
+def _n(number):
+    """A number of the chart as the reference writes it: no ``.0``."""
+    return ("%.2f" % number).rstrip("0").rstrip(".")
 
 
 def _render_result(view, anchors):
@@ -235,28 +312,41 @@ def _render_result(view, anchors):
     record = view["dossier"]
     if record is None:
         return _render_request_panel(view["requests"], anchors)
-    parts = [
-        '<small>%s</small><h2>%s</h2><p>%s</p>'
-        % (_e(record.get("about") or ""), _e(record.get("title") or ""), _e(record.get("summary") or "")),
-        '<div class="pn-resources" %s>%s</div>' % (anchors("resource-list"), _render_resources(record.get("resources") or [])),
+    panel = anchors("panel")
+    parts = ['<small %s>%s</small><h2 %s>%s</h2><p %s>%s</p>'
+             % (anchors("small"), _e(record.get("about") or ""), anchors("h2"), _e(record.get("title") or ""),
+                anchors("p"), _e(record.get("summary") or ""))]
+    resource_list = anchors("resource-list")
+    parts.append('<div class="pn-resources" %s>%s</div>'
+                 % (resource_list, "".join(_render_resource(r, anchors) for r in record.get("resources") or [])))
+    parts.append("".join(_render_folded(report, anchors) for report in record.get("reports") or []))
+    dock = anchors("actions-possibles")
+    parts.append(
         '<div class="pn-dock" role="group" aria-label="Actions possibles" %s>'
-        '<button type="button" disabled>Essai ↗</button><button type="button" disabled>Avis</button>'
-        '<p class="pn-unwired">%s</p></div>' % (anchors("actions-possibles"), UNWIRED_RESULT),
-    ]
-    return '<article class="pn-panel pn-result" %s>%s</article>' % (anchors("panel"), "".join(parts))
+        '<a class="pn-button" role="link" aria-disabled="true" tabindex="-1" %s>Essai ↗</a><button type="button" disabled %s>Avis</button>'
+        '<p class="pn-unwired">%s</p></div>' % (dock, anchors("button"), anchors("button"), UNWIRED_RESULT))
+    return '<article class="pn-panel pn-result" %s>%s</article>' % (panel, "".join(parts))
 
 
-def _render_resources(resources):
-    out = []
-    for resource in resources:
-        if resource.get("opens"):
-            out.append('<div class="pn-resource"><strong>%s</strong><small>%s</small></div>'
-                       % (_e(resource.get("label")), _e(resource.get("detail") or "")))
-        else:
-            said = [line for line in resource.get("said") or [] if isinstance(line, str)] or [NOT_GIVEN]
-            out.append("<details><summary>%s</summary>%s</details>"
-                       % (_e(resource.get("label")), "".join("<p>%s</p>" % _e(line) for line in said)))
-    return "".join(out)
+def _render_resource(resource, anchors):
+    """A resource of the dossier: one that opens -- not from this view yet,
+    so drawn unavailable --, or one that unfolds."""
+    if not resource.get("opens"):
+        return _render_folded(resource, anchors)
+    button, label = anchors("button"), anchors("span")
+    return ('<button type="button" class="pn-resource" disabled %s><span %s><strong %s>%s</strong><small %s>%s</small>'
+            '</span><span aria-hidden="true" %s>↗</span></button>'
+            % (button, label, anchors("strong"), _e(resource.get("label")), anchors("small"),
+               _e(resource.get("detail") or ""), anchors("span")))
+
+
+def _render_folded(part, anchors):
+    """A part of the dossier that unfolds: open, the lines its record gives
+    it, or that the source gave none."""
+    said = [line for line in part.get("said") or [] if isinstance(line, str)] or [NOT_GIVEN]
+    details, summary = anchors("details"), anchors("summary")
+    return "<details %s><summary %s>%s</summary>%s</details>" % (
+        details, summary, _e(part.get("label")), "".join("<p %s>%s</p>" % (anchors("p"), _e(line)) for line in said))
 
 
 def _render_request_panel(requests, anchors):
@@ -276,20 +366,23 @@ def _render_request_panel(requests, anchors):
 
 
 def _render_projects(projects, anchors):
+    panel, title, rows_anchor = anchors("panel"), '<h2 %s>Projets</h2>' % anchors("h2"), anchors("rows")
     rows = []
     for project in projects:
-        figures = "".join("<span>%s</span>" % _e(figure) for figure in project["figures"]) or \
-            "<span>Volumes non collectés</span>"
+        row, holder, name, chantier, stats = (anchors("row"), anchors("div"), anchors("strong"), anchors("small"),
+                                              anchors("small-stats"))
+        figures = "".join("<span %s>%s</span>" % (anchors("span"), _e(figure)) for figure in project["figures"]) or \
+            "<span %s>Volumes non collectés</span>" % anchors("span")
         rows.append(
             '<div class="pn-row pn-project" %s><a href="%s">'
-            '<div><strong>%s</strong><small>%s</small><div class="pn-stats" %s>%s</div>'
-            '<div class="pn-release" %s>%s</div></div><span aria-hidden="true">→</span></a></div>'
-            % (anchors("row"), _e(project_page_url(project["id"])), _e(project["name"]), _e(project["chantier"]),
-               anchors("small-stats"), figures, anchors("release-info"),
-               _e(project["release"] or "Release non cadrée")))
+            '<div %s><strong %s>%s</strong><small %s>%s</small><div class="pn-stats" %s>%s</div>'
+            '<div class="pn-release" %s>%s</div></div><span aria-hidden="true" %s>→</span></a></div>'
+            % (row, _e(project_page_url(project["id"])), holder, name, _e(project["name"]), chantier,
+               _e(project["chantier"]), stats, figures, anchors("release-info"),
+               _e(project["release"] or "Release non cadrée"), anchors("span")))
     body = "".join(rows) or "<p>Aucun projet déclaré.</p>"
-    return '<section class="pn-panel pn-projects" %s><h2>Projets</h2><div class="pn-rows" %s>%s</div></section>' % (
-        anchors("panel"), anchors("rows"), body)
+    return '<section class="pn-panel pn-projects" %s>%s<div class="pn-rows" %s>%s</div></section>' % (
+        panel, title, rows_anchor, body)
 
 
 # The cards of the last runs, inside their frame: none is read on this
@@ -305,60 +398,66 @@ RUNS_DOC = (
 )
 
 CSS = """
-.pn-overview-head small{display:block;margin-bottom:20px;color:var(--pn-muted);font-size:12px}
+.pn-overview-head small{display:block;margin-bottom:20px;color:var(--pn-muted-text);font-size:12px}
 .pn-overview-head h1{font-size:27px;margin:0 0 6px}
-.pn-overview small{color:var(--pn-muted);font-size:12px}
-.pn-overview button{font:inherit;color:var(--pn-ink);background:var(--pn-surface);border:1px solid var(--pn-control-line);
+.pn-overview small{color:var(--pn-muted-text);font-size:12px}
+.pn-overview button{font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--pn-control-line);
   border-radius:8px;padding:10px 14px;cursor:pointer}
-.pn-overview button:hover{border-color:var(--pn-accent)}
+.pn-overview button:hover{border-color:var(--accent)}
 .pn-overview button:disabled{opacity:.5;cursor:not-allowed}
-.pn-link{color:var(--pn-accent);text-decoration:none}
-.pn-link:hover{text-decoration:underline}
-.pn-notice{padding:12px;border:1px solid var(--pn-line);border-radius:6px;color:var(--pn-warn);margin-bottom:18px;
+.pn-overview button.pn-link{padding:0;border:0;border-radius:4px;background:none;color:var(--accent)}
+.pn-overview button.pn-link:hover{text-decoration:underline}
+.pn-notice{padding:12px;border:1px solid var(--line);border-radius:6px;color:var(--pn-warn-text);margin-bottom:18px;
   overflow-wrap:anywhere}
 .pn-metric-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px}
-.pn-metric{border:1px solid var(--pn-line);border-radius:10px;background:var(--pn-surface);min-width:0}
+.pn-metric{border:1px solid var(--line);border-radius:10px;background:var(--surface);min-width:0}
 .pn-metric>a{display:block;padding:18px;border-radius:10px;color:inherit;text-decoration:none}
-.pn-metric:hover{border-color:var(--pn-accent)}
-.pn-metric.pn-emphasis{border-color:var(--pn-accent)}
+.pn-metric:hover{border-color:var(--accent)}
+.pn-metric.pn-emphasis{border-color:var(--accent)}
 .pn-metric strong{display:block;font-size:28px;margin:7px 0}
 .pn-metric small{display:block}
-.pn-metric-label{font-size:13px;color:var(--pn-muted)}
-.pn-activity summary{cursor:pointer;color:var(--pn-muted)}
+.pn-metric-label{font-size:13px;color:var(--pn-muted-text)}
+.pn-activity summary{cursor:pointer;color:var(--pn-muted-text)}
 .pn-chart-key{display:flex;gap:20px;flex-wrap:wrap;font-size:12px;margin:12px 0}
 .pn-chart-key span:before{content:'';display:inline-block;width:20px;height:3px;background:var(--series);
   vertical-align:middle;margin-right:8px}
 .pn-chart{width:100%;height:auto;max-height:290px;display:block}
-.pn-activity p{margin:8px 0;color:var(--pn-muted);font-size:14px}
+.pn-activity p{margin:8px 0;color:var(--pn-muted-text);font-size:14px}
 .pn-section-heading{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:6px}
 .pn-section-heading h2{margin:0}
-.pn-runs{display:block;width:100%;height:110px;margin-top:12px;border:0;background:var(--pn-surface)}
+.pn-runs{display:block;width:100%;height:110px;margin-top:12px;border:0;background:var(--surface)}
 .pn-inbox{display:grid;grid-template-columns:330px minmax(0,1fr);gap:20px;align-items:start}
 .pn-inbox>*{min-width:0}
 .pn-requests{padding:0}
 .pn-requests h2{padding:20px 20px 0}
 .pn-requests>p{padding:0 20px 20px}
-.pn-overview .pn-request{display:block;width:100%;text-align:left;border:0;border-top:1px solid var(--pn-line);
+.pn-overview .pn-request{display:block;width:100%;text-align:left;border:0;border-top:1px solid var(--line);
   border-radius:0;padding:20px;background:transparent}
-.pn-overview .pn-request[aria-current=true]{background:var(--pn-surface-2);box-shadow:inset 4px 0 0 var(--pn-accent)}
+.pn-overview .pn-request[aria-current=true]{background:var(--pn-surface-2);box-shadow:inset 4px 0 0 var(--accent)}
 .pn-request strong{display:block;margin-bottom:8px;overflow-wrap:anywhere}
 .pn-request small{display:block;overflow-wrap:anywhere}
 .pn-origin{display:block;margin-bottom:8px;font-size:14px;overflow-wrap:anywhere}
 .pn-result h2{margin-top:12px;overflow-wrap:anywhere}
 .pn-result>p{margin:0 0 8px}
 .pn-resources{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:22px}
-.pn-resource{display:flex;flex-direction:column;justify-content:start;gap:4px;padding:15px;min-height:95px;
-  border:1px solid var(--pn-line);border-radius:8px}
+.pn-overview .pn-resource{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;width:100%;
+  min-height:95px;padding:15px;text-align:left;border-color:var(--line)}
+.pn-overview .pn-resource:disabled{opacity:1;cursor:default}
+.pn-resource>span:first-child{display:flex;flex-direction:column;gap:4px;min-width:0;overflow-wrap:anywhere}
 .pn-resources details{grid-column:1/-1}
-.pn-result details{border-top:1px solid var(--pn-line);padding:14px 0}
-.pn-result summary{cursor:pointer;color:var(--pn-muted)}
+.pn-result details{border-top:1px solid var(--line);padding:14px 0}
+.pn-result>details{margin-top:8px}
+.pn-result summary{cursor:pointer;color:var(--pn-muted-text)}
 .pn-result details p{font-size:14px;margin:10px 0 0;overflow-wrap:anywhere}
-.pn-dock{display:flex;flex-wrap:wrap;gap:12px;align-items:center;border-top:1px solid var(--pn-line);
+.pn-dock{display:flex;flex-wrap:wrap;gap:12px;align-items:center;border-top:1px solid var(--line);
   padding-top:18px;margin-top:22px}
-.pn-dock>button{flex:1;min-height:54px;font-size:16px;font-weight:650}
-.pn-unwired{flex-basis:100%;margin:0;font-size:13px;color:var(--pn-muted)}
+.pn-dock>:is(button,.pn-button){flex:1;min-height:54px;font-size:16px;font-weight:650}
+.pn-button{display:inline-flex;align-items:center;justify-content:center;padding:10px 14px;color:var(--ink);
+  background:var(--surface);border:1px solid var(--pn-control-line);border-radius:8px;text-decoration:none}
+.pn-button[aria-disabled=true]{opacity:.5;cursor:not-allowed}
+.pn-unwired{flex-basis:100%;margin:0;font-size:13px;color:var(--pn-muted-text)}
 .pn-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:17px 0;
-  border-bottom:1px solid var(--pn-line)}
+  border-bottom:1px solid var(--line)}
 .pn-row:last-child{border-bottom:0}
 .pn-row>*{min-width:0}
 .pn-row strong{display:block;margin-bottom:5px;overflow-wrap:anywhere}
@@ -367,19 +466,19 @@ CSS = """
 .pn-project>a{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:17px 0;
   color:inherit;text-decoration:none}
 .pn-project>a>*{min-width:0}
-.pn-project:hover strong{color:var(--pn-accent)}
+.pn-project:hover strong{color:var(--accent)}
 .pn-rows{display:grid}
-.pn-stats{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:12px;font-size:12px;color:var(--pn-muted)}
-.pn-release{margin-top:8px;font-size:12px;color:var(--pn-muted);overflow-wrap:anywhere}
-.pn-skeleton{height:16px;background:var(--pn-line);border-radius:5px;margin:14px 0;width:65%}
+.pn-stats{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:12px;font-size:12px;color:var(--pn-muted-text)}
+.pn-release{margin-top:8px;font-size:12px;color:var(--pn-muted-text);overflow-wrap:anywhere}
+.pn-skeleton{height:16px;background:var(--line);border-radius:5px;margin:14px 0;width:65%}
 .pn-skeleton:nth-of-type(2){width:85%}
-.pn-error{border-left:3px solid var(--pn-warn);padding:20px;background:var(--pn-surface);margin-bottom:20px}
+.pn-error{border-left:3px solid var(--pn-warn-text);padding:20px;background:var(--surface);margin-bottom:20px}
 .pn-error h2{font-size:19px;margin:0 0 10px}
 .pn-error p{margin:0 0 14px}
 .pn-empty{text-align:center;padding:55px 20px}
-.pn-empty p{color:var(--pn-muted)}
-.pn-legacy{margin-top:28px;border-top:1px solid var(--pn-line);padding-top:16px}
-.pn-legacy>summary{cursor:pointer;color:var(--pn-muted)}
+.pn-empty p{color:var(--pn-muted-text)}
+.pn-legacy{margin-top:28px;border-top:1px solid var(--line);padding-top:16px}
+.pn-legacy>summary{cursor:pointer;color:var(--pn-muted-text)}
 .pn-legacy:not([open])>.pn-legacy-body{display:none}
 @media (max-width:1100px){.pn-inbox{grid-template-columns:minmax(0,1fr)}}
 @media (max-width:800px){

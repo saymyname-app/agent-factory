@@ -268,7 +268,9 @@ class JournalTest(unittest.TestCase):
         # The inbox keeps its control: the same kind of text there falls back.
         self.assertNotIn("Mayor", self.get("/"))
 
-        self.assertIn('href="/journal"', self.get("/"))
+        # The home page leads to the journal: the entry « Journal » of its
+        # navigation opens /journal (a button of a form sent by GET).
+        self.assertIn('action="/journal"', self.get("/"))
 
     def test_an_action_taken_in_the_cockpit_enters_the_journal(self):
         self.start_cockpit()

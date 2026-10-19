@@ -17,5 +17,30 @@
     "Version et sources": [
       "Dossier 1 · version synthétique 1111111. Référence de la Spec : af-2zseit. Aucune livraison réelle prouvée par ces exemples."
     ]
+  },
+  "drawn": {
+    "Activité sur 7 jours": [
+      "PR fusionnées · Lundi : 1",
+      "PR fusionnées · Mardi : 2",
+      "PR fusionnées · Mercredi : 0",
+      "PR fusionnées · Jeudi : 3",
+      "PR fusionnées · Vendredi : 1",
+      "PR fusionnées · Samedi : 4",
+      "PR fusionnées · Dimanche : 1",
+      "Tickets livrés · Lundi : 2",
+      "Tickets livrés · Mardi : 2",
+      "Tickets livrés · Mercredi : 1",
+      "Tickets livrés · Jeudi : 4",
+      "Tickets livrés · Vendredi : 2",
+      "Tickets livrés · Samedi : 5",
+      "Tickets livrés · Dimanche : 2",
+      "CI réussies · Lundi : 5",
+      "CI réussies · Mardi : 8",
+      "CI réussies · Mercredi : 6",
+      "CI réussies · Jeudi : 9",
+      "CI réussies · Vendredi : 4",
+      "CI réussies · Samedi : 8",
+      "CI réussies · Dimanche : 7"
+    ]
   }
 }
