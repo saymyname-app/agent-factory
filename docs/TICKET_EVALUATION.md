@@ -37,7 +37,7 @@ written through `bin/convoy-state` only. A convoy without the mark is not
 touched (exit 4): it is merged as before.
 
 ```bash
-./bin/ticket-evaluation cleanup af-convoy af-t1 [--repo DIR]              # stopped ticket only
+./bin/ticket-evaluation cleanup af-convoy af-t1 [--repo DIR]              # stopped ticket only; an overridden stop keeps its products
 ./bin/ticket-evaluation settle  af-convoy [--repo <project repository>]   # bin/convoy-advance, at each pass
 ./bin/ticket-evaluation brief   af-convoy af-t1                           # the Evaluator session (formula mol-ticket-evaluation)
 ./bin/ticket-evaluation record  af-convoy af-t1 --file result.json        # the Evaluator session
@@ -59,7 +59,10 @@ Every answer is one JSON object on stdout.
 ticket, on the same conditions as the code review (`docs/CODE_REVIEW.md`):
 the Ticket Exit is « terminé », the complete Ticket Handoff was taken at the
 tip, the ticket is green at the tip (`bin/tdd-step`), and it is not stopped,
-parked, closed, or already merged at that tip. `bin/convoy-advance` calls
+parked, closed, or already merged at that tip. A ticket stopped
+`still_refused` whose every unsettled Blocking Finding carries Benjamin's
+override is still evaluated at its tip: the merge asks for that evaluation,
+and nothing else would send it (af-ppdbza, `docs/CORRECTION_ROUND.md`). `bin/convoy-advance` calls
 the code review and the evaluation in the same pass: they run in parallel,
 on the same tip. A finished ticket whose branch does not contain the tip of
 the integration branch is handed back to its author by the resumes of that

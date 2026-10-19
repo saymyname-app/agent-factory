@@ -120,7 +120,8 @@ Evaluation (critère 1) »), and every other condition of the merge still red
 at the tip: a review or evaluation with no favorable verdict there, a red
 fidelity. When the fidelity is red or no evaluation is favorable at the tip,
 the request says the override alone « ne suffit pas » (T02R2, af-r2c0tx). A stopped ticket takes no further step: no
-review, no evaluation, no round, no merge (`docs/SPEC_INTEGRATION.md`). It is
+review, no evaluation, no round, no merge (`docs/SPEC_INTEGRATION.md`),
+but the evaluation of a ticket whose findings are all overridden (below). It is
 raised **once** through `bin/escalation-door benjamin`: one line for the
 ticket in `bin/escalation-door list`, whether one control or both refused
 it. `bin/convoy-state stop-raised` records it; a stop whose request could
@@ -164,8 +165,15 @@ out: a Planning Exception (`bin/planning-exception`,
 The override records a decision; it lifts nothing by itself. The finding
 keeps its unfavorable verdict (`code_review.state.unsettled`), the ticket
 stays stopped. Once **every** Blocking Finding left unsettled is overridden,
+the override stands for the code review and for nothing else: the ticket
+is still evaluated at its tip. When no evaluation is favorable there — the
+stop withdrew the one that was open — `bin/ticket-evaluation settle` opens
+and launches it at the next pass, once (its relaunch rule unchanged), and
+`cleanup` no longer releases its products (af-ppdbza, T02R2). Favorable,
 the next pass merges the ticket and the ticket-end gate closes it: its
-condition 9 reads `overrides` (`docs/TICKET_END.md`).
+condition 9 reads `overrides` (`docs/TICKET_END.md`). Unfavorable, or
+without a result after its relaunch, the ticket stays stopped and nothing
+of it is merged.
 
 ## Stored state
 

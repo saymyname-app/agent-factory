@@ -1394,6 +1394,29 @@ class ConvoyAdvanceTest(ConvoyAdvanceHarness):
         self.assertEqual(base, self.git("rev-parse", "main"))
         self.assertIsNone(self.integration_of(self.advance(CONVOY)))
 
+    def test_a_ticket_stopped_still_refused_whose_every_finding_is_overridden_is_evaluated_then_merged(self):
+        # T02R2 (af-r2c0tx, af-ppdbza): the stop withdrew the evaluation that
+        # was open at the tip; once every Blocking Finding left is overridden,
+        # the pass has it evaluated again at that tip, then merges it.
+        base = self.integrated()
+        self.advance(CONVOY)
+        tip = self.finished(T1)
+        self.run_ok(STATE, "open-code-review", CONVOY, T1, "--kind", "review", "--commit", tip, "--base", base)
+        review = self.tmp / "review-t1.json"
+        review.write_text(json.dumps({"commit": tip, "answers": {}, "recorded_by": "delivery-reviewer-fx",
+                                      **self.BLOCKS}))
+        self.run_ok(STATE, "record-code-review", CONVOY, T1, "--file", review)
+        self.run_ok(STATE, "stop-ticket", CONVOY, T1, "--reason", "still_refused", "--detail", "revue de code (F1.1)")
+        self.run_ok(STATE, "stop-raised", CONVOY, T1)
+        self.run_ok(STATE, "override-finding", CONVOY, T1, "--finding", "F1.1", "--approver", "benjamin-hurand",
+                    "--words", "Je passe outre F1.1.")
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual(tip, self.shown(T1)["evaluation"]["state"]["commit"], answer)
+        self.assertEqual([T1], [entry["id"] for entry in (self.integration_of(answer) or {}).get("merged", [])], answer)
+        self.assertEqual("still_refused", self.shown(T1)["stop"]["reason"])
+
     def test_a_pass_with_no_finished_ticket_runs_no_merge(self):
         self.integrated()
         # No profile at all: a merge pass would refuse.
