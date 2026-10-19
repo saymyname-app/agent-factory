@@ -783,6 +783,44 @@ class CorrectionRoundTest(unittest.TestCase):
         self.assertEqual([], self.launches())
         self.assertEqual([], self.merge()["merged"])
 
+    def override_consequence(self, ticket=SLICE):
+        """The consequence the request raised for a stop gives its first
+        option, the override of a Blocking Finding."""
+        metadata = json.loads(self.tracker.read_text())["beads"][ticket]["metadata"]
+        return json.loads(metadata["gc.escalation_que_faire"])[0]["consequence"]
+
+    def test_a_stop_names_every_condition_still_red_and_says_an_override_alone_merges_nothing(self):
+        # T02R2 (af-r2c0tx, 2026-10-19): F1.2 refused after the round, no
+        # evaluation favorable at the new tip, fidelity red there; the stop
+        # and the request named F1.2 alone.
+        tip = self.refused_by_both()
+        self.settle()
+        new_tip = self.corrected(tip)
+        self.judged(new_tip, tip, refused=("F1.1",))
+        self.open_evaluation(new_tip)
+        self.red_fidelity(new_tip)
+
+        self.assertEqual([SLICE], self.tickets(self.settle()["stopped"]))
+
+        detail = self.shown()["stop"]["detail"]
+        for named in ("F1.1", "Ticket Evaluation", "fidélité"):
+            self.assertIn(named, detail)
+        consequence = self.override_consequence()
+        self.assertIn("ne suffit pas", consequence)
+        self.assertIn("fidélité rouge", consequence)
+        self.assertIn("pas d'évaluation favorable à la pointe", consequence)
+
+    def test_a_stop_the_override_lifts_does_not_say_it_is_not_enough(self):
+        tip = self.refused_by_both()
+        self.settle()
+        new_tip = self.corrected(tip)
+        self.judged(new_tip, tip, refused=("F1.1",))
+        self.evaluated(new_tip)
+
+        self.assertEqual([SLICE], self.tickets(self.settle()["stopped"]))
+
+        self.assertNotIn("ne suffit pas", self.override_consequence())
+
     def test_a_ticket_whose_answers_are_judged_unfavorably_stops_without_second_round_or_merge(self):
         tip = self.refused_by_both()
         self.settle()
