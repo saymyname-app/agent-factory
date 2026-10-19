@@ -282,7 +282,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
     def test_a_stop_without_evaluation_result_the_operator_answered_is_not_resumed(self):
         self.evaluation_stopped()
         self.env["ESCALATION_DOOR_NOW"] = "4102444800"  # the answer comes after the stop
-        self.run_ok(ESCALATION, "repondre", T1, "a")
+        self.run_ok(ESCALATION, "repondre", T1, "a", "--actor", "operateur-test")
 
         answer = self.advance(CONVOY)
 
@@ -331,7 +331,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
     def test_a_stop_of_the_removed_test_review_the_operator_answered_is_not_resumed(self):
         self.stopped_by_the_test_review()
         self.env["ESCALATION_DOOR_NOW"] = "4102444800"  # the answer comes after the stop
-        self.run_ok(ESCALATION, "repondre", T1, "a")
+        self.run_ok(ESCALATION, "repondre", T1, "a", "--actor", "operateur-test")
 
         answer = self.advance(CONVOY)
 
@@ -657,7 +657,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.exhausted_and_alone()
         self.advance(CONVOY)
         request = self.grouped_bead()
-        self.run_ok(ESCALATION, "repondre", request, self.LIFT)
+        self.run_ok(ESCALATION, "repondre", request, self.LIFT, "--actor", "operateur-test")
         self.write_log.write_text("")
 
         answer = self.advance(CONVOY)
@@ -681,7 +681,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
     def test_the_answer_that_leaves_the_tickets_parked_lifts_nothing_and_is_not_asked_again(self):
         self.exhausted_and_alone()
         self.advance(CONVOY)
-        self.run_ok(ESCALATION, "repondre", self.grouped_bead(), self.LEAVE)
+        self.run_ok(ESCALATION, "repondre", self.grouped_bead(), self.LEAVE, "--actor", "operateur-test")
         self.write_log.write_text("")
 
         for _ in range(2):
@@ -705,7 +705,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual(([], []), (self.of(unanswered, "lifted"), self.of(unanswered, "resumed")))
         self.assertEqual("operator_request", self.park_of(T3)["cause"])
         self.env["ESCALATION_DOOR_NOW"] = "4102444800"  # the answer comes after the parking
-        self.run_ok(ESCALATION, "repondre", T1, "a")
+        self.run_ok(ESCALATION, "repondre", T1, "a", "--actor", "operateur-test")
 
         answer = self.advance(CONVOY)
 
@@ -730,7 +730,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.run_ok(STATE, "park", CONVOY, T1, "--cause", "planning_exception", "--detail", request["quoi"])
         self.run_ok(STATE, "set-exit", CONVOY, T1, "--exit", "planning_exception")
         self.env["ESCALATION_DOOR_NOW"] = "4102444800"  # the answer comes after the parking
-        self.run_ok(ESCALATION, "repondre", T1, "c")
+        self.run_ok(ESCALATION, "repondre", T1, "c", "--actor", "operateur-test")
 
         answer = self.advance(CONVOY)
 
@@ -769,7 +769,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         # ADR-0030 L5: « accept » lifts the parking, not the stop; the stop
         # then reaches the operator, once, instead of stalling the convoy.
         self.already_green_excepted()
-        self.run_ok(ESCALATION, "repondre", T1, "b")
+        self.run_ok(ESCALATION, "repondre", T1, "b", "--actor", "operateur-test")
 
         answer = self.advance(CONVOY)
 
@@ -792,7 +792,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
 
     def test_an_already_green_ticket_whose_exception_is_answered_otherwise_stays_parked_and_its_stop_is_not_raised(self):
         self.already_green_excepted()
-        self.run_ok(ESCALATION, "repondre", T1, "a")
+        self.run_ok(ESCALATION, "repondre", T1, "a", "--actor", "operateur-test")
 
         for _ in range(2):
             answer = self.advance(CONVOY)
@@ -951,7 +951,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.planning_exception(self.B)
         self.assertEqual([], self.started(self.advance(CONVOY)))
         self.env["ESCALATION_DOOR_NOW"] = "4102444800"  # the answer comes after the exception
-        self.run_ok(ESCALATION, "repondre", self.B, "a")
+        self.run_ok(ESCALATION, "repondre", self.B, "a", "--actor", "operateur-test")
 
         answer = self.advance(CONVOY)
 

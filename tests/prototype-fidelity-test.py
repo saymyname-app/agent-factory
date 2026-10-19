@@ -626,7 +626,7 @@ class PrototypeFidelityTest(unittest.TestCase):
         self.assertEqual("rouge", self.shown()["fidelity"]["state"])
         self.red("--convoy", CONVOY, "--ticket", T1)
 
-        self.run_door(ESCALATION_TOOL, "repondre", T1, self.accept_letter())
+        self.run_door(ESCALATION_TOOL, "repondre", T1, self.accept_letter(), "--actor", "operateur-test")
 
         fidelity = self.shown()["fidelity"]
         self.assertEqual("accepté par Benjamin", fidelity["state"])
@@ -641,7 +641,7 @@ class PrototypeFidelityTest(unittest.TestCase):
         self.edit_product('<ul data-anchor="fixture-items">', "<ul>", "ancre retirée")
         self.start_ticket()
         self.raise_planning_exception("fixture-state")
-        self.run_door(ESCALATION_TOOL, "repondre", T1, self.accept_letter())
+        self.run_door(ESCALATION_TOOL, "repondre", T1, self.accept_letter(), "--actor", "operateur-test")
 
         # Accepted on another anchor than the one that deviates.
         answer = self.red("--convoy", CONVOY, "--ticket", T1)
@@ -649,7 +649,7 @@ class PrototypeFidelityTest(unittest.TestCase):
 
         self.raise_planning_exception("fixture-items")
         self.assertNotEqual("a", self.accept_letter())
-        self.run_door(ESCALATION_TOOL, "repondre", T1, "a")
+        self.run_door(ESCALATION_TOOL, "repondre", T1, "a", "--actor", "operateur-test")
 
         # Answered, but not by the option that accepts the deviation.
         self.assertEqual("rouge", self.shown()["fidelity"]["state"])

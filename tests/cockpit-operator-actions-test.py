@@ -263,7 +263,8 @@ class OperatorActionsSeamTest(unittest.TestCase):
         )
 
         calls = self.read_calls(self.escalation_calls_file)
-        self.assertIn(["repondre", "af-rep1", "b"], calls)
+        # The click is Benjamin's own gesture: the Cockpit names him (af-zkdvur).
+        self.assertIn(["repondre", "af-rep1", "b", "--actor", "benjamin"], calls)
 
         bead = self.read_bead("af-rep1")
         self.assertEqual("none", bead["metadata"]["gc.needs_benjamin"])

@@ -514,7 +514,7 @@ class ConvoyStopsOnTheFixtureCity(Staged, publication.Harness):
         self.planning_exception(self.ids["T4"])
         self.assertEqual([], self.one_pass()["started"])
         self.env["ESCALATION_DOOR_NOW"] = "4102444800"  # the answer comes after the exception
-        self.run_ok(ESCALATION, "repondre", self.ids["T4"], "a")
+        self.run_ok(ESCALATION, "repondre", self.ids["T4"], "a", "--actor", "operateur-test")
 
         answer = self.one_pass()
 
@@ -551,7 +551,7 @@ class ConvoyStopsOnTheFixtureCity(Staged, publication.Harness):
 
     def answer(self, bead_id, option):
         self.env["ESCALATION_DOOR_NOW"] = "4102444800"  # the answer comes after the request
-        self.run_ok(ESCALATION, "repondre", bead_id, option)
+        self.run_ok(ESCALATION, "repondre", bead_id, option, "--actor", "operateur-test")
 
     def item(self):
         return self.shown_ticket(self.ids["T4"])["tracked_items"][0]
