@@ -6,7 +6,7 @@ min_active_sessions = 0
 # (max_sessions), which bin/convoy-advance enforces across the three roles.
 # A lower cap here leaves a started ticket waiting for the session of another
 # (tests/delivery-agents-test.sh holds the two equal).
-max_active_sessions = 2
+max_active_sessions = 3
 idle_timeout = "2h"
 
 # One session works one ticket. Gas City's default work query offers the
