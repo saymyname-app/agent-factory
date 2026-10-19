@@ -48,6 +48,11 @@
 //           content can be scrolled into view (`scrolls`: a frame whose
 //           document hides what overflows it cannot) and whether the
 //           keyboard reaches it or a control inside it (`keyboard`)
+// marks     every mark of a chart carrying data-anchor (an SVG polyline,
+//           path, circle or rect drawn): `name`, and the contrast of its
+//           colour -- its stroke, or its fill when it has no stroke --
+//           with what is behind the chart (`contrast`, null when an image
+//           or a gradient is drawn there)
 // after     with `click`: the frame read again (the same record, its
 //           address and text included) two seconds after the control named
 //           `click` was activated, with `found` and `disabled` for that
@@ -361,7 +366,8 @@
       overlaps: overlaps(records),
       contrast: contrast(records, view, doc),
       background: bg ? luminance(bg) : null,
-      scrolls: scrolls(doc, view)
+      scrolls: scrolls(doc, view),
+      marks: marks(doc, view)
     };
     measured.controls = controls(doc, view);
     // The documents the frames of the page show: their texts and controls
@@ -418,6 +424,23 @@
         found.push({name: describe(element).slice(0, 60), scrolls: true,
                     keyboard: element.tabIndex >= 0 || !!element.querySelector(CONTROLS)});
       }
+    });
+    return found;
+  }
+
+  // The marks of the charts of a document: what is drawn to say a value,
+  // and how it stands out from what is behind its chart.
+  function marks(doc, view) {
+    var found = [];
+    doc.querySelectorAll('svg polyline[data-anchor], svg path[data-anchor], svg circle[data-anchor], ' +
+                         'svg rect[data-anchor]').forEach(function (element) {
+      if (!element.getClientRects().length) { return; }
+      var s = view.getComputedStyle(element);
+      var stroked = s.stroke && s.stroke !== 'none' && parseFloat(s.strokeWidth) > 0;
+      var colour = rgba(stroked ? s.stroke : s.fill);
+      var behind = backgroundOf(element.closest('svg'), view, doc);
+      found.push({name: element.getAttribute('data-anchor'),
+                  contrast: colour && behind ? ratio(over(colour, behind), behind) : null});
     });
     return found;
   }

@@ -1,0 +1,24 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/analysis-destination-fidelity-test.py::AnalysisDestinationFidelity.test_analysis_content_carries_every_anchor_and_token_of_its_reference",
+      "tests/cockpit-criteria/commands/analysis-destination-fidelity-test.py::AnalysisDestinationFidelity.test_analysis_light_carries_every_anchor_and_token_of_its_reference",
+      "tests/cockpit-criteria/commands/analysis-destination-fidelity-test.py::AnalysisDestinationFidelity.test_analysis_narrow_carries_every_anchor_and_token_of_its_reference",
+      "tests/cockpit-criteria/commands/analysis-destination-fidelity-test.py::AnalysisDestinationFidelity.test_analysis_time_carries_every_anchor_and_token_of_its_reference",
+      "tests/cockpit-criteria/commands/analysis-destination-states-test.py::AnalysisDestinationStates.test_analysis_content_is_the_destination_open_on_the_merged_results",
+      "tests/cockpit-criteria/commands/analysis-destination-states-test.py::AnalysisDestinationStates.test_analysis_light_is_the_destination_open_on_the_merged_results_in_the_light_theme",
+      "tests/cockpit-criteria/commands/analysis-destination-states-test.py::AnalysisDestinationStates.test_analysis_narrow_is_the_destination_open_on_the_merged_results_at_390_px",
+      "tests/cockpit-criteria/commands/analysis-destination-states-test.py::AnalysisDestinationStates.test_analysis_time_is_the_destination_open_on_the_lead_times",
+      "tests/cockpit-criteria/commands/analysis-destination-states-test.py::AnalysisDestinationStates.test_the_destination_follows_the_data_the_cockpit_serves_not_a_page_of_its_own",
+      "tests/cockpit-criteria/commands/analysis-destination-states-test.py::AnalysisDestinationStates.test_the_destination_is_reached_from_the_other_destinations_and_leads_to_them",
+      "tests/cockpit-criteria/commands/analysis-destination-states-test.py::AnalysisDestinationStates.test_the_tabs_lead_from_one_view_to_the_other_and_back"
+    ],
+    "2": [
+      "tests/cockpit-criteria/commands/analysis-destination-layout-test.py::AnalysisDestinationLayout.test_analysis_content_is_readable_and_usable_at_both_widths_in_both_themes",
+      "tests/cockpit-criteria/commands/analysis-destination-layout-test.py::AnalysisDestinationLayout.test_analysis_light_is_readable_and_usable_at_both_widths_in_both_themes",
+      "tests/cockpit-criteria/commands/analysis-destination-layout-test.py::AnalysisDestinationLayout.test_analysis_narrow_is_readable_and_usable_at_both_widths_in_both_themes",
+      "tests/cockpit-criteria/commands/analysis-destination-layout-test.py::AnalysisDestinationLayout.test_analysis_time_is_readable_and_usable_at_both_widths_in_both_themes",
+      "tests/cockpit-criteria/commands/analysis-destination-layout-test.py::AnalysisDestinationLayout.test_long_titles_and_words_stay_whole_and_inside_the_page_at_both_widths_in_both_themes"
+    ]
+  }
+}
