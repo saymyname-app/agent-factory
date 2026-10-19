@@ -374,7 +374,6 @@ CSS = """
 .rt-summary span{color:var(--rt-muted-text)}
 .rt-summary strong{font-size:14px}
 .rt-mono{font:13px ui-monospace,monospace}
-.rt-summary .rt-badge{color:var(--ok)}
 .rt-summary .rt-badge.live{color:var(--accent)}
 .rt-summary .rt-badge.wait{color:var(--rt-wait-text)}
 .rt-live-dot{display:inline-block;width:7px;height:7px;border-radius:100%;background:var(--accent);margin-right:6px}
@@ -405,8 +404,8 @@ CSS = """
 .rt-job.current{border:2px solid var(--accent);background:var(--rt-current);box-shadow:0 0 0 2px #8fa3ff18}
 .rt-job.selected{outline:2px solid var(--rt-selected)}
 .rt-form{display:contents}
-.rt-pick{display:block;position:relative;z-index:1;min-width:100%;width:max-content;height:53px;border:0;
-  background:transparent;border-radius:6px;text-align:left;padding:8px 10px;white-space:nowrap}
+.rt-pick{display:inline-block;vertical-align:top;position:relative;z-index:1;min-width:100%;width:max-content;
+  height:53px;border:0;background:transparent;border-radius:0;text-align:left;padding:8px 10px;white-space:nowrap}
 .rt-pick:hover{background:#8fa3ff10}
 .rt-pick strong{display:block;font-size:13px}
 .rt-pick small{display:block;font-size:11px;color:var(--rt-muted-text);margin-top:6px}
@@ -414,6 +413,7 @@ CSS = """
   gap:1px;align-items:center}
 .rt-mark{flex:0 1 12px;min-width:3px;height:12px;border:0;border-radius:0;padding:0;background:transparent;position:relative}
 .rt-mark:after{content:'';position:absolute;left:40%;width:3px;top:2px;height:8px;background:var(--muted)}
+.rt-mark.tools{display:flex;font-size:13px}
 .rt-mark.tools:after{background:var(--code)}
 .rt-mark.gates:after{background:var(--ok)}
 .rt-mark.sessions:after{background:var(--agent)}
