@@ -533,6 +533,21 @@ class PrototypeFidelityTest(unittest.TestCase):
         record = json.loads(next(self.store.rglob("fidelity.json")).read_text())
         self.assertFalse(record["output_truncated"])
 
+    def test_the_full_measure_stays_readable_in_the_evidence_store_after_the_check(self):
+        # T02R2 (af-r2c0tx, 2026-10-19): the piece sealed a measure under
+        # /tmp that the check then removed; the ticket kept 100 deviations
+        # without their values.
+        self.edit_product('<ul data-anchor="fixture-items">', "<ul>", "ancre retirée")
+
+        answer = self.red("--convoy", CONVOY, "--ticket", T1)
+
+        record = json.loads((self.store / SPEC / T1 / "fidelity.json").read_text())
+        kept = self.store / SPEC / T1 / record["attachment"]
+        self.assertEqual(json.loads(record["output"])["measure_digest"], sha256_of(kept))
+        self.assertEqual(len(answer["deviations"]), len(json.loads(kept.read_text())["deviations"]))
+        proc = subprocess.run((str(CAPTURE_TOOL), "verify", CONVOY, T1), env=self.env, text=True, capture_output=True)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+
     def test_named_ticket_compares_only_the_anchors_of_the_screen_it_touches(self):
         two_screens = self.descriptor_with_screens([
             {"name": "accueil-vide", "path": "/", "states": ["empty"]},
