@@ -804,7 +804,7 @@ def sealed_measure(args: argparse.Namespace, plan: dict[str, Any], work: Path) -
     timeout = 600 + LAUNCH_TIMEOUT * len(plan["states"])
     status, answer = run_json([
         str(CAPTURE_TOOL), "command", args.convoy, args.ticket, "--piece", PIECE, "--launch-state", str(state_file),
-        "--timeout", str(timeout), "--expect-exit", "0", "--", sys.executable, str(Path(__file__).resolve()), "measure", "--plan", str(plan_file)])
+        "--timeout", str(timeout), "--expect-exit", "0", "--attach", str(work / MEASURE_FILE), "--", sys.executable, str(Path(__file__).resolve()), "measure", "--plan", str(plan_file)])
     if status != 0:
         output = answer.get("output") if isinstance(answer, dict) else None
         try:
@@ -819,10 +819,11 @@ def sealed_measure(args: argparse.Namespace, plan: dict[str, Any], work: Path) -
                 f"relevé de fidélité tronqué dans le magasin de preuves ({record.get('output_bytes')} octets) : "
                 "la mesure ne se relit pas", [f"pièce {PIECE}"])
         sealed = json.loads(record["output"])
-        content = Path(sealed["measure"]).read_bytes()
+        # The copy filed beside the piece: the work directory is removed below (T02R2, af-r2c0tx).
+        content = Path(answer["attachment"]).read_bytes()
         if "sha256:" + hashlib.sha256(content).hexdigest() != sealed["measure_digest"]:
             raise Refusal(
-                f"mesure de fidélité {sealed['measure']} différente de l'empreinte scellée dans le magasin de preuves",
+                f"mesure de fidélité {answer['attachment']} différente de l'empreinte scellée dans le magasin de preuves",
                 [f"pièce {PIECE}"])
         return json.loads(content)
     except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:

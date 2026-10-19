@@ -63,6 +63,12 @@ the tests it runs on a merged result without `--expect-exit` (piece
 `merged_tests`, `docs/SPEC_INTEGRATION.md`): a red run is a piece too, tied
 to the commit that was tested and never pushed.
 
+`command --attach <file>` files a file the command writes during the run
+(refused if it exists before, or is not written) beside the record, as
+`<piece>--attachment`, with its fingerprint in the record (`attachment`,
+`attachment_digest`); `verify` checks it like an image. `bin/prototype-fidelity`
+keeps its full measure this way (T02R2, af-r2c0tx).
+
 ## The store
 
 ```
@@ -70,6 +76,7 @@ to the commit that was tested and never pushed.
 <store>/<spec id>/<ticket id>/<piece>.json     the Evidence Record
 <store>/<spec id>/<ticket id>/<piece>.png      the image of a screenshot piece, or the two sides of a comparison piece
 <store>/<spec id>/<ticket id>/<piece>--difference.png   the image of the difference of a comparison piece
+<store>/<spec id>/<ticket id>/<piece>--attachment       the file a command piece wrote (--attach)
 ```
 
 `<store>` is `EVIDENCE_STORE_DIR`, default `~/.local/state/agent-factory-evidence`

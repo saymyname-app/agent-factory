@@ -309,6 +309,29 @@ class EvidenceCaptureTest(unittest.TestCase):
                          self.tracked_evidence()["demo.commande"]["digest"])
         self.ok("verify", CONVOY, T1)
 
+    def test_a_file_the_command_writes_is_filed_beside_the_record_and_verified(self):
+        written = self.tmp / "mesure.json"
+        self.ok("command", CONVOY, T1, "--piece", "demo.mesure", "--repo", self.repo, "--attach", written,
+                "--", "sh", "-c", f"echo '{{\"complet\": true}}' > '{written}'")
+        # A second command can take the same path: the first copy is in the store.
+        written.unlink()
+
+        record = self.record("demo.mesure")
+        kept = self.store / SPEC / T1 / record["attachment"]
+        self.assertEqual({"complet": True}, json.loads(kept.read_text()))
+        self.assertEqual(sha256_of(kept), record["attachment_digest"])
+        self.ok("verify", CONVOY, T1)
+        kept.write_text('{"complet": false}\n')
+        self.assertIn("fichier joint", self.refused("verify", CONVOY, T1))
+
+    def test_an_attached_file_that_exists_before_the_run_or_is_not_written_is_refused(self):
+        before = self.tmp / "deja-la.json"
+        before.write_text("{}")
+        self.assertIn("existe déjà", self.refused(
+            "command", CONVOY, T1, "--piece", "demo", "--repo", self.repo, "--attach", before, "--", "true"))
+        self.assertIn("n'a pas écrit", self.refused(
+            "command", CONVOY, T1, "--piece", "demo", "--repo", self.repo, "--attach", self.tmp / "jamais", "--", "true"))
+
     def test_command_piece_replacing_a_screenshot_piece_leaves_no_image(self):
         state_file, _ = self.launch()
         self.ok("screenshot", CONVOY, T1, "--piece", "demo", "--launch-state", state_file, "--path", "/")

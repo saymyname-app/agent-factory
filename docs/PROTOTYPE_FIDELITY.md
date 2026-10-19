@@ -96,7 +96,10 @@ With `--convoy` and `--ticket`, on a convoy that carries the new-flow mark:
    launched product (`docs/EVIDENCE_STORE.md`). The full measure runs to
    megabytes on a real screen, beyond what the store keeps of an output
    (1 MB): it is written to a file of the work directory, and the piece seals
-   its path, size and SHA-256 (af-2cpwkh). The command reads that file back
+   its path, size and SHA-256 (af-2cpwkh). The capture tool files that file
+   beside the piece (`fidelity--attachment`, `command --attach`), so the full
+   measure, every deviation with its values, stays readable once the work
+   directory is gone (T02R2, af-r2c0tx). The command reads that copy back
    only when it matches the sealed fingerprint, and refuses a record the
    store truncated, or a file that differs from it;
 2. one comparison piece per state and rendering is filed by
