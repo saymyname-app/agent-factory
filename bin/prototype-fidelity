@@ -20,7 +20,11 @@ prototype (`--prototype`, the directory `bin/prototype-conformance` checks):
   enclosing anchor, another number of occurrences, or another computed value
   of a compared property, is a deviation. A theme the preferred colour
   scheme does not reach on the prototype (it renders the same in every
-  theme) is not compared but reported « non mesurable » (af-yw9awk).
+  theme) is put on both sides by the common convention (the class
+  `theme-<name>` on `<html>` and `<body>`, `data-theme="<name>"`), and
+  compared only when that changes the prototype; otherwise it is reported
+  « non mesurable » (af-yw9awk). Tokens are resolved per theme on each
+  side, and each theme is compared to the same theme.
 
 The states are compared one at a time (af-6xjghg): the product of a state
 is stopped before that of the next is launched.
@@ -106,6 +110,14 @@ PROPERTIES = (
 # What a reference theme is for the browser: its preferred colour scheme
 # (observed on chrome-headless-shell 1243, 2026-10-07: 0 is dark, 1 is light).
 COLOUR_SCHEMES = {"light": "1", "dark": "0"}
+# The common way a page is put in a theme without the preferred colour
+# scheme: the measuring page applies it when the emulation does not reach a
+# theme of the prototype (its `theme` and `themes` parameters).
+THEME_CONVENTION = "la classe theme-{0} sur <html> et <body>, data-theme={0} sur <html>"
+# The theme a rule declares its tokens for: its `prefers-color-scheme`, or
+# a `[data-theme=<name>]` or `.theme-<name>` selector.
+CONTEXT_THEME = re.compile(r"prefers-color-scheme\s*:\s*([\w-]+)")
+SELECTOR_THEME = re.compile(r"\[data-theme\s*=\s*[\"']?([\w-]+)|\.theme-([\w-]+)")
 PIECE = "fidelity"
 # The full measure, in the work directory; the piece seals its fingerprint (af-2cpwkh).
 MEASURE_FILE = "measure.json"
@@ -129,8 +141,18 @@ MEASURE_PAGE = """<!doctype html>
   var frame = document.getElementById('page');
   var attribute = query.get('attr');
   var properties = query.get('props').split(',');
+  var theme = query.get('theme'), themes = (query.get('themes') || '').split(',');
   frame.style.width = query.get('w') + 'px';
   frame.style.height = query.get('h') + 'px';
+  function themed(doc) {
+    [doc.documentElement, doc.body].forEach(function (element) {
+      if (!element) { return; }
+      themes.forEach(function (other) { element.classList.remove('theme-' + other); });
+      element.classList.add('theme-' + theme);
+    });
+    doc.documentElement.setAttribute('data-theme', theme);
+    if (doc.body && doc.body.hasAttribute('data-theme')) { doc.body.setAttribute('data-theme', theme); }
+  }
   function measure() {
     try {
       var view = frame.contentWindow, anchors = [];
@@ -143,13 +165,15 @@ MEASURE_PAGE = """<!doctype html>
           parent: up ? up.getAttribute(attribute) : null, styles: styles
         });
       });
-      var scheme = view.getComputedStyle(frame.contentDocument.documentElement).getPropertyValue('color-scheme');
+      var doc = frame.contentDocument;
+      var scheme = view.getComputedStyle(doc.body || doc.documentElement).getPropertyValue('color-scheme');
       out.textContent = JSON.stringify({ok: true, anchors: anchors, scheme: scheme});
     } catch (error) {
       out.textContent = JSON.stringify({ok: false, error: String(error)});
     }
   }
   frame.addEventListener('load', function () {
+    if (theme && frame.contentDocument) { themed(frame.contentDocument); }
     var fonts = frame.contentDocument && frame.contentDocument.fonts;
     if (fonts && fonts.ready) { fonts.ready.then(measure, measure); } else { measure(); }
   });
@@ -465,11 +489,13 @@ def css_rules(css: str, context: str = "") -> list[tuple[str, str, str]]:
     return rules
 
 
-def tokens_of(page_url: str, what: str) -> dict[str, str]:
+def tokens_of(page_url: str, what: str, themes: list[str]) -> dict[str, str]:
     """The tokens the sources of a page declare: custom properties on `:root`,
-    `html` or a `[data-theme…]` selector, in its `<style>` blocks and the
-    style sheets it links from its own address. A token declared for the dark
-    theme is another token than the light one."""
+    `html`, a `[data-theme…]` or a `.theme-<name>` selector, in its `<style>`
+    blocks and the style sheets it links from its own address. They are
+    resolved per theme: those of no theme, then those declared for it. A
+    token of the light theme keeps its name; another theme's is named after
+    it (`--bg (dark)`), so each theme is compared to the same theme."""
     sources = StyleSources()
     sources.feed(fetch(page_url, what))
     css = list(sources.inline)
@@ -478,16 +504,23 @@ def tokens_of(page_url: str, what: str) -> dict[str, str]:
         sheet = urllib.parse.urljoin(page_url, href)
         if urllib.parse.urlsplit(sheet)[:2] == origin:
             css.append(fetch(sheet, f"la feuille de style de {what}"))
-    tokens: dict[str, str] = {}
-    for context, selector, body in css_rules("\n".join(css)):
-        if not re.search(r":root|\bhtml\b|\[data-theme", selector):
-            continue
-        dark = "dark" in context or "dark" in selector
-        for declaration in body.split(";"):
-            name, separator, value = declaration.partition(":")
-            if separator and name.strip().startswith("--"):
-                tokens[name.strip() + (" (dark)" if dark else "")] = re.sub(r"\s+", "", value).lower()
-    return tokens
+    declared: dict[str | None, dict[str, str]] = {}
+    for context, selectors, body in css_rules("\n".join(css)):
+        for selector in selectors.split(","):
+            if not re.search(r":root|\bhtml\b|\[data-theme|\.theme-", selector):
+                continue
+            plain = re.sub(r":not\([^)]*\)", "", selector)
+            found = CONTEXT_THEME.search(context) or SELECTOR_THEME.search(plain)
+            theme = next((group for group in found.groups() if group), None) if found else next(
+                (name for name in ("dark", "light") if name in context or name in plain), None)
+            for declaration in body.split(";"):
+                name, separator, value = declaration.partition(":")
+                if separator and name.strip().startswith("--"):
+                    declared.setdefault(theme, {})[name.strip()] = re.sub(r"\s+", "", value).lower()
+    return {
+        name if theme == "light" else f"{name} ({theme})": value
+        for theme in themes for name, value in {**declared.get(None, {}), **declared.get(theme, {})}.items()
+    }
 
 
 # --- structure and computed styles, in the browser -------------------------------
@@ -531,13 +564,20 @@ def dump_dom(browser: str, url: str, rendering: dict[str, Any]) -> str:
             time.sleep(0.1)
 
 
-def measure_page(browser: str, measure_url: str, target: str, attribute: str, rendering: dict[str, Any], what: str) -> dict[str, Any]:
+def measure_page(
+    browser: str, measure_url: str, target: str, attribute: str, rendering: dict[str, Any], what: str,
+    themes: list[str] | None = None,
+) -> dict[str, Any]:
     """The anchors of one page, in document order (name, element, enclosing
-    anchor and computed styles), and the computed `color-scheme` of its root
-    (`scheme`)."""
-    query = urllib.parse.urlencode({
+    anchor and computed styles), and the computed `color-scheme` of its body
+    (`scheme`). With `themes`, the page is first put in the theme of the
+    rendering by the convention (THEME_CONVENTION)."""
+    fields = {
         "target": target, "attr": attribute, "props": ",".join(PROPERTIES),
-        "w": rendering["width"], "h": rendering["height"]})
+        "w": rendering["width"], "h": rendering["height"]}
+    if themes:
+        fields.update(theme=rendering["theme"], themes=",".join(themes))
+    query = urllib.parse.urlencode(fields)
     found = MEASURE_RE.search(dump_dom(browser, f"{measure_url}?{query}", rendering))
     try:
         measured = json.loads(html.unescape(found.group(1))) if found and found.group(1).strip() else None
@@ -570,7 +610,8 @@ def unmeasured_themes(renderings_: list[dict[str, Any]], prototype: dict[str, di
             if rendering["theme"] != first["scheme"]:
                 out[rendering["label"]] = (
                     f"le prototype mesure à l'identique en {themes} : l'émulation de prefers-color-scheme ne change "
-                    f"pas son thème (color-scheme de sa racine : {first['scheme'] or 'aucun'}) ; son thème "
+                    f"pas son thème (color-scheme de sa racine : {first['scheme'] or 'aucun'}), "
+                    f"{THEME_CONVENTION.format(rendering['theme'])} non plus ; son thème "
                     f"{rendering['theme']} passe par un autre mécanisme, que le manifeste ne déclare pas")
     return out
 
@@ -640,8 +681,9 @@ def measure(plan: dict[str, Any]) -> dict[str, Any]:
 def measure_state(plan: dict[str, Any], state: dict[str, Any], deviations: list[dict[str, Any]]) -> dict[str, Any]:
     """The records of one launched state; its deviations are added to `deviations`."""
     browser, attribute = plan["browser"], plan["anchor_attribute"]
-    reference_tokens = tokens_of(state["prototype_url"], f"la page du prototype (état {state['id']})")
-    delivered_tokens = tokens_of(state["delivered_url"], f"la page livrée (état {state['id']})")
+    themes = list(dict.fromkeys(rendering["theme"] for rendering in plan["renderings"]))
+    reference_tokens = tokens_of(state["prototype_url"], f"la page du prototype (état {state['id']})", themes)
+    delivered_tokens = tokens_of(state["delivered_url"], f"la page livrée (état {state['id']})", themes)
     for name, value in reference_tokens.items():
         if delivered_tokens.get(name) != value:
             deviations.append({
@@ -659,6 +701,17 @@ def measure_state(plan: dict[str, Any], state: dict[str, Any], deviations: list[
     # A theme not measurable on the prototype is not compared: it is one
     # deviation of its own, never green and never accepted (af-yw9awk).
     unmeasured = unmeasured_themes(plan["renderings"], measured)
+    # Such a theme is put on the prototype by the convention, and compared
+    # only when that changes what is measured on it.
+    by_convention = []
+    for rendering in plan["renderings"]:
+        if rendering["label"] in unmeasured:
+            themed = measure_page(browser, plan["measure_url"], state["prototype_url"], attribute, rendering,
+                                  "le prototype", themes)
+            if themed["anchors"] != measured[rendering["label"]]["anchors"]:
+                measured[rendering["label"]] = themed
+                by_convention.append(rendering["label"])
+                del unmeasured[rendering["label"]]
     for rendering in plan["renderings"]:
         if rendering["label"] in unmeasured:
             deviations.append({
@@ -667,7 +720,8 @@ def measure_state(plan: dict[str, Any], state: dict[str, Any], deviations: list[
                 "delivered": "non mesurable"})
             continue
         prototype = measured[rendering["label"]]["anchors"]
-        delivered = measure_page(browser, plan["measure_url"], state["delivered_url"], attribute, rendering, "le livré")["anchors"]
+        delivered = measure_page(browser, plan["measure_url"], state["delivered_url"], attribute, rendering, "le livré",
+                                 themes if rendering["label"] in by_convention else None)["anchors"]
         compared, only_delivered = compare_anchors(prototype, delivered)
         for record in compared:
             records.append({"viewport": rendering["label"], **record})
@@ -681,7 +735,7 @@ def measure_state(plan: dict[str, Any], state: dict[str, Any], deviations: list[
     return {
         "screen": state["screen"], "path": state["path"],
         "viewports": [r["label"] for r in plan["renderings"] if r["label"] not in unmeasured],
-        "unmeasured": unmeasured, "anchors": anchors, "records": records,
+        "unmeasured": unmeasured, "themed_by_convention": by_convention, "anchors": anchors, "records": records,
         "tokens": {"compared": len(reference_tokens),
                    "only_delivered": sorted(name for name in delivered_tokens if name not in reference_tokens)},
         "anchors_only_delivered": extra,

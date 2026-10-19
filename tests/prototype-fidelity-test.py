@@ -291,13 +291,13 @@ class PrototypeFidelityTest(unittest.TestCase):
             page.write_text(page.read_text().replace("</head>", prototype_style + "\n</head>"))
         self.edit_product("</title></head>", "</title>" + delivered_style + "</head>", "thèmes")
 
-    def test_theme_the_prototype_reaches_only_by_a_class_is_unmeasured_not_compared(self):
-        # The prototype is dark on :root and turns light only by a class
-        # (the Cockpit's, Spec af-2zseit); the product follows the preferred
-        # colour scheme, light by default.
+    def test_theme_the_prototype_reaches_only_by_another_class_is_unmeasured_not_compared(self):
+        # The prototype is dark on :root and turns light only by a class that
+        # is not the convention (theme-<name>, data-theme); the product
+        # follows the preferred colour scheme, light by default.
         self.themed(
             "<style>:root{color-scheme:dark}h1{color:rgb(236, 237, 243)}"
-            ".theme-light{color-scheme:light}.theme-light h1{color:rgb(23, 32, 46)}</style>",
+            ".clair{color-scheme:light}.clair h1{color:rgb(23, 32, 46)}</style>",
             "<style>:root{color-scheme:light}h1{color:rgb(23, 32, 46)}"
             "@media (prefers-color-scheme: dark){:root{color-scheme:dark}h1{color:rgb(236, 237, 243)}}</style>")
 
@@ -312,6 +312,8 @@ class PrototypeFidelityTest(unittest.TestCase):
             unmeasured = answer["states"][state]["unmeasured"]
             self.assertEqual(["desktop", "narrow"], sorted(unmeasured))
             self.assertIn("prefers-color-scheme", unmeasured["desktop"])
+            self.assertIn("theme-light", unmeasured["desktop"])
+            self.assertEqual([], answer["states"][state]["themed_by_convention"])
             for viewport in VIEWPORTS:
                 found = self.named(answer["deviations"], state=state, viewport=viewport, kind="theme")
                 self.assertEqual([("thème light", None, "non mesurable")],
@@ -326,6 +328,48 @@ class PrototypeFidelityTest(unittest.TestCase):
         found = self.named(answer["deviations"], state="empty", viewport="desktop@dark", anchor="fixture-state")
         self.assertEqual([("style", "color", "rgb(236, 237, 243)", "rgb(200, 200, 200)")],
                          [(d["kind"], d["property"], d["prototype"], d["delivered"]) for d in found])
+
+    def test_theme_the_prototype_reaches_by_the_theme_class_is_measured_in_both_themes(self):
+        # The Cockpit's prototype (Spec af-2zseit): dark on :root, light by the
+        # class .theme-light; the product follows the preferred colour scheme,
+        # light by default. Each theme is compared to the same theme.
+        self.themed(
+            "<style>:root{color-scheme:dark;--ink:#ecedf3}h1{color:var(--ink)}"
+            ".theme-light{color-scheme:light;--ink:#17202e}</style>",
+            "<style>:root{color-scheme:light;--ink:#17202e}h1{color:var(--ink)}"
+            "@media (prefers-color-scheme: dark){:root{color-scheme:dark;--ink:#ecedf3}}</style>")
+
+        answer = self.green()
+
+        for state in STATES:
+            measured = answer["states"][state]
+            self.assertEqual({}, measured["unmeasured"])
+            self.assertEqual(["desktop", "narrow"], measured["themed_by_convention"])
+            self.assertEqual(["desktop@dark", "narrow@dark", "desktop", "narrow"], measured["viewports"])
+            # --ink in the light theme and in the dark one.
+            self.assertEqual(2, measured["tokens"]["compared"])
+
+        # Compared, not skipped: a light product that differs is red in the
+        # light theme only, token and anchor named.
+        self.edit_product(":root{color-scheme:light;--ink:#17202e}", ":root{color-scheme:light;--ink:#000000}", "encre claire")
+        answer = self.red()
+        found = self.named(answer["deviations"], state="empty", kind="token")
+        self.assertEqual([("--ink", "#17202e", "#000000")], [(d["property"], d["prototype"], d["delivered"]) for d in found])
+        found = self.named(answer["deviations"], state="empty", anchor="fixture-state", property="color")
+        self.assertEqual([("desktop", "#17202e", "#000000"), ("narrow", "#17202e", "#000000")], [(d["viewport"], d["prototype"], d["delivered"]) for d in found])
+
+    def test_theme_the_prototype_reaches_by_the_data_theme_attribute_is_measured(self):
+        self.themed(
+            "<style>:root{color-scheme:dark;--ink:#ecedf3}h1{color:var(--ink)}"
+            "[data-theme=\"light\"]{color-scheme:light;--ink:#17202e}</style>",
+            "<style>:root{color-scheme:light;--ink:#17202e}h1{color:var(--ink)}"
+            "@media (prefers-color-scheme: dark){:root{color-scheme:dark;--ink:#ecedf3}}</style>")
+
+        answer = self.green()
+
+        for state in STATES:
+            self.assertEqual(["desktop", "narrow"], answer["states"][state]["themed_by_convention"])
+            self.assertEqual(2, answer["states"][state]["tokens"]["compared"])
 
     def test_prototype_that_follows_the_preferred_colour_scheme_is_measured_in_both_themes(self):
         style = ("<style>:root{color-scheme:light}h1{color:rgb(23, 32, 46)}"
