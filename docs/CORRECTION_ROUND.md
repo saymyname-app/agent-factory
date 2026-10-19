@@ -99,20 +99,15 @@ closes nothing: code decides what follows.
 |---|---|
 | the author session is at work (its bead is open): the ticket is not finished at the tip, a Blocking Finding has no answer, or the evaluation refused at the commit of the round | waits (`pending`) |
 | the answers wait for their judgement, or the ticket waits for its evaluation at the new tip | waits (`pending`): `bin/code-review` sends the judgement to a second reviewer session, `bin/ticket-evaluation` evaluates the new tip |
-| both accepted at the tip | nothing: the merge follows; unless the mechanical fidelity is red there (below) |
+| both accepted at the tip | nothing: the merge follows, whatever the fidelity (below) |
 | a review judgement or replay blocks, or an evaluation remains not observed at the new tip, even while the other control is pending | **stops the ticket**; the pending control cannot lift the stop |
 | the author session ended (its bead is closed) without finishing the ticket at the tip, or leaving a Blocking Finding unanswered or the refused evaluation as it was | **stops the ticket** |
 
-**A red fidelity is a stop too** (af-ckbood). The mechanical fidelity
-(`bin/ticket-end fidelity`, `docs/PROTOTYPE_FIDELITY.md`) blocks the merge,
-and no round takes its deviations up: only a Planning Exception accepts one.
-So once the code review and the evaluation both accept the tip of a finished
-ticket whose fidelity is red at that same tip, `settle` stops it and raises
-it, before or after the round (« fidélité au Validated Prototype rouge (N
-écart(s)) »). Before this, such a ticket waited with nobody told
-(T02R, 2026-10-18: favorable review and evaluation, 23 134 deviations, no
-request). A stop on fidelity has no Blocking Finding to override: nothing of
-it merges until a Planning Exception or a new tip.
+**A red fidelity never stops a ticket** (ADR-0032, af-hcriwn, 2026-10-19;
+it replaced af-ckbood). The fidelity to the Validated Prototype is still
+measured at the tip (`bin/ticket-end fidelity`) and joined for the visual
+finishing pass Benjamin judges at the end of the Spec; it is not part of a
+stop, nor of the « ne suffit pas » of an override request.
 
 Before raising the stop, `bin/ticket-evaluation cleanup` reaps only this
 ticket's products. A failed cleanup leaves the stop recorded and is retried on

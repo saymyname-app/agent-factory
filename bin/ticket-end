@@ -69,7 +69,7 @@ CONDITIONS = (
     ("criteria", "Critères évalués identiques au digest approuvé"),
     ("handoff", "Ticket Handoff valide, avec preuve du rouge et preuve de démonstration"),
     ("evaluation", "Ticket Evaluation : tout « observé avec preuve » ; prefactoring ou sans interface : le produit démarre"),
-    ("fidelity", "Contrôles mécaniques de fidélité verts si le ticket touche un écran"),
+    ("fidelity", "Fidélité au Validated Prototype mesurée et jointe, non bloquante (af-hcriwn)"),
     ("deferral", "Détecteur de report passé"),
     ("merge", "Fusionné dans la branche d'intégration, tests verts sur le résultat fusionné"),
     ("evidence", "Preuves recevables, liées à la pointe exacte de la branche du ticket au moment de la fusion"),
@@ -368,21 +368,18 @@ def condition_evaluation(ticket: dict[str, Any], tip: str, evidence: Evidence, r
 
 
 def condition_fidelity(ticket: dict[str, Any], tip: str, evidence: Evidence, repo: Path, convoy: dict[str, Any]) -> Verdict:
+    """Informative, never blocking (Benjamin, 2026-10-19, af-hcriwn): the
+    measure is joined for the visual finishing pass Benjamin judges at the
+    end of the Spec. The verdict always passes and says what was measured."""
     if not ticket.get("interface"):
         return True, "sans objet : le ticket ne touche aucun écran (aucune référence de Validated Prototype posée à la publication)"
     fidelity = ticket.get("fidelity")
-    if not fidelity:
-        return False, f"aucun contrôle de fidélité sur ce ticket d'interface : la commande n'a pas tourné à la pointe {sha(tip)}"
-    if fidelity.get("commit") != tip:
-        return False, (f"contrôle de fidélité fait au commit {sha(fidelity.get('commit'))} et non à la pointe "
-                       f"{sha(tip)} : à refaire sur le commit qui fusionne")
+    if not fidelity or fidelity.get("commit") != tip:
+        return True, f"non bloquante (af-hcriwn) : aucune mesure de fidélité à la pointe {sha(tip)}"
     if fidelity.get("state") not in FIDELITY_PASSING:
-        open_ = [f"{d.get('state')}/{d.get('anchor') or d.get('property')}" for d in fidelity.get("deviations") or []
-                 if d.get("status") != FIDELITY_PASSING[1]]
-        return False, f"fidélité {fidelity.get('state')} : écart ouvert ({', '.join(open_[:5])})"
-    problem = evidence.at(str(fidelity.get("piece")), tip, "relevé de fidélité")
-    if problem:
-        return False, problem
+        count = fidelity.get("deviation_count") or len(fidelity.get("deviations") or [])
+        return True, (f"non bloquante (af-hcriwn) : fidélité {fidelity.get('state')} à {sha(tip)}, {count} écart(s) "
+                      f"joint(s) pour la passe de finition (pièce {fidelity.get('piece')})")
     return True, (f"fidélité {fidelity['state']} à {sha(tip)} sur {', '.join(fidelity.get('screens') or [])} "
                   f"(pièce {fidelity.get('piece')})")
 
@@ -435,7 +432,9 @@ def condition_evidence(ticket: dict[str, Any], tip: str, evidence: Evidence, rep
         last = rounds[-1]
         at_tip += [str(item["evidence"]) for item in [*(last.get("criteria") or []), last.get("demonstration_line") or {},
                                                       last] if item.get("evidence")]
-    if ticket.get("fidelity"):
+    # A fidelity measure of another commit is not merged evidence: it is not
+    # required (condition 4 informs only, af-hcriwn).
+    if (ticket.get("fidelity") or {}).get("commit") == tip:
         at_tip.append(str(ticket["fidelity"].get("piece")))
     elsewhere = [f"{name} ({sha(evidence.pieces[name].get('commit'))})" for name in dict.fromkeys(at_tip)
                  if name in evidence.pieces and evidence.pieces[name].get("commit") != tip]

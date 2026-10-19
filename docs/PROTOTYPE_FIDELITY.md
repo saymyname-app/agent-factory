@@ -2,6 +2,13 @@
 
 ## Status and purpose
 
+**Not blocking since 2026-10-19** (ADR-0032, Benjamin, af-hcriwn). The
+command runs and records exactly as below, but no gate stops on its result:
+condition 4 of `bin/ticket-end`, condition 3 of `bin/spec-end` and the stop of
+`bin/correction-round` only report it. The deviations are joined for one
+visual finishing pass Benjamin judges at the end of the Spec. Where this page
+says « blocking » or « red stops », read « reported ».
+
 `bin/prototype-fidelity` compares a delivered screen to its **Validated
 Prototype** (`docs/VALIDATED_PROTOTYPE.md`), state by state, by code. It is
 the blocking half of the fidelity proof Benjamin chose (Spec §3,
