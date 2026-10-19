@@ -30,6 +30,8 @@ ESCALATION_TOOL = ROOT / "bin" / "escalation-door"
 FIXTURE = Path("tests") / "fixtures" / "delivery-fixture-city"
 FAKE_GC = ROOT / "tests" / "fixtures" / "convoy-state" / "gc"
 GATE_REPORT = ROOT / "tests" / "fixtures" / "convoy-state" / "ticket-end-report.json"
+FAKE_BROWSER = ROOT / "tests" / "fixtures" / "prototype-fidelity" / "browser"
+PROTOTYPE = f"{FIXTURE}/prototype"
 
 CONVOY, SPEC = "fx-convoy", "fx-spec"
 # The graph of the Fixture City: T2 waits for T1, T3 for T2; T4 waits for nothing.
@@ -101,7 +103,17 @@ class TicketExitTest(unittest.TestCase):
             "EVIDENCE_STORE_DIR": str(self.store),
             "GIT_CONFIG_GLOBAL": os.devnull,
             "GIT_CONFIG_SYSTEM": os.devnull,
+            "EVIDENCE_CAPTURE_BROWSER": str(FAKE_BROWSER),
+            "EVIDENCE_FAKE_BROWSER_LOG": str(self.tmp / "browser.log"),
+            "TICKET_END_WORK_DIR": str(self.tmp / "gate-work"),
         }
+        # The profile of the Fixture City, which declares its screen (af-r2c0tx).
+        descriptor = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
+        (self.root / "config" / "project-descriptors").mkdir(parents=True)
+        (self.root / "config" / "project-descriptors" / "fx.json").write_text(json.dumps(
+            {**descriptor, "rigs": ["fx-rig"], "stacks": {"fx-rig": ["fixture-stack"]}}))
+        for name in ("FIDELITY_FAKE_BROWSER_MODE", "EVIDENCE_FAKE_BROWSER_MODE"):
+            self.env.pop(name, None)
         # As an author's tool call would run, but never as this suite's own session.
         for name in ("CONVOY_STATE_FAKE_SLING_FAIL", "CONVOY_STATE_FAKE_MAIL_FAIL", *SESSION_IDENTITY):
             self.env.pop(name, None)
@@ -523,6 +535,80 @@ class TicketExitTest(unittest.TestCase):
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         self.assertTrue(json.loads(proc.stdout)["markers"][0]["declared"])
         self.assertEqual((before, []), (self.tracker.read_bytes(), self.store_files()))
+
+    # --- the fidelity to the Validated Prototype, measured before « terminé » (af-r2c0tx) ---
+
+    def touches_the_screen(self):
+        """T2 as the publication door poses an interface ticket: the
+        reference of the Validated Prototype of the Fixture City."""
+        bead = json.loads(self.tracker.read_text())["beads"][T2]
+        self.edit(T2, description=bead["description"].replace(
+            "## Target rigs", "## Validated Prototype\n\n- branche : main\n"
+            f"- commit : {self.base}\n- chemin : {PROTOTYPE}\n- états : empty, content\n\n## Target rigs"))
+        self.assertTrue(self.shown()["interface"])
+
+    def without_anchor(self):
+        """The code of T2, its list delivered without the anchor of the prototype."""
+        app = self.repo / APP
+        source = app.read_text()
+        self.assertIn('<ul data-anchor="fixture-items">', source)
+        app.write_text(source.replace('<ul data-anchor="fixture-items">', "<ul>"))
+        return self.code()
+
+    def test_finished_on_an_interface_ticket_is_refused_while_its_fidelity_is_red(self):
+        """Faux si l'auteur sort « terminé » sans avoir vu ses écarts au
+        Validated Prototype : T02R et T02R2 ont épuisé leur tour de correction
+        avant que ticket-end ne les mesure (af-r2c0tx)."""
+        self.touches_the_screen()
+        head = self.without_anchor()
+
+        proc = self.assert_refused_and_nothing_written(lambda: self.finish(self.handoff()),
+                                                       "fidélité", "fixture-items", "planning_exception")
+
+        answer = json.loads(proc.stdout)
+        self.assertEqual((head, "rouge"), (answer["fidelity"]["commit"], answer["fidelity"]["result"]))
+        self.assertEqual({("fixture-items", "absent")},
+                         {(d["anchor"], d["kind"]) for d in answer["fidelity"]["deviations"]})
+        self.assertIsNone(self.shown()["exit"])
+
+    def test_finished_on_an_interface_ticket_whose_fidelity_is_green_is_recorded(self):
+        self.touches_the_screen()
+        head = self.code()
+
+        self.exited("--exit", "finished", "--repo", self.repo, "--handoff", self.handoff())
+
+        self.assertEqual(("finished", head), (self.shown()["exit"]["exit"], self.shown()["handoff"]["commit"]))
+
+    def test_finished_passes_once_the_operator_accepted_the_deviation_on_its_anchor(self):
+        self.touches_the_screen()
+        self.without_anchor()
+        self.raise_exception("--kind", "semantic", "--summary", "La liste est livrée sans sa région",
+                             "--anchor", "fixture-items", deviations=[self.DEVIATION])
+        accept = self.shown()["planning_exceptions"][0]["accept_option"]
+        proc = self.run_cmd(ESCALATION_TOOL, "repondre", T2, accept, "--actor", "operateur-test")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+
+        self.exited("--exit", "finished", "--repo", self.repo, "--handoff", self.handoff(deviations=[self.DEVIATION]))
+
+        self.assertEqual("finished", self.shown()["exit"]["exit"])
+
+    def test_the_measure_alone_lists_the_deviations_and_writes_nothing(self):
+        self.touches_the_screen()
+        self.without_anchor()
+
+        proc = self.assert_refused_and_nothing_written(
+            lambda: self.run_cmd(TOOL, "fidelity", CONVOY, T2, "--repo", self.repo), status=EXIT_REFUSED)
+
+        answer = json.loads(proc.stdout)
+        self.assertEqual(["fixture-items"], sorted({d["anchor"] for d in answer["deviations"]}))
+        self.assertEqual(["content", "empty"], sorted(answer["states"]))
+
+    def test_a_ticket_that_touches_no_screen_is_not_measured(self):
+        self.code()
+        proc = self.run_cmd(TOOL, "fidelity", CONVOY, T2, "--repo", self.repo)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual("sans objet", json.loads(proc.stdout)["result"])
+        self.assertFalse((self.tmp / "browser.log").exists())
 
     # --- AC2: Planning Exception and operator request park the ticket ----------
 

@@ -150,7 +150,10 @@ anchor: it is repaired, never accepted.
   of a Spec the caller is `bin/spec-end run` (T23, `docs/SPEC_END.md`): no
   ticket and no `--screen`, every screen of the profile on the states each
   Validated Prototype of the convoy lists, at the tip of the integration
-  branch; nothing is filed in the evidence store there.
+  branch; nothing is filed in the evidence store there. Before both, the
+  author's « terminé » runs `bin/ticket-end measure`, the ticket's check
+  without `--convoy`: nothing written, and refused while it is red
+  (af-r2c0tx, `docs/TICKET_EXIT.md`).
 - A state is launched on the dataset of the same name; the profile has no
   other mapping.
 - Text content is not compared: both sides render the same synthetic
