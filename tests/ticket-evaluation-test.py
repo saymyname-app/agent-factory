@@ -1845,6 +1845,62 @@ class TicketEvaluationTest(unittest.TestCase):
                          (self.tmp / "cancel.log").read_text().splitlines())
         self.assertNotIn("evaluation", self.shown()["verdicts"])
 
+    def stopped_still_refused(self, tip):
+        """The code review leaves one Blocking Finding at `tip`, and the
+        ticket stops after its round (bin/correction-round): the evaluation
+        that was open is withdrawn with its products."""
+        self.state("open-code-review", CONVOY, SLICE, "--kind", "review", "--commit", tip, "--base", self.base)
+        self.state("record-code-review", CONVOY, SLICE, "--file", self.json_file("code-review.json", {
+            "commit": tip, "answers": {}, "recorded_by": "delivery-reviewer-fx", "findings": [
+                {"axis": "spec", "blocking": True, "summary": "Le nombre n'est pas écrit dans le cas.",
+                 "citation": {"source": "ticket", "quote": DEMONSTRATION}}]}))
+        self.state("stop-ticket", CONVOY, SLICE, "--reason", "still_refused", "--detail", "revue de code (F1.1)")
+        self.tool("cleanup")
+        self.settle()
+        self.assertNotIn("request", self.evaluation())
+
+    def test_a_ticket_stopped_still_refused_whose_every_finding_is_overridden_is_evaluated_once_at_its_tip(self):
+        # T02R2 (af-r2c0tx, af-ppdbza): the stop withdrew the evaluation open
+        # at the tip; once the operator overrides every Blocking Finding left,
+        # the evaluation the merge still needs is launched again, by code.
+        tip, _ = self.open_evaluation()
+        self.stopped_still_refused(tip)
+        self.state("override-finding", CONVOY, SLICE, "--finding", "F1.1", "--approver", "benjamin-hurand",
+                   "--words", "Je passe outre F1.1.")
+        launched_before = len(self.launches())
+
+        settled = self.settle()
+
+        self.assertEqual([tip], [entry["commit"] for entry in settled["launched"]], settled)
+        self.assertEqual(launched_before + 1, len(self.launches()))
+        # The cleanup of the stop, run again by each pass of
+        # bin/correction-round, leaves the products of that evaluation alone.
+        self.tool("cleanup")
+        request = self.evaluation()["request"]
+        self.assertTrue(self.evaluation().get("live"))
+        again = self.settle()
+        self.assertEqual(([], []), (again["launched"], again["relaunched"]))
+        self.assertEqual(launched_before + 1, len(self.launches()))
+        # The Evaluator's states are recorded on the stopped ticket.
+        self.recorded(self.handed(tip, request))
+        self.assertEqual(("favorable", tip), (self.evaluation()["state"]["verdict"], self.evaluation()["state"]["commit"]))
+        self.assertEqual("still_refused", self.shown()["stop"]["reason"])
+        # Favorable at the tip, the overridden ticket is merged by code.
+        self.settle()
+        self.edit(SLICE, description=TICKET_TEXT)
+        merged = self.merge()
+        self.assertEqual([SLICE], [entry["id"] for entry in merged["merged"]], merged)
+
+    def test_a_ticket_stopped_still_refused_without_an_override_of_every_finding_is_not_evaluated(self):
+        tip, _ = self.open_evaluation()
+        self.stopped_still_refused(tip)
+        launched_before = len(self.launches())
+
+        settled = self.settle()
+
+        self.assertEqual(([], launched_before), (settled["launched"], len(self.launches())))
+        self.assertNotIn("request", self.evaluation())
+
     def test_a_withdrawn_ticket_with_an_open_evaluation_releases_its_request_and_product(self):
         _, request = self.open_evaluation()
         self.state("record-gate", CONVOY, SLICE, "--gate", "withdrawn")
