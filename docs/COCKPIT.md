@@ -1167,3 +1167,14 @@ Status: « Fusionné » (`gc.flow.merge` outcome merged), « Abandonné »
 journal's rhythm and keeps the 24 most recently updated; the three most
 recent fill « Derniers runs » of the Vue d'ensemble when no `gc.run_card`
 is written. Test: `tests/cockpit-runs-test.py`.
+
+## « Usine »: machine, sources, agents (direct build, 2026-10-19)
+
+`GET /usine` (`lib/cockpit/ui/factory/page.py`): the machine the cockpit
+runs on, read at each request (`os.getloadavg`, `/proc/meminfo`, the disk
+of the home); every source of the read model with its freshness and last
+read; the model of each delivery role as seen on the most recent run that
+launched it, and the sessions at work; then the health zone and the stop
+and access zones the home already had. Provider quotas, the configuration
+form and the clean-up of the reference are left out: the cockpit has no
+real reading of them yet. Test: `tests/cockpit-factory-page-test.py`.

@@ -34,6 +34,7 @@ from cockpit.runs.derive import runs_from_beads
 from cockpit.ui.base.page import render_document, render_fresh, render_home_zones
 from cockpit.ui.health.page import render_health_zone, render_status_line
 from cockpit.ui.access.page import render_access_zone
+from cockpit.ui.factory.page import CSS as FACTORY_PAGE_CSS, read_machine, render_factory_page
 from cockpit.ui.home.overview import CSS as OVERVIEW_CSS
 from cockpit.ui.home.overview import overview_view, render_overview
 from cockpit.ui.home.page import render_requests_section
@@ -56,7 +57,7 @@ ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
 # The destinations of Panorama whose Prototype Fold is not done yet: their
 # address answers, in the shell, that they are not served here yet.
 NOT_FOLDED = {
-    href: (key, label) for key, label, href in NAVIGATION if key not in (HOME, "projets", "journal", "runs")
+    href: (key, label) for key, label, href in NAVIGATION if key not in (HOME, "projets", "journal", "runs", "usine")
 }
 NOT_FOLDED.update({"/runs/job": ("runs", "Runs")})
 
@@ -120,6 +121,9 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             return
         if path.startswith("/projet/"):
             self._send_project_page(read_model)
+            return
+        if path == "/usine":
+            self._send_factory_page(read_model)
             return
         if path == "/runs":
             self._send_runs_page(read_model)
@@ -439,6 +443,22 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             return None, bool(row and row.get("failed_at") is not None), None
         checked = datetime.fromtimestamp(row["read_at"], tz=PARIS).strftime("%H:%M") if row["read_at"] else None
         return runs_from_beads(row["value"], read_model.now()), False, checked
+
+    def _send_factory_page(self, read_model):
+        """GET /usine: the machine, the sources, the agents seen at work,
+        then the health and the zones that change the factory."""
+        snapshot = read_model.snapshot()
+        now = read_model.now()
+        runs, _, _ = self._runs(read_model)
+        health = self._compute_health(read_model)
+        notify = self.server.notify
+        actions_html = self._render_stop_zone(snapshot) + render_access_zone(
+            self.server.benjamin_login, snapshot.get("tailscale"), now)
+        main = render_factory_page(
+            read_machine(), snapshot, runs, bool(notify and notify.configured()),
+            render_health_zone(health, checked_at=_latest_read_at(snapshot, ("beads", "git"))), actions_html, now)
+        self._send_page(read_model, "usine", main, extra_css=FACTORY_PAGE_CSS,
+                        headers={"Set-Cookie": session_cookie_header(self.server.session_token)}, snapshot=snapshot)
 
     def _send_runs_page(self, read_model):
         """GET /runs: the runs, filtered by ?filtre=tous|en-cours|termines."""
