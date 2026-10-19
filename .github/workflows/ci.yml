@@ -143,6 +143,22 @@ jobs:
               config/fixture-city-bwrap.apparmor
           fi
 
+      # The Cockpit's criterion tests measure pages in a headless Chromium:
+      # the one the hosts run, Playwright's headless shell at the pin of
+      # bin/factory-host-install. Its sandbox needs a user namespace, which
+      # this runner restricts: without the hosts' profile the page is empty
+      # and the test reads « the browser measured nothing » (PR #683,
+      # af-wplvhs). tests/ci-capture-browser-test.sh keeps the pin and the
+      # profile those of the hosts, and renders a page here.
+      - name: Ensure the capture browser
+        if: runner.environment == 'github-hosted'
+        run: |
+          npx --yes playwright@1.63.0 install chromium-headless-shell
+          if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || true)" = "1" ]; then
+            sudo apparmor_parser --replace --skip-read-cache --skip-cache \
+              config/ci-capture-browser.apparmor
+          fi
+
       # The second project of the Delivery Fixture City is a JSON API on
       # Node.js (T35, af-f62cxt): its launch recipe, its test command and its
       # regression command run `node`. The runner ships it in /usr/local/bin,
