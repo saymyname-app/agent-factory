@@ -651,7 +651,7 @@ class SpecEndTest(Harness):
         accept = self.requested()
         self.assertEqual("ouvert", self.shown(SLICE)["tracked_items"][0]["state"])
 
-        self.door("repondre", SLICE, accept)
+        self.door("repondre", SLICE, accept, "--actor", "operateur-test")
 
         item = self.shown(SLICE)["tracked_items"][0]
         self.assertEqual(("not_done.1", NOT_DONE, "accepté par Benjamin"), (item["id"], item["text"], item["state"]))
@@ -664,7 +664,7 @@ class SpecEndTest(Harness):
         accept = self.requested()
         other = next(letter for letter in "ab" if letter != accept)
 
-        self.door("repondre", SLICE, other)
+        self.door("repondre", SLICE, other, "--actor", "operateur-test")
 
         item = self.shown(SLICE)["tracked_items"][0]
         self.assertEqual("ouvert", item["state"])

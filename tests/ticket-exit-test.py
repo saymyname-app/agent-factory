@@ -683,7 +683,7 @@ class TicketExitTest(unittest.TestCase):
         self.assertEqual(1, len(accepting))
         self.assertIn("fixture-items", accepting[0]["option"])
 
-        proc = self.run_cmd(ESCALATION_TOOL, "repondre", T2, raised[0]["accept_option"])
+        proc = self.run_cmd(ESCALATION_TOOL, "repondre", T2, raised[0]["accept_option"], "--actor", "operateur-test")
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
 
         self.assertEqual(["fixture-items"], self.shown()["accepted_anchors"])
@@ -703,7 +703,7 @@ class TicketExitTest(unittest.TestCase):
         self.assertIn("reprend", accepting[0]["consequence"])
         self.assertNotIn("déjà verts", accepting[0]["consequence"])
 
-        proc = self.run_cmd(ESCALATION_TOOL, "repondre", T2, "c")
+        proc = self.run_cmd(ESCALATION_TOOL, "repondre", T2, "c", "--actor", "operateur-test")
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
 
         self.assertTrue(self.shown()["planning_exceptions"][0]["accepted"])

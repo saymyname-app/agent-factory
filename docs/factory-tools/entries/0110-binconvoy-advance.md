@@ -91,7 +91,10 @@ touché : il reste avancé par le Mayor.
 - **Lever un parcage, c'est répondre** : `./bin/escalation-door repondre` sur
   la demande du ticket (demande opérateur : toute réponse ; Planning
   Exception : seulement l'option qui accepte l'écart) ou sur la demande
-  groupée. La passe suivante lève le parcage et reprend le ticket. **Ne
+  groupée. La passe suivante lève le parcage et reprend le ticket. **Qui
+  répond** : `--actor benjamin` seulement sur ses mots ; une session sous
+  délégation donne son propre acteur (`--actor` ou `BEADS_ACTOR`), sans quoi
+  la porte refuse (af-zkdvur). **Ne
   jamais reprendre ou déparquer un ticket à la main**, ni dispatcher
   `mol-ticket-resume`.
 - **Pas repris** : un ticket arrêté ; un ticket dont la session du tour de
