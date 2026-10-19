@@ -22,6 +22,7 @@ of the ticket, in a single tracker write.
 ./bin/ticket-end settle   af-convoy --repo <project repository>                        # bin/convoy-advance, after the merge
 ./bin/ticket-end fidelity af-convoy --repo <project repository> --profile <descriptor> [--limit N]   # bin/convoy-advance, before the merge
 ./bin/ticket-end close    af-convoy af-t1 --repo <project repository>                  # one ticket; refused from an agent session
+./bin/ticket-end measure  af-convoy af-t1 --repo <repository> --profile <descriptor> --commit <sha>   # bin/ticket-exit, before « terminé »; writes nothing
 ```
 
 To know why a ticket is still open, run `check`: each condition has a
@@ -110,6 +111,10 @@ Every answer is one JSON object on stdout.
 
 ## Limits
 
+- **The author sees the fidelity first.** `bin/ticket-exit` refuses
+  « terminé » while `measure` (the same check at the head commit, without
+  captures, written nowhere) is red (af-r2c0tx, `docs/TICKET_EXIT.md`); the
+  recorded check above stays the final control of condition 4.
 - **A red fidelity is not run again at the same tip**, and nothing sends the
   ticket back to its author: the resumes of T20 (`docs/CONVOY_ADVANCE.md`)
   do not cover a ticket this gate leaves waiting. Once its code review and

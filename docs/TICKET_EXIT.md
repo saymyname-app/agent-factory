@@ -24,6 +24,21 @@ store, captured on the launched product at the head commit of the ticket
 branch (`bin/ticket-author demonstrate`). The records of the Handoff carry
 it as `demonstration_proof`.
 
+« terminé » on a ticket that carries a Validated Prototype is refused while
+its fidelity is red at the head commit (af-r2c0tx). Intent (Benjamin, his
+words, 2026-10-19 15:50 Paris): « fais mesurer la fidélité par l'auteur avant
+sa sortie ». Mechanism (agent interpretation): the exit runs `bin/ticket-end
+measure`, the check `bin/ticket-end fidelity` runs after the exit, on the
+same states, without its side-by-side captures and writing nothing: at most
+2 to 4 minutes on T02R2 and T02R (the measure was sealed that soon after
+their exit), where the recorded check, captures included, ended 9 to 15
+minutes after it. The
+refusal names the open deviations and the answer lists them all under
+`fidelity`, each once with its number of renderings; an anchor Benjamin
+accepted does not refuse. The author repairs, or exits by
+`planning_exception --anchor` for a deviation to have accepted (below). The
+recorded check of the ticket-end gate stays the final control.
+
 ```bash
 ./bin/ticket-exit exit af-convoy af-t1 --exit finished --repo <ticket worktree> --handoff handoff.json
 ./bin/ticket-exit exit af-convoy af-t1 --exit planning_exception --repo <ticket worktree> --handoff handoff.json --kind semantic --summary "La Spec fixe X, la démonstration demande Y" [--anchor liste]
@@ -32,6 +47,7 @@ it as `demonstration_proof`.
 ./bin/ticket-exit exit af-convoy af-t1 --exit interrupted --repo <ticket worktree> [--handoff partial.json]
 ./bin/ticket-exit read af-convoy af-t2                       # the ticket as its author receives it
 ./bin/ticket-exit deferral af-convoy af-t1 --repo <ticket worktree> [--handoff handoff.json]
+./bin/ticket-exit fidelity af-convoy af-t1 --repo <ticket worktree>   # the fidelity at HEAD, as « terminé » measures it
 ```
 
 Every answer is one JSON object on stdout.
@@ -50,7 +66,7 @@ exits again).
 
 | `--exit` | Asks for | What the code does | Effect on the convoy |
 |---|---|---|---|
-| `finished` | `--repo`, `--handoff` (complete) | seals the records, writes the Handoff, then the exit | none: the code review (`docs/CODE_REVIEW.md`) and the Ticket Evaluation on the launched product (`docs/TICKET_EVALUATION.md`) follow, in parallel |
+| `finished` | `--repo`, `--handoff` (complete); a fidelity not red at HEAD on a ticket with a Validated Prototype | seals the records, writes the Handoff, then the exit | none: the code review (`docs/CODE_REVIEW.md`) and the Ticket Evaluation on the launched product (`docs/TICKET_EVALUATION.md`) follow, in parallel |
 | `planning_exception` | `--repo`, `--handoff` (its four sections), `--kind semantic\|topology`, `--summary` (one line) | seals the records, writes the Handoff, then the Planning Exception; sends the question to the operator through `bin/escalation-door benjamin`, parks, writes the exit | the ticket and every ticket that waits for it are parked |
 | `operator_request` | `--request` (`quoi`, `pourquoi`, `que_faire`) | sends the request through `bin/escalation-door benjamin`, parks, writes the exit | the ticket and every ticket that waits for it are parked |
 | `technically_blocked` | `--repair` (the fields of a `repair`) | drafts a revision that adds the `repair` in front of the ticket and sends it through `bin/ticket-graph-publish bd-patch`, writes the exit | the ticket waits for the repair; nothing is parked, the rest goes on |
@@ -218,7 +234,9 @@ exit the markers are recorded and refuse nothing.
 
 `deferral` runs the detector alone, against `--handoff` or the Handoff on
 the ticket: exit 0 when it passes, 1 with the markers when it refuses. It
-writes nothing.
+writes nothing. `fidelity` does the same for the fidelity check at HEAD:
+exit 0 when it is green, accepted or « sans objet » (no Validated
+Prototype), 1 with the deviations when it is red.
 
 ## Limits
 
@@ -249,7 +267,9 @@ tracker, the evidence store and the remote to prove nothing was written. The
 records are sealed by the real `bin/evidence-capture`, the requests go
 through the real `bin/escalation-door`, the parked convoy is advanced by the
 real `bin/convoy-advance`, and the repair is published by the real patch
-door on the graph of the Fixture City. `tests/convoy-state-test.py` covers
+door on the graph of the Fixture City. The fidelity before « terminé » is measured by the real `bin/ticket-end` and
+`bin/prototype-fidelity` on the launched Fixture City, with the fake browser
+of `tests/fixtures/prototype-fidelity`. `tests/convoy-state-test.py` covers
 `set-handoff` and `park`. On the real `gc`/`bd`, in a disposable city
 (local-only): `tests/convoy-state-real-tracker-test.sh` (a 20 kB Handoff
 read back as written, a parking that follows real `blocks` edges) and

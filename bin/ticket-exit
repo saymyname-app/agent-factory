@@ -13,13 +13,16 @@ here, by code:
     ticket-exit exit CONVOY TICKET --exit interrupted --repo DIR [--handoff FILE]
     ticket-exit read CONVOY TICKET
     ticket-exit deferral CONVOY TICKET --repo DIR [--handoff FILE]
+    ticket-exit fidelity CONVOY TICKET --repo DIR
 
 `finished`: refused without a valid Ticket Handoff -- its four sections, each
 with content or « aucun » --, without the proof of the demonstration line
 captured on the launched product at the head commit (bin/ticket-author
 demonstrate; a `prefactoring` has no such line), and while the diff of the ticket carries a
 deferral marker (TODO, FIXME, « not wired », « à brancher ») that no declared
-« non fait » covers. `planning_exception` and `operator_request`: the ticket
+« non fait » covers; on a ticket that carries a Validated Prototype, also while
+the mechanical fidelity check (bin/ticket-end measure) is red at the head
+commit: the answer lists the open deviations (af-r2c0tx). `planning_exception` and `operator_request`: the ticket
 and every ticket that waits for it are parked, and the request reaches the
 operator through bin/escalation-door. A Planning Exception comes after the
 Ticket Handoff (Spec §3; T41, af-rqgtpi): it is refused without a Handoff
@@ -49,7 +52,8 @@ through bin/convoy-state.
 `read` renders a ticket as its author receives it: its text, its Ticket
 Exit, and the Ticket Handoff of each of its direct blockers that is closed.
 A started ticket whose session ended without an exit is read as
-`interrupted`. `deferral` runs the detector alone and writes nothing.
+`interrupted`. `deferral` runs the detector alone and `fidelity` the fidelity
+check alone, at HEAD; neither writes anything.
 
 Every answer is one JSON object on stdout. Exit status: 0 done; 1 refused
 (nothing was written, unless the answer says what was); 4 the convoy does
@@ -71,6 +75,9 @@ from typing import Any
 
 import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+import delivery_reads  # noqa: E402
+
 
 PROGRAM = "ticket-exit"
 BIN = Path(__file__).resolve().parent
@@ -82,6 +89,11 @@ ESCALATION_TOOL = BIN / "escalation-door"
 PUBLISH_TOOL = BIN / "ticket-graph-publish"
 EXCEPTION_TOOL = BIN / "planning-exception"
 OPERATOR_CONFIG_TOOL = BIN / "operator-config"
+TICKET_END_TOOL = BIN / "ticket-end"
+PROJECTS = ROOT / "config" / "projects"
+DESCRIPTORS = ROOT / "config" / "project-descriptors"
+# The open deviations a refusal names; the answer carries them all.
+NAMED_DEVIATIONS = 8
 
 EXITS = ("finished", "planning_exception", "operator_request", "technically_blocked", "interrupted")
 PARKING_EXITS = ("planning_exception", "operator_request")
@@ -125,9 +137,10 @@ class Refusal(RuntimeError):
     """The call is refused. `written` names what was already written when
     the refusal came after a first write."""
 
-    def __init__(self, message: str, written: list[str] | None = None):
+    def __init__(self, message: str, written: list[str] | None = None, extra: dict[str, Any] | None = None):
         super().__init__(" ".join(message.split()))
         self.written = written or []
+        self.extra = extra or {}
 
 
 class NotNewFlow(RuntimeError):
@@ -853,6 +866,39 @@ def publish_repair(args: argparse.Namespace, ticket: Ticket, repair: dict[str, A
 # --- exit ------------------------------------------------------------------------
 
 
+def fidelity_at(ticket: Ticket, repo: Path, head: str) -> dict[str, Any]:
+    """The mechanical fidelity of the ticket to its Validated Prototype at
+    `head`, measured as the ticket-end gate measures it (bin/ticket-end
+    measure), written nowhere. « sans objet » on a ticket that touches no screen."""
+    if not ticket.state.get("interface"):
+        return {"ok": True, "commit": head, "result": "sans objet", "deviations": []}
+    rig = delivery_reads.ticket_rig(read_bead(ticket.id).get("description"), PROJECTS)
+    profiles = [path for path in sorted(DESCRIPTORS.glob("*.json"))
+                if rig and rig in (json.loads(path.read_text(encoding="utf-8")).get("rigs") or [])]
+    if not profiles:
+        raise Refusal(f"aucun profil de projet de config/project-descriptors ne couvre le rig {rig} du ticket : "
+                      "ses écrans n'y sont déclarés nulle part")
+    status, answer = tool(TICKET_END_TOOL, "measure", ticket.convoy_id, ticket.id, "--repo", str(repo),
+                          "--profile", str(profiles[0]), "--commit", head)
+    if status != 0 or "result" not in answer:
+        raise Refusal(f"mesure de fidélité impossible : {refusal_text(answer)}")
+    return answer
+
+
+def red_fidelity(measured: dict[str, Any]) -> str | None:
+    """Why a red fidelity refuses « terminé »: the open deviations, the most
+    repeated first, and the two ways out (docs/PROTOTYPE_FIDELITY.md)."""
+    if measured["result"] != "rouge":
+        return None
+    open_ = [d for d in measured["deviations"] if d.get("status") == "ouvert"]
+    named = ", ".join(f"{d.get('anchor') or d.get('property')} ({d.get('property')} : {d.get('prototype')} → "
+                      f"{d.get('delivered')})" for d in open_[:NAMED_DEVIATIONS])
+    return (f"fidélité au Validated Prototype rouge au commit {measured['commit']} : {len(open_)} écart(s) ouvert(s) "
+            f"sur {len({d.get('anchor') for d in open_})} ancre(s), dont {named} ; la liste entière est sous "
+            "« fidelity ». Répare-les et ressors, ou fais accepter un écart d'ancre par la sortie "
+            "planning_exception --anchor <ancre> (un écart de token se répare)")
+
+
 def cmd_exit(args: argparse.Namespace) -> int:
     written: list[str] = []
     if args.exit not in EXITS:
@@ -881,8 +927,14 @@ def cmd_exit(args: argparse.Namespace) -> int:
         repair = repair_of(args)
     if args.repo:
         repo = Path(args.repo).resolve()
-        clean_head(repo)
+        head = clean_head(repo)
         branch = checked_out_branch(repo, ticket)
+    if finished:
+        # Seen by its author before the review and the evaluation, not after (af-r2c0tx).
+        measured = fidelity_at(ticket, repo, head)
+        reason = red_fidelity(measured)
+        if reason:
+            raise Refusal(reason, extra={"fidelity": measured})
 
     try:
         if args.exit == "interrupted":
@@ -1000,6 +1052,21 @@ def cmd_read(args: argparse.Namespace) -> int:
 # --- deferral ------------------------------------------------------------------
 
 
+def cmd_fidelity(args: argparse.Namespace) -> int:
+    """The fidelity check alone, at HEAD: what `finished` will measure."""
+    if not args.repo:
+        raise Refusal("mesure de fidélité sans dépôt (--repo) : la tête de la branche du ticket y est lue")
+    repo = Path(args.repo).resolve()
+    ticket = Ticket(args.convoy, args.ticket, repo)
+    measured = {**fidelity_at(ticket, repo, clean_head(repo)), "convoy": args.convoy, "ticket": args.ticket}
+    reason = red_fidelity(measured)
+    measured["ok"] = reason is None
+    if reason:
+        measured["error"] = f"refus : {reason}"
+    print(json.dumps(measured, indent=2, sort_keys=True, ensure_ascii=False))
+    return EXIT_REFUSED if reason else 0
+
+
 def cmd_deferral(args: argparse.Namespace) -> int:
     """The deferral detector alone: the markers of the ticket's diff against
     the « non fait » of the Handoff given, or of the one on the ticket."""
@@ -1052,6 +1119,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--anchor", action="append", default=[])
     p.add_argument("--repair")
     command("read", cmd_read)
+    p = command("fidelity", cmd_fidelity)
+    p.add_argument("--repo")
     p = command("deferral", cmd_deferral)
     p.add_argument("--repo")
     p.add_argument("--handoff")
@@ -1076,6 +1145,7 @@ def main(argv: list[str]) -> int:
         answer: dict[str, Any] = {"ok": False, "ticket": args.ticket, "error": f"refus : {exc}"}
         if exc.written:
             answer["written"] = exc.written
+        answer.update(exc.extra)
         print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
         return EXIT_REFUSED
 

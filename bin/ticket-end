@@ -13,6 +13,7 @@ are refused from an agent session.
     ticket-end close    CONVOY TICKET --repo DIR
     ticket-end settle   CONVOY --repo DIR
     ticket-end fidelity CONVOY --repo DIR --profile DESCRIPTOR [--limit N]
+    ticket-end measure  CONVOY TICKET --repo DIR --profile DESCRIPTOR --commit SHA
 
 `check` lists the verdict of each condition and writes nothing. With
 `--before-merge` it asks conditions 1 to 5 and 7 to 9: what the merge command
@@ -27,7 +28,9 @@ left open is an outcome of it, not a failure. `fidelity` runs the mechanical
 fidelity check (bin/prototype-fidelity) of each finished interface ticket at
 the tip of its branch, before its merge, on the screens that serve the
 states of the Validated Prototype the publication door posed in the ticket;
-the result is written on the ticket by that command.
+the result is written on the ticket by that command. `measure` runs the same
+check on one ticket at a commit and writes nothing: bin/ticket-exit runs it
+before an author leaves by « terminé » (af-r2c0tx).
 
 Called by bin/convoy-advance on each of its passes (`fidelity` before the
 merge, `settle` after it). Every answer is one JSON object on stdout. Exit
@@ -675,10 +678,13 @@ def named_states(ticket: dict[str, Any], states: list[str]) -> list[str]:
     return named or list(states)
 
 
-def measure(convoy_id: str, ticket: dict[str, Any], repo: Path, profile: str, screens: list[dict[str, Any]]) -> dict[str, Any]:
-    """Run the mechanical fidelity check of one interface ticket at its tip,
-    on the screens that serve the states of its Validated Prototype it names."""
-    reference, tip = ticket["validated_prototype"], ticket["tip"]
+def measure(convoy_id: str, ticket: dict[str, Any], repo: Path, profile: str, screens: list[dict[str, Any]],
+            commit: str | None = None, record: bool = True) -> dict[str, Any]:
+    """Run the mechanical fidelity check of one interface ticket at its tip
+    (or at `commit`), on the screens that serve the states of its Validated
+    Prototype it names. Without `record`, nothing is filed nor written: the
+    deviations are returned, each once with the number of its renderings."""
+    reference, tip = ticket["validated_prototype"], commit or ticket["tip"]
     states = named_states(ticket, reference["states"])
     touched = [screen["name"] for screen in screens
                if set(screen.get("states") or []) & set(states) and isinstance(screen.get("name"), str)]
@@ -691,14 +697,29 @@ def measure(convoy_id: str, ticket: dict[str, Any], repo: Path, profile: str, sc
         prototype = extract_prototype(repo, reference, tmp)
         status, answer = tool(
             FIDELITY_TOOL, "check", profile, "--prototype", str(prototype), "--commit", tip, "--repo-root", str(repo),
-            "--states", ",".join(states), "--convoy", convoy_id, "--ticket", ticket["id"],
+            "--states", ",".join(states), *(("--convoy", convoy_id, "--ticket", ticket["id"]) if record else ()),
             *(arg for name in touched for arg in ("--screen", name)))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     if status not in (0, FIDELITY_RED) or "result" not in answer:
         raise Refusal(f"contrôle de fidélité impossible : {refusal_text(answer)}")
-    return {"id": ticket["id"], "commit": tip, "result": answer["result"], "screens": touched,
-            "deviations": len(answer.get("deviations") or [])}
+    if record:
+        return {"id": ticket["id"], "commit": tip, "result": answer["result"], "screens": touched,
+                "deviations": len(answer.get("deviations") or [])}
+    # Unrecorded, the check knows no accepted anchor: read them on the ticket.
+    accepted = set(ticket.get("accepted_anchors") or [])
+    distinct: dict[tuple[Any, ...], dict[str, Any]] = {}
+    for deviation in answer.get("deviations") or []:
+        key = tuple(deviation.get(name) for name in ("anchor", "kind", "property", "prototype", "delivered"))
+        entry = distinct.setdefault(key, {**dict(zip(("anchor", "kind", "property", "prototype", "delivered"), key)),
+                                          "status": "accepté par Benjamin" if key[0] in accepted else "ouvert",
+                                          "renderings": 0})
+        entry["renderings"] += 1
+    deviations = sorted(distinct.values(), key=lambda d: (d["status"] != "ouvert", -d["renderings"], str(d["anchor"])))
+    result = ("vert" if not deviations else "rouge" if any(d["status"] == "ouvert" for d in deviations)
+              else "accepté par Benjamin")
+    return {"id": ticket["id"], "commit": tip, "result": result, "screens": touched, "states": states,
+            "deviations": deviations}
 
 
 def cmd_fidelity(args: argparse.Namespace) -> int:
@@ -735,6 +756,31 @@ def cmd_fidelity(args: argparse.Namespace) -> int:
     return EXIT_REFUSED if refused else 0
 
 
+def cmd_measure(args: argparse.Namespace) -> int:
+    """The fidelity of one ticket at a commit, written nowhere: what its
+    author sees before leaving by « terminé » (af-r2c0tx)."""
+    repo = require_repo(args.repo)
+    if not args.commit or run(["git", "-C", str(repo), "cat-file", "-e", f"{args.commit}^{{commit}}"]).returncode != 0:
+        raise Refusal(f"--commit absent ou inconnu dans {repo} : {args.commit!r}")
+    # The ticket alone is read: an anomaly elsewhere in the convoy does not hide its deviations.
+    status, state = tool(STATE_TOOL, "show", args.convoy, "--repo", str(repo))
+    if status == EXIT_NOT_NEW_FLOW:
+        raise NotNewFlow(state)
+    if status not in (0, EXIT_UNRULED) or not isinstance(state.get("tickets"), list):
+        raise Refusal(f"lecture de l'état du convoi {args.convoy} impossible : {refusal_text(state)}")
+    ticket = ticket_of(state, args.convoy, args.ticket)
+    reference = ticket.get("validated_prototype")
+    if isinstance(reference, dict) and "unruled" in reference:
+        raise Refusal(f"référence du Validated Prototype illisible sur le ticket {args.ticket} : {reference['unruled']}")
+    if not ticket.get("interface") or not isinstance(reference, dict):
+        answer = {"ok": True, "id": args.ticket, "commit": args.commit, "result": "sans objet", "deviations": []}
+    else:
+        answer = {"ok": True, **measure(args.convoy, ticket, repo, args.profile, profile_screens(args.profile),
+                                        commit=args.commit, record=False)}
+    print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
 # --- command line ------------------------------------------------------------------------------
 
 
@@ -764,6 +810,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--profile")
     p.add_argument("--limit")
     p.set_defaults(handler=cmd_fidelity)
+    p = sub.add_parser("measure")
+    p.add_argument("convoy")
+    p.add_argument("ticket")
+    p.add_argument("--repo")
+    p.add_argument("--profile")
+    p.add_argument("--commit")
+    p.set_defaults(handler=cmd_measure)
     return parser
 
 
