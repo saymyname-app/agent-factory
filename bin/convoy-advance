@@ -225,6 +225,9 @@ from typing import Any, Iterator
 
 import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+from convoy_state import overridden_ticket  # noqa: E402
+
 
 PROGRAM = "convoy-advance"
 BIN = Path(__file__).resolve().parent
@@ -531,9 +534,11 @@ class Convoy:
             stop = t.get("stop") or {}
             if (t.get("evaluation") or {}).get("live") or (t.get("evaluation") or {}).get("request"):
                 due.append(t["id"])
-            elif stop:
+            elif stop and not overridden_ticket(t):
                 if stop.get("reason") in EVALUATION_STOPS and "raised" not in stop:
                     due.append(t["id"])
+            # A stop whose every Blocking Finding is overridden is still
+            # evaluated at its tip (af-ppdbza).
             elif not t.get("park") and t["id"] in self.finished_unmerged():
                 due.append(t["id"])
         return due
