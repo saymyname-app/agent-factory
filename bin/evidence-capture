@@ -69,6 +69,9 @@ import zlib
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+from account_home import account_home  # noqa: E402
+
 
 PROGRAM = "evidence-capture"
 STATE_TOOL = Path(__file__).resolve().parent / "convoy-state"
@@ -145,8 +148,10 @@ def git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
 def store_dir() -> Path:
     configured = os.environ.get("EVIDENCE_STORE_DIR")
     # ~/.local/state is what bin/delivery-role-sandbox leaves writable to a
-    # read-only role: the Evaluator captures its evidence there too.
-    return Path(configured) if configured else Path.home() / ".local" / "state" / "agent-factory-evidence"
+    # read-only role: the Evaluator captures its evidence there too. The
+    # account's home, not $HOME: the check of mol-ticket-author verifies the
+    # pieces with HOME set to the city root (af-i4d833, af-e84s74).
+    return Path(configured) if configured else account_home() / ".local" / "state" / "agent-factory-evidence"
 
 
 def usable_store() -> Path:
@@ -313,7 +318,7 @@ def find_browser() -> str:
         if not (os.path.isfile(configured) and os.access(configured, os.X_OK)):
             raise Refusal(f"navigateur introuvable ou non exécutable : {configured} (EVIDENCE_CAPTURE_BROWSER)")
         return configured
-    cache = Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or Path.home() / ".cache" / "ms-playwright")
+    cache = Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or account_home() / ".cache" / "ms-playwright")
     for names, pattern in ((BROWSER_NAMES[:1], BROWSER_CACHE_GLOBS[0]), (BROWSER_NAMES[1:], BROWSER_CACHE_GLOBS[1])):
         for name in names:
             found = shutil.which(name)
