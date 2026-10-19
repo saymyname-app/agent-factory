@@ -1,0 +1,31 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/run-timeline-fidelity-test.py::RunTimelineFidelity.test_run_active_carries_every_anchor_and_token_of_its_reference",
+      "tests/cockpit-criteria/commands/run-timeline-fidelity-test.py::RunTimelineFidelity.test_run_completed_carries_every_anchor_and_token_of_its_reference",
+      "tests/cockpit-criteria/commands/run-timeline-fidelity-test.py::RunTimelineFidelity.test_run_waiting_carries_every_anchor_and_token_of_its_reference",
+      "tests/cockpit-criteria/commands/run-timeline-fidelity-test.py::RunTimelineFidelity.test_run_abandoned_carries_every_anchor_and_token_of_its_reference",
+      "tests/cockpit-criteria/commands/run-timeline-fidelity-test.py::RunTimelineFidelity.test_run_stale_carries_every_anchor_and_token_of_its_reference",
+      "tests/cockpit-criteria/commands/run-timeline-states-test.py::RunTimelineStates.test_run_active_draws_the_run_under_way_in_its_lanes_human_code_and_one_per_agent",
+      "tests/cockpit-criteria/commands/run-timeline-states-test.py::RunTimelineStates.test_run_completed_draws_the_merged_run_at_its_final_time",
+      "tests/cockpit-criteria/commands/run-timeline-states-test.py::RunTimelineStates.test_run_waiting_draws_the_run_waiting_for_benjamin_in_his_lane",
+      "tests/cockpit-criteria/commands/run-timeline-states-test.py::RunTimelineStates.test_run_abandoned_draws_the_abandoned_run_at_its_final_time",
+      "tests/cockpit-criteria/commands/run-timeline-states-test.py::RunTimelineStates.test_run_stale_draws_the_last_observation_under_a_notice_that_it_is_stale",
+      "tests/cockpit-criteria/commands/run-timeline-states-test.py::RunTimelineStates.test_the_timeline_follows_the_data_the_cockpit_serves_not_a_page_of_its_own",
+      "tests/cockpit-criteria/commands/run-timeline-states-test.py::RunTimelineStates.test_the_timeline_is_that_of_the_run_the_cockpit_shows"
+    ],
+    "2": [
+      "tests/cockpit-criteria/commands/run-timeline-selection-test.py::RunTimelineSelection.test_a_job_selected_on_a_phone_stays_in_view_and_selected_after_a_refresh_in_the_dark_theme",
+      "tests/cockpit-criteria/commands/run-timeline-selection-test.py::RunTimelineSelection.test_a_job_selected_on_a_phone_stays_in_view_and_selected_after_a_refresh_in_the_light_theme"
+    ],
+    "3": [
+      "tests/cockpit-criteria/commands/run-timeline-layout-test.py::RunTimelineLayout.test_run_active_is_readable_and_usable_at_both_widths_in_both_themes",
+      "tests/cockpit-criteria/commands/run-timeline-layout-test.py::RunTimelineLayout.test_run_completed_is_readable_and_usable_at_both_widths_in_both_themes",
+      "tests/cockpit-criteria/commands/run-timeline-layout-test.py::RunTimelineLayout.test_run_waiting_is_readable_and_usable_at_both_widths_in_both_themes",
+      "tests/cockpit-criteria/commands/run-timeline-layout-test.py::RunTimelineLayout.test_run_abandoned_is_readable_and_usable_at_both_widths_in_both_themes",
+      "tests/cockpit-criteria/commands/run-timeline-layout-test.py::RunTimelineLayout.test_run_stale_is_readable_and_usable_at_both_widths_in_both_themes",
+      "tests/cockpit-criteria/commands/run-timeline-layout-test.py::RunTimelineLayout.test_long_job_titles_stay_whole_without_overlap_at_both_widths_in_both_themes",
+      "tests/cockpit-criteria/commands/run-timeline-selection-test.py::RunTimelineSelection.test_a_job_is_selected_from_the_keyboard_on_a_phone_and_brought_into_view"
+    ]
+  }
+}
