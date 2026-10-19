@@ -18,6 +18,9 @@ ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT / "bin" / "spec-approve"
 FIXTURES = ROOT / "tests" / "fixtures" / "spec-approve"
 FAKE_BD = FIXTURES / "bd"
+# The fidelity tool calibrates the prototype (af-u8cbl0) on the fake browser
+# of its own tests: a page model, not a Chromium.
+FAKE_BROWSER = ROOT / "tests" / "fixtures" / "prototype-fidelity" / "browser"
 PROJECTS_CONFIG_DIR = FIXTURES / "projects"
 # The smallest Spec body bd-approve accepts since T07 (af-tvda3w): numbered
 # user stories, no interface story, so no Validated Prototype reference.
@@ -334,7 +337,8 @@ class SpecApproveEntryContractTest(unittest.TestCase):
         return json.loads(self.state_path.read_text())
 
     def invoke(self, *args):
-        env = {**os.environ, "BD_BIN": str(FAKE_BD), "SPEC_APPROVE_BD_STATE": str(self.state_path)}
+        env = {**os.environ, "BD_BIN": str(FAKE_BD), "SPEC_APPROVE_BD_STATE": str(self.state_path),
+               "EVIDENCE_CAPTURE_BROWSER": str(FAKE_BROWSER)}
         return subprocess.run((str(TOOL), *[str(a) for a in args]), env=env, text=True, capture_output=True)
 
     def bd_approve(self, remote=None, name_remote=True):
@@ -509,6 +513,35 @@ class SpecApproveEntryContractTest(unittest.TestCase):
             "validated-prototype.json", '"dataset": "data/content.json"', '"dataset": "data/absent.json"'
         )
         self.assert_refused_untouched(spec, "non conforme", "datasets", remote=remote)
+
+    # --- refus : le contrôle de fidélité ne mesure pas le prototype comme lui-même (af-u8cbl0) ---
+
+    def test_refuses_a_prototype_the_fidelity_tool_does_not_measure_as_itself(self):
+        # Two themes declared, nothing on the pages tells them apart: the
+        # browser measures the same in both, so neither is measurable -- the
+        # Cockpit's case before #676, found then by a ticket, here by approval.
+        spec, remote = self.spec_on_altered_prototype(
+            "validated-prototype.json", '"themes": ["light"]', '"themes": ["dark", "light"]'
+        )
+        self.assert_refused_untouched(
+            spec, "ne mesure pas le Validated Prototype", "comme lui-même", "non mesurable",
+            "maintenance de l'usine", remote=remote)
+
+    def test_the_fixture_prototype_is_calibrated_before_its_spec_is_approved(self):
+        self.seed_spec(FIXTURE_SPEC)
+        log = self.tmp / "browser.log"
+        env = {**os.environ, "BD_BIN": str(FAKE_BD), "SPEC_APPROVE_BD_STATE": str(self.state_path),
+               "EVIDENCE_CAPTURE_BROWSER": str(FAKE_BROWSER), "EVIDENCE_FAKE_BROWSER_LOG": str(log)}
+        proc = subprocess.run(
+            (str(TOOL), "bd-approve", "--spec", "spec-1", "--approved-by", "benjamin",
+             "--evidence", "« J'approuve » (Benjamin, 2026-10-06 Paris)", "--project", "delivery-fixture-city",
+             "--repo-root", str(self.repo_root), "--config-dir", str(PROJECTS_CONFIG_DIR),
+             "--prototype-remote", str(self.remote)), env=env, text=True, capture_output=True)
+        self.assertEqual(0, proc.returncode, proc.stdout)
+        # Each state of the reference was read by the browser, on the prototype.
+        read = log.read_text()
+        for state in ("states/empty.html", "states/content.html"):
+            self.assertIn(state, read)
 
     # --- T46 (af-lb9zkz) : branche de prototype jamais fusionnée, variante seule, ancres par région ---
 

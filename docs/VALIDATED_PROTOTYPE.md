@@ -30,7 +30,9 @@ reference"). Without them the output is the six records.
 
 The delivered screen is compared to this frozen version, state by state, by
 `bin/prototype-fidelity` (`docs/PROTOTYPE_FIDELITY.md`): the anchors named
-here are what it measures.
+here are what it measures. Before the Spec is approved, that tool must
+measure the frozen version against itself with no deviation
+(`prototype-fidelity calibrate`, run by `bin/spec-approve`, af-u8cbl0).
 
 ## The anchors a citation is read against (T40, af-o6tu3z)
 
