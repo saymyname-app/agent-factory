@@ -214,7 +214,7 @@ def run_from_bead(bead, now):
         "start": start, "end": end, "elapsed": int(end - start),
         "started": paris(start, with_day=True), "lanes": lanes,
         "events": sorted(events, key=lambda e: e["at"]), "models": models,
-        "branch": m.get("gc.flow.branch"), "href": "/runs/run?id=%s" % bead.get("id"),
+        "branch": m.get("gc.flow.branch"), "rig": m.get("gc.dispatch_rig"), "href": "/runs/run?id=%s" % bead.get("id"),
     }
 
 

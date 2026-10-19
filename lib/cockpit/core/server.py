@@ -50,6 +50,7 @@ from cockpit.ui.projects.page import (
     render_projects_section,
     render_projects_unknown,
 )
+from cockpit.ui.projects.panorama import CSS as PROJECTS_PANORAMA_CSS, render_project_head, render_projects_list
 from cockpit.ui.projects.project_page import render_project_page, render_project_unknown
 from cockpit.ui.projects.tokens import CSS as PROJECT_PAGE_CSS
 
@@ -400,13 +401,18 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         )
 
     def _send_projects_page(self, read_model):
-        """GET /projets: the declared projects, each with its link « Page
-        projet » -- where the entry « Projets » of the navigation leads
-        until the Prototype Fold of its destination."""
-        fresh_html = render_fresh(read_model.headline(), not read_model.stale_or_unknown())
-        inner = '<div class="pn-head"><h1>Projets</h1></div>%s%s' % (
-            fresh_html, self._render_projects_zone(read_model.snapshot()) or render_projects_unknown())
-        self._send_page(read_model, "projets", inner, extra_css=PROJECT_PAGE_CSS)
+        """GET /projets: a card per declared project (Panorama), its open
+        chantiers, its runs merged in 7 days and in progress."""
+        snapshot = read_model.snapshot()
+        row = snapshot.get("projets")
+        if row is None or row["value"] is None or row["freshness"] == UNKNOWN:
+            inner = '<div class="pn-head"><h1>Projets</h1></div>' + render_projects_unknown(row["read_at"] if row else None)
+        else:
+            projects, _ = projects_from_value(row["value"])
+            runs, _, checked = self._runs(read_model)
+            inner = render_projects_list(projects, runs, read_model.now(), checked=checked)
+        self._send_page(read_model, "projets", inner, extra_css=PROJECT_PAGE_CSS + PROJECTS_PANORAMA_CSS,
+                        snapshot=snapshot)
 
     def _send_project_page(self, read_model):
         """GET /projet/<id> (spec .49): one declared project's chantiers by
@@ -427,13 +433,15 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             else:
                 project, hors_chantier, historique = data
                 apply_to_projects([project], snapshot.get("depots"))
-                inner = render_project_page(
+                runs, _, _ = self._runs(read_model)
+                inner = render_project_head(project, runs, read_model.now()) + render_project_page(
                     project,
                     hors_chantier=hors_chantier,
                     historique_html=render_historique_section([historique]),
                     fresh_html=fresh_html,
                 )
-        self._send_page(read_model, "projets", inner, extra_css=PROJECT_PAGE_CSS, status=status)
+        self._send_page(read_model, "projets", inner,
+                        extra_css=PROJECT_PAGE_CSS + PROJECTS_PANORAMA_CSS + RUNS_PAGE_CSS, status=status)
 
     def _runs(self, read_model):
         """The runs the cockpit reads (cockpit.runs), most recent first:
