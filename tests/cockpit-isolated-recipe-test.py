@@ -132,6 +132,18 @@ class TheOverview(Refusals):
         dataset = {**DOSSIER, "folded": {"Compte rendu long": ["Constat 1"], "Version et sources": ["Dossier 1"]}}
         self.assertRefused(dataset, r"folded parts that no part of the dossier unfolds: \['Version et sources'\]")
 
+    def test_a_run_card_whose_job_ends_after_its_run_is_refused(self):
+        card = {"type": "Livraison D01", "status": "En cours", "tone": "live", "title": "Un run", "step": "Réaliser",
+                "started": "14:34", "elapsed": 60, "lanes": [{"name": "Alex", "kind": "agent", "jobs": [[0, 90]]}]}
+        dataset = {**overview("Derniers runs", "Tout voir"), "runs": [card]}
+        self.assertRefused(dataset, r"its runs \(runs\) are not each a card")
+
+    def test_run_cards_on_a_screen_without_the_last_runs_are_refused(self):
+        card = {"type": "Livraison D01", "status": "En cours", "tone": "live", "title": "Un run", "step": "Réaliser",
+                "started": "14:34", "elapsed": 60, "lanes": [{"name": "Alex", "kind": "agent", "jobs": [[0, 60]]}]}
+        dataset = {**overview("Projets", "Notes", "Recherche · En cours", "→"), "runs": [card]}
+        self.assertRefused(dataset, r"runs \(runs\) on a screen without « Derniers runs »")
+
 
 class TheOtherScreens(Refusals):
 

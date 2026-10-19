@@ -266,14 +266,23 @@ the read model, never from the frozen page:
   collecté »), the activity of seven days (the daily volumes of its three
   series the tracker keeps as said under « Activité sur 7 jours », one
   line a day and a series, « PR fusionnées · Lundi : 1 », drawn as the
-  reference draws them; without them, an empty grid and the volumes said
-  not collected), the last runs (their cards are not wired to
-  this destination yet: said so), « Ce qui t’attend » beside the result
+  reference draws them, each series told apart by its dashes as well as
+  its colour -- a token at 3:1 at least on the surface in both themes --,
+  and said in a table a screen reader reads; without them, an empty grid
+  and the volumes said not collected), the last runs (the cards the
+  tracker carries under `gc.run_card`, drawn in their frame as the
+  reference draws them -- workflow, status, title, step, a lane per
+  participant with a bar per job, axis, start, duration --, the frame as
+  tall as its cards; a card opens Runs, the reuse of the Runs card itself
+  and the opening of its run are T44's; without one, the frame says the
+  cockpit reads none), « Ce qui t’attend » beside the result
   open under it, and the projects, those something waits for first. An
   indicator and a project's card are links (to `/analyses`, to the
   requests, to `/projet/<key>`), so the keyboard opens them as a click
   does; the line of the request open carries `aria-current` and an
-  accent mark, not only its background.
+  accent mark, not only its background. Selecting a request scrolls to
+  its detail under « Détails techniques et actions » and moves the focus
+  there.
   A supervisor or tracker reading that is no longer current keeps the
   last values under « Lecture périmée · état actuel inconnu. »
 - The result open is the record of a result to judge a bead carries
@@ -297,9 +306,11 @@ the read model, never from the frozen page:
 real cockpit on each of the 10 home states of the reference and read the
 page in a headless Chromium at 1440 and 390 px, light and dark -- every
 anchor of the reference with its element, its enclosing anchor, its
-font-family and line-height, and the tokens of the page
-(`home_reference.json`, read from the frozen pages); the 14 result states
-are T02S's.
+font-family and line-height, and the tokens of the page, the values
+written in the cases (an outline of anchors per state, read from the
+frozen pages); the cards of « Derniers runs », read in the document of
+their frame; a focus a person sees (drawn at 3:1 at least) and the local
+scroll kept. The 14 result states are T02S's.
 
 ## Home screen, as the validated prototype shows it (af-mjfvwx)
 
@@ -994,6 +1005,7 @@ ways:
 | « Vue d’ensemble »: the cards under « Projets » (name, « chantier · étape », then the figures of the card) | one declared project per name; one open chantier per project, under its title, whose description is the stage and the other lines of the card, and whose `gc.project_card` is the stage, the figures and, last, the line of the release | `projets.value.projects`; `GET /api/projects`; `beads.value`; `GET /` |
 | « Vue d’ensemble »: the four indicators | one bead kept as said per indicator (value, period) | `beads.value` |
 | a drawing of the screen: `drawn` under « Activité sur 7 jours », one line a day and a series | one bead kept as said under that heading, whose description is those lines | `beads.value`; `GET /` |
+| « Vue d’ensemble »: `runs`, the cards under « Derniers runs » (workflow, status and its tone, title, step, start, elapsed seconds, lanes with the start and end of each job) | one bead `synthetic-run-card-N` per card, under the title of its run, whose `gc.run_card` is the card | `beads.value`; `GET /` |
 | the page of a project (« ← Projets »): its name, what is said above the first section; « CHANTIER ACTUEL »; « Prochaine release », « PROCHAIN JALON », « ROADMAP », « Derniers changements » | the project is declared; one bead under its name (purpose, stage, indicators); its open chantier; one bead kept as said per section, of that project | `projets.value.projects`, `GET /projet/<key>`; `beads.value` |
 | « Journal »: each event, « HH:MM (Paris) · projet · nature » or « HH:MM (Paris) · source », under « Aujourd’hui » or « Hier », its title and what follows | one bead of type `event` per event, as `bd create --type event` writes it: its title, its nature or source as `event_kind`, as label and as `gc.journal_event`, its project (declared), `created_at` the day of the dataset or the day before at that time, the other lines | `beads.value`; `projets.value.projects`; `GET /api/journal` `entries`: one entry per event, its title as `quoi`, its `created_at` as `quand`, its nature or source as `voie`, newest first (`lib/cockpit/ui/journal/entries.py`, T01R6 af-ltchro) |
 | « Usine »: « Machine d’exécution », « Connexions », « Fournisseurs et accès API », « Agents dans le workflow », « Auteur livraison », « Autres rôles », « Suspension, reprise et arrêt », « Nettoyer les espaces inutilisés », « Ressources et libellés longs » | one bead kept as said per section | `beads.value` |
@@ -1031,8 +1043,9 @@ What is left out, and why:
   fixtures, byte for byte, and are served the same lanes, runs and jobs;
 - the lines of a page above its first section (title, subtitle, tabs, the
   banner of a reading that is no longer current, « Rien à afficher ici »)
-  and the sections that hold links only (« Derniers runs », « Ressources du
-  projet »); « Activité sur 7 jours » holds only what its `drawn` says;
+  and the sections that hold links only (« Ressources du projet »);
+  « Activité sur 7 jours » holds only what its `drawn` says, « Derniers
+  runs » only what its `runs` says;
 - the finished runs and jobs are in the tracker, closed: the cockpit reads
   the open work of a tracker, and does not show them yet.
 
@@ -1058,7 +1071,10 @@ since the prototype's dataset keeps only the text of the page (T02R,
 af-vbb4ol: « Compte rendu long » and its eighteen findings), and for the
 `drawn` of the seven `home-*` states that show the activity chart: the
 titles of its 21 points, copied from the frozen state drawn (T02R2,
-af-r2c0tx). A state is launched with
+af-r2c0tx), and for the `runs` of those seven states: the three cards of
+the frame « Derniers runs », copied from the frozen state drawn, a bar's
+place and width given back in seconds of its run (T02R2, after its code
+review). A state is launched with
 `--dataset <state>`.
 
 **Screens.** `launch.screens` gives each screen of the Spec its address and

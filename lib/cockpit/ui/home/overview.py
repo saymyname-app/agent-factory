@@ -43,12 +43,13 @@ from datetime import datetime
 from cockpit.core.freshness import FRESH
 from cockpit.core.readmodel import PARIS
 from cockpit.projects.source import from_value as projects_from_value
-from cockpit.ui.panorama.shell import anchor_slug, open_button
+from cockpit.ui.panorama.shell import Anchors, anchor_slug, open_button
 from cockpit.ui.projects.project_page import project_page_url
 
 LOADING, ERROR, EMPTY, CONTENT = "loading", "error", "empty", "content"
 RESULT_DOSSIER = "gc.result_dossier"
 PROJECT_CARD = "gc.project_card"
+RUN_CARD = "gc.run_card"
 SAID = "said"
 
 DECISIONS = "Décisions à prendre"
@@ -58,7 +59,11 @@ DECISIONS = "Décisions à prendre"
 SAID_INDICATORS = ("Résultats fusionnés", "Délai de livraison", "Vérifications CI réussies")
 CHART_LABEL = ("Volumes quotidiens comparés sur sept jours : PR fusionnées, tickets livrés, "
                "exécutions CI réussies")
-CHART_SERIES = (("PR fusionnées", "#91a7ff"), ("Tickets livrés", "#52c9b1"), ("CI réussies", "#e6ba70"))
+# Each series its colour (a token of the page, 3:1 at least on the surface
+# in both themes) and its dashes, so that it is told apart without its
+# colour: a plain, a dashed and a dotted line.
+CHART_SERIES = (("PR fusionnées", "var(--pn-series-1)", ""), ("Tickets livrés", "var(--pn-series-2)", "8 5"),
+                ("CI réussies", "var(--pn-series-3)", "1 5"))
 ACTIVITY = "Activité sur 7 jours"
 UNWIRED_RESULT = "Essai et Avis ne sont pas encore raccordés à cette vue : rien n’est lancé ni préparé d’ici."
 NOT_GIVEN = "Contenu non fourni par la source."
@@ -68,10 +73,11 @@ LEGACY_SUMMARY = "Détails techniques et actions"
 def overview_view(snapshot, requests):
     """What the destination shows: ``state`` (see the module), ``stale``,
     ``checked`` (HH:MM of the reading shown), ``requests``, ``indicators``,
-    ``dossier``, ``projects``."""
+    ``activity``, ``runs`` (the cards of the last runs), ``dossier``,
+    ``projects``."""
     beads_row = snapshot.get("beads")
     view = {"state": CONTENT, "stale": False, "checked": None, "requests": [], "indicators": [],
-            "activity": {}, "dossier": None, "projects": []}
+            "activity": {}, "runs": [], "dossier": None, "projects": []}
     if beads_row is None or beads_row["value"] is None:
         view["state"] = ERROR if (beads_row or {}).get("failed_at") is not None else LOADING
         return view
@@ -93,8 +99,9 @@ def overview_view(snapshot, requests):
         for label in SAID_INDICATORS
     ]
     view["activity"] = _activity(said.get(ACTIVITY) or [])
+    view["runs"] = [card for card in (_record(bead, RUN_CARD) for bead in beads) if card]
     view["projects"] = _projects(snapshot.get("projets"), beads, view["requests"])
-    if not (view["requests"] or view["dossier"] or view["projects"] or view["activity"]
+    if not (view["requests"] or view["dossier"] or view["projects"] or view["activity"] or view["runs"]
             or any(said.get(label) for label in SAID_INDICATORS)):
         view["state"] = EMPTY
     return view
@@ -115,7 +122,7 @@ def _activity(lines):
         except ValueError:
             continue
     return {series: [volumes[day] for day in days] for series, volumes in said.items()
-            if series in dict(CHART_SERIES) and set(days) <= set(volumes)}
+            if series in {label for label, _, _ in CHART_SERIES} and set(days) <= set(volumes)}
 
 
 def _hhmm(epoch):
@@ -227,7 +234,7 @@ def _render_content(view, anchors):
         '<section class="pn-panel" %s><div class="pn-section-heading" %s><h2 %s>Derniers runs</h2>%s</div>'
         '<iframe class="pn-runs" title="Cartes des derniers runs" srcdoc="%s" %s></iframe></section>'
         % (panel, heading, anchors("h2"), open_button("/runs", "Tout voir", anchors("link"), "pn-link"),
-           _e(RUNS_DOC), anchors("overview-runs")))
+           _e(_runs_document(view["runs"])), anchors("overview-runs")))
     inbox, requests_panel = anchors("inbox"), anchors("panel")
     title = '<h2 %s>Ce qui t’attend</h2>' % anchors("h2")
     lines = "".join(
@@ -261,8 +268,10 @@ def _render_activity(activity, anchors):
     series -> seven volumes, Monday first), or, without one, that they are
     not collected -- no line is drawn of a volume no source gave."""
     bilan, summary, chart_key = anchors("bilan"), anchors("summary"), anchors("chart-key")
-    key = "".join('<span style="--series:%s" %s>%s</span>' % (colour, anchors("span"), _e(label))
-                  for label, colour in CHART_SERIES)
+    key = "".join('<span style="--series:%s;--dash:%s" %s>%s</span>'
+                  % (colour, "dashed" if dashes.startswith("8") else "dotted" if dashes else "solid",
+                     anchors("span"), _e(label))
+                  for label, colour, dashes in CHART_SERIES)
     if activity:
         top = max(3, -(-max(max(volumes) for volumes in activity.values()) // 3) * 3)
         scale = CHART_HEIGHT / top
@@ -277,18 +286,20 @@ def _render_activity(activity, anchors):
         labels += "".join('<text x="%d" y="222" %s>%s</text>' % (45 + CHART_STEP * day, anchors("text"), short)
                           for day, (short, _) in enumerate(CHART_DAYS))
         series = []
-        for label, colour in CHART_SERIES:
+        for label, colour, dashes in CHART_SERIES:
             volumes = activity.get(label)
             if not volumes:
                 continue
             points = [(55 + CHART_STEP * day, _n(CHART_ZERO - volume * scale)) for day, volume in enumerate(volumes)]
-            series.append('<polyline fill="none" stroke="%s" stroke-width="2.5" stroke-linejoin="round" points="%s" %s>'
-                          "</polyline>" % (colour, " ".join("%d,%s" % point for point in points), anchors("polyline")))
+            series.append('<polyline fill="none" stroke="%s" stroke-width="2.5" stroke-linejoin="round" '
+                          'stroke-linecap="round"%s points="%s" %s></polyline>'
+                          % (colour, ' stroke-dasharray="%s"' % dashes if dashes else "",
+                             " ".join("%d,%s" % point for point in points), anchors("polyline")))
             for (x, y), volume, (_, day) in zip(points, volumes, CHART_DAYS):
                 series.append('<circle cx="%d" cy="%s" r="4" fill="%s" %s><title %s>%s · %s : %s</title></circle>'
                               % (x, y, colour, anchors("circle"), anchors("title"), _e(label), day, _n(volume)))
         chart = grid + '<g fill="var(--muted)" font-size="11" %s>%s</g>%s' % (g, labels, "".join(series))
-        note = ""
+        note = _activity_table(activity)
     else:
         chart = '<g stroke="var(--line)">%s</g>' % "".join(
             '<line x1="40" y1="%d" x2="695" y2="%d"></line>' % (y, y) for y in (195, 141, 87, 33))
@@ -300,6 +311,17 @@ def _render_activity(activity, anchors):
         "%s%s</details>"
     ) % (bilan, summary, chart_key, key, _e(CHART_LABEL), anchor_slug(CHART_LABEL), chart, note,
          open_button("/analyses", "Explorer les métriques", anchors("link"), "pn-link"))
+
+
+def _activity_table(activity):
+    """The volumes of the chart as a table, for a reader that does not see
+    it: one row a series, one column a day."""
+    head = "".join('<th scope="col">%s</th>' % day for _, day in CHART_DAYS)
+    rows = "".join('<tr><th scope="row">%s</th>%s</tr>'
+                   % (_e(label), "".join("<td>%s</td>" % _n(volume) for volume in activity[label]))
+                   for label, _, _ in CHART_SERIES if activity.get(label))
+    return ('<table class="pn-sr-only"><caption>%s</caption><tr><th scope="col">Série</th>%s</tr>%s</table>'
+            % (_e(CHART_LABEL), head, rows))
 
 
 def _n(number):
@@ -385,19 +407,94 @@ def _render_projects(projects, anchors):
         panel, title, rows_anchor, body)
 
 
-# The cards of the last runs, inside their frame: none is read on this
-# destination yet.
-RUNS_DOC = (
-    '<!doctype html><html lang="fr"><head><meta charset="utf-8"><style>'
-    ":root{color-scheme:light;--bg:#FFFFFF;--ink:#566175}"
-    "@media (prefers-color-scheme: dark){:root{color-scheme:dark;--bg:#161B23;--ink:#9AA6B9}}"
-    "body{margin:0;background:var(--bg);color:var(--ink);font:14px system-ui,sans-serif}"
-    "p{margin:12px 0;line-height:1.5}</style></head><body>"
-    "<p>Aucune carte de run sur cette vue : les cartes Runs n’y sont pas encore raccordées. "
-    "La page Runs les liste.</p></body></html>"
+# The cards of the last runs, inside their frame, as the reference draws
+# them: three a row, one under the other in a frame under 850 px. A card
+# opens the destination Runs; opening the run itself is T44's. The status of
+# a run waiting for a decision is written darker in the light theme, where
+# the reference's is under 4.5:1 on the surface.
+RUNS_CSS = (
+    ":root{color-scheme:light;--surface:#fff;--line:#dbe0e8;--ink:#17202e;--muted:#657185;--accent:#415fce;"
+    "--ok:#1c7954;--human:#e4bc6d;--code:#55b5ae;--agent:#a897eb;--wait:#85590f}"
+    "@media (prefers-color-scheme: dark){:root{color-scheme:dark;--surface:#161b23;--line:#2a3240;--ink:#ecedf3;"
+    "--muted:#9aa6b9;--accent:#99aaff;--ok:#55c89d;--wait:#e4bc6d}}"
+    "*{box-sizing:border-box}html,body{margin:0;background:var(--surface);color:var(--ink);font:15px system-ui,sans-serif}"
+    ".grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}"
+    ".card{display:block;height:100%;background:var(--surface);border:1px solid var(--line);border-radius:10px;"
+    "padding:18px;color:inherit;text-decoration:none}"
+    ".card:hover{border-color:var(--accent)}.card:focus-visible{outline:2px solid var(--accent);outline-offset:-4px}"
+    ".card h2{margin:12px 0 7px;font-size:18px;overflow-wrap:anywhere}"
+    ".card p{margin:0 0 14px;font-size:14px;line-height:1.5;color:var(--muted);overflow-wrap:anywhere}"
+    ".card-top{display:flex;justify-content:space-between;gap:12px;font-size:12px;color:var(--muted)}"
+    ".badge{color:var(--ok)}.badge.live{color:var(--accent)}.badge.wait{color:var(--wait)}"
+    ".live-dot{display:inline-block;width:7px;height:7px;border-radius:100%;background:var(--accent);margin-right:6px}"
+    ".card-foot{display:flex;justify-content:space-between;gap:10px;margin-top:15px;font-size:13px;color:var(--muted)}"
+    ".mono{font:13px ui-monospace,monospace}"
+    ".mini{display:grid;gap:6px;font-size:11px}"
+    ".mini-row{display:grid;grid-template-columns:70px 1fr;gap:8px;align-items:center}"
+    ".mini-track{height:8px;position:relative;border-bottom:1px solid var(--line);"
+    "background:repeating-linear-gradient(90deg,transparent 0,transparent calc(25% - 1px),var(--line) 25%)}"
+    ".mini-bar{position:absolute;height:5px;border-radius:4px;top:1px;background:var(--agent);min-width:2px}"
+    ".mini-bar.code{background:var(--code)}.mini-bar.human{background:var(--human)}"
+    ".mini-axis{margin:8px 0 0 78px;display:flex;justify-content:space-between;color:var(--muted);font-size:10px}"
+    ".none{margin:12px 0;font-size:14px;line-height:1.5;color:var(--muted)}"
+    "@media(max-width:850px){.grid{grid-template-columns:1fr}}"
 )
 
+
+def _runs_document(runs):
+    """The document of the frame « Derniers runs »: a card for each run of
+    ``runs``, or that the cockpit reads none."""
+    anchors = Anchors()
+    cards = "".join(_run_card(run, anchors) for run in runs)
+    body = ('<div class="grid" %s>%s</div>' % (anchors("grid"), cards) if cards
+            else '<p class="none">Aucun run récent n’est lu par le cockpit.</p>')
+    return ('<!doctype html><html lang="fr"><head><meta charset="utf-8"><base target="_top">'
+            "<style>%s</style></head><body>%s</body></html>" % (RUNS_CSS, body))
+
+
+def _run_card(run, anchors):
+    """One card: the workflow and the status of the run, its title and its
+    step, a lane per participant with a bar per job, placed within the run,
+    its axis, its start and its duration."""
+    elapsed = run["elapsed"]
+    card, top = anchors("card"), anchors("card-top")
+    tone = run.get("tone")
+    dot = '<span class="live-dot" %s></span>' % anchors("live-dot") if tone in ("wait", "live") else ""
+    head = ('<div class="card-top" %s><span %s>%s</span><span class="badge %s" %s>%s%s</span></div>'
+            % (top, anchors("span"), _e(run["type"]), tone if tone in ("wait", "live") else "", anchors("badge"),
+               dot, _e(run["status"])))
+    title = "<h2 %s>%s</h2><p %s>%s</p>" % (anchors("h2"), _e(run["title"]), anchors("p"), _e(run["step"]))
+    mini = anchors("mini")
+    rows = []
+    for lane in run["lanes"]:
+        row, name, track = anchors("mini-row"), anchors("span"), anchors("mini-track")
+        bars = "".join('<span class="mini-bar %s" style="left:%s%%;width:%s%%" %s></span>'
+                       % (_e(lane["kind"]), _n(100 * start / elapsed), _n(100 * (end - start) / elapsed),
+                          anchors("mini-bar"))
+                       for start, end in lane["jobs"])
+        rows.append('<div class="mini-row" %s><span %s>%s</span><div class="mini-track" %s>%s</div></div>'
+                    % (row, name, _e(lane["name"]), track, bars))
+    axis = anchors("mini-axis")
+    ticks = "".join("<span %s>%s</span>" % (anchors("span"), _tick(seconds)) for seconds in (0, elapsed / 2, elapsed))
+    foot = anchors("card-foot")
+    return (
+        '<a class="card" href="/runs" %s>%s%s<div class="mini" %s>%s</div><div class="mini-axis" %s>%s</div>'
+        '<div class="card-foot" %s><span %s>Début %s (Paris)</span><span class="mono" %s>%d min %d s</span></div></a>'
+    ) % (card, head, title, mini, "".join(rows), axis, ticks, foot, anchors("span"), _e(run["started"]),
+         anchors("mono"), elapsed // 60, elapsed % 60)
+
+
+def _tick(seconds):
+    """A mark of the axis of a card: « 0s », « 45s », « 6m », « 4m06s »."""
+    seconds = int(round(seconds))
+    minutes, rest = divmod(seconds, 60)
+    if not minutes:
+        return "%ds" % rest
+    return "%dm%02ds" % (minutes, rest) if rest else "%dm" % minutes
+
 CSS = """
+:root{--pn-series-1:#415fce;--pn-series-2:#1c7954;--pn-series-3:#97691e}
+@media (prefers-color-scheme: dark){:root{--pn-series-1:#91a7ff;--pn-series-2:#52c9b1;--pn-series-3:#e6ba70}}
 .pn-overview-head small{display:block;margin-bottom:20px;color:var(--pn-muted-text);font-size:12px}
 .pn-overview-head h1{font-size:27px;margin:0 0 6px}
 .pn-overview small{color:var(--pn-muted-text);font-size:12px}
@@ -419,13 +516,16 @@ CSS = """
 .pn-metric-label{font-size:13px;color:var(--pn-muted-text)}
 .pn-activity summary{cursor:pointer;color:var(--pn-muted-text)}
 .pn-chart-key{display:flex;gap:20px;flex-wrap:wrap;font-size:12px;margin:12px 0}
-.pn-chart-key span:before{content:'';display:inline-block;width:20px;height:3px;background:var(--series);
+.pn-chart-key span:before{content:'';display:inline-block;width:20px;height:0;border-top:3px var(--dash) var(--series);
   vertical-align:middle;margin-right:8px}
+.pn-sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);
+  white-space:nowrap;border:0}
 .pn-chart{width:100%;height:auto;max-height:290px;display:block}
 .pn-activity p{margin:8px 0;color:var(--pn-muted-text);font-size:14px}
 .pn-section-heading{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:6px}
 .pn-section-heading h2{margin:0}
-.pn-runs{display:block;width:100%;height:110px;margin-top:12px;border:0;background:var(--surface)}
+.pn-runs{display:block;width:100%;height:330px;margin-top:12px;border:0;background:var(--surface)}
+@media (max-width:850px){.pn-runs{height:890px}}
 .pn-inbox{display:grid;grid-template-columns:330px minmax(0,1fr);gap:20px;align-items:start}
 .pn-inbox>*{min-width:0}
 .pn-requests{padding:0}
@@ -503,8 +603,24 @@ SCRIPT = """
     var item = legacy.querySelector('.li[data-id="' + id.replace(/"/g, '') + '"]');
     if (item) { item.click(); }
     var detail = document.getElementById('d-' + id);
-    (detail || legacy).scrollIntoView({block: 'start'});
+    var target = detail || legacy.querySelector('summary');
+    target.scrollIntoView({block: 'start'});
+    // The focus goes where the page went: the keyboard goes on from the
+    // detail, not from a line now out of sight.
+    if (target.tabIndex < 0 && !target.hasAttribute('tabindex')) { target.setAttribute('tabindex', '-1'); }
+    target.focus({preventScroll: true});
   }
+  // The frame of the last runs is as tall as its cards: none is cut, none
+  // is scrolled to inside the page.
+  function fit(frame) {
+    var doc = frame.contentDocument;
+    if (doc && doc.body) { frame.style.height = Math.ceil(doc.body.getBoundingClientRect().height) + 'px'; }
+  }
+  document.querySelectorAll('iframe.pn-runs').forEach(function (frame) {
+    frame.addEventListener('load', function () { fit(frame); });
+    if (frame.contentDocument && frame.contentDocument.readyState === 'complete') { fit(frame); }
+  });
+  window.addEventListener('resize', function () { document.querySelectorAll('iframe.pn-runs').forEach(fit); });
   document.addEventListener('click', function (event) {
     var request = event.target.closest('[data-request]');
     if (request) { openRequest(request.getAttribute('data-request')); }

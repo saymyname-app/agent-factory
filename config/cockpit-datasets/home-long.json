@@ -60,5 +60,232 @@
       "CI réussies · Samedi : 8",
       "CI réussies · Dimanche : 7"
     ]
-  }
+  },
+  "runs": [
+    {
+      "type": "Livraison D01",
+      "status": "Ta décision",
+      "tone": "wait",
+      "title": "Reprise du cockpit",
+      "step": "Juger le résultat",
+      "started": "15:00",
+      "elapsed": 720,
+      "lanes": [
+        {
+          "name": "Humain",
+          "kind": "human",
+          "jobs": [
+            [
+              0,
+              18
+            ],
+            [
+              690,
+              720
+            ]
+          ]
+        },
+        {
+          "name": "Code",
+          "kind": "code",
+          "jobs": [
+            [
+              18,
+              42
+            ],
+            [
+              177,
+              190
+            ],
+            [
+              450,
+              570
+            ]
+          ]
+        },
+        {
+          "name": "Alex",
+          "kind": "agent",
+          "jobs": [
+            [
+              42,
+              122
+            ],
+            [
+              190,
+              365
+            ]
+          ]
+        },
+        {
+          "name": "Léa",
+          "kind": "agent",
+          "jobs": [
+            [
+              122,
+              177
+            ],
+            [
+              365,
+              430
+            ]
+          ]
+        },
+        {
+          "name": "Noé",
+          "kind": "agent",
+          "jobs": [
+            [
+              370,
+              450
+            ],
+            [
+              570,
+              690
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "type": "Livraison D01",
+      "status": "En cours",
+      "tone": "live",
+      "title": "Recherche dans les notes · nouvelle version",
+      "step": "Préparer les tests · Relire les tests",
+      "started": "14:34",
+      "elapsed": 492,
+      "lanes": [
+        {
+          "name": "Humain",
+          "kind": "human",
+          "jobs": [
+            [
+              0,
+              18
+            ]
+          ]
+        },
+        {
+          "name": "Code",
+          "kind": "code",
+          "jobs": [
+            [
+              18,
+              42
+            ]
+          ]
+        },
+        {
+          "name": "Alex",
+          "kind": "agent",
+          "jobs": [
+            [
+              42,
+              492
+            ]
+          ]
+        },
+        {
+          "name": "Léa",
+          "kind": "agent",
+          "jobs": [
+            [
+              80,
+              492
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "type": "Livraison D01",
+      "status": "✓ Fusionné",
+      "tone": "done",
+      "title": "Recherche dans les notes",
+      "step": "Exécution terminée · historique disponible",
+      "started": "14:10",
+      "elapsed": 720,
+      "lanes": [
+        {
+          "name": "Humain",
+          "kind": "human",
+          "jobs": [
+            [
+              0,
+              18
+            ],
+            [
+              690,
+              705
+            ]
+          ]
+        },
+        {
+          "name": "Code",
+          "kind": "code",
+          "jobs": [
+            [
+              18,
+              42
+            ],
+            [
+              177,
+              190
+            ],
+            [
+              450,
+              570
+            ],
+            [
+              705,
+              720
+            ]
+          ]
+        },
+        {
+          "name": "Alex",
+          "kind": "agent",
+          "jobs": [
+            [
+              42,
+              122
+            ],
+            [
+              190,
+              365
+            ]
+          ]
+        },
+        {
+          "name": "Léa",
+          "kind": "agent",
+          "jobs": [
+            [
+              122,
+              177
+            ],
+            [
+              365,
+              430
+            ]
+          ]
+        },
+        {
+          "name": "Noé",
+          "kind": "agent",
+          "jobs": [
+            [
+              370,
+              450
+            ],
+            [
+              570,
+              690
+            ]
+          ]
+        }
+      ]
+    }
+  ]
 }
