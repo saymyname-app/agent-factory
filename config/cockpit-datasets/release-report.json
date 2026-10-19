@@ -7,5 +7,27 @@
     "setup": "ritualId='release';ritualTarget='Notes';releaseDraftProject='Notes';releaseDraft=JSON.parse(JSON.stringify(releasePlans.Notes));ritualPhase='report';render()"
   },
   "visible_text": "← Rituels\nPréparer la prochaine release\n\nNotes · cible révisable\n\n1 · Périmètre\n2 · Préparation\n3 · Ton cadrage\n4 · Projet mis à jour\nProposition à examiner\n\nGarde une cible provisoire et un prochain jalon précis. Les questions peuvent rester ouvertes.\n\nRésultat attendu pour cette release\nAcquis à conserver\n\n✓ Créer et retrouver une note\n\n✓ Conserver ses notes après reconnexion\n\nCritères restant à satisfaire\n\n○ Exporter les notes au format choisi\n\n○ Vérifier le parcours sans assistance\n\nLe partage de notes est-il nécessaire dès cette release ?\nGarder la question ouverte\nReporter après cette release\nInclure dans la cible de cette release\nProchain jalon\nComment vérifier ce jalon\nEstimation non disponible\n\nHistorique comparable insuffisant. Prochaine réévaluation après le jalon.\n\nSources et inconnues\nRevenir au projet sans conserver\nConserver ce cadrage",
-  "production_writes": 0
+  "production_writes": 0,
+  "ritual": {
+    "framing": {
+      "expected": "Permettre à un nouvel utilisateur de retrouver et exporter ses notes sans aide.",
+      "acquired": [
+        "Créer et retrouver une note",
+        "Conserver ses notes après reconnexion"
+      ],
+      "remaining": [
+        "Exporter les notes au format choisi",
+        "Vérifier le parcours sans assistance"
+      ],
+      "question": "Le partage de notes est-il nécessaire dès cette release ?",
+      "decision": "open",
+      "milestone": "Faire essayer le parcours complet à trois utilisateurs",
+      "check": "Trois essais documentés ; blocages et réussites observés.",
+      "estimate": {
+        "title": "Estimation non disponible",
+        "detail": "Historique comparable insuffisant. Prochaine réévaluation après le jalon."
+      },
+      "sources": "Données de démonstration : objectif du projet, critères, avis et résultats. Dans le produit, chaque acquis renverra à sa preuve ; un document absent restera signalé comme inconnu. La préparation propose des décisions, sans les prendre à ta place."
+    }
+  }
 }

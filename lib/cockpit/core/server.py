@@ -47,12 +47,14 @@ from cockpit.ui.projects.page import (
 )
 from cockpit.ui.projects.project_page import render_project_page, render_project_unknown
 from cockpit.ui.projects.tokens import CSS as PROJECT_PAGE_CSS
+from cockpit.ui.rituals.page import CSS as RITUALS_CSS
+from cockpit.ui.rituals.page import render_rituals, rituals_view
 
 ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
 # The destinations of Panorama whose Prototype Fold is not done yet: their
 # address answers, in the shell, that they are not served here yet.
 NOT_FOLDED = {
-    href: (key, label) for key, label, href in NAVIGATION if key not in (HOME, "projets", "journal")
+    href: (key, label) for key, label, href in NAVIGATION if key not in (HOME, "projets", "journal", "rituels")
 }
 NOT_FOLDED.update({"/runs/run": NOT_FOLDED["/runs"], "/runs/job": NOT_FOLDED["/runs"]})
 
@@ -119,6 +121,9 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/":
             self._send_home(read_model)
+            return
+        if path == "/rituels":
+            self._send_rituals(read_model, urllib.parse.urlsplit(self.path).query)
             return
         if path in NOT_FOLDED:
             key, label = NOT_FOLDED[path]
@@ -205,6 +210,15 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                         extra_css=OVERVIEW_CSS,
                         headers={"Set-Cookie": session_cookie_header(self.server.session_token)},
                         snapshot=snapshot)
+
+    def _send_rituals(self, read_model, query):
+        """GET /rituels: the destination « Rituels et préparation release »
+        of Panorama (T41, af-r4hrt7): the catalogue, or the ritual under way
+        at its step, or the launch of the one ``query`` names."""
+        snapshot = read_model.snapshot()
+        view = rituals_view(snapshot, query)
+        self._send_page(read_model, "rituels", lambda anchors: render_rituals(view, anchors),
+                        extra_css=RITUALS_CSS, snapshot=snapshot)
 
     def _send_page(self, read_model, destination, main, extra_css="", status=200, headers=None, snapshot=None):
         """One page of Panorama: the navigation B with ``destination`` open,

@@ -246,9 +246,9 @@ the read model, never from the frozen page:
   normal leading, a paragraph at 1.5. `/journal` and `/projet/<key>` are served in it, and
   `/projets`: the declared projects, each with its « Page projet » (the
   « Projets » zone of the home screen), until the Fold of « Projets »;
-  `/runs`, `/runs/run`, `/runs/job`, `/usine`, `/rituels` and `/analyses`
-  answer, in it, that the destination is not served here yet, until their
-  own Fold. The shell's own tokens: `--pn-control-line`, the box of a
+  `/rituels` is served in it (below); `/runs`, `/runs/run`, `/runs/job`,
+  `/usine` and `/analyses` answer, in it, that the destination is not
+  served here yet, until their own Fold. The shell's own tokens: `--pn-control-line`, the box of a
   control, at 3:1 at least on the surface and the background in both
   themes, where the reference's `--line` is not; `--pn-muted-text` and
   `--pn-warn-text`, the muted and the warning text, darker in the light
@@ -311,6 +311,66 @@ written in the cases (an outline of anchors per state, read from the
 frozen pages); the cards of « Derniers runs », read in the document of
 their frame; a focus a person sees (drawn at 3:1 at least) and the local
 scroll kept. The 14 result states are T02S's.
+
+## « Rituels et préparation release » (T41, af-r4hrt7)
+
+`GET /rituels` is the destination « Rituels et préparation release » of
+B/Panorama (`prototypes/c01-complete/frozen-panorama-rituals`; Spec
+af-2zseit, user stories 167 to 175), drawn in the shell from the read
+model, never from the frozen page, by `ui/rituals/page.py`:
+`rituals_view` reads what it shows from the snapshot and the query of the
+address, `render_rituals` draws it with the anchors of the reference.
+
+- **The catalogue** (`/rituels`, or `/rituels?vue=catalogue` while a ritual
+  is under way): the five rituals of the Spec, in its order -- « Préparer la
+  prochaine release », then the reviews of incidents, of architecture, of
+  quality / AI Slop and the diagnostic of the Factory --, each what it is
+  for, how it is launched and when it last ran. The catalogue is the
+  cockpit's own; how a ritual is launched (a recommendation among them),
+  the line of its last run and whether its last report can be read are the
+  record `gc.ritual` of the bead under its title, when the tracker holds
+  one -- otherwise « non renseigné », or « inconnu » while the tracker is
+  not read. « Préparer le lancement » opens its launch; « Voir le dernier
+  rapport » is drawn unavailable.
+- **A ritual under way**: the record `gc.ritual_operation` of a bead -- the
+  ritual (`incidents`, `release`…), its title, its project, what the page
+  says after the project (`lead`), its step -- is drawn at its step, under
+  the way back to the catalogue and the path of its four steps, the one
+  under way marked (`aria-current="step"`). A review: `confirm` (its scope,
+  among the declared projects, the one of the review first; it uses an
+  agent), `review` (« Voir le run » opens Runs), `report` (its proposals to
+  choose, from `report`), `preparing`, `ready` (the work prepared, from
+  `work`), `execution`, `delivered` (no acceptance nor merge deduced from
+  its end). The next release: `confirm` (its project), `review`, `report`
+  (the framing proposed, from `framing`: the result expected, what is
+  acquired and what remains, an open question, the next milestone and how
+  to check it, the estimate or why there is none, its sources), `saved`
+  (« Voir le projet » opens the page of the project).
+- **The launch of a ritual chosen from the catalogue**
+  (`/rituels?rituel=<key>`, `&projet=<key>`): its `confirm` step, before
+  anything is launched or recorded.
+- **Not wired**: launching a review, having a selection prepared, going
+  back to the selection, launching the corrections, launching the
+  preparation of a release and keeping a framing are drawn unavailable, and
+  their bar says « … n’est pas encore raccordé à cette vue : rien n’est
+  lancé ni enregistré d’ici. »; the fields of a step can be edited, nothing
+  sends them. The doors are T29, T32 and T61's.
+- **Corrected from the reference** (Testing Decisions 5): a text on the
+  accent is `--pn-accent-ink`, white in the light theme where the
+  reference's dark ink is under 4.5:1 (« Préparer le lancement », the
+  count of « Vue d’ensemble »); muted texts are `--pn-muted-text`; the box
+  of a field or a button is `--pn-control-line`; every field shows its
+  focus; long titles and words wrap inside their panel, and a field that
+  holds more than it shows scrolls. The examples the reference writes as
+  « simulées » in the result of a review are not: the corrections are said
+  done, without the word.
+- **Not prototyped** (the Spec lists them): an empty, loading, error or
+  long state of this destination has no frozen page; the catalogue is
+  drawn while the tracker is not read, its last runs said unknown.
+
+The criterion tests of the Fold are
+`tests/cockpit-criteria/commands/rituals-destination-{states,fidelity,layout}-test.py`
+(`T41-criteria.json`).
 
 ## Home screen, as the validated prototype shows it (af-mjfvwx)
 
@@ -1010,8 +1070,8 @@ ways:
 | « Journal »: each event, « HH:MM (Paris) · projet · nature » or « HH:MM (Paris) · source », under « Aujourd’hui » or « Hier », its title and what follows | one bead of type `event` per event, as `bd create --type event` writes it: its title, its nature or source as `event_kind`, as label and as `gc.journal_event`, its project (declared), `created_at` the day of the dataset or the day before at that time, the other lines | `beads.value`; `projets.value.projects`; `GET /api/journal` `entries`: one entry per event, its title as `quoi`, its `created_at` as `quand`, its nature or source as `voie`, newest first (`lib/cockpit/ui/journal/entries.py`, T01R6 af-ltchro) |
 | « Usine »: « Machine d’exécution », « Connexions », « Fournisseurs et accès API », « Agents dans le workflow », « Auteur livraison », « Autres rôles », « Suspension, reprise et arrêt », « Nettoyer les espaces inutilisés », « Ressources et libellés longs » | one bead kept as said per section | `beads.value` |
 | a suspended Factory: `ui.setup` sets `shutdownState='suspended'` | a suspended city | `gc.value.suspended` is true |
-| « Rituels »: each ritual (a line in capitals says how it is launched, then its title) | one bead per ritual under its title: how it is launched, what it is for, when it last ran | `beads.value` |
-| the page of a ritual (« ← Rituels », its title, « projet · … ») | one bead under the title of the ritual, its project declared; its steps and what the step it is at shows | `beads.value` |
+| « Rituels »: each ritual (a line in capitals says how it is launched, then its title) | one bead per ritual under its title: how it is launched, what it is for, when it last ran; its record `gc.ritual`: how it is launched (`label`), the line of its last run (`last`) and whether its last report can be read (`report`) | `beads.value`; `GET /rituels` |
+| the page of a ritual (« ← Rituels », its title, « projet · … »), the ritual and its step set by `ui.setup` (`ritualId`, `ritualPhase`), and at the step of a report, of the work prepared or of a framing proposed, its content in the dataset's `ritual` (`report`, `work`, `framing`) | one bead under the title of the ritual, its project declared; its steps and what the step it is at shows; its record `gc.ritual_operation`: the ritual, its title, its project, what the page says after the project (`lead`), its step and that content; the projects the page offers under « Périmètre » or « Projet » are declared | `beads.value`; `projets.value.projects`; `GET /rituels` |
 | « Analyses »: « Résultats fusionnés » or « Où passe le temps ? »; a merged result (« projet · hier ») | one bead kept as said for the view; the project of each merged result is declared | `beads.value`; `projets.value.projects` |
 | nothing read yet: `ui.state` is `loading` | a supervisor that never answers, and a tracker whose read never ends (the cockpit waits a day for it, `COCKPIT_BEADS_READ_TIMEOUT_SECONDS`) | every source `unknown`, without value, `beads.failed_at` empty; `GET /` says it is reading, however late it is looked at |
 | nothing readable: `ui.state` is `error` | a supervisor that never answers, and a tracker whose read fails | every source `unknown`, without value, `beads.failed_at` set; `GET /` says the view is unavailable as soon as the first read failed |
@@ -1024,7 +1084,9 @@ The key of a project the dataset only names is its name without accents, in
 lower case, with dashes between words (« Notes » is `notes`). A screen no
 rule reads, a page with « Décisions à prendre » whose list does not hold
 that many lines, a project card without its chantier, an event or a ritual
-without a title, a `ui.state` that names the state of a result on a page
+without a title, a ritual page whose ritual and step `ui.setup` does not set,
+that sets a step its ritual has not or that lacks the content of its step,
+a `ritual` that is not the content of a step or on another screen, a `ui.state` that names the state of a result on a page
 that opens no dossier, or a Runs state whose fixtures cannot be read, is
 refused, as is a `folded` that is not a label and its lines for each part
 or that names a part the dossier does not unfold, and a `drawn` that names a
@@ -1074,7 +1136,11 @@ titles of its 21 points, copied from the frozen state drawn (T02R2,
 af-r2c0tx), and for the `runs` of those seven states: the three cards of
 the frame « Derniers runs », copied from the frozen state drawn, a bar's
 place and width given back in seconds of its run (T02R2, after its code
-review). A state is launched with
+review), and for the `ritual` of `ritual-report`, `ritual-ready` and
+`release-report`: what their step shows that their text leaves out (the
+report and its proposals, the work prepared, the framing proposed and its
+fields), copied from the frozen state drawn (T41, af-r4hrt7). A state is
+launched with
 `--dataset <state>`.
 
 **Screens.** `launch.screens` gives each screen of the Spec its address and
@@ -1092,8 +1158,8 @@ its states, which is what `bin/prototype-fidelity` compares:
 | `run-frise` | `/runs/run` | `run-*` (5) |
 | `job-detail` | `/runs/job` | `job-*` (11) |
 
-`/`, `/journal` and `/projet/notes` (the page of the project the six states
-of that screen are about) are served today; the other addresses are declared
+`/`, `/journal`, `/projet/notes` (the page of the project the six states
+of that screen are about) and `/rituels` are served today; the other addresses are declared
 for the tickets that deliver those screens, and answer 404 until then.
 
 **The public commands of the Delivery Workflow.** Beside its `http` entry

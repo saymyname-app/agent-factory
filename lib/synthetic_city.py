@@ -67,6 +67,26 @@ JOURNAL_EVENT = re.compile(r"^(?P<time>\d\d:\d\d) \(Paris\)(?: · (?P<project>[^
 MERGED = re.compile(r"^(?P<project>[^·]+?) · (?P<when>hier|avant-hier|aujourd’hui)$")
 # « Usine · données et avancement simulés »: the project of a ritual.
 RITUAL_PROJECT = re.compile(r"^(?P<project>[^·]+?) · ")
+# The record of a ritual of the list, and of the one under way, as the
+# destination « Rituels » reads them (cockpit.ui.rituals.page).
+RITUAL = "gc.ritual"
+RITUAL_OPERATION = "gc.ritual_operation"
+LAST_REPORT = "Voir le dernier rapport"
+# The ritual and the step a ritual page is set up at (`ui.setup`).
+RITUAL_ID = re.compile(r"ritualId='([a-z]+)'")
+RITUAL_STEP = re.compile(r"ritualPhase='([a-z]+)'")
+# A review goes through its steps from its launch to its result; the
+# preparation of the next release from its project to the framing kept.
+REVIEW, RELEASE = "review", "release"
+RITUAL_STEPS = {
+    REVIEW: ("confirm", "review", "report", "preparing", "ready", "execution", "delivered"),
+    RELEASE: ("confirm", "review", "report", "saved"),
+}
+# The steps that show a content of their own, and its key in the dataset's
+# `ritual`: the report of a review, the work prepared, the framing proposed.
+RITUAL_CONTENT = {(REVIEW, "report"): "report", (REVIEW, "ready"): "work", (RELEASE, "report"): "framing"}
+# The labels the projects a ritual page offers follow.
+CHOICE_LABELS = ("Périmètre", "Projet")
 # « Reprise du cockpit · À juger »: the current chantier of a project.
 CHANTIER = re.compile(r"^(?P<title>.+) · (?P<stage>[^·]+)$")
 # The day an event of the journal is listed under, counted from the day of
@@ -101,8 +121,11 @@ def from_dataset(dataset) -> SyntheticCity:
         raise DatasetRefused("names no state (ui.id, or state)")
     if "fixtures" in dataset:
         return _runs_city(name, at, ui, dataset["fixtures"])
+    ritual = dataset.get("ritual")
+    if ritual is not None and not isinstance(ritual, dict):
+        raise DatasetRefused("its ritual (ritual) is not the content of a step of a ritual")
     return _panorama_city(name, _fixed_time(at), ui, dataset.get("visible_text"), _folded(dataset.get("folded")),
-                          _folded(dataset.get("drawn"), "drawn"), _run_cards(dataset.get("runs")))
+                          _folded(dataset.get("drawn"), "drawn"), _run_cards(dataset.get("runs")), ritual)
 
 
 def _folded(folded, key="folded") -> dict:
@@ -174,8 +197,10 @@ def _descriptor(display_name: str) -> dict:
 class _Tracker:
     """The beads and the declared projects read from one screen."""
 
-    def __init__(self, at: datetime):
+    def __init__(self, at: datetime, setup: str = "", ritual=None):
         self.at = at
+        self.setup = setup
+        self.ritual = ritual
         self.beads = []
         self.projects = {}
 
@@ -203,7 +228,7 @@ class _Tracker:
                          project=project, labels=[SAID])
 
 
-def _panorama_city(name, at, ui, text, folded, drawn, runs) -> SyntheticCity:
+def _panorama_city(name, at, ui, text, folded, drawn, runs, ritual=None) -> SyntheticCity:
     if not isinstance(text, str) or not text.strip():
         raise DatasetRefused("a Panorama state without the text of its page (visible_text)")
     lines = [line.strip() for line in text.split("\n") if line.strip()]
@@ -217,7 +242,9 @@ def _panorama_city(name, at, ui, text, folded, drawn, runs) -> SyntheticCity:
         raise DatasetRefused(f"a screen no rule reads: « {lines[0] if lines else ''} »")
     result_state = None if view is None or reading != READ or view in PLAIN_VIEWS else view
     stop_step = STOP_STEP.search(ui.get("setup") or "")
-    tracker = _Tracker(at)
+    if ritual is not None and read_screen is not _ritual_page:
+        raise DatasetRefused("a ritual (ritual) on a screen that is not the page of a ritual")
+    tracker = _Tracker(at, ui.get("setup") or "", ritual)
     read_screen(lines, tracker)
     # A drawing is kept as it is said, under its heading, on the screen that
     # shows that heading.
@@ -430,7 +457,10 @@ def _factory(lines, tracker) -> None:
 
 def _rituals(lines, tracker) -> None:
     """One bead per ritual of the list: a line in capitals says how it is
-    launched, the next one is its title, the others what the list says of it."""
+    launched, the next one is its title, the others what the list says of it.
+    Its record `gc.ritual`: how it is launched (`label`), when it last ran
+    (`last`, the line « Dernière revue … » or « Dernier cadrage … ») and
+    whether its last report can be read (`report`)."""
     rituals = []
     for line in lines[1:]:
         if line == line.upper() and any(letter.isalpha() for letter in line):
@@ -440,16 +470,46 @@ def _rituals(lines, tracker) -> None:
     for number, (launched, *said) in enumerate(rituals, 1):
         if not said:
             raise DatasetRefused(f"a ritual without a title, under « {launched} »")
-        tracker.add(f"synthetic-ritual-{number}", said[0], said=[launched, *said[1:]])
+        record = {"label": launched, "last": next((line for line in said[1:] if line.startswith("Derni")), None),
+                  "report": LAST_REPORT in said}
+        tracker.add(f"synthetic-ritual-{number}", said[0], said=[launched, *said[1:]],
+                    metadata={RITUAL: json.dumps(record, ensure_ascii=False)})
 
 
 def _ritual_page(lines, tracker) -> None:
     """The page of one ritual (« ← Rituels »): its title, « projet · … »,
-    then its steps and what the step it is at shows."""
+    then its steps and what the step it is at shows. Its record
+    `gc.ritual_operation`: the ritual and the step `ui.setup` sets
+    (`ritualId`, `ritualPhase`), its title, its project and what the page
+    says of it after the project (`lead`), and, at a step that shows a
+    content of its own, that content, from the dataset's `ritual`. The
+    projects the page offers to choose from (under « Périmètre » or
+    « Projet ») are declared."""
     project = RITUAL_PROJECT.match(lines[2]) if len(lines) > 2 else None
     if not project:
         raise DatasetRefused("a ritual page that names no ritual and project")
-    tracker.add("synthetic-ritual", lines[1], said=lines[3:], project=tracker.declare(project["project"]))
+    ritual, step = RITUAL_ID.search(tracker.setup), RITUAL_STEP.search(tracker.setup)
+    if not ritual or not step:
+        raise DatasetRefused("a ritual page whose ritual and step are not set (ui.setup: ritualId, ritualPhase)")
+    kind = RELEASE if ritual.group(1) == RELEASE else REVIEW
+    if step.group(1) not in RITUAL_STEPS[kind]:
+        raise DatasetRefused(f"a ritual page at a step its ritual has not: {step.group(1)!r}")
+    content = tracker.ritual or {}
+    wanted = RITUAL_CONTENT.get((kind, step.group(1)))
+    if wanted and (not isinstance(content.get(wanted), dict) or not content[wanted]):
+        raise DatasetRefused(f"a ritual page at the step {step.group(1)!r} without its content (ritual.{wanted})")
+    for label in CHOICE_LABELS:
+        if label in lines:
+            # The names offered, up to the sentence that follows them.
+            for name in lines[lines.index(label) + 1:]:
+                if name.endswith("."):
+                    break
+                tracker.declare(name)
+    record = {"ritual": ritual.group(1), "title": lines[1], "project": project["project"],
+              "lead": lines[2][project.end():], "step": step.group(1),
+              **({wanted: content[wanted]} if wanted else {})}
+    tracker.add("synthetic-ritual", lines[1], said=lines[3:], project=tracker.declare(project["project"]),
+                metadata={RITUAL_OPERATION: json.dumps(record, ensure_ascii=False)})
 
 
 # « Analyses »: the view it is on is kept as said; a merged result

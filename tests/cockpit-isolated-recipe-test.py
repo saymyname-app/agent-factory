@@ -162,6 +162,34 @@ class TheOtherScreens(Refusals):
         self.assertRefused(panorama("← Rituels", "Revue d’incidents", "Sans projet"),
                            r"a ritual page that names no ritual and project")
 
+    def test_a_ritual_page_whose_ritual_and_step_are_not_set_is_refused(self):
+        self.assertRefused(ritual_page("ritualId='incidents'"),
+                           r"a ritual page whose ritual and step are not set \(ui.setup: ritualId, ritualPhase\)")
+
+    def test_a_ritual_page_at_a_step_its_ritual_has_not_is_refused(self):
+        self.assertRefused(ritual_page("ritualId='incidents';ritualPhase='saved'"),
+                           r"a ritual page at a step its ritual has not: 'saved'")
+
+    def test_a_ritual_page_at_a_step_without_its_content_is_refused(self):
+        self.assertRefused(ritual_page("ritualId='incidents';ritualPhase='report'", ritual={"work": {"title": "x"}}),
+                           r"a ritual page at the step 'report' without its content \(ritual.report\)")
+
+    def test_a_ritual_that_is_not_the_content_of_a_step_is_refused(self):
+        self.assertRefused(ritual_page("ritualId='incidents';ritualPhase='report'", ritual=["Un rapport"]),
+                           r"its ritual \(ritual\) is not the content of a step of a ritual")
+
+    def test_a_ritual_on_a_screen_that_is_not_a_ritual_page_is_refused(self):
+        self.assertRefused({**panorama("Rituels", "LANCEMENT MANUEL", "Revue d’architecture"), "ritual": {}},
+                           r"a ritual \(ritual\) on a screen that is not the page of a ritual")
+
+
+def ritual_page(setup, ritual=None):
+    """The page of the review of incidents of « Usine », set up by `setup`,
+    with the content `ritual` of its step."""
+    dataset = panorama("← Rituels", "Revue d’incidents", "Usine · données simulées", "1 · Revue")
+    dataset["ui"]["setup"] = setup
+    return {**dataset, **({"ritual": ritual} if ritual is not None else {})}
+
 
 def listening_sockets(port):
     """The sockets listening on `port`, as /proc/<pid>/fd names them."""

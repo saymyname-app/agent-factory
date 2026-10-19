@@ -7,5 +7,14 @@
     "setup": "ritualId='incidents';ritualPhase='ready';ritualChosen.add('alerts');render()"
   },
   "visible_text": "← Rituels\nRevue d’incidents\n\nUsine · données et avancement simulés\n\n1 · Revue\n2 · Ton choix\n3 · Travail précis\n4 · Réalisation\nTravail prêt à valider\nRegrouper les signalements d’un même incident\n\nDétection et regroupement des alertes ; aucun changement produit.\n\nRésultat attendu\n\nChaque défaut sélectionné est reproduit, corrigé et vérifié ; le résultat assemblé est prêt à juger.\n\nLimites\n\nUn lot limité aux propositions choisies. Aucun nouveau service, accès public ou changement de production. Toute extension demande une nouvelle décision.\n\nTravail précis et critères\nRevoir la sélection\nLancer les corrections",
-  "production_writes": 0
+  "production_writes": 0,
+  "ritual": {
+    "work": {
+      "title": "Regrouper les signalements d’un même incident",
+      "scope": "Détection et regroupement des alertes ; aucun changement produit.",
+      "expected": "Chaque défaut sélectionné est reproduit, corrigé et vérifié ; le résultat assemblé est prêt à juger.",
+      "limits": "Un lot limité aux propositions choisies. Aucun nouveau service, accès public ou changement de production. Toute extension demande une nouvelle décision.",
+      "criteria": "Exemple : un ticket par défaut sélectionné ; dépendances et tests de régression préparés. Le produit devra présenter le texte exact à approuver et ses critères, pas transformer un résumé en autorisation."
+    }
+  }
 }
