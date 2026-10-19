@@ -61,8 +61,11 @@ class CockpitCriteria(unittest.TestCase):
             "tests/cockpit-criteria/commands/isolated-launch-test.py::IsolatedCockpitLaunch", ids,
             "the criterion tests of the launch are not found",
         )
-        # Each class launches its own products on its own ports: side by side.
-        with ThreadPoolExecutor(max_workers=len(ids)) as pool:
+        # Each class launches its own products on its own ports: side by side,
+        # but no more at once than the host has cores -- the classes that
+        # measure in a headless browser, all started together on a CI runner
+        # of two cores, measured nothing (PR #683, 2026-10-19).
+        with ThreadPoolExecutor(max_workers=max(1, min(len(ids), os.cpu_count() or 1))) as pool:
             failed = [failure for failure in pool.map(run, ids) if failure]
         self.assertEqual([], failed)
 
