@@ -121,7 +121,10 @@ readable, and a late result is refused by the stopped-ticket gate.
 
 The stop is `bin/convoy-state stop-ticket --reason still_refused`, with one
 line that names everything still refused (« revue de code (F1.1) ; Ticket
-Evaluation (critère 1) »). A stopped ticket takes no further step: no
+Evaluation (critère 1) »), and every other condition of the merge still red
+at the tip: a review or evaluation with no favorable verdict there, a red
+fidelity. When the fidelity is red or no evaluation is favorable at the tip,
+the request says the override alone « ne suffit pas » (T02R2, af-r2c0tx). A stopped ticket takes no further step: no
 review, no evaluation, no round, no merge (`docs/SPEC_INTEGRATION.md`). It is
 raised **once** through `bin/escalation-door benjamin`: one line for the
 ticket in `bin/escalation-door list`, whether one control or both refused
