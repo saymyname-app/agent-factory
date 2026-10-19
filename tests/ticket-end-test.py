@@ -274,7 +274,7 @@ class TicketEndTest(unittest.TestCase):
                                   for number, text in enumerate(shown["criteria"], start=1)]
         return self.state("record-evaluation", CONVOY, ticket, "--file", self.json_file(f"evaluation-{ticket}.json", handed))
 
-    def finished(self, ticket, findings=(), markers=(), legacy=False):
+    def finished(self, ticket, findings=(), markers=(), legacy=False, amended=False):
         """A ticket walked by its author to the exit « terminé », then
         reviewed and evaluated at its tip: every step proven by a sealed
         piece, as bin/tdd-step, bin/ticket-author and bin/ticket-exit file
@@ -301,6 +301,21 @@ class TicketEndTest(unittest.TestCase):
             files = {test: "sha256:" + hashlib.sha256((self.worktree(ticket) / test).read_bytes()).hexdigest()}
             self.capture(ticket, "tdd_freeze", {"files": files})
             self.state("set-tdd", CONVOY, ticket, "--step", "freeze", "--commit", red_commit)
+            if amended:
+                # bin/tdd-step amend: the red of the amended tests is its own
+                # piece, recorded as the red at the commit of the amendment.
+                red_commit = self.commit_on(ticket, {test: f"# test de critère amendé du ticket {ticket}\n"},
+                                            "tests de critère amendés")
+                self.capture(ticket, "tdd_amendment", {
+                    "verdict": "red", "base": start, "seam_mode": "black_box",
+                    "tests": [{"id": f"{test}::T::test", "outcome": "failed", "entry_points": ["GET /"]}],
+                    "amendment": {"reason": "revue de code", "files": [test]}})
+                self.state("set-tdd", CONVOY, ticket, "--step", "amendment", "--commit", red_commit,
+                           "--reason", "revue de code")
+                self.state("set-tdd", CONVOY, ticket, "--step", "red", "--commit", red_commit, "--base", start)
+                files = {test: "sha256:" + hashlib.sha256((self.worktree(ticket) / test).read_bytes()).hexdigest()}
+                self.capture(ticket, "tdd_freeze", {"files": files})
+                self.state("set-tdd", CONVOY, ticket, "--step", "freeze", "--commit", red_commit)
             tip = self.commit_on(ticket, {f"docs/{ticket}.md": "la tranche\n"})
             self.capture(ticket, "tdd_green", {"verdict": "green", "k": 3, "frozen": red_commit, "seam_mode": "black_box"})
             self.state("set-tdd", CONVOY, ticket, "--step", "green", "--commit", tip)
@@ -411,6 +426,19 @@ class TicketEndTest(unittest.TestCase):
         # Closed through its gate: the convoy is in a state the code has a rule for.
         self.assertEqual([], shown["unruled"])
         self.assertFalse(self.show()["unruled"])
+
+    def test_an_amended_ticket_is_closed_on_the_red_proof_of_its_amendment(self):
+        # T02R2 (af-r2c0tx, af-9cjg26): after bin/tdd-step amend, the red is
+        # recorded at the commit of the amendment and proven by tdd_amendment;
+        # tdd_red stays the first red, at an older commit.
+        tip = self.finished(SLICE, amended=True)
+        status, answer = self.merge()
+        self.assertEqual((0, [SLICE]), (status, [entry["id"] for entry in answer["merged"]]), answer)
+
+        status, answer = self.close(SLICE)
+
+        self.assertEqual(0, status, answer)
+        self.assertEqual((True, tip), (answer["closed"], answer["commit"]))
 
     def test_a_round_on_the_demonstration_line_alone_passes_the_nine_conditions(self):
         self.merged(SLICE)

@@ -274,6 +274,16 @@ class Evidence:
         return report if isinstance(report, dict) else {}
 
 
+def red_piece(tdd: dict[str, Any], step: str) -> str:
+    """The piece that proves the red recorded on the ticket. After an
+    amendment the red is recorded at its commit and proven by
+    `tdd_amendment`; `tdd_red` stays the first red (docs/TDD_STEP.md)."""
+    amendment = tdd.get("amendment") or {}
+    if step == "red" and amendment.get("commit") and amendment.get("commit") == (tdd.get("red") or {}).get("commit"):
+        return TDD_PIECES["amendment"]
+    return TDD_PIECES[step]
+
+
 # --- the nine conditions ---------------------------------------------------------------
 # Each returns (met, detail): one line that says what was read.
 
@@ -316,7 +326,7 @@ def condition_handoff(ticket: dict[str, Any], tip: str, evidence: Evidence, repo
     red = (handoff.get("records") or {}).get("red_proof") or {}
     if not proven or red.get("step") != step or red.get("commit") != proven.get("commit"):
         return False, f"le Handoff ne porte pas la preuve du rouge ({step}) prouvée sur le ticket"
-    problem = evidence.at(TDD_PIECES[step], proven["commit"], "preuve du rouge")
+    problem = evidence.at(red_piece(ticket.get("tdd") or {}, step), proven["commit"], "preuve du rouge")
     if problem:
         return False, problem
     if ticket.get("kind") == KIND_PREFACTORING:
@@ -461,7 +471,7 @@ def condition_tdd(ticket: dict[str, Any], tip: str, evidence: Evidence, repo: Pa
         record = tdd.get(step)
         if not record:
             return False, f"étape « {said} » ({step}) non enregistrée sur le ticket"
-        problem = evidence.at(TDD_PIECES[step], record.get("commit"), f"preuve de l'étape « {said} »")
+        problem = evidence.at(red_piece(tdd, step), record.get("commit"), f"preuve de l'étape « {said} »")
         if problem:
             return False, problem
     if "amendment" in tdd:
@@ -470,7 +480,7 @@ def condition_tdd(ticket: dict[str, Any], tip: str, evidence: Evidence, repo: Pa
             return False, problem
     if tdd["green"].get("commit") != tip:
         return False, f"vert prouvé à {sha(tdd['green'].get('commit'))} et non à la pointe {sha(tip)}"
-    red, green = evidence.report(TDD_PIECES["red"]), evidence.report(TDD_PIECES["green"])
+    red, green = evidence.report(red_piece(tdd, "red")), evidence.report(TDD_PIECES["green"])
     if red.get("verdict") != "red":
         return False, "le relevé de l'étape rouge ne dit pas « red »"
     if not red.get("seam_mode"):

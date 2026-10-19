@@ -45,6 +45,11 @@ that is, or was, merged.
 | 8 | `tdd` | Red, freeze and green are recorded, each with its sealed report at its commit; green is at the tip; the red report says `red` and carries its seam; the green report says `green`. A prefactoring: its regression at the tip says `unchanged`. |
 | 9 | `review` | The code review is favorable at the tip with no Blocking Finding left without a favorable verdict; or every such finding carries Benjamin's recorded override (`bin/correction-round override`). |
 
+After an amendment (`bin/tdd-step amend`), the red of conditions 2 and 8
+is the one recorded at the commit of the amendment, proven by the piece
+`tdd_amendment`; `tdd_red` stays the first red (`docs/TDD_STEP.md`,
+af-9cjg26).
+
 A ticket « touches a screen » when the publication door posed the reference
 of the Validated Prototype in its description (`## Validated Prototype`,
 T36). `bin/convoy-state show` renders it as `interface` and
