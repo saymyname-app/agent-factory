@@ -846,9 +846,11 @@ class CodeReviewTest(unittest.TestCase):
         self.assertEqual([], self.merge()["merged"])
 
     def test_blocking_findings_without_an_answer_wait_and_no_judgement_is_sent(self):
-        self.finished_slice()
+        _, reviewed = self.finished_slice()
         self.reviewer({"findings": [CONTRADICTS]})
         self.settle()
+        self.evaluated(SLICE, reviewed)
+        self.state("open-correction", CONVOY, SLICE, "--commit", reviewed)
         self.corrected({NOTE: "le nombre est affiché : 3\n"})
 
         settled = self.settle()
@@ -856,6 +858,22 @@ class CodeReviewTest(unittest.TestCase):
         self.assertEqual([], settled["launched"])
         self.assertIn("F1.1", settled["waiting"][0]["reason"])
         self.assertEqual(1, len(self.launches()))
+
+    def test_an_unfavorable_review_outdated_before_any_correction_round_is_replayed_in_full_at_the_tip(self):
+        # af-s31cvi (T02, 17/10): an author resumed outside the correction
+        # round finished again at a new tip. Nobody answers the old
+        # findings there: the review is replayed, not left waiting for them.
+        _, first = self.finished_slice()
+        self.reviewer({"findings": [CONTRADICTS]}, "favorable")
+        self.settle()
+        tip = self.corrected({NOTE: "le nombre est affiché : 3\n"})
+
+        settled = self.settle()
+
+        self.assertEqual([("review", tip)], [(entry["kind"], entry["commit"]) for entry in settled["launched"]])
+        review = self.review()
+        self.assertEqual([("review", first), ("review", tip)], [(r["kind"], r["commit"]) for r in review["rounds"]])
+        self.assertEqual({"verdict": "favorable", "commit": tip, "unsettled": []}, review["state"])
 
     def test_respond_refuses_a_correction_commit_that_does_not_follow_the_reviewed_commit(self):
         red, _ = self.finished_slice()

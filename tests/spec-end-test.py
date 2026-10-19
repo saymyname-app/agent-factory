@@ -651,7 +651,7 @@ class SpecEndTest(Harness):
         accept = self.requested()
         self.assertEqual("ouvert", self.shown(SLICE)["tracked_items"][0]["state"])
 
-        self.door("repondre", SLICE, accept)
+        self.door("repondre", SLICE, accept, "--actor", "operateur-test")
 
         item = self.shown(SLICE)["tracked_items"][0]
         self.assertEqual(("not_done.1", NOT_DONE, "accepté par Benjamin"), (item["id"], item["text"], item["state"]))
@@ -664,7 +664,7 @@ class SpecEndTest(Harness):
         accept = self.requested()
         other = next(letter for letter in "ab" if letter != accept)
 
-        self.door("repondre", SLICE, other)
+        self.door("repondre", SLICE, other, "--actor", "operateur-test")
 
         item = self.shown(SLICE)["tracked_items"][0]
         self.assertEqual("ouvert", item["state"])
@@ -751,31 +751,21 @@ class SpecEndTest(Harness):
         self.assertEqual(before, self.snapshot())
         self.assertEqual({"end_rounds": 1}, self.counters())
 
-    def test_red_fidelity_on_the_tip_records_the_red_count_one_round_and_stop_the_gate(self):
+    def test_red_fidelity_on_the_tip_is_reported_never_the_red_of_the_branch(self):
+        """Faux si une fidélité rouge en fin de Spec arrête encore la porte
+        (ADR-0032, af-hcriwn) : elle est jointe pour la passe de finition."""
         self.delivered()
 
-        protected = self.commit_to(PROTECTED, self.drop_the_empty_list, "l'état vide perd sa liste")
+        self.commit_to(PROTECTED, self.drop_the_empty_list, "l'état vide perd sa liste")
 
-        status, answer = self.run_gate()
+        answer = self.mechanical_green(*self.run_gate())
 
-        self.assertEqual(EXIT_REFUSED, status, answer)
-        self.assertEqual([(1, "registry", "pass"), (2, "tests", "pass"), (3, "fidelity", "fail")] + NOT_LAUNCHED,
-                         self.verdicts(answer))
-        self.assertEqual([3], answer["missing"])
         detail = answer["conditions"][2]["detail"]
+        self.assertIn("non bloquante", detail)
         self.assertIn("fixture-items", detail)
-        self.assertIn("empty", detail)
         convoy = self.show()["convoy"]
-        red = convoy["integration_red"]
-        self.assertEqual("fidelity", red["check"])
-        self.assertIn("fidélité", red["control"])
-        self.assertIn("fixture-items", red["detail"])
-        # Measured on the one tip the tests ran on: the protected branch taken up.
-        tip = self.remote_tip()
-        self.assertEqual((tip, tip, protected), (red["commit"], red["integration"], red["protected"]))
-        self.assertTrue(self.holds(protected, tip))
-        self.assertEqual({"end_rounds": 1}, convoy["counters"])
-        self.assertIsNone(convoy["spec_end"])
+        self.assertIsNone(convoy["integration_red"])
+        self.assertFalse(convoy["counters"].get("end_rounds"))
 
     def test_deviation_on_an_anchor_benjamin_accepted_is_not_a_red_fidelity(self):
         self.delivered()

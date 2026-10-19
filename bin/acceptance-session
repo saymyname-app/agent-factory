@@ -4,7 +4,7 @@ and no agent, launches the product Benjamin judges and stops it.
 
     ./bin/acceptance-session open   CONVOY [--repo <project repository>] [--profile <descriptor>]
     ./bin/acceptance-session close  CONVOY
-    ./bin/acceptance-session record CONVOY [--repo <project repository>] --response relancer|planification|abandon
+    ./bin/acceptance-session record CONVOY [--repo <project repository>] --response relancer|planification|abandon [--actor benjamin|<session>]
 
 `open` reads the dossier Benjamin was asked to judge -- the Evidence Pack
 of the Delivered Outcome, or the one the « non conforme » request of
@@ -448,7 +448,9 @@ def cmd_record(args: argparse.Namespace) -> dict[str, Any]:
     if response not in known:
         raise Refusal(f"issue inconnue : {args.response!r} (attendu : {offered}) ; rien n'est enregistré")
     letter = "abc"[known.index(response)]
-    proc = run([str(ESCALATION_TOOL), "repondre", dossier["bead"], letter])
+    # Who chose: --actor, else the door takes the session's own identity (af-zkdvur).
+    actor = ["--actor", args.actor] if args.actor else []
+    proc = run([str(ESCALATION_TOOL), "repondre", dossier["bead"], letter, *actor])
     if proc.returncode != 0:
         raise Refusal(f"la porte d'escalade n'a pas enregistré l'issue : {detail_of(proc)}")
     return {"ok": True, "convoy": convoy.id, "kind": NON_CONFORME, "response": response,
@@ -470,6 +472,7 @@ def main() -> int:
     p.add_argument("convoy")
     p.add_argument("--repo")
     p.add_argument("--response")
+    p.add_argument("--actor")
     p.set_defaults(run=cmd_record)
     args = parser.parse_args()
     try:

@@ -90,6 +90,7 @@ author, cause `behind` (`docs/CONVOY_ADVANCE.md`).
 |---|---|
 | none, or favorable at an older commit than the tip | opens a **review** at the tip: a commit added after a verdict has it replayed in full (Spec §8) |
 | favorable at the tip | nothing: the merge may follow |
+| unfavorable review at an older commit than the tip, no correction round taken and no answer given (the author was resumed outside the round, af-s31cvi) | opens a **review** at the tip, replayed in full: no session would answer the old findings |
 | unfavorable review, a Blocking Finding without an answer | waits (`respond`) |
 | unfavorable review, every Blocking Finding answered | opens a **judgement** at the tip, against the reviewed commit |
 | unfavorable judgement | nothing more opens, nothing merges; `bin/correction-round settle` stops the ticket, still refused after its correction round (`docs/CORRECTION_ROUND.md`) |

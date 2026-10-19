@@ -102,7 +102,10 @@ for t in ${TESTS[@]+"${TESTS[@]}"}; do
     FAILED+=("$t: missing or not executable")
     continue
   fi
-  OUTPUT=$(timeout --kill-after=30 "$TEST_TIMEOUT" "$t" 2>&1)
+  # Unbuffered: a Python test's stdout, block-buffered into this pipe, landed
+  # after its FAIL lines on stderr, and the last 5 lines kept for the bead hid
+  # them (fake-tool-contract-test.py, 2026-10-18 nightly, af-foq4t7).
+  OUTPUT=$(PYTHONUNBUFFERED=1 timeout --kill-after=30 "$TEST_TIMEOUT" "$t" 2>&1)
   rc=$?
   if [ "$rc" -eq 0 ]; then
     say "local-only-tests: PASS $t"

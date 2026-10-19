@@ -18,7 +18,13 @@ prototype (`--prototype`, the directory `bin/prototype-conformance` checks):
   at every reference viewport and theme the prototype declares: an anchor of
   the prototype absent from the delivered page, another element, another
   enclosing anchor, another number of occurrences, or another computed value
-  of a compared property, is a deviation.
+  of a compared property, is a deviation. A theme the preferred colour
+  scheme does not reach on the prototype (it renders the same in every
+  theme) is put on both sides by the common convention (the class
+  `theme-<name>` on `<html>` and `<body>`, `data-theme="<name>"`), and
+  compared only when that changes the prototype; otherwise it is reported
+  « non mesurable » (af-yw9awk). Tokens are resolved per theme on each
+  side, and each theme is compared to the same theme.
 
 The states are compared one at a time (af-6xjghg): the product of a state
 is stopped before that of the next is launched.
@@ -104,7 +110,17 @@ PROPERTIES = (
 # What a reference theme is for the browser: its preferred colour scheme
 # (observed on chrome-headless-shell 1243, 2026-10-07: 0 is dark, 1 is light).
 COLOUR_SCHEMES = {"light": "1", "dark": "0"}
+# The common way a page is put in a theme without the preferred colour
+# scheme: the measuring page applies it when the emulation does not reach a
+# theme of the prototype (its `theme` and `themes` parameters).
+THEME_CONVENTION = "la classe theme-{0} sur <html> et <body>, data-theme={0} sur <html>"
+# The theme a rule declares its tokens for: its `prefers-color-scheme`, or
+# a `[data-theme=<name>]` or `.theme-<name>` selector.
+CONTEXT_THEME = re.compile(r"prefers-color-scheme\s*:\s*([\w-]+)")
+SELECTOR_THEME = re.compile(r"\[data-theme\s*=\s*[\"']?([\w-]+)|\.theme-([\w-]+)")
 PIECE = "fidelity"
+# The full measure, in the work directory; the piece seals its fingerprint (af-2cpwkh).
+MEASURE_FILE = "measure.json"
 MEASURE_PATH = "/__fidelity__/measure.html"
 MEASURE_RE = re.compile(r'<pre id="fidelity-measure">(.*?)</pre>', re.S)
 BROWSER_TIMEOUT = 60
@@ -125,8 +141,18 @@ MEASURE_PAGE = """<!doctype html>
   var frame = document.getElementById('page');
   var attribute = query.get('attr');
   var properties = query.get('props').split(',');
+  var theme = query.get('theme'), themes = (query.get('themes') || '').split(',');
   frame.style.width = query.get('w') + 'px';
   frame.style.height = query.get('h') + 'px';
+  function themed(doc) {
+    [doc.documentElement, doc.body].forEach(function (element) {
+      if (!element) { return; }
+      themes.forEach(function (other) { element.classList.remove('theme-' + other); });
+      element.classList.add('theme-' + theme);
+    });
+    doc.documentElement.setAttribute('data-theme', theme);
+    if (doc.body && doc.body.hasAttribute('data-theme')) { doc.body.setAttribute('data-theme', theme); }
+  }
   function measure() {
     try {
       var view = frame.contentWindow, anchors = [];
@@ -139,12 +165,15 @@ MEASURE_PAGE = """<!doctype html>
           parent: up ? up.getAttribute(attribute) : null, styles: styles
         });
       });
-      out.textContent = JSON.stringify({ok: true, anchors: anchors});
+      var doc = frame.contentDocument;
+      var scheme = view.getComputedStyle(doc.body || doc.documentElement).getPropertyValue('color-scheme');
+      out.textContent = JSON.stringify({ok: true, anchors: anchors, scheme: scheme});
     } catch (error) {
       out.textContent = JSON.stringify({ok: false, error: String(error)});
     }
   }
   frame.addEventListener('load', function () {
+    if (theme && frame.contentDocument) { themed(frame.contentDocument); }
     var fonts = frame.contentDocument && frame.contentDocument.fonts;
     if (fonts && fonts.ready) { fonts.ready.then(measure, measure); } else { measure(); }
   });
@@ -241,7 +270,7 @@ def renderings(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     keeps the name of the viewport; another one is named after it."""
     return [
         {"label": viewport["name"] if theme == "light" else f"{viewport['name']}@{theme}",
-         "width": viewport["width"], "height": viewport["height"], "theme": theme}
+         "viewport": viewport["name"], "width": viewport["width"], "height": viewport["height"], "theme": theme}
         for theme in manifest["themes"] for viewport in manifest["viewports"]
     ]
 
@@ -460,11 +489,13 @@ def css_rules(css: str, context: str = "") -> list[tuple[str, str, str]]:
     return rules
 
 
-def tokens_of(page_url: str, what: str) -> dict[str, str]:
+def tokens_of(page_url: str, what: str, themes: list[str]) -> dict[str, str]:
     """The tokens the sources of a page declare: custom properties on `:root`,
-    `html` or a `[data-theme…]` selector, in its `<style>` blocks and the
-    style sheets it links from its own address. A token declared for the dark
-    theme is another token than the light one."""
+    `html`, a `[data-theme…]` or a `.theme-<name>` selector, in its `<style>`
+    blocks and the style sheets it links from its own address. They are
+    resolved per theme: those of no theme, then those declared for it. A
+    token of the light theme keeps its name; another theme's is named after
+    it (`--bg (dark)`), so each theme is compared to the same theme."""
     sources = StyleSources()
     sources.feed(fetch(page_url, what))
     css = list(sources.inline)
@@ -473,16 +504,23 @@ def tokens_of(page_url: str, what: str) -> dict[str, str]:
         sheet = urllib.parse.urljoin(page_url, href)
         if urllib.parse.urlsplit(sheet)[:2] == origin:
             css.append(fetch(sheet, f"la feuille de style de {what}"))
-    tokens: dict[str, str] = {}
-    for context, selector, body in css_rules("\n".join(css)):
-        if not re.search(r":root|\bhtml\b|\[data-theme", selector):
-            continue
-        dark = "dark" in context or "dark" in selector
-        for declaration in body.split(";"):
-            name, separator, value = declaration.partition(":")
-            if separator and name.strip().startswith("--"):
-                tokens[name.strip() + (" (dark)" if dark else "")] = re.sub(r"\s+", "", value).lower()
-    return tokens
+    declared: dict[str | None, dict[str, str]] = {}
+    for context, selectors, body in css_rules("\n".join(css)):
+        for selector in selectors.split(","):
+            if not re.search(r":root|\bhtml\b|\[data-theme|\.theme-", selector):
+                continue
+            plain = re.sub(r":not\([^)]*\)", "", selector)
+            found = CONTEXT_THEME.search(context) or SELECTOR_THEME.search(plain)
+            theme = next((group for group in found.groups() if group), None) if found else next(
+                (name for name in ("dark", "light") if name in context or name in plain), None)
+            for declaration in body.split(";"):
+                name, separator, value = declaration.partition(":")
+                if separator and name.strip().startswith("--"):
+                    declared.setdefault(theme, {})[name.strip()] = re.sub(r"\s+", "", value).lower()
+    return {
+        name if theme == "light" else f"{name} ({theme})": value
+        for theme in themes for name, value in {**declared.get(None, {}), **declared.get(theme, {})}.items()
+    }
 
 
 # --- structure and computed styles, in the browser -------------------------------
@@ -526,12 +564,20 @@ def dump_dom(browser: str, url: str, rendering: dict[str, Any]) -> str:
             time.sleep(0.1)
 
 
-def measure_page(browser: str, measure_url: str, target: str, attribute: str, rendering: dict[str, Any], what: str) -> list[dict[str, Any]]:
-    """The anchors of one page, in document order: name, element, enclosing
-    anchor and computed styles."""
-    query = urllib.parse.urlencode({
+def measure_page(
+    browser: str, measure_url: str, target: str, attribute: str, rendering: dict[str, Any], what: str,
+    themes: list[str] | None = None,
+) -> dict[str, Any]:
+    """The anchors of one page, in document order (name, element, enclosing
+    anchor and computed styles), and the computed `color-scheme` of its body
+    (`scheme`). With `themes`, the page is first put in the theme of the
+    rendering by the convention (THEME_CONVENTION)."""
+    fields = {
         "target": target, "attr": attribute, "props": ",".join(PROPERTIES),
-        "w": rendering["width"], "h": rendering["height"]})
+        "w": rendering["width"], "h": rendering["height"]}
+    if themes:
+        fields.update(theme=rendering["theme"], themes=",".join(themes))
+    query = urllib.parse.urlencode(fields)
     found = MEASURE_RE.search(dump_dom(browser, f"{measure_url}?{query}", rendering))
     try:
         measured = json.loads(html.unescape(found.group(1))) if found and found.group(1).strip() else None
@@ -541,7 +587,33 @@ def measure_page(browser: str, measure_url: str, target: str, attribute: str, re
         raise Refusal(f"aucune mesure rendue par le navigateur pour {what} ({target}, {rendering['label']})")
     if measured.get("ok") is not True or not isinstance(measured.get("anchors"), list):
         raise Refusal(f"mesure impossible pour {what} ({target}, {rendering['label']}) : {measured.get('error')}")
-    return measured["anchors"]
+    return {"anchors": measured["anchors"], "scheme": str(measured.get("scheme") or "").strip()}
+
+
+def unmeasured_themes(renderings_: list[dict[str, Any]], prototype: dict[str, dict[str, Any]]) -> dict[str, str]:
+    """The renderings of a theme the preferred colour scheme does not reach on
+    the prototype, each with its reason (af-yw9awk). When the prototype
+    measures the same in every theme of a viewport, the emulation changed
+    nothing there: it shows one theme only, the one the `color-scheme` of its
+    root names (none when it names no declared theme), and every other theme
+    of that viewport is not measurable on it."""
+    by_viewport: dict[str, list[dict[str, Any]]] = {}
+    for rendering in renderings_:
+        by_viewport.setdefault(rendering["viewport"], []).append(rendering)
+    out: dict[str, str] = {}
+    for group in by_viewport.values():
+        first = prototype[group[0]["label"]]
+        if len(group) < 2 or any(prototype[r["label"]] != first for r in group[1:]):
+            continue
+        themes = ", ".join(r["theme"] for r in group)
+        for rendering in group:
+            if rendering["theme"] != first["scheme"]:
+                out[rendering["label"]] = (
+                    f"le prototype mesure à l'identique en {themes} : l'émulation de prefers-color-scheme ne change "
+                    f"pas son thème (color-scheme de sa racine : {first['scheme'] or 'aucun'}), "
+                    f"{THEME_CONVENTION.format(rendering['theme'])} non plus ; son thème "
+                    f"{rendering['theme']} passe par un autre mécanisme, que le manifeste ne déclare pas")
+    return out
 
 
 def by_name(anchors: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
@@ -609,21 +681,47 @@ def measure(plan: dict[str, Any]) -> dict[str, Any]:
 def measure_state(plan: dict[str, Any], state: dict[str, Any], deviations: list[dict[str, Any]]) -> dict[str, Any]:
     """The records of one launched state; its deviations are added to `deviations`."""
     browser, attribute = plan["browser"], plan["anchor_attribute"]
-    reference_tokens = tokens_of(state["prototype_url"], f"la page du prototype (état {state['id']})")
-    delivered_tokens = tokens_of(state["delivered_url"], f"la page livrée (état {state['id']})")
+    themes = list(dict.fromkeys(rendering["theme"] for rendering in plan["renderings"]))
+    reference_tokens = tokens_of(state["prototype_url"], f"la page du prototype (état {state['id']})", themes)
+    delivered_tokens = tokens_of(state["delivered_url"], f"la page livrée (état {state['id']})", themes)
     for name, value in reference_tokens.items():
         if delivered_tokens.get(name) != value:
             deviations.append({
                 "state": state["id"], "viewport": None, "anchor": None, "kind": "token", "property": name,
                 "prototype": value, "delivered": delivered_tokens.get(name)})
     records, anchors, extra = [], [], {}
+    measured = {}
     for rendering in plan["renderings"]:
-        prototype = measure_page(browser, plan["measure_url"], state["prototype_url"], attribute, rendering, "le prototype")
-        if not prototype:
+        measured[rendering["label"]] = measure_page(
+            browser, plan["measure_url"], state["prototype_url"], attribute, rendering, "le prototype")
+        if not measured[rendering["label"]]["anchors"]:
             raise Refusal(
                 f"aucune ancre mesurée sur le prototype pour l'état {state['id']} ({rendering['label']}) : "
                 "rien à comparer n'est pas une fidélité prouvée")
-        delivered = measure_page(browser, plan["measure_url"], state["delivered_url"], attribute, rendering, "le livré")
+    # A theme not measurable on the prototype is not compared: it is one
+    # deviation of its own, never green and never accepted (af-yw9awk).
+    unmeasured = unmeasured_themes(plan["renderings"], measured)
+    # Such a theme is put on the prototype by the convention, and compared
+    # only when that changes what is measured on it.
+    by_convention = []
+    for rendering in plan["renderings"]:
+        if rendering["label"] in unmeasured:
+            themed = measure_page(browser, plan["measure_url"], state["prototype_url"], attribute, rendering,
+                                  "le prototype", themes)
+            if themed["anchors"] != measured[rendering["label"]]["anchors"]:
+                measured[rendering["label"]] = themed
+                by_convention.append(rendering["label"])
+                del unmeasured[rendering["label"]]
+    for rendering in plan["renderings"]:
+        if rendering["label"] in unmeasured:
+            deviations.append({
+                "state": state["id"], "viewport": rendering["label"], "anchor": None, "kind": "theme",
+                "property": f"thème {rendering['theme']}", "prototype": unmeasured[rendering["label"]],
+                "delivered": "non mesurable"})
+            continue
+        prototype = measured[rendering["label"]]["anchors"]
+        delivered = measure_page(browser, plan["measure_url"], state["delivered_url"], attribute, rendering, "le livré",
+                                 themes if rendering["label"] in by_convention else None)["anchors"]
         compared, only_delivered = compare_anchors(prototype, delivered)
         for record in compared:
             records.append({"viewport": rendering["label"], **record})
@@ -635,8 +733,9 @@ def measure_state(plan: dict[str, Any], state: dict[str, Any], deviations: list[
         if only_delivered:
             extra[rendering["label"]] = only_delivered
     return {
-        "screen": state["screen"], "path": state["path"], "viewports": [r["label"] for r in plan["renderings"]],
-        "anchors": anchors, "records": records,
+        "screen": state["screen"], "path": state["path"],
+        "viewports": [r["label"] for r in plan["renderings"] if r["label"] not in unmeasured],
+        "unmeasured": unmeasured, "themed_by_convention": by_convention, "anchors": anchors, "records": records,
         "tokens": {"compared": len(reference_tokens),
                    "only_delivered": sorted(name for name in delivered_tokens if name not in reference_tokens)},
         "anchors_only_delivered": extra,
@@ -646,12 +745,25 @@ def measure_state(plan: dict[str, Any], state: dict[str, Any], deviations: list[
 def cmd_measure(args: argparse.Namespace) -> int:
     """Run inside bin/evidence-capture command: its output is the record. It
     exits 0 once everything was compared, red or green, so that only a
-    complete record becomes a piece."""
+    complete record becomes a piece.
+
+    The full measure is written to a file of the work directory and the
+    output carries its fingerprint (af-2cpwkh): a measure of a real screen
+    runs to megabytes, beyond what the store keeps of an output (1 MB, then
+    its first and last 500 kB), and a truncated record cannot be read back."""
     try:
         plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise Refusal(f"plan de mesure illisible ({args.plan}) : {exc}") from exc
-    print(json.dumps(measure(plan), indent=2, sort_keys=True, ensure_ascii=False))
+    result = measure(plan)
+    content = json.dumps(result, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    measure_file = Path(plan["work"]) / MEASURE_FILE
+    measure_file.write_bytes(content)
+    print(json.dumps({
+        "commit": result["commit"], "measure": str(measure_file),
+        "measure_digest": "sha256:" + hashlib.sha256(content).hexdigest(), "measure_bytes": len(content),
+        "deviations": len(result["deviations"]),
+    }, indent=2, sort_keys=True, ensure_ascii=False))
     return 0
 
 
@@ -692,7 +804,7 @@ def sealed_measure(args: argparse.Namespace, plan: dict[str, Any], work: Path) -
     timeout = 600 + LAUNCH_TIMEOUT * len(plan["states"])
     status, answer = run_json([
         str(CAPTURE_TOOL), "command", args.convoy, args.ticket, "--piece", PIECE, "--launch-state", str(state_file),
-        "--timeout", str(timeout), "--expect-exit", "0", "--", sys.executable, str(Path(__file__).resolve()), "measure", "--plan", str(plan_file)])
+        "--timeout", str(timeout), "--expect-exit", "0", "--attach", str(work / MEASURE_FILE), "--", sys.executable, str(Path(__file__).resolve()), "measure", "--plan", str(plan_file)])
     if status != 0:
         output = answer.get("output") if isinstance(answer, dict) else None
         try:
@@ -701,8 +813,20 @@ def sealed_measure(args: argparse.Namespace, plan: dict[str, Any], work: Path) -
             inner = None
         raise Refusal(refusal_text(inner) if isinstance(inner, dict) and inner.get("error") else refusal_text(answer))
     try:
-        return json.loads(json.loads(Path(answer["path"]).read_text(encoding="utf-8"))["output"])
-    except (OSError, KeyError, json.JSONDecodeError) as exc:
+        record = json.loads(Path(answer["path"]).read_text(encoding="utf-8"))
+        if record.get("output_truncated"):
+            raise Refusal(
+                f"relevé de fidélité tronqué dans le magasin de preuves ({record.get('output_bytes')} octets) : "
+                "la mesure ne se relit pas", [f"pièce {PIECE}"])
+        sealed = json.loads(record["output"])
+        # The copy filed beside the piece: the work directory is removed below (T02R2, af-r2c0tx).
+        content = Path(answer["attachment"]).read_bytes()
+        if "sha256:" + hashlib.sha256(content).hexdigest() != sealed["measure_digest"]:
+            raise Refusal(
+                f"mesure de fidélité {answer['attachment']} différente de l'empreinte scellée dans le magasin de preuves",
+                [f"pièce {PIECE}"])
+        return json.loads(content)
+    except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
         raise Refusal(f"relevé de fidélité illisible dans le magasin de preuves : {exc}", [f"pièce {PIECE}"]) from exc
 
 

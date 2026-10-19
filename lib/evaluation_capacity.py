@@ -22,6 +22,13 @@ from typing import Iterator
 LIMIT = 2
 
 
+def launch_timeout(settings: dict, datasets: int) -> int:
+    """How long one evaluation launch may take: the floor `timeout_seconds`,
+    or `per_dataset_seconds` for each dataset the evaluation covers when that
+    is longer (af-vtg5kl). The Ticket and the Outcome Evaluation share it."""
+    return max(settings["timeout_seconds"], datasets * settings.get("per_dataset_seconds", 0))
+
+
 class Busy(RuntimeError):
     pass
 

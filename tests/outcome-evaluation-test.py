@@ -15,6 +15,7 @@ runs: tests/fixtures/outcome-evaluation/evaluator stands in for the dispatch
 door and the Evaluator session of the end, and uses the launched product for
 real."""
 
+import calendar
 import importlib.machinery
 import importlib.util
 import fcntl
@@ -22,6 +23,7 @@ import json
 import shutil
 import subprocess
 import sys
+import time
 import unittest
 from pathlib import Path
 
@@ -212,6 +214,23 @@ class Harness(gate.Harness):
         state["beads"][SPEC]["description"] = text.replace(STORY_3, f"{UNSERVED}\n{UNCOVERED}")
         self.tracker.write_text(json.dumps(state))
 
+    def every_declared_dataset(self):
+        """The profile of the fixture with both its declared datasets."""
+        profile = json.loads((ROOT / gate.FIXTURE / "descriptor.json").read_text())
+        profile["rigs"] = ["fx-rig"]
+        profile["stacks"] = {"fx-rig": ["fixture-stack"]}
+        self.outcome_profile.write_text(json.dumps(profile))
+        (self.root / "config" / "project-descriptors" / "fx.json").write_text(json.dumps(profile))
+
+    def spec_names(self, *datasets):
+        """Story 1 of the Spec of the convoy names these datasets."""
+        state = json.loads(self.tracker.read_text())
+        text = state["beads"][SPEC]["description"]
+        story = "1. As a visiteur, I want voir l'état du jeu de données sur la page d'accueil"
+        self.assertIn(story, text)
+        state["beads"][SPEC]["description"] = text.replace(story, f"{story} (jeux {' et '.join(datasets)})")
+        self.tracker.write_text(json.dumps(state))
+
     def opened(self, findings=()):
         """The verified convoy, its Outcome Evaluation open on the launched
         product and no answer yet: what an Evaluator session of the end
@@ -328,11 +347,8 @@ class OutcomeEvaluationTest(Harness):
 
     def test_two_datasets_are_opened_one_at_a_time_with_proof_from_each(self):
         commit = self.verified()
-        profile = json.loads((ROOT / gate.FIXTURE / "descriptor.json").read_text())
-        profile["rigs"] = ["fx-rig"]
-        profile["stacks"] = {"fx-rig": ["fixture-stack"]}
-        self.outcome_profile.write_text(json.dumps(profile))
-        (self.root / "config" / "project-descriptors" / "fx.json").write_text(json.dumps(profile))
+        self.every_declared_dataset()
+        self.spec_names("content", "empty")
         self.evaluator("silent")
         self.assertEqual("launched", self.settle()["action"])
         _, first_brief = self.tool("brief", "--profile", self.outcome_profile, env=self.session)
@@ -380,11 +396,8 @@ class OutcomeEvaluationTest(Harness):
 
     def test_legacy_open_multi_game_request_requires_address_bound_coverage(self):
         self.verified()
-        profile = json.loads((ROOT / gate.FIXTURE / "descriptor.json").read_text())
-        profile["rigs"] = ["fx-rig"]
-        profile["stacks"] = {"fx-rig": ["fixture-stack"]}
-        self.outcome_profile.write_text(json.dumps(profile))
-        (self.root / "config" / "project-descriptors" / "fx.json").write_text(json.dumps(profile))
+        self.every_declared_dataset()
+        self.spec_names("content", "empty")
         self.evaluator("silent")
         self.assertEqual("launched", self.settle()["action"])
         _, brief = self.tool("brief", "--profile", self.outcome_profile, env=self.session)
@@ -404,6 +417,66 @@ class OutcomeEvaluationTest(Harness):
         result["coverage"] = [{"dataset": "content", "evidence": result["stories"][0]["evidence"]},
                               {"dataset": "empty", "evidence": result["stories"][0]["evidence"]}]
         self.assert_record_refused(result, "adresse")
+
+    def test_only_the_datasets_the_spec_names_are_evaluated_else_the_first_declared_one(self):
+        # Benjamin, 2026-10-17: « Réduire aux jeux cités ». A Spec that names
+        # no declared dataset is evaluated on the first one alone.
+        self.verified()
+        self.every_declared_dataset()
+        self.evaluator("silent")
+        self.assertEqual("launched", self.settle()["action"])
+        _, brief = self.tool("brief", "--profile", self.outcome_profile, env=self.session)
+        self.assertEqual(["content"], brief["datasets"])
+        self.assertEqual(["content"], [entry["dataset"] for entry in brief["environments"]])
+        status, answer = self.tool("product", "--dataset", "empty", env=self.session)
+        self.assertEqual(EXIT_REFUSED, status, answer)
+        self.assertIn("jeu absent", answer["error"])
+
+    def test_a_dataset_named_by_a_story_of_the_spec_is_the_one_evaluated(self):
+        self.verified()
+        self.every_declared_dataset()
+        self.spec_names("empty")
+        self.evaluator("silent")
+        self.assertEqual("launched", self.settle()["action"])
+        _, brief = self.tool("brief", "--profile", self.outcome_profile, env=self.session)
+        self.assertEqual(["empty"], brief["datasets"])
+        self.assertEqual(["empty"], [entry["dataset"] for entry in brief["environments"]])
+
+    def test_a_dataset_named_by_a_demonstration_line_of_the_convoy_is_evaluated_too(self):
+        self.verified()
+        self.every_declared_dataset()
+        state = json.loads(self.tracker.read_text())
+        state["beads"][SLICE]["metadata"]["gc.flow.demonstration_line"] = (
+            "La page d'accueil affiche les trois éléments, et rien sur le jeu empty")
+        self.tracker.write_text(json.dumps(state))
+        self.evaluator("silent")
+        self.assertEqual("launched", self.settle()["action"])
+        _, brief = self.tool("brief", "--profile", self.outcome_profile, env=self.session)
+        self.assertEqual(["empty"], brief["datasets"])
+
+    def test_the_launch_delay_grows_with_the_datasets_of_the_evaluation(self):
+        # The same delay as the Ticket Evaluation (af-vtg5kl): the floor, or
+        # per_dataset_seconds for each dataset the evaluation covers.
+        self.verified()
+        self.every_declared_dataset()
+        self.spec_names("content", "empty")
+        self.settings(timeout_seconds=0, per_dataset_seconds=3600)
+        self.evaluator("silent")
+        self.assertEqual("launched", self.settle()["action"])
+        answer = self.settle()
+        self.assertEqual("pending", answer["action"], answer)
+        launched = self.outcome()["request"]["launches"][-1]["at"]
+        start = calendar.timegm(time.strptime(launched, "%Y-%m-%dT%H:%M:%SZ"))
+        self.assertEqual(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(start + 2 * 3600)), answer["deadline"])
+
+    def test_a_per_dataset_delay_that_is_not_a_number_of_seconds_is_refused(self):
+        self.verified()
+        self.settings(timeout_seconds=3600, per_dataset_seconds="240")
+        before = self.snapshot()
+        status, answer = self.tool("settle", "--profile", self.outcome_profile)
+        self.assertEqual(EXIT_REFUSED, status, answer)
+        self.assertIn("per_dataset_seconds", answer["error"])
+        self.assertEqual(before, self.snapshot())
 
     def test_the_evaluator_is_given_the_stories_of_the_spec_and_the_launched_products_and_nothing_of_the_authors(self):
         brief = self.opened(findings=[FINDING])

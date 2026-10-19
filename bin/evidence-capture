@@ -12,7 +12,7 @@ place of the ticket: it is filed under the convoy and its fingerprint goes on
 it. A piece this tool did not produce is refused by `verify`.
 
     evidence-capture command    CONVOY TICKET --piece NAME [--repo DIR | --launch-state FILE]
-                                              [--timeout SECONDS] [--expect-exit CODE] -- COMMAND [ARG ...]
+                                              [--timeout SECONDS] [--expect-exit CODE] [--attach FILE] -- COMMAND [ARG ...]
     evidence-capture screenshot CONVOY TICKET --piece NAME --launch-state FILE [--path /PATH]
                                               [--window-size WIDTHxHEIGHT]
     evidence-capture comparison CONVOY TICKET --piece NAME --launch-state FILE --reference-url URL
@@ -29,7 +29,10 @@ from it, or the commit of the product launched by `bin/project-launch start
 output. With `--expect-exit CODE`, the piece is filed only if COMMAND exits
 with that code: any other exit is a refusal that carries the exit code and
 the output, and files nothing (what a script that proves a step uses, so
-that only its passing report becomes a piece). `screenshot` records an image of one address of that launched
+that only its passing report becomes a piece). With `--attach FILE`, a
+file COMMAND writes during the run (absent before it) is filed beside the
+record and sealed with it: an output too large for the record (the measure
+of bin/prototype-fidelity) stays readable. `screenshot` records an image of one address of that launched
 product. `comparison` captures that address and a reference page served on
 this host (a state of the Validated Prototype) at the same moment, and
 records them side by side with an image of their difference; it counts the
@@ -86,6 +89,8 @@ ADDRESS_RE = re.compile(r"^http://(?:127\.0\.0\.1|localhost):[0-9]+$")
 # A reference page of a comparison is served on this host, like the product.
 REFERENCE_RE = re.compile(r"^http://127\.0\.0\.1:[0-9]{1,5}/\S*$")
 DIFFERENCE_SUFFIX = "--difference.png"
+# The file a command wrote, filed beside its record (`command --attach`).
+ATTACHMENT_SUFFIX = "--attachment"
 # The colour scheme a comparison is rendered in, as Chromium numbers it
 # (observed on chrome-headless-shell 1243, 2026-10-07).
 COLOUR_SCHEMES = {"light": "1", "dark": "0"}
@@ -505,7 +510,7 @@ def difference_of(reference: Pixels, delivered: Pixels) -> tuple[Pixels, int]:
 
 def file_piece(
     store: Path, convoy_id: str, ticket_id: str, spec: str, record: dict[str, Any], image: bytes | None,
-    difference: bytes | None = None,
+    difference: bytes | None = None, attachment: bytes | None = None,
 ) -> dict[str, Any]:
     """Seal the record, write the piece in the store and its fingerprint in
     the tracker. If the tracker refuses, the store keeps what it had."""
@@ -524,6 +529,8 @@ def file_piece(
         final[ticket_dir / record["image"]] = image
     if difference is not None:
         final[ticket_dir / record["difference"]] = difference
+    if attachment is not None:
+        final[ticket_dir / record["attachment"]] = attachment
     pending = {ticket_dir / f".tmp-{uuid.uuid4().hex}": (path, content) for path, content in final.items()}
     try:
         for tmp, (_, content) in pending.items():
@@ -540,6 +547,8 @@ def file_piece(
             (ticket_dir / f"{piece}.png").unlink(missing_ok=True)
         if difference is None:
             (ticket_dir / f"{piece}{DIFFERENCE_SUFFIX}").unlink(missing_ok=True)
+        if attachment is None:
+            (ticket_dir / f"{piece}{ATTACHMENT_SUFFIX}").unlink(missing_ok=True)
     finally:
         for tmp in pending:
             tmp.unlink(missing_ok=True)
@@ -556,6 +565,8 @@ def file_piece(
         out["image"] = str(ticket_dir / record["image"])
     if difference is not None:
         out["difference"] = str(ticket_dir / record["difference"])
+    if attachment is not None:
+        out["attachment"] = str(ticket_dir / record["attachment"])
     return out
 
 
@@ -589,6 +600,9 @@ def cmd_command(args: argparse.Namespace) -> int:
         address, commit = launched_product(args.launch_state)
     else:
         address, commit = None, head_of_clean_repo(Path(args.repo or "."))
+    attach = Path(args.attach) if args.attach else None
+    if attach is not None and (attach.exists() or attach.is_symlink()):
+        raise Refusal(f"--attach {attach} existe déjà : le fichier joint est écrit par la commande, pendant son exécution")
 
     output, exit_code = run_command(args.argv, timeout)
     if expected is not None and exit_code != expected:
@@ -603,7 +617,14 @@ def cmd_command(args: argparse.Namespace) -> int:
         command=args.argv, exit_code=exit_code, output=kept.decode("utf-8", errors="replace"),
         output_digest=digest_of(output), output_bytes=len(output), output_truncated=kept is not output,
     )
-    answer = file_piece(store, args.convoy, args.ticket, spec, record, None)
+    attachment = None
+    if attach is not None:
+        try:
+            attachment = attach.read_bytes()
+        except OSError as exc:
+            raise Refusal(f"la commande n'a pas écrit le fichier joint {attach} : aucune pièce enregistrée") from exc
+        record.update(attachment=f"{piece}{ATTACHMENT_SUFFIX}", attachment_digest=digest_of(attachment))
+    answer = file_piece(store, args.convoy, args.ticket, spec, record, None, attachment=attachment)
     answer["exit_code"] = exit_code
     print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
     return 0
@@ -732,14 +753,18 @@ def check_piece(
     out = {"piece": piece, "kind": record.get("kind"), "digest": fingerprint["digest"], "commit": record["commit"],
            "at": record.get("at"), "path": str(path)}
     images = {"screenshot": (("image", ".png"),), "comparison": (("image", ".png"), ("difference", DIFFERENCE_SUFFIX))}
-    for field, suffix in images.get(record.get("kind"), ()):
+    files = images.get(record.get("kind"), ()) + ((("attachment", ATTACHMENT_SUFFIX),) if "attachment" in record else ())
+    for field, suffix in files:
         image = ticket_dir / f"{piece}{suffix}"
+        absent, changed = (("fichier joint absent", "le fichier joint du magasin ne correspond plus à celui")
+                           if field == "attachment" else
+                           ("image absente", "l'image du magasin ne correspond plus à celle"))
         try:
             image_digest = digest_of(image.read_bytes())
         except OSError as exc:
-            raise Refusal(f"pièce {piece} : image absente du magasin ({image})") from exc
+            raise Refusal(f"pièce {piece} : {absent} du magasin ({image})") from exc
         if record.get(field) != image.name or image_digest != record.get(f"{field}_digest"):
-            raise Refusal(f"pièce {piece} : l'image du magasin ne correspond plus à celle de la capture ({image})")
+            raise Refusal(f"pièce {piece} : {changed} de la capture ({image})")
         out[field] = str(image)
     return out
 
@@ -779,7 +804,8 @@ def verified_pieces(args: argparse.Namespace) -> tuple[str, Path, list[dict[str,
     if args.piece is None:
         # Whatever else sits in the ticket's folder was not filed by a capture.
         known = {f"{piece}.json" for piece in pieces} | {
-            Path(entry[field]).name for entry in verified for field in ("image", "difference") if field in entry}
+            Path(entry[field]).name for entry in verified for field in ("image", "difference", "attachment")
+            if field in entry}
         problems += [f"fichier sans empreinte dans le magasin : {ticket_dir / name}" for name in stored if name not in known]
     if problems:
         raise Refusal(" ; ".join(problems), path=str(ticket_dir))
@@ -850,6 +876,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--launch-state")
     p.add_argument("--timeout", default=DEFAULT_TIMEOUT)
     p.add_argument("--expect-exit")
+    p.add_argument("--attach")
     p = mode("screenshot", cmd_screenshot)
     p.add_argument("--launch-state")
     p.add_argument("--path", default="/")

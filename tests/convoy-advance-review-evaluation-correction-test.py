@@ -135,7 +135,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
     def test_a_code_review_stop_the_operator_answered_is_not_resumed(self):
         self.review_stopped()
         self.env["ESCALATION_DOOR_NOW"] = "4102444800"  # the answer comes after the stop
-        self.run_ok(ESCALATION, "repondre", T1, "a")
+        self.run_ok(ESCALATION, "repondre", T1, "a", "--actor", "operateur-test")
 
         answer = self.advance(CONVOY)
 

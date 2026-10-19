@@ -31,7 +31,7 @@ Ce qu'il contrôle :
 | `branch` | la racine vive est sur sa branche épinglée ; restaure si la dérive a cassé un invariant |
 | `runtime-files` | `pr-autopilot`, `factory-guard` et leurs orders existent encore sur le disque |
 | `exec-bits` | (af-ogg8z) chaque fichier que git suit en mode `100755` sous `bin/` est bien exécutable sur disque — restaure le bit avec `chmod +x` sinon ; `runtime-files` ne teste que l'existence (`-e`), pas l'exécutabilité, ce qui a laissé `bin/provider-failover` échouer en silence (exit 126) pendant ~2h le 2026-09-17 |
-| `config-invariants` | `permission_mode` est sain et les 4 providers vérifiés (`codex`, `claude`, `claude-readonly`, `claude-standard`) résolvent |
+| `config-invariants` | `permission_mode` est sain et les 5 providers vérifiés (`codex`, `codex-readonly`, `claude`, `claude-readonly`, `claude-standard`) résolvent |
 | `work-backup` | **pousse** toute branche qui n'existe que sur cette machine |
 | `work-tree` | **sauvegarde** l'arbre de travail modifié ou non suivi (voir plus bas) |
 | `rig:*` | un rig suspendu bloque la livraison ; un dispatcher au repos, non |
@@ -607,7 +607,10 @@ touché : il reste avancé par le Mayor.
 - **Lever un parcage, c'est répondre** : `./bin/escalation-door repondre` sur
   la demande du ticket (demande opérateur : toute réponse ; Planning
   Exception : seulement l'option qui accepte l'écart) ou sur la demande
-  groupée. La passe suivante lève le parcage et reprend le ticket. **Ne
+  groupée. La passe suivante lève le parcage et reprend le ticket. **Qui
+  répond** : `--actor benjamin` seulement sur ses mots ; une session sous
+  délégation donne son propre acteur (`--actor` ou `BEADS_ACTOR`), sans quoi
+  la porte refuse (af-zkdvur). **Ne
   jamais reprendre ou déparquer un ticket à la main**, ni dispatcher
   `mol-ticket-resume`.
 - **Pas repris** : un ticket arrêté ; un ticket dont la session du tour de
@@ -1430,7 +1433,10 @@ réactive ensuite et qui redémarre alors en échec toutes les 5 secondes.
 
 Côté tests : aucun test n'arrête une cité ou un superviseur autrement que par
 `isolated_city_stop` (`tests/lib/isolated-city.sh`), qui refuse si `GC_HOME`
-n'est pas dans le répertoire de l'essai.
+n'est pas dans le répertoire de l'essai. Le même fichier efface ce répertoire
+(`isolated_city_remove`) : il réessaie en tuant les processus dont le
+répertoire courant ou l'environnement y pointe encore, faute de quoi un essai
+réussi échouait sur « Directory not empty » (af-foq4t7).
 
 Tests : `tests/factory-revive-test.sh`, `tests/factory-boot-supervisor-test.sh`,
 `tests/isolated-city-stop-guard-test.sh`. Runbook :

@@ -142,10 +142,13 @@ When they are the same, the review still runs and is **flagged, never
 silent**: `same_model: true` is stored with the verdicts, and
 `model_independence` says « relecture non indépendante… » in the output of
 `review`, of `remaining` (text included), of `check` and of the publication
-door. With one Anthropic account and a reviewer role tried on Claude only
-(`config/provider-policy.json`), a graph written by a Claude session is
-flagged this way until the reviewer role is tried on another provider
-(`bin/role-adoption-trial`). A review whose author model is not declared, or
+door. Since af-npz9v1.12 (Benjamin, 2026-10-17: « Essayer un autre
+fournisseur ») the reviewer role runs on Codex first (`codex-readonly`,
+tried by `bin/role-adoption-trial`, chain in `config/provider-policy.json`),
+so a graph written by a Claude session gets an independent reviewer; it is
+flagged this way again only while the OpenAI pool is exhausted and
+`bin/provider-failover` falls back to `claude-readonly`. A review whose
+author model is not declared, or
 whose reviewer model cannot be read, is refused.
 
 ## Stored state
