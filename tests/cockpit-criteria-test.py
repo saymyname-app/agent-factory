@@ -27,10 +27,18 @@ HARNESS = ROOT / "tests" / "fixtures" / "delivery-fixture-city" / "tests" / "har
 COMMANDS = ROOT / "tests" / "cockpit-criteria" / "commands"
 
 
+# The measures of fidelity to the prototype (anchors and tokens, in a headless
+# browser) are never blocking (ADR-0032, af-ledn95; Benjamin, 2026-10-19:
+# fidelity judged by his eye). On a CI runner the browser measured nothing
+# (PR #683): they run where `bin/tdd-step` and a person run them, not in CI.
+FIDELITY_GLOB = "*-fidelity-test.py"
+
+
 def criterion_tests() -> list[str]:
     """One id per test class of each criterion test file."""
     ids = []
-    for path in sorted(COMMANDS.glob("*-test.py")):
+    skipped = set(COMMANDS.glob(FIDELITY_GLOB)) if os.environ.get("CI") else set()
+    for path in sorted(set(COMMANDS.glob("*-test.py")) - skipped):
         spec = importlib.util.spec_from_file_location("criterion_test", path)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
