@@ -33,6 +33,7 @@ from cockpit.projects.source import read_projects
 from cockpit.requests.assemble import assemble_from_snapshot
 from cockpit.requests.defects import DefectCounter
 from cockpit.requests.journal import read_journal
+from cockpit.runs.derive import read_runs
 
 # github/rituals sources are in the Validity window table (spec .3) for the
 # tickets that will wire up their producers; T11 builds the seam and wires
@@ -100,6 +101,8 @@ def build(config, clock=None):
                 config.journal_poll_seconds,
             )
         )
+        read_model.register("runs", display_name="runs")
+        pollers.append(PollingSource(read_model, "runs", lambda: read_runs(bd_bin=config.bd_bin), config.journal_poll_seconds))
     if config.repo_dir:
         read_model.register("git", display_name="version de l'usine")
         pollers.append(

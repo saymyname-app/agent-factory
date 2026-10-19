@@ -43,6 +43,8 @@ from datetime import datetime
 from cockpit.core.freshness import FRESH
 from cockpit.core.readmodel import PARIS
 from cockpit.projects.source import from_value as projects_from_value
+from cockpit.runs.derive import runs_from_beads
+from cockpit.ui.runs.page import duration
 from cockpit.ui.panorama.shell import Anchors, anchor_slug, open_button
 from cockpit.ui.projects.project_page import project_page_url
 
@@ -100,6 +102,9 @@ def overview_view(snapshot, requests):
     ]
     view["activity"] = _activity(said.get(ACTIVITY) or [])
     view["runs"] = [card for card in (_record(bead, RUN_CARD) for bead in beads) if card]
+    runs_row = snapshot.get("runs")
+    if not view["runs"] and runs_row and runs_row["value"]:
+        view["runs"] = runs_from_beads(runs_row["value"], max(r["read_at"] or 0 for r in rows + [runs_row]))[:3]
     view["projects"] = _projects(snapshot.get("projets"), beads, view["requests"])
     if not (view["requests"] or view["dossier"] or view["projects"] or view["activity"] or view["runs"]
             or any(said.get(label) for label in SAID_INDICATORS)):
@@ -478,10 +483,10 @@ def _run_card(run, anchors):
     ticks = "".join("<span %s>%s</span>" % (anchors("span"), _tick(seconds)) for seconds in (0, elapsed / 2, elapsed))
     foot = anchors("card-foot")
     return (
-        '<a class="card" href="/runs" %s>%s%s<div class="mini" %s>%s</div><div class="mini-axis" %s>%s</div>'
-        '<div class="card-foot" %s><span %s>Début %s (Paris)</span><span class="mono" %s>%d min %d s</span></div></a>'
-    ) % (card, head, title, mini, "".join(rows), axis, ticks, foot, anchors("span"), _e(run["started"]),
-         anchors("mono"), elapsed // 60, elapsed % 60)
+        '<a class="card" href="%s" %s>%s%s<div class="mini" %s>%s</div><div class="mini-axis" %s>%s</div>'
+        '<div class="card-foot" %s><span %s>Début %s (Paris)</span><span class="mono" %s>%s</span></div></a>'
+    ) % (_e(run.get("href") or "/runs"), card, head, title, mini, "".join(rows), axis, ticks, foot, anchors("span"), _e(run["started"]),
+         anchors("mono"), duration(elapsed))
 
 
 def _tick(seconds):

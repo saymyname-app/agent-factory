@@ -1140,3 +1140,30 @@ Limits.
   out where they cannot be read, CI included.
 - `tests/cockpit-criteria/http/` holds no test yet: the first ticket that
   writes one adds the run that launches the product for it.
+
+## « Runs »: the deliveries of tickets (direct build, 2026-10-19)
+
+Intent (Benjamin, his words, 2026-10-19 19:20 Paris): « fusionne la Vue
+d'ensemble sur main et enchaîne directement sur Runs puis Usine. »
+Mechanism (agent interpretation): built in an interactive session, outside
+the paused convoy af-pqfxmd (decision recorded on af-npz9v1, 19/10 19:13).
+
+`GET /runs` lists the runs, `GET /runs/run?id=<bead>` draws one. A run is
+one delivery of a ticket: a bead carrying `gc.flow.models` (an agent was
+launched on it). `lib/cockpit/runs/derive.py` reads it from what the
+delivery flow already writes (docs/CONVOY_STATE.md), nothing is collected
+for the cockpit alone:
+
+| Lane | Drawn from |
+|---|---|
+| Humain | `gc.escalation_horodatage` → `gc.escalation_response_at` (now while unanswered), `gc.flow.overrides`, `gc.flow.gate.withdrawn` |
+| Code | `gc.flow.gate.dispatch`, `gc.flow.tdd.*`, `gc.flow.verdict.fidelity`, `gc.flow.stop`, `gc.flow.resume`, `gc.flow.merge` |
+| Auteur, Relecteur, Évaluateur | `gc.flow.models.<role>.at` → `gc.flow.exit` / last `gc.flow.code_review` round / last `gc.flow.evaluation` round (now while running) |
+
+Status: « Fusionné » (`gc.flow.merge` outcome merged), « Abandonné »
+(`gc.flow.gate.withdrawn`), « Ta décision » (a question without answer),
+« Arrêté » (`gc.flow.stop`), else « En cours ». The source `runs` reads
+`bd list --all --limit 0 --has-metadata-key gc.flow.models` on the
+journal's rhythm and keeps the 24 most recently updated; the three most
+recent fill « Derniers runs » of the Vue d'ensemble when no `gc.run_card`
+is written. Test: `tests/cockpit-runs-test.py`.

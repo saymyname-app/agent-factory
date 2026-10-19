@@ -9,11 +9,13 @@ import time
 import threading
 import json
 import urllib.parse
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from cockpit.access.guard import session_cookie_header
 from cockpit.actions.registry import ActionError
 from cockpit.core.freshness import FRESH, UNKNOWN
+from cockpit.core.readmodel import PARIS
 from cockpit.health import collectors
 from cockpit.health.engine import (
     FACTORY_STALLED_AFTER_SECONDS,
@@ -28,6 +30,7 @@ from cockpit.requests.assemble import assemble_from_snapshot
 from cockpit.requests.defects import DefectCounter
 from cockpit.requests.journal import entries_from_value as journal_entries_from_value
 from cockpit.requests.sources.readability import ILLISIBLE_THRESHOLD_SECONDS
+from cockpit.runs.derive import runs_from_beads
 from cockpit.ui.base.page import render_document, render_fresh, render_home_zones
 from cockpit.ui.health.page import render_health_zone, render_status_line
 from cockpit.ui.access.page import render_access_zone
@@ -40,6 +43,7 @@ from cockpit.ui.stop.render import render_stop_section
 from cockpit.ui.journal.render import CSS as JOURNAL_CSS
 from cockpit.ui.journal.render import render_journal_page, render_journal_section, render_journal_unknown
 from cockpit.ui.notify.render import render_envois_section
+from cockpit.ui.runs.page import CSS as RUNS_PAGE_CSS, render_run_page, render_runs_page
 from cockpit.ui.projects.page import (
     render_historique_section,
     render_projects_section,
@@ -52,9 +56,9 @@ ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
 # The destinations of Panorama whose Prototype Fold is not done yet: their
 # address answers, in the shell, that they are not served here yet.
 NOT_FOLDED = {
-    href: (key, label) for key, label, href in NAVIGATION if key not in (HOME, "projets", "journal")
+    href: (key, label) for key, label, href in NAVIGATION if key not in (HOME, "projets", "journal", "runs")
 }
-NOT_FOLDED.update({"/runs/run": NOT_FOLDED["/runs"], "/runs/job": NOT_FOLDED["/runs"]})
+NOT_FOLDED.update({"/runs/job": ("runs", "Runs")})
 
 
 
@@ -116,6 +120,12 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             return
         if path.startswith("/projet/"):
             self._send_project_page(read_model)
+            return
+        if path == "/runs":
+            self._send_runs_page(read_model)
+            return
+        if path == "/runs/run":
+            self._send_run_page(read_model)
             return
         if path == "/":
             self._send_home(read_model)
@@ -420,6 +430,31 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                     fresh_html=fresh_html,
                 )
         self._send_page(read_model, "projets", inner, extra_css=PROJECT_PAGE_CSS, status=status)
+
+    def _runs(self, read_model):
+        """The runs the cockpit reads (cockpit.runs), most recent first:
+        (runs or None while unread, read failed, HH:MM of the reading)."""
+        row = read_model.snapshot().get("runs")
+        if row is None or row["value"] is None:
+            return None, bool(row and row.get("failed_at") is not None), None
+        checked = datetime.fromtimestamp(row["read_at"], tz=PARIS).strftime("%H:%M") if row["read_at"] else None
+        return runs_from_beads(row["value"], read_model.now()), False, checked
+
+    def _send_runs_page(self, read_model):
+        """GET /runs: the runs, filtered by ?filtre=tous|en-cours|termines."""
+        runs, failed, checked = self._runs(read_model)
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        filtre = (query.get("filtre") or ["tous"])[0]
+        self._send_page(read_model, "runs", render_runs_page(runs, filtre, checked=checked, error=failed),
+                        extra_css=RUNS_PAGE_CSS)
+
+    def _send_run_page(self, read_model):
+        """GET /runs/run?id=<bead>: one run, its frise and its events."""
+        runs, _, _ = self._runs(read_model)
+        wanted = (urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("id") or [""])[0]
+        run = next((r for r in runs or [] if r["id"] == wanted), None)
+        self._send_page(read_model, "runs", render_run_page(run), extra_css=RUNS_PAGE_CSS,
+                        status=200 if run else 404)
 
     def _send_journal_page(self, read_model):
         """GET /journal (spec .18): the resolved requests, re-read from the
