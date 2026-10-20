@@ -61,6 +61,10 @@ class JournalDestinationFilters(unittest.TestCase):
                           "Voir les connexions": "/usine"}, reached)
 
     def test_a_category_shows_its_own_events_only(self):
+        # Each category is chosen by its own name: « Événements » is the
+        # category of that name, not the tab « Événements utiles » before it
+        # whose name it starts (journal_journey.js takes the control of the
+        # exact name first).
         address = self.tree.launch("journal-content")
         chosen = {}
         for category in CATEGORIES[1:]:
