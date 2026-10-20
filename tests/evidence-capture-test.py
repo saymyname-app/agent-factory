@@ -530,6 +530,19 @@ class EvidenceCaptureTest(unittest.TestCase):
         error = self.refused("verify", CONVOY, T1, "--piece", "demo.commande")
         self.assertIn("absente du magasin", error)
 
+    def test_verify_reads_the_store_in_the_same_place_whatever_home_is(self):
+        # The check of mol-ticket-author verifies the pieces with HOME set to
+        # the city root by Gas City (af-i4d833, af-e84s74).
+        self.capture_command()
+        read = []
+        for home in ("city-root", "elsewhere"):
+            proc = self.run_tool("verify", CONVOY, T1,
+                                 env={**self.env, "EVIDENCE_STORE_DIR": "", "HOME": str(self.tmp / home)})
+            self.assertEqual(EXIT_REFUSED, proc.returncode, proc.stdout + proc.stderr)
+            read.append(json.loads(proc.stdout)["path"])
+        self.assertEqual(read[0], read[1])
+        self.assertNotIn(str(self.tmp), read[0])
+
     def test_hand_written_piece_is_refused_even_with_its_fingerprint_in_the_tracker(self):
         """A file written by hand, whose author also writes its fingerprint in
         the tracker: the fingerprint matches, the piece is still refused."""

@@ -54,8 +54,10 @@ Before any write, `bd-approve` refuses unless, in order:
    "Entry contract" below): numbered user stories, and, when a story
    describes an interface, a complete Validated Prototype reference, a
    state inventory and a conformant Validated Prototype on a `prototype/`
-   branch never merged into the protected branch (T46) -- for each
-   Validated Prototype the Spec names.
+   branch never merged into the protected branch (T46), that
+   `bin/prototype-fidelity calibrate` measures as itself with no
+   deviation (af-u8cbl0, `docs/PROTOTYPE_FIDELITY.md`, « Calibration »)
+   -- for each Validated Prototype the Spec names.
 
 On success it sets `spec_state=APPROVED_SPEC`, `approved_by`,
 `approved_evidence` and `approved_digest` (`sha256:` of the bead's current

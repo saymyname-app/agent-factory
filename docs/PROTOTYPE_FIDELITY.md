@@ -146,6 +146,42 @@ The stored verdict stays `unfavorable`: the deviation is still one, and it
 is the computed `fidelity.state` a gate reads. A token deviation has no
 anchor: it is repaired, never accepted.
 
+## Calibration: the prototype against itself (af-u8cbl0)
+
+```bash
+./bin/prototype-fidelity calibrate --prototype <dir> [--states empty,content]
+```
+
+Before a Spec freezes its Validated Prototype, the command measures that
+prototype against itself. Every control of `check` runs as it does on a
+ticket (tokens, anchors, structure, computed styles, each state, viewport and
+theme), with the prototype's own page in place of the delivered one. No
+product is launched and nothing is written.
+
+The tool reads the prototype correctly only if it finds **no deviation at
+all**. A theme it cannot reach is reported as a `theme` deviation
+« non mesurable », and a measure that changes from one reading to the next
+is reported too. Without calibration, each of these shows up later as a false
+deviation on every ticket.
+
+The Cockpit's prototype was first measured by a ticket, T02R, and its themes
+were read wrong for hours of work (#675, #676). Replayed on that prototype,
+the calibration is red with the tool of #675 (the light theme is « non
+mesurable »). With the tool of #676 it gives 0 deviations over 10 states and
+4 renderings, in 84 s on the VM (20/10/2026).
+
+| Exit | Meaning |
+|---|---|
+| 0 | `"result": "étalonné"`: no deviation |
+| 1 | `"result": "non étalonné"`: each deviation is named, as in `check` |
+| 2 | refused (`"ok": false`): a state is not declared, or there is no browser |
+
+`bin/spec-approve bd-approve` runs it on each Validated Prototype the Spec
+names, after `bin/prototype-conformance`, and refuses the approval until
+the calibration is clean (`docs/SPEC_APPROVE.md`). This is a defect of the
+tool, repaired by Factory maintenance. It is not a choice for Benjamin, and
+it never changes the frozen prototype.
+
 ## Limits
 
 - The ticket → screen link is not recorded at publication: the caller names
@@ -192,7 +228,8 @@ The Planning Exception goes through the real `bin/ticket-exit` and
 `bin/escalation-door`. `tests/convoy-state-test.py`,
 `tests/evidence-capture-test.py`, `tests/ticket-exit-test.py` and
 `tests/project-planning-profile-test.py` cover what each of those tools
-gained. `tests/prototype-fidelity-demonstration-test.sh` (local-only)
+gained. The calibration's cases are `test_calibration_*` there, and its refusal at approval is in
+`tests/spec-approve-test.py`. `tests/prototype-fidelity-demonstration-test.sh` (local-only)
 replays the demonstration line on the real `gc`/`bd` in a disposable city
 with the real Chromium.
 

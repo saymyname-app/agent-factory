@@ -100,6 +100,9 @@ class AmendedSpecResolvesTheBatchException(walks.FixtureCityWalk):
         return error
 
     def approve_the_spec(self):
+        # The door calibrates the fidelity tool on the prototype (af-u8cbl0):
+        # the fake browser of the fidelity tests, the city's HOME has none.
+        self.env["EVIDENCE_CAPTURE_BROWSER"] = str(ROOT / "tests" / "fixtures" / "prototype-fidelity" / "browser")
         return self.door(SPEC_APPROVE, "bd-approve", "--spec", SPEC, "--approved-by", APPROVER,
                          "--evidence", "« j'approuve la Spec amendée » (Benjamin, fixture)", "--project", self.project,
                          "--repo-root", self.repo, "--prototype-remote", self.repo)

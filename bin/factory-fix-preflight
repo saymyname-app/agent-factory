@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""What else is changing these files? Run before a Factory fix is coded, and
+again before its pull request opens (af-frflvz, docs/DELIVERY.md).
+
+    factory-fix-preflight [--repo DIR] [--branch NAME] [--days N] PATH...
+
+On 19/10/2026 #681 made fidelity blocking at the author's exit while
+Benjamin, in another session, had just decided it would not be (af-hcriwn,
+16:51 Paris); #682 undid #681 an hour after its merge. Neither session had
+looked at what the other was changing.
+
+For each PATH (a file, or a directory ending in `/`), the answer names:
+
+- `prs`: the open pull requests of the repository that change it, the
+  fix's own branch left out;
+- `branches`: the remote branches with a commit of the last N days (2 by
+  default) that change it against `origin/main`, the fix's own left out, and
+  those whose every pull request is merged or closed (a squash merge leaves
+  them on the remote);
+- `decisions_naming`: the decision beads (label `decision`), open or updated
+  in those days, whose title or description names it (its path or its file
+  name).
+
+Any of the three: exit 1, `"ok": false`. Stop, read it, and settle with
+the session or the decision before coding. A decision seldom names a file:
+af-hcriwn named none. So `decisions_to_read` also lists every decision
+bead open or updated in those days, whatever it names. Read each one, and
+stop if it bears on the fix. Nothing is written anywhere.
+
+Exit 0 clear, 1 something found, 2 refused: a source that cannot be read
+(git, `gh pr list`, `gc bd list`) is never read as clear.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
+
+EXIT_FOUND, EXIT_REFUSED = 1, 2
+TIMEOUT = 120
+
+
+class Refusal(Exception):
+    pass
+
+
+def run(argv: list[str], what: str, cwd: Path | None = None) -> str:
+    try:
+        proc = subprocess.run(argv, cwd=cwd, text=True, capture_output=True, timeout=TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise Refusal(f"{what} impossible : {exc}") from exc
+    if proc.returncode != 0:
+        raise Refusal(f"{what} a échoué : {(proc.stderr or proc.stdout).strip()[:300]}")
+    return proc.stdout
+
+
+def touches(path: str, wanted: list[str]) -> bool:
+    return any(path == w or (w.endswith("/") and path.startswith(w)) for w in wanted)
+
+
+def pull_requests(repo: Path, state: str, fields: str) -> list[dict[str, Any]]:
+    out = run([os.environ.get("GH_BIN") or "gh", "pr", "list", "--state", state, "--limit", "300", "--json", fields],
+              "gh pr list", repo)
+    try:
+        return json.loads(out or "[]")
+    except json.JSONDecodeError as exc:
+        raise Refusal(f"gh pr list illisible : {exc}") from exc
+
+
+def finished_branches(repo: Path) -> set[str]:
+    """Branches whose every pull request is merged or closed: a squash merge
+    leaves them on the remote with commits main does not hold."""
+    states: dict[str, set[str]] = {}
+    for pr in pull_requests(repo, "all", "headRefName,state"):
+        states.setdefault(str(pr.get("headRefName")), set()).add(str(pr.get("state") or "OPEN"))
+    return {branch for branch, seen in states.items() if seen <= {"MERGED", "CLOSED"}}
+
+
+def changed_by_prs(repo: Path, wanted: list[str], own: str) -> list[dict[str, Any]]:
+    found = []
+    for pr in pull_requests(repo, "open", "number,title,url,headRefName,files"):
+        if pr.get("headRefName") == own or pr.get("state") in ("MERGED", "CLOSED"):
+            continue
+        files = [f["path"] for f in pr.get("files") or [] if touches(str(f.get("path")), wanted)]
+        if files:
+            found.append({"number": pr.get("number"), "title": pr.get("title"), "url": pr.get("url"),
+                          "branch": pr.get("headRefName"), "files": files})
+    return found
+
+
+def changed_by_branches(repo: Path, wanted: list[str], own: str, days: int) -> list[dict[str, Any]]:
+    run(["git", "fetch", "--quiet", "--prune", "origin"], "git fetch origin", repo)
+    refs = run(["git", "for-each-ref", "--format=%(refname:short)", "refs/remotes/origin"], "git for-each-ref", repo)
+    finished = finished_branches(repo)
+    found = []
+    for ref in refs.split():
+        name = ref.split("/", 1)[1] if "/" in ref else ref
+        if name in ("HEAD", "main", own) or ref == "origin" or name in finished:
+            continue
+        recent = run(["git", "log", "--format=%H", f"--since={days} days ago", f"origin/main..{ref}"],
+                     f"git log {ref}", repo)
+        if not recent.strip():
+            continue
+        base = run(["git", "merge-base", "origin/main", ref], f"git merge-base {ref}", repo).strip()
+        files = [path for path in run(["git", "diff", "--name-only", base, ref], f"git diff {ref}", repo).split()
+                 if touches(path, wanted)]
+        if files:
+            found.append({"branch": name, "files": files})
+    return found
+
+
+def recent_decisions(days: int) -> list[dict[str, Any]]:
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    out = run([os.environ.get("GC_BIN") or "gc", "bd", "list", "--all", "--label-any", "decision",
+               "--updated-after", since.strftime("%Y-%m-%dT%H:%M:%SZ"), "--limit", "0", "--json"], "gc bd list",
+              # Beads answer from the city, never from a work tree.
+              Path(os.environ.get("FACTORY_ROOT") or "/home/benja/agent-factory"))
+    try:
+        beads = json.loads(out or "[]")
+    except json.JSONDecodeError as exc:
+        raise Refusal(f"gc bd list illisible : {exc}") from exc
+    kept = []
+    for bead in beads:
+        try:
+            updated = datetime.fromisoformat(str(bead.get("updated_at")).replace("Z", "+00:00"))
+        except ValueError:
+            updated = None
+        if bead.get("status") != "closed" or updated is None or updated >= since:
+            kept.append(bead)
+    return kept
+
+
+def names(bead: dict[str, Any], path: str) -> bool:
+    text = f"{bead.get('title') or ''}\n{bead.get('description') or ''}"
+    leaf = path.rstrip("/").rsplit("/", 1)[-1]
+    return path.rstrip("/") in text or (len(leaf) > 3 and leaf in text)
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="factory-fix-preflight", description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("paths", nargs="+")
+    parser.add_argument("--repo", default=".")
+    parser.add_argument("--branch", help="the fix's own branch (default: the current one)")
+    parser.add_argument("--days", type=int, default=2)
+    args = parser.parse_args(argv)
+    repo = Path(args.repo).resolve()
+    try:
+        own = args.branch or run(["git", "rev-parse", "--abbrev-ref", "HEAD"], "git rev-parse", repo).strip()
+        prs = changed_by_prs(repo, args.paths, own)
+        branches = changed_by_branches(repo, args.paths, own, args.days)
+        decisions = recent_decisions(args.days)
+    except Refusal as exc:
+        print(json.dumps({"ok": False, "error": f"refus : {exc}"}, indent=2, ensure_ascii=False))
+        return EXIT_REFUSED
+    summary = [{"id": d.get("id"), "title": d.get("title"), "status": d.get("status"), "updated_at": d.get("updated_at")}
+               for d in decisions]
+    naming = [s for s, d in zip(summary, decisions) if any(names(d, path) for path in args.paths)]
+    answer = {"ok": not (prs or branches or naming), "paths": args.paths, "branch": own, "days": args.days,
+              "prs": prs, "branches": branches, "decisions_naming": naming,
+              "decisions_to_read": [s for s in summary if s not in naming]}
+    print(json.dumps(answer, indent=2, ensure_ascii=False))
+    return 0 if answer["ok"] else EXIT_FOUND
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

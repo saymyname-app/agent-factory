@@ -257,6 +257,9 @@ class ConvoyStopsOnTheFixtureCity(Staged, publication.Harness):
             "FACTORY_ROOT": str(self.repo_root),
             "TICKET_GRAPH_BD_WORKSPACE": str(self.tmp),
             "CONVOY_ADVANCE_LOCK_DIR": str(self.tmp / "locks"),
+            # The live pass leaves the fidelity check to a later pass (af-wz4dd8);
+            # here a pass waits for it, so that no check outlives its test.
+            "CONVOY_ADVANCE_FIDELITY_WAIT": "120",
             "SPEC_INTEGRATION_LOCK_DIR": str(self.tmp / "locks"),
             "SPEC_INTEGRATION_WORK_DIR": str(self.tmp / "work"),
             "EVIDENCE_STORE_DIR": str(self.tmp / "store"),

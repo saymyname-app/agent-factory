@@ -307,6 +307,9 @@ class City:
             **{name: os.environ[name] for name in SIMULATED_CLOCKS if name in os.environ},
             "CONVOY_STATE_FAKE_WRITE_LOG": str(self.workspace / "writes.log"),
             "CONVOY_ADVANCE_LOCK_DIR": str(self.workspace / "locks"),
+            # The live pass leaves the fidelity check to a later pass (af-wz4dd8);
+            # here a pass waits for it, so that no check outlives its test.
+            "CONVOY_ADVANCE_FIDELITY_WAIT": "120",
             "SPEC_INTEGRATION_LOCK_DIR": str(self.workspace / "locks"),
             "SPEC_INTEGRATION_WORK_DIR": str(self.workspace / "work"),
             "TICKET_END_WORK_DIR": str(self.workspace / "gate-work"),
