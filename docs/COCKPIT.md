@@ -1092,6 +1092,11 @@ its states, which is what `bin/prototype-fidelity` compares:
 | `run-frise` | `/runs/run` | `run-*` (5) |
 | `job-detail` | `/runs/job` | `job-*` (11) |
 
+Beside the states of the screens, the profile declares `journal-demonstration`:
+the useful events of `journal-content` and the technical logs of
+`journal-logs` on one launch, so that the demonstration line of the Journal
+Fold (F, af-njwz8v) is observed on one cockpit; it is no state of a reference.
+
 `/`, `/journal` and `/projet/notes` (the page of the project the six states
 of that screen are about) are served today; the other addresses are declared
 for the tickets that deliver those screens, and answer 404 until then.
