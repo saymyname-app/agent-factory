@@ -58,16 +58,19 @@ class AnalysesDestinationIndicators(unittest.TestCase):
     def test_analysis_content_shows_the_merged_results_its_sources_prove(self):
         """The state analysis-content of the reference: six results merged
         over the seven days, one a day but none on the third and fifth and
-        two on the sixth, the last ones first."""
+        two on the sixth, the last ones first. The reference says when each
+        was merged in words its chart contradicts (« avant-hier », a day its
+        chart counts none): a defect of the prototype, not copied -- the
+        results are held to their order, by title and project."""
         page = served(self.launch("analysis-content"), "Résultats")
         self.assertEqual("Résultats fusionnés", page.says("h2-1"))
         self.assertEqual("6 résultats sur sept jours · fusion prouvée", page.says("p-1"))
         self.assertEqual([1, 1, 0, 1, 0, 2, 1], [value for _, value in page.series().get("Résultats fusionnés", [])],
                          "the merged results a day are not those of the reference")
         history = page.says("metrics-history-1")
-        found = [history.find(item) for item in ("Présentation du projet Portfolio · hier",
-                                                  "Import des documents Notes · hier",
-                                                  "Fiabilisation des reprises Usine · avant-hier")]
+        found = [history.find(item) for item in ("Présentation du projet Portfolio",
+                                                  "Import des documents Notes",
+                                                  "Fiabilisation des reprises Usine")]
         self.assertTrue(-1 not in found and found == sorted(found),
                         f"the last merged results are not listed, the last first: « {history} »")
 
