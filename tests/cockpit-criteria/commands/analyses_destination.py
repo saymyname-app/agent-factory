@@ -302,7 +302,7 @@ class Page:
     def chart_text(self) -> str:
         """What the chart of daily volumes says: its label, its axes and
         legend inside it, the titles of its points."""
-        return " ".join(" ".join([chart["label"], *chart["text"], *chart["points"]]).split()
+        return " ".join(" ".join(" ".join([chart["label"], *chart["text"], *chart["points"]]).split())
                         for chart in self.charts)
 
     def method(self) -> dict[str, str]:
