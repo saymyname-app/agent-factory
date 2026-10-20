@@ -26,9 +26,9 @@ if sys.argv[1:] == ["list", "--all", "--limit", "0", "--has-metadata-key", "gc.g
 
 # The journal's reads: every bead that ever bore a proposal or a cockpit
 # action trace, and every event held for the journal (af-ltchro) -- none in
-# this fixture.
+# this fixture; and the sources declared connected (af-njwz8v) -- none.
 # The runs read (cockpit.runs): ticket beads an agent ran on -- none here.
-for _key in ("gc.proposal_state", "gc.cockpit_action_quoi", "gc.journal_event", "gc.flow.models"):
+for _key in ("gc.proposal_state", "gc.cockpit_action_quoi", "gc.journal_event", "gc.journal_source", "gc.flow.models"):
     if sys.argv[1:] == ["list", "--all", "--limit", "0", "--has-metadata-key", _key, "--json"]:
         print(json.dumps([]))
         sys.exit(0)
