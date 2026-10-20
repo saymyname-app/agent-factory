@@ -50,7 +50,7 @@ class RitualsTest(unittest.TestCase):
 
     def test_a_paused_ritual_says_why_and_when_it_resumes(self):
         self.assertIn("Dernière revue (Usine) : en pause · refactor churn · reprise : A6 closed"
-                      " · due après 20 PR fusionnées dans main", page(TOML))
+                      " · puis due après 20 PR fusionnées dans main", page(TOML))
 
     def test_a_ritual_done_says_its_day_in_paris(self):
         self.assertIn("Dernière revue : 11/10/2026 · due après 5 PR fusionnées dans main", page(TOML))

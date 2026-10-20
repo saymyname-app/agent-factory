@@ -88,7 +88,8 @@ def _last_lines(key, name, gender, rituals):
         else:
             line = "%s : non renseigné%s" % (label, gender)
         if isinstance(ritual.get("threshold"), int) and ritual.get("kind") == "pr_threshold":
-            line += " · due après %d PR fusionnées dans %s" % (ritual["threshold"], ritual.get("base_branch") or "main")
+            line += " · %sdue après %d PR fusionnées dans %s" % (
+                "puis " if last == "paused" else "", ritual["threshold"], ritual.get("base_branch") or "main")
         lines.append(line)
     return lines or ["%s : non renseigné%s" % (name, gender)]
 
