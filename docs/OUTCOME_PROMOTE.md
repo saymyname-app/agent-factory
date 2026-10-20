@@ -157,7 +157,11 @@ leaves tickets that are not closed. Before the closing, each of them gets
 the gate record `withdrawn` (`bin/convoy-state record-gate`) and is closed
 with the reason in its notes, as `bin/ticket-graph-publish` withdraws a
 ticket; `withdrawn` names them (empty after a Delivered Outcome, whose
-tickets are all closed). Their branches and their beads stay. A run
+tickets are all closed). The closing is forced (`bd update --force`): bd
+refuses to close a ticket another open one blocks, and every ticket of the
+convoy is withdrawn, none will start. It writes `gc.work_outcome=abandoned`,
+which bd's work-record gate asks of a closing. On af-pqfxmd the first run
+stopped on that refusal before closing anything (20/10/2026). Their branches and their beads stay. A run
 interrupted between two tickets is taken up by the next one, which also
 closes a ticket that already carries its record.
 
