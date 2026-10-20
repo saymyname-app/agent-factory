@@ -233,6 +233,11 @@ class OutcomePromoteTest(answers.OwnerAnswerTest):
         self.state("set-branch", CONVOY, answers.SLICE, "--branch", branch)
         self.edit(answers.SLICE, status="in_progress")
         started = self.commit_on(answers.SLICE, {"docs/tranche.md": "la tranche\n"})
+        # The started ticket waits on the other one: bd refuses to close it
+        # first unless forced (af-pqfxmd, 20/10/2026).
+        tracker = json.loads(self.tracker.read_text())
+        tracker["beads"][answers.SLICE]["blocks"] = [gate.SCREEN]
+        self.tracker.write_text(json.dumps(tracker))
         main, tip = self.remote_tip(PROTECTED), self.remote_tip(INTEGRATION)
         self.passed(self.respond("abandonné", None, None, "--reason", REASON, words="Ok pour ta recommandation."))
         self.assertEqual("close", self.promote("check")[1]["due"])
@@ -251,6 +256,8 @@ class OutcomePromoteTest(answers.OwnerAnswerTest):
             self.assertIn("at", ticket["gates"]["withdrawn"], ticket["id"])
         beads = json.loads(self.tracker.read_text())["beads"]
         self.assertIn(REASON, beads[answers.SLICE].get("notes", ""))
+        self.assertEqual(["abandoned", "abandoned"],
+                         [beads[ticket]["metadata"].get("gc.work_outcome") for ticket in (answers.SLICE, gate.SCREEN)])
         # Run again: nothing more is written.
         before = self.tracker.read_text()
         self.assertTrue(self.passed(self.promote())["done"])

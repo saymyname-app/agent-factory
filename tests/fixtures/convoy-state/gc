@@ -45,7 +45,9 @@ CONVOY_STATE_FAKE_SLING_FAIL (comma-separated) makes its sling fail.
 
 For the factory incident of bin/convoy-advance and for bin/escalation-door
 (T34, af-ckwina): `bd update` also takes `--unset-metadata KEY`, `--status
-VALUE` and `--append-notes TEXT`; `bd create TITLE ... --json` adds an open
+VALUE` and `--append-notes TEXT`; as bd 1.4.1 does, `--status closed` on a
+bead one of whose `blocks` is not closed fails, unless `--force` is given
+(af-npz9v1); `bd create TITLE ... --json` adds an open
 task and answers `{"id": ...}` (logged as ["create", ID, TITLE]); `bd close
 ID --reason TEXT [--json]` closes it (logged as ["close", ID]); `mail send RECIPIENT
 ... -s SUBJECT ...` is logged as ["mail", RECIPIENT, SUBJECT] and fails when
@@ -130,9 +132,16 @@ def update(state, bead_id, rest):
     if bead is None:
         fail(f"issue not found: {bead_id}")
     metadata = dict(bead.get("metadata") or {})
+    forced = "--force" in rest
+    rest = [arg for arg in rest if arg != "--force"]
     i = 0
     while i < len(rest):
         flag = rest[i]
+        if flag == "--status" and i + 1 < len(rest) and rest[i + 1] == "closed" and not forced:
+            blockers = [dep for dep in bead.get("blocks") or []
+                        if (state["beads"].get(dep) or {}).get("status") != "closed"]
+            if blockers:
+                fail(f"cannot close blocked issue: {bead_id} is blocked by [{' '.join(blockers)}]")
         if flag == "--set-metadata" and i + 1 < len(rest):
             key, sep, value = rest[i + 1].partition("=")
             if not sep:
@@ -153,7 +162,7 @@ def update(state, bead_id, rest):
             fail(f"no canned response configured for: bd update {bead_id} {' '.join(rest)}")
         i += 2
     bead["metadata"] = metadata
-    log_write([bead_id, *rest])
+    log_write([bead_id, *rest, *(("--force",) if forced else ())])
     print(f"Updated issue: {bead_id}")
 
 

@@ -400,7 +400,11 @@ def withdraw_open_tickets(convoy: Convoy, answer: dict[str, Any]) -> list[str]:
             continue
         if "at" not in (ticket.get("gates") or {}).get("withdrawn", {}):
             state_write("record-gate", convoy.id, ticket["id"], "--gate", "withdrawn")
-        proc = run([os.environ.get("GC_BIN", "gc"), "bd", "update", ticket["id"], "--status", "closed", "--append-notes",
+        # --force: a ticket blocked by another one of the convoy closes
+        # anyway, since every ticket of the convoy is withdrawn and none
+        # will start; gc.work_outcome is what bd's work-record gate asks.
+        proc = run([os.environ.get("GC_BIN", "gc"), "bd", "update", ticket["id"], "--status", "closed", "--force",
+                    "--set-metadata", "gc.work_outcome=abandoned", "--append-notes",
                     f"WITHDRAWN by {PROGRAM} (convoi {convoy.id} abandonné par {answer['approver']}) : {answer['reason']}"])
         if proc.returncode != 0:
             raise Refusal(f"le ticket {ticket['id']} du convoi abandonné {convoy.id} n'a pas pu être fermé "
