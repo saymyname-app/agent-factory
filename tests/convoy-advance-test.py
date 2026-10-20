@@ -986,6 +986,31 @@ class ConvoyAdvanceTest(ConvoyAdvanceHarness):
         self.assertEqual([T1, T2], self.slung())
         self.assertEqual(after_first, self.tracker.read_text())
 
+    def test_a_pass_that_finds_another_one_running_ends_at_once_and_writes_nothing(self):
+        # af-wz4dd8: the order starts a pass while the last one still runs.
+        # Queued behind its lock, the new pass spent its 300 s waiting and
+        # was killed; it now leaves the work to the pass that holds it.
+        before = self.tracker.read_text()
+        locks = self.tmp / "locks"
+        locks.mkdir(parents=True, exist_ok=True)
+        with (locks / "agent-factory-convoy-advance.lock").open("w") as held:
+            fcntl.flock(held.fileno(), fcntl.LOCK_EX)
+            started = time.monotonic()
+            try:
+                proc = subprocess.run((str(TOOL), "--all", "--stopped-ok"), env=self.env, text=True,
+                                      capture_output=True, timeout=30)
+            except subprocess.TimeoutExpired:
+                self.fail("the pass waited for the one that holds the lock")
+            waited = time.monotonic() - started
+
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertLess(waited, 30)
+        answer = json.loads(proc.stdout)
+        self.assertTrue(answer["ok"], answer)
+        self.assertIn("passe déjà en cours", answer["skipped"])
+        self.assertEqual([], self.slung())
+        self.assertEqual(before, self.tracker.read_text())
+
     # --- refusals: nothing is started ------------------------------------------
 
     def test_a_convoy_in_a_state_without_rule_starts_nothing(self):
@@ -1548,10 +1573,10 @@ class ConvoyAdvanceTest(ConvoyAdvanceHarness):
             "EVIDENCE_CAPTURE_BROWSER": str(ROOT / "tests" / "fixtures" / "prototype-fidelity" / "browser"),
             "EVIDENCE_FAKE_BROWSER_LOG": str(self.tmp / "browser.log"),
             "TICKET_END_WORK_DIR": str(self.tmp / "gate-work"),
-            # The pass does not wait for the check (af-pxijl6): it outlives
-            # the pass that started it, as when the order kills a pass.
-            "CONVOY_ADVANCE_FIDELITY_WAIT": "0",
         })
+        # The pass does not wait for the check by default (af-wz4dd8): it
+        # outlives the pass that started it, which leaves it to a later one.
+        self.env.pop("CONVOY_ADVANCE_FIDELITY_WAIT", None)
         # An interface slice: the publication door posed the reference of
         # the Validated Prototype in it, before the convoy was marked.
         state = self.tracker_state()
