@@ -273,9 +273,13 @@ MERGES_PER_PASS = 1
 FIDELITY_CHECKS_PER_PASS = 1
 # How long a pass waits for the fidelity check it started (af-pxijl6). The
 # check runs in its own session and outlives the pass, which the order kills
-# at 300 s: a longer check is left running and its answer read by a later
-# pass, instead of being killed and started again from zero by every pass.
-FIDELITY_WAIT_SECONDS = 120
+# at 300 s: it is left running and its answer read by a later pass, instead
+# of being killed and started again from zero by every pass. Not waited for
+# (af-wz4dd8, ADR-0032): 120 s of it, on a pass slowed by the load of the
+# host, made the pass of 20/10 01:27 Paris outlast the 300 s.
+FIDELITY_WAIT_SECONDS = 0
+# What a pass answers when another one holds the lock (af-wz4dd8).
+PASS_RUNNING = "passe déjà en cours : elle avance les convois, celle-ci ne fait rien"
 
 # The stop the code review of a ticket writes (bin/convoy-state).
 CODE_REVIEW_STOP = "code_review_no_result"
@@ -1919,14 +1923,23 @@ def settle_non_conforme(convoy: Convoy) -> dict[str, Any] | None:
 
 
 @contextmanager
-def advance_lock() -> Iterator[None]:
-    """One pass at a time, Factory-wide: N is shared between the convoys."""
+def advance_lock() -> Iterator[bool]:
+    """One pass at a time, Factory-wide: N is shared between the convoys.
+
+    False when another pass holds it: the order starts a pass while the last
+    one still runs, and one that waited for the lock spent the order's 300 s
+    in that wait and was killed (af-wz4dd8). The pass that holds it does the
+    work; the one after it reads the state it left."""
     lock_dir = Path(os.environ.get("CONVOY_ADVANCE_LOCK_DIR") or os.environ.get("XDG_RUNTIME_DIR") or "/tmp")
     lock_dir.mkdir(parents=True, exist_ok=True)
     with (lock_dir / "agent-factory-convoy-advance.lock").open("w") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         try:
-            yield
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield False
+            return
+        try:
+            yield True
         finally:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
@@ -2337,7 +2350,10 @@ def failure_line(message: str | None, failed: list[str]) -> str:
 
 def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
     """`targets` None: every marked convoy that is open or was closed outside its commands."""
-    with advance_lock():
+    with advance_lock() as held:
+        if not held:
+            print(json.dumps({"ok": True, "skipped": PASS_RUNNING}, indent=2, sort_keys=True, ensure_ascii=False))
+            return 0
         # Sessions are listed before the state is read: a session that ends
         # between the two reads is then still seen alive, and nothing it wrote
         # before ending is missed (a stop raised before its exception).

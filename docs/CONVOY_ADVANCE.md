@@ -88,7 +88,12 @@ A pass decides from the tracker alone: a second pass on the same state
 starts nothing more, because a started ticket carries its `dispatch` gate
 record. Passes are serialised Factory-wide by a lock
 (`CONVOY_ADVANCE_LOCK_DIR`, default `$XDG_RUNTIME_DIR` or `/tmp`), so two of
-them never count the same free place.
+them never count the same free place. A pass that finds the lock held does
+not wait for it: it answers `ok` with `skipped` (« passe déjà en cours »),
+writes nothing and exits 0. The order starts a pass while the last one
+still runs; on 20/10 01:32 to 01:56 Paris, under a load of 23 to 45 on 8
+vCPU, each new pass waited 120 to 180 s for that lock, the 300 s of the
+order ran during the wait, and five passes were killed (af-wz4dd8).
 
 ## Finished tickets are merged by the pass (T18)
 
@@ -223,8 +228,9 @@ A ticket of a marked convoy is closed by the pass, through `bin/ticket-end`
   1`, which runs the mechanical fidelity check on the commit that merges.
   Reported under `fidelity` (`checked`, `waiting`, `refused`). The check
   runs in its own session, under a lock per convoy in the directory of the
-  pass's lock (af-pxijl6): the pass waits for it 120 s at most, then leaves
-  it running, its tickets under `waiting`. The order's timeout kills the
+  pass's lock (af-pxijl6): the pass does not wait for it (ADR-0032,
+  af-wz4dd8; `CONVOY_ADVANCE_FIDELITY_WAIT` sets a wait in seconds), it
+  leaves it running, its tickets under `waiting`. The order's timeout kills the
   pass, not the check; a pass that finds it running leaves it, and the
   pass that finds it ended reports its answer. Before this, a check longer
   than what was left of the 300 s was killed with its pass and started
