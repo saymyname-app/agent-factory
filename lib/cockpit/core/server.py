@@ -31,6 +31,8 @@ from cockpit.requests.sources.readability import ILLISIBLE_THRESHOLD_SECONDS
 from cockpit.ui.base.page import render_document, render_fresh, render_home_zones
 from cockpit.ui.health.page import render_health_zone, render_status_line
 from cockpit.ui.access.page import render_access_zone
+from cockpit.ui.analyses.page import CSS as ANALYSES_CSS
+from cockpit.ui.analyses.page import analyses_view, render_analyses
 from cockpit.ui.home.overview import CSS as OVERVIEW_CSS
 from cockpit.ui.home.overview import overview_view, render_overview
 from cockpit.ui.home.page import render_requests_section
@@ -52,7 +54,7 @@ ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
 # The destinations of Panorama whose Prototype Fold is not done yet: their
 # address answers, in the shell, that they are not served here yet.
 NOT_FOLDED = {
-    href: (key, label) for key, label, href in NAVIGATION if key not in (HOME, "projets", "journal")
+    href: (key, label) for key, label, href in NAVIGATION if key not in (HOME, "projets", "journal", "analyses")
 }
 NOT_FOLDED.update({"/runs/run": NOT_FOLDED["/runs"], "/runs/job": NOT_FOLDED["/runs"]})
 
@@ -120,6 +122,9 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         if path == "/":
             self._send_home(read_model)
             return
+        if path == "/analyses":
+            self._send_analyses(read_model)
+            return
         if path in NOT_FOLDED:
             key, label = NOT_FOLDED[path]
             self._send_page(read_model, key, render_not_folded(label))
@@ -140,7 +145,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             # project's page.
             referer_path = urllib.parse.urlsplit(self.headers.get("Referer") or "").path
             location = "/"
-            if referer_path.startswith("/projet/") or referer_path in ("/projets", "/journal"):
+            if referer_path.startswith("/projet/") or referer_path in ("/projets", "/journal", "/analyses"):
                 location = urllib.parse.quote(urllib.parse.unquote(referer_path), safe="/-_.~")
             self.send_response(303)
             self.send_header("Location", location)
@@ -205,6 +210,15 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                         extra_css=OVERVIEW_CSS,
                         headers={"Set-Cookie": session_cookie_header(self.server.session_token)},
                         snapshot=snapshot)
+
+    def _send_analyses(self, read_model):
+        """GET /analyses: the destination « Analyses » of Panorama (T42,
+        af-muqyxm), open on the tab its address names (``?vue=``)."""
+        snapshot = read_model.snapshot()
+        tab = (urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("vue") or [None])[0]
+        view = analyses_view(snapshot, tab)
+        self._send_page(read_model, "analyses", lambda anchors: render_analyses(view, anchors),
+                        extra_css=ANALYSES_CSS, snapshot=snapshot)
 
     def _send_page(self, read_model, destination, main, extra_css="", status=200, headers=None, snapshot=None):
         """One page of Panorama: the navigation B with ``destination`` open,

@@ -115,7 +115,8 @@ def render_not_folded(label):
 # --pn-warn-text, the muted and the warning text, darker in the light theme
 # where the reference's are under 4.5:1 on --bg; --pn-control-line, the box
 # of a control, 3:1 at least on the surface and the background where --line
-# is not. The type of the page is the reference's: 15 px system-ui, normal
+# is not; --pn-series-1 to 3, the series of a chart, 3:1 at least on the
+# surface. The type of the page is the reference's: 15 px system-ui, normal
 # leading, a paragraph at 1.5. The shell's layout: the navigation beside the
 # destination, above it under 800 px. A rule of a destination reuses these
 # tokens.
@@ -125,7 +126,7 @@ CSS = """
   --bg:#f3f5f9; --surface:#fff; --line:#dbe0e8; --ink:#17202e; --muted:#657185; --accent:#415fce;
   --ok:#1c7954; --warn:#97691e;
   --pn-surface-2:#E6EBFB; --pn-accent-ink:#FFFFFF; --pn-muted-text:#566175; --pn-warn-text:#85590F;
-  --pn-control-line:#788396;
+  --pn-control-line:#788396; --pn-series-1:#415fce; --pn-series-2:#1c7954; --pn-series-3:#97691e;
 }
 @media (prefers-color-scheme: dark){
   :root{
@@ -133,7 +134,7 @@ CSS = """
     --bg:#0d1015; --surface:#161b23; --line:#2a3240; --ink:#ecedf3; --muted:#9aa6b9; --accent:#99aaff;
     --ok:#55c89d; --warn:#efc778;
     --pn-surface-2:#222D46; --pn-accent-ink:#101526; --pn-muted-text:#9aa6b9; --pn-warn-text:#efc778;
-    --pn-control-line:#707C91;
+    --pn-control-line:#707C91; --pn-series-1:#91a7ff; --pn-series-2:#52c9b1; --pn-series-3:#e6ba70;
   }
 }
 body{padding:0;background:var(--bg);color:var(--ink);font:15px system-ui}

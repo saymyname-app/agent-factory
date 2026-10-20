@@ -220,12 +220,17 @@ def _panorama_city(name, at, ui, text, folded, drawn, runs) -> SyntheticCity:
     tracker = _Tracker(at)
     read_screen(lines, tracker)
     # A drawing is kept as it is said, under its heading, on the screen that
-    # shows that heading.
+    # shows that heading: after the lines of its section when the section is
+    # kept as said.
     undrawn = sorted(set(drawn) - set(lines))
     if undrawn:
         raise DatasetRefused(f"drawings under no heading of the screen: {undrawn}")
+    kept = {bead["title"]: bead for bead in tracker.beads if SAID in (bead.get("labels") or [])}
     for heading, said in drawn.items():
-        tracker.add(f"synthetic-said-{project_id(heading)}", heading, said=said, labels=[SAID])
+        if heading in kept:
+            kept[heading]["description"] = "\n".join(filter(None, (kept[heading].get("description"), *said)))
+        else:
+            tracker.add(f"synthetic-said-{project_id(heading)}", heading, said=said, labels=[SAID])
     if runs and "Derniers runs" not in lines:
         raise DatasetRefused("runs (runs) on a screen without « Derniers runs »")
     for number, run in enumerate(runs, start=1):
@@ -241,6 +246,16 @@ def _panorama_city(name, at, ui, text, folded, drawn, runs) -> SyntheticCity:
     unfolding = [resource for resource in (record or {}).get("resources", []) if not resource["opens"]] + \
         (record or {}).get("reports", [])
     unread = sorted(set(folded) - {resource["label"] for resource in unfolding})
+    # A part that unfolds in a section kept as said: what it says open
+    # follows its label in that section.
+    for label in list(unread):
+        section = next((bead for bead in tracker.beads if SAID in (bead.get("labels") or [])
+                        and label in (bead.get("description") or "").split("\n")), None)
+        if section is not None:
+            said = section["description"].split("\n")
+            at = said.index(label) + 1
+            section["description"] = "\n".join(said[:at] + folded[label] + said[at:])
+            unread.remove(label)
     if unread:
         raise DatasetRefused(f"folded parts that no part of the dossier unfolds: {unread}")
     for resource in unfolding:

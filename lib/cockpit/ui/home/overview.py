@@ -493,8 +493,6 @@ def _tick(seconds):
     return "%dm%02ds" % (minutes, rest) if rest else "%dm" % minutes
 
 CSS = """
-:root{--pn-series-1:#415fce;--pn-series-2:#1c7954;--pn-series-3:#97691e}
-@media (prefers-color-scheme: dark){:root{--pn-series-1:#91a7ff;--pn-series-2:#52c9b1;--pn-series-3:#e6ba70}}
 .pn-overview-head small{display:block;margin-bottom:20px;color:var(--pn-muted-text);font-size:12px}
 .pn-overview-head h1{font-size:27px;margin:0 0 6px}
 .pn-overview small{color:var(--pn-muted-text);font-size:12px}

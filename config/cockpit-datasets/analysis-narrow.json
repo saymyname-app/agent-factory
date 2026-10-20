@@ -9,5 +9,21 @@
     "width": 390
   },
   "visible_text": "Analyses\n\nToute l’usine · 7 derniers jours\n\nRésultats\nDélais\nVérifications\nActivité\nRésultats fusionnés\n\n6 résultats sur sept jours · fusion prouvée\n\nRésultats fusionnés\n0\n3\n6\n9\nLun\nMar\nMer\nJeu\nVen\nSam\nDim\nPrésentation du projet\nPortfolio · hier\nImport des documents\nNotes · hier\nFiabilisation des reprises\nUsine · avant-hier\nDéfinition et sources",
-  "production_writes": 0
+  "production_writes": 0,
+  "drawn": {
+    "Résultats fusionnés": [
+      "Résultats fusionnés · Lundi : 1",
+      "Résultats fusionnés · Mardi : 1",
+      "Résultats fusionnés · Mercredi : 0",
+      "Résultats fusionnés · Jeudi : 1",
+      "Résultats fusionnés · Vendredi : 0",
+      "Résultats fusionnés · Samedi : 2",
+      "Résultats fusionnés · Dimanche : 1"
+    ]
+  },
+  "folded": {
+    "Définition et sources": [
+      "Un résultat est compté sur sa preuve de fusion. Les PR et les tickets ne sont pas des résultats distincts par défaut. Historique partiel d’exemple ; données synthétiques."
+    ]
+  }
 }

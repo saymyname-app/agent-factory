@@ -246,14 +246,15 @@ the read model, never from the frozen page:
   normal leading, a paragraph at 1.5. `/journal` and `/projet/<key>` are served in it, and
   `/projets`: the declared projects, each with its « Page projet » (the
   « Projets » zone of the home screen), until the Fold of « Projets »;
-  `/runs`, `/runs/run`, `/runs/job`, `/usine`, `/rituels` and `/analyses`
-  answer, in it, that the destination is not served here yet, until their
-  own Fold. The shell's own tokens: `--pn-control-line`, the box of a
+  `/analyses` is « Analyses » (below); `/runs`, `/runs/run`, `/runs/job`,
+  `/usine` and `/rituels` answer, in it, that the destination is not served
+  here yet, until their own Fold. The shell's own tokens: `--pn-control-line`, the box of a
   control, at 3:1 at least on the surface and the background in both
   themes, where the reference's `--line` is not; `--pn-muted-text` and
   `--pn-warn-text`, the muted and the warning text, darker in the light
   theme, where the reference's `--muted` and `--warn` are under 4.5:1 on
-  `--bg`.
+  `--bg`; `--pn-series-1` to `-3`, the series of a chart, at 3:1 at least
+  on the surface in both themes.
 - `ui/home/overview.py` — `overview_view` reads the state of the
   destination from the snapshot and the requests; `render_overview` draws
   it. Loading while the tracker has not answered and no read of it ended,
@@ -311,6 +312,47 @@ written in the cases (an outline of anchors per state, read from the
 frozen pages); the cards of « Derniers runs », read in the document of
 their frame; a focus a person sees (drawn at 3:1 at least) and the local
 scroll kept. The 14 result states are T02S's.
+
+## « Analyses » (T42, af-muqyxm)
+
+`GET /analyses` is the destination « Analyses » of the Validated Prototype
+(`prototypes/c01-complete/frozen-panorama-analysis`), in the shell, drawn by
+`ui/analyses/page.py` from the read model: `analyses_view` reads what each
+tab shows, `render_analyses` draws the tab open. Its four tabs (Résultats,
+Délais, Vérifications, Activité) are buttons of forms sent by GET to
+`/analyses?vue=<tab>` -- a click or Enter, no script; the tab open carries
+`aria-current` and is drawn filled and bold, the others boxed at 3:1. The
+page opens on the tab its address names, else on « Résultats », or on
+« Délais » when the tracker holds only that view.
+
+- « Résultats »: what the tracker keeps as said under « Résultats
+  fusionnés » -- the summary (its count in bold), the volume of each day
+  (« Résultats fusionnés · Lundi : 1 », all seven or no line), the ticks of
+  the scale the source says (four numbers from 0, else 0 to a multiple of 3),
+  the merged results (a title, then « projet · quand ») and, after
+  « Définition et sources », how they are counted. The line and its points
+  are `--pn-series-1`, at 3:1 at least on the surface in both themes; the
+  chart says its volumes in its accessible name.
+- « Délais »: what the tracker keeps as said under « Où passe le temps ? »
+  -- the median lead time (its value in bold), each of its parts
+  (« Travail et vérifications · Préparation : 18 », « Attentes · Attente
+  de départ : 12 », in minutes), a bar each as long as its share of the
+  longest, a wait hatched as well as coloured, the line « À examiner … »
+  as its notice and, after « Méthode et couverture », how it is computed.
+- A view the tracker holds nothing for, « Vérifications » and « Activité »
+  (not drawn by the reference, T43's), say that nothing is collected for
+  them: no figure is drawn that no source gave. Before the tracker
+  answered: « Lecture en cours… »; once its read failed: « Cette vue est
+  indisponible » with « Réessayer » (`POST /api/health/recheck`, back to
+  `/analyses`); a reading no longer current is said in the line under the
+  title.
+
+`tests/cockpit-criteria/commands/analysis-destination-*-test.py` launch the
+real cockpit on each of the 4 analysis states and read the page in a
+headless Chromium as the home tests do (`analysis_destination.py` holds the
+address and the named parts of the reference); analysis-time is « Délais »
+opened on the served page. Each mark of the chart is held to 3:1
+(`marks` of `home_destination_measure.js`).
 
 ## Home screen, as the validated prototype shows it (af-mjfvwx)
 
@@ -983,7 +1025,9 @@ carries the text of one screen (`visible_text`), how the state is set
 (`ui`) and, when the screen has parts that unfold, what each says open
 (`folded`: its label, its lines), and, when it has a drawing, what its
 marks say (`drawn`: its heading, its lines -- the titles of the points of a
-chart), which the text of a page leaves out. Its screen is known by the first line of the page, and read in two
+chart), which the text of a page leaves out. A drawing or a part that
+unfolds in a section kept as said joins that section: the marks after its
+lines, what the part says open after its label. Its screen is known by the first line of the page, and read in two
 ways:
 
 - what the cockpit has a record for is read into that record: a request, a
@@ -1012,7 +1056,7 @@ ways:
 | a suspended Factory: `ui.setup` sets `shutdownState='suspended'` | a suspended city | `gc.value.suspended` is true |
 | « Rituels »: each ritual (a line in capitals says how it is launched, then its title) | one bead per ritual under its title: how it is launched, what it is for, when it last ran | `beads.value` |
 | the page of a ritual (« ← Rituels », its title, « projet · … ») | one bead under the title of the ritual, its project declared; its steps and what the step it is at shows | `beads.value` |
-| « Analyses »: « Résultats fusionnés » or « Où passe le temps ? »; a merged result (« projet · hier ») | one bead kept as said for the view; the project of each merged result is declared | `beads.value`; `projets.value.projects` |
+| « Analyses »: « Résultats fusionnés » or « Où passe le temps ? », with the marks of its drawing in `drawn` (« Résultats fusionnés · Lundi : 1 », « Attentes · Attente de départ : 12 ») and what « Définition et sources » or « Méthode et couverture » says open in `folded`; a merged result (« projet · hier ») | one bead kept as said for the view: its lines, what its part that unfolds says after its label, then its marks; the project of each merged result is declared | `beads.value`; `projets.value.projects`; `GET /analyses` |
 | nothing read yet: `ui.state` is `loading` | a supervisor that never answers, and a tracker whose read never ends (the cockpit waits a day for it, `COCKPIT_BEADS_READ_TIMEOUT_SECONDS`) | every source `unknown`, without value, `beads.failed_at` empty; `GET /` says it is reading, however late it is looked at |
 | nothing readable: `ui.state` is `error` | a supervisor that never answers, and a tracker whose read fails | every source `unknown`, without value, `beads.failed_at` set; `GET /` says the view is unavailable as soon as the first read failed |
 | a reading that is no longer current: `ui.state` is `stale` or `offline`, or `ui.stale` is true (Runs) | a supervisor that is read once, then answers no more | `gc.freshness` leaves `fresh` within seconds (a 2 s Validity window instead of 2 min), the last `gc.value` kept |
@@ -1027,7 +1071,8 @@ that many lines, a project card without its chantier, an event or a ritual
 without a title, a `ui.state` that names the state of a result on a page
 that opens no dossier, or a Runs state whose fixtures cannot be read, is
 refused, as is a `folded` that is not a label and its lines for each part
-or that names a part the dossier does not unfold, and a `drawn` that names a
+or that names a part neither the dossier nor a section kept as said
+unfolds, and a `drawn` that names a
 heading the screen does not show. Each refusal, and that of
 a file that is no dataset at all, is proven once by
 `tests/cockpit-isolated-recipe-test.py`, at the recipe.

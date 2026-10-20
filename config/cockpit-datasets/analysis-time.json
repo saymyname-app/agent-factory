@@ -5,5 +5,22 @@
     "id": "analysis-time",
     "setup": "analysisView='time'"
   },
-  "visible_text": "Analyses\n\nToute l’usine · 7 derniers jours\n\nRésultats\nDélais\nVérifications\nActivité\nOù passe le temps ?\n\nDélai médian : 2 h 40 · 6 résultats fusionnés\n\nTravail et vérifications\nAttentes\nPréparation\n18 min\nAttente de départ\n12 min\nRéalisation\n45 min\nRelectures\n20 min\nÉvaluation\n15 min\nAttente de jugement\n40 min\nFusion\n10 min\nÀ examiner : attente de jugement de 3 h 10 sur un résultat. Référence habituelle non collectée : aucune anomalie automatique affirmée.\nMéthode et couverture"
+  "visible_text": "Analyses\n\nToute l’usine · 7 derniers jours\n\nRésultats\nDélais\nVérifications\nActivité\nOù passe le temps ?\n\nDélai médian : 2 h 40 · 6 résultats fusionnés\n\nTravail et vérifications\nAttentes\nPréparation\n18 min\nAttente de départ\n12 min\nRéalisation\n45 min\nRelectures\n20 min\nÉvaluation\n15 min\nAttente de jugement\n40 min\nFusion\n10 min\nÀ examiner : attente de jugement de 3 h 10 sur un résultat. Référence habituelle non collectée : aucune anomalie automatique affirmée.\nMéthode et couverture",
+  "drawn": {
+    "Où passe le temps ?": [
+      "Travail et vérifications · Préparation : 18",
+      "Attentes · Attente de départ : 12",
+      "Travail et vérifications · Réalisation : 45",
+      "Travail et vérifications · Relectures : 20",
+      "Travail et vérifications · Évaluation : 15",
+      "Attentes · Attente de jugement : 40",
+      "Travail et vérifications · Fusion : 10"
+    ]
+  },
+  "folded": {
+    "Méthode et couverture": [
+      "Déclenchement → fusion, séparé en travail et attentes. Décomposition d’un exemple de 160 minutes ; ce n’est pas la somme de médianes indépendantes. Pour les travaux parallèles, temps écoulé et temps agent ne s’additionnent pas.",
+      "Portions sans horodatage et période comparée : non collectées dans cet exemple ; aucune durée n’est qualifiée d’anormale."
+    ]
+  }
 }
