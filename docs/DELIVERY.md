@@ -538,10 +538,14 @@ seconds or less: catalogues, registration, lints (105 files, 107 s together
 on 2026-10-08). Of those 6 failed files, 5 were rule checks of 1 second or
 less, a stale generated catalogue most often, and each was seen only after
 about 37 billed minutes of a run. `--changed-since` adds the test files the
-branch changes, committed or not, and the test files that name another
-changed file: a tool, library or configuration by its own name, a fixture by
-its directory (af-awyj8z: PR #602 changed `bin/ticket-evaluation`, and
-`tests/convoy-advance-test.py`, which runs its fixture, was red only in CI).
+branch changes, committed or not. The test files that name another changed
+file (a tool, library or configuration by its own name, a fixture by its
+directory, af-awyj8z) are left to CI and named in the run's output;
+`--with-naming` runs them too. For a change to `bin/convoy-advance` alone
+they were 11 files and 1912 s, a quarter of the battery, against 131 s for
+the 124 rule checks (20/10/2026, af-sgsh4g). A red one is seen in CI about
+15 minutes after the push, as PR #602's was (`tests/convoy-advance-test.py`
+runs the fixture of the `bin/ticket-evaluation` it changed).
 The run starts with `NOT the battery` and counts each kind. It waits its turn on the host like a battery
 (`tests/ci-run-tests-rule-checks-test.sh`, `tests/ci-runner-test.sh`).
 

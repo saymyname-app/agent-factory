@@ -74,9 +74,13 @@ echo "ok   a failing rule check fails the run; an unreadable commit runs nothing
   || fail "without --rule-checks the run is no longer every discovered test"
 echo "ok   without --rule-checks every discovered test still runs"
 
-# --- a changed tool brings the tests that name it (af-awyj8z, PR #602) -------
+# --- the tests naming a changed tool are left to CI, or run on demand ------
 # PR #602 changed bin/ticket-evaluation; tests/convoy-advance-test.py, a long
 # test, runs tests/fixtures/ticket-evaluation/evaluator and went red in CI.
+# af-awyj8z made the rule checks bring such tests. af-sgsh4g leaves them to
+# CI by default: for bin/convoy-advance alone they were 11 files and 32 min
+# against 131 s for the 124 rule checks (20/10/2026). They are named in the
+# output, and --with-naming runs them.
 REPO="$TMP/repo602"
 mkdir -p "$REPO/bin" "$REPO/lib" "$REPO/tests/fixtures/ticket-evaluation" "$REPO/config"
 g init -q -b main
@@ -89,17 +93,25 @@ for f in bin/ticket-evaluation lib/ticket_graph.py tests/fixtures/ticket-evaluat
 g add -A && g commit -q -m base
 BASE=$(g rev-parse HEAD)
 echo v2 >>"$REPO/bin/ticket-evaluation" && g commit -qam "change the tool"
-[ "$(listed --rule-checks --changed-since "$BASE")" = "tests/convoy-advance-test.py tests/short-test.sh " ] \
-  || fail "a change to bin/ticket-evaluation listed '$(listed --rule-checks --changed-since "$BASE")', not the test that runs its fixture"
+[ "$(listed --rule-checks --changed-since "$BASE")" = "tests/short-test.sh " ] \
+  || fail "by default a change to bin/ticket-evaluation listed '$(listed --rule-checks --changed-since "$BASE")', not the rule checks alone"
 out=$(runner --rule-checks --changed-since "$BASE") || { echo "$out" >&2; fail "the run failed"; }
-grep -Fq '1 test file(s) naming a changed file' <<<"$out" || { echo "$out" >&2; fail "the run does not count the test naming the tool"; }
+grep -Fq '1 test file(s) naming a changed file left to CI (--with-naming runs them): tests/convoy-advance-test.py' <<<"$out" \
+  || { echo "$out" >&2; fail "the run does not name the test it leaves to CI"; }
+grep -Fq 'ran 1 test(s), 0 failure(s)' <<<"$out" || { echo "$out" >&2; fail "the run ran a test it leaves to CI"; }
+[ "$(listed --rule-checks --changed-since "$BASE" --with-naming)" = "tests/convoy-advance-test.py tests/short-test.sh " ] \
+  || fail "with --with-naming a change to bin/ticket-evaluation listed '$(listed --rule-checks --changed-since "$BASE" --with-naming)', not the test that runs its fixture"
+out=$(runner --rule-checks --changed-since "$BASE" --with-naming) || { echo "$out" >&2; fail "the run failed"; }
+grep -Fq '1 test file(s) naming a changed file.' <<<"$out" || { echo "$out" >&2; fail "the run does not count the test naming the tool"; }
 g reset -q --hard "$BASE"
 echo v2 >>"$REPO/tests/fixtures/ticket-evaluation/evaluator"
 echo v2 >>"$REPO/lib/ticket_graph.py"
 echo v2 >>"$REPO/docs.md"
-[ "$(listed --rule-checks --changed-since "$BASE")" = "tests/convoy-advance-test.py tests/lib-user-test.py tests/short-test.sh " ] \
-  || fail "an uncommitted change to a fixture and a library listed '$(listed --rule-checks --changed-since "$BASE")', not the two tests naming them"
-echo "ok   a changed tool, fixture or library brings the tests that name it, not those naming a longer name"
+[ "$(listed --rule-checks --changed-since "$BASE" --with-naming)" = "tests/convoy-advance-test.py tests/lib-user-test.py tests/short-test.sh " ] \
+  || fail "an uncommitted change to a fixture and a library listed '$(listed --rule-checks --changed-since "$BASE" --with-naming)', not the two tests naming them"
+[ "$(listed --rule-checks --changed-since "$BASE")" = "tests/short-test.sh " ] \
+  || fail "by default an uncommitted change to a fixture and a library listed '$(listed --rule-checks --changed-since "$BASE")', not the rule checks alone"
+echo "ok   the tests naming a changed tool, fixture or library are left to CI, named, and run with --with-naming"
 
 # --- on the real list ---------------------------------------------------------
 expected=$(cd "$ROOT" && comm -12 <("$RUNNER" --list | sort) \

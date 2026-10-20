@@ -71,14 +71,15 @@
 #                            # the gate is unchanged. Factory CI passes it in
 #                            # every lot (af-vqew1x): each lot leads with its
 #                            # own rule checks.
-#   ci-run-tests --rule-checks [--changed-since REF] [--list]
+#   ci-run-tests --rule-checks [--changed-since REF [--with-naming]] [--list]
 #                            # not the battery: only the rule checks, the
 #                            # files config/ci-test-seconds.tsv gives
 #                            # RULE_CHECK_SECONDS or less (catalogues,
 #                            # registration, lints), and with --changed-since
 #                            # the test files changed since REF, committed or
-#                            # not, and the test files that name another
-#                            # changed file (af-awyj8z).What a change to docs, CI or tests alone
+#                            # not. The test files that name another changed
+#                            # file (af-awyj8z) are left to CI and named;
+#                            # --with-naming runs them too (af-sgsh4g).What a change to docs, CI or tests alone
 #                            # runs before its pull request; a delivery runs
 #                            # the whole battery, and CI runs it in every case
 #                            # (af-66bfyx, docs/DELIVERY.md).
@@ -128,11 +129,13 @@ JOBS="${CI_RUN_TESTS_JOBS:-1}"
 CHANGED_SINCE=""
 RULE_CHECKS=0
 RULE_CHECKS_FIRST=0
+WITH_NAMING=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --list) MODE="list" ;;
     --rule-checks) RULE_CHECKS=1 ;;
     --rule-checks-first) RULE_CHECKS_FIRST=1 ;;
+    --with-naming) WITH_NAMING=1 ;;
     --shard)
       if ! [[ "${2:-}" =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]] || [ "${BASH_REMATCH[1]}" -gt "${BASH_REMATCH[2]}" ]; then
         echo "ci-run-tests: --shard wants I/N with 1 <= I <= N, got: ${2:-nothing}" >&2; exit 2
@@ -272,9 +275,16 @@ fi
 # (fixtures/<name>), matched as a whole word; names under 4 characters and
 # Markdown files name nothing. A test reaching a file under another name is
 # still seen only in CI.
+#
+# Those tests are left to CI unless --with-naming asks for them (af-sgsh4g):
+# for bin/convoy-advance alone they were 11 files and 1912 s, a quarter of
+# the battery, against 131 s for the 124 rule checks (20/10/2026). A red one
+# is seen in CI about 15 minutes after the push, billed nothing
+# (docs/DELIVERY.md). The run names each one it leaves.
 RULE_CHECK_SECONDS=5
 touched=()
 naming=()
+left=()
 if [ "$RULE_CHECKS" -eq 1 ]; then
   declare -A CHANGED_TESTS=() NAMING_TESTS=()
   if [ -n "$CHANGED_SINCE" ]; then
@@ -308,10 +318,12 @@ if [ "$RULE_CHECKS" -eq 1 ]; then
   for f in "${files[@]}"; do
     if [ -n "${CHANGED_TESTS[$f]:-}" ]; then
       kept+=("$f"); touched+=("$f")
-    elif [ -n "${NAMING_TESTS[$f]:-}" ]; then
+    elif [ -n "${NAMING_TESTS[$f]:-}" ] && [ "$WITH_NAMING" -eq 1 ]; then
       kept+=("$f"); naming+=("$f")
     elif [ -n "${MEASURED[$f]:-}" ] && [ "${MEASURED[$f]}" -le "$RULE_CHECK_SECONDS" ]; then
       kept+=("$f")
+    elif [ -n "${NAMING_TESTS[$f]:-}" ]; then
+      left+=("$f")
     fi
   done
   files=("${kept[@]}")
@@ -337,6 +349,9 @@ fi
 
 if [ "$RULE_CHECKS" -eq 1 ]; then
   echo "ci-run-tests: NOT the battery: the rule checks ($(( ${#files[@]} - ${#touched[@]} - ${#naming[@]} )) file(s) of ${RULE_CHECK_SECONDS}s or less in config/ci-test-seconds.tsv), ${#touched[@]} changed test file(s) and ${#naming[@]} test file(s) naming a changed file.Enough before a pull request that changes docs, CI or tests alone; a delivery runs the whole battery (docs/DELIVERY.md)."
+  if [ "${#left[@]}" -gt 0 ]; then
+    echo "ci-run-tests: ${#left[@]} test file(s) naming a changed file left to CI (--with-naming runs them): ${left[*]}"
+  fi
 elif [ -n "$CHANGED_SINCE" ]; then
   if [ "$SKIP_LONG" -eq 1 ]; then
     echo "ci-run-tests: ${#skipped[@]} long test(s) NOT run: $SELECTION. CI_RUN_TESTS_FULL=1 runs them."
