@@ -95,7 +95,10 @@ even when the ceiling makes its session wait: its exit is taken back, so
 neither the review nor the evaluation is sent on the old tip. So is a ticket
 stopped because its Ticket Evaluation gave no result (af-xhc0sj), once per
 tip of the integration branch: the resume lifts the stop, keeps it on the
-resume, and withdraws its request; every other stop stays with the operator. At the
+resume, and withdraws its request; so is a ticket stopped at its second
+amendment once the operator answered « a » to its request (af-25o7vr,
+cause `amendment_granted`, one amendment more); every other stop stays
+with the operator. At the
 last resume of a same cause (bounds.resumes, one bound per cause, ADR-0030
 L2: these causes and a commit after a verdict; the correction round keeps
 its own bound of one round), the ticket is
@@ -314,6 +317,12 @@ BEHIND = "behind"
 # that stop is lifted by a resume of the ticket itself, once per tip of the
 # integration branch (af-xhc0sj). Every other stop stays with the operator.
 NO_RESULT = "evaluation_no_result"
+# A stop at the second amendment, and the resume that lifts it once the
+# operator answered the first option of its request (tdd_stop_request,
+# af-25o7vr): the author may then amend its frozen tests once more.
+AMENDMENT_STOP = "amendment_exhausted"
+AMENDMENT_GRANTED = "amendment_granted"
+AMENDMENT_RESUME_OPTION = "a"
 # ADR-0030 L3 removed the test review: a ticket it stopped before is resumed
 # on itself, once per stop, its request withdrawn (af-pjvsgo). A code review
 # without result is resumed the same way (af-wu6xj7): most often a defect of
@@ -1039,10 +1048,25 @@ def behind_due(convoy: Convoy, ticket: dict[str, Any]) -> tuple[str, str, str] |
 
 def stopped_without_result(ticket: dict[str, Any]) -> bool:
     """Started, not closed nor parked, and stopped because its Ticket
-    Evaluation or its code review gave no result, or by a stage the flow
-    removed: the stops a resume may lift."""
+    Evaluation or its code review gave no result, by a stage the flow
+    removed, or at its second amendment: the stops a resume may lift."""
     return started(ticket) and ticket.get("status") != "closed" and not ticket.get("park") \
-        and (ticket.get("stop") or {}).get("reason") in (NO_RESULT, CODE_REVIEW_STOP, *REMOVED_STAGE_STOPS)
+        and (ticket.get("stop") or {}).get("reason") in (NO_RESULT, CODE_REVIEW_STOP, AMENDMENT_STOP,
+                                                         *REMOVED_STAGE_STOPS)
+
+
+def amendment_granted_due(ticket: dict[str, Any]) -> tuple[str, str, str] | None:
+    """The resume a stop at the second amendment asks for once the operator
+    answered its request with the option that has the ticket resumed
+    (af-25o7vr): once per stop, none on any other answer, none before the
+    request was raised and answered, none when the ticket has no resume
+    left. The fact is `stop:<reason>/<time>`."""
+    stop = ticket["stop"]
+    if "raised" not in stop or ticket.get("resumes_left") == 0:
+        return None
+    if request_answer(read_bead(ticket["id"]), stop["at"]) != AMENDMENT_RESUME_OPTION:
+        return None
+    return "new", AMENDMENT_GRANTED, f"stop:{stop['reason']}/{stop['at']}"
 
 
 def once_per_stop_due(ticket: dict[str, Any], cause: str) -> tuple[str, str, str] | None:
@@ -1102,6 +1126,8 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
                 due = once_per_stop_due(ticket, STAGE_REMOVED)
             elif ticket["stop"]["reason"] == CODE_REVIEW_STOP:
                 due = once_per_stop_due(ticket, CODE_REVIEW_STOP)
+            elif ticket["stop"]["reason"] == AMENDMENT_STOP:
+                due = amendment_granted_due(ticket)
             else:
                 due = no_result_due(convoy, ticket)
             if due is None:
@@ -2110,8 +2136,8 @@ def tdd_stop_request(ticket: dict[str, Any]) -> str:
             {"option": "Clore ce ticket comme satisfait par le code existant",
              "consequence": "La clôture se fait dans le Planning Run ; cette réponse seule ne ferme pas le ticket."}
             if stop["reason"] == ALREADY_GREEN else
-            {"option": "Faire reprendre ce ticket ou ses tests de critère par une Planning Exception",
-             "consequence": "Le ticket reste arrêté tant que son arrêt n'est pas levé."},
+            {"option": "Accepter un amendement de plus de ses tests et faire reprendre le ticket",
+             "consequence": "Une nouvelle session de l'auteur reprend le ticket ; ses tests amendés sont gelés à nouveau."},
             {"option": "Laisser le ticket arrêté",
              "consequence": "Rien de ce ticket ne fusionne ; les tickets qui l'attendent ne démarrent pas."},
         ],

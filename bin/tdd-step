@@ -77,6 +77,9 @@ PIECES = {
 KIND_PREFACTORING = "prefactoring"
 STOP_ALREADY_GREEN = "criterion_already_green"
 STOP_AMENDMENT_EXHAUSTED = "amendment_exhausted"
+# The resume bin/convoy-advance sends once the operator answered « a » to that
+# stop: it allows one more amendment (af-25o7vr).
+GRANTED = "amendment_granted"
 
 EXIT_REFUSED = 1
 EXIT_NOT_NEW_FLOW = 4
@@ -806,7 +809,10 @@ def check_amend(check: Check) -> dict[str, Any]:
         raise Refusal("raison absente : un amendement porte sa raison, écrite sur une ligne (--reason)")
     if "freeze" not in check.tdd or "red" not in check.tdd:
         raise Refusal("aucun gel enregistré pour ce ticket : un amendement change des tests gelés, il n'y a rien à amender")
-    if "amendment" in check.tdd:
+    entries = (check.ticket.get("resume") or {}).get("entries") or []
+    if "amendment" in check.tdd and not any(
+            entry.get("cause") == GRANTED and entry.get("at", "") > check.tdd["amendment"]["at"] for entry in entries):
+        # af-25o7vr: a resume the operator granted allows one amendment more.
         raise Refusal(
             f"un seul amendement par ticket : {check.args.ticket} a déjà amendé ses tests gelés au commit "
             f"{check.tdd['amendment']['commit']}",
