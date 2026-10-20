@@ -1,0 +1,27 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/home-result-states-test.py::HomeResultStates.test_result_ready_is_to_judge_with_its_dossier_above_the_bar",
+      "tests/cockpit-criteria/commands/home-result-states-test.py::HomeResultStates.test_result_dossier_shows_the_dossier_above_the_bar",
+      "tests/cockpit-criteria/commands/home-result-states-test.py::HomeResultStates.test_result_accepted_says_accepted_and_the_merge_pending",
+      "tests/cockpit-criteria/commands/home-result-states-test.py::HomeResultStates.test_result_merging_says_the_merge_under_way",
+      "tests/cockpit-criteria/commands/home-result-states-test.py::HomeResultStates.test_result_merged_says_the_merge_confirmed_by_its_proof",
+      "tests/cockpit-criteria/commands/home-result-states-test.py::HomeResultStates.test_result_abandoned_says_nothing_was_merged_and_keeps_its_reason",
+      "tests/cockpit-criteria/commands/home-result-states-test.py::HomeResultStates.test_result_outdated_says_its_dossier_is_outdated_and_offers_nothing"
+    ],
+    "2": [
+      "tests/cockpit-criteria/commands/home-d01-records-test.py::HomeD01Records.test_a_delivered_result_on_an_open_convoy_is_to_judge_on_the_home_and_the_project_page",
+      "tests/cockpit-criteria/commands/home-d01-records-test.py::HomeD01Records.test_an_accepted_result_not_merged_says_accepted_and_the_merge_pending",
+      "tests/cockpit-criteria/commands/home-d01-records-test.py::HomeD01Records.test_a_merge_recorded_says_merged_with_the_commit_judged_and_the_commit_merged",
+      "tests/cockpit-criteria/commands/home-d01-records-test.py::HomeD01Records.test_an_abandon_says_nothing_merged_keeps_its_reason_and_is_no_anomaly",
+      "tests/cockpit-criteria/commands/home-d01-records-test.py::HomeD01Records.test_a_record_that_cannot_be_read_is_unknown_on_every_screen",
+      "tests/cockpit-criteria/commands/home-d01-records-test.py::HomeD01Records.test_an_issue_its_proofs_contradict_is_flagged_on_every_screen"
+    ],
+    "3": [
+      "tests/cockpit-criteria/commands/home-recette-test.py::HomeRecette.test_home_content_shows_the_recette_with_its_missing_proofs_at_both_widths_in_both_themes",
+      "tests/cockpit-criteria/commands/home-recette-test.py::HomeRecette.test_home_stale_shows_the_recette_with_its_missing_proofs_at_both_widths_in_both_themes",
+      "tests/cockpit-criteria/commands/home-recette-test.py::HomeRecette.test_home_narrow_shows_the_recette_with_its_missing_proofs_at_both_widths_in_both_themes",
+      "tests/cockpit-criteria/commands/home-recette-test.py::HomeRecette.test_home_light_shows_the_recette_with_its_missing_proofs_at_both_widths_in_both_themes"
+    ]
+  }
+}
