@@ -468,6 +468,7 @@ def check_validated_prototype(
         except json.JSONDecodeError as exc:
             raise SpecApproveError(f"{conformance_bin} returned invalid JSON: {proc.stderr.strip() or exc}") from exc
         if proc.returncode == 0 and report.get("ok"):
+            check_calibration(reference, tree / path)
             return
         failures = [
             f"{record['property']} : {failure}"
@@ -477,6 +478,42 @@ def check_validated_prototype(
         raise SpecApproveError(
             f"refus : le Validated Prototype ({branch} @ {commit}, {path}) est non conforme : " + " ; ".join(failures)
         )
+
+
+def check_calibration(reference: dict[str, Any], prototype: Path) -> None:
+    """The fidelity tool measures the Validated Prototype as itself, no
+    deviation at all, before the Spec freezes it (af-u8cbl0;
+    docs/PROTOTYPE_FIDELITY.md, « Calibration »). The Cockpit's prototype was
+    first measured by a ticket, T02R, and its themes were read wrong for
+    hours of work (#675, #676): a prototype the tool cannot read is refused
+    here, where the repair costs one Factory fix and no ticket's work."""
+    fidelity_bin = tool_path("PROTOTYPE_FIDELITY_BIN", "prototype-fidelity")
+    proc = subprocess.run(
+        [fidelity_bin, "calibrate", "--prototype", str(prototype), "--states", ",".join(reference["states"])],
+        capture_output=True, text=True,
+    )
+    try:
+        report = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise SpecApproveError(f"{fidelity_bin} returned invalid JSON: {proc.stderr.strip() or exc}") from exc
+    if proc.returncode == 0 and report.get("ok"):
+        return
+    where = f"{reference['branch']} @ {reference['commit']}, {reference['path']}"
+    deviations = report.get("deviations") or []
+    if not deviations:
+        raise SpecApproveError(
+            f"refus : le contrôle de fidélité ne sait pas mesurer le Validated Prototype ({where}) : "
+            + str(report.get("error") or "étalonnage impossible"))
+    named = [
+        " / ".join(str(part) for part in (d.get("state"), d.get("viewport"), d.get("anchor"), d.get("property")) if part)
+        + f" : {d.get('prototype')} ≠ {d.get('delivered')}"
+        for d in deviations[:3]
+    ]
+    more = f" (+{len(deviations) - 3})" if len(deviations) > 3 else ""
+    raise SpecApproveError(
+        f"refus : le contrôle de fidélité ne mesure pas le Validated Prototype ({where}) comme lui-même, "
+        f"{len(deviations)} écart(s) : " + " ; ".join(named) + more
+        + " — un défaut de l'outil de fidélité, à corriger par la maintenance de l'usine avant d'approuver")
 
 
 def check_entry_contract(

@@ -48,7 +48,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import pwd
 import subprocess
 import sys
 import tempfile
@@ -76,6 +75,7 @@ AUTHOR_ROLE = "author"
 
 sys.path.insert(0, str(BIN.parent / "lib"))
 import delivery_reads  # noqa: E402
+from account_home import account_home  # noqa: E402
 from delivery_role_identity import role_identity  # noqa: E402
 
 EXIT_REFUSED = 1
@@ -126,8 +126,6 @@ def detail_of(proc: subprocess.CompletedProcess[str]) -> str:
 
 def tool(path: Path, *args: str, env: dict[str, str] | None = None) -> tuple[int, dict[str, Any]]:
     """One JSON answer of bin/convoy-state or bin/evidence-capture."""
-    if path == CAPTURE_TOOL:
-        env = with_evidence_store(env)
     proc = run([str(path), *args], env=env)
     try:
         answer = json.loads(proc.stdout)
@@ -218,28 +216,9 @@ def rig_profile(rig: str) -> Path | None:
     return None
 
 
-def account_home() -> Path:
-    """The home of the account, not $HOME: Gas City runs an exec check with
-    HOME set to the city root, so the gate looked for the work tree where the
-    author session, which keeps the home of the account, had not made it
-    (af-r35155)."""
-    try:
-        return Path(pwd.getpwuid(os.getuid()).pw_dir)
-    except KeyError:
-        return Path.home()
-
-
-def with_evidence_store(env: dict[str, str] | None) -> dict[str, str]:
-    """The evidence store under the home of the account, not $HOME: the check
-    read it under the city root and refused the red step of a ticket whose
-    tdd_red the author session had captured (af-i4d833)."""
-    env = dict(os.environ if env is None else env)
-    if not env.get("EVIDENCE_STORE_DIR"):
-        env["EVIDENCE_STORE_DIR"] = str(account_home() / ".local/state/agent-factory-evidence")
-    return env
-
-
 def worktree_of(ticket_id: str) -> Path:
+    # The account's home, not $HOME: Gas City runs the check with HOME set
+    # to the city root (af-r35155, lib/account_home.py).
     base = os.environ.get("TICKET_AUTHOR_WORKTREES_DIR") or account_home() / ".local/share/agent-factory-runtime-worktrees"
     return Path(base) / ticket_id
 

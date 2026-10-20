@@ -1153,7 +1153,13 @@ n'arrive jamais jusqu'à Benjamin sans l'être.
 ./bin/prototype-fidelity check <descriptor.json> --prototype <dossier> --commit <sha> [--repo-root <dépôt du produit>]   # tous les écrans (fin de Spec)
 ./bin/prototype-fidelity check <descriptor.json> --prototype <dossier> --commit <sha> \
     --convoy <convoi> --ticket <ticket> [--screen <écran>]                                                              # un ticket : son écran seulement
+./bin/prototype-fidelity calibrate --prototype <dossier> [--states <état,état>]                                        # le prototype comparé à lui-même
 ```
+
+- **Étalonnage** (`calibrate`, af-u8cbl0) : le prototype est placé des deux côtés de la comparaison, et
+  le résultat doit être 0 écart. Un thème que l'outil n'atteint pas (« non mesurable ») ou une mesure
+  instable le rend rouge. `bin/spec-approve` le lance avant d'approuver la Spec, et refuse tant qu'il
+  reste un écart : c'est un défaut de l'outil, à corriger par la maintenance de l'usine.
 
 - **Ce qui bloque** : un token du prototype absent ou changé (lu sur les
   sources), une ancre du prototype absente du livré, un autre élément, un
@@ -2109,3 +2115,26 @@ lancements en attente expiraient sans résultat (17/10, T59).
   démarre une neuve pour le travail en attente.
 
 Preuve : `tests/delivery-seat-release-test.sh` ; l'ordre : `tests/delivery-seat-release-order-test.sh` (local-only).
+## `./bin/factory-fix-preflight` — qui d'autre change ces fichiers ?
+
+**À lancer avant de coder un correctif d'usine, puis avant d'ouvrir sa PR**
+(af-frflvz, `docs/DELIVERY.md`). Le 19/10, la #681 a rendu la fidélité
+bloquante alors que Benjamin venait de décider le contraire dans une autre
+session (af-hcriwn). La #682 a défait la #681 une heure après sa fusion.
+
+```bash
+./bin/factory-fix-preflight bin/ticket-exit bin/ticket-end formulas/   # un fichier, ou un dossier finissant par /
+```
+
+- **Arrêt (sortie 1)** : une PR ouverte qui change ces chemins, une branche
+  distante avec un commit des 2 derniers jours (`--days`) qui les change,
+  ou un bead de décision récent qui les cite. Ne sont pas comptées la branche
+  du correctif lui-même, ni celles dont toutes les PR sont fusionnées ou
+  fermées.
+- **À lire** (`decisions_to_read`) : chaque décision ouverte ou mise à jour
+  pendant ces jours, même si elle ne cite aucun fichier, ce qui est le cas
+  le plus courant. S'arrêter si l'une d'elles touche le correctif.
+- **Refus (sortie 2)** : git, `gh pr list` ou `gc bd list` illisible. Un
+  refus n'est jamais lu comme « rien trouvé ». L'outil n'écrit rien.
+
+---

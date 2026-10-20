@@ -4,6 +4,7 @@
 
     prototype-fidelity check DESCRIPTOR --prototype DIR --commit SHA [--repo-root DIR]
                              [--states STATE,STATE] [--screen NAME ...] [--convoy CONVOY --ticket TICKET]
+    prototype-fidelity calibrate --prototype DIR [--states STATE,STATE]
 
 For every prototyped state, the product is launched by bin/project-launch
 from a clean copy of `--commit` on the dataset of that state, and the page of
@@ -99,6 +100,8 @@ EXIT_NOT_NEW_FLOW = 4
 GREEN = "vert"
 RED = "rouge"
 ACCEPTED = "accepté par Benjamin"
+CALIBRATED = "étalonné"
+NOT_CALIBRATED = "non étalonné"
 OPEN = "ouvert"
 
 # The computed properties compared on every anchor (the ones the fidelity
@@ -950,6 +953,57 @@ def cmd_check(args: argparse.Namespace) -> int:
     return 0 if result["ok"] else EXIT_RED
 
 
+def cmd_calibrate(args: argparse.Namespace) -> int:
+    """The Validated Prototype on both sides of the comparison (af-u8cbl0).
+    Every control of `check` runs as it does on a ticket -- tokens, anchors,
+    structure, computed styles, each state, viewport and theme -- with the
+    prototype's own page in place of the delivered one, and no product
+    launched. The tool reads the prototype right only when that finds no
+    deviation at all: a theme it cannot reach, or a measure that changes
+    from one reading to the next, is a deviation here before it is a false
+    one on every ticket. The Cockpit's prototype was first measured by T02R,
+    and its themes were read wrong for hours of work (#675, #676)."""
+    prototype = Path(args.prototype).resolve()
+    manifest = read_manifest(prototype)
+    declared = {state["id"]: state for state in manifest["states"]}
+    wanted = [state for state in args.states.split(",") if state] if args.states is not None else list(declared)
+    absent = [state for state in wanted if state not in declared]
+    if absent:
+        raise Refusal(
+            f"état prototypé absent du Validated Prototype : {', '.join(absent)} "
+            f"(états du prototype : {', '.join(declared)})")
+    capture_tool = load_tool("evidence-capture")
+    try:
+        browser = capture_tool.find_browser()
+    except capture_tool.Refusal as exc:
+        raise Refusal(str(exc)) from exc
+    server, prototype_address = serve_prototype(prototype)
+    try:
+        states = []
+        for state_id in wanted:
+            address = declared[state_id]["address"]
+            url = f"{prototype_address}/{address.lstrip('/')}"
+            states.append({"id": state_id, "address": address, "screen": None, "path": address,
+                           "prototype_url": url, "delivered_url": url})
+        plan = {"browser": browser, "anchor_attribute": manifest["anchor_attribute"],
+                "renderings": renderings(manifest), "measure_url": prototype_address + MEASURE_PATH}
+        deviations: list[dict[str, Any]] = []
+        measured = {state["id"]: measure_state(plan, state, deviations) for state in states}
+    finally:
+        server.shutdown()
+        server.server_close()
+    result = {
+        "ok": not deviations, "result": CALIBRATED if not deviations else NOT_CALIBRATED,
+        "prototype": str(prototype), "deviations": deviations,
+        "states": {name: {"viewports": state["viewports"], "unmeasured": state["unmeasured"],
+                          "themed_by_convention": state["themed_by_convention"], "anchors": state["anchors"],
+                          "tokens": state["tokens"]["compared"]}
+                   for name, state in measured.items()},
+    }
+    print(json.dumps(result, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0 if result["ok"] else EXIT_RED
+
+
 # --- command line ----------------------------------------------------------------
 
 
@@ -967,6 +1021,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ticket")
     p.set_defaults(handler=cmd_check)
     # Run by `check` through the capture tool; not a command of its own.
+    p = sub.add_parser("calibrate")
+    p.add_argument("--prototype", required=True)
+    p.add_argument("--states")
+    p.set_defaults(handler=cmd_calibrate)
     p = sub.add_parser("measure")
     p.add_argument("--plan", required=True)
     p.set_defaults(handler=cmd_measure)

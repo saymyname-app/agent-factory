@@ -58,12 +58,14 @@ was observed:
 - Its `HOME` is **the city root**, not the home of the account (seen on the
   real city under Gas City 1.5.0, af-r35155: the `workspace` gate looked for
   the work tree under the city root and refused three times a ticket whose
-  work tree was in place). `bin/ticket-author` therefore places the work
-  trees under the home of the account as the password database gives it,
-  the same for the author session and for the check. It hands
-  `bin/evidence-capture` the evidence store from that same home when
-  `EVIDENCE_STORE_DIR` is not set (af-i4d833: the `red` gate looked for
+  work tree was in place; then af-i4d833: the `red` gate looked for
   `tdd_red` under the city root and refused it although it was captured).
+  Every tool the check reaches finds the account's state under the home
+  the password database gives (`lib/account_home.py`), the same for the
+  author session and for the check: `bin/ticket-author` its work trees,
+  `bin/evidence-capture` its store. `tests/account-home-lint-test.py`
+  refuses any other read of `HOME` in `bin/`, `lib/` and `assets/scripts/`
+  outside its list of tools no check runs (af-e84s74).
 - Exit 0: the next step opens.
 - Any other exit: a new attempt of the same step goes back to the same
   session; the stderr of the check is kept in `gc.attempt_log`.

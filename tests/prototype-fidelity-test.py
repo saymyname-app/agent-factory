@@ -283,13 +283,17 @@ class PrototypeFidelityTest(unittest.TestCase):
 
     def themed(self, prototype_style, delivered_style):
         """Both themes declared; each side gets its own style sheet."""
+        self.themed_prototype(prototype_style)
+        self.edit_product("</title></head>", "</title>" + delivered_style + "</head>", "thèmes")
+
+    def themed_prototype(self, prototype_style):
+        """Both themes declared on the prototype, which gets this style sheet."""
         manifest_path = self.prototype / "validated-prototype.json"
         manifest = json.loads(manifest_path.read_text())
         manifest["themes"] = ["dark", "light"]
         manifest_path.write_text(json.dumps(manifest))
         for page in sorted((self.prototype / "states").glob("*.html")):
             page.write_text(page.read_text().replace("</head>", prototype_style + "\n</head>"))
-        self.edit_product("</title></head>", "</title>" + delivered_style + "</head>", "thèmes")
 
     def test_theme_the_prototype_reaches_only_by_another_class_is_unmeasured_not_compared(self):
         # The prototype is dark on :root and turns light only by a class that
@@ -381,6 +385,77 @@ class PrototypeFidelityTest(unittest.TestCase):
         for state in STATES:
             self.assertEqual({}, answer["states"][state]["unmeasured"])
             self.assertEqual(["desktop@dark", "narrow@dark", "desktop", "narrow"], answer["states"][state]["viewports"])
+
+    # --- calibration: the prototype against itself (af-u8cbl0) ------------------
+    # The tool had never measured the Cockpit's prototype before T02R did:
+    # its themes were read wrong for hours of work (#675, #676). The prototype
+    # on both sides of the comparison must give no deviation at all.
+
+    def calibrate(self, *args, env=None):
+        return subprocess.run(
+            (str(TOOL), "calibrate", "--prototype", str(self.prototype), *[str(a) for a in args]),
+            env=env or self.env, text=True, capture_output=True, cwd=self.tmp,
+        )
+
+    def test_calibration_measures_the_fixture_prototype_as_itself(self):
+        self.styled()
+
+        proc = self.calibrate()
+
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        answer = json.loads(proc.stdout)
+        self.assertEqual((True, "étalonné", []), (answer["ok"], answer["result"], answer["deviations"]))
+        self.assertEqual(sorted(STATES), sorted(answer["states"]))
+        for state in STATES:
+            self.assertEqual(list(VIEWPORTS), answer["states"][state]["viewports"])
+            self.assertEqual(sorted(ANCHORS), sorted(answer["states"][state]["anchors"]))
+            self.assertGreater(answer["states"][state]["tokens"], 0)
+
+    def test_calibration_is_red_on_a_theme_the_tool_cannot_reach_on_the_prototype(self):
+        # The Cockpit's prototype as the tool read it before #676: dark on
+        # :root, light by a class the tool does not set.
+        self.themed_prototype(
+            "<style>:root{color-scheme:dark}h1{color:rgb(236, 237, 243)}"
+            ".clair{color-scheme:light}.clair h1{color:rgb(23, 32, 46)}</style>")
+
+        proc = self.calibrate()
+
+        self.assertEqual(EXIT_RED, proc.returncode, proc.stdout + proc.stderr)
+        answer = json.loads(proc.stdout)
+        self.assertEqual((False, "non étalonné"), (answer["ok"], answer["result"]))
+        self.assertEqual(
+            sorted((state, viewport) for state in STATES for viewport in VIEWPORTS),
+            sorted((d["state"], d["viewport"]) for d in answer["deviations"]))
+        self.assertEqual({("theme", "thème light", "non mesurable")},
+                         {(d["kind"], d["property"], d["delivered"]) for d in answer["deviations"]})
+
+    def test_calibration_measures_a_prototype_themed_by_the_theme_class_in_both_themes(self):
+        self.themed_prototype(
+            "<style>:root{color-scheme:dark;--ink:#ecedf3}h1{color:var(--ink)}"
+            ".theme-light{color-scheme:light;--ink:#17202e}</style>")
+
+        proc = self.calibrate()
+
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        answer = json.loads(proc.stdout)
+        self.assertEqual([], answer["deviations"])
+        for state in STATES:
+            self.assertEqual(sorted(["desktop", "narrow", "desktop@dark", "narrow@dark"]),
+                             sorted(answer["states"][state]["viewports"]))
+
+    def test_calibration_refuses_a_state_the_prototype_does_not_declare(self):
+        proc = self.calibrate("--states", "empty,absent")
+
+        self.assertEqual(EXIT_REFUSED, proc.returncode, proc.stdout + proc.stderr)
+        answer = json.loads(proc.stdout)
+        self.assertFalse(answer["ok"])
+        self.assertIn("absent", answer["error"])
+
+    def test_calibration_of_the_named_states_only(self):
+        proc = self.calibrate("--states", "content")
+
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual(["content"], list(json.loads(proc.stdout)["states"]))
 
     def test_never_green_on_a_state_it_did_not_compare(self):
         # A prototyped state the prototype does not hold.

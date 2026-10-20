@@ -9,7 +9,13 @@ n'arrive jamais jusqu'à Benjamin sans l'être.
 ./bin/prototype-fidelity check <descriptor.json> --prototype <dossier> --commit <sha> [--repo-root <dépôt du produit>]   # tous les écrans (fin de Spec)
 ./bin/prototype-fidelity check <descriptor.json> --prototype <dossier> --commit <sha> \
     --convoy <convoi> --ticket <ticket> [--screen <écran>]                                                              # un ticket : son écran seulement
+./bin/prototype-fidelity calibrate --prototype <dossier> [--states <état,état>]                                        # le prototype comparé à lui-même
 ```
+
+- **Étalonnage** (`calibrate`, af-u8cbl0) : le prototype est placé des deux côtés de la comparaison, et
+  le résultat doit être 0 écart. Un thème que l'outil n'atteint pas (« non mesurable ») ou une mesure
+  instable le rend rouge. `bin/spec-approve` le lance avant d'approuver la Spec, et refuse tant qu'il
+  reste un écart : c'est un défaut de l'outil, à corriger par la maintenance de l'usine.
 
 - **Ce qui bloque** : un token du prototype absent ou changé (lu sur les
   sources), une ancre du prototype absente du livré, un autre élément, un

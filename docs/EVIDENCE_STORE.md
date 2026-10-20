@@ -80,6 +80,7 @@ keeps its full measure this way (T02R2, af-r2c0tx).
 ```
 
 `<store>` is `EVIDENCE_STORE_DIR`, default `~/.local/state/agent-factory-evidence`
+under the home of the account, whatever `HOME` is (`lib/account_home.py`)
 (`~/.local/state` is what `bin/delivery-role-sandbox` leaves writable to a
 read-only role, so the Evaluator captures there too). The Spec is the one the
 convoy names (`gc.spec_id`, read through `bin/convoy-state show`, field

@@ -514,6 +514,14 @@ the rule for every kind of change, and the row that asked for the battery
 now holds only for a repository whose runs are billed. It does not mean
 fewer tests in CI or a merge without the whole battery green.
 
+Before coding a Factory fix, and again before its pull request opens, run
+`bin/factory-fix-preflight <path>...` on the files the fix changes
+(af-frflvz). It names the open pull requests, the recent branches and the
+decision beads on those files, and lists every recent decision to read. On
+exit 1, or on a decision that bears on the fix, stop and settle with that
+session or decision first. On 19/10/2026 #681 and a decision Benjamin was
+taking elsewhere (af-hcriwn) changed the same rule, and #682 undid #681.
+
 | Kind of change | Where CI runs | Before the pull request | Why |
 |---|---|---|---|
 | A delivery: a `do-work` ticket, or anything that changes a tool, a formula, an order or a configuration | Where a red is billed nothing: GitHub's runners on a public repository (today), or the host's own runner on a private one | The rule checks and the tests the change touches: `bin/ci-run-tests --rule-checks --changed-since origin/main` | The battery by hand (14 minutes on 4 cores) and the CI run that follows (15 minutes on 4 cores) were the same work twice on the same machine, 29 minutes a push; a red in CI is billed nothing there (measured 2026-10-08, `docs/OPERATIONS.md`, "Factory CI on the host's own runner") |
