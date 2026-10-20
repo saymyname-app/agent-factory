@@ -79,6 +79,10 @@ class RequestDoors(unittest.TestCase):
             "OPERATOR_CONFIG_BIN": str(tools / "operator-config"),
             "TICKET_GRAPH_BD_STATE": str(self.store),
             "TICKET_GRAPH_PUBLISH_SKIP_MAYOR_NOTIFY": "1",
+            # The doors' locks belong to this test, never the host's default
+            # (bin/ci-run-tests refuses a test that reaches it).
+            "ESCALATION_DOOR_LOCK_FILE": str(self.tmp / "escalation-door.lock"),
+            "PROPOSAL_DOOR_LOCK_FILE": str(self.tmp / "proposal-door.lock"),
         }
         self.seed()
 
