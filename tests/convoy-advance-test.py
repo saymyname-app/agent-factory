@@ -178,6 +178,9 @@ class ConvoyAdvanceHarness(unittest.TestCase):
             "CONVOY_STATE_FAKE_WRITE_LOG": str(self.write_log),
             "CONVOY_STATE_LOCK_DIR": str(self.tmp / "locks"),
             "CONVOY_ADVANCE_LOCK_DIR": str(self.tmp / "locks"),
+            # The live pass leaves the fidelity check to a later pass (af-wz4dd8);
+            # here a pass waits for it, so that no check outlives its test.
+            "CONVOY_ADVANCE_FIDELITY_WAIT": "120",
             "DISPATCH_DOOR_PROVIDER_FAILOVER_BIN": str(self.tmp / "provider-failover"),
             "DISPATCH_DOOR_MEMINFO_FILE": str(self.tmp / "no-meminfo"),
             "ESCALATION_DOOR_LOCK_FILE": str(self.tmp / "escalation-door.lock"),
@@ -1567,6 +1570,23 @@ class ConvoyAdvanceTest(ConvoyAdvanceHarness):
         self.assertIsNone(self.ticket_end_of(answer))
         self.assertEqual("in_progress", self.shown(T1)["status"])
 
+    def fidelity_check_ended(self):
+        """No check left running by the test writes into the next one: its
+        lock (bin/convoy-advance, fidelity_files) is free once it ended."""
+        lock = self.tmp / "locks" / f"agent-factory-convoy-fidelity-{CONVOY}.lock"
+        if not lock.exists():
+            return
+        deadline = time.monotonic() + 120
+        with lock.open("a") as handle:
+            while True:
+                try:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    return
+                except BlockingIOError:
+                    if time.monotonic() > deadline:
+                        self.fail("the fidelity check the test started did not end")
+                    time.sleep(0.5)
+
     def test_a_pass_starts_the_fidelity_check_and_merges_an_interface_ticket_without_waiting_for_it(self):
         base = self.integrated()
         self.env.update({
@@ -1577,6 +1597,7 @@ class ConvoyAdvanceTest(ConvoyAdvanceHarness):
         # The pass does not wait for the check by default (af-wz4dd8): it
         # outlives the pass that started it, which leaves it to a later one.
         self.env.pop("CONVOY_ADVANCE_FIDELITY_WAIT", None)
+        self.addCleanup(self.fidelity_check_ended)
         # An interface slice: the publication door posed the reference of
         # the Validated Prototype in it, before the convoy was marked.
         state = self.tracker_state()
