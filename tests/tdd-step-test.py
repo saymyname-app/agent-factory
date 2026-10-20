@@ -820,6 +820,32 @@ class TddStepTest(unittest.TestCase):
         self.assertEqual("amendment_exhausted", state["stop"]["reason"])
         self.assertEqual(store_before, self.store_files())
 
+    def test_a_resume_the_operator_granted_allows_one_more_amendment_and_no_third(self):
+        """af-25o7vr: the operator answered « a » to the stop of the second
+        amendment; bin/convoy-advance lifted it by a resume `amendment_granted`.
+        The second amendment is then proven and frozen; a third stops again."""
+        self.frozen()
+        self.commit("code et test corrigé", {APP: self.amended_app(), HEALTH_FILE: self.AMENDED_HEALTH_TEST})
+        first = self.ok("amend", SLICE, "--reason", "le champ s'appelle dataset_name dans la Spec")
+        second_commit = self.commit("second changement de test", {COUNT_FILE: COUNT_TEST.replace(">3<", "> 3 <")})
+        self.assertEqual(EXIT_STOPPED, self.run_tool("amend", SLICE, "--reason", "autre erreur de test").returncode)
+        state = json.loads(self.tracker.read_text())
+        state["beads"][SLICE]["metadata"]["gc.flow.gate.dispatch"] = json.dumps({"at": "2026-10-20T20:00:00Z"})
+        self.tracker.write_text(json.dumps(state))
+        self.state("open-resume", CONVOY, SLICE, "--cause", "amendment_granted", "--ref", "stop:amendment_exhausted/x")
+
+        answer = self.ok("amend", SLICE, "--reason", "autre erreur de test")
+
+        self.assertEqual(("amend", second_commit), (answer["step"], answer["commit"]))
+        tdd = self.ticket_state()["tdd"]
+        self.assertEqual((second_commit, "autre erreur de test"), (tdd["amendment"]["commit"], tdd["amendment"]["reason"]))
+        self.assertEqual(second_commit, tdd["freeze"]["commit"])
+        self.assertNotEqual(first["commit"], second_commit)
+        self.commit("troisième changement de test", {COUNT_FILE: COUNT_TEST.replace(">3<", ">  3  <")})
+        proc = self.run_tool("amend", SLICE, "--reason", "encore une")
+        self.assertEqual(EXIT_STOPPED, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual("amendment_exhausted", self.ticket_state()["stop"]["reason"])
+
     def test_a_ticket_stopped_at_its_second_amendment_reaches_the_operator_at_the_next_advance_pass(self):
         """The demonstration line of T45: bin/tdd-step amend stops the
         ticket, one pass of bin/convoy-advance puts exactly one request on

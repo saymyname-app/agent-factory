@@ -694,10 +694,19 @@ show`) and posts nothing more. A request the door could not post is an
 `error` in `tdd_stops` and fails the pass (exit 1); nothing is recorded, so
 the next pass posts it.
 
-The stopped ticket is never resumed and never merged (a stopped ticket is
-not at work, and it has no Ticket Exit « terminé »); the tickets it blocks
-do not start; the others keep starting and merging. Nothing lifts the stop
-yet: the request offers a Planning Exception or leaving the ticket stopped.
+While it is stopped, the ticket is never resumed and never merged (a
+stopped ticket is not at work, and it has no Ticket Exit « terminé »); the
+tickets it blocks do not start; the others keep starting and merging. The
+request offers two options: « Accepter un amendement de plus de ses tests et
+faire reprendre le ticket » (a) or « Laisser le ticket arrêté » (b). Once the
+operator answered **a** through `bin/escalation-door repondre`, after the
+stop, the pass lifts it by a resume of cause `amendment_granted`
+(`bin/convoy-state open-resume`, counted under `bounds.resumes` like the
+other causes; the resume keeps the stop it lifted) and sends a fresh author
+session on the same branch. That resume allows the author one amendment more
+(`docs/TDD_STEP.md`); a further amendment stops the ticket again, and the
+next pass raises that new stop. Answered **b**, or not answered, the ticket
+stays stopped. Before af-25o7vr (2026-10-21) no code carried out answer a.
 
 ## The end code review of the assembled diff (T25)
 
