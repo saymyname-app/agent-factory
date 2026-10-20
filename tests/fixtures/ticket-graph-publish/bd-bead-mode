@@ -8,6 +8,10 @@ graph transaction (`list --all --limit 0 --json`, `create --graph ...`) the
 door needs to publish/patch the actual delivery beads, in the same store, so
 a single fixture covers both the planning-plane reads and the delivery-plane
 writes a bead-mode publish makes in one call.
+
+As bd 1.4.1 does (af-npz9v1), the graph transaction keeps each `blocks`
+edge (the ticket waits for its blocker), and `update --status closed` on an
+issue that waits for one not closed fails, unless `--force` is given.
 """
 import json
 import os
@@ -16,7 +20,7 @@ from pathlib import Path
 
 STATE_PATH = Path(os.environ["TICKET_GRAPH_BD_STATE"])
 
-BOOLEAN_FLAGS = {"--all", "--json", "--silent"}
+BOOLEAN_FLAGS = {"--all", "--json", "--silent", "--force"}
 VALUE_FLAGS = {"--limit", "--title", "--description", "--type", "--priority", "--labels", "--metadata", "--deps", "--graph",
                "--status"}
 # `create --deps <type>:<id>`, as the real bd 1.2.2 stores it (compared with
@@ -122,6 +126,11 @@ def cmd_update(flags, repeated, positionals):
         bead["title"] = flags["--title"]
     if "--description" in flags:
         bead["description"] = flags["--description"]
+    if flags.get("--status") == "closed" and "--force" not in flags:
+        blockers = [dep for dep in bead.get("waits_for", [])
+                    if state["beads"].get(dep, {}).get("status", "open") != "closed"]
+        if blockers:
+            fail(f"cannot close blocked issue {issue_id}: blocked by {', '.join(blockers)} (use --force)")
     if "--status" in flags:
         bead["status"] = flags["--status"]
     for entry in repeated.get("--set-metadata", []):
@@ -152,6 +161,8 @@ def cmd_create(flags, positionals):
         for edge in plan.get("edges", []):
             if edge.get("type") == "tracks":
                 state["beads"][ids[edge["from_key"]]].setdefault("tracks", []).append(ids[edge["to_key"]])
+            elif edge.get("type") == "blocks":
+                add_dependency(state, ids[edge["from_key"]], ids[edge["to_key"]], "blocks")
         save_state(state)
         print(json.dumps({"schema_version": 1, "ids": ids}))
         return

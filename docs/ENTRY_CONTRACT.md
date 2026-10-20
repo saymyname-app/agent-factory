@@ -332,7 +332,9 @@ without the withdrawn ticket: a story it alone covered is an orphan unless
 the amended, re-approved Spec no longer holds it or another slice of the
 revision covers it. The ticket is then closed behind its `withdrawn` gate
 record (`bin/convoy-state record-gate`), so it is not read as closed
-outside a gate.
+outside a gate. It closes with `--force` and `gc.work_outcome=abandoned`:
+bd refuses to close an issue another open issue blocks, and a withdrawn
+ticket will not start, whatever it waited for (af-npz9v1).
 
 On success the added tickets are created in dependency order, tracked by
 the convoy (`bd dep add <convoy> <ticket> --type tracks`) and marked through

@@ -1148,6 +1148,20 @@ class PatchDoorTest(Harness):
         self.assertTrue(any("parcage" in line for line in self.refusal_lines(proc, "T2")), proc.stderr)
         self.assertEqual(self.ids["T2"], self.shown_ticket(self.convoy, self.ids["T3"])["park"]["origin"])
 
+    def test_withdraws_a_ticket_that_waits_for_a_ticket_still_open(self):
+        # af-npz9v1: bd 1.4.1 refuses to close an issue another open issue
+        # blocks; T2 waits for T1, which is not delivered.
+        register = self.register("resolved", ticket="T2")
+        self.propose(self.replacement_of_t2())
+
+        result = self.patched(extra=("--planning-exception-register", str(register)))
+        self.assertEqual({"T2": self.ids["T2"]}, result["withdrawn"])
+        self.assertEqual("open", self.beads()[self.ids["T1"]]["status"])
+        withdrawn = self.beads()[self.ids["T2"]]
+        self.assertEqual("closed", withdrawn["status"])
+        self.assertEqual("abandoned", withdrawn["metadata"]["gc.work_outcome"])
+        self.assertIn("withdrawn", self.shown_ticket(self.convoy, self.ids["T2"])["gates"])
+
     def test_refuses_a_withdrawal_that_orphans_a_story_the_spec_still_holds(self):
         register = self.register("resolved")
         self.propose(self.withdrawal())

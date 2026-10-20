@@ -527,7 +527,9 @@ class EntryContractTest(unittest.TestCase):
 
     def test_undeclared_draft_is_published_exactly_as_before_this_ticket(self):
         # The golden file was written by the door as it was before T05
-        # (commit 15374c7), on this same seed.
+        # (commit 15374c7), on this same seed; T2's wait for T1 was added
+        # when the fake bd started keeping the graph's `blocks` edges
+        # (af-npz9v1).
         golden = json.loads(LEGACY_GOLDEN.read_text(encoding="utf-8"))
         self.seed(self.LEGACY_DRAFT, spec_text=LEGACY_SPEC)
 

@@ -2348,8 +2348,12 @@ def withdraw_tickets(
                  "--gate", "withdrawn"],
                 cwd=BD_WORKSPACE,
             )
+            # --force: a withdrawn ticket closes even when it waits for one
+            # still open, since it will not start; gc.work_outcome is what
+            # bd's work-record gate asks (af-npz9v1, as bin/outcome-promote).
             run(
-                "update", member["id"], "--status", "closed",
+                "update", member["id"], "--status", "closed", "--force",
+                "--set-metadata", "gc.work_outcome=abandoned",
                 "--append-notes", f"WITHDRAWN by {author} (Planning Exception {decision}): {reason}",
             )
         park = own_parking(states.get(member["id"], {}), member["id"])
