@@ -31,6 +31,7 @@ from cockpit.requests.defects import DefectCounter
 from cockpit.requests.journal import entries_from_value as journal_entries_from_value
 from cockpit.requests.sources.readability import ILLISIBLE_THRESHOLD_SECONDS
 from cockpit.runs.derive import runs_from_beads
+from cockpit.ui.analyses.page import CSS as ANALYSES_CSS, render_analyses
 from cockpit.ui.base.page import render_document, render_fresh, render_home_zones
 from cockpit.ui.health.page import render_health_zone, render_status_line
 from cockpit.ui.access.page import render_access_zone
@@ -41,8 +42,9 @@ from cockpit.ui.home.page import render_requests_section
 from cockpit.ui.panorama.shell import CSS as PANORAMA_CSS
 from cockpit.ui.panorama.shell import HOME, NAVIGATION, render_not_folded, render_shell
 from cockpit.ui.stop.render import render_stop_section
+from cockpit.ui.journal.panorama import CSS as JOURNAL_PANORAMA_CSS, journal_items, render_journal_panorama
 from cockpit.ui.journal.render import CSS as JOURNAL_CSS
-from cockpit.ui.journal.render import render_journal_page, render_journal_section, render_journal_unknown
+from cockpit.ui.journal.render import render_journal_unknown
 from cockpit.ui.notify.render import render_envois_section
 from cockpit.ui.runs.page import CSS as RUNS_PAGE_CSS, render_run_page, render_runs_page
 from cockpit.ui.projects.page import (
@@ -50,6 +52,7 @@ from cockpit.ui.projects.page import (
     render_projects_section,
     render_projects_unknown,
 )
+from cockpit.ui.projects.panorama import CSS as PROJECTS_PANORAMA_CSS, render_project_head, render_projects_list
 from cockpit.ui.projects.project_page import render_project_page, render_project_unknown
 from cockpit.ui.projects.tokens import CSS as PROJECT_PAGE_CSS
 
@@ -57,7 +60,7 @@ ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
 # The destinations of Panorama whose Prototype Fold is not done yet: their
 # address answers, in the shell, that they are not served here yet.
 NOT_FOLDED = {
-    href: (key, label) for key, label, href in NAVIGATION if key not in (HOME, "projets", "journal", "runs", "usine")
+    href: (key, label) for key, label, href in NAVIGATION if key not in (HOME, "projets", "journal", "runs", "usine", "analyses")
 }
 NOT_FOLDED.update({"/runs/job": ("runs", "Runs")})
 
@@ -121,6 +124,9 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             return
         if path.startswith("/projet/"):
             self._send_project_page(read_model)
+            return
+        if path == "/analyses":
+            self._send_analyses_page(read_model)
             return
         if path == "/usine":
             self._send_factory_page(read_model)
@@ -400,13 +406,18 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         )
 
     def _send_projects_page(self, read_model):
-        """GET /projets: the declared projects, each with its link « Page
-        projet » -- where the entry « Projets » of the navigation leads
-        until the Prototype Fold of its destination."""
-        fresh_html = render_fresh(read_model.headline(), not read_model.stale_or_unknown())
-        inner = '<div class="pn-head"><h1>Projets</h1></div>%s%s' % (
-            fresh_html, self._render_projects_zone(read_model.snapshot()) or render_projects_unknown())
-        self._send_page(read_model, "projets", inner, extra_css=PROJECT_PAGE_CSS)
+        """GET /projets: a card per declared project (Panorama), its open
+        chantiers, its runs merged in 7 days and in progress."""
+        snapshot = read_model.snapshot()
+        row = snapshot.get("projets")
+        if row is None or row["value"] is None or row["freshness"] == UNKNOWN:
+            inner = '<div class="pn-head"><h1>Projets</h1></div>' + render_projects_unknown(row["read_at"] if row else None)
+        else:
+            projects, _ = projects_from_value(row["value"])
+            runs, _, checked = self._runs(read_model)
+            inner = render_projects_list(projects, runs, read_model.now(), checked=checked)
+        self._send_page(read_model, "projets", inner, extra_css=PROJECT_PAGE_CSS + PROJECTS_PANORAMA_CSS,
+                        snapshot=snapshot)
 
     def _send_project_page(self, read_model):
         """GET /projet/<id> (spec .49): one declared project's chantiers by
@@ -427,13 +438,15 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             else:
                 project, hors_chantier, historique = data
                 apply_to_projects([project], snapshot.get("depots"))
-                inner = render_project_page(
+                runs, _, _ = self._runs(read_model)
+                inner = render_project_head(project, runs, read_model.now()) + render_project_page(
                     project,
                     hors_chantier=hors_chantier,
                     historique_html=render_historique_section([historique]),
                     fresh_html=fresh_html,
                 )
-        self._send_page(read_model, "projets", inner, extra_css=PROJECT_PAGE_CSS, status=status)
+        self._send_page(read_model, "projets", inner,
+                        extra_css=PROJECT_PAGE_CSS + PROJECTS_PANORAMA_CSS + RUNS_PAGE_CSS, status=status)
 
     def _runs(self, read_model):
         """The runs the cockpit reads (cockpit.runs), most recent first:
@@ -443,6 +456,17 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             return None, bool(row and row.get("failed_at") is not None), None
         checked = datetime.fromtimestamp(row["read_at"], tz=PARIS).strftime("%H:%M") if row["read_at"] else None
         return runs_from_beads(row["value"], read_model.now()), False, checked
+
+    def _send_analyses_page(self, read_model):
+        """GET /analyses?vue=&periode=: the numbers of the runs, by day."""
+        runs, _, checked = self._runs(read_model)
+        row = read_model.snapshot().get("journal")
+        entries = (journal_entries_from_value(row["value"])
+                   if row and row["value"] is not None and row["freshness"] != UNKNOWN else [])
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        main = render_analyses(runs or [], journal_items(entries, []), read_model.now(),
+                               (query.get("vue") or ["resultats"])[0], (query.get("periode") or ["7"])[0], checked=checked)
+        self._send_page(read_model, "analyses", main, extra_css=ANALYSES_CSS)
 
     def _send_factory_page(self, read_model):
         """GET /usine: the machine, the sources, the agents seen at work,
@@ -477,20 +501,26 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                         status=200 if run else 404)
 
     def _send_journal_page(self, read_model):
-        """GET /journal (spec .18): the resolved requests, re-read from the
-        traces on the beads -- the cockpit keeps no copy of its own."""
-        fresh_html = render_fresh(read_model.headline(), not read_model.stale_or_unknown())
+        """GET /journal (spec .18): what changed, day by day -- the requests
+        answered or cleared, re-read from the traces on the beads (the
+        cockpit keeps no copy of its own), and the deliveries merged or
+        stopped; filtered by ?filtre=."""
         row = read_model.snapshot().get("journal")
+        runs, _, _ = self._runs(read_model)
+        unknown_html, checked = "", None
         if row is None or row["value"] is None or row["freshness"] == UNKNOWN:
-            section = render_journal_unknown(row["read_at"] if row else None)
+            items = journal_items([], runs)
+            unknown_html = render_journal_unknown(row["read_at"] if row else None)
         else:
-            section = render_journal_section(journal_entries_from_value(row["value"]))
+            items = journal_items(journal_entries_from_value(row["value"]), runs)
+            checked = datetime.fromtimestamp(row["read_at"], tz=PARIS).strftime("%H:%M")
         notify = self.server.notify
-        if notify is not None:
-            # Journal des envois and the test notification (spec .60).
-            section += render_envois_section(notify.journal_entries(), notify.configured())
-        self._send_page(read_model, "journal", render_journal_page(section, fresh_html=fresh_html),
-                        extra_css=PROJECT_PAGE_CSS + JOURNAL_CSS)
+        envois = render_envois_section(notify.journal_entries(), notify.configured()) if notify is not None else ""
+        filtre = (urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("filtre") or ["utiles"])[0]
+        self._send_page(read_model, "journal",
+                        render_journal_panorama(items, filtre, read_model.now(), checked=checked, envois_html=envois,
+                                                unknown_html=unknown_html),
+                        extra_css=PROJECT_PAGE_CSS + JOURNAL_CSS + JOURNAL_PANORAMA_CSS)
 
     def _journal_payload(self, snapshot):
         """JSON twin of the journal page, for tests."""

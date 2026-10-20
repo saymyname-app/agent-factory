@@ -10,6 +10,8 @@ import html
 
 from cockpit.runs.derive import DONE, paris
 
+# The cards drawn at most; the analyses read every run the cockpit keeps.
+SHOWN = 48
 FILTERS = (("tous", "Tous"), ("en-cours", "En cours"), ("termines", "Terminés"))
 
 
@@ -80,7 +82,7 @@ def render_runs_page(runs, filtre, checked=None, error=False):
         body = '<section class="pn-panel"><p>%s</p></section>' % (
             "Les runs n’ont pas pu être lus (tracker injoignable)." if error else "Lecture des runs…")
     else:
-        shown = _selected(runs, filtre)
+        shown = _selected(runs, filtre)[:SHOWN]
         body = ('<div class="rn-grid">%s</div>' % "".join(run_card(run) for run in shown) if shown
                 else '<section class="pn-panel"><p>Aucun run dans ce filtre.</p></section>')
     when = ' · vérifié à %s (Paris)' % _e(checked) if checked else ""

@@ -1178,3 +1178,36 @@ launched it, and the sessions at work; then the health zone and the stop
 and access zones the home already had. Provider quotas, the configuration
 form and the clean-up of the reference are left out: the cockpit has no
 real reading of them yet. Test: `tests/cockpit-factory-page-test.py`.
+
+## « Projets » in Panorama (direct build, 2026-10-19)
+
+`GET /projets` (`lib/cockpit/ui/projects/panorama.py`): a card per declared
+project -- what waits for Benjamin, the current chantier, open chantiers,
+runs merged in 7 days and runs open (a run belongs to the project its
+ticket was dispatched to, `gc.dispatch_rig`), its link « Page projet ».
+`GET /projet/<id>` opens on the same counts and its three last runs, above
+the chantiers by stage, actions and history the page already drew. The
+release target, estimate and roadmap of the reference have no source yet
+and are left out. Test: `tests/cockpit-projects-panorama-test.py`.
+
+## « Journal » in Panorama (direct build, 2026-10-19)
+
+`GET /journal` (`lib/cockpit/ui/journal/panorama.py`) is now one timeline
+by day (Paris): the requests answered or cleared, each drawn as the
+journal always drew it (what, when, by whom, which way, details), and the
+deliveries of the runs (launched, stopped, merged) with their link. Filters
+`?filtre=utiles` (default: everything but the cleared requests),
+`decisions`, `propositions`, `livraisons`, `evenements`, `effacees`, `tout`.
+The notification sends follow, folded. Tests:
+`tests/cockpit-journal-test.py`, `tests/cockpit-journal-panorama-test.py`.
+
+## « Analyses » (direct build, 2026-10-19)
+
+`GET /analyses?vue=resultats|delais|verifications|activite&periode=7|30`
+(`lib/cockpit/ui/analyses/page.py`): runs merged per day and which;
+median lead time from dispatch to merge and median wait for a decision;
+code reviews (with or without blocking findings), evaluations and fidelity
+measures per day; runs launched, stops and Benjamin's decisions per day.
+Every number comes from the runs (now the 200 most recently updated; the
+Runs page draws 48) and the journal; each view says its definition. GitHub
+CI is not read yet. Test: `tests/cockpit-analyses-test.py`.

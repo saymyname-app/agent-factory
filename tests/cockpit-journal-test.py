@@ -237,10 +237,11 @@ class JournalTest(unittest.TestCase):
             {(e["demande"], e["quoi"]) for e in twice},
         )
 
-        page = self.get("/journal")
-        self.assertIn("Atkinson+Hyperlegible+Next", page)
-        self.assertIn('<a class="back" href="/">← Accueil</a><h1>Journal</h1>', page)
-        self.assertIn("Journal des demandes résolues", page)
+        page = self.get("/journal?filtre=tout")
+        # Panorama: the destination Journal, its filters, a timeline by day.
+        self.assertIn("<h1>Journal</h1>", page)
+        self.assertIn('href="/journal?filtre=decisions"', page)
+        self.assertIn('class="jn-day"', page)
 
         answered = self.entry_html(page, "af-rep1")
         self.assertIn("l&#x27;étape 1 est livrée, la suite attend ton accord", answered)   # quoi
@@ -292,7 +293,7 @@ class JournalTest(unittest.TestCase):
         self.assertEqual("Page d'accueil publique", entry["demande"])
         self.assertEqual("benjamin", entry["par"])
         self.assertTrue(entry["quand"])
-        accepted = self.entry_html(self.get("/journal"), "af-conv-b")
+        accepted = self.entry_html(self.get("/journal?filtre=tout"), "af-conv-b")
         self.assertIn("<span>action dans le cockpit</span>", accepted)
         self.assertNotIn("accepter_chantier", accepted.partition("<details")[0])
         # The newest entry heads the journal.
@@ -325,7 +326,7 @@ class JournalTest(unittest.TestCase):
             {k: entries[0].get(k) for k in ("bead_id", "demande", "quoi", "quand", "par", "voie")},
         )
 
-        event = self.entry_html(self.get("/journal"), "af-ev1")
+        event = self.entry_html(self.get("/journal?filtre=tout"), "af-ev1")
         self.assertIn("Release 1.4 publiée", event)
         self.assertIn("<time>06/10 13:30</time>", event)
         self.assertIn("<span>livraison</span>", event)
@@ -337,7 +338,7 @@ class JournalTest(unittest.TestCase):
         Path(self.fail_flag_file).write_text("fail")
         self.start_cockpit()
         self.assertEqual("unknown", self.get("/api/journal")["state"])
-        page = self.get("/journal")
+        page = self.get("/journal?filtre=tout")
         self.assertIn("Inconnu : journal illisible", page)
         self.assertNotIn("Aucune demande résolue", page)
         os.remove(self.fail_flag_file)
