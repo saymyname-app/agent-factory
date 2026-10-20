@@ -143,6 +143,17 @@ class Config:
             "COCKPIT_RIG_FILES_DIR", os.path.join(_REPO_ROOT, "config", "projects")
         )
         self.depots_poll_seconds = float(env.get("COCKPIT_DEPOTS_POLL_SECONDS", "600"))
+        # The CI and the pull requests of the Analyses (D, af-ten1sp): the
+        # GitHub repository whose CI they read, « owner/name », through the
+        # GitHub client. Opt-in, as the version of the factory below: no
+        # repository declared, no read of GitHub, and the indicator of the
+        # CI says it is unavailable for that reason.
+        self.github_repo = env.get("COCKPIT_GITHUB_REPO") or local.get("github_repo", "")
+        self.gh_bin = env.get("COCKPIT_GH_BIN") or local.get("gh_bin", "") or "gh"
+        self.github_poll_seconds = float(env.get("COCKPIT_GITHUB_POLL_SECONDS", "300"))
+        # When the cockpit starts, as an ISO instant: its « now » starts
+        # there (the fixed time of a synthetic dataset); unset, the wall clock.
+        self.clock_start = env.get("COCKPIT_CLOCK_START") or None
         self.validity_seconds = dict(VALIDITY_WINDOWS_SECONDS)
         for source in list(self.validity_seconds):
             override = env.get("COCKPIT_VALIDITY_%s_SECONDS" % source.upper())

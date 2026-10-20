@@ -11,11 +11,13 @@ import signal
 import sys
 import threading
 import time
+from datetime import datetime
 
 from cockpit.access.guard import ActionGuard, new_session_token
 from cockpit.actions.registry import build_action_handlers
+from cockpit.analyses.sources import read_flow, read_github
 from cockpit.core.beads_source import read_operator_beads
-from cockpit.core.clock import SystemClock
+from cockpit.core.clock import StartedClock, SystemClock
 from cockpit.core.freshness import UNKNOWN
 from cockpit.core.gc_client import GcSsePoller
 from cockpit.core.polling_source import PollingSource
@@ -53,7 +55,8 @@ SHUTDOWN_BUDGET_SECONDS = 5.0
 
 def build(config, clock=None):
     """Returns (server, pollers) — nothing is started yet."""
-    clock = clock or SystemClock()
+    clock = clock or (StartedClock(datetime.fromisoformat(config.clock_start).timestamp()) if config.clock_start
+                      else SystemClock())
     read_model = ReadModel(clock, validity_seconds=config.validity_seconds)
     for name, display_name in SOURCE_DISPLAY_NAMES.items():
         read_model.register(name, display_name=display_name)
@@ -103,6 +106,18 @@ def build(config, clock=None):
         )
         read_model.register("runs", display_name="runs")
         pollers.append(PollingSource(read_model, "runs", lambda: read_runs(bd_bin=config.bd_bin), config.journal_poll_seconds))
+        # The Analyses (D, af-ten1sp): the records of the delivery flow.
+        read_model.register("flow", display_name="tickets du flux")
+        pollers.append(PollingSource(read_model, "flow", lambda: read_flow(bd_bin=config.bd_bin),
+                                     config.journal_poll_seconds))
+    if config.github_repo:
+        # The CI and the pull requests of the declared repository, over the
+        # last eight days: the period of the Analyses and the day before it.
+        read_model.register("github", display_name="CI GitHub")
+        pollers.append(PollingSource(
+            read_model, "github",
+            lambda: read_github(config.gh_bin, config.github_repo, read_model.now() - 8 * 86400),
+            config.github_poll_seconds))
     if config.repo_dir:
         read_model.register("git", display_name="version de l'usine")
         pollers.append(

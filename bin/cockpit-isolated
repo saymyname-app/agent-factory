@@ -15,6 +15,10 @@ synthetic sources only:
   `tests/cockpit-fake-gc-contract-test.py`);
 - a synthetic tracker (`tests/fixtures/cockpit/requests/fake-bd`) and the
   projects declared for this launch alone;
+- when the dataset gives what GitHub answers, a synthetic GitHub client
+  (`tests/fixtures/cockpit/github/fake-gh`) for the repository it names;
+  otherwise no repository is declared, and GitHub is not read;
+- a clock that starts at the fixed time of the dataset (`generated_at`).
 - an empty environment: a temporary HOME, no local settings file, so no
   secret, no notification, no heartbeat and no project clone; the doors
   that change the Factory are replaced by a command that refuses. Only the
@@ -139,6 +143,11 @@ def write_tracker_and_projects(city: synthetic_city.SyntheticCity, home: str) ->
         "FAKE_BD_STATE_FILE": str(beads),
         "COCKPIT_DESCRIPTORS_DIR": str(projects),
     }
+    if city.github is not None:
+        github = Path(home, "github.json")
+        github.write_text(json.dumps(city.github, ensure_ascii=False), encoding="utf-8")
+        env.update({"COCKPIT_GH_BIN": str(FIXTURES / "github" / "fake-gh"), "FAKE_GH_STATE_FILE": str(github),
+                    "COCKPIT_GITHUB_REPO": city.github["repository"]})
     if city.reading == synthetic_city.FAILING:
         # The tracker fails for as long as this file exists: always.
         env["FAKE_BD_FAIL_FLAG_FILE"] = str(beads)
@@ -196,6 +205,8 @@ def main(argv: list[str]) -> int:
         "COCKPIT_PROJECTS_POLL_SECONDS": POLL_SECONDS,
         "COCKPIT_JOURNAL_POLL_SECONDS": POLL_SECONDS,
         "COCKPIT_SESSIONS_POLL_SECONDS": POLL_SECONDS,
+        "COCKPIT_GITHUB_POLL_SECONDS": POLL_SECONDS,
+        "COCKPIT_CLOCK_START": city.started,
         **write_tracker_and_projects(city, home),
     }
     if LAUNCH_MARK in os.environ:

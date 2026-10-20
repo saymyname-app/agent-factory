@@ -1,213 +1,254 @@
-"""The destination Analyses of Panorama: what the factory delivered, how
-long it took and how its checks answered, day by day, from the runs.
+"""The destination Analyses of Panorama: the four indicators of the factory,
+each its view, and the daily volumes that compare, over the seven days that
+end today (D, af-ten1sp; Spec af-fgcw0d, user stories 148, 149, 150, 124
+and 175).
 
 It follows the Analyses reference (prototypes/c01-complete/frozen-panorama-
-analysis at 632deea): a period, four views (Résultats, Délais,
-Vérifications, Activité), a chart a day and the items behind it, and how
-each number is defined. Every number is computed from the runs the cockpit
-reads (cockpit.runs) and the journal; nothing is drawn with example values.
+analysis at 632deea): a lead, the tabs of the four views, then one panel --
+its heading, its value, what is behind it and, folded, its method. Every
+number comes from ``cockpit.analyses.indicators``, computed from the sources
+the cockpit reads; a source not read shows its indicator unavailable with
+the reason, never a zero.
 
-Intent (Benjamin, his words, 2026-10-19 19:42 Paris): « enchaîne sur la
-page suivante. »
-Mechanism (agent interpretation): Analyses after Journal; built directly,
-outside the paused convoy af-pqfxmd.
+Corrective deviations from the reference, its rendering defects not copied:
+the chart draws the volumes its label names, one line a series, each told
+apart by its dashes too; a merged result is dated by its own day, where the
+reference says « avant-hier » of a day its chart counts none; the tabs are
+links to their view, opened with the keyboard as with a click.
 """
 import html
 from datetime import datetime, timedelta
 
+from cockpit.analyses.indicators import CI, DECISIONS, DELAY, RESULTS, delay_text
 from cockpit.core.readmodel import PARIS
-from cockpit.ui.runs.page import duration
+from cockpit.ui.panorama.shell import anchor_slug
 
-VIEWS = (("resultats", "Résultats"), ("delais", "Délais"), ("verifications", "Vérifications"),
-         ("activite", "Activité"))
-PERIODS = (("7", "7 jours"), ("30", "30 jours"))
-DAY_NAMES = ("Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim")
+# The views, by the key of their address: their tab, their indicator, their
+# heading and the label of their method.
+VIEWS = (
+    ("resultats", "Résultats", RESULTS, "Résultats fusionnés", "Définition et sources"),
+    ("delais", "Délais", DELAY, "Où passe le temps ?", "Méthode et couverture"),
+    ("verifications", "Vérifications", CI, "Vérifications CI réussies", "Définition et sources"),
+    ("activite", "Activité", DECISIONS, "Décisions ouvertes", "Définition et sources"),
+)
+DEFAULT_VIEW = "resultats"
+CHART_LABEL = ("Volumes quotidiens comparés sur sept jours : résultats fusionnés, PR fusionnées, tickets livrés, "
+               "exécutions CI réussies")
+# Each series its colour and its dashes, so that it is told apart without
+# its colour.
+SERIES_STYLE = {
+    "Résultats fusionnés": ("var(--an-1)", ""),
+    "PR fusionnées": ("var(--an-2)", "8 5"),
+    "Tickets livrés": ("var(--an-3)", "1 5"),
+    "Exécutions CI réussies": ("var(--an-4)", "12 4 2 4"),
+}
+WEEKDAYS = ("lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim.")
+# The frame of the chart: the days along x from x 55, the volumes along y
+# from y 195 (none) up to 162 px higher.
+CHART_ZERO, CHART_HEIGHT, CHART_LEFT, CHART_RIGHT = 195, 162, 55, 685
+METHOD = (("reason", "Raison"), ("population", "Population"), ("period", "Période"), ("sources", "Sources"),
+          ("read", "Horodatage"), ("calculation", "Calcul"))
+UNMEASURED = ("La préparation avant la publication du graphe n’est pas comptée. Attente de départ, relectures et "
+              "évaluation sont comprises dans « Réalisation et vérifications » : le flux ne les date pas séparément.")
 
 
 def _e(value):
     return html.escape(str(value), quote=True)
 
 
-def _days(now, count):
-    today = datetime.fromtimestamp(now, tz=PARIS).date()
-    return [today - timedelta(days=count - 1 - i) for i in range(count)]
+def view_key(asked):
+    """The view asked at the address (``?vue=``), the first one otherwise."""
+    return asked if asked in {key for key, *_ in VIEWS} else DEFAULT_VIEW
 
 
-def _day_of(at):
-    return datetime.fromtimestamp(at, tz=PARIS).date()
+def render_analyses(data, view):
+    """The ``main`` of the destination on ``view``, from ``data`` (what
+    ``cockpit.analyses.indicators.analyses`` gives): a function that draws it
+    with the numbering of the page."""
+    view = view_key(view)
+    _, _, key, heading, method_label = next(entry for entry in VIEWS if entry[0] == view)
+    indicator = data["indicators"][key]
+
+    def draw(anchors):
+        tabs = "".join(
+            '<a class="an-tab%s" href="/analyses?vue=%s"%s %s>%s</a>'
+            % (" on" if name == view else "", name, ' aria-current="page"' if name == view else "",
+               anchors("primary" if name == view else "a"), _e(label))
+            for name, label, *_ in VIEWS)
+        head = ('<h1 class="an-title" %s>Analyses</h1><p class="an-lead" %s>Toute l’usine · %d derniers jours</p>'
+                '<div class="an-tabs" %s>%s</div>'
+                % (anchors("h1"), anchors("page-lead"), len(data["days"]), anchors("metric-tabs"), tabs))
+        panel, h2, lead = anchors("panel"), anchors("h2"), anchors("p")
+        body = {"resultats": _results, "delais": _delays, "verifications": _checks, "activite": _decisions}[view]
+        headline, content = body(data, indicator, anchors)
+        method = "".join('<p>%s : %s</p>' % (label, _e(indicator[field]))
+                         for field, label in METHOD if indicator.get(field))
+        details = '<details class="an-def" %s><summary %s>%s</summary>%s</details>' % (
+            anchors("details"), anchors("summary"), method_label, method)
+        return head + '<section class="pn-panel an-panel" %s><h2 %s>%s</h2><p class="an-head" %s>%s</p>%s%s</section>' % (
+            panel, h2, _e(heading), lead, headline, content, details)
+
+    return draw
 
 
-def _label(day, count):
-    return DAY_NAMES[day.weekday()] if count <= 7 else day.strftime("%d/%m")
-
-
-def _events(runs, prefix):
-    for run in runs or []:
-        for event in run["events"]:
-            if event["text"].startswith(prefix):
-                yield run, event
-
-
-def compute(runs, entries, now, period):
-    """The numbers of every view over ``period`` days: per day series and
-    the items behind them."""
-    days = _days(now, period)
-    first = days[0]
-    merged = [(run, e) for run, e in _events(runs, "Fusionné") if _day_of(e["at"]) >= first]
-    launched = [(run, e) for run, e in _events(runs, "Ticket lancé") if _day_of(e["at"]) >= first]
-    stopped = [(run, e) for run, e in _events(runs, "Arrêt") if _day_of(e["at"]) >= first]
-    reviews = [(run, e) for run, e in _events(runs, "Revue de code") if _day_of(e["at"]) >= first]
-    evaluations = [(run, e) for run, e in _events(runs, "Évaluation") if _day_of(e["at"]) >= first]
-    fidelity = [(run, e) for run, e in _events(runs, "Fidélité") if _day_of(e["at"]) >= first]
-    answers = [e for e in entries or [] if e.get("at") and _day_of(e["at"]) >= first and e.get("kind") == "decisions"]
-
-    def per_day(pairs, keep=lambda run, e: True):
-        counts = {day: 0 for day in days}
-        for run, e in pairs:
-            if keep(run, e) and _day_of(e["at"]) in counts:
-                counts[_day_of(e["at"])] += 1
-        return [counts[day] for day in days]
-
-    lead = []
-    for run, e in merged:
-        lead.append((run, e["at"] - run["start"]))
-    waits = []
-    for run in runs or []:
-        for lane in run["lanes"]:
-            if lane["kind"] == "human":
-                for start, end in lane["jobs"]:
-                    if end > start and _day_of(run["start"] + start) >= first:
-                        waits.append((run, end - start))
-    blocking = lambda run, e: "bloquant" in e["text"] and "aucun bloquant" not in e["text"]
-    return {
-        "days": days,
-        "merged": merged, "merged_per_day": per_day(merged),
-        "lead": lead, "waits": waits,
-        "reviews": reviews, "reviews_blocking": per_day(reviews, blocking),
-        "reviews_clear": per_day(reviews, lambda run, e: not blocking(run, e)),
-        "evaluations": evaluations,
-        "evaluations_ok": per_day(evaluations, lambda run, e: "favorable" in e["text"] and "défavorable" not in e["text"]),
-        "fidelity": fidelity,
-        "launched_per_day": per_day(launched), "stopped_per_day": per_day(stopped),
-        "answers_per_day": [sum(1 for e in answers if _day_of(e["at"]) == day) for day in days],
-    }
-
-
-def _chart(days, series, title):
-    """Grouped bars, one group a day; ``series``: (label, values, css class)."""
-    count = len(days)
-    top = max([1] + [v for _, values, _ in series for v in values])
-    width, height, pad = 640, 180, 28
-    group = (width - pad) / count
-    bar = max(2, min(18, (group - 6) / max(1, len(series))))
-    shapes = []
-    for i, day in enumerate(days):
-        x0 = pad + i * group + (group - bar * len(series)) / 2
-        for j, (label, values, css) in enumerate(series):
-            h = (height - 30) * values[i] / top
-            shapes.append('<rect class="%s" x="%.1f" y="%.1f" width="%.1f" height="%.1f"><title>%s · %s : %d</title></rect>'
-                          % (css, x0 + j * bar, height - 20 - h, bar - 1, h, _e(label), _label(day, count), values[i]))
-        if count <= 7 or i % max(1, count // 10) == 0:
-            shapes.append('<text x="%.1f" y="%d" text-anchor="middle">%s</text>' % (pad + i * group + group / 2, height - 4,
-                                                                                  _label(day, count)))
-    for k in (0, top):
-        y = height - 20 - (height - 30) * k / top
-        shapes.append('<line x1="%d" x2="%d" y1="%.1f" y2="%.1f"/><text x="0" y="%.1f">%d</text>' % (pad, width, y, y, y + 4, k))
-    legend = "".join('<span><i class="%s"></i>%s : %d</span>' % (css, _e(label), sum(values)) for label, values, css in series)
-    return ('<figure class="an-chart"><svg viewBox="0 0 %d %d" role="img" aria-label="%s">%s</svg>'
-            '<figcaption>%s</figcaption></figure>' % (width, height, _e(title), "".join(shapes), legend))
-
-
-def _items(rows, empty):
-    if not rows:
-        return '<p class="an-muted">%s</p>' % _e(empty)
-    return '<ul class="an-items">%s</ul>' % "".join(
-        '<li><a href="%s">%s</a><span>%s</span></li>' % (_e(href), _e(text), _e(side)) for href, text, side in rows)
-
-
-def _median(values):
-    values = sorted(values)
-    if not values:
-        return None
-    mid = len(values) // 2
-    return values[mid] if len(values) % 2 else (values[mid - 1] + values[mid]) / 2
-
-
-def render_analyses(runs, entries, now, view, period, checked=None):
-    view = view if view in dict(VIEWS) else "resultats"
-    period = period if period in dict(PERIODS) else "7"
-    data = compute(runs, entries, now, int(period))
-    days = data["days"]
-    tabs = "".join('<a class="an-tab%s" href="/analyses?vue=%s&periode=%s"%s>%s</a>'
-                   % (" on" if key == view else "", key, period, ' aria-current="page"' if key == view else "", label)
-                   for key, label in VIEWS)
-    periods = "".join('<a class="an-tab%s" href="/analyses?vue=%s&periode=%s">%s</a>'
-                      % (" on" if key == period else "", view, key, label) for key, label in PERIODS)
-    if view == "resultats":
-        n = len(data["merged"])
-        head = "%d résultat%s fusionné%s sur %s · fusion prouvée par le flux" % (n, "s" * (n > 1), "s" * (n > 1), dict(PERIODS)[period])
-        body = _chart(days, [("Fusionnés", data["merged_per_day"], "s1")], "Résultats fusionnés par jour") + _items(
-            [(run["href"], "%s · %s" % (run["ticket"], run["title"]), datetime.fromtimestamp(e["at"], tz=PARIS).strftime("%d/%m %H:%M"))
-             for run, e in sorted(data["merged"], key=lambda p: -p[1]["at"])], "Aucun résultat fusionné sur la période.")
-        definition = "Un résultat fusionné est un run dont le flux a écrit la fusion (gc.flow.merge, outcome merged)."
-    elif view == "delais":
-        lead = _median([d for _, d in data["lead"]])
-        wait = _median([d for _, d in data["waits"]])
-        head = "Délai médian lancement → fusion : %s · attente médiane d’une décision : %s" % (
-            duration(lead) if lead is not None else "non mesurable", duration(wait) if wait is not None else "aucune")
-        body = _items([(run["href"], "%s · %s" % (run["ticket"], run["title"]), duration(d))
-                       for run, d in sorted(data["lead"], key=lambda p: -p[1])], "Aucun run fusionné sur la période.") + \
-            "<h3>Attentes de décision</h3>" + _items(
-                [(run["href"], "%s · %s" % (run["ticket"], run["title"]), duration(d))
-                 for run, d in sorted(data["waits"], key=lambda p: -p[1])], "Aucune attente de décision sur la période.")
-        definition = ("Délai : du lancement du ticket (gc.flow.gate.dispatch) à sa fusion. Attente : de la question "
-                      "posée à Benjamin à sa réponse, ou jusqu’à maintenant si elle attend encore.")
-    elif view == "verifications":
-        reviews, evals = len(data["reviews"]), len(data["evaluations"])
-        head = "%d revue%s de code · %d évaluation%s · %d mesure%s de fidélité" % (
-            reviews, "s" * (reviews > 1), evals, "s" * (evals > 1), len(data["fidelity"]), "s" * (len(data["fidelity"]) > 1))
-        body = _chart(days, [("Revues sans bloquant", data["reviews_clear"], "s2"),
-                             ("Revues avec bloquants", data["reviews_blocking"], "s3"),
-                             ("Évaluations favorables", data["evaluations_ok"], "s1")], "Vérifications par jour") + _items(
-            [(run["href"], "%s · %s" % (run["ticket"], e["text"]), datetime.fromtimestamp(e["at"], tz=PARIS).strftime("%d/%m %H:%M"))
-             for run, e in sorted(data["reviews"] + data["evaluations"] + data["fidelity"], key=lambda p: -p[1]["at"])],
-            "Aucune vérification sur la période.")
-        definition = ("Revues de code (gc.flow.code_review), évaluations (gc.flow.evaluation) et mesures de fidélité "
-                      "(gc.flow.verdict.fidelity) écrites sur les tickets. La CI GitHub n’est pas encore lue ici.")
+def _results(data, indicator, anchors):
+    if indicator["value"] is None:
+        headline = "Résultats indisponibles"
     else:
-        head = "%d run%s lancé%s · %d arrêt%s · %d décision%s de Benjamin" % (
-            sum(data["launched_per_day"]), "s" * (sum(data["launched_per_day"]) > 1), "s" * (sum(data["launched_per_day"]) > 1),
-            sum(data["stopped_per_day"]), "s" * (sum(data["stopped_per_day"]) > 1),
-            sum(data["answers_per_day"]), "s" * (sum(data["answers_per_day"]) > 1))
-        body = _chart(days, [("Runs lancés", data["launched_per_day"], "s1"), ("Arrêts", data["stopped_per_day"], "s3"),
-                             ("Décisions", data["answers_per_day"], "s2")], "Activité par jour")
-        definition = "Lancements et arrêts lus sur les tickets ; décisions lues dans le journal (réponses aux demandes)."
-    when = " · vérifié à %s (Paris)" % _e(checked) if checked else ""
-    return ('<div class="pn-head"><h1>Analyses</h1><p class="an-sub">Toute l’usine · %s%s</p></div>'
-            '<nav class="an-tabs" aria-label="Période">%s</nav><nav class="an-tabs" aria-label="Vue">%s</nav>'
-            '<section class="pn-panel"><h2>%s</h2><p class="an-head">%s</p>%s'
-            '<details class="an-def"><summary>Définition et sources</summary><p>%s</p></details></section>'
-            % (dict(PERIODS)[period], when, periods, tabs, _e(dict(VIEWS)[view]), _e(head), body, _e(definition)))
+        count = int(indicator["value"])
+        headline = "<strong %s>%s</strong> sur sept jours · fusion prouvée" % (
+            anchors("strong"), "%d résultat%s" % (count, "s" if count > 1 else "") if count else "Aucun résultat")
+    items = "".join(
+        '<div %s><strong %s>%s</strong><small %s>%s · %s</small></div>'
+        % (anchors("div"), anchors("strong"), _e(result["title"]), anchors("small"), _e(result["project"] or "Sans projet"),
+           _day_word(result["merged"], data["now"]))
+        for result in data["results"])
+    history = '<div class="an-history" %s>%s</div>' % (
+        anchors("metrics-history"), items or '<p class="an-muted">Aucun résultat fusionné sur la période.</p>')
+    return headline, _chart(data, anchors) + history
+
+
+def _delays(data, indicator, anchors):
+    count = len(data["results"])
+    headline = "Délai médian : <strong %s>%s</strong> · %d résultat%s fusionné%s" % (
+        anchors("strong"), _e(indicator["value"] or "indisponible"), count, "s" * (count > 1), "s" * (count > 1))
+    key = ('<div class="an-key" %s><span style="--series:var(--accent)" %s>Travail et vérifications</span>'
+           '<span style="--series:var(--warn)" %s>Attentes</span></div>'
+           % (anchors("chart-key"), anchors("span"), anchors("span")))
+    longest = max([portion["median"] or 0 for portion in data["portions"]] + [1])
+    rows = "".join(
+        '<div class="an-duration" %s><span %s>%s</span><div class="an-track" %s><div class="an-bar%s" '
+        'style="width:%.1f%%" %s></div></div><strong %s>%s</strong></div>'
+        % (anchors("duration-row"), anchors("span"), _e(portion["label"]), anchors("div"),
+           " wait" if portion["wait"] else "", 100 * (portion["median"] or 0) / longest, anchors("duration-bar"),
+           anchors("strong"), _e(delay_text(portion["median"])) if portion["median"] is not None else "non daté")
+        for portion in data["portions"])
+    notice = '<div class="an-notice" %s>%s</div>' % (anchors("notice"), _e(UNMEASURED))
+    return headline, key + rows + notice
+
+
+def _checks(data, indicator, anchors):
+    if indicator["value"] is None:
+        headline = "Taux indisponible : la CI GitHub n’est pas lue"
+    else:
+        headline = "<strong %s>%s</strong> des exécutions CI terminées ont réussi · %s" % (
+            anchors("strong"), _e(indicator["value"]), _e(indicator["calculation"]))
+    note = ('<p class="an-muted">Ce taux n’est pas tracé avec les volumes quotidiens : ce n’est pas la même unité. '
+            'Les exécutions réussies par jour sont dans le graphique de « Résultats ».</p>')
+    return headline, note
+
+
+def _decisions(data, indicator, anchors):
+    if indicator["value"] is None:
+        return "Décisions indisponibles", ""
+    count = int(indicator["value"])
+    headline = "<strong %s>%s</strong> · elles attendent ta réponse" % (
+        anchors("strong"), "%d décision%s ouverte%s" % (count, "s" * (count > 1), "s" * (count > 1))
+        if count else "Aucune décision ouverte")
+    items = "".join('<div %s><strong %s>%s</strong><small %s>%s</small></div>'
+                    % (anchors("div"), anchors("strong"), _e(request.quoi), anchors("small"),
+                       _e(request.projet or "Sans projet"))
+                    for request in data["decisions"])
+    link = '<p><a class="an-link" href="/#pn-inbox">Répondre depuis la Vue d’ensemble</a></p>' if count else ""
+    return headline, ('<div class="an-history" %s>%s</div>' % (anchors("metrics-history"), items) if items else "") + link
+
+
+def _chart(data, anchors):
+    """The daily volumes on one chart, one unit -- a count per day -- for
+    every series read; a series not read is said unavailable in the key and
+    not drawn."""
+    days, volumes = data["days"], data["volumes"]
+    key = "".join(
+        '<span style="--series:%s;--dash:%s" %s>%s%s</span>'
+        % (SERIES_STYLE[serie["label"]][0], _dash(SERIES_STYLE[serie["label"]][1]), anchors("span"),
+           _e(serie["label"]), "" if serie["values"] is not None else " : indisponible")
+        for serie in volumes)
+    drawn = [serie for serie in volumes if serie["values"] is not None]
+    top = max([3] + [value for serie in drawn for value in serie["values"]])
+    top = -(-top // 3) * 3
+    step = (CHART_RIGHT - CHART_LEFT) / max(1, len(days) - 1)
+    y = lambda value: CHART_ZERO - CHART_HEIGHT * value / top
+    shapes = ['<g stroke="var(--line)">%s</g>' % "".join(
+        '<line x1="40" y1="%.1f" x2="695" y2="%.1f"></line>' % (y(tick), y(tick)) for tick in (0, top / 3, 2 * top / 3, top))]
+    shapes.append('<g fill="var(--muted)" font-size="11">%s%s<text x="40" y="20">nombre par jour</text></g>' % (
+        "".join('<text x="20" y="%.1f">%d</text>' % (y(tick) + 4, tick) for tick in (0, top // 3, 2 * top // 3, top)),
+        "".join('<text x="%.1f" y="222" text-anchor="middle">%s</text>' % (CHART_LEFT + step * i, WEEKDAYS[day.weekday()])
+                for i, day in enumerate(days))))
+    for serie in drawn:
+        colour, dashes = SERIES_STYLE[serie["label"]]
+        points = [(CHART_LEFT + step * i, y(value)) for i, value in enumerate(serie["values"])]
+        shapes.append('<polyline fill="none" stroke="%s" stroke-width="2.5" stroke-linejoin="round" '
+                      'stroke-linecap="round"%s points="%s"></polyline>'
+                      % (colour, ' stroke-dasharray="%s"' % dashes if dashes else "",
+                         " ".join("%.1f,%.1f" % point for point in points)))
+        shapes += ['<circle cx="%.1f" cy="%.1f" r="4" fill="%s"><title>%s · %s %s : %d</title></circle>'
+                   % (x, cy, colour, _e(serie["label"]), WEEKDAYS[day.weekday()], day.strftime("%d/%m"), value)
+                   for (x, cy), day, value in zip(points, days, serie["values"])]
+    table = ('<div class="an-sr-only"><table><caption>%s, par jour</caption><tr><th scope="col">Série</th>%s</tr>%s'
+             '</table></div>'
+             % (_e(CHART_LABEL), "".join('<th scope="col">%s</th>' % day.strftime("%d/%m") for day in days),
+                "".join('<tr><th scope="row">%s</th>%s</tr>' % (
+                    _e(serie["label"]), "".join("<td>%d</td>" % value for value in serie["values"])) for serie in drawn)))
+    return ('<div class="an-key" %s>%s</div><svg class="an-chart" viewBox="0 0 720 235" role="img" aria-label="%s" '
+            'data-anchor="%s-1">%s</svg>%s' % (anchors("chart-key"), key, _e(CHART_LABEL), anchor_slug(CHART_LABEL),
+                                               "".join(shapes), table))
+
+
+def _dash(dashes):
+    return "dashed" if dashes.startswith("8") else "dotted" if dashes.startswith("1 ") else \
+        "double" if dashes else "solid"
+
+
+def _day_word(at, now):
+    """The day a result was merged, in words up to the day before
+    yesterday, then by its date."""
+    day, today = datetime.fromtimestamp(at, tz=PARIS).date(), datetime.fromtimestamp(now, tz=PARIS).date()
+    words = {today: "aujourd’hui", today - timedelta(days=1): "hier", today - timedelta(days=2): "avant-hier"}
+    return words.get(day, "le %s" % day.strftime("%d/%m"))
 
 
 CSS = """
-:root{--an-1:#415fce;--an-2:#1c7954;--an-3:#97691e}
-@media (prefers-color-scheme: dark){:root{--an-1:#91a7ff;--an-2:#52c9b1;--an-3:#e6ba70}}
-.an-sub{margin:0 0 16px;color:var(--pn-muted-text)}
-.an-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
-.an-tab{padding:8px 13px;border:1px solid var(--pn-control-line);border-radius:8px;color:var(--ink);text-decoration:none;font-size:13px}
+:root{--an-1:#415fce;--an-2:#1c7954;--an-3:#97691e;--an-4:#8a3ea8}
+@media (prefers-color-scheme: dark){:root{--an-1:#91a7ff;--an-2:#52c9b1;--an-3:#e6ba70;--an-4:#d39cf0}}
+.an-title{font-size:27px;margin:0 0 6px}
+.an-lead{margin:0 0 16px;color:var(--pn-muted-text)}
+.an-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+.an-tab{padding:8px 13px;border:1px solid var(--pn-control-line);border-radius:8px;color:var(--ink);
+  text-decoration:none;font-size:14px}
+.an-tab:hover{border-color:var(--accent)}
 .an-tab.on{background:var(--pn-surface-2);border-color:var(--accent)}
 .an-head{margin:0 0 14px!important;color:var(--pn-muted-text)}
-.an-chart{margin:0 0 16px}.an-chart svg{width:100%;height:auto;max-height:240px}
-.an-chart rect.s1{fill:var(--an-1)}.an-chart rect.s2{fill:var(--an-2)}.an-chart rect.s3{fill:var(--an-3)}
-.an-chart text{fill:var(--pn-muted-text);font-size:11px}.an-chart line{stroke:var(--line)}
-.an-chart figcaption{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--pn-muted-text)}
-.an-chart figcaption i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px}
-.an-chart i.s1{background:var(--an-1)}.an-chart i.s2{background:var(--an-2)}.an-chart i.s3{background:var(--an-3)}
-.an-items{list-style:none;margin:0;padding:0}
-.an-items li{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--line);font-size:14px}
-.an-items a{color:var(--ink);overflow-wrap:anywhere}.an-items span{color:var(--pn-muted-text);white-space:nowrap}
-.pn-panel h3{font-size:15px;margin:18px 0 6px}
+.an-head strong{color:var(--ink)}
+.an-key{display:flex;gap:8px 20px;flex-wrap:wrap;font-size:13px;margin:12px 0;color:var(--pn-muted-text)}
+.an-key span:before{content:'';display:inline-block;width:20px;height:0;margin-right:6px;vertical-align:middle;
+  border-top:3px var(--dash,solid) var(--series)}
+.an-chart{width:100%;height:auto;max-height:290px;display:block;margin-bottom:14px}
+.an-sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);
+  white-space:nowrap;border:0}
+.an-sr-only *{clip-path:inset(50%)}
+.an-history{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+.an-history>div{border:1px solid var(--line);border-radius:8px;padding:12px 14px;min-width:0}
+.an-history strong{display:block;overflow-wrap:anywhere}
+.an-history small{display:block;margin-top:5px;color:var(--pn-muted-text);font-size:13px}
+.an-duration{display:grid;grid-template-columns:minmax(150px,220px) minmax(0,1fr) 70px;gap:12px;align-items:center;
+  padding:8px 0;border-bottom:1px solid var(--line)}
+.an-track{height:10px;background:var(--pn-surface-2);border-radius:5px;overflow:hidden}
+.an-bar{height:100%;background:var(--accent);border-radius:5px}
+.an-bar.wait{background:var(--warn)}
+.an-duration strong{text-align:right}
+.an-notice{margin-top:14px;padding:12px 14px;border:1px solid var(--line);border-radius:8px;font-size:14px;
+  line-height:1.5;color:var(--ink)}
 .an-muted{color:var(--pn-muted-text)}
-.an-def{margin-top:14px;font-size:13px}.an-def summary{cursor:pointer;color:var(--pn-muted-text)}
+.an-link{color:var(--ink)}
+.an-def{margin-top:16px;font-size:14px}
+.an-def summary{cursor:pointer;color:var(--pn-muted-text)}
+.an-def p{margin:8px 0 0!important}
+@media (max-width:800px){
+  .an-title{font-size:24px}
+  .an-duration{grid-template-columns:minmax(0,1fr) auto}
+  .an-duration .an-track{grid-column:1 / -1;grid-row:2}
+  /* The chart shrinks with the page: its labels are drawn larger in its
+     own units, so that they stay readable at 390 px. */
+  .an-chart text{font-size:22px}
+}
 """

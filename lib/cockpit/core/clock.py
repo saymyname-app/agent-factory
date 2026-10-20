@@ -13,3 +13,16 @@ class SystemClock:
 
     def now(self):
         return time.time()
+
+
+class StartedClock:
+    """A clock that starts at a given instant and runs from there at the
+    pace of the wall clock: the fixed time of a synthetic dataset
+    (``generated_at``) is the cockpit's « now » when it starts, and the
+    freshness of its sources still moves with time."""
+
+    def __init__(self, start):
+        self._offset = start - time.time()
+
+    def now(self):
+        return time.time() + self._offset

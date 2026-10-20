@@ -791,8 +791,14 @@ root; `COCKPIT_LOCAL_CONFIG` to put it elsewhere):
 }
 ```
 
+Two more keys name the CI the Analyses read (D, af-ten1sp):
+`github_repo`, the repository « owner/name » whose CI runs and pull requests
+are read through the GitHub client, and `gh_bin`, that client (`gh` when
+unset). Without `github_repo` GitHub is never read, and the indicator of
+the CI says it is unavailable for that reason.
+
 Every key is optional; an environment variable of the same meaning
-(`COCKPIT_PUSHOVER_SECRETS_FILE`, …) wins. Absent or malformed, the file is
+(`COCKPIT_PUSHOVER_SECRETS_FILE`, `COCKPIT_GITHUB_REPO`, …) wins. Absent or malformed, the file is
 ignored: no push, no ping, read-only. A test never sees the live one: each
 gives the process its own pid file, so its own (absent) settings file.
 
@@ -953,6 +959,8 @@ copy. What it gives the cockpit to read:
 | tracker | `tests/fixtures/cockpit/requests/fake-bd`, which answers the beads written for this launch from the dataset, and hides the closed ones from a plain `list` as `bd` does |
 | declared projects | one descriptor per project the dataset names, written for this launch; no file of the repository |
 | doors that change the Factory (`gc`, escalation door, proposal door, loop guard) | a command that refuses |
+| GitHub (CI and pull requests of the Analyses) | when the dataset gives what GitHub answers (`github`), `tests/fixtures/cockpit/github/fake-gh`, which answers the two calls of the Analyses as the REST API does, from that block; otherwise no repository is declared and GitHub is not read |
+| clock | it starts at the fixed time of the dataset (`generated_at`, `COCKPIT_CLOCK_START`) and runs from there: « today » is the dataset's day |
 | local settings, secrets, notifications, heartbeat, project clones, Tailscale | none: a temporary HOME and no local settings file |
 
 No controller and no tracker is started. A dataset that is not marked
@@ -992,10 +1000,11 @@ ways:
   section, under its heading, labelled `said`, whose description is the
   lines of the section in their order. The cockpit has no source yet for
   the measures of the machine, the connections, the configuration of the
-  roles, the steps of a stop, the clean-up, the indicators, the next release
-  of a project, its roadmap or the analyses: the tracker holds what the
+  roles, the steps of a stop, the clean-up, the indicators of the overview,
+  the next release of a project or its roadmap: the tracker holds what the
   dataset says of each until the ticket of that screen reads it into records
-  of its own.
+  of its own. The Analyses read records of their own (below: `flow`,
+  `github`).
 
 | The dataset says | The sources answer | Seen at |
 |---|---|---|
@@ -1013,6 +1022,10 @@ ways:
 | « Rituels »: each ritual (a line in capitals says how it is launched, then its title) | one bead per ritual under its title: how it is launched, what it is for, when it last ran | `beads.value` |
 | the page of a ritual (« ← Rituels », its title, « projet · … ») | one bead under the title of the ritual, its project declared; its steps and what the step it is at shows | `beads.value` |
 | « Analyses »: « Résultats fusionnés » or « Où passe le temps ? »; a merged result (« projet · hier ») | one bead kept as said for the view; the project of each merged result is declared | `beads.value`; `projets.value.projects` |
+| `flow.results`: a result of the flow (title, project, `published`, `delivered`, `accepted`, `merged`, ISO instants, the last three possibly null) | one convoy bead `synthetic-result-N` marked by the flow, created at `published`, closed once merged, its project declared, carrying `gc.flow.delivered`, a `gc.flow.judgement` answer `accepted` and `gc.flow.promotion` at those instants | `flow.value`; `GET /analyses` |
+| `flow.tickets`: a ticket (title, project, `dispatched`, `merge` `{outcome, at}`) | one ticket bead marked by the flow, carrying `gc.flow.gate.dispatch` and `gc.flow.merge`, closed when merged | `flow.value`; `GET /analyses` |
+| `flow.decisions`: a decision asked of Benjamin (title, project, `asked`, `answered` or null) | open: one bead asking the operator (`gc.needs_benjamin`); answered: a closed bead with its answer time, which no request lists | `beads.value`; `GET /api/requests` |
+| `github`: the repository, its `pull_requests` and its `workflow_runs`, as the GitHub REST API gives them | what the synthetic GitHub client answers for that repository, declared for this launch | `github.value`; `GET /analyses` |
 | nothing read yet: `ui.state` is `loading` | a supervisor that never answers, and a tracker whose read never ends (the cockpit waits a day for it, `COCKPIT_BEADS_READ_TIMEOUT_SECONDS`) | every source `unknown`, without value, `beads.failed_at` empty; `GET /` says it is reading, however late it is looked at |
 | nothing readable: `ui.state` is `error` | a supervisor that never answers, and a tracker whose read fails | every source `unknown`, without value, `beads.failed_at` set; `GET /` says the view is unavailable as soon as the first read failed |
 | a reading that is no longer current: `ui.state` is `stale` or `offline`, or `ui.stale` is true (Runs) | a supervisor that is read once, then answers no more | `gc.freshness` leaves `fresh` within seconds (a 2 s Validity window instead of 2 min), the last `gc.value` kept |
@@ -1201,13 +1214,43 @@ deliveries of the runs (launched, stopped, merged) with their link. Filters
 The notification sends follow, folded. Tests:
 `tests/cockpit-journal-test.py`, `tests/cockpit-journal-panorama-test.py`.
 
-## « Analyses » (direct build, 2026-10-19)
+## « Analyses » (Prototype Fold D, af-ten1sp)
 
-`GET /analyses?vue=resultats|delais|verifications|activite&periode=7|30`
-(`lib/cockpit/ui/analyses/page.py`): runs merged per day and which;
-median lead time from dispatch to merge and median wait for a decision;
-code reviews (with or without blocking findings), evaluations and fidelity
-measures per day; runs launched, stops and Benjamin's decisions per day.
-Every number comes from the runs (now the 200 most recently updated; the
-Runs page draws 48) and the journal; each view says its definition. GitHub
-CI is not read yet. Test: `tests/cockpit-analyses-test.py`.
+`GET /analyses?vue=resultats|delais|verifications|activite`
+(`lib/cockpit/ui/analyses/page.py`) shows, over the seven days that end
+today (Paris), one view per indicator of the Spec: « Résultats fusionnés »,
+« Délai de livraison » (« Où passe le temps ? »), « Vérifications CI
+réussies » and « Décisions ouvertes ». Each is computed once by
+`cockpit.analyses.indicators.analyses(snapshot, requests, now)`, the call
+the overview reuses (ticket K):
+
+| Indicator | Computed from |
+|---|---|
+| Résultats fusionnés | the convoys whose merge the flow proved (`gc.flow.promotion`), counted on the day of the merge |
+| Délai de livraison | the median, from the publication of the graph (the convoy's creation) to the proof of merge; per portion, the median of « Réalisation et vérifications » (to `gc.flow.delivered`), « Attente de jugement » (to the accepted answer of `gc.flow.judgement`, a voided one excluded) and « Fusion » (to the proof) |
+| Vérifications CI réussies | the CI runs GitHub gives for the declared repository: those that succeeded over those completed; a run in progress is not counted |
+| Décisions ouvertes | the requests the cockpit lists, the same count as the overview |
+
+The sources: `flow`, every bead the flow marked (`gc.flow.mark`), closed
+ones too (`cockpit.analyses.sources.read_flow`); `github`, the workflow
+runs and the last closed pull requests of `github_repo` through `gh api`,
+registered only when that repository is declared. A source not read, or
+failed, gives its indicator no value and its reason (when it was last
+tried); no count is ever zero by default, and none is a percentage. Each
+view states, folded, its population, period, sources, when they were read
+(Paris) and calculation.
+
+The daily volumes -- results merged, pull requests merged, tickets merged
+into the integration branch, CI runs that succeeded -- share one chart in
+one unit, a count a day, under « Résultats »; a series not read is said
+unavailable in its key and not drawn; the rate of the CI is in its own view.
+
+Corrective deviations from the reference (Testing Decisions 5): the chart
+draws the volumes its label names, each series told apart by its dashes
+too; a merged result is dated by its own day, where the reference says
+« avant-hier » of a day its chart counts none; the tabs are links to their
+view; the reference's « données synthétiques » note is not shown.
+
+Tests: `tests/cockpit-analyses-test.py` (an indicator without its source),
+`tests/cockpit-criteria/commands/analyses-destination-{indicators,layout}-test.py`
+(the launched cockpit, `D-criteria.json`).

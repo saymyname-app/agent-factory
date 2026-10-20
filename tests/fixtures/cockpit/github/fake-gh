@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+"""A synthetic GitHub client for the isolated cockpit (D, af-ten1sp): the
+two calls the Analyses make (cockpit.analyses.sources), answered as the
+GitHub REST API answers them, from the file FAKE_GH_STATE_FILE names --
+`{"repository", "pull_requests", "workflow_runs"}`, written from a dataset.
+
+    fake-gh api -X GET repos/OWNER/NAME/actions/runs -f per_page=100 -f created=>=YYYY-MM-DD
+    fake-gh api -X GET repos/OWNER/NAME/pulls -f state=closed -f per_page=100 -f sort=updated -f direction=desc
+
+`actions/runs` answers `{"total_count", "workflow_runs"}`, the runs created
+on or after the day asked, newest first; `pulls` answers the closed pull
+requests, the last updated first. Another repository is « Not Found »
+(exit 1), as is any other call; no state file, GitHub does not answer.
+"""
+
+import json
+import os
+import sys
+from datetime import date, datetime, timezone
+
+
+def fail(message: str) -> int:
+    sys.stderr.write(f"gh: {message}\n")
+    return 1
+
+
+def instant(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def main(args: list[str]) -> int:
+    state_file = os.environ.get("FAKE_GH_STATE_FILE")
+    if not state_file or not os.path.exists(state_file):
+        return fail("error connecting to api.github.com")
+    if len(args) < 4 or args[:3] != ["api", "-X", "GET"]:
+        return fail("unknown command")
+    path, rest = args[3], args[4:]
+    fields = {}
+    for flag, value in zip(rest[0::2], rest[1::2]):
+        if flag != "-f" or "=" not in value:
+            return fail(f"unknown flag {flag}")
+        name, _, field = value.partition("=")
+        fields[name] = field
+    with open(state_file, encoding="utf-8") as handle:
+        state = json.load(handle)
+    prefix = f"repos/{state['repository']}/"
+    if path == prefix + "actions/runs":
+        runs = state["workflow_runs"]
+        created = fields.get("created", "")
+        if created.startswith(">="):
+            since = date.fromisoformat(created[2:])
+            runs = [run for run in runs if instant(run["created_at"]).astimezone(timezone.utc).date() >= since]
+        runs = sorted(runs, key=lambda run: instant(run["created_at"]), reverse=True)
+        runs = runs[:int(fields.get("per_page", "30"))]
+        print(json.dumps({"total_count": len(runs), "workflow_runs": runs}, ensure_ascii=False))
+        return 0
+    if path == prefix + "pulls" and fields.get("state") == "closed":
+        pulls = sorted(state["pull_requests"], key=lambda pull: pull.get("merged_at") or "", reverse=True)
+        print(json.dumps(pulls[:int(fields.get("per_page", "30"))], ensure_ascii=False))
+        return 0
+    return fail("HTTP 404: Not Found")
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

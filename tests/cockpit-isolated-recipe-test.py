@@ -163,6 +163,17 @@ class TheOtherScreens(Refusals):
                            r"a ritual page that names no ritual and project")
 
 
+class TheAnalyses(Refusals):
+
+    def test_records_of_the_flow_that_cannot_be_read_are_refused(self):
+        dataset = {**panorama("Analyses"), "flow": {"results": [{"title": "Export des notes"}]}}
+        self.assertRefused(dataset, r"records of the flow \(flow\) or of GitHub \(github\) cannot be read")
+
+    def test_what_github_answers_without_its_workflow_runs_is_refused(self):
+        dataset = {**panorama("Analyses"), "github": {"repository": "o/r", "pull_requests": []}}
+        self.assertRefused(dataset, r"records of the flow \(flow\) or of GitHub \(github\) cannot be read")
+
+
 def listening_sockets(port):
     """The sockets listening on `port`, as /proc/<pid>/fd names them."""
     found = set()
