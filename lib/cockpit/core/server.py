@@ -55,12 +55,13 @@ from cockpit.ui.projects.page import (
 from cockpit.ui.projects.panorama import CSS as PROJECTS_PANORAMA_CSS, render_project_head, render_projects_list
 from cockpit.ui.projects.project_page import render_project_page, render_project_unknown
 from cockpit.ui.projects.tokens import CSS as PROJECT_PAGE_CSS
+from cockpit.ui.rituals.page import CSS as RITUALS_CSS, read_rituals, render_rituals
 
 ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
 # The destinations of Panorama whose Prototype Fold is not done yet: their
 # address answers, in the shell, that they are not served here yet.
 NOT_FOLDED = {
-    href: (key, label) for key, label, href in NAVIGATION if key not in (HOME, "projets", "journal", "runs", "usine", "analyses")
+    href: (key, label) for key, label, href in NAVIGATION if key not in (HOME, "projets", "journal", "runs", "usine", "rituels", "analyses")
 }
 NOT_FOLDED.update({"/runs/job": ("runs", "Runs")})
 
@@ -130,6 +131,11 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/usine":
             self._send_factory_page(read_model)
+            return
+        if path == "/rituels":
+            rituals = read_rituals(self.server.rituals_file)
+            self._send_page(read_model, "rituels", lambda anchors: render_rituals(rituals, anchors),
+                            extra_css=RITUALS_CSS)
             return
         if path == "/runs":
             self._send_runs_page(read_model)
@@ -649,6 +655,8 @@ def make_server(
     server.heartbeat = None
     server.stop_driver = None
     server.benjamin_login = ""
+    # The rituals file of the Factory (« Rituels »): unset, nothing read.
+    server.rituals_file = None
     server.extra_requests = lambda snapshot, now: []
     server.illisible_after_seconds = (
         ILLISIBLE_THRESHOLD_SECONDS if illisible_after_seconds is None else illisible_after_seconds
