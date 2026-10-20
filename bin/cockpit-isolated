@@ -126,8 +126,14 @@ def serve_synthetic_supervisor(
 def write_tracker_and_projects(city: synthetic_city.SyntheticCity, home: str) -> dict[str, str]:
     """Put what the tracker holds and the projects declared in `home`; the
     environment that makes the cockpit read them."""
+    # The files the sources point at, in the home of the launch: a value
+    # that names one says where it is.
+    for path, content in city.files.items():
+        Path(home, path).parent.mkdir(parents=True, exist_ok=True)
+        Path(home, path).write_text(content, encoding="utf-8")
     beads = Path(home, "tracker.json")
-    beads.write_text(json.dumps(city.beads, ensure_ascii=False), encoding="utf-8")
+    beads.write_text(json.dumps(city.beads, ensure_ascii=False).replace(synthetic_city.HOME_MARK, home + "/"),
+                     encoding="utf-8")
     projects = Path(home, "projects")
     projects.mkdir()
     for descriptor in city.projects:

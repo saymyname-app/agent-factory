@@ -216,7 +216,9 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             ),
             status_html=render_status_line(snapshot.get("gc"), health),
         )
-        view = overview_view(snapshot, requests if beads_known else [])
+        driver = getattr(self.server, "stop_driver", None)
+        view = overview_view(snapshot, requests if beads_known else [],
+                             stop_trial_passed=bool(driver is not None and driver.essai_reussi()))
         # T13, af-cx20q9: the SameSite=Strict cookie an action POST must
         # echo back -- a cross-site POST never carries it, so its presence
         # alone proves this request came from a page the cockpit itself

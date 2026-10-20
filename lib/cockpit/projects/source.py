@@ -6,6 +6,7 @@ other value — the page never reads Beads itself.
 What is stored is the computed view as plain data (so ``/api/status`` and
 ``/api/projects`` can serialise it), not the beads it was computed from.
 """
+import json
 from dataclasses import asdict
 
 from cockpit.core.beads_source import read_beads_json
@@ -16,6 +17,7 @@ from cockpit.projects.descriptors import load_descriptors
 from cockpit.projects.hors_chantier import HorsChantierItem, hors_chantier_par_projet
 from cockpit.projects.model import Chantier, Project, RoadmapStep
 from cockpit.projects.promu import read_promotion_results
+from cockpit.projects.result import PACK_KEY, read_pack_sections
 from cockpit.projects.stage import MAP_LABEL
 
 
@@ -39,10 +41,12 @@ def read_projects(descriptors_dir, bd_bin="bd", timeout=20, clones_dir="", rig_r
         if MAP_LABEL in (bead.get("labels") or []) and bead.get("status") != "closed"
     }
     promotion_results = read_promotion_results(descriptors, beads, rig_repos, clones_dir, git_bin=git_bin)
+    pack_reads = read_dossier_pages(beads)
     projects, sans_projet = build_projects(
-        descriptors, beads, children_by_map_id, promotion_results=promotion_results
+        descriptors, beads, children_by_map_id, promotion_results=promotion_results, pack_reads=pack_reads
     )
-    historique_projects, _ = build_historique_par_projet(descriptors, beads, promotion_results)
+    historique_projects, _ = build_historique_par_projet(descriptors, beads, promotion_results,
+                                                         pack_reads=pack_reads)
     value = to_value(
         projects,
         sans_projet,
@@ -52,6 +56,25 @@ def read_projects(descriptors_dir, bd_bin="bd", timeout=20, clones_dir="", rig_r
     # spec .47: a closed chantier with a ticket not merged, for the health zone.
     value["anomalies"] = convoy_closed_with_unmerged_child(beads)
     return value
+
+
+def read_dossier_pages(beads):
+    """The rubrics of the dossier page of each convoy that records one
+    (``gc.flow.evidence_pack``, its ``path``): ``{convoy_id: rubrics, or
+    None when the page cannot be read}`` (A1,
+    :func:`cockpit.projects.result.read_pack_sections`)."""
+    pages = {}
+    for bead in beads:
+        raw = (bead.get("metadata") or {}).get(PACK_KEY)
+        if not raw:
+            continue
+        try:
+            record = json.loads(raw) if isinstance(raw, str) else raw
+        except ValueError:
+            record = None
+        path = record.get("path") if isinstance(record, dict) else None
+        pages[bead["id"]] = read_pack_sections(path) if isinstance(path, str) and path else None
+    return pages
 
 
 def to_value(projects, sans_projet, historique=None, hors_chantier=None):

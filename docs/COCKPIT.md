@@ -285,16 +285,33 @@ the read model, never from the frozen page:
   there.
   A supervisor or tracker reading that is no longer current keeps the
   last values under « Lecture périmée · état actuel inconnu. »
-- The result open is the record of a result to judge a bead carries
-  under `gc.result_dossier`; without one, the first request and the way
-  to its detail. The panels of a result in its other states (its dossier,
-  its follow-up, a decision and its options) are T02S's. A project's card
-  reads its current chantier's `gc.project_card` (stage, figures, release
-  line) when the tracker holds one, its computed stage otherwise. The
-  record's resources are listed together; its reports (`reports`, « Compte
-  rendu long ») unfold after them. No door is wired to Essai, Avis or a
-  resource that opens on this destination: they are drawn unavailable and
-  the panel says so; nothing shows a command done that no door recorded.
+- The result open is the result of a chantier as the records of the D01
+  flow give it (A1, af-c662qx; `projects/result.py`, below): the first one
+  to judge, else the first active one, else the last one ended; without
+  one, the first request and the way to its detail. No record a
+  demonstration dataset writes (`gc.result_dossier`) is read. A result to
+  judge (to judge, its dossier outdated, its trial down) shows the title
+  of its request of acceptance, the title of its Spec, then, above its bar,
+  its dossier: the two parts that open its page, « Ce qui reste à
+  vérifier » -- for the Factory's own project (« Usine »), the recette of
+  the cockpit first, each proof said present or missing (a verified
+  restart is the stop driver's `essai_reussi`; the alert and the days of
+  real use have no source and are said missing), then the rubric « Ce qui
+  n'a PAS été vérifié » of its dossier page, or that the page could not be
+  read --, its other rubrics, « Version et sources » (the version, the
+  fingerprint and the Spec the records give, when the page leaves it
+  out), and its reports (rubrics named « Compte rendu … »). An outdated
+  dossier or a trial down is said above it. A result judged shows « Suivi
+  du résultat »: its issue, and under « Historique et preuves » when it
+  was ready, when the answer was recorded, the proof of the merge (« Fusion
+  confirmée · résultat jugé … → commit fusionné … ») or « Aucune preuve de
+  fusion à ce stade. », the reason of an abandon. A project's card says its
+  current chantier -- its last one ended when none is active -- at the
+  issue of its result when it has one, else at the stage of its
+  `gc.project_card`, else at its computed stage. No door is wired to
+  Essai, Avis or a resource that opens on this destination (A2): they are
+  drawn unavailable and the panel says so; nothing shows a command done
+  that no door recorded.
 - The zones of variant D that no destination of Panorama holds yet -- the
   inbox with its actions, the projects with their chantiers, the stop,
   the access and the health zones -- are kept, whole and working, folded
@@ -310,7 +327,36 @@ font-family and line-height, and the tokens of the page, the values
 written in the cases (an outline of anchors per state, read from the
 frozen pages); the cards of « Derniers runs », read in the document of
 their frame; a focus a person sees (drawn at 3:1 at least) and the local
-scroll kept. The 14 result states are T02S's.
+scroll kept. `home-result-states-test.py`, `home-d01-records-test.py` and
+`home-recette-test.py` (A1) hold the result states, the records of the
+D01 commands read back on the home and the project page, and the recette.
+
+**The result of a chantier** (`projects/result.py`, A1). `read_result`
+reads, on a convoy that carries the new-flow mark, `gc.flow.delivered`,
+`gc.flow.evidence_pack`, `gc.flow.acceptance`, `gc.flow.judgement`,
+`gc.flow.promotion` and `gc.flow.closed` (`docs/CONVOY_STATE.md`), and
+gives one issue the home, the project page, its chantiers and its history
+all say:
+
+| The records say | Issue |
+|---|---|
+| one of them cannot be read | Inconnu |
+| closed as accepted, a promotion recorded | Fusionné (history: the commit judged → the commit merged) |
+| closed as accepted, no promotion; abandoned with a promotion; a promotion with no acceptance in force | Incohérence |
+| an answer « abandonné », or closed as abandoned | Abandonné (nothing merged, its reason) |
+| an acceptance in force and a promotion, the convoy open | Fusion en cours |
+| an acceptance voided (conflict, red check) | Acceptation annulée |
+| an acceptance in force | Accepté (the merge pending) |
+| « constats rendus » | Constats rendus |
+| a result delivered and no answer since: the request of the acceptance says the trial failed | Essai en panne |
+| the same, the dossier of another version or fingerprint | Dossier périmé |
+| the same, otherwise | À juger -- « à toi de jouer », never « bloqué » for its closed tickets |
+| none of these yet | its tickets give its stage; a convoy of the new flow whose tickets are all closed is not « bloqué » |
+
+A merged or abandoned closed convoy goes to the history of its project. A
+closed ticket is never counted as a merge of the result. The page of the
+dossier is read by `projects/source.py` from the `path` of its record
+(`read_pack_sections`: one rubric per `<section id="rubrique-N">`).
 
 ## Home screen, as the validated prototype shows it (af-mjfvwx)
 
@@ -1001,7 +1047,8 @@ ways:
 |---|---|---|
 | the state it is: `ui.id` (Panorama), `state` (Runs) | the supervisor's city bears that name | `GET /api/status`, `gc.value.city` |
 | « Vue d’ensemble »: « Décisions à prendre N », then N lines under « Ce qui t’attend », each with « projet · nature » | one open bead per line that asks the operator (title, project, nature, the fixed time of the dataset) | `beads.value`; `GET /api/requests` |
-| « Vue d’ensemble »: the dossier open under those lines (« projet · sujet », its title, what it shows), and the state of the result when `ui.state` names one (`ready`, `findings`, `merged`, `abandoned`…) | one bead `synthetic-dossier` under the title of the dossier, of that project; its lines; with no state of a result, its record `gc.result_dossier`, a result to judge (its resources: label, detail and « ↗ » open, a label alone unfolds, and says open its lines in `folded`; a part named « Compte rendu … » is its report, `reports`) -- Essai and Avis are the cockpit's own; with one, `synthetic.result_state` alone (the panels of a result in its states are T02S's) | `beads.value`; `GET /` |
+| « Vue d’ensemble »: the dossier open under those lines (« projet · sujet », its title, what it shows), and the state of the result when `ui.state` names one (`ready`, `dossier`, `outdated`, `outage`, `accepted`, `merging`, `merged`, `abandoned`, `findings`, `returned`, `repairing`, `conflict`; none is a result to judge), and what the result says of itself (`result`: its commits, the times of its records, the words of the answer, the reason of an abandon -- required for `abandoned` -- unsaid, those of the reference) | the records the D01 commands write on the convoy of its chantier (A1): the new-flow mark, the result delivered, its dossier, the request of the acceptance and, by state, the answer, the promotion, the closing; the request of its project the page lists becomes the convoy's while the result waits for a judgement, and is gone once answered; the title of its Spec is what the dossier first says; the page of its dossier, one rubric per part that unfolds (« Ce qui reste à vérifier » as « Ce qui n'a PAS été vérifié »), its lines in `folded`, written in the home of the launch (`SyntheticCity.files`) -- the parts that open and the bar are the cockpit's own. `request` and `confirmation` open a decision: their dossier stays one open bead `synthetic-dossier` | `beads.value`; `GET /` |
+| a tracker the commands of the flow wrote (`tracker`: `{"beads": {id: bead}}`, as the fake `gc` of `tests/fixtures/convoy-state` holds it), with `ui.id` | its beads, as they are; one declared project per `gc.project_id` they name, under that key | `beads.value`; `GET /`; `GET /projet/<key>` |
 | « Vue d’ensemble »: the cards under « Projets » (name, « chantier · étape », then the figures of the card) | one declared project per name; one open chantier per project, under its title, whose description is the stage and the other lines of the card, and whose `gc.project_card` is the stage, the figures and, last, the line of the release | `projets.value.projects`; `GET /api/projects`; `beads.value`; `GET /` |
 | « Vue d’ensemble »: the four indicators | one bead kept as said per indicator (value, period) | `beads.value` |
 | a drawing of the screen: `drawn` under « Activité sur 7 jours », one line a day and a series | one bead kept as said under that heading, whose description is those lines | `beads.value`; `GET /` |

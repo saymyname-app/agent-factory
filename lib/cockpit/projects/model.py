@@ -65,6 +65,18 @@ class Chantier:
     # they agree on one: places a convoy that carries no project key
     # (spec "Données de projet": "projet déduit du rig").
     rig: str = None
+    # The result of a convoy of the new flow, as its D01 records give it
+    # (:func:`cockpit.projects.result.read_result`, plain data), or None;
+    # ``issue`` is the stage every screen says of it (« À juger »,
+    # « Fusionné »…), in place of ``stage``.
+    resultat: dict = None
+    issue: str = None
+
+    @property
+    def libelle(self):
+        """The stage a screen says of this chantier: its result's when it
+        has one, else its stage."""
+        return self.issue or self.stage
 
     @property
     def stage_index(self):

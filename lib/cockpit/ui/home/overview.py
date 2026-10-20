@@ -22,14 +22,18 @@ The states:
   reading of the supervisor or the tracker that is no longer current keeps
   the last values under a notice that says so.
 
-The result open is the record of a result to judge a bead carries under
-``gc.result_dossier``; without one, the first request. The panels of a
-result in its other states (its dossier, its follow-up, a decision) are
-T02S's. A part of it that unfolds says, open, the lines its record gives it
-(a report, « Compte rendu long », its findings), or that the source gave
-none. Its commands are not wired to a door here: Essai, Avis and the
-resources that open are drawn unavailable, and the panel says so -- nothing
-on the page shows a command done that no door recorded.
+The result open is the result of a chantier, as the records of the D01 flow
+give it (A1, af-c662qx; :mod:`cockpit.projects.result`, read with the
+projects): the one to judge first, else the latest of the others; without
+one, the first request. A result to judge shows what it is, its dossier --
+the rubrics of its dossier page, each a part that unfolds, « Ce qui n'a PAS
+été vérifié » as « Ce qui reste à vérifier » with the recette of the cockpit
+for the Factory's own project, its reports (« Compte rendu … ») -- above its
+bar; a result judged shows its follow-up: what was answered, the proof of
+the merge or that there is none, the reason of an abandon. Essai and Avis
+are not wired to a door here (A2): they are drawn unavailable, and the panel
+says so -- nothing on the page shows a command done that no door recorded.
+No record a demonstration dataset writes (``gc.result_dossier``) is read.
 
 Every part carries the anchor of the reference (``data-anchor``), numbered
 by the :class:`~cockpit.ui.panorama.shell.Anchors` of the page as the frozen
@@ -42,6 +46,8 @@ from datetime import datetime
 
 from cockpit.core.freshness import FRESH
 from cockpit.core.readmodel import PARIS
+from cockpit.projects import result as result_mod
+from cockpit.projects.model import Chantier
 from cockpit.projects.source import from_value as projects_from_value
 from cockpit.runs.derive import runs_from_beads
 from cockpit.ui.runs.page import duration
@@ -49,7 +55,6 @@ from cockpit.ui.panorama.shell import Anchors, anchor_slug, open_button
 from cockpit.ui.projects.project_page import project_page_url
 
 LOADING, ERROR, EMPTY, CONTENT = "loading", "error", "empty", "content"
-RESULT_DOSSIER = "gc.result_dossier"
 PROJECT_CARD = "gc.project_card"
 RUN_CARD = "gc.run_card"
 SAID = "said"
@@ -69,14 +74,43 @@ CHART_SERIES = (("PR fusionnées", "var(--pn-series-1)", ""), ("Tickets livrés"
 ACTIVITY = "Activité sur 7 jours"
 UNWIRED_RESULT = "Essai et Avis ne sont pas encore raccordés à cette vue : rien n’est lancé ni préparé d’ici."
 NOT_GIVEN = "Contenu non fourni par la source."
+# The parts of a result to judge the cockpit draws whatever its dossier: the
+# two that open the page of the dossier, the one that says what is left to
+# verify, the one that gives its version and its sources.
+OPENING = (("Ce qui a été livré", "Changements et version à essayer"),
+           ("Vérifications et preuves", "Parcours, tests et relecture"))
+TO_VERIFY = "Ce qui reste à vérifier"
+VERSION = "Version et sources"
+DOSSIER_UNREAD = "Dossier non lu : sa page est introuvable ou illisible."
+FOLLOW_UP = "Suivi du résultat"
+HISTORY = "Historique et preuves"
+# The project whose results carry the recette of the cockpit (Spec
+# af-fgcw0d, Testing Decisions 6): the Factory itself.
+FACTORY_PROJECT = "Usine"
+# The proofs of the recette, each said with what the cockpit holds of it.
+RECETTE_STOP_DONE = "Arrêt et reprise : une reprise vérifiée est enregistrée après un essai réel."
+RECETTE_STOP_MISSING = "Arrêt et reprise vérifiés : preuve manquante, aucun essai réel réussi n’est enregistré."
+RECETTE_ALERT_MISSING = ("Alerte d’une usine muette : preuve manquante, aucune alerte d’essai n’est enregistrée "
+                         "par le cockpit.")
+RECETTE_DAYS_MISSING = ("Sept jours consécutifs d’usage réel : preuve manquante, le cockpit ne compte pas encore "
+                        "les jours d’usage.")
+
+
+def recette(stop_trial_passed):
+    """The lines of the recette of the cockpit: each proof it needs, said
+    present when the cockpit holds it, missing otherwise -- never said
+    acquired without a record."""
+    return [RECETTE_STOP_DONE if stop_trial_passed else RECETTE_STOP_MISSING, RECETTE_ALERT_MISSING,
+            RECETTE_DAYS_MISSING]
 LEGACY_SUMMARY = "Détails techniques et actions"
 
 
-def overview_view(snapshot, requests):
+def overview_view(snapshot, requests, stop_trial_passed=False):
     """What the destination shows: ``state`` (see the module), ``stale``,
     ``checked`` (HH:MM of the reading shown), ``requests``, ``indicators``,
-    ``activity``, ``runs`` (the cards of the last runs), ``dossier``,
-    ``projects``."""
+    ``activity``, ``runs`` (the cards of the last runs), ``dossier`` (the
+    result open), ``projects``. ``stop_trial_passed``: whether a real stop
+    and restart reached a verified restart (the recette)."""
     beads_row = snapshot.get("beads")
     view = {"state": CONTENT, "stale": False, "checked": None, "requests": [], "indicators": [],
             "activity": {}, "runs": [], "dossier": None, "projects": []}
@@ -93,7 +127,7 @@ def overview_view(snapshot, requests):
          "origine": (r.texte_origine or {}).get("quoi")}
         for r in requests
     ]
-    view["dossier"] = next(filter(None, (_record(bead, RESULT_DOSSIER) for bead in beads)), None)
+    view["dossier"] = _result_open(snapshot.get("projets"), recette(stop_trial_passed))
     said = {bead.get("title"): _lines(bead) for bead in beads if SAID in (bead.get("labels") or [])}
     view["indicators"] = [(DECISIONS, str(len(requests)), "Maintenant · demandes ouvertes", "#pn-inbox")] + [
         (label, *(said[label] + ["", ""])[:2], "/analyses") if said.get(label)
@@ -149,10 +183,77 @@ def _record(bead, key):
     return raw if isinstance(raw, dict) else None
 
 
+def _historique(value, project_id):
+    """The chantiers of the historique of a project, the last one first."""
+    rows = ((value or {}).get("historique") or {}).get(project_id) or []
+    return [Chantier(**raw) for raw in reversed(rows)]
+
+
+def _result_open(row, lines_of_recette):
+    """The result the destination opens: of the chantiers whose D01
+    records give a result, the first to judge, else the first active one,
+    else the last one ended; as the panel draws it, or None."""
+    if row is None or row["value"] is None:
+        return None
+    projects, _ = projects_from_value(row["value"])
+    found = [(project, chantier) for project in projects
+             for chantier in project.chantiers + _historique(row["value"], project.project_id) if chantier.resultat]
+    ranked = sorted(found, key=lambda pair: (pair[1].resultat["issue"] not in result_mod.JUDGED_NOW,
+                                             pair[1].termine))
+    if not ranked:
+        return None
+    project, chantier = ranked[0]
+    return _result_view(project, chantier,
+                        lines_of_recette if project.display_name == FACTORY_PROJECT else [])
+
+
+def _result_view(project, chantier, lines_of_recette):
+    """What the panel of the result says: what it is about, its issue, its
+    title and summary, its dossier (its parts above the bar) or its
+    follow-up."""
+    resultat = chantier.resultat
+    issue = resultat["issue"]
+    view = {"about": "%s · %s" % (project.display_name, chantier.titre), "issue": issue,
+            "label": resultat["label"], "sentence": resultat["sentence"], "history": resultat["history"],
+            "judged_now": issue in result_mod.JUDGED_NOW}
+    if not view["judged_now"]:
+        view.update(title=FOLLOW_UP, summary=resultat["sentence"], resources=[], reports=[])
+        return view
+    view["title"] = resultat["title"] or "Le résultat attend ton avis"
+    view["summary"] = resultat["summary"] or ""
+    to_verify = list(lines_of_recette) + (resultat["unverified"] if resultat["pack_read"] else [DOSSIER_UNREAD])
+    resources = [{"label": label, "detail": detail, "opens": True} for label, detail in OPENING]
+    resources.append({"label": TO_VERIFY, "opens": False, "said": to_verify})
+    # « Version et sources » the dossier leaves empty, or does not have, is
+    # given by the records: the version delivered and its dossier.
+    rubrics = [part for part in resultat.get("rubrics") or [] if part["label"] != VERSION or part["said"]]
+    resources += [{"label": part["label"], "opens": False, "said": part["said"]} for part in rubrics]
+    if not any(part["label"] == VERSION for part in rubrics):
+        resources.append({"label": VERSION, "opens": False, "said": _version(resultat)})
+    view["resources"] = resources
+    view["reports"] = [{"label": part["label"], "opens": False, "said": part["said"]} for part in resultat["reports"]]
+    return view
+
+
+def _version(resultat):
+    """« Version et sources » of a result its dossier does not give: the
+    version delivered, the fingerprint of its dossier, its Spec."""
+    lines = []
+    if resultat["commit"]:
+        lines.append("Version livrée : commit %s." % str(resultat["commit"])[:7])
+    if resultat["pack"]:
+        lines.append("Empreinte du dossier : %s." % resultat["pack"])
+    if resultat["spec"]:
+        lines.append("Spec : %s." % resultat["spec"])
+    return lines
+
+
 def _projects(row, beads, requests):
     """One card per declared project, those something waits for first, in
-    the order of what waits: its name, its current chantier and its stage,
-    its figures and the line of its release when the tracker holds them."""
+    the order of what waits: its name, its current chantier and its stage
+    -- the issue of its result when the D01 records give one --, its
+    figures and the line of its release when the tracker holds them. A
+    project with no active chantier shows its last one ended."""
     if row is None or row["value"] is None:
         return []
     projects, _ = projects_from_value(row["value"])
@@ -161,12 +262,13 @@ def _projects(row, beads, requests):
     order = {name: waiting.index(name) if name in waiting else len(waiting) for name in waiting}
     out = []
     for project in sorted(projects, key=lambda p: order.get(p.display_name, len(waiting))):
-        current = next((c for c in project.chantiers if not c.termine), None)
+        current = next((c for c in project.chantiers if not c.termine), None) or next(
+            iter(_historique(row["value"], project.project_id)), None)
         card = (cards.get(current.id) if current else None) or {}
         out.append({
             "id": project.project_id,
             "name": project.display_name,
-            "chantier": "%s · %s" % (current.titre, card.get("stage") or current.stage) if current
+            "chantier": "%s · %s" % (current.titre, current.issue or card.get("stage") or current.stage) if current
             else "Aucun chantier en cours",
             "figures": [str(figure) for figure in card.get("figures") or []],
             "release": card.get("release"),
@@ -335,24 +437,35 @@ def _n(number):
 
 
 def _render_result(view, anchors):
-    """The panel of the result open under « Ce qui t’attend »."""
-    record = view["dossier"]
-    if record is None:
+    """The panel of the result open under « Ce qui t’attend »: a result to
+    judge, with its dossier above its bar; a result judged, with its
+    follow-up; without one, the first request."""
+    result = view["dossier"]
+    if result is None:
         return _render_request_panel(view["requests"], anchors)
     panel = anchors("panel")
-    parts = ['<small %s>%s</small><h2 %s>%s</h2><p %s>%s</p>'
-             % (anchors("small"), _e(record.get("about") or ""), anchors("h2"), _e(record.get("title") or ""),
-                anchors("p"), _e(record.get("summary") or ""))]
+    parts = ['<small %s>%s</small><h2 %s>%s</h2>'
+             % (anchors("small"), _e(result["about"]), anchors("h2"), _e(result["title"]))]
+    if result["summary"]:
+        parts.append("<p %s>%s</p>" % (anchors("p"), _e(result["summary"])))
+    if not result["judged_now"]:
+        parts.append(_render_folded({"label": HISTORY, "said": result["history"]}, anchors))
+        return '<article class="pn-panel pn-result" data-issue="%s" %s>%s</article>' % (
+            _e(result["issue"]), panel, "".join(parts))
+    if result["issue"] != result_mod.TO_JUDGE:
+        # Outdated, or its trial down: said before anything of the dossier.
+        parts.append('<p class="pn-result-issue" role="status">%s</p>' % _e(result["sentence"]))
     resource_list = anchors("resource-list")
     parts.append('<div class="pn-resources" %s>%s</div>'
-                 % (resource_list, "".join(_render_resource(r, anchors) for r in record.get("resources") or [])))
-    parts.append("".join(_render_folded(report, anchors) for report in record.get("reports") or []))
+                 % (resource_list, "".join(_render_resource(r, anchors) for r in result["resources"])))
+    parts.append("".join(_render_folded(report, anchors) for report in result["reports"]))
     dock = anchors("actions-possibles")
     parts.append(
         '<div class="pn-dock" role="group" aria-label="Actions possibles" %s>'
         '<a class="pn-button" role="link" aria-disabled="true" tabindex="-1" %s>Essai ↗</a><button type="button" disabled %s>Avis</button>'
         '<p class="pn-unwired">%s</p></div>' % (dock, anchors("button"), anchors("button"), UNWIRED_RESULT))
-    return '<article class="pn-panel pn-result" %s>%s</article>' % (panel, "".join(parts))
+    return '<article class="pn-panel pn-result" data-issue="%s" %s>%s</article>' % (
+        _e(result["issue"]), panel, "".join(parts))
 
 
 def _render_resource(resource, anchors):
@@ -544,6 +657,8 @@ CSS = """
 .pn-origin{display:block;margin-bottom:8px;font-size:14px;overflow-wrap:anywhere}
 .pn-result h2{margin-top:12px;overflow-wrap:anywhere}
 .pn-result>p{margin:0 0 8px}
+.pn-result-issue{padding:10px 12px;border:1px solid var(--line);border-left:3px solid var(--pn-warn-text);
+  border-radius:6px;color:var(--ink);overflow-wrap:anywhere}
 .pn-resources{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:22px}
 .pn-overview .pn-resource{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;width:100%;
   min-height:95px;padding:15px;text-align:left;border-color:var(--line)}

@@ -21,6 +21,7 @@ check on ``convoy_chantiers`` (git facts injected via ``promotion_results``
 the historique (spec .46).
 """
 from cockpit.projects import etat as etat_mod
+from cockpit.projects import result as result_mod
 from cockpit.projects.model import ACCEPTE, CADRAGE, GRAPHE, LIVRAISON, LIVRE, PROMU, SPEC, Chantier
 
 MAP_LABEL = "wayfinder:map"
@@ -219,7 +220,59 @@ def _is_delivery_ticket(bead, digest):
     return (bead.get("metadata") or {}).get(GRAPH_DIGEST_KEY) == digest
 
 
-def _convoy_chantiers_all(beads, promotion_results=None):
+# The stage of a chantier whose result the D01 records give
+# (:mod:`cockpit.projects.result`): where it sits among the stages, and the
+# issues that end it (it then goes to the historique).
+RESULT_STAGES = {
+    result_mod.TO_JUDGE: LIVRE, result_mod.OUTDATED: LIVRE, result_mod.OUTAGE: LIVRE,
+    result_mod.RETURNED: LIVRAISON, result_mod.VOIDED: LIVRAISON,
+    result_mod.ACCEPTED: ACCEPTE, result_mod.MERGING: ACCEPTE, result_mod.MERGED: ACCEPTE,
+    result_mod.ABANDONED: LIVRE, result_mod.UNKNOWN: LIVRE, result_mod.INCONSISTENT: LIVRE,
+}
+# The issues whose last line of history is said with the stage: the proof of
+# the merge, or that there is none yet.
+RESULT_PROOF_ISSUES = (result_mod.ACCEPTED, result_mod.MERGING, result_mod.MERGED)
+
+
+def _result_chantier(bead, tickets, resultat, rigs):
+    """The chantier of a convoy whose result its D01 records give: its
+    stage, and what every screen says of it -- never « bloqué » for its
+    closed tickets, never merged for them."""
+    issue = resultat["issue"]
+    bead_id = bead.get("id") or ""
+    detail = "%s · %s" % (resultat["label"], resultat["sentence"])
+    if issue in RESULT_PROOF_ISSUES and resultat["history"]:
+        detail += " %s" % resultat["history"][-1]
+    if issue == result_mod.ABANDONED:
+        detail += " Raison : %s" % (resultat["reason"] or "non enregistrée")
+    if issue in result_mod.JUDGED_NOW:
+        # The result waits for Benjamin's judgement: his turn, even while
+        # the convoy carries the request of the acceptance.
+        etat_val, cible = etat_mod.resolve(a_toi_de_jouer=True, a_toi_de_jouer_cible=bead_id)
+    else:
+        etat_val, cible = _etat_for(bead, extra_beads=tickets)
+    ended = not resultat["open"] and issue in (result_mod.MERGED, result_mod.ABANDONED)
+    metadata = bead.get("metadata") or {}
+    return Chantier(
+        id=bead_id,
+        titre=_title(bead),
+        projet=_project_of(bead),
+        stage=RESULT_STAGES[issue],
+        detail=detail,
+        etat=etat_val,
+        etat_cible=cible,
+        promu_masque=True,
+        termine=ended,
+        abandonne=ended and issue == result_mod.ABANDONED,
+        raison_abandon=resultat["reason"] if issue == result_mod.ABANDONED else None,
+        planning_run_target=metadata.get("planning_run_target"),
+        rig=rigs.pop() if len(rigs) == 1 else None,
+        resultat=resultat,
+        issue=resultat["label"],
+    )
+
+
+def _convoy_chantiers_all(beads, promotion_results=None, pack_reads=None):
     """Étapes 4 à 7 -- Livraison, Livré, Accepté, Promu. ``beads`` must
     include closed beads (:func:`cockpit.projects.beads.read_convoy_beads`)
     or a Livré convoy and any already-merged ticket under an open one are
@@ -230,10 +283,19 @@ def _convoy_chantiers_all(beads, promotion_results=None):
     project's rig declaring no promotion branch at all is the common case,
     spec .41, and the safe default when a read was never attempted).
 
+    ``pack_reads`` (A1): ``{convoy_id: rubrics of its dossier page, or
+    None}`` -- :func:`cockpit.projects.result.read_pack_sections`, read by
+    :mod:`cockpit.projects.source` for each convoy whose dossier is
+    recorded. A convoy of the new flow whose D01 records give a result is
+    that result (:func:`_result_chantier`); before them, its tickets give
+    its stage.
+
     Returns every convoy chantier regardless of ``termine`` -- callers
     (:func:`convoy_chantiers`, :func:`convoy_chantiers_historique`)
     partition on that flag."""
     promotion_results = promotion_results or {}
+    pack_reads = pack_reads or {}
+    by_id = {b.get("id"): b for b in beads or [] if isinstance(b, dict) and b.get("id")}
     out = []
     for bead in beads or []:
         if not isinstance(bead, dict) or bead.get("issue_type") != CONVOY_ISSUE_TYPE:
@@ -256,6 +318,12 @@ def _convoy_chantiers_all(beads, promotion_results=None):
         )
         en_cours = sum(1 for t in tickets if t.get("status") == "in_progress") - en_pr
         pret = sum(1 for t in tickets if t.get("status") == "open")
+        metadata = bead.get("metadata") or {}
+        spec = by_id.get(metadata.get(result_mod.SPEC_KEY)) or {}
+        resultat = result_mod.read_result(bead, spec.get("title"), pack_reads.get(bead_id))
+        if resultat is not None:
+            out.append(_result_chantier(bead, tickets, resultat, rigs))
+            continue
 
         promu_masque = False
         promu_inconnu = False
@@ -268,9 +336,12 @@ def _convoy_chantiers_all(beads, promotion_results=None):
             # PR" -- the silence-is-not-a-blocage carve-out means an empty
             # convoy or one where every ticket is already closed (merged)
             # is bloqué, never a convoy that simply has one ticket moving.
-            etat_val, cible = _etat_for(bead, extra_beads=tickets, bloque_extra=(pret + en_cours + en_pr == 0))
+            # A convoy of the new flow is not: once its tickets are closed,
+            # the end of its Spec runs, then its result is delivered (A1,
+            # user story 44).
+            etat_val, cible = _etat_for(bead, extra_beads=tickets, bloque_extra=(
+                pret + en_cours + en_pr == 0 and not metadata.get(NEW_FLOW_MARK_KEY)))
         else:
-            metadata = bead.get("metadata") or {}
             accepted = _accepted(metadata)
             note = metadata.get(ACCEPTANCE_NOTE_KEY)
             a_regarder = note.strip() if isinstance(note, str) else ""
@@ -332,17 +403,17 @@ def _convoy_chantiers_all(beads, promotion_results=None):
     return out
 
 
-def convoy_chantiers(beads, promotion_results=None):
+def convoy_chantiers(beads, promotion_results=None, pack_reads=None):
     """The active convoy chantiers (not yet at their last applicable
     stage) -- what the "Projets" section shows (spec .46: "l'accueil ne
     montre que l'actif")."""
-    return [c for c in _convoy_chantiers_all(beads, promotion_results) if not c.termine]
+    return [c for c in _convoy_chantiers_all(beads, promotion_results, pack_reads) if not c.termine]
 
 
-def convoy_chantiers_historique(beads, promotion_results=None):
+def convoy_chantiers_historique(beads, promotion_results=None, pack_reads=None):
     """Terminé convoy chantiers (spec .46) -- Accepté with Promu masked,
-    or Promu itself."""
-    return [c for c in _convoy_chantiers_all(beads, promotion_results) if c.termine]
+    or Promu itself, and a result merged or abandoned (A1)."""
+    return [c for c in _convoy_chantiers_all(beads, promotion_results, pack_reads) if c.termine]
 
 
 def abandoned_chantiers(beads):
@@ -385,7 +456,7 @@ def abandoned_chantiers(beads):
     return out
 
 
-def build_chantiers(beads, children_by_map_id=None, promotion_results=None):
+def build_chantiers(beads, children_by_map_id=None, promotion_results=None, pack_reads=None):
     """Every active chantier (Cadrage à Promu, excluding historique), in
     no particular order -- :mod:`cockpit.projects.builder` groups and
     sorts them per project."""
@@ -393,11 +464,11 @@ def build_chantiers(beads, children_by_map_id=None, promotion_results=None):
         cadrage_chantiers(beads, children_by_map_id)
         + spec_chantiers(beads)
         + graphe_chantiers(beads)
-        + convoy_chantiers(beads, promotion_results)
+        + convoy_chantiers(beads, promotion_results, pack_reads)
     )
 
 
-def build_historique(beads, promotion_results=None):
+def build_historique(beads, promotion_results=None, pack_reads=None):
     """Every historique chantier (spec .46): terminé convoy chantiers plus
     abandonné cadrage/spec/graphe ones."""
-    return convoy_chantiers_historique(beads, promotion_results) + abandoned_chantiers(beads)
+    return convoy_chantiers_historique(beads, promotion_results, pack_reads) + abandoned_chantiers(beads)
