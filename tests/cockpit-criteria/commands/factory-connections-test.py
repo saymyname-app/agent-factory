@@ -8,7 +8,7 @@ factory-machine.
 Each case launches the real cockpit with the launcher of the profile,
 bin/project-launch, on its dataset -- or on a commit of the tree where that
 dataset says other figures than the prototype's -- and reads the page GET
-/usine as a headless Chromium renders it (factory_page.py).
+/usine as a headless Chromium renders it (usine_page.py).
 
 False if a value no longer current looks current (no « vu il y a … »), if an
 unknown becomes a failure or a success (a latency, « 0 », « échec »), or if
@@ -26,7 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from factory_page import (  # noqa: E402
+from usine_page import (  # noqa: E402
     LATENCY, PAGE, TIME, UNKNOWN_SAYING, LaunchTree, connection, connection_rows, measure, section_titled,
 )
 from home_destination import measure_until  # noqa: E402

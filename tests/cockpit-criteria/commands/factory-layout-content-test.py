@@ -9,7 +9,7 @@ themselves are in factory-roles-test.py.
 Each case launches the real cockpit with the launcher of the profile,
 bin/project-launch, on its dataset, and has a headless Chromium render GET
 /usine in two frames, 1440 and 390 px wide, once with the dark and once with
-the light colour scheme preferred (factory_page.assert_usable). The roles
+the light colour scheme preferred (usine_page.assert_usable). The roles
 come from the Factory's configuration on every dataset, whatever its
 sources answer.
 
@@ -27,7 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from factory_page import LaunchTree, assert_usable  # noqa: E402
+from usine_page import LaunchTree, assert_usable  # noqa: E402
 
 
 class FactoryLayoutContent(unittest.TestCase):

@@ -11,7 +11,7 @@ other names and figures than the prototype's, or where the Factory's own
 configuration says other ones (config/provider-policy.json,
 config/delivery-flow.json, city.toml) -- and reads the page GET /usine as a
 headless Chromium renders it, before and after a role of the drawing was
-selected, by a click or by the keyboard (factory_page.py). The detail of
+selected, by a click or by the keyboard (usine_page.py). The detail of
 the role selected is the part that holds its heading (`<h3>`).
 
 The configuration the cases expect is that of the Factory's files at the
@@ -35,7 +35,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from factory_page import (  # noqa: E402
+from usine_page import (  # noqa: E402
     GPT_5_6, OPUS_5_5, PAGE, LaunchTree, anchors_by_name, measure, reconfigure, replaced, says, section_titled,
 )
 

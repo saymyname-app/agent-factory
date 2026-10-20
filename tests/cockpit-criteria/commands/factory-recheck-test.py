@@ -6,7 +6,7 @@ button « Revérifier » of a section of the destination Usine.
 Each case launches the real cockpit with the launcher of the profile,
 bin/project-launch, on the dataset health-content, reads the page GET /usine
 as a headless Chromium renders it, activates the button « Revérifier… » that
-one section holds, and reads the page again (factory_page.py). A section
+one section holds, and reads the page again (usine_page.py). A section
 says the time it was read to the second: a reading done again a few seconds
 later is seen there.
 
@@ -23,7 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from factory_page import (  # noqa: E402
+from usine_page import (  # noqa: E402
     PAGE, TIME_TO_THE_SECOND, LaunchTree, anchors_by_name, measure, recheck_of, section_titled, sections,
 )
 
