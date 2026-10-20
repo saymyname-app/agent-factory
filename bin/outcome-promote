@@ -26,6 +26,10 @@
                  Spec again and Benjamin judges it again.
   « abandonné »  Nothing is merged: the convoy is closed with the reason;
                  the integration branch stays where it is, as a source.
+                 Abandoned during delivery, each ticket not closed yet is
+                 first withdrawn: its gate record `withdrawn`, then its
+                 closing with the reason in its notes. No branch and no
+                 bead is deleted.
 
 No merge into the protected branch without an « accepté » recorded for the
 tip of the integration branch: `run` refuses, and so does a tip that moved
@@ -384,6 +388,29 @@ def cmd_check(args: argparse.Namespace) -> int:
     return 0
 
 
+def withdraw_open_tickets(convoy: Convoy, answer: dict[str, Any]) -> list[str]:
+    """An abandoned convoy closes with no ticket left to start: each ticket
+    neither closed nor withdrawn gets the gate record `withdrawn`
+    (bin/convoy-state), then is closed with the reason in its notes, as
+    bin/ticket-graph-publish withdraws one. Its branch and its bead stay.
+    A run interrupted between the two is taken up by the next one."""
+    withdrawn: list[str] = []
+    for ticket in convoy.tickets:
+        if ticket.get("status") == "closed":
+            continue
+        if "at" not in (ticket.get("gates") or {}).get("withdrawn", {}):
+            state_write("record-gate", convoy.id, ticket["id"], "--gate", "withdrawn")
+        proc = run([os.environ.get("GC_BIN", "gc"), "bd", "update", ticket["id"], "--status", "closed", "--append-notes",
+                    f"WITHDRAWN by {PROGRAM} (convoi {convoy.id} abandonné par {answer['approver']}) : {answer['reason']}"])
+        if proc.returncode != 0:
+            raise Refusal(f"le ticket {ticket['id']} du convoi abandonné {convoy.id} n'a pas pu être fermé "
+                          f"({detail_of(proc)}) : le convoi reste ouvert, la prochaine passe reprend")
+        withdrawn.append(ticket["id"])
+    if withdrawn:
+        convoy.load()
+    return withdrawn
+
+
 def close(convoy: Convoy, base: dict[str, Any]) -> int:
     """Close the convoy on Benjamin's words. For an accepted Outcome, the
     two commits are first noted in its dossier and the evidence store of
@@ -433,7 +460,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             f"ni « accepté » ni « abandonné » ne tient sur le convoi {convoy.id} : rien n'est fusionné vers la branche "
             "protégée et rien n'est fermé sans la réponse de l'approbateur ; rien n'est écrit")
     if answer["response"] == "abandoned":
-        return close(convoy, {"promoted": False, "merged": None})
+        return close(convoy, {"promoted": False, "merged": None, "withdrawn": withdraw_open_tickets(convoy, answer)})
     if convoy.state.get("promotion"):
         return close(convoy, {"promoted": True, "merged": convoy.state["promotion"]["merged"], "resumed": True})
 

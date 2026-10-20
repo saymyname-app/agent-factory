@@ -40,7 +40,11 @@ acceptance:
                    never a repair.
                    Nothing closes; the Outcome is no longer Delivered; the
                    rounds of the end start again from zero.
-  abandonné        with a one-line reason (`--reason`).
+  abandonné        with a one-line reason (`--reason`). On a convoy that
+                   is neither Delivered nor carrying a « non conforme »
+                   request -- abandoned during delivery -- also with his
+                   words (`--words`); the tip of the integration branch is
+                   recorded, and the next pass withdraws the open tickets.
 
 `resolve-exception` records, on his words, that the Planning Exception of
 the last batch is resolved; until then the Outcome is not Delivered again.
@@ -266,6 +270,27 @@ class Convoy:
                 "rien n'est écrit")
         return delivered
 
+    def dossier(self) -> bool:
+        """Whether Benjamin judges a dossier on this convoy: its Delivered
+        Outcome, or the « non conforme » request of its stopped rounds."""
+        stop = self.state.get("end_stop")
+        return isinstance(self.state.get("delivered"), dict) \
+            or (isinstance(stop, dict) and isinstance(stop.get("request"), dict))
+
+    def integration_tip(self) -> str | None:
+        """The tip of the convoy's integration branch, on the remote when the
+        repository has one; None when the convoy has no integration branch."""
+        branch = (self.state.get("integration") or {}).get("branch")
+        if not branch:
+            return None
+        repo = str(self.repo())
+        run(["git", "-C", repo, "fetch", "--quiet", "origin", branch])
+        for ref in (f"refs/remotes/origin/{branch}", f"refs/heads/{branch}"):
+            proc = run(["git", "-C", repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"])
+            if proc.returncode == 0 and proc.stdout.strip():
+                return proc.stdout.strip()
+        return None
+
     def request_beads(self) -> list[str]:
         """Where a request waits for Benjamin on this convoy: its Acceptance
         Request, and the « non conforme » request of its stopped rounds."""
@@ -431,8 +456,18 @@ def cmd_record(args: argparse.Namespace) -> dict[str, Any]:
             raise Refusal(
                 "« abandonné » exige une raison d'une ligne (--reason) : absente, vide ou sur plusieurs lignes ; "
                 "rien n'est écrit")
+        in_flight: list[str] = []
+        if not convoy.dossier():
+            # Abandoned during delivery: his words, and the tip the
+            # integration branch keeps as a source (af-npz9v1).
+            if not args.words or not args.words.strip():
+                raise Refusal(
+                    f"le convoi {convoy.id} n'est ni Delivered ni porteur d'une demande « non conforme » : « abandonné » "
+                    "en cours de route s'enregistre avec les mots de Benjamin (--words), non vides ; rien n'est écrit")
+            tip = convoy.integration_tip()
+            in_flight = ["--words", args.words, *(("--commit", tip) if tip else ())]
         state_write("record-owner-answer", convoy.id, "--response", response, "--approver", approver,
-                    "--reason", args.reason.strip())
+                    "--reason", args.reason.strip(), *in_flight)
     else:
         name = f"« {RESPONSE_NAMES[response]} »"
         if not args.words or not args.words.strip():
@@ -452,7 +487,7 @@ def cmd_record(args: argparse.Namespace) -> dict[str, Any]:
                                for number, finding in enumerate(last["findings"], start=1)]
         written["next"] = ("Les repairs sont publiés et livrés par la prochaine passe de l'ordre ; la porte de fin de "
                            "ticket et toute la porte de fin de Spec repassent, puis un nouveau dossier arrive.")
-    written.update({key: last[key] for key in ("commit", "pack", "words", "reason", "at") if key in last})
+    written.update({key: last[key] for key in ("commit", "pack", "words", "reason", "in_flight", "at") if key in last})
     door = answer_request(convoy)
     if door:
         written["door"] = door

@@ -5567,14 +5567,20 @@ def judgement_record(raw: Any) -> dict[str, Any]:
                                     or not 1 <= verdict["answer"] <= len(record["answers"])):
             raise Refusal(f"renvoi d'un verdict à une réponse inconnue : {verdict!r}")
     for index, answer in enumerate(record["answers"]):
-        required = {"response", "approver", "commit", "pack", "at"}
+        # An abandon during delivery judged no dossier: no pack, and the
+        # tip of the integration branch when it had one.
+        in_flight = isinstance(answer, dict) and answer.get("in_flight") is True
+        required = {"response", "approver", "at", *(("in_flight", "words") if in_flight else ("commit", "pack"))}
         if not isinstance(answer, dict) or not required <= set(answer) \
-                or not set(answer) <= required | {"words", "reason", "findings", "exception", "voided"}:
+                or not set(answer) <= required | {"commit", "words", "reason", "findings", "exception", "voided"} \
+                or (in_flight and answer["response"] != "abandoned"):
             raise Refusal(f"réponse de l'approbateur mal formée : {answer!r}")
         response = one_of(answer["response"], OWNER_RESPONSES, "réponse de l'approbateur")
         single_line(answer["approver"], "approbateur")
-        valid_commit(answer["commit"], "commit du dossier")
-        valid_digest(answer["pack"])
+        if "commit" in answer:
+            valid_commit(answer["commit"], "commit du dossier")
+        if not in_flight:
+            valid_digest(answer["pack"])
         if "voided" in answer:
             voided = answer["voided"]
             if response != "accepted" or not isinstance(voided, dict) or set(voided) != {"cause", "at"}:
@@ -5822,16 +5828,22 @@ def cmd_record_owner_answer(args: argparse.Namespace) -> int:
     not_reopened(args.convoy, judgement)
     values: dict[str, Any] = {}
     if response == "abandoned":
-        dossier = judged_dossier(args.convoy, metadata)
-        if dossier is None:
-            raise Refusal(
-                f"le convoi {args.convoy} n'est pas Delivered et ne porte aucune demande « non conforme » : "
-                "il n'y a rien à quoi répondre « abandonné »")
         if not isinstance(args.reason, str) or not args.reason.strip():
             raise Refusal("« abandonné » sans raison : l'abandon s'enregistre avec une raison d'une ligne (--reason)")
-        answer: dict[str, Any] = {"response": response, "approver": approver, "commit": dossier["commit"],
-                                  "pack": dossier["pack"], "reason": single_line(args.reason, "raison de l'abandon"),
-                                  "at": now()}
+        reason = single_line(args.reason, "raison de l'abandon")
+        dossier = judged_dossier(args.convoy, metadata)
+        if dossier is not None:
+            answer: dict[str, Any] = {"response": response, "approver": approver, "commit": dossier["commit"],
+                                      "pack": dossier["pack"], "reason": reason, "at": now()}
+        else:
+            # Abandoned during delivery: no dossier was judged. His words
+            # stand for it, with the tip the integration branch keeps, if
+            # it has one (af-npz9v1).
+            answer = {"response": response, "approver": approver, "in_flight": True, "reason": reason,
+                      "words": owner_words(args.words, "« abandonné » d'un convoi ni Delivered ni « non conforme »"),
+                      "at": now()}
+            if args.commit is not None:
+                answer["commit"] = valid_commit(args.commit, "pointe de la branche d'intégration")
     else:
         said = "« accepté »" if response == "accepted" else "« constats rendus »"
         delivered = judged_delivered(args.convoy, metadata, said)

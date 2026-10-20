@@ -636,6 +636,33 @@ class OwnerAnswerTest(sessions.AcceptanceSessionTest):
         self.assertEqual(("abandoned", commit), (self.judgement()["answers"][-1]["response"], answer["commit"]))
         self.assertNotIn(CONVOY, self.door("list"))
 
+    def test_abandoned_during_delivery_is_recorded_on_the_approver_words_with_the_tip_of_the_integration_branch(self):
+        # A convoy neither Delivered nor « non conforme »: no dossier was judged (af-pqfxmd, 20/10/2026).
+        declared = self.root / "config" / "projects" / "fx-rig.toml"
+        declared.write_text(declared.read_text() + f'human_approver = "{APPROVER}"\n')
+        tip = self.remote_tip(INTEGRATION)
+
+        self.assertIn("mots", self.refusal_of(
+            lambda: self.respond("abandonné", None, None, "--reason", "Le besoin a disparu.", words=None)))
+        self.assertIn("raison", self.refusal_of(lambda: self.respond("abandonné", None, None)))
+        self.assertIn("Delivered", self.refusal_of(lambda: self.respond("accepté", tip, "sha256:" + "0" * 64)))
+
+        answer = self.passed(self.respond("abandonné", None, None, "--reason", "Le besoin a disparu.",
+                                          words="Ok pour ta recommandation."))
+
+        (last,) = self.judgement()["answers"]
+        self.assertEqual(("abandoned", "Le besoin a disparu.", "Ok pour ta recommandation.", APPROVER, tip, True),
+                         (last["response"], last["reason"], last["words"], last["approver"], last["commit"],
+                          last["in_flight"]))
+        self.assertNotIn("pack", last)
+        self.assertEqual((tip, True), (answer["commit"], answer["in_flight"]))
+        shown = self.show()
+        # Recorded only: the next pass withdraws the tickets and closes the convoy.
+        self.assertEqual((False, "open"), (bool(shown["unruled"]), shown["convoy"]["status"]))
+        self.assertEqual(["open", "open"], [ticket["status"] for ticket in shown["tickets"]])
+        self.assertIn("rien ne le rouvre", self.refusal_of(
+            lambda: self.respond("abandonné", None, None, "--reason", "Encore.", words="Encore.")))
+
     def test_a_convoy_in_a_state_without_rule_takes_no_answer(self):
         commit, digest = self.delivered_dossier()
         self.passed(self.give_verdict("sans suite"))

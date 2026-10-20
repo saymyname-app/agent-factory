@@ -224,6 +224,38 @@ class OutcomePromoteTest(answers.OwnerAnswerTest):
         self.assertEqual(("closed", [], "abandoned", None), (shown["status"], shown["unruled"], shown["outcome"], shown["promotion"]))
         self.assertEqual(store, self.store_files())
 
+    def test_a_convoy_abandoned_during_delivery_withdraws_its_open_tickets_merges_nothing_and_keeps_every_branch(self):
+        declared = self.root / "config" / "projects" / "fx-rig.toml"
+        declared.write_text(declared.read_text() + f'human_approver = "{answers.APPROVER}"\n')
+        # One ticket started, its branch pushed; the other never started.
+        branch = gate.branch_of(answers.SLICE)
+        self.state("record-gate", CONVOY, answers.SLICE, "--gate", "dispatch")
+        self.state("set-branch", CONVOY, answers.SLICE, "--branch", branch)
+        self.edit(answers.SLICE, status="in_progress")
+        started = self.commit_on(answers.SLICE, {"docs/tranche.md": "la tranche\n"})
+        main, tip = self.remote_tip(PROTECTED), self.remote_tip(INTEGRATION)
+        self.passed(self.respond("abandonné", None, None, "--reason", REASON, words="Ok pour ta recommandation."))
+        self.assertEqual("close", self.promote("check")[1]["due"])
+
+        answer = self.passed(self.promote())
+
+        self.assertEqual((False, None, True, "abandoned", REASON, [answers.SLICE, gate.SCREEN]),
+                         tuple(answer[k] for k in ("promoted", "merged", "closed", "how", "said", "withdrawn")))
+        self.assertEqual((main, tip, started),
+                         (self.remote_tip(PROTECTED), self.remote_tip(INTEGRATION), self.remote_tip(branch)))
+        shown = self.show()
+        self.assertEqual(("closed", False, "abandoned"),
+                         (shown["convoy"]["status"], bool(shown["unruled"]), shown["convoy"]["outcome"]))
+        for ticket in shown["tickets"]:
+            self.assertEqual("closed", ticket["status"], ticket["id"])
+            self.assertIn("at", ticket["gates"]["withdrawn"], ticket["id"])
+        beads = json.loads(self.tracker.read_text())["beads"]
+        self.assertIn(REASON, beads[answers.SLICE].get("notes", ""))
+        # Run again: nothing more is written.
+        before = self.tracker.read_text()
+        self.assertTrue(self.passed(self.promote())["done"])
+        self.assertEqual(before, self.tracker.read_text())
+
     # --- refusals ----------------------------------------------------------------
 
     def test_no_merge_without_an_accepted_answer(self):
