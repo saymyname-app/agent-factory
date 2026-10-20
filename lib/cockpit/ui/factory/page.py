@@ -19,6 +19,8 @@ import shutil
 import socket
 from datetime import datetime
 
+from account_home import account_home
+
 from cockpit.core.freshness import FRESH, STALE
 from cockpit.core.readmodel import PARIS
 
@@ -56,7 +58,7 @@ def read_machine(path=None):
     except (OSError, KeyError, ValueError, IndexError):
         pass
     try:
-        usage = shutil.disk_usage(path or os.path.expanduser("~"))
+        usage = shutil.disk_usage(path or account_home())
         out["disk_total"], out["disk_used"] = usage.total, usage.used
     except OSError:
         pass
