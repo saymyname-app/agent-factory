@@ -71,13 +71,18 @@
     return line(element.getAttribute('placeholder') || element.getAttribute('title') || text);
   }
 
+  // The control named `name`; else the first whose name starts with it (a
+  // name followed by what the control adds, a count or an arrow): « Événements »
+  // is the category of that name, not the tab « Événements utiles » before it.
   function find(doc, view, selector, name) {
-    var found = null;
+    var exact = null, starting = null;
     doc.querySelectorAll(selector).forEach(function (element) {
+      if (!drawn(element, view)) { return; }
       var own = nameOf(element, doc);
-      if (!found && drawn(element, view) && (own === name || own.indexOf(name) === 0)) { found = element; }
+      if (!exact && own === name) { exact = element; }
+      if (!starting && own.indexOf(name) === 0) { starting = element; }
     });
-    return found;
+    return exact || starting;
   }
 
   function read(frame) {
