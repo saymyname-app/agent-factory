@@ -71,7 +71,10 @@
         "gc.ticket_kind": "prefactor"
       },
       "status": "open",
-      "title": "T2 — Second"
+      "title": "T2 — Second",
+      "waits_for": [
+        "af-002"
+      ]
     },
     "draft-1": {
       "description": "global_execution_contract:\n  models: none\n  review: Un test montre que le relecteur a relu.\n\ntickets:\n  - id: T1\n    title: First\n    blocked_by: []\n    target_rigs: [fixture_city]\n    what_it_delivers: does a thing\n    acceptance_criteria: [Un test montre que la chose est faite, La CI est verte]\n    scope:\n      paths: [bin/foo.py]\n  - id: T2\n    kind: prefactor\n    title: Second\n    blocked_by: [T1]\n    target_rigs: [fixture_city]\n    what_it_delivers: does another thing\n    acceptance_criteria: [does the other thing]\n",
