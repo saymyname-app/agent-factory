@@ -268,7 +268,9 @@ class JournalTest(unittest.TestCase):
         # The inbox keeps its control: the same kind of text there falls back.
         self.assertNotIn("Mayor", self.get("/"))
 
-        self.assertIn('href="/journal"', self.get("/"))
+        # The home page leads to the journal: the entry « Journal » of its
+        # navigation opens /journal (a button of a form sent by GET).
+        self.assertIn('action="/journal"', self.get("/"))
 
     def test_an_action_taken_in_the_cockpit_enters_the_journal(self):
         self.start_cockpit()
@@ -295,6 +297,41 @@ class JournalTest(unittest.TestCase):
         self.assertNotIn("accepter_chantier", accepted.partition("<details")[0])
         # The newest entry heads the journal.
         self.assertEqual("af-conv-b", self.journal()["entries"][0]["bead_id"])
+
+    def test_an_event_held_for_the_journal_is_an_entry_of_its_own(self):
+        # Two event beads as `bd create --type event` writes them (T01R6,
+        # af-ltchro): no notes, their nature under gc.journal_event, their
+        # time as created_at -- written with an offset, unlike the traces.
+        # 13:30+02:00 is 11:30Z, after af-rep1 (11:08:55Z); 12:00+02:00 is
+        # 10:00Z, before it, though its text sorts after it.
+        events = [
+            {"id": "af-ev1", "title": "Release 1.4 publiée", "status": "closed", "issue_type": "event",
+             "labels": ["livraison"], "notes": "", "created_at": "2026-10-06T13:30:00+02:00",
+             "metadata": {"gc.journal_event": "livraison"}},
+            {"id": "af-ev2", "title": "Rapport nocturne reçu", "status": "closed", "issue_type": "event",
+             "labels": ["ci"], "notes": "", "created_at": "2026-10-06T12:00:00+02:00",
+             "metadata": {"gc.journal_event": "ci"}},
+        ]
+        with open(self.state_file, "w") as fh:
+            json.dump(beads() + events, fh)
+        self.start_cockpit()
+        entries = wait_until(self.journal)["entries"]
+
+        self.assertEqual(9, len(entries), entries)
+        self.assertEqual(["af-ev1", "af-rep1", "af-ev2", "af-clr2"], [e["bead_id"] for e in entries[:4]])
+        self.assertEqual(
+            {"bead_id": "af-ev1", "demande": "", "quoi": "Release 1.4 publiée",
+             "quand": "2026-10-06T13:30:00+02:00", "par": "", "voie": "livraison"},
+            {k: entries[0].get(k) for k in ("bead_id", "demande", "quoi", "quand", "par", "voie")},
+        )
+
+        event = self.entry_html(self.get("/journal"), "af-ev1")
+        self.assertIn("Release 1.4 publiée", event)
+        self.assertIn("<time>06/10 13:30</time>", event)
+        self.assertIn("<span>livraison</span>", event)
+        # An event answers no request: no request block, not even the empty one.
+        self.assertNotIn("cockpit-journal-demande", event)
+        self.assertNotIn("Demande sans texte enregistré", event)
 
     def test_unreadable_journal_is_unknown_never_empty(self):
         Path(self.fail_flag_file).write_text("fail")

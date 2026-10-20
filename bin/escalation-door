@@ -123,7 +123,6 @@ PROGRAM_NAME="escalation-door"
 GC_BIN="${GC_BIN:-gc}"
 ESCALATION_RECIPIENT="${GC_ESCALATION_RECIPIENT:-human}"
 MAYOR_FIRST_GRACE_SECONDS="${ESCALATION_DOOR_MAYOR_GRACE_SECONDS:-7200}"
-MAX_LINE_LENGTH=140
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd -P)"
 OPERATOR_CONFIG_BIN="${OPERATOR_CONFIG_BIN:-$ROOT/bin/operator-config}"
 PROPOSAL_DOOR_BIN="${PROPOSAL_DOOR_BIN:-$ROOT/bin/proposal-door}"
@@ -134,10 +133,14 @@ PROPOSAL_DOOR_BIN="${PROPOSAL_DOOR_BIN:-$ROOT/bin/proposal-door}"
 OPERATOR_NAME="${GC_OPERATOR_NAME:-$(sed -n 's/^name[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "${OPERATOR_CONFIG_FILE:-$ROOT/config/operator.toml}" 2>/dev/null | head -n1)}"
 OPERATOR_NAME="${OPERATOR_NAME:-Benjamin}"
 BEAD_ID_RE='^[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]+(\.[A-Za-z0-9]+)*$'
-OPTION_LETTERS="abcdefghijklmnopqrstuvwxyz"
 
 log() { printf '%s: %s\n' "$PROGRAM_NAME" "$*" >&2; }
 die() { log "ERROR: $1"; exit 1; }
+
+# The request fields check, shared with the other request door (T59).
+REQUEST_INCOMPLETE="requête incomplète"
+# shellcheck source=lib/request_fields.sh
+. "$ROOT/lib/request_fields.sh"
 
 usage() {
   awk 'NR > 1 && /^set /{exit} NR > 1' "$0" | sed 's/^# \{0,1\}//'
@@ -172,43 +175,6 @@ show_bead() {  # $1 = bead id -> prints the single-object JSON, or dies
     || die "$id is unavailable."
   jq -e 'if type == "array" then (if length == 1 then .[0] else error("ambiguous") end) else . end' \
     <<<"$raw" 2>/dev/null || die "$id did not resolve to exactly one Bead."
-}
-
-# field_ok validates a single-line field: present, no newline, <= 140 chars.
-field_ok() {  # $1 = label (for the diagnostic) $2 = value
-  local label=$1 value=$2
-  [[ -n $value ]] || die "requête incomplète : champ « $label » manquant."
-  [[ $value != *$'\n'* && $value != *$'\r'* ]] || die "champ « $label » doit tenir sur une seule ligne."
-  (( ${#value} <= MAX_LINE_LENGTH )) || die "champ « $label » dépasse $MAX_LINE_LENGTH caractères."
-}
-
-# validate_que_faire checks a JSON array of options (.option, .consequence,
-# optional .recommande/.raison), then prints it back with a .lettre (a, b,
-# c, ...) added to each item in order -- or dies without printing anything.
-validate_que_faire() {  # $1 = JSON array
-  local json=$1
-  jq -e 'type == "array" and length > 0' <<<"$json" >/dev/null 2>&1 \
-    || die "requête incomplète : champ « que faire » manquant ou vide."
-  local count i
-  count=$(jq 'length' <<<"$json")
-  for ((i = 0; i < count; i++)); do
-    local item option consequence recommande raison
-    item=$(jq -c ".[$i]" <<<"$json")
-    option=$(jq -r '.option // ""' <<<"$item")
-    consequence=$(jq -r '.consequence // ""' <<<"$item")
-    recommande=$(jq -r 'if (.recommande // false) == true then "true" else "false" end' <<<"$item")
-    raison=$(jq -r '.raison // ""' <<<"$item")
-    field_ok "option $((i + 1))" "$option"
-    field_ok "conséquence de l'option $((i + 1))" "$consequence"
-    if [[ $recommande == true ]]; then
-      field_ok "raison de la recommandation" "$raison"
-    fi
-  done
-  local recommended_count
-  recommended_count=$(jq '[.[] | (.recommande // false)] | map(select(. == true)) | length' <<<"$json")
-  (( recommended_count <= 1 )) || die "au plus une option « Recommandé »."
-  jq -c --arg letters "$OPTION_LETTERS" \
-    '[to_entries[] | .value + {lettre: $letters[.key:(.key + 1)]}]' <<<"$json"
 }
 
 # emit_benjamin performs the write + mail once a request has validated;

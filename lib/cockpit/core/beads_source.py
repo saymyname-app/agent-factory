@@ -8,9 +8,11 @@ import json
 import subprocess
 
 NEEDS_BENJAMIN_KEY = "gc.needs_benjamin"
+# How long one ``bd`` call may take before the read counts as failed.
+READ_TIMEOUT_SECONDS = 10
 
 
-def read_beads_json(args, bd_bin="bd", timeout=10):
+def read_beads_json(args, bd_bin="bd", timeout=READ_TIMEOUT_SECONDS):
     """Run ``bd <args> --json`` and return the parsed payload."""
     completed = subprocess.run(
         [bd_bin, *args, "--json"],
@@ -22,7 +24,7 @@ def read_beads_json(args, bd_bin="bd", timeout=10):
     return json.loads(completed.stdout)
 
 
-def read_operator_beads(bd_bin="bd", timeout=10):
+def read_operator_beads(bd_bin="bd", timeout=READ_TIMEOUT_SECONDS):
     """The beads the cockpit's source keeps: every non-closed bead (plain
     ``bd list``), plus every bead still carrying ``gc.needs_benjamin``
     whatever its status — closing the work does not answer the question

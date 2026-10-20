@@ -9,11 +9,13 @@ import time
 import threading
 import json
 import urllib.parse
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from cockpit.access.guard import session_cookie_header
 from cockpit.actions.registry import ActionError
 from cockpit.core.freshness import FRESH, UNKNOWN
+from cockpit.core.readmodel import PARIS
 from cockpit.health import collectors
 from cockpit.health.engine import (
     FACTORY_STALLED_AFTER_SECONDS,
@@ -28,14 +30,21 @@ from cockpit.requests.assemble import assemble_from_snapshot
 from cockpit.requests.defects import DefectCounter
 from cockpit.requests.journal import entries_from_value as journal_entries_from_value
 from cockpit.requests.sources.readability import ILLISIBLE_THRESHOLD_SECONDS
-from cockpit.ui.base.page import render_document, render_fresh, render_home
+from cockpit.runs.derive import runs_from_beads
+from cockpit.ui.base.page import render_document, render_fresh, render_home_zones
 from cockpit.ui.health.page import render_health_zone, render_status_line
 from cockpit.ui.access.page import render_access_zone
+from cockpit.ui.factory.page import CSS as FACTORY_PAGE_CSS, read_machine, render_factory_page
+from cockpit.ui.home.overview import CSS as OVERVIEW_CSS
+from cockpit.ui.home.overview import overview_view, render_overview
 from cockpit.ui.home.page import render_requests_section
+from cockpit.ui.panorama.shell import CSS as PANORAMA_CSS
+from cockpit.ui.panorama.shell import HOME, NAVIGATION, render_not_folded, render_shell
 from cockpit.ui.stop.render import render_stop_section
 from cockpit.ui.journal.render import CSS as JOURNAL_CSS
 from cockpit.ui.journal.render import render_journal_page, render_journal_section, render_journal_unknown
 from cockpit.ui.notify.render import render_envois_section
+from cockpit.ui.runs.page import CSS as RUNS_PAGE_CSS, render_run_page, render_runs_page
 from cockpit.ui.projects.page import (
     render_historique_section,
     render_projects_section,
@@ -45,6 +54,12 @@ from cockpit.ui.projects.project_page import render_project_page, render_project
 from cockpit.ui.projects.tokens import CSS as PROJECT_PAGE_CSS
 
 ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
+# The destinations of Panorama whose Prototype Fold is not done yet: their
+# address answers, in the shell, that they are not served here yet.
+NOT_FOLDED = {
+    href: (key, label) for key, label, href in NAVIGATION if key not in (HOME, "projets", "journal", "runs", "usine")
+}
+NOT_FOLDED.update({"/runs/job": ("runs", "Runs")})
 
 
 
@@ -63,13 +78,16 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         read_model = self.server.read_model
-        if self.path == "/api/status":
+        # A page is the path of its address: a query (« /runs? », which a
+        # button of the navigation sends) names the same page.
+        path = urllib.parse.urlsplit(self.path).path
+        if path == "/api/status":
             self._send_json(read_model.snapshot())
             return
-        if self.path == "/api/requests":
+        if path == "/api/requests":
             self._send_json(self._requests_payload(read_model.snapshot(), read_model.now()))
             return
-        if self.path == "/api/notifications":
+        if path == "/api/notifications":
             notify = self.server.notify
             self._send_json(
                 {
@@ -79,61 +97,46 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                 }
             )
             return
-        if self.path == "/api/journal":
+        if path == "/api/journal":
             self._send_json(self._journal_payload(read_model.snapshot()))
             return
-        if self.path == "/journal":
+        if path == "/journal":
             self._send_journal_page(read_model)
             return
-        if self.path == "/api/projects":
+        if path == "/api/projects":
             self._send_json(self._projects_payload(read_model.snapshot()))
             return
-        if self.path == "/api/health":
+        if path == "/api/health":
             self._send_json(self._compute_health(read_model))
             return
-        if self.path.startswith("/api/actions/"):
+        if path.startswith("/api/actions/"):
             # T13, af-cx20q9 AC1: an action in GET is refused the same
             # way as any other guard failure, not a bare 404 — the guard
             # itself rejects on method before anything else is checked.
             guard_result = self.server.action_guard.check("GET", self.headers)
             self._send_json({"error": guard_result.reason}, status=403)
             return
-        if self.path.startswith("/projet/"):
+        if path == "/projets":
+            self._send_projects_page(read_model)
+            return
+        if path.startswith("/projet/"):
             self._send_project_page(read_model)
             return
-        if self.path == "/":
-            snapshot = read_model.snapshot()
-            stale_names = read_model.stale_or_unknown()
-            stale_rows = [
-                {"display_name": snapshot[name]["display_name"], "freshness": snapshot[name]["freshness"]}
-                for name in stale_names
-            ]
-            requests_section_html = self._render_requests_section(snapshot, read_model.now())
-            health = self._compute_health(read_model)
-            checked_at = _latest_read_at(snapshot, ("beads", "git"))
-            health_html = render_health_zone(health, checked_at=checked_at)
-            body = render_home(
-                read_model.headline(),
-                stale_rows,
-                requests_section_html=requests_section_html,
-                extra_sections_html=(
-                    self._render_projects_zone(snapshot)
-                    + self._render_stop_zone(snapshot)
-                    + render_access_zone(self.server.benjamin_login, snapshot.get("tailscale"), read_model.now())
-                    + health_html
-                ),
-                status_html=render_status_line(snapshot.get("gc"), health),
-            ).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            # T13, af-cx20q9: the SameSite=Strict cookie an action POST
-            # must echo back — a cross-site POST never carries it, so its
-            # presence alone proves this request came from a page the
-            # cockpit itself served (cockpit.access.guard.ActionGuard).
-            self.send_header("Set-Cookie", session_cookie_header(self.server.session_token))
-            self.end_headers()
-            self.wfile.write(body)
+        if path == "/usine":
+            self._send_factory_page(read_model)
+            return
+        if path == "/runs":
+            self._send_runs_page(read_model)
+            return
+        if path == "/runs/run":
+            self._send_run_page(read_model)
+            return
+        if path == "/":
+            self._send_home(read_model)
+            return
+        if path in NOT_FOLDED:
+            key, label = NOT_FOLDED[path]
+            self._send_page(read_model, key, render_not_folded(label))
             return
         self.send_response(404)
         self.end_headers()
@@ -151,7 +154,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             # project's page.
             referer_path = urllib.parse.urlsplit(self.headers.get("Referer") or "").path
             location = "/"
-            if referer_path.startswith("/projet/") or referer_path == "/journal":
+            if referer_path.startswith("/projet/") or referer_path in ("/projets", "/journal"):
                 location = urllib.parse.quote(urllib.parse.unquote(referer_path), safe="/-_.~")
             self.send_response(303)
             self.send_header("Location", location)
@@ -186,6 +189,57 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         if action not in ACTIONS_WITHOUT_WRITE and isinstance(result, dict):
             result["rafraichi"] = self._reread_after_action()
         self._send_json(result)
+
+    def _send_home(self, read_model):
+        """GET /: the destination « Vue d’ensemble » of Panorama (T02,
+        af-0gonc9), with the zones of the cockpit no destination of
+        Panorama holds yet folded under it."""
+        snapshot = read_model.snapshot()
+        now = read_model.now()
+        requests, _, beads_known = self._assemble_requests(snapshot, now)
+        health = self._compute_health(read_model)
+        zones_html = render_home_zones(
+            read_model.headline(),
+            read_model.stale_or_unknown(),
+            requests_section_html=self._render_requests_section(snapshot, now),
+            extra_sections_html=(
+                self._render_projects_zone(snapshot)
+                + self._render_stop_zone(snapshot)
+                + render_access_zone(self.server.benjamin_login, snapshot.get("tailscale"), now)
+                + render_health_zone(health, checked_at=_latest_read_at(snapshot, ("beads", "git")))
+            ),
+            status_html=render_status_line(snapshot.get("gc"), health),
+        )
+        view = overview_view(snapshot, requests if beads_known else [])
+        # T13, af-cx20q9: the SameSite=Strict cookie an action POST must
+        # echo back -- a cross-site POST never carries it, so its presence
+        # alone proves this request came from a page the cockpit itself
+        # served (cockpit.access.guard.ActionGuard).
+        self._send_page(read_model, HOME, lambda anchors: render_overview(view, anchors, zones_html),
+                        extra_css=OVERVIEW_CSS,
+                        headers={"Set-Cookie": session_cookie_header(self.server.session_token)},
+                        snapshot=snapshot)
+
+    def _send_page(self, read_model, destination, main, extra_css="", status=200, headers=None, snapshot=None):
+        """One page of Panorama: the navigation B with ``destination`` open,
+        how many requests wait and the state of the factory, ``main`` beside
+        it (its HTML, or a function that draws it with the anchors of the
+        page, numbered after the shell's) -- read from ``snapshot`` when the
+        page was drawn from one, so the page says one count."""
+        snapshot = snapshot or read_model.snapshot()
+        requests, _, beads_known = self._assemble_requests(snapshot, read_model.now())
+        body = render_document(
+            render_shell(destination, main, waiting=len(requests) if beads_known else None,
+                         live=_live_line(snapshot.get("gc"))),
+            extra_css=PANORAMA_CSS + extra_css,
+        ).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
+        self.end_headers()
+        self.wfile.write(body)
 
     def _reread_after_action(self):
         """An action just wrote on a bead; the page reads the read model,
@@ -345,6 +399,15 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             stale_since=None if row["freshness"] == FRESH else row["read_at"],
         )
 
+    def _send_projects_page(self, read_model):
+        """GET /projets: the declared projects, each with its link « Page
+        projet » -- where the entry « Projets » of the navigation leads
+        until the Prototype Fold of its destination."""
+        fresh_html = render_fresh(read_model.headline(), not read_model.stale_or_unknown())
+        inner = '<div class="pn-head"><h1>Projets</h1></div>%s%s' % (
+            fresh_html, self._render_projects_zone(read_model.snapshot()) or render_projects_unknown())
+        self._send_page(read_model, "projets", inner, extra_css=PROJECT_PAGE_CSS)
+
     def _send_project_page(self, read_model):
         """GET /projet/<id> (spec .49): one declared project's chantiers by
         stage, its travail hors chantier and its historique. An id no
@@ -370,12 +433,48 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                     historique_html=render_historique_section([historique]),
                     fresh_html=fresh_html,
                 )
-        body = render_document(inner, extra_css=PROJECT_PAGE_CSS).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        self._send_page(read_model, "projets", inner, extra_css=PROJECT_PAGE_CSS, status=status)
+
+    def _runs(self, read_model):
+        """The runs the cockpit reads (cockpit.runs), most recent first:
+        (runs or None while unread, read failed, HH:MM of the reading)."""
+        row = read_model.snapshot().get("runs")
+        if row is None or row["value"] is None:
+            return None, bool(row and row.get("failed_at") is not None), None
+        checked = datetime.fromtimestamp(row["read_at"], tz=PARIS).strftime("%H:%M") if row["read_at"] else None
+        return runs_from_beads(row["value"], read_model.now()), False, checked
+
+    def _send_factory_page(self, read_model):
+        """GET /usine: the machine, the sources, the agents seen at work,
+        then the health and the zones that change the factory."""
+        snapshot = read_model.snapshot()
+        now = read_model.now()
+        runs, _, _ = self._runs(read_model)
+        health = self._compute_health(read_model)
+        notify = self.server.notify
+        actions_html = self._render_stop_zone(snapshot) + render_access_zone(
+            self.server.benjamin_login, snapshot.get("tailscale"), now)
+        main = render_factory_page(
+            read_machine(), snapshot, runs, bool(notify and notify.configured()),
+            render_health_zone(health, checked_at=_latest_read_at(snapshot, ("beads", "git"))), actions_html, now)
+        self._send_page(read_model, "usine", main, extra_css=FACTORY_PAGE_CSS,
+                        headers={"Set-Cookie": session_cookie_header(self.server.session_token)}, snapshot=snapshot)
+
+    def _send_runs_page(self, read_model):
+        """GET /runs: the runs, filtered by ?filtre=tous|en-cours|termines."""
+        runs, failed, checked = self._runs(read_model)
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        filtre = (query.get("filtre") or ["tous"])[0]
+        self._send_page(read_model, "runs", render_runs_page(runs, filtre, checked=checked, error=failed),
+                        extra_css=RUNS_PAGE_CSS)
+
+    def _send_run_page(self, read_model):
+        """GET /runs/run?id=<bead>: one run, its frise and its events."""
+        runs, _, _ = self._runs(read_model)
+        wanted = (urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("id") or [""])[0]
+        run = next((r for r in runs or [] if r["id"] == wanted), None)
+        self._send_page(read_model, "runs", render_run_page(run), extra_css=RUNS_PAGE_CSS,
+                        status=200 if run else 404)
 
     def _send_journal_page(self, read_model):
         """GET /journal (spec .18): the resolved requests, re-read from the
@@ -390,14 +489,8 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         if notify is not None:
             # Journal des envois and the test notification (spec .60).
             section += render_envois_section(notify.journal_entries(), notify.configured())
-        body = render_document(
-            render_journal_page(section, fresh_html=fresh_html), extra_css=PROJECT_PAGE_CSS + JOURNAL_CSS
-        ).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        self._send_page(read_model, "journal", render_journal_page(section, fresh_html=fresh_html),
+                        extra_css=PROJECT_PAGE_CSS + JOURNAL_CSS)
 
     def _journal_payload(self, snapshot):
         """JSON twin of the journal page, for tests."""
@@ -456,6 +549,19 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+
+def _live_line(gc_row):
+    """The state of the factory under the brand: running and how many
+    agents, suspended, or unknown when the supervisor's reading is not
+    current."""
+    value = (gc_row or {}).get("value")
+    if not value or gc_row.get("freshness") != FRESH:
+        return "● État actuel inconnu"
+    if value.get("suspended"):
+        return "● Suspendue"
+    agents = int(value.get("agents_running") or 0)
+    return "● En marche · %d agent%s" % (agents, "s" if agents > 1 else "")
 
 
 def _latest_read_at(snapshot, names):

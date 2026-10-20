@@ -60,6 +60,9 @@ POLL_SECONDS = "0.2"
 # A supervisor that answers no more is shown as such after this long, not
 # after the two minutes a reading stays current in service.
 SILENT_VALIDITY_SECONDS = "2"
+# A read of a tracker that never answers is not given up while the cockpit
+# lives (a day is longer than any launch): the page says it is being read.
+UNANSWERED_READ_TIMEOUT_SECONDS = "86400"
 # The mark bin/project-launch gives what it launches: the launcher stops
 # the processes that carry it, and the controller of an evaluation attests
 # that the process listening on the port carries it. The cockpit keeps it.
@@ -108,7 +111,7 @@ def serve_synthetic_supervisor(
     )
     supervisor.set_sessions(city.sessions)
     supervisor.start()
-    if city.reading == synthetic_city.UNREAD:
+    if city.reading in (synthetic_city.UNANSWERED, synthetic_city.FAILING):
         supervisor.go_down()
     os.write(announce, supervisor.base_url.encode("ascii"))
     os.close(announce)
@@ -136,9 +139,13 @@ def write_tracker_and_projects(city: synthetic_city.SyntheticCity, home: str) ->
         "FAKE_BD_STATE_FILE": str(beads),
         "COCKPIT_DESCRIPTORS_DIR": str(projects),
     }
-    if city.reading == synthetic_city.UNREAD:
+    if city.reading == synthetic_city.FAILING:
         # The tracker fails for as long as this file exists: always.
         env["FAKE_BD_FAIL_FLAG_FILE"] = str(beads)
+    if city.reading == synthetic_city.UNANSWERED:
+        # A tracker that answers no read, and a cockpit that waits for it.
+        env["COCKPIT_BD_BIN"] = str(FIXTURES / "requests" / "silent-bd")
+        env["COCKPIT_BEADS_READ_TIMEOUT_SECONDS"] = UNANSWERED_READ_TIMEOUT_SECONDS
     return env
 
 

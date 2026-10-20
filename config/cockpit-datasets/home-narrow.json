@@ -9,5 +9,265 @@
     "width": 390
   },
   "visible_text": "Vue d’ensemble\nExemple · vérifié à 14:42 (Paris)\nDécisions à prendre\n2\nMaintenant · demandes ouvertes\nRésultats fusionnés\n6\n7 derniers jours · preuves de fusion\nDélai de livraison\n2 h 40\nMédiane · 6 résultats fusionnés\nVérifications CI réussies\n94 %\n7 derniers jours · 47 / 50 exécutions\nActivité sur 7 jours\nDerniers runs\nTout voir\nCe qui t’attend\nLe cockpit attend ton avis\nUsine · résultat prêt\nChoisir le format d’export\nProjet Notes · décision\nUsine · Reprise du cockpit\nLe cockpit attend ton avis\n\nLes nouveaux parcours du cockpit sont prêts.\n\nCe qui a été livré\nChangements et version à essayer\n↗\nVérifications et preuves\nParcours, tests et relecture\n↗\nCe qui reste à vérifier\nVersion et sources\nEssai ↗\nAvis\nProjets\nUsine\nReprise du cockpit · À juger\n6 résultats fusionnés\n12 PR · 7 jours\nCible révisable · 2 acquis · 2 critères restants · 1 décision ouverte\n→\nNotes\nRecherche dans les notes · En cours\n3 résultats fusionnés\n7 PR · 7 jours\nCible révisable · 2 acquis · 2 critères restants · 1 décision ouverte\n→\nPortfolio\nPrésentation du projet · Fusionné\n2 résultats fusionnés\n4 PR · 7 jours\nCible révisable · 2 acquis · 2 critères restants · 1 décision ouverte\n→",
-  "production_writes": 0
+  "production_writes": 0,
+  "folded": {
+    "Ce qui reste à vérifier": [
+      "Notifications sur iPhone, sept jours d’usage et suspension réelle : non vérifiés dans cet exemple."
+    ],
+    "Version et sources": [
+      "Dossier 1 · version synthétique 1111111. Référence de la Spec : af-2zseit. Aucune livraison réelle prouvée par ces exemples."
+    ]
+  },
+  "drawn": {
+    "Activité sur 7 jours": [
+      "PR fusionnées · Lundi : 1",
+      "PR fusionnées · Mardi : 2",
+      "PR fusionnées · Mercredi : 0",
+      "PR fusionnées · Jeudi : 3",
+      "PR fusionnées · Vendredi : 1",
+      "PR fusionnées · Samedi : 4",
+      "PR fusionnées · Dimanche : 1",
+      "Tickets livrés · Lundi : 2",
+      "Tickets livrés · Mardi : 2",
+      "Tickets livrés · Mercredi : 1",
+      "Tickets livrés · Jeudi : 4",
+      "Tickets livrés · Vendredi : 2",
+      "Tickets livrés · Samedi : 5",
+      "Tickets livrés · Dimanche : 2",
+      "CI réussies · Lundi : 5",
+      "CI réussies · Mardi : 8",
+      "CI réussies · Mercredi : 6",
+      "CI réussies · Jeudi : 9",
+      "CI réussies · Vendredi : 4",
+      "CI réussies · Samedi : 8",
+      "CI réussies · Dimanche : 7"
+    ]
+  },
+  "runs": [
+    {
+      "type": "Livraison D01",
+      "status": "Ta décision",
+      "tone": "wait",
+      "title": "Reprise du cockpit",
+      "step": "Juger le résultat",
+      "started": "15:00",
+      "elapsed": 720,
+      "lanes": [
+        {
+          "name": "Humain",
+          "kind": "human",
+          "jobs": [
+            [
+              0,
+              18
+            ],
+            [
+              690,
+              720
+            ]
+          ]
+        },
+        {
+          "name": "Code",
+          "kind": "code",
+          "jobs": [
+            [
+              18,
+              42
+            ],
+            [
+              177,
+              190
+            ],
+            [
+              450,
+              570
+            ]
+          ]
+        },
+        {
+          "name": "Alex",
+          "kind": "agent",
+          "jobs": [
+            [
+              42,
+              122
+            ],
+            [
+              190,
+              365
+            ]
+          ]
+        },
+        {
+          "name": "Léa",
+          "kind": "agent",
+          "jobs": [
+            [
+              122,
+              177
+            ],
+            [
+              365,
+              430
+            ]
+          ]
+        },
+        {
+          "name": "Noé",
+          "kind": "agent",
+          "jobs": [
+            [
+              370,
+              450
+            ],
+            [
+              570,
+              690
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "type": "Livraison D01",
+      "status": "En cours",
+      "tone": "live",
+      "title": "Recherche dans les notes · nouvelle version",
+      "step": "Préparer les tests · Relire les tests",
+      "started": "14:34",
+      "elapsed": 492,
+      "lanes": [
+        {
+          "name": "Humain",
+          "kind": "human",
+          "jobs": [
+            [
+              0,
+              18
+            ]
+          ]
+        },
+        {
+          "name": "Code",
+          "kind": "code",
+          "jobs": [
+            [
+              18,
+              42
+            ]
+          ]
+        },
+        {
+          "name": "Alex",
+          "kind": "agent",
+          "jobs": [
+            [
+              42,
+              492
+            ]
+          ]
+        },
+        {
+          "name": "Léa",
+          "kind": "agent",
+          "jobs": [
+            [
+              80,
+              492
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "type": "Livraison D01",
+      "status": "✓ Fusionné",
+      "tone": "done",
+      "title": "Recherche dans les notes",
+      "step": "Exécution terminée · historique disponible",
+      "started": "14:10",
+      "elapsed": 720,
+      "lanes": [
+        {
+          "name": "Humain",
+          "kind": "human",
+          "jobs": [
+            [
+              0,
+              18
+            ],
+            [
+              690,
+              705
+            ]
+          ]
+        },
+        {
+          "name": "Code",
+          "kind": "code",
+          "jobs": [
+            [
+              18,
+              42
+            ],
+            [
+              177,
+              190
+            ],
+            [
+              450,
+              570
+            ],
+            [
+              705,
+              720
+            ]
+          ]
+        },
+        {
+          "name": "Alex",
+          "kind": "agent",
+          "jobs": [
+            [
+              42,
+              122
+            ],
+            [
+              190,
+              365
+            ]
+          ]
+        },
+        {
+          "name": "Léa",
+          "kind": "agent",
+          "jobs": [
+            [
+              122,
+              177
+            ],
+            [
+              365,
+              430
+            ]
+          ]
+        },
+        {
+          "name": "Noé",
+          "kind": "agent",
+          "jobs": [
+            [
+              370,
+              450
+            ],
+            [
+              570,
+              690
+            ]
+          ]
+        }
+      ]
+    }
+  ]
 }

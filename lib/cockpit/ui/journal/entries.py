@@ -48,6 +48,7 @@ guessing at a format that does not exist yet.
 """
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 REPONSE_RE = re.compile(r"^RÉPONSE: (?P<lettre>.+?) — (?P<texte>.*)$")
 PROPOSITION_ACCEPTEE_RE = re.compile(r"^PROPOSITION ACCEPTÉE par (?P<acteur>.+?) — passe à planifier$")
@@ -232,9 +233,19 @@ COCKPIT_ACTION_TEXT = {"relancer": "Relance demandée", "accepter_chantier": "Ch
 RESOLVING_COCKPIT_ACTIONS.update(COCKPIT_ACTION_TEXT)
 
 
+# An event bead meant for the journal (`bd create --type event`) carries its
+# nature or its source under this key (T01R6, af-ltchro; Spec af-2zseit).
+JOURNAL_EVENT_KEY = "gc.journal_event"
+
+
 def _entries_of(bead):
     bead_id = bead.get("id") or ""
     metadata = bead.get("metadata") or {}
+    if metadata.get(JOURNAL_EVENT_KEY):
+        # An event is not the resolution of a request: it is its own entry,
+        # under its title, at the time it was recorded.
+        return [JournalEntry(bead_id=bead_id, quoi=bead.get("title") or "", quand=bead.get("created_at") or "",
+                             par="", voie=metadata[JOURNAL_EVENT_KEY])]
     entries = []
     # The request a resolution answers is the last one asked before it; a
     # trace on a bead that never bore a question (a chantier accepted) is
@@ -278,13 +289,22 @@ def _entries_of(bead):
     return entries
 
 
+def _instant_key(quand):
+    """What orders ``quand`` among the others: the instant it says, in UTC,
+    whatever offset it is written with; the text itself when it is no date."""
+    try:
+        return datetime.fromisoformat(quand).astimezone(timezone.utc).isoformat()
+    except ValueError:
+        return quand
+
+
 def journal_from_beads(beads):
-    """Every resolution the notes of ``beads`` record, newest first; the
-    ones no trace dates come last, in the order given. A bead resolved
-    twice yields two entries (spec .19)."""
+    """Every resolution the notes of ``beads`` record, and every event they
+    hold for the journal, newest first; the ones no trace dates come last,
+    in the order given. A bead resolved twice yields two entries (spec .19)."""
     entries = []
     for bead in beads or []:
         if isinstance(bead, dict):
             entries.extend(_entries_of(bead))
-    dated = sorted((e for e in entries if e.quand), key=lambda e: e.quand, reverse=True)
+    dated = sorted((e for e in entries if e.quand), key=lambda e: _instant_key(e.quand), reverse=True)
     return dated + [e for e in entries if not e.quand]
