@@ -17,6 +17,7 @@ from cockpit.actions.registry import ActionError
 from cockpit.core.freshness import FRESH, UNKNOWN
 from cockpit.core.readmodel import PARIS
 from cockpit.factory.checks import SectionChecks
+from cockpit.factory.configuration import ROOT as FACTORY_ROOT
 from cockpit.factory.configuration import read_configuration
 from cockpit.health import collectors
 from cockpit.health.engine import (
@@ -489,7 +490,8 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         wanted = (urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("role") or [""])[0]
         keys = [role["key"] for role in agents["value"]["configuration"]["roles"]]
         main = render_factory_page({
-            "machine": checks.get("machine"), "connections": checks.get("connexions"), "agents": agents,
+            "machine": checks.get("machine"), "connections": checks.get("connexions"),
+            "providers": checks.get("fournisseurs"), "agents": agents,
             "live": snapshot, "now": now, "notify_configured": bool(notify and notify.configured()),
             "selected": wanted if wanted in keys else (keys[0] if keys else ""),
             "health_html": render_health_zone(health, checked_at=_latest_read_at(snapshot, ("beads", "git"))),
@@ -499,7 +501,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                         headers={"Set-Cookie": session_cookie_header(self.server.session_token)}, snapshot=snapshot)
 
     def _recheck_factory_section(self):
-        """POST /api/usine/reverifier (section=machine|connexions|agents,
+        """POST /api/usine/reverifier (section=machine|connexions|fournisseurs|agents,
         role=): reads that section of the page Usine again -- the
         connections after every source was read again now -- and only that
         one, then back to the page with the same role open. It writes
@@ -508,7 +510,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         form = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8") if length else "")
         section = (form.get("section") or [""])[0]
         role = (form.get("role") or [""])[0]
-        if section not in ("machine", "connexions", "agents"):
+        if section not in ("machine", "connexions", "fournisseurs", "agents"):
             self.send_response(400)
             self.send_header("Content-Length", "0")
             self.end_headers()
@@ -650,6 +652,7 @@ def make_server(
     supervisor_unreachable_after_seconds=None,
     factory_stalled_after_seconds=None,
     illisible_after_seconds=None,
+    factory_root=None,
 ):
     if host not in ALLOWED_HOSTS:
         raise ValueError(
@@ -692,12 +695,16 @@ def make_server(
     server.extra_requests = lambda snapshot, now: []
     # The sections of the page Usine, each as it was last checked
     # (cockpit.factory.checks): the machine, the connections as the read
-    # model held them, the configuration of the roles with the sessions
-    # observed at work.
+    # model held them, the providers and what the failover observed of
+    # them, the configuration of the roles with the sessions observed at
+    # work -- read in the Factory's files at ``factory_root``.
+    root = FACTORY_ROOT if factory_root is None else factory_root
     server.factory_checks = SectionChecks({
         "machine": read_machine,
         "connexions": lambda: read_model.snapshot(),
-        "agents": lambda: {"configuration": read_configuration(), "sessions": read_model.snapshot().get("sessions")},
+        "fournisseurs": lambda: read_configuration(root, read_model.now()),
+        "agents": lambda: {"configuration": read_configuration(root, read_model.now()),
+                           "sessions": read_model.snapshot().get("sessions")},
     }, read_model.now)
     server.illisible_after_seconds = (
         ILLISIBLE_THRESHOLD_SECONDS if illisible_after_seconds is None else illisible_after_seconds

@@ -7,9 +7,10 @@ the other datasets of the criterion is in factory-layout-*-test.py.
 
 Each case launches the real cockpit with the launcher of the profile,
 bin/project-launch, on health-content -- at a commit where the dataset says
-other names and figures than the prototype's, or where the Factory's own
+other names and figures than the prototype's, where the Factory's own
 configuration says other ones (config/provider-policy.json,
-config/delivery-flow.json, city.toml) -- and reads the page GET /usine as a
+config/delivery-flow.json, city.toml), or where the host holds what the
+provider failover observed (.gc/provider-state.json) -- and reads the page GET /usine as a
 headless Chromium renders it, before and after a role of the drawing was
 selected, by a click or by the keyboard (usine_page.py). The detail of
 the role selected is the part that holds its heading (`<h3>`).
@@ -20,26 +21,40 @@ two author sessions at most; the reviewer on Codex GPT-5.6 Sol, then Claude
 as fallback, one session; the evaluator on Claude Opus 5.5 with no
 fallback.
 
+The reference (prototype/cockpit-b-zones-20261012 at 632deea,
+prototypes/c01-complete/frozen-panorama-factory/states/health-content.html)
+draws its sections in this order, and its flow downwards: the deterministic
+controller, the author, the reviewer and the evaluator, the integration,
+the owner's judgment.
+
 False if a name or a figure of the prototype is shown as the real
 configuration, if the page does not follow a change of the configuration,
-if the configuration is not told apart from what is observed, or if a role
-of the drawing cannot be selected.
+if the configuration is not told apart from what is observed -- the
+availability the failover observed, or that none was --, if a role of the
+drawing cannot be selected, or if the sections or the flow are not in the
+order of the reference.
 """
 
 from __future__ import annotations
 
 import json
 import sys
+import time
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from usine_page import (  # noqa: E402
-    GPT_5_6, OPUS_5_5, PAGE, LaunchTree, anchors_by_name, measure, reconfigure, replaced, says, section_titled,
+    GPT_5_6, OPUS_5_5, PAGE, LaunchTree, anchors_by_name, in_order, measure, observed, reconfigure, replaced, says,
+    section_titled, section_titles,
 )
 
 FLOW = "flow-down-1"
+# The sections of the reference's state health-content, in its order.
+REFERENCE_SECTIONS = ["Machine d’exécution", "Connexions", "Fournisseurs et accès API", "Agents dans le workflow",
+                      "Suspension, reprise et arrêt", "Nettoyer les espaces inutilisés"]
 
 
 def json_edit(change):
@@ -115,6 +130,12 @@ class FactoryRoles(unittest.TestCase):
         for role in ("Auteur", "Relecteur", "Évaluateur"):
             self.assertTrue([name for name in roles if role in name],
                             f"the drawing has no role « {role} » to select: {roles}")
+        downwards = [flow.find(said) for said in ("déterministe", "Auteur", "Relecteur", "Évaluateur", "Intégration",
+                                                  "jugement")]
+        self.assertNotIn(-1, downwards, f"the drawing does not show every step of the flow: « {flow} »")
+        self.assertEqual(sorted(downwards), downwards, f"the drawing is not in the order of the flow: « {flow} »")
+        self.assertEqual([], in_order(REFERENCE_SECTIONS, section_titles(frame)),
+                         "sections of the reference missing or out of its order")
         _, agents = section_titled(self, frame, "Agents dans le workflow")
         self.assertRegex(agents, GPT_5_6, "the reviewer is not shown on the model its configuration names")
         self.assertRegex(agents, OPUS_5_5, "the author is not shown on the model its configuration names")
@@ -130,14 +151,39 @@ class FactoryRoles(unittest.TestCase):
         self.assertRegex(detail, r"(?i)claude|opus", "the reviewer's fallback is not said")
         self.assertRegex(detail, r"\b(1|une) session", "the reviewer's limit of sessions is not said")
         self.assertIn("configur", detail.lower(), "the detail does not say what is configured")
-        self.assertIn("observ", detail.lower(), "the detail does not say what is observed, apart")
+        self.assertLess(-1, detail.lower().find("configuration"))
+        self.assertLess(detail.lower().find("configuration"), detail.lower().find("observé"),
+                        "the detail does not say what is configured, then what is observed apart")
+        self.assertIn("Disponibilité observée non observée sur cet hôte", detail,
+                      "the launched tree holds no state of the failover, and the detail does not say so")
 
     def test_selecting_the_evaluator_by_the_keyboard_shows_its_configuration(self):
         address = self.tree.launch("health-content")
         detail = self.select(address, "Évaluateur", keys=True)
         self.assertRegex(detail, OPUS_5_5, "the evaluator's configured model is not said")
         self.assertIn("aucun secours", detail.lower(), "the evaluator has no fallback, and it is not said")
-        self.assertIn("observ", detail.lower(), "the detail does not say what is observed, apart")
+        self.assertIn("Disponibilité observée", detail, "the detail does not say the availability observed, apart")
+
+    def test_what_the_failover_observed_is_the_availability_shown_apart_from_the_configuration(self):
+        # The host's failover detected that the Anthropic pool is exhausted
+        # for ten hours more.
+        until = datetime.fromtimestamp(time.time() + 10 * 3600, tz=timezone.utc)
+        commit = observed(self.tree, {".gc/provider-state.json": json.dumps({
+            "contract": "agent-factory-provider-state/v1",
+            "pools": {"anthropic": {"status": "exhausted", "source": "detected",
+                                    "until": until.strftime("%Y-%m-%dT%H:%M:%SZ")}},
+        })})
+        address = self.tree.launch("health-content", commit)
+        frame = measure(address, PAGE)[0]
+        _, providers = section_titled(self, frame, "Fournisseurs et accès API")
+        self.assertRegex(providers, r"Anthropic[^·]*· Claude.*Quota épuisé jusqu’à \d{2}:\d{2}",
+                         "the pool the failover found exhausted is not said exhausted")
+        self.assertRegex(providers, r"OpenAI.*Aucune limite détectée", "the pool the failover found nothing of is "
+                         "not said so")
+        detail = self.select(address, "Évaluateur")
+        self.assertRegex(detail, OPUS_5_5, "the evaluator's configured model is not said")
+        self.assertRegex(detail, r"Disponibilité observée Claude Opus 5\.5 : quota épuisé jusqu’à \d{2}:\d{2}",
+                         "the evaluator's provider is not said exhausted, as the failover observed")
 
     def test_a_change_of_the_configuration_is_what_the_page_says(self):
         def flow(document):

@@ -148,6 +148,7 @@ def build(config, clock=None):
         supervisor_unreachable_after_seconds=config.supervisor_unreachable_after_seconds,
         factory_stalled_after_seconds=config.factory_stalled_after_seconds,
         illisible_after_seconds=config.illisible_after_seconds,
+        factory_root=config.factory_root,
     )
 
     # Clean stop (T23, T24) -- read side only (af-mjfvwx 7a): the driver keeps

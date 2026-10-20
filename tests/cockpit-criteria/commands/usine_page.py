@@ -10,8 +10,9 @@ where a headless Chromium renders it (`measure`). What a page is cut into
 is read from the anchors of the reference (prototype/cockpit-b-zones-20261012
 at 632deea, prototypes/c01-complete/frozen-panorama-factory, attribute
 `data-anchor`): its sections are the anchored `<section>` elements, its
-connections the anchors `connection-row-N`, its flow the anchor
-`flow-down-1`.
+connections the anchors `connection-row-N` of the section « Connexions »
+(the reference draws the providers' rows with the same anchors, in their
+own section), its flow the anchor `flow-down-1`.
 
 Nothing here reads the code of the cockpit: the launcher is an entry point
 of the profile, the page is read where the browser renders it, and the
@@ -69,10 +70,36 @@ def section_of(frame: dict, anchor: str | None) -> str | None:
 
 
 def connection_rows(frame: dict) -> dict[str, str]:
-    """The connections the page shows (anchors `connection-row-N`): anchor ->
-    its text on one line."""
+    """The connections the page shows (anchors `connection-row-N` of the
+    section « Connexions »): anchor -> its text on one line."""
+    held = [name for name, text in sections(frame).items() if text.startswith("Connexions")]
     return {anchor["name"]: says(frame, anchor["name"]) for anchor in frame["anchors"]
-            if re.fullmatch(r"connection-row-\d+", anchor["name"])}
+            if re.fullmatch(r"connection-row-\d+", anchor["name"]) and set(held) & set(anchor["chain"])}
+
+
+def colour(frame: dict, anchor: str) -> str:
+    """The computed colour of the text of the anchor `anchor`."""
+    return anchors_by_name(frame)[anchor]["styles"]["color"]
+
+
+def section_titles(frame: dict) -> list[str]:
+    """The text each anchored section of the page begins with, in the
+    order of the page."""
+    return [says(frame, anchor["name"]) for anchor in frame["anchors"] if anchor["tag"] == "section"]
+
+
+def in_order(expected: list[str], titles: list[str]) -> list[str]:
+    """The titles of `expected` the page does not show in that order,
+    each as the start of one of its sections (`titles`); other sections of
+    the page may come between them."""
+    missing, at = [], 0
+    for title in expected:
+        found = next((index for index in range(at, len(titles)) if titles[index].startswith(title)), None)
+        if found is None:
+            missing.append(title)
+        else:
+            at = found + 1
+    return missing
 
 
 def connection(case, frame: dict, name: str) -> str:
@@ -114,6 +141,23 @@ def reconfigure(tree: LaunchTree, edits: dict[str, Callable[[str], str]]) -> str
     return commit
 
 
+def observed(tree: LaunchTree, files: dict[str, str]) -> str:
+    """A commit of the launched tree that holds, besides the Factory's own
+    files, the files `files` (path -> text) a host writes beside them and
+    no commit of the Factory holds -- what the provider failover observed;
+    the tree is back at its first commit afterwards."""
+    for path, text in files.items():
+        target = Path(tree.repo) / path
+        assert not target.exists(), f"{path} is already in the launched tree"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+        git(tree.repo, "add", "--force", path)
+    git(tree.repo, "commit", "--quiet", "--message", "the host observed something")
+    commit = git(tree.repo, "rev-parse", "HEAD")
+    git(tree.repo, "checkout", "--quiet", tree.head)
+    return commit
+
+
 def replaced(before: str, after: str) -> Callable[[str], str]:
     """An edit that writes `after` where the text says `before`, once."""
     def edit(text: str) -> str:
@@ -132,7 +176,7 @@ GPT_5_6 = re.compile(r"gpt[\s-]*5[.,-]6", re.I)
 OPUS_5_5 = re.compile(r"opus[\s-]*5[.,-]5", re.I)
 
 
-def assert_usable(case, tree: LaunchTree, dataset: str) -> None:
+def assert_usable(case, tree: LaunchTree, dataset: str, reference_sections: list[str] | None = None) -> None:
     """GET /usine of the cockpit launched on `dataset`, rendered dark then
     light at 1440 and 390 px, draws the connections and the flow with the
     roles of the Factory's configuration (the reviewer on GPT-5.6, the
@@ -140,7 +184,8 @@ def assert_usable(case, tree: LaunchTree, dataset: str) -> None:
     unreadable or unusable (home_destination.problems: overflow, cut or
     overlapping texts, contrast, controls without a name, out of reach of
     the keyboard or without a visible focus, a lost local scroll, the wrong
-    theme)."""
+    theme). With `reference_sections`, the sections of the reference's
+    state, its page shows them in that order."""
     address = tree.launch(dataset)
     found = {}
     for theme in ("dark", "light"):
@@ -151,4 +196,7 @@ def assert_usable(case, tree: LaunchTree, dataset: str) -> None:
             case.assertTrue(agents, f"no section « Agents dans le workflow » at {frame['width']} px, {theme}")
             case.assertRegex(agents[0], GPT_5_6, f"the reviewer's configured model is not said ({frame['width']} px)")
             case.assertRegex(agents[0], OPUS_5_5, f"the author's configured model is not said ({frame['width']} px)")
+            if reference_sections is not None:
+                case.assertEqual([], in_order(reference_sections, section_titles(frame)),
+                                 f"sections of the reference missing or out of its order ({frame['width']} px, {theme})")
     case.assertEqual({}, found)

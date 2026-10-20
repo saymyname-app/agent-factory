@@ -1172,20 +1172,30 @@ is written. Test: `tests/cockpit-runs-test.py`.
 
 `GET /usine?role=<author|reviewer|evaluator>` (`lib/cockpit/ui/factory/page.py`),
 the Prototype Fold of the reference « Usine, configuration et maintenance »
-(Spec af-fgcw0d, user stories 63, 65, 160–162). Three sections, each shown
+(Spec af-fgcw0d, user stories 63, 65, 160–162). Four sections, each shown
 as it was **last checked** (`lib/cockpit/factory/checks.py`), with the time
-of that check to the second and its own « Revérifier » button:
+of that check to the second and its own « Revérifier maintenant » button:
 
 - « Machine d’exécution »: the machine the cockpit runs on (host, system,
-  cores, load, memory, disk of the home), read when checked;
+  cores, time in service from `/proc/uptime`, load, memory, disk of the
+  home), read when checked;
 - « Connexions »: every source of the read model with its state, its
   latency -- how long its last complete read took, timed by its poller
   (`PollingSource`, the status read of `GcSsePoller`; `latency` in each row
   of the read model) -- and when it was read. Whether a source is still
   current is read now: one no longer current is greyed « Périmé · vu il y a
-  … » with its last latency, one never read is « inconnu — la source ne
-  répond pas », never 0 and never a failure. The notifications say whether
-  they are configured; their delivery is not measured;
+  … » with its last latency; one failing since its last reading (unknown,
+  `cockpit.core.freshness`) is greyed « Inconnu — la source ne répond plus ·
+  vu il y a … », without a latency; one never read is « inconnu — la source
+  ne répond pas », never 0 and never a failure. The notifications say
+  whether they are configured; their delivery is not measured;
+- « Fournisseurs et accès API »: each pool of quota of
+  `config/provider-policy.json`, the providers drawn on it, and what the
+  provider failover observed of it in `.gc/provider-state.json` (read as
+  `bin/provider-failover status` reads it: « Quota épuisé jusqu’à … »,
+  « Quota bas », « En erreur », or « Aucune limite détectée », which
+  measures no quota); « Disponibilité non observée » where the host holds
+  no such file. No key is shown;
 - « Agents dans le workflow »: the roles as the Factory's files configure
   them (`lib/cockpit/factory/configuration.py`: `config/delivery-roles.json`,
   the chains of `config/provider-policy.json` -- the first provider is the
@@ -1195,11 +1205,16 @@ of that check to the second and its own « Revérifier » button:
   (deterministic controller, the steps each role runs, integration, the
   owner's judgment). A step is a link that opens the detail of its role:
   configuration first, then what is observed apart -- the provider in
-  service from `city.provider.toml` when the host has one, the sessions of
-  that role at work. The other targets of the policy are listed outside the
-  flow. A file that cannot be read is named, nothing is guessed.
+  service from `city.provider.toml` when the host has one, the availability
+  the failover observed of each provider of its chain (a provider disabled
+  says it, with its reason), the sessions of that role at work. The other
+  targets of the policy are listed outside the flow. A file that cannot be
+  read is named, nothing is guessed.
 
-`POST /api/usine/reverifier` (form `section=machine|connexions|agents`,
+The Factory's files are read under `COCKPIT_FACTORY_ROOT` (default: the tree
+the cockpit runs from).
+
+`POST /api/usine/reverifier` (form `section=machine|connexions|fournisseurs|agents`,
 `role=`) checks that section again -- the connections after every source was
 read again now -- and only that one, then answers 303 back to the page; it
 writes nothing. A check older than five minutes is done again at the next

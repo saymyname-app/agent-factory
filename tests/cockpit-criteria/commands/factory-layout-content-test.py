@@ -14,7 +14,9 @@ come from the Factory's configuration on every dataset, whatever its
 sources answer.
 
 False if a state does not draw its connections and its flow, if the roles
-it shows are not those of the configuration, or if the page overflows, cuts
+it shows are not those of the configuration, if a state the reference draws
+whole (health-content, -long, -narrow, -light) does not show the sections of
+the reference in its order, or if the page overflows, cuts
 or overlaps a text, lacks contrast, or has a control the keyboard cannot
 reach, activate or show focused.
 """
@@ -28,6 +30,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from usine_page import LaunchTree, assert_usable  # noqa: E402
+
+# The sections the reference's state draws, in its order
+# (prototype/cockpit-b-zones-20261012 at 632deea,
+# prototypes/c01-complete/frozen-panorama-factory/states/<state>.html).
+REFERENCE_SECTIONS = ["Machine d’exécution", "Connexions", "Fournisseurs et accès API", "Agents dans le workflow",
+                      "Suspension, reprise et arrêt", "Nettoyer les espaces inutilisés"]
 
 
 class FactoryLayoutContent(unittest.TestCase):
@@ -45,13 +53,13 @@ class FactoryLayoutContent(unittest.TestCase):
         self.tree.stop_all()
 
     def test_health_content_is_readable_and_usable_at_both_widths_in_both_themes(self):
-        assert_usable(self, self.tree, "health-content")
+        assert_usable(self, self.tree, "health-content", REFERENCE_SECTIONS)
 
     def test_health_long_is_readable_and_usable_at_both_widths_in_both_themes(self):
-        assert_usable(self, self.tree, "health-long")
+        assert_usable(self, self.tree, "health-long", REFERENCE_SECTIONS)
 
     def test_health_narrow_is_readable_and_usable_at_both_widths_in_both_themes(self):
-        assert_usable(self, self.tree, "health-narrow")
+        assert_usable(self, self.tree, "health-narrow", REFERENCE_SECTIONS)
 
 
 if __name__ == "__main__":

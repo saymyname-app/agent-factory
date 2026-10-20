@@ -8,19 +8,24 @@ of them, and the zones that change the factory, still unavailable.
     render_factory_page(view) -> a function of the anchors of the page
 
 ``view`` holds what the page shows, already read: ``machine``,
-``connections`` and ``agents``, the last check of each section
-(cockpit.factory.checks: ``{"at", "value"}``); ``live``, the read model now;
+``connections``, ``providers`` and ``agents``, the last check of each
+section (cockpit.factory.checks: ``{"at", "value"}``); ``live``, the read model now;
 ``selected``, the role whose detail is open; ``notify_configured``;
 ``health_html`` and ``actions_html``, the zones the cockpit already had;
 ``now``.
 
 A section says when it was checked, to the second, and holds its own
-« Revérifier » (POST /api/usine/reverifier): reading the page again reads
-nothing again. A connection says its state, its latency (how long the
-cockpit's last read of it took) and its freshness, from the check; once its
-source is no longer current it says how long ago it was seen, and a source
-never read is « inconnu — la source ne répond pas », never 0, never a
-failure. Nothing on the page is an example value: what the cockpit cannot
+« Revérifier maintenant » (POST /api/usine/reverifier): reading the page
+again reads nothing again. A connection says its state, its latency (how
+long the cockpit's last read of it took) and its freshness, from the check;
+once its source is no longer current it is greyed « Périmé » with how long
+ago it was seen, a source that has failed since (cockpit.core.freshness:
+UNKNOWN, a last reading kept) is « Inconnu — la source ne répond plus »
+with that age, and a source never read is « inconnu — la source ne répond
+pas »: never 0, never a failure, never a latency. What the provider
+failover observed of each provider (a quota exhausted, an error, a provider
+disabled) is shown apart from the configuration, and said not observed
+where the host holds no state of it. Nothing on the page is an example value: what the cockpit cannot
 read is said unread.
 
 Intent (Benjamin, his words, 2026-10-19 19:20 Paris): « enchaîne
@@ -38,11 +43,12 @@ from datetime import datetime
 
 from account_home import account_home
 
-from cockpit.core.freshness import FRESH
+from cockpit.core.freshness import FRESH, UNKNOWN
 from cockpit.core.readmodel import PARIS
 
 GIB = 1024 ** 3
 UNKNOWN_SAYING = "inconnu — la source ne répond pas"
+FAILING_SAYING = "Inconnu — la source ne répond plus"
 EFFORTS = {"minimal": "Minimal", "low": "Faible", "medium": "Moyen", "high": "Élevé", "xhigh": "Très élevé",
            "max": "Maximal"}
 # What each source the cockpit reads is for, under its name.
@@ -57,7 +63,11 @@ PURPOSES = {
     "depots": "Dépôts des projets",
     "tailscale": "Accès privé à la VM",
 }
-SECTION_NAMES = {"machine": "la machine", "connexions": "les connexions", "agents": "la configuration"}
+SECTION_NAMES = {"machine": "la machine", "connexions": "les connexions", "fournisseurs": "les fournisseurs",
+                 "agents": "la configuration"}
+# What the provider failover observed of a provider or its pool.
+AVAILABILITY = {"available": "aucune limite détectée", "exhausted": "quota épuisé", "low": "quota bas",
+                "error": "en erreur", "disabled": "désactivé"}
 
 
 def _e(value):
@@ -70,6 +80,18 @@ def _go(value):
 
 def _clock(epoch):
     return datetime.fromtimestamp(epoch, tz=PARIS).strftime("%H:%M:%S")
+
+
+def _duration(seconds):
+    """« 3 j 4 h 12 min 7 s »: a length of time to the second, without the
+    colons of a time of day."""
+    seconds = max(0, int(seconds))
+    parts = []
+    for unit, size in (("j", 86400), ("h", 3600), ("min", 60)):
+        if seconds >= size or parts:
+            parts.append("%d %s" % (seconds // size, unit))
+            seconds %= size
+    return " ".join(parts + ["%d s" % seconds])
 
 
 def _age(seconds):
@@ -107,7 +129,12 @@ def read_machine(path=None):
     disk. A part that cannot be read is None, never guessed."""
     out = {"host": socket.gethostname(), "system": "%s %s" % (platform.system(), platform.release()),
            "cores": os.cpu_count(), "load": None, "mem_total": None, "mem_used": None,
-           "disk_total": None, "disk_used": None}
+           "disk_total": None, "disk_used": None, "uptime": None}
+    try:
+        with open("/proc/uptime") as handle:
+            out["uptime"] = float(handle.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        pass
     try:
         out["load"] = os.getloadavg()[0]
     except OSError:
@@ -130,11 +157,11 @@ def read_machine(path=None):
     return out
 
 
-def _recheck(section, selected, label="Revérifier"):
+def _recheck(section, selected, label="Revérifier maintenant"):
     """The button that checks one section again, and keeps the role open."""
     return ('<form class="fa-recheck" method="post" action="/api/usine/reverifier">'
             '<input type="hidden" name="section" value="%s"><input type="hidden" name="role" value="%s">'
-            '<button type="submit" aria-label="Revérifier %s">%s</button></form>'
+            '<button type="submit" aria-label="Revérifier maintenant %s">%s</button></form>'
             % (_e(section), _e(selected or ""), _e(SECTION_NAMES[section]), _e(label)))
 
 
@@ -158,8 +185,10 @@ def render_machine(a, check, selected):
     mem_t, mem_u = machine["mem_total"], machine["mem_used"]
     disk_t, disk_u = machine["disk_total"], machine["disk_used"]
     disk = None if not disk_t else round(100 * disk_u / disk_t)
-    summary = "%s · %s · %d cœurs%s" % (machine["host"], machine["system"], cores,
-                                       " · %s Go de mémoire" % _go(mem_t) if mem_t else "")
+    summary = "%s · %s · %d cœurs%s · %s" % (
+        machine["host"], machine["system"], cores, " · %s Go de mémoire" % _go(mem_t) if mem_t else "",
+        "en service depuis %s" % _duration(machine["uptime"]) if machine.get("uptime") is not None
+        else "durée de service non lue")
     meters = (
         _meter(a, "Processeur", "non lu" if cpu is None else "%d %%" % cpu, cpu,
                "Charge non lue" if load is None
@@ -183,6 +212,8 @@ def _connection_row(a, name, checked, live, now):
     purpose = PURPOSES.get(name, "Source lue par le cockpit")
     if live.get("read_at") is None:
         tone, state, value = "unknown", UNKNOWN_SAYING, ""
+    elif live.get("freshness") == UNKNOWN:
+        tone, state, value = "unknown", "%s · vu il y a %s" % (FAILING_SAYING, _age(now - live["read_at"])), ""
     elif live.get("freshness") == FRESH:
         row = checked if checked and checked.get("freshness") == FRESH and checked.get("read_at") else live
         tone, state = "ok", "À jour · lu à %s" % _clock(row["read_at"])
@@ -202,13 +233,53 @@ def render_connections(a, check, live, notify_configured, now, selected):
     rows.append('<li class="fa-row fa-%s" %s><span class="fa-dot %s" aria-hidden="true"></span><div>'
                 '<strong>Notifications iPhone</strong><small>Envoi Pushover · %s</small></div>'
                 '<span class="fa-val">latence non mesurée</span></li>'
-                % (("ok", a("connection-row"), "ok", "configurées") if notify_configured
-                   else ("off", a("connection-row"), "off", "non configurées")))
+                % (("ok", a("connection-row"), "ok", "Configurées, remise non vérifiée") if notify_configured
+                   else ("off", a("connection-row"), "off", "Non configurées")))
     return ('<section class="pn-panel" %s><div class="fa-head"><h2>Connexions</h2>%s</div>'
             '<ul class="fa-list">%s</ul><p class="fa-muted fa-note" %s>Latence : durée de la dernière lecture de '
             'chaque source par le cockpit. Une source qui ne répond plus est grisée avec son âge. Aucun envoi de '
             'notification n’est assimilé à une réception sur le téléphone.</p></section>'
             % (a("panel"), _checked("Vérifiées", check, "connexions", selected), "".join(rows), a("readonly-note")))
+
+
+def _observed(status):
+    """« quota épuisé jusqu’à 18:00 »: what the failover observed of a
+    provider or its pool."""
+    said = AVAILABILITY.get(status.get("state"), status.get("state") or "non observé")
+    if status.get("until") is not None and status.get("state") != "available":
+        said += " jusqu’à %s" % _clock(status["until"])[:5]
+    if status.get("state") == "disabled" and status.get("reason"):
+        said += " (%s)" % status["reason"]
+    return said
+
+
+def render_providers(a, check, selected):
+    """« Fournisseurs et accès API »: each pool of quota the providers draw
+    on, the providers configured on it, and what the failover observed."""
+    configuration = check["value"]
+    availability = configuration["availability"]
+    rows = []
+    for pool in configuration["pools"]:
+        if availability is None:
+            tone, said = "unknown", "disponibilité non observée"
+        else:
+            status = availability["pools"].get(pool["key"]) or {}
+            tone, said = ("ok" if status.get("state") == "available" else "stale"), _observed(status)
+        rows.append('<li class="fa-row fa-%s" %s><span class="fa-dot %s" aria-hidden="true"></span><div>'
+                    '<strong>%s</strong><small>%s</small></div><span class="fa-val">%s</span></li>'
+                    % (tone, a("connection-row"), tone, _e(pool["label"]),
+                       _e(" · ".join(pool["providers"]) or "aucun fournisseur configuré"), _e(said[:1].upper() + said[1:])))
+    if availability is None:
+        source = ("Aucun état du repli automatique sur cet hôte (.gc/provider-state.json) : la disponibilité des "
+                  "fournisseurs n’y est pas observée.")
+    else:
+        source = ("Disponibilité observée par le repli automatique des fournisseurs%s : « aucune limite détectée » "
+                  "ne mesure pas un quota." % (" à %s" % _clock(availability["at"]) if availability["at"] else ""))
+    return ('<section class="pn-panel" %s><div class="fa-head"><h2>Fournisseurs et accès API</h2>%s</div>'
+            '<ul class="fa-list">%s</ul><p class="fa-muted fa-note" %s>%s Aucune clé affichée. Un compte configuré ne '
+            'prouve pas que son quota est disponible.</p></section>'
+            % (a("panel"), _checked("Vérifiés", check, "fournisseurs", selected), "".join(rows), a("readonly-note"),
+               _e(source)))
 
 
 def _provider_line(provider):
@@ -277,6 +348,18 @@ def _sessions_of(role, sessions_row):
     return str(len(held))
 
 
+def _availability_of(role, availability):
+    """What the failover observed of each provider of the role's chain, in
+    its order."""
+    chain = [p for p in [role["configured"], *role["fallbacks"]] if p]
+    if availability is None:
+        return "non observée sur cet hôte (aucun état du repli écrit)"
+    if not chain:
+        return "aucun fournisseur configuré"
+    return " ; ".join("%s : %s" % (model_label(p["model"]), _observed(availability["providers"].get(p["name"]) or {}))
+                      for p in chain)
+
+
 def render_role(a, configuration, sessions_row, in_service, key):
     role = _role_of(configuration, key)
     if role is None:
@@ -305,13 +388,14 @@ def render_role(a, configuration, sessions_row, in_service, key):
         '<p class="fa-kicker">Configuration</p><dl class="fa-rows">%s</dl><p>%s</p>'
         '<p class="fa-muted">%s</p>'
         '<p class="fa-kicker">Observé</p><dl class="fa-rows"><div><dt>Fournisseur en service</dt><dd>%s</dd></div>'
+        '<div><dt>Disponibilité observée</dt><dd>%s</dd></div>'
         '<div><dt>Sessions de ce rôle au travail</dt><dd>%s</dd></div></dl>'
-        '<p class="fa-muted">Disponibilité des API et quotas : non mesurés par le cockpit.</p>'
         '<button type="button" disabled>Configurer</button>'
         '<p class="fa-muted">Les réglages ne sont pas encore raccordés à leur porte.</p></section>'
     ) % (a("section"), a("h3"), _e(role["label"]),
          "".join("<div><dt>%s</dt><dd>%s</dd></div>" % (_e(k), _e(v)) for k, v in rows), _e(fallbacks),
-         _e(_bounds_line(configuration["bounds"])), _e(serving), _e(_sessions_of(role, sessions_row)))
+         _e(_bounds_line(configuration["bounds"])), _e(serving),
+         _e(_availability_of(role, configuration["availability"])), _e(_sessions_of(role, sessions_row)))
 
 
 def render_agents(a, check, selected):
@@ -361,7 +445,7 @@ def render_factory_page(view):
             '<div class="fa-legacy">%s</div>%s'
         ) % (a("h1"), a("page-lead"), render_machine(a, view["machine"], view["selected"]), a("section-grid"),
              render_connections(a, view["connections"], view["live"], view["notify_configured"], view["now"],
-                                view["selected"]),
+                                view["selected"]) + render_providers(a, view["providers"], view["selected"]),
              render_agents(a, view["agents"], view["selected"]), view["health_html"],
              render_unavailable(a, view["actions_html"]))
     return draw
@@ -393,7 +477,7 @@ CSS = """
 .fa-row:last-child{border-bottom:0}
 .fa-row strong{display:block;font-size:14px}
 .fa-row small{display:block;font-size:12px;color:var(--pn-muted-text);margin-top:3px;overflow-wrap:anywhere}
-.fa-row.fa-stale strong,.fa-row.fa-stale .fa-val,.fa-row.fa-unknown strong,.fa-row.fa-off strong{color:var(--pn-muted-text)}
+.fa-row.fa-stale,.fa-row.fa-unknown,.fa-row.fa-off{color:var(--pn-muted-text)}
 .fa-val{font-size:14px;text-align:right}
 .fa-dot{width:8px;height:8px;border-radius:100%;background:var(--line)}
 .fa-dot.ok{background:var(--ok)}.fa-dot.stale{background:var(--pn-muted-text)}

@@ -21,7 +21,8 @@
       "tests/cockpit-criteria/commands/factory-roles-test.py::FactoryRoles.test_a_change_of_the_configuration_is_what_the_page_says",
       "tests/cockpit-criteria/commands/factory-roles-test.py::FactoryRoles.test_selecting_the_evaluator_by_the_keyboard_shows_its_configuration",
       "tests/cockpit-criteria/commands/factory-roles-test.py::FactoryRoles.test_selecting_the_reviewer_shows_its_configuration_apart_from_what_is_observed",
-      "tests/cockpit-criteria/commands/factory-roles-test.py::FactoryRoles.test_the_roles_and_their_flow_are_those_of_the_configuration_not_the_prototype"
+      "tests/cockpit-criteria/commands/factory-roles-test.py::FactoryRoles.test_the_roles_and_their_flow_are_those_of_the_configuration_not_the_prototype",
+      "tests/cockpit-criteria/commands/factory-roles-test.py::FactoryRoles.test_what_the_failover_observed_is_the_availability_shown_apart_from_the_configuration"
     ]
   }
 }

@@ -143,6 +143,10 @@ class Config:
             "COCKPIT_RIG_FILES_DIR", os.path.join(_REPO_ROOT, "config", "projects")
         )
         self.depots_poll_seconds = float(env.get("COCKPIT_DEPOTS_POLL_SECONDS", "600"))
+        # Where the page Usine reads the Factory's configuration of its roles
+        # and what the provider failover observed (.gc/provider-state.json,
+        # city.provider.toml): the tree the cockpit runs from.
+        self.factory_root = env.get("COCKPIT_FACTORY_ROOT", _REPO_ROOT)
         self.validity_seconds = dict(VALIDITY_WINDOWS_SECONDS)
         for source in list(self.validity_seconds):
             override = env.get("COCKPIT_VALIDITY_%s_SECONDS" % source.upper())
