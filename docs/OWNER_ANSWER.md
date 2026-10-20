@@ -93,6 +93,23 @@ recorded with the commit and the fingerprint of the dossier he judged — the
 Delivered Outcome, or the one of a « non conforme » request. The next pass
 closes the convoy with that reason and merges nothing.
 
+**Abandoned during delivery.** On a convoy that is neither Delivered nor
+carrying a « non conforme » request, there is no dossier: « abandonné »
+then also takes `--words`, Benjamin's words, and is recorded with
+`in_flight: true`, his words, the reason and the tip of the integration
+branch (`commit`, read on the remote; absent when the convoy has no
+integration branch), without a fingerprint. The next pass
+(`bin/outcome-promote`) withdraws every ticket of the convoy not closed yet
+— gate record `withdrawn`, then closed with the reason in its notes — and
+closes the convoy with `how: abandoned`. Nothing is merged, and no branch
+nor bead is deleted: the integration branch and the ticket branches stay as
+sources for later work. Intent (Benjamin, his words, 2026-10-20 15:58
+Paris): « ok pour ta recommandation », to "abandon the Cockpit convoy
+af-pqfxmd, recover Rituels from T41, replan the rest in larger tickets".
+Mechanism (agent interpretation, af-npz9v1): the convoy was cut for a code
+base #683 and #684 had overtaken, and « abandonné » was refused on it
+because no dossier existed yet.
+
 **`resolve-exception`** records, on his words, that the Planning Exception
 of the last batch is resolved — once the Spec is amended (T40, af-o6tu3z;
 Spec §11, « Spec amendée et graphe révisé »). The exception keeps the
@@ -181,7 +198,7 @@ nothing is recorded on such a convoy); 4 the convoy does not carry the mark
 | `record` accepté, constats rendus | the commit is not the one of the dossier; it is no longer the tip of the integration branch (`bin/evidence-pack check`, `tip`); the fingerprint is not the dossier's; the pack is not « à jour » (périmé, altéré, absent, incomplet) | nothing; the next pass generates a new dossier |
 | `record` accepté | a proposition has no verdict; a proposition « à faire avant d'accepter » has not been returned | nothing |
 | `record` constats rendus | no finding and no proposition to do first; a malformed finding; a finding that cites a held story or an anchor without its drafted `repair`; `later` with a `repair`; a finding that cites an anchor while the Validated Prototype cannot be read (the commit is neither in the repository nor on its `origin`): nothing is routed on a citation that cannot be checked | nothing |
-| `record` abandonné | no `--reason`, empty or on several lines; the convoy is neither Delivered nor carrying a « non conforme » request | nothing |
+| `record` abandonné | no `--reason`, empty or on several lines; on a convoy neither Delivered nor carrying a « non conforme » request, no `--words` | nothing |
 | `resolve-exception` | the last answer carries no Planning Exception; no words; the convoy still carries the digest of the approved Spec the exception was raised on — the refusal says which step is missing: the amendment of the Spec, its new approval, or the revised graph | nothing |
 
 Refused by `bin/convoy-state` itself, whoever calls it: `set-owner-repair`
@@ -198,7 +215,9 @@ second repair for a finding; `set-owner-proposal` and
   number of the « constats rendus » answer that returned it);
 - `answers`, oldest first: `{response: accepted|findings|abandoned,
   approver, commit, pack, at}` with `words` (accepted, findings), `reason`
-  (abandoned), `findings` — each `{text, route, cites?, draft?, ticket?,
+  (abandoned); an abandon during delivery is `{response: abandoned,
+  in_flight: true, approver, words, reason, at}` with `commit` (the tip of
+  the integration branch) when there was one, and no `pack`; `findings` — each `{text, route, cites?, draft?, ticket?,
   proposal?, proposition?}` — and `exception`: `{findings: [n…], at,
   resolved?: {approver, words, at}}`. An « accepté » may carry `voided`:
   `{cause: regression|fidelity|start|conflict, at}`, written by
@@ -251,8 +270,13 @@ unchanged.
   packs and the calls to the proposition door; the three verdicts; the
   routing of a batch and the Outcome back in delivery; Delivered refused
   while a repair is unpublished or the exception open; the request cleared;
-  rubric 0 of the next dossier; « abandonné » and its reason; « refusé »
-  and partial acceptance; a convoy without the mark.
+  rubric 0 of the next dossier; « abandonné » and its reason; « abandonné »
+  during delivery, refused without his words, recorded with the tip of the
+  integration branch; « refusé » and partial acceptance; a convoy without
+  the mark.
+- `tests/outcome-promote-test.py`: the convoy abandoned during delivery
+  closed by the next run, its started and its never-started tickets
+  withdrawn, the protected, integration and ticket branches unmoved.
 - `tests/owner-answer-promotion-fixture-city-test.py`, class
   `OwnerAnswerOnTheFixtureCity`: on the graph of the Fixture City, with the
   real passes — « accepté » waits for the verdicts, a returned finding is
@@ -307,4 +331,10 @@ unchanged.
   last answer is not « accepté »: one closed by hand with no recorded
   answer, and one closed by command on « abandonné » (T30), which it
   renders as delivered and waiting for him. The click is refused.
-- No real convoy reached an answer.
+- **An abandon during delivery withdraws, it does not stop.** A ticket
+  whose author session still runs when the pass closes it is not stopped
+  by this tool; its later writes on the closed convoy are refused by
+  `bin/convoy-state`. Pause the order (`[orders] skip`) and let running
+  sessions end first, as was done for af-pqfxmd.
+- The first real answer is the abandon during delivery of af-pqfxmd
+  (2026-10-20); no real convoy reached « accepté » or « constats rendus ».

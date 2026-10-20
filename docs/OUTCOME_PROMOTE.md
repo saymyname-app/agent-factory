@@ -150,7 +150,16 @@ draft. **Nothing is merged and no branch is fetched or moved**: the
 integration branch keeps its tip, as a source for later work. No promotion is recorded,
 no `fusion.html` is written and the evidence store of the Spec is not
 purged. The answer is `{promoted: false, merged: null, closed: true, how:
-abandoned, said, outcome: abandoned}`.
+abandoned, said, outcome: abandoned, withdrawn}`.
+
+An abandon recorded during delivery (`in_flight`, `docs/OWNER_ANSWER.md`)
+leaves tickets that are not closed. Before the closing, each of them gets
+the gate record `withdrawn` (`bin/convoy-state record-gate`) and is closed
+with the reason in its notes, as `bin/ticket-graph-publish` withdraws a
+ticket; `withdrawn` names them (empty after a Delivered Outcome, whose
+tickets are all closed). Their branches and their beads stay. A run
+interrupted between two tickets is taken up by the next one, which also
+closes a ticket that already carries its record.
 
 ## Refusals
 
