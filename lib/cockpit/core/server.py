@@ -29,6 +29,7 @@ from cockpit.projects.source import project_page_data
 from cockpit.requests.assemble import assemble_from_snapshot
 from cockpit.requests.defects import DefectCounter
 from cockpit.requests.journal import entries_from_value as journal_entries_from_value
+from cockpit.requests.journal import sources_from_value as journal_sources_from_value
 from cockpit.requests.sources.readability import ILLISIBLE_THRESHOLD_SECONDS
 from cockpit.runs.derive import runs_from_beads
 from cockpit.ui.analyses.page import CSS as ANALYSES_CSS, render_analyses
@@ -514,7 +515,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         if projets is not None and projets["value"] is not None:
             projects = {p.project_id: p.display_name for p in projects_from_value(projets["value"])[0]}
         view = journal_view(row, journal_entries_from_value(row["value"]) if known else [], runs, projects,
-                            snapshot.get("gc"))
+                            snapshot.get("gc"), journal_sources_from_value(row["value"]) if known else ())
         notify = self.server.notify
         envois = render_envois_section(notify.journal_entries(), notify.configured()) if notify is not None else ""
         query = {key: values[0] for key, values in urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).items()}
@@ -527,7 +528,8 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         row = snapshot.get("journal")
         if row is None or row["value"] is None or row["freshness"] == UNKNOWN:
             return {"state": "unknown", "entries": []}
-        return {"state": "filled", "verified_at": row["read_at"], "entries": row["value"]["entries"]}
+        return {"state": "filled", "verified_at": row["read_at"], "entries": row["value"]["entries"],
+                "sources": journal_sources_from_value(row["value"])}
 
     def _projects_payload(self, snapshot):
         """JSON twin of :meth:`_render_projects_zone`, for tests."""

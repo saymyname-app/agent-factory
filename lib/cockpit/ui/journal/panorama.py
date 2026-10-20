@@ -2,7 +2,7 @@
 the Journal reference, prototypes/c01-complete/frozen-panorama-journal at
 632deea; Spec af-fgcw0d, user stories 76, 157, 158 and 175).
 
-    view = journal_view(snapshot_row, entries, runs, projects, gc_row)
+    view = journal_view(snapshot_row, entries, runs, projects, gc_row, connected)
     render_journal_panorama(view, query, now, anchors, envois_html="")
 
 Three tabs, each an address of its own (``/journal?vue=…``), opened by a
@@ -24,8 +24,9 @@ button that sends a form, with no script:
   less its secrets; filtered by source (``source=``) and searched
   (``q=``, in the title, the meaning, the source and the raw event).
 - « Sources disponibles » (``vue=sources``): each source of the logs, said
-  « raccordée » when the cockpit read logs of it, « absente » when it read
-  none, « inconnue » while the journal cannot be read.
+  « raccordée » when the factory declares it connected or the cockpit read
+  logs of it -- a connected source that sent nothing yet stays connected --,
+  « absente » otherwise, « inconnue » while the journal cannot be read.
 
 Every label is fixed by the type of the event; no model reads or writes
 any of it. A journal not read yet says so, one that cannot be read says
@@ -169,17 +170,20 @@ def _event_items(entry, at, projects):
     ]
 
 
-def journal_view(row, entries, runs, projects, gc_row):
+def journal_view(row, entries, runs, projects, gc_row, connected=()):
     """What the destination shows: ``state`` (LOADING while the journal was
     never read, ERROR when its read failed, EMPTY, CONTENT), ``stale``
     (what it shows is no longer current: the journal or the supervisor no
-    longer answers), ``checked`` (when it was read) and ``items``."""
+    longer answers), ``checked`` (when it was read), ``items`` and
+    ``connected`` (the keys of the sources declared connected, from their
+    producers' names in ``connected``)."""
     if row is None or row["value"] is None or row["freshness"] == UNKNOWN:
         state = ERROR if row is not None and row.get("failed_at") is not None else LOADING
-        return {"state": state, "stale": False, "checked": None, "items": []}
+        return {"state": state, "stale": False, "checked": None, "items": [], "connected": set()}
     items = journal_items(entries, runs, projects)
     stale = row["freshness"] != FRESH or (gc_row or {}).get("freshness", UNKNOWN) != FRESH
-    return {"state": CONTENT if items else EMPTY, "stale": stale, "checked": row["read_at"], "items": items}
+    return {"state": CONTENT if items else EMPTY, "stale": stale, "checked": row["read_at"], "items": items,
+            "connected": {TECHNICAL.get(str(name).lower(), str(name).lower()) for name in connected}}
 
 
 # --- the page ----------------------------------------------------------------------
@@ -381,6 +385,8 @@ def _render_sources(view, anchors):
         elif counts.get(key):
             state = "raccordée — %d log%s lu%s" % (counts[key], "s" if counts[key] > 1 else "",
                                                      "s" if counts[key] > 1 else "")
+        elif key in view.get("connected", ()):
+            state = "raccordée — aucun log reçu"
         else:
             state = "absente — aucun log reçu de cette source"
         rows.append('<li class="jn-source"><strong>%s</strong> · %s</li>' % (_e(label), _e(state)))

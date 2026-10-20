@@ -254,6 +254,8 @@ RESOLVING_COCKPIT_ACTIONS.update(COCKPIT_ACTION_TEXT)
 JOURNAL_EVENT_KEY = "gc.journal_event"
 JOURNAL_LINK_KEY = "gc.journal_link"
 JOURNAL_FOLDED_KEY = "gc.journal_folded"
+# A bead that declares a technical source connected (cockpit.requests.journal).
+JOURNAL_SOURCE_KEY = "gc.journal_source"
 PROJECT_KEY = "gc.project_id"
 
 

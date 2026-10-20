@@ -1229,20 +1229,30 @@ Three tabs, each a button of a form sent by GET (no script):
   search `?q=` (the title, the meaning, the source and the raw event, case
   ignored).
 - **Sources disponibles** (`?vue=sources`): each source of the logs,
-  « raccordée » when the cockpit read logs of it, « absente » when it read
-  none, « inconnue » while the journal is being read or cannot be.
+  « raccordée » when the factory declares it connected -- a bead whose
+  `gc.journal_source` names it, read with the journal, also in `GET
+  /api/journal` under `sources` -- or the cockpit read logs of it; a
+  connected source that sent nothing yet stays « raccordée — aucun log
+  reçu ». « absente » otherwise, « inconnue » while the journal is being
+  read or cannot be.
 
 Labels are fixed by the type of the event; no model reads or writes them.
 Every text of an event is read through `cockpit.text.redact`: a secret (a
 token of a known shape, the value of a field named as one) and a private
-reasoning (`reasoning=`, `thinking=`) are replaced where they are written,
-so neither a page nor `GET /api/journal` holds one. A journal never read
+reasoning (`reasoning`, `thinking`) are replaced where they are written,
+so neither a page nor `GET /api/journal` holds one. A field is `name=value`
+or `name: value`, its name quoted or not (a JSON key); its value a quoted
+text, an object or a list to its closing bracket, else the word that
+follows, and an unquoted reasoning to the end of its line. Neither the
+read nor the page calls a model: `tests/cockpit-journal-test.py` launches
+the cockpit with every way out to one recorded (a proxy, the providers'
+addresses, their commands) and sees none taken. A journal never read
 says « Lecture en cours… », one whose read failed « Cette vue est
 indisponible » (never an empty journal), and a journal read while it or the
 supervisor no longer answers keeps its events under the notice « État actuel
 inconnu · dernières données conservées. Actions indisponibles. ». Tests:
-`tests/cockpit-journal-test.py`, `tests/cockpit-journal-panorama-test.py`,
-the criterion tests `tests/cockpit-criteria/commands/journal-destination-*-test.py`.
+`tests/cockpit-journal-test.py` (through the running process), the
+criterion tests `tests/cockpit-criteria/commands/journal-destination-*-test.py`.
 
 ## « Analyses » (direct build, 2026-10-19)
 
