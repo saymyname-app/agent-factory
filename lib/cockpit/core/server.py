@@ -16,6 +16,8 @@ from cockpit.access.guard import session_cookie_header
 from cockpit.actions.registry import ActionError
 from cockpit.core.freshness import FRESH, UNKNOWN
 from cockpit.core.readmodel import PARIS
+from cockpit.factory.checks import SectionChecks
+from cockpit.factory.configuration import read_configuration
 from cockpit.health import collectors
 from cockpit.health.engine import (
     FACTORY_STALLED_AFTER_SECONDS,
@@ -151,6 +153,9 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         """Operator Actions (T13, af-cx20q9; spec af-oohx2x §"Actions
         opérateur"). Every write goes through the access guard first —
         refused, nothing downstream (Beads included) is ever touched."""
+        if self.path == "/api/usine/reverifier":
+            self._recheck_factory_section()
+            return
         if self.path == "/api/health/recheck":
             for poller in getattr(self.server, "pollers", ()):
                 poll_now = getattr(poller, "poll_now", None)
@@ -160,7 +165,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             # project's page.
             referer_path = urllib.parse.urlsplit(self.headers.get("Referer") or "").path
             location = "/"
-            if referer_path.startswith("/projet/") or referer_path in ("/projets", "/journal"):
+            if referer_path.startswith("/projet/") or referer_path in ("/projets", "/journal", "/usine"):
                 location = urllib.parse.quote(urllib.parse.unquote(referer_path), safe="/-_.~")
             self.send_response(303)
             self.send_header("Location", location)
@@ -469,20 +474,55 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         self._send_page(read_model, "analyses", main, extra_css=ANALYSES_CSS)
 
     def _send_factory_page(self, read_model):
-        """GET /usine: the machine, the sources, the agents seen at work,
-        then the health and the zones that change the factory."""
+        """GET /usine?role=: the machine, the connections and the roles,
+        each as its section was last checked, the role ``role`` open (the
+        author by default), then the health and the zones that change the
+        factory."""
         snapshot = read_model.snapshot()
         now = read_model.now()
-        runs, _, _ = self._runs(read_model)
+        checks = self.server.factory_checks
         health = self._compute_health(read_model)
         notify = self.server.notify
         actions_html = self._render_stop_zone(snapshot) + render_access_zone(
             self.server.benjamin_login, snapshot.get("tailscale"), now)
-        main = render_factory_page(
-            read_machine(), snapshot, runs, bool(notify and notify.configured()),
-            render_health_zone(health, checked_at=_latest_read_at(snapshot, ("beads", "git"))), actions_html, now)
+        agents = checks.get("agents")
+        wanted = (urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("role") or [""])[0]
+        keys = [role["key"] for role in agents["value"]["configuration"]["roles"]]
+        main = render_factory_page({
+            "machine": checks.get("machine"), "connections": checks.get("connexions"), "agents": agents,
+            "live": snapshot, "now": now, "notify_configured": bool(notify and notify.configured()),
+            "selected": wanted if wanted in keys else (keys[0] if keys else ""),
+            "health_html": render_health_zone(health, checked_at=_latest_read_at(snapshot, ("beads", "git"))),
+            "actions_html": actions_html,
+        })
         self._send_page(read_model, "usine", main, extra_css=FACTORY_PAGE_CSS,
                         headers={"Set-Cookie": session_cookie_header(self.server.session_token)}, snapshot=snapshot)
+
+    def _recheck_factory_section(self):
+        """POST /api/usine/reverifier (section=machine|connexions|agents,
+        role=): reads that section of the page Usine again -- the
+        connections after every source was read again now -- and only that
+        one, then back to the page with the same role open. It writes
+        nothing."""
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        form = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8") if length else "")
+        section = (form.get("section") or [""])[0]
+        role = (form.get("role") or [""])[0]
+        if section not in ("machine", "connexions", "agents"):
+            self.send_response(400)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        if section == "connexions":
+            for poller in getattr(self.server, "pollers", ()):
+                poll_now = getattr(poller, "poll_now", None)
+                if poll_now is not None:
+                    poll_now()
+        self.server.factory_checks.recheck(section)
+        self.send_response(303)
+        self.send_header("Location", "/usine" + ("?" + urllib.parse.urlencode({"role": role}) if role else ""))
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def _send_runs_page(self, read_model):
         """GET /runs: the runs, filtered by ?filtre=tous|en-cours|termines."""
@@ -650,6 +690,15 @@ def make_server(
     server.stop_driver = None
     server.benjamin_login = ""
     server.extra_requests = lambda snapshot, now: []
+    # The sections of the page Usine, each as it was last checked
+    # (cockpit.factory.checks): the machine, the connections as the read
+    # model held them, the configuration of the roles with the sessions
+    # observed at work.
+    server.factory_checks = SectionChecks({
+        "machine": read_machine,
+        "connexions": lambda: read_model.snapshot(),
+        "agents": lambda: {"configuration": read_configuration(), "sessions": read_model.snapshot().get("sessions")},
+    }, read_model.now)
     server.illisible_after_seconds = (
         ILLISIBLE_THRESHOLD_SECONDS if illisible_after_seconds is None else illisible_after_seconds
     )

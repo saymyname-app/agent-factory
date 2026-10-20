@@ -1168,16 +1168,49 @@ journal's rhythm and keeps the 24 most recently updated; the three most
 recent fill « Derniers runs » of the Vue d'ensemble when no `gc.run_card`
 is written. Test: `tests/cockpit-runs-test.py`.
 
-## « Usine »: machine, sources, agents (direct build, 2026-10-19)
+## « Usine »: machine, connections, roles (G1, af-wrxrmg)
 
-`GET /usine` (`lib/cockpit/ui/factory/page.py`): the machine the cockpit
-runs on, read at each request (`os.getloadavg`, `/proc/meminfo`, the disk
-of the home); every source of the read model with its freshness and last
-read; the model of each delivery role as seen on the most recent run that
-launched it, and the sessions at work; then the health zone and the stop
-and access zones the home already had. Provider quotas, the configuration
-form and the clean-up of the reference are left out: the cockpit has no
-real reading of them yet. Test: `tests/cockpit-factory-page-test.py`.
+`GET /usine?role=<author|reviewer|evaluator>` (`lib/cockpit/ui/factory/page.py`),
+the Prototype Fold of the reference « Usine, configuration et maintenance »
+(Spec af-fgcw0d, user stories 63, 65, 160–162). Three sections, each shown
+as it was **last checked** (`lib/cockpit/factory/checks.py`), with the time
+of that check to the second and its own « Revérifier » button:
+
+- « Machine d’exécution »: the machine the cockpit runs on (host, system,
+  cores, load, memory, disk of the home), read when checked;
+- « Connexions »: every source of the read model with its state, its
+  latency -- how long its last complete read took, timed by its poller
+  (`PollingSource`, the status read of `GcSsePoller`; `latency` in each row
+  of the read model) -- and when it was read. Whether a source is still
+  current is read now: one no longer current is greyed « Périmé · vu il y a
+  … » with its last latency, one never read is « inconnu — la source ne
+  répond pas », never 0 and never a failure. The notifications say whether
+  they are configured; their delivery is not measured;
+- « Agents dans le workflow »: the roles as the Factory's files configure
+  them (`lib/cockpit/factory/configuration.py`: `config/delivery-roles.json`,
+  the chains of `config/provider-policy.json` -- the first provider is the
+  one configured, the others its fallbacks --, the model and effort of each
+  provider in `city.toml`, the ceilings and bounds of
+  `config/delivery-flow.json`), drawn as the descending flow of delivery
+  (deterministic controller, the steps each role runs, integration, the
+  owner's judgment). A step is a link that opens the detail of its role:
+  configuration first, then what is observed apart -- the provider in
+  service from `city.provider.toml` when the host has one, the sessions of
+  that role at work. The other targets of the policy are listed outside the
+  flow. A file that cannot be read is named, nothing is guessed.
+
+`POST /api/usine/reverifier` (form `section=machine|connexions|agents`,
+`role=`) checks that section again -- the connections after every source was
+read again now -- and only that one, then answers 303 back to the page; it
+writes nothing. A check older than five minutes is done again at the next
+view. Then come the health zone, and the panels « Suspension, reprise et
+arrêt » (with the stop and access zones the home already had) and
+« Nettoyer les espaces inutilisés », whose commands stay disabled until
+their tickets wire them (G2, H); the role detail's « Configurer » too.
+Nothing on the page is a value of the dataset: in an isolated launch the
+machine and the configuration are those of the tree launched. Tests:
+`tests/cockpit-factory-page-test.py`, and the criterion tests
+`tests/cockpit-criteria/commands/factory-*-test.py`.
 
 ## « Projets » in Panorama (direct build, 2026-10-19)
 
