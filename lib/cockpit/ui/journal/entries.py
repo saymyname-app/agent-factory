@@ -46,9 +46,12 @@ simply does not match their output today, so they are silently absent
 from the journal until those tools gain one, rather than this module
 guessing at a format that does not exist yet.
 """
+import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+
+from cockpit.text.redact import redact
 
 REPONSE_RE = re.compile(r"^RÉPONSE: (?P<lettre>.+?) — (?P<texte>.*)$")
 PROPOSITION_ACCEPTEE_RE = re.compile(r"^PROPOSITION ACCEPTÉE par (?P<acteur>.+?) — passe à planifier$")
@@ -83,6 +86,16 @@ class JournalEntry:
     # The request this resolved, in its producer's words (spec .18
     # "quoi"): the journal says what was asked, not only what was done.
     demande: str = ""
+    # An event (F, af-njwz8v): what its producer said of it -- its
+    # consequence or meaning (``texte``, its lines), the link it offers
+    # (``lien``, « Voir le projet »), what it holds folded (``plie``: its
+    # detail and source, or its raw event as received) and its project
+    # (``projet``, a key). Secrets and private reasoning are removed as it
+    # is read (cockpit.text.redact).
+    texte: list = field(default_factory=list)
+    lien: str = ""
+    plie: list = field(default_factory=list)
+    projet: str = ""
 
 
 def _field(comment, *names):
@@ -234,8 +247,27 @@ RESOLVING_COCKPIT_ACTIONS.update(COCKPIT_ACTION_TEXT)
 
 
 # An event bead meant for the journal (`bd create --type event`) carries its
-# nature or its source under this key (T01R6, af-ltchro; Spec af-2zseit).
+# nature or its source under this key (T01R6, af-ltchro; Spec af-2zseit),
+# the link it offers under the second, and what it holds folded under the
+# third: a JSON list of lines (F, af-njwz8v; Spec af-fgcw0d). Its
+# description is its consequence, or what it means.
 JOURNAL_EVENT_KEY = "gc.journal_event"
+JOURNAL_LINK_KEY = "gc.journal_link"
+JOURNAL_FOLDED_KEY = "gc.journal_folded"
+PROJECT_KEY = "gc.project_id"
+
+
+def _folded_lines(raw):
+    """The folded lines an event carries: a JSON list of strings, or a
+    text, one line each."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            raw = raw.split("\n")
+    if not isinstance(raw, list):
+        return []
+    return [redact(str(line)) for line in raw if str(line).strip()]
 
 
 def _entries_of(bead):
@@ -244,8 +276,12 @@ def _entries_of(bead):
     if metadata.get(JOURNAL_EVENT_KEY):
         # An event is not the resolution of a request: it is its own entry,
         # under its title, at the time it was recorded.
-        return [JournalEntry(bead_id=bead_id, quoi=bead.get("title") or "", quand=bead.get("created_at") or "",
-                             par="", voie=metadata[JOURNAL_EVENT_KEY])]
+        lines = [redact(line.strip()) for line in (bead.get("description") or "").split("\n") if line.strip()]
+        return [JournalEntry(bead_id=bead_id, quoi=redact(bead.get("title") or ""), quand=bead.get("created_at") or "",
+                             par="", voie=redact(str(metadata[JOURNAL_EVENT_KEY])), texte=lines,
+                             lien=str(metadata.get(JOURNAL_LINK_KEY) or ""),
+                             plie=_folded_lines(metadata.get(JOURNAL_FOLDED_KEY)),
+                             projet=str(metadata.get(PROJECT_KEY) or ""))]
     entries = []
     # The request a resolution answers is the last one asked before it; a
     # trace on a bead that never bore a question (a chantier accepted) is

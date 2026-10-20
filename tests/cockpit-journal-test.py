@@ -238,9 +238,10 @@ class JournalTest(unittest.TestCase):
         )
 
         page = self.get("/journal?filtre=tout")
-        # Panorama: the destination Journal, its filters, a timeline by day.
-        self.assertIn("<h1>Journal</h1>", page)
-        self.assertIn('href="/journal?filtre=decisions"', page)
+        # Panorama: the destination Journal, its categories (each a button
+        # of a form sent by GET), a timeline by day.
+        self.assertIn(">Journal</h1>", page)
+        self.assertIn('name="categorie" value="decisions"', page)
         self.assertIn('class="jn-day"', page)
 
         answered = self.entry_html(page, "af-rep1")
@@ -326,21 +327,29 @@ class JournalTest(unittest.TestCase):
             {k: entries[0].get(k) for k in ("bead_id", "demande", "quoi", "quand", "par", "voie")},
         )
 
-        event = self.entry_html(self.get("/journal?filtre=tout"), "af-ev1")
+        # Both are events of technical sources (delivery, CI): logs of the
+        # journal (F, af-njwz8v), each under its title and at its time.
+        logs = self.get("/journal?vue=logs")
+        event = logs[logs.index('data-bead-id="af-ev1"'):logs.index('data-bead-id="af-ev2"')]
         self.assertIn("Release 1.4 publiée", event)
-        self.assertIn("<time>06/10 13:30</time>", event)
-        self.assertIn("<span>livraison</span>", event)
+        self.assertIn("13:30 (Paris) · Livraison", event)
+        self.assertIn("12:00 (Paris) · CI", logs[logs.index('data-bead-id="af-ev2"'):])
         # An event answers no request: no request block, not even the empty one.
         self.assertNotIn("cockpit-journal-demande", event)
         self.assertNotIn("Demande sans texte enregistré", event)
+        # They are not useful events: the journal of those does not list them.
+        self.assertNotIn('data-bead-id="af-ev1"', self.get("/journal?filtre=tout"))
 
     def test_unreadable_journal_is_unknown_never_empty(self):
         Path(self.fail_flag_file).write_text("fail")
         self.start_cockpit()
         self.assertEqual("unknown", self.get("/api/journal")["state"])
-        page = self.get("/journal?filtre=tout")
-        self.assertIn("Inconnu : journal illisible", page)
+        # Being read, then once the read failed: never an empty journal.
+        self.assertNotIn("Rien à afficher ici", self.get("/journal?filtre=tout"))
+        page = wait_until(lambda: (lambda p: p if "Cette vue est indisponible" in p else None)(
+            self.get("/journal?filtre=tout")))
         self.assertNotIn("Aucune demande résolue", page)
+        self.assertNotIn("Rien à afficher ici", page)
         os.remove(self.fail_flag_file)
         wait_until(self.journal)
 

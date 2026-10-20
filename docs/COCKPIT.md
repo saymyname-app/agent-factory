@@ -981,7 +981,7 @@ cockpit reads those sources as it reads the real ones.
 A Runs dataset carries `fixtures` (lanes, runs, jobs). A Panorama dataset
 carries the text of one screen (`visible_text`), how the state is set
 (`ui`) and, when the screen has parts that unfold, what each says open
-(`folded`: its label, its lines), and, when it has a drawing, what its
+(`folded`: its label, its lines; for an event of the journal, its title and the lines it holds folded), and, when it has a drawing, what its
 marks say (`drawn`: its heading, its lines -- the titles of the points of a
 chart), which the text of a page leaves out. Its screen is known by the first line of the page, and read in two
 ways:
@@ -1007,7 +1007,7 @@ ways:
 | a drawing of the screen: `drawn` under « Activité sur 7 jours », one line a day and a series | one bead kept as said under that heading, whose description is those lines | `beads.value`; `GET /` |
 | « Vue d’ensemble »: `runs`, the cards under « Derniers runs » (workflow, status and its tone, title, step, start, elapsed seconds, lanes with the start and end of each job) | one bead `synthetic-run-card-N` per card, under the title of its run, whose `gc.run_card` is the card | `beads.value`; `GET /` |
 | the page of a project (« ← Projets »): its name, what is said above the first section; « CHANTIER ACTUEL »; « Prochaine release », « PROCHAIN JALON », « ROADMAP », « Derniers changements » | the project is declared; one bead under its name (purpose, stage, indicators); its open chantier; one bead kept as said per section, of that project | `projets.value.projects`, `GET /projet/<key>`; `beads.value` |
-| « Journal »: each event, « HH:MM (Paris) · projet · nature » or « HH:MM (Paris) · source », under « Aujourd’hui » or « Hier », its title and what follows | one bead of type `event` per event, as `bd create --type event` writes it: its title, its nature or source as `event_kind`, as label and as `gc.journal_event`, its project (declared), `created_at` the day of the dataset or the day before at that time, the other lines | `beads.value`; `projets.value.projects`; `GET /api/journal` `entries`: one entry per event, its title as `quoi`, its `created_at` as `quand`, its nature or source as `voie`, newest first (`lib/cockpit/ui/journal/entries.py`, T01R6 af-ltchro) |
+| « Journal »: each event, « HH:MM (Paris) · projet · nature » or « HH:MM (Paris) · source », under « Aujourd’hui » or « Hier », its title and what follows | one bead of type `event` per event, as `bd create --type event` writes it: its title, its nature or source as `event_kind`, as label and as `gc.journal_event`, its project (declared), `created_at` the day of the dataset or the day before at that time, its line « Voir … » as `gc.journal_link`, the other lines as its description (the labels « Détail et source », « Événement brut » and the note under the logs are the page's); what `folded` says under its title as `gc.journal_folded` | `beads.value`; `projets.value.projects`; `GET /api/journal` `entries`: one entry per event, its title as `quoi`, its `created_at` as `quand`, its nature or source as `voie`, newest first (`lib/cockpit/ui/journal/entries.py`, T01R6 af-ltchro) |
 | « Usine »: « Machine d’exécution », « Connexions », « Fournisseurs et accès API », « Agents dans le workflow », « Auteur livraison », « Autres rôles », « Suspension, reprise et arrêt », « Nettoyer les espaces inutilisés », « Ressources et libellés longs » | one bead kept as said per section | `beads.value` |
 | a suspended Factory: `ui.setup` sets `shutdownState='suspended'` | a suspended city | `gc.value.suspended` is true |
 | « Rituels »: each ritual (a line in capitals says how it is launched, then its title) | one bead per ritual under its title: how it is launched, what it is for, when it last ran | `beads.value` |
@@ -1190,16 +1190,54 @@ the chantiers by stage, actions and history the page already drew. The
 release target, estimate and roadmap of the reference have no source yet
 and are left out. Test: `tests/cockpit-projects-panorama-test.py`.
 
-## « Journal » in Panorama (direct build, 2026-10-19)
+## « Journal » in Panorama (F, af-njwz8v: the Prototype Fold of the Journal reference)
 
-`GET /journal` (`lib/cockpit/ui/journal/panorama.py`) is now one timeline
-by day (Paris): the requests answered or cleared, each drawn as the
-journal always drew it (what, when, by whom, which way, details), and the
-deliveries of the runs (launched, stopped, merged) with their link. Filters
-`?filtre=utiles` (default: everything but the cleared requests),
-`decisions`, `propositions`, `livraisons`, `evenements`, `effacees`, `tout`.
-The notification sends follow, folded. Tests:
-`tests/cockpit-journal-test.py`, `tests/cockpit-journal-panorama-test.py`.
+`GET /journal` (`lib/cockpit/ui/journal/panorama.py`) follows the Journal
+reference (prototypes/c01-complete/frozen-panorama-journal at 632deea) in its
+ten states, at its own address, its parts carrying the reference's anchors.
+Three tabs, each a button of a form sent by GET (no script):
+
+- **Événements utiles** (`?vue=utiles`, the default): one timeline by day
+  (Paris) of the requests answered or cleared -- each drawn as the journal
+  always drew it (what, when, by whom, which way, details) --, the
+  deliveries of the runs (launched, stopped, merged) with their link, and
+  the events held for the journal whose nature is a category: each with
+  its time, its project and its category, its title, its consequence (its
+  description), its link (`gc.journal_link`: « Voir le projet » opens the
+  page of its project, « Voir les connexions » `/usine`, « Voir le
+  résultat » and « Voir les propositions » `/`) and, folded, its detail and
+  its source (`gc.journal_folded`, a JSON list of lines). Categories
+  `?categorie=tout|bugs|propositions|changements|decisions|evenements`
+  (natures Bug, Proposition, Changement, Décision, Événement; the answered
+  requests are Décisions or Propositions, the deliveries Changements, the
+  cleared requests Événements). The former `?filtre=` still names its
+  category. An event of a nature no rule knows keeps its place, said
+  « Signal non reconnu venant de <project> » (or « d’une source inconnue »),
+  its nature, title and words folded, unchanged, and is under « Tout » only.
+  The notification sends follow, folded.
+- **Logs techniques** (`?vue=logs`): the events of the technical sources
+  (natures `ci`, `agents`, `delivery`/`livraison`, `connections`/`connexions`,
+  `maintenance`, `notifications`), each with its time and source, its title,
+  what it means and, folded, its raw event (`gc.journal_folded`), plus the
+  events of an unknown nature under « Autres », « Événement non reconnu ».
+  Filter `?source=tous|ci|agents|livraison|connexions|maintenance|notifications|autres`,
+  search `?q=` (the title, the meaning, the source and the raw event, case
+  ignored).
+- **Sources disponibles** (`?vue=sources`): each source of the logs,
+  « raccordée » when the cockpit read logs of it, « absente » when it read
+  none, « inconnue » while the journal is being read or cannot be.
+
+Labels are fixed by the type of the event; no model reads or writes them.
+Every text of an event is read through `cockpit.text.redact`: a secret (a
+token of a known shape, the value of a field named as one) and a private
+reasoning (`reasoning=`, `thinking=`) are replaced where they are written,
+so neither a page nor `GET /api/journal` holds one. A journal never read
+says « Lecture en cours… », one whose read failed « Cette vue est
+indisponible » (never an empty journal), and a journal read while it or the
+supervisor no longer answers keeps its events under the notice « État actuel
+inconnu · dernières données conservées. Actions indisponibles. ». Tests:
+`tests/cockpit-journal-test.py`, `tests/cockpit-journal-panorama-test.py`,
+the criterion tests `tests/cockpit-criteria/commands/journal-destination-*-test.py`.
 
 ## « Analyses » (direct build, 2026-10-19)
 
