@@ -60,6 +60,9 @@ class Config:
             "COCKPIT_DESCRIPTORS_DIR", os.path.join(_REPO_ROOT, "config", "project-descriptors")
         )
         self.projects_poll_seconds = float(env.get("COCKPIT_PROJECTS_POLL_SECONDS", "30"))
+        # « Rituels »: when each ritual last ran, read from this file at each
+        # view of the page (bin/rituals-status reads the same file).
+        self.rituals_file = env.get("COCKPIT_RITUALS_FILE", os.path.join(_REPO_ROOT, "docs", "rituals.toml"))
         self.journal_poll_seconds = float(env.get("COCKPIT_JOURNAL_POLL_SECONDS", "60"))
         # spec .17: a source unreadable for longer than this is itself a request.
         self.illisible_after_seconds = float(
