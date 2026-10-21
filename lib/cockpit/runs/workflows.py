@@ -55,6 +55,7 @@ controls, usage, outputs: C2a and C2b) is said so, never filled in.
 import json
 import re
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from cockpit.core.readmodel import PARIS
@@ -94,16 +95,22 @@ TOOLS, CONTROLS, SESSIONS, OTHERS = "tools", "controls", "sessions", "others"
 
 def read_workflow_beads(bd_bin="bd", timeout=READ_TIMEOUT_SECONDS):
     """Every bead a run is read from: one read per key of :data:`KEYS`,
-    merged by id."""
-    seen = {}
-    for key in KEYS:
+    merged by id. The reads run side by side: « revérifier maintenant »
+    waits for every source, and six reads one after the other made it wait
+    six times as long as the other sources."""
+    def read(key):
         completed = subprocess.run(
             [bd_bin, "list", "--all", "--limit", "0", "--has-metadata-key", key, "--json"],
             capture_output=True, text=True, timeout=timeout, check=True,
         )
-        for bead in json.loads(completed.stdout) or []:
-            if isinstance(bead, dict) and bead.get("id"):
-                seen[bead["id"]] = bead
+        return json.loads(completed.stdout) or []
+
+    seen = {}
+    with ThreadPoolExecutor(max_workers=len(KEYS)) as pool:
+        for beads in pool.map(read, KEYS):
+            for bead in beads:
+                if isinstance(bead, dict) and bead.get("id"):
+                    seen[bead["id"]] = bead
     return list(seen.values())
 
 
