@@ -458,6 +458,19 @@ RESUMABLE_STOPS = {"evaluation_no_result": ("evaluation_no_result",),
                    "stage_removed": ("test_review_refused", "test_review_no_result"),
                    "code_review_no_result": ("code_review_no_result",),
                    "amendment_granted": ("amendment_exhausted",)}
+# A ticket stopped still refused whose every Blocking Finding the operator
+# overrode is merged as if at work; the merge that returns it lifts its stop
+# like a resumable one (af-n4bn62). The cause stays one of a ticket not
+# stopped: it is not in RESUMABLE_STOPS.
+OVERRIDDEN_STOP_CAUSE = "returned"
+
+
+def resume_lifts(cause: str, reason: str) -> bool:
+    """A resume of `cause` may lift a stop of `reason`; for the overridden
+    stop, only once open-resume has checked the overrides."""
+    return reason in RESUMABLE_STOPS.get(cause, ()) or (cause, reason) == (OVERRIDDEN_STOP_CAUSE, STOP_STILL_REFUSED)
+
+
 # A commit after a verdict counts a resume without an entry (T18): it is a
 # cause of its own. The correction round is not one: it has its own bound of
 # one round (CORRECTION_MAX_ROUNDS), held here, outside K.
@@ -1874,8 +1887,7 @@ def resume_record(raw: Any) -> dict[str, Any]:
     for entry in entries:
         if not isinstance(entry, dict) or set(entry) - {"stop"} != {"cause", "ref", "session", "exit", "launches", "at"}:
             raise Refusal(f"reprise mal formée : {entry!r}")
-        if "stop" in entry and (entry["cause"] not in RESUMABLE_STOPS
-                                or stop_record(encode(entry["stop"]))["reason"] not in RESUMABLE_STOPS[entry["cause"]]):
+        if "stop" in entry and not resume_lifts(entry["cause"], stop_record(encode(entry["stop"]))["reason"]):
             raise Refusal(f"arrêt levé par la reprise mal formé : {entry!r}")
         one_of(entry["cause"], RESUME_CAUSES, "cause de reprise")
         single_line(entry["ref"], "repère de la reprise")
@@ -4133,9 +4145,9 @@ def overridden_ticket(ticket: dict[str, Any]) -> bool:
                              [entry.get("finding") for entry in overrides if isinstance(entry, dict)])
 
 
-def stopped_for_evaluation(metadata: dict[str, Any]) -> bool:
-    """The ticket is stopped and its evaluation does not go on: any stop but
-    the one review_overridden reads."""
+def overridden_metadata(metadata: dict[str, Any]) -> bool:
+    """review_overridden, on a ticket's metadata; an unreadable record is
+    not an override."""
     if KEY_STOP not in metadata:
         return False
     try:
@@ -4144,8 +4156,14 @@ def stopped_for_evaluation(metadata: dict[str, Any]) -> bool:
         overridden = [entry["finding"] for entry in overrides_record(metadata[KEY_OVERRIDES])] \
             if KEY_OVERRIDES in metadata else []
     except Refusal:
-        return True
-    return not review_overridden(reason, code_review_state(review)["unsettled"], overridden)
+        return False
+    return review_overridden(reason, code_review_state(review)["unsettled"], overridden)
+
+
+def stopped_for_evaluation(metadata: dict[str, Any]) -> bool:
+    """The ticket is stopped and its evaluation does not go on: any stop but
+    the one review_overridden reads."""
+    return KEY_STOP in metadata and not overridden_metadata(metadata)
 
 
 def evaluation_target(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
@@ -4995,8 +5013,9 @@ def cmd_open_resume(args: argparse.Namespace) -> int:
     resume left for one cause (that one is parked), and on a stopped ticket unless the
     cause is one that lifts its stop (RESUMABLE_STOPS): `evaluation_no_result`
     (af-xhc0sj), `stage_removed` for a stop of the removed test review
-    (af-pjvsgo), `code_review_no_result` (af-wu6xj7); that resume keeps the
-    stop under it. A code review without result also loses its spent round:
+    (af-pjvsgo), `code_review_no_result` (af-wu6xj7), or `returned` for a
+    stop `still_refused` the operator overrode in full (af-n4bn62); that
+    resume keeps the stop under it. A code review without result also loses its spent round:
     the next finished exit is reviewed afresh."""
     ticket = marked_ticket(args.convoy, args.ticket)
     metadata = metadata_of(ticket)
@@ -5007,7 +5026,8 @@ def cmd_open_resume(args: argparse.Namespace) -> int:
     if GATE_PREFIX + "dispatch" not in metadata:
         raise Refusal(f"le ticket {args.ticket} n'a pas été démarré par la porte de dispatch : rien à reprendre")
     lifted = stop_record(metadata[KEY_STOP]) if KEY_STOP in metadata else None
-    if lifted is not None and (cause not in RESUMABLE_STOPS or lifted["reason"] not in RESUMABLE_STOPS[cause]):
+    if lifted is not None and (cause not in RESUMABLE_STOPS or lifted["reason"] not in RESUMABLE_STOPS[cause]) \
+            and not (cause == OVERRIDDEN_STOP_CAUSE and overridden_metadata(metadata)):
         raise Refusal(f"ticket arrêté ({lifted['reason']}) : {args.ticket} ne se reprend pas pour la cause {cause}")
     entries = resume_record(metadata[KEY_RESUME])["entries"] if KEY_RESUME in metadata else []
     if entries and (entries[-1]["cause"], entries[-1]["ref"]) == (cause, ref):

@@ -384,7 +384,9 @@ removal of the Ticket Exit the resume replaces (a resumed ticket exits
 again) go in **one tracker write**. The same cause and `--ref` as the last
 resume write nothing and count nothing. It refuses a cause outside the list,
 a missing `--ref`, a closed ticket, a ticket the dispatch door did not
-start, a stopped ticket, a parked ticket, and a ticket that has no resume
+start, a stopped ticket (but the cause `returned` on a stop `still_refused`
+whose every Blocking Finding is overridden: lifted and kept on the entry,
+af-n4bn62), a parked ticket, and a ticket that has no resume
 left for one cause: that one is parked. `launch-resume` records the bead of the author
 session the last resume was sent to: one per resume, a second is refused, as
 is a launch on a stopped or a parked ticket or with no resume open.
