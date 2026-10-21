@@ -26,6 +26,10 @@ from cockpit.core.readmodel import PARIS
 from cockpit.projects import etat as etat_mod
 from cockpit.projects.model import LIVRE, SANS_PROJET, STAGES
 
+# The panel of the result open on the home page (cockpit.ui.home.overview):
+# where the chip of a chantier whose Outcome is to judge leads.
+RESULT_PANEL_ID = "pn-result"
+
 SECTION_TITLE = "Projets"
 EMPTY_TEXT = "Aucun projet déclaré."
 NO_CHANTIER_TEXT = "Aucun chantier actif."
@@ -187,6 +191,13 @@ def _render_etat(chantier, home=""):
     if texte == etat_mod.DEFAUT_LABEL or chantier.etat == etat_mod.BLOQUE:
         return '<span class="chip bloque cockpit-chantier-etat" %s>%s</span>' % (attrs, label)
     chip = "chip go %s cockpit-chantier-etat" % _CHIP_CLASS[chantier.etat]
+    if chantier.etat == etat_mod.A_TOI_DE_JOUER and chantier.outcome:
+        # An Outcome of the new flow is judged at its Acceptance Session,
+        # never by a button here (cockpit.projects.actions refuses it): the
+        # chip leads to its result, open on the home page (A1).
+        return '<a class="%s" %s href="%s#%s" title="Voir le résultat à juger">%s</a>' % (
+            chip, attrs, html.escape(home), RESULT_PANEL_ID, label,
+        )
     if chantier.etat == etat_mod.A_TOI_DE_JOUER and chantier.stage == LIVRE:
         if home:
             return '<a class="%s" %s href="%s#acc-%s" title="Aller là où tu dois agir">%s</a>' % (
@@ -208,8 +219,10 @@ def _render_etat(chantier, home=""):
 
 def _render_chantier_actions(chantier):
     """The acceptance panel of a Livré chantier (spec .30, .31), closed
-    until its "À toi de jouer" chip opens it in place."""
-    if chantier.stage != LIVRE:
+    until its "À toi de jouer" chip opens it in place. None for an Outcome
+    of the new flow: its acceptance is recorded at the Acceptance Session
+    (bin/owner-answer), which this panel cannot do (A1)."""
+    if chantier.stage != LIVRE or chantier.outcome:
         return ""
     bead_id = html.escape(chantier.id)
     return (

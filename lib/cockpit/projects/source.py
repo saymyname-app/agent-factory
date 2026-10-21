@@ -16,6 +16,7 @@ from cockpit.projects.descriptors import load_descriptors
 from cockpit.projects.hors_chantier import HorsChantierItem, hors_chantier_par_projet
 from cockpit.projects.model import Chantier, Project, RoadmapStep
 from cockpit.projects.promu import read_promotion_results
+from cockpit.projects.outcome import pack_folder, read_pack_sections
 from cockpit.projects.stage import MAP_LABEL
 
 
@@ -39,10 +40,12 @@ def read_projects(descriptors_dir, bd_bin="bd", timeout=20, clones_dir="", rig_r
         if MAP_LABEL in (bead.get("labels") or []) and bead.get("status") != "closed"
     }
     promotion_results = read_promotion_results(descriptors, beads, rig_repos, clones_dir, git_bin=git_bin)
+    pack_reads = read_dossier_pages(beads)
     projects, sans_projet = build_projects(
-        descriptors, beads, children_by_map_id, promotion_results=promotion_results
+        descriptors, beads, children_by_map_id, promotion_results=promotion_results, pack_reads=pack_reads
     )
-    historique_projects, _ = build_historique_par_projet(descriptors, beads, promotion_results)
+    historique_projects, _ = build_historique_par_projet(descriptors, beads, promotion_results,
+                                                         pack_reads=pack_reads)
     value = to_value(
         projects,
         sans_projet,
@@ -52,6 +55,19 @@ def read_projects(descriptors_dir, bd_bin="bd", timeout=20, clones_dir="", rig_r
     # spec .47: a closed chantier with a ticket not merged, for the health zone.
     value["anomalies"] = convoy_closed_with_unmerged_child(beads)
     return value
+
+
+def read_dossier_pages(beads):
+    """The rubrics of the dossier page of each convoy that records an
+    Evidence Pack (its folder, :func:`cockpit.projects.outcome.pack_folder`):
+    ``{convoy_id: rubrics, or None when the page cannot be read}`` (A1,
+    :func:`cockpit.projects.outcome.read_pack_sections`)."""
+    pages = {}
+    for bead in beads:
+        folder = pack_folder(bead)
+        if folder is not None:
+            pages[bead["id"]] = read_pack_sections(folder)
+    return pages
 
 
 def to_value(projects, sans_projet, historique=None, hors_chantier=None):

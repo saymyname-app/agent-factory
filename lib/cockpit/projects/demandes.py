@@ -97,6 +97,12 @@ def chantier_demandes(chantiers, verifie_a=None):
     for chantier in chantiers or []:
         if chantier.termine or chantier.abandonne:
             continue
+        if chantier.outcome:
+            # An Outcome of the new flow: its request is the Acceptance
+            # Request the escalation door writes on the convoy, answered at
+            # the Acceptance Session -- never « Accepter » here, which
+            # cockpit.projects.actions refuses for it (A1).
+            continue
         if chantier.stage == LIVRE:
             out.append(_livre_non_accepte(chantier, verifie_a))
         elif chantier.stage == ACCEPTE and not chantier.promu_masque and not chantier.promu_inconnu:

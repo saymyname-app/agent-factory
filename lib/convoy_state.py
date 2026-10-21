@@ -5756,6 +5756,34 @@ def owner_answer_of(metadata: dict[str, Any]) -> dict[str, Any] | None:
     return judgement["answers"][-1] if judgement and judgement["answers"] else None
 
 
+OUTCOME_RECORDS = (("delivered", KEY_DELIVERED, delivered_record), ("evidence_pack", KEY_EVIDENCE_PACK, evidence_pack_record),
+                   ("acceptance", KEY_ACCEPTANCE, acceptance_record), ("judgement", KEY_JUDGEMENT, judgement_record),
+                   ("promotion", KEY_PROMOTION, promotion_record), ("closed", KEY_CLOSED, closed_record))
+
+
+def outcome_records_of(convoy: dict[str, Any]) -> dict[str, Any] | None:
+    """The records of the Outcome of a convoy, from its bead, read as `show`
+    reads them: `delivered`, `evidence_pack`, `acceptance`, `judgement`,
+    `promotion` and `closed` (the record of `close-convoy`, whatever the
+    status of the bead), each None when absent, or `{"unruled": reason,
+    "raw": stored value}` when this command would not have written it.
+    None for a convoy without the mark. For the readers that hold a bead
+    and run no command (the cockpit, A1 af-c662qx)."""
+    metadata = metadata_of(convoy)
+    if metadata.get(KEY_MARK) is None:
+        return None
+    records: dict[str, Any] = {}
+    for name, key, reader in OUTCOME_RECORDS:
+        if key not in metadata:
+            records[name] = None
+            continue
+        try:
+            records[name] = reader(metadata[key])
+        except Refusal as exc:
+            records[name] = {"unruled": f"{key} : {exc}", "raw": metadata[key]}
+    return records
+
+
 def propositions_of(tickets: list[dict[str, Any]]) -> dict[str, str]:
     """Each « proposition pour Benjamin » of the convoy and its text: the
     findings « hors ticket » the Evaluator of the end kept as a proposal."""
