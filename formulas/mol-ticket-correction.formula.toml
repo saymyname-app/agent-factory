@@ -79,7 +79,9 @@ refused after it, the ticket is stopped without being merged.
   never waived.
 - The rules of the author hold: follow the `tdd` and `codebase-design`
   skills; you write the code yourself, no writing sub-agent; a frozen test
-  is changed by `bin/tdd-step amend` only, once; a behaviour the Spec or
+  is changed by `bin/tdd-step amend` only — when a Blocking Finding asks to
+  change a frozen test, this round allows one amendment more even if the
+  ticket already used its own (docs/TDD_STEP.md); a behaviour the Spec or
   another ticket fixes is not yours to change — take the Ticket Exit
   `planning_exception` instead (docs/TICKET_EXIT.md).
 

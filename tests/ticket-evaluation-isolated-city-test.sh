@@ -429,6 +429,7 @@ TIP_P=$(commit_on "$P" "docs/$P.md" "Le rendu de la page est rangé." "PROSE-DU-
 finish "$P" "$TIP_P" prefactoring
 echo "$(date -u +%H:%M:%S) marque posée, branche $INTEGRATION ouverte, deux tickets terminés par leur auteur et relus (A $TIP_A, P $TIP_P)"
 
+isolated_city_disable_dog "$TRIAL" "$CITY"
 (env -u CLAUDE_CODE_SESSION_ID gc supervisor run > "$TRIAL/supervisor.out" 2>&1 &)
 sleep 3
 gc --city "$CITY" start >/dev/null 2>&1 || true

@@ -123,6 +123,21 @@ grep -q 'EXCLUDED tests/needs-mayor-test.sh.*vraie session du Mayor' <<<"$out" \
   || fail "the output does not name the excluded test with its reason: $out"
 [ ! -e "$TMP/door.calls" ] || fail "a green run paged somebody"
 
+# The old 1800 s outer deadline killed the second-project journey while its
+# scripted workflow was still advancing (af-x3re4a). Hold the repaired
+# one-hour per-test budget through the runner's public execution behavior.
+REAL_TIMEOUT=$(command -v timeout)
+mkdir -p "$TMP/timeout-bin"
+cat >"$TMP/timeout-bin/timeout" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$2" >"$TMP/timeout.seconds"
+exec "$REAL_TIMEOUT" "\$@"
+EOF
+chmod +x "$TMP/timeout-bin/timeout"
+out=$(PATH="$TMP/timeout-bin:$PATH" run) || fail "the run used to inspect its outer deadline failed: $out"
+[ "$(cat "$TMP/timeout.seconds")" -ge 3600 ] \
+  || fail "the runner's outer deadline regressed below one hour: $(cat "$TMP/timeout.seconds")s"
+
 fake_test broken-test.sh yes 1
 if out=$(run); then fail "a run with a failing test exited 0: $out"; fi
 grep -q 'FAIL tests/broken-test.sh' <<<"$out" || fail "the output does not name the failing test: $out"
