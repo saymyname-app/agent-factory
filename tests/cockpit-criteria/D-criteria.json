@@ -3,7 +3,10 @@
     "1": [
       "tests/cockpit-criteria/commands/analyses-destination-indicators-test.py::AnalysesDestinationIndicators.test_analysis_content_shows_the_merged_results_its_sources_prove",
       "tests/cockpit-criteria/commands/analyses-destination-indicators-test.py::AnalysesDestinationIndicators.test_analysis_time_shows_the_median_delivery_delay_its_sources_give",
-      "tests/cockpit-criteria/commands/analyses-destination-indicators-test.py::AnalysesDestinationIndicators.test_each_indicator_is_computed_from_the_records_of_the_flow_and_of_github",
+      "tests/cockpit-criteria/commands/analyses-destination-indicators-test.py::AnalysesDestinationIndicators.test_the_merged_results_are_those_whose_merge_is_proven_within_the_seven_days",
+      "tests/cockpit-criteria/commands/analyses-destination-indicators-test.py::AnalysesDestinationIndicators.test_the_delivery_delay_is_the_median_from_publication_to_proven_merge",
+      "tests/cockpit-criteria/commands/analyses-destination-indicators-test.py::AnalysesDestinationIndicators.test_the_ci_rate_is_the_runs_that_succeeded_over_those_completed",
+      "tests/cockpit-criteria/commands/analyses-destination-indicators-test.py::AnalysesDestinationIndicators.test_the_open_decisions_are_counted_and_those_answered_are_read_in_the_journal",
       "tests/cockpit-criteria/commands/analyses-destination-indicators-test.py::AnalysesDestinationIndicators.test_each_indicator_states_its_population_period_sources_timestamp_and_calculation",
       "tests/cockpit-criteria/commands/analyses-destination-indicators-test.py::AnalysesDestinationIndicators.test_the_daily_volumes_are_drawn_over_the_same_seven_days_in_one_unit_and_the_rate_apart",
       "tests/cockpit-criteria/commands/analyses-destination-indicators-test.py::AnalysesDestinationIndicators.test_each_indicator_opens_its_view"
@@ -17,7 +20,8 @@
       "tests/cockpit-criteria/commands/analyses-destination-layout-test.py::AnalysesDestinationLayout.test_analysis_narrow_carries_its_reference_and_is_readable_at_390_px",
       "tests/cockpit-criteria/commands/analyses-destination-layout-test.py::AnalysesDestinationLayout.test_analysis_light_carries_its_reference_and_is_readable_in_the_light_theme",
       "tests/cockpit-criteria/commands/analyses-destination-layout-test.py::AnalysesDestinationLayout.test_analysis_time_carries_its_reference_and_is_readable_at_both_widths",
-      "tests/cockpit-criteria/commands/analyses-destination-layout-test.py::AnalysesDestinationLayout.test_the_view_of_an_indicator_is_opened_with_the_keyboard"
+      "tests/cockpit-criteria/commands/analyses-destination-layout-test.py::AnalysesDestinationLayout.test_long_titles_projects_and_words_stay_readable_at_both_widths",
+      "tests/cockpit-criteria/commands/analyses-destination-layout-test.py::AnalysesDestinationLayout.test_the_page_is_walked_with_tab_and_a_view_opened_with_enter"
     ]
   }
 }
