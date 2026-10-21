@@ -82,7 +82,7 @@ decided (af-x11w4x: reading the convoy again for each of 62 tickets made
 | none at the tip (none yet, or a commit was added after the last one) | launches the products at the tip and opens an **evaluation**: a commit added after a verdict has it replayed in full (Spec §8). For a `prefactoring` or a ticket without interface (ADR-0030 L4): the **startup control**, no session. A startup control that stood for the evaluation (the product started) does not stand for a ticket that has since become interface: it gets its model evaluation at the same tip; a product that did not start stays the verdict at that tip |
 | favorable at the tip | nothing: the merge may follow |
 | `not_observed` at the tip | waits: back to the author, nothing merges before a new commit. `bin/correction-round settle` sends what was not observed, with the findings of the code review, to the one author session of the ticket's correction round, and stops the ticket still not observed after it (`docs/CORRECTION_ROUND.md`) |
-| `unobservable` by the criterion at the tip | **Planning Exception**: one request on the operator's list (`bin/escalation-door`), the ticket and those that wait for it are parked (`bin/convoy-state park`) |
+| `unobservable` by the criterion at the tip | **Planning Exception**: one request on the operator's list (`bin/escalation-door`), the ticket and those that wait for it are parked (`bin/convoy-state park`). Its option `a` judges what was unobservable proven by its criterion test: `bin/convoy-advance` lifts the parking and the evaluation is made again at the tip (below) |
 | `unobservable` by the environment only | an **outage**: no verdict, nothing counted as a refusal; the evaluation is made once more on products launched again. A second outage at the same commit stops the ticket (`evaluation_outage`) |
 | open, launched, within its time | waits |
 | open on a ticket that is no longer to be evaluated at that commit (its author added a commit, it was parked, or it has no interface: a model evaluation opened before ADR-0030 L4) | withdraws it and stops its products: what its session hands in later is refused |
@@ -240,7 +240,19 @@ as the round:
 | an `unobservable` by the **environment**, nothing else refused | `environment_outage` | none written | an outage, not counted as a refusal: evaluated once more |
 
 Nobody waives a criterion: a state other than `observed` never gives a
-favorable verdict, and no option of the command lifts one.
+favorable verdict, and no option of the command lifts one. The one
+exception is the operator's: answered `a` (« Juger ce qui est inobservable
+prouvé par son test de critère vert ») to the request a Planning Exception
+of the evaluation raised, the lift (`bin/convoy-state lift-park`) records
+each item that evaluation found unobservable by the criterion, with its
+frozen text, under `park_lifts[].proven_by_test`. The next evaluation
+counts such an item, still unobservable by the criterion with the same
+text, proven by its test: the round names it under `proven_by_test` and
+its outcome reads it as `observed`. A lift without that answer, any other
+answer, or any other item: unchanged.
+
+Intent (Benjamin, his words, 21/10/2026 about 16:55 Paris, operator chat, ticket af-ten1sp): « Preuve par le test (Recommandé) », to a question whose option said: « Réponse a (trancher) : la demi-phrase « CI absente → indisponible » de la ligne de démonstration est jugée prouvée par son test, pas sur le produit lancé. »
+Mechanism (agent interpretation): the option `a` of the request an evaluation's Planning Exception raises judges what that evaluation could not observe by the criterion proven by its green criterion test. The lift records it (`park_lifts[].proven_by_test`), and the next evaluation counts it proven instead of observed. Without that answer a frozen criterion is never waived.
 
 `verdict` computes the same answer again from the tracker, the evidence
 store and the tip of the ticket branch, for a gate: `favorable` is true only
