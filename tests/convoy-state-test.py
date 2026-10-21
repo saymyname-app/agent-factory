@@ -3227,6 +3227,9 @@ class ConvoyStateTest(unittest.TestCase):
         self.ok("stop-ticket", CONVOY, "fx-t4", "--reason", "still_refused", "--detail", "encore refusé")
         self.assert_refused_and_nothing_written(
             "open-resume", CONVOY, "fx-t4", "--cause", "interrupted", "--ref", "x", mention="arrêté")
+        # Still refused with no override: the merge that returned it lifts nothing (af-n4bn62).
+        self.assert_refused_and_nothing_written(
+            "open-resume", CONVOY, "fx-t4", "--cause", "returned", "--ref", "x", mention="arrêté (still_refused)")
         for ref in ("a", "b", "c"):
             self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", ref)
         self.assert_refused_and_nothing_written(

@@ -522,6 +522,60 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
         self.assertEqual(1, self.resumes())
 
+    def overridden_then_returned(self, override=True):
+        """T1 stopped still refused, its one Blocking Finding overridden by
+        the operator, then returned by red tests on the merged result
+        (af-n4bn62: F and G1 of af-strhoy, 21/10/2026). Without `override`
+        the finding is left as it is and the merge red is written as
+        bin/spec-integration writes it."""
+        base = self.integrated(regression="false")
+        self.resumable()
+        self.evaluated()
+        self.advance(CONVOY)
+        tip = self.finished(T1)
+        self.run_ok(STATE, "open-code-review", CONVOY, T1, "--kind", "review", "--commit", tip, "--base", base)
+        review = self.tmp / "review-t1.json"
+        review.write_text(json.dumps({"commit": tip, "answers": {}, "recorded_by": "delivery-reviewer-fx",
+                                      **self.BLOCKS}))
+        self.run_ok(STATE, "record-code-review", CONVOY, T1, "--file", review)
+        self.run_ok(STATE, "stop-ticket", CONVOY, T1, "--reason", "still_refused", "--detail", "revue de code (F1.1)")
+        self.run_ok(STATE, "stop-raised", CONVOY, T1)
+        if override:
+            self.run_ok(STATE, "override-finding", CONVOY, T1, "--finding", "F1.1", "--approver", "benjamin-hurand",
+                        "--words", "Je passe outre F1.1.")
+            self.advance(CONVOY)  # evaluated at the tip, then the merge returns it: red tests
+        else:
+            self.run_ok(STATE, "set-merge", CONVOY, T1, "--outcome", "red", "--ticket-commit", tip,
+                        "--integration", base, "--commit", tip)
+        self.assertEqual("red", self.shown_state(T1)["merge"]["outcome"])
+        self.write_log.write_text("")
+
+    def test_a_ticket_stopped_still_refused_and_overridden_that_the_merge_returned_is_resumed_once(self):
+        self.overridden_then_returned()
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "returned")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")], answer)
+        self.assertEqual(1, len(self.resume_launches()))
+        shown = self.shown_state(T1)
+        # The stop is lifted, not erased: the resume keeps it, and its request leaves the operator's list.
+        self.assertIsNone(shown["stop"])
+        self.assertEqual("still_refused", shown["resume"]["entries"][-1]["stop"]["reason"])
+        self.assertEqual(["F1.1"], [entry["finding"] for entry in shown["overrides"]])
+        self.assertEqual([], [line for line in self.needs() if T1 in line])
+        self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
+        self.assertEqual(1, self.resumes())
+
+    def test_a_ticket_stopped_still_refused_without_its_override_is_not_resumed_by_a_returned_merge(self):
+        self.overridden_then_returned(override=False)
+        before = self.tickets_snapshot()
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([], self.of(answer, "resumed"))
+        self.assertEqual([], self.resume_launches())
+        self.assertEqual(before, self.tickets_snapshot())
+
     def test_a_ticket_parked_at_a_resume_its_red_merge_asked_for_names_that_cause_and_the_failing_tests(self):
         # af-w6xtw0: the operator read « 3 reprises » and not why the last one was.
         failing = " ; ".join(f"echo FAILED: tests/{name}-test.py" for name in ("a", "b", "c", "d"))
