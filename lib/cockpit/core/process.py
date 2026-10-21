@@ -149,6 +149,7 @@ def build(config, clock=None):
         factory_stalled_after_seconds=config.factory_stalled_after_seconds,
         illisible_after_seconds=config.illisible_after_seconds,
     )
+    server.descriptors_dir = config.descriptors_dir
 
     # Clean stop (T23, T24) -- read side only (af-mjfvwx 7a): the driver keeps
     # its state and its tick; the reader it is handed cannot suspend, resume

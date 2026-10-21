@@ -373,6 +373,11 @@ One entry of a Project's structured roadmap file (id, title, "done when" conditi
 _French conversational alias_: étape de roadmap
 _Avoid_: milestone, Planning Run, Chantier
 
+**Release Plan**:
+A Project's plan for its next release, versioned as `release.toml` beside its structured roadmap: a revisable target, the criteria verified with their proof, the criteria that remain, the decisions open, deferred or included, the next milestone and how it is verified, an estimate that is conditional or unavailable, and the history of changes to the target kept apart from what was verified. The cockpit reads it; the ritual « Préparer la prochaine release » writes it.
+_French conversational alias_: cadrage de release
+_Avoid_: cadrage alone (the Planning Run's own stage), roadmap, Spec
+
 **Fixture City Oracle**:
 The hermetic public-behavior harness that starts from synthetic project intent
 and verifies Planning Run, Work Plane, artifact, publication, integration, and

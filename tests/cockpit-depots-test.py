@@ -242,7 +242,8 @@ class DepotsTest(unittest.TestCase):
         wait_until(lambda: "Tout est à jour à" in self.get("/"))
 
         page = self.get("/projet/demo")
-        self.assertIn("Roadmap : Bêta privée", page)
+        # The page of the project shows its whole roadmap (E, af-8rbceu).
+        self.assertRegex(page, r"ROADMAP</small><h2[^>]*>Bêta privée</h2>")
         self.assertIn("demo-back : dev a 3 commits d'avance", page)
         self.assertIn("Roadmap inconnue", self.get("/projet/brut"))
 
@@ -330,7 +331,7 @@ class DepotsTest(unittest.TestCase):
         self.assertNotIn("Fiches contacts", self.project_block(body, "demo"), "a promoted chantier is finished")
         wait_until(lambda: "dev a 0 commits d'avance" in self.get("/"))
         page = self.get("/projet/demo")
-        self.assertGreater(page.index("Fiches contacts"), page.rindex("Historique"), "it is in the project's history")
+        self.assertGreater(page.rindex("Fiches contacts"), page.rindex("Historique"), "it is in the project's history")
 
     def test_promotion_that_cannot_be_read_is_unknown_and_asks_nothing(self):
         self.accepted_chantier("0" * 40)  # a commit the clone does not know

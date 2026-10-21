@@ -316,7 +316,10 @@ class HomeProjectsZoneTest(unittest.TestCase):
         status, page = self.get_status("/projet/saymyname")
         self.assertEqual(200, status)
         self.assertIn("Atkinson+Hyperlegible+Next", page)
-        self.assertIn('<a class="back cockpit-pp-back" href="/">← Accueil</a><h1>SayMyName</h1>', page)
+        # The head of the page is the reference's (E, af-8rbceu): the way
+        # back to « Projets », then the name of the project.
+        self.assertRegex(page, r'<div class="pf-crumb" data-anchor="crumb-1">.*?← Projets</button>')
+        self.assertRegex(page, r'<h1 data-anchor="h1-1">SayMyName</h1>')
         self.assertIn("<b>1</b> chantier actif</span>", page)
         self.assertIn('<span class="chip probleme">1 problème remonté</span>', page)
         self.assertIn('href="#cockpit-pp-historique">Historique du projet →</a>', page)

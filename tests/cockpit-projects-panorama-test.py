@@ -1,5 +1,5 @@
 """The destination Projets of Panorama (cockpit.ui.projects.panorama): a
-card per project with its counts, and the head of a project's page."""
+card per project with its counts, the whole card the link to its page."""
 import sys
 import unittest
 from pathlib import Path
@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
 from cockpit.projects.model import Chantier, Project  # noqa: E402
-from cockpit.ui.projects.panorama import render_project_head, render_projects_list  # noqa: E402
+from cockpit.ui.projects.panorama import render_projects_list  # noqa: E402
 
 NOW = 1760000000.0
 
@@ -42,15 +42,15 @@ class ProjectsPanoramaTest(unittest.TestCase):
         self.assertIn("<dt>Runs ouverts</dt><dd>1</dd>", page)
         self.assertIn("Dernier run : T2 · En cours", page)
 
-    def test_the_project_head_shows_its_own_runs_only(self):
-        page = render_project_head(PROJECT, RUNS, NOW)
-        self.assertIn("Projet P", page)
-        self.assertIn("/runs/run?id=T2", page)
-        self.assertNotIn("/runs/run?id=X", page)
+    def test_the_whole_card_is_the_link_to_the_page_of_the_project(self):
+        page = render_projects_list([PROJECT], RUNS, NOW)
+        self.assertIn('<a class="pj-card" href="/projet/p" aria-label="Page projet Projet P · À toi de jouer · 1 · '
+                      'Chantier actuel : Chantier b">', page)
+        self.assertEqual(1, page.count("<a "), "a link inside the card")
 
     def test_no_project_and_no_run_are_said(self):
         self.assertIn("Aucun projet déclaré", render_projects_list([], [], NOW))
-        self.assertIn("Aucun run lu pour ce projet", render_project_head(PROJECT, None, NOW))
+        self.assertIn("Aucun run lu pour ce projet", render_projects_list([PROJECT], None, NOW))
 
 
 if __name__ == "__main__":

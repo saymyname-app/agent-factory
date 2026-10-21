@@ -92,6 +92,11 @@ class SyntheticCity:
     # the home of the launch; a value that names one says `HOME_MARK` for
     # that home (bin/cockpit-isolated writes them and says where).
     files: dict = field(default_factory=dict)
+    # The knowledge repositories of the projects, by the name their
+    # descriptors give them (`knowledge_repo`): `{"files": {path: text},
+    # "at": ISO date}` for one this city writes, committed at that date, or
+    # `{"path": …}` for a Git repository already on this host.
+    repos: dict = field(default_factory=dict)
 
 
 # Where a value of a source names a file of `SyntheticCity.files`.
@@ -112,10 +117,10 @@ def from_dataset(dataset) -> SyntheticCity:
     if "fixtures" in dataset:
         return _runs_city(name, at, ui, dataset["fixtures"])
     if "tracker" in dataset:
-        return _tracker_city(name, dataset["tracker"])
+        return _tracker_city(name, dataset["tracker"], dataset.get("projects"), dataset.get("repos"))
     return _panorama_city(name, _fixed_time(at), ui, dataset.get("visible_text"), _folded(dataset.get("folded")),
                           _folded(dataset.get("drawn"), "drawn"), _run_cards(dataset.get("runs")),
-                          _result_values(dataset.get("result")))
+                          _result_values(dataset.get("result")), dataset.get("release"))
 
 
 def _folded(folded, key="folded") -> dict:
@@ -187,10 +192,12 @@ def _descriptor(display_name: str) -> dict:
 class _Tracker:
     """The beads and the declared projects read from one screen."""
 
-    def __init__(self, at: datetime):
+    def __init__(self, at: datetime, release=None):
         self.at = at
         self.beads = []
         self.projects = {}
+        self.repos = {}
+        self.release = release
 
     def declare(self, display_name: str) -> str:
         """Declare the project the screen names; its key."""
@@ -216,7 +223,7 @@ class _Tracker:
                          project=project, labels=[SAID])
 
 
-def _panorama_city(name, at, ui, text, folded, drawn, runs, ui_result) -> SyntheticCity:
+def _panorama_city(name, at, ui, text, folded, drawn, runs, ui_result, release=None) -> SyntheticCity:
     if not isinstance(text, str) or not text.strip():
         raise DatasetRefused("a Panorama state without the text of its page (visible_text)")
     lines = [line.strip() for line in text.split("\n") if line.strip()]
@@ -230,7 +237,9 @@ def _panorama_city(name, at, ui, text, folded, drawn, runs, ui_result) -> Synthe
         raise DatasetRefused(f"a screen no rule reads: « {lines[0] if lines else ''} »")
     result_state = None if view is None or reading != READ or view in PLAIN_VIEWS else view
     stop_step = STOP_STEP.search(ui.get("setup") or "")
-    tracker = _Tracker(at)
+    if release is not None and read_screen is not _project_page:
+        raise DatasetRefused("what a release plan says beside the page (release) on a screen that is no project's")
+    tracker = _Tracker(at, release)
     read_screen(lines, tracker)
     # A drawing is kept as it is said, under its heading, on the screen that
     # shows that heading.
@@ -256,7 +265,7 @@ def _panorama_city(name, at, ui, text, folded, drawn, runs, ui_result) -> Synthe
         name=name, reading=reading,
         suspended=bool(stop_step) and stop_step.group(1) == "suspended",
         beads=tracker.beads, projects=sorted(tracker.projects.values(), key=lambda d: d["project_id"]),
-        files=files,
+        files=files, repos=tracker.repos,
     )
 
 
@@ -530,28 +539,129 @@ def _dossier_page(record: dict, folded: dict) -> str:
 
 # A tracker as the commands of the flow write it (`tracker`): its beads,
 # served as they are; the project each names is declared under its key.
-def _tracker_city(name: str, tracker) -> SyntheticCity:
+def _tracker_city(name: str, tracker, declared=None, repos=None) -> SyntheticCity:
     if not isinstance(tracker, dict) or not isinstance(tracker.get("beads"), dict) or not all(
             isinstance(bead, dict) for bead in tracker["beads"].values()):
         raise DatasetRefused("its tracker (tracker) is not the beads the commands wrote, by their id")
     beads = [{**bead, "id": bead_id} for bead_id, bead in tracker["beads"].items()]
     projects = {}
+    for descriptor in declared or []:
+        if not isinstance(descriptor, dict) or descriptor.get("contract") != DESCRIPTOR_CONTRACT or not all(
+                isinstance(descriptor.get(key), str) and descriptor[key] for key in ("project_id", "display_name")):
+            raise DatasetRefused(f"its projects (projects) are not each a descriptor {DESCRIPTOR_CONTRACT}")
+        projects[descriptor["project_id"]] = descriptor
     for bead in beads:
         key = (bead.get("metadata") or {}).get(PROJECT_KEY)
         if isinstance(key, str) and key:
             projects.setdefault(key, {"contract": DESCRIPTOR_CONTRACT, "project_id": key, "display_name": key})
-    return SyntheticCity(name=name, beads=beads, projects=sorted(projects.values(), key=lambda d: d["project_id"]))
+    if repos is not None and (not isinstance(repos, dict) or not all(
+            isinstance(path, str) and path.startswith("/") for path in repos.values())):
+        raise DatasetRefused("its repositories (repos) are not each a name and the absolute path of a Git repository")
+    return SyntheticCity(name=name, beads=beads, projects=sorted(projects.values(), key=lambda d: d["project_id"]),
+                         repos={repo: {"path": path} for repo, path in (repos or {}).items()})
 
 
 # The page of one project (« ← Projets »): what it is and its indicators
 # above the first section, its next release and next step, its current
 # chantier, its roadmap and last changes. « Ressources du projet » is links.
-PROJECT_SAID = ("Prochaine release", "PROCHAIN JALON", "ROADMAP", "Derniers changements")
+# The release, its milestone and the roadmap are what the knowledge
+# repository of the project holds (E, af-8rbceu): a release plan and a
+# structured roadmap, written in a repository of the city.
+RELEASE = "Prochaine release"
+MILESTONE = "PROCHAIN JALON"
+ROADMAP = "ROADMAP"
+PROJECT_SAID = ("Derniers changements",)
 CURRENT_CHANTIER = "CHANTIER ACTUEL"
+KNOWLEDGE_ROADMAP = "roadmap.toml"
+KNOWLEDGE_RELEASE = "release.toml"
+ROADMAP_STATUSES = {"Terminé": "done", "Fusionné": "done", "En cours": "in_progress", "À venir": "todo"}
+DECISIONS = {"Décision ouverte": "open", "Décision reportée": "deferred", "Périmètre élargi": "included"}
+TARGET_TAG = re.compile(r"^Cible révisable(?: · (?P<status>.+))?$")
+GAINS = re.compile(r"^✓ Acquis vérifiés \d+$")
+REMAINING = re.compile(r"^Reste connu \d+$")
+RANGE = "Fourchette indicative · "
+NO_ESTIMATE = "Estimation non disponible"
+# What a release plan says that the page shows folded (`release`): the
+# proof of each gain, by its title; each change of the target; and what a
+# range rests on.
+RELEASE_EXTRAS = ("proofs", "history", "estimate")
+ESTIMATE_EXTRAS = ("comparables", "hypotheses", "computed_at")
+
+
+def _toml(value) -> str:
+    """A TOML value: a JSON string is a TOML basic string."""
+    return json.dumps(value, ensure_ascii=False) if isinstance(value, str) else str(value)
+
+
+def _table(name: str, values: dict, array=False) -> str:
+    head = f"[[{name}]]" if array else f"[{name}]"
+    return "\n".join([head, *(f"{key} = {_toml(value)}" for key, value in values.items())]) + "\n"
+
+
+def _release_plan(release, milestone, extras) -> str | None:
+    """The release plan the page shows, as `release.toml` writes it
+    (cockpit.projects.release), or None when the page says it has none."""
+    if not release or not TARGET_TAG.match(release[0]):
+        return None
+    if not isinstance(extras, dict) or set(extras) - set(RELEASE_EXTRAS):
+        raise DatasetRefused(f"what a release plan says beside the page (release) is not {list(RELEASE_EXTRAS)}")
+    proofs = extras.get("proofs") or {}
+    lines = list(release)
+    out = [f"target = {_toml(lines[1])}"]
+    status = TARGET_TAG.match(lines[0])["status"]
+    if status:
+        out.append(f"status = {_toml(status)}")
+    out.append("")
+    part = None
+    pending = None
+    for line in lines[2:]:
+        if GAINS.match(line):
+            part = "gain"
+        elif REMAINING.match(line):
+            part = "remaining"
+        elif line in DECISIONS:
+            part, pending = "decision", DECISIONS[line]
+        elif part == "gain" and line != "Voir la preuve":
+            if line not in proofs:
+                raise DatasetRefused(f"a gain without its proof (release.proofs): « {line} »")
+            out.append(_table("gain", {"title": line, "proof": proofs[line]}, array=True))
+        elif part == "remaining" and line.startswith("○ "):
+            out.append(_table("remaining", {"title": line[2:]}, array=True))
+        elif part == "decision" and pending:
+            out.append(_table("decision", {"question": line, "state": pending}, array=True))
+            pending = None
+    if milestone:
+        state = milestone[2] if len(milestone) > 2 and " · " in milestone[2] else ""
+        out.append(_table("milestone", {"title": milestone[0], "check": milestone[1],
+                                        **({"state": state} if state else {})}))
+        remaining = sum(1 for line in out if line.startswith("[[remaining]]"))
+        for index, line in enumerate(milestone):
+            if line == NO_ESTIMATE and index + 1 < len(milestone):
+                out.append(_table("estimate", {"unavailable": milestone[index + 1]}))
+            elif line.startswith(RANGE) and index + 1 < len(milestone):
+                rests = extras.get("estimate") or {}
+                if set(rests) != set(ESTIMATE_EXTRAS):
+                    raise DatasetRefused(f"a range without what it rests on (release.estimate: {list(ESTIMATE_EXTRAS)})")
+                out.append(_table("estimate", {"range": line[len(RANGE):], "conditions": milestone[index + 1],
+                                               **rests, "criteria": remaining}))
+    for change in extras.get("history") or []:
+        out.append(_table("history", {"change": change}, array=True))
+    return "\n".join(out)
+
+
+def _roadmap(section) -> str:
+    """The structured roadmap the page shows (« ROADMAP »: its heading, then
+    each step and its status), as a `[[step]]` file writes it."""
+    pairs = [line for line in section[1:] if not line.startswith("Prochain jalon proposé")]
+    if len(pairs) % 2 or not all(status in ROADMAP_STATUSES for status in pairs[1::2]):
+        raise DatasetRefused(f"a roadmap that is not each step then its status {sorted(ROADMAP_STATUSES)}: {pairs}")
+    return "\n".join(_table("step", {"id": f"R{number}", "title": title, "done_when": title, "order": number,
+                                      "status": ROADMAP_STATUSES[status]}, array=True)
+                     for number, (title, status) in enumerate(zip(pairs[::2], pairs[1::2]), start=1))
 
 
 def _project_page(lines, tracker) -> None:
-    sections = _sections(lines, (*PROJECT_SAID, CURRENT_CHANTIER, "Ressources du projet"))
+    sections = _sections(lines, (RELEASE, MILESTONE, ROADMAP, *PROJECT_SAID, CURRENT_CHANTIER, "Ressources du projet"))
     about = sections[None][1:]
     if not about:
         raise DatasetRefused("a project page that names no project")
@@ -561,6 +671,18 @@ def _project_page(lines, tracker) -> None:
     current = sections.get(CURRENT_CHANTIER)
     if current:
         _chantier(tracker, project, current[0], current[1:])
+    files = {}
+    plan = _release_plan(sections.get(RELEASE), sections.get(MILESTONE), tracker.release or {})
+    if plan is not None:
+        files[KNOWLEDGE_RELEASE] = plan
+    if sections.get(ROADMAP):
+        files[KNOWLEDGE_ROADMAP] = _roadmap(sections[ROADMAP])
+    if files:
+        if KNOWLEDGE_ROADMAP not in files:
+            raise DatasetRefused("a release plan without the roadmap it stands beside (« ROADMAP »)")
+        repo = f"synthetic/{project}"
+        tracker.projects[project].update({"knowledge_repo": repo, "roadmap_path": KNOWLEDGE_ROADMAP})
+        tracker.repos[repo] = {"files": files, "at": tracker.at.isoformat()}
 
 
 def _journal(lines, tracker) -> None:
