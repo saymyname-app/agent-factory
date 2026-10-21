@@ -149,7 +149,12 @@ class FactoryConnections(unittest.TestCase):
             "dernière lecture 14:42": "dernière lecture 03:33",
         })
         address = self.tree.launch("factory-machine", commit)
+        # The page reads the load average while the browser renders it: the
+        # host's is read on each side of that rendering, which takes seconds
+        # on a busy host where the load of one minute moves by several units.
+        load_before = os.getloadavg()[0]
         frame = measure(address, PAGE)[0]
+        load_after = os.getloadavg()[0]
         _, machine = section_titled(self, frame, "Machine d’exécution")
         self.assertIn(socket.gethostname(), machine, "the machine is not the host the cockpit runs on")
         self.assertIn(f"{os.cpu_count()} cœurs", machine, "the cores are not those of the host")
@@ -160,8 +165,10 @@ class FactoryConnections(unittest.TestCase):
         load = re.search(r"Processeur\s+(\d+) %.*?Charge moyenne : (\d+(?:,\d)?) / (\d+) cœurs", machine)
         self.assertTrue(load, f"the processor's load is not said: « {machine} »")
         self.assertEqual(cores, int(load.group(3)), "the load is not said over the cores of the host")
-        self.assertLessEqual(abs(number(load.group(2)) - os.getloadavg()[0]), 2.0,
-                             "the load said is not the load average of the host")
+        self.assertTrue(min(load_before, load_after) - 2.0 <= number(load.group(2))
+                        <= max(load_before, load_after) + 2.0,
+                        f"the load said ({load.group(2)}) is not the load average of the host "
+                        f"({load_before:.2f} before the page was read, {load_after:.2f} after)")
         self.assertLessEqual(abs(int(load.group(1)) - 100 * number(load.group(2)) / cores), 1,
                              "the processor's percentage is not its load over its cores")
 
