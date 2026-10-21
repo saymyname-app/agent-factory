@@ -192,6 +192,11 @@ records what was verified about the machinery underneath.
    sender to `human`; the message body's own `ACTION: pr-autopilot reconciled
    …` line self-identifies the true actor instead (af-4ruvv). The
    `merge_result` stamp makes later passes silent.
+   A merged PR whose work bead still carries an active `gc.needs_benjamin`
+   remains pending: `pr-autopilot` does not call the delivery door for it and
+   does not fail the order. Once `escalation-door repondre` or `clear` sets
+   the field to `none`, the next tick indexes the bead again and performs the
+   normal exact-head reconciliation.
 5. A PR whose required check **failed** is never armed. It is raised as a P1
    bug bead in the rig instead, so a red build becomes ready work rather than a
    silently open PR.
@@ -462,7 +467,8 @@ by hand. `bin/local-only-tests --list` prints what a run would do (`run
 `tests/local-only-tests-coverage-test.sh` fails in CI when a marked file is
 neither run nor excluded, or when an exclusion has no reason or names no
 marked file. A test stopped after `LOCAL_ONLY_TEST_TIMEOUT` (default
-1800 s) counts as failed; the order's own timeout (`6h`) bounds the night: run one at a
+3600 s) counts as failed; the one-hour per-test budget covers the observed
+long isolated-city journey. The order's timeout (`6h`) bounds the night: run one at a
 time on a loaded host, the marked tests take a little over two hours.
 A trial on the real tracker that calls `bin/convoy-state` or a tool built on
 it exports `FACTORY_ROOT` to its disposable city: the tools name their city

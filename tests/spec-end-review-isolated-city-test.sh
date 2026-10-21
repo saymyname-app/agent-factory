@@ -435,6 +435,7 @@ echo "$(date -u +%H:%M:%S) deux tickets livrés et fermés par leur porte ; poin
 
 # The conversation of a session (af-bb69uq) is Claude Code's
 # CLAUDE_CODE_SESSION_ID: the runner's own must not reach the trial sessions.
+isolated_city_disable_dog "$TRIAL" "$CITY"
 (env -u CLAUDE_CODE_SESSION_ID gc supervisor run > "$TRIAL/supervisor.out" 2>&1 &)
 sleep 3
 gc --city "$CITY" start >/dev/null 2>&1 || true

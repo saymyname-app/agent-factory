@@ -334,6 +334,7 @@ gc bd update "$A" --set-metadata "gc.scope_paths=$FIXTURE/tests/*,$FIXTURE/app.p
 echo "relevé d'essai — formule de l'auteur en cité isolée ($(gc version 2>/dev/null | head -1), N=$CEILING, aucun Mayor, auteur scripté)"
 echo "convoi $CONVOY (Spec $SPEC) : A=$A (suit la séquence) B=$B (saute le rouge) C=$C (Planning Exception)"
 
+isolated_city_disable_dog "$TRIAL" "$CITY"
 (env -u CLAUDE_CODE_SESSION_ID gc supervisor run > "$TRIAL/supervisor.out" 2>&1 &)
 sleep 3
 gc --city "$CITY" start >/dev/null 2>&1 || true
@@ -375,7 +376,9 @@ workflow_done() { [ "$(gc bd show "$1" --json | jq -r '.[0].status')" = closed ]
 
 # --- every ticket is started by the order, each in a session of its own ---------
 all_taken() { for t in "${ALL[@]}"; do step_seen "$t" workspace || return 1; done; }
-wait_for 420 all_taken || fail "the three tickets were not all taken by an author session within 420s"
+# A controller tick and three formula claims can take just over seven minutes
+# under gc 1.5 even while all sessions keep advancing (af-x3re4a).
+wait_for 600 all_taken || fail "the three tickets were not all taken by an author session within 600s"
 for t in "${ALL[@]}"; do
   [ "$(field "$t" gc.dispatched_via)" = dispatch-door ] || fail "${NAME[$t]} was not started through the dispatch door"
 done

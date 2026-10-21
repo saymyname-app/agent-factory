@@ -409,6 +409,51 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertIn("raised", self.shown_state(T1)["stop"])
         self.assertEqual(1, len([line for line in self.needs() if T1 in line]))
 
+    # --- an exhausted amendment the operator answered « a » is resumed with one more amendment (af-25o7vr) ---
+
+    def amendment_answered(self, letter):
+        """T1 stopped at its second amendment, its request raised, then
+        answered `letter` by the operator."""
+        self.amendment_exhausted()
+        self.advance(CONVOY)
+        self.env["ESCALATION_DOOR_NOW"] = "4102444800"  # the answer comes after the stop
+        self.run_ok(ESCALATION, "repondre", T1, letter, "--actor", "operateur-test")
+        self.write_log.write_text("")
+
+    def test_an_exhausted_amendment_answered_a_is_resumed_once_and_its_stop_kept_on_the_resume(self):
+        self.amendment_answered("a")
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "amendment_granted")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+        self.assertEqual(1, len(self.resume_launches()))
+        shown = self.shown_state(T1)
+        self.assertEqual((1, None), (shown["counters"]["resumes"], shown["stop"]))
+        self.assertEqual("amendment_exhausted", shown["resume"]["entries"][-1]["stop"]["reason"])
+        self.assertEqual([], [line for line in self.needs() if T1 in line])
+        # The next pass counts and sends nothing more.
+        self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
+        self.assertEqual(1, self.resumes())
+
+    def test_an_exhausted_amendment_answered_b_stays_stopped(self):
+        self.amendment_answered("b")
+        before = self.tickets_snapshot()
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual(([], []), (self.of(answer, "resumed"), self.resume_launches()))
+        self.assertEqual("amendment_exhausted", self.shown_state(T1)["stop"]["reason"])
+        self.assertEqual(before, self.tickets_snapshot())
+
+    def test_an_exhausted_amendment_not_answered_yet_is_not_resumed(self):
+        self.amendment_exhausted()
+        self.advance(CONVOY)
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual(([], []), (self.of(answer, "resumed"), self.resume_launches()))
+        self.assertEqual("amendment_exhausted", self.shown_state(T1)["stop"]["reason"])
+
     def test_a_ticket_blocked_by_a_repair_is_resumed_once_the_repair_is_closed(self):
         self.started_convoy()
         self.taken(T1, "auteur-1")
