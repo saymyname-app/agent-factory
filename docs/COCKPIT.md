@@ -286,7 +286,7 @@ the read model, never from the frozen page:
   A supervisor or tracker reading that is no longer current keeps the
   last values under « Lecture périmée · état actuel inconnu. »
 - The result open is the result of a chantier as the records of the D01
-  flow give it (A1, af-c662qx; `projects/result.py`, below): the first one
+  flow give it (A1, af-c662qx; `projects/outcome.py`, below): the first one
   to judge, else the first active one, else the last one ended; without
   one, the first request and the way to its detail. No record a
   demonstration dataset writes (`gc.result_dossier`) is read. A result to
@@ -309,9 +309,16 @@ the read model, never from the frozen page:
   current chantier -- its last one ended when none is active -- at the
   issue of its result when it has one, else at the stage of its
   `gc.project_card`, else at its computed stage. No door is wired to
-  Essai, Avis or a resource that opens on this destination (A2): they are
-  drawn unavailable and the panel says so; nothing shows a command done
-  that no door recorded.
+  Essai, Avis or a resource that opens on this destination (A2): Essai and
+  Avis are drawn unavailable under every result, judged or not, and the
+  bar says why (not wired yet on a result to judge; of no use on a result
+  already judged; unsure on a result unknown or inconsistent); nothing
+  shows a command done that no door recorded. A chantier whose Outcome is
+  to judge offers no « Accepter » on the page of its project nor in « Ce
+  qui t’attend »: its chip leads to its result on the home page
+  (`#pn-result`), and its request is the Acceptance Request the escalation
+  door writes on the convoy -- `cockpit.projects.actions` refuses the
+  cockpit's own acceptance of a convoy of the new flow.
 - The zones of variant D that no destination of Panorama holds yet -- the
   inbox with its actions, the projects with their chantiers, the stop,
   the access and the health zones -- are kept, whole and working, folded
@@ -331,16 +338,19 @@ scroll kept. `home-result-states-test.py`, `home-d01-records-test.py` and
 `home-recette-test.py` (A1) hold the result states, the records of the
 D01 commands read back on the home and the project page, and the recette.
 
-**The result of a chantier** (`projects/result.py`, A1). `read_result`
-reads, on a convoy that carries the new-flow mark, `gc.flow.delivered`,
-`gc.flow.evidence_pack`, `gc.flow.acceptance`, `gc.flow.judgement`,
-`gc.flow.promotion` and `gc.flow.closed` (`docs/CONVOY_STATE.md`), and
-gives one issue the home, the project page, its chantiers and its history
-all say:
+**The Outcome of a chantier** (`projects/outcome.py`, A1; « résultat » on
+the screens). `read_outcome` reads, on a convoy that carries the new-flow
+mark, the Delivered Outcome, its Evidence Pack, the acceptance, the
+judgement, the promotion and the closing through
+`convoy_state.outcome_records_of` -- the reader of `bin/convoy-state`, which
+validates each record as `show` does (`docs/CONVOY_STATE.md`); the cockpit
+reads no `gc.flow.*` key itself -- and gives one issue the home, the
+project page, its chantiers and its history all say:
 
 | The records say | Issue |
 |---|---|
-| one of them cannot be read | Inconnu |
+| one of them cannot be read, or is not one `bin/convoy-state` would have written | Inconnu |
+| the answer « accepté » or « abandonné » names another commit or dossier fingerprint than the Delivered Outcome; the commit judged of the promotion is not the commit of the answer | Incohérence |
 | closed as accepted, a promotion recorded | Fusionné (history: the commit judged → the commit merged) |
 | closed as accepted, no promotion; abandoned with a promotion; a promotion with no acceptance in force | Incohérence |
 | an answer « abandonné », or closed as abandoned | Abandonné (nothing merged, its reason) |
@@ -355,8 +365,9 @@ all say:
 
 A merged or abandoned closed convoy goes to the history of its project. A
 closed ticket is never counted as a merge of the result. The page of the
-dossier is read by `projects/source.py` from the `path` of its record
-(`read_pack_sections`: one rubric per `<section id="rubrique-N">`).
+dossier is read by `projects/source.py` in the folder its record names
+(`path`, the folder of the Evidence Pack; `read_pack_sections` opens its
+`index.html`: one rubric per `<section id="rubrique-N">`).
 
 ## Home screen, as the validated prototype shows it (af-mjfvwx)
 

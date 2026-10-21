@@ -23,7 +23,7 @@ The states:
   the last values under a notice that says so.
 
 The result open is the result of a chantier, as the records of the D01 flow
-give it (A1, af-c662qx; :mod:`cockpit.projects.result`, read with the
+give it (A1, af-c662qx; :mod:`cockpit.projects.outcome`, read with the
 projects): the one to judge first, else the latest of the others; without
 one, the first request. A result to judge shows what it is, its dossier --
 the rubrics of its dossier page, each a part that unfolds, « Ce qui n'a PAS
@@ -31,8 +31,10 @@ the rubrics of its dossier page, each a part that unfolds, « Ce qui n'a PAS
 for the Factory's own project, its reports (« Compte rendu … ») -- above its
 bar; a result judged shows its follow-up: what was answered, the proof of
 the merge or that there is none, the reason of an abandon. Essai and Avis
-are not wired to a door here (A2): they are drawn unavailable, and the panel
-says so -- nothing on the page shows a command done that no door recorded.
+are not wired to a door here (A2): they are drawn unavailable under every
+result, and the panel says why -- not wired yet on a result to judge, of no
+use on a result already judged; nothing on the page shows a command done
+that no door recorded.
 No record a demonstration dataset writes (``gc.result_dossier``) is read.
 
 Every part carries the anchor of the reference (``data-anchor``), numbered
@@ -46,12 +48,13 @@ from datetime import datetime
 
 from cockpit.core.freshness import FRESH
 from cockpit.core.readmodel import PARIS
-from cockpit.projects import result as result_mod
+from cockpit.projects import outcome as outcome_mod
 from cockpit.projects.model import Chantier
 from cockpit.projects.source import from_value as projects_from_value
 from cockpit.runs.derive import runs_from_beads
 from cockpit.ui.runs.page import duration
 from cockpit.ui.panorama.shell import Anchors, anchor_slug, open_button
+from cockpit.ui.projects.page import RESULT_PANEL_ID
 from cockpit.ui.projects.project_page import project_page_url
 
 LOADING, ERROR, EMPTY, CONTENT = "loading", "error", "empty", "content"
@@ -73,6 +76,9 @@ CHART_SERIES = (("PR fusionnées", "var(--pn-series-1)", ""), ("Tickets livrés"
                 ("CI réussies", "var(--pn-series-3)", "1 5"))
 ACTIVITY = "Activité sur 7 jours"
 UNWIRED_RESULT = "Essai et Avis ne sont pas encore raccordés à cette vue : rien n’est lancé ni préparé d’ici."
+JUDGED_RESULT = "Résultat déjà jugé : Essai et Avis ne servent qu’à un résultat à juger, rien n’est lancé ni préparé d’ici."
+UNSURE_RESULT = ("État du résultat incertain : Essai et Avis restent indisponibles tant que ses enregistrements "
+                 "ne sont ni lisibles ni cohérents.")
 NOT_GIVEN = "Contenu non fourni par la source."
 # The parts of a result to judge the cockpit draws whatever its dossier: the
 # two that open the page of the dossier, the one that says what is left to
@@ -199,8 +205,8 @@ def _result_open(row, lines_of_recette):
         return None
     projects, _ = projects_from_value(row["value"])
     found = [(project, chantier) for project in projects
-             for chantier in project.chantiers + _historique(row["value"], project.project_id) if chantier.resultat]
-    ranked = sorted(found, key=lambda pair: (pair[1].resultat["issue"] not in result_mod.JUDGED_NOW,
+             for chantier in project.chantiers + _historique(row["value"], project.project_id) if chantier.outcome]
+    ranked = sorted(found, key=lambda pair: (pair[1].outcome["issue"] not in outcome_mod.JUDGED_NOW,
                                              pair[1].termine))
     if not ranked:
         return None
@@ -213,40 +219,40 @@ def _result_view(project, chantier, lines_of_recette):
     """What the panel of the result says: what it is about, its issue, its
     title and summary, its dossier (its parts above the bar) or its
     follow-up."""
-    resultat = chantier.resultat
-    issue = resultat["issue"]
+    outcome = chantier.outcome
+    issue = outcome["issue"]
     view = {"about": "%s · %s" % (project.display_name, chantier.titre), "issue": issue,
-            "label": resultat["label"], "sentence": resultat["sentence"], "history": resultat["history"],
-            "judged_now": issue in result_mod.JUDGED_NOW}
+            "label": outcome["label"], "sentence": outcome["sentence"], "history": outcome["history"],
+            "judged_now": issue in outcome_mod.JUDGED_NOW}
     if not view["judged_now"]:
-        view.update(title=FOLLOW_UP, summary=resultat["sentence"], resources=[], reports=[])
+        view.update(title=FOLLOW_UP, summary=outcome["sentence"], resources=[], reports=[])
         return view
-    view["title"] = resultat["title"] or "Le résultat attend ton avis"
-    view["summary"] = resultat["summary"] or ""
-    to_verify = resultat["unverified"] if resultat["pack_read"] else [DOSSIER_UNREAD]
+    view["title"] = outcome["title"] or "Le résultat attend ton avis"
+    view["summary"] = outcome["summary"] or ""
+    to_verify = outcome["unverified"] if outcome["pack_read"] else [DOSSIER_UNREAD]
     resources = [{"label": label, "detail": detail, "opens": True} for label, detail in OPENING]
     resources.append({"label": TO_VERIFY, "opens": False, "said": to_verify, "recette": list(lines_of_recette)})
     # « Version et sources » the dossier leaves empty, or does not have, is
     # given by the records: the version delivered and its dossier.
-    rubrics = [part for part in resultat.get("rubrics") or [] if part["label"] != VERSION or part["said"]]
+    rubrics = [part for part in outcome.get("rubrics") or [] if part["label"] != VERSION or part["said"]]
     resources += [{"label": part["label"], "opens": False, "said": part["said"]} for part in rubrics]
     if not any(part["label"] == VERSION for part in rubrics):
-        resources.append({"label": VERSION, "opens": False, "said": _version(resultat)})
+        resources.append({"label": VERSION, "opens": False, "said": _version(outcome)})
     view["resources"] = resources
-    view["reports"] = [{"label": part["label"], "opens": False, "said": part["said"]} for part in resultat["reports"]]
+    view["reports"] = [{"label": part["label"], "opens": False, "said": part["said"]} for part in outcome["reports"]]
     return view
 
 
-def _version(resultat):
+def _version(outcome):
     """« Version et sources » of a result its dossier does not give: the
     version delivered, the fingerprint of its dossier, its Spec."""
     lines = []
-    if resultat["commit"]:
-        lines.append("Version livrée : commit %s." % str(resultat["commit"])[:7])
-    if resultat["pack"]:
-        lines.append("Empreinte du dossier : %s." % resultat["pack"])
-    if resultat["spec"]:
-        lines.append("Spec : %s." % resultat["spec"])
+    if outcome["commit"]:
+        lines.append("Version livrée : commit %s." % str(outcome["commit"])[:7])
+    if outcome["pack"]:
+        lines.append("Empreinte du dossier : %s." % outcome["pack"])
+    if outcome["spec"]:
+        lines.append("Spec : %s." % outcome["spec"])
     return lines
 
 
@@ -451,23 +457,25 @@ def _render_result(view, anchors):
     if result["summary"]:
         parts.append("<p %s>%s</p>" % (anchors("p"), _e(result["summary"])))
     if not result["judged_now"]:
+        # Judged: its follow-up, then the bar, Essai and Avis unavailable.
         parts.append(_render_folded({"label": HISTORY, "said": result["history"]}, anchors))
-        return '<article class="pn-panel pn-result" data-issue="%s" %s>%s</article>' % (
-            _e(result["issue"]), panel, "".join(parts))
-    if result["issue"] != result_mod.TO_JUDGE:
-        # Outdated, or its trial down: said before anything of the dossier.
-        parts.append('<p class="pn-result-issue" role="status">%s</p>' % _e(result["sentence"]))
-    resource_list = anchors("resource-list")
-    parts.append('<div class="pn-resources" %s>%s</div>'
-                 % (resource_list, "".join(_render_resource(r, anchors) for r in result["resources"])))
-    parts.append("".join(_render_folded(report, anchors) for report in result["reports"]))
+        reason = UNSURE_RESULT if result["issue"] in (outcome_mod.UNKNOWN, outcome_mod.INCONSISTENT) else JUDGED_RESULT
+    else:
+        if result["issue"] != outcome_mod.TO_JUDGE:
+            # Outdated, or its trial down: said before anything of the dossier.
+            parts.append('<p class="pn-result-issue" role="status">%s</p>' % _e(result["sentence"]))
+        resource_list = anchors("resource-list")
+        parts.append('<div class="pn-resources" %s>%s</div>'
+                     % (resource_list, "".join(_render_resource(r, anchors) for r in result["resources"])))
+        parts.append("".join(_render_folded(report, anchors) for report in result["reports"]))
+        reason = UNWIRED_RESULT
     dock = anchors("actions-possibles")
     parts.append(
         '<div class="pn-dock" role="group" aria-label="Actions possibles" %s>'
         '<a class="pn-button" role="link" aria-disabled="true" tabindex="-1" %s>Essai ↗</a><button type="button" disabled %s>Avis</button>'
-        '<p class="pn-unwired">%s</p></div>' % (dock, anchors("button"), anchors("button"), UNWIRED_RESULT))
-    return '<article class="pn-panel pn-result" data-issue="%s" %s>%s</article>' % (
-        _e(result["issue"]), panel, "".join(parts))
+        '<p class="pn-unwired">%s</p></div>' % (dock, anchors("button"), anchors("button"), reason))
+    return '<article class="pn-panel pn-result" id="%s" data-issue="%s" %s>%s</article>' % (
+        RESULT_PANEL_ID, _e(result["issue"]), panel, "".join(parts))
 
 
 def _render_resource(resource, anchors):

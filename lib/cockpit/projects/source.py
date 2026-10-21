@@ -6,7 +6,6 @@ other value — the page never reads Beads itself.
 What is stored is the computed view as plain data (so ``/api/status`` and
 ``/api/projects`` can serialise it), not the beads it was computed from.
 """
-import json
 from dataclasses import asdict
 
 from cockpit.core.beads_source import read_beads_json
@@ -17,7 +16,7 @@ from cockpit.projects.descriptors import load_descriptors
 from cockpit.projects.hors_chantier import HorsChantierItem, hors_chantier_par_projet
 from cockpit.projects.model import Chantier, Project, RoadmapStep
 from cockpit.projects.promu import read_promotion_results
-from cockpit.projects.result import PACK_KEY, read_pack_sections
+from cockpit.projects.outcome import pack_folder, read_pack_sections
 from cockpit.projects.stage import MAP_LABEL
 
 
@@ -59,21 +58,15 @@ def read_projects(descriptors_dir, bd_bin="bd", timeout=20, clones_dir="", rig_r
 
 
 def read_dossier_pages(beads):
-    """The rubrics of the dossier page of each convoy that records one
-    (``gc.flow.evidence_pack``, its ``path``): ``{convoy_id: rubrics, or
-    None when the page cannot be read}`` (A1,
-    :func:`cockpit.projects.result.read_pack_sections`)."""
+    """The rubrics of the dossier page of each convoy that records an
+    Evidence Pack (its folder, :func:`cockpit.projects.outcome.pack_folder`):
+    ``{convoy_id: rubrics, or None when the page cannot be read}`` (A1,
+    :func:`cockpit.projects.outcome.read_pack_sections`)."""
     pages = {}
     for bead in beads:
-        raw = (bead.get("metadata") or {}).get(PACK_KEY)
-        if not raw:
-            continue
-        try:
-            record = json.loads(raw) if isinstance(raw, str) else raw
-        except ValueError:
-            record = None
-        path = record.get("path") if isinstance(record, dict) else None
-        pages[bead["id"]] = read_pack_sections(path) if isinstance(path, str) and path else None
+        folder = pack_folder(bead)
+        if folder is not None:
+            pages[bead["id"]] = read_pack_sections(folder)
     return pages
 
 

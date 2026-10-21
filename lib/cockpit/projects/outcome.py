@@ -1,56 +1,54 @@
-"""The result of a chantier, read from the records of the D01 flow (A1,
+"""The Outcome of a chantier, read from the records of the D01 flow (A1,
 af-c662qx; Spec af-fgcw0d, user stories 8, 40, 44, 47, 108, 111, 117,
 118, 119, 120, 121, 123 and 136; decision « État D01 commun aux vues »).
 
-    result = read_result(convoy, spec_title, pack)
-    sections = read_pack_sections(path)
+    outcome = read_outcome(convoy, spec_title, pack)
+    sections = read_pack_sections(folder)
 
-:func:`read_result` is the one reader of the result of a convoy that
-carries the new-flow mark: what the flow recorded on it -- the result
-delivered (``gc.flow.delivered``), the dossier (``gc.flow.evidence_pack``),
-the request of the acceptance (``gc.flow.acceptance``), the answers of the
-owner (``gc.flow.judgement``), the proof of the merge
-(``gc.flow.promotion``) and the closing (``gc.flow.closed``), as
-``bin/convoy-state`` writes them (``docs/CONVOY_STATE.md``) -- becomes one
-issue, its words and its history, as plain data. The home page, the page of
-the project, its details and its history all show that record, so no
-screen says another state than the records.
+:func:`read_outcome` is the one reader, in the cockpit, of the Outcome of a
+convoy that carries the new-flow mark. It reads the records the flow wrote
+on it -- the Delivered Outcome, its Evidence Pack, the acceptance, the
+answers of the owner, the proof of the merge and the closing -- through
+``convoy_state.outcome_records_of``, the reader of ``bin/convoy-state``
+(``docs/CONVOY_STATE.md``: the only reader of the state of a convoy of the
+new flow), and makes of them one issue, its words and its history, as plain
+data. The home page, the page of the project, its details and its history
+all show that record, so no screen says another state than the records.
+The screens say « résultat » for it, the word of the interface.
 
-- A result delivered on an open convoy is to judge, never blocked because
-  the convoy is still open: it closes only after the judgement.
+- An Outcome delivered on an open convoy is to judge, never blocked
+  because the convoy is still open: it closes only after the judgement.
 - A closed ticket is no merge: only a recorded promotion is.
 - Accepted, merge pending, merge under way and merge confirmed are told
   apart; an abandon merged nothing, legitimately, and keeps its reason.
-- A record that cannot be read leaves the result unknown: never a known
+- A record that cannot be read leaves the Outcome unknown: never a known
   state, never a guess from the others.
-- An issue its proofs contradict (closed as accepted with no proof of
-  merge, a merge with no acceptance) is said as an inconsistency.
+- An issue its proofs contradict is said as an inconsistency: closed as
+  accepted with no proof of merge, a merge with no acceptance, an answer
+  or a merge whose commit or dossier fingerprint is not the one of the
+  Delivered Outcome.
 
-A convoy with none of these records yet is in delivery: :func:`read_result`
+A convoy with none of these records yet is in delivery: :func:`read_outcome`
 answers None and the stage of its tickets stands. No I/O but
 :func:`read_pack_sections`, which reads the page of a dossier.
 """
 import html
-import json
+import os
 import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from convoy_state import outcome_records_of
+
 PARIS = ZoneInfo("Europe/Paris")
-NEW_FLOW_MARK_KEY = "gc.flow.mark"
-DELIVERED_KEY = "gc.flow.delivered"
-PACK_KEY = "gc.flow.evidence_pack"
-ACCEPTANCE_KEY = "gc.flow.acceptance"
-JUDGEMENT_KEY = "gc.flow.judgement"
-PROMOTION_KEY = "gc.flow.promotion"
-CLOSED_KEY = "gc.flow.closed"
-RECORD_KEYS = (DELIVERED_KEY, PACK_KEY, ACCEPTANCE_KEY, JUDGEMENT_KEY, PROMOTION_KEY, CLOSED_KEY)
 REQUEST_KEY = "gc.needs_benjamin"
 REQUEST_WHY_KEY = "gc.escalation_pourquoi"
 SPEC_KEY = "gc.spec_id"
+# The page of an Evidence Pack, in its folder (bin/evidence-pack).
+PACK_PAGE = "index.html"
 
-# The issues of a result, each with the stage the screens show and what the
-# result panel says of it.
+# The issues of an Outcome, each with the stage the screens show and what
+# the panel of the result says of it.
 TO_JUDGE = "to_judge"
 OUTDATED = "outdated"
 OUTAGE = "outage"
@@ -62,7 +60,7 @@ MERGED = "merged"
 ABANDONED = "abandoned"
 UNKNOWN = "unknown"
 INCONSISTENT = "inconsistent"
-# Issues where the result is the one to judge now: Essai and Avis belong there.
+# Issues where the Outcome is the one to judge now: Essai and Avis belong there.
 JUDGED_NOW = (TO_JUDGE, OUTDATED, OUTAGE)
 
 LABELS = {
@@ -96,17 +94,13 @@ VOID_CAUSES = {"conflict": "conflit avec la branche protégée", "regression": "
 NO_MERGE_PROOF = "Aucune preuve de fusion à ce stade."
 NOT_VERIFIED = "Ce qui n'a PAS été vérifié"
 REPORT = "Compte rendu"
-
-
-def _decode(raw):
-    """A record as ``bin/convoy-state`` stores it (a JSON object, often as
-    a string), or ``False`` when it cannot be read."""
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except ValueError:
-            return False
-    return raw if isinstance(raw, dict) else False
+# The contradictions between an issue and its proofs, as the screens say them.
+CLOSED_WITHOUT_MERGE = "Fermé comme accepté, sans preuve de fusion enregistrée."
+ABANDONED_MERGED = "Abandonné alors qu’un commit est enregistré comme fusionné."
+MERGE_WITHOUT_ACCEPTANCE = "Un commit est enregistré comme fusionné sans acceptation en cours."
+ANSWER_NOT_DELIVERED = ("La réponse enregistrée ne porte pas sur la version livrée : son commit ou l’empreinte "
+                        "de son dossier diffère du résultat Delivered.")
+MERGE_NOT_JUDGED = "Le commit fusionné ne vient pas du résultat jugé : le commit jugé diffère de la réponse enregistrée."
 
 
 def _hhmm(at):
@@ -128,12 +122,20 @@ def _at(record):
     return str((record or {}).get("at") or "")
 
 
-def read_result(convoy, spec_title=None, pack=None):
-    """The result of ``convoy`` (a bead) as its D01 records give it, or
+def pack_folder(convoy):
+    """The folder of the Evidence Pack recorded on ``convoy`` (a bead), or
+    None when it records none, or none that can be read."""
+    records = outcome_records_of(convoy) or {}
+    pack = records.get("evidence_pack")
+    return pack["path"] if isinstance(pack, dict) and "unruled" not in pack else None
+
+
+def read_outcome(convoy, spec_title=None, pack=None):
+    """The Outcome of ``convoy`` (a bead) as its D01 records give it, or
     None when it carries none of them (not of the new flow, or still in
     delivery).
 
-    ``spec_title``: the title of the Spec of the convoy, what the result
+    ``spec_title``: the title of the Spec of the convoy, what the Outcome
     delivers. ``pack``: the rubrics of its dossier page,
     :func:`read_pack_sections`, or None when it was not read.
 
@@ -145,79 +147,84 @@ def read_result(convoy, spec_title=None, pack=None):
     ``unverified`` (what the dossier says was not verified), ``reports``
     (its parts named « Compte rendu … »: label and lines), ``rubrics`` (its
     other parts), ``pack_read``, ``open``."""
-    metadata = convoy.get("metadata") or {}
-    if not metadata.get(NEW_FLOW_MARK_KEY):
+    records = outcome_records_of(convoy)
+    if records is None:
         return None
-    present = {key: _decode(metadata[key]) for key in RECORD_KEYS if metadata.get(key) not in (None, "")}
+    present = {name: record for name, record in records.items() if record is not None}
     if not present:
         return None
+    metadata = convoy.get("metadata") or {}
     is_open = convoy.get("status") != "closed"
-    result = _base(convoy, metadata, spec_title, pack, is_open)
-    if any(record is False for record in present.values()):
-        return _issue(result, UNKNOWN)
-    answers = present.get(JUDGEMENT_KEY, {}).get("answers", [])
-    if not isinstance(answers, list) or not all(isinstance(answer, dict) for answer in answers):
-        return _issue(result, UNKNOWN)
-    delivered = present.get(DELIVERED_KEY)
-    promotion = present.get(PROMOTION_KEY)
-    closed = present.get(CLOSED_KEY)
-    acceptance = present.get(ACCEPTANCE_KEY)
-    dossier = present.get(PACK_KEY)
+    outcome = _base(metadata, spec_title, pack, is_open)
+    if any("unruled" in record for record in present.values()):
+        return _issue(outcome, UNKNOWN)
+    answers = present.get("judgement", {}).get("answers", [])
+    delivered = present.get("delivered")
+    promotion = present.get("promotion")
+    closed = present.get("closed")
+    acceptance = present.get("acceptance")
+    dossier = present.get("evidence_pack")
     last = answers[-1] if answers else None
-    # An answer counts for the result delivered now when it is not older
-    # than it: « constats rendus » withdraws a result, the next one is new.
+    # An answer counts for the Outcome delivered now when it is not older
+    # than it: « constats rendus » withdraws an Outcome, the next one is new.
     current = last if last and (delivered is None or _at(last) >= _at(delivered)) else None
 
-    result["commit"] = (delivered or current or dossier or {}).get("commit")
-    result["pack"] = (delivered or current or {}).get("pack") or (dossier or {}).get("digest")
-    history = result["history"]
+    outcome["commit"] = (delivered or current or dossier or {}).get("commit")
+    outcome["pack"] = (delivered or current or {}).get("pack") or (dossier or {}).get("digest")
+    history = outcome["history"]
     ready_at = _hhmm((delivered or acceptance or {}).get("at"))
     if ready_at:
         history.append("%s · Résultat prêt" % ready_at)
     if current is not None and _hhmm(current.get("at")):
         history.append("%s · Réponse enregistrée" % _hhmm(current.get("at")))
     if promotion:
-        result["judged"], result["merged"] = promotion.get("judged"), promotion.get("merged")
+        outcome["judged"], outcome["merged"] = promotion.get("judged"), promotion.get("merged")
     response = (current or {}).get("response")
     how = (closed or {}).get("how")
 
     if not is_open and closed is None and promotion is None:
         # Closed outside the doors of the flow: nothing here says its issue.
         return None
+    if current is not None and response != "findings" and not current.get("in_flight") and delivered and (
+            current.get("commit") != delivered["commit"] or current.get("pack") != delivered["pack"]):
+        return _issue(outcome, INCONSISTENT, ANSWER_NOT_DELIVERED)
+    if promotion and response == "accepted" and promotion["judged"] != current.get("commit"):
+        return _issue(outcome, INCONSISTENT, MERGE_NOT_JUDGED)
     if how == "accepted" or (not is_open and promotion):
         if not promotion:
-            return _issue(result, INCONSISTENT, "Fermé comme accepté, sans preuve de fusion enregistrée.")
-        return _merged(result, promotion, MERGED)
+            return _issue(outcome, INCONSISTENT, CLOSED_WITHOUT_MERGE)
+        if response != "accepted" or current.get("voided"):
+            return _issue(outcome, INCONSISTENT, MERGE_WITHOUT_ACCEPTANCE)
+        return _merged(outcome, promotion, MERGED)
     if how == "abandoned" or response == "abandoned":
         if promotion:
-            return _issue(result, INCONSISTENT, "Abandonné alors qu’un commit est enregistré comme fusionné.")
-        result["reason"] = (current or {}).get("reason") or (closed or {}).get("said")
-        return _issue(result, ABANDONED)
+            return _issue(outcome, INCONSISTENT, ABANDONED_MERGED)
+        outcome["reason"] = (current or {}).get("reason") or (closed or {}).get("said")
+        return _issue(outcome, ABANDONED)
     if promotion:
         if response != "accepted" or current.get("voided"):
-            return _issue(result, INCONSISTENT, "Un commit est enregistré comme fusionné sans acceptation en cours.")
-        return _merged(result, promotion, MERGING)
+            return _issue(outcome, INCONSISTENT, MERGE_WITHOUT_ACCEPTANCE)
+        return _merged(outcome, promotion, MERGING)
     if response == "accepted" and current.get("voided"):
         cause = (current.get("voided") or {}).get("cause")
         sentence = SENTENCES[VOIDED]
         if cause in VOID_CAUSES:
             sentence = "Ton acceptation est annulée (%s). Un nouveau jugement sera nécessaire." % VOID_CAUSES[cause]
-        return _issue(result, VOIDED, sentence)
+        return _issue(outcome, VOIDED, sentence)
     if response == "accepted":
-        return _issue(result, ACCEPTED, history_end=NO_MERGE_PROOF)
+        return _issue(outcome, ACCEPTED, history_end=NO_MERGE_PROOF)
     if response == "findings":
-        return _issue(result, RETURNED)
+        return _issue(outcome, RETURNED)
     if delivered is None:
         return None
     if (acceptance or {}).get("panne"):
-        return _issue(result, OUTAGE)
-    if dossier and (dossier.get("commit") != delivered.get("commit") or
-                    (delivered.get("pack") and dossier.get("digest") != delivered.get("pack"))):
-        return _issue(result, OUTDATED)
-    return _issue(result, TO_JUDGE)
+        return _issue(outcome, OUTAGE)
+    if dossier and (dossier["commit"] != delivered["commit"] or dossier["digest"] != delivered["pack"]):
+        return _issue(outcome, OUTDATED)
+    return _issue(outcome, TO_JUDGE)
 
 
-def _base(convoy, metadata, spec_title, pack, is_open):
+def _base(metadata, spec_title, pack, is_open):
     request = metadata.get(REQUEST_KEY)
     sections = pack or []
     return {
@@ -235,24 +242,24 @@ def _base(convoy, metadata, spec_title, pack, is_open):
     }
 
 
-def _issue(result, issue, sentence=None, history_end=None):
-    result["issue"], result["label"] = issue, LABELS[issue]
-    result["sentence"] = sentence or SENTENCES[issue]
+def _issue(outcome, issue, sentence=None, history_end=None):
+    outcome["issue"], outcome["label"] = issue, LABELS[issue]
+    outcome["sentence"] = sentence or SENTENCES[issue]
     if issue == ABANDONED:
-        result["history"].append("Raison : %s" % (result["reason"] or "non enregistrée"))
+        outcome["history"].append("Raison : %s" % (outcome["reason"] or "non enregistrée"))
     if history_end:
-        result["history"].append(history_end)
-    return result
+        outcome["history"].append(history_end)
+    return outcome
 
 
-def _merged(result, promotion, issue):
+def _merged(outcome, promotion, issue):
     at = _hhmm(promotion.get("at"))
     proof = "Fusion confirmée · résultat jugé %s → commit fusionné %s" % (_short(promotion.get("judged")),
                                                                          _short(promotion.get("merged")))
     if issue == MERGING:
         # Recorded, the convoy not closed yet: the merge is under way.
-        return _issue(result, MERGING, history_end=NO_MERGE_PROOF)
-    return _issue(result, MERGED, history_end="%s · %s" % (at, proof) if at else proof)
+        return _issue(outcome, MERGING, history_end=NO_MERGE_PROOF)
+    return _issue(outcome, MERGED, history_end="%s · %s" % (at, proof) if at else proof)
 
 
 # --- the page of a dossier -------------------------------------------------------
@@ -275,12 +282,13 @@ def pack_sections(page):
     return sections
 
 
-def read_pack_sections(path):
-    """The rubrics of the page of a dossier at ``path``, or None when the
-    page cannot be read: the cockpit then says the dossier was not read,
-    never that it says nothing."""
+def read_pack_sections(folder):
+    """The rubrics of the page of the dossier whose folder is ``folder``
+    (its ``index.html``, as ``gc.flow.evidence_pack`` records it), or None
+    when the page cannot be read: the cockpit then says the dossier was not
+    read, never that it says nothing."""
     try:
-        with open(path, encoding="utf-8") as page:
+        with open(os.path.join(folder, PACK_PAGE), encoding="utf-8") as page:
             return pack_sections(page.read())
     except (OSError, UnicodeDecodeError, TypeError):
         return None

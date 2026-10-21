@@ -21,7 +21,7 @@ check on ``convoy_chantiers`` (git facts injected via ``promotion_results``
 the historique (spec .46).
 """
 from cockpit.projects import etat as etat_mod
-from cockpit.projects import result as result_mod
+from cockpit.projects import outcome as outcome_mod
 from cockpit.projects.model import ACCEPTE, CADRAGE, GRAPHE, LIVRAISON, LIVRE, PROMU, SPEC, Chantier
 
 MAP_LABEL = "wayfinder:map"
@@ -220,55 +220,55 @@ def _is_delivery_ticket(bead, digest):
     return (bead.get("metadata") or {}).get(GRAPH_DIGEST_KEY) == digest
 
 
-# The stage of a chantier whose result the D01 records give
-# (:mod:`cockpit.projects.result`): where it sits among the stages, and the
+# The stage of a chantier whose Outcome the D01 records give
+# (:mod:`cockpit.projects.outcome`): where it sits among the stages, and the
 # issues that end it (it then goes to the historique).
-RESULT_STAGES = {
-    result_mod.TO_JUDGE: LIVRE, result_mod.OUTDATED: LIVRE, result_mod.OUTAGE: LIVRE,
-    result_mod.RETURNED: LIVRAISON, result_mod.VOIDED: LIVRAISON,
-    result_mod.ACCEPTED: ACCEPTE, result_mod.MERGING: ACCEPTE, result_mod.MERGED: ACCEPTE,
-    result_mod.ABANDONED: LIVRE, result_mod.UNKNOWN: LIVRE, result_mod.INCONSISTENT: LIVRE,
+OUTCOME_STAGES = {
+    outcome_mod.TO_JUDGE: LIVRE, outcome_mod.OUTDATED: LIVRE, outcome_mod.OUTAGE: LIVRE,
+    outcome_mod.RETURNED: LIVRAISON, outcome_mod.VOIDED: LIVRAISON,
+    outcome_mod.ACCEPTED: ACCEPTE, outcome_mod.MERGING: ACCEPTE, outcome_mod.MERGED: ACCEPTE,
+    outcome_mod.ABANDONED: LIVRE, outcome_mod.UNKNOWN: LIVRE, outcome_mod.INCONSISTENT: LIVRE,
 }
 # The issues whose last line of history is said with the stage: the proof of
 # the merge, or that there is none yet.
-RESULT_PROOF_ISSUES = (result_mod.ACCEPTED, result_mod.MERGING, result_mod.MERGED)
+OUTCOME_PROOF_ISSUES = (outcome_mod.ACCEPTED, outcome_mod.MERGING, outcome_mod.MERGED)
 
 
-def _result_chantier(bead, tickets, resultat, rigs):
-    """The chantier of a convoy whose result its D01 records give: its
+def _outcome_chantier(bead, tickets, outcome, rigs):
+    """The chantier of a convoy whose Outcome its D01 records give: its
     stage, and what every screen says of it -- never « bloqué » for its
     closed tickets, never merged for them."""
-    issue = resultat["issue"]
+    issue = outcome["issue"]
     bead_id = bead.get("id") or ""
-    detail = "%s · %s" % (resultat["label"], resultat["sentence"])
-    if issue in RESULT_PROOF_ISSUES and resultat["history"]:
-        detail += " %s" % resultat["history"][-1]
-    if issue == result_mod.ABANDONED:
-        detail += " Raison : %s" % (resultat["reason"] or "non enregistrée")
-    if issue in result_mod.JUDGED_NOW:
+    detail = "%s · %s" % (outcome["label"], outcome["sentence"])
+    if issue in OUTCOME_PROOF_ISSUES and outcome["history"]:
+        detail += " %s" % outcome["history"][-1]
+    if issue == outcome_mod.ABANDONED:
+        detail += " Raison : %s" % (outcome["reason"] or "non enregistrée")
+    if issue in outcome_mod.JUDGED_NOW:
         # The result waits for Benjamin's judgement: his turn, even while
         # the convoy carries the request of the acceptance.
         etat_val, cible = etat_mod.resolve(a_toi_de_jouer=True, a_toi_de_jouer_cible=bead_id)
     else:
         etat_val, cible = _etat_for(bead, extra_beads=tickets)
-    ended = not resultat["open"] and issue in (result_mod.MERGED, result_mod.ABANDONED)
+    ended = not outcome["open"] and issue in (outcome_mod.MERGED, outcome_mod.ABANDONED)
     metadata = bead.get("metadata") or {}
     return Chantier(
         id=bead_id,
         titre=_title(bead),
         projet=_project_of(bead),
-        stage=RESULT_STAGES[issue],
+        stage=OUTCOME_STAGES[issue],
         detail=detail,
         etat=etat_val,
         etat_cible=cible,
         promu_masque=True,
         termine=ended,
-        abandonne=ended and issue == result_mod.ABANDONED,
-        raison_abandon=resultat["reason"] if issue == result_mod.ABANDONED else None,
+        abandonne=ended and issue == outcome_mod.ABANDONED,
+        raison_abandon=outcome["reason"] if issue == outcome_mod.ABANDONED else None,
         planning_run_target=metadata.get("planning_run_target"),
         rig=rigs.pop() if len(rigs) == 1 else None,
-        resultat=resultat,
-        issue=resultat["label"],
+        outcome=outcome,
+        issue=outcome["label"],
     )
 
 
@@ -284,10 +284,10 @@ def _convoy_chantiers_all(beads, promotion_results=None, pack_reads=None):
     spec .41, and the safe default when a read was never attempted).
 
     ``pack_reads`` (A1): ``{convoy_id: rubrics of its dossier page, or
-    None}`` -- :func:`cockpit.projects.result.read_pack_sections`, read by
+    None}`` -- :func:`cockpit.projects.outcome.read_pack_sections`, read by
     :mod:`cockpit.projects.source` for each convoy whose dossier is
-    recorded. A convoy of the new flow whose D01 records give a result is
-    that result (:func:`_result_chantier`); before them, its tickets give
+    recorded. A convoy of the new flow whose D01 records give an Outcome is
+    that Outcome (:func:`_outcome_chantier`); before them, its tickets give
     its stage.
 
     Returns every convoy chantier regardless of ``termine`` -- callers
@@ -319,10 +319,10 @@ def _convoy_chantiers_all(beads, promotion_results=None, pack_reads=None):
         en_cours = sum(1 for t in tickets if t.get("status") == "in_progress") - en_pr
         pret = sum(1 for t in tickets if t.get("status") == "open")
         metadata = bead.get("metadata") or {}
-        spec = by_id.get(metadata.get(result_mod.SPEC_KEY)) or {}
-        resultat = result_mod.read_result(bead, spec.get("title"), pack_reads.get(bead_id))
-        if resultat is not None:
-            out.append(_result_chantier(bead, tickets, resultat, rigs))
+        spec = by_id.get(metadata.get(outcome_mod.SPEC_KEY)) or {}
+        outcome = outcome_mod.read_outcome(bead, spec.get("title"), pack_reads.get(bead_id))
+        if outcome is not None:
+            out.append(_outcome_chantier(bead, tickets, outcome, rigs))
             continue
 
         promu_masque = False

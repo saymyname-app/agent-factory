@@ -1050,6 +1050,15 @@ and the digest of the Spec the publication door wrote (`spec_digest`). An
 `end_stop` or a `delivered` that cannot be read is an « état sans règle »
 like the others: rendered with `unruled` and its raw value, exit 3.
 
+A reader that holds the bead of a convoy and runs no command -- the
+cockpit -- reads its Outcome through `convoy_state.outcome_records_of`
+(A1, af-c662qx): the six records `delivered`, `evidence_pack`,
+`acceptance`, `judgement`, `promotion` and `closed` (the record of
+`close-convoy`, whatever the status), each validated by the reader `show`
+uses, `null` when absent, `{unruled, raw}` when this command would not
+have written it; `null` for a convoy without the mark. Like
+`owner_answer_of`, it reads only that bead and writes nothing.
+
 `ticket` answers whether one bead carries the mark, without naming its
 convoy: exit 0 and `"new_flow": true`, or exit 4 and `"new_flow": false`.
 With `--bead-json -` it reads the bead from stdin, as `gc bd show --json`

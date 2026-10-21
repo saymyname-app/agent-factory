@@ -436,42 +436,48 @@ def _result(tracker, dossier: dict, state: str, folded: dict, values: dict) -> d
         metadata["gc.spec_id"] = spec_id
 
     page = _dossier_page(record, folded)
-    path = f"packs/{project}/index.html"
+    # The Evidence Pack is a folder, its page index.html in it, as
+    # bin/evidence-pack writes it and gc.flow.evidence_pack records it.
+    folder = f"packs/{project}"
+    path = f"{folder}/index.html"
     digest = "sha256:" + hashlib.sha256(page.encode("utf-8")).hexdigest()
     at = {key: _at(tracker.at, values[key]) for key in ("ready_at", "answered_at", "merged_at")}
     commit = values["commit"]
     delivered = {"at": at["ready_at"], "commit": commit, "pack": digest, "protected": "0" * 40,
                  "version": "spec-end/v4"}
-    acceptance = {"at": at["ready_at"], "commit": commit, "pack": digest,
-                  "request": {"bead": convoy_id, "page": HOME_MARK + path, "at": at["ready_at"]}}
+    # Each record as bin/convoy-state writes it, read back by its readers
+    # (convoy_state.outcome_records_of). The Acceptance Request is the
+    # convoy's NEEDS BENJAMIN (_hand_over_request): the bead id the record
+    # would name is not one a synthetic convoy has.
+    acceptance = {"at": at["ready_at"], "commit": commit, "pack": digest}
     records = {"gc.flow.evidence_pack": {
         "at": at["ready_at"], "commit": values["outdated_commit"] if state == "outdated" else commit,
-        "digest": digest, "path": HOME_MARK + path, "conforming": True, "inadmissible": 0,
+        "digest": digest, "path": HOME_MARK + folder, "conforming": True, "inadmissible": 0,
         "version": "evidence-pack/v1"}}
     answer = {"approver": APPROVER, "commit": commit, "pack": digest, "at": at["answered_at"], "words": values["words"]}
-    promotion = {"at": at["merged_at"], "judged": commit, "merged": values["merged"], "protected": "main",
-                 "tip": values["merged"]}
+    promotion = {"at": at["merged_at"], "judged": commit, "merged": values["merged"], "protected": delivered["protected"],
+                 "tip": commit}
     if state in JUDGED_NOW_STATES:
         records.update({"gc.flow.delivered": delivered, "gc.flow.acceptance": acceptance})
         if state == "outage":
             acceptance["panne"] = {"at": at["ready_at"], "detail": values["outage"]}
     elif state in ACCEPTED_STATES:
-        records.update({"gc.flow.delivered": delivered, "gc.flow.judgement": {"answers": [{**answer, "response": "accepted"}]}})
+        records.update({"gc.flow.delivered": delivered, "gc.flow.judgement": {"verdicts": [], "answers": [{**answer, "response": "accepted"}]}})
         if state != "accepted":
             records["gc.flow.promotion"] = promotion
         if state == "merged":
             records["gc.flow.closed"] = {"how": "accepted", "said": values["words"], "approver": APPROVER,
                                          "at": at["merged_at"]}
     elif state in RETURNED_STATES:
-        records["gc.flow.judgement"] = {"answers": [{**answer, "response": "findings",
-                                                     "findings": [{"text": values["words"], "route": "repair"}]}]}
+        records["gc.flow.judgement"] = {"verdicts": [], "answers": [{**answer, "response": "findings",
+                                                     "findings": [{"text": values["words"], "route": "later"}]}]}
     elif state == "conflict":
-        records["gc.flow.judgement"] = {"answers": [{**answer, "response": "accepted",
+        records["gc.flow.judgement"] = {"verdicts": [], "answers": [{**answer, "response": "accepted",
                                                      "voided": {"cause": "conflict", "at": at["merged_at"]}}]}
     else:
         if not values["reason"]:
             raise DatasetRefused("an abandoned result says no reason (result.reason)")
-        records.update({"gc.flow.delivered": delivered, "gc.flow.judgement": {"answers": [
+        records.update({"gc.flow.delivered": delivered, "gc.flow.judgement": {"verdicts": [], "answers": [
             {**answer, "response": "abandoned", "reason": values["reason"]}]}})
         records["gc.flow.closed"] = {"how": "abandoned", "said": values["reason"], "approver": APPROVER,
                                      "at": at["merged_at"]}
