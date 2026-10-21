@@ -93,6 +93,16 @@ Blocking Finding « corrigé » or « contesté » (`bin/code-review respond`), 
 leaves by the Ticket Exit « terminé » (`bin/ticket-exit`). What it says
 closes nothing: code decides what follows.
 
+Intent (Benjamin, his words, 2026-10-21 about 03:45 Paris): « Oui, maintenance
+(Recommandé) », to the question « Je corrige aussi la règle d usine pour les
+prochains tickets : un constat de revue sur un test gelé, quand l amendement
+est déjà utilisé, ne peut plus mener qu à un arrêt. On la corrige ? ».
+Mechanism (agent interpretation): a Blocking Finding that asks to change a
+frozen test is corrected by `bin/tdd-step amend`, and the round opened after
+the ticket's amendment allows one amendment more, once, not bounded to the
+files the findings name (a finding cites a line, not a test file); a further
+one stops the ticket `amendment_exhausted` (af-vsni1n, `docs/TDD_STEP.md`).
+
 ## After the round
 
 | State at the tip, the round taken | What `settle` does |
