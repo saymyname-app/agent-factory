@@ -23,7 +23,9 @@
 # 2 on an exclusion that names no marked file or gives no reason.
 # The output of a run names each test (PASS, FAIL, SKIPPED) and each
 # exclusion (EXCLUDED). A test that runs longer than LOCAL_ONLY_TEST_TIMEOUT
-# (default 1800 s) is stopped and counted as failed.
+# (default 3600 s) is stopped and counted as failed. The one-hour per-test
+# budget covers the observed long isolated-city journey while the order's
+# own timeout still bounds the whole night.
 #
 # A test that exits 77 says this host cannot run it (for example the capture
 # browser refused by the host sandbox, af-yb2cb5): it is SKIPPED, not failed,
@@ -42,7 +44,7 @@ LIST=0
 # at the real repo's escalation-door instead of $FACTORY_ROOT's.
 ESCALATION_DOOR_BIN="${ESCALATION_DOOR_BIN:-$ROOT/bin/escalation-door}"
 EXCLUSIONS_FILE="config/local-only-tests-exclusions.txt"
-TEST_TIMEOUT="${LOCAL_ONLY_TEST_TIMEOUT:-1800}"
+TEST_TIMEOUT="${LOCAL_ONLY_TEST_TIMEOUT:-3600}"
 
 while [ $# -gt 0 ]; do
   case "$1" in

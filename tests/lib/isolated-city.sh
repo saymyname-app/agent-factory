@@ -51,6 +51,27 @@ isolated_city_stop() {
   gc supervisor stop
 }
 
+# isolated_city_disable_dog <trial-dir> <city-dir>
+#   The minimal Gas City template imports bd.dog with a pool of two sessions.
+#   Delivery trials replace the workspace provider with a role-specific stub,
+#   so an unrelated maintenance wisp would run that stub with the wrong
+#   contract and contend with the actors under test. Disable the imported pool
+#   in these disposable cities; Dolt itself and the controller keep running.
+isolated_city_disable_dog() {
+  local trial=${1:-} city=${2:-} config
+  if ! _isolated_city_inside "$city" "$trial"; then
+    echo "isolated_city_disable_dog: city (${city:-unset}) is not inside the trial directory (${trial:-none})" >&2
+    return 1
+  fi
+  config="$city/city.toml"
+  if [ ! -f "$config" ]; then
+    echo "isolated_city_disable_dog: city config does not exist: $config" >&2
+    return 1
+  fi
+  grep -qF '# isolated-city: disable bd.dog' "$config" && return 0
+  printf '\n# isolated-city: disable bd.dog\n[[patches.agent]]\nname = "dog"\nmax_active_sessions = 0\n' >> "$config"
+}
+
 # isolated_city_remove <trial-dir>
 #   Removes the trial directory once its processes are stopped (af-foq4t7).
 #   A process still writing in it -- one whose command line does not name the
