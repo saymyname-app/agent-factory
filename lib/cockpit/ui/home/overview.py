@@ -113,7 +113,7 @@ def overview_view(snapshot, requests, stop_trial_passed=False):
     and restart reached a verified restart (the recette)."""
     beads_row = snapshot.get("beads")
     view = {"state": CONTENT, "stale": False, "checked": None, "requests": [], "indicators": [],
-            "activity": {}, "runs": [], "dossier": None, "projects": []}
+            "activity": {}, "runs": [], "dossier": None, "projects": [], "projects_unread": False}
     if beads_row is None or beads_row["value"] is None:
         view["state"] = ERROR if (beads_row or {}).get("failed_at") is not None else LOADING
         return view
@@ -140,6 +140,8 @@ def overview_view(snapshot, requests, stop_trial_passed=False):
     if not view["runs"] and runs_row and runs_row["value"]:
         view["runs"] = runs_from_beads(runs_row["value"], max(r["read_at"] or 0 for r in rows + [runs_row]))[:3]
     view["projects"] = _projects(snapshot.get("projets"), beads, view["requests"])
+    projets = snapshot.get("projets")
+    view["projects_unread"] = projets is not None and projets["value"] is None
     if not (view["requests"] or view["dossier"] or view["projects"] or view["activity"] or view["runs"]
             or any(said.get(label) for label in SAID_INDICATORS)):
         view["state"] = EMPTY
@@ -221,9 +223,9 @@ def _result_view(project, chantier, lines_of_recette):
         return view
     view["title"] = resultat["title"] or "Le résultat attend ton avis"
     view["summary"] = resultat["summary"] or ""
-    to_verify = list(lines_of_recette) + (resultat["unverified"] if resultat["pack_read"] else [DOSSIER_UNREAD])
+    to_verify = resultat["unverified"] if resultat["pack_read"] else [DOSSIER_UNREAD]
     resources = [{"label": label, "detail": detail, "opens": True} for label, detail in OPENING]
-    resources.append({"label": TO_VERIFY, "opens": False, "said": to_verify})
+    resources.append({"label": TO_VERIFY, "opens": False, "said": to_verify, "recette": list(lines_of_recette)})
     # « Version et sources » the dossier leaves empty, or does not have, is
     # given by the records: the version delivered and its dossier.
     rubrics = [part for part in resultat.get("rubrics") or [] if part["label"] != VERSION or part["said"]]
@@ -357,7 +359,7 @@ def _render_content(view, anchors):
     ) or "<p>Rien ne t’attend.</p>"
     parts.append('<div class="pn-inbox" id="pn-inbox" %s><div class="pn-panel pn-requests" %s>%s%s</div>%s</div>'
                  % (inbox, requests_panel, title, lines, _render_result(view, anchors)))
-    parts.append(_render_projects(view["projects"], anchors))
+    parts.append(_render_projects(view["projects"], anchors, view["projects_unread"]))
     return "".join(parts)
 
 
@@ -482,11 +484,16 @@ def _render_resource(resource, anchors):
 
 def _render_folded(part, anchors):
     """A part of the dossier that unfolds: open, the lines its record gives
-    it, or that the source gave none."""
+    it, or that the source gave none; then, for « Ce qui reste à
+    vérifier », the recette of the cockpit -- a list of its own, outside
+    the numbering of the parts the reference draws."""
     said = [line for line in part.get("said") or [] if isinstance(line, str)] or [NOT_GIVEN]
     details, summary = anchors("details"), anchors("summary")
-    return "<details %s><summary %s>%s</summary>%s</details>" % (
-        details, summary, _e(part.get("label")), "".join("<p %s>%s</p>" % (anchors("p"), _e(line)) for line in said))
+    lines = "".join("<p %s>%s</p>" % (anchors("p"), _e(line)) for line in said)
+    if part.get("recette"):
+        lines += ('<ul class="pn-recette" aria-label="Recette du cockpit">%s</ul>'
+                  % "".join("<li>%s</li>" % _e(line) for line in part["recette"]))
+    return "<details %s><summary %s>%s</summary>%s</details>" % (details, summary, _e(part.get("label")), lines)
 
 
 def _render_request_panel(requests, anchors):
@@ -505,7 +512,7 @@ def _render_request_panel(requests, anchors):
          LEGACY_SUMMARY, _e(first["id"]))
 
 
-def _render_projects(projects, anchors):
+def _render_projects(projects, anchors, unread=False):
     panel, title, rows_anchor = anchors("panel"), '<h2 %s>Projets</h2>' % anchors("h2"), anchors("rows")
     rows = []
     for project in projects:
@@ -520,7 +527,8 @@ def _render_projects(projects, anchors):
             % (row, _e(project_page_url(project["id"])), holder, name, _e(project["name"]), chantier,
                _e(project["chantier"]), stats, figures, anchors("release-info"),
                _e(project["release"] or "Release non cadrée"), anchors("span")))
-    body = "".join(rows) or "<p>Aucun projet déclaré.</p>"
+    body = "".join(rows) or ("<p>Lecture des projets en cours : leur état réel n’est pas encore connu.</p>" if unread
+                             else "<p>Aucun projet déclaré.</p>")
     return '<section class="pn-panel pn-projects" %s>%s<div class="pn-rows" %s>%s</div></section>' % (
         panel, title, rows_anchor, body)
 
@@ -669,6 +677,8 @@ CSS = """
 .pn-result>details{margin-top:8px}
 .pn-result summary{cursor:pointer;color:var(--pn-muted-text)}
 .pn-result details p{font-size:14px;margin:10px 0 0;overflow-wrap:anywhere}
+.pn-recette{margin:10px 0 0;padding-left:20px;font-size:14px}
+.pn-recette li{margin-top:6px;overflow-wrap:anywhere}
 .pn-dock{display:flex;flex-wrap:wrap;gap:12px;align-items:center;border-top:1px solid var(--line);
   padding-top:18px;margin-top:22px}
 .pn-dock>:is(button,.pn-button){flex:1;min-height:54px;font-size:16px;font-weight:650}

@@ -73,6 +73,11 @@ ACTIONS_WITHOUT_WRITE = frozenset({"continuer", "pas_bon_vers_agent", "notifier_
 SOURCES_REREAD_AFTER_ACTION = frozenset({"beads", "projets", "journal"})
 REREAD_AFTER_ACTION_SECONDS = 8.0
 
+
+# How long GET / waits for the first reading of the projects, once the
+# tracker is read (A1): the first page after a start shows them.
+FIRST_READING_WAIT_SECONDS = 5
+
 class CockpitRequestHandler(BaseHTTPRequestHandler):
     server_version = "cockpit/1"
 
@@ -196,11 +201,27 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             result["rafraichi"] = self._reread_after_action()
         self._send_json(result)
 
+    def _first_reading(self, read_model):
+        """The snapshot, once the projects had their first reading if the
+        tracker had its own -- waiting at most
+        :data:`FIRST_READING_WAIT_SECONDS`: a page served the instant the
+        cockpit started would show no project, and no result, of a source
+        simply not read yet (A1)."""
+        deadline = time.monotonic() + FIRST_READING_WAIT_SECONDS
+        while True:
+            snapshot = read_model.snapshot()
+            beads, projets = snapshot.get("beads"), snapshot.get("projets")
+            pending = (beads is not None and beads["read_at"] is not None and projets is not None
+                       and projets["read_at"] is None and projets.get("failed_at") is None)
+            if not pending or time.monotonic() >= deadline:
+                return snapshot
+            time.sleep(0.1)
+
     def _send_home(self, read_model):
         """GET /: the destination « Vue d’ensemble » of Panorama (T02,
         af-0gonc9), with the zones of the cockpit no destination of
         Panorama holds yet folded under it."""
-        snapshot = read_model.snapshot()
+        snapshot = self._first_reading(read_model)
         now = read_model.now()
         requests, _, beads_known = self._assemble_requests(snapshot, now)
         health = self._compute_health(read_model)
