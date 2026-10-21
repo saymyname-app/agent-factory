@@ -1950,12 +1950,13 @@ def settle_non_conforme(convoy: Convoy) -> dict[str, Any] | None:
 
 @contextmanager
 def advance_lock() -> Iterator[bool]:
-    """One pass at a time, Factory-wide: N is shared between the convoys.
+    """One whole pass at a time, Factory-wide: N is shared between convoys.
 
     False when another pass holds it: the order starts a pass while the last
-    one still runs, and one that waited for the lock spent the order's 300 s
-    in that wait and was killed (af-wz4dd8). The pass that holds it does the
-    work; the one after it reads the state it left."""
+    one still runs. A pass that waited for the lock spent the order's 300 s
+    there and was killed (af-wz4dd8); a pass that overlapped settlement
+    amplified tracker load until both exceeded that deadline (af-ebqm1y).
+    The pass that holds it does the work; a later pass reads what it left."""
     lock_dir = Path(os.environ.get("CONVOY_ADVANCE_LOCK_DIR") or os.environ.get("XDG_RUNTIME_DIR") or "/tmp")
     lock_dir.mkdir(parents=True, exist_ok=True)
     with (lock_dir / "agent-factory-convoy-advance.lock").open("w") as handle:
@@ -2376,34 +2377,30 @@ def failure_line(message: str | None, failed: list[str]) -> str:
 
 def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
     """`targets` None: every marked convoy that is open or was closed outside its commands."""
-    with advance_lock() as held:
-        if not held:
-            print(json.dumps({"ok": True, "skipped": PASS_RUNNING}, indent=2, sort_keys=True, ensure_ascii=False))
-            return 0
-        # Sessions are listed before the state is read: a session that ends
-        # between the two reads is then still seen alive, and nothing it wrote
-        # before ending is missed (a stop raised before its exception).
-        live = live_sessions()
-        convoys = {convoy_id: Convoy(convoy_id) for convoy_id in targets or []}
-        settings = load_settings()
-        for convoy_id in marked_convoys():
-            if convoy_id not in convoys:
-                convoys[convoy_id] = Convoy(convoy_id)
-        sessions = role_sessions(live)
-        awaiting = sorted(ticket for convoy in convoys.values() for ticket in convoy.awaiting_a_session())
-        # N counts authors only: a reviewer or Evaluator session, even idle
-        # until its idle_timeout, does not hold an author's place (af-4xxlo7).
-        occupied = sessions.get("author", 0) + len(awaiting)
-        free = max(0, settings["ceiling"] - occupied)
+    # Sessions are listed before the state is read: a session that ends
+    # between the two reads is then still seen alive, and nothing it wrote
+    # before ending is missed (a stop raised before its exception).
+    live = live_sessions()
+    convoys = {convoy_id: Convoy(convoy_id) for convoy_id in targets or []}
+    settings = load_settings()
+    for convoy_id in marked_convoys():
+        if convoy_id not in convoys:
+            convoys[convoy_id] = Convoy(convoy_id)
+    sessions = role_sessions(live)
+    awaiting = sorted(ticket for convoy in convoys.values() for ticket in convoy.awaiting_a_session())
+    # N counts authors only: a reviewer or Evaluator session, even idle
+    # until its idle_timeout, does not hold an author's place (af-4xxlo7).
+    occupied = sessions.get("author", 0) + len(awaiting)
+    free = max(0, settings["ceiling"] - occupied)
 
-        results, alive = [], session_names(live)
-        for convoy_id in targets if targets is not None else sorted(convoys):
-            result = advance_convoy(convoys[convoy_id], settings, free, alive)
-            free -= len(result["started"]) + len(result["resumed"])
-            results.append(result)
+    results, alive = [], session_names(live)
+    for convoy_id in targets if targets is not None else sorted(convoys):
+        result = advance_convoy(convoys[convoy_id], settings, free, alive)
+        free -= len(result["started"]) + len(result["resumed"])
+        results.append(result)
 
-    # Outside the lock of the starts: the tests on a merged result take the
-    # time they take, and bin/spec-integration holds its own lock per convoy.
+    # Settlement stays under the pass lock. Individual long-running checks
+    # still use their own per-convoy locks and outlive this pass where noted.
     for result in results:
         if "unruled" in result:
             continue
@@ -2514,7 +2511,12 @@ def main(argv: list[str]) -> int:
     try:
         if args.check_only:
             return 0 if marked_convoys() else 1
-        return one_pass(None if args.all else [args.convoy], args.stopped_ok)
+        with advance_lock() as held:
+            if not held:
+                print(json.dumps({"ok": True, "skipped": PASS_RUNNING}, indent=2,
+                                 sort_keys=True, ensure_ascii=False))
+                return 0
+            return one_pass(None if args.all else [args.convoy], args.stopped_ok)
     except NotNewFlow as exc:
         print(json.dumps(json.loads(str(exc)), indent=2, sort_keys=True, ensure_ascii=False))
         return EXIT_NOT_NEW_FLOW
