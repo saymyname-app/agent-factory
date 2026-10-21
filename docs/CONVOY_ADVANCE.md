@@ -1266,7 +1266,7 @@ closing of its Spec and its draft replayed.
 
 **What it leaves open.**
 
-- The merge is made inside the pass, under the 300 s timeout of the order;
+- The merge is made inside the pass, under the 30 min timeout of the order;
   a replay of the mechanical controls killed there is taken up by the next
   pass (`docs/OUTCOME_PROMOTE.md`, Limits).
 - Once an answer that ends the judgement stands, `settle_acceptance` no
