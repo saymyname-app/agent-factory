@@ -371,6 +371,7 @@ TIP_B=$(author_finishes "$B" modele-auteur "Le nombre d'éléments est affiché 
 TIP_C=$(author_finishes "$C" modele-auteur "Le nombre d'éléments est affiché, vu par C.")
 echo "$(date -u +%H:%M:%S) marque posée, branche $INTEGRATION ouverte, trois tickets terminés par leur auteur (A $TIP_A, B $TIP_B, C $TIP_C)"
 
+isolated_city_disable_dog "$TRIAL" "$CITY"
 (env -u CLAUDE_CODE_SESSION_ID gc supervisor run > "$TRIAL/supervisor.out" 2>&1 &)
 sleep 3
 gc --city "$CITY" start >/dev/null 2>&1 || true
