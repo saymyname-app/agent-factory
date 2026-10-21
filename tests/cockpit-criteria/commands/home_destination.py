@@ -97,6 +97,10 @@ class LaunchTree:
         git(self.repo, "commit", "--quiet", "--message", "the tree under test")
         self.head = git(self.repo, "rev-parse", "HEAD")
         self.states: list[Path] = []
+        # Never reused: the guard of a stopped launch (--owner-pid) still
+        # watches its state file for a second, and would stop a new launch
+        # written at the same path.
+        self.launches = 0
         self.lock = threading.Lock()
 
     def reword(self, name: str, replacements: dict[str, str]) -> str:
@@ -120,7 +124,8 @@ class LaunchTree:
         tree as it is by default) on `dataset`."""
         commit = commit or self.head
         with self.lock:
-            state = self.work / f"launch-{len(self.states)}.json"
+            state = self.work / f"launch-{self.launches}.json"
+            self.launches += 1
             self.states.append(state)
         proc = subprocess.run(
             [sys.executable, str(ROOT / LAUNCHER), "--repo-root", str(self.repo), "start", "--owner-pid", str(os.getpid()),
