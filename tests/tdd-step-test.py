@@ -39,6 +39,7 @@ APP = f"{FIXTURE}/app.py"
 TABLE = f"{TESTS}/criteria.json"
 REGRESSION_FILE = f"{TESTS}/regression.py"
 COUNT_FILE, HEALTH_FILE = f"{TESTS}/test_count.py", f"{TESTS}/test_health.py"
+HELPER_FILE = f"{TESTS}/health_field.py"
 COUNT_ID = f"{COUNT_FILE}::CountTest.test_count_is_shown"
 HEALTH_ID = f"{HEALTH_FILE}::HealthTest.test_dataset_is_named"
 
@@ -923,6 +924,41 @@ class TddStepTest(unittest.TestCase):
         self.commit("code", {APP: self.green_app()})
 
         self.assertIn("aucun fichier gelé", self.refused("amend", SLICE, "--reason", "rien"))
+
+    # A criterion test that reads a helper of the test perimeter, outside the
+    # registry of fingerprints (af-7lmvys).
+    HELPED_HEALTH_TEST = HEALTH_TEST.replace(
+        "import unittest\n", "import unittest\n\nfrom health_field import FIELD\n").replace(
+        'body.get("dataset")', "body.get(FIELD)")
+
+    def helper_corrected_after_the_freeze(self):
+        self.commit_tests({HEALTH_FILE: self.HELPED_HEALTH_TEST, HELPER_FILE: 'FIELD = "dataset"\n'})
+        self.red()
+        self.ok("freeze")
+        return self.commit("code et helper corrigé", {APP: self.amended_app(), HELPER_FILE: 'FIELD = "dataset_name"\n'})
+
+    def test_amendment_takes_a_helper_of_the_test_perimeter_changed_since_the_freeze(self):
+        """af-7lmvys: the green runs the whole test perimeter as frozen,
+        helpers included; a helper corrected after the freeze is amended like
+        a frozen file, and the green then runs the corrected helper."""
+        head = self.helper_corrected_after_the_freeze()
+
+        self.ok("amend", SLICE, "--reason", "le champ s'appelle dataset_name dans la Spec")
+
+        _, proof = self.piece("tdd_amendment")
+        self.assertEqual([HELPER_FILE], proof["amendment"]["files"])
+        self.assertIn('+FIELD = "dataset_name"', proof["amendment"]["diff"])
+        self.assertEqual(head, self.ticket_state()["tdd"]["freeze"]["commit"])
+        self.ok("green")
+
+    def test_green_failing_names_a_helper_changed_since_the_freeze_and_points_to_the_amendment(self):
+        self.helper_corrected_after_the_freeze()
+
+        error = self.refused("green")
+
+        self.assertIn(HEALTH_ID, error)
+        self.assertIn(HELPER_FILE, error)
+        self.assertIn("tdd-step amend", error)
 
     def test_amendment_refused_before_the_freeze(self):
         self.commit_tests()

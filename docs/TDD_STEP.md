@@ -170,7 +170,11 @@ state is frozen. The ticket then carries `tdd.amendment` (commit, reason):
 this is the deviation the Ticket Handoff reports (`records.amendment`,
 `docs/TICKET_EXIT.md`). After an amendment, the
 red proof of the amended tests is `tdd_amendment`; `tdd_red` stays the first
-one.
+one. Since the green runs the whole test perimeter as frozen, a helper of the
+test perimeter outside the registry that changed since the freeze counts as
+a frozen file: `amend` takes it (listed in `amendment.files`), the new
+freeze seals it, and a failing `green` names it and points to `amend`
+(af-7lmvys).
 
 A second `amend` on the same ticket stops it (`amendment_exhausted`, exit
 5), unless a resume of cause `amendment_granted` was opened after the
