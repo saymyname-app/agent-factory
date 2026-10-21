@@ -414,6 +414,10 @@ EVALUATION_KINDS = ("evaluation", "startup")
 EVALUATION_STATES = ("observed", "not_observed", "unobservable")
 UNOBSERVABLE_CAUSES = ("criterion", "environment")
 EVALUATION_OUTCOMES = ("favorable", "return_to_author", "planning_exception", "environment_outage")
+# The option of the request an evaluation's Planning Exception raises
+# (bin/ticket-evaluation) that judges what it could not observe proven by
+# its criterion test (Benjamin, 21/10/2026, af-ten1sp).
+PROVEN_BY_TEST_OPTION = "a"
 EVALUATION_MAX_LAUNCHES = 2
 KIND_WITHOUT_EVALUATOR = "prefactoring"
 ADDRESS_RE = re.compile(r"^http://127\.0\.0\.1:[0-9]{1,5}$")
@@ -1351,6 +1355,14 @@ def evaluation_items(round_: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]
     return named + [("ligne de démonstration", round_["demonstration_line"])]
 
 
+def evaluation_judged(round_: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """The states of an evaluation round as its outcome reads them: an item
+    the round counts proven by its criterion test (`proven_by_test`, on the
+    operator's answer, proven_by_test_at_lift) reads « observé »."""
+    proven = set(round_.get("proven_by_test", []))
+    return [(name, {**item, "state": "observed"} if name in proven else item) for name, item in evaluation_items(round_)]
+
+
 def evaluation_outcome(items: list[tuple[str, dict[str, Any]]], screen_findings: list[dict[str, Any]] | None = None) -> str:
     """Spec §7: what code makes of the states. Favorable only when every
     state is « observé ». An « inobservable » by the criterion goes back to
@@ -1403,7 +1415,7 @@ def evaluation_round(value: Any) -> dict[str, Any]:
             raise Refusal("issue du contrôle de démarrage qui n'est pas celle de son résultat")
         return value
     required = common | {"criteria", "demonstration_line", "roles", "environment", "recorded_by"}
-    if not required <= set(value) or set(value) - required - {"coverage", "screen_findings", "conversation"}:
+    if not required <= set(value) or set(value) - required - {"coverage", "screen_findings", "conversation", "proven_by_test"}:
         raise Refusal(f"passe d'évaluation mal formée : {value!r}")
     stored_conversation(value)
     # ADR-0030 L4: no state per criterion (empty), or only those a validated
@@ -1433,7 +1445,13 @@ def evaluation_round(value: Any) -> dict[str, Any]:
             single_line(finding[name], f"constat écran : {name}")
         if not isinstance(finding["evidence"], str) or not PIECE_RE.match(finding["evidence"]):
             raise Refusal("constat écran sans pièce de preuve")
-    if outcome != evaluation_outcome(evaluation_items(value), findings):
+    if "proven_by_test" in value:
+        proven = value["proven_by_test"]
+        unobservable = [name for name, item in evaluation_items(value)
+                        if item["state"] == "unobservable" and item["cause"] == "criterion"]
+        if not isinstance(proven, list) or not proven or any(name not in unobservable for name in proven):
+            raise Refusal(f"éléments comptés prouvés par leur test mal formés : {proven!r}")
+    if outcome != evaluation_outcome(evaluation_judged(value), findings):
         raise Refusal("issue d'évaluation qui n'est pas celle de ses états")
     return value
 
@@ -1807,6 +1825,28 @@ def operator_answer(metadata: dict[str, Any], since: str) -> dict[str, str] | No
     return {"option": option, "at": at}
 
 
+def proven_by_test_at_lift(park: dict[str, Any], option: str | None, metadata: dict[str, Any]) -> list[dict[str, str]]:
+    """What the operator's answer judges proven by its criterion test when
+    it lifts the parking an evaluation's Planning Exception caused: with the
+    option PROVEN_BY_TEST_OPTION, recorded on the ticket after the parking,
+    each item that evaluation found unobservable by the criterion (Benjamin,
+    21/10/2026 about 16:55 Paris, af-ten1sp: « Preuve par le test »). A lift
+    without that answer, or of another parking, judges nothing: a frozen
+    criterion is never waived otherwise."""
+    if park["cause"] != "planning_exception" or option != PROVEN_BY_TEST_OPTION or KEY_EVALUATION not in metadata:
+        return []
+    answer = operator_answer(metadata, park["at"])
+    rounds = [round_ for round_ in evaluation_record(metadata[KEY_EVALUATION])["rounds"] if round_["at"] <= park["at"]]
+    if not answer or answer["option"] != option or not rounds or rounds[-1]["outcome"] != "planning_exception":
+        return []
+    # A Planning Exception a Ticket Exit raised after that round parked it, not the evaluation.
+    raised = planning_exceptions_record(metadata[KEY_PLANNING_EXCEPTIONS]) if KEY_PLANNING_EXCEPTIONS in metadata else []
+    if any(entry["at"] > rounds[-1]["at"] for entry in raised):
+        return []
+    return [{"what": name, "text": item["text"]} for name, item in evaluation_items(rounds[-1])
+            if item["state"] == "unobservable" and item["cause"] == "criterion"]
+
+
 def park_rendered(record: dict[str, Any], ticket_id: str, metadata: dict[str, Any]) -> dict[str, Any]:
     """The parking with the answer given to the request of the ticket that
     was asked: the one whose exit parked it, never those behind it."""
@@ -1859,8 +1899,14 @@ def park_lifts_record(raw: Any) -> list[dict[str, Any]]:
         raise Refusal(f"parcages levés mal formés : {entries!r}")
     for entry in entries:
         if not isinstance(entry, dict) \
-                or set(entry) - {"taken"} != {"cause", "detail", "parked_at", "request", "option", "resumes", "at"}:
+                or set(entry) - {"taken", "proven_by_test"} != {"cause", "detail", "parked_at", "request", "option", "resumes", "at"}:
             raise Refusal(f"parcage levé mal formé : {entry!r}")
+        if "proven_by_test" in entry:
+            proven = entry["proven_by_test"]
+            if not isinstance(proven, list) or not proven or any(
+                    not isinstance(item, dict) or set(item) != {"what", "text"}
+                    or not all(isinstance(v, str) for v in item.values()) for item in proven):
+                raise Refusal(f"éléments jugés prouvés par leur test mal formés : {proven!r}")
         if "taken" in entry:
             if not isinstance(entry["taken"], dict) or set(entry["taken"]) - set(BOUNDED_RESUME_CAUSES):
                 raise Refusal(f"reprises prises au parcage levé mal formées : {entry['taken']!r}")
@@ -4140,8 +4186,10 @@ def evidence_at(metadata: dict[str, Any], piece: Any, commit: str) -> str | None
 
 
 def retry_after_lift(last, lifts):
-    """One resolved parking permits a new judgement, never a favorable verdict.
-    A subsequent refusal is newer than the lift and requires a new decision."""
+    """One resolved parking permits a new judgement. It is favorable only
+    for what the operator's answer judged proven by its criterion test
+    (proven_by_test_at_lift); a subsequent refusal is newer than the lift and
+    requires a new decision."""
     return bool(last and last.get('outcome') == 'planning_exception' and isinstance(lifts, list)
                 and any(lift.get('cause') == 'planning_exception'
                         and lift.get('parked_at', '') >= last['at']
@@ -4497,7 +4545,16 @@ def cmd_record_evaluation(args: argparse.Namespace) -> int:
         round_["coverage"] = coverage
     if given.get("screen_findings"):
         round_["screen_findings"] = given["screen_findings"]
-    round_["outcome"] = evaluation_outcome(evaluation_items(round_), round_.get("screen_findings"))
+    # What the operator judged proven by its criterion test, on lifting the
+    # parking an earlier evaluation caused, is not observed: it is counted
+    # proven, as long as its frozen text is the same.
+    lifts = park_lifts_record(metadata[KEY_PARK_LIFTS]) if KEY_PARK_LIFTS in metadata else []
+    judged = {(item["what"], item["text"]) for lift in lifts for item in lift.get("proven_by_test", [])}
+    proven = [name for name, item in evaluation_items(round_)
+              if item["state"] == "unobservable" and item["cause"] == "criterion" and (name, item["text"]) in judged]
+    if proven:
+        round_["proven_by_test"] = proven
+    round_["outcome"] = evaluation_outcome(evaluation_judged(round_), round_.get("screen_findings"))
     round_["verdict"] = verdict_of_outcome(round_["outcome"])
     record["rounds"].append(evaluation_round(round_))
     del record["request"]
@@ -4897,6 +4954,9 @@ def cmd_lift_park(args: argparse.Namespace) -> int:
     resumes = counter_value(metadata.get(COUNTER_PREFIX + "resumes"), "resumes")
     lifts.append({"cause": park["cause"], "detail": park["detail"], "parked_at": park["at"], "request": args.request,
                   "option": option, "resumes": resumes, "taken": resumes_taken(metadata), "at": now()})
+    proven = proven_by_test_at_lift(park, option, metadata)
+    if proven:
+        lifts[-1]["proven_by_test"] = proven
     # Each other ticket that still parks, with those that wait for it.
     still_parked: dict[str, str] = {}
     for other in tickets:

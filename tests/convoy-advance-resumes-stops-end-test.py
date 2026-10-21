@@ -782,6 +782,56 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual([(T1, [T1, T3])], [(entry["id"], entry["lifted"]) for entry in self.of(answer, "lifted")])
         self.assertEqual([(T1, "answered")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
 
+    def evaluation_parked(self):
+        """T1 finished; its last Ticket Evaluation found the demonstration
+        line unobservable by the criterion (the round as bin/convoy-state
+        records it), and the request it raised parks T1, with no entry under
+        `planning_exceptions` (af-ten1sp)."""
+        self.integrated()
+        self.advance(CONVOY)
+        tip = self.finished(T1)
+        line = {"text": "la ligne de démonstration", "state": "unobservable", "evidence": "evaluation.demo",
+                "reason": "aucun jeu lancé n'a de source CI absente", "cause": "criterion"}
+        round_ = {"kind": "evaluation", "commit": tip, "criteria": [], "demonstration_line": line,
+                  "roles": {"author": None, "evaluator": None, "same_provider": None, "other_declared": []},
+                  "environment": [{"dataset": None, "address": "http://127.0.0.1:40000"}],
+                  "recorded_by": "delivery-evaluator-fx", "outcome": "planning_exception", "verdict": "unfavorable",
+                  "at": "2026-10-21T04:13:02Z"}
+        metadata = self.bead(T1)["metadata"]
+        self.edit(T1, metadata={**metadata, "gc.flow.evaluation": json.dumps({"rounds": [round_]})})
+        request = {"quoi": f"Planning Exception sur {T1} : inobservable sur le produit lancé (ligne de démonstration)",
+                   "pourquoi": "Un critère gelé que l'Evaluator ne peut pas observer ne se dispense ni ne se reformule.",
+                   "que_faire": [{"option": "Juger ce qui est inobservable prouvé par son test de critère vert",
+                                  "consequence": "Le parcage est levé."},
+                                 {"option": "Retirer le ticket du graphe", "consequence": "La couverture est recalculée."}],
+                   "langue": "fr", "bloquant": True}
+        self.run_ok(ESCALATION, "benjamin", T1, json.dumps(request))
+        self.run_ok(STATE, "park", CONVOY, T1, "--cause", "planning_exception", "--detail", request["quoi"])
+        self.assertEqual([], self.of(self.advance(CONVOY), "lifted"))
+        self.assertEqual([], self.shown_state(T1)["planning_exceptions"])
+        self.env["ESCALATION_DOOR_NOW"] = "4102444800"  # the answer comes after the parking
+
+    def test_the_answer_a_to_an_evaluation_planning_exception_lifts_it_and_judges_the_item_proven_by_test(self):
+        # Benjamin, 21/10/2026 about 16:55 Paris (af-ten1sp): « Preuve par le test ».
+        self.evaluation_parked()
+        self.run_ok(ESCALATION, "repondre", T1, "a", "--actor", "benjamin")
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "a")], [(entry["id"], entry["option"]) for entry in self.of(answer, "lifted")])
+        self.assertIsNone(self.park_of(T1))
+        self.assertEqual([{"what": "ligne de démonstration", "text": "la ligne de démonstration"}],
+                         self.shown_state(T1)["park_lifts"][-1]["proven_by_test"])
+
+    def test_the_answer_b_to_an_evaluation_planning_exception_leaves_it_parked(self):
+        self.evaluation_parked()
+        self.run_ok(ESCALATION, "repondre", T1, "b", "--actor", "benjamin")
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([], self.of(answer, "lifted"))
+        self.assertEqual("planning_exception", self.park_of(T1)["cause"])
+
     def already_green_excepted(self):
         """T1 stopped with all its criteria already green while its author
         session is alive; the author raises its Planning Exception, the
