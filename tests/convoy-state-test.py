@@ -2773,12 +2773,13 @@ class ConvoyStateTest(unittest.TestCase):
         self.assert_refused_and_nothing_written("open-correction", CONVOY, T1, "--commit", "HEAD", mention="commit")
         self.assert_refused_and_nothing_written("open-correction", CONVOY, T1, mention="commit")
 
-    def test_a_second_correction_round_is_refused(self):
+    def test_a_correction_round_beyond_the_bound_is_refused(self):
+        self.bounds(resumes=3, open_planning_exceptions=2, correction_rounds=1)
         self.refused_by_both()
         self.ok("open-correction", CONVOY, T1, "--commit", self.REVIEWED)
 
         self.assert_refused_and_nothing_written(
-            "open-correction", CONVOY, T1, "--commit", self.CORRECTED, mention="un seul tour de correction")
+            "open-correction", CONVOY, T1, "--commit", self.CORRECTED, mention="bounds.correction_rounds")
 
     def test_open_correction_is_refused_on_a_stopped_or_a_parked_ticket(self):
         self.refused_by_both()

@@ -57,7 +57,7 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state set-integration af-convoy --branch integration/af-spec --protected main --base <sha>   # bin/spec-integration open
 ./bin/convoy-state set-merge   af-convoy af-t1 --outcome merged --ticket-commit <sha> --integration <sha> --commit <sha>   # bin/spec-integration merge
 ./bin/convoy-state invalidate-verdicts af-convoy af-t1 --tip <sha> --kind code_review --kind evaluation   # bin/spec-integration merge
-./bin/convoy-state open-correction   af-convoy af-t1 --commit <tip>          # bin/correction-round settle: the single correction round
+./bin/convoy-state open-correction   af-convoy af-t1 --commit <tip>          # bin/correction-round settle: a correction round
 ./bin/convoy-state launch-correction af-convoy af-t1 --bead af-correction    # bin/correction-round, once the author session is sent
 ./bin/convoy-state override-finding  af-convoy af-t1 --finding F1.1 --approver <human approver> --words "…"   # bin/correction-round override
 ./bin/convoy-state open-resume   af-convoy af-t1 --cause interrupted --ref "session:<session name>"   # bin/convoy-advance: one resume counted, before the fresh author session is sent
@@ -828,14 +828,21 @@ writes a fresh verdict: replaying is what lifts an invalidation.
 `open-correction`, `launch-correction` and `override-finding` are called by
 `bin/correction-round` (T17, `docs/CORRECTION_ROUND.md`).
 
-`open-correction` opens the single correction round of a ticket at the
-commit its author finished at. It refuses a stopped or a parked ticket; a
-ticket that already took its round (one per ticket, code review and Ticket
-Evaluation together); a code review that has no round at that commit or has
+`open-correction` opens a correction round of a ticket at the commit its
+author finished at. It refuses a stopped or a parked ticket; a ticket that
+already took its rounds (`bounds.correction_rounds` per ticket, code review
+and Ticket Evaluation together, one when unset; two since af-bv0ikr). A
+later round replaces the record of the one before (its `grants` kept); when
+the review at that commit is a judgement, its Blocking Findings are the
+answers it judged unfavorably. `grant-correction` lifts the stop
+`still_refused` of a ticket that has a round left (stopped when the bound
+was lower), with the approver's words, kept under `grants` of the round;
+bin/correction-round grant calls it.
+It also refuses a code review that has no round at that commit or has
 one open; an evaluation that has no round at that commit, has one open, or
 whose outcome there is neither `favorable` nor `return_to_author` (one
 session receives every finding: both have answered); answers already judged
-unfavorably; and a ticket neither of them refused. What was refused is read
+unfavorably before any round; and a ticket neither of them refused. What was refused is read
 here — the Blocking Findings of the review, the states the evaluation did
 not observe — never given. The round, `resumes` and `correction_rounds` each
 one more, go in **one tracker write**: the round counts among the resumes
