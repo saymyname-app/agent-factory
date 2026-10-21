@@ -543,6 +543,7 @@ echo "relevé d'essai — le flux sur le second projet de la fixture ; cité iso
 echo "projet : $(printf '%s' "$profile" | jq -r '.project_id') ; recette de lancement : $(printf '%s' "$profile" | jq -r '.launch.recipe | join(" ")') ; commande de test : $(printf '%s' "$profile" | jq -r '.launch.test_command') ; seam : $(printf '%s' "$profile" | jq -r '.launch.seam_mode') ; écrans : $(printf '%s' "$profile" | jq -c '.launch.screens // "aucun"') ; équivalent des ancres : $(printf '%s' "$profile" | jq -c '[.launch.anchors.equivalent[].name]') ; $(node --version | sed 's/^/Node.js /')"
 echo "convoi $CONVOY (Spec $SPEC) : ticket $T"
 
+isolated_city_disable_dog "$TRIAL" "$CITY"
 (env -u CLAUDE_CODE_SESSION_ID gc supervisor run > "$TRIAL/supervisor.out" 2>&1 &)
 sleep 3
 gc --city "$CITY" start >/dev/null 2>&1 || true
