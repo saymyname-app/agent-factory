@@ -4,12 +4,16 @@ two calls the Analyses make (cockpit.analyses.sources), answered as the
 GitHub REST API answers them, from the file FAKE_GH_STATE_FILE names --
 `{"repository", "pull_requests", "workflow_runs"}`, written from a dataset.
 
-    fake-gh api -X GET repos/OWNER/NAME/actions/runs -f per_page=100 -f created=>=YYYY-MM-DD
-    fake-gh api -X GET repos/OWNER/NAME/pulls -f state=closed -f per_page=100 -f sort=updated -f direction=desc
+    fake-gh api -X GET repos/OWNER/NAME/actions/runs -f per_page=100 -f page=1 -f created=>=YYYY-MM-DD
+    fake-gh api -X GET repos/OWNER/NAME/pulls -f state=closed -f per_page=100 -f page=1 -f sort=updated \
+        -f direction=desc
 
 `actions/runs` answers `{"total_count", "workflow_runs"}`, the runs created
 on or after the day asked, newest first; `pulls` answers the closed pull
-requests, the last updated first. Another repository is « Not Found »
+requests, the last updated first (a pull request without `updated_at` was
+last updated when it was merged). Both answer the page asked of
+`per_page` items (30 and the first page by default), as GitHub pages
+them. Another repository is « Not Found »
 (exit 1), as is any other call; no state file, GitHub does not answer.
 """
 
@@ -27,6 +31,12 @@ def fail(message: str) -> int:
 def instant(value: str) -> datetime:
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def page(items: list, fields: dict) -> list:
+    """The page of `items` the call asks (`page`, `per_page`)."""
+    size, number = int(fields.get("per_page", "30")), int(fields.get("page", "1"))
+    return items[(number - 1) * size:number * size]
 
 
 def main(args: list[str]) -> int:
@@ -52,12 +62,12 @@ def main(args: list[str]) -> int:
             since = date.fromisoformat(created[2:])
             runs = [run for run in runs if instant(run["created_at"]).astimezone(timezone.utc).date() >= since]
         runs = sorted(runs, key=lambda run: instant(run["created_at"]), reverse=True)
-        runs = runs[:int(fields.get("per_page", "30"))]
-        print(json.dumps({"total_count": len(runs), "workflow_runs": runs}, ensure_ascii=False))
+        print(json.dumps({"total_count": len(runs), "workflow_runs": page(runs, fields)}, ensure_ascii=False))
         return 0
     if path == prefix + "pulls" and fields.get("state") == "closed":
-        pulls = sorted(state["pull_requests"], key=lambda pull: pull.get("merged_at") or "", reverse=True)
-        print(json.dumps(pulls[:int(fields.get("per_page", "30"))], ensure_ascii=False))
+        pulls = sorted(state["pull_requests"], key=lambda pull: pull.get("updated_at") or pull.get("merged_at") or "",
+                       reverse=True)
+        print(json.dumps(page(pulls, fields), ensure_ascii=False))
         return 0
     return fail("HTTP 404: Not Found")
 
