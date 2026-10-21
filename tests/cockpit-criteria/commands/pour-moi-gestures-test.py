@@ -166,8 +166,10 @@ class PourMoiGestures(unittest.TestCase):
         journal = wait_for(lambda: journal_of(address),
                            lambda found: any(e["bead_id"] == SESSION_BEAD for e in found), TRACED_SECONDS)
         relaunched = [e for e in journal if e["bead_id"] == SESSION_BEAD]
-        self.assertEqual(1, len(relaunched), f"the source does not hold the relaunch, once: {relaunched}")
-        self.assertTrue(relaunched[0]["quoi"].startswith("relancer"), f"the source holds {relaunched[0]['quoi']!r}")
+        # The journal says a relaunch in its own words, never the name of
+        # the gesture: « Relance demandée ».
+        self.assertEqual(["Relance demandée"], [e["quoi"] for e in relaunched],
+                         "the source does not hold the relaunch, once")
         self.assertEqual("benjamin", relaunched[0]["par"], "the relaunch is not the operator's")
         self.assert_left(address, SESSION_BEAD)
 

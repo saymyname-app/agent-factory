@@ -19,7 +19,10 @@ criterion test files of B load it.
 - `walk`: the page at GET / as a headless Chromium shows it, then after
   each step of a gesture done in it (a control activated, a field filled),
   the browser going through an identity proxy that adds the login of the
-  operator, as Tailscale Serve does in front of the cockpit;
+  operator, as Tailscale Serve does in front of the cockpit. The page that
+  walks is served by that proxy at the address of the cockpit itself, so
+  the cockpit's page is read from its own origin and the browser keeps its
+  web security: a gesture it sends carries the Origin a browser sends;
 - what a page says: `visible_text`, `control`, and `folded`, the folded
   details of the page apart from the old zone « Détails techniques et
   actions ».
@@ -223,12 +226,22 @@ class Operator:
 class _Forward(BaseHTTPRequestHandler):
     """A forward proxy for the browser: each request goes on to the address
     it names, with the login of the operator added, as the identity proxy
-    of the host adds it in front of the cockpit."""
+    of the host adds it in front of the cockpit -- but the page that walks
+    (`WALK_PATH`), which it serves itself at that address."""
 
     def _forward(self) -> None:
         url = urllib.parse.urlsplit(self.path)
         if not url.hostname:
             self.send_error(400, "a proxy is asked an absolute address")
+            return
+        if url.path == WALK_PATH:
+            body = (WALK_PAGE % WALK_SCRIPT).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(body)
             return
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length else None
@@ -261,19 +274,6 @@ class _Forward(BaseHTTPRequestHandler):
         pass
 
 
-class _WalkPage(BaseHTTPRequestHandler):
-    def do_GET(self):  # noqa: N802
-        body = (WALK_PAGE % WALK_SCRIPT).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, *args):
-        pass
-
-
 _servers_lock = threading.Lock()
 _servers: dict[str, ThreadingHTTPServer] = {}
 
@@ -300,6 +300,9 @@ WALK_PAGE = """<!doctype html>
 <script>%s</script>
 </body></html>
 """
+# Where the identity proxy serves the page that walks, at the address of the
+# cockpit: a path the cockpit does not serve.
+WALK_PATH = "/__pour-moi-walk__"
 WALK_RE = re.compile(r'<pre id="walk">(.*?)</pre>', re.S)
 BROWSER_TIMEOUT = 150
 FRAME_HEIGHT = 900
@@ -319,9 +322,9 @@ def walk(address: str, steps: list[dict], *, width: int = 1440, theme: str = "da
     and its visible `controls` (`name`, `disabled`, `field`, `folds`: the
     summaries of the details that hold it, nearest first); the walk stops
     at the first step whose control is not found. The browser goes through
-    the identity proxy of this process."""
+    the identity proxy of this process, which serves the walking page at
+    `address` itself."""
     proxy = _served("proxy", _Forward)
-    page = _served("walk", _WalkPage)
     query = urllib.parse.urlencode({
         "target": address + path, "width": width, "height": FRAME_HEIGHT, "settle": settle_ms,
         "steps": json.dumps(steps, ensure_ascii=False),
@@ -329,11 +332,10 @@ def walk(address: str, steps: list[dict], *, width: int = 1440, theme: str = "da
     work = tempfile.mkdtemp(prefix="cockpit-pour-moi-browser-")
     argv = [
         find_browser(), "--headless", "--disable-gpu", "--hide-scrollbars", f"--user-data-dir={work}/profile",
-        "--disable-web-security", "--disable-site-isolation-trials",
         f"--proxy-server=http://127.0.0.1:{proxy}", "--proxy-bypass-list=<-loopback>",
         f"--window-size={width + 20},{FRAME_HEIGHT + 20}",
         f"--blink-settings=preferredColorScheme={COLOUR_SCHEMES[theme]}",
-        "--virtual-time-budget=120000", "--dump-dom", f"http://127.0.0.1:{page}/walk.html?{query}",
+        "--virtual-time-budget=120000", "--dump-dom", f"{address}{WALK_PATH}?{query}",
     ]
     proc = None
     try:
