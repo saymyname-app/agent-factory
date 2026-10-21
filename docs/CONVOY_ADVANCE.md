@@ -290,6 +290,7 @@ the parking only):
 |---|---|
 | `operator_request` (its own Ticket Exit) | any answer given to the request of that ticket (`bin/escalation-door repondre`) after the parking |
 | `planning_exception` (its own Ticket Exit) | only the option that accepts the deviation: the last Planning Exception of the ticket is `accepted` (it was answered by its `accept_option`, `docs/CONVOY_STATE.md`; every exception raised since ADR-0030 L5 has one, with or without anchors). Any other answer leaves the ticket parked |
+| `planning_exception` (its Ticket Evaluation: the ticket is `finished`, its last evaluation's outcome is `planning_exception`, no entry under `planning_exceptions`) | only option `a`, « Juger ce qui est inobservable prouvé par son test de critère vert » (`bin/ticket-evaluation`); `lift-park` records what that evaluation found unobservable by the criterion under `proven_by_test`, and the evaluation the lift sends again counts it proven (`docs/TICKET_EVALUATION.md`). Option `b` (remove the ticket from the graph) or no answer: parked |
 | `resumes_exhausted` | option `a` of the convoy's grouped request (below), for the tickets that request names as lifted |
 
 The lift is `bin/convoy-state lift-park <convoy> <ticket> --request <bead>
@@ -325,7 +326,7 @@ ticket:
 | Cause | Read on the tracker |
 |---|---|
 | `interrupted` | the Ticket Exit is `interrupted`; or the ticket is `in_progress` with no Ticket Exit and its recorded session is not among the live ones (`gc session list`); or the bead of its last resume is closed and no session took the ticket since |
-| `returned` | the Ticket Exit is `finished` and the merge returned the ticket (`merge.outcome` `conflict` or `red`) at the tip of its branch |
+| `returned` | the Ticket Exit is `finished` and the merge returned the ticket (`merge.outcome` `conflict` or `red`) at the tip of its branch. Also on a ticket stopped `still_refused` whose every Blocking Finding the operator overrode, which `bin/spec-integration` merges as if at work: the resume lifts that stop, keeps it on its entry and withdraws its request; with no resume left the stop stays with the operator (af-n4bn62: F and G1 of af-strhoy, returned red on 21/10/2026, were neither merged again nor resumed) |
 | `unblocked` | the Ticket Exit is `technically_blocked` and no bead it waits for with a `blocks` edge is open any more (its repair is closed) |
 | `answered` | the Ticket Exit is `planning_exception` or `operator_request` and the ticket is no longer parked: its parking was lifted |
 | `behind` | the Ticket Exit is `finished`, the ticket is not merged, and `bin/code-review show <convoy> <ticket> --repo` reports `behind`: its branch does not contain the tip of the integration branch, so no reviewer is sent on it (T44, `docs/CODE_REVIEW.md`). The fact is `integration:<tip>/exit:<exit time>`: once per Ticket Exit |

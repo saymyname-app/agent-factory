@@ -414,6 +414,10 @@ EVALUATION_KINDS = ("evaluation", "startup")
 EVALUATION_STATES = ("observed", "not_observed", "unobservable")
 UNOBSERVABLE_CAUSES = ("criterion", "environment")
 EVALUATION_OUTCOMES = ("favorable", "return_to_author", "planning_exception", "environment_outage")
+# The option of the request an evaluation's Planning Exception raises
+# (bin/ticket-evaluation) that judges what it could not observe proven by
+# its criterion test (Benjamin, 21/10/2026, af-ten1sp).
+PROVEN_BY_TEST_OPTION = "a"
 EVALUATION_MAX_LAUNCHES = 2
 KIND_WITHOUT_EVALUATOR = "prefactoring"
 ADDRESS_RE = re.compile(r"^http://127\.0\.0\.1:[0-9]{1,5}$")
@@ -454,6 +458,19 @@ RESUMABLE_STOPS = {"evaluation_no_result": ("evaluation_no_result",),
                    "stage_removed": ("test_review_refused", "test_review_no_result"),
                    "code_review_no_result": ("code_review_no_result",),
                    "amendment_granted": ("amendment_exhausted",)}
+# A ticket stopped still refused whose every Blocking Finding the operator
+# overrode is merged as if at work; the merge that returns it lifts its stop
+# like a resumable one (af-n4bn62). The cause stays one of a ticket not
+# stopped: it is not in RESUMABLE_STOPS.
+OVERRIDDEN_STOP_CAUSE = "returned"
+
+
+def resume_lifts(cause: str, reason: str) -> bool:
+    """A resume of `cause` may lift a stop of `reason`; for the overridden
+    stop, only once open-resume has checked the overrides."""
+    return reason in RESUMABLE_STOPS.get(cause, ()) or (cause, reason) == (OVERRIDDEN_STOP_CAUSE, STOP_STILL_REFUSED)
+
+
 # A commit after a verdict counts a resume without an entry (T18): it is a
 # cause of its own. The correction round is not one: it has its own bound of
 # one round (CORRECTION_MAX_ROUNDS), held here, outside K.
@@ -1351,6 +1368,14 @@ def evaluation_items(round_: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]
     return named + [("ligne de démonstration", round_["demonstration_line"])]
 
 
+def evaluation_judged(round_: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """The states of an evaluation round as its outcome reads them: an item
+    the round counts proven by its criterion test (`proven_by_test`, on the
+    operator's answer, proven_by_test_at_lift) reads « observé »."""
+    proven = set(round_.get("proven_by_test", []))
+    return [(name, {**item, "state": "observed"} if name in proven else item) for name, item in evaluation_items(round_)]
+
+
 def evaluation_outcome(items: list[tuple[str, dict[str, Any]]], screen_findings: list[dict[str, Any]] | None = None) -> str:
     """Spec §7: what code makes of the states. Favorable only when every
     state is « observé ». An « inobservable » by the criterion goes back to
@@ -1403,7 +1428,7 @@ def evaluation_round(value: Any) -> dict[str, Any]:
             raise Refusal("issue du contrôle de démarrage qui n'est pas celle de son résultat")
         return value
     required = common | {"criteria", "demonstration_line", "roles", "environment", "recorded_by"}
-    if not required <= set(value) or set(value) - required - {"coverage", "screen_findings", "conversation"}:
+    if not required <= set(value) or set(value) - required - {"coverage", "screen_findings", "conversation", "proven_by_test"}:
         raise Refusal(f"passe d'évaluation mal formée : {value!r}")
     stored_conversation(value)
     # ADR-0030 L4: no state per criterion (empty), or only those a validated
@@ -1433,7 +1458,13 @@ def evaluation_round(value: Any) -> dict[str, Any]:
             single_line(finding[name], f"constat écran : {name}")
         if not isinstance(finding["evidence"], str) or not PIECE_RE.match(finding["evidence"]):
             raise Refusal("constat écran sans pièce de preuve")
-    if outcome != evaluation_outcome(evaluation_items(value), findings):
+    if "proven_by_test" in value:
+        proven = value["proven_by_test"]
+        unobservable = [name for name, item in evaluation_items(value)
+                        if item["state"] == "unobservable" and item["cause"] == "criterion"]
+        if not isinstance(proven, list) or not proven or any(name not in unobservable for name in proven):
+            raise Refusal(f"éléments comptés prouvés par leur test mal formés : {proven!r}")
+    if outcome != evaluation_outcome(evaluation_judged(value), findings):
         raise Refusal("issue d'évaluation qui n'est pas celle de ses états")
     return value
 
@@ -1807,6 +1838,28 @@ def operator_answer(metadata: dict[str, Any], since: str) -> dict[str, str] | No
     return {"option": option, "at": at}
 
 
+def proven_by_test_at_lift(park: dict[str, Any], option: str | None, metadata: dict[str, Any]) -> list[dict[str, str]]:
+    """What the operator's answer judges proven by its criterion test when
+    it lifts the parking an evaluation's Planning Exception caused: with the
+    option PROVEN_BY_TEST_OPTION, recorded on the ticket after the parking,
+    each item that evaluation found unobservable by the criterion (Benjamin,
+    21/10/2026 about 16:55 Paris, af-ten1sp: « Preuve par le test »). A lift
+    without that answer, or of another parking, judges nothing: a frozen
+    criterion is never waived otherwise."""
+    if park["cause"] != "planning_exception" or option != PROVEN_BY_TEST_OPTION or KEY_EVALUATION not in metadata:
+        return []
+    answer = operator_answer(metadata, park["at"])
+    rounds = [round_ for round_ in evaluation_record(metadata[KEY_EVALUATION])["rounds"] if round_["at"] <= park["at"]]
+    if not answer or answer["option"] != option or not rounds or rounds[-1]["outcome"] != "planning_exception":
+        return []
+    # A Planning Exception a Ticket Exit raised after that round parked it, not the evaluation.
+    raised = planning_exceptions_record(metadata[KEY_PLANNING_EXCEPTIONS]) if KEY_PLANNING_EXCEPTIONS in metadata else []
+    if any(entry["at"] > rounds[-1]["at"] for entry in raised):
+        return []
+    return [{"what": name, "text": item["text"]} for name, item in evaluation_items(rounds[-1])
+            if item["state"] == "unobservable" and item["cause"] == "criterion"]
+
+
 def park_rendered(record: dict[str, Any], ticket_id: str, metadata: dict[str, Any]) -> dict[str, Any]:
     """The parking with the answer given to the request of the ticket that
     was asked: the one whose exit parked it, never those behind it."""
@@ -1834,8 +1887,7 @@ def resume_record(raw: Any) -> dict[str, Any]:
     for entry in entries:
         if not isinstance(entry, dict) or set(entry) - {"stop"} != {"cause", "ref", "session", "exit", "launches", "at"}:
             raise Refusal(f"reprise mal formée : {entry!r}")
-        if "stop" in entry and (entry["cause"] not in RESUMABLE_STOPS
-                                or stop_record(encode(entry["stop"]))["reason"] not in RESUMABLE_STOPS[entry["cause"]]):
+        if "stop" in entry and not resume_lifts(entry["cause"], stop_record(encode(entry["stop"]))["reason"]):
             raise Refusal(f"arrêt levé par la reprise mal formé : {entry!r}")
         one_of(entry["cause"], RESUME_CAUSES, "cause de reprise")
         single_line(entry["ref"], "repère de la reprise")
@@ -1859,8 +1911,14 @@ def park_lifts_record(raw: Any) -> list[dict[str, Any]]:
         raise Refusal(f"parcages levés mal formés : {entries!r}")
     for entry in entries:
         if not isinstance(entry, dict) \
-                or set(entry) - {"taken"} != {"cause", "detail", "parked_at", "request", "option", "resumes", "at"}:
+                or set(entry) - {"taken", "proven_by_test"} != {"cause", "detail", "parked_at", "request", "option", "resumes", "at"}:
             raise Refusal(f"parcage levé mal formé : {entry!r}")
+        if "proven_by_test" in entry:
+            proven = entry["proven_by_test"]
+            if not isinstance(proven, list) or not proven or any(
+                    not isinstance(item, dict) or set(item) != {"what", "text"}
+                    or not all(isinstance(v, str) for v in item.values()) for item in proven):
+                raise Refusal(f"éléments jugés prouvés par leur test mal formés : {proven!r}")
         if "taken" in entry:
             if not isinstance(entry["taken"], dict) or set(entry["taken"]) - set(BOUNDED_RESUME_CAUSES):
                 raise Refusal(f"reprises prises au parcage levé mal formées : {entry['taken']!r}")
@@ -4087,9 +4145,9 @@ def overridden_ticket(ticket: dict[str, Any]) -> bool:
                              [entry.get("finding") for entry in overrides if isinstance(entry, dict)])
 
 
-def stopped_for_evaluation(metadata: dict[str, Any]) -> bool:
-    """The ticket is stopped and its evaluation does not go on: any stop but
-    the one review_overridden reads."""
+def overridden_metadata(metadata: dict[str, Any]) -> bool:
+    """review_overridden, on a ticket's metadata; an unreadable record is
+    not an override."""
     if KEY_STOP not in metadata:
         return False
     try:
@@ -4098,8 +4156,14 @@ def stopped_for_evaluation(metadata: dict[str, Any]) -> bool:
         overridden = [entry["finding"] for entry in overrides_record(metadata[KEY_OVERRIDES])] \
             if KEY_OVERRIDES in metadata else []
     except Refusal:
-        return True
-    return not review_overridden(reason, code_review_state(review)["unsettled"], overridden)
+        return False
+    return review_overridden(reason, code_review_state(review)["unsettled"], overridden)
+
+
+def stopped_for_evaluation(metadata: dict[str, Any]) -> bool:
+    """The ticket is stopped and its evaluation does not go on: any stop but
+    the one review_overridden reads."""
+    return KEY_STOP in metadata and not overridden_metadata(metadata)
 
 
 def evaluation_target(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
@@ -4140,8 +4204,10 @@ def evidence_at(metadata: dict[str, Any], piece: Any, commit: str) -> str | None
 
 
 def retry_after_lift(last, lifts):
-    """One resolved parking permits a new judgement, never a favorable verdict.
-    A subsequent refusal is newer than the lift and requires a new decision."""
+    """One resolved parking permits a new judgement. It is favorable only
+    for what the operator's answer judged proven by its criterion test
+    (proven_by_test_at_lift); a subsequent refusal is newer than the lift and
+    requires a new decision."""
     return bool(last and last.get('outcome') == 'planning_exception' and isinstance(lifts, list)
                 and any(lift.get('cause') == 'planning_exception'
                         and lift.get('parked_at', '') >= last['at']
@@ -4497,7 +4563,16 @@ def cmd_record_evaluation(args: argparse.Namespace) -> int:
         round_["coverage"] = coverage
     if given.get("screen_findings"):
         round_["screen_findings"] = given["screen_findings"]
-    round_["outcome"] = evaluation_outcome(evaluation_items(round_), round_.get("screen_findings"))
+    # What the operator judged proven by its criterion test, on lifting the
+    # parking an earlier evaluation caused, is not observed: it is counted
+    # proven, as long as its frozen text is the same.
+    lifts = park_lifts_record(metadata[KEY_PARK_LIFTS]) if KEY_PARK_LIFTS in metadata else []
+    judged = {(item["what"], item["text"]) for lift in lifts for item in lift.get("proven_by_test", [])}
+    proven = [name for name, item in evaluation_items(round_)
+              if item["state"] == "unobservable" and item["cause"] == "criterion" and (name, item["text"]) in judged]
+    if proven:
+        round_["proven_by_test"] = proven
+    round_["outcome"] = evaluation_outcome(evaluation_judged(round_), round_.get("screen_findings"))
     round_["verdict"] = verdict_of_outcome(round_["outcome"])
     record["rounds"].append(evaluation_round(round_))
     del record["request"]
@@ -4897,6 +4972,9 @@ def cmd_lift_park(args: argparse.Namespace) -> int:
     resumes = counter_value(metadata.get(COUNTER_PREFIX + "resumes"), "resumes")
     lifts.append({"cause": park["cause"], "detail": park["detail"], "parked_at": park["at"], "request": args.request,
                   "option": option, "resumes": resumes, "taken": resumes_taken(metadata), "at": now()})
+    proven = proven_by_test_at_lift(park, option, metadata)
+    if proven:
+        lifts[-1]["proven_by_test"] = proven
     # Each other ticket that still parks, with those that wait for it.
     still_parked: dict[str, str] = {}
     for other in tickets:
@@ -4935,8 +5013,9 @@ def cmd_open_resume(args: argparse.Namespace) -> int:
     resume left for one cause (that one is parked), and on a stopped ticket unless the
     cause is one that lifts its stop (RESUMABLE_STOPS): `evaluation_no_result`
     (af-xhc0sj), `stage_removed` for a stop of the removed test review
-    (af-pjvsgo), `code_review_no_result` (af-wu6xj7); that resume keeps the
-    stop under it. A code review without result also loses its spent round:
+    (af-pjvsgo), `code_review_no_result` (af-wu6xj7), or `returned` for a
+    stop `still_refused` the operator overrode in full (af-n4bn62); that
+    resume keeps the stop under it. A code review without result also loses its spent round:
     the next finished exit is reviewed afresh."""
     ticket = marked_ticket(args.convoy, args.ticket)
     metadata = metadata_of(ticket)
@@ -4947,7 +5026,8 @@ def cmd_open_resume(args: argparse.Namespace) -> int:
     if GATE_PREFIX + "dispatch" not in metadata:
         raise Refusal(f"le ticket {args.ticket} n'a pas été démarré par la porte de dispatch : rien à reprendre")
     lifted = stop_record(metadata[KEY_STOP]) if KEY_STOP in metadata else None
-    if lifted is not None and (cause not in RESUMABLE_STOPS or lifted["reason"] not in RESUMABLE_STOPS[cause]):
+    if lifted is not None and (cause not in RESUMABLE_STOPS or lifted["reason"] not in RESUMABLE_STOPS[cause]) \
+            and not (cause == OVERRIDDEN_STOP_CAUSE and overridden_metadata(metadata)):
         raise Refusal(f"ticket arrêté ({lifted['reason']}) : {args.ticket} ne se reprend pas pour la cause {cause}")
     entries = resume_record(metadata[KEY_RESUME])["entries"] if KEY_RESUME in metadata else []
     if entries and (entries[-1]["cause"], entries[-1]["ref"]) == (cause, ref):
@@ -5674,6 +5754,34 @@ def owner_answer_of(metadata: dict[str, Any]) -> dict[str, Any] | None:
     the readers that hold a bead and run no command (the cockpit)."""
     judgement = stored_or_none(metadata.get(KEY_JUDGEMENT), judgement_record)
     return judgement["answers"][-1] if judgement and judgement["answers"] else None
+
+
+OUTCOME_RECORDS = (("delivered", KEY_DELIVERED, delivered_record), ("evidence_pack", KEY_EVIDENCE_PACK, evidence_pack_record),
+                   ("acceptance", KEY_ACCEPTANCE, acceptance_record), ("judgement", KEY_JUDGEMENT, judgement_record),
+                   ("promotion", KEY_PROMOTION, promotion_record), ("closed", KEY_CLOSED, closed_record))
+
+
+def outcome_records_of(convoy: dict[str, Any]) -> dict[str, Any] | None:
+    """The records of the Outcome of a convoy, from its bead, read as `show`
+    reads them: `delivered`, `evidence_pack`, `acceptance`, `judgement`,
+    `promotion` and `closed` (the record of `close-convoy`, whatever the
+    status of the bead), each None when absent, or `{"unruled": reason,
+    "raw": stored value}` when this command would not have written it.
+    None for a convoy without the mark. For the readers that hold a bead
+    and run no command (the cockpit, A1 af-c662qx)."""
+    metadata = metadata_of(convoy)
+    if metadata.get(KEY_MARK) is None:
+        return None
+    records: dict[str, Any] = {}
+    for name, key, reader in OUTCOME_RECORDS:
+        if key not in metadata:
+            records[name] = None
+            continue
+        try:
+            records[name] = reader(metadata[key])
+        except Refusal as exc:
+            records[name] = {"unruled": f"{key} : {exc}", "raw": metadata[key]}
+    return records
 
 
 def propositions_of(tickets: list[dict[str, Any]]) -> dict[str, str]:
