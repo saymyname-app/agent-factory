@@ -30,10 +30,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from analyses_destination import Keyboard  # noqa: E402
-from home_destination import NAVIGATION, LaunchTree, hierarchy, measure, problems  # noqa: E402
-
-# The chart of the daily volumes, by the start of the anchor its label names.
-CHART = "volumes-quotidiens-compar-s-sur-sept-jours"
+from home_destination import LaunchTree, hierarchy, measure, problems  # noqa: E402
 
 
 class AnalysesDestinationLayout(unittest.TestCase):
@@ -51,25 +48,26 @@ class AnalysesDestinationLayout(unittest.TestCase):
         self.tree.stop_all()
 
     def frames(self, address: str, path: str, theme: str) -> list[dict]:
-        """The page at 1440 and 390 px in `theme`, each frame checked to be
-        the destination « Analyses » open in the navigation B."""
-        frames = measure(address, path, theme=theme, widths=(1440, 390))
-        # No subTest: the harness of the profile records none of them.
-        for frame in frames:
-            width = frame["width"]
-            self.assertEqual("/analyses", frame["path"],
-                             f"{width} px: the state is not served at the address of the destination")
-            labels = [entry["label"].rstrip("0123456789 ") for entry in frame["nav"]]
-            self.assertEqual(NAVIGATION, labels, f"{width} px: the navigation B is not the reference's")
-            self.assertEqual(["Analyses"], [label for label, entry in zip(labels, frame["nav"]) if entry["current"]],
-                             f"{width} px: the navigation does not say « Analyses » is open")
-        return frames
+        """The page at 1440 and 390 px in `theme`."""
+        return measure(address, path, theme=theme, widths=(1440, 390))
+
+    @staticmethod
+    def navigation(frame: dict) -> tuple[str, list[str], list[str]]:
+        """What `frame` says of the destination: the address it is served
+        at, the labels of its navigation (without their counts) and those
+        of them marked open."""
+        labels = [entry["label"].rstrip("0123456789 ") for entry in frame["nav"]]
+        return frame["path"], labels, [label for label, entry in zip(labels, frame["nav"]) if entry["current"]]
 
     def test_analysis_content_carries_its_reference_and_is_readable_at_both_widths(self):
         """The view « Résultats »: its chart of daily volumes in the panel
         of the view, the merged results under it."""
         frames = self.frames(self.tree.launch("analysis-content"), "/analyses", "dark")
+        # No subTest: the harness of the profile records none of them.
         for frame in frames:
+            self.assertEqual(("/analyses", ["Vue d’ensemble", "Projets", "Runs", "Journal", "Usine", "Rituels",
+                                            "Analyses"], ["Analyses"]), self.navigation(frame),
+                             f"{frame['width']} px: not the destination « Analyses » open in the navigation B")
             expected = {
                 "shell-nav-1": ("aside", None), "brand-1": ("header", "shell-nav-1"), "live-1": ("span", "brand-1"),
                 "nav-1": ("nav", "shell-nav-1"), "badge-count-1": ("span", "nav-1"),
@@ -80,14 +78,19 @@ class AnalysesDestinationLayout(unittest.TestCase):
             }
             self.assertEqual(expected, {name: value for name, value in hierarchy(frame).items() if name in expected},
                              f"{frame['width']} px: the named parts of the page are not the reference's")
-            self.assertEqual([("svg", "panel-1")], [value for name, value in hierarchy(frame).items()
-                                                    if name.startswith(CHART)],
+            self.assertEqual([("svg", "panel-1")],
+                             [value for name, value in hierarchy(frame).items()
+                              if name.startswith("volumes-quotidiens-compar-s-sur-sept-jours")],
                              f"{frame['width']} px: the chart of the daily volumes is not drawn in the panel of the view")
         self.assertEqual({}, problems(frames, "dark", ("panel-1",)), "analysis-content is not readable and usable")
 
     def test_analysis_narrow_carries_its_reference_and_is_readable_at_390_px(self):
         frames = self.frames(self.tree.launch("analysis-narrow"), "/analyses", "dark")
+        # No subTest: the harness of the profile records none of them.
         for frame in frames:
+            self.assertEqual(("/analyses", ["Vue d’ensemble", "Projets", "Runs", "Journal", "Usine", "Rituels",
+                                            "Analyses"], ["Analyses"]), self.navigation(frame),
+                             f"{frame['width']} px: not the destination « Analyses » open in the navigation B")
             expected = {
                 "shell-nav-1": ("aside", None), "brand-1": ("header", "shell-nav-1"), "live-1": ("span", "brand-1"),
                 "nav-1": ("nav", "shell-nav-1"), "badge-count-1": ("span", "nav-1"),
@@ -98,14 +101,19 @@ class AnalysesDestinationLayout(unittest.TestCase):
             }
             self.assertEqual(expected, {name: value for name, value in hierarchy(frame).items() if name in expected},
                              f"{frame['width']} px: the named parts of the page are not the reference's")
-            self.assertEqual([("svg", "panel-1")], [value for name, value in hierarchy(frame).items()
-                                                    if name.startswith(CHART)],
+            self.assertEqual([("svg", "panel-1")],
+                             [value for name, value in hierarchy(frame).items()
+                              if name.startswith("volumes-quotidiens-compar-s-sur-sept-jours")],
                              f"{frame['width']} px: the chart of the daily volumes is not drawn in the panel of the view")
         self.assertEqual({}, problems(frames, "dark", ("panel-1",)), "analysis-narrow is not readable and usable")
 
     def test_analysis_light_carries_its_reference_and_is_readable_in_the_light_theme(self):
         frames = self.frames(self.tree.launch("analysis-light"), "/analyses", "light")
+        # No subTest: the harness of the profile records none of them.
         for frame in frames:
+            self.assertEqual(("/analyses", ["Vue d’ensemble", "Projets", "Runs", "Journal", "Usine", "Rituels",
+                                            "Analyses"], ["Analyses"]), self.navigation(frame),
+                             f"{frame['width']} px: not the destination « Analyses » open in the navigation B")
             expected = {
                 "shell-nav-1": ("aside", None), "brand-1": ("header", "shell-nav-1"), "live-1": ("span", "brand-1"),
                 "nav-1": ("nav", "shell-nav-1"), "badge-count-1": ("span", "nav-1"),
@@ -116,8 +124,9 @@ class AnalysesDestinationLayout(unittest.TestCase):
             }
             self.assertEqual(expected, {name: value for name, value in hierarchy(frame).items() if name in expected},
                              f"{frame['width']} px: the named parts of the page are not the reference's")
-            self.assertEqual([("svg", "panel-1")], [value for name, value in hierarchy(frame).items()
-                                                    if name.startswith(CHART)],
+            self.assertEqual([("svg", "panel-1")],
+                             [value for name, value in hierarchy(frame).items()
+                              if name.startswith("volumes-quotidiens-compar-s-sur-sept-jours")],
                              f"{frame['width']} px: the chart of the daily volumes is not drawn in the panel of the view")
         self.assertEqual({}, problems(frames, "light", ("panel-1",)), "analysis-light is not readable and usable")
 
@@ -125,7 +134,11 @@ class AnalysesDestinationLayout(unittest.TestCase):
         """The view « Délais »: a row per portion of the delay, and the
         notice of what the records do not time."""
         frames = self.frames(self.tree.launch("analysis-time"), "/analyses?vue=delais", "dark")
+        # No subTest: the harness of the profile records none of them.
         for frame in frames:
+            self.assertEqual(("/analyses", ["Vue d’ensemble", "Projets", "Runs", "Journal", "Usine", "Rituels",
+                                            "Analyses"], ["Analyses"]), self.navigation(frame),
+                             f"{frame['width']} px: not the destination « Analyses » open in the navigation B")
             expected = {
                 "shell-nav-1": ("aside", None), "brand-1": ("header", "shell-nav-1"), "live-1": ("span", "brand-1"),
                 "nav-1": ("nav", "shell-nav-1"), "badge-count-1": ("span", "nav-1"),
@@ -151,6 +164,9 @@ class AnalysesDestinationLayout(unittest.TestCase):
                                                        "\"Portfolio\"": f"\"{long_project}\""})
         frames = self.frames(self.tree.launch("analysis-content", commit), "/analyses", "dark")
         for frame in frames:
+            self.assertEqual(("/analyses", ["Vue d’ensemble", "Projets", "Runs", "Journal", "Usine", "Rituels",
+                                            "Analyses"], ["Analyses"]), self.navigation(frame),
+                             f"{frame['width']} px: not the destination « Analyses » open in the navigation B")
             history = frame["texts"].get("metrics-history-1", "")
             self.assertIn("recherche plein texte sur toutes les pages publiées", history,
                           f"{frame['width']} px: the long title is not shown whole")
