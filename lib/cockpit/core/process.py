@@ -29,7 +29,7 @@ from cockpit.stop.driver import StopDriver
 from cockpit.stop.gc_city import GcCityReader
 from cockpit.projects.depots import read_depots, read_rig_repos
 from cockpit.projects.descriptors import load_descriptors
-from cockpit.projects.source import read_projects
+from cockpit.projects.source import READ_TIMEOUT_SECONDS as PROJECTS_READ_TIMEOUT_SECONDS, read_projects
 from cockpit.requests.assemble import assemble_from_snapshot
 from cockpit.requests.defects import DefectCounter
 from cockpit.requests.journal import read_journal
@@ -85,6 +85,7 @@ def build(config, clock=None):
                 lambda: read_projects(
                     config.descriptors_dir,
                     bd_bin=config.bd_bin,
+                    timeout=max(PROJECTS_READ_TIMEOUT_SECONDS, config.beads_read_timeout_seconds),
                     clones_dir=config.clones_dir,
                     rig_repos=read_rig_repos(config.rig_files_dir),
                     git_bin=config.git_bin,

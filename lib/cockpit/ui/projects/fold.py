@@ -350,6 +350,7 @@ CSS = """
 .cockpit-pp-fresh{margin:8px 0 4px}
 .cockpit-pp-fresh .recheck{border-color:var(--pn-control-line);color:var(--ink);cursor:pointer}
 .cockpit-project-page .v1 .bh{color:var(--pn-muted-text)}
+.pn-main .cockpit-projects[data-state="unknown"] .unknown{color:var(--pn-warn-text)}
 @media (max-width:800px){
   .pf-kpis{grid-template-columns:1fr 1fr}
   .pf-columns{grid-template-columns:minmax(0,1fr);gap:16px}

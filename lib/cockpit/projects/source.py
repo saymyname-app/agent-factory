@@ -24,7 +24,14 @@ TARGET_KEY = "planning_run_target"
 SPEC_KEY = "gc.spec_id"
 
 
-def read_projects(descriptors_dir, bd_bin="bd", timeout=20, clones_dir="", rig_repos=None, git_bin="git"):
+# How long one read of the tracker for the projects may take: at least as
+# long as any read of the tracker may (config.beads_read_timeout_seconds) --
+# a tracker still being read is not a tracker that failed (E, af-8rbceu).
+READ_TIMEOUT_SECONDS = 20
+
+
+def read_projects(descriptors_dir, bd_bin="bd", timeout=READ_TIMEOUT_SECONDS, clones_dir="", rig_repos=None,
+                  git_bin="git"):
     """One complete read. Raises on any failed ``bd`` call: a partial view
     would show a project with chantiers missing as if it were whole.
     ``clones_dir`` / ``rig_repos``: where the promotion of an accepted
