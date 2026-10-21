@@ -1,2 +1,2 @@
-Need: Bounded correction after code/evaluation refusal
+Need: Bounded correction rounds after code/evaluation refusal
 Read: `CORRECTION_ROUND.md`
