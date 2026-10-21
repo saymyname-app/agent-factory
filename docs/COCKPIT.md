@@ -654,7 +654,9 @@ says what was asked, how it was resolved, when (Paris time), by whom, and
 by which way (spec .18); a bead resolved twice has two entries (spec .19).
 The cockpit keeps no copy: `requests/journal.py` `read_journal` is the
 read model's `journal` source (every `COCKPIT_JOURNAL_POLL_SECONDS`, 60 s)
-and re-reads the traces.
+and re-reads the traces; a read fails after
+`COCKPIT_JOURNAL_READ_TIMEOUT_SECONDS` (20 s), which the isolated recipe
+raises to a day with the tracker's, so that a journal being read stays so.
 
 What the tracker really holds, checked 2026-10-06 — T15 had assumed Beads
 comments, which are empty on a bead Benjamin answered:
@@ -1013,7 +1015,7 @@ ways:
 | « Rituels »: each ritual (a line in capitals says how it is launched, then its title) | one bead per ritual under its title: how it is launched, what it is for, when it last ran | `beads.value` |
 | the page of a ritual (« ← Rituels », its title, « projet · … ») | one bead under the title of the ritual, its project declared; its steps and what the step it is at shows | `beads.value` |
 | « Analyses »: « Résultats fusionnés » or « Où passe le temps ? »; a merged result (« projet · hier ») | one bead kept as said for the view; the project of each merged result is declared | `beads.value`; `projets.value.projects` |
-| nothing read yet: `ui.state` is `loading` | a supervisor that never answers, and a tracker whose read never ends (the cockpit waits a day for it, `COCKPIT_BEADS_READ_TIMEOUT_SECONDS`) | every source `unknown`, without value, `beads.failed_at` empty; `GET /` says it is reading, however late it is looked at |
+| nothing read yet: `ui.state` is `loading` | a supervisor that never answers, and a tracker whose read never ends (the cockpit waits a day for it, `COCKPIT_BEADS_READ_TIMEOUT_SECONDS` and `COCKPIT_JOURNAL_READ_TIMEOUT_SECONDS`) | every source `unknown`, without value, `beads.failed_at` empty; `GET /` says it is reading, however late it is looked at |
 | nothing readable: `ui.state` is `error` | a supervisor that never answers, and a tracker whose read fails | every source `unknown`, without value, `beads.failed_at` set; `GET /` says the view is unavailable as soon as the first read failed |
 | a reading that is no longer current: `ui.state` is `stale` or `offline`, or `ui.stale` is true (Runs) | a supervisor that is read once, then answers no more | `gc.freshness` leaves `fresh` within seconds (a 2 s Validity window instead of 2 min), the last `gc.value` kept |
 | the runs of a Runs state | one bead per run under its title, open while the run has no end, with its type, status, start and elapsed time | `beads.value` (the open ones: the cockpit reads the open work of a tracker) |

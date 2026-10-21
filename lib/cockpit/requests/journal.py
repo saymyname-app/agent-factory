@@ -27,7 +27,12 @@ from cockpit.ui.journal.entries import JOURNAL_EVENT_KEY, JOURNAL_SOURCE_KEY, Jo
 TRACE_KEYS = ("gc.needs_benjamin", "gc.proposal_state", "gc.cockpit_action_quoi", JOURNAL_EVENT_KEY)
 
 
-def read_journal(bd_bin="bd", timeout=20):
+# How long one read of the journal may take before it counts as failed: it
+# lists the whole tracker, once per key.
+READ_TIMEOUT_SECONDS = 20
+
+
+def read_journal(bd_bin="bd", timeout=READ_TIMEOUT_SECONDS):
     """Raises on any failed ``bd`` call: a journal missing a kind of
     resolution would read as "that never happened"."""
     by_id = {}

@@ -172,7 +172,6 @@ class JournalTest(unittest.TestCase):
 
     def start_cockpit(self, **extra_env):
         env = dict(os.environ)
-        env.update(extra_env)
         env.update(
             {
                 "COCKPIT_HOST": "127.0.0.1",
@@ -193,6 +192,7 @@ class JournalTest(unittest.TestCase):
                 "FAKE_BD_FAIL_FLAG_FILE": self.fail_flag_file,
             }
         )
+        env.update(extra_env)
         self.proc = subprocess.Popen(
             [sys.executable, str(COCKPIT_BIN), "run"],
             env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -361,6 +361,16 @@ class JournalTest(unittest.TestCase):
         self.assertIn("<strong>CI</strong> · inconnue — la source ne répond pas", self.get("/journal?vue=sources"))
         os.remove(self.fail_flag_file)
         wait_until(self.journal)
+
+    def test_a_journal_read_lasts_as_long_as_the_cockpit_allows_it(self):
+        # A tracker that never answers, and a cockpit that allows the journal
+        # one second per read: the journal says its read failed well before
+        # the twenty seconds it allows itself otherwise -- the isolated
+        # recipe allows 24 hours, and a reading under way stays one.
+        self.start_cockpit(COCKPIT_BD_BIN=str(ROOT / "tests" / "fixtures" / "cockpit" / "requests" / "silent-bd"),
+                           COCKPIT_JOURNAL_READ_TIMEOUT_SECONDS="1")
+        self.assertIn("Lecture en cours…", self.get("/journal"))
+        wait_until(lambda: "Cette vue est indisponible" in self.get("/journal"), timeout=10)
 
     # The Journal Prototype Fold (F, af-njwz8v) -------------------------
 

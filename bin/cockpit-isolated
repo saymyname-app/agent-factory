@@ -146,6 +146,7 @@ def write_tracker_and_projects(city: synthetic_city.SyntheticCity, home: str) ->
         # A tracker that answers no read, and a cockpit that waits for it.
         env["COCKPIT_BD_BIN"] = str(FIXTURES / "requests" / "silent-bd")
         env["COCKPIT_BEADS_READ_TIMEOUT_SECONDS"] = UNANSWERED_READ_TIMEOUT_SECONDS
+        env["COCKPIT_JOURNAL_READ_TIMEOUT_SECONDS"] = UNANSWERED_READ_TIMEOUT_SECONDS
     return env
 
 
