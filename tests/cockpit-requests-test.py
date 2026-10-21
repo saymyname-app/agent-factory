@@ -238,14 +238,16 @@ class RequestsSeamTest(unittest.TestCase):
         self.assertEqual("proposal", proposal["type"])
 
         body = self.home_body()
-        self.assertIn("Ce qui t&#x27;attend", body)
+        self.assertIn("Ce qui t’attend", body)
         self.assertIn("usine est muette", body)
         self.assertIn("Recommandé", body)
 
     # ------------------------------------------------------------------
     # af-mjfvwx — the home screen is the validated variant D: one status
     # line, a short list, one detail per request, and the answer /
-    # accept / refuse controls where the prototype puts them.
+    # accept / refuse controls where the prototype puts them. Since B
+    # (af-4uzgzm) the list and its details are « Pour moi » of the
+    # overview: one line per request, each request opened in its article.
     # ------------------------------------------------------------------
     def test_home_is_the_variant_d_inbox(self):
         lettered = [dict(option, lettre=lettre) for option, lettre in zip(SOME_OPTIONS, "ab")]
@@ -273,14 +275,16 @@ class RequestsSeamTest(unittest.TestCase):
         body = wait_until(lambda: self.home_body() if "Tout est à jour à <time>" in self.home_body() else None)
         self.assertIn('action="/api/health/recheck"', body)
 
-        # One list row and one detail per request; the first is selected.
-        self.assertEqual(3, body.count('<a class="li"'))
-        self.assertEqual(3, body.count('<article class="detail'))
-        self.assertEqual(1, body.count('<article class="detail zone-body cockpit-request on"'))
-        self.assertIn('href="#d-af-aaaa" data-id="af-aaaa" aria-current="true"', body)
-        self.assertIn("Retour à la liste", body)
+        # One line and one opened article per request; the first is open.
+        self.assertEqual(3, body.count('<button type="button" class="pn-request"'))
+        self.assertEqual(3, body.count('<article class="pn-panel pn-result pn-open-request cockpit-request"'))
+        self.assertEqual(2, body.count('data-open="af-cccc" data-level="info" hidden')
+                         + body.count('data-open="af-dddd" data-level="normal" hidden'))
+        opening = body[body.index('id="d-af-aaaa"'):]
+        self.assertNotIn(" hidden", opening[:opening.index(">")], "the first request is not the one open")
+        self.assertIn('aria-current="true" data-request="af-aaaa"', body)
         # A request from another day never shows a bare hour.
-        self.assertIn("<time>30/09 ", body)
+        self.assertIn("depuis 30/09 ", body)
 
         def detail(bead_id):
             start = body.index('id="d-%s"' % bead_id)

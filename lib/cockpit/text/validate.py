@@ -99,6 +99,17 @@ def violations(label, value, max_length=MAX_LINE_LENGTH):
     return reasons
 
 
+def speaks_plainly(value):
+    """Whether ``value`` holds neither an identifier nor an internal term
+    (spec .73): what may be shown as main text, whatever its length or
+    shape."""
+    if not isinstance(value, str):
+        return False
+    lowered = value.lower()
+    return not any(pattern.search(value) for pattern in _IDENTIFIER_PATTERNS) and not any(
+        re.search(r"\b%s\b" % re.escape(term), lowered) for term in BANNED_INTERNAL_TERMS)
+
+
 def is_valid(label, value, max_length=MAX_LINE_LENGTH):
     return not violations(label, value, max_length=max_length)
 

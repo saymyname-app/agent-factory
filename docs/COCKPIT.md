@@ -369,6 +369,72 @@ dossier is read by `projects/source.py` in the folder its record names
 (`path`, the folder of the Evidence Pack; `read_pack_sections` opens its
 `index.html`: one rubric per `<section id="rubrique-N">`).
 
+## « Pour moi » in the foreground, gestures confirmed, commands that no longer fail silently (B, af-4uzgzm)
+
+Spec af-fgcw0d, user stories 6, 27, 29, 34, 73, 75, 76, 79, 122 and 175;
+Validated Prototype `prototype/cockpit-b-zones-20261012` at 632deea, states
+result-request and result-confirmation.
+
+**Pour moi is the decision box of the overview.** « Ce qui t’attend » is no
+longer folded under « Détails techniques et actions »: each line of the
+overview's inbox opens its request beside the list, where the result of a
+chantier opens (`lib/cockpit/ui/home/pour_moi.py`). The result's own
+request (the Acceptance Request on its convoy) opens the result. A request
+opened says what it is about, its title, why it waits, its prepared
+options, then its bar of gestures:
+
+| Request | Gestures |
+|---|---|
+| a question (NEEDS BENJAMIN) | its options, each the answer (armed, then « Confirmer ? »); Continuer avec un agent; Acquitter (Urgent); Reporter |
+| a proposal of class decision | Accepter; Refuser with the reason written in its field; Reporter → « Dans 1 h », « Dans 4 h », « Demain 09:00 », each armed then confirmed; Continuer avec un agent |
+| a session the Factory paused (`[session-loop] <session>`, `gc.source=factory-session-loop-guard`, `lib/cockpit/requests/sources/paused_sessions.py`) | Relancer (armed, then confirmed: `factory-session-loop-guard resume`, traced on the bead, « Relance demandée » in the journal); Reporter |
+| « Usine muette » | Vérifier l’usine (the page Usine); Revérifier maintenant |
+
+Every gesture that changes the Factory is two-step (`cockpit.ui.actions.
+render`): a first click arms it, « Confirmer ? », a second sends it. A
+proposal put off goes through `bin/proposal-door reporter` with the time the
+cockpit computed (ISO, Paris): `gc.proposal_report_until` then hides it
+until that time, as `gc.cockpit_defer_until` hides any other request; a time
+written in free words hides nothing. Nothing pauses an order yet (no door
+writes one paused): no request is read for one.
+
+On a reading that is no longer current the gestures are drawn and
+unavailable (« Lecture périmée : les gestes reviennent à la prochaine
+lecture. »). While the tracker cannot be read the box says « Inconnu :
+illisible depuis HH:MM » and lists what does not come from it.
+
+**Main text, folded details.** A line and a request opened say the cockpit's
+French. A title its producer wrote outside the text contract is said whole
+after the cockpit's label (« Texte écrit : « … » ») only when it holds no
+identifier and no internal term (`cockpit.text.validate.speaks_plainly`);
+otherwise the producer's words are in the folded details only. The folded
+« Détails » of each request give its identifier, its nature, why a field
+was replaced, the producer's words as written, the precise source, and the
+links where it lives (the page of its project, the page Usine, the journal).
+
+**Usine muette** (`lib/cockpit/requests/sources/silence.py`): the heartbeat
+goes out only while the supervisor and the tracker read fresh; once one of
+them has been silent for longer than `COCKPIT_SILENCE_ALERT_SECONDS` (900 s,
+the alert delay of the heartbeat), the cockpit raises an Urgent request
+« Usine muette » that names the sources and since when. It leaves when both
+read fresh again; it is pushed as any Urgent request. It is shown even
+while the tracker was never read (home-loading, home-error), outside the
+parts the reference numbers.
+
+**A command that expires** (af-fksj2c, `cockpit.actions.registry`,
+`cockpit.actions.uncertain`): a door that does not answer within
+`COCKPIT_ACTION_TIMEOUT_SECONDS` (15 s) is killed. The POST answers 504 with
+a readable error (« La commande n’a pas répondu en N s : elle a expiré. Son
+issue est incertaine ; le cockpit relit la source avant tout nouvel
+essai. ») and `incertain: true`, and the tracker is read again at once. Its
+target is marked uncertain: a new gesture on it answers 409 until the
+tracker was read again after the mark; then, if the request no longer
+waits -- the command had done its work --, 409 for good (« Le geste
+précédent a été enregistré à la source … ») and the success read is what the
+page shows; if it still waits, the gesture goes. An unforeseen error of a
+gesture answers 500 with a readable sentence instead of breaking the
+request. The page shows the error on the request and reads itself again.
+
 ## Home screen, as the validated prototype shows it (af-mjfvwx)
 
 Since T02 (above), this variant D is folded under « Détails techniques et

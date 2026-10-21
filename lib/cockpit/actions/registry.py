@@ -35,6 +35,21 @@ class ActionError(Exception):
     pass
 
 
+class ActionUncertain(ActionError):
+    """The command of a gesture did not answer in time (af-fksj2c): it may
+    have done its work, or not. The cockpit says so, then reads the source
+    again before the gesture can be tried again (:mod:`cockpit.actions.
+    uncertain`)."""
+
+
+EXPIRED = ("La commande n’a pas répondu en %d s : elle a expiré. Son issue est incertaine ; "
+           "le cockpit relit la source avant tout nouvel essai.")
+
+
+def expired(seconds):
+    return ActionUncertain(EXPIRED % round(seconds))
+
+
 def _require(payload, field):
     value = payload.get(field)
     if not value:
@@ -72,9 +87,12 @@ def _run_door(args, timeout=DOOR_TIMEOUT_SECONDS):
     loop-guard, or the order runner) the same way :mod:`cockpit.actions.
     trace` shells out to ``bd`` -- a non-zero exit becomes an
     :class:`ActionError` carrying the door's own refusal message, never
-    swallowed."""
+    swallowed; a door that does not answer within ``timeout`` is killed,
+    and its outcome is uncertain (:class:`ActionUncertain`)."""
     try:
         completed = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise expired(timeout)
     except OSError as exc:
         raise ActionError("commande introuvable : %s" % exc)
     if completed.returncode != 0:
@@ -86,9 +104,12 @@ def _run_door(args, timeout=DOOR_TIMEOUT_SECONDS):
 def _show_bead(bd_bin, bead_id, timeout=DOOR_TIMEOUT_SECONDS):
     import json
 
-    completed = subprocess.run(
-        [bd_bin, "show", bead_id, "--json"], capture_output=True, text=True, timeout=timeout
-    )
+    try:
+        completed = subprocess.run(
+            [bd_bin, "show", bead_id, "--json"], capture_output=True, text=True, timeout=timeout
+        )
+    except subprocess.TimeoutExpired:
+        raise expired(timeout)
     if completed.returncode != 0:
         raise ActionError((completed.stderr or "bead introuvable : %s" % bead_id).strip())
     try:
@@ -121,7 +142,11 @@ def build_action_handlers(
     proposal_door_bin="proposal-door",
     loop_guard_bin="factory-session-loop-guard",
     gc_bin="gc",
+    door_timeout=DOOR_TIMEOUT_SECONDS,
 ):
+    def run_door(args):
+        return _run_door(args, timeout=door_timeout)
+
     def handle_acquitter(payload):
         target_id = _resolve_target(bd_bin, payload)
         quand = trace.now_iso(clock)
@@ -186,8 +211,8 @@ def build_action_handlers(
         lettre = _require(payload, "lettre")
         # The click is Benjamin's own, confirmed gesture: the door records
         # him as the one who answered (af-zkdvur).
-        _run_door([escalation_door_bin, "repondre", bead_id, lettre, "--actor", "benjamin"])
-        bead = _show_bead(bd_bin, bead_id)
+        run_door([escalation_door_bin, "repondre", bead_id, lettre, "--actor", "benjamin"])
+        bead = _show_bead(bd_bin, bead_id, timeout=door_timeout)
         metadata = bead.get("metadata") or {}
         option = metadata.get("gc.escalation_response_option", lettre)
         quand_iso = metadata.get("gc.escalation_response_at")
@@ -207,7 +232,7 @@ def build_action_handlers(
         calls it after the two-step confirmation."""
         _require_confirm(payload)
         bead_id = _require(payload, "bead_id")
-        _run_door([proposal_door_bin, "accepter", bead_id, acteur])
+        run_door([proposal_door_bin, "accepter", bead_id, acteur])
         return {"ok": True, "bead_id": bead_id}
 
     def handle_rejeter_proposition(payload):
@@ -218,18 +243,32 @@ def build_action_handlers(
         _require_confirm(payload)
         bead_id = _require(payload, "bead_id")
         raison = _require(payload, "raison")
-        _run_door([proposal_door_bin, "rejeter", bead_id, raison, acteur])
+        run_door([proposal_door_bin, "rejeter", bead_id, raison, acteur])
         return {"ok": True, "bead_id": bead_id, "raison": raison}
 
     def handle_reporter_proposition(payload):
         """Reporter une proposition (T14 AC2): defers it until ``heure``
         (free text) without changing its state -- proposal-door's own
-        ``reporter`` traces this."""
+        ``reporter`` traces this. With ``option`` (one of the delays of
+        Reporter, B af-4uzgzm), the time is computed from the cockpit's
+        clock and written as an ISO time, which the requests read back to
+        hide the proposal until then."""
         _require_confirm(payload)
         bead_id = _require(payload, "bead_id")
-        heure = _require(payload, "heure")
-        _run_door([proposal_door_bin, "reporter", bead_id, heure, acteur])
-        return {"ok": True, "bead_id": bead_id, "heure": heure}
+        option = payload.get("option")
+        if option:
+            try:
+                until = compute_defer_until(option, clock, custom_epoch=payload.get("custom_epoch"))
+            except ValueError as exc:
+                raise ActionError(str(exc))
+            heure = datetime.fromtimestamp(until, tz=PARIS).isoformat(timespec="minutes")
+        else:
+            heure = _require(payload, "heure")
+        run_door([proposal_door_bin, "reporter", bead_id, heure, acteur])
+        result = {"ok": True, "bead_id": bead_id, "heure": heure}
+        if option:
+            result["display"] = "Proposition reportée jusqu’à %s" % (_hhmm_paris(heure) or heure)
+        return result
 
     def handle_relancer(payload):
         """Relancer (T14 AC3): resumes a session or an order the
@@ -246,7 +285,7 @@ def build_action_handlers(
             )
         except relancer.RelanceError as exc:
             raise ActionError(str(exc))
-        _run_door(args)
+        run_door(args)
         target_id = _resolve_target(bd_bin, payload)
         label = relancer.relance_target_label(target_type, session_id=session_id, order_name=order_name)
         quand = trace.now_iso(clock)

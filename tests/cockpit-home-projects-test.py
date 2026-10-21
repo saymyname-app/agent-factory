@@ -256,7 +256,7 @@ class HomeProjectsZoneTest(unittest.TestCase):
         # "Problème remonté" leads in one click to the request that carries the question.
         self.assertIn('href="#d-af-tk-a4" data-goto="af-tk-a4"', body)
         self.assertIn("Problème remonté</a>", body)
-        self.assertIn('<a class="li" href="#d-af-tk-a4" data-id="af-tk-a4"', body)
+        self.assertIn('data-request="af-tk-a4"', body)
         # "À toi de jouer" on a delivered chantier opens its acceptance panel in place.
         self.assertIn('data-acc-open="af-conv-b"', body)
         self.assertIn('<div class="accpanel cockpit-chantier-actions" id="acc-af-conv-b" hidden>', body)
