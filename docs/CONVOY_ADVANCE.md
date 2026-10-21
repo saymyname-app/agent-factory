@@ -86,19 +86,23 @@ Benjamin's answer » below).
 
 A pass decides from the tracker alone: a second pass on the same state
 starts nothing more, because a started ticket carries its `dispatch` gate
-record. Passes are serialised Factory-wide by a lock
-(`CONVOY_ADVANCE_LOCK_DIR`, default `$XDG_RUNTIME_DIR` or `/tmp`), so two of
-them never count the same free place. A pass that finds the lock held does
-not wait for it: it answers `ok` with `skipped` (« passe déjà en cours »),
-writes nothing and exits 0. The order starts a pass while the last one
-still runs; on 20/10 01:32 to 01:56 Paris, under a load of 23 to 45 on 8
-vCPU, each new pass waited 120 to 180 s for that lock, the 300 s of the
-order ran during the wait, and five passes were killed (af-wz4dd8).
+record. Whole passes, including settlement after the starts, are serialised
+Factory-wide by a lock (`CONVOY_ADVANCE_LOCK_DIR`, default
+`$XDG_RUNTIME_DIR` or `/tmp`), so two of them never count the same free
+place or repeat the same tracker-heavy settlement. A pass that finds the
+lock held does not wait for it: it answers `ok` with `skipped` (« passe déjà
+en cours »), writes nothing and exits 0. The order starts a pass while the
+last one still runs; on 20/10 01:32 to 01:56 Paris, under a load of 23 to 45
+on 8 vCPU, each new pass waited 120 to 180 s for that lock, the 300 s of the
+order ran during the wait, and five passes were killed (af-wz4dd8). On
+21/10, releasing the lock before settlement let several passes repeat the
+same reads and writes until they exceeded the same deadline (af-ebqm1y); the
+lock now stays held through the whole pass.
 
 ## Finished tickets are merged by the pass (T18)
 
-Once the starts are made and the reviews settled (below), and outside the
-lock of the starts, the pass hands each convoy
+Once the starts are made and the reviews settled (below), under the same
+whole-pass lock, the pass hands each convoy
 that has an integration branch and a finished ticket not merged yet to
 `bin/spec-integration merge <convoy> --repo <project repository> --profile
 <project profile> --limit 1` (`docs/SPEC_INTEGRATION.md`): one ticket per
