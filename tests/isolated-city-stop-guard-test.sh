@@ -19,7 +19,9 @@
 #      session-like environment, asks gc for nothing -- without the helper,
 #      and with the helper but without the trial's GC_HOME;
 #   3. the helper itself stops the trial's city and supervisor when GC_HOME
-#      is inside the trial directory, and refuses every other case.
+#      is inside the trial directory, and refuses every other case;
+#   4. every trial disables the imported bd.dog pool, and the helper writes
+#      that patch once only inside the trial city.
 
 set -Eeuo pipefail
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
@@ -70,6 +72,8 @@ for f in "${trials[@]}"; do
     || fail "$(basename -- "$f") does not source tests/lib/isolated-city.sh"
   grep -qE '^[[:space:]]+isolated_city_stop "\$TRIAL" "\$CITY"' "$f" \
     || fail "$(basename -- "$f") does not stop its trial through isolated_city_stop"
+  grep -qE '^isolated_city_disable_dog "\$TRIAL" "\$CITY"$' "$f" \
+    || fail "$(basename -- "$f") does not disable bd.dog in its isolated city"
 done
 
 # --- 2. the incident, replayed on each trial ---------------------------------
@@ -130,5 +134,21 @@ $(cat "$CALLS")"
 ( GC_HOME="$trial/h" isolated_city_stop "$trial" "" ) || fail "the supervisor of a trial was not stopped when no city is named"
 [ "$(cat "$CALLS")" = "supervisor stop" ] || fail "a city outside the trial directory must not be stopped, got:
 $(cat "$CALLS")"
+
+# --- 4. imported maintenance agents are absent from delivery trials ----------
+city="$trial/c"
+printf '[workspace]\nprovider = "stub"\n' > "$city/city.toml"
+isolated_city_disable_dog "$trial" "$city" || fail "the bd.dog patch was refused inside the trial"
+isolated_city_disable_dog "$trial" "$city" || fail "the idempotent bd.dog patch was refused"
+[ "$(grep -c '^# isolated-city: disable bd.dog$' "$city/city.toml")" = 1 ] \
+  || fail "the bd.dog patch was not written exactly once: $(cat "$city/city.toml")"
+grep -qE '^name = "dog"$' "$city/city.toml" || fail "the bd.dog patch names no dog agent"
+grep -qE '^max_active_sessions = 0$' "$city/city.toml" || fail "the bd.dog patch does not disable the pool"
+
+before=$(cat "$city/city.toml")
+if isolated_city_disable_dog "$trial" "$TMP/elsewhere" 2>/dev/null; then
+  fail "the bd.dog patch accepted a city outside the trial"
+fi
+[ "$(cat "$city/city.toml")" = "$before" ] || fail "a refused bd.dog patch changed the trial city"
 
 echo "PASS: $SELF"

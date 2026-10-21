@@ -203,6 +203,7 @@ declare -A NAME=([$T1]=T1 [$T2]=T2 [$T3]=T3 [$O1]=O1)
 echo "relevé d'essai — bin/convoy-advance en cité isolée ($(gc version 2>/dev/null | head -1), N=$CEILING, aucun Mayor)"
 echo "convoi $CONVOY : T1=$T1 T2=$T2 T3=$T3 (T3 bloqué par T1 et T2) ; autre Spec $OTHER : O1=$O1"
 
+isolated_city_disable_dog "$TRIAL" "$CITY"
 (env -u CLAUDE_CODE_SESSION_ID gc supervisor run > "$TRIAL/supervisor.out" 2>&1 &)
 sleep 3
 gc --city "$CITY" start >/dev/null 2>&1 || true
