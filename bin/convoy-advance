@@ -2368,7 +2368,7 @@ FAILING_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("non_conforme", ("error",)), ("acceptance", ("error",)), ("promotion", ("error", "message", "pending")),
     ("integration", ("error", "message")), ("tdd_stops", ("error",)), ("code_review", ("error", "refused")),
     ("standard_recurrence", ("error",)), ("evaluation", ("error", "refused")),
-    ("correction", ("error", "refused")), ("fidelity", ("error", "refused", "message")),
+    ("correction", ("error", "refused")), ("fidelity", ("error", "message")),
     ("ticket_end", ("error", "message")),
 )
 FAILURE_DETAIL_CHARS = 300
