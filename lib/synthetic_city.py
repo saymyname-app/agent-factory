@@ -28,7 +28,7 @@ import html
 import json
 import re
 import unicodedata
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -92,7 +92,17 @@ class SyntheticCity:
     # the home of the launch; a value that names one says `HOME_MARK` for
     # that home (bin/cockpit-isolated writes them and says where).
     files: dict = field(default_factory=dict)
+    # How a door of the Factory answers in the launch (`doors`): by its name
+    # in `DOORS`, `expires` or `records-then-expires`; a door not named
+    # acts on the tracker of the launch as it does in service.
+    doors: dict = field(default_factory=dict)
 
+
+# The doors of the Factory an isolated cockpit runs, and how a dataset may
+# say one answers: it never does (`expires`), or it writes its record, then
+# never answers (`records-then-expires`).
+DOORS = ("proposal-door", "escalation-door", "loop-guard", "gc")
+DOOR_ANSWERS = ("expires", "records-then-expires")
 
 # Where a value of a source names a file of `SyntheticCity.files`.
 HOME_MARK = "@home/"
@@ -109,13 +119,28 @@ def from_dataset(dataset) -> SyntheticCity:
     name = ui.get("id") or dataset.get("state")
     if not isinstance(name, str) or not name.strip():
         raise DatasetRefused("names no state (ui.id, or state)")
+    doors = _doors(dataset.get("doors"))
     if "fixtures" in dataset:
-        return _runs_city(name, at, ui, dataset["fixtures"])
-    if "tracker" in dataset:
-        return _tracker_city(name, dataset["tracker"])
-    return _panorama_city(name, _fixed_time(at), ui, dataset.get("visible_text"), _folded(dataset.get("folded")),
-                          _folded(dataset.get("drawn"), "drawn"), _run_cards(dataset.get("runs")),
-                          _result_values(dataset.get("result")))
+        city = _runs_city(name, at, ui, dataset["fixtures"])
+    elif "tracker" in dataset:
+        city = _tracker_city(name, dataset["tracker"])
+    else:
+        city = _panorama_city(name, _fixed_time(at), ui, dataset.get("visible_text"), _folded(dataset.get("folded")),
+                              _folded(dataset.get("drawn"), "drawn"), _run_cards(dataset.get("runs")),
+                              _result_values(dataset.get("result")))
+    return replace(city, doors=doors)
+
+
+def _doors(doors) -> dict:
+    """How the doors named in `doors` answer: each a door of `DOORS`, each
+    answer one of `DOOR_ANSWERS`."""
+    if doors is None:
+        return {}
+    if not isinstance(doors, dict) or not all(
+            door in DOORS and answer in DOOR_ANSWERS for door, answer in doors.items()):
+        raise DatasetRefused(f"its doors (doors) are not each a door of {', '.join(DOORS)} "
+                             f"and how it answers: {', '.join(DOOR_ANSWERS)}")
+    return dict(doors)
 
 
 def _folded(folded, key="folded") -> dict:

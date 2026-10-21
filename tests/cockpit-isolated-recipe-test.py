@@ -88,6 +88,14 @@ class TheDatasetItself(Refusals):
     def test_a_screen_no_rule_reads_is_refused(self):
         self.assertRefused(panorama("Paramètres", "Thème"), r"a screen no rule reads: « Paramètres »")
 
+    def test_doors_that_are_not_each_a_door_and_how_it_answers_are_refused(self):
+        # B (af-4uzgzm): a dataset may say a door of the Factory expires, or
+        # expires once its record is written; nothing else.
+        dataset = {**panorama("Journal"), "doors": {"proposal-door": "answers twice"}}
+        self.assertRefused(dataset, r"its doors \(doors\) are not each a door of proposal-door")
+        dataset = {**panorama("Journal"), "doors": {"merge-door": "expires"}}
+        self.assertRefused(dataset, r"its doors \(doors\) are not each a door of proposal-door")
+
     def test_a_runs_state_whose_fixtures_cannot_be_read_is_refused(self):
         dataset = {"synthetic": True, "generated_at": AT, "state": "runs-active", "ui": {},
                    "fixtures": {"lanes": [], "runs": [{"id": "r1", "title": "Un run"}]}}

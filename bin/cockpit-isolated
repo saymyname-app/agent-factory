@@ -16,9 +16,15 @@ synthetic sources only:
 - a synthetic tracker (`tests/fixtures/cockpit/requests/fake-bd`) and the
   projects declared for this launch alone;
 - an empty environment: a temporary HOME, no local settings file, so no
-  secret, no notification, no heartbeat and no project clone; the doors
-  that change the Factory are replaced by a command that refuses. Only the
-  mark of the launch (`FACTORY_LAUNCH_ID`) is kept from the launcher's.
+  secret, no notification, no heartbeat and no project clone. Only the mark
+  of the launch (`FACTORY_LAUNCH_ID`) is kept from the launcher's;
+- the doors that change the Factory (`bin/proposal-door`,
+  `bin/escalation-door`, `bin/factory-session-loop-guard`, `gc order run`)
+  are the real ones, run on the tracker of the launch through a synthetic
+  `gc` (`tests/fixtures/cockpit/synthetic-city/`): a gesture is recorded
+  there as in service, and read back from there (B, af-4uzgzm). A dataset
+  may say a door expires, or expires once its record is written
+  (`doors`), and the cockpit gives up on a door after a few seconds.
 
 What those sources answer is what the named dataset says, and nothing else:
 `lib/synthetic_city.py` translates its content (`docs/COCKPIT.md`, « State
@@ -36,6 +42,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import shutil
 import signal
 import sys
@@ -52,8 +59,23 @@ sys.path.insert(0, str(ROOT / "lib"))
 
 import synthetic_city  # noqa: E402
 
-# A door that changes the Factory: refused, whatever is asked of it.
-REFUSING_DOOR = "/bin/false"
+# The tracker, the `gc` and the doors of the launch.
+SYNTHETIC = FIXTURES / "synthetic-city"
+# The doors of the Factory the cockpit calls, by their name in a dataset:
+# what each one is, and the variable that tells the cockpit where it is.
+DOORS = {
+    "proposal-door": (ROOT / "bin" / "proposal-door", "COCKPIT_PROPOSAL_DOOR_BIN"),
+    "escalation-door": (ROOT / "bin" / "escalation-door", "COCKPIT_ESCALATION_DOOR_BIN"),
+    "loop-guard": (ROOT / "bin" / "factory-session-loop-guard", "COCKPIT_LOOP_GUARD_BIN"),
+    "gc": (SYNTHETIC / "gc", "COCKPIT_GC_BIN"),
+}
+# How long the cockpit waits for a door before it says its command expired:
+# a door of the launch answers within a second.
+ACTION_TIMEOUT_SECONDS = "5"
+# How long the main sources stay silent before the cockpit says the Factory
+# muette: long enough that a state that falls silent (home-stale,
+# home-offline) is first seen as it is drawn, short enough to be waited for.
+SILENCE_ALERT_SECONDS = "20"
 # The synthetic sources never change by themselves: read them every second,
 # so the cockpit shows its state soon after it is asked. At 0.2 s each launch
 # cost about 1.6 core in tracker reads alone (one Python process per read):
@@ -144,7 +166,7 @@ def write_tracker_and_projects(city: synthetic_city.SyntheticCity, home: str) ->
             json.dumps(descriptor, ensure_ascii=False), encoding="utf-8"
         )
     env = {
-        "COCKPIT_BD_BIN": str(FIXTURES / "requests" / "fake-bd"),
+        "COCKPIT_BD_BIN": str(SYNTHETIC / "bd"),
         "FAKE_BD_STATE_FILE": str(beads),
         "COCKPIT_DESCRIPTORS_DIR": str(projects),
     }
@@ -155,6 +177,28 @@ def write_tracker_and_projects(city: synthetic_city.SyntheticCity, home: str) ->
         # A tracker that answers no read, and a cockpit that waits for it.
         env["COCKPIT_BD_BIN"] = str(FIXTURES / "requests" / "silent-bd")
         env["COCKPIT_BEADS_READ_TIMEOUT_SECONDS"] = UNANSWERED_READ_TIMEOUT_SECONDS
+    return env
+
+
+def write_doors(city: synthetic_city.SyntheticCity, home: str) -> dict[str, str]:
+    """The doors of the launch, in `home`: each the real door, or the way
+    the dataset says it answers; the environment that makes the cockpit
+    and the doors use them, and the tracker of the launch."""
+    doors = Path(home, "doors")
+    doors.mkdir()
+    env = {
+        "GC_BIN": str(SYNTHETIC / "gc"),
+        "FACTORY_SESSION_LOOP_GUARD_LOG": os.path.join(home, "factory-session-loop-guard.log"),
+        "COCKPIT_ACTION_TIMEOUT_SECONDS": ACTION_TIMEOUT_SECONDS,
+    }
+    for name, (real, variable) in DOORS.items():
+        how = city.doors.get(name, "acts")
+        door = doors / name
+        door.write_text("#!/bin/sh\nexec %s %s %s %s \"$@\"\n" % (
+            shlex.quote(sys.executable), shlex.quote(str(SYNTHETIC / "door")), how, shlex.quote(str(real))),
+            encoding="utf-8")
+        door.chmod(0o755)
+        env[variable] = str(door)
     return env
 
 
@@ -196,16 +240,14 @@ def main(argv: list[str]) -> int:
         "COCKPIT_PID_FILE": os.path.join(home, "cockpit.pid"),
         "COCKPIT_LOCAL_CONFIG": os.path.join(home, "absent.json"),
         "COCKPIT_GC_BASE_URL": supervisor_url,
-        "COCKPIT_GC_BIN": REFUSING_DOOR,
-        "COCKPIT_ESCALATION_DOOR_BIN": REFUSING_DOOR,
-        "COCKPIT_PROPOSAL_DOOR_BIN": REFUSING_DOOR,
-        "COCKPIT_LOOP_GUARD_BIN": REFUSING_DOOR,
+        "COCKPIT_SILENCE_ALERT_SECONDS": SILENCE_ALERT_SECONDS,
         "COCKPIT_GC_STATUS_POLL_SECONDS": POLL_SECONDS,
         "COCKPIT_BEADS_POLL_SECONDS": POLL_SECONDS,
         "COCKPIT_PROJECTS_POLL_SECONDS": POLL_SECONDS,
         "COCKPIT_JOURNAL_POLL_SECONDS": POLL_SECONDS,
         "COCKPIT_SESSIONS_POLL_SECONDS": POLL_SECONDS,
         **write_tracker_and_projects(city, home),
+        **write_doors(city, home),
     }
     if LAUNCH_MARK in os.environ:
         env[LAUNCH_MARK] = os.environ[LAUNCH_MARK]
