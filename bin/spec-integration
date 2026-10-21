@@ -73,6 +73,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 from contextlib import ExitStack, contextmanager
@@ -163,11 +164,20 @@ def last_lines(text: str, limit: int = MAX_DETAIL) -> str | None:
 
 
 def run(argv: list[str], cwd: Path | None = None, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
+    """In a session of its own: past its timeout, everything it started is
+    killed with it (a regression run leaves no cockpit or browser behind)."""
     try:
-        return subprocess.run(
-            argv, capture_output=True, text=True, errors="replace", stdin=subprocess.DEVNULL, cwd=cwd, timeout=timeout)
+        proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace",
+                                stdin=subprocess.DEVNULL, cwd=cwd, start_new_session=True)
     except OSError as exc:
         raise Refusal(f"impossible de lancer {Path(argv[0]).name} : {exc}") from exc
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        proc.communicate()
+        raise
+    return subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)
 
 
 def detail_of(proc: subprocess.CompletedProcess[str]) -> str:
