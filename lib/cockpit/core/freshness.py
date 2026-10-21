@@ -20,11 +20,9 @@ VALIDITY_WINDOWS_SECONDS = {
     # Computed from Beads: same window as Beads itself.
     "projets": 300,
     "journal": 300,
-    # The runs: ticket beads, same window as Beads.
+    # The runs: ticket beads and the convoys of their results, same window
+    # as Beads.
     "runs": 300,
-    # The results whose merge the flow proved, read by the Analyses: beads
-    # too.
-    "results": 300,
     # Agents at work: read from gc, same window as gc.
     "sessions": 120,
     # The Tailscale key's expiry changes once in months: read hourly.

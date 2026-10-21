@@ -2,7 +2,7 @@
 the sources the cockpit reads (D, af-ten1sp; Spec af-fgcw0d, user stories
 148, 149 and 150).
 
-    view = analyses(snapshot, requests, now)
+    view = analyses(snapshot, now)
 
 One call gives everything the Analyses show, and what the overview reuses
 (ticket K): over the seven days that end today (Paris),
@@ -18,11 +18,11 @@ One call gives everything the Analyses show, and what the overview reuses
   list.
 
 The sources are those the cockpit reads: the runs (``runs``: a ticket is
-delivered on its merge into the integration branch), the journal
-(``journal``: the decisions answered), the requests (the decisions open),
-GitHub (``github``: a CI run counts on its conclusion), and the results
-whose merge the flow proved (``results``: ``gc.flow.promotion``), which
-neither a run nor the journal holds. Only a fresh source gives a value
+delivered on its merge into the integration branch, a result is merged on
+the proof of its merge, ``gc.flow.promotion``, that ends the run of its
+delivery), the journal (``journal``: the decisions open and those
+answered) and GitHub (``github``: a CI run counts on its conclusion). Only
+a fresh source gives a value
 (GLOSSARY.md, Freshness): one not read yet, failing or stale gives none,
 never a zero nor its last known value, and says why; a count is never a
 percentage.
@@ -37,7 +37,7 @@ from datetime import datetime, timedelta, timezone
 
 from cockpit.core.freshness import FRESH, STALE
 from cockpit.core.readmodel import PARIS
-from cockpit.requests.journal import entries_from_value
+from cockpit.requests.journal import entries_from_value, open_from_value
 from cockpit.runs.derive import RUNS_LIMIT, runs_from_beads
 
 DAYS = 7
@@ -55,22 +55,17 @@ NO_REPOSITORY = "aucun dépôt GitHub n’est déclaré pour la CI du cockpit (r
 # ended, once its read failed, once its value is older than its Validity
 # window.
 UNREAD = {
-    "results": ("les résultats du flux sont en cours de lecture", "les résultats du flux n’ont pas pu être lus",
-                "les résultats du flux ne sont plus à jour"),
     "runs": ("les runs sont en cours de lecture", "les runs n’ont pas pu être lus", "les runs ne sont plus à jour"),
     "journal": ("le journal est en cours de lecture", "le journal n’a pas pu être lu", "le journal n’est plus à jour"),
-    "beads": ("les demandes sont en cours de lecture", "les demandes n’ont pas pu être lues",
-              "les demandes ne sont plus à jour"),
     "github": ("GitHub est en cours de lecture", "GitHub n’a pas répondu", "la CI GitHub n’est plus à jour"),
 }
 # The ways of the journal that answer a decision (cockpit.ui.journal).
 ANSWERING = ("escalation-door", "cockpit")
 
 
-def analyses(snapshot, requests, now, days=DAYS):
+def analyses(snapshot, now, days=DAYS):
     """What the Analyses show over the ``days`` days that end on the day of
-    ``now`` (Paris), from the read model's ``snapshot`` and the ``requests``
-    the cockpit lists. See the module."""
+    ``now`` (Paris), from the read model's ``snapshot``. See the module."""
     span = _days(now, days)
     period = "%d jours, du %s au %s (Paris)" % (days, span[0].strftime("%d/%m"), span[-1].strftime("%d/%m"))
     within = lambda at: at is not None and span[0] <= _day(at) <= span[-1]
@@ -81,20 +76,20 @@ def analyses(snapshot, requests, now, days=DAYS):
         reasons["github"] = NO_REPOSITORY
     value = lambda name: None if reasons[name] else rows[name]["value"]
 
-    results_reason = reasons["results"]
-    results = sorted((r for r in map(_result, value("results") or []) if r and within(r["merged"])),
-                     key=lambda r: -r["merged"])
-    for result in results:
-        result["project"] = names.get(result["project"], result["project"])
-
-    # A ticket is delivered on its merge into the integration branch, as its
-    # run says. The runs are the most recently updated ones: when as many as
-    # the cockpit keeps were updated within the period, older merges of the
-    # period may be missing, and none is counted.
+    # A ticket is delivered on its merge into the integration branch, and a
+    # result merged on the proof of its merge, as their runs say. The runs
+    # are the most recently updated ones: when as many as the cockpit keeps
+    # were updated within the period, older merges of the period may be
+    # missing, and none is counted.
     runs_reason = reasons["runs"]
     if not runs_reason and _truncated(value("runs"), span[0]):
         runs_reason = "plus de %d runs mis à jour sur la période : le cockpit n’en garde que %d" % (
             RUNS_LIMIT, RUNS_LIMIT)
+    results_reason = runs_reason
+    results = [] if runs_reason else sorted(
+        (r for r in map(_result, value("runs")) if r and within(r["merged"])), key=lambda r: -r["merged"])
+    for result in results:
+        result["project"] = names.get(result["project"], result["project"])
     tickets = [] if runs_reason else [
         event["at"] for run in runs_from_beads(value("runs"), now) for event in run["events"]
         if event["text"].startswith("Fusionné") and within(event["at"])]
@@ -108,8 +103,10 @@ def analyses(snapshot, requests, now, days=DAYS):
     pulls = [at for at in (_ts(pull.get("merged_at")) for pull in github.get("pull_requests") or []
                            if isinstance(pull, dict)) if within(at)]
 
-    decisions_reason = reasons["beads"]
     journal_reason = reasons["journal"]
+    decisions = [] if journal_reason else [
+        {"quoi": decision["quoi"], "projet": names.get(decision["projet"], decision["projet"])}
+        for decision in open_from_value(value("journal"))]
     answered = None if journal_reason else sorted(
         ({"title": entry.demande or entry.quoi, "answer": entry.quoi, "at": _ts(entry.quand)}
          for entry in entries_from_value(value("journal"))
@@ -130,24 +127,24 @@ def analyses(snapshot, requests, now, days=DAYS):
     totals = [r["merged"] - r["published"] for r in results if r["published"] is not None]
     repository = github.get("repository") or ""
 
-    results_sources = "les résultats de chantier du flux de livraison, lus sur le tracker"
+    results_sources = "runs des livraisons, lus sur le tracker"
     indicators = {
         DECISIONS: _indicator(
-            DECISIONS, None if decisions_reason else str(len(requests)), decisions_reason,
-            population="les décisions qui t’attendent : propositions, questions et résultats à juger, "
+            DECISIONS, None if journal_reason else str(len(decisions)), journal_reason,
+            population="les décisions qui t’attendent : questions, propositions et résultats à juger, "
                        "ouvertes maintenant",
             period="%s ; une décision ouverte est comptée tant qu’elle attend, même posée avant" % period,
-            sources="les demandes du cockpit, lues sur le tracker ; les décisions répondues, au journal",
-            read=_read(rows["beads"]),
-            calculation="le nombre de demandes ouvertes, comme sur la Vue d’ensemble ; une demande répondue ne "
-                        "compte plus, elle est au journal"),
+            sources="le journal des décisions, lu sur le tracker : les décisions posées et leurs réponses",
+            read=_read(rows["journal"]),
+            calculation="le nombre de décisions posées que le journal ne dit pas répondues ; une décision "
+                        "répondue ne compte plus, elle est listée parmi les décisions répondues"),
         RESULTS: _indicator(
             RESULTS, None if results_reason else str(len(results)), results_reason,
             population="les résultats de chantier dont la fusion est prouvée ; les PR et les tickets ne sont "
                        "pas des résultats",
-            period=period, sources="la preuve de fusion (gc.flow.promotion) des %s ; les tickets livrés, aux "
-                                   "runs" % results_sources,
-            read=_read(rows["results"]),
+            period=period, sources="la preuve de fusion (gc.flow.promotion) qui clôt le run de chaque "
+                                   "livraison, aux %s ; les tickets livrés, aux mêmes runs" % results_sources,
+            read=_read(rows["runs"]),
             calculation="le nombre de résultats fusionnés, un par preuve de fusion, compté le jour de la fusion "
                         "(Paris)"),
         DELAY: _indicator(
@@ -155,7 +152,7 @@ def analyses(snapshot, requests, now, days=DAYS):
             results_reason or (None if totals else "aucun résultat fusionné sur la période"),
             population="les %d résultats fusionnés de la période" % len(results),
             period=period, sources="la publication du graphe, la livraison, l’acceptation et la preuve de fusion "
-                                   "des %s" % results_sources, read=_read(rows["results"]),
+                                   "de chaque résultat, aux %s" % results_sources, read=_read(rows["runs"]),
             calculation="la médiane des délais de la publication du graphe à la preuve de fusion ; chaque portion "
                         "est la médiane de ses propres délais, mesurée sur les résultats qui la datent : elles ne "
                         "s’additionnent pas"),
@@ -178,7 +175,7 @@ def analyses(snapshot, requests, now, days=DAYS):
          "reason": github_reason},
     ]
     return {"days": span, "period": period, "indicators": indicators, "volumes": volumes, "results": results,
-            "portions": portions, "decisions": [] if decisions_reason else list(requests),
+            "portions": portions, "decisions": decisions,
             "answered": answered, "answered_reason": journal_reason, "now": now}
 
 

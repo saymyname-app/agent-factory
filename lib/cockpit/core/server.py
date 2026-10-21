@@ -470,9 +470,8 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         (cockpit.analyses.indicators)."""
         snapshot = read_model.snapshot()
         now = read_model.now()
-        requests, _, _ = self._assemble_requests(snapshot, now)
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
-        main = render_analyses(analyses(snapshot, requests, now), (query.get("vue") or [None])[0])
+        main = render_analyses(analyses(snapshot, now), (query.get("vue") or [None])[0])
         self._send_page(read_model, "analyses", main, extra_css=ANALYSES_CSS, snapshot=snapshot)
 
     def _send_factory_page(self, read_model):

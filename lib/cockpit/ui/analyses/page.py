@@ -146,9 +146,9 @@ def _decisions(data, indicator, anchors):
         anchors("strong"), "%d décision%s ouverte%s" % (count, "s" * (count > 1), "s" * (count > 1))
         if count else "Aucune décision ouverte")
     items = "".join('<div %s><strong %s>%s</strong><small %s>%s</small></div>'
-                    % (anchors("div"), anchors("strong"), _e(request.quoi), anchors("small"),
-                       _e(request.projet or "Sans projet"))
-                    for request in data["decisions"])
+                    % (anchors("div"), anchors("strong"), _e(decision["quoi"]), anchors("small"),
+                       _e(decision["projet"] or "Sans projet"))
+                    for decision in data["decisions"])
     link = '<p><a class="an-link" href="/#pn-inbox">Répondre depuis la Vue d’ensemble</a></p>' if count else ""
     return headline, ('<div class="an-history" %s>%s</div>' % (anchors("metrics-history"), items) if items else "") + \
         link + _answered(data)

@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from cockpit.core.readmodel import PARIS
 
 MODELS = "gc.flow.models"
+MARK, PROMOTION = "gc.flow.mark", "gc.flow.promotion"
 # How many runs the cockpit keeps: the most recently updated.
 RUNS_LIMIT = 200
 READ_TIMEOUT_SECONDS = 20
@@ -33,15 +34,23 @@ LIVE, WAIT, DONE, STOPPED = "live", "wait", "done", "stopped"
 
 
 def read_runs(bd_bin="bd", timeout=READ_TIMEOUT_SECONDS, limit=RUNS_LIMIT):
-    """The ticket beads a delivery agent was launched on, the ``limit`` most
-    recently updated, with their metadata (the same read shape as the other
-    sources: every bead bearing the key)."""
-    completed = subprocess.run(
-        [bd_bin, "list", "--all", "--limit", "0", "--has-metadata-key", MODELS, "--json"],
-        capture_output=True, text=True, timeout=timeout, check=True,
-    )
-    beads = [b for b in json.loads(completed.stdout) if isinstance(b, dict)]
-    return sorted(beads, key=lambda b: b.get("updated_at") or "", reverse=True)[:limit]
+    """The beads of the runs, the ``limit`` most recently updated, with
+    their metadata (the same read shape as the other sources: every bead
+    bearing the key): the ticket beads a delivery agent was launched on,
+    and the convoys the delivery flow marked whose result it merged
+    (``gc.flow.promotion``) -- the end of the run of a delivery, which no
+    ticket holds (D, af-ten1sp: the Analyses count the results merged and
+    their delay there). A convoy draws no run of its own here."""
+    by_id = {}
+    for key in (MODELS, MARK):
+        completed = subprocess.run(
+            [bd_bin, "list", "--all", "--limit", "0", "--has-metadata-key", key, "--json"],
+            capture_output=True, text=True, timeout=timeout, check=True,
+        )
+        for bead in json.loads(completed.stdout):
+            if isinstance(bead, dict) and (key == MODELS or (bead.get("metadata") or {}).get(PROMOTION)):
+                by_id.setdefault(bead.get("id"), bead)
+    return sorted(by_id.values(), key=lambda b: b.get("updated_at") or "", reverse=True)[:limit]
 
 
 def runs_from_beads(beads, now):

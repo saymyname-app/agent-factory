@@ -1,7 +1,8 @@
 """The Analyses of the launched cockpit (D, af-ten1sp), read at GET
 /analyses: the CI its local settings file declares, every page of what
-GitHub answers, and a source gone stale or never readable, which no
-indicator presents as current.
+GitHub answers, the runs and the journal the indicators are computed from,
+and a source gone stale or never readable, which no indicator presents as
+current.
 
 Each case starts the cockpit process (bin/cockpit run) on fake sources --
 the fake gc supervisor, the fake tracker of the requests
@@ -144,7 +145,7 @@ class AnalysesOfTheLaunchedCockpitTest(unittest.TestCase):
             except OSError:
                 pass
             time.sleep(0.05)
-        self.fail("the source %s never became %s" % (source, state))
+        self.fail("the source %s never became %s: %s" % (source, state, self.get("/api/status")))
 
     # --- the CI the cockpit reads ------------------------------------------------
 
@@ -192,16 +193,42 @@ class AnalysesOfTheLaunchedCockpitTest(unittest.TestCase):
         self.assertRegex(text, r"Raison : la CI GitHub n’est plus à jour \(dernière lecture le \d\d/\d\d à \d\d:\d\d "
                                r"\(Paris\)\)")
 
-    def test_merged_results_gone_stale_are_not_presented_as_current(self):
+    def test_the_merged_results_are_read_from_the_runs_and_not_presented_as_current_once_stale(self):
+        """The run of a delivery holds the proof of its merge: once the runs
+        are older than their Validity window, neither the merged results
+        nor the delay are shown, and the runs are why."""
         self.write_tracker([merged_result("Export des notes", ago(hours=3), ago(hours=1))])
-        self.start(COCKPIT_VALIDITY_RESULTS_SECONDS="2")
+        self.start(COCKPIT_VALIDITY_RUNS_SECONDS="2")
         self.assertIn("1 résultat sur sept jours", self.until("resultats", lambda text: "1 résultat" in text))
+        self.assertIn("2 h 00", self.until("delais", lambda text: "Délai médian" in text))
         self.tracker_down.touch()
-        self.until_fresh_then("results", "stale")
+        self.until_fresh_then("runs", "stale")
         text = self.page("resultats")
         self.assertNotIn("1 résultat sur sept jours", text, "a stale count of the results is presented as current")
         self.assertIn("Résultats indisponibles", text)
-        self.assertRegex(text, r"Raison : les résultats du flux ne sont plus à jour \(dernière lecture le \d\d/\d\d à "
+        self.assertRegex(text, r"Raison : les runs ne sont plus à jour \(dernière lecture le \d\d/\d\d à "
+                               r"\d\d:\d\d \(Paris\)\)")
+        delay = self.page("delais")
+        self.assertNotIn("2 h 00", delay, "a stale delay is presented as current")
+        self.assertIn("Raison : les runs ne sont plus à jour", delay)
+
+    def test_the_open_decisions_are_read_from_the_journal_and_not_presented_as_current_once_stale(self):
+        """The journal holds every decision asked of Benjamin: once it is
+        older than its Validity window, the open decisions are not counted,
+        and the journal is why."""
+        self.write_tracker([{"id": "af-question", "title": "Nommer la page", "issue_type": "task", "status": "open",
+                             "created_at": ago(hours=2), "notes": "NEEDS BENJAMIN: Nommer la page",
+                             "metadata": {"gc.needs_benjamin": "Nommer la page",
+                                          "gc.escalation_pourquoi": "le nom de la page est à choisir",
+                                          "gc.escalation_horodatage": ago(hours=2)}}])
+        self.start(COCKPIT_VALIDITY_JOURNAL_SECONDS="2")
+        self.assertIn("1 décision ouverte", self.until("activite", lambda text: "1 décision ouverte" in text))
+        self.tracker_down.touch()
+        self.until_fresh_then("journal", "stale")
+        text = self.page("activite")
+        self.assertNotIn("1 décision ouverte", text, "a stale count of the decisions is presented as current")
+        self.assertIn("Décisions indisponibles", text)
+        self.assertRegex(text, r"Raison : le journal n’est plus à jour \(dernière lecture le \d\d/\d\d à "
                                r"\d\d:\d\d \(Paris\)\)")
 
     def test_github_never_answering_gives_no_rate_and_says_when_it_was_tried(self):
