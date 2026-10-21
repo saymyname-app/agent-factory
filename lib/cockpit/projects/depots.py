@@ -25,7 +25,8 @@ from pathlib import Path
 
 from cockpit.projects import promotion
 from cockpit.projects.model import RoadmapStep
-from cockpit.projects.roadmap import RoadmapReadError, pick_current_step, read_steps
+from cockpit.projects.release import ReleaseError, parse_release, release_path
+from cockpit.projects.roadmap import RoadmapReadError, pick_current_step, read_at_default_branch, read_steps
 
 REPO_URL_TEMPLATE = "https://github.com/%s.git"
 CLONE_TIMEOUT_SECONDS = 180
@@ -68,32 +69,57 @@ def read_rig_repos(rig_files_dir):
     return out
 
 
+def read_release(clone, roadmap_path, git_bin="git"):
+    """The release plan of a project in its clone (E, af-8rbceu;
+    :mod:`cockpit.projects.release`), as plain data: ``{"state": "read",
+    "plan", "path"}``, ``{"state": "absent", "path"}`` when the knowledge
+    repository holds none, ``{"state": "unreadable", "path", "reason"}``."""
+    path = release_path(roadmap_path)
+    try:
+        text, _ = read_at_default_branch(clone, path, git_bin=git_bin)
+        if text is None:
+            return {"state": "absent", "path": path}
+        return {"state": "read", "plan": parse_release(text), "path": path}
+    except (RoadmapReadError, ReleaseError) as exc:
+        return {"state": "unreadable", "path": path, "reason": str(exc)}
+
+
 def read_depots(descriptors, rig_repos, clones_dir, url_template=REPO_URL_TEMPLATE, git_bin="git"):
     """One read. Returns plain data: ``{"roadmaps": {project_id: {"ok",
-    "step"}}, "steps": {project_id: [{"id", "status"}]}, "ecarts":
-    {project_id: {rig: n or None}}}``. Raises only when not a single clone
-    could be read -- then the whole source is failing, not one project."""
-    roadmaps, steps_by_project, ecarts = {}, {}, {}
+    "step", "changed_at"}}, "steps": {project_id: [{"id", "title",
+    "status"}]}, "releases": {project_id: read_release(…), or {"state":
+    "undeclared"} for a project that declares no knowledge repository},
+    "ecarts": {project_id: {rig: n or None}}}``. Raises only when not a
+    single clone could be read -- then the whole source is failing, not one
+    project."""
+    roadmaps, steps_by_project, releases, ecarts = {}, {}, {}, {}
     attempts = successes = 0
     for descriptor in descriptors:
         project_id = descriptor["project_id"]
+        releases[project_id] = {"state": "undeclared"}
         if descriptor.get("knowledge_repo") and descriptor.get("roadmap_path"):
             attempts += 1
             try:
                 clone = ensure_clone(clones_dir, descriptor["knowledge_repo"], url_template, git_bin)
                 steps = read_steps(clone, descriptor["roadmap_path"], git_bin=git_bin)
+                _, changed_at = read_at_default_branch(clone, descriptor["roadmap_path"], git_bin=git_bin)
                 step = pick_current_step(steps)
                 roadmaps[project_id] = {
                     "ok": True,
                     "step": {"id": str(step.get("id", "")), "title": str(step.get("title", "")), "status": str(step.get("status", ""))},
+                    "changed_at": changed_at,
                 }
                 steps_by_project[project_id] = [
-                    {"id": str(s.get("id", "")), "title": str(s.get("title", "")), "status": str(s.get("status", ""))}
+                    {"id": str(s.get("id", "")), "title": str(s.get("title", "")), "status": str(s.get("status", "")),
+                     "order": s.get("order") if isinstance(s.get("order"), int) else 0}
                     for s in steps
                 ]
+                releases[project_id] = read_release(clone, descriptor["roadmap_path"], git_bin=git_bin)
                 successes += 1
-            except RoadmapReadError:
+            except RoadmapReadError as exc:
                 roadmaps[project_id] = {"ok": False, "step": None}
+                releases[project_id] = {"state": "unreadable", "path": release_path(descriptor["roadmap_path"]),
+                                        "reason": str(exc)}
         for rig, branches in sorted((descriptor.get("promotion_branch") or {}).items()):
             attempts += 1
             n = None
@@ -109,7 +135,7 @@ def read_depots(descriptors, rig_repos, clones_dir, url_template=REPO_URL_TEMPLA
             ecarts.setdefault(project_id, {})[rig] = n
     if attempts and not successes:
         raise RoadmapReadError("aucun dépôt de projet lisible")
-    return {"roadmaps": roadmaps, "steps": steps_by_project, "ecarts": ecarts}
+    return {"roadmaps": roadmaps, "steps": steps_by_project, "releases": releases, "ecarts": ecarts}
 
 
 def apply_to_projects(projects, row):

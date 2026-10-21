@@ -902,8 +902,10 @@ clone a test had made; nothing made the cockpit's clones or called them.
 - one clone per repository under `clones_dir`, made with
   `git clone --no-checkout` and only ever fetched — no file of a project
   is written anywhere, nothing is pushed (spec « lecture seule »);
-- each project's current Roadmap Step, from `roadmap_path` on the default
-  branch of its `knowledge_repo` (descriptor);
+- each project's current Roadmap Step, every step and the date of the
+  last change of the roadmap, from `roadmap_path` on the default branch of
+  its `knowledge_repo` (descriptor), and its release plan, `release.toml`
+  beside it (E, af-8rbceu: read, absent or unreadable, with why);
 - « <rig> : dev a N commits d'avance » for each rig with a
   `promotion_branch`, from the rig's repository (`config/projects/<rig>.toml`,
   `repo`).
@@ -1049,8 +1051,8 @@ ways:
   section, under its heading, labelled `said`, whose description is the
   lines of the section in their order. The cockpit has no source yet for
   the measures of the machine, the connections, the configuration of the
-  roles, the steps of a stop, the clean-up, the indicators, the next release
-  of a project, its roadmap or the analyses: the tracker holds what the
+  roles, the steps of a stop, the clean-up, the indicators or the analyses:
+  the tracker holds what the
   dataset says of each until the ticket of that screen reads it into records
   of its own.
 
@@ -1059,12 +1061,12 @@ ways:
 | the state it is: `ui.id` (Panorama), `state` (Runs) | the supervisor's city bears that name | `GET /api/status`, `gc.value.city` |
 | « Vue d’ensemble »: « Décisions à prendre N », then N lines under « Ce qui t’attend », each with « projet · nature » | one open bead per line that asks the operator (title, project, nature, the fixed time of the dataset) | `beads.value`; `GET /api/requests` |
 | « Vue d’ensemble »: the dossier open under those lines (« projet · sujet », its title, what it shows), and the state of the result when `ui.state` names one (`ready`, `dossier`, `outdated`, `outage`, `accepted`, `merging`, `merged`, `abandoned`, `findings`, `returned`, `repairing`, `conflict`; none is a result to judge), and what the result says of itself (`result`: its commits, the times of its records, the words of the answer, the reason of an abandon -- required for `abandoned` -- unsaid, those of the reference) | the records the D01 commands write on the convoy of its chantier (A1): the new-flow mark, the result delivered, its dossier, the request of the acceptance and, by state, the answer, the promotion, the closing; the request of its project the page lists becomes the convoy's while the result waits for a judgement, and is gone once answered; the title of its Spec is what the dossier first says; the page of its dossier, one rubric per part that unfolds (« Ce qui reste à vérifier » as « Ce qui n'a PAS été vérifié »), its lines in `folded`, written in the home of the launch (`SyntheticCity.files`) -- the parts that open and the bar are the cockpit's own. `request` and `confirmation` open a decision: their dossier stays one open bead `synthetic-dossier` | `beads.value`; `GET /` |
-| a tracker the commands of the flow wrote (`tracker`: `{"beads": {id: bead}}`, as the fake `gc` of `tests/fixtures/convoy-state` holds it), with `ui.id` | its beads, as they are; one declared project per `gc.project_id` they name, under that key | `beads.value`; `GET /`; `GET /projet/<key>` |
+| a tracker the commands of the flow wrote (`tracker`: `{"beads": {id: bead}}`, as the fake `gc` of `tests/fixtures/convoy-state` holds it), with `ui.id`; the descriptors of its projects (`projects`, optional) and where their knowledge repositories are (`repos`, optional: `{knowledge_repo: absolute path of a Git repository on this host}`) | its beads, as they are; each descriptor declared as it is, and one project per other `gc.project_id` the beads name, under that key; each knowledge repository read through a link to it in the home of the launch | `beads.value`; `depots.value`; `GET /`; `GET /projet/<key>` |
 | « Vue d’ensemble »: the cards under « Projets » (name, « chantier · étape », then the figures of the card) | one declared project per name; one open chantier per project, under its title, whose description is the stage and the other lines of the card, and whose `gc.project_card` is the stage, the figures and, last, the line of the release | `projets.value.projects`; `GET /api/projects`; `beads.value`; `GET /` |
 | « Vue d’ensemble »: the four indicators | one bead kept as said per indicator (value, period) | `beads.value` |
 | a drawing of the screen: `drawn` under « Activité sur 7 jours », one line a day and a series | one bead kept as said under that heading, whose description is those lines | `beads.value`; `GET /` |
 | « Vue d’ensemble »: `runs`, the cards under « Derniers runs » (workflow, status and its tone, title, step, start, elapsed seconds, lanes with the start and end of each job) | one bead `synthetic-run-card-N` per card, under the title of its run, whose `gc.run_card` is the card | `beads.value`; `GET /` |
-| the page of a project (« ← Projets »): its name, what is said above the first section; « CHANTIER ACTUEL »; « Prochaine release », « PROCHAIN JALON », « ROADMAP », « Derniers changements » | the project is declared; one bead under its name (purpose, stage, indicators); its open chantier; one bead kept as said per section, of that project | `projets.value.projects`, `GET /projet/<key>`; `beads.value` |
+| the page of a project (« ← Projets »): its name, what is said above the first section; « CHANTIER ACTUEL »; « Derniers changements »; « Prochaine release » and « PROCHAIN JALON » (a target, its gains, what remains, its decisions, its milestone, its estimate -- unavailable and why, or a range and its conditions), with what they show folded (`release`: the proof of each gain by its title, each change of the target, and for a range what it rests on: `comparables`, `hypotheses`, `computed_at`); « ROADMAP » (a heading, then each step and its status) | the project is declared; one bead under its name (purpose, stage, indicators); its open chantier; « Derniers changements » kept as said; its knowledge repository `synthetic/<key>`, a Git repository of the launch committed at the fixed time of the dataset, holding `roadmap.toml` and, when the page shows a target, `release.toml` (`lib/cockpit/projects/release.py`) | `projets.value.projects`, `GET /projet/<key>`; `beads.value`; `depots.value` |
 | « Journal »: each event, « HH:MM (Paris) · projet · nature » or « HH:MM (Paris) · source », under « Aujourd’hui » or « Hier », its title and what follows | one bead of type `event` per event, as `bd create --type event` writes it: its title, its nature or source as `event_kind`, as label and as `gc.journal_event`, its project (declared), `created_at` the day of the dataset or the day before at that time, the other lines | `beads.value`; `projets.value.projects`; `GET /api/journal` `entries`: one entry per event, its title as `quoi`, its `created_at` as `quand`, its nature or source as `voie`, newest first (`lib/cockpit/ui/journal/entries.py`, T01R6 af-ltchro) |
 | « Usine »: « Machine d’exécution », « Connexions », « Fournisseurs et accès API », « Agents dans le workflow », « Auteur livraison », « Autres rôles », « Suspension, reprise et arrêt », « Nettoyer les espaces inutilisés », « Ressources et libellés longs » | one bead kept as said per section | `beads.value` |
 | a suspended Factory: `ui.setup` sets `shutdownState='suspended'` | a suspended city | `gc.value.suspended` is true |
@@ -1237,16 +1239,64 @@ and access zones the home already had. Provider quotas, the configuration
 form and the clean-up of the reference are left out: the cockpit has no
 real reading of them yet. Test: `tests/cockpit-factory-page-test.py`.
 
-## « Projets » in Panorama (direct build, 2026-10-19)
+## « Projets » in Panorama (direct build, 2026-10-19; Prototype Fold E, af-8rbceu)
 
 `GET /projets` (`lib/cockpit/ui/projects/panorama.py`): a card per declared
 project -- what waits for Benjamin, the current chantier, open chantiers,
 runs merged in 7 days and runs open (a run belongs to the project its
-ticket was dispatched to, `gc.dispatch_rig`), its link « Page projet ».
-`GET /projet/<id>` opens on the same counts and its three last runs, above
-the chantiers by stage, actions and history the page already drew. The
-release target, estimate and roadmap of the reference have no source yet
-and are left out. Test: `tests/cockpit-projects-panorama-test.py`.
+ticket was dispatched to, `gc.dispatch_rig`). The whole card is one link to
+the page of the project, by a click or the keyboard; its accessible name
+starts « Page projet » and says the line.
+
+`GET /projet/<id>` is the Prototype Fold of the reference « Projet, release
+et historique » (`lib/cockpit/ui/projects/fold.py`; Spec af-fgcw0d, stories
+46, 103, 152 to 156): the way back, the name and state of the project,
+three counts, then « Prochaine release », « Chantier actuel », « Roadmap »,
+« Derniers changements » and « Ressources du projet », numbered with the
+anchors of the reference; under them, the chantiers by stage, the work
+outside a chantier and the historique the page already drew (A1 reads the
+Outcome into them; E does not change that reader). The label of a section
+the reference writes small (« CHANTIER ACTUEL », « ROADMAP ») is held in a
+heading, so a navigation by headings reaches it; the label keeps the
+element and the anchor of the reference. Each « Voir la preuve » is named
+by its gain (« Voir la preuve : <gain> »).
+
+- **Release plan (cadrage).** Read, never written (writing it is the ritual
+  « Préparer la prochaine release »), from `release.toml` beside the
+  structured roadmap in the knowledge repository of the project
+  (`lib/cockpit/projects/release.py` holds the format): the revisable
+  target, the gains verified each with its proof, the criteria that remain,
+  the decisions open, deferred or included, the next milestone and how it
+  is verified, the history of the target kept apart from the gains. A
+  range is shown only conditional -- its conditions, its hypotheses, the
+  comparable results it rests on, the date it was computed, and exactly the
+  criteria that remain; otherwise « Estimation non disponible » and why. No
+  global percentage, no date of delivery. A project without a release plan
+  says « Cadrage et preuves non collectés. Aucun avancement déduit. » and
+  where the plan lacks (the repository and the file, or that the project
+  declares no knowledge repository).
+- **Roadmap.** Every step of the structured roadmap, its status, the
+  repository and file it comes from and the date of its last change. A step
+  « En cours » whose chantier is closed (the Specs that target it, by
+  `planning_run_target`, and the convoys published from them, by
+  `gc.spec_id`, all closed), or one of whose results is merged (a convoy
+  that records its promotion, or whose tickets all recorded the merge of
+  their PR, `gc.merge_commit`; one PR merged among tickets still at work is
+  a chantier under way), is flagged « Incohérent »
+  (`roadmap.roadmap_rows`; the Specs that target a step are read open or
+  closed, `source.read_targeting_beads`). A Spec closed without successor,
+  its reason recorded, reaches the historique the same way.
+- **Chantiers not read.** While the tracker is being read the page says so
+  (« Lecture des chantiers en cours »), and « Lecture des chantiers
+  impossible » when it fails; the counts are « — · inconnu », never 0, and
+  no chantier is said absent. The release plan and the roadmap, read from
+  the repository, are shown all the same. The page waits at most
+  `FIRST_READING_WAIT_SECONDS` for the first reading of the projects and of
+  their repositories.
+
+Tests: `tests/cockpit-home-projects-test.py` (`GET /projets` and the page of
+a project, through the running process), and the criterion tests of E
+(`tests/cockpit-criteria/commands/projects-{release,roadmap,recette}-test.py`).
 
 ## « Journal » in Panorama (direct build, 2026-10-19)
 
