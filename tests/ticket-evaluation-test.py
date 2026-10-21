@@ -1298,6 +1298,52 @@ class TicketEvaluationTest(unittest.TestCase):
         self.assertFalse(self.tool("verdict")["favorable"])
         self.assertEqual([], self.settle()["launched"])
 
+    def unobservable_answered(self, option):
+        """The demonstration line unobservable by the criterion: the ticket is
+        parked, the operator answers its request with `option`, the parking is
+        lifted as bin/convoy-advance lifts it, and the Evaluator replays it,
+        still unobservable. Returns what the replay recorded."""
+        tip, request = self.open_evaluation()
+        handed = self.handed(tip, request)
+        handed["demonstration_line"].update(state="unobservable", cause="criterion", reason="aucun jeu n'a de CI absente")
+        self.recorded(handed)
+        self.settle()
+        answered = self.run_cmd(ESCALATION_TOOL, "repondre", SLICE, option, "--actor", "benjamin",
+                                env={"ESCALATION_DOOR_NOW": "4102444800"})  # after the parking
+        self.assertEqual(0, answered.returncode, answered.stdout + answered.stderr)
+        self.state("lift-park", CONVOY, SLICE, "--request", SLICE, "--option", option)
+        self.evaluator("silent")
+        self.assertEqual([SLICE], [e["ticket"] for e in self.settle()["launched"]])
+        handed = self.handed(tip, self.evaluation()["request"])
+        handed["demonstration_line"].update(state="unobservable", cause="criterion", reason="toujours aucune CI absente")
+        return self.tool("record", SLICE, "--file", self.json_file("replay.json", handed),
+                         env={**SESSION, "GC_SESSION_NAME": "delivery-evaluator-fx-replay"})
+
+    def test_the_operator_answer_a_counts_the_unobservable_proven_by_its_test_at_the_next_evaluation(self):
+        # Benjamin, 21/10/2026 about 16:55 Paris (af-ten1sp): « Preuve par le
+        # test » -- the half-sentence no launched game can show is judged
+        # proven by its green criterion test, not observed on the product.
+        self.unobservable_answered("a")
+
+        lift = self.shown()["park_lifts"][-1]
+        self.assertEqual(["ligne de démonstration"], [entry["what"] for entry in lift["proven_by_test"]])
+        last = self.evaluation()["rounds"][-1]
+        self.assertEqual(("favorable", "favorable", ["ligne de démonstration"]),
+                         (last["outcome"], last["verdict"], last["proven_by_test"]))
+        self.assertTrue(self.tool("verdict")["favorable"])
+        settled = self.settle()
+        self.assertEqual(([], []), (settled["planning_exception"], settled["launched"]))
+        self.assertIsNone(self.shown()["park"])
+
+    def test_any_other_answer_leaves_the_unobservable_a_planning_exception(self):
+        # A frozen criterion is never waived without the operator's « a ».
+        self.unobservable_answered("b")
+
+        self.assertNotIn("proven_by_test", self.shown()["park_lifts"][-1])
+        last = self.evaluation()["rounds"][-1]
+        self.assertEqual(("planning_exception", False), (last["outcome"], "proven_by_test" in last))
+        self.assertEqual([SLICE], [e["ticket"] for e in self.settle()["planning_exception"]])
+
     def test_an_unobservable_by_the_environment_is_an_outage_that_is_not_counted_as_a_refusal(self):
         tip, request = self.open_evaluation()
         handed = self.handed(tip, request)

@@ -229,7 +229,7 @@ from typing import Any, Iterator
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
-from convoy_state import overridden_ticket  # noqa: E402
+from convoy_state import PROVEN_BY_TEST_OPTION, overridden_ticket  # noqa: E402
 
 
 PROGRAM = "convoy-advance"
@@ -914,6 +914,16 @@ def at_work(ticket: dict[str, Any]) -> bool:
     return started(ticket) and ticket.get("status") != "closed" and not ticket.get("park") and not ticket.get("stop")
 
 
+def overridden_at_work(ticket: dict[str, Any]) -> bool:
+    """Started, not closed nor parked, stopped still refused and every
+    Blocking Finding its review left overridden by the operator: merged like
+    a ticket at work (bin/spec-integration), so resumed like one when the
+    merge returns it (af-n4bn62: F and G1 of af-strhoy, red on 21/10/2026,
+    were neither merged again nor resumed)."""
+    return started(ticket) and ticket.get("status") != "closed" and not ticket.get("park") \
+        and overridden_ticket(ticket)
+
+
 def resume_on_its_way(ticket: dict[str, Any]) -> bool:
     """A resume was sent and nobody took the ticket since: its session
     holds a place under the ceiling. A resume bead closed without the ticket
@@ -1110,7 +1120,8 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
     """Spec §8: park the ticket that took its last resume; send the ticket
     that needs its author again to one fresh session, and count it. `only`:
     the tickets a red integration branch still lets go on."""
-    for ticket_id in [t["id"] for t in convoy.tickets if at_work(t) or stopped_without_result(t)]:
+    for ticket_id in [t["id"] for t in convoy.tickets
+                      if at_work(t) or stopped_without_result(t) or overridden_at_work(t)]:
         if only is not None and ticket_id not in only:
             continue
         try:
@@ -1128,6 +1139,10 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
                 due = once_per_stop_due(ticket, CODE_REVIEW_STOP)
             elif ticket["stop"]["reason"] == AMENDMENT_STOP:
                 due = amendment_granted_due(ticket)
+            elif overridden_at_work(ticket):
+                # Only the merge that returned it lifts its stop; no resume left, it stays with the operator.
+                due = resume_due(ticket, alive) if ticket.get("resumes_left") != 0 else None
+                due = due if due and due[1] == "returned" else None
             else:
                 due = no_result_due(convoy, ticket)
             if due is None:
@@ -1184,8 +1199,10 @@ def settle_lifts(convoy: Convoy, out: dict[str, Any]) -> None:
     """An answer of the operator that lifts a parking is applied by the
     pass: any answer to the request an operator request left on its ticket;
     the option that accepts the deviation a Planning Exception asked about;
-    the lifting option of the convoy's grouped request, for the tickets it
-    names. Any other answer leaves the ticket parked."""
+    the option that judges proven by its test what an evaluation's Planning
+    Exception could not observe; the lifting option of the convoy's grouped
+    request, for the tickets it names. Any other answer leaves the ticket
+    parked."""
     lifts: list[tuple[str, str, str]] = []
     for ticket in convoy.tickets:
         park = ticket.get("park") or {}
@@ -1194,7 +1211,12 @@ def settle_lifts(convoy: Convoy, out: dict[str, Any]) -> None:
             continue
         exceptions = ticket.get("planning_exceptions") or []
         accepted = bool(exceptions) and isinstance(exceptions, list) and exceptions[-1].get("accepted")
-        if park.get("cause") == "operator_request" or (park.get("cause") == "planning_exception" and accepted):
+        # Raised by the Ticket Evaluation of a finished ticket: no entry under
+        # `planning_exceptions` (Benjamin, 21/10/2026, af-ten1sp).
+        evaluated = ((ticket.get("exit") or {}).get("exit") == "finished"
+                     and ((ticket.get("evaluation") or {}).get("state") or {}).get("outcome") == "planning_exception")
+        proven = evaluated and answer["option"] == PROVEN_BY_TEST_OPTION
+        if park.get("cause") == "operator_request" or (park.get("cause") == "planning_exception" and (accepted or proven)):
             lifts.append((ticket["id"], ticket["id"], answer["option"]))
     try:
         grouped = convoy.grouped or {}

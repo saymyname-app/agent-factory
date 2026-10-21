@@ -1108,7 +1108,9 @@ convoi qui porte la **marque du nouveau flux**.
   - « non observé » : défavorable, retour à l'auteur.
   - « inobservable » par le critère : Planning Exception — une demande dans
     `./bin/escalation-door list`, le ticket et ceux qui l'attendent sont
-    parqués. Un critère ne se dispense jamais.
+    parqués. Un critère ne se dispense jamais, sauf par l'option `a` de
+    cette demande : l'élément est jugé prouvé par son test de critère et
+    l'évaluation suivante le compte (af-ten1sp).
   - « inobservable » par l'environnement : panne, non comptée comme refus ;
     l'évaluation est refaite une fois, puis le ticket est arrêté.
 - **Ce que reçoit l'Evaluator** (`brief`) : la ligne de démonstration, les
