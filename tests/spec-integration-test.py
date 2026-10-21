@@ -923,6 +923,21 @@ class SpecIntegrationTest(unittest.TestCase):
         answer = self.assert_refused_and_nothing_written(self.merge, "branche protégée", "conflit")
         self.assertNotIn("returned", answer)
 
+    def test_a_control_past_its_timeout_leaves_none_of_its_processes_running(self):
+        # 21/10/2026: a regression run killed at its deadline left the
+        # cockpits and browsers it had started running (af-strhoy).
+        self.two_finished_tickets()
+        self.advance_protected({"docs/ailleurs.md": "ailleurs"})
+        pid_file = self.tmp / "grandchild.pid"
+        descriptor = json.loads(self.profile.read_text())
+        descriptor["launch"]["regression_command"] = f"sh -c 'sleep 60 & echo $! > {pid_file}; wait'"
+        self.profile.write_text(json.dumps(descriptor))
+
+        self.assert_refused_and_nothing_written(lambda: self.merge("--timeout", "2"), "n'a pas fini en 2 s")
+        grandchild = int(pid_file.read_text())
+        self.addCleanup(lambda: subprocess.run(["kill", "-9", str(grandchild)], capture_output=True))
+        self.assertFalse(Path(f"/proc/{grandchild}").exists(), "the control's own child still runs")
+
     def test_a_red_takeover_is_not_pushed_and_no_ticket_is_blamed(self):
         self.two_finished_tickets()
         self.advance_protected({DATASET: json.dumps({"state": "content", "items": []})})

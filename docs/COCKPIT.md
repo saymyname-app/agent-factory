@@ -246,9 +246,9 @@ the read model, never from the frozen page:
   normal leading, a paragraph at 1.5. `/journal` and `/projet/<key>` are served in it, and
   `/projets`: the declared projects, each with its « Page projet » (the
   « Projets » zone of the home screen), until the Fold of « Projets »;
-  `/runs`, `/runs/run`, `/runs/job`, `/usine`, `/rituels` and `/analyses`
-  answer, in it, that the destination is not served here yet, until their
-  own Fold. The shell's own tokens: `--pn-control-line`, the box of a
+  `/runs`, `/runs/run`, `/usine`, `/rituels` and `/analyses` are served in
+  it by direct build (sections below); `/runs/job` answers, in it, that
+  the destination is not served here yet. The shell's own tokens: `--pn-control-line`, the box of a
   control, at 3:1 at least on the surface and the background in both
   themes, where the reference's `--line` is not; `--pn-muted-text` and
   `--pn-warn-text`, the muted and the warning text, darker in the light
@@ -1266,3 +1266,20 @@ sources: the CI of the local settings file, every page of GitHub, a source
 gone stale or never answering),
 `tests/cockpit-criteria/commands/analyses-destination-{indicators,layout}-test.py`
 (the launched cockpit, `D-criteria.json`).
+
+## « Rituels » (direct build, 2026-10-20)
+
+`GET /rituels` (`lib/cockpit/ui/rituals/page.py`), carried over from T41's
+fold (af-r4hrt7, commit 8ef15917, never merged) with only what has a real
+source: the catalogue of the Spec (the next release's framing, the reviews
+of incidents, architecture and quality / AI Slop, the diagnostic of the
+Factory), each what it is for and how it is launched, and when it last ran
+read at each view from the rituals file (`COCKPIT_RITUALS_FILE`, by default
+`docs/rituals.toml`, the file `bin/rituals-status` reads): a ritual whose
+id starts with a card's key (`architecture:factory`) gives that card its
+last run, or that it is paused, why and when it resumes, and its threshold.
+A card the file names nothing for says « non renseigné »; an unreadable
+file, « inconnu ». Whether a ritual is due (merged PRs counted through
+`gh`), launching a ritual and the pages of a ritual under way (T41's
+`gc.ritual_operation`, which no door writes) are left out, not drawn with
+example values. Test: `tests/cockpit-rituals-panorama-test.py`.

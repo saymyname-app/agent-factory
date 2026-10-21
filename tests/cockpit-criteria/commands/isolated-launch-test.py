@@ -120,7 +120,8 @@ class IsolatedCockpitLaunch(unittest.TestCase):
         state = self.work / f"launch-{self._testMethodName}-{len(self.states)}.json"
         self.states.append(state)
         proc = subprocess.run(
-            [sys.executable, str(ROOT / LAUNCHER), "--repo-root", str(self.repo), "start", str(self.repo / PROFILE),
+            [sys.executable, str(ROOT / LAUNCHER), "--repo-root", str(self.repo), "start", "--owner-pid", str(os.getpid()),
+             str(self.repo / PROFILE),
              "--commit", commit, "--dataset", dataset, "--state-file", str(state), "--timeout", "30"],
             text=True, capture_output=True, stdin=subprocess.DEVNULL,
         )

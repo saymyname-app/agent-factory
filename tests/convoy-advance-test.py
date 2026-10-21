@@ -1014,6 +1014,50 @@ class ConvoyAdvanceTest(ConvoyAdvanceHarness):
         self.assertEqual([], self.slung())
         self.assertEqual(before, self.tracker.read_text())
 
+    def test_a_pass_stays_serialized_while_it_settles(self):
+        # af-ebqm1y: the start lock used to be released before settlement.
+        # The condition order then ran overlapping settlements until their
+        # shared tracker work exceeded the order's 300 s deadline.
+        self.advance(CONVOY)
+        self.edit(T1, status="in_progress")
+        self.run_ok(STATE, "stop-ticket", CONVOY, T1, "--reason", "amendment_exhausted",
+                    "--detail", self.AMENDMENT_DETAIL)
+
+        escalation_lock = Path(self.env["ESCALATION_DOOR_LOCK_FILE"])
+        with escalation_lock.open("w") as held:
+            fcntl.flock(held.fileno(), fcntl.LOCK_EX)
+            first = subprocess.Popen((str(TOOL), CONVOY), env=self.env, text=True,
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            # The escalation process is a direct child and starts only in
+            # settlement, after the start phase. Hold it there while the
+            # condition order launches its overlapping pass.
+            deadline = time.monotonic() + 30
+            reached = False
+            while first.poll() is None and time.monotonic() < deadline:
+                children = Path(f"/proc/{first.pid}/task/{first.pid}/children")
+                for child in children.read_text().split() if children.exists() else ():
+                    command = Path(f"/proc/{child}/cmdline")
+                    if command.exists() and b"escalation-door" in command.read_bytes():
+                        reached = True
+                        break
+                if reached:
+                    break
+                time.sleep(0.05)
+            self.assertTrue(reached, "the first pass did not reach its blocked settlement")
+            try:
+                second = subprocess.run((str(TOOL), "--all", "--stopped-ok"), env=self.env, text=True,
+                                        capture_output=True, timeout=2)
+            except subprocess.TimeoutExpired:
+                second = None
+
+        stdout, stderr = first.communicate(timeout=30)
+
+        self.assertEqual(0, first.returncode, stdout + stderr)
+        self.assertIsNotNone(second, "the overlapping pass entered settlement instead of skipping")
+        self.assertEqual(0, second.returncode, second.stdout + second.stderr)
+        answer = json.loads(second.stdout)
+        self.assertIn("passe déjà en cours", answer["skipped"])
+
     # --- refusals: nothing is started ------------------------------------------
 
     def test_a_convoy_in_a_state_without_rule_starts_nothing(self):

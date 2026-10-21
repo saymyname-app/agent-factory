@@ -235,9 +235,12 @@ to a ticket, and this tip belongs to none.
 - A frozen harness file changed on the integration branch by another
   ticket's merge is still seen by `bin/tdd-step green` as modified
   (`docs/TDD_STEP.md`, Limits) when an author takes up the integration tip.
-- The order that runs `bin/convoy-advance` has a 300 s timeout; a test run
-  on a merged result may take up to `--timeout` (600 s). A pass killed by
-  the controller has pushed nothing; its work tree is removed by the next.
+- The order that runs `bin/convoy-advance` has a 30 min timeout, above the
+  two runs of the regression command a pass may make (the control after a
+  take-up, then the tests of the merged result), up to `--timeout` (600 s)
+  each. A run past `--timeout` is killed with every process it started (its
+  own session). A pass killed by the controller has pushed nothing; its work
+  tree is removed by the next.
 
 ## Proof
 

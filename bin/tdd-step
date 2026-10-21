@@ -77,6 +77,9 @@ PIECES = {
 KIND_PREFACTORING = "prefactoring"
 STOP_ALREADY_GREEN = "criterion_already_green"
 STOP_AMENDMENT_EXHAUSTED = "amendment_exhausted"
+# The resume bin/convoy-advance sends once the operator answered « a » to that
+# stop: it allows one more amendment (af-25o7vr).
+GRANTED = "amendment_granted"
 
 EXIT_REFUSED = 1
 EXIT_NOT_NEW_FLOW = 4
@@ -473,6 +476,14 @@ class Check:
                 changed[path] = f"fichier gelé modifié : {path}"
         return changed
 
+    def changed_helpers(self, frozen_commit: str, files: dict[str, str]) -> dict[str, str]:
+        """The files of the test perimeter outside the registry (helpers the
+        green runs as they were frozen) that differ between the freeze and
+        HEAD (af-7lmvys)."""
+        return {path: f"fichier du périmètre de test modifié depuis le gel : {path}"
+                for _, path in self.changes(frozen_commit, self.head)
+                if in_paths(path, self.test_scope) and path not in files}
+
     def tests_at(self, commit: str) -> list[str]:
         """The tests a commit holds: the files of the test perimeter, the
         frozen harness aside."""
@@ -785,6 +796,11 @@ def check_green(check: Check) -> dict[str, Any]:
             problems.append(f"test ignoré : {test_id} (aucun test gelé n'est ignoré au vert)")
         else:
             problems.append(f"test en échec : {test_id} ({', '.join(runs[test_id])} sur {k} exécutions)")
+    helpers = check.changed_helpers(frozen_commit, registry["files"]) if problems else {}
+    if helpers:
+        problems.append(
+            f"les tests tournent tels que gelés, mais {', '.join(sorted(helpers))} a changé depuis le gel : "
+            "il ne compte qu'après l'amendement (tdd-step amend)")
     if problems:
         raise Refusal(" ; ".join(problems))
     # ADR-0030 L1: the handoff also proves the regression of the profile at
@@ -806,20 +822,30 @@ def check_amend(check: Check) -> dict[str, Any]:
         raise Refusal("raison absente : un amendement porte sa raison, écrite sur une ligne (--reason)")
     if "freeze" not in check.tdd or "red" not in check.tdd:
         raise Refusal("aucun gel enregistré pour ce ticket : un amendement change des tests gelés, il n'y a rien à amender")
-    if "amendment" in check.tdd:
+    entries = (check.ticket.get("resume") or {}).get("entries") or []
+    correction = check.ticket.get("correction") or {}
+    if "amendment" in check.tdd and not any(
+            entry.get("cause") == GRANTED and entry.get("at", "") > check.tdd["amendment"]["at"]
+            for entry in [*entries, {"cause": GRANTED, "at": correction.get("at", "")}]):
+        # af-25o7vr: a resume the operator granted allows one amendment more.
+        # af-vsni1n: so does the correction round opened after the amendment,
+        # since the code review is the only review of the frozen tests.
         raise Refusal(
             f"un seul amendement par ticket : {check.args.ticket} a déjà amendé ses tests gelés au commit "
             f"{check.tdd['amendment']['commit']}",
             stop=STOP_AMENDMENT_EXHAUSTED,
         )
     registry = check.registry()
-    changed = check.changed_frozen(registry["files"])
+    frozen_commit = check.tdd["freeze"]["commit"]
+    # The green runs the whole test perimeter as frozen: a helper outside the
+    # registry is amended like a frozen file (af-7lmvys).
+    changed = {**check.changed_frozen(registry["files"]), **check.changed_helpers(frozen_commit, registry["files"])}
     if not changed:
         raise Refusal("aucun fichier gelé n'a changé depuis le gel : il n'y a rien à amender")
     proof = red_proof(check, check.tdd["red"]["base"], registry["table"], amendment=True,
                       satisfied_before=registry.get("satisfied", []))
-    frozen_commit = check.tdd["freeze"]["commit"]
-    paths = sorted({*registry["files"], *(test_id.partition("::")[0] for test_id in unique_ids(proof["criteria"]))})
+    paths = sorted({*registry["files"], *changed,
+                    *(test_id.partition("::")[0] for test_id in unique_ids(proof["criteria"]))})
     diff = git(check.repo, "diff", "--no-renames", frozen_commit, check.head, "--", *paths)
     if diff.returncode != 0:
         raise Refusal(f"git diff du gel à HEAD a échoué : {short(diff.stderr.decode(errors='replace'))}")

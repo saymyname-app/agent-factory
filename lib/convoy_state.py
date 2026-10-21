@@ -440,18 +440,20 @@ BOUND_END_ROUNDS = "end_rounds"
 # the request that parked it was answered, or its branch, finished, does not
 # contain the tip of the integration branch (T44), or its Ticket Evaluation
 # gave no result (af-xhc0sj), or a stage the flow removed stopped it
-# (ADR-0030 L3, af-pjvsgo), or its code review gave no result (af-wu6xj7):
-# those resumes lift the stop. The correction round and a commit after a
+# (ADR-0030 L3, af-pjvsgo), or its code review gave no result (af-wu6xj7),
+# or the operator answered « a » to its stop at a second amendment
+# (af-25o7vr): those resumes lift the stop. The correction round and a commit after a
 # verdict are counted where they are written.
 RESUME_CAUSES = ("interrupted", "returned", "unblocked", "answered", "behind", "evaluation_no_result",
-                 "stage_removed", "code_review_no_result")
+                 "stage_removed", "code_review_no_result", "amendment_granted")
 # The stops a resume lifts, by the cause that lifts them: a Ticket Evaluation
 # without result (af-xhc0sj), the stops of the test review, a stage
-# ADR-0030 L3 removed (af-pjvsgo), and a code review without result
-# (af-wu6xj7).
+# ADR-0030 L3 removed (af-pjvsgo), a code review without result
+# (af-wu6xj7), and a second amendment the operator granted (af-25o7vr).
 RESUMABLE_STOPS = {"evaluation_no_result": ("evaluation_no_result",),
                    "stage_removed": ("test_review_refused", "test_review_no_result"),
-                   "code_review_no_result": ("code_review_no_result",)}
+                   "code_review_no_result": ("code_review_no_result",),
+                   "amendment_granted": ("amendment_exhausted",)}
 # A commit after a verdict counts a resume without an entry (T18): it is a
 # cause of its own. The correction round is not one: it has its own bound of
 # one round (CORRECTION_MAX_ROUNDS), held here, outside K.
@@ -3616,6 +3618,13 @@ def cmd_close_ticket(args: argparse.Namespace) -> int:
     return 0
 
 
+def amendment_granted(entries: list[dict[str, Any]], amendment: dict[str, Any]) -> bool:
+    """One more amendment is allowed once a resume `amendment_granted` (the
+    operator answered « a » to the stop of the second amendment, af-25o7vr)
+    came after the amendment recorded: one per such resume."""
+    return any(entry["cause"] == "amendment_granted" and entry["at"] > amendment["at"] for entry in entries)
+
+
 def cmd_set_tdd(args: argparse.Namespace) -> int:
     """Record one proven step of a ticket's TDD. The order of the steps is
     held here, under the lock: bin/tdd-step proves a step, this refuses one
@@ -3651,7 +3660,11 @@ def cmd_set_tdd(args: argparse.Namespace) -> int:
     if step == "amendment":
         if "freeze" not in known:
             raise Refusal("amendement sans gel : il n'y a aucun test gelé à amender")
-        if "amendment" in known:
+        entries = resume_record(metadata[KEY_RESUME])["entries"] if KEY_RESUME in metadata else []
+        if KEY_CORRECTION in metadata:
+            # af-vsni1n: the correction round opened after the amendment allows one more.
+            entries = [*entries, {"cause": "amendment_granted", "at": correction_record(metadata[KEY_CORRECTION])["at"]}]
+        if "amendment" in known and not amendment_granted(entries, known["amendment"]):
             raise Refusal(f"un seul amendement par ticket : {args.ticket} en porte déjà un (commit {amended_at})")
     if step == "green" and "freeze" not in known:
         raise Refusal("vert sans gel : le vert se prouve sur des tests gelés")

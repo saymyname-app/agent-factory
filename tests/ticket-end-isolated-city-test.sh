@@ -552,6 +552,7 @@ TIP_B=$(author_finishes "$B")
 before_merge=$(gate_check "$A" --before-merge) || true
 echo "$(date -u +%H:%M:%S) marque posée, critères gelés, branche $INTEGRATION ouverte, deux tickets terminés par leur auteur (A $TIP_A, B $TIP_B) ; porte avant fusion sur A, avant toute revue : conditions manquantes $(printf '%s' "$before_merge" | jq -c '.missing')"
 
+isolated_city_disable_dog "$TRIAL" "$CITY"
 (env -u CLAUDE_CODE_SESSION_ID gc supervisor run > "$TRIAL/supervisor.out" 2>&1 &)
 sleep 3
 gc --city "$CITY" start >/dev/null 2>&1 || true
