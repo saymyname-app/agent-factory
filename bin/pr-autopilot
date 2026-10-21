@@ -702,6 +702,8 @@ index_merged() {  # merged-TSV -> fills LINKED_FOR[num]=candidate-json, VIA_FOR[
     [ -n "$n" ] && LINKED_FOR[$n]=$v
   done < <(printf '%s' "$RIG_ALL_BEADS_JSON" | jq -r --argjson pairs "$pairs" "$LINKED_WORK_JQ"'
     . as $all | $pairs[] | . as $p | ($all | linked($p.b; $p.n)) as $c
+    | select((($c.metadata["gc.needs_benjamin"] // "") | tostring) as $needs
+             | $needs == "" or $needs == "none")
     | "\($p.n)\t\($c|tojson)"' 2>/dev/null)
   while IFS=$'\t' read -r n v; do
     [ -n "$n" ] && VIA_FOR[$n]+="$v"$'\n'
@@ -709,6 +711,8 @@ index_merged() {  # merged-TSV -> fills LINKED_FOR[num]=candidate-json, VIA_FOR[
     .[]|(.metadata["gc.delivered_via_pr"]|tostring) as $v
     |select($v!="null")
     |select(.status=="open" or .status=="in_progress")
+    |((.metadata["gc.needs_benjamin"] // "") | tostring) as $needs
+    |select($needs == "" or $needs == "none")
     |"\($v)\t\(.id)"' 2>/dev/null)
 }
 

@@ -192,6 +192,11 @@ records what was verified about the machinery underneath.
    sender to `human`; the message body's own `ACTION: pr-autopilot reconciled
    …` line self-identifies the true actor instead (af-4ruvv). The
    `merge_result` stamp makes later passes silent.
+   A merged PR whose work bead still carries an active `gc.needs_benjamin`
+   remains pending: `pr-autopilot` does not call the delivery door for it and
+   does not fail the order. Once `escalation-door repondre` or `clear` sets
+   the field to `none`, the next tick indexes the bead again and performs the
+   normal exact-head reconciliation.
 5. A PR whose required check **failed** is never armed. It is raised as a P1
    bug bead in the rig instead, so a red build becomes ready work rather than a
    silently open PR.

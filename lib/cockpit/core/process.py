@@ -240,6 +240,7 @@ def build(config, clock=None):
 
     server.stop_driver = stop_driver
     server.benjamin_login = config.benjamin_login
+    server.rituals_file = config.rituals_file
     server.extra_requests = extra_requests
 
     # Notifications and heartbeat (T17, T18): each a policy with tick() as
