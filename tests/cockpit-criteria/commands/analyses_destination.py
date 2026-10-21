@@ -3,16 +3,20 @@ af-ten1sp; Spec af-fgcw0d, user stories 124, 148, 149, 150 and 175, Testing
 Decisions 1, 5 and 8). Not a test file: the criterion test files of the
 destination load it.
 
-- `SOURCES`: a dataset of the isolated cockpit whose Analyses read real
+- `sources` and its records (`result`, `ticket`, `decision`, `pull`,
+  `ci_run`): a dataset of the isolated cockpit whose Analyses read real
   records -- the results, the tickets and the decisions of the delivery
   flow, and what GitHub answers for the CI and the pull requests of the
   declared repository -- at a fixed time, the Monday 12/10/2026 at noon
-  (Paris), so that the seven days of the page are the 06/10 to the 12/10;
+  (Paris), so that the seven days of the page are the 06/10 to the 12/10.
+  A case writes the records, and what it expects of them;
 - `declare`: a commit of the tree under test where the profile declares
   more datasets, from which the launcher of the profile starts the cockpit;
 - `served`: the page the launched cockpit serves at one address, read over
   HTTP: the text of each anchor, the points of its daily chart, the views
-  its tabs open.
+  its tabs open;
+- `Keyboard`: a headless Chromium on one page, driven key by key over its
+  DevTools pipe: Tab and Enter pressed as a person presses them.
 
 Nothing here reads the code of the cockpit: the launcher is an entry point
 of the profile, and the page is read as the cockpit serves it.
@@ -20,154 +24,74 @@ of the profile, and the page is read as the cockpit serves it.
 
 from __future__ import annotations
 
-import copy
 import json
 import re
 from html.parser import HTMLParser
 
 from home_destination import PROFILE, LaunchTree, fetch, git
 
-# The dataset of the Analyses on real records. Every value the page shows
-# is computed by the cockpit from these records: none of them is written
-# here. Over the seven days 06/10 -> 12/10 (Paris):
+# --- the records of a dataset ---------------------------------------------------
 #
-# - results whose merge is proven (`merged`): Export des notes (06/10),
-#   Recherche plein texte (08/10), Reprise des sessions (11/10), Page
-#   Portfolio (12/10); one merged before the period, one delivered and not
-#   yet judged;
-# - from publication to proven merge: 130, 260, 80 and 240 minutes -- the
-#   work and checks up to the delivery 90, 180, 60 and 100, the wait for
-#   the judgement 30, 60, 15 and 120, the merge 10, 20, 5 and 20;
-# - tickets merged into the integration branch: 2, 1, 3, 0, 0, 1, 2 a day;
-#   one refused by a conflict, one before the period;
-# - pull requests merged: 1, 0, 2, 0, 0, 1, 1 a day; one closed unmerged,
-#   one before the period;
-# - CI runs: succeeded 2, 1, 3, 0, 0, 2, 1 a day, 13 completed in all; one
-#   still running, one before the period;
-# - decisions asked of Benjamin: three open, one answered.
-SOURCES = {
-    "generated_at": "2026-10-12T12:00:00+02:00",
-    "synthetic": True,
-    "ui": {"id": "analysis-sources", "page": "analysis"},
-    "visible_text": "Analyses",
-    "flow": {
-        "results": [
-            {"title": "Export des notes", "project": "Notes", "published": "2026-10-06T09:00:00+02:00",
-             "delivered": "2026-10-06T10:30:00+02:00", "accepted": "2026-10-06T11:00:00+02:00",
-             "merged": "2026-10-06T11:10:00+02:00"},
-            {"title": "Recherche plein texte", "project": "Notes", "published": "2026-10-08T14:00:00+02:00",
-             "delivered": "2026-10-08T17:00:00+02:00", "accepted": "2026-10-08T18:00:00+02:00",
-             "merged": "2026-10-08T18:20:00+02:00"},
-            {"title": "Reprise des sessions", "project": "Usine", "published": "2026-10-11T08:00:00+02:00",
-             "delivered": "2026-10-11T09:00:00+02:00", "accepted": "2026-10-11T09:15:00+02:00",
-             "merged": "2026-10-11T09:20:00+02:00"},
-            {"title": "Page Portfolio", "project": "Portfolio", "published": "2026-10-12T07:00:00+02:00",
-             "delivered": "2026-10-12T08:40:00+02:00", "accepted": "2026-10-12T10:40:00+02:00",
-             "merged": "2026-10-12T11:00:00+02:00"},
-            {"title": "Ancienne livraison", "project": "Notes", "published": "2026-09-30T09:00:00+02:00",
-             "delivered": "2026-10-01T09:00:00+02:00", "accepted": "2026-10-02T09:00:00+02:00",
-             "merged": "2026-10-02T10:00:00+02:00"},
-            {"title": "Résultat à juger", "project": "Usine", "published": "2026-10-10T09:00:00+02:00",
-             "delivered": "2026-10-10T15:00:00+02:00", "accepted": None, "merged": None},
-        ],
-        "tickets": [
-            {"title": "Lire les notes", "project": "Notes", "dispatched": "2026-10-06T08:00:00+02:00",
-             "merge": {"outcome": "merged", "at": "2026-10-06T09:40:00+02:00"}},
-            {"title": "Écrire l’export", "project": "Notes", "dispatched": "2026-10-06T08:10:00+02:00",
-             "merge": {"outcome": "merged", "at": "2026-10-06T10:00:00+02:00"}},
-            {"title": "Tester l’export", "project": "Notes", "dispatched": "2026-10-07T09:00:00+02:00",
-             "merge": {"outcome": "merged", "at": "2026-10-07T11:00:00+02:00"}},
-            {"title": "Index de recherche", "project": "Notes", "dispatched": "2026-10-08T09:00:00+02:00",
-             "merge": {"outcome": "merged", "at": "2026-10-08T12:00:00+02:00"}},
-            {"title": "Requêtes de recherche", "project": "Notes", "dispatched": "2026-10-08T10:00:00+02:00",
-             "merge": {"outcome": "merged", "at": "2026-10-08T15:00:00+02:00"}},
-            {"title": "Résultats de recherche", "project": "Notes", "dispatched": "2026-10-08T11:00:00+02:00",
-             "merge": {"outcome": "merged", "at": "2026-10-08T16:30:00+02:00"}},
-            {"title": "Colonnes du tableau", "project": "Notes", "dispatched": "2026-10-09T09:00:00+02:00",
-             "merge": {"outcome": "conflict", "at": "2026-10-09T11:00:00+02:00"}},
-            {"title": "Reprendre une session", "project": "Usine", "dispatched": "2026-10-11T07:00:00+02:00",
-             "merge": {"outcome": "merged", "at": "2026-10-11T08:30:00+02:00"}},
-            {"title": "En-tête du portfolio", "project": "Portfolio", "dispatched": "2026-10-12T06:00:00+02:00",
-             "merge": {"outcome": "merged", "at": "2026-10-12T07:30:00+02:00"}},
-            {"title": "Galerie du portfolio", "project": "Portfolio", "dispatched": "2026-10-12T06:30:00+02:00",
-             "merge": {"outcome": "merged", "at": "2026-10-12T08:00:00+02:00"}},
-            {"title": "Ancien ticket", "project": "Notes", "dispatched": "2026-10-05T09:00:00+02:00",
-             "merge": {"outcome": "merged", "at": "2026-10-05T10:00:00+02:00"}},
-        ],
-        "decisions": [
-            {"title": "Choisir le format d’export", "project": "Notes", "asked": "2026-10-08T10:00:00+02:00",
-             "answered": None},
-            {"title": "Valider la reprise", "project": "Usine", "asked": "2026-10-10T16:00:00+02:00",
-             "answered": None},
-            {"title": "Nommer la page", "project": "Portfolio", "asked": "2026-10-11T11:00:00+02:00",
-             "answered": None},
-            {"title": "Ordre des colonnes", "project": "Notes", "asked": "2026-10-12T08:00:00+02:00",
-             "answered": "2026-10-12T09:00:00+02:00"},
-        ],
-    },
-    "github": {
-        "repository": "saymyname-app/agent-factory",
-        "pull_requests": [
-            {"number": 99, "title": "Ancienne PR", "merged_at": "2026-10-04T10:00:00+02:00"},
-            {"number": 101, "title": "Export des notes", "merged_at": "2026-10-06T11:10:00+02:00"},
-            {"number": 102, "title": "Essai abandonné", "merged_at": None},
-            {"number": 103, "title": "Index de recherche", "merged_at": "2026-10-08T12:05:00+02:00"},
-            {"number": 104, "title": "Recherche plein texte", "merged_at": "2026-10-08T18:20:00+02:00"},
-            {"number": 105, "title": "Reprise des sessions", "merged_at": "2026-10-11T09:20:00+02:00"},
-            {"number": 106, "title": "Page Portfolio", "merged_at": "2026-10-12T11:00:00+02:00"},
-        ],
-        "workflow_runs": [
-            {"id": 900, "name": "CI", "status": "completed", "conclusion": "failure",
-             "created_at": "2026-10-03T10:00:00+02:00"},
-            {"id": 901, "name": "CI", "status": "completed", "conclusion": "success",
-             "created_at": "2026-10-06T09:00:00+02:00"},
-            {"id": 902, "name": "CI", "status": "completed", "conclusion": "success",
-             "created_at": "2026-10-06T10:00:00+02:00"},
-            {"id": 903, "name": "CI", "status": "completed", "conclusion": "failure",
-             "created_at": "2026-10-06T11:00:00+02:00"},
-            {"id": 904, "name": "CI", "status": "completed", "conclusion": "success",
-             "created_at": "2026-10-07T10:00:00+02:00"},
-            {"id": 905, "name": "CI", "status": "completed", "conclusion": "success",
-             "created_at": "2026-10-08T09:00:00+02:00"},
-            {"id": 906, "name": "CI", "status": "completed", "conclusion": "success",
-             "created_at": "2026-10-08T10:00:00+02:00"},
-            {"id": 907, "name": "CI", "status": "completed", "conclusion": "success",
-             "created_at": "2026-10-08T11:00:00+02:00"},
-            {"id": 908, "name": "CI", "status": "completed", "conclusion": "failure",
-             "created_at": "2026-10-08T12:00:00+02:00"},
-            {"id": 909, "name": "CI", "status": "completed", "conclusion": "failure",
-             "created_at": "2026-10-10T10:00:00+02:00"},
-            {"id": 910, "name": "CI", "status": "completed", "conclusion": "success",
-             "created_at": "2026-10-11T09:00:00+02:00"},
-            {"id": 911, "name": "CI", "status": "completed", "conclusion": "success",
-             "created_at": "2026-10-11T10:00:00+02:00"},
-            {"id": 912, "name": "CI", "status": "completed", "conclusion": "success",
-             "created_at": "2026-10-12T09:00:00+02:00"},
-            {"id": 913, "name": "CI", "status": "completed", "conclusion": "failure",
-             "created_at": "2026-10-12T10:00:00+02:00"},
-            {"id": 914, "name": "CI", "status": "in_progress", "conclusion": None,
-             "created_at": "2026-10-12T11:50:00+02:00"},
-        ],
-    },
-}
+# A case writes the records its dataset holds, and what it expects of them:
+# these only put them in the shape the isolated cockpit reads (the records
+# of the delivery flow, what GitHub answers), at the fixed time of every
+# dataset of the Analyses, Monday 12/10/2026 at noon (Paris), so that the
+# seven days of the page are the 06/10 to the 12/10.
 
-# The same records, with no CI the cockpit can read: GitHub answers nothing.
-WITHOUT_CI = {key: value for key, value in copy.deepcopy(SOURCES).items() if key != "github"}
-WITHOUT_CI["ui"]["id"] = "analysis-sources-without-ci"
+GENERATED_AT = "2026-10-12T12:00:00+02:00"
 
-# The seven days of the page for these datasets, oldest first.
-DAYS = ["06/10", "07/10", "08/10", "09/10", "10/10", "11/10", "12/10"]
 
-# The four views of the Analyses, as their tabs name them, each the view of
-# one indicator: what the page asks at its address, and the heading it shows.
-VIEWS = {
-    "Résultats": "Résultats fusionnés",
-    "Délais": "Où passe le temps ?",
-    "Vérifications": "Vérifications CI réussies",
-    "Activité": "Décisions ouvertes",
-}
-# The labels of what the method of an indicator states, in its details.
-METHOD = ("Population", "Période", "Sources", "Horodatage", "Calcul")
+def at(moment: str | None) -> str | None:
+    """« 06/10 09:00 », an instant of October 2026 in Paris, as the tracker
+    and GitHub write it; None stays None."""
+    if moment is None:
+        return None
+    day, time = moment.split()
+    return f"2026-{day[3:5]}-{day[0:2]}T{time}:00+02:00"
+
+
+def result(title: str, project: str, published: str, delivered: str, accepted: str | None,
+           merged: str | None) -> dict:
+    """A result of the flow: published, delivered, accepted by Benjamin and
+    merged (None when it was not)."""
+    return {"title": title, "project": project, "published": at(published), "delivered": at(delivered),
+            "accepted": at(accepted), "merged": at(merged)}
+
+
+def ticket(title: str, project: str, dispatched: str, outcome: str, merge: str) -> dict:
+    """A ticket of the flow, dispatched, then its merge into the integration
+    branch: `merged`, or refused (`conflict`)."""
+    return {"title": title, "project": project, "dispatched": at(dispatched),
+            "merge": {"outcome": outcome, "at": at(merge)}}
+
+
+def decision(title: str, project: str, asked: str, answered: str | None = None) -> dict:
+    """A decision asked of Benjamin, answered or still open."""
+    return {"title": title, "project": project, "asked": at(asked), "answered": at(answered)}
+
+
+def pull(number: int, title: str, merged: str | None) -> dict:
+    """A closed pull request, merged or not, as GitHub answers it."""
+    return {"number": number, "title": title, "merged_at": at(merged), "updated_at": at(merged)}
+
+
+def ci_run(number: int, conclusion: str | None, created: str) -> dict:
+    """A CI run as GitHub answers it: completed with its conclusion, or
+    still running (`conclusion` None)."""
+    return {"id": number, "name": "CI", "status": "completed" if conclusion else "in_progress",
+            "conclusion": conclusion, "created_at": at(created)}
+
+
+def sources(name: str, *, results=(), tickets=(), decisions=(), repository: str | None = None, pulls=(),
+            ci_runs=()) -> dict:
+    """The dataset `name`: the records of the flow, and what GitHub answers
+    for `repository` -- nothing when None: no CI the cockpit can read."""
+    dataset = {"generated_at": GENERATED_AT, "synthetic": True, "ui": {"id": name, "page": "analysis"},
+               "visible_text": "Analyses",
+               "flow": {"results": list(results), "tickets": list(tickets), "decisions": list(decisions)}}
+    if repository is not None:
+        dataset["github"] = {"repository": repository, "pull_requests": list(pulls), "workflow_runs": list(ci_runs)}
+    return dataset
 
 
 def declare(tree: LaunchTree, datasets: dict[str, dict]) -> str:
@@ -306,9 +230,9 @@ class Page:
                         for chart in self.charts)
 
     def method(self) -> dict[str, str]:
-        """What the method of the indicator states, by label (`METHOD`):
+        """What the method of the indicator states, by label: « Raison : … »,
         « Population : … », « Période : … » …, read in the page."""
-        labels = "|".join(METHOD + ("Raison",))
+        labels = "|".join(("Raison", "Population", "Période", "Sources", "Horodatage", "Calcul"))
         found = {}
         for matched in re.finditer(rf"\b({labels}) : (.+?)(?=\s(?:{labels}) : |$)", self.text):
             found.setdefault(matched.group(1), matched.group(2).strip())
@@ -318,12 +242,194 @@ class Page:
 def served(address: str, view: str | None = None) -> Page:
     """The page « Analyses » of the cockpit at `address`, on the view whose
     tab is named `view` (« Délais »…), followed from the tab of its first
-    page; the first page when None."""
-    page = Page(address, "/analyses")
+    page; the first page when None. Read once no source it shows is still
+    being read for the first time: a cockpit just launched reads them one
+    after the other."""
+    page = _read(address, "/analyses")
     if view is None:
         return page
     href = page.links("metric-tabs-1").get(view)
     if href is None:
         raise AssertionError(f"the Analyses have no tab « {view} » leading to its view: "
                              f"{page.links('metric-tabs-1')}")
-    return Page(address, href if href.startswith("/") else "/analyses" + href)
+    return _read(address, href if href.startswith("/") else "/analyses" + href)
+
+
+def _read(address: str, path: str, seconds: float = 15) -> Page:
+    import time
+
+    deadline = time.monotonic() + seconds
+    while True:
+        page = Page(address, path)
+        if "en cours de lecture" not in page.text or time.monotonic() > deadline:
+            return page
+        time.sleep(0.2)
+
+
+# --- the keyboard, key by key ----------------------------------------------------
+
+# What the element that has the focus is, read in the page: its accessible
+# name, its element and where it leads; null when no control of the page
+# has it (the focus left the document).
+_FOCUSED = """(() => {
+  const el = document.activeElement;
+  if (!el || el === document.body || el === document.documentElement) return null;
+  const name = (el.getAttribute('aria-label') || el.innerText || el.value || el.title || '').trim().replace(/\\s+/g, ' ');
+  return {name: name, tag: el.tagName.toLowerCase(), href: el.getAttribute('href')};
+})()"""
+# The controls a person reaches with Tab: shown, not disabled, in the order
+# of the document (the page sets no positive tabindex).
+_REACHABLE = """(() => Array.from(document.querySelectorAll(
+    'a[href], button, input:not([type=hidden]), select, textarea, summary, [tabindex]'))
+  .filter(el => el.tabIndex >= 0 && !el.disabled && el.getClientRects().length > 0
+                && getComputedStyle(el).visibility !== 'hidden')
+  .map(el => (el.getAttribute('aria-label') || el.innerText || el.value || el.title || '').trim()
+                .replace(/\\s+/g, ' ')))()"""
+
+
+class Keyboard:
+    """A headless Chromium driven over its DevTools pipe, on one page of the
+    cockpit, in a frame of `width` pixels and the colour scheme `theme`:
+    the keys are pressed as a person presses them, and the browser moves
+    the focus itself."""
+
+    def __init__(self, url: str, width: int, theme: str = "dark") -> None:
+        import os
+        import subprocess
+        import tempfile
+
+        from home_destination import FRAME_HEIGHT, find_browser
+
+        self._work = tempfile.TemporaryDirectory(prefix="cockpit-analyses-keyboard-")
+        to_browser, self._write = os.pipe()
+        self._read, from_browser = os.pipe()
+
+        def pipes() -> None:
+            # Moved out of the way first: either end may already be fd 3 or 4.
+            reading, writing = os.dup(to_browser), os.dup(from_browser)
+            os.dup2(reading, 3)
+            os.dup2(writing, 4)
+
+        self._browser = subprocess.Popen(
+            [find_browser(), "--headless", "--disable-gpu", "--remote-debugging-pipe", "--no-first-run",
+             f"--user-data-dir={self._work.name}/profile", f"--window-size={width},{FRAME_HEIGHT}", "about:blank"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=False,
+            preexec_fn=pipes, start_new_session=True)
+        os.close(to_browser)
+        os.close(from_browser)
+        self._buffer, self._next, self._events = b"", 0, []
+        page = next(t for t in self._call("Target.getTargets")["targetInfos"] if t["type"] == "page")
+        self._session = self._call("Target.attachToTarget", targetId=page["targetId"], flatten=True)["sessionId"]
+        self._call("Page.enable", session=True)
+        self._call("Emulation.setFocusEmulationEnabled", enabled=True, session=True)
+        self._call("Emulation.setDeviceMetricsOverride", width=width, height=FRAME_HEIGHT, deviceScaleFactor=1,
+                   mobile=False, session=True)
+        self._call("Emulation.setEmulatedMedia", features=[{"name": "prefers-color-scheme", "value": theme}],
+                   session=True)
+        self.open(url)
+
+    def open(self, url: str) -> None:
+        self._events = []
+        self._call("Page.navigate", url=url, session=True)
+        self._wait_load()
+
+    def tab(self) -> dict | None:
+        """Tab pressed: the control that has the focus then, None when the
+        focus left the page."""
+        self._key("Tab", 9)
+        return self.focused()
+
+    def enter(self) -> None:
+        """Enter pressed on the control that has the focus; what it opens is
+        loaded before this returns."""
+        self._events = []
+        self._key("Enter", 13, text="\r")
+        self._wait_load(seconds=5, required=False)
+
+    def focused(self) -> dict | None:
+        return self.evaluate(_FOCUSED)
+
+    def reachable(self) -> list[str]:
+        """The names of the controls a person reaches with Tab, in order."""
+        return self.evaluate(_REACHABLE)
+
+    def text(self, anchor: str) -> str:
+        return self.evaluate(f"(document.querySelector('[data-anchor=\"{anchor}\"]') || {{}}).innerText || ''")
+
+    def evaluate(self, expression: str):
+        answer = self._call("Runtime.evaluate", expression=expression, returnByValue=True, session=True)
+        return answer.get("result", {}).get("value")
+
+    def close(self) -> None:
+        import os
+        import signal
+
+        try:
+            os.killpg(self._browser.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        self._browser.wait()
+        os.close(self._write)
+        os.close(self._read)
+        self._work.cleanup()
+
+    def _key(self, key: str, code: int, text: str | None = None) -> None:
+        down = {"type": "keyDown" if text is None else "keyDown", "key": key, "code": key,
+                "windowsVirtualKeyCode": code, "nativeVirtualKeyCode": code}
+        if text is not None:
+            down["text"] = text
+        self._call("Input.dispatchKeyEvent", **down, session=True)
+        self._call("Input.dispatchKeyEvent", type="keyUp", key=key, code=key, windowsVirtualKeyCode=code,
+                   nativeVirtualKeyCode=code, session=True)
+
+    def _wait_load(self, seconds: float = 20, required: bool = True) -> None:
+        import time
+
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            if any(event.get("method") == "Page.loadEventFired" for event in self._events):
+                return
+            self._receive(deadline)
+        if required:
+            raise AssertionError("the page did not load in the browser driven by the keyboard")
+
+    def _call(self, method: str, session: bool = False, **params):
+        import os
+        import time
+
+        self._next += 1
+        message = {"id": self._next, "method": method, "params": params}
+        if session:
+            message["sessionId"] = self._session
+        os.write(self._write, json.dumps(message).encode("utf-8") + b"\0")
+        deadline = time.monotonic() + 30
+        while True:
+            for received in self._receive(deadline):
+                if received.get("id") == self._next:
+                    if "error" in received:
+                        raise AssertionError(f"the browser refused {method}: {received['error']}")
+                    return received.get("result", {})
+
+    def _receive(self, deadline: float) -> list[dict]:
+        import os
+        import select
+        import time
+
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise AssertionError("the browser driven by the keyboard did not answer")
+        ready, _, _ = select.select([self._read], [], [], min(left, 0.5))
+        if not ready:
+            return []
+        chunk = os.read(self._read, 1 << 16)
+        if not chunk:
+            raise AssertionError("the browser driven by the keyboard ended")
+        self._buffer += chunk
+        messages = []
+        while b"\0" in self._buffer:
+            raw, self._buffer = self._buffer.split(b"\0", 1)
+            message = json.loads(raw)
+            if "method" in message:
+                self._events.append(message)
+            messages.append(message)
+        return messages
