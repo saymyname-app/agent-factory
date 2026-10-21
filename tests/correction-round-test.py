@@ -226,8 +226,11 @@ class CorrectionRoundTest(unittest.TestCase):
         config = self.root / "config"
         (config / "projects").mkdir(parents=True)
         (config / "project-descriptors").mkdir()
+        # The bounds of the Factory, under one correction round: the tests
+        # of two rounds raise it (rounds_bound).
+        bounds = {**json.loads((ROOT / "config" / "delivery-flow.json").read_text())["bounds"], "correction_rounds": 1}
         (config / "delivery-flow.json").write_text(json.dumps({
-            "contract": "agent-factory-delivery-flow/v1", "max_sessions": 2,
+            "contract": "agent-factory-delivery-flow/v1", "max_sessions": 2, "bounds": bounds,
             "start": {"formula": "mol-ticket-author", "role": "author"},
             "correction": {"formula": "mol-ticket-correction", "role": "author", "rig": "agent-factory"}}))
         (config / "projects" / f"{RIG}.toml").write_text(f'rig_dir = "{self.repo}"\nhuman_approver = "{APPROVER}"\n')
@@ -739,6 +742,107 @@ class CorrectionRoundTest(unittest.TestCase):
         self.assertIsNone(self.shown()["stop"])
         self.assertEqual([SLICE], [entry["id"] for entry in self.merge()["merged"]])
         self.assertEqual([], self.escalation_list())
+
+    # --- two correction rounds (af-bv0ikr; Benjamin, 2026-10-21) ---------------------
+
+    def rounds_bound(self, rounds):
+        """The bound of the correction rounds this test runs under."""
+        settings = self.root / "config" / "delivery-flow.json"
+        data = json.loads(settings.read_text())
+        data["bounds"]["correction_rounds"] = rounds
+        settings.write_text(json.dumps(data))
+
+    def refused_after_the_first_round(self):
+        """A ticket refused by both, corrected in its first round, its answer
+        judged unfavorably and its criterion still not observed. Returns the
+        tip of that round."""
+        tip = self.refused_by_both()
+        self.settle()
+        new_tip = self.corrected(tip)
+        self.judged(new_tip, tip, refused=("F1.1",))
+        self.evaluated(new_tip, observed=False)
+        return new_tip
+
+    def test_with_two_rounds_answers_judged_unfavorably_open_a_second_round_reviewed_in_full_at_its_tip(self):
+        self.rounds_bound(2)
+        new_tip = self.refused_after_the_first_round()
+
+        second = self.settle()
+
+        self.assertEqual(([SLICE], []), (self.tickets(second["launched"]), second["stopped"]))
+        self.assertEqual(2, len(self.launches()))
+        self.assertEqual({"resumes": 2, "correction_rounds": 2}, self.shown()["counters"])
+        brief = self.brief_given(2)
+        self.assertEqual(["F1.1"], [finding["id"] for finding in brief["code_review"]["blocking_findings"]])
+        self.assertIsNone(brief["code_review"]["respond"])
+        self.assertEqual(["critère 1"], [entry["what"] for entry in brief["evaluation"]["not_observed"]])
+        self.assertIn("dernier tour", brief["round"])
+
+        # The second round corrects without answering a judgement: its tip is
+        # reviewed in full, and accepted by both it merges.
+        last_tip = self.corrected(new_tip, response=False)
+        self.assertEqual([], self.settle()["stopped"])
+        self.reviewed(last_tip, TASTE)
+        self.evaluated(last_tip)
+        settled = self.settle()
+        self.assertEqual(([], []), (settled["stopped"], settled["launched"]))
+        self.assertEqual([SLICE], [entry["id"] for entry in self.merge()["merged"]])
+        self.assertEqual([], self.escalation_list())
+
+    def test_with_two_rounds_a_ticket_still_refused_after_its_second_round_stops(self):
+        self.rounds_bound(2)
+        new_tip = self.refused_after_the_first_round()
+        self.settle()
+        last_tip = self.corrected(new_tip, response=False)
+        self.reviewed(last_tip, CONTRADICTS)
+        self.evaluated(last_tip)
+
+        stopped = self.settle()
+
+        self.assertEqual([SLICE], self.tickets(stopped["stopped"]))
+        self.assertEqual(2, len(self.launches()))
+        self.assertEqual(0, self.shown()["correction_rounds_left"])
+        (line,) = self.escalation_list()
+        self.assertIn(SLICE, line)
+
+    def test_with_two_rounds_a_review_replayed_in_full_after_the_first_round_opens_the_second_with_its_findings(self):
+        self.rounds_bound(2)
+        tip = self.finished_slice()
+        self.reviewed(tip, TASTE)
+        self.evaluated(tip, observed=False)
+        self.settle()
+        new_tip = self.corrected(tip, response=False)
+        self.reviewed(new_tip, CONTRADICTS)
+        self.evaluated(new_tip)
+
+        second = self.settle()
+
+        self.assertEqual(([SLICE], []), (self.tickets(second["launched"]), second["stopped"]))
+        brief = self.brief_given(2)
+        self.assertEqual(["F2.1"], [finding["id"] for finding in brief["code_review"]["blocking_findings"]])
+        self.assertIn("bin/code-review respond", brief["code_review"]["respond"])
+        self.assertEqual([], brief["evaluation"]["not_observed"])
+
+    def test_a_ticket_stopped_after_its_only_round_takes_the_round_the_bound_now_allows_once_its_approver_grants_it(self):
+        self.refused_after_the_first_round()
+        self.assertEqual([SLICE], self.tickets(self.settle()["stopped"]))
+        grant = ("grant", CONVOY, SLICE, "--repo", self.repo)
+        self.refused(*grant, "--approved-by", APPROVER, "--words", WORDS, mention="tour(s) de correction")
+
+        self.rounds_bound(2)
+        self.refused(*grant, "--approved-by", "quelqu'un", "--words", WORDS, mention="approbateur humain")
+        self.refused(*grant, "--approved-by", APPROVER, "--words", " ", mention="mots")
+        granted = self.run_cmd(TOOL, *grant, "--approved-by", APPROVER, "--words", WORDS)
+
+        self.assertEqual(0, granted.returncode, granted.stdout + granted.stderr)
+        self.assertIsNone(self.shown()["stop"])
+        (given,) = self.shown()["correction"]["grants"]
+        self.assertEqual((APPROVER, WORDS, "still_refused"), (given["approver"], given["words"], given["stop"]["reason"]))
+        self.assertEqual([], self.escalation_list())
+        self.assertEqual([SLICE], self.tickets(self.settle()["launched"]))
+        self.assertEqual(2, len(self.launches()))
+        self.assertEqual([given], self.shown()["correction"]["grants"])
+        self.refused(*grant, "--approved-by", APPROVER, "--words", WORDS, mention="pas arrêté")
 
     def red_fidelity(self, tip, ticket=SLICE):
         """The mechanical fidelity, red at `tip`, as bin/prototype-fidelity
