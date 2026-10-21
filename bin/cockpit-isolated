@@ -63,6 +63,10 @@ SILENT_VALIDITY_SECONDS = "2"
 # A read of a tracker that never answers is not given up while the cockpit
 # lives (a day is longer than any launch): the page says it is being read.
 UNANSWERED_READ_TIMEOUT_SECONDS = "86400"
+# The first page waits for the first reading of the sources, at most this
+# long: a source that never answers (a state under reading) is served as
+# such once it is over.
+FIRST_READ_SECONDS = "8"
 # The mark bin/project-launch gives what it launches: the launcher stops
 # the processes that carry it, and the controller of an evaluation attests
 # that the process listening on the port carries it. The cockpit keeps it.
@@ -81,12 +85,14 @@ def read_city(path: Path) -> synthetic_city.SyntheticCity:
 
 
 def fall_silent_once_read(supervisor, cockpit_url: str) -> None:
-    """Take `supervisor` down as soon as the cockpit shows a reading of it:
-    the last values are kept, and are no longer current."""
+    """Take `supervisor` down as soon as the cockpit shows a reading of it
+    -- its state and its sessions: the last values are kept, and are no
+    longer current."""
     while True:
         try:
             with urllib.request.urlopen(cockpit_url + "/api/status", timeout=2) as response:
-                if (json.load(response).get("gc") or {}).get("value"):
+                status = json.load(response)
+                if (status.get("gc") or {}).get("value") and (status.get("sessions") or {}).get("value"):
                     break
         except (urllib.error.URLError, ConnectionError, OSError, ValueError):
             pass
@@ -196,12 +202,19 @@ def main(argv: list[str]) -> int:
         "COCKPIT_PROJECTS_POLL_SECONDS": POLL_SECONDS,
         "COCKPIT_JOURNAL_POLL_SECONDS": POLL_SECONDS,
         "COCKPIT_SESSIONS_POLL_SECONDS": POLL_SECONDS,
+        "COCKPIT_FIRST_READ_SECONDS": FIRST_READ_SECONDS,
         **write_tracker_and_projects(city, home),
     }
     if LAUNCH_MARK in os.environ:
         env[LAUNCH_MARK] = os.environ[LAUNCH_MARK]
     if city.reading == synthetic_city.READ_ONCE:
         env["COCKPIT_VALIDITY_GC_SECONDS"] = SILENT_VALIDITY_SECONDS
+    # A Runs state: the clock starts at the moment the state shows, and its
+    # selection is what a page opens when its address names none.
+    if city.clock_start:
+        env["COCKPIT_CLOCK_START"] = city.clock_start
+    if city.view:
+        env["COCKPIT_RUNS_VIEW"] = json.dumps(city.view)
     os.execve(sys.executable, [sys.executable, str(ROOT / "bin" / "cockpit"), "run"], env)
     return 1
 

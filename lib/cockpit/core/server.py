@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from cockpit.access.guard import session_cookie_header
 from cockpit.actions.registry import ActionError
-from cockpit.core.freshness import FRESH, UNKNOWN
+from cockpit.core.freshness import FRESH, STALE, UNKNOWN
 from cockpit.core.readmodel import PARIS
 from cockpit.health import collectors
 from cockpit.health.engine import (
@@ -31,6 +31,7 @@ from cockpit.requests.defects import DefectCounter
 from cockpit.requests.journal import entries_from_value as journal_entries_from_value
 from cockpit.requests.sources.readability import ILLISIBLE_THRESHOLD_SECONDS
 from cockpit.runs.derive import runs_from_beads
+from cockpit.runs.workflows import workflow_runs
 from cockpit.ui.analyses.page import CSS as ANALYSES_CSS, render_analyses
 from cockpit.ui.base.page import render_document, render_fresh, render_home_zones
 from cockpit.ui.health.page import render_health_zone, render_status_line
@@ -62,7 +63,6 @@ ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
 NOT_FOLDED = {
     href: (key, label) for key, label, href in NAVIGATION if key not in (HOME, "projets", "journal", "runs", "usine", "analyses")
 }
-NOT_FOLDED.update({"/runs/job": ("runs", "Runs")})
 
 
 
@@ -134,8 +134,8 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         if path == "/runs":
             self._send_runs_page(read_model)
             return
-        if path == "/runs/run":
-            self._send_run_page(read_model)
+        if path in ("/runs/run", "/runs/job"):
+            self._send_run_page(read_model, job=path == "/runs/job")
             return
         if path == "/":
             self._send_home(read_model)
@@ -484,21 +484,49 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         self._send_page(read_model, "usine", main, extra_css=FACTORY_PAGE_CSS,
                         headers={"Set-Cookie": session_cookie_header(self.server.session_token)}, snapshot=snapshot)
 
-    def _send_runs_page(self, read_model):
-        """GET /runs: the runs, filtered by ?filtre=tous|en-cours|termines."""
-        runs, failed, checked = self._runs(read_model)
-        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
-        filtre = (query.get("filtre") or ["tous"])[0]
-        self._send_page(read_model, "runs", render_runs_page(runs, filtre, checked=checked, error=failed),
-                        extra_css=RUNS_PAGE_CSS)
+    def _workflow_runs(self, read_model, snapshot):
+        """The runs of the destination Runs (cockpit.runs.workflows), one
+        per complete workflow, most recent first: (runs or None while
+        unread, read failed, HH:MM of the reading)."""
+        row = snapshot.get("runs")
+        if row is None or row["value"] is None:
+            return None, bool(row and row.get("failed_at") is not None), None
+        checked = datetime.fromtimestamp(row["read_at"], tz=PARIS).strftime("%H:%M") if row["read_at"] else None
+        sessions = (snapshot.get("sessions") or {}).get("value") or {}
+        return workflow_runs(row["value"], sessions.get("agents"), read_model.now()), False, checked
 
-    def _send_run_page(self, read_model):
-        """GET /runs/run?id=<bead>: one run, its frise and its events."""
-        runs, _, _ = self._runs(read_model)
-        wanted = (urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("id") or [""])[0]
+    def _query(self):
+        return urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+
+    def _send_runs_page(self, read_model):
+        """GET /runs: the runs, filtered by ?filtre=tous|en-cours|termines
+        (by default, the filter the frozen state selects, else Tous)."""
+        snapshot = read_model.snapshot()
+        runs, failed, checked = self._workflow_runs(read_model, snapshot)
+        filtre = (self._query().get("filtre") or [self.server.runs_view.get("filter") or "tous"])[0]
+        self._send_page(read_model, "runs",
+                        render_runs_page(runs, filtre, checked=checked, error=failed, now=read_model.now()),
+                        extra_css=RUNS_PAGE_CSS, snapshot=snapshot)
+
+    def _send_run_page(self, read_model, job=False):
+        """GET /runs/run?id=<run>: one run and its frise; GET
+        /runs/job?run=<run>&job=<job>&event=<n>: the same, with the detail
+        of a job under the frise and one of its events open. An address
+        that names nothing opens what the frozen state selects. A reading
+        of the supervisor no longer current is said, with when it was."""
+        snapshot = read_model.snapshot()
+        runs, _, _ = self._workflow_runs(read_model, snapshot)
+        query, view = self._query(), self.server.runs_view
+        wanted = (query.get("run" if job else "id") or [view.get("run") or ""])[0]
         run = next((r for r in runs or [] if r["id"] == wanted), None)
-        self._send_page(read_model, "runs", render_run_page(run), extra_css=RUNS_PAGE_CSS,
-                        status=200 if run else 404)
+        job_id = (query.get("job") or [view.get("job") or ""])[0] if job else None
+        event = (query.get("event") or [str(view.get("event") or "")])[0] if job else ""
+        gc_row = snapshot.get("gc") or {}
+        stale_at = gc_row.get("read_at") if gc_row.get("freshness") in (STALE, UNKNOWN) else None
+        main = render_run_page(run, now=read_model.now(), stale_at=stale_at, job_id=job_id,
+                               event=int(event) if event.isdigit() else None)
+        self._send_page(read_model, "runs", main, extra_css=RUNS_PAGE_CSS, status=200 if run else 404,
+                        snapshot=snapshot)
 
     def _send_journal_page(self, read_model):
         """GET /journal (spec .18): what changed, day by day -- the requests
@@ -647,6 +675,9 @@ def make_server(
     # without them (a narrow test) simply has no notifications to show.
     server.notify = None
     server.heartbeat = None
+    # What a Runs state selects when the address names nothing (the
+    # isolated cockpit of a frozen state; empty in service).
+    server.runs_view = {}
     server.stop_driver = None
     server.benjamin_login = ""
     server.extra_requests = lambda snapshot, now: []

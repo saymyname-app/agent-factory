@@ -1,18 +1,45 @@
 """The destination Runs of Panorama: the list of runs with their mini
-frises, then one run in full -- its swim lanes and what happened, in order.
+frises, then one run in full -- its swim lanes Humain, Code and one per
+agent, on the time relative to its trigger -- and, under it, the detail of
+the job selected (C1, af-lzti7w; Spec af-fgcw0d, user stories 127 to 135).
 
-The list follows the Runs reference (prototypes/c01-complete/runs.html at
-632deea): a card a run, three a row, with its workflow, status, title, step,
-mini frise and duration; filters « Tous », « En cours », « Terminés ». A
-card opens its run (/runs/run?id=<bead>).
+The pages follow the Runs reference (prototype/c01-parcours-20261011 at
+d8cb462, prototypes/c01-flow/frozen-runs) and carry its anchors, numbered
+as its frozen pages number them (:class:`RunAnchors`). A card is
+:func:`run_card`, the one card of a run -- the overview draws the same. A
+job opens at /runs/job?run=<run>&job=<job>, its frise above it; an event
+opened is kept in the address (``&event=<n>``), so a reload keeps it.
+
+What a run holds is :mod:`cockpit.runs.workflows`'s: the page draws it and
+says what is not collected, never a value of its own.
 """
 import html
+import urllib.parse
 
-from cockpit.runs.derive import DONE, paris
+from cockpit.runs.derive import AGENT, CODE, DONE, HUMAN, WAIT
+from cockpit.runs.workflows import CONTROLS, OTHERS, SESSIONS, TOOLS, normalized, paris_time
 
 # The cards drawn at most; the analyses read every run the cockpit keeps.
 SHOWN = 48
 FILTERS = (("tous", "Tous"), ("en-cours", "En cours"), ("termines", "Terminés"))
+LEGEND = ("Origine 0 : déclencheur · traits : outils (turquoise), contrôles (vert), sessions (violet), "
+          "autres (gris) · clic : détail")
+NOT_COLLECTED = "Pas encore disponible : donnée non collectée."
+EVENT_KINDS = {TOOLS: "outil", CONTROLS: "contrôle", SESSIONS: "session", OTHERS: "autre"}
+TICKS = 5
+
+
+class RunAnchors:
+    """Numbers the anchors of one page of Runs as its frozen pages number
+    them: ``card``, then ``card-2``, ``card-3``."""
+
+    def __init__(self):
+        self._counts = {}
+
+    def __call__(self, name):
+        self._counts[name] = self._counts.get(name, 0) + 1
+        count = self._counts[name]
+        return 'data-anchor="%s"' % html.escape(name if count == 1 else "%s-%d" % (name, count))
 
 
 def _e(value):
@@ -34,6 +61,17 @@ def duration(seconds):
     return "%d j %d h" % divmod(hours, 24)
 
 
+def short(seconds):
+    """A job's duration: « 18 s » under a minute, else :func:`duration`."""
+    seconds = int(seconds)
+    return "%d s" % seconds if seconds < 60 else duration(seconds)
+
+
+def relative(seconds):
+    """« +2 min 57 s » from the trigger."""
+    return "+" + short(seconds)
+
+
 def _tick(seconds):
     seconds = int(round(seconds))
     if seconds < 60:
@@ -53,91 +91,267 @@ def _selected(runs, filtre):
     return list(runs)
 
 
-def run_card(run):
+def _status(run):
+    return ("✓ %s" if run["state"] == DONE else "%s") % run["status"]
+
+
+def _now(run, now):
+    return now if now is not None else run["end"]
+
+
+# --- the card -----------------------------------------------------------------------
+
+def run_card(run, now=None, anchors=None):
+    """The card of one run: its workflow, its status, its title, its step,
+    a mini frise with a row per participant and a bar per job, its start
+    and its duration. It opens the run. It draws any run the cockpit reads:
+    its lanes, each a name and the (start, end) seconds of its jobs."""
+    anchors = anchors or RunAnchors()
     elapsed = max(run["elapsed"], 1)
     tone = run.get("tone") or ""
-    dot = '<span class="rn-dot"></span>' if tone else ""
+    card, top, type_, badge = anchors("card"), anchors("card-top"), anchors("span"), anchors("badge")
+    dot = '<span class="rn-dot" %s></span>' % anchors("live-dot") if tone else ""
+    head = ('<div class="rn-top" %s><span %s>%s</span><span class="rn-badge %s" %s>%s%s</span></div>'
+            % (top, type_, _e(run["type"]), tone, badge, dot, _e(_status(run))))
+    title = '<h2 %s>%s</h2><p %s>%s</p>' % (anchors("h2"), _e(run["title"]), anchors("p"), _e(run["step"]))
     rows = []
+    mini = anchors("mini")
     for lane in run["lanes"]:
-        bars = "".join('<span class="rn-bar %s" style="left:%s%%;width:%s%%"></span>'
-                       % (lane["kind"], _n(100 * s / elapsed), _n(100 * (e - s) / elapsed))
+        row, label, track = anchors("mini-row"), anchors("mini-label"), anchors("mini-track")
+        bars = "".join('<span class="rn-bar %s" %s style="left:%s%%;width:%s%%"></span>'
+                       % (lane["kind"], anchors("mini-bar"), _n(100 * s / elapsed), _n(100 * (e - s) / elapsed))
                        for s, e in lane["jobs"])
-        rows.append('<div class="rn-row"><span>%s</span><div class="rn-track">%s</div></div>' % (_e(lane["name"]), bars))
+        rows.append('<div class="rn-row" %s><span %s>%s</span><div class="rn-track" %s>%s</div></div>'
+                    % (row, label, _e(lane["name"]), track, bars))
     ticks = "".join("<span>%s</span>" % _tick(t) for t in (0, elapsed / 2, elapsed))
+    axis, foot, mono = anchors("mini-axis"), anchors("card-foot"), anchors("mono")
+    started = paris_time(run["start"], _now(run, now)) if run.get("start") else run.get("started", "?")
     return (
-        '<a class="rn-card" href="%s"><div class="rn-top"><span>%s</span><span class="rn-badge %s">%s%s</span></div>'
-        '<h2>%s</h2><p>%s</p><div class="rn-mini">%s</div><div class="rn-axis">%s</div>'
-        '<div class="rn-foot"><span>Début %s (Paris)</span><span class="rn-mono">%s</span></div></a>'
-    ) % (_e(run["href"]), _e(run["type"]), tone, dot, _e(run["status"]), _e(run["title"]), _e(run["step"]),
-         "".join(rows), ticks, _e(run["started"]), duration(run["elapsed"]))
+        '<a class="rn-card" href="%s" %s>%s%s<div class="rn-mini" %s>%s</div><div class="rn-axis" %s>%s</div>'
+        '<div class="rn-foot" %s><span>Début %s (Paris)</span><span class="rn-mono" %s>%s</span></div></a>'
+    ) % (_e(run["href"]), card, head, title, mini, "".join(rows), axis, ticks, foot,
+         _e(started), mono, duration(run["elapsed"]))
 
 
-def render_runs_page(runs, filtre, checked=None, error=False):
-    """Main part of /runs."""
+# --- the list ------------------------------------------------------------------------
+
+def render_runs_page(runs, filtre, checked=None, error=False, now=None):
+    """Main part of /runs: the filters, then a card per run."""
+    anchors = RunAnchors()
     filtre = filtre if filtre in dict(FILTERS) else "tous"
-    buttons = "".join('<a class="rn-filter%s" href="/runs?filtre=%s"%s>%s</a>'
-                      % (" on" if key == filtre else "", key, ' aria-current="page"' if key == filtre else "", label)
-                      for key, label in FILTERS)
+    head = ('<div class="pn-head"><small class="rn-crumb" %s>Usine / Runs</small><h1 %s>Runs</h1>'
+            '<p class="rn-sub" %s>Les workflows en cours et leur historique%s.</p></div>'
+            % (anchors("crumb"), anchors("h1"), anchors("muted"),
+               ' · vérifié à %s (Paris)' % _e(checked) if checked else ""))
+    buttons = []
+    filters = anchors("filters")
+    for key, label in FILTERS:
+        chosen = key == filtre
+        buttons.append('<a class="rn-filter%s" href="/runs?filtre=%s" %s%s>%s</a>'
+                       % (" on" if chosen else "", key, anchors("chosen" if chosen else "button"),
+                          ' aria-current="page"' if chosen else "", label))
+    nav = '<nav class="rn-filters" aria-label="Filtrer les runs" %s>%s</nav>' % (filters, "".join(buttons))
     if runs is None:
         body = '<section class="pn-panel"><p>%s</p></section>' % (
-            "Les runs n’ont pas pu être lus (tracker injoignable)." if error else "Lecture des runs…")
+            "Les runs n’ont pas pu être lus : le tracker ne répond pas (tracker injoignable)."
+            if error else "Lecture des runs…")
     else:
         shown = _selected(runs, filtre)[:SHOWN]
-        body = ('<div class="rn-grid">%s</div>' % "".join(run_card(run) for run in shown) if shown
-                else '<section class="pn-panel"><p>Aucun run dans ce filtre.</p></section>')
-    when = ' · vérifié à %s (Paris)' % _e(checked) if checked else ""
-    return ('<div class="pn-head"><small class="rn-crumb">Usine / Runs</small><h1>Runs</h1>'
-            '<p class="rn-sub">Les livraisons de tickets, en cours et passées%s.</p></div>'
-            '<nav class="rn-filters" aria-label="Filtrer les runs">%s</nav>%s') % (when, buttons, body)
+        body = ('<div class="rn-grid" %s>%s</div>' % (anchors("grid"), "".join(run_card(run, now, anchors)
+                                                                               for run in shown))
+                if shown else '<section class="pn-panel"><p>Aucun run dans ce filtre. '
+                              '<a href="/runs?filtre=tous">Voir tous les runs</a></p></section>')
+    return head + nav + body
 
 
-def render_run_page(run):
-    """Main part of /runs/run?id=…: the run's frise, then its events."""
+# --- one run, and the detail of a job --------------------------------------------------
+
+def render_run_page(run, now=None, stale_at=None, job_id=None, event=None):
+    """Main part of /runs/run?id=… (and of /runs/job, with ``job_id``): the
+    head of the run, its frise, and under it the detail of the job
+    ``job_id`` with its event ``event`` (its number) open. ``stale_at``:
+    when the activity was last observed, if the reading is no longer
+    current."""
+    anchors = RunAnchors()
     if run is None:
-        return ('<div class="pn-head"><small class="rn-crumb"><a href="/runs">Runs</a></small><h1>Run introuvable</h1></div>'
-                '<section class="pn-panel"><p>Ce run n’est pas parmi ceux que le cockpit lit.</p></section>')
+        return ('<div class="pn-head"><small class="rn-crumb" %s><a href="/runs" %s>← Runs</a></small>'
+                '<h1 %s>Run introuvable</h1></div><section class="pn-panel"><p>Ce run n’est pas parmi ceux que le '
+                'cockpit lit. <a href="/runs">Revenir à la liste des runs</a></p></section>'
+                % (anchors("crumb"), anchors("back"), anchors("h1")))
+    now = _now(run, now)
+    run = normalized(run, now)
+    job = next((item for item in run["items"] if item["id"] == job_id), None)
+    return (_render_head(run, now, stale_at, anchors) + _render_frise(run, job, anchors)
+            + (_render_detail(run, job, event, anchors) if job else ""))
+
+
+def _render_head(run, now, stale_at, anchors):
+    crumb, back, kind, title = anchors("crumb"), anchors("back"), anchors("small"), anchors("h1")
+    summary, badge = anchors("run-summary"), anchors("badge")
+    tone = run.get("tone") or ""
+    dot = '<span class="rn-dot" %s></span>' % anchors("live-dot") if tone else ""
+    horizon = "Temps final figé" if run["state"] == DONE else "Horizon : maintenant"
+    parts = ['<span class="rn-badge %s" %s>%s%s</span>' % (tone, badge, dot, _e(_status(run))),
+             "<span>Déclenché à %s (Paris)</span>" % _e(paris_time(run["start"], now)),
+             '<span class="rn-mono" %s>%s</span>' % (anchors("mono"), duration(run["elapsed"])),
+             "<span>%s</span>" % horizon, "<span>Usage et coût non collectés</span>"]
+    out = ('<div class="pn-head rn-head"><small class="rn-crumb" %s><a href="/runs" %s>← Runs</a> · '
+           '<span %s>%s</span></small><h1 %s>%s</h1><div class="rn-summary" %s>%s</div>'
+           % (crumb, back, kind, _e(run["type"]), title, _e(run["title"]), summary, "".join(parts)))
+    if run["state"] != DONE:
+        current = [item["name"] for item in run["items"] if item["open"]]
+        said = "Derniers jobs observés" if stale_at else "Job courant"
+        if run["state"] == WAIT and not current:
+            current = [run["step"]]
+        out += '<p class="rn-current" %s>%s : %s</p>' % (anchors("p"), said, _e(" · ".join(current) or run["step"]))
+        if stale_at:
+            out += ('<p class="rn-notice" role="status" %s>Lecture périmée · dernière observation à %s (Paris), '
+                    'activité actuelle non confirmée.</p>' % (anchors("notice"), _e(paris_time(stale_at, now, True))))
+    return out + "</div>"
+
+
+def _job_href(run, item, event=None):
+    query = {"run": run["id"], "job": item["id"]}
+    if event:
+        query["event"] = event
+    return "/runs/job?" + urllib.parse.urlencode(query)
+
+
+def _render_frise(run, selected, anchors):
     elapsed = max(run["elapsed"], 1)
+    box, scroll, chart = anchors("chart-box"), anchors("scroll"), anchors("chart")
+    axis, axis_title, ticks_anchor = anchors("axis"), anchors("axis-title"), anchors("ticks")
+    ticks = "".join('<span class="rn-tick">%s</span>' % _tick(elapsed * i / TICKS) for i in range(TICKS + 1))
     lanes = []
     for lane in run["lanes"]:
-        bars = []
-        for s, e in lane["jobs"]:
-            label = "%s → %s" % (paris(run["start"] + s), paris(run["start"] + e)) if e > s else paris(run["start"] + s)
-            bars.append('<span class="rn-bar %s%s" style="left:%s%%;width:%s%%" title="%s"></span>'
-                        % (lane["kind"], " point" if e <= s else "", _n(100 * s / elapsed),
-                           _n(100 * (e - s) / elapsed), _e("%s · %s" % (lane["title"], label))))
-        lanes.append('<div class="rn-lane"><span title="%s">%s</span><div class="rn-track big">%s</div></div>'
-                     % (_e(lane["title"]), _e(lane["title"]), "".join(bars)))
-    ticks = "".join("<span>%s</span>" % paris(run["start"] + elapsed * i / 4) for i in range(5))
-    events = "".join('<tr><td class="rn-mono">%s</td><td>%s</td><td>%s</td></tr>'
-                     % (paris(e["at"], with_day=True), _e(e["lane"]), _e(e["text"])) for e in run["events"])
-    facts = [("Statut", run["status"]), ("Début", "%s (Paris)" % run["started"]), ("Durée", duration(run["elapsed"])),
-             ("Ticket", "%s · %s" % (run["ticket"], run["id"]))]
-    if run.get("branch"):
-        facts.append(("Branche", run["branch"]))
-    if run.get("spec"):
-        facts.append(("Spec", run["spec"]))
-    dl = "".join("<div><dt>%s</dt><dd>%s</dd></div>" % (_e(k), _e(v)) for k, v in facts)
+        lane_anchor, name, track = anchors("lane"), anchors("lane-name"), anchors("track")
+        context = ('<small>Contexte · dernière session : non collecté</small>' if lane["kind"] == AGENT else "")
+        jobs = []
+        for item in lane["items"]:
+            job, select, marks = anchors("job"), anchors("job-select"), anchors("marks")
+            mark = "●" if item["open"] else "✓"
+            lasted = "%s · en cours" % short(item["lasted"]) if item["open"] else short(item["lasted"])
+            drawn = "".join(
+                '<a class="rn-mark %s" href="%s" aria-label="Événement · %s · %s à %s (Paris)" title="%s · %s"></a>'
+                % (event["kind"], _e(_job_href(run, item, number)), _e(event["label"]), _e(event["text"]),
+                   paris_time(event["at"], None, True), _e(event["label"]), _e(event["text"]))
+                for number, event in enumerate(item["events"], start=1))
+            current = item is selected
+            jobs.append(
+                '<div class="rn-job %s%s%s" %s style="left:%s%%;width:%s%%"><a class="rn-job-select" href="%s" title="%s" %s%s>'
+                '<strong>%s %s</strong><small>%s</small></a><div class="rn-marks" %s>%s</div></div>'
+                % (lane["kind"], " open" if item["open"] else "", " selected" if current else "", job,
+                   _n(100 * item["offset"] / elapsed), _n(100 * min(item["lasted"], elapsed - item["offset"]) / elapsed),
+                   _e(_job_href(run, item)), _e("%s · %s" % (item["name"], lasted)), select,
+                   ' aria-current="true"' if current else "", mark,
+                   _e(item["name"]), _e(lasted), marks, drawn))
+        lanes.append('<div class="rn-lane" %s><div class="rn-lane-name" %s><strong>%s</strong><small>%s</small>%s</div>'
+                     '<div class="rn-track" %s>%s</div></div>'
+                     % (lane_anchor, name, _e(lane["who"]), _e(lane["role"]), context, track, "".join(jobs)))
     return (
-        '<div class="pn-head"><small class="rn-crumb"><a href="/runs">Runs</a> / %s</small><h1>%s</h1>'
-        '<p class="rn-sub">%s</p></div>'
-        '<section class="pn-panel"><dl class="rn-facts">%s</dl></section>'
-        '<section class="pn-panel"><h2>Frise du run</h2><div class="rn-frise"><div class="rn-frise-in">%s'
-        '<div class="rn-axis big">%s</div></div></div>'
-        '<p class="rn-legend"><span class="rn-key human"></span>Humain <span class="rn-key code"></span>Code '
-        '<span class="rn-key agent"></span>Agents · heures de Paris</p></section>'
-        '<section class="pn-panel"><h2>Ce qui s’est passé</h2><div class="rn-scroll"><table class="rn-events">'
-        '<thead><tr><th>Quand (Paris)</th><th>Piste</th><th>Événement</th></tr></thead><tbody>%s</tbody></table>'
-        '</div></section>'
-    ) % (_e(run["ticket"]), _e(run["title"]), _e(run["step"]), dl, "".join(lanes), ticks,
-         events or '<tr><td colspan="3">Aucun événement écrit.</td></tr>')
+        '<section class="rn-chart-box" %s><h2 class="rn-hidden">Frise du run</h2>'
+        '<div class="rn-scroll" %s tabindex="0" aria-label="Frise du run : faire défiler pour tout voir">'
+        '<div class="rn-chart" %s><div class="rn-axis-row" %s><span class="rn-axis-title" %s>Responsable</span>'
+        '<div class="rn-ticks" %s>%s</div></div>%s</div></div>'
+        '<p class="rn-legend" %s>%s</p></section>'
+    ) % (box, scroll, chart, axis, axis_title, ticks_anchor, ticks, "".join(lanes), anchors("legend"), LEGEND)
+
+
+def _section(anchors, title, body, name="details"):
+    return ('<details class="rn-section" %s><summary %s>%s</summary>%s</details>'
+            % (anchors(name), anchors("summary"), _e(title), body))
+
+
+def _said(text):
+    return "<p>%s</p>" % _e(text)
+
+
+def _render_detail(run, item, event, anchors):
+    lane = next(lane for lane in run["lanes"] if lane["key"] == item["lane"])
+    inspector, detail, head = anchors("inspector"), anchors("detail"), anchors("inspector-head")
+    state = "En cours" if item["open"] else "Terminé"
+    kind = {HUMAN: "humain", CODE: "code"}.get(lane["kind"], "agent")
+    pills = ('<div><h2 %s>%s</h2><span class="rn-pill%s">%s</span><span class="rn-pill">%s</span></div>'
+             '<div><span class="rn-pill">Responsable %s</span><span class="rn-pill">%s</span>'
+             '<a class="rn-close" href="%s" aria-label="Fermer le détail du job">×</a></div>'
+             % (anchors("h2"), _e(item["name"]), "" if item["open"] else " good", state,
+                _e(short(item["lasted"]) + (" · en cours" if item["open"] else "")), _e(lane["who"]), kind,
+                _e(run["href"])))
+    sections = []
+    end = "en cours" if item["open"] else relative(item["offset"] + item["lasted"])
+    timing = '<p class="rn-muted">Début %s · fin %s</p>' % (relative(item["offset"]), end)
+    if lane["kind"] == AGENT:
+        sections.append(_section(anchors, "Configuration de l’agent", _said(NOT_COLLECTED)))
+        sections.append(_section(anchors, "Sessions du job", _said(NOT_COLLECTED), name="session-history"))
+        sections.append(_section(anchors, "Description", _said(item["description"] or NOT_COLLECTED) + timing))
+        sections.append(_section(anchors, "Prompts envoyés", _said(NOT_COLLECTED)))
+        usage = _said(NOT_COLLECTED)
+    else:
+        who = "Ce job est un geste de Benjamin" if lane["kind"] == HUMAN else "Ce job est exécuté par le code"
+        sections.append(_section(anchors, "Configuration de l’agent",
+                                 _said("Ce job n’utilise pas un agent modèle. %s." % who)))
+        sections.append(_section(anchors, "Description", _said(item["description"] or "Aucune description écrite.")
+                                 + timing))
+        sections.append(_section(anchors, "Prompts envoyés", _said("Sans objet : aucune instruction à un modèle.")))
+        usage = _said("Aucun appel modèle pour ce job.")
+    sections.append(_section(anchors, "Contrôles", _said(NOT_COLLECTED)))
+    sections.append(_section(anchors, "Tokens et coût", usage))
+    sections.append(_section(anchors, "Sorties", _said(NOT_COLLECTED)))
+    events_anchor, events_title, events_note, events_list = (anchors("events"), anchors("h3"), anchors("muted"),
+                                                              anchors("event-list"))
+    rows = []
+    for number, recorded in enumerate(item["events"], start=1):
+        at = paris_time(recorded["at"], None, True)
+        content = ('<dl class="rn-event-facts"><div><dt>Instant</dt><dd>%s (Paris) · %s depuis le déclencheur</dd></div>'
+                   '<div><dt>Nature</dt><dd>%s · %s</dd></div><div><dt>Job</dt><dd>%s</dd></div>'
+                   '<div><dt>Source</dt><dd>%s</dd></div></dl>'
+                   % (at, relative(max(0, recorded["at"] - run["start"])), _e(recorded["label"]),
+                      EVENT_KINDS[recorded["kind"]], _e(item["name"]), _e(item.get("source") or "tracker")))
+        rows.append('<details class="rn-event" data-run-event="%d" %s%s><summary %s><time %s>%s</time>'
+                    '<span class="rn-event-type %s" %s>%s</span><span class="rn-event-label" %s>%s</span></summary>%s'
+                    '</details>'
+                    % (number, anchors("event"), " open" if event == number else "", anchors("summary"),
+                       anchors("time"), at, recorded["kind"], anchors("event-type"), _e(recorded["label"]),
+                       anchors("event-label"), _e(recorded["text"]), content))
+    return (
+        '<div class="rn-inspector" %s><section class="rn-detail" aria-label="Détail du job %s" %s>'
+        '<header class="rn-inspector-head" %s>%s</header><div class="rn-inspector-grid" %s>'
+        '<div class="rn-inspector-sections" %s>%s</div>'
+        '<section class="rn-events" %s><h3 %s>Événements (%d)</h3><p class="rn-muted" %s>Horaires de Paris · '
+        'ouvrir un événement pour lire ce qui en est enregistré.</p><div class="rn-event-list" %s>%s</div></section>'
+        '</div></section></div>%s'
+    ) % (inspector, _e(item["name"]), detail, head, pills, anchors("inspector-grid"), anchors("inspector-sections"),
+         "".join(sections), events_anchor, events_title, len(rows), events_note, events_list, "".join(rows), EVENT_SCRIPT)
+
+
+# An event opened or closed is written in the address, so a reload of the
+# page opens the same one; opening one closes the others.
+EVENT_SCRIPT = """<script>
+document.querySelectorAll('[data-run-event]').forEach(function (item) {
+  item.addEventListener('toggle', function () {
+    var address = new URL(location.href);
+    if (item.open) {
+      document.querySelectorAll('[data-run-event][open]').forEach(function (other) {
+        if (other !== item) { other.open = false; }
+      });
+      address.searchParams.set('event', item.getAttribute('data-run-event'));
+    } else if (address.searchParams.get('event') === item.getAttribute('data-run-event')) {
+      address.searchParams.delete('event');
+    }
+    history.replaceState(null, '', address.toString());
+  });
+});
+</script>"""
 
 
 CSS = """
-:root{--rn-human:#c9962f;--rn-code:#2f9c94;--rn-agent:#8b75e0;--rn-wait:#85590f}
-@media (prefers-color-scheme: dark){:root{--rn-human:#e4bc6d;--rn-code:#55b5ae;--rn-agent:#a897eb;--rn-wait:#e4bc6d}}
+:root{--rn-human:#9a6f1c;--rn-code:#1f7f78;--rn-agent:#6a51c9;--rn-ok:#1c7954;--rn-other:#5f5f5f}
+@media (prefers-color-scheme: dark){:root{--rn-human:#e4bc6d;--rn-code:#55b5ae;--rn-agent:#a897eb;--rn-ok:#55c89d;--rn-other:#a3a3a3}}
+.rn-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .rn-crumb{display:block;margin-bottom:8px;font-size:13px;color:var(--pn-muted-text)}
 .rn-crumb a{color:inherit}
 .rn-sub{margin:0 0 18px;color:var(--pn-muted-text)}
+.rn-muted{color:var(--pn-muted-text);font-size:13px}
 .rn-filters{display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap}
 .rn-filter{padding:9px 14px;border:1px solid var(--pn-control-line);border-radius:8px;color:var(--ink);text-decoration:none;font-size:14px}
 .rn-filter.on{background:var(--pn-surface-2);border-color:var(--accent)}
@@ -154,28 +368,68 @@ CSS = """
 .rn-mini{display:grid;gap:6px;font-size:11px}
 .rn-row{display:grid;grid-template-columns:70px 1fr;gap:8px;align-items:center}
 .rn-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rn-track{height:8px;position:relative;border-bottom:1px solid var(--line);
+.rn-track{position:relative}
+.rn-row .rn-track{height:8px;border-bottom:1px solid var(--line);
   background:repeating-linear-gradient(90deg,transparent 0,transparent calc(25% - 1px),var(--line) 25%)}
 .rn-bar{position:absolute;height:5px;border-radius:4px;top:1px;background:var(--rn-agent);min-width:3px}
 .rn-bar.code{background:var(--rn-code)}.rn-bar.human{background:var(--rn-human)}
 .rn-axis{margin:8px 0 0 78px;display:flex;justify-content:space-between;color:var(--pn-muted-text);font-size:10px}
-.rn-facts{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px;margin:0}
-.rn-facts dt{font-size:12px;color:var(--pn-muted-text)}.rn-facts dd{margin:4px 0 0;overflow-wrap:anywhere}
-.rn-frise{overflow-x:auto}.rn-frise-in{min-width:640px;display:grid;gap:12px}
-.rn-lane{display:grid;grid-template-columns:200px 1fr;gap:12px;align-items:center;font-size:13px}
-.rn-lane span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rn-track.big{height:22px}
-.rn-track.big .rn-bar{height:14px;top:3px;min-width:4px}
-.rn-track.big .rn-bar.point{width:6px!important;margin-left:-3px;border-radius:2px}
-.rn-axis.big{margin:0 0 0 212px;font-size:12px}
-.rn-legend{margin-top:14px!important;font-size:13px;color:var(--pn-muted-text)}
-.rn-key{display:inline-block;width:12px;height:8px;border-radius:3px;margin:0 4px 0 10px;background:var(--rn-agent)}
-.rn-key.human{background:var(--rn-human);margin-left:0}.rn-key.code{background:var(--rn-code)}
+.rn-summary{display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin:14px 0 8px;color:var(--pn-muted-text)}
+.rn-summary .rn-badge{font-weight:600}
+.rn-current{margin:6px 0 0;color:var(--pn-muted-text)}
+.rn-notice{margin:10px 0 0;color:var(--pn-warn-text)}
+.rn-chart-box{margin-top:20px;border:1px solid var(--line);border-radius:10px;background:var(--surface);overflow:hidden}
 .rn-scroll{overflow-x:auto}
-.rn-events{border-collapse:collapse;width:100%;font-size:14px}
-.rn-events th{text-align:left;font-size:12px;color:var(--pn-muted-text);font-weight:600;padding:6px 10px 6px 0;border-bottom:1px solid var(--line)}
-.rn-events td{padding:8px 10px 8px 0;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:anywhere}
-.rn-events td:first-child,.rn-events td:nth-child(2){white-space:nowrap}
+.rn-scroll:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.rn-chart{min-width:820px}
+.rn-axis-row,.rn-lane{display:grid;grid-template-columns:165px minmax(0,1fr)}
+.rn-axis-row{height:44px;background:var(--pn-surface-2)}
+.rn-axis-title{padding:14px 16px;color:var(--pn-muted-text);font-size:12px}
+.rn-ticks{display:flex;justify-content:space-between;align-items:center;margin-right:28px;color:var(--pn-muted-text);font:12px ui-monospace,monospace}
+.rn-lane{min-height:112px;border-top:1px solid var(--line)}
+.rn-lane-name{padding:18px 16px;border-right:1px solid var(--line);min-width:0}
+.rn-lane-name strong{display:block;font-size:14px;overflow-wrap:anywhere}
+.rn-lane-name small{display:block;color:var(--pn-muted-text);font-size:12px;margin-top:6px;overflow-wrap:anywhere}
+.rn-lane .rn-track{margin-right:28px;min-height:111px;
+  background:repeating-linear-gradient(90deg,transparent 0,transparent calc(20% - 1px),var(--line) 20%)}
+.rn-job{position:absolute;top:22px;height:68px;border-radius:7px;border:1px solid var(--rn-agent);
+  background:color-mix(in srgb,var(--rn-agent) 10%,transparent);overflow:hidden;min-width:56px}
+.rn-job.human{border-color:var(--rn-human);background:color-mix(in srgb,var(--rn-human) 10%,transparent)}
+.rn-job.code{border-color:var(--rn-code);background:color-mix(in srgb,var(--rn-code) 10%,transparent)}
+.rn-job.selected{outline:2px solid var(--ink);outline-offset:1px}
+.rn-job-select{display:block;height:calc(100% - 16px);padding:8px 10px;color:inherit;text-decoration:none}
+.rn-job-select:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.rn-job strong{display:block;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rn-job small{display:block;font-size:11px;color:var(--pn-muted-text);margin-top:6px;white-space:nowrap}
+.rn-marks{position:absolute;left:5px;right:5px;bottom:2px;height:12px;display:flex;gap:1px;align-items:center}
+.rn-mark{flex:0 1 12px;min-width:3px;height:12px;position:relative}
+.rn-mark::after{content:'';position:absolute;left:40%;width:3px;top:2px;height:8px;background:var(--rn-other)}
+.rn-mark.tools::after{background:var(--rn-code)}.rn-mark.controls::after{background:var(--rn-ok)}
+.rn-mark.sessions::after{background:var(--rn-agent)}
+.rn-legend{margin:0!important;padding:12px 18px;border-top:1px solid var(--line);font-size:13px;color:var(--pn-muted-text)}
+.rn-detail{margin-top:20px;border:1px solid var(--line);border-radius:10px;padding:20px;background:var(--surface)}
+.rn-inspector-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;padding-bottom:16px;border-bottom:1px solid var(--line)}
+.rn-inspector-head>div{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.rn-inspector-head h2{margin:0;font-size:18px;overflow-wrap:anywhere}
+.rn-pill{border:1px solid var(--line);border-radius:25px;padding:5px 9px;font-size:12px;color:var(--pn-muted-text)}
+.rn-pill.good{color:var(--ok)}
+.rn-close{display:inline-grid;place-items:center;width:32px;height:32px;border:1px solid var(--pn-control-line);border-radius:8px;color:var(--ink);text-decoration:none;font-size:18px}
+.rn-inspector-grid{display:grid;grid-template-columns:minmax(0,0.42fr) minmax(0,0.58fr);gap:20px;margin-top:18px}
+.rn-section{padding:14px 0;border-bottom:1px solid var(--line)}
+.rn-section>summary,.rn-event>summary{cursor:pointer}
+.rn-section>summary{font-weight:600;font-size:14px}
+.rn-section p{font-size:14px;margin:10px 0 0;overflow-wrap:anywhere}
+.rn-events h3{margin:0;font-size:16px}
+.rn-event-list{max-height:570px;overflow:auto}
+.rn-event{border-bottom:1px solid var(--line)}
+.rn-event>summary{display:grid;grid-template-columns:66px 92px minmax(0,1fr);gap:8px;font:12px ui-monospace,monospace;padding:12px 0;align-items:center}
+.rn-event-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rn-event-type{color:var(--rn-other)}
+.rn-event-type.tools{color:var(--rn-code)}.rn-event-type.controls{color:var(--rn-ok)}.rn-event-type.sessions{color:var(--rn-agent)}
+.rn-event-facts{display:grid;gap:8px;margin:4px 0 14px;font-size:13px}
+.rn-event-facts dt{font-size:12px;color:var(--pn-muted-text)}.rn-event-facts dd{margin:2px 0 0;overflow-wrap:anywhere}
 @media (max-width:1100px){.rn-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media (max-width:800px){.rn-grid{grid-template-columns:1fr}.rn-lane{grid-template-columns:110px 1fr}.rn-axis.big{margin-left:122px}}
+@media (max-width:800px){.rn-grid{grid-template-columns:1fr}.rn-inspector-grid{grid-template-columns:1fr}
+  .rn-axis-row,.rn-lane{grid-template-columns:120px minmax(0,1fr)}.rn-lane-name{padding:14px 10px}.rn-chart{min-width:760px}
+  .rn-detail{padding:15px}.rn-event>summary{grid-template-columns:62px 70px minmax(0,1fr);font-size:11px}}
 """

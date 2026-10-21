@@ -1016,9 +1016,11 @@ ways:
 | nothing read yet: `ui.state` is `loading` | a supervisor that never answers, and a tracker whose read never ends (the cockpit waits a day for it, `COCKPIT_BEADS_READ_TIMEOUT_SECONDS`) | every source `unknown`, without value, `beads.failed_at` empty; `GET /` says it is reading, however late it is looked at |
 | nothing readable: `ui.state` is `error` | a supervisor that never answers, and a tracker whose read fails | every source `unknown`, without value, `beads.failed_at` set; `GET /` says the view is unavailable as soon as the first read failed |
 | a reading that is no longer current: `ui.state` is `stale` or `offline`, or `ui.stale` is true (Runs) | a supervisor that is read once, then answers no more | `gc.freshness` leaves `fresh` within seconds (a 2 s Validity window instead of 2 min), the last `gc.value` kept |
-| the runs of a Runs state | one bead per run under its title, open while the run has no end, with its type, status, start and elapsed time | `beads.value` (the open ones: the cockpit reads the open work of a tracker) |
-| the jobs of a run | one bead per job under its name, child of its run, assigned to the name of its lane, in progress while it has no end; its prompt and result, its start and end, the role of its lane | `beads.value` (those in progress) |
-| the agent lanes | one session per agent lane, running on the job without an end it holds | `sessions.value.sessions`, `gc.value.agents_running` |
+| the runs of a Runs state, each « Livraison D01 » or « Maintenance » | a workflow as the tracker holds one (C1, af-lzti7w): a « Livraison D01 » is a convoy carrying the new-flow mark, under the title of the run, its ticket (same `gc.graph_digest`; `gc.flow.merge` when the run says « Fusionné », `gc.flow.gate.withdrawn` when « Abandonné »), the input convoy that tracks the ticket and the workflow root `mol-ticket-author` run on it; a « Maintenance » is a workflow root `mol-do-work` under the title of the run; closed at the end of the run, open while it has none; the day of `generated_at` at the run's `started` (Paris) is its start | `runs.value`; `GET /runs` |
+| the jobs of a run | one step of the workflow root per job, under its name, from its start to its end (open without one): a job of the lane `human` routed to `benjamin`, of the lane `code` a `check`, of an agent lane a `ralph` claimed by the session of that agent (an attempt, `gc.logical_bead_id`, `gc.claimed_at`); its prompt as description, its result as close reason | `runs.value`; `GET /runs/run`, `GET /runs/job` |
+| the agent lanes | one session per agent: its `agent_name` the name of the lane, its `template` and `provider` the two halves of its role (« Relectrice · Claude »), running on the open job it holds | `sessions.value.agents`, `sessions.value.sessions`, `gc.value.agents_running` |
+| what a Runs state selects: `ui.filter`, `ui.run`, `ui.selected_job`, `ui.selected_event` | the filter, the run, the job and the event a page opens when its address names none (`COCKPIT_RUNS_VIEW`) | `GET /runs`, `GET /runs/run`, `GET /runs/job` |
+| the moment a Runs state shows (the latest `started` + `elapsed` of an open run) | the clock of the cockpit starts there and runs on (`COCKPIT_CLOCK_START`) | the horizon of the open runs, `read_at` |
 
 The key of a project the dataset only names is its name without accents, in
 lower case, with dashes between words (« Notes » is `notes`). A screen no
@@ -1038,16 +1040,16 @@ What is left out, and why:
   `ui.width`): they belong to the browser that looks, no source answers
   them. `home-light` and `home-narrow` are served the state of
   `home-content`; the same holds for each screen;
-- what a Runs state selects (`ui.run`, `ui.selected_job`,
-  `ui.selected_event`, `ui.filter`): the 19 Runs datasets carry the same
-  fixtures, byte for byte, and are served the same lanes, runs and jobs;
+- in what a Runs state selects, an event (`ui.selected_event`) that is
+  not among the events the job holds: the fixtures hold of a job only its
+  start and its end, the events the prototype draws are not collected yet
+  (C2b); the 19 Runs datasets carry the same fixtures, byte for byte, and
+  are served the same workflows;
 - the lines of a page above its first section (title, subtitle, tabs, the
   banner of a reading that is no longer current, « Rien à afficher ici »)
   and the sections that hold links only (« Ressources du projet »);
   « Activité sur 7 jours » holds only what its `drawn` says, « Derniers
   runs » only what its `runs` says;
-- the finished runs and jobs are in the tracker, closed: the cockpit reads
-  the open work of a tracker, and does not show them yet.
 
 The criterion tests of the cockpit (its T01 ticket) launch the 95 states
 and hold the list of those that are served the same tracker and projects:
@@ -1141,32 +1143,51 @@ Limits.
 - `tests/cockpit-criteria/http/` holds no test yet: the first ticket that
   writes one adds the run that launches the product for it.
 
-## « Runs »: the deliveries of tickets (direct build, 2026-10-19)
+## « Runs »: one run per complete workflow (C1, af-lzti7w)
 
-Intent (Benjamin, his words, 2026-10-19 19:20 Paris): « fusionne la Vue
-d'ensemble sur main et enchaîne directement sur Runs puis Usine. »
-Mechanism (agent interpretation): built in an interactive session, outside
-the paused convoy af-pqfxmd (decision recorded on af-npz9v1, 19/10 19:13).
+Intent (Benjamin, his words, 2026-10-12): « voir les workflows qui sont
+lancés et qui ont été lancés » ; « Oui, un run par workflow complet » ;
+« une lane par agent avec le contexte de sa dernière session, l’historique
+des sessions dans les jobs, et les traits colorés par type d’événement avec
+le détail au clic ».
+Mechanism (agent interpretation): the Prototype Fold of the Runs reference
+(Spec af-fgcw0d, ticket C1) on the Runs page built directly on 2026-10-19;
+the collection of sessions, prompts, events and usage is C2a and C2b's.
 
-`GET /runs` lists the runs, `GET /runs/run?id=<bead>` draws one. A run is
-one delivery of a ticket: a bead carrying `gc.flow.models` (an agent was
-launched on it). `lib/cockpit/runs/derive.py` reads it from what the
-delivery flow already writes (docs/CONVOY_STATE.md), nothing is collected
-for the cockpit alone:
+`GET /runs` lists the runs (`?filtre=tous|en-cours|termines`), `GET
+/runs/run?id=<run>` draws one, `GET /runs/job?run=<run>&job=<job>&event=<n>`
+draws it with the detail of a job under its frise and one of its events
+open -- in the address, so a reload keeps them. `lib/cockpit/runs/workflows.py`
+reads a run from the facts the code already recorded:
 
-| Lane | Drawn from |
+| A run | Read from |
 |---|---|
-| Humain | `gc.escalation_horodatage` → `gc.escalation_response_at` (now while unanswered), `gc.flow.overrides`, `gc.flow.gate.withdrawn` |
-| Code | `gc.flow.gate.dispatch`, `gc.flow.tdd.*`, `gc.flow.verdict.fidelity`, `gc.flow.stop`, `gc.flow.resume`, `gc.flow.merge` |
-| Auteur, Relecteur, Évaluateur | `gc.flow.models.<role>.at` → `gc.flow.exit` / last `gc.flow.code_review` round / last `gc.flow.evaluation` round (now while running) |
+| a D01 delivery | a convoy carrying `gc.flow.mark` and the tickets of its graph (`gc.graph_digest`); its jobs are the steps of the workflow roots (`gc.kind=workflow`) whose input convoy (`gc.input_convoy_id`) tracks one of those tickets, and the facts of each ticket the flow launched (`gc.flow.tdd.*`, a question to Benjamin, the merge) as points |
+| a delivery of the old flow | a ticket an agent was launched on (`gc.flow.models`) whose convoy carries no mark, read as `lib/cockpit/runs/derive.py` reads it |
+| any other workflow | its root and its steps: « Maintenance » (`mol-do-work`), « Planification » (`mol-planning-*`, `mol-graph-review`), « Ancien flux » (`mol-polecat-*`), else « Workflow » |
 
-Status: « Fusionné » (`gc.flow.merge` outcome merged), « Abandonné »
-(`gc.flow.gate.withdrawn`), « Ta décision » (a question without answer),
-« Arrêté » (`gc.flow.stop`), else « En cours ». The source `runs` reads
-`bd list --all --limit 0 --has-metadata-key gc.flow.models` on the
-journal's rhythm and keeps the 24 most recently updated; the three most
-recent fill « Derniers runs » of the Vue d'ensemble when no `gc.run_card`
-is written. Test: `tests/cockpit-runs-test.py`.
+A job is a step (`gc.kind` ralph, task or check): routed to `benjamin`, the
+lane Humain; a check, the lane Code; else the lane of the agent whose
+session claimed it -- its `agent_name` as the supervisor lists it, so a
+new session of the same agent keeps its lane and two agents of the same
+role keep one each. Its start is its first claim, its end its closing; an
+open job lasts up to now, and the clock moves only that horizon. Status:
+« Fusionné » (a ticket merged), « Abandonné » (every ticket withdrawn),
+« Terminé » (the root closed), « Ta décision » (a job of Benjamin open),
+« En cours ». When the supervisor's reading is no longer current, the run
+says « Lecture périmée » with the moment it was last observed.
+
+The detail of a job says, of each section that has no source yet
+(configuration, sessions, prompts, controls, usage, outputs), that it is
+not collected; its events are its start and its end. The source `runs`
+reads `bd list --all --limit 0 --has-metadata-key <key>` for `gc.kind`,
+`gc.logical_bead_id`, `gc.flow.mark`, `gc.synthetic` and `gc.flow.models`,
+merged by id, on the journal's rhythm; the Vue d'ensemble, Projets, Journal,
+Usine and Analyses still read the deliveries of tickets from it, as before
+(`runs_from_beads`). The card of a run is `run_card`
+(`lib/cockpit/ui/runs/page.py`), the one the overview is to reuse (K).
+Tests: `tests/cockpit-criteria/commands/runs-destination-*-test.py`,
+`tests/cockpit-runs-test.py`.
 
 ## « Usine »: machine, sources, agents (direct build, 2026-10-19)
 

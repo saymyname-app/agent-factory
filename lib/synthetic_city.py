@@ -27,7 +27,7 @@ import json
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # How the supervisor and the tracker are read during the launch.
 READ = "read"            # they answer
@@ -86,6 +86,11 @@ class SyntheticCity:
     beads: list = field(default_factory=list)
     projects: list = field(default_factory=list)
     sessions: list = field(default_factory=list)
+    # A Runs state: the moment the state shows (its clock starts there, then
+    # runs), and what it selects -- the filter, the run, the job, the event
+    # the cockpit opens when the address names none.
+    clock_start: str | None = None
+    view: dict = field(default_factory=dict)
 
 
 def from_dataset(dataset) -> SyntheticCity:
@@ -473,39 +478,118 @@ SCREENS = {
 
 
 # Runs: lanes, runs and their jobs -------------------------------------------
+#
+# Each run is written as the tracker holds a workflow, so the cockpit reads
+# it as it reads one in service (cockpit.runs.workflows): a « Livraison
+# D01 » is a convoy carrying the new-flow mark, its ticket, the input convoy
+# that tracks the ticket and the workflow root run on it; a « Maintenance »
+# is a workflow root of the formula mol-do-work. Each job is a step of that
+# root: Benjamin's routed to him, the code's a check, an agent's claimed by
+# the session of that agent -- one session per agent, as the supervisor
+# lists it (its agent, its template and its provider, from the lane's name
+# and role « Relectrice · Claude »).
+
+RUN_FORMULAS = {"Livraison D01": "mol-ticket-author", "Maintenance": "mol-do-work"}
+RUN_FILTERS = {"all": "tous", "active": "en-cours", "completed": "termines"}
+
 
 def _runs_city(name, at, ui, fixtures) -> SyntheticCity:
+    moment = _fixed_time(at)
+    if moment.tzinfo is None:
+        raise DatasetRefused(f"its fixed time (generated_at) has no offset: {at!r}")
     try:
         lanes = {lane["id"]: lane for lane in fixtures["lanes"]}
-        beads, sessions = [], {}
+        beads, sessions, opened, view = [], {}, [], {}
         for run in fixtures["runs"]:
-            run_id = f"synthetic-run-{run['id']}"
-            beads.append({
-                "id": run_id, "title": run["title"], "issue_type": "epic", "created_at": at,
-                "status": "open" if run["end"] is None else "closed",
-                "metadata": {"synthetic.run_type": run["type"], "synthetic.run_status": run["status"],
-                             "synthetic.run_started": run["started"], "synthetic.run_elapsed": run["elapsed"]},
-            })
-            for job in run["jobs"]:
-                lane, job_id = lanes[job["lane"]], f"{run_id}-{job['id']}"
-                running = job["end"] is None
-                beads.append({
-                    "id": job_id, "title": job["name"], "issue_type": "task", "created_at": at, "parent": run_id,
-                    "status": "in_progress" if running else "closed", "assignee": lane["name"],
-                    "description": job["prompt"] or "", "close_reason": job["result"] or "",
-                    "metadata": {"synthetic.lane": lane["id"], "synthetic.lane_kind": lane["kind"],
-                                 "synthetic.lane_role": lane["role"], "synthetic.job_start": job["start"],
-                                 "synthetic.job_end": job["end"]},
-                })
-                if lane["kind"] == "agent" and (running or lane["id"] not in sessions):
-                    sessions[lane["id"]] = {
-                        "id": f"synthetic-session-{lane['id']}", "template": lane["role"],
-                        "session_name": lane["name"], "running": running, "last_active": at,
-                        **({"active_bead": job_id} if running else {}),
-                    }
-    except (KeyError, TypeError) as exc:
+            beads += _run_records(run, lanes, moment, sessions, opened, ui, view)
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
         raise DatasetRefused(f"a Runs state whose fixtures (lanes, runs, jobs) cannot be read: {exc!r}") from exc
+    if ui.get("filter") in RUN_FILTERS:
+        view["filter"] = RUN_FILTERS[ui["filter"]]
+    if isinstance(ui.get("selected_event"), int):
+        view["event"] = ui["selected_event"]
+    clock = max(opened, default=moment)
     return SyntheticCity(
         name=name, reading=READ_ONCE if ui.get("stale") is True else READ,
         beads=beads, sessions=[sessions[lane] for lane in lanes if lane in sessions],
+        clock_start=clock.isoformat(), view=view,
     )
+
+
+def _utc(moment: datetime) -> str:
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _run_records(run, lanes, moment, sessions, opened, ui, view) -> list:
+    """The beads of one run of the fixtures; its open agents' sessions in
+    `sessions`, the moment it is shown at in `opened` when it is open, what
+    the state selects of it in `view`."""
+    formula = RUN_FORMULAS.get(run["type"])
+    if formula is None:
+        raise DatasetRefused(f"a run of a type no workflow has: {run['type']!r}")
+    hours, minutes = run["started"].split(":")
+    start = moment.replace(hour=int(hours), minute=int(minutes), second=0, microsecond=0)
+
+    def at(offset):
+        return _utc(start + timedelta(seconds=offset))
+
+    def ended(end):
+        return {"status": "closed", "closed_at": at(end)} if end is not None else {"status": "open"}
+
+    key, records = run["id"], []
+    root_id = f"synthetic-workflow-{key}"
+    if run["end"] is None:
+        opened.append(start + timedelta(seconds=run["elapsed"]))
+    if formula == "mol-ticket-author":
+        run_id, ticket_id, digest = f"synthetic-run-{key}", f"synthetic-ticket-{key}", f"sha256:synthetic-{key}"
+        records.append({"id": run_id, "title": run["title"], "issue_type": "convoy", "created_at": at(0),
+                        **ended(run["end"]), "metadata": {"gc.flow.mark": "new-flow/v1", "gc.graph_digest": digest}})
+        ticket = {"gc.flow.mark": "new-flow/v1", "gc.graph_digest": digest, "gc.ticket_id": key}
+        if run["status"] == "Fusionné":
+            ticket["gc.flow.merge"] = json.dumps({"at": at(run["end"]), "outcome": "merged"})
+        elif run["status"] == "Abandonné":
+            ticket["gc.flow.gate.withdrawn"] = json.dumps({"at": at(run["end"])})
+        records.append({"id": ticket_id, "title": run["title"], "issue_type": "task", "created_at": at(0),
+                        **ended(run["end"]), "metadata": ticket})
+        tracked = ticket_id
+    else:
+        run_id = tracked = root_id
+    wrapper = f"synthetic-input-{key}"
+    records.append({"id": wrapper, "title": f"input convoy for {tracked}", "issue_type": "convoy", "created_at": at(0),
+                    "status": "open", "metadata": {"gc.synthetic": "true"},
+                    "dependencies": [{"issue_id": wrapper, "depends_on_id": tracked, "type": "tracks"}]})
+    records.append({"id": root_id, "title": run["title"] if run_id == root_id else formula, "issue_type": "task",
+                    "created_at": at(0), **ended(run["end"]),
+                    "metadata": {"gc.kind": "workflow", "gc.formula_name": formula, "gc.input_convoy_id": wrapper}})
+    if ui.get("run") == key:
+        view["run"] = run_id
+    for job in run["jobs"]:
+        lane, step_id = lanes[job["lane"]], f"{root_id}-{job['id']}"
+        step = {"gc.root_bead_id": root_id, "gc.step_id": job["id"]}
+        if lane["kind"] == "human":
+            step.update({"gc.kind": "task", "gc.routed_to": "benjamin"})
+        elif lane["kind"] == "code":
+            step.update({"gc.kind": "check"})
+        else:
+            step.update({"gc.kind": "ralph"})
+        records.append({"id": step_id, "title": job["name"], "issue_type": "task", "created_at": at(job["start"]),
+                        "description": job["prompt"] or "", "close_reason": job["result"] or "",
+                        **ended(job["end"]), "metadata": step})
+        if lane["kind"] == "agent":
+            template, _, provider = lane["role"].partition(" · ")
+            session = f"synthetic-session-{lane['id']}"
+            records.append({"id": f"{step_id}-attempt-1", "title": job["name"], "issue_type": "task",
+                            "created_at": at(job["start"]), **ended(job["end"]),
+                            "metadata": {"gc.logical_bead_id": step_id, "gc.root_bead_id": root_id, "gc.attempt": "1",
+                                         "gc.session_name": session, "gc.routed_to": template,
+                                         "gc.claimed_at": at(job["start"])}})
+            running = job["end"] is None and run["end"] is None
+            if running or lane["id"] not in sessions:
+                sessions[lane["id"]] = {
+                    "id": session, "name": session, "session_name": session, "agent_name": lane["name"],
+                    "template": template, "provider": provider or None, "running": running,
+                    "last_active": _utc(moment), **({"active_bead": step_id} if running else {}),
+                }
+        if ui.get("run") == key and ui.get("selected_job") == job["id"]:
+            view["job"] = step_id
+    return records
