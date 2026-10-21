@@ -16,19 +16,35 @@ What a run is
   and the tickets of its graph (same ``gc.graph_digest``). Its jobs are the
   steps of the workflows run for those tickets -- a workflow root
   (``gc.kind=workflow``) whose input convoy (``gc.input_convoy_id``) tracks
-  one of them -- and the facts the flow wrote on each ticket (tests proven
-  red, frozen, green; a question to Benjamin and his answer; the merge).
+  one of them, or tracks the bead the dispatch door wrote to launch it (a
+  code review, a Ticket Evaluation, a correction round, a resume: its
+  description names the ``convoy:`` and the ``ticket:``) -- and the facts
+  the flow wrote on each ticket (tests proven red, frozen, green; a
+  question to Benjamin and his answer; the merge).
 - **A delivery of the old flow**: a ticket an agent was launched on
   (``gc.flow.models``) whose convoy carries no mark: one run, read as
   :mod:`cockpit.runs.derive` reads it.
-- **Any other workflow** (maintenance, planning, …): its root and its steps.
+- **Any other workflow** (maintenance, planning, …): its root and its steps,
+  named after the bead it was run on when the tracker holds it.
 
-A job is a step of a workflow (``gc.kind`` ralph, task or check, under
-``gc.root_bead_id``): a step routed to the operator (``gc.routed_to``
-benjamin) is Benjamin's, a check is the code's, any other is the agent's
-whose session claimed it (the attempts, ``gc.logical_bead_id``, carry
-``gc.session_name`` and ``gc.claimed_at``). Its start is its first claim
+Each run says what triggered it -- the publication of the graph of its
+Spec, or the bead its workflow was run on, and who wrote it -- and its
+project (``gc.project_id`` of the convoy, else the rig the work was
+dispatched to); what the tracker does not hold is said « non enregistré ».
+
+A job is a step of a workflow (under ``gc.root_bead_id``: a plain step,
+which bears no ``gc.kind``, or one of kind ralph, retry, task or check): a
+step routed to the operator (``gc.routed_to`` benjamin) is Benjamin's, a
+check is the code's, any other is the agent's whose session claimed it (a
+plain step carries ``gc.session_name`` and ``gc.claimed_at`` itself; the
+attempts of a ralph or retry step, ``gc.logical_bead_id``, carry them). Its start is its first claim
 (else its creation), its end its closing; an open job lasts up to now.
+
+The events of a job are what was recorded of it: its start and its end
+(« autre »), each session that claimed it (« session »), a check run and
+its outcome (``gc.outcome`` of a check step, or of each attempt of a step
+whose closing runs a check, ``gc.check_mode``: « contrôle »). Tool calls are not collected
+yet (C2b): no event is drawn « outil ».
 
 Lanes: « Humain », « Code », then one per logical agent -- the agent of the
 session (``agent_name`` as the supervisor lists it), so a new session of
@@ -37,6 +53,7 @@ each. What is not collected yet (sessions, configuration, prompts,
 controls, usage, outputs: C2a and C2b) is said so, never filled in.
 """
 import json
+import re
 import subprocess
 from datetime import datetime
 
@@ -46,13 +63,20 @@ from cockpit.runs.derive import AGENT, CODE, DONE, HUMAN, LIVE, STOPPED, WAIT, _
 READ_TIMEOUT_SECONDS = 20
 # What the reads ask the tracker for: the beads bearing each key, whatever
 # their status (the only read shape the cockpit uses with bd).
-KEYS = ("gc.kind", "gc.logical_bead_id", "gc.flow.mark", "gc.synthetic", "gc.flow.models")
-# The steps of a workflow that are jobs; the others (specs, scopes, their
-# checks, the finalizers) are the plumbing of the engine.
-JOB_KINDS = ("ralph", "task", "check")
+KEYS = ("gc.kind", "gc.root_bead_id", "gc.flow.mark", "gc.synthetic", "gc.flow.models", "gc.dispatched_via")
+# The steps of a workflow that are jobs -- a plain step bears no kind; the
+# others (specs, scopes, their checks, the finalizers, the cleanups) are the
+# plumbing of the engine.
+JOB_KINDS = (None, "ralph", "retry", "task", "check")
 OPERATOR = "benjamin"
 NEW_FLOW = "new-flow/"
 DONE_STEP = "Exécution terminée · historique disponible"
+UNRECORDED = "non enregistré"
+# The lines of a bead the dispatch door wrote that name the work it
+# launched (bin/dispatch-door, « convoy: … », « ticket: … »).
+CONVOY_LINE, TICKET_LINE = re.compile(r"^convoy: (\S+)$", re.M), re.compile(r"^ticket: (\S+)$", re.M)
+# What a check step recorded of its end (gc.outcome).
+OUTCOMES = {"pass": "passé", "fail": "refusé"}
 
 # The type of a workflow, by its formula; any other is a « Workflow ».
 TYPES = (("mol-do-work", "Maintenance"), ("mol-planning", "Planification"), ("mol-graph-review", "Planification"),
@@ -132,13 +156,17 @@ def workflow_runs(beads, agents, now):
         key = convoy["id"] if convoy else bead["id"]
         groups.setdefault(key, {"kind": "ticket", "root": bead, "tickets": [], "roots": []})["tickets"].append(bead)
         of_ticket[bead["id"]] = key
+    d01 = {convoy["id"] for convoy in convoys.values()}
     for bead in beads:
         m = meta[bead["id"]]
         if m.get("gc.kind") != "workflow":
             continue
         tracked = _tracked(by_id.get(m.get("gc.input_convoy_id")))
-        key = of_ticket.get(tracked) or bead["id"]
-        groups.setdefault(key, {"kind": "workflow", "root": bead, "tickets": [], "roots": []})["roots"].append(bead)
+        key = of_ticket.get(tracked) or _launched_for(by_id.get(tracked), of_ticket, d01) or bead["id"]
+        group = groups.setdefault(key, {"kind": "workflow", "root": bead, "tickets": [], "roots": []})
+        group["roots"].append(bead)
+        if group["root"] is bead:
+            group["tracked"] = by_id.get(tracked) or ({"id": tracked} if tracked else None)
 
     runs = []
     for key, group in groups.items():
@@ -156,6 +184,37 @@ def _sessions(agents):
                 if name:
                     found[name] = agent
     return found
+
+
+def _launched_for(bead, of_ticket, d01):
+    """The run a bead the dispatch door wrote launched work for: the run of
+    the ticket it names, else the D01 convoy it names; None."""
+    said = (bead or {}).get("description") or ""
+    ticket, convoy = TICKET_LINE.search(said), CONVOY_LINE.search(said)
+    if ticket and ticket.group(1) in of_ticket:
+        return of_ticket[ticket.group(1)]
+    return convoy.group(1) if convoy and convoy.group(1) in d01 else None
+
+
+def _origin(group, meta):
+    """(what triggered the run, its project), as the tracker holds them."""
+    root = group["root"]
+    m = meta[root["id"]]
+    if group["kind"] == "d01":
+        who = root.get("created_by")
+        spec = m.get("gc.spec_id")
+        trigger = "Graphe publié" + (" · Spec %s" % spec if spec else "") + (" par %s" % who if who else "")
+        return trigger, m.get("gc.project_id") or m.get("gc.dispatch_rig") or UNRECORDED
+    if group["kind"] == "ticket":
+        return "Lancement de %s" % (m.get("gc.ticket_id") or root["id"]), m.get("gc.dispatch_rig") or UNRECORDED
+    tracked = group.get("tracked")
+    if not tracked:
+        return "Déclencheur %s" % UNRECORDED, m.get("gc.dispatch_rig") or UNRECORDED
+    tm = _decoded(tracked.get("metadata"))
+    who = tracked.get("created_by")
+    trigger = "%s (%s)" % (tracked["title"], tracked["id"]) if tracked.get("title") else "Travail %s" % tracked["id"]
+    return (trigger + (" par %s" % who if who else ""),
+            tm.get("gc.project_id") or tm.get("gc.dispatch_rig") or m.get("gc.dispatch_rig") or UNRECORDED)
 
 
 def _tracked(convoy):
@@ -203,9 +262,12 @@ def _run(key, group, meta, steps, attempts, sessions, now):
     outcomes = [_outcome(meta[t["id"]]) for t in group["tickets"]]
     state, status, step = _state(jobs, tickets, outcomes, closed)
     end = closed or now
+    trigger, project = _origin(group, meta)
+    title = (group.get("tracked") or {}).get("title") if group["kind"] == "workflow" else None
     return _assemble({
         "id": key, "ticket": meta[root["id"]].get("gc.ticket_id") or key, "spec": meta[root["id"]].get("gc.spec_id"),
-        "type": _type(group, meta), "title": root.get("title") or key, "step": step, "status": status,
+        "type": _type(group, meta), "title": title or root.get("title") or key, "step": step, "status": status,
+        "trigger": trigger, "project": project,
         "tone": {LIVE: "live", WAIT: "wait"}.get(state), "state": state, "start": start, "end": max(end, start + 1),
         "branch": meta[root["id"]].get("gc.flow.branch"), "rig": meta[root["id"]].get("gc.dispatch_rig"),
         "models": {}, "workflow": True,
@@ -225,7 +287,7 @@ def _job(step, meta, attempts, sessions, formula, workflow, now):
     elif m.get("gc.kind") == "check":
         lane = {"key": CODE, "kind": CODE}
     else:
-        claim = meta[claims[-1][1]["id"]] if claims else meta[workflow["id"]]
+        claim = meta[claims[-1][1]["id"]] if claims else (m if m.get("gc.session_name") else meta[workflow["id"]])
         session = sessions.get(claim.get("gc.session_name") or "") or {}
         template = session.get("template") or claim.get("gc.routed_to") or meta[workflow["id"]].get("gc.routed_to")
         who = session.get("agent_name") or claim.get("gc.session_name") or template or "Agent inconnu"
@@ -234,9 +296,19 @@ def _job(step, meta, attempts, sessions, formula, workflow, now):
         lane = {"key": "agent:%s" % who, "kind": AGENT, "who": who,
                 "role": "%s · %s" % (role, provider) if provider else role}
     name = (STEP_NAMES.get(m.get("gc.step_id")) if formula == "mol-ticket-author" else None) or step.get("title") or "?"
+    sessions = [(at, meta[attempt["id"]].get("gc.session_name"), meta[attempt["id"]].get("gc.attempt"))
+                for at, attempt in claims if at and meta[attempt["id"]].get("gc.session_name")]
+    if not claims and m.get("gc.session_name") and begin:
+        sessions = [(begin, m["gc.session_name"], None)]
+    # A step whose closing runs a check: the outcome of each attempt closed.
+    checked = [(_ts(attempt.get("closed_at")), meta[attempt["id"]].get("gc.attempt"), meta[attempt["id"]].get("gc.outcome"))
+               for _, attempt in claims if m.get("gc.check_mode") and attempt.get("status") == "closed"
+               and _ts(attempt.get("closed_at"))]
     return {"id": step["id"], "name": name, "lane": lane, "start": begin, "end": end,
             "description": step.get("description") or step.get("close_reason") or "",
-            "source": "étape %s du workflow %s" % (step["id"], workflow["id"])}
+            "source": "étape %s du workflow %s" % (step["id"], workflow["id"]),
+            "sessions": sessions, "checked": checked, "check": m.get("gc.kind") == "check",
+            "outcome": m.get("gc.outcome")}
 
 
 def _ticket_facts(derived):
@@ -289,13 +361,31 @@ def _state(jobs, tickets, outcomes, closed):
 
 def _events(job, now):
     """The events of a job: what was recorded of it -- its start and its
-    end; a fact of a ticket is one event."""
+    end, each session that claimed it, a check and its outcome; a fact of
+    a ticket is one event."""
     if job.get("point"):
         return [{"at": job["start"], "kind": job["point"], "label": "Fait", "text": job["name"]}]
+    if job.get("check"):
+        events = [{"at": job["start"], "kind": CONTROLS, "label": "Contrôle", "text": "%s : lancé" % job["name"]}]
+        if job["end"] is not None:
+            said = OUTCOMES.get(job.get("outcome"), "terminé, issue %s" % UNRECORDED)
+            events.append({"at": job["end"], "kind": CONTROLS, "label": "Contrôle", "text": "%s : %s" % (job["name"], said)})
+        return events
     events = [{"at": job["start"], "kind": OTHERS, "label": "Début", "text": job["name"]}]
+    who = job["lane"].get("who")
+    for at, session, attempt in job.get("sessions") or []:
+        text = "%s · session %s" % (who, session) if who else "Session %s" % session
+        events.append({"at": max(at, job["start"]), "kind": SESSIONS, "label": "Session",
+                       "text": text + (" · tentative %s" % attempt if attempt else "")})
+    for at, attempt, outcome in job.get("checked") or []:
+        said = OUTCOMES.get(outcome, "issue %s" % UNRECORDED)
+        events.append({"at": max(at, job["start"]), "kind": CONTROLS, "label": "Contrôle",
+                       "text": "Contrôle de l’étape%s : %s" % (" · tentative %s" % attempt if attempt else "", said)})
     if job["end"] is not None:
         events.append({"at": job["end"], "kind": OTHERS, "label": "Fin", "text": job["name"]})
-    return events
+    order = {OTHERS: 0, SESSIONS: 1, CONTROLS: 2}
+    # The same instant: the start first, then the session, the check, the end.
+    return sorted(events, key=lambda event: (event["at"], event["label"] == "Fin", order[event["kind"]]))
 
 
 def _assemble(run, jobs, now):
@@ -353,6 +443,8 @@ def normalized(run, now):
                          "description": " · ".join(ev["text"] for ev in near), "source": "ticket %s" % run["id"],
                          "facts": near})
     out = dict(run, models=run.get("models") or {})
+    out.setdefault("trigger", "Lancement de %s" % (run.get("ticket") or run["id"]))
+    out.setdefault("project", run.get("rig") or UNRECORDED)
     out = _assemble(out, jobs, now if run["state"] != DONE else run["end"])
     for item in out["items"]:
         recorded = [{"at": ev["at"], "kind": _kind(ev["text"]), "label": "Fait", "text": ev["text"]}

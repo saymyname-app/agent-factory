@@ -48,8 +48,9 @@ class RunsDestinationLayout(unittest.TestCase):
         self.assertEqual(0, reading["overflow"], "the page is wider than a 390 px screen")
         self.assertEqual(who, [lane["name"].split()[0] if lane["name"] else "" for lane in lanes(reading)],
                          "a lane of the run is not drawn at 390 px")
-        self.assertTrue(any(box in FRISE_BOXES for box in reading["scrolls"]),
-                        f"the frise does not scroll in its own box at 390 px: {reading['scrolls']}")
+        boxes = [box["anchor"] for box in reading["scrolls"] if box["scrolls"]]
+        self.assertTrue(any(box in FRISE_BOXES for box in boxes),
+                        f"the frise does not scroll in its own box at 390 px: {boxes}")
 
     def test_run_active_fits_a_390_px_screen(self):
         self.assert_fits_a_phone("run-active", "Reprise du cockpit", ["Benjamin", "Code", "Alex", "Léa", "Noé"])

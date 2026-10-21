@@ -99,6 +99,14 @@ def _now(run, now):
     return now if now is not None else run["end"]
 
 
+def _trigger(run):
+    return run.get("trigger") or "non enregistré"
+
+
+def _project(run):
+    return run.get("project") or "non enregistré"
+
+
 # --- the card -----------------------------------------------------------------------
 
 def run_card(run, now=None, anchors=None):
@@ -113,7 +121,10 @@ def run_card(run, now=None, anchors=None):
     dot = '<span class="rn-dot" %s></span>' % anchors("live-dot") if tone else ""
     head = ('<div class="rn-top" %s><span %s>%s</span><span class="rn-badge %s" %s>%s%s</span></div>'
             % (top, type_, _e(run["type"]), tone, badge, dot, _e(_status(run))))
-    title = '<h2 %s>%s</h2><p %s>%s</p>' % (anchors("h2"), _e(run["title"]), anchors("p"), _e(run["step"]))
+    title = ('<h2 %s>%s</h2><p %s>%s</p><p class="rn-origin" %s><span>Déclencheur : %s</span>'
+             '<span>Projet : %s</span></p>'
+             % (anchors("h2"), _e(run["title"]), anchors("p"), _e(run["step"]), anchors("origin"),
+                _e(_trigger(run)), _e(_project(run))))
     rows = []
     mini = anchors("mini")
     for lane in run["lanes"]:
@@ -195,9 +206,11 @@ def _render_head(run, now, stale_at, anchors):
              "<span>Déclenché à %s (Paris)</span>" % _e(paris_time(run["start"], now)),
              '<span class="rn-mono" %s>%s</span>' % (anchors("mono"), duration(run["elapsed"])),
              "<span>%s</span>" % horizon, "<span>Usage et coût non collectés</span>"]
+    origin = ('<p class="rn-origin" %s><span>Déclencheur : %s</span><span>Projet : %s</span></p>'
+              % (anchors("origin"), _e(_trigger(run)), _e(_project(run))))
     out = ('<div class="pn-head rn-head"><small class="rn-crumb" %s><a href="/runs" %s>← Runs</a> · '
            '<span %s>%s</span></small><h1 %s>%s</h1><div class="rn-summary" %s>%s</div>'
-           % (crumb, back, kind, _e(run["type"]), title, _e(run["title"]), summary, "".join(parts)))
+           % (crumb, back, kind, _e(run["type"]), title, _e(run["title"]), summary, "".join(parts))) + origin
     if run["state"] != DONE:
         current = [item["name"] for item in run["items"] if item["open"]]
         said = "Derniers jobs observés" if stale_at else "Job courant"
@@ -217,44 +230,98 @@ def _job_href(run, item, event=None):
     return "/runs/job?" + urllib.parse.urlencode(query)
 
 
+# The frise is drawn on a track of TRACK pixels, whatever the screen: its box
+# scrolls when the screen is narrower. A job is a box at its start, as wide
+# as its time, and at least as wide as its name, its duration and its
+# events need to be read and clicked (a target of MARK pixels each): the
+# bar at its top keeps its real duration. Two boxes of a lane that would
+# overlap are drawn on two rows of it.
+TRACK = 720
+NAME_MAX = 240          # a name wider than that wraps
+NAME_CHAR, SMALL_CHAR, BOX_PAD = 8.2, 6.8, 24
+LINE, BOX_BASE, MARK, MARK_GAP, ROW_GAP, GAP = 17, 78, 24, 2, 10, 8
+
+
+def _box(item, elapsed):
+    """(left, width, height) of the box of a job, in pixels."""
+    left = TRACK * item["offset"] / elapsed
+    span = TRACK * min(item["lasted"], elapsed - item["offset"]) / elapsed
+    name = (len(item["name"]) + 2) * NAME_CHAR
+    lasted = len(_lasted(item)) * SMALL_CHAR
+    marks = len(item["events"]) * (MARK + MARK_GAP) - MARK_GAP + 10
+    width = max(span, min(name, NAME_MAX) + BOX_PAD, lasted + BOX_PAD, marks, 56)
+    lines = max(1, -(-int(name) // int(width - BOX_PAD)))
+    return left, width, BOX_BASE + LINE * (lines - 1)
+
+
+def _lasted(item):
+    return "%s · en cours" % short(item["lasted"]) if item["open"] else short(item["lasted"])
+
+
+def _rows(items, elapsed):
+    """Each job of a lane with its box and its row, the first row where it
+    overlaps no box: [(item, left, width, height, row)]."""
+    ends, placed = [], []
+    for item in items:
+        left, width, height = _box(item, elapsed)
+        row = next((index for index, end in enumerate(ends) if end + GAP <= left), len(ends))
+        if row == len(ends):
+            ends.append(0)
+        ends[row] = left + width
+        placed.append((item, left, width, height, row))
+    return placed
+
+
 def _render_frise(run, selected, anchors):
     elapsed = max(run["elapsed"], 1)
     box, scroll, chart = anchors("chart-box"), anchors("scroll"), anchors("chart")
     axis, axis_title, ticks_anchor = anchors("axis"), anchors("axis-title"), anchors("ticks")
     ticks = "".join('<span class="rn-tick">%s</span>' % _tick(elapsed * i / TICKS) for i in range(TICKS + 1))
-    lanes = []
+    lanes, widest = [], TRACK
     for lane in run["lanes"]:
         lane_anchor, name, track = anchors("lane"), anchors("lane-name"), anchors("track")
         context = ('<small>Contexte · dernière session : non collecté</small>' if lane["kind"] == AGENT else "")
+        placed = _rows(lane["items"], elapsed)
+        heights = {}
+        for _, _, _, height, row in placed:
+            heights[row] = max(heights.get(row, 0), height)
+        tops = {row: 16 + sum(heights[r] + ROW_GAP for r in range(row)) for row in heights}
         jobs = []
-        for item in lane["items"]:
+        for item, left, width, height, row in placed:
+            widest = max(widest, left + width)
             job, select, marks = anchors("job"), anchors("job-select"), anchors("marks")
             mark = "●" if item["open"] else "✓"
-            lasted = "%s · en cours" % short(item["lasted"]) if item["open"] else short(item["lasted"])
+            lasted = _lasted(item)
             drawn = "".join(
-                '<a class="rn-mark %s" href="%s" aria-label="Événement · %s · %s à %s (Paris)" title="%s · %s"></a>'
-                % (event["kind"], _e(_job_href(run, item, number)), _e(event["label"]), _e(event["text"]),
-                   paris_time(event["at"], None, True), _e(event["label"]), _e(event["text"]))
+                '<a class="rn-mark %s" href="%s" %s aria-label="Événement · %s · %s à %s (Paris)" title="%s · %s"></a>'
+                % (event["kind"], _e(_job_href(run, item, number)), anchors("mark"), _e(event["label"]),
+                   _e(event["text"]), paris_time(event["at"], None, True), _e(event["label"]), _e(event["text"]))
                 for number, event in enumerate(item["events"], start=1))
+            span = TRACK * min(item["lasted"], elapsed - item["offset"]) / elapsed
             current = item is selected
             jobs.append(
-                '<div class="rn-job %s%s%s" %s style="left:%s%%;width:%s%%"><a class="rn-job-select" href="%s" title="%s" %s%s>'
-                '<strong>%s %s</strong><small>%s</small></a><div class="rn-marks" %s>%s</div></div>'
+                '<div class="rn-job %s%s%s" %s style="left:%spx;top:%spx;width:%spx;height:%spx">'
+                '<span class="rn-span" style="width:%spx" aria-hidden="true"></span>'
+                '<a class="rn-job-select" href="%s" title="%s" %s%s><strong>%s %s</strong><small>%s</small></a>'
+                '<div class="rn-marks" %s>%s</div></div>'
                 % (lane["kind"], " open" if item["open"] else "", " selected" if current else "", job,
-                   _n(100 * item["offset"] / elapsed), _n(100 * min(item["lasted"], elapsed - item["offset"]) / elapsed),
+                   _n(left), tops[row], _n(width), height, _n(max(span, 3)),
                    _e(_job_href(run, item)), _e("%s · %s" % (item["name"], lasted)), select,
                    ' aria-current="true"' if current else "", mark,
                    _e(item["name"]), _e(lasted), marks, drawn))
+        height = max(111, 16 + sum(heights[r] + ROW_GAP for r in heights) + 6)
         lanes.append('<div class="rn-lane" %s><div class="rn-lane-name" %s><strong>%s</strong><small>%s</small>%s</div>'
-                     '<div class="rn-track" %s>%s</div></div>'
-                     % (lane_anchor, name, _e(lane["who"]), _e(lane["role"]), context, track, "".join(jobs)))
+                     '<div class="rn-track" %s style="height:%spx">%s</div></div>'
+                     % (lane_anchor, name, _e(lane["who"]), _e(lane["role"]), context, track, height, "".join(jobs)))
     return (
         '<section class="rn-chart-box" %s><h2 class="rn-hidden">Frise du run</h2>'
-        '<div class="rn-scroll" %s tabindex="0" aria-label="Frise du run : faire défiler pour tout voir">'
-        '<div class="rn-chart" %s><div class="rn-axis-row" %s><span class="rn-axis-title" %s>Responsable</span>'
-        '<div class="rn-ticks" %s>%s</div></div>%s</div></div>'
+        '<div class="rn-scroll" %s role="region" aria-label="Frise du run : faire défiler pour tout voir">'
+        '<div class="rn-chart" %s style="width:calc(var(--rn-name) + %spx)"><div class="rn-axis-row" %s>'
+        '<span class="rn-axis-title" %s>Responsable</span>'
+        '<div class="rn-ticks" %s style="width:%spx">%s</div></div>%s</div></div>'
         '<p class="rn-legend" %s>%s</p></section>'
-    ) % (box, scroll, chart, axis, axis_title, ticks_anchor, ticks, "".join(lanes), anchors("legend"), LEGEND)
+    ) % (box, scroll, chart, int(widest + 28), axis, axis_title, ticks_anchor, TRACK, ticks, "".join(lanes),
+         anchors("legend"), LEGEND)
 
 
 def _section(anchors, title, body, name="details"):
@@ -303,10 +370,11 @@ def _render_detail(run, item, event, anchors):
     for number, recorded in enumerate(item["events"], start=1):
         at = paris_time(recorded["at"], None, True)
         content = ('<dl class="rn-event-facts"><div><dt>Instant</dt><dd>%s (Paris) · %s depuis le déclencheur</dd></div>'
-                   '<div><dt>Nature</dt><dd>%s · %s</dd></div><div><dt>Job</dt><dd>%s</dd></div>'
-                   '<div><dt>Source</dt><dd>%s</dd></div></dl>'
+                   '<div><dt>Nature</dt><dd>%s · %s</dd></div><div><dt>Contenu</dt><dd>%s</dd></div>'
+                   '<div><dt>Job</dt><dd>%s</dd></div><div><dt>Source</dt><dd>%s</dd></div></dl>'
                    % (at, relative(max(0, recorded["at"] - run["start"])), _e(recorded["label"]),
-                      EVENT_KINDS[recorded["kind"]], _e(item["name"]), _e(item.get("source") or "tracker")))
+                      EVENT_KINDS[recorded["kind"]], _e(recorded["text"]), _e(item["name"]),
+                      _e(item.get("source") or "tracker")))
         rows.append('<details class="rn-event" data-run-event="%d" %s%s><summary %s><time %s>%s</time>'
                     '<span class="rn-event-type %s" %s>%s</span><span class="rn-event-label" %s>%s</span></summary>%s'
                     '</details>'
@@ -345,7 +413,7 @@ document.querySelectorAll('[data-run-event]').forEach(function (item) {
 
 
 CSS = """
-:root{--rn-human:#9a6f1c;--rn-code:#1f7f78;--rn-agent:#6a51c9;--rn-ok:#1c7954;--rn-other:#5f5f5f}
+:root{--rn-human:#9a6f1c;--rn-code:#1f7f78;--rn-agent:#6a51c9;--rn-ok:#1c7954;--rn-other:#5f5f5f;--rn-name:165px}
 @media (prefers-color-scheme: dark){:root{--rn-human:#e4bc6d;--rn-code:#55b5ae;--rn-agent:#a897eb;--rn-ok:#55c89d;--rn-other:#a3a3a3}}
 .rn-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .rn-crumb{display:block;margin-bottom:8px;font-size:13px;color:var(--pn-muted-text)}
@@ -358,6 +426,12 @@ CSS = """
 .rn-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
 .rn-card{display:block;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px;color:inherit;text-decoration:none}
 .rn-card:hover{border-color:var(--accent)}
+.rn-card:focus-visible,.rn-filter:focus-visible,.rn-close:focus-visible,.rn-crumb a:focus-visible,
+.rn-section>summary:focus-visible,.rn-event>summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.rn-origin{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:13px;color:var(--pn-muted-text);overflow-wrap:anywhere}
+.rn-card .rn-origin{margin:-6px 0 14px;font-size:12px}
+.rn-head .rn-origin{margin:0 0 6px}
+.rn-head h1{overflow-wrap:anywhere}
 .rn-card h2{margin:12px 0 7px;font-size:18px;overflow-wrap:anywhere}
 .rn-card p{margin:0 0 14px;font-size:14px;line-height:1.5;color:var(--pn-muted-text);overflow-wrap:anywhere}
 .rn-top,.rn-foot{display:flex;justify-content:space-between;gap:12px;font-size:12px;color:var(--pn-muted-text)}
@@ -378,32 +452,34 @@ CSS = """
 .rn-summary .rn-badge{font-weight:600}
 .rn-current{margin:6px 0 0;color:var(--pn-muted-text)}
 .rn-notice{margin:10px 0 0;color:var(--pn-warn-text)}
-.rn-chart-box{margin-top:20px;border:1px solid var(--line);border-radius:10px;background:var(--surface);overflow:hidden}
-.rn-scroll{overflow-x:auto}
-.rn-scroll:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
-.rn-chart{min-width:820px}
-.rn-axis-row,.rn-lane{display:grid;grid-template-columns:165px minmax(0,1fr)}
+.rn-chart-box{margin-top:20px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.rn-scroll{overflow-x:auto;border-radius:10px 10px 0 0}
+.rn-axis-row,.rn-lane{display:grid;grid-template-columns:var(--rn-name) minmax(0,1fr)}
 .rn-axis-row{height:44px;background:var(--pn-surface-2)}
 .rn-axis-title{padding:14px 16px;color:var(--pn-muted-text);font-size:12px}
-.rn-ticks{display:flex;justify-content:space-between;align-items:center;margin-right:28px;color:var(--pn-muted-text);font:12px ui-monospace,monospace}
+.rn-ticks{display:flex;justify-content:space-between;align-items:center;color:var(--pn-muted-text);font:12px ui-monospace,monospace}
 .rn-lane{min-height:112px;border-top:1px solid var(--line)}
 .rn-lane-name{padding:18px 16px;border-right:1px solid var(--line);min-width:0}
 .rn-lane-name strong{display:block;font-size:14px;overflow-wrap:anywhere}
 .rn-lane-name small{display:block;color:var(--pn-muted-text);font-size:12px;margin-top:6px;overflow-wrap:anywhere}
-.rn-lane .rn-track{margin-right:28px;min-height:111px;
-  background:repeating-linear-gradient(90deg,transparent 0,transparent calc(20% - 1px),var(--line) 20%)}
-.rn-job{position:absolute;top:22px;height:68px;border-radius:7px;border:1px solid var(--rn-agent);
-  background:color-mix(in srgb,var(--rn-agent) 10%,transparent);overflow:hidden;min-width:56px}
+.rn-lane .rn-track{min-height:111px;background-repeat:no-repeat;
+  background-image:repeating-linear-gradient(90deg,transparent 0,transparent 143px,var(--line) 143px,var(--line) 144px);
+  background-size:721px 100%}
+.rn-job{position:absolute;border-radius:7px;border:1px solid var(--rn-agent);
+  background:color-mix(in srgb,var(--rn-agent) 10%,var(--surface))}
 .rn-job.human{border-color:var(--rn-human);background:color-mix(in srgb,var(--rn-human) 10%,transparent)}
 .rn-job.code{border-color:var(--rn-code);background:color-mix(in srgb,var(--rn-code) 10%,transparent)}
 .rn-job.selected{outline:2px solid var(--ink);outline-offset:1px}
-.rn-job-select{display:block;height:calc(100% - 16px);padding:8px 10px;color:inherit;text-decoration:none}
+.rn-span{position:absolute;left:-1px;top:-1px;height:4px;border-radius:7px 0 0 0;background:var(--rn-agent)}
+.rn-job.human .rn-span{background:var(--rn-human)}.rn-job.code .rn-span{background:var(--rn-code)}
+.rn-job-select{display:block;padding:8px 10px 0;color:inherit;text-decoration:none;border-radius:6px 6px 0 0}
 .rn-job-select:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
-.rn-job strong{display:block;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.rn-job small{display:block;font-size:11px;color:var(--pn-muted-text);margin-top:6px;white-space:nowrap}
-.rn-marks{position:absolute;left:5px;right:5px;bottom:2px;height:12px;display:flex;gap:1px;align-items:center}
-.rn-mark{flex:0 1 12px;min-width:3px;height:12px;position:relative}
-.rn-mark::after{content:'';position:absolute;left:40%;width:3px;top:2px;height:8px;background:var(--rn-other)}
+.rn-job strong{display:block;font-size:13px;line-height:17px;overflow-wrap:anywhere}
+.rn-job small{display:block;font-size:11px;line-height:14px;color:var(--pn-muted-text);margin-top:3px;white-space:nowrap}
+.rn-marks{position:absolute;left:5px;bottom:3px;height:24px;display:flex;gap:2px;align-items:center}
+.rn-mark{flex:0 0 24px;width:24px;height:24px;position:relative;border-radius:4px}
+.rn-mark:focus-visible{outline:2px solid var(--accent);outline-offset:0}
+.rn-mark::after{content:'';position:absolute;left:10px;width:4px;top:5px;height:14px;border-radius:2px;background:var(--rn-other)}
 .rn-mark.tools::after{background:var(--rn-code)}.rn-mark.controls::after{background:var(--rn-ok)}
 .rn-mark.sessions::after{background:var(--rn-agent)}
 .rn-legend{margin:0!important;padding:12px 18px;border-top:1px solid var(--line);font-size:13px;color:var(--pn-muted-text)}
@@ -423,13 +499,13 @@ CSS = """
 .rn-event-list{max-height:570px;overflow:auto}
 .rn-event{border-bottom:1px solid var(--line)}
 .rn-event>summary{display:grid;grid-template-columns:66px 92px minmax(0,1fr);gap:8px;font:12px ui-monospace,monospace;padding:12px 0;align-items:center}
-.rn-event-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rn-event-label{overflow-wrap:anywhere}
 .rn-event-type{color:var(--rn-other)}
 .rn-event-type.tools{color:var(--rn-code)}.rn-event-type.controls{color:var(--rn-ok)}.rn-event-type.sessions{color:var(--rn-agent)}
 .rn-event-facts{display:grid;gap:8px;margin:4px 0 14px;font-size:13px}
 .rn-event-facts dt{font-size:12px;color:var(--pn-muted-text)}.rn-event-facts dd{margin:2px 0 0;overflow-wrap:anywhere}
 @media (max-width:1100px){.rn-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:800px){.rn-grid{grid-template-columns:1fr}.rn-inspector-grid{grid-template-columns:1fr}
-  .rn-axis-row,.rn-lane{grid-template-columns:120px minmax(0,1fr)}.rn-lane-name{padding:14px 10px}.rn-chart{min-width:760px}
+  :root{--rn-name:120px}.rn-lane-name{padding:14px 10px}
   .rn-detail{padding:15px}.rn-event>summary{grid-template-columns:62px 70px minmax(0,1fr);font-size:11px}}
 """

@@ -10,9 +10,15 @@ reads the page the cockpit serves at its address GET /runs as a headless
 Chromium renders it. It holds the page to the Validated Prototype
 (prototype/c01-parcours-20261011 at d8cb462, prototypes/c01-flow/frozen-runs):
 one card per complete workflow -- its type, its status, its title, its
-step, its start, its duration and a mini frise with a row per participant
-and a bar per job --, the filters Tous / En cours / Terminés, and a card
-that opens its run.
+step, what triggered it and its project, its start, its duration and a
+mini frise with a row per participant and a bar per job --, the filters
+Tous / En cours / Terminés, and a card that opens its run.
+
+A delivery D01 of the datasets is written as the tracker holds one: the
+author's workflow runs on its ticket, its code review and its Ticket
+Evaluation each run as a workflow of their own, on the bead the dispatch
+door wrote to launch them. One card per D01 is therefore a card that holds
+them all, Léa's and Noé's rows in its mini frise.
 
 False if a card stands for one session or one job instead of a whole
 workflow, if the runs listed change from one reading to the next, or if a
@@ -32,20 +38,22 @@ from runs_destination import LaunchTree, anchor, cards, observe, seconds, text  
 # The five workflows of the datasets, as the reference draws their cards:
 # what each card says, the rows of its mini frise (who, bars), and, for a
 # run still open, the least it has lasted -- its horizon is now.
+PUBLISHED = ["Déclencheur : Graphe publié", "par benjamin", "Projet : agent-factory"]
 COCKPIT = {"says": ["Livraison D01", "En cours", "Reprise du cockpit", "Revue du code · Essayer la tâche",
-                    "Début 15:00 (Paris)"],
+                    "Début 15:00 (Paris)", *PUBLISHED],
            "rows": [("Humain", 1), ("Code", 2), ("Alex", 2), ("Léa", 2), ("Noé", 1)], "at_least": 450}
 SEARCH = {"says": ["Livraison D01", "Fusionné", "Recherche dans les notes",
-                   "Exécution terminée · historique disponible", "Début 14:10 (Paris)", "12 min 0 s"],
+                   "Exécution terminée · historique disponible", "Début 14:10 (Paris)", "12 min 0 s", *PUBLISHED],
           "rows": [("Humain", 2), ("Code", 4), ("Alex", 2), ("Léa", 2), ("Noé", 2)]}
 FIX = {"says": ["Maintenance", "Terminé", "Corriger le tri des demandes",
-                "Exécution terminée · historique disponible", "Début 13:45 (Paris)", "5 min 1 s"],
+                "Exécution terminée · historique disponible", "Début 13:45 (Paris)", "5 min 1 s",
+                "Déclencheur : Corriger le tri des demandes", "par benjamin", "Projet : agent-factory"],
        "rows": [("Humain", 1), ("Code", 2), ("Alex", 1), ("Léa", 1)]}
 WAIT = {"says": ["Livraison D01", "Ta décision", "Préciser le périmètre du dossier", "Décision attendue",
-                 "Début 13:00 (Paris)"],
+                 "Début 13:00 (Paris)", *PUBLISHED],
         "rows": [("Humain", 2), ("Code", 1), ("Alex", 1), ("Léa", 1)], "at_least": 580}
 ABANDON = {"says": ["Livraison D01", "Abandonné", "Ancienne proposition de filtre",
-                    "Exécution terminée · historique disponible", "Début 12:20 (Paris)", "4 min 20 s"],
+                    "Exécution terminée · historique disponible", "Début 12:20 (Paris)", "4 min 20 s", *PUBLISHED],
            "rows": [("Humain", 2), ("Code", 1), ("Alex", 1)]}
 
 # runs-all, reworded: « Recherche dans les notes » is Delivered and waits
@@ -64,7 +72,7 @@ DELIVERED_TO_JUDGE = {
     '            "result": "Recontrôles favorables ; fusion prouvée et workflow clos."\n          }': "",
 }
 SEARCH_TO_JUDGE = {"says": ["Livraison D01", "Ta décision", "Recherche dans les notes", "Juger le résultat",
-                            "Début 14:10 (Paris)"],
+                            "Début 14:10 (Paris)", *PUBLISHED],
                    "rows": [("Humain", 2), ("Code", 3), ("Alex", 2), ("Léa", 2), ("Noé", 2)], "at_least": 690}
 
 

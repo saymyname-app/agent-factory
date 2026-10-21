@@ -481,16 +481,27 @@ SCREENS = {
 #
 # Each run is written as the tracker holds a workflow, so the cockpit reads
 # it as it reads one in service (cockpit.runs.workflows): a « Livraison
-# D01 » is a convoy carrying the new-flow mark, its ticket, the input convoy
-# that tracks the ticket and the workflow root run on it; a « Maintenance »
-# is a workflow root of the formula mol-do-work. Each job is a step of that
-# root: Benjamin's routed to him, the code's a check, an agent's claimed by
-# the session of that agent -- one session per agent, as the supervisor
-# lists it (its agent, its template and its provider, from the lane's name
-# and role « Relectrice · Claude »).
+# D01 » is a convoy carrying the new-flow mark, published by Benjamin, its
+# ticket, and the workflows run on it -- the author's on an input convoy
+# that tracks the ticket, the code review and the Ticket Evaluation on an
+# input convoy that tracks the bead the dispatch door wrote to launch them
+# (its description names the convoy and the ticket); a « Maintenance » is
+# a workflow root of the formula mol-do-work run on the work Benjamin
+# asked for. Each job is a step of one of those roots: Benjamin's a plain
+# step routed to him, the code's a check (passed once closed), an agent's a
+# ralph step whose closing runs a check, claimed by an attempt of the
+# session of that agent (passed once closed) -- one session per agent, as
+# the supervisor lists it (its agent, its template and its provider, from
+# the lane's name and role « Relectrice · Claude »). The datasets name no project: their runs
+# are of the Factory's own, RUN_PROJECT.
 
 RUN_FORMULAS = {"Livraison D01": "mol-ticket-author", "Maintenance": "mol-do-work"}
 RUN_FILTERS = {"all": "tous", "active": "en-cours", "completed": "termines"}
+RUN_PROJECT = "agent-factory"
+RUN_TRIGGERED_BY = "benjamin"
+# The workflows of a D01 other than the author's, by the role of the agent
+# of their jobs: (formula, the title the dispatch door gives its bead).
+DISPATCHED = (("Relect", "mol-code-review", "Revue de code"), ("Évaluat", "mol-ticket-evaluation", "Ticket Evaluation"))
 
 
 def _runs_city(name, at, ui, fixtures) -> SyntheticCity:
@@ -537,13 +548,37 @@ def _run_records(run, lanes, moment, sessions, opened, ui, view) -> list:
         return {"status": "closed", "closed_at": at(end)} if end is not None else {"status": "open"}
 
     key, records = run["id"], []
-    root_id = f"synthetic-workflow-{key}"
     if run["end"] is None:
         opened.append(start + timedelta(seconds=run["elapsed"]))
+
+    def workflow(suffix, workflow_formula, tracked, title):
+        """A workflow root of `workflow_formula` run on an input convoy that
+        tracks `tracked`; its id."""
+        root_id, wrapper = f"synthetic-workflow-{key}{suffix}", f"synthetic-input-{key}{suffix}"
+        records.append({"id": wrapper, "title": f"input convoy for {tracked}", "issue_type": "convoy",
+                        "created_at": at(0), "status": "open", "metadata": {"gc.synthetic": "true"},
+                        "dependencies": [{"issue_id": wrapper, "depends_on_id": tracked, "type": "tracks"}]})
+        records.append({"id": root_id, "title": title, "issue_type": "task", "created_at": at(0), **ended(run["end"]),
+                        "metadata": {"gc.kind": "workflow", "gc.formula_name": workflow_formula,
+                                     "gc.input_convoy_id": wrapper}})
+        return root_id
+
+    def dispatched(suffix, workflow_formula, title, said):
+        """The bead the dispatch door writes to launch `workflow_formula`."""
+        bead_id = f"synthetic-dispatch-{key}{suffix}"
+        records.append({"id": bead_id, "title": title, "description": said, "issue_type": "task",
+                        "created_at": at(0), "created_by": RUN_TRIGGERED_BY, **ended(run["end"]),
+                        "metadata": {"gc.dispatched_via": "dispatch-door", "gc.dispatch_formula": workflow_formula,
+                                     "gc.dispatch_rig": RUN_PROJECT}})
+        return bead_id
+
+    roots = {}
     if formula == "mol-ticket-author":
         run_id, ticket_id, digest = f"synthetic-run-{key}", f"synthetic-ticket-{key}", f"sha256:synthetic-{key}"
         records.append({"id": run_id, "title": run["title"], "issue_type": "convoy", "created_at": at(0),
-                        **ended(run["end"]), "metadata": {"gc.flow.mark": "new-flow/v1", "gc.graph_digest": digest}})
+                        "created_by": RUN_TRIGGERED_BY, **ended(run["end"]),
+                        "metadata": {"gc.flow.mark": "new-flow/v1", "gc.graph_digest": digest,
+                                     "gc.project_id": RUN_PROJECT, "gc.spec_id": f"synthetic-spec-{key}"}})
         ticket = {"gc.flow.mark": "new-flow/v1", "gc.graph_digest": digest, "gc.ticket_id": key}
         if run["status"] == "Fusionné":
             ticket["gc.flow.merge"] = json.dumps({"at": at(run["end"]), "outcome": "merged"})
@@ -551,27 +586,31 @@ def _run_records(run, lanes, moment, sessions, opened, ui, view) -> list:
             ticket["gc.flow.gate.withdrawn"] = json.dumps({"at": at(run["end"])})
         records.append({"id": ticket_id, "title": run["title"], "issue_type": "task", "created_at": at(0),
                         **ended(run["end"]), "metadata": ticket})
-        tracked = ticket_id
+        roots[None] = workflow("", formula, ticket_id, formula)
+        for prefix, workflow_formula, title in DISPATCHED:
+            if any(lanes[job["lane"]]["role"].startswith(prefix) for job in run["jobs"]):
+                said = f"{title} of ticket {ticket_id}.\n\nconvoy: {run_id}\nticket: {ticket_id}\n"
+                suffix = f"-{workflow_formula}"
+                launched = dispatched(suffix, workflow_formula, f"{title} — {ticket_id}", said)
+                roots[prefix] = workflow(suffix, workflow_formula, launched, workflow_formula)
     else:
-        run_id = tracked = root_id
-    wrapper = f"synthetic-input-{key}"
-    records.append({"id": wrapper, "title": f"input convoy for {tracked}", "issue_type": "convoy", "created_at": at(0),
-                    "status": "open", "metadata": {"gc.synthetic": "true"},
-                    "dependencies": [{"issue_id": wrapper, "depends_on_id": tracked, "type": "tracks"}]})
-    records.append({"id": root_id, "title": run["title"] if run_id == root_id else formula, "issue_type": "task",
-                    "created_at": at(0), **ended(run["end"]),
-                    "metadata": {"gc.kind": "workflow", "gc.formula_name": formula, "gc.input_convoy_id": wrapper}})
+        work = dispatched("", formula, run["title"], f"{run['title']}.\n")
+        run_id = roots[None] = workflow("", formula, work, formula)
     if ui.get("run") == key:
         view["run"] = run_id
     for job in run["jobs"]:
-        lane, step_id = lanes[job["lane"]], f"{root_id}-{job['id']}"
+        lane = lanes[job["lane"]]
+        root_id = next((root for prefix, root in roots.items() if prefix and lane["role"].startswith(prefix)),
+                       roots[None])
+        step_id = f"{root_id}-{job['id']}"
         step = {"gc.root_bead_id": root_id, "gc.step_id": job["id"]}
+        passed = {"gc.outcome": "pass"} if job["end"] is not None else {}
         if lane["kind"] == "human":
-            step.update({"gc.kind": "task", "gc.routed_to": "benjamin"})
+            step.update({"gc.routed_to": "benjamin"})
         elif lane["kind"] == "code":
-            step.update({"gc.kind": "check"})
+            step.update({"gc.kind": "check", **passed})
         else:
-            step.update({"gc.kind": "ralph"})
+            step.update({"gc.kind": "ralph", "gc.check_mode": "exec", **passed})
         records.append({"id": step_id, "title": job["name"], "issue_type": "task", "created_at": at(job["start"]),
                         "description": job["prompt"] or "", "close_reason": job["result"] or "",
                         **ended(job["end"]), "metadata": step})
@@ -582,7 +621,7 @@ def _run_records(run, lanes, moment, sessions, opened, ui, view) -> list:
                             "created_at": at(job["start"]), **ended(job["end"]),
                             "metadata": {"gc.logical_bead_id": step_id, "gc.root_bead_id": root_id, "gc.attempt": "1",
                                          "gc.session_name": session, "gc.routed_to": template,
-                                         "gc.claimed_at": at(job["start"])}})
+                                         "gc.claimed_at": at(job["start"]), **passed}})
             running = job["end"] is None and run["end"] is None
             if running or lane["id"] not in sessions:
                 sessions[lane["id"]] = {

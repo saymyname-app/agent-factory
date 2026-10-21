@@ -6,9 +6,14 @@ a test file: the criterion test files of the destination load it.
   disposable Git repository, from which the real launcher of the profile,
   bin/project-launch, starts the cockpit on a named dataset;
 - `observe`: the page the launched cockpit serves at one of its addresses,
-  as a headless Chromium renders it, in frames of the given widths, read by
-  runs_destination_measure.js -- then read again after each step asked for:
-  a click on a control, a wait, a reload of the page;
+  as a headless Chromium renders it, in frames of the given widths -- the
+  measure of home_destination.py --, then read again after each step asked
+  for: a click on a control, a wait, a reload of the page;
+- `observe_themes`: the same, in the dark theme and in the light one, and
+  `unreadable`: what makes those readings unreadable or unusable -- the
+  `problems` of home_destination.py: the document wider than the screen, a
+  text cut or drawn on another, a contrast too low, a control out of reach
+  of the keyboard or without a visible focus, a local scroll lost;
 - what a reading is looked at through: its anchors, the cards of the list,
   the lanes of the frise and their jobs, the detail of a job, its sections
   and its events, the family of a colour, a duration.
@@ -20,57 +25,14 @@ case verifies are written in the case.
 
 from __future__ import annotations
 
-import html
-import json
-import os
 import re
-import shutil
-import signal
-import subprocess
-import tempfile
-import threading
-import urllib.parse
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
-from home_destination import BROWSER_TIMEOUT, COLOUR_SCHEMES, FRAME_HEIGHT, LaunchTree, find_browser  # noqa: F401
+from home_destination import LaunchTree, measure, problems  # noqa: F401
 
-MEASURE_SCRIPT = (Path(__file__).with_name("runs_destination_measure.js")).read_text(encoding="utf-8")
-MEASURE_PAGE = """<!doctype html>
-<html><head><meta charset="utf-8"><title>mesure</title></head>
-<body style="margin:0">
-<div id="frames"></div>
-<pre id="measure"></pre>
-<script>%s</script>
-</body></html>
-"""
-MEASURE_RE = re.compile(r'<pre id="measure">(.*?)</pre>', re.S)
-
-
-class _MeasurePage(BaseHTTPRequestHandler):
-    def do_GET(self):  # noqa: N802
-        body = (MEASURE_PAGE % MEASURE_SCRIPT).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, *args):
-        pass
-
-
-_server_lock = threading.Lock()
-_server: ThreadingHTTPServer | None = None
-
-
-def _measure_url() -> str:
-    global _server
-    with _server_lock:
-        if _server is None:
-            _server = ThreadingHTTPServer(("127.0.0.1", 0), _MeasurePage)
-            threading.Thread(target=_server.serve_forever, daemon=True).start()
-        return f"http://127.0.0.1:{_server.server_address[1]}/measure.html"
+THEMES = ("dark", "light")
+# A desktop and a phone, as the reference measures them.
+SCREENS = (1440, 390)
 
 
 def observe(address: str, path: str, *, widths: tuple[int, ...] = (1440,), theme: str = "dark",
@@ -79,40 +41,31 @@ def observe(address: str, path: str, *, widths: tuple[int, ...] = (1440,), theme
     width, the reading once it settled, then one reading after each of
     `steps` -- {"click": name, "within": anchor} activates the control
     drawn inside that anchor whose accessible name starts with (or holds)
-    `name`, {"wait": ms} waits, {"reload": True} reloads the page. See
-    runs_destination_measure.js for what a reading holds."""
-    query = urllib.parse.urlencode({
-        "target": address + path, "widths": ",".join(str(w) for w in widths), "height": FRAME_HEIGHT,
-        "steps": json.dumps(list(steps)),
-    })
-    work = tempfile.mkdtemp(prefix="cockpit-runs-browser-")
-    argv = [
-        find_browser(), "--headless", "--disable-gpu", "--hide-scrollbars", f"--user-data-dir={work}/profile",
-        "--disable-web-security", "--disable-site-isolation-trials",
-        f"--window-size={max(widths) + 20},{FRAME_HEIGHT + 20}",
-        f"--blink-settings=preferredColorScheme={COLOUR_SCHEMES[theme]}",
-        "--virtual-time-budget=90000", "--dump-dom", f"{_measure_url()}?{query}",
-    ]
-    proc = None
-    try:
-        with open(Path(work) / "dom.html", "wb") as out, open(Path(work) / "browser.log", "wb") as log:
-            proc = subprocess.Popen(argv, cwd=work, stdin=subprocess.DEVNULL, stdout=out, stderr=log,
-                                    start_new_session=True)
-            proc.wait(timeout=BROWSER_TIMEOUT)
-        dom = (Path(work) / "dom.html").read_text(encoding="utf-8", errors="replace")
-    finally:
-        if proc is not None:
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            proc.wait()
-        shutil.rmtree(work, ignore_errors=True)
-    found = MEASURE_RE.search(dom)
-    measured = json.loads(html.unescape(found.group(1))) if found and found.group(1).strip() else None
-    if not isinstance(measured, dict) or measured.get("ok") is not True:
-        raise AssertionError(f"the browser read nothing of {address}{path} ({theme}): {measured}")
-    return [frame["readings"] for frame in measured["frames"]]
+    `name` (with "keys": true, by the keyboard), {"wait": ms} waits,
+    {"reload": True} reloads the page. See home_destination_measure.js for
+    what a reading holds."""
+    return [frame["readings"] for frame in measure(address, path, theme=theme, widths=widths, steps=steps)]
+
+
+def observe_themes(address: str, path: str, *, widths: tuple[int, ...] = SCREENS,
+                   steps: tuple[dict, ...] = ()) -> dict[str, list[list[dict]]]:
+    """`observe` in each theme of THEMES, side by side: theme -> per frame
+    width, the readings."""
+    with ThreadPoolExecutor(max_workers=len(THEMES)) as pool:
+        found = pool.map(lambda theme: observe(address, path, widths=widths, theme=theme, steps=steps), THEMES)
+        return dict(zip(THEMES, found))
+
+
+def unreadable(by_theme: dict[str, list[list[dict]]], panels: tuple[str, ...]) -> dict[str, dict]:
+    """What makes the readings of `observe_themes` unreadable or unusable,
+    by screen and theme (`problems`, each panel of `panels` required); empty
+    when nothing does."""
+    found = {}
+    for theme, frames in by_theme.items():
+        for number, readings in enumerate(zip(*frames)):
+            for screen, said in problems(list(readings), theme, panels).items():
+                found[screen if number == 0 else f"{screen}, after step {number}"] = said
+    return found
 
 
 # --- a reading ------------------------------------------------------------------
@@ -193,8 +146,9 @@ TIME = re.compile(r"(?<!\d)(\d\d:\d\d:\d\d)(?!\d)")
 
 def events(reading: dict) -> list[dict]:
     """The events listed beside the detail of the job, in the order of the
-    page: the time of day each says, its text, whether it is open, its
-    whole text and the colours its type is drawn with."""
+    page: the time of day each says, its text, its kind as it says it
+    (`kind`), whether it is open, its whole text and the colours its kind
+    is drawn with."""
     found = []
     for event in anchors(reading, "event", within="event-list"):
         if event["chain"][:1] != ["event-list"]:
@@ -205,6 +159,7 @@ def events(reading: dict) -> list[dict]:
         kind = next((a for a in anchors(reading, "event-type", within=event["name"])), None)
         moment = TIME.search(said)
         found.append({"time": moment.group(1) if moment else None, "text": said, "open": event["open"],
+                      "kind": kind["content"] if kind else "",
                       "content": event["content"], "colours": (kind or event)["colours"]})
     return found
 

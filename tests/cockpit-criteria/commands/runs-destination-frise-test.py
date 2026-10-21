@@ -13,11 +13,13 @@ prototypes/c01-flow/frozen-runs): a lane Humain, a lane Code and one lane
 per logical agent, each job with its observed duration or open, the time
 relative to the trigger, the horizon now for a run still open and frozen
 at the end of a finished one, what a run waits for, and a stale reading
-with the last moment it was observed.
+with the last moment it was observed. Its head says what triggered it and
+its project.
 
 False if the timer makes a job, an event or a verdict, or if two agents of
 the same role share a lane. The page at 390 px is in
-runs-destination-layout-test.py.
+runs-destination-layout-test.py; every state of Runs, in both themes, on a
+desktop and a phone, in runs-destination-readable-*-test.py.
 """
 
 from __future__ import annotations
@@ -71,6 +73,11 @@ SECOND_AUTHOR = {'"role": "Évaluateur · Codex"': '"role": "Auteur · Codex"'}
 LAST_SEEN = re.compile(r"(?<!\d)\d{1,2}[:h]\d\d(?!\d)")
 
 
+def events_drawn(reading: dict) -> list[str]:
+    """The events drawn on the frise, as each says what it is."""
+    return [c["name"] for c in reading["controls"] if c["name"].startswith("Événement")]
+
+
 class RunsDestinationFrise(unittest.TestCase):
     maxDiff = None
 
@@ -91,8 +98,9 @@ class RunsDestinationFrise(unittest.TestCase):
 
     def head(self, reading: dict) -> str:
         """What the head of the run says above its frise: its summary
-        (status, trigger, duration, horizon) and the line of its jobs."""
-        return f"{text(reading, 'run-summary')} {text(reading, 'p')}"
+        (status, time of the trigger, duration, horizon), what triggered it
+        and its project, and the line of its jobs."""
+        return f"{text(reading, 'run-summary')} {text(reading, 'origin')} {text(reading, 'p')}"
 
     def assert_run(self, reading: dict, title: str, *phrases: str) -> None:
         """The page is the frise of the run `title`, whose head says each of
@@ -130,7 +138,8 @@ class RunsDestinationFrise(unittest.TestCase):
     def test_run_active_has_a_lane_per_participant_up_to_now(self):
         reading = self.reading(self.tree.launch("run-active"))
         self.assert_run(reading, "Reprise du cockpit", "En cours", "15:00 (Paris)", "Horizon : maintenant",
-                        "Revue du code", "Essayer la tâche")
+                        "Revue du code", "Essayer la tâche", "Déclencheur : Graphe publié", "par benjamin",
+                        "Projet : agent-factory")
         self.assertIn("Livraison D01", reading["text"])
         self.assert_lanes(reading, COCKPIT_LANES)
         # The state is the run seven minutes and a half after its trigger,
@@ -157,12 +166,20 @@ class RunsDestinationFrise(unittest.TestCase):
                     self.assertEqual(job_before, job_after, "a job ended changed with the time")
         self.assertEqual(len(before["controls"]), len(after["controls"]),
                          "the timer added or removed something to click (a job, an event)")
+        # Nor a verdict: the status of the run, what it is at, and the state
+        # of each job (✓ ended, ● open) are what they were.
+        self.assertEqual((text(before, "badge"), text(before, "p")), (text(after, "badge"), text(after, "p")),
+                         "the timer changed the status of the run or what it is at")
+        self.assertEqual([[job.split()[0] for job in lane["jobs"]] for lane in lanes(before)],
+                         [[job.split()[0] for job in lane["jobs"]] for lane in lanes(after)],
+                         "the timer changed the state of a job (ended, open)")
+        self.assertEqual(events_drawn(before), events_drawn(after), "the timer made or changed an event")
 
     def test_run_completed_is_frozen_at_its_end(self):
         address = self.tree.launch("run-completed")
         before = self.reading(address)
         self.assert_run(before, "Recherche dans les notes", "Fusionné", "14:10 (Paris)", "12 min 0 s",
-                        "Temps final figé")
+                        "Temps final figé", "Déclencheur : Graphe publié", "Projet : agent-factory")
         self.assertTrue(text(before, "ticks").endswith("12m"), f"the axis does not end at the end: {text(before, 'ticks')}")
         self.assert_lanes(before, SEARCH_LANES)
         time.sleep(2)
