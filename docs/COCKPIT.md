@@ -1004,7 +1004,8 @@ ways:
   the next release of a project or its roadmap: the tracker holds what the
   dataset says of each until the ticket of that screen reads it into records
   of its own. The Analyses read records of their own (below: `flow`,
-  `github`).
+  `github`): the results, the runs, the journal and the requests they
+  give.
 
 | The dataset says | The sources answer | Seen at |
 |---|---|---|
@@ -1022,9 +1023,9 @@ ways:
 | « Rituels »: each ritual (a line in capitals says how it is launched, then its title) | one bead per ritual under its title: how it is launched, what it is for, when it last ran | `beads.value` |
 | the page of a ritual (« ← Rituels », its title, « projet · … ») | one bead under the title of the ritual, its project declared; its steps and what the step it is at shows | `beads.value` |
 | « Analyses »: « Résultats fusionnés » or « Où passe le temps ? »; a merged result (« projet · hier ») | one bead kept as said for the view; the project of each merged result is declared | `beads.value`; `projets.value.projects` |
-| `flow.results`: a result of the flow (title, project, `published`, `delivered`, `accepted`, `merged`, ISO instants, the last three possibly null) | one convoy bead `synthetic-result-N` marked by the flow, created at `published`, closed once merged, its project declared, carrying `gc.flow.delivered`, a `gc.flow.judgement` answer `accepted` and `gc.flow.promotion` at those instants | `flow.value`; `GET /analyses` |
-| `flow.tickets`: a ticket (title, project, `dispatched`, `merge` `{outcome, at}`) | one ticket bead marked by the flow, carrying `gc.flow.gate.dispatch` and `gc.flow.merge`, closed when merged | `flow.value`; `GET /analyses` |
-| `flow.decisions`: a decision asked of Benjamin (title, project, `asked`, `answered` or null) | open: one bead asking the operator (`gc.needs_benjamin`); answered: a closed bead with its answer time, which no request lists | `beads.value`; `GET /api/requests` |
+| `flow.results`: a result of the flow (title, project, `published`, `delivered`, `accepted`, `merged`, ISO instants, the last three possibly null) | one convoy bead `synthetic-result-N` marked by the flow, created at `published`, closed once merged, its project declared, carrying `gc.flow.delivered`, a `gc.flow.judgement` answer `accepted` and `gc.flow.promotion` at those instants | `results.value` (the merged ones); `GET /analyses` |
+| `flow.tickets`: a ticket (title, project, `dispatched`, `merge` `{outcome, at}`) | one ticket bead marked by the flow, a run: carrying `gc.flow.gate.dispatch`, an author launched then (`gc.flow.models`) and `gc.flow.merge`, closed when merged | `runs.value`; `GET /analyses` |
+| `flow.decisions`: a decision asked of Benjamin (title, project, `asked`, `answered` or null) | open: one bead asking the operator (`gc.needs_benjamin`); answered: a closed bead as `bin/escalation-door` leaves it -- `gc.needs_benjamin` « none », its answer time, « RÉPONSE » in its notes --, which no request lists and the journal records | `beads.value`, `journal.value`; `GET /api/requests` |
 | `github`: the repository, its `pull_requests` and its `workflow_runs`, as the GitHub REST API gives them | what the synthetic GitHub client answers for that repository, declared for this launch | `github.value`; `GET /analyses` |
 | nothing read yet: `ui.state` is `loading` | a supervisor that never answers, and a tracker whose read never ends (the cockpit waits a day for it, `COCKPIT_BEADS_READ_TIMEOUT_SECONDS`) | every source `unknown`, without value, `beads.failed_at` empty; `GET /` says it is reading, however late it is looked at |
 | nothing readable: `ui.state` is `error` | a supervisor that never answers, and a tracker whose read fails | every source `unknown`, without value, `beads.failed_at` set; `GET /` says the view is unavailable as soon as the first read failed |
@@ -1229,16 +1230,25 @@ the overview reuses (ticket K):
 | Résultats fusionnés | the convoys whose merge the flow proved (`gc.flow.promotion`), counted on the day of the merge |
 | Délai de livraison | the median, from the publication of the graph (the convoy's creation) to the proof of merge; per portion, the median of « Réalisation et vérifications » (to `gc.flow.delivered`), « Attente de jugement » (to the accepted answer of `gc.flow.judgement`, a voided one excluded) and « Fusion » (to the proof) |
 | Vérifications CI réussies | the CI runs GitHub gives for the declared repository: those that succeeded over those completed; a run in progress is not counted |
-| Décisions ouvertes | the requests the cockpit lists, the same count as the overview |
+| Décisions ouvertes | the requests the cockpit lists, the same count as the overview; the decisions answered over the period, as the journal records them, are listed under it |
 
-The sources: `flow`, every bead the flow marked (`gc.flow.mark`), closed
-ones too (`cockpit.analyses.sources.read_flow`); `github`, the workflow
-runs and the last closed pull requests of `github_repo` through `gh api`,
-registered only when that repository is declared. A source not read, or
-failed, gives its indicator no value and its reason (when it was last
-tried); no count is ever zero by default, and none is a percentage. Each
-view states, folded, its population, period, sources, when they were read
-(Paris) and calculation.
+The sources are those the cockpit already reads -- `runs` (a ticket is
+delivered on its merge into the integration branch, « Fusionné » in its
+run), `journal` (the decisions answered) and `beads` (the requests) -- and
+two more: `results`, the convoys the flow marked (`gc.flow.mark`) that
+carry the proof of their merge, closed ones too
+(`cockpit.analyses.sources.read_results`), which no run nor entry of the
+journal holds; `github`, every workflow run created over the last eight
+days and every pull request closed since, page after page of `gh api`, of
+`github_repo`, registered only when that repository is declared. Only a
+fresh source gives a value (`GLOSSARY.md`, Freshness): one not read yet,
+failing, or stale gives its indicator no value and its reason (when it was
+last tried, or last read); its last known value is never presented as
+current, no count is ever zero by default, and none is a percentage. When
+the cockpit keeps as many runs as it reads (200) all updated within the
+period, the tickets delivered are said unavailable rather than counted in
+part. Each view states, folded, its population, period, sources, when they
+were read (Paris) and calculation.
 
 The daily volumes -- results merged, pull requests merged, tickets merged
 into the integration branch, CI runs that succeeded -- share one chart in
@@ -1251,6 +1261,8 @@ too; a merged result is dated by its own day, where the reference says
 « avant-hier » of a day its chart counts none; the tabs are links to their
 view; the reference's « données synthétiques » note is not shown.
 
-Tests: `tests/cockpit-analyses-test.py` (an indicator without its source),
+Tests: `tests/cockpit-analyses-test.py` (the launched cockpit on fake
+sources: the CI of the local settings file, every page of GitHub, a source
+gone stale or never answering),
 `tests/cockpit-criteria/commands/analyses-destination-{indicators,layout}-test.py`
 (the launched cockpit, `D-criteria.json`).

@@ -512,24 +512,34 @@ def _with_sources(city, flow, github) -> SyntheticCity:
             beads.append({"id": f"synthetic-result-{number}", "title": result["title"], "issue_type": "convoy",
                           "status": "closed" if result.get("merged") else "open", "created_at": result["published"],
                           "labels": ["owned"], "metadata": metadata})
+        # A ticket is a run: an author was launched on it when it was
+        # dispatched (gc.flow.models), as the flow records it.
         for number, ticket in enumerate((flow or {}).get("tickets", []), 1):
             merge = ticket["merge"]
             beads.append({
                 "id": f"synthetic-ticket-{number}", "title": ticket["title"], "issue_type": "task",
                 "status": "closed" if merge["outcome"] == "merged" else "open", "created_at": ticket["dispatched"],
+                "updated_at": merge["at"],
                 "metadata": {"gc.flow.mark": FLOW_MARK, "gc.project_id": project(ticket["project"]),
                              "gc.flow.gate.dispatch": record(at=ticket["dispatched"]),
+                             "gc.flow.models": json.dumps({"author": {"agent": "delivery-author",
+                                                                      "at": ticket["dispatched"]}}),
                              "gc.flow.merge": record(outcome=merge["outcome"], at=merge["at"])},
             })
+        # A decision answered is as bin/escalation-door leaves it: its
+        # question cleared, its answer in the notes, which the journal reads.
         for number, decision in enumerate((flow or {}).get("decisions", []), 1):
             metadata = {"gc.escalation_pourquoi": "décision", "gc.escalation_horodatage": decision["asked"]}
+            notes = f"NEEDS BENJAMIN: {decision['title']}"
             if decision.get("answered"):
-                metadata["gc.escalation_response_at"] = decision["answered"]
+                metadata.update({"gc.escalation_response_at": decision["answered"], NEEDS_BENJAMIN: "none",
+                                 "gc.escalation_response_actor": "benjamin"})
+                notes += "\nRÉPONSE: a — réponse enregistrée"
             else:
                 metadata[NEEDS_BENJAMIN] = decision["title"]
             beads.append({"id": f"synthetic-decision-{number}", "title": decision["title"], "issue_type": "task",
                           "status": "closed" if decision.get("answered") else "open", "created_at": decision["asked"],
-                          "metadata": {**metadata, PROJECT_KEY: project(decision["project"])}})
+                          "notes": notes, "metadata": {**metadata, PROJECT_KEY: project(decision["project"])}})
         if github is not None and not (isinstance(github.get("repository"), str) and github["repository"]
                                        and isinstance(github.get("pull_requests"), list)
                                        and isinstance(github.get("workflow_runs"), list)):

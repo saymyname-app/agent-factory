@@ -150,7 +150,22 @@ def _decisions(data, indicator, anchors):
                        _e(request.projet or "Sans projet"))
                     for request in data["decisions"])
     link = '<p><a class="an-link" href="/#pn-inbox">Répondre depuis la Vue d’ensemble</a></p>' if count else ""
-    return headline, ('<div class="an-history" %s>%s</div>' % (anchors("metrics-history"), items) if items else "") + link
+    return headline, ('<div class="an-history" %s>%s</div>' % (anchors("metrics-history"), items) if items else "") + \
+        link + _answered(data)
+
+
+def _answered(data):
+    """The decisions answered over the period, as the journal records them."""
+    if data["answered"] is None:
+        return '<p class="an-muted">Décisions répondues sur la période : indisponibles, %s.</p>' % _e(
+            data["answered_reason"])
+    count = len(data["answered"])
+    if not count:
+        return '<p class="an-muted">Aucune décision répondue sur la période, selon le journal.</p>'
+    items = "".join("<li>%s · %s</li>" % (_e(item["title"]), _day_word(item["at"], data["now"]))
+                    for item in data["answered"])
+    return ('<p class="an-muted">%d décision%s répondue%s sur la période, selon le journal :</p>'
+            '<ul class="an-answered">%s</ul>' % (count, "s" * (count > 1), "s" * (count > 1), items))
 
 
 def _chart(data, anchors):
@@ -240,6 +255,7 @@ CSS = """
   line-height:1.5;color:var(--ink)}
 .an-muted{color:var(--pn-muted-text)}
 .an-link{color:var(--ink)}
+.an-answered{margin:6px 0 0;padding-left:20px;font-size:14px;overflow-wrap:anywhere}
 .an-def{margin-top:16px;font-size:14px}
 .an-def summary{cursor:pointer;color:var(--pn-muted-text)}
 .an-def p{margin:8px 0 0!important}

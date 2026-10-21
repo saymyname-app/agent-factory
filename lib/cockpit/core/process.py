@@ -15,7 +15,7 @@ from datetime import datetime
 
 from cockpit.access.guard import ActionGuard, new_session_token
 from cockpit.actions.registry import build_action_handlers
-from cockpit.analyses.sources import read_flow, read_github
+from cockpit.analyses.sources import read_github, read_results
 from cockpit.core.beads_source import read_operator_beads
 from cockpit.core.clock import StartedClock, SystemClock
 from cockpit.core.freshness import UNKNOWN
@@ -106,9 +106,10 @@ def build(config, clock=None):
         )
         read_model.register("runs", display_name="runs")
         pollers.append(PollingSource(read_model, "runs", lambda: read_runs(bd_bin=config.bd_bin), config.journal_poll_seconds))
-        # The Analyses (D, af-ten1sp): the records of the delivery flow.
-        read_model.register("flow", display_name="tickets du flux")
-        pollers.append(PollingSource(read_model, "flow", lambda: read_flow(bd_bin=config.bd_bin),
+        # The Analyses (D, af-ten1sp): the results whose merge the flow
+        # proved, which no run nor entry of the journal holds.
+        read_model.register("results", display_name="résultats du flux")
+        pollers.append(PollingSource(read_model, "results", lambda: read_results(bd_bin=config.bd_bin),
                                      config.journal_poll_seconds))
     if config.github_repo:
         # The CI and the pull requests of the declared repository, over the

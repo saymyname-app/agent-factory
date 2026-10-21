@@ -190,7 +190,7 @@ class Config:
 LOCAL_CONFIG_NAME = "cockpit-local.json"
 LOCAL_CONFIG_KEYS = (
     "pushover_secrets_file", "heartbeat_url_file", "public_url", "benjamin_login", "allowed_origin",
-    "tailscale_bin", "clones_dir",
+    "tailscale_bin", "clones_dir", "github_repo", "gh_bin",
 )
 
 
