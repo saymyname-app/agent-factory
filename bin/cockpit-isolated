@@ -161,6 +161,28 @@ def serve_synthetic_supervisor(
     shutil.rmtree(home, ignore_errors=True)
 
 
+def write_doors(answers: dict[str, str], home: str) -> dict[str, str]:
+    """The doors of the launch, in `home`: each the real door, or the way
+    the dataset says it answers; the environment that makes the cockpit
+    and the doors use them, and the tracker of the launch."""
+    doors = Path(home, "doors")
+    doors.mkdir()
+    env = {
+        "GC_BIN": str(SYNTHETIC / "gc"),
+        "FACTORY_SESSION_LOOP_GUARD_LOG": os.path.join(home, "factory-session-loop-guard.log"),
+        "COCKPIT_ACTION_TIMEOUT_SECONDS": ACTION_TIMEOUT_SECONDS,
+    }
+    for name, (real, variable) in DOORS.items():
+        how = answers.get(name, "acts")
+        door = doors / name
+        door.write_text("#!/bin/sh\nexec %s %s %s %s \"$@\"\n" % (
+            shlex.quote(sys.executable), shlex.quote(str(SYNTHETIC / "door")), how, shlex.quote(str(real))),
+            encoding="utf-8")
+        door.chmod(0o755)
+        env[variable] = str(door)
+    return env
+
+
 def write_tracker_and_projects(city: synthetic_city.SyntheticCity, home: str) -> dict[str, str]:
     """Put what the tracker holds and the projects declared in `home`; the
     environment that makes the cockpit read them."""
@@ -184,28 +206,6 @@ def write_tracker_and_projects(city: synthetic_city.SyntheticCity, home: str) ->
         # A tracker that answers no read, and a cockpit that waits for it.
         env["COCKPIT_BD_BIN"] = str(FIXTURES / "requests" / "silent-bd")
         env["COCKPIT_BEADS_READ_TIMEOUT_SECONDS"] = UNANSWERED_READ_TIMEOUT_SECONDS
-    return env
-
-
-def write_doors(answers: dict[str, str], home: str) -> dict[str, str]:
-    """The doors of the launch, in `home`: each the real door, or the way
-    the dataset says it answers; the environment that makes the cockpit
-    and the doors use them, and the tracker of the launch."""
-    doors = Path(home, "doors")
-    doors.mkdir()
-    env = {
-        "GC_BIN": str(SYNTHETIC / "gc"),
-        "FACTORY_SESSION_LOOP_GUARD_LOG": os.path.join(home, "factory-session-loop-guard.log"),
-        "COCKPIT_ACTION_TIMEOUT_SECONDS": ACTION_TIMEOUT_SECONDS,
-    }
-    for name, (real, variable) in DOORS.items():
-        how = answers.get(name, "acts")
-        door = doors / name
-        door.write_text("#!/bin/sh\nexec %s %s %s %s \"$@\"\n" % (
-            shlex.quote(sys.executable), shlex.quote(str(SYNTHETIC / "door")), how, shlex.quote(str(real))),
-            encoding="utf-8")
-        door.chmod(0o755)
-        env[variable] = str(door)
     return env
 
 
@@ -254,8 +254,8 @@ def main(argv: list[str]) -> int:
         "COCKPIT_PROJECTS_POLL_SECONDS": POLL_SECONDS,
         "COCKPIT_JOURNAL_POLL_SECONDS": POLL_SECONDS,
         "COCKPIT_SESSIONS_POLL_SECONDS": POLL_SECONDS,
-        **write_tracker_and_projects(city, home),
         **write_doors(doors, home),
+        **write_tracker_and_projects(city, home),
     }
     if LAUNCH_MARK in os.environ:
         env[LAUNCH_MARK] = os.environ[LAUNCH_MARK]
