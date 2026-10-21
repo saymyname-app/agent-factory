@@ -15,9 +15,9 @@ from cockpit.projects.builder import build_historique_par_projet, build_projects
 from cockpit.projects.descriptors import load_descriptors
 from cockpit.projects.hors_chantier import HorsChantierItem, hors_chantier_par_projet
 from cockpit.projects.model import Chantier, Project, RoadmapStep
-from cockpit.projects.promu import read_promotion_results
+from cockpit.projects.promu import MERGE_COMMIT_KEY, read_promotion_results
 from cockpit.projects.outcome import pack_folder, read_pack_sections
-from cockpit.projects.stage import CONVOY_ISSUE_TYPE, MAP_LABEL, PROJECT_KEY
+from cockpit.projects.stage import CONVOY_ISSUE_TYPE, DELIVERY_LABEL, GRAPH_DIGEST_KEY, MAP_LABEL, PROJECT_KEY
 from convoy_state import outcome_records_of
 
 TARGET_KEY = "planning_run_target"
@@ -87,14 +87,21 @@ def roadmap_chantiers(targeting, beads):
     convoys published from it (``gc.spec_id``). It is closed when the Spec
     and every such convoy are closed; merged when one of those convoys
     records the proof of its merge (the promotion of the D01 flow, read
-    by :func:`convoy_state.outcome_records_of`). The project is the Spec's,
-    else its convoy's. E, af-8rbceu: what the roadmap of a project is held
-    to (:func:`cockpit.projects.roadmap.roadmap_rows`)."""
+    by :func:`convoy_state.outcome_records_of`), or when every ticket of
+    one of them recorded the merge of its PR (``gc.merge_commit``) -- one
+    PR merged among tickets still at work is a chantier under way. The
+    project is the Spec's, else its convoy's. E, af-8rbceu: what the
+    roadmap of a project is held to
+    (:func:`cockpit.projects.roadmap.roadmap_rows`)."""
     convoys_by_spec = {}
+    tickets_by_digest = {}
     for bead in beads:
-        spec_id = (bead.get("metadata") or {}).get(SPEC_KEY)
+        metadata = bead.get("metadata") or {}
+        spec_id = metadata.get(SPEC_KEY)
         if bead.get("issue_type") == CONVOY_ISSUE_TYPE and spec_id:
             convoys_by_spec.setdefault(spec_id, []).append(bead)
+        elif DELIVERY_LABEL in (bead.get("labels") or []) and metadata.get(GRAPH_DIGEST_KEY):
+            tickets_by_digest.setdefault(metadata[GRAPH_DIGEST_KEY], []).append(bead)
     out = {}
     for spec in targeting:
         metadata = spec.get("metadata") or {}
@@ -108,7 +115,9 @@ def roadmap_chantiers(targeting, beads):
         merged = False
         for convoy in convoys:
             promotion = (outcome_records_of(convoy) or {}).get("promotion")
-            merged = merged or (isinstance(promotion, dict) and "unruled" not in promotion)
+            tickets = tickets_by_digest.get((convoy.get("metadata") or {}).get(GRAPH_DIGEST_KEY), [])
+            prs_merged = bool(tickets) and all((t.get("metadata") or {}).get(MERGE_COMMIT_KEY) for t in tickets)
+            merged = merged or prs_merged or (isinstance(promotion, dict) and "unruled" not in promotion)
         closed = spec.get("status") == "closed" and all(c.get("status") == "closed" for c in convoys)
         out.setdefault(project, {}).setdefault(target, []).append({"id": spec["id"], "closed": closed, "merged": merged})
     return out

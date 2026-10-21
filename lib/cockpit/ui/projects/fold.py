@@ -82,11 +82,13 @@ def _release(anchors, release, repo):
         anchors("h2"), anchors("tag"), _e("Cible révisable · %s" % plan["status"] if plan["status"] else "Cible révisable"))
     goal = '<p class="pf-goal" %s>%s</p>' % (anchors("release-goal"), _e(plan["target"]))
     columns = anchors("release-columns")
+    # Each proof is named by its gain: « Voir la preuve » alone, repeated,
+    # would not tell which gain a control opens.
     gains = "".join(
-        '<div class="pf-criterion" %s><strong %s>%s</strong><details %s><summary %s>Voir la preuve</summary>'
-        '<p %s>%s</p></details></div>'
+        '<div class="pf-criterion" %s><strong %s>%s</strong><details %s><summary %s aria-label="%s">Voir la preuve'
+        '</summary><p %s>%s</p></details></div>'
         % (anchors("release-criterion"), anchors("strong"), _e(g["title"]), anchors("details"), anchors("summary"),
-           anchors("p"), _e(g["proof"])) for g in plan["gains"])
+           _e("Voir la preuve : %s" % g["title"]), anchors("p"), _e(g["proof"])) for g in plan["gains"])
     gained = ('<div %s><h3 %s><span class="pf-ok" %s>✓</span> Acquis vérifiés <small %s>%d</small></h3>%s</div>'
               % (anchors("div"), anchors("h3"), anchors("ok"), anchors("small"), len(plan["gains"]), gains))
     remaining = "".join('<p class="pf-criterion" %s>○ %s</p>' % (anchors("release-criterion"), _e(title))
@@ -134,7 +136,7 @@ def _release(anchors, release, repo):
 def _current(anchors, view):
     """« Chantier actuel »: the chantier under way, or why none is said."""
     panel = anchors("panel")
-    head = '<small %s>CHANTIER ACTUEL</small>' % anchors("small")
+    head = '<h2 class="pf-label"><small %s>CHANTIER ACTUEL</small></h2>' % anchors("small")
     state = view["chantiers_state"]
     if state == "loading":
         body = '<p %s>Lecture des chantiers en cours.</p>' % anchors("p")
@@ -155,7 +157,7 @@ def _roadmap(anchors, roadmap, repo, milestone):
     """« Roadmap »: the steps of the structured roadmap, each flagged when
     the tracker contradicts it, and the date of its last change."""
     panel = anchors("panel")
-    head = '<small %s>ROADMAP</small>' % anchors("small")
+    head = '<h2 class="pf-label"><small %s>ROADMAP</small></h2>' % anchors("small")
     if roadmap["state"] != "read":
         said = {
             "undeclared": "Ce projet ne déclare aucune roadmap structurée : aucune étape à montrer.",
@@ -312,6 +314,8 @@ CSS = """
 .pf-kpis strong{font-size:24px;display:block;margin-bottom:6px}
 .pf-kpis small,.pf-release small,.pf-note,.pf-why{color:var(--pn-muted-text)}
 .pn-main small{font-size:12px;overflow-wrap:anywhere}
+/* The label of a section, small as the reference draws it, and its heading. */
+.pn-panel h2.pf-label,.pf-grid h2.pf-label{font:inherit;color:inherit;margin:0}
 .pf-heading{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
 .pf-heading h2{margin:0}
 .pf-goal{font-size:21px;max-width:850px;margin:12px 0 0!important}

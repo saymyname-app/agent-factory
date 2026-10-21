@@ -243,7 +243,7 @@ class DepotsTest(unittest.TestCase):
 
         page = self.get("/projet/demo")
         # The page of the project shows its whole roadmap (E, af-8rbceu).
-        self.assertRegex(page, r"ROADMAP</small><h2[^>]*>Bêta privée</h2>")
+        self.assertRegex(page, r"ROADMAP</small></h2><h2[^>]*>Bêta privée</h2>")
         self.assertIn("demo-back : dev a 3 commits d'avance", page)
         self.assertIn("Roadmap inconnue", self.get("/projet/brut"))
 

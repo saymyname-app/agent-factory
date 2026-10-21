@@ -1255,7 +1255,11 @@ three counts, then « Prochaine release », « Chantier actuel », « Roadmap »
 « Derniers changements » and « Ressources du projet », numbered with the
 anchors of the reference; under them, the chantiers by stage, the work
 outside a chantier and the historique the page already drew (A1 reads the
-Outcome into them; E does not change that reader).
+Outcome into them; E does not change that reader). The label of a section
+the reference writes small (« CHANTIER ACTUEL », « ROADMAP ») is held in a
+heading, so a navigation by headings reaches it; the label keeps the
+element and the anchor of the reference. Each « Voir la preuve » is named
+by its gain (« Voir la preuve : <gain> »).
 
 - **Release plan (cadrage).** Read, never written (writing it is the ritual
   « Préparer la prochaine release »), from `release.toml` beside the
@@ -1276,7 +1280,9 @@ Outcome into them; E does not change that reader).
   « En cours » whose chantier is closed (the Specs that target it, by
   `planning_run_target`, and the convoys published from them, by
   `gc.spec_id`, all closed), or one of whose results is merged (a convoy
-  that records its promotion), is flagged « Incohérent »
+  that records its promotion, or whose tickets all recorded the merge of
+  their PR, `gc.merge_commit`; one PR merged among tickets still at work is
+  a chantier under way), is flagged « Incohérent »
   (`roadmap.roadmap_rows`; the Specs that target a step are read open or
   closed, `source.read_targeting_beads`). A Spec closed without successor,
   its reason recorded, reaches the historique the same way.
@@ -1288,8 +1294,9 @@ Outcome into them; E does not change that reader).
   `FIRST_READING_WAIT_SECONDS` for the first reading of the projects and of
   their repositories.
 
-Tests: `tests/cockpit-projects-panorama-test.py`, and the criterion tests of
-E (`tests/cockpit-criteria/commands/projects-{release,roadmap,recette}-test.py`).
+Tests: `tests/cockpit-home-projects-test.py` (`GET /projets` and the page of
+a project, through the running process), and the criterion tests of E
+(`tests/cockpit-criteria/commands/projects-{release,roadmap,recette}-test.py`).
 
 ## « Journal » in Panorama (direct build, 2026-10-19)
 

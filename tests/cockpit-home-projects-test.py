@@ -3,11 +3,13 @@
 T19/T20 built the projects and chantiers modules and tested their pure
 functions; nothing served them. This test starts the real ``bin/cockpit``
 on faked sources (fake gc, the controllable fake bd of the actions seam
-test) and reads only what a browser gets: ``GET /``, ``GET /api/projects``,
+test) and reads only what a browser gets: ``GET /``, ``GET /projets``,
+``GET /projet/<id>``, ``GET /api/projects``,
 ``POST /api/actions/*``, and what the fake bd recorded.
 """
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -158,7 +160,7 @@ class HomeProjectsZoneTest(unittest.TestCase):
         with open(self.state_file) as fh:
             return {bead["id"]: bead for bead in json.load(fh)}
 
-    def start_cockpit(self):
+    def start_cockpit(self, descriptors=DESCRIPTORS):
         env = dict(os.environ)
         env.update(
             {
@@ -171,7 +173,7 @@ class HomeProjectsZoneTest(unittest.TestCase):
                 "COCKPIT_PID_FILE": os.path.join(self.tmp.name, "cockpit.pid"),
                 "COCKPIT_BEADS_POLL_SECONDS": "0.2",
                 "COCKPIT_PROJECTS_POLL_SECONDS": "0.2",
-                "COCKPIT_DESCRIPTORS_DIR": str(DESCRIPTORS),
+                "COCKPIT_DESCRIPTORS_DIR": str(descriptors),
                 "COCKPIT_BENJAMIN_LOGIN": BENJAMIN_LOGIN,
                 "COCKPIT_ALLOWED_ORIGIN": self.origin,
                 "FAKE_BD_STATE_FILE": self.state_file,
@@ -351,6 +353,84 @@ class HomeProjectsZoneTest(unittest.TestCase):
         self.assertIn("Aucun chantier terminé ou abandonné.", usine)
         self.assertNotIn("af-conv-a", usine, "another project's chantier never shows here")
 
+
+    # ------------------------------------------------------------------
+    # The destination Projets of Panorama (E, af-8rbceu): a card per
+    # project, the whole card the link to its page, its counts.
+    # ------------------------------------------------------------------
+    def test_a_project_card_is_one_link_counting_what_waits_what_is_open_and_its_runs(self):
+        now = time.time()
+
+        def at(seconds_ago):
+            return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - seconds_ago))
+
+        def run(bead_id, rig, seconds_ago, merged=False):
+            """A ticket a delivery author was launched on `seconds_ago`, at
+            work still, or closed and merged then."""
+            metadata = {"gc.ticket_id": bead_id.upper(), "gc.dispatch_rig": rig,
+                        "gc.flow.gate.dispatch": json.dumps({"at": at(seconds_ago)}),
+                        "gc.flow.models": json.dumps({"author": {"agent": "delivery-author", "at": at(seconds_ago),
+                                                                 "model": "claude-opus-5-5"}})}
+            bead = {"id": bead_id, "title": "%s — Une page" % bead_id.upper(), "status": "in_progress",
+                    "issue_type": "task", "labels": [], "notes": "", "metadata": metadata,
+                    "updated_at": at(seconds_ago)}
+            if merged:
+                metadata["gc.flow.merge"] = json.dumps({"at": at(seconds_ago - 60), "outcome": "merged"})
+                bead.update(status="closed", closed_at=at(seconds_ago - 60))
+            return bead
+
+        self.write_beads(beads() + [
+            run("af-run-live", "agent-factory", 600),
+            run("af-run-merged", "agent-factory", 3600, merged=True),
+            run("af-run-old", "agent-factory", 8 * 86400, merged=True),
+            # A run of a rig named as another project: that project's.
+            run("af-run-other", "saymyname", 300, merged=True),
+        ])
+        self.start_cockpit()
+        wait_until(self.projects)
+        page = wait_until(lambda: (lambda body: body if "Runs ouverts" in body and "Dernier run" in body else None)(
+            self.get("/projets")))
+        cards = re.findall(r'<a class="pj-card".*?</a>', page, re.S)
+        self.assertEqual(2, len(cards), "not one card per declared project")
+        usine = next(card for card in cards if 'href="/projet/agent-factory"' in card)
+        # The whole card is the one link to the page of the project, named
+        # by what it says.
+        self.assertRegex(usine, r'^<a class="pj-card" href="/projet/agent-factory" aria-label="Page projet Usine · '
+                                r'À toi de jouer · 1 · ')
+        self.assertEqual(1, usine.count("<a "), "a link inside the card")
+        self.assertIn("<dt>Chantiers ouverts</dt><dd>1</dd>", usine)
+        # Its runs only: merged within 7 days, and at work.
+        self.assertIn("<dt>Runs fusionnés · 7 j</dt><dd>1</dd>", usine)
+        self.assertIn("<dt>Runs ouverts</dt><dd>1</dd>", usine)
+        self.assertIn("Dernier run : AF-RUN-LIVE · En cours", usine)
+        saymyname = next(card for card in cards if 'href="/projet/saymyname"' in card)
+        self.assertIn("<dt>Runs fusionnés · 7 j</dt><dd>1</dd>", saymyname)
+        self.assertIn("<dt>Runs ouverts</dt><dd>0</dd>", saymyname)
+
+    def test_a_project_without_run_says_so(self):
+        self.start_cockpit()
+        wait_until(self.projects)
+        page = wait_until(lambda: (lambda body: body if '<a class="pj-card"' in body else None)(self.get("/projets")))
+        self.assertIn("Aucun run lu pour ce projet", page)
+
+    def test_no_project_declared_is_said(self):
+        empty = os.path.join(self.tmp.name, "descriptors")
+        os.mkdir(empty)
+        self.start_cockpit(descriptors=empty)
+        page = wait_until(lambda: (lambda body: body if "Aucun projet déclaré" in body else None)(self.get("/projets")))
+        self.assertNotIn('<a class="pj-card"', page)
+
+    def test_each_section_of_the_project_page_is_reached_by_its_heading(self):
+        # E, af-8rbceu: the label of each section, written small as the
+        # reference draws it, is a heading -- a navigation by headings
+        # reaches the current chantier and the roadmap.
+        self.start_cockpit()
+        wait_until(self.projects)
+        _, page = self.get_status("/projet/saymyname")
+        headings = [" ".join(re.sub(r"<[^>]+>", " ", inner).split())
+                    for _, inner in re.findall(r"<h([1-6])\b[^>]*>(.*?)</h\1>", page, re.S)]
+        for label in ("CHANTIER ACTUEL", "ROADMAP"):
+            self.assertIn(label, headings, "a section of the page of the project is not a heading")
     def test_accepted_chantier_moves_to_its_project_history(self):
         self.start_cockpit()
         wait_until(self.projects)
