@@ -15,6 +15,12 @@ t’attend » (`panel-3`) to the issue of its state, said in the words of the
 reference, and the project of the result (its line under « Projets ») to
 the same issue.
 
+In every state Essai and Avis are there, under every other part of the
+result, and cannot be used, each state saying why: on a result to judge,
+they are not wired to this destination yet (A2); on a result already judged
+(accepted, merging, merged, abandoned), they apply only to a result to
+judge. A control that is absent is not one that is unavailable.
+
 False if a Delivered result on an open convoy is shown blocked, a closed
 ticket is shown merged, an abandon lets one believe in a merge, or Essai or
 Avis looks usable.
@@ -53,8 +59,12 @@ READY_RESOURCES = ("Ce qui a été livré", "Changements et version à essayer",
 # result-dossier.
 DOSSIER_PARTS = ("Dossier du résultat", "Reprise complète du cockpit · version 1", "Parcours et relecture",
                  "Pièces et version")
-# Why Essai and Avis cannot be used from this destination until A2.
+# Why Essai and Avis cannot be used from this destination until A2, on a
+# result to judge; and why they cannot be used on a result already judged.
 UNWIRED = "pas encore raccordés"
+JUDGED = "déjà jugé"
+# The part of a result judged that holds its follow-up, above its bar.
+HISTORY = "Historique et preuves"
 
 
 class HomeResultStates(unittest.TestCase):
@@ -116,26 +126,21 @@ class HomeResultStates(unittest.TestCase):
         self.assertTrue("Essai" in bar and "Avis" in bar and bar.index("Essai") < bar.index("Avis"),
                         f"the bar does not hold Essai, then Avis; it says « {bar} »")
 
-    def assert_unavailable(self, page: dict) -> None:
+    def assert_unavailable(self, page: dict, reason: str = UNWIRED) -> None:
         """Essai and Avis are there, once each, and cannot be used; the bar
-        says why."""
+        says why, in the words `reason`. A control that is absent is not
+        one that is unavailable."""
         actions = [c for c in page["controls"] if c["name"].startswith("Essai") or c["name"] == "Avis"]
         self.assertEqual(["Essai", "Avis"], [("Essai" if c["name"].startswith("Essai") else "Avis") for c in actions],
                          "the result has not one Essai and one Avis")
         self.assertEqual([], [c["name"] for c in actions if not c["disabled"]], "Essai or Avis looks usable")
-        assert_says(self, page, "actions-possibles-1", UNWIRED)
-
-    def assert_no_action(self, page: dict) -> None:
-        """No Essai and no Avis can be used on a result already judged."""
-        self.assertEqual([], [c["name"] for c in page["controls"]
-                              if (c["name"].startswith("Essai") or c["name"] == "Avis") and not c["disabled"]],
-                         "Essai or Avis looks usable on a result already judged")
+        assert_says(self, page, "actions-possibles-1", reason)
 
     def history(self, dataset: str) -> tuple[dict, str]:
         """The page of `dataset`, and the text of its result once
         « Historique et preuves » is opened."""
-        page = self.served(dataset, click="Historique et preuves")
-        self.assertTrue(page["after"]["found"], "the result has no « Historique et preuves »")
+        page = self.served(dataset, click=HISTORY)
+        self.assertTrue(page["after"]["found"], f"the result has no « {HISTORY} »")
         return page, says(page["after"], "panel-3")
 
     # --- Criterion 1 ------------------------------------------------------------
@@ -164,7 +169,8 @@ class HomeResultStates(unittest.TestCase):
         self.assertIn("Réponse enregistrée", history)
         self.assertIn("Aucune preuve de fusion à ce stade.", history)
         self.assertNotIn("Fusion confirmée", history, "an accepted result is shown merged")
-        self.assert_no_action(page)
+        self.assert_above_the_bar(page, HISTORY)
+        self.assert_unavailable(page, JUDGED)
         self.assert_issue(page, "Accepté")
         self.assertEqual([], self.requests_ready(page), "the result accepted is still asked to be judged")
 
@@ -173,7 +179,8 @@ class HomeResultStates(unittest.TestCase):
         assert_says(self, page, "panel-3", "Suivi du résultat", "La fusion est en cours.")
         self.assertIn("Aucune preuve de fusion à ce stade.", history)
         self.assertNotIn("Fusion confirmée", history, "a merge under way is shown confirmed")
-        self.assert_no_action(page)
+        self.assert_above_the_bar(page, HISTORY)
+        self.assert_unavailable(page, JUDGED)
         self.assert_issue(page, "Fusion en cours")
         self.assertEqual([], self.requests_ready(page), "the result merging is still asked to be judged")
 
@@ -182,7 +189,8 @@ class HomeResultStates(unittest.TestCase):
         assert_says(self, page, "panel-3", "Suivi du résultat", "La fusion est confirmée.")
         # The proof of the merge: the result judged, and the commit merged.
         self.assertIn("Fusion confirmée · résultat jugé 1111111 → commit fusionné 2222222", history)
-        self.assert_no_action(page)
+        self.assert_above_the_bar(page, HISTORY)
+        self.assert_unavailable(page, JUDGED)
         self.assert_issue(page, "Fusionné")
         self.assertEqual([], self.requests_ready(page), "the result merged is still asked to be judged")
 
@@ -195,7 +203,8 @@ class HomeResultStates(unittest.TestCase):
             self.assertNotIn(merge, history, "an abandon lets one believe in a merge")
         # An abandon merges nothing, legitimately: not an inconsistency.
         self.assertNotRegex(page["after"]["text"], r"(?i)incohéren", "an abandon without merge is shown as an anomaly")
-        self.assert_no_action(page)
+        self.assert_above_the_bar(page, HISTORY)
+        self.assert_unavailable(page, JUDGED)
         self.assert_issue(page, "Abandonné")
         self.assertEqual([], self.requests_ready(page), "the result abandoned is still asked to be judged")
 

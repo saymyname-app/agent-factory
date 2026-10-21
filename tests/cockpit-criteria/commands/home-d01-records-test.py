@@ -9,22 +9,33 @@ the chantier.
 The records are produced as Testing Decisions 2 says: the reference driver
 of the Fixture City walks one convoy to its Delivered Outcome (the harness
 FixtureCityWalk of tests/convoy-stops-fixture-city-test.py, walked once and
-restored for each case), then the case answers with bin/owner-answer
-(verdict, record) and settles the answer with bin/outcome-promote (run).
+restored for each case), then the case opens the Acceptance Session with
+bin/acceptance-session (open), answers with bin/owner-answer (verdict,
+record) and settles the answer with bin/outcome-promote (run).
 The tracker those commands wrote is then the tracker of a cockpit the
 launcher of the profile, bin/project-launch, starts: a dataset of the
 profile that carries it under `tracker`, as the commands wrote it
 (`{"beads": {id: bead}}`), the project of each chantier declared. This
 isolated proof does not claim that a real convoy went through the new flow.
 
-Each case reads the home page as a headless Chromium renders it
-(home_destination.measure) -- the line of the project under « Projets »
-and the result open in « Ce qui t’attend » -- and the page of the project,
-GET /projet/<project>, whole (its details folded included: the details and
-the history), and holds them to the records:
+Each case reads four screens and holds each one, apart, to the records:
+
+- the line of the project under « Projets » on the home page, as a
+  headless Chromium renders it (home_destination.measure);
+- the result open in « Ce qui t’attend » on that page, and its history
+  (« Historique et preuves », opened) when the result is judged;
+- the details of the chantier on the page of the project,
+  GET /projet/<project>: its card among the chantiers by stage, which an
+  ended chantier leaves;
+- the history of the project on that page: its row in the historique,
+  which only an ended chantier has.
+
+What the records say:
 
 - a Delivered result on an open convoy is « À juger », not blocked; its
   closed tickets are no merge;
+- an Acceptance Session whose product does not start is an outage of the
+  trial, « Essai en panne »: the result is still to judge, not judged;
 - an answer « accepté » without a merge is « Accepté », the merge pending;
 - a merge recorded by bin/outcome-promote is « Fusionné », with the commit
   judged and the commit merged;
@@ -70,10 +81,13 @@ def load(name):
 # The module is bound, not its classes: the test classes named at the top
 # of a file are the ones collected there.
 stops = load("convoy-stops-fixture-city-test.py")
-# bin/owner-answer and bin/outcome-promote, the entry points of the profile
-# that produce the records.
+# bin/acceptance-session, bin/owner-answer and bin/outcome-promote, the
+# entry points of the profile that produce the records.
+SESSION = ROOT / "bin" / "acceptance-session"
 OWNER = ROOT / "bin" / "owner-answer"
 PROMOTE = ROOT / "bin" / "outcome-promote"
+# The part of a result judged that holds its history.
+HISTORY = "Historique et preuves"
 
 APPROVER = "benjamin"
 WORDS = "Accepté, c'est ce que je voulais."
@@ -91,13 +105,18 @@ DEMONSTRATION = {
 }
 
 
+def text(fragment: str) -> str:
+    """The text of an HTML fragment on one line, spaces collapsed."""
+    fragment = re.sub(r"(?is)<(script|style)\b.*?</\1>", " ", fragment)
+    return " ".join(html.unescape(re.sub(r"<[^>]+>", " ", fragment)).split())
+
+
 def page_text(address: str, path: str) -> str:
     """The whole text of the page at `path`, its folded details included,
     on one line, spaces collapsed."""
     code, _, body = fetch(address + path)
     assert code == 200, f"{path} answered {code}"
-    body = re.sub(r"(?is)<(script|style)\b.*?</\1>", " ", body)
-    return " ".join(html.unescape(re.sub(r"<[^>]+>", " ", body)).split())
+    return text(body)
 
 
 class HomeD01Records(stops.FixtureCityWalk):
@@ -123,6 +142,17 @@ class HomeD01Records(stops.FixtureCityWalk):
         proc = self.tool(OWNER, command, self.convoy, "--repo", self.repo, "--approved-by", APPROVER, *args)
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         return json.loads(proc.stdout)
+
+    def session_outage(self) -> None:
+        """bin/acceptance-session opens the session of the Delivered
+        Outcome with a recipe whose product does not start: the outage it
+        records."""
+        broken = json.loads(self.profile.read_text())
+        broken["launch"]["recipe"] = ["{python}", "-c", "import sys; sys.exit(3)"]
+        profile = self.workspace / "broken-descriptor.json"
+        profile.write_text(json.dumps(broken))
+        proc = self.tool(SESSION, "open", self.convoy, "--repo", self.repo, "--profile", profile)
+        self.assertTrue(json.loads(proc.stdout).get("outage"), proc.stdout + proc.stderr)
 
     def promote_ok(self) -> None:
         proc = self.tool(PROMOTE, "run", self.convoy, "--repo", self.repo)
@@ -177,17 +207,52 @@ class HomeD01Records(stops.FixtureCityWalk):
         self.assertTrue(key, "the convoy of the city carries no project")
         return key
 
-    def screens(self, tracker: dict) -> tuple[dict, str, str]:
+    def screens(self, tracker: dict, history: bool = False) -> tuple[dict, str, str]:
         """The home page as rendered, the line of the project of the
         chantier under « Projets » on it, and the whole text of the page of
-        that project."""
+        that project; with `history`, « Historique et preuves » of the
+        result opened (``home["after"]``)."""
         address = self.serve(tracker)
-        home = measure(address)[0]
+        home = measure(address, click=HISTORY if history else None)[0]
         rows = [anchor["name"] for anchor in home["anchors"]
                 if re.fullmatch(r"row-\d+", anchor["name"]) and "rows-1" in anchor["chain"]]
         self.assertEqual(1, len(rows), f"not one project under « Projets »: {[says(home, row) for row in rows]}")
-        project = page_text(address, f"/projet/{self.project_key(tracker)}")
-        return home, says(home, rows[0]), project
+        if history:
+            self.assertTrue(home["after"]["found"], f"the result has no « {HISTORY} »")
+        self.project = self.project_parts(address, tracker)
+        return home, says(home, rows[0]), page_text(address, f"/projet/{self.project_key(tracker)}")
+
+    def project_parts(self, address: str, tracker: dict) -> dict[str, list[str]]:
+        """The page of the project of the chantier, apart: ``details``, the
+        text of its card among the chantiers by stage (one per chantier
+        still under way); ``history``, the text of its rows in the
+        historique of the project (one per chantier ended)."""
+        code, _, body = fetch(f"{address}/projet/{self.project_key(tracker)}")
+        self.assertEqual(200, code)
+        convoy = self.convoy_record(tracker)
+        cards = re.findall(r'<div class="card cockpit-pp-card[^"]*" data-chantier="%s">(.*?)</div>'
+                           % re.escape(self.convoy), body, re.S)
+        rows = [text(row) for row in re.findall(r'<div class="cockpit-historique-row"[^>]*>(.*?)</div>', body, re.S)]
+        return {"details": [text(card) for card in cards],
+                "history": [row for row in rows if row.startswith(convoy["title"])]}
+
+    def assert_details(self, *phrases: str) -> None:
+        """The chantier is under way: its details on the page of the
+        project say each phrase, and the historique holds no row of it."""
+        details = self.project["details"]
+        self.assertEqual(1, len(details), f"not one card of the chantier on the page of the project: {details}")
+        self.assertEqual([], [phrase for phrase in phrases if phrase not in details[0]],
+                         f"the details of the chantier do not say it; they say « {details[0]} »")
+        self.assertEqual([], self.project["history"], "a chantier under way is in the historique of the project")
+
+    def assert_history(self, *phrases: str) -> None:
+        """The chantier is ended: its row in the historique of the project
+        says each phrase, and no card of it is left among those under way."""
+        rows = self.project["history"]
+        self.assertEqual(1, len(rows), f"not one row of the chantier in the historique of the project: {rows}")
+        self.assertEqual([], [phrase for phrase in phrases if phrase not in rows[0]],
+                         f"the historique of the project does not say it; it says « {rows[0]} »")
+        self.assertEqual([], self.project["details"], "an ended chantier is still among those under way")
 
     def assert_same_stage(self, line: str, project: str, stage: str) -> None:
         """The home and the page of the project say the chantier at the
@@ -208,6 +273,7 @@ class HomeD01Records(stops.FixtureCityWalk):
         tracker["beads"][DEMONSTRATION["id"]] = DEMONSTRATION
         home, line, project = self.screens(tracker)
         self.assert_same_stage(line, project, "À juger")
+        self.assert_details("À juger")
         self.assertNotRegex(line + " " + project, r"Fusionn", "a closed ticket is shown merged")
         # The result to judge is the one open in « Ce qui t’attend », with
         # its bar; Essai and Avis cannot be used yet.
@@ -222,36 +288,45 @@ class HomeD01Records(stops.FixtureCityWalk):
     def test_an_accepted_result_not_merged_says_accepted_and_the_merge_pending(self):
         self.accepted()
         tracker = self.records()
-        home, line, project = self.screens(tracker)
+        home, line, project = self.screens(tracker, history=True)
         self.assert_same_stage(line, project, "Accepté")
         self.assertIn("Tu as accepté. La fusion est en attente.", says(home, "panel-3"))
-        self.assertIn("La fusion est en attente", project)
-        self.assertNotRegex(line + " " + project, r"Fusionné|Fusion confirmée", "an acceptance is shown as a merge")
+        self.assert_details("Accepté", "La fusion est en attente")
+        history = says(home["after"], "panel-3")
+        self.assertIn("Réponse enregistrée", history)
+        self.assertIn("Aucune preuve de fusion à ce stade.", history)
+        self.assertNotRegex(line + " " + project + " " + history, r"Fusionné|Fusion confirmée",
+                            "an acceptance is shown as a merge")
 
     def test_a_merge_recorded_says_merged_with_the_commit_judged_and_the_commit_merged(self):
         self.accepted()
         self.promote_ok()
         tracker = self.records()
         promotion = json.loads(self.convoy_record(tracker)["metadata"]["gc.flow.promotion"])
-        home, line, project = self.screens(tracker)
+        home, line, project = self.screens(tracker, history=True)
         self.assert_same_stage(line, project, "Fusionné")
-        # The history of the project holds the proof: the commit judged and
-        # the commit merged, as the record says them.
-        self.assertIn(f"Fusion confirmée · résultat jugé {promotion['judged'][:7]} → commit fusionné "
-                      f"{promotion['merged'][:7]}", project)
+        # The history of the project and the history of the result hold
+        # the proof: the commit judged and the commit merged, as the record
+        # says them.
+        proof = (f"Fusion confirmée · résultat jugé {promotion['judged'][:7]} → commit fusionné "
+                 f"{promotion['merged'][:7]}")
+        self.assert_history("Fusionné", proof)
+        self.assertIn(proof, says(home["after"], "panel-3"))
 
     def test_an_abandon_says_nothing_merged_keeps_its_reason_and_is_no_anomaly(self):
         self.judged()
         self.owner_ok("record", "--response", "abandonné", "--reason", REASON)
         self.promote_ok()
         tracker = self.records()
-        home, line, project = self.screens(tracker)
+        home, line, project = self.screens(tracker, history=True)
         self.assert_same_stage(line, project, "Abandonné")
-        self.assertIn("Rien n’a été fusionné", project)
-        self.assertIn(REASON, project, "the abandon does not keep its reason")
-        self.assertNotRegex(line + " " + project, r"Fusionné|Fusion confirmée|fusion est en",
+        self.assert_history("Abandonné", "Rien n’a été fusionné", REASON)
+        history = says(home["after"], "panel-3")
+        self.assertIn(REASON, history, "the history of the result does not keep the reason of the abandon")
+        self.assertNotRegex(line + " " + project + " " + history, r"Fusionné|Fusion confirmée|fusion est en",
                             "an abandon lets one believe in a merge")
-        self.assertNotRegex(line + " " + project, r"(?i)incohéren", "an abandon without merge is shown as an anomaly")
+        self.assertNotRegex(line + " " + project + " " + history, r"(?i)incohéren",
+                            "an abandon without merge is shown as an anomaly")
 
     def test_a_record_that_cannot_be_read_is_unknown_on_every_screen(self):
         self.accepted()
@@ -260,8 +335,11 @@ class HomeD01Records(stops.FixtureCityWalk):
         self.convoy_record(tracker)["metadata"]["gc.flow.judgement"] = "{illisible"
         home, line, project = self.screens(tracker)
         self.assert_same_stage(line, project, "Inconnu")
+        self.assert_details("Inconnu")
         for stage in ("À juger", "Accepté", "Fusionné", "Abandonné"):
             self.assertNotIn(stage, line, f"an unreadable record became « {stage} » on the home")
+            self.assertNotIn(stage, self.project["details"][0],
+                             f"an unreadable record became « {stage} » in the details of the chantier")
 
     def test_an_issue_its_proofs_contradict_is_flagged_on_every_screen(self):
         self.accepted()
@@ -275,7 +353,22 @@ class HomeD01Records(stops.FixtureCityWalk):
         home, line, project = self.screens(tracker)
         self.assertRegex(line, r"(?i)incohéren", f"the home does not flag the inconsistency: « {line} »")
         self.assertRegex(project, r"(?i)incohéren", "the page of the project does not flag the inconsistency")
+        self.assert_details("Incohérence")
         self.assertNotRegex(line + " " + project, r"Fusionné|Fusion confirmée", "an issue without proof is shown merged")
+
+    def test_an_acceptance_session_whose_product_does_not_start_is_an_outage_still_to_judge(self):
+        self.judged()
+        self.session_outage()
+        tracker = self.records()
+        self.assertTrue(json.loads(self.convoy_record(tracker)["metadata"]["gc.flow.acceptance"]).get("panne"),
+                        "bin/acceptance-session recorded no outage")
+        home, line, project = self.screens(tracker)
+        self.assert_same_stage(line, project, "Essai en panne")
+        self.assert_details("Essai en panne")
+        # An outage is no judgement: the result is still the one to judge.
+        self.assertIn("actions-possibles-1", [a["name"] for a in home["anchors"] if "panel-3" in a["chain"]],
+                      "the result whose trial is down is not open with its bar of actions")
+        self.assertNotRegex(line + " " + project, r"Accepté|Fusionn|Abandonné", "an outage is shown as a judgement")
 
 
 if __name__ == "__main__":
