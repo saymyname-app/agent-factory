@@ -847,6 +847,41 @@ class TddStepTest(unittest.TestCase):
         self.assertEqual(EXIT_STOPPED, proc.returncode, proc.stdout + proc.stderr)
         self.assertEqual("amendment_exhausted", self.ticket_state()["stop"]["reason"])
 
+    def open_correction_after_the_amendment(self):
+        """The correction round (gc.flow.correction) opened after the
+        recorded amendment, as bin/convoy-state open-correction leaves it."""
+        state = json.loads(self.tracker.read_text())
+        metadata = state["beads"][SLICE]["metadata"]
+        amendment = json.loads(metadata["gc.flow.tdd.amendment"])
+        amendment["at"] = "2000-01-01T00:00:00Z"
+        metadata["gc.flow.tdd.amendment"] = json.dumps(amendment)
+        metadata["gc.flow.correction"] = json.dumps({
+            "commit": amendment["commit"], "blocking_findings": ["F1.2"], "not_observed": [], "launches": [],
+            "at": "2000-01-02T00:00:00Z"})
+        self.tracker.write_text(json.dumps(state))
+
+    def test_a_correction_round_opened_after_the_amendment_allows_one_more_and_no_third(self):
+        """af-vsni1n: the code review is the only review of the frozen tests;
+        its Blocking Finding on a frozen test, after the one amendment of the
+        ticket, is corrected by one amendment more in the correction round."""
+        self.frozen()
+        self.commit("code et test corrigé", {APP: self.amended_app(), HEALTH_FILE: self.AMENDED_HEALTH_TEST})
+        self.ok("amend", SLICE, "--reason", "le champ s'appelle dataset_name dans la Spec")
+        self.open_correction_after_the_amendment()
+        second_commit = self.commit("test corrigé après la revue", {COUNT_FILE: COUNT_TEST.replace(">3<", "> 3 <")})
+
+        answer = self.ok("amend", SLICE, "--reason", "constat F1.2 de la revue de code")
+
+        self.assertEqual(("amend", second_commit), (answer["step"], answer["commit"]))
+        tdd = self.ticket_state()["tdd"]
+        self.assertEqual((second_commit, "constat F1.2 de la revue de code"),
+                         (tdd["amendment"]["commit"], tdd["amendment"]["reason"]))
+        self.assertEqual(second_commit, tdd["freeze"]["commit"])
+        self.commit("troisième changement de test", {COUNT_FILE: COUNT_TEST.replace(">3<", ">  3  <")})
+        proc = self.run_tool("amend", SLICE, "--reason", "encore une")
+        self.assertEqual(EXIT_STOPPED, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual("amendment_exhausted", self.ticket_state()["stop"]["reason"])
+
     def test_a_ticket_stopped_at_its_second_amendment_reaches_the_operator_at_the_next_advance_pass(self):
         """The demonstration line of T45: bin/tdd-step amend stops the
         ticket, one pass of bin/convoy-advance puts exactly one request on

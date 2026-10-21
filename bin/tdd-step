@@ -823,9 +823,13 @@ def check_amend(check: Check) -> dict[str, Any]:
     if "freeze" not in check.tdd or "red" not in check.tdd:
         raise Refusal("aucun gel enregistré pour ce ticket : un amendement change des tests gelés, il n'y a rien à amender")
     entries = (check.ticket.get("resume") or {}).get("entries") or []
+    correction = check.ticket.get("correction") or {}
     if "amendment" in check.tdd and not any(
-            entry.get("cause") == GRANTED and entry.get("at", "") > check.tdd["amendment"]["at"] for entry in entries):
+            entry.get("cause") == GRANTED and entry.get("at", "") > check.tdd["amendment"]["at"]
+            for entry in [*entries, {"cause": GRANTED, "at": correction.get("at", "")}]):
         # af-25o7vr: a resume the operator granted allows one amendment more.
+        # af-vsni1n: so does the correction round opened after the amendment,
+        # since the code review is the only review of the frozen tests.
         raise Refusal(
             f"un seul amendement par ticket : {check.args.ticket} a déjà amendé ses tests gelés au commit "
             f"{check.tdd['amendment']['commit']}",

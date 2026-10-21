@@ -182,7 +182,11 @@ amendment recorded: the operator answered « a » to that stop and
 `bin/convoy-advance` lifted it (af-25o7vr). Each such resume allows one
 amendment more, which replaces `tdd.amendment` (the evidence of the earlier
 one stays in its resume's stop and in the store); `bin/convoy-state set-tdd`
-holds the same rule. The next pass of `bin/convoy-advance` raises that stop to the operator,
+holds the same rule. The correction round (`gc.flow.correction`,
+`docs/CORRECTION_ROUND.md`) opened after the amendment recorded allows one
+amendment more in the same way: the code review is the only review of the
+frozen tests, and its Blocking Finding on one of them could otherwise only
+end in that stop (af-vsni1n). The next pass of `bin/convoy-advance` raises that stop to the operator,
 once (`docs/CONVOY_ADVANCE.md`, « A ticket stopped at its second amendment
 reaches the operator »). If the freeze that ends an amendment could not be recorded, `tdd-step
 freeze` at the same commit completes it.

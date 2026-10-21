@@ -3661,6 +3661,9 @@ def cmd_set_tdd(args: argparse.Namespace) -> int:
         if "freeze" not in known:
             raise Refusal("amendement sans gel : il n'y a aucun test gelé à amender")
         entries = resume_record(metadata[KEY_RESUME])["entries"] if KEY_RESUME in metadata else []
+        if KEY_CORRECTION in metadata:
+            # af-vsni1n: the correction round opened after the amendment allows one more.
+            entries = [*entries, {"cause": "amendment_granted", "at": correction_record(metadata[KEY_CORRECTION])["at"]}]
         if "amendment" in known and not amendment_granted(entries, known["amendment"]):
             raise Refusal(f"un seul amendement par ticket : {args.ticket} en porte déjà un (commit {amended_at})")
     if step == "green" and "freeze" not in known:
