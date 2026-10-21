@@ -6,8 +6,9 @@ the Factory, read from its structured source in the repository of the
 Factory, apart from the roadmap of SayMyName, and the history of a project.
 
 Each case declares a dataset of its own in the profile of the tree under
-test (project_destination.declare) and launches the real cockpit on it with
-the launcher of the profile, bin/project-launch. The dataset holds:
+test and launches the real cockpit on it with the launcher of the profile,
+bin/project-launch (project_destination.launch_declared: the next case sees
+none of it). The dataset holds:
 
 - `projects`: the descriptors of the projects, as the tree under test
   declares them (config/project-descriptors/agent-factory.json and
@@ -20,15 +21,18 @@ the launcher of the profile, bin/project-launch. The dataset holds:
   in the shapes the flow writes: a Spec carries the Roadmap Step it targets
   (`planning_run_target`), its convoy names it (`gc.spec_id`); a result of
   the D01 flow carries the records its convoy state writes (as the datasets
-  result-merging, result-merged and result-abandoned carry them).
+  result-merging, result-merged and result-abandoned carry them); a ticket
+  of a convoy carries its graph (`gc.graph_digest`), and the commit its PR
+  was merged as once merged (`gc.merge_commit`, as the closing of a
+  delivered ticket writes it).
 
 The page of each project, /projet/<project>, is read as a headless
 Chromium renders it (home_destination.measure), and its historique in the
 page served (the rows A1 reads the Outcome into).
 
 False if the roadmap of the Factory shows content of SayMyName, an item
-« en cours » whose chantier is closed or whose result is merged is not
-flagged, the structured source delivered still holds such an item, or an
+« en cours » whose chantier is closed, whose result is merged or whose PRs
+are merged is not flagged, the structured source delivered still holds such an item, or an
 abandon shows without its reason.
 """
 
@@ -45,98 +49,36 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from home_destination import LaunchTree, fetch, measure  # noqa: E402
-from project_destination import declare, descriptor_of, knowledge_repository, part, part_name, rows  # noqa: E402
+from project_destination import descriptor_of, knowledge_repository, launch_declared, part, part_name, rows  # noqa: E402
 
 ROADMAP = "Roadmap"
 FACTORY = "agent-factory"
 SAYMYNAME = "saymyname"
 AT = "2026-10-21T12:00:00+02:00"
-# The roadmap of the Factory in its repository, last changed on 19/10/2026.
-FACTORY_CHANGED = "2026-10-19T14:05:00+02:00"
-FACTORY_ROADMAP = """\
-[[step]]
-id = "F1"
-title = "Isoler l’ancien code"
-done_when = "plus aucune référence à l’ancien code"
-order = 1
-status = "done"
-
-[[step]]
-id = "F2"
-title = "Livraison parallèle"
-done_when = "deux auteurs livrent sans conflit"
-order = 2
-status = "in_progress"
-
-[[step]]
-id = "F3"
-title = "Flux de livraison jugé"
-done_when = "un résultat jugé puis fusionné"
-order = 3
-status = "in_progress"
-
-[[step]]
-id = "F4"
-title = "Cockpit Panorama"
-done_when = "le cockpit lit ses sources réelles"
-order = 4
-status = "in_progress"
-
-[[step]]
-id = "F5"
-title = "Évaluation bornée"
-done_when = "une évaluation en moins d’une heure"
-order = 5
-status = "todo"
-"""
-SAYMYNAME_CHANGED = "2026-10-14T09:30:00+02:00"
-SAYMYNAME_ROADMAP = """\
-[[step]]
-id = "S1"
-title = "Inscription par lien magique"
-done_when = "un compte créé sans mot de passe"
-order = 1
-status = "done"
-
-[[step]]
-id = "S2"
-title = "Profil public partagé"
-done_when = "un profil ouvert par son lien"
-order = 2
-status = "in_progress"
-"""
-FACTORY_TITLES = ("Isoler l’ancien code", "Livraison parallèle", "Flux de livraison jugé", "Cockpit Panorama",
-                  "Évaluation bornée")
-SAYMYNAME_TITLES = ("Inscription par lien magique", "Profil public partagé")
-
-# The records of a result of the D01 flow, as its convoy state writes them.
-JUDGED = "1" * 40
-MERGED = "2" * 40
-PACK = "sha256:" + "a" * 64
-REASON = "Le besoin a disparu avec la nouvelle version du tableau."
-OLD_SPEC_REASON = "Remplacée par une Spec plus courte."
 
 
-def records(issue: str) -> dict:
+def records(issue: str, judged: str = "1" * 40, merged: str = "2" * 40, reason: str = "") -> dict:
     """The metadata a convoy of the new flow carries once its result is
     `issue`: merging (the merge recorded, the convoy still open), merged,
-    or abandoned."""
-    delivered = {"at": "2026-10-20T14:30:00+02:00", "commit": JUDGED, "pack": PACK, "protected": "0" * 40,
+    or abandoned for `reason`. The result `judged` is the commit merged as
+    `merged`."""
+    pack = "sha256:" + "a" * 64
+    delivered = {"at": "2026-10-20T14:30:00+02:00", "commit": judged, "pack": pack, "protected": "0" * 40,
                  "version": "spec-end/v4"}
-    answer = {"approver": "benjamin", "commit": JUDGED, "pack": PACK, "at": "2026-10-20T14:48:00+02:00",
+    answer = {"approver": "benjamin", "commit": judged, "pack": pack, "at": "2026-10-20T14:48:00+02:00",
               "words": "C’est ce que je voulais."}
     out = {"gc.flow.mark": "new-flow/v1", "gc.flow.delivered": delivered,
-           "gc.flow.evidence_pack": {"at": delivered["at"], "commit": JUDGED, "digest": PACK, "path": "/nonexistent/pack",
+           "gc.flow.evidence_pack": {"at": delivered["at"], "commit": judged, "digest": pack, "path": "/nonexistent/pack",
                                      "conforming": True, "inadmissible": 0, "version": "evidence-pack/v1"}}
     if issue == "abandoned":
-        out["gc.flow.judgement"] = {"verdicts": [], "answers": [{**answer, "response": "abandoned", "reason": REASON}]}
-        out["gc.flow.closed"] = {"how": "abandoned", "said": REASON, "approver": "benjamin",
+        out["gc.flow.judgement"] = {"verdicts": [], "answers": [{**answer, "response": "abandoned", "reason": reason}]}
+        out["gc.flow.closed"] = {"how": "abandoned", "said": reason, "approver": "benjamin",
                                  "at": "2026-10-20T14:50:00+02:00"}
         return {key: json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
                 for key, value in out.items()}
     out["gc.flow.judgement"] = {"verdicts": [], "answers": [{**answer, "response": "accepted"}]}
-    out["gc.flow.promotion"] = {"at": "2026-10-20T14:50:00+02:00", "judged": JUDGED, "merged": MERGED,
-                                "protected": "0" * 40, "tip": JUDGED}
+    out["gc.flow.promotion"] = {"at": "2026-10-20T14:50:00+02:00", "judged": judged, "merged": merged,
+                                "protected": "0" * 40, "tip": judged}
     if issue == "merged":
         out["gc.flow.closed"] = {"how": "accepted", "said": answer["words"], "approver": "benjamin",
                                  "at": "2026-10-20T14:50:00+02:00"}
@@ -156,6 +98,13 @@ def convoy(bead_id: str, project: str, title: str, spec_id: str, status: str, **
             "labels": ["approved-ticket-graph"], "created_at": "2026-10-02T10:00:00+02:00",
             "metadata": {"gc.project_id": project, "gc.graph_digest": f"sha256:{bead_id}", "gc.spec_id": spec_id,
                          **metadata}}
+
+
+def ticket(bead_id: str, convoy_id: str, status: str, **metadata) -> dict:
+    """A ticket of the convoy `convoy_id`, as its graph was published."""
+    return {"id": bead_id, "title": f"Ticket {bead_id}", "status": status, "issue_type": "task",
+            "labels": ["approved-ticket-graph", "delivery-plane"], "created_at": "2026-10-02T10:00:00+02:00",
+            "metadata": {"gc.graph_digest": f"sha256:{convoy_id}", "gc.dispatch_rig": FACTORY, **metadata}}
 
 
 def text_of(fragment: str) -> str:
@@ -189,18 +138,20 @@ class ProjectsRoadmap(unittest.TestCase):
                    "projects": [descriptor_of(self.tree, FACTORY), descriptor_of(self.tree, SAYMYNAME)],
                    "repos": {repo: str(path) for repo, path in repos.items()},
                    "tracker": {"beads": {bead["id"]: bead for bead in beads}}}
-        return self.tree.launch(name, declare(self.tree, name, dataset))
+        return launch_declared(self.tree, name, dataset)
 
-    def repositories(self) -> dict[str, Path]:
+    def repositories(self, factory_roadmap: str, factory_changed: str, saymyname_roadmap: str,
+                     saymyname_changed: str) -> dict[str, Path]:
         """The knowledge repositories of the Factory and of SayMyName, each
-        holding its own roadmap where its descriptor says."""
+        holding its own roadmap where its descriptor says, committed at the
+        date given."""
         factory, saymyname = descriptor_of(self.tree, FACTORY), descriptor_of(self.tree, SAYMYNAME)
         work = self.tree.work / f"knowledge-{self.declared + 1}"
         return {
             factory["knowledge_repo"]: knowledge_repository(
-                work / "factory", {factory["roadmap_path"]: FACTORY_ROADMAP}, FACTORY_CHANGED),
+                work / "factory", {factory["roadmap_path"]: factory_roadmap}, factory_changed),
             saymyname["knowledge_repo"]: knowledge_repository(
-                work / "saymyname", {saymyname["roadmap_path"]: SAYMYNAME_ROADMAP}, SAYMYNAME_CHANGED),
+                work / "saymyname", {saymyname["roadmap_path"]: saymyname_roadmap}, saymyname_changed),
         }
 
     def roadmap(self, address: str, project: str) -> tuple[str, list[str]]:
@@ -225,27 +176,95 @@ class ProjectsRoadmap(unittest.TestCase):
     # --- Criterion 2 ------------------------------------------------------------
 
     def test_the_factory_roadmap_comes_from_its_repository_with_its_date_and_flags_in_progress_items_already_ended(self):
+        factory_roadmap = """\
+[[step]]
+id = "F1"
+title = "Isoler l’ancien code"
+done_when = "plus aucune référence à l’ancien code"
+order = 1
+status = "done"
+
+[[step]]
+id = "F2"
+title = "Livraison parallèle"
+done_when = "deux auteurs livrent sans conflit"
+order = 2
+status = "in_progress"
+
+[[step]]
+id = "F3"
+title = "Flux de livraison jugé"
+done_when = "un résultat jugé puis fusionné"
+order = 3
+status = "in_progress"
+
+[[step]]
+id = "F4"
+title = "Cockpit Panorama"
+done_when = "le cockpit lit ses sources réelles"
+order = 4
+status = "in_progress"
+
+[[step]]
+id = "F5"
+title = "Notifications groupées"
+done_when = "une notification par lot"
+order = 5
+status = "in_progress"
+
+[[step]]
+id = "F6"
+title = "Évaluation bornée"
+done_when = "une évaluation en moins d’une heure"
+order = 6
+status = "todo"
+"""
+        saymyname_roadmap = """\
+[[step]]
+id = "S1"
+title = "Inscription par lien magique"
+done_when = "un compte créé sans mot de passe"
+order = 1
+status = "done"
+
+[[step]]
+id = "S2"
+title = "Profil public partagé"
+done_when = "un profil ouvert par son lien"
+order = 2
+status = "in_progress"
+"""
         beads = [
             # F2: its chantier closed in the tracker.
             spec("spec-f2", FACTORY, "Spec — Livraison parallèle", "F2"),
             convoy("convoy-f2", FACTORY, "Livraison parallèle", "spec-f2", "closed"),
-            # F3: its result merged, the convoy still open.
+            # F3: its result merged by the D01 flow, the convoy still open.
             spec("spec-f3", FACTORY, "Spec — Flux de livraison jugé", "F3"),
             convoy("convoy-f3", FACTORY, "Flux de livraison jugé", "spec-f3", "open", **records("merging")),
-            # F4: its chantier under way.
+            # F4: its chantier under way -- one PR merged, one ticket at work.
             spec("spec-f4", FACTORY, "Spec — Cockpit Panorama", "F4", status="in_progress"),
             convoy("convoy-f4", FACTORY, "Cockpit Panorama", "spec-f4", "open"),
+            ticket("ticket-f4-a", "convoy-f4", "closed", **{"gc.merge_commit": "4" * 40}),
+            ticket("ticket-f4-b", "convoy-f4", "in_progress"),
+            # F5: the PRs of its tickets merged, its Spec and convoy still open.
+            spec("spec-f5", FACTORY, "Spec — Notifications groupées", "F5", status="in_progress"),
+            convoy("convoy-f5", FACTORY, "Notifications groupées", "spec-f5", "open"),
+            ticket("ticket-f5-a", "convoy-f5", "closed", **{"gc.merge_commit": "5" * 40}),
+            ticket("ticket-f5-b", "convoy-f5", "closed", **{"gc.merge_commit": "6" * 40}),
         ]
-        address = self.serve(beads, self.repositories())
+        address = self.serve(beads, self.repositories(factory_roadmap, "2026-10-19T14:05:00+02:00",
+                                                      saymyname_roadmap, "2026-10-14T09:30:00+02:00"))
         roadmap, lines = self.roadmap(address, FACTORY)
-        for title in FACTORY_TITLES:
+        for title in ("Isoler l’ancien code", "Livraison parallèle", "Flux de livraison jugé", "Cockpit Panorama",
+                      "Notifications groupées", "Évaluation bornée"):
             self.line(lines, title)
-        for title in SAYMYNAME_TITLES:
+        for title in ("Inscription par lien magique", "Profil public partagé"):
             self.assertNotIn(title, roadmap, "the roadmap of the Factory shows content of SayMyName")
         self.assertRegex(roadmap, r"19(/| )(10|octobre)(/| )2026",
                          "the roadmap of the Factory does not say the date of its last change")
         for title, ended in (("Livraison parallèle", "its chantier is closed"),
-                             ("Flux de livraison jugé", "its result is merged")):
+                             ("Flux de livraison jugé", "its result is merged"),
+                             ("Notifications groupées", "the PRs of its chantier are merged")):
             self.assertRegex(self.line(lines, title), r"(?i)incohéren",
                              f"« {title} » is in progress while {ended}, and is not flagged")
         self.assertNotRegex(self.line(lines, "Cockpit Panorama"), r"(?i)incohéren",
@@ -253,25 +272,51 @@ class ProjectsRoadmap(unittest.TestCase):
         self.assertNotRegex(self.line(lines, "Isoler l’ancien code"), r"(?i)incohéren", "an item done is flagged")
 
     def test_the_saymyname_page_shows_its_own_roadmap_and_a_history_of_its_results_with_issue_and_reason(self):
+        factory_roadmap = """\
+[[step]]
+id = "F1"
+title = "Isoler l’ancien code"
+done_when = "plus aucune référence à l’ancien code"
+order = 1
+status = "in_progress"
+"""
+        saymyname_roadmap = """\
+[[step]]
+id = "S1"
+title = "Inscription par lien magique"
+done_when = "un compte créé sans mot de passe"
+order = 1
+status = "done"
+
+[[step]]
+id = "S2"
+title = "Profil public partagé"
+done_when = "un profil ouvert par son lien"
+order = 2
+status = "in_progress"
+"""
+        reason = "Le besoin a disparu avec la nouvelle version du tableau."
+        old_spec_reason = "Remplacée par une Spec plus courte."
         beads = [
             spec("spec-merged", SAYMYNAME, "Spec — Partage du profil", "S2"),
-            convoy("convoy-merged", SAYMYNAME, "Partage du profil", "spec-merged", "closed", **records("merged")),
+            convoy("convoy-merged", SAYMYNAME, "Partage du profil", "spec-merged", "closed",
+                   **records("merged", judged="1" * 40, merged="2" * 40)),
             spec("spec-abandoned", SAYMYNAME, "Spec — Tableau des invitations", "S2"),
             convoy("convoy-abandoned", SAYMYNAME, "Tableau des invitations", "spec-abandoned", "closed",
-                   **records("abandoned")),
+                   **records("abandoned", reason=reason)),
             # A delivery of the flow before D01: nothing to judge it on.
             spec("spec-old", SAYMYNAME, "Spec — Page d’accueil", "S1"),
             convoy("convoy-old", SAYMYNAME, "Page d’accueil", "spec-old", "closed"),
             # A Spec closed without successor, its reason recorded.
             spec("spec-dropped", SAYMYNAME, "Messagerie interne", "S2",
-                 **{"gc.chantier_abandon_reason": OLD_SPEC_REASON}),
+                 **{"gc.chantier_abandon_reason": old_spec_reason}),
         ]
-        address = self.serve(beads, self.repositories())
+        address = self.serve(beads, self.repositories(factory_roadmap, "2026-10-19T14:05:00+02:00",
+                                                      saymyname_roadmap, "2026-10-14T09:30:00+02:00"))
         roadmap, lines = self.roadmap(address, SAYMYNAME)
-        for title in SAYMYNAME_TITLES:
+        for title in ("Inscription par lien magique", "Profil public partagé"):
             self.line(lines, title)
-        for title in FACTORY_TITLES:
-            self.assertNotIn(title, roadmap, "the roadmap of SayMyName shows content of the Factory")
+        self.assertNotIn("Isoler l’ancien code", roadmap, "the roadmap of SayMyName shows content of the Factory")
         history = self.historique(address, SAYMYNAME)
 
         def row(title: str) -> str:
@@ -281,18 +326,18 @@ class ProjectsRoadmap(unittest.TestCase):
 
         merged = row("Partage du profil")
         self.assertIn("Fusionné", merged)
-        self.assertIn(f"résultat jugé {JUDGED[:7]} → commit fusionné {MERGED[:7]}", merged,
+        self.assertIn("résultat jugé 1111111 → commit fusionné 2222222", merged,
                       "the merged result does not keep its proof")
         abandoned = row("Tableau des invitations")
         self.assertIn("Abandonné", abandoned)
-        self.assertIn(REASON, abandoned, "the abandoned result does not keep its reason")
+        self.assertIn(reason, abandoned, "the abandoned result does not keep its reason")
         self.assertNotRegex(abandoned, r"Fusionné|commit fusionné", "an abandon lets one believe in a merge")
         old = row("Page d’accueil")
         self.assertRegex(old, r"(?i)livré", "the old delivery does not say its issue")
         self.assertNotRegex(old, r"Accepté|Fusionné", "an old delivery is said accepted or merged")
-        self.assertIn(OLD_SPEC_REASON, row("Messagerie interne"), "the Spec abandoned does not keep its reason")
+        self.assertIn(old_spec_reason, row("Messagerie interne"), "the Spec abandoned does not keep its reason")
         self.assertEqual([], [r for r in history if re.search(r"(?i)abandonn", r)
-                              and not (REASON in r or OLD_SPEC_REASON in r)],
+                              and not (reason in r or old_spec_reason in r)],
                          "an abandon shows without its reason")
 
     def test_the_roadmap_the_factory_delivers_holds_no_item_in_progress_whose_chantier_is_closed(self):

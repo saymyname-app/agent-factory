@@ -20,9 +20,10 @@ the theme asked for).
 The recipe of the states the reference does not draw, each on its own
 dataset, none deduced from a neighbouring screen:
 
-- empty: no project declared (home-empty), /projets says so; a project
-  declared with nothing yet -- no chantier, no release plan, no roadmap
-  -- says each missing, and invents none;
+- empty: no project declared (home-empty), /projets says so, readable and
+  usable at both widths in both themes; a project declared with nothing
+  yet -- no chantier, no release plan, no roadmap -- says each missing, and
+  invents none;
 - loading: the tracker of projects-content never answers (`ui.state`
   loading): the page of the project says its chantiers are being read, and
   says none of them absent;
@@ -48,29 +49,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from home_destination import LaunchTree, measure, measure_until, problems  # noqa: E402
 from project_destination import (  # noqa: E402
-    CONTENT_PARTS, MISSING_PARTS, SHELL, assert_fold, dataset_of, declare, part,
+    CONTENT_PARTS, MISSING_PARTS, SHELL, assert_fold, dataset_of, launch_declared, part,
 )
 
 WIDTHS = (1440, 390)
 THEMES = ("dark", "light")
 RELEASE = "Prochaine release"
 PANELS = ("nav-1", "main-1", "panel-1")
-LOADING = re.compile(r"(?i)lecture[^.]{0,60}en cours|en cours de lecture")
-FAILED = re.compile(r"(?i)illisible|ne répond pas|lecture impossible|échec de la lecture|erreur")
-# What the page would say, were it to deduce from the tracker unread that
-# the project has no chantier.
-NONE_READ = re.compile(r"(?i)aucun chantier|\b0 chantiers?\b|bloqué")
-# Long content: what projects-content says, and what it says instead.
-LONG_TARGET = ("Permettre à un nouvel utilisateur de retrouver, classer, annoter, partager et exporter "
-               "l’intégralité de ses notes personnelles et professionnelles sans aucune aide extérieure, "
-               "y compris depuis un téléphone ancien : réinterprétabilité-anticonstitutionnellement-garantie.")
-LONG_CRITERIA = ("Exporter les notes au format choisi, y compris les pièces jointes volumineuses et les "
-                 "historiques de modification complets",
-                 "Importer les carnets existants depuis trois applications concurrentes sans perte de mise en forme",
-                 "Retrouver une note par une phrase approximative dictée à voix haute dans le métro")
-LONG_MILESTONE = ("Faire essayer le parcours complet à trois utilisateurs débutants, sur trois appareils "
-                  "différents, pendant une semaine d’usage réel et documenté")
-LONG_CHANTIER = "Recherche dans les notes, les pièces jointes, les étiquettes et les historiques de modification"
 
 
 class ProjectsRecette(unittest.TestCase):
@@ -118,11 +103,11 @@ class ProjectsRecette(unittest.TestCase):
             self.assertEqual({}, problems([opened], "dark", PANELS), f"the page with « {control} » open is not usable")
 
     def variant(self, name: str, **ui) -> str:
-        """The commit where projects-content is declared again as `name`,
-        its `ui` given `ui` besides."""
+        """The address of the cockpit launched on projects-content declared
+        again as `name`, its `ui` given `ui` besides."""
         dataset = dataset_of(self.tree, "projects-content")
         dataset["ui"] = {**dataset["ui"], "id": name, **ui}
-        return declare(self.tree, name, dataset)
+        return launch_declared(self.tree, name, dataset)
 
     # --- Criterion 3 ------------------------------------------------------------
 
@@ -137,16 +122,24 @@ class ProjectsRecette(unittest.TestCase):
         self.assert_by_keyboard(address, "Évolution de la cible", r"(?i)Évolution de la cible\s*\S*\s*cible initiale")
 
     def test_no_project_and_a_project_with_nothing_yet_each_say_what_is_missing_and_invent_nothing(self):
-        # No project declared.
-        listed = measure(self.tree.launch("home-empty"), "/projets", widths=WIDTHS)
-        for frame in listed:
-            self.assertRegex(frame.get("text", ""), r"(?i)aucun projet déclaré", "an empty list does not say so")
+        # No project declared: /projets says so, readable and usable.
+        address = self.tree.launch("home-empty")
+        found = {}
+        for theme in THEMES:
+            listed = measure(address, "/projets", theme=theme, widths=WIDTHS)
+            self.assertEqual(list(WIDTHS), [frame["width"] for frame in listed])
+            for frame in listed:
+                self.assertEqual("/projets", frame.get("path"))
+                self.assertRegex(frame.get("text", ""), r"(?i)aucun projet déclaré",
+                                 f"an empty list does not say so at {frame['width']} px in the {theme} theme")
+            found.update(problems(listed, theme, ("nav-1", "main-1")))
+        self.assertEqual({}, found, "/projets without a project is not readable and usable at both widths in both themes")
         # A project declared, with nothing yet.
         name = "projects-nothing-yet"
         dataset = dataset_of(self.tree, "projects-content")
         dataset["ui"] = {"id": name, "page": "projects", "selected": "Vide"}
         dataset["visible_text"] = "← Projets\nVide\n\nUn projet déclaré, sans rien encore."
-        address = self.tree.launch(name, declare(self.tree, name, dataset))
+        address = launch_declared(self.tree, name, dataset)
         for frame in self.rendered(address, "vide", MISSING_PARTS):
             release = part(frame, RELEASE)
             self.assertRegex(release, r"(?i)cadrage", f"the release does not say its release plan is missing at {frame['width']} px")
@@ -156,31 +149,46 @@ class ProjectsRecette(unittest.TestCase):
             self.assertRegex(frame.get("text", ""), r"(?i)aucun chantier", "the project does not say it has no chantier")
 
     def test_a_project_whose_tracker_is_still_being_read_says_so_and_says_no_chantier_absent(self):
-        name = "projects-loading"
-        address = self.tree.launch(name, self.variant(name, state="loading"))
-        for frame in self.rendered(address, "notes", SHELL, ready=LOADING):
-            self.assertRegex(frame.get("text", ""), LOADING, f"the page does not say its chantiers are being read at {frame['width']} px")
-            self.assertNotRegex(frame.get("text", ""), NONE_READ, "the page deduces chantiers from a tracker unread")
+        loading = re.compile(r"(?i)lecture[^.]{0,60}en cours|en cours de lecture")
+        address = self.variant("projects-loading", state="loading")
+        for frame in self.rendered(address, "notes", SHELL, ready=loading):
+            self.assertRegex(frame.get("text", ""), loading, f"the page does not say its chantiers are being read at {frame['width']} px")
+            # What the page would say, were it to deduce from the tracker
+            # unread that the project has no chantier.
+            self.assertNotRegex(frame.get("text", ""), r"(?i)aucun chantier|\b0 chantiers?\b|bloqué",
+                                "the page deduces chantiers from a tracker unread")
 
     def test_a_project_whose_tracker_fails_says_the_reading_failed_and_says_no_chantier_absent(self):
-        name = "projects-error"
-        address = self.tree.launch(name, self.variant(name, state="error"))
-        for frame in self.rendered(address, "notes", SHELL, ready=FAILED):
-            self.assertRegex(frame.get("text", ""), FAILED, f"the page does not say the reading failed at {frame['width']} px")
-            self.assertNotRegex(frame.get("text", ""), NONE_READ, "the page deduces chantiers from a tracker that failed")
+        failed = re.compile(r"(?i)illisible|ne répond pas|lecture impossible|échec de la lecture|erreur")
+        address = self.variant("projects-error", state="error")
+        for frame in self.rendered(address, "notes", SHELL, ready=failed):
+            self.assertRegex(frame.get("text", ""), failed, f"the page does not say the reading failed at {frame['width']} px")
+            self.assertNotRegex(frame.get("text", ""), r"(?i)aucun chantier|\b0 chantiers?\b|bloqué",
+                                "the page deduces chantiers from a tracker that failed")
 
     def test_long_content_is_shown_whole_and_stays_readable_at_both_widths_in_both_themes(self):
-        more = "\\n\\n○ ".join(LONG_CRITERIA)
+        # What projects-content says, and what it says instead.
+        target = ("Permettre à un nouvel utilisateur de retrouver, classer, annoter, partager et exporter "
+                  "l’intégralité de ses notes personnelles et professionnelles sans aucune aide extérieure, "
+                  "y compris depuis un téléphone ancien : réinterprétabilité-anticonstitutionnellement-garantie.")
+        criteria = ("Exporter les notes au format choisi, y compris les pièces jointes volumineuses et les "
+                    "historiques de modification complets",
+                    "Importer les carnets existants depuis trois applications concurrentes sans perte de mise en forme",
+                    "Retrouver une note par une phrase approximative dictée à voix haute dans le métro")
+        milestone = ("Faire essayer le parcours complet à trois utilisateurs débutants, sur trois appareils "
+                     "différents, pendant une semaine d’usage réel et documenté")
+        chantier = "Recherche dans les notes, les pièces jointes, les étiquettes et les historiques de modification"
+        more = "\\n\\n○ ".join(criteria)
         commit = self.tree.reword("projects-content", {
-            "Permettre à un nouvel utilisateur de retrouver et exporter ses notes sans aide.": LONG_TARGET,
+            "Permettre à un nouvel utilisateur de retrouver et exporter ses notes sans aide.": target,
             "Reste connu 2\\n\\n○ Exporter les notes au format choisi": f"Reste connu 4\\n\\n○ {more}",
-            "Faire essayer le parcours complet à trois utilisateurs\\n\\nTrois": f"{LONG_MILESTONE}\\n\\nTrois",
-            "CHANTIER ACTUEL\\nRecherche dans les notes": f"CHANTIER ACTUEL\\n{LONG_CHANTIER}",
+            "Faire essayer le parcours complet à trois utilisateurs\\n\\nTrois": f"{milestone}\\n\\nTrois",
+            "CHANTIER ACTUEL\\nRecherche dans les notes": f"CHANTIER ACTUEL\\n{chantier}",
         })
         address = self.tree.launch("projects-content", commit)
         for frame in self.rendered(address, "notes", CONTENT_PARTS):
             text = " ".join(frame.get("text", "").split())
-            for said in (LONG_TARGET, *LONG_CRITERIA, LONG_MILESTONE, LONG_CHANTIER):
+            for said in (target, *criteria, milestone, chantier):
                 self.assertIn(said, text, f"a long text is not shown whole at {frame['width']} px")
 
 

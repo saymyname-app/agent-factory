@@ -6,10 +6,11 @@ criterion test files of E load it.
 It adds to `home_destination` (the launcher, the browser, the readability
 checks) what a page of a project needs:
 
-- `declare`: a dataset the cases write, declared in the profile of the tree
-  under test at a commit of its own, from which the launcher starts the
-  cockpit -- as the criterion tests of A1 declare the records of the D01
-  commands;
+- `launch_declared`: the cockpit started on a dataset the case writes,
+  declared in the profile of the tree under test at a commit of its own --
+  as the criterion tests of A1 declare the records of the D01 commands --,
+  the tree back at its first commit afterwards: the next case sees none of
+  it;
 - `knowledge_repository`: a disposable Git repository holding the files of
   the knowledge repository of a project, committed at a date the case
   writes;
@@ -77,19 +78,26 @@ MONTHS = "janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|n
 DATE = re.compile(rf"(?i)\b\d{{1,2}}(?:/\d{{1,2}}/\d{{2,4}}|\s+(?:{MONTHS})\b)")
 
 
-def declare(tree: LaunchTree, name: str, dataset: dict) -> str:
-    """The commit, on top of the tree under test as it stands, where
-    `dataset` is a dataset of the profile under `name`. The launcher reads
-    the profile in the tree: the tree stays at this commit."""
+def launch_declared(tree: LaunchTree, name: str, dataset: dict) -> str:
+    """The address of the cockpit the launcher started on `dataset`,
+    declared under `name` in the profile of the tree under test at a commit
+    on top of its first one. The launcher reads the profile in the tree
+    while it starts; the tree is back at its first commit afterwards, so
+    no other case sees this dataset."""
     repo = tree.repo
-    path = Path("config") / "cockpit-datasets" / f"{name}.json"
-    (repo / path).write_text(json.dumps(dataset, ensure_ascii=False, indent=1), encoding="utf-8")
-    profile = json.loads((repo / PROFILE).read_text(encoding="utf-8"))
-    profile["launch"]["datasets"][name] = path.as_posix()
-    (repo / PROFILE).write_text(json.dumps(profile, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    git(repo, "add", "--all")
-    git(repo, "commit", "--quiet", "--message", f"{name}: a dataset of the case")
-    return git(repo, "rev-parse", "HEAD")
+    git(repo, "checkout", "--quiet", "--force", tree.head)
+    try:
+        path = Path("config") / "cockpit-datasets" / f"{name}.json"
+        (repo / path).write_text(json.dumps(dataset, ensure_ascii=False, indent=1), encoding="utf-8")
+        profile = json.loads((repo / PROFILE).read_text(encoding="utf-8"))
+        profile["launch"]["datasets"][name] = path.as_posix()
+        (repo / PROFILE).write_text(json.dumps(profile, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        git(repo, "add", "--all")
+        git(repo, "commit", "--quiet", "--message", f"{name}: a dataset of the case")
+        return tree.launch(name, git(repo, "rev-parse", "HEAD"))
+    finally:
+        git(repo, "checkout", "--quiet", "--force", tree.head)
+        git(repo, "clean", "--quiet", "--force", "-d")
 
 
 def dataset_of(tree: LaunchTree, name: str) -> dict:

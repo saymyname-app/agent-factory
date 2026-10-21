@@ -26,7 +26,6 @@ without its hypotheses.
 
 from __future__ import annotations
 
-import re
 import sys
 import unittest
 from pathlib import Path
@@ -40,16 +39,6 @@ RELEASE = "Prochaine release"
 PROOF = "Voir la preuve"
 HISTORY = "Évolution de la cible"
 HYPOTHESES = "Hypothèses"
-# What the release of Notes says, in projects-content (the reference).
-NOTES_TARGET = "Permettre à un nouvel utilisateur de retrouver et exporter ses notes sans aide."
-NOTES_GAINS = ("Créer et retrouver une note", "Conserver ses notes après reconnexion")
-NOTES_REMAINING = ("Exporter les notes au format choisi", "Vérifier le parcours sans assistance")
-NOTES_DECISION = "Le partage de notes est-il nécessaire dès cette release ?"
-NOTES_MILESTONE = "Faire essayer le parcours complet à trois utilisateurs"
-NOTES_CHECK = "Trois essais documentés ; blocages et réussites observés."
-NOTES_ADDED = "Partager une note avec une autre personne"
-# The current chantier of Notes, said on its line under /projets.
-NOTES_CHANTIER = "Recherche dans les notes"
 
 
 class ProjectsRelease(unittest.TestCase):
@@ -78,29 +67,35 @@ class ProjectsRelease(unittest.TestCase):
         self.assertTrue(text, f"the page of the project has no « {RELEASE} »; it says « {frame.get('text', '')[:400]} »")
         return text
 
-    def assert_no_false_promise(self, release: str) -> None:
-        """No global percentage, and no date but the one an estimate was
-        computed at: the scope is incomplete."""
+    def assert_no_false_promise(self, release: str, computed: str | None = None) -> None:
+        """No global percentage, and no date but `computed`, the date the
+        estimate says it was computed at -- none when it shows no range:
+        the scope is incomplete, a date of delivery would be a promise."""
         self.assertNotIn("%", release, "the release shows a percentage")
         for found in DATE.finditer(release):
-            self.assertRegex(release[max(0, found.start() - 40):found.start()], r"(?i)calcul",
-                             f"the release shows a date that is not the date of a computation: « {found.group(0)} »")
+            self.assertEqual(computed, found.group(0), f"the release shows a date that is not the date of its "
+                                                       f"computation: « {found.group(0)} »")
+            self.assertRegex(release[:found.start()], r"(?i)calculée le\s*$",
+                             f"the date « {found.group(0)} » is not said the date the estimate was computed")
 
-    def assert_target(self, release: str) -> None:
-        """The revisable target, the gains verified then what remains, the
-        milestone and how it is verified."""
+    def assert_target(self, release: str, target: str, gains: tuple[str, ...], remaining: tuple[str, ...],
+                      milestone: str, check: str) -> None:
+        """The revisable `target`, the `gains` verified then what remains,
+        among it each criterion of `remaining`, the `milestone` and how it
+        is verified, its `check`."""
         self.assertRegex(release, r"(?i)cible révisable", "the target is not said revisable")
-        self.assertIn(NOTES_TARGET, release, "the release does not say its target")
-        self.assertRegex(release, r"Acquis vérifiés\s*2\b", "the release does not count its two gains verified")
-        gains = release.index("Acquis vérifiés")
-        remaining = release.find("Reste connu")
-        self.assertGreater(remaining, gains, "the release does not say what remains after its gains")
-        for gain in NOTES_GAINS:
-            self.assertTrue(gains < release.find(gain) < remaining, f"« {gain} » is not among the gains verified")
-        for criterion in NOTES_REMAINING:
-            self.assertGreater(release.find(criterion), remaining, f"« {criterion} » is not among what remains")
-        self.assertIn(NOTES_MILESTONE, release, "the release does not say its next milestone")
-        self.assertIn(NOTES_CHECK, release, "the milestone does not say how it is verified")
+        self.assertIn(target, release, "the release does not say its target")
+        self.assertRegex(release, rf"Acquis vérifiés\s*{len(gains)}\b", f"the release does not count its {len(gains)} "
+                                                                       "gains verified")
+        gained = release.index("Acquis vérifiés")
+        remains = release.find("Reste connu")
+        self.assertGreater(remains, gained, "the release does not say what remains after its gains")
+        for gain in gains:
+            self.assertTrue(gained < release.find(gain) < remains, f"« {gain} » is not among the gains verified")
+        for criterion in remaining:
+            self.assertGreater(release.find(criterion), remains, f"« {criterion} » is not among what remains")
+        self.assertIn(milestone, release, "the release does not say its next milestone")
+        self.assertIn(check, release, "the milestone does not say how it is verified")
 
     def history_of(self, dataset: str, project: str) -> tuple[str, str]:
         """The release of `project` on `dataset`, then once the history of
@@ -120,9 +115,10 @@ class ProjectsRelease(unittest.TestCase):
         listed = measure(address, "/projets")[0]
         self.assertEqual("/projets", listed["path"])
         # The control of the line holds the whole line: the project and
-        # what the line says of it.
+        # what the line says of it, its current chantier.
         lines = [control["name"] for control in listed["controls"]
-                 if "Notes" in control["name"] and NOTES_CHANTIER in control["name"] and not control["disabled"]]
+                 if "Notes" in control["name"] and "Recherche dans les notes" in control["name"]
+                 and not control["disabled"]]
         self.assertEqual(1, len(lines), "the line of Notes is not one control holding the whole line: "
                                         f"{[c['name'] for c in listed['controls']]}")
         for keys in (False, True):
@@ -133,43 +129,57 @@ class ProjectsRelease(unittest.TestCase):
             self.assertIn(RELEASE, opened.get("text", ""), "the page opened does not show the release of the project")
 
     def test_projects_content_shows_the_target_the_gains_with_their_proofs_what_remains_the_decision_and_the_milestone(self):
-        page = self.page("projects-content", "notes", click=PROOF)
+        gains = ("Créer et retrouver une note", "Conserver ses notes après reconnexion")
+        proof = ("Preuve illustrative : parcours essayé, résultat conforme au critère et avis favorable. "
+                 "Aucune validation réelle représentée par cette donnée fictive.")
+        address = self.tree.launch("projects-content")
+        page = measure(address, "/projet/notes")[0]
         release = self.release(page)
-        self.assert_target(release)
+        self.assert_target(release, "Permettre à un nouvel utilisateur de retrouver et exporter ses notes sans aide.",
+                           gains, ("Exporter les notes au format choisi", "Vérifier le parcours sans assistance"),
+                           "Faire essayer le parcours complet à trois utilisateurs",
+                           "Trois essais documentés ; blocages et réussites observés.")
         self.assertRegex(release, r"Reste connu\s*2\b", "the release does not count the two criteria that remain")
-        self.assertRegex(release, rf"(?i)décision ouverte\s*{re.escape(NOTES_DECISION)}",
+        self.assertRegex(release, r"(?i)décision ouverte\s*Le partage de notes est-il nécessaire dès cette release \?",
                          "the release does not say its open decision")
-        # Each gain has its proof, which opens.
-        proofs = [c for c in page["controls"] if c["name"].startswith(PROOF)]
-        self.assertEqual(2, len(proofs), "each gain verified has not its proof")
-        after = page.get("after", {})
-        self.assertTrue(after.get("found"))
-        opened = part(after, RELEASE)
-        shown = opened[opened.index(PROOF) + len(PROOF):opened.find(NOTES_GAINS[1])] if PROOF in opened else ""
-        self.assertGreaterEqual(len(shown.strip()), 20, f"the proof of « {NOTES_GAINS[0]} » shows nothing: « {opened} »")
-        self.assert_no_false_promise(opened)
+        self.assertNotIn(proof, release, "the proofs are not folded under their gains")
+        # Each gain has its proof, which opens under it, and under it only.
+        proofs = [c["name"] for c in page["controls"] if c["name"].startswith(PROOF)]
+        self.assertEqual([f"{PROOF} : {gain}" for gain in gains], proofs, "each gain verified has not its proof")
+        for gain, following in ((gains[0], gains[1]), (gains[1], "Reste connu")):
+            after = measure(address, "/projet/notes", click=f"{PROOF} : {gain}")[0].get("after", {})
+            self.assertTrue(after.get("found"), f"no proof of « {gain} » to open")
+            opened = part(after, RELEASE)
+            self.assertIn(proof, opened[opened.index(gain):opened.index(following)],
+                          f"the proof of « {gain} » does not open under it: « {opened} »")
+            self.assertEqual(1, opened.count(proof), f"opening the proof of « {gain} » opens another")
+            self.assert_no_false_promise(opened)
 
     def test_projects_content_says_its_estimate_unavailable_and_keeps_the_history_of_its_target_apart(self):
         release, history = self.history_of("projects-content", "notes")
         self.assertRegex(release, r"(?i)estimation (non disponible|indisponible)", "the estimate is not said unavailable")
         self.assertRegex(release, r"(?i)historique comparable insuffisant", "the estimate does not say why it is unavailable")
-        self.assertRegex(history, r"(?i)cible initiale", "the history of the target does not hold the initial target")
-        for gain in NOTES_GAINS:
+        self.assertRegex(history, r"(?i)cible initiale proposée · parcours individuel",
+                         "the history of the target does not hold the initial target")
+        for gain in ("Créer et retrouver une note", "Conserver ses notes après reconnexion"):
             self.assertNotIn(gain, history, "the history of the target mixes the gains")
         self.assert_no_false_promise(release + " " + history)
 
     def test_release_expanded_adds_the_included_criterion_to_what_remains_and_keeps_its_gains(self):
+        gains = ("Créer et retrouver une note", "Conserver ses notes après reconnexion")
+        added = "Partager une note avec une autre personne"
         release, history = self.history_of("release-expanded", "notes")
-        self.assert_target(release)
+        self.assert_target(release, "Permettre à un nouvel utilisateur de retrouver et exporter ses notes sans aide.",
+                           gains, ("Exporter les notes au format choisi", "Vérifier le parcours sans assistance", added),
+                           "Faire essayer le parcours complet à trois utilisateurs",
+                           "Trois essais documentés ; blocages et réussites observés.")
         self.assertRegex(release, r"Reste connu\s*3\b", "the criterion included is not counted among what remains")
-        self.assertGreater(release.find(NOTES_ADDED), release.find("Reste connu"),
-                           "the criterion included is not among what remains")
         self.assertRegex(release, r"(?i)périmètre élargi", "the decision included is not said")
         self.assertRegex(release, r"(?i)estimation (non disponible|indisponible)",
                          "the estimate of the scope widened is not said unavailable")
         self.assertRegex(history, r"(?i)cible initiale", "the history lost the initial target")
         self.assertRegex(history, r"(?i)cible élargie", "the history does not hold the widening of the target")
-        for gain in NOTES_GAINS:
+        for gain in gains:
             self.assertNotIn(gain, history, "the history of the target mixes the gains")
         self.assert_no_false_promise(release + " " + history)
 
@@ -187,11 +197,10 @@ class ProjectsRelease(unittest.TestCase):
         self.assertTrue(after.get("found"), f"the range has no « {HYPOTHESES} »")
         opened = part(after, RELEASE)
         hypotheses = opened[opened.find(HYPOTHESES):] if HYPOTHESES in opened else ""
-        self.assertRegex(hypotheses, r"\d+ résultats comparables", "the hypotheses do not say the comparable data")
-        self.assertRegex(hypotheses, r"(?i)capacité", "the hypotheses do not say the capacity")
-        self.assertRegex(hypotheses, rf"(?i)calcul\w*[^.]*?{DATE.pattern.removeprefix('(?i)')}",
-                         "the hypotheses do not say when the range was computed")
-        self.assert_no_false_promise(opened)
+        self.assertIn("12 résultats comparables", hypotheses, "the hypotheses do not say the comparable data")
+        self.assertRegex(hypotheses, r"(?i)capacité stable", "the hypotheses do not say the capacity")
+        self.assertIn("calculée le 12/10/2026", hypotheses, "the hypotheses do not say when the range was computed")
+        self.assert_no_false_promise(opened, computed="12/10/2026")
 
     def test_project_missing_says_the_release_plan_absent_points_what_lacks_and_deduces_nothing(self):
         page = self.page("project-missing", "notes")
@@ -200,8 +209,10 @@ class ProjectsRelease(unittest.TestCase):
         self.assertRegex(release, r"(?i)non collecté|absent|aucun cadrage", "the release plan is not said absent")
         self.assertRegex(release, r"(?i)aucun avancement déduit", "the release does not say no progress is deduced")
         self.assertRegex(release, r"(?i)dépôt", "the release does not point where the release plan lacks")
-        for invented in ("Cible révisable", NOTES_TARGET, "Acquis vérifiés", "Reste connu", "Fourchette",
-                         *NOTES_GAINS, *NOTES_REMAINING):
+        for invented in ("Cible révisable", "Permettre à un nouvel utilisateur de retrouver et exporter ses notes sans aide.",
+                         "Acquis vérifiés", "Reste connu", "Fourchette", "Créer et retrouver une note",
+                         "Conserver ses notes après reconnexion", "Exporter les notes au format choisi",
+                         "Vérifier le parcours sans assistance"):
             self.assertNotIn(invented, release, f"a release plan the project does not have is shown: « {invented} »")
         self.assert_no_false_promise(release)
 
