@@ -95,7 +95,10 @@ even when the ceiling makes its session wait: its exit is taken back, so
 neither the review nor the evaluation is sent on the old tip. So is a ticket
 stopped because its Ticket Evaluation gave no result (af-xhc0sj), once per
 tip of the integration branch: the resume lifts the stop, keeps it on the
-resume, and withdraws its request; every other stop stays with the operator. At the
+resume, and withdraws its request; so is a ticket stopped at its second
+amendment once the operator answered « a » to its request (af-25o7vr,
+cause `amendment_granted`, one amendment more); every other stop stays
+with the operator. At the
 last resume of a same cause (bounds.resumes, one bound per cause, ADR-0030
 L2: these causes and a commit after a verdict; the correction round keeps
 its own bound of one round), the ticket is
@@ -314,6 +317,12 @@ BEHIND = "behind"
 # that stop is lifted by a resume of the ticket itself, once per tip of the
 # integration branch (af-xhc0sj). Every other stop stays with the operator.
 NO_RESULT = "evaluation_no_result"
+# A stop at the second amendment, and the resume that lifts it once the
+# operator answered the first option of its request (tdd_stop_request,
+# af-25o7vr): the author may then amend its frozen tests once more.
+AMENDMENT_STOP = "amendment_exhausted"
+AMENDMENT_GRANTED = "amendment_granted"
+AMENDMENT_RESUME_OPTION = "a"
 # ADR-0030 L3 removed the test review: a ticket it stopped before is resumed
 # on itself, once per stop, its request withdrawn (af-pjvsgo). A code review
 # without result is resumed the same way (af-wu6xj7): most often a defect of
@@ -1039,10 +1048,25 @@ def behind_due(convoy: Convoy, ticket: dict[str, Any]) -> tuple[str, str, str] |
 
 def stopped_without_result(ticket: dict[str, Any]) -> bool:
     """Started, not closed nor parked, and stopped because its Ticket
-    Evaluation or its code review gave no result, or by a stage the flow
-    removed: the stops a resume may lift."""
+    Evaluation or its code review gave no result, by a stage the flow
+    removed, or at its second amendment: the stops a resume may lift."""
     return started(ticket) and ticket.get("status") != "closed" and not ticket.get("park") \
-        and (ticket.get("stop") or {}).get("reason") in (NO_RESULT, CODE_REVIEW_STOP, *REMOVED_STAGE_STOPS)
+        and (ticket.get("stop") or {}).get("reason") in (NO_RESULT, CODE_REVIEW_STOP, AMENDMENT_STOP,
+                                                         *REMOVED_STAGE_STOPS)
+
+
+def amendment_granted_due(ticket: dict[str, Any]) -> tuple[str, str, str] | None:
+    """The resume a stop at the second amendment asks for once the operator
+    answered its request with the option that has the ticket resumed
+    (af-25o7vr): once per stop, none on any other answer, none before the
+    request was raised and answered, none when the ticket has no resume
+    left. The fact is `stop:<reason>/<time>`."""
+    stop = ticket["stop"]
+    if "raised" not in stop or ticket.get("resumes_left") == 0:
+        return None
+    if request_answer(read_bead(ticket["id"]), stop["at"]) != AMENDMENT_RESUME_OPTION:
+        return None
+    return "new", AMENDMENT_GRANTED, f"stop:{stop['reason']}/{stop['at']}"
 
 
 def once_per_stop_due(ticket: dict[str, Any], cause: str) -> tuple[str, str, str] | None:
@@ -1102,6 +1126,8 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
                 due = once_per_stop_due(ticket, STAGE_REMOVED)
             elif ticket["stop"]["reason"] == CODE_REVIEW_STOP:
                 due = once_per_stop_due(ticket, CODE_REVIEW_STOP)
+            elif ticket["stop"]["reason"] == AMENDMENT_STOP:
+                due = amendment_granted_due(ticket)
             else:
                 due = no_result_due(convoy, ticket)
             if due is None:
@@ -1924,12 +1950,13 @@ def settle_non_conforme(convoy: Convoy) -> dict[str, Any] | None:
 
 @contextmanager
 def advance_lock() -> Iterator[bool]:
-    """One pass at a time, Factory-wide: N is shared between the convoys.
+    """One whole pass at a time, Factory-wide: N is shared between convoys.
 
     False when another pass holds it: the order starts a pass while the last
-    one still runs, and one that waited for the lock spent the order's 300 s
-    in that wait and was killed (af-wz4dd8). The pass that holds it does the
-    work; the one after it reads the state it left."""
+    one still runs. A pass that waited for the lock spent the order's 300 s
+    there and was killed (af-wz4dd8); a pass that overlapped settlement
+    amplified tracker load until both exceeded that deadline (af-ebqm1y).
+    The pass that holds it does the work; a later pass reads what it left."""
     lock_dir = Path(os.environ.get("CONVOY_ADVANCE_LOCK_DIR") or os.environ.get("XDG_RUNTIME_DIR") or "/tmp")
     lock_dir.mkdir(parents=True, exist_ok=True)
     with (lock_dir / "agent-factory-convoy-advance.lock").open("w") as handle:
@@ -2110,8 +2137,8 @@ def tdd_stop_request(ticket: dict[str, Any]) -> str:
             {"option": "Clore ce ticket comme satisfait par le code existant",
              "consequence": "La clôture se fait dans le Planning Run ; cette réponse seule ne ferme pas le ticket."}
             if stop["reason"] == ALREADY_GREEN else
-            {"option": "Faire reprendre ce ticket ou ses tests de critère par une Planning Exception",
-             "consequence": "Le ticket reste arrêté tant que son arrêt n'est pas levé."},
+            {"option": "Accepter un amendement de plus de ses tests et faire reprendre le ticket",
+             "consequence": "Une nouvelle session de l'auteur reprend le ticket ; ses tests amendés sont gelés à nouveau."},
             {"option": "Laisser le ticket arrêté",
              "consequence": "Rien de ce ticket ne fusionne ; les tickets qui l'attendent ne démarrent pas."},
         ],
@@ -2350,34 +2377,30 @@ def failure_line(message: str | None, failed: list[str]) -> str:
 
 def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
     """`targets` None: every marked convoy that is open or was closed outside its commands."""
-    with advance_lock() as held:
-        if not held:
-            print(json.dumps({"ok": True, "skipped": PASS_RUNNING}, indent=2, sort_keys=True, ensure_ascii=False))
-            return 0
-        # Sessions are listed before the state is read: a session that ends
-        # between the two reads is then still seen alive, and nothing it wrote
-        # before ending is missed (a stop raised before its exception).
-        live = live_sessions()
-        convoys = {convoy_id: Convoy(convoy_id) for convoy_id in targets or []}
-        settings = load_settings()
-        for convoy_id in marked_convoys():
-            if convoy_id not in convoys:
-                convoys[convoy_id] = Convoy(convoy_id)
-        sessions = role_sessions(live)
-        awaiting = sorted(ticket for convoy in convoys.values() for ticket in convoy.awaiting_a_session())
-        # N counts authors only: a reviewer or Evaluator session, even idle
-        # until its idle_timeout, does not hold an author's place (af-4xxlo7).
-        occupied = sessions.get("author", 0) + len(awaiting)
-        free = max(0, settings["ceiling"] - occupied)
+    # Sessions are listed before the state is read: a session that ends
+    # between the two reads is then still seen alive, and nothing it wrote
+    # before ending is missed (a stop raised before its exception).
+    live = live_sessions()
+    convoys = {convoy_id: Convoy(convoy_id) for convoy_id in targets or []}
+    settings = load_settings()
+    for convoy_id in marked_convoys():
+        if convoy_id not in convoys:
+            convoys[convoy_id] = Convoy(convoy_id)
+    sessions = role_sessions(live)
+    awaiting = sorted(ticket for convoy in convoys.values() for ticket in convoy.awaiting_a_session())
+    # N counts authors only: a reviewer or Evaluator session, even idle
+    # until its idle_timeout, does not hold an author's place (af-4xxlo7).
+    occupied = sessions.get("author", 0) + len(awaiting)
+    free = max(0, settings["ceiling"] - occupied)
 
-        results, alive = [], session_names(live)
-        for convoy_id in targets if targets is not None else sorted(convoys):
-            result = advance_convoy(convoys[convoy_id], settings, free, alive)
-            free -= len(result["started"]) + len(result["resumed"])
-            results.append(result)
+    results, alive = [], session_names(live)
+    for convoy_id in targets if targets is not None else sorted(convoys):
+        result = advance_convoy(convoys[convoy_id], settings, free, alive)
+        free -= len(result["started"]) + len(result["resumed"])
+        results.append(result)
 
-    # Outside the lock of the starts: the tests on a merged result take the
-    # time they take, and bin/spec-integration holds its own lock per convoy.
+    # Settlement stays under the pass lock. Individual long-running checks
+    # still use their own per-convoy locks and outlive this pass where noted.
     for result in results:
         if "unruled" in result:
             continue
@@ -2488,7 +2511,12 @@ def main(argv: list[str]) -> int:
     try:
         if args.check_only:
             return 0 if marked_convoys() else 1
-        return one_pass(None if args.all else [args.convoy], args.stopped_ok)
+        with advance_lock() as held:
+            if not held:
+                print(json.dumps({"ok": True, "skipped": PASS_RUNNING}, indent=2,
+                                 sort_keys=True, ensure_ascii=False))
+                return 0
+            return one_pass(None if args.all else [args.convoy], args.stopped_ok)
     except NotNewFlow as exc:
         print(json.dumps(json.loads(str(exc)), indent=2, sort_keys=True, ensure_ascii=False))
         return EXIT_NOT_NEW_FLOW

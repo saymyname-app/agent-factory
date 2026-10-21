@@ -173,14 +173,8 @@ version = "sha:3b3b89f2011e06d84459aa7bea1552382f13930a"
 # and the order still ran every 5 minutes (af-qgwvgi). An aged human gate is
 # still paged without it: factory-watchdog (section 1) raises it to the Mayor
 # past 30 minutes, and notify-on-human-gate-creation still fires at creation.
-# convoy-advance: paused on Benjamin's words (2026-10-19 19:13 Paris, « Oui je
-# suis d'accord » to pausing convoy af-pqfxmd; 2026-10-20 01:24 Paris, « Oui,
-# suspends l'ordre convoy-advance (de façon réversible) »). The pause of
-# 2026-10-19 was only a relay comment, so the order kept starting tickets
-# (T03R, T41 at 00:18). Undo: remove it from this list, then
-# bin/factory-maintain reload-city-config. Bead and relay: af-npz9v1.
 skip = ["dolt-remotes-patrol", "nudge-mail-sweep", "prune-branches", "cross-rig-deps", "orphan-sweep",
-        "renudge-stale-human-gates", "convoy-advance"]
+        "renudge-stale-human-gates"]
 
 [[orders.overrides]]
 # dolt-health.sh only checks live server health; a 2m gap is still well

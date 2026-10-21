@@ -13,6 +13,8 @@
 # `base_branch` of `repo` since `last_done` (an ISO 8601 UTC timestamp), or
 # the literal string "paused" -- while paused, status is always "paused"
 # until an operator edits `last_done` to a real timestamp (normal commit).
+# `paused_reason` and `resume_when` are shown as written on the cockpit's
+# Rituels page: write them in French, for Benjamin.
 
 [[ritual]]
 id = "architecture:factory"
@@ -21,5 +23,5 @@ repo = "saymyname-app/agent-factory"
 base_branch = "main"
 threshold = 20
 last_done = "paused"
-paused_reason = "deferred 2026-09-29 (decision 22): 64 PRs were A4-A6 refactor churn"
-resume_when = "A6 (docs/roadmap.toml step A6) closed: then write A6's closing date here as the new baseline"
+paused_reason = "reportée le 29/09/2026 (décision 22), les 64 PR depuis la dernière revue étant du remaniement des étapes A4 à A6"
+resume_when = "à la clôture de l’étape A6 de la feuille de route (docs/roadmap.toml), dont la date deviendra le nouveau point de départ"

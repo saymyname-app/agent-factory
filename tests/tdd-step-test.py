@@ -39,6 +39,7 @@ APP = f"{FIXTURE}/app.py"
 TABLE = f"{TESTS}/criteria.json"
 REGRESSION_FILE = f"{TESTS}/regression.py"
 COUNT_FILE, HEALTH_FILE = f"{TESTS}/test_count.py", f"{TESTS}/test_health.py"
+HELPER_FILE = f"{TESTS}/health_field.py"
 COUNT_ID = f"{COUNT_FILE}::CountTest.test_count_is_shown"
 HEALTH_ID = f"{HEALTH_FILE}::HealthTest.test_dataset_is_named"
 
@@ -820,6 +821,67 @@ class TddStepTest(unittest.TestCase):
         self.assertEqual("amendment_exhausted", state["stop"]["reason"])
         self.assertEqual(store_before, self.store_files())
 
+    def test_a_resume_the_operator_granted_allows_one_more_amendment_and_no_third(self):
+        """af-25o7vr: the operator answered « a » to the stop of the second
+        amendment; bin/convoy-advance lifted it by a resume `amendment_granted`.
+        The second amendment is then proven and frozen; a third stops again."""
+        self.frozen()
+        self.commit("code et test corrigé", {APP: self.amended_app(), HEALTH_FILE: self.AMENDED_HEALTH_TEST})
+        first = self.ok("amend", SLICE, "--reason", "le champ s'appelle dataset_name dans la Spec")
+        second_commit = self.commit("second changement de test", {COUNT_FILE: COUNT_TEST.replace(">3<", "> 3 <")})
+        self.assertEqual(EXIT_STOPPED, self.run_tool("amend", SLICE, "--reason", "autre erreur de test").returncode)
+        state = json.loads(self.tracker.read_text())
+        state["beads"][SLICE]["metadata"]["gc.flow.gate.dispatch"] = json.dumps({"at": "2026-10-20T20:00:00Z"})
+        self.tracker.write_text(json.dumps(state))
+        self.state("open-resume", CONVOY, SLICE, "--cause", "amendment_granted", "--ref", "stop:amendment_exhausted/x")
+
+        answer = self.ok("amend", SLICE, "--reason", "autre erreur de test")
+
+        self.assertEqual(("amend", second_commit), (answer["step"], answer["commit"]))
+        tdd = self.ticket_state()["tdd"]
+        self.assertEqual((second_commit, "autre erreur de test"), (tdd["amendment"]["commit"], tdd["amendment"]["reason"]))
+        self.assertEqual(second_commit, tdd["freeze"]["commit"])
+        self.assertNotEqual(first["commit"], second_commit)
+        self.commit("troisième changement de test", {COUNT_FILE: COUNT_TEST.replace(">3<", ">  3  <")})
+        proc = self.run_tool("amend", SLICE, "--reason", "encore une")
+        self.assertEqual(EXIT_STOPPED, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual("amendment_exhausted", self.ticket_state()["stop"]["reason"])
+
+    def open_correction_after_the_amendment(self):
+        """The correction round (gc.flow.correction) opened after the
+        recorded amendment, as bin/convoy-state open-correction leaves it."""
+        state = json.loads(self.tracker.read_text())
+        metadata = state["beads"][SLICE]["metadata"]
+        amendment = json.loads(metadata["gc.flow.tdd.amendment"])
+        amendment["at"] = "2000-01-01T00:00:00Z"
+        metadata["gc.flow.tdd.amendment"] = json.dumps(amendment)
+        metadata["gc.flow.correction"] = json.dumps({
+            "commit": amendment["commit"], "blocking_findings": ["F1.2"], "not_observed": [], "launches": [],
+            "at": "2000-01-02T00:00:00Z"})
+        self.tracker.write_text(json.dumps(state))
+
+    def test_a_correction_round_opened_after_the_amendment_allows_one_more_and_no_third(self):
+        """af-vsni1n: the code review is the only review of the frozen tests;
+        its Blocking Finding on a frozen test, after the one amendment of the
+        ticket, is corrected by one amendment more in the correction round."""
+        self.frozen()
+        self.commit("code et test corrigé", {APP: self.amended_app(), HEALTH_FILE: self.AMENDED_HEALTH_TEST})
+        self.ok("amend", SLICE, "--reason", "le champ s'appelle dataset_name dans la Spec")
+        self.open_correction_after_the_amendment()
+        second_commit = self.commit("test corrigé après la revue", {COUNT_FILE: COUNT_TEST.replace(">3<", "> 3 <")})
+
+        answer = self.ok("amend", SLICE, "--reason", "constat F1.2 de la revue de code")
+
+        self.assertEqual(("amend", second_commit), (answer["step"], answer["commit"]))
+        tdd = self.ticket_state()["tdd"]
+        self.assertEqual((second_commit, "constat F1.2 de la revue de code"),
+                         (tdd["amendment"]["commit"], tdd["amendment"]["reason"]))
+        self.assertEqual(second_commit, tdd["freeze"]["commit"])
+        self.commit("troisième changement de test", {COUNT_FILE: COUNT_TEST.replace(">3<", ">  3  <")})
+        proc = self.run_tool("amend", SLICE, "--reason", "encore une")
+        self.assertEqual(EXIT_STOPPED, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual("amendment_exhausted", self.ticket_state()["stop"]["reason"])
+
     def test_a_ticket_stopped_at_its_second_amendment_reaches_the_operator_at_the_next_advance_pass(self):
         """The demonstration line of T45: bin/tdd-step amend stops the
         ticket, one pass of bin/convoy-advance puts exactly one request on
@@ -897,6 +959,41 @@ class TddStepTest(unittest.TestCase):
         self.commit("code", {APP: self.green_app()})
 
         self.assertIn("aucun fichier gelé", self.refused("amend", SLICE, "--reason", "rien"))
+
+    # A criterion test that reads a helper of the test perimeter, outside the
+    # registry of fingerprints (af-7lmvys).
+    HELPED_HEALTH_TEST = HEALTH_TEST.replace(
+        "import unittest\n", "import unittest\n\nfrom health_field import FIELD\n").replace(
+        'body.get("dataset")', "body.get(FIELD)")
+
+    def helper_corrected_after_the_freeze(self):
+        self.commit_tests({HEALTH_FILE: self.HELPED_HEALTH_TEST, HELPER_FILE: 'FIELD = "dataset"\n'})
+        self.red()
+        self.ok("freeze")
+        return self.commit("code et helper corrigé", {APP: self.amended_app(), HELPER_FILE: 'FIELD = "dataset_name"\n'})
+
+    def test_amendment_takes_a_helper_of_the_test_perimeter_changed_since_the_freeze(self):
+        """af-7lmvys: the green runs the whole test perimeter as frozen,
+        helpers included; a helper corrected after the freeze is amended like
+        a frozen file, and the green then runs the corrected helper."""
+        head = self.helper_corrected_after_the_freeze()
+
+        self.ok("amend", SLICE, "--reason", "le champ s'appelle dataset_name dans la Spec")
+
+        _, proof = self.piece("tdd_amendment")
+        self.assertEqual([HELPER_FILE], proof["amendment"]["files"])
+        self.assertIn('+FIELD = "dataset_name"', proof["amendment"]["diff"])
+        self.assertEqual(head, self.ticket_state()["tdd"]["freeze"]["commit"])
+        self.ok("green")
+
+    def test_green_failing_names_a_helper_changed_since_the_freeze_and_points_to_the_amendment(self):
+        self.helper_corrected_after_the_freeze()
+
+        error = self.refused("green")
+
+        self.assertIn(HEALTH_ID, error)
+        self.assertIn(HELPER_FILE, error)
+        self.assertIn("tdd-step amend", error)
 
     def test_amendment_refused_before_the_freeze(self):
         self.commit_tests()
