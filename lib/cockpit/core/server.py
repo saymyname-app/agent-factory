@@ -25,6 +25,7 @@ from cockpit.health.engine import (
 )
 from cockpit.projects import anomalies as project_anomalies
 from cockpit.projects.depots import apply_to_projects
+from cockpit.projects.descriptors import load_descriptors
 from cockpit.projects.source import from_value as projects_from_value
 from cockpit.projects.source import project_page_data
 from cockpit.requests.assemble import assemble_from_snapshot
@@ -53,7 +54,8 @@ from cockpit.ui.projects.page import (
     render_projects_section,
     render_projects_unknown,
 )
-from cockpit.ui.projects.panorama import CSS as PROJECTS_PANORAMA_CSS, render_project_head, render_projects_list
+from cockpit.ui.projects.panorama import CSS as PROJECTS_PANORAMA_CSS, render_projects_list
+from cockpit.ui.projects.fold import CSS as PROJECT_FOLD_CSS, project_view, render_project_fold
 from cockpit.ui.projects.project_page import render_project_page, render_project_unknown
 from cockpit.ui.projects.tokens import CSS as PROJECT_PAGE_CSS
 from cockpit.ui.rituals.page import CSS as RITUALS_CSS, read_rituals, render_rituals
@@ -74,6 +76,11 @@ ACTIONS_WITHOUT_WRITE = frozenset({"continuer", "pas_bon_vers_agent", "notifier_
 # What "Ce qui t'attend", the projects and the journal are built from.
 SOURCES_REREAD_AFTER_ACTION = frozenset({"beads", "projets", "journal"})
 REREAD_AFTER_ACTION_SECONDS = 8.0
+
+
+# How long GET / waits for the first reading of the projects, once the
+# tracker is read (A1): the first page after a start shows them.
+FIRST_READING_WAIT_SECONDS = 5
 
 class CockpitRequestHandler(BaseHTTPRequestHandler):
     server_version = "cockpit/1"
@@ -203,11 +210,32 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             result["rafraichi"] = self._reread_after_action()
         self._send_json(result)
 
+    def _first_reading(self, read_model, knowledge=False):
+        """The snapshot, once the projects had their first reading if the
+        tracker had its own -- and, with ``knowledge``, once the projects
+        and their repositories were read or failed, so that the page of a
+        project tells a reading under way from one that failed (E) --
+        waiting at most
+        :data:`FIRST_READING_WAIT_SECONDS`: a page served the instant the
+        cockpit started would show no project, and no result, of a source
+        simply not read yet (A1)."""
+        deadline = time.monotonic() + FIRST_READING_WAIT_SECONDS
+        while True:
+            snapshot = read_model.snapshot()
+            beads, projets, depots = snapshot.get("beads"), snapshot.get("projets"), snapshot.get("depots")
+            pending = (beads is not None and beads["read_at"] is not None and projets is not None
+                       and projets["read_at"] is None and projets.get("failed_at") is None)
+            pending = pending or knowledge and any(
+                row is not None and row["read_at"] is None and row.get("failed_at") is None for row in (projets, depots))
+            if not pending or time.monotonic() >= deadline:
+                return snapshot
+            time.sleep(0.1)
+
     def _send_home(self, read_model):
         """GET /: the destination « Vue d’ensemble » of Panorama (T02,
         af-0gonc9), with the zones of the cockpit no destination of
         Panorama holds yet folded under it."""
-        snapshot = read_model.snapshot()
+        snapshot = self._first_reading(read_model)
         now = read_model.now()
         requests, _, beads_known = self._assemble_requests(snapshot, now)
         health = self._compute_health(read_model)
@@ -223,7 +251,9 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             ),
             status_html=render_status_line(snapshot.get("gc"), health),
         )
-        view = overview_view(snapshot, requests if beads_known else [])
+        driver = getattr(self.server, "stop_driver", None)
+        view = overview_view(snapshot, requests if beads_known else [],
+                             stop_trial_passed=bool(driver is not None and driver.essai_reussi()))
         # T13, af-cx20q9: the SameSite=Strict cookie an action POST must
         # echo back -- a cross-site POST never carries it, so its presence
         # alone proves this request came from a page the cockpit itself
@@ -427,16 +457,32 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                         snapshot=snapshot)
 
     def _send_project_page(self, read_model):
-        """GET /projet/<id> (spec .49): one declared project's chantiers by
-        stage, its travail hors chantier and its historique. An id no
+        """GET /projet/<id> (spec .49; E, af-8rbceu): the Prototype Fold of
+        the reference « Projet, release et historique » -- the release plan
+        and the roadmap of the project read in its knowledge repository,
+        then its chantiers by stage, its travail hors chantier and its
+        historique. A project declared whose chantiers are not read yet, or
+        no longer, is drawn with what is known and says so. An id no
         descriptor declares is a 404 that says so."""
         project_id = urllib.parse.unquote(self.path.split("?", 1)[0][len("/projet/"):])
+        snapshot = self._first_reading(read_model, knowledge=True)
         fresh_html = render_fresh(read_model.headline(), not read_model.stale_or_unknown())
-        snapshot = read_model.snapshot()
         row = snapshot.get("projets")
+        descriptor = next((d for d in load_descriptors(self.server.descriptors_dir) if d["project_id"] == project_id),
+                          None) if self.server.descriptors_dir else None
+        runs, _, _ = self._runs(read_model)
+        now = read_model.now()
         status = 200
         if row is None or row["value"] is None or row["freshness"] == UNKNOWN:
-            inner = render_project_unknown(fresh_html) + render_projects_unknown(row["read_at"] if row else None)
+            if descriptor is None:
+                inner = render_project_unknown(fresh_html) + render_projects_unknown(row["read_at"] if row else None)
+            else:
+                state = "failed" if row is not None and row.get("failed_at") is not None else "loading"
+                below = '<div class="cockpit-pp-fresh">%s</div>' % fresh_html
+                if state == "failed":
+                    below += render_projects_unknown(row["read_at"])
+                inner = render_project_fold(project_view(descriptor, None, state, snapshot.get("depots"), {}, runs, now,
+                                                         [], below))
         else:
             data = project_page_data(row["value"], project_id)
             if data is None:
@@ -445,15 +491,16 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             else:
                 project, hors_chantier, historique = data
                 apply_to_projects([project], snapshot.get("depots"))
-                runs, _, _ = self._runs(read_model)
-                inner = render_project_head(project, runs, read_model.now()) + render_project_page(
-                    project,
-                    hors_chantier=hors_chantier,
-                    historique_html=render_historique_section([historique]),
-                    fresh_html=fresh_html,
-                )
+                below = render_project_page(project, hors_chantier=hors_chantier,
+                                            historique_html=render_historique_section([historique]),
+                                            fresh_html=fresh_html, topbar=False)
+                targets = (row["value"].get("roadmap_chantiers") or {}).get(project_id) or {}
+                inner = render_project_fold(project_view(
+                    descriptor or {"project_id": project.project_id, "display_name": project.display_name},
+                    project, "read", snapshot.get("depots"), targets, runs, now, historique.chantiers, below))
         self._send_page(read_model, "projets", inner,
-                        extra_css=PROJECT_PAGE_CSS + PROJECTS_PANORAMA_CSS + RUNS_PAGE_CSS, status=status)
+                        extra_css=PROJECT_PAGE_CSS + PROJECTS_PANORAMA_CSS + RUNS_PAGE_CSS + PROJECT_FOLD_CSS,
+                        status=status, snapshot=snapshot)
 
     def _runs(self, read_model):
         """The runs the cockpit reads (cockpit.runs), most recent first:
@@ -657,6 +704,9 @@ def make_server(
     server.benjamin_login = ""
     # The rituals file of the Factory (« Rituels »): unset, nothing read.
     server.rituals_file = None
+    # Where the projects are declared (cockpit.projects.descriptors): the
+    # page of a project names it from there while its chantiers are unread.
+    server.descriptors_dir = None
     server.extra_requests = lambda snapshot, now: []
     server.illisible_after_seconds = (
         ILLISIBLE_THRESHOLD_SECONDS if illisible_after_seconds is None else illisible_after_seconds

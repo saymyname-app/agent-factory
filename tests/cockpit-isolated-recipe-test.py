@@ -257,7 +257,14 @@ class TheRecipe(unittest.TestCase):
             self.assertLess(time.monotonic(), deadline, "the cockpit never answered")
             time.sleep(0.2)
         listening = listening_sockets(port)
-        held = {os.readlink(fd) for fd in Path(f"/proc/{proc.pid}/fd").iterdir()}
+        held = set()
+        for fd in Path(f"/proc/{proc.pid}/fd").iterdir():
+            # A descriptor the cockpit closes between the listing and its
+            # read (a read of its tracker ending) is no socket of the port.
+            try:
+                held.add(os.readlink(fd))
+            except FileNotFoundError:
+                pass
         # The process the launcher holds is the one that listens on the port...
         self.assertTrue(listening & held, "the launched process does not hold the listening socket")
         # ... and it carries the mark of the launch.
