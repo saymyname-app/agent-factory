@@ -34,6 +34,7 @@ from cockpit.projects.source import READ_TIMEOUT_SECONDS as PROJECTS_READ_TIMEOU
 from cockpit.requests.assemble import assemble_from_snapshot
 from cockpit.requests.defects import DefectCounter
 from cockpit.requests.journal import read_journal
+from cockpit.runs.trace import SessionTrace
 from cockpit.runs.workflows import read_workflow_beads
 
 # github/rituals sources are in the Validity window table (spec .3) for the
@@ -175,7 +176,12 @@ def build(config, clock=None):
                 held[session_id] = bead["id"]
         return held
 
-    city_reader = GcCityReader(config.gc_base_url, city=config.gc_city, held_work=held_work)
+    # The trace of the sessions: collected at each reading of them, read by
+    # the pages of Runs.
+    session_trace = SessionTrace(config.trace_file)
+    server.session_trace = session_trace
+    city_reader = GcCityReader(config.gc_base_url, city=config.gc_city, held_work=held_work,
+                               observer=session_trace.collect)
     read_model.register("sessions", display_name="agents au travail")
     pollers.append(PollingSource(read_model, "sessions", city_reader.status, config.sessions_poll_seconds))
 

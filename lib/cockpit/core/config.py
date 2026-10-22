@@ -131,6 +131,11 @@ class Config:
         )
         self.stop_tick_seconds = float(env.get("COCKPIT_STOP_TICK_SECONDS", "15"))
         self.sessions_poll_seconds = float(env.get("COCKPIT_SESSIONS_POLL_SECONDS", "15"))
+        # The trace of the sessions (cockpit.runs.trace): what each session
+        # ran with and was sent, kept once the supervisor no longer lists it.
+        self.trace_file = env.get("COCKPIT_TRACE_FILE") or os.path.join(
+            os.path.dirname(self.pid_file), "cockpit-session-trace.jsonl"
+        )
         # Access (spec .71): the `tailscale` client to ask for the key's
         # expiry -- on this host a Windows binary reached from WSL, so it is
         # named in the local settings file; unset, Tailscale is not read.

@@ -12,7 +12,10 @@ synthetic sources only:
 
 - a synthetic supervisor that answers as the installed one does
   (`tests/fixtures/cockpit/core/fake_gc.py`, held to the real contract by
-  `tests/cockpit-fake-gc-contract-test.py`);
+  `tests/cockpit-fake-gc-contract-test.py`), and that keeps what the
+  provider recorded of each session the dataset says
+  (`GET /v0/city/<city>/session/<id>/transcript?format=raw`, as gc 1.5.0
+  answers it);
 - a synthetic tracker (`tests/fixtures/cockpit/requests/fake-bd`) and the
   projects declared for this launch alone;
 - the knowledge repositories of those projects (their roadmap and release
@@ -54,6 +57,7 @@ import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -142,6 +146,28 @@ def fall_silent_once_read(supervisor, cockpit_url: str) -> None:
     supervisor.go_down()
 
 
+def serve_transcripts(supervisor, city: synthetic_city.SyntheticCity) -> None:
+    """Make `supervisor` answer what the provider recorded of each session
+    of `city`, as the installed supervisor does: ``{"id", "format": "raw",
+    "messages"}``, or a 404 for a session it keeps nothing of."""
+    handler = supervisor._server.RequestHandlerClass
+    answer_other = handler.do_GET
+    prefix = "/v0/city/%s/session/" % city.name
+
+    def do_GET(self):  # noqa: N802
+        path = self.path.split("?", 1)[0]
+        if supervisor._down or not (path.startswith(prefix) and path.endswith("/transcript")):
+            answer_other(self)
+            return
+        session = urllib.parse.unquote(path[len(prefix):-len("/transcript")])
+        if session not in city.transcripts:
+            self._send(404, "text/plain; charset=utf-8", b"404 page not found\n")
+            return
+        self._send_json({"id": session, "format": "raw", "messages": city.transcripts[session]})
+
+    handler.do_GET = do_GET
+
+
 def serve_synthetic_supervisor(
     city: synthetic_city.SyntheticCity, cockpit_url: str, home: str, announce: int, cockpit_alive: int
 ) -> None:
@@ -154,6 +180,7 @@ def serve_synthetic_supervisor(
     import fake_gc
 
     supervisor = fake_gc.FakeGc(city=city.name)
+    serve_transcripts(supervisor, city)
     supervisor.set_status(
         suspended=city.suspended, agents_running=sum(1 for session in city.sessions if session["running"])
     )

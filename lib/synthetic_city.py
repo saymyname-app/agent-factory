@@ -102,6 +102,9 @@ class SyntheticCity:
     # "at": ISO date}` for one this city writes, committed at that date, or
     # `{"path": …}` for a Git repository already on this host.
     repos: dict = field(default_factory=dict)
+    # What the provider recorded of each session, by its id, as the
+    # supervisor answers it (``GET …/session/<id>/transcript?format=raw``).
+    transcripts: dict = field(default_factory=dict)
 
 
 # Where a value of a source names a file of `SyntheticCity.files`.
@@ -788,8 +791,20 @@ SCREENS = {
 # the supervisor lists it (its agent, its template and its provider, from
 # the lane's name and role « Relectrice · Claude »). The datasets name no project: their runs
 # are of the Factory's own, RUN_PROJECT.
+#
+# A job may say its sessions (`sessions`, C2a): each one the supervisor
+# lists as it ran it -- its name, its start from the trigger, its provider,
+# model, effort, permission mode, context and work directory, the attempt
+# of the job it worked -- and what its provider recorded (`transcript`,
+# records in the provider's own format, read as the supervisor answers
+# them). The tracker records the last of them as the session of the attempt,
+# as gc does when a session takes over; an empty list is a job no session
+# is recorded for. A run may say what the flow declared for each role
+# (`declared`), written on its ticket as the flow writes it (gc.flow.models).
 
 RUN_FORMULAS = {"Livraison D01": "mol-ticket-author", "Maintenance": "mol-do-work"}
+# What a session a job says carries as the supervisor lists it.
+SESSION_SAID = ("model", "context_pct", "context_window", "work_dir")
 RUN_FILTERS = {"all": "tous", "active": "en-cours", "completed": "termines"}
 RUN_PROJECT = "agent-factory"
 RUN_TRIGGERED_BY = "benjamin"
@@ -804,20 +819,22 @@ def _runs_city(name, at, ui, fixtures) -> SyntheticCity:
         raise DatasetRefused(f"its fixed time (generated_at) has no offset: {at!r}")
     try:
         lanes = {lane["id"]: lane for lane in fixtures["lanes"]}
-        beads, sessions, opened, view = [], {}, [], {}
+        beads, sessions, opened, view, transcripts = [], {}, [], {}, {}
         for run in fixtures["runs"]:
-            beads += _run_records(run, lanes, moment, sessions, opened, ui, view)
+            beads += _run_records(run, lanes, moment, sessions, opened, ui, view, transcripts)
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
         raise DatasetRefused(f"a Runs state whose fixtures (lanes, runs, jobs) cannot be read: {exc!r}") from exc
     if ui.get("filter") in RUN_FILTERS:
         view["filter"] = RUN_FILTERS[ui["filter"]]
     if isinstance(ui.get("selected_event"), int):
         view["event"] = ui["selected_event"]
+    if isinstance(ui.get("detail"), str) and ui["detail"]:
+        view["detail"] = ui["detail"]
     clock = max(opened, default=moment)
     return SyntheticCity(
         name=name, reading=READ_ONCE if ui.get("stale") is True else READ,
         beads=beads, sessions=[session for lane in lanes for session in sessions.get(lane, {}).values()],
-        clock_start=clock.isoformat(), view=view,
+        clock_start=clock.isoformat(), view=view, transcripts=transcripts,
     )
 
 
@@ -825,9 +842,10 @@ def _utc(moment: datetime) -> str:
     return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _run_records(run, lanes, moment, sessions, opened, ui, view) -> list:
+def _run_records(run, lanes, moment, sessions, opened, ui, view, transcripts) -> list:
     """The beads of one run of the fixtures; the sessions of its agents in
-    `sessions` (by lane, then by name: one per job), the moment it is shown
+    `sessions` (by lane, then by name: one per job, or those the job says),
+    what their providers recorded in `transcripts`, the moment it is shown
     at in `opened` when it is open, what the state selects of it in
     `view`."""
     formula = RUN_FORMULAS.get(run["type"])
@@ -879,6 +897,8 @@ def _run_records(run, lanes, moment, sessions, opened, ui, view) -> list:
             ticket["gc.flow.merge"] = json.dumps({"at": at(run["end"]), "outcome": "merged"})
         elif run["status"] == "Abandonné":
             ticket["gc.flow.gate.withdrawn"] = json.dumps({"at": at(run["end"])})
+        if run.get("declared"):
+            ticket["gc.flow.models"] = json.dumps(run["declared"], ensure_ascii=False)
         records.append({"id": ticket_id, "title": run["title"], "issue_type": "task", "created_at": at(0),
                         **ended(run["end"]), "metadata": ticket})
         roots[None] = workflow("", formula, ticket_id, formula)
@@ -911,20 +931,36 @@ def _run_records(run, lanes, moment, sessions, opened, ui, view) -> list:
                         **ended(job["end"]), "metadata": step})
         if lane["kind"] == "agent":
             template, _, provider = lane["role"].partition(" · ")
-            # Each job of an agent is claimed by a session of its own: the
-            # agent keeps one lane across them.
-            session = f"synthetic-session-{lane['id']}-{key}-{job['id']}"
-            records.append({"id": f"{step_id}-attempt-1", "title": job["name"], "issue_type": "task",
-                            "created_at": at(job["start"]), **ended(job["end"]),
-                            "metadata": {"gc.logical_bead_id": step_id, "gc.root_bead_id": root_id, "gc.attempt": "1",
-                                         "gc.session_name": session, "gc.routed_to": template,
-                                         "gc.claimed_at": at(job["start"]), **passed}})
             running = job["end"] is None and run["end"] is None
-            sessions.setdefault(lane["id"], {})[session] = {
-                "id": session, "name": session, "session_name": session, "agent_name": lane["name"],
-                "template": template, "provider": provider or None, "running": running,
-                "last_active": _utc(moment), **({"active_bead": step_id} if running else {}),
-            }
+            attempt = f"{step_id}-attempt-1"
+            # Each job of an agent is claimed by a session of its own (or
+            # those it says): the agent keeps one lane across them.
+            said = job.get("sessions")
+            listed = said if isinstance(said, list) else [{"name": f"synthetic-session-{lane['id']}-{key}-{job['id']}"}]
+            if listed:
+                records.append({"id": attempt, "title": job["name"], "issue_type": "task",
+                                "created_at": at(job["start"]), **ended(job["end"]),
+                                "metadata": {"gc.logical_bead_id": step_id, "gc.root_bead_id": root_id,
+                                             "gc.attempt": "1", "gc.session_name": listed[-1]["name"],
+                                             "gc.routed_to": template, "gc.claimed_at": at(job["start"]), **passed}})
+            for number, one in enumerate(listed):
+                last = number == len(listed) - 1
+                record = {
+                    "id": one["name"], "name": one["name"], "session_name": one["name"], "agent_name": lane["name"],
+                    "template": template, "provider": one.get("provider", provider or None),
+                    "running": running and last, "last_active": _utc(moment),
+                    **({"active_bead": step_id} if running and last and not isinstance(said, list) else {}),
+                }
+                if isinstance(said, list):
+                    record["active_bead"] = attempt
+                    record["created_at"] = at(one.get("start", job["start"]))
+                    record.update({field_name: one[field_name] for field_name in SESSION_SAID if field_name in one})
+                    options = {name: one[name] for name in ("effort", "permission_mode") if name in one}
+                    if options:
+                        record["options"] = options
+                    if isinstance(one.get("transcript"), list):
+                        transcripts[one["name"]] = one["transcript"]
+                sessions.setdefault(lane["id"], {})[one["name"]] = record
         if ui.get("run") == key and ui.get("selected_job") == job["id"]:
             view["job"] = step_id
     return records
