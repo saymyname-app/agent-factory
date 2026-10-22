@@ -8,21 +8,22 @@ Each case launches the real cockpit with the launcher of the profile,
 bin/project-launch, on the dataset job-configuration, and reads GET
 /runs/job -- the job « Réaliser » of « Recherche dans les notes », or another
 job of that run clicked in its frise -- as a headless Chromium renders it.
-What the dataset holds is written in runs_trace.py.
 
 The section « Configuration de l’agent » says first the configuration in
 effect, as observed for the session -- provider, model, effort, tools,
 environment, mission, session, context --, then, apart, the configuration
 declared for the role of the job when its session took it. A value nothing
-observed is said not collected, even when the declared one is known.
+observed is said not collected, even when the declared one is known -- the
+mission of a session, which the supervisor does not report, among them.
 
 False if the declared configuration is shown as the one in effect, a value
-nothing observed is given one, or a session is attributed to a job no
-session was recorded for.
+nothing observed is given one (the name of the job for the mission), or a
+session is attributed to a job no session was recorded for.
 """
 
 from __future__ import annotations
 
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -30,8 +31,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from runs_destination import LaunchTree, observe, section  # noqa: E402
-from runs_trace import NOT_COLLECTED, head_says, percent  # noqa: E402
+from runs_trace import head_says, percent  # noqa: E402
 
+NOT_COLLECTED = "non collecté"
 DECLARED = "Configuration déclarée"
 EFFECTIVE = "Configuration effective"
 
@@ -67,10 +69,18 @@ class RunsTraceConfiguration(unittest.TestCase):
         self.assertIn("Réaliser", head_says(reading), "the detail is not that of the job « Réaliser »")
         self.assertTrue(section(reading, "Configuration")["open"], "job-configuration does not open the configuration")
         effective, declared = self.parts(reading)
-        for phrase in ("codex", "gpt-6.1-sol", "high", "read · rg · exec · write", "Réaliser", "demo-search-alex-2"):
+        # The last session of « Réaliser », demo-search-alex-2, as the
+        # supervisor reported it: codex, gpt-6.1-sol, the effort high, the
+        # tools it called, its context 7 %.
+        for phrase in ("codex", "gpt-6.1-sol", "high", "read · rg · exec · write", "demo-search-alex-2"):
             self.assertIn(phrase, effective, f"the configuration in effect does not say « {phrase} »: « {effective} »")
         self.assertRegex(effective, percent(7), f"the configuration in effect does not say its context: « {effective} »")
-        self.assertNotIn(NOT_COLLECTED, effective, f"a value observed is said not collected: « {effective} »")
+        # No source reports the mission of a session: it is not taken from
+        # the name of the job.
+        mission = re.compile(r"Mission\s*" + NOT_COLLECTED)
+        self.assertRegex(effective, mission, f"the mission nothing reported is not said not collected: « {effective} »")
+        self.assertNotIn("Réaliser", effective, "the name of the job is shown as the mission in effect")
+        self.assertNotIn(NOT_COLLECTED, mission.sub("", effective), f"a value observed is said not collected: « {effective} »")
         # Declared when the session took the ticket: the agent of the role,
         # its provider and its model -- and nothing a session showed.
         for phrase in ("delivery-author", "codex", "gpt-6.1-sol"):

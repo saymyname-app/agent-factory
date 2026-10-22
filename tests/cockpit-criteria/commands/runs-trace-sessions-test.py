@@ -9,7 +9,7 @@ Each case launches the real cockpit with the launcher of the profile,
 bin/project-launch, on the dataset job-sessions, and reads GET /runs/job --
 the job « Réaliser » of « Recherche dans les notes », under the frise of
 its run -- as a headless Chromium renders it, then over HTTP the page the
-browser was on. What the dataset holds is written in runs_trace.py.
+browser was on, or on a dataset the case declares from it.
 
 The section « Sessions du job » lists each session that worked the job,
 in the order they ran, each with its identifier, its start and end from the
@@ -17,11 +17,13 @@ trigger of the run, its model and the context observed in it; the lane of
 an agent shows the context of the last session of that agent observed in
 the run, the history of the job keeps the values of each session. Choosing
 a session of the history shows its own configuration and its own prompts.
+A session whose end the supervisor did not record says its end not
+collected.
 
 False if the history of a job shows the values of its last session for an
 earlier one, if choosing an earlier session keeps the prompts of the last,
-if a reload loses the session chosen, or if an agent with no session
-observed gets a context.
+if a reload loses the session chosen, if an agent with no session observed
+gets a context, or if an end nothing recorded is taken from another time.
 """
 
 from __future__ import annotations
@@ -32,12 +34,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from project_destination import dataset_of, launch_declared  # noqa: E402
 from runs_destination import LaunchTree, lanes, observe, section  # noqa: E402
-from runs_trace import (  # noqa: E402
-    NOT_COLLECTED, SYSTEM_PROMPT, USER_PROMPT_1, USER_PROMPT_2, head_says, percent, raw_texts,
-)
+from runs_trace import head_says, percent, raw_texts  # noqa: E402
 
+# « Réaliser » (Alex, +3 min 10 s → +6 min 5 s) had two sessions, in this
+# order; « Revue du code », one of Léa's; no session of Noé was observed.
 FIRST, LAST = "demo-search-alex-1", "demo-search-alex-2"
+NOT_COLLECTED = "non collecté"
 
 
 class RunsTraceSessions(unittest.TestCase):
@@ -72,7 +76,9 @@ class RunsTraceSessions(unittest.TestCase):
         self.assertEqual(1, said.count(LAST), f"the last session is not listed once: « {said} »")
         first, last = said.index(FIRST), said.index(LAST)
         self.assertLess(first, last, "the sessions are not listed in the order they ran")
-        # Each session, its own values: the first ended where the second began.
+        # Each session, its own values, as the supervisor recorded them: the
+        # first from +3 min 10 s to +4 min 37 s (context 27 %), the second
+        # from +4 min 37 s to +6 min 5 s (context 7 %), both on gpt-6.1-sol.
         earlier, later = said[first:last], said[last:]
         for phrase in ("+3 min 10 s", "+4 min 37 s", "gpt-6.1-sol"):
             self.assertIn(phrase, earlier, f"the first session does not say « {phrase} »: « {earlier} »")
@@ -109,8 +115,8 @@ class RunsTraceSessions(unittest.TestCase):
         configured = section(shown, "Configuration")
         self.assertIsNotNone(configured, "the detail has no section « Configuration »")
         self.assertIn(LAST, configured["content"], "the configuration shown is not that of the last session")
-        last = raw_texts(address, shown["href"])
-        self.assertIn(USER_PROMPT_2, last, "the prompts shown are not those sent to the last session")
+        last = "\n".join(raw_texts(address, shown["href"]))
+        self.assertIn("Version : exemple synthétique\n", last, "the prompts shown are not those sent to the last session")
         self.assertTrue(chosen["step"]["found"], f"no control to choose the session {FIRST} in the history")
         for reading in (chosen, reloaded):
             configured = section(reading, "Configuration")
@@ -119,10 +125,37 @@ class RunsTraceSessions(unittest.TestCase):
             self.assertNotIn(LAST, configured["content"], "the configuration of the last session stays shown")
             self.assertRegex(configured["content"], percent(27), "the configuration does not say the context "
                                                                    "of the session chosen")
-            sent = raw_texts(address, reading["href"])
-            self.assertIn(USER_PROMPT_1, sent, "the prompts shown are not those sent to the session chosen")
-            self.assertNotIn(USER_PROMPT_2, sent, "the session chosen shows the prompts of the last session")
-            self.assertIn(SYSTEM_PROMPT, sent, "the system prompt sent to the session chosen is not shown")
+            sent = "\n".join(raw_texts(address, reading["href"]))
+            # The user prompt of each session names the session it was sent
+            # to; both were sent the same system prompt.
+            self.assertIn("Version : exemple synthétique, première session", sent,
+                          "the prompts shown are not those sent to the session chosen")
+            self.assertNotIn("Version : exemple synthétique\n", sent,
+                             "the session chosen shows the prompts of the last session")
+            self.assertIn("# Auteur\n\n# Mission\nRéaliser sur le périmètre approuvé.", sent,
+                          "the system prompt sent to the session chosen is not shown")
+
+    def test_a_session_whose_end_the_supervisor_did_not_record_says_it_not_collected(self):
+        # job-sessions, but the supervisor recorded the stop of neither
+        # session of « Réaliser »: the first did not end when the second
+        # began, the second did not end with the job.
+        dataset = dataset_of(self.tree, "job-sessions")
+        run = next(run for run in dataset["fixtures"]["runs"] if run["id"] == "search")
+        build = next(job for job in run["jobs"] if job["id"] == "build")
+        for session in build.get("sessions") or []:
+            session.pop("end", None)
+        reading, = observe(launch_declared(self.tree, "job-sessions-no-end", dataset), "/runs/job")[0]
+        said = self.history(reading)
+        for session in (FIRST, LAST):
+            self.assertIn(session, said, f"the session {session} is not listed: « {said} »")
+        first, last = said.index(FIRST), said.index(LAST)
+        earlier, later = said[first:last], said[last:]
+        self.assertIn("+3 min 10 s", earlier, f"the first session does not say its start: « {earlier} »")
+        self.assertIn(NOT_COLLECTED, earlier, f"the end of the first session is not said not collected: « {earlier} »")
+        self.assertNotIn("+4 min 37 s", earlier, "the first session ends where the next one began")
+        self.assertIn("+4 min 37 s", later, f"the last session does not say its start: « {later} »")
+        self.assertIn(NOT_COLLECTED, later, f"the end of the last session is not said not collected: « {later} »")
+        self.assertNotIn("+6 min 5 s", later, "the last session ends where the job ended")
 
 
 if __name__ == "__main__":
