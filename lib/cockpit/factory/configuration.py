@@ -28,9 +28,12 @@ absent, are not configuration but what is observed, and are returned apart:
   disabled -- read at ``now`` as ``bin/provider-failover status`` reads it
   (``availability``: ``{"at": its last tick, "pools": {pool: status},
   "providers": {provider: status}}``, a status being ``{"state":
-  available|exhausted|low|error|disabled, "until", "reason"}``; None when
-  there is no such file). « available » means no limit was detected, not
-  that a quota was measured.
+  available|exhausted|low|error|disabled, "until", "reason", "recorded"}``;
+  None when there is no such file). « available » means no limit was
+  detected, not that a quota was measured; ``recorded`` is False when the
+  file holds nothing of that pool (nor, for a provider, of it disabled):
+  the failover then observed nothing of it, and « available » is only its
+  default.
 
 A file that cannot be read leaves its part out and is named in
 ``unreadable``: nothing is guessed in its place.
@@ -106,15 +109,20 @@ def _availability(policy, state_doc, now):
         return None
     state = provider_failover.normalize_state(state_doc, policy)
 
-    def status(found):
+    def status(found, recorded):
         return {"state": found.get("state"), "until": provider_failover.epoch(found.get("until")),
-                "reason": found.get("reason") or found.get("evidence")}
+                "reason": found.get("reason") or found.get("evidence"), "recorded": recorded}
+
+    def pool_recorded(pool):
+        return bool(state["pools"].get(pool))
 
     return {
         "at": provider_failover.epoch(state.get("sessions_at")),
-        "pools": {name: status(provider_failover.pool_status(state, policy, name, now)) for name in policy["pools"]},
-        "providers": {name: status(provider_failover.provider_status(state, policy, name, now))
-                      for name in policy["providers"]},
+        "pools": {name: status(provider_failover.pool_status(state, policy, name, now), pool_recorded(name))
+                  for name in policy["pools"]},
+        "providers": {name: status(provider_failover.provider_status(state, policy, name, now),
+                                   bool(state["disabled"].get(name)) or pool_recorded(declared["pool"]))
+                      for name, declared in policy["providers"].items()},
     }
 
 

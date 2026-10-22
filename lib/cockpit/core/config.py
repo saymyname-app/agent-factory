@@ -150,6 +150,9 @@ class Config:
         # and what the provider failover observed (.gc/provider-state.json,
         # city.provider.toml): the tree the cockpit runs from.
         self.factory_root = env.get("COCKPIT_FACTORY_ROOT", _REPO_ROOT)
+        # How long a check of a section of the page Usine stays current
+        # (cockpit.factory.checks): older, it is greyed with its age.
+        self.factory_check_validity_seconds = float(env.get("COCKPIT_VALIDITY_USINE_SECONDS", "300"))
         # The isolated cockpit of a Runs state (bin/cockpit-isolated): the
         # moment its clock starts at, and what the state selects -- the
         # filter, the run, the job, the event a page opens when its address

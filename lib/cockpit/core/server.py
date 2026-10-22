@@ -16,6 +16,7 @@ from cockpit.access.guard import session_cookie_header
 from cockpit.actions.registry import ActionError
 from cockpit.core.freshness import FRESH, STALE, UNKNOWN
 from cockpit.core.readmodel import PARIS
+from cockpit.factory.checks import VALIDITY_SECONDS as CHECK_VALIDITY_SECONDS
 from cockpit.factory.checks import SectionChecks
 from cockpit.factory.configuration import ROOT as FACTORY_ROOT
 from cockpit.factory.configuration import read_configuration
@@ -755,6 +756,7 @@ def make_server(
     factory_stalled_after_seconds=None,
     illisible_after_seconds=None,
     factory_root=None,
+    factory_check_validity_seconds=None,
 ):
     if host not in ALLOWED_HOSTS:
         raise ValueError(
@@ -815,7 +817,8 @@ def make_server(
         "fournisseurs": lambda: read_configuration(root, read_model.now()),
         "agents": lambda: {"configuration": read_configuration(root, read_model.now()),
                            "sessions": read_model.snapshot().get("sessions")},
-    }, read_model.now)
+    }, read_model.now, CHECK_VALIDITY_SECONDS if factory_check_validity_seconds is None
+        else factory_check_validity_seconds)
     server.illisible_after_seconds = (
         ILLISIBLE_THRESHOLD_SECONDS if illisible_after_seconds is None else illisible_after_seconds
     )

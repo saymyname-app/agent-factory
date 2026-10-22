@@ -25,6 +25,7 @@ import sys
 import tempfile
 import time
 import unittest
+import urllib.error
 import urllib.request
 from datetime import datetime
 from pathlib import Path
@@ -83,6 +84,47 @@ def row(page, name):
 
 def hhmm(epoch):
     return datetime.fromtimestamp(epoch, tz=ZoneInfo("Europe/Paris")).strftime("%H:%M")
+
+
+def http_post(port, path, body):
+    """POST a form; the redirect it answers is not followed."""
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *args, **kwargs):
+            return None
+    request = urllib.request.Request("http://127.0.0.1:%d%s" % (port, path), data=body.encode("utf-8"),
+                                     method="POST")
+    try:
+        urllib.request.build_opener(NoRedirect).open(request, timeout=10)
+    except urllib.error.HTTPError as answer:
+        assert answer.code == 303, "POST %s answered %d" % (path, answer.code)
+
+
+def chips(page):
+    """What each section of the page says of its last check, in its order."""
+    return [html.unescape(chip) for chip in re.findall(r'<span class="fa-chip[^"]*">([^<]*)</span>', page)]
+
+
+def clock_of(chip):
+    return re.search(r"\d{2}:\d{2}:\d{2}", chip).group(0)
+
+
+def tone(page, name):
+    """The tone (ok, stale, unknown, off) the row named `name` is drawn in."""
+    found = re.findall(r'<li class="fa-row fa-(\w+)"[^>]*>(?:(?!</li>).)*<strong>%s</strong>' % re.escape(name), page,
+                       flags=re.S)
+    assert len(found) == 1, "the page has not one row « %s »: %r" % (name, found)
+    return found[0]
+
+
+def freshness(port, source):
+    return (json.loads(http_get(port, "/api/status")).get(source) or {}).get("freshness")
+
+
+def sessions_said(page):
+    """What the detail of the role open says of its sessions at work."""
+    found = re.search(r"<dt>Sessions de ce rôle au travail</dt><dd>(.*?)</dd>", page)
+    assert found, "the detail of the role does not say its sessions at work"
+    return html.unescape(found.group(1))
 
 
 class FactoryPageTest(unittest.TestCase):
@@ -178,7 +220,8 @@ class FactoryPageTest(unittest.TestCase):
         self.start_cockpit()
         page = self.usine("?role=reviewer")
         self.assertIn("Quota épuisé jusqu’à %s" % hhmm(until), row(page, "Anthropic · Claude (compte partagé)"))
-        self.assertIn("Aucune limite détectée", row(page, "OpenAI · Codex (quota standard)"))
+        self.assertIn("Aucun relevé du repli", row(page, "OpenAI · Codex (quota standard)"))
+        self.assertEqual("unknown", tone(page, "OpenAI · Codex (quota standard)"))
         self.assertIn("<dt>Disponibilité observée</dt><dd>GPT-5.6 Sol : désactivé (clé révoquée) ; "
                       "Claude Opus 5.5 : quota épuisé jusqu’à %s</dd>" % hhmm(until), page)
 
@@ -189,6 +232,43 @@ class FactoryPageTest(unittest.TestCase):
         self.assertIn("<dt>Disponibilité observée</dt><dd>non observée sur cet hôte (aucun état du repli écrit)</dd>",
                       page)
 
+
+    def test_rechecking_one_section_long_after_reads_no_other_section_and_says_the_others_stale(self):
+        # A check is valid one second here: the other sections are checked
+        # longer ago than that when « Revérifier » is pressed.
+        self.start_cockpit(COCKPIT_VALIDITY_USINE_SECONDS="1")
+        before = chips(self.usine())
+        self.assertEqual(4, len(before), "the page has not one check per section: %r" % before)
+        time.sleep(2.2)
+        http_post(self.port, "/api/usine/reverifier", "section=machine")
+        after = chips(self.usine())
+        self.assertNotEqual(clock_of(before[0]), clock_of(after[0]), "the machine was not read again: %r" % after)
+        self.assertNotIn("vu il y a", after[0])
+        self.assertEqual([clock_of(chip) for chip in before[1:]], [clock_of(chip) for chip in after[1:]],
+                         "rechecking the machine read another section again")
+        for chip in after[1:]:
+            self.assertRegex(chip, r"· périmé, vu il y a \d+ s$", "a check older than its validity looks current")
+
+    def test_notifications_configured_are_not_drawn_as_a_connection_verified(self):
+        self.start_cockpit(COCKPIT_PUSHOVER_SECRETS_FILE=str(ROOT / "tests" / "fixtures" / "cockpit" / "notify"
+                                                                 / "valid-secrets.json"))
+        page = self.usine()
+        self.assertIn("Configurées, remise non vérifiée", row(page, "Notifications iPhone"))
+        self.assertNotEqual("ok", tone(page, "Notifications iPhone"),
+                            "notifications whose delivery is not verified are drawn as verified")
+
+    def test_sessions_of_a_role_no_longer_current_are_said_stale_then_unknown_never_current(self):
+        self.fake_gc.set_sessions([{"id": "s-1", "template": "delivery-author", "session_name": "delivery-author-1",
+                                    "active_bead": "af-t1", "running": True}])
+        self.start_cockpit(COCKPIT_VALIDITY_SESSIONS_SECONDS="3", COCKPIT_SESSIONS_POLL_SECONDS="0.1")
+        wait_until(lambda: freshness(self.port, "sessions") == "fresh")
+        self.assertEqual("1", sessions_said(self.usine("?role=author")))
+        self.fake_gc.go_down()
+        wait_until(lambda: freshness(self.port, "sessions") == "stale")
+        self.assertRegex(sessions_said(self.usine("?role=author")), r"^1 · périmé, vu il y a \d+ s$")
+        wait_until(lambda: freshness(self.port, "sessions") == "unknown")
+        self.assertRegex(sessions_said(self.usine("?role=author")),
+                         r"^Inconnu — la source ne répond plus · vu il y a \d+ s$")
 
 if __name__ == "__main__":
     unittest.main()

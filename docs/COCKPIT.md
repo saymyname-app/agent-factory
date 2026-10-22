@@ -1304,14 +1304,16 @@ of that check to the second and its own « Revérifier maintenant » button:
   `cockpit.core.freshness`) is greyed « Inconnu — la source ne répond plus ·
   vu il y a … », without a latency; one never read is « inconnu — la source
   ne répond pas », never 0 and never a failure. The notifications say
-  whether they are configured; their delivery is not measured;
+  whether they are configured; their delivery is not measured, so they are
+  never drawn as a connection verified;
 - « Fournisseurs et accès API »: each pool of quota of
   `config/provider-policy.json`, the providers drawn on it, and what the
   provider failover observed of it in `.gc/provider-state.json` (read as
   `bin/provider-failover status` reads it: « Quota épuisé jusqu’à … »,
   « Quota bas », « En erreur », or « Aucune limite détectée », which
-  measures no quota); « Disponibilité non observée » where the host holds
-  no such file. No key is shown;
+  measures no quota, for a pool the file records); « Aucun relevé du
+  repli », greyed, for a pool the file holds nothing of; « Disponibilité non
+  observée » where the host holds no such file. No key is shown;
 - « Agents dans le workflow »: the roles as the Factory's files configure
   them (`lib/cockpit/factory/configuration.py`: `config/delivery-roles.json`,
   the chains of `config/provider-policy.json` -- the first provider is the
@@ -1323,7 +1325,11 @@ of that check to the second and its own « Revérifier maintenant » button:
   configuration first, then what is observed apart -- the provider in
   service from `city.provider.toml` when the host has one, the availability
   the failover observed of each provider of its chain (a provider disabled
-  says it, with its reason), the sessions of that role at work. The other
+  says it, with its reason), the sessions of that role at work -- greyed
+  « périmé, vu il y a … » once the sessions are no longer current, and
+  unknown, without a count, once their source fails. The bounds of the flow
+  shown are its resumes, open planning exceptions, end rounds and
+  correction rounds. The other
   targets of the policy are listed outside the flow. A file that cannot be
   read is named, nothing is guessed.
 
@@ -1333,8 +1339,9 @@ the cockpit runs from).
 `POST /api/usine/reverifier` (form `section=machine|connexions|fournisseurs|agents`,
 `role=`) checks that section again -- the connections after every source was
 read again now -- and only that one, then answers 303 back to the page; it
-writes nothing. A check older than five minutes is done again at the next
-view. Then come the health zone, and the panels « Suspension, reprise et
+writes nothing. Viewing the page never checks a section again: a check older
+than five minutes (`COCKPIT_VALIDITY_USINE_SECONDS`) is kept, greyed
+« périmé, vu il y a … », until its « Revérifier maintenant ». Then come the health zone, and the panels « Suspension, reprise et
 arrêt » (with the stop and access zones the home already had) and
 « Nettoyer les espaces inutilisés », whose commands stay disabled until
 their tickets wire them (G2, H); the role detail's « Configurer » too.

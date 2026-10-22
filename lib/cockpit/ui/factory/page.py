@@ -14,7 +14,8 @@ section (cockpit.factory.checks: ``{"at", "value"}``); ``live``, the read model 
 ``health_html`` and ``actions_html``, the zones the cockpit already had;
 ``now``.
 
-A section says when it was checked, to the second, and holds its own
+A section says when it was checked, to the second -- greyed « périmé, vu il
+y a … » once that check is older than its validity -- and holds its own
 « Revérifier maintenant » (POST /api/usine/reverifier): reading the page
 again reads nothing again. A connection says its state, its latency (how
 long the cockpit's last read of it took) and its freshness, from the check;
@@ -25,7 +26,9 @@ with that age, and a source never read is « inconnu — la source ne répond
 pas »: never 0, never a failure, never a latency. What the provider
 failover observed of each provider (a quota exhausted, an error, a provider
 disabled) is shown apart from the configuration, and said not observed
-where the host holds no state of it. Nothing on the page is an example value: what the cockpit cannot
+where the host holds no state of it, or no record of that pool. The
+notifications, whose delivery is not measured, are never drawn verified;
+the sessions of a role are said with the freshness of their source. Nothing on the page is an example value: what the cockpit cannot
 read is said unread.
 
 Intent (Benjamin, his words, 2026-10-19 19:20 Paris): « enchaîne
@@ -66,6 +69,7 @@ PURPOSES = {
 SECTION_NAMES = {"machine": "la machine", "connexions": "les connexions", "fournisseurs": "les fournisseurs",
                  "agents": "la configuration"}
 # What the provider failover observed of a provider or its pool.
+NOT_RECORDED = "aucun relevé du repli"
 AVAILABILITY = {"available": "aucune limite détectée", "exhausted": "quota épuisé", "low": "quota bas",
                 "error": "en erreur", "disabled": "désactivé"}
 
@@ -165,9 +169,14 @@ def _recheck(section, selected, label="Revérifier maintenant"):
             % (_e(section), _e(selected or ""), _e(SECTION_NAMES[section]), _e(label)))
 
 
-def _checked(label, check, section, selected):
-    return ('<div class="fa-check"><span class="fa-chip">%s à %s (Paris)</span>%s</div>'
-            % (_e(label), _clock(check["at"]), _recheck(section, selected)))
+def _checked(label, check, section, selected, now):
+    """When the section was checked, greyed with its age once that check is
+    no longer current, and its « Revérifier maintenant »."""
+    said = "%s à %s (Paris)" % (label, _clock(check["at"]))
+    if check.get("stale"):
+        said += " · périmé, vu il y a %s" % _age(now - check["at"])
+    return ('<div class="fa-check"><span class="fa-chip%s">%s</span>%s</div>'
+            % (" fa-stale" if check.get("stale") else "", _e(said), _recheck(section, selected)))
 
 
 def _meter(a, label, value, percent, note):
@@ -177,7 +186,7 @@ def _meter(a, label, value, percent, note):
             % (a("div"), a("gauge-top"), _e(label), _e(value), a("meter"), width, _e(note)))
 
 
-def render_machine(a, check, selected):
+def render_machine(a, check, selected, now):
     machine = check["value"]
     cores = machine["cores"] or 0
     load = machine["load"]
@@ -201,7 +210,7 @@ def render_machine(a, check, selected):
     )
     return ('<section class="pn-panel" %s><div class="fa-head" %s><div><h2>Machine d’exécution</h2>'
             '<p class="fa-muted">%s</p></div>%s</div><div class="fa-meters" %s>%s</div></section>'
-            % (a("panel"), a("host-heading"), _e(summary), _checked("Vérifiée", check, "machine", selected),
+            % (a("panel"), a("host-heading"), _e(summary), _checked("Vérifiée", check, "machine", selected, now),
                a("capacity"), meters))
 
 
@@ -233,18 +242,21 @@ def render_connections(a, check, live, notify_configured, now, selected):
     rows.append('<li class="fa-row fa-%s" %s><span class="fa-dot %s" aria-hidden="true"></span><div>'
                 '<strong>Notifications iPhone</strong><small>Envoi Pushover · %s</small></div>'
                 '<span class="fa-val">latence non mesurée</span></li>'
-                % (("ok", a("connection-row"), "ok", "Configurées, remise non vérifiée") if notify_configured
+                % (("unknown", a("connection-row"), "unknown", "Configurées, remise non vérifiée") if notify_configured
                    else ("off", a("connection-row"), "off", "Non configurées")))
     return ('<section class="pn-panel" %s><div class="fa-head"><h2>Connexions</h2>%s</div>'
             '<ul class="fa-list">%s</ul><p class="fa-muted fa-note" %s>Latence : durée de la dernière lecture de '
             'chaque source par le cockpit. Une source qui ne répond plus est grisée avec son âge. Aucun envoi de '
             'notification n’est assimilé à une réception sur le téléphone.</p></section>'
-            % (a("panel"), _checked("Vérifiées", check, "connexions", selected), "".join(rows), a("readonly-note")))
+            % (a("panel"), _checked("Vérifiées", check, "connexions", selected, now), "".join(rows), a("readonly-note")))
 
 
 def _observed(status):
     """« quota épuisé jusqu’à 18:00 »: what the failover observed of a
-    provider or its pool."""
+    provider or its pool; « aucun relevé du repli » when the failover
+    recorded nothing of it."""
+    if not status.get("recorded"):
+        return NOT_RECORDED
     said = AVAILABILITY.get(status.get("state"), status.get("state") or "non observé")
     if status.get("until") is not None and status.get("state") != "available":
         said += " jusqu’à %s" % _clock(status["until"])[:5]
@@ -253,7 +265,7 @@ def _observed(status):
     return said
 
 
-def render_providers(a, check, selected):
+def render_providers(a, check, selected, now):
     """« Fournisseurs et accès API »: each pool of quota the providers draw
     on, the providers configured on it, and what the failover observed."""
     configuration = check["value"]
@@ -264,7 +276,9 @@ def render_providers(a, check, selected):
             tone, said = "unknown", "disponibilité non observée"
         else:
             status = availability["pools"].get(pool["key"]) or {}
-            tone, said = ("ok" if status.get("state") == "available" else "stale"), _observed(status)
+            tone = ("unknown" if not status.get("recorded") else "ok" if status.get("state") == "available"
+                    else "stale")
+            said = _observed(status)
         rows.append('<li class="fa-row fa-%s" %s><span class="fa-dot %s" aria-hidden="true"></span><div>'
                     '<strong>%s</strong><small>%s</small></div><span class="fa-val">%s</span></li>'
                     % (tone, a("connection-row"), tone, _e(pool["label"]),
@@ -278,7 +292,7 @@ def render_providers(a, check, selected):
     return ('<section class="pn-panel" %s><div class="fa-head"><h2>Fournisseurs et accès API</h2>%s</div>'
             '<ul class="fa-list">%s</ul><p class="fa-muted fa-note" %s>%s Aucune clé affichée. Un compte configuré ne '
             'prouve pas que son quota est disponible.</p></section>'
-            % (a("panel"), _checked("Vérifiés", check, "fournisseurs", selected), "".join(rows), a("readonly-note"),
+            % (a("panel"), _checked("Vérifiés", check, "fournisseurs", selected, now), "".join(rows), a("readonly-note"),
                _e(source)))
 
 
@@ -337,15 +351,30 @@ def _bounds_line(bounds):
                      + ("s" if bounds["open_planning_exceptions"] > 1 else ""))
     if isinstance(bounds.get("end_rounds"), int):
         parts.append("%s de fin" % _plural(bounds["end_rounds"], "tour"))
+    if isinstance(bounds.get("correction_rounds"), int):
+        parts.append("%s de correction" % _plural(bounds["correction_rounds"], "tour"))
     return "Limites du flux : %s. Limites configurées, pas un optimum calculé." % ", ".join(parts)
 
 
-def _sessions_of(role, sessions_row):
-    value = (sessions_row or {}).get("value")
-    if not isinstance(value, dict) or (sessions_row or {}).get("read_at") is None:
-        return "non lues"
+def _sessions_of(role, checked, live, now):
+    """How many sessions of the role are at work: the count of the check
+    while the source is current, the last count kept greyed « périmé » with
+    its age once it is not, never a count once the source fails. The read
+    model now says whether the source is still current, as for a connection."""
+    live = live or {}
+    if live.get("read_at") is None:
+        return UNKNOWN_SAYING
+    if live.get("freshness") == UNKNOWN:
+        return "%s · vu il y a %s" % (FAILING_SAYING, _age(now - live["read_at"]))
+    current = live.get("freshness") == FRESH
+    row = checked if current and (checked or {}).get("freshness") == FRESH and checked.get("read_at") else live
+    value = row.get("value")
+    if not isinstance(value, dict):
+        return UNKNOWN_SAYING
     held = [s for s in value.get("sessions") or [] if str(s.get("assignee") or "").startswith(role["agent"] or "\0")]
-    return str(len(held))
+    if current:
+        return str(len(held))
+    return "%d · périmé, vu il y a %s" % (len(held), _age(now - live["read_at"]))
 
 
 def _availability_of(role, availability):
@@ -360,7 +389,7 @@ def _availability_of(role, availability):
                       for p in chain)
 
 
-def render_role(a, configuration, sessions_row, in_service, key):
+def render_role(a, configuration, sessions_row, live_sessions, in_service, key, now):
     role = _role_of(configuration, key)
     if role is None:
         return ('<section class="fa-role" id="role" %s><h3 %s>Rôle inconnu</h3><p>Ce rôle n’est pas dans la '
@@ -395,10 +424,10 @@ def render_role(a, configuration, sessions_row, in_service, key):
     ) % (a("section"), a("h3"), _e(role["label"]),
          "".join("<div><dt>%s</dt><dd>%s</dd></div>" % (_e(k), _e(v)) for k, v in rows), _e(fallbacks),
          _e(_bounds_line(configuration["bounds"])), _e(serving),
-         _e(_availability_of(role, configuration["availability"])), _e(_sessions_of(role, sessions_row)))
+         _e(_availability_of(role, configuration["availability"])), _e(_sessions_of(role, sessions_row, live_sessions, now)))
 
 
-def render_agents(a, check, selected):
+def render_agents(a, check, live, selected, now):
     configuration, sessions_row = check["value"]["configuration"], check["value"]["sessions"]
     others = "".join(
         "<li><strong>%s</strong> · %s</li>" % (_e(other["label"]), _e(_provider_line(other["configured"])))
@@ -416,9 +445,10 @@ def render_agents(a, check, selected):
         'config/delivery-flow.json. Le fournisseur en service est lu dans city.provider.toml, écrit par le repli '
         'automatique. Le dessin simplifie le flux : corrections et reprises reviennent à l’auteur ; il ne '
         'remplace pas les transitions du moteur.</p></details></section>'
-    ) % (a("panel"), _checked("Configuration lue", check, "agents", selected), unreadable, a("section-grid"),
+    ) % (a("panel"), _checked("Configuration lue", check, "agents", selected, now), unreadable, a("section-grid"),
          render_flow(a, configuration, selected),
-         render_role(a, configuration, sessions_row, configuration["in_service"], selected), others)
+         render_role(a, configuration, sessions_row, live.get("sessions"), configuration["in_service"], selected, now),
+         others)
 
 
 def render_unavailable(a, actions_html):
@@ -443,10 +473,10 @@ def render_factory_page(view):
             '<div class="pn-head"><h1 %s>Usine</h1><p class="fa-sub" %s>Ressources, connexions et réglages de '
             'l’environnement d’exécution.</p></div>%s<div class="fa-two" %s>%s</div>%s'
             '<div class="fa-legacy">%s</div>%s'
-        ) % (a("h1"), a("page-lead"), render_machine(a, view["machine"], view["selected"]), a("section-grid"),
+        ) % (a("h1"), a("page-lead"), render_machine(a, view["machine"], view["selected"], view["now"]), a("section-grid"),
              render_connections(a, view["connections"], view["live"], view["notify_configured"], view["now"],
-                                view["selected"]) + render_providers(a, view["providers"], view["selected"]),
-             render_agents(a, view["agents"], view["selected"]), view["health_html"],
+                                view["selected"]) + render_providers(a, view["providers"], view["selected"], view["now"]),
+             render_agents(a, view["agents"], view["live"], view["selected"], view["now"]), view["health_html"],
              render_unavailable(a, view["actions_html"]))
     return draw
 
@@ -460,6 +490,7 @@ CSS = """
 .fa-head>div{min-width:0}
 .fa-check{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .fa-chip{border:1px solid var(--line);border-radius:999px;padding:5px 10px;font-size:12px}
+.fa-chip.fa-stale{color:var(--pn-muted-text)}
 .fa-recheck{display:contents}
 .pn-main button{font:inherit;font-size:13px;color:var(--ink);background:var(--surface);
   border:1px solid var(--pn-control-line);border-radius:8px;padding:7px 12px;cursor:pointer}
