@@ -97,22 +97,28 @@ class RunsTraceConfiguration(unittest.TestCase):
             self.assertIn(phrase, declared, f"the configuration declared does not say « {phrase} »: « {declared} »")
 
     def test_a_job_no_session_was_recorded_for_is_attributed_none(self):
-        _, reading = observe(self.tree.launch("job-configuration"), "/runs/job", steps=(
+        _, review, tests = observe(self.tree.launch("job-configuration"), "/runs/job", steps=(
+            {"click": "Revue du code", "within": "chart"},
             {"click": "Relire les tests", "within": "chart"},
         ))[0]
-        self.assertTrue(reading["step"]["found"], "no job « Relire les tests » to click in the frise")
-        self.assertIn("Relire les tests", head_says(reading), "the detail is not that of the job « Relire les tests »")
-        sessions = section(reading, "Sessions du job")
+        # Léa worked « Revue du code » in a session of hers...
+        self.assertTrue(review["step"]["found"], "no job « Revue du code » to click in the frise")
+        worked = section(review, "Sessions du job")
+        self.assertIsNotNone(worked, "the detail has no section « Sessions du job »")
+        self.assertIn("demo-search-lea-1", worked["content"], "the session that worked « Revue du code » is not said")
+        # ...which is not the one of « Relire les tests », no session was
+        # recorded for.
+        self.assertTrue(tests["step"]["found"], "no job « Relire les tests » to click in the frise")
+        self.assertIn("Relire les tests", head_says(tests), "the detail is not that of the job « Relire les tests »")
+        sessions = section(tests, "Sessions du job")
         self.assertIsNotNone(sessions, "the detail has no section « Sessions du job »")
         self.assertIn(NOT_COLLECTED, sessions["content"], "the job no session was recorded for says a session")
-        configured = section(reading, "Configuration")
+        configured = section(tests, "Configuration")
         self.assertIsNotNone(configured, "the detail has no section « Configuration »")
-        # Léa worked another job of the run in a session: it is not this one's.
-        for reading_part in (sessions["content"], configured["content"]):
-            self.assertNotIn("demo-search-lea", reading_part, "a session of the agent is attributed to a job "
-                                                               "no session was recorded for")
-            self.assertNotRegex(reading_part, percent(3), "the context of another job is attributed to this one")
-
+        for said in (sessions["content"], configured["content"]):
+            self.assertNotIn("demo-search-lea", said, "a session of the agent is attributed to a job "
+                                                       "no session was recorded for")
+            self.assertNotRegex(said, percent(3), "the context of another job is attributed to this one")
 
 if __name__ == "__main__":
     unittest.main()

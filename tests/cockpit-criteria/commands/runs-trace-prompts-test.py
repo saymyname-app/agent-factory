@@ -112,9 +112,14 @@ class RunsTracePrompts(unittest.TestCase):
 
     def test_a_prompt_no_trace_recorded_is_said_not_collected_and_not_rebuilt(self):
         address = self.tree.launch("job-system-prompt")
-        _, reading = observe(address, "/runs/job", steps=({"click": "Revue du code", "within": "chart"},))[0]
+        built, reading = observe(address, "/runs/job", steps=({"click": "Revue du code", "within": "chart"},))[0]
+        # The prompts sent to the session of « Réaliser » were recorded...
+        self.assert_sent(address, built, SYSTEM_PROMPT)
+        # ...none sent to the session of « Revue du code », though it ran.
         self.assertTrue(reading["step"]["found"], "no job « Revue du code » to click in the frise")
         self.assertIn("Revue du code", head_says(reading), "the detail is not that of the job « Revue du code »")
+        self.assertIn("demo-search-lea-1", section(reading, "Sessions du job")["content"],
+                      "the session that worked « Revue du code » is not said")
         listed = section(reading, "Prompts envoyés")
         self.assertIsNotNone(listed, "the detail has no section « Prompts envoyés »")
         self.assertIn(NOT_COLLECTED, listed["content"], "a prompt no trace recorded is not said not collected")
