@@ -58,9 +58,10 @@ The sessions of a job (C2a, af-k2rbw1) are those the tracker records of it
 (its claims) and those the trace of the sessions saw working it or one of
 its attempts (cockpit.runs.trace), in the order they began: each from its
 claim, or its creation when it was created later (a session that took
-over an attempt), to the beginning of the next one, the last to the end of
-the job. What the trace observed of each -- its configuration, what
-it was sent -- is carried as it is; a session the trace has nothing of has
+over an attempt), to when the supervisor stopped it -- an end it did not
+record is none, never the beginning of the next session or the end of the
+job. What the trace observed of each -- its configuration, what it was
+sent -- is carried as it is; a session the trace has nothing of has
 nothing observed. The configuration declared for the role of a job is the
 one the flow wrote on the ticket when its session took it
 (``gc.flow.models``). What is not collected yet (controls, usage, outputs:
@@ -386,9 +387,9 @@ def _place_sessions(jobs, sessions, trace, now):
                 job["lane"].pop("unattributed")
         ordered = sorted(found.items(), key=lambda pair: (max(pair[1] or 0, job["start"]), pair[0]))
         placed = []
-        for index, (name, at) in enumerate(ordered):
+        for name, at in ordered:
             begin = max(at or job["start"], job["start"])
-            end = ordered[index + 1][1] if index + 1 < len(ordered) else job["end"]
+            end = (trace.get(name) or {}).get("ended_at")
             placed.append({"name": name, "start": begin, "end": max(end, begin) if end is not None else None,
                            "observed": trace.get(name)})
         job["trace_sessions"] = placed

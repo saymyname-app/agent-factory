@@ -453,7 +453,9 @@ def _configuration(run, item, lane, chosen, anchors):
         effective = rows((("Agent", "%s · %s" % (lane["who"], lane["role"])), ("Session", chosen["name"]),
                           ("Fournisseur", observed.get("provider")), ("Modèle", observed.get("model")),
                           ("Effort", observed.get("effort")), ("Outils", " · ".join(observed.get("tools") or [])),
-                          ("Environnement", environment), ("Mission", item["name"]), ("Contexte observé", context)))
+                          # No source reports the mission of a session: the
+                          # name of its job is not one.
+                          ("Environnement", environment), ("Mission", None), ("Contexte observé", context)))
     declared = (run.get("declared") or {}).get(item.get("role") or "")
     if declared:
         when = declared.get("at")
@@ -473,19 +475,25 @@ def _session_href(run, item, name):
 
 def _sessions(run, item, placed, chosen):
     """The sessions of the job, in the order they ran: each a link that
-    shows its own configuration and prompts."""
+    shows its own configuration and prompts, the one shown saying so. An
+    end the supervisor did not record is said not collected (in progress
+    for the last session of a job that runs)."""
     if not placed:
         return _said("Aucune session n’est enregistrée pour ce job : %s." % UNCOLLECTED)
     out = []
     for session in placed:
         observed = session.get("observed") or {}
-        end = relative(session["end"] - run["start"]) if session["end"] is not None else "en cours"
+        if session["end"] is not None:
+            end = relative(session["end"] - run["start"])
+        else:
+            end = "en cours" if item["open"] and session is placed[-1] else UNCOLLECTED
         said = "%s · contexte observé %s" % (observed.get("model") or "modèle %s" % UNCOLLECTED,
                                              _percent(observed) or UNCOLLECTED)
-        out.append('<a class="rn-session" href="%s" data-session-link%s><strong>%s</strong><small>%s → %s</small>'
+        out.append('<a class="rn-session" href="%s" data-session-link%s><strong>%s%s</strong><small>%s → %s</small>'
                    '<span>%s</span></a>'
                    % (_e(_session_href(run, item, session["name"])),
                       ' aria-current="true"' if session is chosen else "", _e(session["name"]),
+                      ' <em class="rn-session-shown">Affichée</em>' if session is chosen else "",
                       relative(session["start"] - run["start"]), end, _e(said)))
     return ('<div class="rn-sessions">%s</div><p class="rn-muted">Historique du job ; la lane affiche seulement la '
             'dernière session de cet agent dans le run.</p>' % "".join(out))
@@ -695,7 +703,8 @@ CSS = """
 .rn-session strong{font:13px ui-monospace,monospace;overflow-wrap:anywhere}
 .rn-session small{color:var(--pn-muted-text);font-size:12px}
 .rn-session span{overflow-wrap:anywhere}
-.rn-session[aria-current]{border-color:var(--accent)}
+.rn-session[aria-current]{border-color:var(--accent);box-shadow:inset 3px 0 0 var(--accent)}
+.rn-session-shown{margin-left:8px;padding:1px 6px;border:1px solid currentColor;border-radius:4px;font:600 11px system-ui,sans-serif;font-style:normal;white-space:nowrap}
 .rn-session:hover{border-color:var(--accent)}
 .rn-session:focus-visible,.rn-prompt>summary:focus-visible,.rn-format button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 /* A prompt of a closed section is not laid out: its title is no control to reach. */

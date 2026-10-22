@@ -13,9 +13,12 @@ synthetic sources only:
 - a synthetic supervisor that answers as the installed one does
   (`tests/fixtures/cockpit/core/fake_gc.py`, held to the real contract by
   `tests/cockpit-fake-gc-contract-test.py`), and that keeps what the
-  provider recorded of each session the dataset says
-  (`GET /v0/city/<city>/session/<id>/transcript?format=raw`, as gc 1.5.0
-  answers it);
+  installed one keeps of each session the dataset says -- the session, what
+  its provider recorded, when it woke and stopped
+  (`GET /v0/city/<city>/session/<id>`, `…/transcript?format=raw`,
+  `GET /v0/city/<city>/events?type=session.woke`, as gc 1.5.0 answers
+  them) -- and sends the sessions the dataset dispatches once the cockpit
+  is up;
 - a synthetic tracker (`tests/fixtures/cockpit/requests/fake-bd`) and the
   projects declared for this launch alone;
 - the knowledge repositories of those projects (their roadmap and release
@@ -146,26 +149,87 @@ def fall_silent_once_read(supervisor, cockpit_url: str) -> None:
     supervisor.go_down()
 
 
-def serve_transcripts(supervisor, city: synthetic_city.SyntheticCity) -> None:
-    """Make `supervisor` answer what the provider recorded of each session
-    of `city`, as the installed supervisor does: ``{"id", "format": "raw",
-    "messages"}``, or a 404 for a session it keeps nothing of."""
+def serve_sessions(supervisor, city: synthetic_city.SyntheticCity) -> None:
+    """Make `supervisor` answer what the installed one keeps of each session
+    of `city` (gc 1.5.0): ``GET /v0/city/<city>/session/<id>``, the session
+    as it lists it; ``…/session/<id>/transcript?format=raw``, what its
+    provider recorded (``{"id", "format": "raw", "messages"}``); ``GET
+    /v0/city/<city>/events?type=session.woke|session.stopped``, when it
+    woke and stopped, the latest first -- a 404 for a session it knows
+    nothing of. Then send the sessions `city` dispatches once the cockpit is
+    up: each wakes, is listed at work for a while with only its first
+    records, then stops and is listed no more, as the installed supervisor
+    lists only the sessions it runs."""
     handler = supervisor._server.RequestHandlerClass
     answer_other = handler.do_GET
-    prefix = "/v0/city/%s/session/" % city.name
+    prefix = "/v0/city/%s/" % city.name
+    sessions = {session["id"]: dict(session) for session in city.sessions}
+    lock = threading.Lock()
+    # What the supervisor knows now: the sessions it sent, how many records
+    # of each it serves (None: all), its events.
+    known = {name: None for name in sessions if name not in city.dispatched}
+    events = []
+
+    def record(kind: str, name: str, at: str) -> None:
+        events.append({"seq": len(events) + 1, "type": kind, "ts": at, "actor": "gc",
+                       "subject": sessions[name].get("template") or "", "session_id": name,
+                       "payload": {"session_id": name, "template": sessions[name].get("template") or ""}})
+
+    for name, logged in sorted(city.session_log.items(), key=lambda pair: pair[1]["woke"]):
+        if name in known and name in sessions:
+            record("session.woke", name, logged["woke"])
+            if logged["stopped"]:
+                record("session.stopped", name, logged["stopped"])
+
+    def listed() -> list:
+        return [dict(sessions[name]) for name in known if name not in city.dispatched or sessions[name]["running"]]
 
     def do_GET(self):  # noqa: N802
-        path = self.path.split("?", 1)[0]
-        if supervisor._down or not (path.startswith(prefix) and path.endswith("/transcript")):
+        path, _, query = self.path.partition("?")
+        rest = path[len(prefix):] if path.startswith(prefix) else None
+        if supervisor._down or rest is None or not (rest == "events" or rest.startswith("session/")):
             answer_other(self)
             return
-        session = urllib.parse.unquote(path[len(prefix):-len("/transcript")])
-        if session not in city.transcripts:
-            self._send(404, "text/plain; charset=utf-8", b"404 page not found\n")
-            return
-        self._send_json({"id": session, "format": "raw", "messages": city.transcripts[session]})
+        with lock:
+            if rest == "events":
+                wanted = urllib.parse.parse_qs(query).get("type", [""])[0]
+                items = [dict(event) for event in reversed(events) if not wanted or event["type"] == wanted]
+                self._send_json({"items": items, "total": len(items)})
+                return
+            name, _, part = urllib.parse.unquote(rest[len("session/"):]).partition("/")
+            if name not in known or part not in ("", "transcript") or (part and name not in city.transcripts):
+                self._send(404, "text/plain; charset=utf-8", b"404 page not found\n")
+                return
+            if not part:
+                self._send_json(dict(sessions[name]))
+                return
+            served = city.transcripts[name][:known[name]] if known[name] is not None else city.transcripts[name]
+            self._send_json({"id": name, "format": "raw", "messages": served})
 
     handler.do_GET = do_GET
+
+    def dispatch(name: str, said: dict) -> None:
+        time.sleep(float(said.get("after_seconds") or 0))
+        running = float(said.get("running_seconds") or 0)
+        logged = city.session_log.get(name) or {}
+        with lock:
+            record("session.woke", name, logged.get("woke") or sessions[name].get("created_at") or "")
+            sessions[name]["running"] = running > 0
+            known[name] = said.get("recorded_while_running") if running > 0 else None
+            supervisor.set_sessions(listed())
+        if running > 0:
+            time.sleep(running)
+        with lock:
+            sessions[name]["running"] = False
+            known[name] = None
+            if logged.get("stopped"):
+                record("session.stopped", name, logged["stopped"])
+            supervisor.set_sessions(listed())
+
+    supervisor.set_sessions(listed())
+    for name, said in city.dispatched.items():
+        if name in sessions:
+            threading.Thread(target=dispatch, args=(name, said), daemon=True).start()
 
 
 def serve_synthetic_supervisor(
@@ -180,12 +244,11 @@ def serve_synthetic_supervisor(
     import fake_gc
 
     supervisor = fake_gc.FakeGc(city=city.name)
-    serve_transcripts(supervisor, city)
     supervisor.set_status(
         suspended=city.suspended, agents_running=sum(1 for session in city.sessions if session["running"])
     )
-    supervisor.set_sessions(city.sessions)
     supervisor.start()
+    serve_sessions(supervisor, city)
     if city.reading in (synthetic_city.UNANSWERED, synthetic_city.FAILING):
         supervisor.go_down()
     os.write(announce, supervisor.base_url.encode("ascii"))
@@ -348,6 +411,8 @@ def main(argv: list[str]) -> int:
         env["COCKPIT_CLOCK_START"] = city.clock_start
     if city.view:
         env["COCKPIT_RUNS_VIEW"] = json.dumps(city.view)
+    if city.session_trace:
+        env["COCKPIT_TRACE_FILE"] = city.session_trace
     os.execve(sys.executable, [sys.executable, str(ROOT / "bin" / "cockpit"), "run"], env)
     return 1
 

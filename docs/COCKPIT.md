@@ -1008,7 +1008,7 @@ copy. What it gives the cockpit to read:
 
 | Source | In the isolated launch |
 |---|---|
-| supervisor | a synthetic one, `tests/fixtures/cockpit/core/fake_gc.py`, the fake `tests/cockpit-fake-gc-contract-test.py` holds to the installed supervisor; what it answers is what the dataset says (below); `bin/cockpit-isolated` makes it answer too what the provider recorded of each session the dataset says, as the installed one does (`GET /v0/city/<city>/session/<id>/transcript?format=raw`: `{"id", "format": "raw", "messages"}`, a 404 for a session it keeps nothing of) |
+| supervisor | a synthetic one, `tests/fixtures/cockpit/core/fake_gc.py`, the fake `tests/cockpit-fake-gc-contract-test.py` holds to the installed supervisor; what it answers is what the dataset says (below); `bin/cockpit-isolated` makes it answer too what the installed one keeps of each session the dataset says (`GET /v0/city/<city>/session/<id>`, the session as listed; `…/transcript?format=raw`, `{"id", "format": "raw", "messages"}`; a 404 for a session it keeps nothing of; `GET /v0/city/<city>/events?type=session.woke` and `session.stopped`, when it woke and stopped each one, the latest first), and send the sessions the dataset dispatches once the cockpit is up |
 | tracker | `tests/fixtures/cockpit/synthetic-city/bd`, which answers the beads written for this launch from the dataset as `tests/fixtures/cockpit/requests/fake-bd` does -- hiding the closed ones from a plain `list` as `bd` does --, and writes what the doors and the gestures write there (`update`, `create`, `show`), in the home of the launch only |
 | declared projects | one descriptor per project the dataset names, written for this launch; no file of the repository |
 | doors that change the Factory (`gc order run`, escalation door, proposal door, loop guard) | the real doors of the commit, run on the tracker of the launch through a synthetic `gc` (`tests/fixtures/cockpit/synthetic-city/gc`: `gc bd` is that tracker; a mail, the waking of a session, the run of an order are taken and change nothing else); the cockpit gives up on a door after 5 s (`COCKPIT_ACTION_TIMEOUT_SECONDS`). A dataset may say how a door answers (`doors`: `proposal-door`, `escalation-door`, `loop-guard` or `gc`, each `expires` -- it never answers, and writes nothing -- or `records-then-expires` -- it writes its record, then never answers); `bin/cockpit-isolated` refuses any other |
@@ -1080,7 +1080,9 @@ ways:
 | the runs of a Runs state, each « Livraison D01 » or « Maintenance » | a workflow as the tracker holds one (C1, af-lzti7w): a « Livraison D01 » is a convoy carrying the new-flow mark, under the title of the run, written by `benjamin` for the project `agent-factory` (the datasets name none), its ticket (same `gc.graph_digest`; `gc.flow.merge` when the run says « Fusionné », `gc.flow.gate.withdrawn` when « Abandonné »), the workflow root `mol-ticket-author` run on an input convoy that tracks the ticket, and, when an agent of the run is a « Relect… » or an « Évaluat… », the workflow root `mol-code-review` or `mol-ticket-evaluation` run on an input convoy that tracks the bead the dispatch door writes to launch it (`gc.dispatched_via`, its description naming the convoy and the ticket); a « Maintenance » is a workflow root `mol-do-work` run on the work Benjamin asked for, under the title of the run; closed at the end of the run, open while it has none; the day of `generated_at` at the run's `started` (Paris) is its start | `runs.value`; `GET /runs` |
 | the jobs of a run | one step per job, of the workflow root of its agent's role (the author's for Benjamin's and the code's), under its name, from its start to its end (open without one): a job of the lane `human` a plain step routed to `benjamin`, of the lane `code` a `check` (`gc.outcome` pass once closed), of an agent lane a `ralph` whose closing runs a check (`gc.check_mode`), claimed by an attempt of the session of that agent (`gc.logical_bead_id`, `gc.claimed_at`, `gc.outcome` pass once closed); its prompt as description, its result as close reason | `runs.value`; `GET /runs/run`, `GET /runs/job` |
 | the agent lanes | one session per job of an agent (`synthetic-session-<lane>-<run>-<job>`): its `agent_name` the name of the lane, its `template` and `provider` the two halves of its role (« Relectrice · Claude »), running on the open job it holds | `sessions.value.agents`, `sessions.value.sessions`, `gc.value.agents_running` |
-| the sessions a job says (`sessions`: each its `name`, its `start` from the trigger, and as the supervisor lists it its `provider`, `model`, `effort`, `permission_mode`, `context_pct`, `context_window`, `work_dir`; its `transcript`, records in the provider's own format) (C2a, af-k2rbw1) | in place of the one session of the job: each listed by the supervisor as it ran it, created at its start, working the attempt of the job (`active_bead`), its effort and permission mode under `options`; the attempt claimed at the start of the job under the name of the last (gc keeps the session that took over); what its provider recorded served as its transcript; an empty list, a job no session is recorded for (no attempt) | the trace of the sessions; `GET /runs/job` |
+| the sessions a job says (`sessions`: each its `name`, its `start` and `end` from the trigger, and as the supervisor lists it its `provider`, `model`, `effort`, `permission_mode`, `context_pct`, `context_window`, `work_dir`; its `transcript`, records in the provider's own format) (C2a, af-k2rbw1) | in place of the one session of the job: each listed by the supervisor as it ran it, created at its start, working the attempt of the job (`active_bead`), its effort and permission mode under `options`, its waking (at its start) and its stop (at its `end`; none without one) in the supervisor's log; the attempt claimed at the start of the job under the name of the last (gc keeps the session that took over); what its provider recorded served as its transcript; an empty list, a job no session is recorded for (no attempt) | the trace of the sessions; `GET /runs/job` |
+| a session a job says sent once the cockpit is up (`dispatched`: `after_seconds` from the launch, `running_seconds`, `recorded_while_running`) | nothing of it until then, as for a ticket not yet dispatched; then its waking in the log, listed at work for `running_seconds` with only its first `recorded_while_running` records served, then its stop in the log, all its records served, listed no more (the installed supervisor lists only the sessions it runs) -- with `running_seconds` 0, a session that woke and stopped between two readings | the collection at the waking and stop of the sessions |
+| where the cockpit keeps its trace of the sessions (`session_trace`, an absolute path) | `COCKPIT_TRACE_FILE`; else in the home of the launch, removed with it | the projection a case reads, and keeps from one launch to the next |
 | what the flow declared for each role of a run (`declared`: `{role: {agent, provider, model, at}}`) | written on its ticket as the flow writes it (`gc.flow.models`) | the configuration declared in `GET /runs/job` |
 | what a Runs state selects: `ui.filter`, `ui.run`, `ui.selected_job`, `ui.selected_event`, `ui.detail` | the filter, the run, the job, the event and the state of the detail (the sections it opens, the prompts it shows raw) a page opens when its address names none (`COCKPIT_RUNS_VIEW`) | `GET /runs`, `GET /runs/run`, `GET /runs/job` |
 | the moment a Runs state shows (the latest `started` + `elapsed` of an open run) | the clock of the cockpit starts there and runs on (`COCKPIT_CLOCK_START`) | the horizon of the open runs, `read_at` |
@@ -1276,37 +1278,55 @@ are those of the trace of the sessions (below).
 
 Intent (Benjamin, his words, 2026-10-12): « l’historique des sessions dans
 les jobs ». Mechanism (agent interpretation): the sessions, the
-configuration in effect and the prompts sent are collected where the
-cockpit already reads the supervisor, into a projection of its own, since
-neither the supervisor nor the provider keeps a session once it is gone.
+configuration in effect and the prompts sent are collected from the
+supervisor, which sends the sessions their work and records when it woke
+and stopped each one, into a projection of the cockpit's own, since the
+supervisor does not keep them for ever. The Factory has no point of its
+own where a session is sent its prompts: gc wakes the session and sends
+them.
 
-At each reading of the sessions (`sessions`, every 15 s), the cockpit
-records in a private file (`COCKPIT_TRACE_FILE`, by default
-`cockpit-session-trace.jsonl` beside its pid file, 0600, appended only) what
-the supervisor lists of each session -- identity, provider, model, effort
-and permission mode, context observed and its window, work directory,
-creation, the bead it works -- and, once per session then at most every
-minute while it runs, what its provider recorded
-(`GET /v0/city/<city>/session/<id>/transcript?format=raw`): the system
-prompt where the provider records it (Codex, `session_meta`; Claude Code
-does not: it is said not collected), each user prompt as typed (Codex,
-`event_msg` UserMessage; Claude Code, a `user` record of text), with its
-version (`sha256:` and twelve digits of its exact text), and the names of
-the tools it called. Nothing else is read: what tools were given and
-printed, reasoning, environment, tokens. A record already written is not
-written again, and a record of the provider older than the session belongs
-to an earlier one its trace replays (`lib/cockpit/runs/trace.py`).
+At each reading of the sessions (`sessions`, every 15 s: no reading of its
+own), the cockpit reads the supervisor's log of the sessions it woke and
+stopped since the last event it read (`GET
+/v0/city/<city>/events?type=session.woke`, `session.stopped`; on a first
+reading, the latest 50 of each), and records in a private file
+(`COCKPIT_TRACE_FILE`, by default `cockpit-session-trace.jsonl` beside its
+pid file, 0600, appended only) each of those moments, then, of each session
+listed or named by that log (`GET /v0/city/<city>/session/<id>`: the
+supervisor keeps a session it stopped and no longer lists), its identity,
+provider, model, effort and permission mode, context observed and its
+window, work directory, creation, the bead it works -- and, the first time,
+at most every minute while it runs, and once more when it stopped, what its
+provider recorded (`GET
+/v0/city/<city>/session/<id>/transcript?format=raw`): the system prompt
+where the provider records it (Codex, `session_meta`; Claude Code does not:
+it is said not collected), each user prompt as typed (Codex, `event_msg`
+UserMessage; Claude Code, a `user` record of text), with its version
+(`sha256:` and twelve digits of its exact text), and the names of the tools
+it called. A session that woke and stopped between two readings is so
+collected, and what a session was sent after it was last read. Nothing else
+is read: what tools were given and printed, reasoning, environment, tokens.
+A record already written is not written again -- another cockpit reading
+the same log adds nothing --, a session that could not be read keeps its
+moments out until it is, and a record of the provider older than the
+session belongs to an earlier one its trace replays
+(`lib/cockpit/runs/trace.py`). On the live host (2026-10-22, under load) a
+first collection took 18 s for 40 sessions, the next ones 1.5 s.
 
 The sessions of a job are those the tracker records (its claims) and those
 the trace saw working it or one of its attempts, each from its claim -- or
-its creation, for a session that took over -- to the next one. The detail
+its creation, for a session that took over -- to when the supervisor
+stopped it; an end it did not record is said « non collecté » (« en
+cours » for the last session of a job that runs). The detail
 of an agent's job says, for the session chosen (by default the last;
 `&session=<name>`): « Configuration effective » as observed, then
 « Configuration déclarée » for the role of its workflow (`gc.flow.models`
 on the ticket); « Sessions du job », each a link that shows its own
-configuration and prompts; « Prompts envoyés », each rendered or raw
+configuration and prompts, the one shown marked « Affichée »; « Prompts
+envoyés », each rendered or raw
 (`Rendu`, `Brut`), the raw text being the text sent. What nothing observed
-is said « non collecté », never taken from the declaration or the job. The
+is said « non collecté », never taken from the declaration or the job --
+the mission of a session among them, which no source reports. The
 lane of an agent says the context and model of its last session in the
 run; a job of an agent no session is recorded for is drawn on the lane of
 the one agent of its workflow, its detail saying that no session is

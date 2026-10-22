@@ -194,6 +194,7 @@
                 "work_dir": "/srv/synthetic/worktrees/recherche-dans-les-notes",
                 "name": "demo-search-alex-1",
                 "start": 190,
+                "end": 277,
                 "context_pct": 27,
                 "transcript": [
                   {
@@ -333,6 +334,7 @@
                 "work_dir": "/srv/synthetic/worktrees/recherche-dans-les-notes",
                 "name": "demo-search-alex-2",
                 "start": 277,
+                "end": 365,
                 "context_pct": 7,
                 "transcript": [
                   {
@@ -653,6 +655,7 @@
               {
                 "name": "demo-search-lea-1",
                 "start": 365,
+                "end": 430,
                 "provider": "claude",
                 "context_pct": 3
               }

@@ -26,9 +26,10 @@ from __future__ import annotations
 import hashlib
 import html
 import json
+import os
 import re
 import unicodedata
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -105,6 +106,18 @@ class SyntheticCity:
     # What the provider recorded of each session, by its id, as the
     # supervisor answers it (``GET …/session/<id>/transcript?format=raw``).
     transcripts: dict = field(default_factory=dict)
+    # When the supervisor recorded each session woke and stopped, by its id:
+    # `{"woke": ISO date, "stopped": ISO date or None}` (its events
+    # ``session.woke`` and ``session.stopped``).
+    session_log: dict = field(default_factory=dict)
+    # The sessions the supervisor sends once the cockpit is up, as it does
+    # when a ticket is dispatched, by their id: `{"after_seconds",
+    # "running_seconds", "recorded_while_running"}`. Until then it knows
+    # nothing of them.
+    dispatched: dict = field(default_factory=dict)
+    # Where the cockpit keeps its trace of the sessions, when the dataset
+    # says it (`session_trace`); else in the home of the launch.
+    session_trace: str | None = None
 
 
 # Where a value of a source names a file of `SyntheticCity.files`.
@@ -123,7 +136,13 @@ def from_dataset(dataset) -> SyntheticCity:
     if not isinstance(name, str) or not name.strip():
         raise DatasetRefused("names no state (ui.id, or state)")
     if "fixtures" in dataset:
-        return _runs_city(name, at, ui, dataset["fixtures"])
+        city = _runs_city(name, at, ui, dataset["fixtures"])
+        trace = dataset.get("session_trace")
+        if trace is None:
+            return city
+        if not isinstance(trace, str) or not os.path.isabs(trace):
+            raise DatasetRefused(f"its session_trace is not an absolute path: {trace!r}")
+        return replace(city, session_trace=trace)
     if "tracker" in dataset:
         return _tracker_city(name, dataset["tracker"], dataset.get("projects"), dataset.get("repos"))
     return _panorama_city(name, _fixed_time(at), ui, dataset.get("visible_text"), _folded(dataset.get("folded")),
@@ -797,9 +816,14 @@ SCREENS = {
 # model, effort, permission mode, context and work directory, the attempt
 # of the job it worked -- and what its provider recorded (`transcript`,
 # records in the provider's own format, read as the supervisor answers
-# them). The tracker records the last of them as the session of the attempt,
-# as gc does when a session takes over; an empty list is a job no session
-# is recorded for. A run may say what the flow declared for each role
+# them), and when the supervisor recorded it stopped (`end`, from the
+# trigger; absent, no stop is recorded). A session may be sent once the
+# cockpit is up (`dispatched`: `after_seconds` from the launch, then
+# `running_seconds` listed at work with only its first
+# `recorded_while_running` records, or all of them, before it stops), as
+# the supervisor sends the sessions of a dispatched ticket. The tracker
+# records the last of them as the session of the attempt, as gc does when a
+# session takes over; an empty list is a job no session is recorded for. A run may say what the flow declared for each role
 # (`declared`), written on its ticket as the flow writes it (gc.flow.models).
 
 RUN_FORMULAS = {"Livraison D01": "mol-ticket-author", "Maintenance": "mol-do-work"}
@@ -819,9 +843,10 @@ def _runs_city(name, at, ui, fixtures) -> SyntheticCity:
         raise DatasetRefused(f"its fixed time (generated_at) has no offset: {at!r}")
     try:
         lanes = {lane["id"]: lane for lane in fixtures["lanes"]}
-        beads, sessions, opened, view, transcripts = [], {}, [], {}, {}
+        beads, sessions, opened, view = [], {}, [], {}
+        trace = {"transcripts": {}, "log": {}, "dispatched": {}}
         for run in fixtures["runs"]:
-            beads += _run_records(run, lanes, moment, sessions, opened, ui, view, transcripts)
+            beads += _run_records(run, lanes, moment, sessions, opened, ui, view, trace)
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
         raise DatasetRefused(f"a Runs state whose fixtures (lanes, runs, jobs) cannot be read: {exc!r}") from exc
     if ui.get("filter") in RUN_FILTERS:
@@ -834,7 +859,8 @@ def _runs_city(name, at, ui, fixtures) -> SyntheticCity:
     return SyntheticCity(
         name=name, reading=READ_ONCE if ui.get("stale") is True else READ,
         beads=beads, sessions=[session for lane in lanes for session in sessions.get(lane, {}).values()],
-        clock_start=clock.isoformat(), view=view, transcripts=transcripts,
+        clock_start=clock.isoformat(), view=view, transcripts=trace["transcripts"], session_log=trace["log"],
+        dispatched=trace["dispatched"],
     )
 
 
@@ -842,10 +868,12 @@ def _utc(moment: datetime) -> str:
     return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _run_records(run, lanes, moment, sessions, opened, ui, view, transcripts) -> list:
+def _run_records(run, lanes, moment, sessions, opened, ui, view, trace) -> list:
     """The beads of one run of the fixtures; the sessions of its agents in
     `sessions` (by lane, then by name: one per job, or those the job says),
-    what their providers recorded in `transcripts`, the moment it is shown
+    what their providers recorded, when the supervisor recorded them woke
+    and stopped and those it sends once the cockpit is up in `trace`
+    (`transcripts`, `log`, `dispatched`), the moment it is shown
     at in `opened` when it is open, what the state selects of it in
     `view`."""
     formula = RUN_FORMULAS.get(run["type"])
@@ -959,7 +987,12 @@ def _run_records(run, lanes, moment, sessions, opened, ui, view, transcripts) ->
                     if options:
                         record["options"] = options
                     if isinstance(one.get("transcript"), list):
-                        transcripts[one["name"]] = one["transcript"]
+                        trace["transcripts"][one["name"]] = one["transcript"]
+                    end = one.get("end")
+                    trace["log"][one["name"]] = {"woke": record["created_at"],
+                                                 "stopped": at(end) if isinstance(end, (int, float)) else None}
+                    if isinstance(one.get("dispatched"), dict):
+                        trace["dispatched"][one["name"]] = dict(one["dispatched"])
                 sessions.setdefault(lane["id"], {})[one["name"]] = record
         if ui.get("run") == key and ui.get("selected_job") == job["id"]:
             view["job"] = step_id
