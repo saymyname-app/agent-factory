@@ -115,7 +115,7 @@ def recette(stop_trial_passed):
 LEGACY_SUMMARY = "Détails techniques et actions"
 
 
-def overview_view(snapshot, requests, stop_trial_passed=False, now=None, undelivered=()):
+def overview_view(snapshot, requests, stop_trial_passed=False, now=None, undelivered=(), uncertain=None):
     """What the destination shows: ``state`` (see the module), ``stale``,
     ``checked`` (HH:MM of the reading shown), ``requests`` (« Pour moi »,
     each opened with its gestures, :mod:`cockpit.ui.home.pour_moi`),
@@ -125,7 +125,9 @@ def overview_view(snapshot, requests, stop_trial_passed=False, now=None, undeliv
     recette). ``requests`` are those the cockpit knows even while the
     tracker is not read: what it raises itself (« Usine muette »); the
     list then says it is not whole (``unknown``). ``undelivered``: the ids
-    of the requests whose push could not be delivered yet."""
+    of the requests whose push could not be delivered yet. ``uncertain``:
+    why a gesture on a request may not go yet, by its id, after a command
+    whose outcome is uncertain."""
     beads_row = snapshot.get("beads")
     view = {"state": CONTENT, "stale": False, "checked": None, "requests": [], "indicators": [],
             "activity": {}, "runs": [], "dossier": None, "projects": [], "projects_unread": False, "now": now,
@@ -139,7 +141,7 @@ def overview_view(snapshot, requests, stop_trial_passed=False, now=None, undeliv
          # folded details (spec .73, .75).
          "origine": _plain((r.texte_origine or {}).get("quoi")),
          "links": links_of(r, urls.get(r.projet) or urls.get((r.projet or "").lower())),
-         "undelivered": r.id in undelivered}
+         "undelivered": r.id in undelivered, "uncertain": (uncertain or {}).get(r.id)}
         for r in requests
     ]
     if beads_row is None or beads_row["value"] is None:
@@ -514,7 +516,7 @@ def _render_requests(view, opened, anchors=None):
         shown = request["id"] == opened
         out.append(render_request(request["request"], view["now"], request["links"], stale=view["stale"],
                                   shown=shown, anchor=anchors("panel") if shown and anchors else "",
-                                  undelivered=request["undelivered"]))
+                                  undelivered=request["undelivered"], uncertain=request["uncertain"]))
     return "".join(out)
 
 

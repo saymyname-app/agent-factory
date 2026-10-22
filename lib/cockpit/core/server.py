@@ -271,7 +271,11 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         Panorama holds yet folded under it."""
         snapshot = self._first_reading(read_model)
         now = read_model.now()
-        requests, _, _ = self._assemble_requests(snapshot, now)
+        requests, beads_row, _ = self._assemble_requests(snapshot, now)
+        # A gesture whose outcome is uncertain is drawn unavailable for as
+        # long as a POST on it would be refused (af-fksj2c).
+        uncertain = self.server.uncertain.pending(beads_row["read_at"] if beads_row else None,
+                                                  {request.id for request in requests})
         health = self._compute_health(read_model)
         # « Ce qui t’attend » is « Pour moi » of the overview itself (B,
         # af-4uzgzm): the zones folded under it no longer hold it.
@@ -287,7 +291,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             status_html=render_status_line(snapshot.get("gc"), health),
         )
         driver = getattr(self.server, "stop_driver", None)
-        view = overview_view(snapshot, requests, now=now, undelivered=self._undelivered(),
+        view = overview_view(snapshot, requests, now=now, undelivered=self._undelivered(), uncertain=uncertain,
                              stop_trial_passed=bool(driver is not None and driver.essai_reussi()))
         # T13, af-cx20q9: the SameSite=Strict cookie an action POST must
         # echo back -- a cross-site POST never carries it, so its presence

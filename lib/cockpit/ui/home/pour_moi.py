@@ -29,6 +29,7 @@ from cockpit.requests.model import TYPE_ESCALATION, TYPE_PROPOSAL, URGENT
 from cockpit.requests.sources.paused_sessions import TYPE_SESSION_EN_PAUSE
 from cockpit.requests.sources.readability import TYPE_SOURCE_ILLISIBLE
 from cockpit.requests.sources.silence import TYPE_USINE_MUETTE
+from cockpit.requests.sources.unknown_signal import TYPE_SIGNAL_INCONNU
 from cockpit.text.fallback import FALLBACK_NO_RECOMMENDATION, FIELD_LABELS, incomplete_label
 from cockpit.ui.actions.render import REPORT_OPTIONS, FREE_TIME_OPTION, render_actions
 from cockpit.ui.home.page import LEVEL_CLASS, _render_option, _since
@@ -40,6 +41,7 @@ KINDS = {
     TYPE_SESSION_EN_PAUSE: "Session mise en pause par l’usine",
     TYPE_USINE_MUETTE: "Usine muette",
     TYPE_SOURCE_ILLISIBLE: "Source illisible",
+    TYPE_SIGNAL_INCONNU: "Signal non reconnu",
 }
 # The kinds that come from no bead: the cockpit raised them itself.
 RAISED_BY_THE_COCKPIT = (TYPE_USINE_MUETTE, TYPE_SOURCE_ILLISIBLE)
@@ -67,11 +69,13 @@ def links_of(request, project_url):
     return links
 
 
-def render_request(request, now, links, stale=False, shown=False, anchor="", undelivered=False):
+def render_request(request, now, links, stale=False, shown=False, anchor="", undelivered=False, uncertain=None):
     """The article of ``request`` opened in the overview; hidden unless
     ``shown``. ``links``: (address, label) of where it lives;
     ``anchor``: the anchor of the reference it carries, if any;
-    ``undelivered``: its push could not be delivered yet (spec .59)."""
+    ``undelivered``: its push could not be delivered yet (spec .59);
+    ``uncertain``: why a gesture on it may not go yet, after a command
+    whose outcome is uncertain (af-fksj2c), or ``None``."""
     level = LEVEL_CLASS.get(request.niveau, "info")
     about = " · ".join(filter(None, (request.projet, request.pourquoi if request.type == TYPE_ESCALATION else "")))
     since = _since(request.depuis_quand, now)
@@ -93,9 +97,10 @@ def render_request(request, now, links, stale=False, shown=False, anchor="", und
     if request.recommande_absent and request.type not in RAISED_BY_THE_COCKPIT:
         options += '<span class="oc">%s</span>' % _e(FALLBACK_NO_RECOMMENDATION)
     gestures = _gestures(request)
-    if stale:
+    unavailable = uncertain or (STALE_GESTURES if stale else None)
+    if unavailable:
         options, gestures = _unavailable(options), _unavailable(gestures) + '<p class="pn-unwired">%s</p>' % _e(
-            STALE_GESTURES)
+            unavailable)
     return (
         '<article class="pn-panel pn-result pn-open-request cockpit-request" id="d-%s" data-open="%s" '
         'data-level="%s"%s%s>'
@@ -178,6 +183,8 @@ def render_details(request, links):
             rows.append(("Texte écrit (%s)" % FIELD_LABELS.get(field_name, field_name), "<code>%s</code>" % _e(written)))
     if request.precisions:
         rows.append(("Précisions", "<code>%s</code>" % _e(request.precisions)))
+    if request.texte_brut:
+        rows.append(("Texte brut", "<pre>%s</pre>" % _e(request.texte_brut)))
     if links:
         rows.append(("Liens", " · ".join('<a href="%s">%s</a>' % (_e(url), _e(label)) for url, label in links)))
     body = "".join('<div class="row"><span>%s</span><span>%s</span></div>' % (_e(label), value) for label, value in rows)
@@ -195,6 +202,7 @@ CSS = """
 .pn-request-details{margin-top:16px}
 .pn-request-details .det .row{grid-template-columns:minmax(92px,auto) minmax(0,1fr)}
 .pn-request-details .det .row>span{overflow-wrap:anywhere}
+.pn-request-details pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}
 .pn-overview .pn-dock .acts{display:contents}
 .pn-overview .pn-dock>.btn,.pn-overview .pn-dock .acts>.btn,.pn-overview .pn-dock .pn-refuse .btn{flex:0 1 auto;
   min-height:44px}
@@ -205,5 +213,5 @@ CSS = """
 .pn-dock .cockpit-actions-explication,.pn-dock .hint{flex-basis:100%;margin:0;font-size:13px;color:var(--pn-muted-text)}
 .pn-dock form{margin:0}
 .pn-gestures{display:contents;border:0;margin:0;padding:0;min-width:0}
-.pn-overview .cockpit-armed{background:var(--accent-soft);border-color:var(--accent)}
+.pn-overview .cockpit-armed{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
 """

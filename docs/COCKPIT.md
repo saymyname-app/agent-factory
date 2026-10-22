@@ -369,71 +369,118 @@ dossier is read by `projects/source.py` in the folder its record names
 (`path`, the folder of the Evidence Pack; `read_pack_sections` opens its
 `index.html`: one rubric per `<section id="rubrique-N">`).
 
-## « Pour moi » in the foreground, gestures confirmed, commands that no longer fail silently (B, af-4uzgzm)
+## « Pour moi » au premier plan, gestes confirmés, commandes qui n'échouent plus en silence (B, af-4uzgzm)
 
-Spec af-fgcw0d, user stories 6, 27, 29, 34, 73, 75, 76, 79, 122 and 175;
-Validated Prototype `prototype/cockpit-b-zones-20261012` at 632deea, states
-result-request and result-confirmation.
+Spec af-fgcw0d, user stories 6, 27, 29, 34, 73, 75, 76, 79, 122 et 175 ;
+Validated Prototype `prototype/cockpit-b-zones-20261012` à 632deea, états
+result-request et result-confirmation. Cette section est écrite pour
+Benjamin, qui se sert de ces gestes lui-même (ADR-0017, condition 4).
 
-**Pour moi is the decision box of the overview.** « Ce qui t’attend » is no
-longer folded under « Détails techniques et actions »: each line of the
-overview's inbox opens its request beside the list, where the result of a
-chantier opens (`lib/cockpit/ui/home/pour_moi.py`). The result's own
-request (the Acceptance Request on its convoy) opens the result. A request
-opened says what it is about, its title, why it waits, its prepared
-options, then its bar of gestures:
+**Ce que tu y gagnes** (ADR-0017, condition 3 : temps humain et jetons).
+Avant B, « Ce qui t’attend » était replié sous « Détails techniques et
+actions », aucune demande ni bouton « Relancer » n’existait pour une session
+mise en pause par l’usine, une proposition ne se reportait qu’à une heure
+écrite en mots (qui ne la cachait pas), et une commande qui ne répondait pas
+laissait le geste sans réponse. Relancer une session en pause passait donc
+par une session d’agent : une demande écrite, le contexte relu par l’agent,
+puis la vérification de ce qu’il a fait.
 
-| Request | Gestures |
+| Geste | Avant B | Avec B |
+|---|---|---|
+| Ouvrir une demande et voir ses gestes | 1 clic de plus (déplier la zone technique) | 1 clic sur la ligne |
+| Relancer une session en pause | une session d’agent : quelques minutes de ton temps et les jetons d’une session (estimation, non mesurée : de l’ordre de 20 000 à 50 000 jetons pour relire le contexte) | 2 clics (armer, « Confirmer ») et aucun jeton ; l’écriture à la source est relue en moins de 20 s (mesuré par les tests de critère, `TRACED_SECONDS`) |
+| Reporter une proposition jusqu’à une heure | impossible sans agent : l’heure écrite en mots ne la cachait pas | 2 clics, la proposition est cachée jusqu’à l’heure choisie |
+| Une commande qui ne répond pas | le geste restait sans réponse, et le répéter risquait un doublon | une erreur lisible en 15 s au plus (`COCKPIT_ACTION_TIMEOUT_SECONDS`), puis une relecture de la source avant tout nouvel essai |
+| L’usine se tait | rien ne le disait sur l’accueil | une demande Urgent « Usine muette » après 15 min de silence |
+
+**Pour moi est la boîte de décision de la Vue d’ensemble.** « Ce qui
+t’attend » n’est plus replié sous « Détails techniques et actions » : chaque
+ligne ouvre sa demande à côté de la liste, là où s’ouvre le résultat d’un
+chantier (`lib/cockpit/ui/home/pour_moi.py`). La demande propre au résultat
+(sa demande d’acceptation) ouvre le résultat. Une demande ouverte dit de quoi
+il s’agit, son titre, pourquoi elle t’attend, les options préparées, puis sa
+barre de gestes :
+
+| Demande | Gestes |
 |---|---|
-| a question (NEEDS BENJAMIN) | its options, each the answer (armed, then « Confirmer ? »); Continuer avec un agent; Acquitter (Urgent); Reporter |
-| a proposal of class decision | Accepter; Refuser with the reason written in its field; Reporter → « Dans 1 h », « Dans 4 h », « Demain 09:00 », each armed then confirmed; Continuer avec un agent |
-| a session the Factory paused (`[session-loop] <session>`, `gc.source=factory-session-loop-guard`, `lib/cockpit/requests/sources/paused_sessions.py`) | Relancer (armed, then confirmed: `factory-session-loop-guard resume`, traced on the bead, « Relance demandée » in the journal); Reporter |
-| « Usine muette » | Vérifier l’usine (the page Usine); Revérifier maintenant |
+| une question (NEEDS BENJAMIN) | ses options, chacune la réponse (armée, puis « Confirmer ? ») ; Continuer avec un agent ; Acquitter (Urgent) ; Reporter |
+| une proposition de classe décision | Accepter ; Refuser, avec la raison écrite dans son champ ; Reporter → « Dans 1 h », « Dans 4 h », « Demain 09:00 », chacun armé puis confirmé ; Continuer avec un agent |
+| une session mise en pause par l’usine (`[session-loop] <session>`, `gc.source=factory-session-loop-guard`, `lib/cockpit/requests/sources/paused_sessions.py`) | Relancer (armé, puis confirmé : `factory-session-loop-guard resume`, tracé sur sa fiche, « Relance demandée » au journal) ; Reporter |
+| « Usine muette » | Vérifier l’usine (la page Usine) ; Revérifier maintenant |
+| un signal non reconnu (`lib/cockpit/requests/sources/unknown_signal.py`) | Continuer avec un agent ; Reporter |
 
-Every gesture that changes the Factory is two-step (`cockpit.ui.actions.
-render`): a first click arms it, « Confirmer ? », a second sends it. A
-proposal put off goes through `bin/proposal-door reporter` with the time the
-cockpit computed (ISO, Paris): `gc.proposal_report_until` then hides it
-until that time, as `gc.cockpit_defer_until` hides any other request; a time
-written in free words hides nothing. Nothing pauses an order yet (no door
-writes one paused): no request is read for one.
+Chaque geste qui modifie l’usine se fait en deux temps
+(`cockpit.ui.actions.render`) : un premier clic l’arme, « Confirmer ? », un
+second l’envoie. Une proposition reportée passe par `bin/proposal-door
+reporter` avec l’heure que le cockpit a calculée (ISO, heure de Paris) :
+`gc.proposal_report_until` la cache jusqu’à cette heure, comme
+`gc.cockpit_defer_until` cache toute autre demande ; une heure écrite en
+mots libres ne cache rien.
 
-On a reading that is no longer current the gestures are drawn and
-unavailable (« Lecture périmée : les gestes reviennent à la prochaine
-lecture. »). While the tracker cannot be read the box says « Inconnu :
-illisible depuis HH:MM » and lists what does not come from it.
+**Un ordre en pause n’est pas relancé.** Rien dans l’usine ne met un ordre
+en pause : la seule pause d’un ordre est une décision de l’opérateur, son
+nom dans `[orders] skip` de `city.toml` (#691, #695). `gc order run` ne
+trouve pas un ordre ainsi mis de côté, et aucune porte ne lève cette pause.
+Aucune demande n’en est donc lue ; c’est l’écart que porte la Planning
+Exception de B.
 
-**Main text, folded details.** A line and a request opened say the cockpit's
-French. A title its producer wrote outside the text contract is said whole
-after the cockpit's label (« Texte écrit : « … » ») only when it holds no
-identifier and no internal term (`cockpit.text.validate.speaks_plainly`);
-otherwise the producer's words are in the folded details only. The folded
-« Détails » of each request give its identifier, its nature, why a field
-was replaced, the producer's words as written, the precise source, and the
-links where it lives (the page of its project, the page Usine, the journal).
+Sur une lecture qui n’est plus à jour, les gestes sont dessinés et
+indisponibles (« Lecture périmée : les gestes reviennent à la prochaine
+lecture. »). Tant que le suivi des tickets est illisible, la boîte dit
+« Inconnu : illisible depuis HH:MM » et liste ce qui ne vient pas de lui.
 
-**Usine muette** (`lib/cockpit/requests/sources/silence.py`): the heartbeat
-goes out only while the supervisor and the tracker read fresh; once one of
-them has been silent for longer than `COCKPIT_SILENCE_ALERT_SECONDS` (900 s,
-the alert delay of the heartbeat), the cockpit raises an Urgent request
-« Usine muette » that names the sources and since when. It leaves when both
-read fresh again; it is pushed as any Urgent request. It is shown even
-while the tracker was never read (home-loading, home-error), outside the
-parts the reference numbers.
+**Texte principal en français, détails repliés.** Une ligne et une demande
+ouverte disent le français du cockpit. Le texte d’un producteur passe le
+contrôle de `cockpit.text.validate` : pas d’identifiant, pas de terme
+interne, une ligne de 140 caractères au plus, et en français — une phrase
+dont les mots grammaticaux sont anglais (« the », « is », « your »…) et plus
+nombreux que les mots grammaticaux français est refusée
+(`speaks_french`). Un champ refusé est remplacé par sa phrase de repli et le
+défaut du producteur est compté ; les portes (`bin/proposal-door`, par
+`bin/operator-text-check`) appliquent le même contrôle avant d’écrire. Un
+titre écrit hors de ce contrat est redit en entier après le libellé du
+cockpit (« Texte écrit : « … » ») seulement s’il est français et ne porte ni
+identifiant ni terme interne (`speaks_plainly`) ; sinon les mots du
+producteur ne sont que dans les détails repliés. Les « Détails » repliés de
+chaque demande donnent son identifiant, sa nature, pourquoi un champ a été
+remplacé, les mots du producteur tels qu’écrits, la source précise et les
+liens où elle vit (la page de son projet, la page Usine, le journal).
 
-**A command that expires** (af-fksj2c, `cockpit.actions.registry`,
-`cockpit.actions.uncertain`): a door that does not answer within
-`COCKPIT_ACTION_TIMEOUT_SECONDS` (15 s) is killed. The POST answers 504 with
-a readable error (« La commande n’a pas répondu en N s : elle a expiré. Son
-issue est incertaine ; le cockpit relit la source avant tout nouvel
-essai. ») and `incertain: true`, and the tracker is read again at once. Its
-target is marked uncertain: a new gesture on it answers 409 until the
-tracker was read again after the mark; then, if the request no longer
-waits -- the command had done its work --, 409 for good (« Le geste
-précédent a été enregistré à la source … ») and the success read is what the
-page shows; if it still waits, the gesture goes. An unforeseen error of a
-gesture answers 500 with a readable sentence instead of breaking the
-request. The page shows the error on the request and reads itself again.
+**Signal non reconnu** (user story 76) : une fiche ouverte du suivi des
+tickets qu’un producteur de l’usine a déposée (`gc.source`), qui n’est
+d’aucune forme que le cockpit lit (question, proposition, session en pause)
+et qui n’a alerté personne (ni `gc.needs_benjamin`, ni
+`gc.escalation_mayor_paged_at` : une alerte d’abord adressée au Maire reste
+au Maire), devient une demande Quand tu veux « Signal non reconnu venant de
+<producteur> ». Son titre et sa description, tels qu’écrits, sont dans les
+détails repliés sous « Texte brut », jamais en texte principal : le cockpit
+n’invente aucun sens. Aujourd’hui chaque producteur connu alerte le Maire
+d’abord : aucun signal de ce type n’apparaît, sauf d’un producteur nouveau.
+
+**Usine muette** (`lib/cockpit/requests/sources/silence.py`) : le heartbeat
+ne part que tant que le superviseur et le suivi des tickets sont lus à jour ;
+dès que l’un d’eux se tait plus longtemps que `COCKPIT_SILENCE_ALERT_SECONDS`
+(900 s, le délai d’alerte du heartbeat), le cockpit lève une demande Urgent
+« Usine muette » qui nomme les sources et depuis quand. Elle part quand les
+deux sont de nouveau lus à jour ; elle est envoyée comme toute demande
+Urgent. Elle s’affiche même quand le suivi des tickets n’a jamais été lu
+(home-loading, home-error), hors des parties que la référence numérote.
+
+**Une commande qui expire** (af-fksj2c, `cockpit.actions.registry`,
+`cockpit.actions.uncertain`) : une porte qui ne répond pas dans
+`COCKPIT_ACTION_TIMEOUT_SECONDS` (15 s) est arrêtée. Le POST répond 504 avec
+une erreur lisible (« La commande n’a pas répondu en N s : elle a expiré.
+Son issue est incertaine ; le cockpit relit la source avant tout nouvel
+essai. ») et `incertain: true`, et le suivi des tickets est relu aussitôt.
+Sa cible est marquée incertaine : un nouveau geste sur elle répond 409 tant
+que le suivi n’a pas été relu après la marque ; ensuite, si la demande
+n’attend plus — la commande avait fait son travail —, 409 pour de bon (« Le
+geste précédent a été enregistré à la source … ») et la page montre le
+succès lu ; si elle attend encore, le geste part. Tant qu’un geste serait
+refusé, la page le dessine indisponible avec la même raison, même quand la
+relecture a échoué (`UncertainOutcomes.pending`). Une erreur imprévue d’un
+geste répond 500 avec une phrase lisible au lieu de casser la requête. La
+page montre l’erreur sur la demande et se relit.
 
 ## Home screen, as the validated prototype shows it (af-mjfvwx)
 
@@ -1084,7 +1131,14 @@ copy. What it gives the cockpit to read:
 `home-gestes` carries such a tracker: a proposal, a session the loop guard
 paused and a question, with the escalation door that expires. On it the
 gestures of « Ce qui t’attend » are confirmed and read back at their source,
-and an answer to the question expires (B, af-4uzgzm: its demonstration line).
+and an answer to the question expires (B, af-4uzgzm: its demonstration line;
+for Benjamin, « Le jeu home-gestes » below says it in French).
+
+Le jeu `home-gestes` (pour Benjamin) : un suivi des tickets tel que les
+portes l’écrivent — une proposition, une session mise en pause par l’usine et
+une question —, la porte des questions ne répondant jamais. On y refuse une
+proposition avec sa raison, on relance la session, et une réponse à la
+question expire, puis la source est relue.
 
 No controller and no tracker is started. A dataset that is not marked
 `"synthetic": true`, carries no `generated_at`, names no state, or whose

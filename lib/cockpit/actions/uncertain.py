@@ -36,6 +36,18 @@ class UncertainOutcomes:
             with self._lock:
                 self._since[target] = at
 
+    def pending(self, read_at, waiting):
+        """``{target: reason}`` for every target a new gesture on would be
+        refused right now, so that the page draws it unavailable; lifts
+        nothing (``read_at``, ``waiting``: as :meth:`refusal`)."""
+        with self._lock:
+            marks = dict(self._since)
+        return {
+            target: REREAD_PENDING if read_at is None or read_at <= since else ALREADY_DONE
+            for target, since in marks.items()
+            if read_at is None or read_at <= since or target not in waiting
+        }
+
     def refusal(self, target, read_at, waiting):
         """Why a new gesture on ``target`` may not go, or ``None``.
         ``read_at``: when the tracker was last read (``None``: never);
