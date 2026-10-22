@@ -1015,10 +1015,10 @@ ways:
 | « Analyses »: « Résultats fusionnés » or « Où passe le temps ? »; a merged result (« projet · hier ») | one bead kept as said for the view; the project of each merged result is declared | `beads.value`; `projets.value.projects` |
 | nothing read yet: `ui.state` is `loading` | a supervisor that never answers, and a tracker whose read never ends (the cockpit waits a day for it, `COCKPIT_BEADS_READ_TIMEOUT_SECONDS`) | every source `unknown`, without value, `beads.failed_at` empty; `GET /` says it is reading, however late it is looked at |
 | nothing readable: `ui.state` is `error` | a supervisor that never answers, and a tracker whose read fails | every source `unknown`, without value, `beads.failed_at` set; `GET /` says the view is unavailable as soon as the first read failed |
-| a reading that is no longer current: `ui.state` is `stale` or `offline`, or `ui.stale` is true (Runs) | a supervisor that is read once, then answers no more | `gc.freshness` leaves `fresh` within seconds (a 2 s Validity window instead of 2 min), the last `gc.value` kept |
+| a reading that is no longer current: `ui.state` is `stale` or `offline`, or `ui.stale` is true (Runs) | a supervisor that is read once, then answers no more | `gc.freshness` and `sessions.freshness` leave `fresh` within seconds (a 2 s Validity window instead of 2 min), the last `gc.value` and `sessions.value` kept |
 | the runs of a Runs state, each « Livraison D01 » or « Maintenance » | a workflow as the tracker holds one (C1, af-lzti7w): a « Livraison D01 » is a convoy carrying the new-flow mark, under the title of the run, written by `benjamin` for the project `agent-factory` (the datasets name none), its ticket (same `gc.graph_digest`; `gc.flow.merge` when the run says « Fusionné », `gc.flow.gate.withdrawn` when « Abandonné »), the workflow root `mol-ticket-author` run on an input convoy that tracks the ticket, and, when an agent of the run is a « Relect… » or an « Évaluat… », the workflow root `mol-code-review` or `mol-ticket-evaluation` run on an input convoy that tracks the bead the dispatch door writes to launch it (`gc.dispatched_via`, its description naming the convoy and the ticket); a « Maintenance » is a workflow root `mol-do-work` run on the work Benjamin asked for, under the title of the run; closed at the end of the run, open while it has none; the day of `generated_at` at the run's `started` (Paris) is its start | `runs.value`; `GET /runs` |
 | the jobs of a run | one step per job, of the workflow root of its agent's role (the author's for Benjamin's and the code's), under its name, from its start to its end (open without one): a job of the lane `human` a plain step routed to `benjamin`, of the lane `code` a `check` (`gc.outcome` pass once closed), of an agent lane a `ralph` whose closing runs a check (`gc.check_mode`), claimed by an attempt of the session of that agent (`gc.logical_bead_id`, `gc.claimed_at`, `gc.outcome` pass once closed); its prompt as description, its result as close reason | `runs.value`; `GET /runs/run`, `GET /runs/job` |
-| the agent lanes | one session per agent: its `agent_name` the name of the lane, its `template` and `provider` the two halves of its role (« Relectrice · Claude »), running on the open job it holds | `sessions.value.agents`, `sessions.value.sessions`, `gc.value.agents_running` |
+| the agent lanes | one session per job of an agent (`synthetic-session-<lane>-<run>-<job>`): its `agent_name` the name of the lane, its `template` and `provider` the two halves of its role (« Relectrice · Claude »), running on the open job it holds | `sessions.value.agents`, `sessions.value.sessions`, `gc.value.agents_running` |
 | what a Runs state selects: `ui.filter`, `ui.run`, `ui.selected_job`, `ui.selected_event` | the filter, the run, the job and the event a page opens when its address names none (`COCKPIT_RUNS_VIEW`) | `GET /runs`, `GET /runs/run`, `GET /runs/job` |
 | the moment a Runs state shows (the latest `started` + `elapsed` of an open run) | the clock of the cockpit starts there and runs on (`COCKPIT_CLOCK_START`) | the horizon of the open runs, `read_at` |
 
@@ -1186,8 +1186,12 @@ role keep one each. Its start is its first claim, its end its closing; an
 open job lasts up to now, and the clock moves only that horizon. Status:
 « Fusionné » (a ticket merged), « Abandonné » (every ticket withdrawn),
 « Terminé » (the root closed), « Ta décision » (a job of Benjamin open),
-« En cours ». When the supervisor's reading is no longer current, the run
-says « Lecture périmée » with the moment it was last observed.
+« En cours »; a run ended in a success is ticked « ✓ », one ended without
+(« Abandonné », « Fermé » sans fusion) crossed « ✕ » and drawn muted. The
+lanes Humain and Code are drawn even without a job. When a source the run
+is drawn from -- its workflow beads (`runs`) or the supervisor's sessions
+(`sessions`) -- is no longer current, the run says « Lecture périmée » with
+the moment it was last observed.
 
 The events of a job are what the tracker recorded of it: its start and its
 end (« autre », grey), each session that claimed it, at its claim
