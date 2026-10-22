@@ -519,7 +519,8 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         /runs/job?run=<run>&job=<job>&event=<n>: the same, with the detail
         of a job under the frise and one of its events open. An address
         that names nothing opens what the frozen state selects. A reading
-        of the supervisor no longer current is said, with when it was."""
+        of a source the run is drawn from no longer current is said, with
+        when it was."""
         snapshot = read_model.snapshot()
         runs, _, _ = self._workflow_runs(read_model, snapshot)
         query, view = self._query(), self.server.runs_view
@@ -527,8 +528,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         run = next((r for r in runs or [] if r["id"] == wanted), None)
         job_id = (query.get("job") or [view.get("job") or ""])[0] if job else None
         event = (query.get("event") or [str(view.get("event") or "")])[0] if job else ""
-        gc_row = snapshot.get("gc") or {}
-        stale_at = gc_row.get("read_at") if gc_row.get("freshness") in (STALE, UNKNOWN) else None
+        stale_at = _stale_at(snapshot, RUN_SOURCES)
         main = render_run_page(run, now=read_model.now(), stale_at=stale_at, job_id=job_id,
                                event=int(event) if event.isdigit() else None)
         self._send_page(read_model, "runs", main, extra_css=RUNS_PAGE_CSS, status=200 if run else 404,
@@ -626,6 +626,20 @@ def _live_line(gc_row):
         return "● Suspendue"
     agents = int(value.get("agents_running") or 0)
     return "● En marche · %d agent%s" % (agents, "s" if agents > 1 else "")
+
+
+# The sources a run is drawn from: its workflow beads, and the sessions the
+# supervisor lists for its agents.
+RUN_SOURCES = ("runs", "sessions")
+
+
+def _stale_at(snapshot, names):
+    """When the sources ``names`` no longer current were last read (the
+    oldest of them); None while each is current or was never read."""
+    read_ats = [snapshot[name]["read_at"] for name in names
+                if snapshot.get(name) and snapshot[name].get("freshness") in (STALE, UNKNOWN)
+                and snapshot[name].get("read_at") is not None]
+    return min(read_ats) if read_ats else None
 
 
 def _latest_read_at(snapshot, names):

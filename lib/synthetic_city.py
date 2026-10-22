@@ -522,7 +522,7 @@ def _runs_city(name, at, ui, fixtures) -> SyntheticCity:
     clock = max(opened, default=moment)
     return SyntheticCity(
         name=name, reading=READ_ONCE if ui.get("stale") is True else READ,
-        beads=beads, sessions=[sessions[lane] for lane in lanes if lane in sessions],
+        beads=beads, sessions=[session for lane in lanes for session in sessions.get(lane, {}).values()],
         clock_start=clock.isoformat(), view=view,
     )
 
@@ -532,9 +532,10 @@ def _utc(moment: datetime) -> str:
 
 
 def _run_records(run, lanes, moment, sessions, opened, ui, view) -> list:
-    """The beads of one run of the fixtures; its open agents' sessions in
-    `sessions`, the moment it is shown at in `opened` when it is open, what
-    the state selects of it in `view`."""
+    """The beads of one run of the fixtures; the sessions of its agents in
+    `sessions` (by lane, then by name: one per job), the moment it is shown
+    at in `opened` when it is open, what the state selects of it in
+    `view`."""
     formula = RUN_FORMULAS.get(run["type"])
     if formula is None:
         raise DatasetRefused(f"a run of a type no workflow has: {run['type']!r}")
@@ -616,19 +617,20 @@ def _run_records(run, lanes, moment, sessions, opened, ui, view) -> list:
                         **ended(job["end"]), "metadata": step})
         if lane["kind"] == "agent":
             template, _, provider = lane["role"].partition(" · ")
-            session = f"synthetic-session-{lane['id']}"
+            # Each job of an agent is claimed by a session of its own: the
+            # agent keeps one lane across them.
+            session = f"synthetic-session-{lane['id']}-{key}-{job['id']}"
             records.append({"id": f"{step_id}-attempt-1", "title": job["name"], "issue_type": "task",
                             "created_at": at(job["start"]), **ended(job["end"]),
                             "metadata": {"gc.logical_bead_id": step_id, "gc.root_bead_id": root_id, "gc.attempt": "1",
                                          "gc.session_name": session, "gc.routed_to": template,
                                          "gc.claimed_at": at(job["start"]), **passed}})
             running = job["end"] is None and run["end"] is None
-            if running or lane["id"] not in sessions:
-                sessions[lane["id"]] = {
-                    "id": session, "name": session, "session_name": session, "agent_name": lane["name"],
-                    "template": template, "provider": provider or None, "running": running,
-                    "last_active": _utc(moment), **({"active_bead": step_id} if running else {}),
-                }
+            sessions.setdefault(lane["id"], {})[session] = {
+                "id": session, "name": session, "session_name": session, "agent_name": lane["name"],
+                "template": template, "provider": provider or None, "running": running,
+                "last_active": _utc(moment), **({"active_bead": step_id} if running else {}),
+            }
         if ui.get("run") == key and ui.get("selected_job") == job["id"]:
             view["job"] = step_id
     return records

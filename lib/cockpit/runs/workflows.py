@@ -59,7 +59,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from cockpit.core.readmodel import PARIS
-from cockpit.runs.derive import AGENT, CODE, DONE, HUMAN, LIVE, STOPPED, WAIT, _decoded, _ts, run_from_bead
+from cockpit.runs.derive import AGENT, CODE, DONE, HUMAN, LIVE, STOPPED, WAIT, _decoded, _ts, run_from_bead, tone
 
 READ_TIMEOUT_SECONDS = 20
 # What the reads ask the tracker for: the beads bearing each key, whatever
@@ -275,7 +275,7 @@ def _run(key, group, meta, steps, attempts, sessions, now):
         "id": key, "ticket": meta[root["id"]].get("gc.ticket_id") or key, "spec": meta[root["id"]].get("gc.spec_id"),
         "type": _type(group, meta), "title": title or root.get("title") or key, "step": step, "status": status,
         "trigger": trigger, "project": project,
-        "tone": {LIVE: "live", WAIT: "wait"}.get(state), "state": state, "start": start, "end": max(end, start + 1),
+        "tone": tone(state, status), "state": state, "start": start, "end": max(end, start + 1),
         "branch": meta[root["id"]].get("gc.flow.branch"), "rig": meta[root["id"]].get("gc.dispatch_rig"),
         "models": {}, "workflow": True,
     }, jobs, now)
@@ -396,8 +396,8 @@ def _events(job, now):
 
 
 def _assemble(run, jobs, now):
-    """``run`` with its lanes and jobs as the pages draw them: Humain, Code,
-    then the agents in the order they began."""
+    """``run`` with its lanes and jobs as the pages draw them: Humain and
+    Code, even without a job, then the agents in the order they began."""
     start, end = run["start"], run["end"]
     lanes = {HUMAN: {"key": HUMAN, "kind": HUMAN, "who": "Benjamin", "role": "Humain", "name": "Humain"},
              CODE: {"key": CODE, "kind": CODE, "who": "Code", "role": "Contrôles et transitions", "name": "Code"}}
@@ -416,8 +416,6 @@ def _assemble(run, jobs, now):
     for key in order:
         lane = dict(lanes[key])
         mine = [item for item in items if item["lane"] == key]
-        if key in (HUMAN, CODE) and not mine:
-            continue
         lane["title"] = "%s · %s" % (lane["who"], lane["role"])
         lane["items"] = mine
         lane["jobs"] = [(int(i["offset"]), int(min(i["offset"] + i["lasted"], end - start))) for i in mine]

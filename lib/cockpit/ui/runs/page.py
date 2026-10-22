@@ -92,7 +92,16 @@ def _selected(runs, filtre):
 
 
 def _status(run):
-    return ("✓ %s" if run["state"] == DONE else "%s") % run["status"]
+    """The status of a run, ticked when it ended in a success, crossed when
+    it ended without one."""
+    if run["state"] != DONE:
+        return run["status"]
+    return ("✕ %s" if run.get("tone") == "ended" else "✓ %s") % run["status"]
+
+
+def _dot(run, anchors):
+    """The dot of a run still open, beside its status."""
+    return '<span class="rn-dot" %s></span>' % anchors("live-dot") if run.get("tone") in ("live", "wait") else ""
 
 
 def _now(run, now):
@@ -118,7 +127,7 @@ def run_card(run, now=None, anchors=None):
     elapsed = max(run["elapsed"], 1)
     tone = run.get("tone") or ""
     card, top, type_, badge = anchors("card"), anchors("card-top"), anchors("span"), anchors("badge")
-    dot = '<span class="rn-dot" %s></span>' % anchors("live-dot") if tone else ""
+    dot = _dot(run, anchors)
     head = ('<div class="rn-top" %s><span %s>%s</span><span class="rn-badge %s" %s>%s%s</span></div>'
             % (top, type_, _e(run["type"]), tone, badge, dot, _e(_status(run))))
     title = ('<h2 %s>%s</h2><p %s>%s</p><p class="rn-origin" %s><span>Déclencheur : %s</span>'
@@ -200,7 +209,7 @@ def _render_head(run, now, stale_at, anchors):
     crumb, back, kind, title = anchors("crumb"), anchors("back"), anchors("small"), anchors("h1")
     summary, badge = anchors("run-summary"), anchors("badge")
     tone = run.get("tone") or ""
-    dot = '<span class="rn-dot" %s></span>' % anchors("live-dot") if tone else ""
+    dot = _dot(run, anchors)
     horizon = "Temps final figé" if run["state"] == DONE else "Horizon : maintenant"
     parts = ['<span class="rn-badge %s" %s>%s%s</span>' % (tone, badge, dot, _e(_status(run))),
              "<span>Déclenché à %s (Paris)</span>" % _e(paris_time(run["start"], now)),
@@ -437,6 +446,7 @@ CSS = """
 .rn-top,.rn-foot{display:flex;justify-content:space-between;gap:12px;font-size:12px;color:var(--pn-muted-text)}
 .rn-foot{margin-top:15px;font-size:13px}
 .rn-badge{color:var(--ok);white-space:nowrap}.rn-badge.live{color:var(--accent)}.rn-badge.wait{color:var(--pn-warn-text)}
+.rn-badge.ended{color:var(--pn-muted-text)}
 .rn-dot{display:inline-block;width:7px;height:7px;border-radius:100%;background:currentColor;margin-right:6px}
 .rn-mono{font:13px ui-monospace,monospace}
 .rn-mini{display:grid;gap:6px;font-size:11px}

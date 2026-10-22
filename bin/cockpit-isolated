@@ -208,7 +208,9 @@ def main(argv: list[str]) -> int:
     if LAUNCH_MARK in os.environ:
         env[LAUNCH_MARK] = os.environ[LAUNCH_MARK]
     if city.reading == synthetic_city.READ_ONCE:
+        # Its state and its sessions alike: both are read from it.
         env["COCKPIT_VALIDITY_GC_SECONDS"] = SILENT_VALIDITY_SECONDS
+        env["COCKPIT_VALIDITY_SESSIONS_SECONDS"] = SILENT_VALIDITY_SECONDS
     # A Runs state: the clock starts at the moment the state shows, and its
     # selection is what a page opens when its address names none.
     if city.clock_start:
