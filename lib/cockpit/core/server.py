@@ -209,11 +209,14 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             result["rafraichi"] = self._reread_after_action()
         self._send_json(result)
 
-    def _first_reading(self, read_model, knowledge=False):
+    def _first_reading(self, read_model, knowledge=False, agents=False):
         """The snapshot, once the projects had their first reading if the
         tracker had its own -- and, with ``knowledge``, once the projects
         and their repositories were read or failed, so that the page of a
-        project tells a reading under way from one that failed (E) --
+        project tells a reading under way from one that failed (E); with
+        ``agents``, once the sessions were tried after the tracker was read
+        (they are refused while it is not), so that a run names its agents
+        on the first page (C1) --
         waiting at most
         :data:`FIRST_READING_WAIT_SECONDS`: a page served the instant the
         cockpit started would show no project, and no result, of a source
@@ -226,6 +229,10 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                        and projets["read_at"] is None and projets.get("failed_at") is None)
             pending = pending or knowledge and any(
                 row is not None and row["read_at"] is None and row.get("failed_at") is None for row in (projets, depots))
+            sessions = snapshot.get("sessions")
+            pending = pending or agents and sessions is not None and sessions["read_at"] is None and (
+                sessions.get("failed_at") is None or beads is None or beads["read_at"] is None
+                or sessions["failed_at"] <= beads["read_at"])
             if not pending or time.monotonic() >= deadline:
                 return snapshot
             time.sleep(0.1)
@@ -554,7 +561,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
     def _send_runs_page(self, read_model):
         """GET /runs: the runs, filtered by ?filtre=tous|en-cours|termines
         (by default, the filter the frozen state selects, else Tous)."""
-        snapshot = read_model.snapshot()
+        snapshot = self._first_reading(read_model, agents=True)
         runs, failed, checked = self._workflow_runs(read_model, snapshot)
         filtre = (self._query().get("filtre") or [self.server.runs_view.get("filter") or "tous"])[0]
         self._send_page(read_model, "runs",
@@ -568,7 +575,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         that names nothing opens what the frozen state selects. A reading
         of a source the run is drawn from no longer current is said, with
         when it was."""
-        snapshot = read_model.snapshot()
+        snapshot = self._first_reading(read_model, agents=True)
         runs, _, _ = self._workflow_runs(read_model, snapshot)
         query, view = self._query(), self.server.runs_view
         wanted = (query.get("run" if job else "id") or [view.get("run") or ""])[0]
