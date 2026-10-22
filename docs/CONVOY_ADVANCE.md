@@ -238,7 +238,10 @@ A ticket of a marked convoy is closed by the pass, through `bin/ticket-end`
   pass, not the check; a pass that finds it running leaves it, and the
   pass that finds it ended reports its answer. Before this, a check longer
   than what was left of the 300 s was killed with its pass and started
-  again from zero by the next one: no pass ended any more.
+  again from zero by the next one: no pass ended any more. A measurement
+  refusal (for example, a declared screen that does not answer) stays visible
+  under `fidelity.refused`, but is informative and does not fail the pass
+  (ADR-0032). A controller error or an unreadable answer still fails it.
 - **After the merge**, a convoy that has a merged ticket still open, or in
   which this pass merged one, is handed to `bin/ticket-end settle <convoy>
   --repo <project repository>`. Reported under `ticket_end`: `closed` (the
@@ -791,7 +794,7 @@ it is named as CONVOY, carries `closed`, the record of its closing.
 | Exit | Meaning |
 |---|---|
 | 0 | the pass is done; what it started is listed, possibly nothing |
-| 1 | refused or could not run (settings, a bound, tracker), the door refused a ticket or a resume (named under `refused`), a ticket to resume has no `resume` setting or no project, a parking could not be lifted, an incident or a grouped request could not be raised or withdrawn, the repair of a red integration branch or of tracked elements could not be published, or the merge pass, the settlement of the code reviews, of the evaluations or of the correction rounds, a fidelity check, the ticket-end gate, the end-of-Spec gate, the Outcome Evaluation or the settlement of the end code review could not run, a repair the Evaluator of the end drafted could not be published, the Evidence Pack could not be generated, the « non conforme » request of stopped rounds could not be raised or recorded, the Acceptance Request of a Delivered Outcome or the repair of an Acceptance Session's outage could not be sent, published or recorded, or the merge or the closing that follows the operator's answer could not be made (`promotion.error`, `promotion.message`, `promotion.pending`, or the `repair` of a voided acceptance that could not be published) |
+| 1 | refused or could not run (settings, a bound, tracker), the door refused a ticket or a resume (named under `refused`), a ticket to resume has no `resume` setting or no project, a parking could not be lifted, an incident or a grouped request could not be raised or withdrawn, the repair of a red integration branch or of tracked elements could not be published, or the merge pass, the settlement of the code reviews, of the evaluations or of the correction rounds, the fidelity controller (not an informative measurement refusal), the ticket-end gate, the end-of-Spec gate, the Outcome Evaluation or the settlement of the end code review could not run, a repair the Evaluator of the end drafted could not be published, the Evidence Pack could not be generated, the « non conforme » request of stopped rounds could not be raised or recorded, the Acceptance Request of a Delivered Outcome or the repair of an Acceptance Session's outage could not be sent, published or recorded, or the merge or the closing that follows the operator's answer could not be made (`promotion.error`, `promotion.message`, `promotion.pending`, or the `repair` of a voided acceptance that could not be published) |
 | 3 | a convoy is in an « état sans règle »: none of its tickets is started, the anomalies are listed (0 with `--stopped-ok` once its incident is raised) |
 | 4 | the convoy does not carry the mark: « pas un convoi du nouveau flux » |
 
