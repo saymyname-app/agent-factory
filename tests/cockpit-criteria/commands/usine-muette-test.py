@@ -13,13 +13,17 @@ bin/project-launch, on a dataset:
   heartbeat goes out only on fresh readings, so it stops;
 - home-loading: nothing is ever read -- no heartbeat goes out;
 - a tracker as bin/escalation-door (benjamin) leaves a question whose
-  producer wrote an identifier in its words (pour_moi.serve_tracker).
+  producer wrote an identifier in its words, and one whose producer wrote
+  English (pour_moi.serve_tracker).
 
 The silence is waited for longer than the threshold of the launch: the
 request « usine muette » is read at GET /api/requests, Urgent, and on the
 page at GET / as a headless Chromium shows it (pour_moi.walk). The folded
 details are read in the HTML served (pour_moi.folded), apart from the old
 zone « Détails techniques et actions ».
+
+A main text is French: no request of « Ce qui t’attend » says a sentence
+told English by its grammatical words (« the », « is », « your »…).
 
 False if the silent Factory is not Urgent, or an internal identifier shows
 in a main text.
@@ -44,16 +48,29 @@ SILENCE_SECONDS = 40
 # tracker or of a pull request, an internal term.
 IDENTIFIER = re.compile(r"\baf-[a-z0-9]{3,}\b|(?<![\w&])#\d+\b|\bsynthetic-[\w-]+")
 INTERNAL_TERM = re.compile(r"(?i)\b(?:beads?|convoys?|orders?|molecules?|wisps?|rigs?)\b")
+# What tells a sentence English (user story 73: « tout texte principal en
+# français »): its grammatical words, none of them a French word.
+ENGLISH = re.compile(r"(?i)\b(?:the|and|is|are|was|were|of|for|with|this|that|it|be|not|should|will|has|have|"
+                     r"please|from|by|which|what|when|you|your|we|our|to|before|after)\b")
 
 AT = "2026-10-12T08:00:00Z"
 QUESTION = "af-r3t5y"
 # The words of a producer that wrote identifiers where the operator reads.
 WRITTEN = "Relire af-k2j4h avant la fusion de #712"
-TRACKER = {QUESTION: escalation(WRITTEN, "La relecture de la carte attend ton avis.", [
+OPTIONS = [
     {"lettre": "a", "option": "Relire maintenant", "consequence": "la fusion attend la relecture", "recommande": True,
      "raison": "la carte change le parcours"},
     {"lettre": "b", "option": "Fusionner sans relire", "consequence": "la fusion part tout de suite"},
-], AT, "notes")}
+]
+QUESTION_IN_ENGLISH = "af-e7n2w"
+# The words of a producer that wrote English, with no identifier and no
+# internal term in them.
+WRITTEN_IN_ENGLISH = "Please review the export before the merge"
+TRACKER = {
+    QUESTION: escalation(WRITTEN, "La relecture de la carte attend ton avis.", OPTIONS, AT, "notes"),
+    QUESTION_IN_ENGLISH: escalation(WRITTEN_IN_ENGLISH, "La relecture de l’export attend ton avis.", OPTIONS, AT,
+                                    "notes"),
+}
 
 
 class UsineMuette(unittest.TestCase):
@@ -94,6 +111,11 @@ class UsineMuette(unittest.TestCase):
         self.assertEqual([], IDENTIFIER.findall(shown), "an identifier shows in a main text")
         self.assertEqual([], INTERNAL_TERM.findall(shown), "an internal term shows in a main text")
         self.assertEqual([], [r["id"] for r in requests if r["id"] in shown], "the identifier of a request shows")
+        said = [text for r in requests
+                for text in [r.get("quoi"), r.get("pourquoi")] + [o.get("option") for o in r.get("que_faire") or []]
+                if isinstance(text, str)]
+        self.assertEqual([], [text for text in said if ENGLISH.search(text)], "a main text is not French")
+        self.assertEqual([], ENGLISH.findall(shown.split("Ce qui t’attend", 1)[-1]), "a main text is not French")
 
     def details_of(self, address: str, request: dict) -> list[dict]:
         """The folded details of the page that give the identifier of
@@ -118,16 +140,21 @@ class UsineMuette(unittest.TestCase):
 
     def test_a_producer_text_with_identifiers_is_shown_without_them_and_kept_whole_in_its_details(self):
         address = serve_tracker(self.tree, TRACKER)
-        requests = wait_for(lambda: requests_of(address), lambda found: any(r["id"] == QUESTION for r in found), 20)
-        self.assertIn(QUESTION, [r["id"] for r in requests], "« Ce qui t’attend » does not list the question")
+        requests = wait_for(lambda: requests_of(address),
+                            lambda found: {QUESTION, QUESTION_IN_ENGLISH} <= {r["id"] for r in found}, 20)
+        for bead_id in (QUESTION, QUESTION_IN_ENGLISH):
+            self.assertIn(bead_id, [r["id"] for r in requests], f"« Ce qui t’attend » does not list {bead_id}")
         shown = visible_text(walk(address, [])["start"])
         self.assertIn("Ce qui t’attend", shown)
         self.assert_main_texts_clean(shown, requests)
-        question = next(r for r in requests if r["id"] == QUESTION)
-        details = self.details_of(address, question)
-        self.assertTrue(details, "no folded details give the identifier of the question")
-        self.assertTrue(any(WRITTEN in d["text"] for d in details),
-                        f"its folded details do not keep the words of its producer as written: {details}")
+        self.assertNotIn(WRITTEN_IN_ENGLISH, shown, "the words a producer wrote in English show as main text")
+        for bead_id, written in ((QUESTION, WRITTEN), (QUESTION_IN_ENGLISH, WRITTEN_IN_ENGLISH)):
+            question = next(r for r in requests if r["id"] == bead_id)
+            details = self.details_of(address, question)
+            self.assertTrue(details, f"no folded details give the identifier of {bead_id}")
+            self.assertTrue(any(written in d["text"] for d in details),
+                            f"the folded details of {bead_id} do not keep the words of its producer as written: "
+                            f"{details}")
 
 
 if __name__ == "__main__":

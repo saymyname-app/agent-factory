@@ -23,7 +23,9 @@ request activated in « Ce qui t’attend », the gesture activated, then
 GET /api/journal, from the page): nothing was written, the request is
 still waiting. After it, the source says what was done: the journal of the
 requests resolved at their source holds the refusal and its reason, or the
-relaunch; the request has left « Ce qui t’attend ».
+relaunch; the tracker as the cockpit reads it at its source (GET
+/api/status) holds the time a proposal is put off until; the request has
+left « Ce qui t’attend ».
 
 False if a gesture stays under the technical details, or if a gesture that
 changes the Factory goes without its confirmation.
@@ -37,14 +39,16 @@ from __future__ import annotations
 import json
 import sys
 import unittest
+from datetime import datetime, time, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from home_destination import LaunchTree  # noqa: E402
 from pour_moi import (  # noqa: E402
-    LEGACY_SUMMARY, control, escalation, journal_of, paused_session, proposal, requests_of, serve_tracker,
-    wait_for, walk,
+    LEGACY_SUMMARY, control, escalation, journal_of, paused_session, proposal, read_json, requests_of,
+    serve_tracker, wait_for, walk,
 )
 
 AT = "2026-10-12T08:00:00Z"
@@ -72,6 +76,17 @@ UNTIL = "Demain 09:00"
 CONFIRM = "Confirmer"
 # How long the source may take to say what a gesture did, once confirmed.
 TRACED_SECONDS = 20
+PARIS = ZoneInfo("Europe/Paris")
+# What bin/proposal-door (reporter) leaves on the proposal it puts off: the
+# time until which it is put off.
+REPORT_UNTIL = "gc.proposal_report_until"
+
+
+def tracker_read(address: str) -> tuple[dict, float]:
+    """The beads of the tracker as the cockpit last read them at their
+    source (GET /api/status), by their id, and when it read them."""
+    beads = read_json(address, "/api/status").get("beads") or {}
+    return {b.get("id"): b for b in beads.get("value") or [] if isinstance(b, dict)}, beads.get("read_at") or 0.0
 
 
 class PourMoiGestures(unittest.TestCase):
@@ -154,6 +169,18 @@ class PourMoiGestures(unittest.TestCase):
         self.assert_unfolded(walked[0]["page"], "Reporter")
         self.assert_nothing_written_before(walked, PROPOSAL)
         self.assert_left(address, PROPOSAL)
+        # The source holds the delay: the proposal is put off until
+        # tomorrow 09:00 (Paris) by the cockpit's clock -- not only hidden
+        # by the page or by the cockpit.
+        beads, read_at = wait_for(lambda: tracker_read(address),
+                                  lambda read: (read[0].get(PROPOSAL, {}).get("metadata") or {}).get(REPORT_UNTIL),
+                                  TRACED_SECONDS)
+        until = (beads.get(PROPOSAL, {}).get("metadata") or {}).get(REPORT_UNTIL)
+        self.assertTrue(until, f"the source holds no time the proposal is put off until: {beads.get(PROPOSAL)}")
+        tomorrow = datetime.fromtimestamp(read_at, PARIS).date() + timedelta(days=1)
+        self.assertEqual(datetime.combine(tomorrow, time(9), PARIS), datetime.fromisoformat(until),
+                         f"the source puts the proposal off until {until}, not « {UNTIL} »")
+        self.assertEqual("open", beads[PROPOSAL].get("status"), "putting the proposal off closed it")
         # Put off is no decision: nothing resolved the proposal.
         self.assertEqual([], [e for e in journal_of(address) if e["bead_id"] == PROPOSAL],
                          "putting the proposal off was written as its decision")
