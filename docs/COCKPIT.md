@@ -1081,6 +1081,11 @@ copy. What it gives the cockpit to read:
 | silence of the main sources | said « Usine muette » after 20 s (`COCKPIT_SILENCE_ALERT_SECONDS`): a state that falls silent (home-stale, home-offline) is first seen as it is drawn |
 | local settings, secrets, notifications, heartbeat, project clones, Tailscale | none: a temporary HOME and no local settings file |
 
+`home-gestes` carries such a tracker: a proposal, a session the loop guard
+paused and a question, with the escalation door that expires. On it the
+gestures of « Ce qui t’attend » are confirmed and read back at their source,
+and an answer to the question expires (B, af-4uzgzm: its demonstration line).
+
 No controller and no tracker is started. A dataset that is not marked
 `"synthetic": true`, carries no `generated_at`, names no state, or whose
 content the rules below cannot read, is refused before anything starts: the
