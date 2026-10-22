@@ -385,18 +385,21 @@ cmd_sweep() {
     # A page about the bead's own PR ("PR #N rejected ...", pr-autopilot) is
     # resolved once deliver-close has closed the bead on that same PR's
     # verified merge: clear it instead of asking the operator about a ticket
-    # already delivered (af-53v22s, 2026-10-01). A page about anything else,
-    # or about another PR, is left to the 2h rule.
+    # already delivered (af-53v22s, 2026-10-01). Likewise a page about a
+    # failing order once its bead is closed: the order opens a new bead if it
+    # fails again (af-drwmqm, 2026-10-22). A page about anything else, or
+    # about another PR, is left to the 2h rule.
     if jq -e --arg reason "$reason" '
-        .status == "closed" and .metadata["gc.delivery_status"] == "merged"
-        and ((.metadata["gc.pr_number"] // "" | tostring) as $n
-             | $n != "" and ($reason | startswith("PR #" + $n + " ")))' <<<"$issue" >/dev/null 2>&1; then
+        .status == "closed" and (((.metadata["gc.order_subject"] // "") != "")
+        or (.metadata["gc.delivery_status"] == "merged"
+            and ((.metadata["gc.pr_number"] // "" | tostring) as $n
+                 | $n != "" and ($reason | startswith("PR #" + $n + " ")))))' <<<"$issue" >/dev/null 2>&1; then
       "$GC_BIN" bd update "$bead" \
         --set-metadata "gc.escalation_mayor_paged_at=none" \
         --set-metadata "gc.escalation_mayor_reason=none" \
-        --append-notes "MAYOR FIRST RESOLVED: $reason -- that PR is merged" \
+        --append-notes "MAYOR FIRST RESOLVED: $reason -- its bead is closed" \
         >/dev/null || die "Beads write failed for $bead."
-      printf 'SWEPT: %s resolved by its merged PR, page cleared\n' "$bead"
+      printf 'SWEPT: %s resolved by its closing, page cleared\n' "$bead"
       continue
     fi
     paged_epoch=$(date -u -d "$paged_at" +%s 2>/dev/null) || continue
