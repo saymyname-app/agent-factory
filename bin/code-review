@@ -536,6 +536,12 @@ def wanted_round(convoy: Convoy, ticket: dict[str, Any]) -> tuple[str, Any]:
             # A later correction round took up the answers judged unfavorably
             # (bin/correction-round, af-bv0ikr): its tip is reviewed in full.
             return full_review(convoy, tip)
+        overridden = {entry.get("finding") for entry in ticket.get("overrides") or [] if isinstance(entry, dict)}
+        if last["commit"] != tip and set(review["state"]["unsettled"]) <= overridden:
+            # Every Blocking Finding left unsettled was overridden, which stands
+            # for a favorable verdict (bin/spec-integration): a commit added
+            # since is reviewed in full (F and G1 of af-strhoy, 22/10/2026).
+            return full_review(convoy, tip)
         return "waiting", (f"encore refusé après son tour de correction ({', '.join(review['state']['unsettled'])}) : "
                            "aucune revue ne s'ouvre, rien ne fusionne")
     responses = last.get("responses") or {}

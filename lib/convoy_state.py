@@ -3932,6 +3932,14 @@ def cmd_open_code_review(args: argparse.Namespace) -> int:
         replayed = replayed or (kind == "review" and last is not None and last["kind"] == "judgement"
                                 and last["commit"] != commit and KEY_CORRECTION in metadata
                                 and correction_record(metadata[KEY_CORRECTION])["commit"] == last["commit"])
+        # And the judgement whose every unsettled Blocking Finding the operator
+        # overrode, which stands for a favorable verdict: a later tip is
+        # reviewed in full (F and G1 of af-strhoy, 22/10/2026).
+        overridden = {entry["finding"] for entry in overrides_record(metadata[KEY_OVERRIDES])} \
+            if KEY_OVERRIDES in metadata else set()
+        replayed = replayed or (kind == "review" and last is not None and last["kind"] == "judgement"
+                                and last["commit"] != commit
+                                and set(code_review_state(record)["unsettled"]) <= overridden)
         if last and last["verdict"] == "unfavorable" and not replayed:
             if last["kind"] == "judgement":
                 raise Refusal(
