@@ -16,8 +16,10 @@ at the end of a finished one, what a run waits for, and a stale reading
 with the last moment it was observed. Its head says what triggered it and
 its project.
 
-False if the timer makes a job, an event or a verdict, or if two agents of
-the same role share a lane. The page at 390 px is in
+False if the timer makes a job, an event or a verdict, if two agents of
+the same role share a lane, if a new session of an agent opens a lane of
+its own, if the lane Humain or Code is missing because it holds no job, or
+if a run abandoned is drawn as a success. The page at 390 px is in
 runs-destination-layout-test.py; every state of Runs, in both themes, on a
 desktop and a phone, in runs-destination-readable-*-test.py.
 """
@@ -33,7 +35,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from runs_destination import LaunchTree, anchor, lanes, observe, seconds, text  # noqa: E402
+from runs_destination import LaunchTree, anchor, family, lanes, observe, seconds, text  # noqa: E402
 
 OPEN = None  # a job still open: « en cours », its duration up to now
 
@@ -70,12 +72,20 @@ ABANDON_LANES = [
 
 # run-active, reworded: Noé is a second author beside Alex.
 SECOND_AUTHOR = {'"role": "Évaluateur · Codex"': '"role": "Auteur · Codex"'}
+# run-abandoned, reworded: Alex did every job, Benjamin's and the code's.
+ALEX_ALONE = {'"lane": "human"': '"lane": "alex"', '"lane": "code"': '"lane": "alex"'}
 LAST_SEEN = re.compile(r"(?<!\d)\d{1,2}[:h]\d\d(?!\d)")
 
 
 def events_drawn(reading: dict) -> list[str]:
     """The events drawn on the frise, as each says what it is."""
     return [c["name"] for c in reading["controls"] if c["name"].startswith("Événement")]
+
+
+def sessions_of(reading: dict, who: str) -> set[str]:
+    """The sessions the events of the frise say `who` worked in."""
+    said = re.compile(rf"{re.escape(who)} · session (\S+)")
+    return {found.group(1) for name in events_drawn(reading) for found in [said.search(name)] if found}
 
 
 class RunsDestinationFrise(unittest.TestCase):
@@ -200,6 +210,11 @@ class RunsDestinationFrise(unittest.TestCase):
         self.assertTrue(text(reading, "ticks").endswith("4m20s"),
                         f"the axis does not end at the end: {text(reading, 'ticks')}")
         self.assert_lanes(reading, ABANDON_LANES)
+        # Abandoned is not a success: not ticked, not in the colour of one.
+        badge = anchor(reading, "badge")
+        self.assertIn("Abandonné", badge["text"])
+        self.assertNotIn("✓", badge["text"], "the run abandoned is ticked as a success")
+        self.assertNotIn("vert", {family(c) for c in badge["colours"]}, "the run abandoned is drawn as a success")
 
     def test_run_stale_says_the_reading_is_stale_and_when_it_was_last_observed(self):
         address = self.tree.launch("run-stale")
@@ -214,6 +229,21 @@ class RunsDestinationFrise(unittest.TestCase):
         self.assertIn("Lecture périmée", notice, "the stale reading is not said")
         self.assertRegex(notice, LAST_SEEN, f"the stale reading does not say when it was last observed: « {notice} »")
         self.assertNotIn("Job courant", self.head(reading), "a stale reading still claims the current jobs")
+        self.assert_lanes(reading, COCKPIT_LANES)
+
+    def test_a_run_without_a_job_of_benjamin_or_of_the_code_keeps_their_lanes(self):
+        reading = self.reading(self.tree.launch("run-abandoned", self.tree.reword("run-abandoned", ALEX_ALONE)))
+        self.assert_run(reading, "Ancienne proposition de filtre", "Abandonné")
+        self.assert_lanes(reading, [(BENJAMIN, []), (CODE, []),
+                                    (ALEX, [("Déclencheur", "18 s"), ("Préparer le travail", "24 s"),
+                                            ("Préparer les tests", "1 min 20 s"), ("Abandonner", "30 s")])])
+
+    def test_a_new_session_of_an_agent_keeps_its_lane(self):
+        reading = self.reading(self.tree.launch("run-active"))
+        # Alex prepared the tests in a session, then did the work in another:
+        # one lane, both jobs.
+        self.assertGreaterEqual(len(sessions_of(reading, "Alex")), 2,
+                                f"the run does not show Alex in two sessions: {events_drawn(reading)}")
         self.assert_lanes(reading, COCKPIT_LANES)
 
     def test_two_agents_of_the_same_role_keep_a_lane_each(self):
