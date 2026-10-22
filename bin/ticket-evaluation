@@ -888,7 +888,9 @@ def raise_stop(convoy_id: str, ticket: dict[str, Any], stop: dict[str, Any]) -> 
 def raise_planning_exception(convoy_id: str, ticket: dict[str, Any], state: dict[str, Any]) -> list[str]:
     """Spec §7: a criterion the Evaluator could not observe because of the
     criterion itself goes back to the Planning Run, so to the operator. The
-    ticket and those that wait for it are parked; nobody waives a criterion."""
+    ticket and those that wait for it are parked; only the operator's first
+    option judges it proven by its criterion test (af-ten1sp), nobody else
+    waives a criterion."""
     names = ", ".join(entry["what"] for entry in state["unobservable"] if entry["cause"] == "criterion")
     head = f"Planning Exception sur {ticket['id']} : "
     what = head + short(f"inobservable sur le produit lancé ({names})", REQUEST_LINE_MAX - len(head))
@@ -896,8 +898,9 @@ def raise_planning_exception(convoy_id: str, ticket: dict[str, Any], state: dict
         "quoi": what,
         "pourquoi": "Un critère gelé que l'Evaluator ne peut pas observer ne se dispense ni ne se reformule.",
         "que_faire": [
-            {"option": "Trancher dans le Planning Run",
-             "consequence": "Le ticket et ceux qui l'attendent restent parqués jusqu'à ta décision."},
+            {"option": "Juger ce qui est inobservable prouvé par son test de critère vert",
+             "consequence": "Le parcage est levé ; l'évaluation suivante le compte prouvé par le test, "
+                            "sans le voir sur le produit lancé avant ta recette."},
             {"option": "Retirer le ticket du graphe",
              "consequence": "Le graphe révisé passe par la porte de patch ; la couverture est recalculée."},
         ],

@@ -506,6 +506,19 @@ class TicketExitTest(unittest.TestCase):
                 self.assertIn(line, found[0]["text"])
                 self.assertGreater(found[0]["line"], 0)
 
+    def test_a_marker_taken_in_from_the_integration_is_not_its_deferral(self):
+        # A branch that merged the integration of its Spec takes in the lines of the
+        # tickets merged there: they are not its own (af-wrxrmg).
+        self.state("set-integration", CONVOY, "--branch", "integration/fx", "--protected", "main", "--base", self.base)
+        self.git("checkout", "-q", "-b", "integration/fx", self.base)
+        self.commit("un autre ticket", {"autre-ticket.txt": "TODO d'un autre ticket" + chr(10)})
+        self.git("checkout", "-q", BRANCH)
+        self.git("merge", "-q", "--no-edit", "integration/fx")
+        self.code()
+
+        self.exited("--exit", "finished", "--repo", self.repo, "--handoff", self.handoff())
+        self.assertEqual([], self.shown()["handoff"]["records"]["deferral_markers"])
+
     def test_a_marker_the_ticket_did_not_add_is_not_its_deferral(self):
         # Only the lines the ticket added are read: a line removed, or already there, is not one.
         self.git("checkout", "-q", "main")

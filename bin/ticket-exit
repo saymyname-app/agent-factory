@@ -403,6 +403,19 @@ def added_lines(repo: Path, base: str, head: str) -> list[tuple[str, int, str]]:
     return out
 
 
+def own_start(ticket: Ticket, repo: Path, base: str, head: str) -> str:
+    """Where the lines of the ticket start: `base`, or the integration of
+    its Spec the branch took in since -- the lines of the tickets merged
+    there are not its own (af-wrxrmg), as bin/code-review reads them."""
+    branch = (ticket.convoy.get("integration") or {}).get("branch")
+    for ref in (f"refs/remotes/origin/{branch}", f"refs/heads/{branch}") if branch else ():
+        proc = git(repo, "merge-base", head, ref)
+        start = proc.stdout.strip()
+        if proc.returncode == 0 and git(repo, "merge-base", "--is-ancestor", base, start).returncode == 0:
+            return start
+    return base
+
+
 def deferral_markers(repo: Path, base: str, head: str, sections: dict[str, Any]) -> list[dict[str, Any]]:
     """Every deferral marker in the lines the ticket added. A marker is
     declared when a « non fait » of the Handoff names its file (`paths`)."""
@@ -462,7 +475,8 @@ def build_records(ticket: Ticket, repo: Path, exit_name: str, sections: dict[str
         records.update(commits=None, files_changed=None, files_outside_declared_scope=None, deferral_markers=None)
     else:
         log = git(repo, "log", "--reverse", "--format=%H%x09%s", f"{base}..{head}")
-        names = git(repo, "diff", "--name-only", "--no-renames", base, head)
+        own = own_start(ticket, repo, base, head)
+        names = git(repo, "diff", "--name-only", "--no-renames", own, head)
         if log.returncode != 0 or names.returncode != 0:
             raise Refusal(f"lecture de la branche {branch} impossible : {short(log.stderr or names.stderr)}")
         records["commits"] = [
@@ -471,7 +485,7 @@ def build_records(ticket: Ticket, repo: Path, exit_name: str, sections: dict[str
         records["files_changed"] = files
         records["files_outside_declared_scope"] = (
             None if scope is None else [path for path in files if not in_paths(path, scope)])
-        markers = deferral_markers(repo, base, head, sections)
+        markers = deferral_markers(repo, own, head, sections)
         records["deferral_markers"] = markers
         reason = undeclared(markers)
         if finished and reason:
@@ -1076,7 +1090,7 @@ def cmd_deferral(args: argparse.Namespace) -> int:
     red = ticket.red()
     if red is None or git(repo, "merge-base", "--is-ancestor", red["base"], head).returncode != 0:
         raise Refusal(f"aucun commit de départ prouvé sur le ticket {args.ticket} : le diff du ticket ne peut pas être lu")
-    markers = deferral_markers(repo, red["base"], head, sections)
+    markers = deferral_markers(repo, own_start(ticket, repo, red["base"], head), head, sections)
     reason = undeclared(markers)
     answer: dict[str, Any] = {"ok": reason is None, "convoy": args.convoy, "ticket": args.ticket,
                               "base": red["base"], "head": head, "markers": markers}

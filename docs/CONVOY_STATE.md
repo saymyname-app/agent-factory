@@ -57,7 +57,7 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state set-integration af-convoy --branch integration/af-spec --protected main --base <sha>   # bin/spec-integration open
 ./bin/convoy-state set-merge   af-convoy af-t1 --outcome merged --ticket-commit <sha> --integration <sha> --commit <sha>   # bin/spec-integration merge
 ./bin/convoy-state invalidate-verdicts af-convoy af-t1 --tip <sha> --kind code_review --kind evaluation   # bin/spec-integration merge
-./bin/convoy-state open-correction   af-convoy af-t1 --commit <tip>          # bin/correction-round settle: the single correction round
+./bin/convoy-state open-correction   af-convoy af-t1 --commit <tip>          # bin/correction-round settle: a correction round
 ./bin/convoy-state launch-correction af-convoy af-t1 --bead af-correction    # bin/correction-round, once the author session is sent
 ./bin/convoy-state override-finding  af-convoy af-t1 --finding F1.1 --approver <human approver> --words "…"   # bin/correction-round override
 ./bin/convoy-state open-resume   af-convoy af-t1 --cause interrupted --ref "session:<session name>"   # bin/convoy-advance: one resume counted, before the fresh author session is sent
@@ -138,7 +138,7 @@ Every answer is one JSON object on stdout.
 | TDD step | `gc.flow.tdd.<step>` | ticket | step: `red`, `freeze`, `green`, `amendment`, `prefactoring`; always with the full commit SHA it was proven at; `red` and `prefactoring` with their start commit (`base`), `amendment` with its one-line reason |
 | Stop | `gc.flow.stop` | ticket | reason: `criterion_already_green`, `amendment_exhausted`, `test_review_no_result` (written before ADR-0030 L3, read only), `code_review_no_result`, `evaluation_no_result`, `evaluation_outage`, `still_refused`; with a one-line detail, and `raised` once `stop-raised` wrote that the escalation door accepted it |
 | Code review | `gc.flow.code_review` | ticket | `rounds`: each recorded round (`kind`: `review` / `judgement`, `commit`, `base`, `verdict`, `models`, `recorded_by`, `conversation` when known, `at`; a review with `findings` — `id`, `axis`: `standards` / `spec` / `tests`, `blocking`, `summary`, and `citation` (`source`: `spec` / `ticket` / `repo_rule`, `quote`, `path`), `demoted` or `question` — its `answers` (question id → `oui` / `non` and a reason) and its `responses` (finding id → `fixed` with a commit, or `contested` with a reason); a judgement with `judgements`: finding id → `favorable` / `unfavorable` and a reason); `request` while a round is open (`kind`, `commit`, `base`, `questions`, `models`, `launches`: at most two `{bead, at}`, each with `refused`: `{session, at}` once a session that already served answered it, `at`) |
-| Ticket Evaluation | `gc.flow.evaluation` | ticket | `rounds`: each recorded round — kind `evaluation` (`commit`, `criteria`: one `{number, text, state, evidence, reason, cause}` per approved criterion, in order; `demonstration_line`: `{text, state, evidence, reason, cause}`; state: `observed` / `not_observed` / `unobservable`, a `reason` unless observed, a `cause` (`criterion` / `environment`) for an unobservable; `outcome`: `favorable` / `return_to_author` / `planning_exception` / `environment_outage`; `verdict`: `favorable`, `unfavorable`, or `null` for an outage; `roles`; `environment`: `{dataset, address}` per launched product; `recorded_by`, `conversation` when known, `at`) or kind `startup` (`commit`, `started`, then `evidence` and `environment`, or `detail`; `outcome`, `verdict`, `at`); `request` while an evaluation is open (`commit`, `criteria`, `demonstration_line`, `roles`: `{author, evaluator: {provider, supplier} or null, same_provider, other_declared}`, `environment`: `{dataset, address, state_file}` per launched product, `launches`: at most two `{bead, at}`, each with `refused`: `{session, at}` once a session that already served answered it, `at`); `live`: the launch records of the products still to stop |
+| Ticket Evaluation | `gc.flow.evaluation` | ticket | `rounds`: each recorded round — kind `evaluation` (`commit`, `criteria`: one `{number, text, state, evidence, reason, cause}` per approved criterion, in order; `demonstration_line`: `{text, state, evidence, reason, cause}`; state: `observed` / `not_observed` / `unobservable`, a `reason` unless observed, a `cause` (`criterion` / `environment`) for an unobservable; `outcome`: `favorable` / `return_to_author` / `planning_exception` / `environment_outage`; `verdict`: `favorable`, `unfavorable`, or `null` for an outage; `roles`; `environment`: `{dataset, address}` per launched product; `recorded_by`, `conversation` when known, `proven_by_test`: the items counted proven by their criterion test on the operator's answer (`park_lifts`), read as `observed` by the outcome, `at`) or kind `startup` (`commit`, `started`, then `evidence` and `environment`, or `detail`; `outcome`, `verdict`, `at`); `request` while an evaluation is open (`commit`, `criteria`, `demonstration_line`, `roles`: `{author, evaluator: {provider, supplier} or null, same_provider, other_declared}`, `environment`: `{dataset, address, state_file}` per launched product, `launches`: at most two `{bead, at}`, each with `refused`: `{session, at}` once a session that already served answered it, `at`); `live`: the launch records of the products still to stop |
 | Models per role | `gc.flow.models` | ticket | role: `author`, `reviewer`, `evaluator`; each with `agent`, `provider`, `model`, `at` |
 | Test review | `gc.flow.test_review` | ticket (`vertical_slice`, `repair`) | written before ADR-0030 L3 only, now read only: `rounds`: each recorded pass (`commit`, `files`: path → `sha256:`, `verdict`: `favorable` / `unfavorable`, `tests`: test id → `state` and, when unfavorable, `reason`, `recorded_by`, `conversation` when known, `at`); `request` while a review is open (`commit`, `files`, `criteria`: the criterion → test table, `launches`: at most two `{bead, at}`, each with `refused`: `{session, at}` once a session that already served answered it, `at`) |
 | Ticket Handoff | `gc.flow.handoff` | ticket | `sections` (`done`, `deviations`, `not_done`, `out_of_ticket`: each `aucun` or a non-empty list of one-line items; an item of `not_done` may be `{what, paths}`), `partial`, the full commit SHA it was taken at, and the `records` written by code |
@@ -146,7 +146,7 @@ Every answer is one JSON object on stdout.
 | Overrides | `gc.flow.overrides` | ticket | `entries`, oldest first, one per overridden Blocking Finding: `finding`, `approver`, `words` (not empty, as given), `commit` (the one of the review), `at` |
 | Parking | `gc.flow.park` | ticket | cause: `planning_exception`, `operator_request`, `resumes_exhausted` (T20); the ticket that caused it (`origin`: the one whose Ticket Exit parked it, or that is out of resumes); a one-line detail |
 | Resumes | `gc.flow.resume` | ticket | `entries`, oldest first, one per resume code opened (T20): `cause` (`interrupted`, `returned`, `unblocked`, `answered`, `behind`, `evaluation_no_result`, `stage_removed`, `code_review_no_result`, `amendment_granted`), `ref` (the one-line fact that asked for it), `session` (the author session it takes over from, or null), `exit` (the Ticket Exit it replaced, `{exit, at}`, or null), `stop` (only for `evaluation_no_result`, and for `stage_removed` a stop `test_review_refused` or `test_review_no_result`, and for `code_review_no_result`, whose resume also drops the `request` of `gc.flow.code_review`, and for `amendment_granted` a stop `amendment_exhausted` the operator answered « a », which allows one amendment more: the stop it lifted, as it was), `launches`: at most one `{bead, at}`; `at` |
-| Parkings lifted | `gc.flow.park_lifts` | ticket | `entries`, oldest first, one per parking lifted on the ticket that caused it (T20): `cause`, `detail`, `parked_at`, `request` (the bead of the answered request), `option` (the letter taken, or null), `resumes` (the counter at that moment), `at` |
+| Parkings lifted | `gc.flow.park_lifts` | ticket | `entries`, oldest first, one per parking lifted on the ticket that caused it (T20): `cause`, `detail`, `parked_at`, `request` (the bead of the answered request), `option` (the letter taken, or null), `resumes` (the counter at that moment), `at`; `proven_by_test`: `{what, text}` per item the operator's answer `a` to an evaluation's Planning Exception judged proven by its criterion test (af-ten1sp) |
 | Grouped request | `gc.flow.grouped_request` | convoy | the bead that carries the one request of a convoy in which nothing but parked tickets is left (T20) and, once it reached the escalation door, the `sha256:` signature of the parkings it names, with `lift_option` (a letter) and `lifts` (the tickets that option lifts), both or neither |
 | Fidelity result | `gc.flow.fidelity` | ticket | `commit`, `verdict` (`favorable` / `unfavorable`, computed), `piece` (the sealed record), `screens`, `states` (state → `viewports`, `anchors` compared), `deviations`: each `state`, `viewport`, `anchor`, `kind` (`absent`, `structure`, `style`, `token`, `theme`), `property`; a `token` deviation has neither viewport nor anchor, a `theme` one (a theme not measurable on the prototype) a viewport and no anchor; past 100 deviations, the first 100 only, with `deviation_count` (all of them) and `deviation_anchors` (the anchors of all, `null` for a token deviation) |
 | Planning Exceptions | `gc.flow.planning_exceptions` | ticket | `entries`, oldest first: `kind` (`semantic`, `topology`), `summary`, `anchors` (the anchors whose deviation it asks to accept, possibly none), `accept_option` (the letter of the request's option that accepts it; with anchors or items only), `prior_response_at`, `at`, and `resolution` (`option`, `at`) once a later one was raised; T23: `items` (the tracked elements of the Ticket Handoff it names, `deviations.N` / `not_done.N`; absent when none) and `repair` (the `repair` ticket code published once the operator asked for one, with the answer frozen beside it) |
@@ -384,7 +384,9 @@ removal of the Ticket Exit the resume replaces (a resumed ticket exits
 again) go in **one tracker write**. The same cause and `--ref` as the last
 resume write nothing and count nothing. It refuses a cause outside the list,
 a missing `--ref`, a closed ticket, a ticket the dispatch door did not
-start, a stopped ticket, a parked ticket, and a ticket that has no resume
+start, a stopped ticket (but the cause `returned` on a stop `still_refused`
+whose every Blocking Finding is overridden: lifted and kept on the entry,
+af-n4bn62), a parked ticket, and a ticket that has no resume
 left for one cause: that one is parked. `launch-resume` records the bead of the author
 session the last resume was sent to: one per resume, a second is refused, as
 is a launch on a stopped or a parked ticket or with no resume open.
@@ -826,14 +828,21 @@ writes a fresh verdict: replaying is what lifts an invalidation.
 `open-correction`, `launch-correction` and `override-finding` are called by
 `bin/correction-round` (T17, `docs/CORRECTION_ROUND.md`).
 
-`open-correction` opens the single correction round of a ticket at the
-commit its author finished at. It refuses a stopped or a parked ticket; a
-ticket that already took its round (one per ticket, code review and Ticket
-Evaluation together); a code review that has no round at that commit or has
+`open-correction` opens a correction round of a ticket at the commit its
+author finished at. It refuses a stopped or a parked ticket; a ticket that
+already took its rounds (`bounds.correction_rounds` per ticket, code review
+and Ticket Evaluation together, one when unset; two since af-bv0ikr). A
+later round replaces the record of the one before (its `grants` kept); when
+the review at that commit is a judgement, its Blocking Findings are the
+answers it judged unfavorably. `grant-correction` lifts the stop
+`still_refused` of a ticket that has a round left (stopped when the bound
+was lower), with the approver's words, kept under `grants` of the round;
+bin/correction-round grant calls it.
+It also refuses a code review that has no round at that commit or has
 one open; an evaluation that has no round at that commit, has one open, or
 whose outcome there is neither `favorable` nor `return_to_author` (one
 session receives every finding: both have answered); answers already judged
-unfavorably; and a ticket neither of them refused. What was refused is read
+unfavorably before any round; and a ticket neither of them refused. What was refused is read
 here — the Blocking Findings of the review, the states the evaluation did
 not observe — never given. The round, `resumes` and `correction_rounds` each
 one more, go in **one tracker write**: the round counts among the resumes
@@ -1049,6 +1058,15 @@ the promotion, the closing and the state of the Outcome (`promotion`,
 and the digest of the Spec the publication door wrote (`spec_digest`). An
 `end_stop` or a `delivered` that cannot be read is an « état sans règle »
 like the others: rendered with `unruled` and its raw value, exit 3.
+
+A reader that holds the bead of a convoy and runs no command -- the
+cockpit -- reads its Outcome through `convoy_state.outcome_records_of`
+(A1, af-c662qx): the six records `delivered`, `evidence_pack`,
+`acceptance`, `judgement`, `promotion` and `closed` (the record of
+`close-convoy`, whatever the status), each validated by the reader `show`
+uses, `null` when absent, `{unruled, raw}` when this command would not
+have written it; `null` for a convoy without the mark. Like
+`owner_answer_of`, it reads only that bead and writes nothing.
 
 `ticket` answers whether one bead carries the mark, without naming its
 convoy: exit 0 and `"new_flow": true`, or exit 4 and `"new_flow": false`.

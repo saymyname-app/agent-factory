@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+"""The tracker of an isolated cockpit (bin/cockpit-isolated; B, af-4uzgzm).
+
+It answers the reads of the cockpit as `tests/fixtures/cockpit/requests/
+fake-bd` does, from the JSON list of beads in $FAKE_BD_STATE_FILE -- plain
+`list` hides closed beads, `list --all` does not -- and it writes as the real
+`bd` does what the doors of the Factory and the cockpit's own gestures write
+there: `update` (metadata, notes, status), `create`, `show`. So a gesture
+done on an isolated cockpit goes through the doors it goes through in
+service, and is read back from this tracker, which lives in the home of the
+launch and nowhere else.
+
+The file named by $FAKE_BD_FAIL_FLAG_FILE, while it exists, makes every call
+fail: a tracker that cannot be read. A call this tracker has no answer for
+is refused, loudly.
+"""
+import fcntl
+import json
+import os
+import sys
+import tempfile
+from contextlib import contextmanager
+from datetime import datetime, timezone
+
+
+def fail(message):
+    sys.stderr.write("synthetic bd: %s\n" % message)
+    sys.exit(1)
+
+
+def state_file():
+    flag = os.environ.get("FAKE_BD_FAIL_FLAG_FILE")
+    if flag and os.path.exists(flag):
+        fail("forced failure")
+    path = os.environ.get("FAKE_BD_STATE_FILE")
+    if not path or not os.path.exists(path):
+        fail("no state file")
+    return path
+
+
+@contextmanager
+def tracker(write=False):
+    """The beads, under a lock; written back atomically when `write`."""
+    path = state_file()
+    with open(path + ".lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX if write else fcntl.LOCK_SH)
+        with open(path, encoding="utf-8") as fh:
+            beads = json.load(fh)
+        yield beads
+        if write:
+            handle, temporary = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".tracker-")
+            with os.fdopen(handle, "w", encoding="utf-8") as fh:
+                json.dump(beads, fh, ensure_ascii=False)
+            os.replace(temporary, path)
+
+
+def now_iso():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def options(args, flags_with_value, repeated=()):
+    """(positionals, {flag: value or [values]}) of `args`; `--flag=value`
+    is `--flag value`."""
+    positionals, found = [], {name: [] for name in repeated}
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        name, equals, inline = arg.partition("=")
+        if name in flags_with_value or name in repeated:
+            if equals:
+                value = inline
+            else:
+                index += 1
+                if index >= len(args):
+                    fail("%s needs a value" % name)
+                value = args[index]
+            if name in repeated:
+                found[name].append(value)
+            else:
+                found[name] = value
+        elif arg.startswith("-"):
+            found[arg] = True
+        else:
+            positionals.append(arg)
+        index += 1
+    return positionals, found
+
+
+def find(beads, bead_id):
+    bead = next((b for b in beads if b.get("id") == bead_id), None)
+    if bead is None:
+        fail("no issue found matching %s" % bead_id)
+    return bead
+
+
+def cmd_list(args):
+    _, found = options(args, ("--status", "--title-contains", "--limit", "--has-metadata-key"))
+    with tracker() as beads:
+        listed = list(beads)
+    if "--status" in found:
+        listed = [b for b in listed if b.get("status") == found["--status"]]
+    elif "--all" not in found:
+        listed = [b for b in listed if b.get("status") != "closed"]
+    if "--title-contains" in found:
+        listed = [b for b in listed if found["--title-contains"] in (b.get("title") or "")]
+    if "--has-metadata-key" in found:
+        listed = [b for b in listed if found["--has-metadata-key"] in (b.get("metadata") or {})]
+    sys.stdout.write(json.dumps(listed, ensure_ascii=False))
+
+
+def cmd_show(args):
+    positionals, _ = options(args, ())
+    if len(positionals) != 1:
+        fail("show takes one id")
+    with tracker() as beads:
+        sys.stdout.write(json.dumps([find(beads, positionals[0])], ensure_ascii=False))
+
+
+def set_metadata(bead, assignments):
+    metadata = bead.setdefault("metadata", {})
+    for assignment in assignments:
+        key, equals, value = assignment.partition("=")
+        if not equals or not key:
+            fail("--set-metadata takes key=value, not %r" % assignment)
+        metadata[key] = value
+
+
+def cmd_update(args):
+    positionals, found = options(args, ("--append-notes", "--notes", "--status", "--metadata"), ("--set-metadata",))
+    if len(positionals) != 1:
+        fail("update takes one id")
+    with tracker(write=True) as beads:
+        bead = find(beads, positionals[0])
+        set_metadata(bead, found["--set-metadata"])
+        if "--metadata" in found:
+            bead.setdefault("metadata", {}).update(json.loads(found["--metadata"]))
+        if "--notes" in found:
+            bead["notes"] = found["--notes"]
+        if "--append-notes" in found:
+            notes = bead.get("notes") or ""
+            bead["notes"] = (notes + "\n" if notes else "") + found["--append-notes"]
+        if "--status" in found:
+            bead["status"] = found["--status"]
+            if found["--status"] == "closed":
+                bead["closed_at"] = now_iso()
+        bead["updated_at"] = now_iso()
+    if "--json" in found:
+        sys.stdout.write(json.dumps([bead], ensure_ascii=False))
+
+
+def cmd_create(args):
+    positionals, found = options(args, ("--metadata", "-d", "--description", "-t", "--type", "-p", "--priority",
+                                        "--notes"), ("--set-metadata", "-l", "--label"))
+    if len(positionals) != 1:
+        fail("create takes one title")
+    with tracker(write=True) as beads:
+        number = 1 + sum(1 for b in beads if str(b.get("id", "")).startswith("syn-"))
+        bead = {
+            "id": "syn-%d" % number, "title": positionals[0], "status": "open",
+            "issue_type": found.get("-t") or found.get("--type") or "task",
+            "priority": int(found.get("-p") or found.get("--priority") or 2),
+            "description": found.get("-d") or found.get("--description") or "",
+            "notes": found.get("--notes") or "", "labels": found["-l"] + found["--label"],
+            "metadata": json.loads(found["--metadata"]) if "--metadata" in found else {},
+            "created_at": now_iso(), "updated_at": now_iso(),
+        }
+        set_metadata(bead, found["--set-metadata"])
+        beads.append(bead)
+    if "--silent" in found:
+        sys.stdout.write(bead["id"] + "\n")
+    elif "--json" in found:
+        sys.stdout.write(json.dumps(bead, ensure_ascii=False))
+    else:
+        sys.stdout.write("Created issue: %s\n" % bead["id"])
+
+
+COMMANDS = {"list": cmd_list, "show": cmd_show, "update": cmd_update, "create": cmd_create}
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
+        fail("no answer for: bd %s" % " ".join(sys.argv[1:]))
+    COMMANDS[sys.argv[1]](sys.argv[2:])

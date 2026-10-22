@@ -522,6 +522,60 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
         self.assertEqual(1, self.resumes())
 
+    def overridden_then_returned(self, override=True):
+        """T1 stopped still refused, its one Blocking Finding overridden by
+        the operator, then returned by red tests on the merged result
+        (af-n4bn62: F and G1 of af-strhoy, 21/10/2026). Without `override`
+        the finding is left as it is and the merge red is written as
+        bin/spec-integration writes it."""
+        base = self.integrated(regression="false")
+        self.resumable()
+        self.evaluated()
+        self.advance(CONVOY)
+        tip = self.finished(T1)
+        self.run_ok(STATE, "open-code-review", CONVOY, T1, "--kind", "review", "--commit", tip, "--base", base)
+        review = self.tmp / "review-t1.json"
+        review.write_text(json.dumps({"commit": tip, "answers": {}, "recorded_by": "delivery-reviewer-fx",
+                                      **self.BLOCKS}))
+        self.run_ok(STATE, "record-code-review", CONVOY, T1, "--file", review)
+        self.run_ok(STATE, "stop-ticket", CONVOY, T1, "--reason", "still_refused", "--detail", "revue de code (F1.1)")
+        self.run_ok(STATE, "stop-raised", CONVOY, T1)
+        if override:
+            self.run_ok(STATE, "override-finding", CONVOY, T1, "--finding", "F1.1", "--approver", "benjamin-hurand",
+                        "--words", "Je passe outre F1.1.")
+            self.advance(CONVOY)  # evaluated at the tip, then the merge returns it: red tests
+        else:
+            self.run_ok(STATE, "set-merge", CONVOY, T1, "--outcome", "red", "--ticket-commit", tip,
+                        "--integration", base, "--commit", tip)
+        self.assertEqual("red", self.shown_state(T1)["merge"]["outcome"])
+        self.write_log.write_text("")
+
+    def test_a_ticket_stopped_still_refused_and_overridden_that_the_merge_returned_is_resumed_once(self):
+        self.overridden_then_returned()
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "returned")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")], answer)
+        self.assertEqual(1, len(self.resume_launches()))
+        shown = self.shown_state(T1)
+        # The stop is lifted, not erased: the resume keeps it, and its request leaves the operator's list.
+        self.assertIsNone(shown["stop"])
+        self.assertEqual("still_refused", shown["resume"]["entries"][-1]["stop"]["reason"])
+        self.assertEqual(["F1.1"], [entry["finding"] for entry in shown["overrides"]])
+        self.assertEqual([], [line for line in self.needs() if T1 in line])
+        self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
+        self.assertEqual(1, self.resumes())
+
+    def test_a_ticket_stopped_still_refused_without_its_override_is_not_resumed_by_a_returned_merge(self):
+        self.overridden_then_returned(override=False)
+        before = self.tickets_snapshot()
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([], self.of(answer, "resumed"))
+        self.assertEqual([], self.resume_launches())
+        self.assertEqual(before, self.tickets_snapshot())
+
     def test_a_ticket_parked_at_a_resume_its_red_merge_asked_for_names_that_cause_and_the_failing_tests(self):
         # af-w6xtw0: the operator read « 3 reprises » and not why the last one was.
         failing = " ; ".join(f"echo FAILED: tests/{name}-test.py" for name in ("a", "b", "c", "d"))
@@ -781,6 +835,56 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
 
         self.assertEqual([(T1, [T1, T3])], [(entry["id"], entry["lifted"]) for entry in self.of(answer, "lifted")])
         self.assertEqual([(T1, "answered")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+
+    def evaluation_parked(self):
+        """T1 finished; its last Ticket Evaluation found the demonstration
+        line unobservable by the criterion (the round as bin/convoy-state
+        records it), and the request it raised parks T1, with no entry under
+        `planning_exceptions` (af-ten1sp)."""
+        self.integrated()
+        self.advance(CONVOY)
+        tip = self.finished(T1)
+        line = {"text": "la ligne de démonstration", "state": "unobservable", "evidence": "evaluation.demo",
+                "reason": "aucun jeu lancé n'a de source CI absente", "cause": "criterion"}
+        round_ = {"kind": "evaluation", "commit": tip, "criteria": [], "demonstration_line": line,
+                  "roles": {"author": None, "evaluator": None, "same_provider": None, "other_declared": []},
+                  "environment": [{"dataset": None, "address": "http://127.0.0.1:40000"}],
+                  "recorded_by": "delivery-evaluator-fx", "outcome": "planning_exception", "verdict": "unfavorable",
+                  "at": "2026-10-21T04:13:02Z"}
+        metadata = self.bead(T1)["metadata"]
+        self.edit(T1, metadata={**metadata, "gc.flow.evaluation": json.dumps({"rounds": [round_]})})
+        request = {"quoi": f"Planning Exception sur {T1} : inobservable sur le produit lancé (ligne de démonstration)",
+                   "pourquoi": "Un critère gelé que l'Evaluator ne peut pas observer ne se dispense ni ne se reformule.",
+                   "que_faire": [{"option": "Juger ce qui est inobservable prouvé par son test de critère vert",
+                                  "consequence": "Le parcage est levé."},
+                                 {"option": "Retirer le ticket du graphe", "consequence": "La couverture est recalculée."}],
+                   "langue": "fr", "bloquant": True}
+        self.run_ok(ESCALATION, "benjamin", T1, json.dumps(request))
+        self.run_ok(STATE, "park", CONVOY, T1, "--cause", "planning_exception", "--detail", request["quoi"])
+        self.assertEqual([], self.of(self.advance(CONVOY), "lifted"))
+        self.assertEqual([], self.shown_state(T1)["planning_exceptions"])
+        self.env["ESCALATION_DOOR_NOW"] = "4102444800"  # the answer comes after the parking
+
+    def test_the_answer_a_to_an_evaluation_planning_exception_lifts_it_and_judges_the_item_proven_by_test(self):
+        # Benjamin, 21/10/2026 about 16:55 Paris (af-ten1sp): « Preuve par le test ».
+        self.evaluation_parked()
+        self.run_ok(ESCALATION, "repondre", T1, "a", "--actor", "benjamin")
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "a")], [(entry["id"], entry["option"]) for entry in self.of(answer, "lifted")])
+        self.assertIsNone(self.park_of(T1))
+        self.assertEqual([{"what": "ligne de démonstration", "text": "la ligne de démonstration"}],
+                         self.shown_state(T1)["park_lifts"][-1]["proven_by_test"])
+
+    def test_the_answer_b_to_an_evaluation_planning_exception_leaves_it_parked(self):
+        self.evaluation_parked()
+        self.run_ok(ESCALATION, "repondre", T1, "b", "--actor", "benjamin")
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([], self.of(answer, "lifted"))
+        self.assertEqual("planning_exception", self.park_of(T1)["cause"])
 
     def already_green_excepted(self):
         """T1 stopped with all its criteria already green while its author

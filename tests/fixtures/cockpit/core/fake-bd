@@ -30,8 +30,10 @@ if sys.argv[1:] == ["list", "--all", "--limit", "0", "--has-metadata-key", "gc.g
 # The runs reads (cockpit.runs.workflows): workflows, their steps and
 # attempts, the convoys and tickets of D01, the input convoys, the beads
 # the dispatch door wrote and the ticket beads an agent ran on -- none here.
+# The Specs that target a Roadmap Step, open or closed (cockpit.projects,
+# af-8rbceu) -- none here.
 for _key in ("gc.proposal_state", "gc.cockpit_action_quoi", "gc.journal_event", "gc.flow.models", "gc.kind",
-             "gc.root_bead_id", "gc.flow.mark", "gc.synthetic", "gc.dispatched_via"):
+             "gc.root_bead_id", "gc.flow.mark", "gc.synthetic", "gc.dispatched_via", "planning_run_target"):
     if sys.argv[1:] == ["list", "--all", "--limit", "0", "--has-metadata-key", _key, "--json"]:
         print(json.dumps([]))
         sys.exit(0)

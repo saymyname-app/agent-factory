@@ -85,6 +85,28 @@ def read_steps(clone_dir, roadmap_path, remote="origin", git_bin="git", timeout=
     return steps
 
 
+def read_at_default_branch(clone_dir, path, remote="origin", git_bin="git", timeout=30):
+    """``(text, changed_at)`` of ``path`` as the remote's default branch
+    holds it, with the ISO date of the last commit that changed it; ``(None,
+    None)`` when that branch has no such file. Reads only what the last
+    ``fetch`` brought (:func:`read_steps` fetches). Raises
+    :class:`RoadmapReadError` on any other failure."""
+    branch = default_branch(clone_dir, remote=remote, git_bin=git_bin, timeout=timeout)
+    ref = "%s/%s" % (remote, branch)
+    try:
+        completed = subprocess.run(
+            [git_bin, "-C", str(clone_dir), "cat-file", "-e", "%s:%s" % (ref, path)],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RoadmapReadError(str(exc)) from exc
+    if completed.returncode != 0:
+        return None, None
+    text = _run([git_bin, "-C", str(clone_dir), "show", "%s:%s" % (ref, path)], timeout)
+    changed_at = _run([git_bin, "-C", str(clone_dir), "log", "-1", "--format=%cI", ref, "--", path], timeout).strip()
+    return text, changed_at or None
+
+
 def read_current_step(clone_dir, roadmap_path, remote="origin", git_bin="git", timeout=10):
     """Fetch ``remote``, then read ``roadmap_path`` as it exists on the
     remote's default branch -- never the clone's own working tree, which
@@ -94,3 +116,33 @@ def read_current_step(clone_dir, roadmap_path, remote="origin", git_bin="git", t
     return pick_current_step(
         read_steps(clone_dir, roadmap_path, remote=remote, git_bin=git_bin, timeout=timeout)
     )
+
+
+# What the page of a project says of each status of a Roadmap Step.
+STATUS_LABELS = {"done": "Terminé", "in_progress": "En cours", "todo": "À venir"}
+FLAG_CLOSED = "Incohérent : marqué en cours, son chantier est fermé"
+FLAG_MERGED = "Incohérent : marqué en cours, son résultat est fusionné"
+
+
+def roadmap_rows(steps, chantiers_by_step):
+    """The lines of a structured roadmap, in its order (E, af-8rbceu; Spec
+    af-fgcw0d, user story 103): ``[{"id", "title", "status", "label",
+    "flag"}]``. ``chantiers_by_step``: ``{step id: [{"closed", "merged"}]}``,
+    the chantiers that target each step (their Specs carry it as
+    ``planning_run_target``). A step said in progress whose chantiers are
+    all closed, or one of whose results is merged, is flagged: the roadmap
+    contradicts the tracker. ``flag`` is None otherwise -- a step no
+    chantier targets says nothing either way."""
+    rows = []
+    for step in sorted(steps or [], key=lambda s: s.get("order", 0) if isinstance(s.get("order"), int) else 0):
+        status = str(step.get("status", ""))
+        chantiers = chantiers_by_step.get(str(step.get("id", ""))) or []
+        flag = None
+        if status == "in_progress" and chantiers:
+            if any(c.get("merged") for c in chantiers):
+                flag = FLAG_MERGED
+            elif all(c.get("closed") for c in chantiers):
+                flag = FLAG_CLOSED
+        rows.append({"id": str(step.get("id", "")), "title": str(step.get("title", "")), "status": status,
+                     "label": STATUS_LABELS.get(status, status or "Inconnu"), "flag": flag})
+    return rows
