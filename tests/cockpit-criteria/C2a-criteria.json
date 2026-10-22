@@ -1,0 +1,21 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/runs-trace-sessions-test.py::RunsTraceSessions.test_job_sessions_lists_each_session_with_its_id_its_times_its_model_and_its_context",
+      "tests/cockpit-criteria/commands/runs-trace-sessions-test.py::RunsTraceSessions.test_a_lane_shows_the_context_of_the_last_session_of_its_agent",
+      "tests/cockpit-criteria/commands/runs-trace-sessions-test.py::RunsTraceSessions.test_choosing_an_earlier_session_shows_its_own_configuration_and_prompts_and_a_reload_keeps_it",
+      "tests/cockpit-criteria/commands/runs-trace-configuration-test.py::RunsTraceConfiguration.test_job_configuration_says_what_the_last_session_ran_with_apart_from_what_was_declared",
+      "tests/cockpit-criteria/commands/runs-trace-configuration-test.py::RunsTraceConfiguration.test_a_value_the_supervisor_did_not_report_stays_not_collected_beside_the_declared_one",
+      "tests/cockpit-criteria/commands/runs-trace-configuration-test.py::RunsTraceConfiguration.test_a_job_no_session_was_recorded_for_is_attributed_none",
+      "tests/cockpit-criteria/commands/runs-trace-prompts-test.py::RunsTracePrompts.test_job_system_prompt_shows_the_system_prompt_sent_rendered_then_raw",
+      "tests/cockpit-criteria/commands/runs-trace-prompts-test.py::RunsTracePrompts.test_job_user_prompt_rendered_shows_the_user_prompt_sent_rendered",
+      "tests/cockpit-criteria/commands/runs-trace-prompts-test.py::RunsTracePrompts.test_job_user_prompt_raw_shows_the_user_prompt_sent_raw",
+      "tests/cockpit-criteria/commands/runs-trace-prompts-test.py::RunsTracePrompts.test_a_prompt_no_trace_recorded_is_said_not_collected_and_not_rebuilt",
+      "tests/cockpit-criteria/commands/runs-trace-prompts-test.py::RunsTracePrompts.test_a_session_and_the_raw_text_are_chosen_from_the_keyboard_readable_on_a_desktop_and_a_phone"
+    ],
+    "2": [
+      "tests/cockpit-criteria/commands/runs-trace-collection-test.py::RunsTraceCollection.test_the_sessions_sent_are_collected_once_however_often_the_collection_is_replayed",
+      "tests/cockpit-criteria/commands/runs-trace-collection-test.py::RunsTraceCollection.test_nothing_the_cockpit_serves_holds_a_secret_or_a_private_reasoning"
+    ]
+  }
+}
