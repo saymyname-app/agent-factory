@@ -29,7 +29,7 @@ import json
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 PARIS = ZoneInfo("Europe/Paris")
@@ -88,6 +88,11 @@ class SyntheticCity:
     beads: list = field(default_factory=list)
     projects: list = field(default_factory=list)
     sessions: list = field(default_factory=list)
+    # A Runs state: the moment the state shows (its clock starts there, then
+    # runs), and what it selects -- the filter, the run, the job, the event
+    # the cockpit opens when the address names none.
+    clock_start: str | None = None
+    view: dict = field(default_factory=dict)
     # Files the sources point at (the page of a dossier), by their path under
     # the home of the launch; a value that names one says `HOME_MARK` for
     # that home (bin/cockpit-isolated writes them and says where).
@@ -767,39 +772,159 @@ SCREENS = {
 
 
 # Runs: lanes, runs and their jobs -------------------------------------------
+#
+# Each run is written as the tracker holds a workflow, so the cockpit reads
+# it as it reads one in service (cockpit.runs.workflows): a « Livraison
+# D01 » is a convoy carrying the new-flow mark, published by Benjamin, its
+# ticket, and the workflows run on it -- the author's on an input convoy
+# that tracks the ticket, the code review and the Ticket Evaluation on an
+# input convoy that tracks the bead the dispatch door wrote to launch them
+# (its description names the convoy and the ticket); a « Maintenance » is
+# a workflow root of the formula mol-do-work run on the work Benjamin
+# asked for. Each job is a step of one of those roots: Benjamin's a plain
+# step routed to him, the code's a check (passed once closed), an agent's a
+# ralph step whose closing runs a check, claimed by an attempt of the
+# session of that agent (passed once closed) -- one session per agent, as
+# the supervisor lists it (its agent, its template and its provider, from
+# the lane's name and role « Relectrice · Claude »). The datasets name no project: their runs
+# are of the Factory's own, RUN_PROJECT.
+
+RUN_FORMULAS = {"Livraison D01": "mol-ticket-author", "Maintenance": "mol-do-work"}
+RUN_FILTERS = {"all": "tous", "active": "en-cours", "completed": "termines"}
+RUN_PROJECT = "agent-factory"
+RUN_TRIGGERED_BY = "benjamin"
+# The workflows of a D01 other than the author's, by the role of the agent
+# of their jobs: (formula, the title the dispatch door gives its bead).
+DISPATCHED = (("Relect", "mol-code-review", "Revue de code"), ("Évaluat", "mol-ticket-evaluation", "Ticket Evaluation"))
+
 
 def _runs_city(name, at, ui, fixtures) -> SyntheticCity:
+    moment = _fixed_time(at)
+    if moment.tzinfo is None:
+        raise DatasetRefused(f"its fixed time (generated_at) has no offset: {at!r}")
     try:
         lanes = {lane["id"]: lane for lane in fixtures["lanes"]}
-        beads, sessions = [], {}
+        beads, sessions, opened, view = [], {}, [], {}
         for run in fixtures["runs"]:
-            run_id = f"synthetic-run-{run['id']}"
-            beads.append({
-                "id": run_id, "title": run["title"], "issue_type": "epic", "created_at": at,
-                "status": "open" if run["end"] is None else "closed",
-                "metadata": {"synthetic.run_type": run["type"], "synthetic.run_status": run["status"],
-                             "synthetic.run_started": run["started"], "synthetic.run_elapsed": run["elapsed"]},
-            })
-            for job in run["jobs"]:
-                lane, job_id = lanes[job["lane"]], f"{run_id}-{job['id']}"
-                running = job["end"] is None
-                beads.append({
-                    "id": job_id, "title": job["name"], "issue_type": "task", "created_at": at, "parent": run_id,
-                    "status": "in_progress" if running else "closed", "assignee": lane["name"],
-                    "description": job["prompt"] or "", "close_reason": job["result"] or "",
-                    "metadata": {"synthetic.lane": lane["id"], "synthetic.lane_kind": lane["kind"],
-                                 "synthetic.lane_role": lane["role"], "synthetic.job_start": job["start"],
-                                 "synthetic.job_end": job["end"]},
-                })
-                if lane["kind"] == "agent" and (running or lane["id"] not in sessions):
-                    sessions[lane["id"]] = {
-                        "id": f"synthetic-session-{lane['id']}", "template": lane["role"],
-                        "session_name": lane["name"], "running": running, "last_active": at,
-                        **({"active_bead": job_id} if running else {}),
-                    }
-    except (KeyError, TypeError) as exc:
+            beads += _run_records(run, lanes, moment, sessions, opened, ui, view)
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
         raise DatasetRefused(f"a Runs state whose fixtures (lanes, runs, jobs) cannot be read: {exc!r}") from exc
+    if ui.get("filter") in RUN_FILTERS:
+        view["filter"] = RUN_FILTERS[ui["filter"]]
+    if isinstance(ui.get("selected_event"), int):
+        view["event"] = ui["selected_event"]
+    clock = max(opened, default=moment)
     return SyntheticCity(
         name=name, reading=READ_ONCE if ui.get("stale") is True else READ,
-        beads=beads, sessions=[sessions[lane] for lane in lanes if lane in sessions],
+        beads=beads, sessions=[session for lane in lanes for session in sessions.get(lane, {}).values()],
+        clock_start=clock.isoformat(), view=view,
     )
+
+
+def _utc(moment: datetime) -> str:
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _run_records(run, lanes, moment, sessions, opened, ui, view) -> list:
+    """The beads of one run of the fixtures; the sessions of its agents in
+    `sessions` (by lane, then by name: one per job), the moment it is shown
+    at in `opened` when it is open, what the state selects of it in
+    `view`."""
+    formula = RUN_FORMULAS.get(run["type"])
+    if formula is None:
+        raise DatasetRefused(f"a run of a type no workflow has: {run['type']!r}")
+    hours, minutes = run["started"].split(":")
+    start = moment.replace(hour=int(hours), minute=int(minutes), second=0, microsecond=0)
+
+    def at(offset):
+        return _utc(start + timedelta(seconds=offset))
+
+    def ended(end):
+        return {"status": "closed", "closed_at": at(end)} if end is not None else {"status": "open"}
+
+    key, records = run["id"], []
+    if run["end"] is None:
+        opened.append(start + timedelta(seconds=run["elapsed"]))
+
+    def workflow(suffix, workflow_formula, tracked, title):
+        """A workflow root of `workflow_formula` run on an input convoy that
+        tracks `tracked`; its id."""
+        root_id, wrapper = f"synthetic-workflow-{key}{suffix}", f"synthetic-input-{key}{suffix}"
+        records.append({"id": wrapper, "title": f"input convoy for {tracked}", "issue_type": "convoy",
+                        "created_at": at(0), "status": "open", "metadata": {"gc.synthetic": "true"},
+                        "dependencies": [{"issue_id": wrapper, "depends_on_id": tracked, "type": "tracks"}]})
+        records.append({"id": root_id, "title": title, "issue_type": "task", "created_at": at(0), **ended(run["end"]),
+                        "metadata": {"gc.kind": "workflow", "gc.formula_name": workflow_formula,
+                                     "gc.input_convoy_id": wrapper}})
+        return root_id
+
+    def dispatched(suffix, workflow_formula, title, said):
+        """The bead the dispatch door writes to launch `workflow_formula`."""
+        bead_id = f"synthetic-dispatch-{key}{suffix}"
+        records.append({"id": bead_id, "title": title, "description": said, "issue_type": "task",
+                        "created_at": at(0), "created_by": RUN_TRIGGERED_BY, **ended(run["end"]),
+                        "metadata": {"gc.dispatched_via": "dispatch-door", "gc.dispatch_formula": workflow_formula,
+                                     "gc.dispatch_rig": RUN_PROJECT}})
+        return bead_id
+
+    roots = {}
+    if formula == "mol-ticket-author":
+        run_id, ticket_id, digest = f"synthetic-run-{key}", f"synthetic-ticket-{key}", f"sha256:synthetic-{key}"
+        records.append({"id": run_id, "title": run["title"], "issue_type": "convoy", "created_at": at(0),
+                        "created_by": RUN_TRIGGERED_BY, **ended(run["end"]),
+                        "metadata": {"gc.flow.mark": "new-flow/v1", "gc.graph_digest": digest,
+                                     "gc.project_id": RUN_PROJECT, "gc.spec_id": f"synthetic-spec-{key}"}})
+        ticket = {"gc.flow.mark": "new-flow/v1", "gc.graph_digest": digest, "gc.ticket_id": key}
+        if run["status"] == "Fusionné":
+            ticket["gc.flow.merge"] = json.dumps({"at": at(run["end"]), "outcome": "merged"})
+        elif run["status"] == "Abandonné":
+            ticket["gc.flow.gate.withdrawn"] = json.dumps({"at": at(run["end"])})
+        records.append({"id": ticket_id, "title": run["title"], "issue_type": "task", "created_at": at(0),
+                        **ended(run["end"]), "metadata": ticket})
+        roots[None] = workflow("", formula, ticket_id, formula)
+        for prefix, workflow_formula, title in DISPATCHED:
+            if any(lanes[job["lane"]]["role"].startswith(prefix) for job in run["jobs"]):
+                said = f"{title} of ticket {ticket_id}.\n\nconvoy: {run_id}\nticket: {ticket_id}\n"
+                suffix = f"-{workflow_formula}"
+                launched = dispatched(suffix, workflow_formula, f"{title} — {ticket_id}", said)
+                roots[prefix] = workflow(suffix, workflow_formula, launched, workflow_formula)
+    else:
+        work = dispatched("", formula, run["title"], f"{run['title']}.\n")
+        run_id = roots[None] = workflow("", formula, work, formula)
+    if ui.get("run") == key:
+        view["run"] = run_id
+    for job in run["jobs"]:
+        lane = lanes[job["lane"]]
+        root_id = next((root for prefix, root in roots.items() if prefix and lane["role"].startswith(prefix)),
+                       roots[None])
+        step_id = f"{root_id}-{job['id']}"
+        step = {"gc.root_bead_id": root_id, "gc.step_id": job["id"]}
+        passed = {"gc.outcome": "pass"} if job["end"] is not None else {}
+        if lane["kind"] == "human":
+            step.update({"gc.routed_to": "benjamin"})
+        elif lane["kind"] == "code":
+            step.update({"gc.kind": "check", **passed})
+        else:
+            step.update({"gc.kind": "ralph", "gc.check_mode": "exec", **passed})
+        records.append({"id": step_id, "title": job["name"], "issue_type": "task", "created_at": at(job["start"]),
+                        "description": job["prompt"] or "", "close_reason": job["result"] or "",
+                        **ended(job["end"]), "metadata": step})
+        if lane["kind"] == "agent":
+            template, _, provider = lane["role"].partition(" · ")
+            # Each job of an agent is claimed by a session of its own: the
+            # agent keeps one lane across them.
+            session = f"synthetic-session-{lane['id']}-{key}-{job['id']}"
+            records.append({"id": f"{step_id}-attempt-1", "title": job["name"], "issue_type": "task",
+                            "created_at": at(job["start"]), **ended(job["end"]),
+                            "metadata": {"gc.logical_bead_id": step_id, "gc.root_bead_id": root_id, "gc.attempt": "1",
+                                         "gc.session_name": session, "gc.routed_to": template,
+                                         "gc.claimed_at": at(job["start"]), **passed}})
+            running = job["end"] is None and run["end"] is None
+            sessions.setdefault(lane["id"], {})[session] = {
+                "id": session, "name": session, "session_name": session, "agent_name": lane["name"],
+                "template": template, "provider": provider or None, "running": running,
+                "last_active": _utc(moment), **({"active_bead": step_id} if running else {}),
+            }
+        if ui.get("run") == key and ui.get("selected_job") == job["id"]:
+            view["job"] = step_id
+    return records
