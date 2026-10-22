@@ -74,8 +74,8 @@ class GcCityReader:
         return "/v0/city/%s/%s" % (urllib.parse.quote(self._city, safe=""), suffix)
 
     def status(self):
-        """``{"suspended", "sessions": [...], "closed_steps_count"}``, the
-        driver's shape. A session is listed only while it holds a ticket:
+        """``{"suspended", "sessions": [...], "closed_steps_count",
+        "agents": [...]}``, the driver's shape and who each session is. A session is listed only while it holds a ticket:
         that is the work a stop waits for. Raises when gc cannot be read --
         the caller keeps the last value and lets it age."""
         held = {}
@@ -101,6 +101,12 @@ class GcCityReader:
                 # gc exposes no count of closed steps; progress is read from
                 # each session's last sign of life alone.
                 "closed_steps_count": 0,
+                # Who each session is, running or not: the lanes of Runs
+                # are the agents (cockpit.runs.workflows).
+                "agents": [
+                    {key: item.get(key) for key in ("name", "session_name", "agent_name", "template", "provider")}
+                    for item in sessions if isinstance(item, dict)
+                ],
             }
         except (urllib.error.URLError, OSError, KeyError, IndexError, TypeError) as exc:
             raise ValueError("gc illisible : %s" % exc)

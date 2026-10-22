@@ -1,0 +1,56 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/runs-destination-list-test.py::RunsDestinationList.test_runs_all_lists_one_card_per_complete_workflow_the_same_on_each_reading",
+      "tests/cockpit-criteria/commands/runs-destination-list-test.py::RunsDestinationList.test_runs_active_lists_the_workflows_still_open",
+      "tests/cockpit-criteria/commands/runs-destination-list-test.py::RunsDestinationList.test_runs_completed_lists_the_workflows_that_ended",
+      "tests/cockpit-criteria/commands/runs-destination-list-test.py::RunsDestinationList.test_a_filter_keeps_its_runs_and_a_card_opens_its_run",
+      "tests/cockpit-criteria/commands/runs-destination-list-test.py::RunsDestinationList.test_a_result_delivered_and_waiting_for_judgment_is_a_run_still_open",
+      "tests/cockpit-criteria/commands/runs-destination-readable-list-test.py::RunsDestinationReadableList.test_runs_all_is_readable_in_both_themes_on_a_desktop_and_a_phone",
+      "tests/cockpit-criteria/commands/runs-destination-readable-list-test.py::RunsDestinationReadableList.test_runs_active_is_readable_in_both_themes_on_a_desktop_and_a_phone",
+      "tests/cockpit-criteria/commands/runs-destination-readable-list-test.py::RunsDestinationReadableList.test_runs_completed_is_readable_in_both_themes_on_a_desktop_and_a_phone",
+      "tests/cockpit-criteria/commands/runs-destination-readable-list-test.py::RunsDestinationReadableList.test_a_card_opens_its_run_from_the_keyboard_and_long_contents_are_read_whole"
+    ],
+    "2": [
+      "tests/cockpit-criteria/commands/runs-destination-frise-test.py::RunsDestinationFrise.test_run_active_has_a_lane_per_participant_up_to_now",
+      "tests/cockpit-criteria/commands/runs-destination-frise-test.py::RunsDestinationFrise.test_the_timer_only_extends_the_horizon_and_the_jobs_still_open",
+      "tests/cockpit-criteria/commands/runs-destination-frise-test.py::RunsDestinationFrise.test_run_completed_is_frozen_at_its_end",
+      "tests/cockpit-criteria/commands/runs-destination-frise-test.py::RunsDestinationFrise.test_run_waiting_says_what_it_waits_for",
+      "tests/cockpit-criteria/commands/runs-destination-frise-test.py::RunsDestinationFrise.test_run_abandoned_shows_its_participants_frozen_at_its_end",
+      "tests/cockpit-criteria/commands/runs-destination-frise-test.py::RunsDestinationFrise.test_run_stale_says_the_reading_is_stale_and_when_it_was_last_observed",
+      "tests/cockpit-criteria/commands/runs-destination-frise-test.py::RunsDestinationFrise.test_two_agents_of_the_same_role_keep_a_lane_each",
+      "tests/cockpit-criteria/commands/runs-destination-frise-test.py::RunsDestinationFrise.test_a_run_without_a_job_of_benjamin_or_of_the_code_keeps_their_lanes",
+      "tests/cockpit-criteria/commands/runs-destination-frise-test.py::RunsDestinationFrise.test_a_new_session_of_an_agent_keeps_its_lane",
+      "tests/cockpit-criteria/commands/runs-destination-layout-test.py::RunsDestinationLayout.test_run_active_fits_a_390_px_screen",
+      "tests/cockpit-criteria/commands/runs-destination-layout-test.py::RunsDestinationLayout.test_run_completed_fits_a_390_px_screen",
+      "tests/cockpit-criteria/commands/runs-destination-layout-test.py::RunsDestinationLayout.test_run_waiting_fits_a_390_px_screen",
+      "tests/cockpit-criteria/commands/runs-destination-layout-test.py::RunsDestinationLayout.test_run_abandoned_fits_a_390_px_screen",
+      "tests/cockpit-criteria/commands/runs-destination-layout-test.py::RunsDestinationLayout.test_run_stale_fits_a_390_px_screen",
+      "tests/cockpit-criteria/commands/runs-destination-readable-run-test.py::RunsDestinationReadableRun.test_run_active_is_readable_in_both_themes_on_a_desktop_and_a_phone",
+      "tests/cockpit-criteria/commands/runs-destination-readable-run-test.py::RunsDestinationReadableRun.test_run_completed_is_readable_in_both_themes_on_a_desktop_and_a_phone",
+      "tests/cockpit-criteria/commands/runs-destination-readable-run-test.py::RunsDestinationReadableRun.test_run_waiting_is_readable_in_both_themes_on_a_desktop_and_a_phone",
+      "tests/cockpit-criteria/commands/runs-destination-readable-run-test.py::RunsDestinationReadableRun.test_run_abandoned_is_readable_in_both_themes_on_a_desktop_and_a_phone",
+      "tests/cockpit-criteria/commands/runs-destination-readable-run-test.py::RunsDestinationReadableRun.test_run_stale_is_readable_in_both_themes_on_a_desktop_and_a_phone",
+      "tests/cockpit-criteria/commands/runs-destination-readable-run-test.py::RunsDestinationReadableRun.test_a_job_opens_its_detail_from_the_keyboard"
+    ],
+    "3": [
+      "tests/cockpit-criteria/commands/runs-destination-job-test.py::RunsDestinationJob.test_job_code_opens_its_detail_under_the_frise_with_its_sections_and_events",
+      "tests/cockpit-criteria/commands/runs-destination-job-test.py::RunsDestinationJob.test_job_event_opens_its_detail_with_what_is_not_collected_said_so",
+      "tests/cockpit-criteria/commands/runs-destination-job-test.py::RunsDestinationJob.test_a_click_on_a_job_opens_its_detail_under_the_frise_and_a_reload_keeps_it",
+      "tests/cockpit-criteria/commands/runs-destination-job-test.py::RunsDestinationJob.test_a_click_on_an_event_opens_that_event_and_a_reload_keeps_it",
+      "tests/cockpit-criteria/commands/runs-destination-job-test.py::RunsDestinationJob.test_each_event_of_the_frise_is_a_target_of_24_px_on_no_other",
+      "tests/cockpit-criteria/commands/runs-destination-job-test.py::RunsDestinationJob.test_a_long_event_is_said_whole_on_a_phone_and_on_a_desktop",
+      "tests/cockpit-criteria/commands/runs-destination-readable-jobs-test.py::RunsDestinationReadableJobs.test_job_code_is_readable_in_both_themes_on_a_desktop_and_a_phone",
+      "tests/cockpit-criteria/commands/runs-destination-readable-jobs-test.py::RunsDestinationReadableJobs.test_job_configuration_is_readable_in_both_themes_on_a_desktop_and_a_phone",
+      "tests/cockpit-criteria/commands/runs-destination-readable-jobs-test.py::RunsDestinationReadableJobs.test_job_event_is_readable_in_both_themes_on_a_desktop_and_a_phone",
+      "tests/cockpit-criteria/commands/runs-destination-readable-jobs-test.py::RunsDestinationReadableJobs.test_job_gates_is_readable_in_both_themes_on_a_desktop_and_a_phone",
+      "tests/cockpit-criteria/commands/runs-destination-readable-sessions-test.py::RunsDestinationReadableSessions.test_job_output_is_readable_in_both_themes_on_a_desktop_and_a_phone",
+      "tests/cockpit-criteria/commands/runs-destination-readable-sessions-test.py::RunsDestinationReadableSessions.test_job_sessions_is_readable_in_both_themes_on_a_desktop_and_a_phone",
+      "tests/cockpit-criteria/commands/runs-destination-readable-sessions-test.py::RunsDestinationReadableSessions.test_job_usage_is_readable_in_both_themes_on_a_desktop_and_a_phone",
+      "tests/cockpit-criteria/commands/runs-destination-readable-sessions-test.py::RunsDestinationReadableSessions.test_job_usage_unavailable_is_readable_in_both_themes_on_a_desktop_and_a_phone",
+      "tests/cockpit-criteria/commands/runs-destination-readable-prompts-test.py::RunsDestinationReadablePrompts.test_job_system_prompt_is_readable_in_both_themes_on_a_desktop_and_a_phone",
+      "tests/cockpit-criteria/commands/runs-destination-readable-prompts-test.py::RunsDestinationReadablePrompts.test_job_user_prompt_raw_is_readable_in_both_themes_on_a_desktop_and_a_phone",
+      "tests/cockpit-criteria/commands/runs-destination-readable-prompts-test.py::RunsDestinationReadablePrompts.test_job_user_prompt_rendered_is_readable_in_both_themes_on_a_desktop_and_a_phone"
+    ]
+  }
+}

@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from cockpit.access.guard import session_cookie_header
 from cockpit.actions.registry import ActionError
-from cockpit.core.freshness import FRESH, UNKNOWN
+from cockpit.core.freshness import FRESH, STALE, UNKNOWN
 from cockpit.core.readmodel import PARIS
 from cockpit.health import collectors
 from cockpit.health.engine import (
@@ -24,6 +24,7 @@ from cockpit.health.engine import (
 )
 from cockpit.projects import anomalies as project_anomalies
 from cockpit.projects.depots import apply_to_projects
+from cockpit.projects.descriptors import load_descriptors
 from cockpit.projects.source import from_value as projects_from_value
 from cockpit.projects.source import project_page_data
 from cockpit.requests.assemble import assemble_from_snapshot
@@ -32,6 +33,7 @@ from cockpit.requests.journal import entries_from_value as journal_entries_from_
 from cockpit.requests.journal import sources_from_value as journal_sources_from_value
 from cockpit.requests.sources.readability import ILLISIBLE_THRESHOLD_SECONDS
 from cockpit.runs.derive import runs_from_beads
+from cockpit.runs.workflows import workflow_runs
 from cockpit.ui.analyses.page import CSS as ANALYSES_CSS, render_analyses
 from cockpit.ui.base.page import render_document, render_fresh, render_home_zones
 from cockpit.ui.health.page import render_health_zone, render_status_line
@@ -52,7 +54,8 @@ from cockpit.ui.projects.page import (
     render_projects_section,
     render_projects_unknown,
 )
-from cockpit.ui.projects.panorama import CSS as PROJECTS_PANORAMA_CSS, render_project_head, render_projects_list
+from cockpit.ui.projects.panorama import CSS as PROJECTS_PANORAMA_CSS, render_projects_list
+from cockpit.ui.projects.fold import CSS as PROJECT_FOLD_CSS, project_view, render_project_fold
 from cockpit.ui.projects.project_page import render_project_page, render_project_unknown
 from cockpit.ui.projects.tokens import CSS as PROJECT_PAGE_CSS
 from cockpit.ui.rituals.page import CSS as RITUALS_CSS, read_rituals, render_rituals
@@ -63,7 +66,6 @@ ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
 NOT_FOLDED = {
     href: (key, label) for key, label, href in NAVIGATION if key not in (HOME, "projets", "journal", "runs", "usine", "rituels", "analyses")
 }
-NOT_FOLDED.update({"/runs/job": ("runs", "Runs")})
 
 
 
@@ -73,6 +75,11 @@ ACTIONS_WITHOUT_WRITE = frozenset({"continuer", "pas_bon_vers_agent", "notifier_
 # What "Ce qui t'attend", the projects and the journal are built from.
 SOURCES_REREAD_AFTER_ACTION = frozenset({"beads", "projets", "journal"})
 REREAD_AFTER_ACTION_SECONDS = 8.0
+
+
+# How long GET / waits for the first reading of the projects, once the
+# tracker is read (A1): the first page after a start shows them.
+FIRST_READING_WAIT_SECONDS = 5
 
 class CockpitRequestHandler(BaseHTTPRequestHandler):
     server_version = "cockpit/1"
@@ -140,8 +147,8 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         if path == "/runs":
             self._send_runs_page(read_model)
             return
-        if path == "/runs/run":
-            self._send_run_page(read_model)
+        if path in ("/runs/run", "/runs/job"):
+            self._send_run_page(read_model, job=path == "/runs/job")
             return
         if path == "/":
             self._send_home(read_model)
@@ -202,11 +209,39 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             result["rafraichi"] = self._reread_after_action()
         self._send_json(result)
 
+    def _first_reading(self, read_model, knowledge=False, agents=False):
+        """The snapshot, once the projects had their first reading if the
+        tracker had its own -- and, with ``knowledge``, once the projects
+        and their repositories were read or failed, so that the page of a
+        project tells a reading under way from one that failed (E); with
+        ``agents``, once the sessions were tried after the tracker was read
+        (they are refused while it is not), so that a run names its agents
+        on the first page (C1) --
+        waiting at most
+        :data:`FIRST_READING_WAIT_SECONDS`: a page served the instant the
+        cockpit started would show no project, and no result, of a source
+        simply not read yet (A1)."""
+        deadline = time.monotonic() + FIRST_READING_WAIT_SECONDS
+        while True:
+            snapshot = read_model.snapshot()
+            beads, projets, depots = snapshot.get("beads"), snapshot.get("projets"), snapshot.get("depots")
+            pending = (beads is not None and beads["read_at"] is not None and projets is not None
+                       and projets["read_at"] is None and projets.get("failed_at") is None)
+            pending = pending or knowledge and any(
+                row is not None and row["read_at"] is None and row.get("failed_at") is None for row in (projets, depots))
+            sessions = snapshot.get("sessions")
+            pending = pending or agents and sessions is not None and sessions["read_at"] is None and (
+                sessions.get("failed_at") is None or beads is None or beads["read_at"] is None
+                or sessions["failed_at"] <= beads["read_at"])
+            if not pending or time.monotonic() >= deadline:
+                return snapshot
+            time.sleep(0.1)
+
     def _send_home(self, read_model):
         """GET /: the destination « Vue d’ensemble » of Panorama (T02,
         af-0gonc9), with the zones of the cockpit no destination of
         Panorama holds yet folded under it."""
-        snapshot = read_model.snapshot()
+        snapshot = self._first_reading(read_model)
         now = read_model.now()
         requests, _, beads_known = self._assemble_requests(snapshot, now)
         health = self._compute_health(read_model)
@@ -222,7 +257,9 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             ),
             status_html=render_status_line(snapshot.get("gc"), health),
         )
-        view = overview_view(snapshot, requests if beads_known else [])
+        driver = getattr(self.server, "stop_driver", None)
+        view = overview_view(snapshot, requests if beads_known else [],
+                             stop_trial_passed=bool(driver is not None and driver.essai_reussi()))
         # T13, af-cx20q9: the SameSite=Strict cookie an action POST must
         # echo back -- a cross-site POST never carries it, so its presence
         # alone proves this request came from a page the cockpit itself
@@ -426,16 +463,32 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                         snapshot=snapshot)
 
     def _send_project_page(self, read_model):
-        """GET /projet/<id> (spec .49): one declared project's chantiers by
-        stage, its travail hors chantier and its historique. An id no
+        """GET /projet/<id> (spec .49; E, af-8rbceu): the Prototype Fold of
+        the reference « Projet, release et historique » -- the release plan
+        and the roadmap of the project read in its knowledge repository,
+        then its chantiers by stage, its travail hors chantier and its
+        historique. A project declared whose chantiers are not read yet, or
+        no longer, is drawn with what is known and says so. An id no
         descriptor declares is a 404 that says so."""
         project_id = urllib.parse.unquote(self.path.split("?", 1)[0][len("/projet/"):])
+        snapshot = self._first_reading(read_model, knowledge=True)
         fresh_html = render_fresh(read_model.headline(), not read_model.stale_or_unknown())
-        snapshot = read_model.snapshot()
         row = snapshot.get("projets")
+        descriptor = next((d for d in load_descriptors(self.server.descriptors_dir) if d["project_id"] == project_id),
+                          None) if self.server.descriptors_dir else None
+        runs, _, _ = self._runs(read_model)
+        now = read_model.now()
         status = 200
         if row is None or row["value"] is None or row["freshness"] == UNKNOWN:
-            inner = render_project_unknown(fresh_html) + render_projects_unknown(row["read_at"] if row else None)
+            if descriptor is None:
+                inner = render_project_unknown(fresh_html) + render_projects_unknown(row["read_at"] if row else None)
+            else:
+                state = "failed" if row is not None and row.get("failed_at") is not None else "loading"
+                below = '<div class="cockpit-pp-fresh">%s</div>' % fresh_html
+                if state == "failed":
+                    below += render_projects_unknown(row["read_at"])
+                inner = render_project_fold(project_view(descriptor, None, state, snapshot.get("depots"), {}, runs, now,
+                                                         [], below))
         else:
             data = project_page_data(row["value"], project_id)
             if data is None:
@@ -444,15 +497,16 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             else:
                 project, hors_chantier, historique = data
                 apply_to_projects([project], snapshot.get("depots"))
-                runs, _, _ = self._runs(read_model)
-                inner = render_project_head(project, runs, read_model.now()) + render_project_page(
-                    project,
-                    hors_chantier=hors_chantier,
-                    historique_html=render_historique_section([historique]),
-                    fresh_html=fresh_html,
-                )
+                below = render_project_page(project, hors_chantier=hors_chantier,
+                                            historique_html=render_historique_section([historique]),
+                                            fresh_html=fresh_html, topbar=False)
+                targets = (row["value"].get("roadmap_chantiers") or {}).get(project_id) or {}
+                inner = render_project_fold(project_view(
+                    descriptor or {"project_id": project.project_id, "display_name": project.display_name},
+                    project, "read", snapshot.get("depots"), targets, runs, now, historique.chantiers, below))
         self._send_page(read_model, "projets", inner,
-                        extra_css=PROJECT_PAGE_CSS + PROJECTS_PANORAMA_CSS + RUNS_PAGE_CSS, status=status)
+                        extra_css=PROJECT_PAGE_CSS + PROJECTS_PANORAMA_CSS + RUNS_PAGE_CSS + PROJECT_FOLD_CSS,
+                        status=status, snapshot=snapshot)
 
     def _runs(self, read_model):
         """The runs the cockpit reads (cockpit.runs), most recent first:
@@ -490,21 +544,49 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         self._send_page(read_model, "usine", main, extra_css=FACTORY_PAGE_CSS,
                         headers={"Set-Cookie": session_cookie_header(self.server.session_token)}, snapshot=snapshot)
 
-    def _send_runs_page(self, read_model):
-        """GET /runs: the runs, filtered by ?filtre=tous|en-cours|termines."""
-        runs, failed, checked = self._runs(read_model)
-        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
-        filtre = (query.get("filtre") or ["tous"])[0]
-        self._send_page(read_model, "runs", render_runs_page(runs, filtre, checked=checked, error=failed),
-                        extra_css=RUNS_PAGE_CSS)
+    def _workflow_runs(self, read_model, snapshot):
+        """The runs of the destination Runs (cockpit.runs.workflows), one
+        per complete workflow, most recent first: (runs or None while
+        unread, read failed, HH:MM of the reading)."""
+        row = snapshot.get("runs")
+        if row is None or row["value"] is None:
+            return None, bool(row and row.get("failed_at") is not None), None
+        checked = datetime.fromtimestamp(row["read_at"], tz=PARIS).strftime("%H:%M") if row["read_at"] else None
+        sessions = (snapshot.get("sessions") or {}).get("value") or {}
+        return workflow_runs(row["value"], sessions.get("agents"), read_model.now()), False, checked
 
-    def _send_run_page(self, read_model):
-        """GET /runs/run?id=<bead>: one run, its frise and its events."""
-        runs, _, _ = self._runs(read_model)
-        wanted = (urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("id") or [""])[0]
+    def _query(self):
+        return urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+
+    def _send_runs_page(self, read_model):
+        """GET /runs: the runs, filtered by ?filtre=tous|en-cours|termines
+        (by default, the filter the frozen state selects, else Tous)."""
+        snapshot = self._first_reading(read_model, agents=True)
+        runs, failed, checked = self._workflow_runs(read_model, snapshot)
+        filtre = (self._query().get("filtre") or [self.server.runs_view.get("filter") or "tous"])[0]
+        self._send_page(read_model, "runs",
+                        render_runs_page(runs, filtre, checked=checked, error=failed, now=read_model.now()),
+                        extra_css=RUNS_PAGE_CSS, snapshot=snapshot)
+
+    def _send_run_page(self, read_model, job=False):
+        """GET /runs/run?id=<run>: one run and its frise; GET
+        /runs/job?run=<run>&job=<job>&event=<n>: the same, with the detail
+        of a job under the frise and one of its events open. An address
+        that names nothing opens what the frozen state selects. A reading
+        of a source the run is drawn from no longer current is said, with
+        when it was."""
+        snapshot = self._first_reading(read_model, agents=True)
+        runs, _, _ = self._workflow_runs(read_model, snapshot)
+        query, view = self._query(), self.server.runs_view
+        wanted = (query.get("run" if job else "id") or [view.get("run") or ""])[0]
         run = next((r for r in runs or [] if r["id"] == wanted), None)
-        self._send_page(read_model, "runs", render_run_page(run), extra_css=RUNS_PAGE_CSS,
-                        status=200 if run else 404)
+        job_id = (query.get("job") or [view.get("job") or ""])[0] if job else None
+        event = (query.get("event") or [str(view.get("event") or "")])[0] if job else ""
+        stale_at = _stale_at(snapshot, RUN_SOURCES)
+        main = render_run_page(run, now=read_model.now(), stale_at=stale_at, job_id=job_id,
+                               event=int(event) if event.isdigit() else None)
+        self._send_page(read_model, "runs", main, extra_css=RUNS_PAGE_CSS, status=200 if run else 404,
+                        snapshot=snapshot)
 
     def _send_journal_page(self, read_model):
         """GET /journal?vue=&categorie=&source=&q= (spec .18; F, af-njwz8v):
@@ -602,6 +684,20 @@ def _live_line(gc_row):
     return "● En marche · %d agent%s" % (agents, "s" if agents > 1 else "")
 
 
+# The sources a run is drawn from: its workflow beads, and the sessions the
+# supervisor lists for its agents.
+RUN_SOURCES = ("runs", "sessions")
+
+
+def _stale_at(snapshot, names):
+    """When the sources ``names`` no longer current were last read (the
+    oldest of them); None while each is current or was never read."""
+    read_ats = [snapshot[name]["read_at"] for name in names
+                if snapshot.get(name) and snapshot[name].get("freshness") in (STALE, UNKNOWN)
+                and snapshot[name].get("read_at") is not None]
+    return min(read_ats) if read_ats else None
+
+
 def _latest_read_at(snapshot, names):
     read_ats = [snapshot[name]["read_at"] for name in names if snapshot.get(name) and snapshot[name]["read_at"] is not None]
     return max(read_ats) if read_ats else None
@@ -655,10 +751,16 @@ def make_server(
     # without them (a narrow test) simply has no notifications to show.
     server.notify = None
     server.heartbeat = None
+    # What a Runs state selects when the address names nothing (the
+    # isolated cockpit of a frozen state; empty in service).
+    server.runs_view = {}
     server.stop_driver = None
     server.benjamin_login = ""
     # The rituals file of the Factory (« Rituels »): unset, nothing read.
     server.rituals_file = None
+    # Where the projects are declared (cockpit.projects.descriptors): the
+    # page of a project names it from there while its chantiers are unread.
+    server.descriptors_dir = None
     server.extra_requests = lambda snapshot, now: []
     server.illisible_after_seconds = (
         ILLISIBLE_THRESHOLD_SECONDS if illisible_after_seconds is None else illisible_after_seconds

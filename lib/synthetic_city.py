@@ -23,11 +23,16 @@ screen or a state no rule reads is refused, never served in part.
 
 from __future__ import annotations
 
+import hashlib
+import html
 import json
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+PARIS = ZoneInfo("Europe/Paris")
 
 # How the supervisor and the tracker are read during the launch.
 READ = "read"            # they answer
@@ -44,10 +49,7 @@ PLAIN_VIEWS = ("content", "empty", "long", "missing")
 DESCRIPTOR_CONTRACT = "agent-factory-project-descriptor/v1"
 NEEDS_BENJAMIN = "gc.needs_benjamin"
 PROJECT_KEY = "gc.project_id"
-RESULT_STATE = "synthetic.result_state"
-# The record of the result open under « Ce qui t’attend », and the card of a
-# chantier, as the overview reads them (cockpit.ui.home.overview).
-RESULT_DOSSIER = "gc.result_dossier"
+# The card of a chantier, as the overview reads it (cockpit.ui.home.overview).
 PROJECT_CARD = "gc.project_card"
 # The card of a run among the last runs of the overview.
 RUN_CARD = "gc.run_card"
@@ -92,6 +94,24 @@ class SyntheticCity:
     beads: list = field(default_factory=list)
     projects: list = field(default_factory=list)
     sessions: list = field(default_factory=list)
+    # A Runs state: the moment the state shows (its clock starts there, then
+    # runs), and what it selects -- the filter, the run, the job, the event
+    # the cockpit opens when the address names none.
+    clock_start: str | None = None
+    view: dict = field(default_factory=dict)
+    # Files the sources point at (the page of a dossier), by their path under
+    # the home of the launch; a value that names one says `HOME_MARK` for
+    # that home (bin/cockpit-isolated writes them and says where).
+    files: dict = field(default_factory=dict)
+    # The knowledge repositories of the projects, by the name their
+    # descriptors give them (`knowledge_repo`): `{"files": {path: text},
+    # "at": ISO date}` for one this city writes, committed at that date, or
+    # `{"path": …}` for a Git repository already on this host.
+    repos: dict = field(default_factory=dict)
+
+
+# Where a value of a source names a file of `SyntheticCity.files`.
+HOME_MARK = "@home/"
 
 
 def from_dataset(dataset) -> SyntheticCity:
@@ -107,8 +127,11 @@ def from_dataset(dataset) -> SyntheticCity:
         raise DatasetRefused("names no state (ui.id, or state)")
     if "fixtures" in dataset:
         return _runs_city(name, at, ui, dataset["fixtures"])
+    if "tracker" in dataset:
+        return _tracker_city(name, dataset["tracker"], dataset.get("projects"), dataset.get("repos"))
     return _panorama_city(name, _fixed_time(at), ui, dataset.get("visible_text"), _folded(dataset.get("folded")),
-                          _folded(dataset.get("drawn"), "drawn"), _run_cards(dataset.get("runs")))
+                          _folded(dataset.get("drawn"), "drawn"), _run_cards(dataset.get("runs")),
+                          _result_values(dataset.get("result")), dataset.get("release"))
 
 
 def _folded(folded, key="folded") -> dict:
@@ -180,10 +203,12 @@ def _descriptor(display_name: str) -> dict:
 class _Tracker:
     """The beads and the declared projects read from one screen."""
 
-    def __init__(self, at: datetime):
+    def __init__(self, at: datetime, release=None):
         self.at = at
         self.beads = []
         self.projects = {}
+        self.repos = {}
+        self.release = release
 
     def declare(self, display_name: str) -> str:
         """Declare the project the screen names; its key."""
@@ -209,7 +234,7 @@ class _Tracker:
                          project=project, labels=[SAID])
 
 
-def _panorama_city(name, at, ui, text, folded, drawn, runs) -> SyntheticCity:
+def _panorama_city(name, at, ui, text, folded, drawn, runs, ui_result, release=None) -> SyntheticCity:
     if not isinstance(text, str) or not text.strip():
         raise DatasetRefused("a Panorama state without the text of its page (visible_text)")
     lines = [line.strip() for line in text.split("\n") if line.strip()]
@@ -223,7 +248,9 @@ def _panorama_city(name, at, ui, text, folded, drawn, runs) -> SyntheticCity:
         raise DatasetRefused(f"a screen no rule reads: « {lines[0] if lines else ''} »")
     result_state = None if view is None or reading != READ or view in PLAIN_VIEWS else view
     stop_step = STOP_STEP.search(ui.get("setup") or "")
-    tracker = _Tracker(at)
+    if release is not None and read_screen is not _project_page:
+        raise DatasetRefused("what a release plan says beside the page (release) on a screen that is no project's")
+    tracker = _Tracker(at, release)
     read_screen(lines, tracker)
     # A drawing is kept as it is said, under its heading, on the screen that
     # shows that heading.
@@ -245,26 +272,16 @@ def _panorama_city(name, at, ui, text, folded, drawn, runs) -> SyntheticCity:
     dossier = next((bead for bead in tracker.beads if bead["id"] == DOSSIER), None)
     if result_state and dossier is None:
         raise DatasetRefused(f"« {lines[0]} » opens no dossier to be in the state {result_state!r} (ui.state)")
-    # A result in one of its states (`ui.state`) is the panels of T02S: its
-    # dossier is only marked with that state.
-    record = None if dossier is None or result_state else _dossier_record(
-        dossier["title"], dossier["description"].split("\n"))
-    unfolding = [resource for resource in (record or {}).get("resources", []) if not resource["opens"]] + \
-        (record or {}).get("reports", [])
-    unread = sorted(set(folded) - {resource["label"] for resource in unfolding})
-    if unread:
-        raise DatasetRefused(f"folded parts that no part of the dossier unfolds: {unread}")
-    for resource in unfolding:
-        if resource["label"] in folded:
-            resource["said"] = folded[resource["label"]]
-    if result_state:
-        dossier["metadata"][RESULT_STATE] = result_state
-    if record is not None:
-        dossier["metadata"][RESULT_DOSSIER] = json.dumps(record, ensure_ascii=False)
+    files = {}
+    if dossier is not None:
+        files = _result(tracker, dossier, result_state or TO_JUDGE_STATE, folded, ui_result)
+    elif folded:
+        raise DatasetRefused(f"folded parts that no part of the dossier unfolds: {sorted(folded)}")
     return SyntheticCity(
         name=name, reading=reading,
         suspended=bool(stop_step) and stop_step.group(1) == "suspended",
         beads=tracker.beads, projects=sorted(tracker.projects.values(), key=lambda d: d["project_id"]),
+        files=files, repos=tracker.repos,
     )
 
 
@@ -382,15 +399,285 @@ def _dossier_record(title: str, lines) -> dict:
     return record
 
 
+# The result of the chantier of the dossier open (A1, af-c662qx): what the
+# D01 commands write on its convoy, in the state of the result the dataset is
+# in (`ui.state`; a page with no state of a result shows one to judge), and
+# the page of its dossier, whose rubrics are the parts of the dossier the
+# page shows. The request of the acceptance is the convoy's while the result
+# waits for a judgement, and is gone once it is answered.
+TO_JUDGE_STATE = "ready"
+JUDGED_NOW_STATES = ("ready", "dossier", "outdated", "outage")
+# The states where the panel opens a decision a project waits for, not a
+# result: their dossier stays the open bead the page says.
+DECISION_STATES = ("request", "confirmation")
+ACCEPTED_STATES = ("accepted", "merging", "merged")
+RETURNED_STATES = ("findings", "returned", "repairing")
+RESULT_STATES = (*JUDGED_NOW_STATES, *ACCEPTED_STATES, *RETURNED_STATES, *DECISION_STATES, "abandoned", "conflict")
+NOT_VERIFIED = "Ce qui n'a PAS été vérifié"
+TO_VERIFY = "Ce qui reste à vérifier"
+APPROVER = "benjamin"
+# What a result in a dataset may say of itself (`result`): its commits, the
+# times its records were written (HH:MM, Paris, the day of the dataset), the
+# words of the answer, the reason of an abandon, what a failed trial said.
+# Unsaid, the commits and times are those the reference writes.
+RESULT_VALUES = {"commit": "1" * 40, "merged": "2" * 40, "outdated_commit": "3" * 40, "ready_at": "14:30",
+                 "answered_at": "14:48", "merged_at": "14:50", "words": "C’est ce que je voulais.",
+                 "reason": None, "outage": "Le produit ne démarre pas au commit du dossier."}
+
+
+def _result_values(values) -> dict:
+    if values is None:
+        return dict(RESULT_VALUES)
+    if not isinstance(values, dict) or set(values) - set(RESULT_VALUES) or not all(
+            isinstance(value, str) and value.strip() for value in values.values()):
+        raise DatasetRefused(f"its result (result) says something else than {sorted(RESULT_VALUES)}, each a text")
+    return {**RESULT_VALUES, **values}
+
+
+def _result(tracker, dossier: dict, state: str, folded: dict, values: dict) -> dict:
+    """Turn the dossier the page opens into the records of the result of
+    its chantier; the files they point at."""
+    if state not in RESULT_STATES:
+        raise DatasetRefused(f"a state of a result no rule reads (ui.state): {state!r}")
+    project = dossier["metadata"][PROJECT_KEY]
+    record = _dossier_record(dossier["title"], dossier["description"].split("\n"))
+    unfolding = [resource for resource in record["resources"] if not resource["opens"]] + record["reports"]
+    unread = sorted(set(folded) - {resource["label"] for resource in unfolding})
+    if unread:
+        raise DatasetRefused(f"folded parts that no part of the dossier unfolds: {unread}")
+    if state in DECISION_STATES:
+        return {}
+    tracker.beads.remove(dossier)
+    convoy_id = f"synthetic-chantier-{project}"
+    if not any(bead["id"] == convoy_id for bead in tracker.beads):
+        _chantier(tracker, project, AWAITED.match(record["about"])["kind"], [])
+    convoy = next(bead for bead in tracker.beads if bead["id"] == convoy_id)
+    metadata = convoy["metadata"]
+    metadata["gc.flow.mark"] = "new-flow/v1"
+    if record["summary"] and state in JUDGED_NOW_STATES:
+        # What the result to judge delivers: the title of its Spec.
+        spec_id = f"synthetic-spec-{project}"
+        tracker.add(spec_id, record["summary"], project=project, metadata={"spec_state": "APPROVED_SPEC"})
+        metadata["gc.spec_id"] = spec_id
+
+    page = _dossier_page(record, folded)
+    # The Evidence Pack is a folder, its page index.html in it, as
+    # bin/evidence-pack writes it and gc.flow.evidence_pack records it.
+    folder = f"packs/{project}"
+    path = f"{folder}/index.html"
+    digest = "sha256:" + hashlib.sha256(page.encode("utf-8")).hexdigest()
+    at = {key: _at(tracker.at, values[key]) for key in ("ready_at", "answered_at", "merged_at")}
+    commit = values["commit"]
+    delivered = {"at": at["ready_at"], "commit": commit, "pack": digest, "protected": "0" * 40,
+                 "version": "spec-end/v4"}
+    # Each record as bin/convoy-state writes it, read back by its readers
+    # (convoy_state.outcome_records_of). The Acceptance Request is the
+    # convoy's NEEDS BENJAMIN (_hand_over_request): the bead id the record
+    # would name is not one a synthetic convoy has.
+    acceptance = {"at": at["ready_at"], "commit": commit, "pack": digest}
+    records = {"gc.flow.evidence_pack": {
+        "at": at["ready_at"], "commit": values["outdated_commit"] if state == "outdated" else commit,
+        "digest": digest, "path": HOME_MARK + folder, "conforming": True, "inadmissible": 0,
+        "version": "evidence-pack/v1"}}
+    answer = {"approver": APPROVER, "commit": commit, "pack": digest, "at": at["answered_at"], "words": values["words"]}
+    promotion = {"at": at["merged_at"], "judged": commit, "merged": values["merged"], "protected": delivered["protected"],
+                 "tip": commit}
+    if state in JUDGED_NOW_STATES:
+        records.update({"gc.flow.delivered": delivered, "gc.flow.acceptance": acceptance})
+        if state == "outage":
+            acceptance["panne"] = {"at": at["ready_at"], "detail": values["outage"]}
+    elif state in ACCEPTED_STATES:
+        records.update({"gc.flow.delivered": delivered, "gc.flow.judgement": {"verdicts": [], "answers": [{**answer, "response": "accepted"}]}})
+        if state != "accepted":
+            records["gc.flow.promotion"] = promotion
+        if state == "merged":
+            records["gc.flow.closed"] = {"how": "accepted", "said": values["words"], "approver": APPROVER,
+                                         "at": at["merged_at"]}
+    elif state in RETURNED_STATES:
+        records["gc.flow.judgement"] = {"verdicts": [], "answers": [{**answer, "response": "findings",
+                                                     "findings": [{"text": values["words"], "route": "later"}]}]}
+    elif state == "conflict":
+        records["gc.flow.judgement"] = {"verdicts": [], "answers": [{**answer, "response": "accepted",
+                                                     "voided": {"cause": "conflict", "at": at["merged_at"]}}]}
+    else:
+        if not values["reason"]:
+            raise DatasetRefused("an abandoned result says no reason (result.reason)")
+        records.update({"gc.flow.delivered": delivered, "gc.flow.judgement": {"verdicts": [], "answers": [
+            {**answer, "response": "abandoned", "reason": values["reason"]}]}})
+        records["gc.flow.closed"] = {"how": "abandoned", "said": values["reason"], "approver": APPROVER,
+                                     "at": at["merged_at"]}
+    metadata.update({key: json.dumps(value, ensure_ascii=False) for key, value in records.items()})
+    if "gc.flow.closed" in records:
+        convoy["status"] = "closed"
+    _hand_over_request(tracker, project, metadata if state in JUDGED_NOW_STATES else None)
+    return {path: page}
+
+
+def _hand_over_request(tracker, project: str, metadata) -> None:
+    """The request of the acceptance of the result: the first request of
+    its project the page lists. While the result waits for a judgement, it
+    is the convoy's (`metadata`), as the escalation door writes it there;
+    once answered, there is none."""
+    request = next((bead for bead in tracker.beads if bead["id"].startswith("synthetic-request-")
+                    and bead["metadata"].get(PROJECT_KEY) == project), None)
+    if request is None:
+        return
+    tracker.beads.remove(request)
+    if metadata is not None:
+        metadata.update({key: request["metadata"][key] for key in
+                         (NEEDS_BENJAMIN, "gc.escalation_pourquoi", "gc.escalation_horodatage")})
+
+
+def _at(day: datetime, hhmm: str) -> str:
+    """HH:MM (Paris) on the day of the dataset, as a recorded instant."""
+    try:
+        hour, minute = (int(part) for part in hhmm.split(":"))
+        return day.astimezone(PARIS).replace(hour=hour, minute=minute, second=0, microsecond=0).isoformat()
+    except ValueError as exc:
+        raise DatasetRefused(f"a time of the result is not HH:MM: {hhmm!r}") from exc
+
+
+def _dossier_page(record: dict, folded: dict) -> str:
+    """The page of the dossier, as bin/evidence-pack lays it out: one
+    rubric per part of the dossier that unfolds (« Ce qui reste à
+    vérifier » is its rubric « Ce qui n'a PAS été vérifié »), then its
+    reports; the lines each says open."""
+    parts = [resource for resource in record["resources"] if not resource["opens"]] + record["reports"]
+    sections = []
+    for number, part in enumerate(parts, start=1):
+        title = NOT_VERIFIED if part["label"] == TO_VERIFY else part["label"]
+        body = "\n".join(f"<p>{html.escape(line)}</p>" for line in folded.get(part["label"], []))
+        sections.append(f'<section id="rubrique-{number}">\n<h2>{number}. {html.escape(title)}</h2>\n{body}\n</section>')
+    return ("<!DOCTYPE html>\n<html lang=\"fr\">\n<head>\n<meta charset=\"utf-8\">\n"
+            f"<title>Dossier — {html.escape(record['title'])}</title>\n</head>\n<body>\n"
+            + "\n".join(sections) + "\n</body>\n</html>\n")
+
+
+# A tracker as the commands of the flow write it (`tracker`): its beads,
+# served as they are; the project each names is declared under its key.
+def _tracker_city(name: str, tracker, declared=None, repos=None) -> SyntheticCity:
+    if not isinstance(tracker, dict) or not isinstance(tracker.get("beads"), dict) or not all(
+            isinstance(bead, dict) for bead in tracker["beads"].values()):
+        raise DatasetRefused("its tracker (tracker) is not the beads the commands wrote, by their id")
+    beads = [{**bead, "id": bead_id} for bead_id, bead in tracker["beads"].items()]
+    projects = {}
+    for descriptor in declared or []:
+        if not isinstance(descriptor, dict) or descriptor.get("contract") != DESCRIPTOR_CONTRACT or not all(
+                isinstance(descriptor.get(key), str) and descriptor[key] for key in ("project_id", "display_name")):
+            raise DatasetRefused(f"its projects (projects) are not each a descriptor {DESCRIPTOR_CONTRACT}")
+        projects[descriptor["project_id"]] = descriptor
+    for bead in beads:
+        key = (bead.get("metadata") or {}).get(PROJECT_KEY)
+        if isinstance(key, str) and key:
+            projects.setdefault(key, {"contract": DESCRIPTOR_CONTRACT, "project_id": key, "display_name": key})
+    if repos is not None and (not isinstance(repos, dict) or not all(
+            isinstance(path, str) and path.startswith("/") for path in repos.values())):
+        raise DatasetRefused("its repositories (repos) are not each a name and the absolute path of a Git repository")
+    return SyntheticCity(name=name, beads=beads, projects=sorted(projects.values(), key=lambda d: d["project_id"]),
+                         repos={repo: {"path": path} for repo, path in (repos or {}).items()})
+
+
 # The page of one project (« ← Projets »): what it is and its indicators
 # above the first section, its next release and next step, its current
 # chantier, its roadmap and last changes. « Ressources du projet » is links.
-PROJECT_SAID = ("Prochaine release", "PROCHAIN JALON", "ROADMAP", "Derniers changements")
+# The release, its milestone and the roadmap are what the knowledge
+# repository of the project holds (E, af-8rbceu): a release plan and a
+# structured roadmap, written in a repository of the city.
+RELEASE = "Prochaine release"
+MILESTONE = "PROCHAIN JALON"
+ROADMAP = "ROADMAP"
+PROJECT_SAID = ("Derniers changements",)
 CURRENT_CHANTIER = "CHANTIER ACTUEL"
+KNOWLEDGE_ROADMAP = "roadmap.toml"
+KNOWLEDGE_RELEASE = "release.toml"
+ROADMAP_STATUSES = {"Terminé": "done", "Fusionné": "done", "En cours": "in_progress", "À venir": "todo"}
+DECISIONS = {"Décision ouverte": "open", "Décision reportée": "deferred", "Périmètre élargi": "included"}
+TARGET_TAG = re.compile(r"^Cible révisable(?: · (?P<status>.+))?$")
+GAINS = re.compile(r"^✓ Acquis vérifiés \d+$")
+REMAINING = re.compile(r"^Reste connu \d+$")
+RANGE = "Fourchette indicative · "
+NO_ESTIMATE = "Estimation non disponible"
+# What a release plan says that the page shows folded (`release`): the
+# proof of each gain, by its title; each change of the target; and what a
+# range rests on.
+RELEASE_EXTRAS = ("proofs", "history", "estimate")
+ESTIMATE_EXTRAS = ("comparables", "hypotheses", "computed_at")
+
+
+def _toml(value) -> str:
+    """A TOML value: a JSON string is a TOML basic string."""
+    return json.dumps(value, ensure_ascii=False) if isinstance(value, str) else str(value)
+
+
+def _table(name: str, values: dict, array=False) -> str:
+    head = f"[[{name}]]" if array else f"[{name}]"
+    return "\n".join([head, *(f"{key} = {_toml(value)}" for key, value in values.items())]) + "\n"
+
+
+def _release_plan(release, milestone, extras) -> str | None:
+    """The release plan the page shows, as `release.toml` writes it
+    (cockpit.projects.release), or None when the page says it has none."""
+    if not release or not TARGET_TAG.match(release[0]):
+        return None
+    if not isinstance(extras, dict) or set(extras) - set(RELEASE_EXTRAS):
+        raise DatasetRefused(f"what a release plan says beside the page (release) is not {list(RELEASE_EXTRAS)}")
+    proofs = extras.get("proofs") or {}
+    lines = list(release)
+    out = [f"target = {_toml(lines[1])}"]
+    status = TARGET_TAG.match(lines[0])["status"]
+    if status:
+        out.append(f"status = {_toml(status)}")
+    out.append("")
+    part = None
+    pending = None
+    for line in lines[2:]:
+        if GAINS.match(line):
+            part = "gain"
+        elif REMAINING.match(line):
+            part = "remaining"
+        elif line in DECISIONS:
+            part, pending = "decision", DECISIONS[line]
+        elif part == "gain" and line != "Voir la preuve":
+            if line not in proofs:
+                raise DatasetRefused(f"a gain without its proof (release.proofs): « {line} »")
+            out.append(_table("gain", {"title": line, "proof": proofs[line]}, array=True))
+        elif part == "remaining" and line.startswith("○ "):
+            out.append(_table("remaining", {"title": line[2:]}, array=True))
+        elif part == "decision" and pending:
+            out.append(_table("decision", {"question": line, "state": pending}, array=True))
+            pending = None
+    if milestone:
+        state = milestone[2] if len(milestone) > 2 and " · " in milestone[2] else ""
+        out.append(_table("milestone", {"title": milestone[0], "check": milestone[1],
+                                        **({"state": state} if state else {})}))
+        remaining = sum(1 for line in out if line.startswith("[[remaining]]"))
+        for index, line in enumerate(milestone):
+            if line == NO_ESTIMATE and index + 1 < len(milestone):
+                out.append(_table("estimate", {"unavailable": milestone[index + 1]}))
+            elif line.startswith(RANGE) and index + 1 < len(milestone):
+                rests = extras.get("estimate") or {}
+                if set(rests) != set(ESTIMATE_EXTRAS):
+                    raise DatasetRefused(f"a range without what it rests on (release.estimate: {list(ESTIMATE_EXTRAS)})")
+                out.append(_table("estimate", {"range": line[len(RANGE):], "conditions": milestone[index + 1],
+                                               **rests, "criteria": remaining}))
+    for change in extras.get("history") or []:
+        out.append(_table("history", {"change": change}, array=True))
+    return "\n".join(out)
+
+
+def _roadmap(section) -> str:
+    """The structured roadmap the page shows (« ROADMAP »: its heading, then
+    each step and its status), as a `[[step]]` file writes it."""
+    pairs = [line for line in section[1:] if not line.startswith("Prochain jalon proposé")]
+    if len(pairs) % 2 or not all(status in ROADMAP_STATUSES for status in pairs[1::2]):
+        raise DatasetRefused(f"a roadmap that is not each step then its status {sorted(ROADMAP_STATUSES)}: {pairs}")
+    return "\n".join(_table("step", {"id": f"R{number}", "title": title, "done_when": title, "order": number,
+                                      "status": ROADMAP_STATUSES[status]}, array=True)
+                     for number, (title, status) in enumerate(zip(pairs[::2], pairs[1::2]), start=1))
 
 
 def _project_page(lines, tracker) -> None:
-    sections = _sections(lines, (*PROJECT_SAID, CURRENT_CHANTIER, "Ressources du projet"))
+    sections = _sections(lines, (RELEASE, MILESTONE, ROADMAP, *PROJECT_SAID, CURRENT_CHANTIER, "Ressources du projet"))
     about = sections[None][1:]
     if not about:
         raise DatasetRefused("a project page that names no project")
@@ -400,6 +687,18 @@ def _project_page(lines, tracker) -> None:
     current = sections.get(CURRENT_CHANTIER)
     if current:
         _chantier(tracker, project, current[0], current[1:])
+    files = {}
+    plan = _release_plan(sections.get(RELEASE), sections.get(MILESTONE), tracker.release or {})
+    if plan is not None:
+        files[KNOWLEDGE_RELEASE] = plan
+    if sections.get(ROADMAP):
+        files[KNOWLEDGE_ROADMAP] = _roadmap(sections[ROADMAP])
+    if files:
+        if KNOWLEDGE_ROADMAP not in files:
+            raise DatasetRefused("a release plan without the roadmap it stands beside (« ROADMAP »)")
+        repo = f"synthetic/{project}"
+        tracker.projects[project].update({"knowledge_repo": repo, "roadmap_path": KNOWLEDGE_ROADMAP})
+        tracker.repos[repo] = {"files": files, "at": tracker.at.isoformat()}
 
 
 def _journal(lines, tracker) -> None:
@@ -490,39 +789,159 @@ SCREENS = {
 
 
 # Runs: lanes, runs and their jobs -------------------------------------------
+#
+# Each run is written as the tracker holds a workflow, so the cockpit reads
+# it as it reads one in service (cockpit.runs.workflows): a « Livraison
+# D01 » is a convoy carrying the new-flow mark, published by Benjamin, its
+# ticket, and the workflows run on it -- the author's on an input convoy
+# that tracks the ticket, the code review and the Ticket Evaluation on an
+# input convoy that tracks the bead the dispatch door wrote to launch them
+# (its description names the convoy and the ticket); a « Maintenance » is
+# a workflow root of the formula mol-do-work run on the work Benjamin
+# asked for. Each job is a step of one of those roots: Benjamin's a plain
+# step routed to him, the code's a check (passed once closed), an agent's a
+# ralph step whose closing runs a check, claimed by an attempt of the
+# session of that agent (passed once closed) -- one session per agent, as
+# the supervisor lists it (its agent, its template and its provider, from
+# the lane's name and role « Relectrice · Claude »). The datasets name no project: their runs
+# are of the Factory's own, RUN_PROJECT.
+
+RUN_FORMULAS = {"Livraison D01": "mol-ticket-author", "Maintenance": "mol-do-work"}
+RUN_FILTERS = {"all": "tous", "active": "en-cours", "completed": "termines"}
+RUN_PROJECT = "agent-factory"
+RUN_TRIGGERED_BY = "benjamin"
+# The workflows of a D01 other than the author's, by the role of the agent
+# of their jobs: (formula, the title the dispatch door gives its bead).
+DISPATCHED = (("Relect", "mol-code-review", "Revue de code"), ("Évaluat", "mol-ticket-evaluation", "Ticket Evaluation"))
+
 
 def _runs_city(name, at, ui, fixtures) -> SyntheticCity:
+    moment = _fixed_time(at)
+    if moment.tzinfo is None:
+        raise DatasetRefused(f"its fixed time (generated_at) has no offset: {at!r}")
     try:
         lanes = {lane["id"]: lane for lane in fixtures["lanes"]}
-        beads, sessions = [], {}
+        beads, sessions, opened, view = [], {}, [], {}
         for run in fixtures["runs"]:
-            run_id = f"synthetic-run-{run['id']}"
-            beads.append({
-                "id": run_id, "title": run["title"], "issue_type": "epic", "created_at": at,
-                "status": "open" if run["end"] is None else "closed",
-                "metadata": {"synthetic.run_type": run["type"], "synthetic.run_status": run["status"],
-                             "synthetic.run_started": run["started"], "synthetic.run_elapsed": run["elapsed"]},
-            })
-            for job in run["jobs"]:
-                lane, job_id = lanes[job["lane"]], f"{run_id}-{job['id']}"
-                running = job["end"] is None
-                beads.append({
-                    "id": job_id, "title": job["name"], "issue_type": "task", "created_at": at, "parent": run_id,
-                    "status": "in_progress" if running else "closed", "assignee": lane["name"],
-                    "description": job["prompt"] or "", "close_reason": job["result"] or "",
-                    "metadata": {"synthetic.lane": lane["id"], "synthetic.lane_kind": lane["kind"],
-                                 "synthetic.lane_role": lane["role"], "synthetic.job_start": job["start"],
-                                 "synthetic.job_end": job["end"]},
-                })
-                if lane["kind"] == "agent" and (running or lane["id"] not in sessions):
-                    sessions[lane["id"]] = {
-                        "id": f"synthetic-session-{lane['id']}", "template": lane["role"],
-                        "session_name": lane["name"], "running": running, "last_active": at,
-                        **({"active_bead": job_id} if running else {}),
-                    }
-    except (KeyError, TypeError) as exc:
+            beads += _run_records(run, lanes, moment, sessions, opened, ui, view)
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
         raise DatasetRefused(f"a Runs state whose fixtures (lanes, runs, jobs) cannot be read: {exc!r}") from exc
+    if ui.get("filter") in RUN_FILTERS:
+        view["filter"] = RUN_FILTERS[ui["filter"]]
+    if isinstance(ui.get("selected_event"), int):
+        view["event"] = ui["selected_event"]
+    clock = max(opened, default=moment)
     return SyntheticCity(
         name=name, reading=READ_ONCE if ui.get("stale") is True else READ,
-        beads=beads, sessions=[sessions[lane] for lane in lanes if lane in sessions],
+        beads=beads, sessions=[session for lane in lanes for session in sessions.get(lane, {}).values()],
+        clock_start=clock.isoformat(), view=view,
     )
+
+
+def _utc(moment: datetime) -> str:
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _run_records(run, lanes, moment, sessions, opened, ui, view) -> list:
+    """The beads of one run of the fixtures; the sessions of its agents in
+    `sessions` (by lane, then by name: one per job), the moment it is shown
+    at in `opened` when it is open, what the state selects of it in
+    `view`."""
+    formula = RUN_FORMULAS.get(run["type"])
+    if formula is None:
+        raise DatasetRefused(f"a run of a type no workflow has: {run['type']!r}")
+    hours, minutes = run["started"].split(":")
+    start = moment.replace(hour=int(hours), minute=int(minutes), second=0, microsecond=0)
+
+    def at(offset):
+        return _utc(start + timedelta(seconds=offset))
+
+    def ended(end):
+        return {"status": "closed", "closed_at": at(end)} if end is not None else {"status": "open"}
+
+    key, records = run["id"], []
+    if run["end"] is None:
+        opened.append(start + timedelta(seconds=run["elapsed"]))
+
+    def workflow(suffix, workflow_formula, tracked, title):
+        """A workflow root of `workflow_formula` run on an input convoy that
+        tracks `tracked`; its id."""
+        root_id, wrapper = f"synthetic-workflow-{key}{suffix}", f"synthetic-input-{key}{suffix}"
+        records.append({"id": wrapper, "title": f"input convoy for {tracked}", "issue_type": "convoy",
+                        "created_at": at(0), "status": "open", "metadata": {"gc.synthetic": "true"},
+                        "dependencies": [{"issue_id": wrapper, "depends_on_id": tracked, "type": "tracks"}]})
+        records.append({"id": root_id, "title": title, "issue_type": "task", "created_at": at(0), **ended(run["end"]),
+                        "metadata": {"gc.kind": "workflow", "gc.formula_name": workflow_formula,
+                                     "gc.input_convoy_id": wrapper}})
+        return root_id
+
+    def dispatched(suffix, workflow_formula, title, said):
+        """The bead the dispatch door writes to launch `workflow_formula`."""
+        bead_id = f"synthetic-dispatch-{key}{suffix}"
+        records.append({"id": bead_id, "title": title, "description": said, "issue_type": "task",
+                        "created_at": at(0), "created_by": RUN_TRIGGERED_BY, **ended(run["end"]),
+                        "metadata": {"gc.dispatched_via": "dispatch-door", "gc.dispatch_formula": workflow_formula,
+                                     "gc.dispatch_rig": RUN_PROJECT}})
+        return bead_id
+
+    roots = {}
+    if formula == "mol-ticket-author":
+        run_id, ticket_id, digest = f"synthetic-run-{key}", f"synthetic-ticket-{key}", f"sha256:synthetic-{key}"
+        records.append({"id": run_id, "title": run["title"], "issue_type": "convoy", "created_at": at(0),
+                        "created_by": RUN_TRIGGERED_BY, **ended(run["end"]),
+                        "metadata": {"gc.flow.mark": "new-flow/v1", "gc.graph_digest": digest,
+                                     "gc.project_id": RUN_PROJECT, "gc.spec_id": f"synthetic-spec-{key}"}})
+        ticket = {"gc.flow.mark": "new-flow/v1", "gc.graph_digest": digest, "gc.ticket_id": key}
+        if run["status"] == "Fusionné":
+            ticket["gc.flow.merge"] = json.dumps({"at": at(run["end"]), "outcome": "merged"})
+        elif run["status"] == "Abandonné":
+            ticket["gc.flow.gate.withdrawn"] = json.dumps({"at": at(run["end"])})
+        records.append({"id": ticket_id, "title": run["title"], "issue_type": "task", "created_at": at(0),
+                        **ended(run["end"]), "metadata": ticket})
+        roots[None] = workflow("", formula, ticket_id, formula)
+        for prefix, workflow_formula, title in DISPATCHED:
+            if any(lanes[job["lane"]]["role"].startswith(prefix) for job in run["jobs"]):
+                said = f"{title} of ticket {ticket_id}.\n\nconvoy: {run_id}\nticket: {ticket_id}\n"
+                suffix = f"-{workflow_formula}"
+                launched = dispatched(suffix, workflow_formula, f"{title} — {ticket_id}", said)
+                roots[prefix] = workflow(suffix, workflow_formula, launched, workflow_formula)
+    else:
+        work = dispatched("", formula, run["title"], f"{run['title']}.\n")
+        run_id = roots[None] = workflow("", formula, work, formula)
+    if ui.get("run") == key:
+        view["run"] = run_id
+    for job in run["jobs"]:
+        lane = lanes[job["lane"]]
+        root_id = next((root for prefix, root in roots.items() if prefix and lane["role"].startswith(prefix)),
+                       roots[None])
+        step_id = f"{root_id}-{job['id']}"
+        step = {"gc.root_bead_id": root_id, "gc.step_id": job["id"]}
+        passed = {"gc.outcome": "pass"} if job["end"] is not None else {}
+        if lane["kind"] == "human":
+            step.update({"gc.routed_to": "benjamin"})
+        elif lane["kind"] == "code":
+            step.update({"gc.kind": "check", **passed})
+        else:
+            step.update({"gc.kind": "ralph", "gc.check_mode": "exec", **passed})
+        records.append({"id": step_id, "title": job["name"], "issue_type": "task", "created_at": at(job["start"]),
+                        "description": job["prompt"] or "", "close_reason": job["result"] or "",
+                        **ended(job["end"]), "metadata": step})
+        if lane["kind"] == "agent":
+            template, _, provider = lane["role"].partition(" · ")
+            # Each job of an agent is claimed by a session of its own: the
+            # agent keeps one lane across them.
+            session = f"synthetic-session-{lane['id']}-{key}-{job['id']}"
+            records.append({"id": f"{step_id}-attempt-1", "title": job["name"], "issue_type": "task",
+                            "created_at": at(job["start"]), **ended(job["end"]),
+                            "metadata": {"gc.logical_bead_id": step_id, "gc.root_bead_id": root_id, "gc.attempt": "1",
+                                         "gc.session_name": session, "gc.routed_to": template,
+                                         "gc.claimed_at": at(job["start"]), **passed}})
+            running = job["end"] is None and run["end"] is None
+            sessions.setdefault(lane["id"], {})[session] = {
+                "id": session, "name": session, "session_name": session, "agent_name": lane["name"],
+                "template": template, "provider": provider or None, "running": running,
+                "last_active": _utc(moment), **({"active_bead": step_id} if running else {}),
+            }
+        if ui.get("run") == key and ui.get("selected_job") == job["id"]:
+            view["job"] = step_id
+    return records

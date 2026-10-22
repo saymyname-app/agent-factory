@@ -91,7 +91,7 @@ def paris(epoch, with_day=False):
 
 def run_from_bead(bead, now):
     """One run: ``id``, ``ticket``, ``type``, ``title``, ``step``, ``status``,
-    ``tone``, ``state`` (live / wait / done / stopped), ``start``, ``end``,
+    ``tone`` (:func:`tone`), ``state`` (live / wait / done / stopped), ``start``, ``end``,
     ``elapsed``, ``started``, ``lanes`` (``name``, ``kind``, ``jobs``: spans
     in seconds from the start, ``labels``), ``events`` (``at``, ``lane``,
     ``text``), ``models``, ``branch``; None for a bead no agent ran on."""
@@ -210,12 +210,25 @@ def run_from_bead(bead, now):
     return {
         "id": bead.get("id"), "ticket": ticket, "spec": m.get("gc.spec_id"),
         "type": "Livraison · %s" % ticket, "title": title, "step": step, "status": status,
-        "tone": {LIVE: "live", WAIT: "wait"}.get(state), "state": state,
+        "tone": tone(state, status), "state": state,
         "start": start, "end": end, "elapsed": int(end - start),
         "started": paris(start, with_day=True), "lanes": lanes,
         "events": sorted(events, key=lambda e: e["at"]), "models": models,
         "branch": m.get("gc.flow.branch"), "rig": m.get("gc.dispatch_rig"), "href": "/runs/run?id=%s" % bead.get("id"),
     }
+
+
+# A run ended that is not a success: abandoned, or closed without a merge.
+UNSUCCESSFUL = ("Abandonné", "Fermé")
+
+
+def tone(state, status):
+    """How the status of a run is drawn: « live » or « wait » while it is
+    open, « ended » when it ended without success, else None (a success,
+    or stopped)."""
+    if state == DONE:
+        return "ended" if status in UNSUCCESSFUL else None
+    return {LIVE: "live", WAIT: "wait"}.get(state)
 
 
 def _verdict(state):

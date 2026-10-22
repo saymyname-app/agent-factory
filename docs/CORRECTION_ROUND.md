@@ -1,4 +1,4 @@
-# The single correction round, the stop of a ticket, the override (T17, Spec af-wf4w5r §8)
+# The correction rounds, the stop of a ticket, the override (T17, Spec af-wf4w5r §8)
 
 ## Status and purpose
 
@@ -7,14 +7,28 @@ A finished ticket of a convoy that carries the **new-flow mark** is reviewed
 (`docs/TICKET_EVALUATION.md`) in parallel, on the same tip. What happens when
 one of them refuses is held here, by code:
 
-- **One correction round per ticket**, common to the code review and the
-  Ticket Evaluation. It is opened once both have answered at the tip, and it
-  goes to **one fresh author session**, which receives every finding of both.
-- **It counts among the resumes** of the ticket (`resumes`,
+- **At most `bounds.correction_rounds` correction rounds per ticket**
+  (`config/delivery-flow.json`: two; one when unset), common to the code
+  review and the Ticket Evaluation. A round is opened once both have answered
+  at the tip, and it goes to **one fresh author session**, which receives
+  every finding of both.
+- **Each counts among the resumes** of the ticket (`resumes`,
   `correction_rounds`).
-- **Still refused after that round, the ticket stops**: no second round
+- **Still refused after a round with one left, the next round opens** on
+  what still refuses the ticket at the tip, gathered the same way.
+- **Still refused after its last round, the ticket stops**: no round more
   starts, nothing of it is merged, and it is raised to the operator **once,
   as one item**, whatever refused it.
+
+Intent (Benjamin, his words, 2026-10-21 about 22:50 Paris): « B. Deux tours
+(Recommandé) », to the question « Règle des tours de correction : laquelle ? »,
+whose option read: deux tours de correction automatiques et un amendement de
+tests par tour avant de te remonter un ticket ; C1 et D repartent seuls, sans
+dérogation.
+Mechanism (agent interpretation, af-bv0ikr, ADR-0033): `bounds.correction_rounds`
+is 2; a round opened after the last amendment allows one amendment (af-vsni1n,
+unchanged), so each round may amend once; a ticket stopped under the single
+round is given its second by `grant`, with the approver's words.
 - **On a stopped ticket**, the declared human approver of the project may
   **override a Blocking Finding of the code review**, with their words; it is
   then read as « dérogation enregistrée ». **A criterion that was not
@@ -29,6 +43,7 @@ touched (exit 4).
 ./bin/correction-round settle   af-convoy [--repo <project repository>]   # bin/convoy-advance, at each pass
 ./bin/correction-round brief    af-convoy af-t1                           # the author session of the round (formula mol-ticket-correction)
 ./bin/correction-round override af-convoy af-t1 --finding F1.1 --approved-by <human approver> --words "…"   # the operator, on a stopped ticket
+./bin/correction-round grant    af-convoy af-t1 --approved-by <human approver> --words "…"   # the operator, on a ticket stopped with a round left
 ./bin/correction-round show     af-convoy af-t1                           # the round, the overrides, the stop, the counters
 ```
 
@@ -110,8 +125,16 @@ one stops the ticket `amendment_exhausted` (af-vsni1n, `docs/TDD_STEP.md`).
 | the author session is at work (its bead is open): the ticket is not finished at the tip, a Blocking Finding has no answer, or the evaluation refused at the commit of the round | waits (`pending`) |
 | the answers wait for their judgement, or the ticket waits for its evaluation at the new tip | waits (`pending`): `bin/code-review` sends the judgement to a second reviewer session, `bin/ticket-evaluation` evaluates the new tip |
 | both accepted at the tip | nothing: the merge follows, whatever the fidelity (below) |
-| a review judgement or replay blocks, or an evaluation remains not observed at the new tip, even while the other control is pending | **stops the ticket**; the pending control cannot lift the stop |
+| a review judgement or replay blocks, or an evaluation remains not observed at the new tip, with a round left | waits (`waiting`) while the other control is pending, then **opens the next round** at the tip and sends it to one fresh author session |
+| the same, on the last round, even while the other control is pending | **stops the ticket**; the pending control cannot lift the stop |
 | the author session ended (its bead is closed) without finishing the ticket at the tip, or leaving a Blocking Finding unanswered or the refused evaluation as it was | **stops the ticket** |
+
+A round opened on a **judgement** (the answers of the round before, judged
+unfavorably) has no answers of its own: its brief gives `respond: null` and
+the findings the judgement kept, and the review is replayed in full at the
+tip its author finishes at (`bin/code-review`, `open-code-review`). A round
+opened on a **review** (one replayed in full after the round before) is
+answered and judged like the first.
 
 **A red fidelity never stops a ticket** (ADR-0032, af-hcriwn, 2026-10-19;
 it replaced af-ckbood). The fidelity to the Validated Prototype is still
@@ -184,6 +207,24 @@ the next pass merges the ticket and the ticket-end gate closes it: its
 condition 9 reads `overrides` (`docs/TICKET_END.md`). Unfavorable, or
 without a result after its relaunch, the ticket stays stopped and nothing
 of it is merged.
+
+## A round granted by the operator
+
+A ticket stopped `still_refused` while the bound allows it one round more —
+it was stopped under a lower bound — takes that round once its declared
+human approver grants it, with their words:
+
+```bash
+./bin/correction-round grant af-convoy af-t1 --approved-by benjamin-hurand --words "…"
+```
+
+`bin/convoy-state grant-correction` lifts the stop and keeps it, with the
+approver and the words, under `grants` of the round (carried to the next
+round); `bin/escalation-door clear` withdraws its request. The next passes
+review and evaluate the tip again if needed, and `settle` opens the next
+round once both answered there. Refused: from anyone else, without words,
+on a ticket that is not stopped `still_refused` after a round, or that has
+no round left.
 
 ## Stored state
 

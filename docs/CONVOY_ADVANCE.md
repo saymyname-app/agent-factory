@@ -238,7 +238,10 @@ A ticket of a marked convoy is closed by the pass, through `bin/ticket-end`
   pass, not the check; a pass that finds it running leaves it, and the
   pass that finds it ended reports its answer. Before this, a check longer
   than what was left of the 300 s was killed with its pass and started
-  again from zero by the next one: no pass ended any more.
+  again from zero by the next one: no pass ended any more. A measurement
+  refusal (for example, a declared screen that does not answer) stays visible
+  under `fidelity.refused`, but is informative and does not fail the pass
+  (ADR-0032). A controller error or an unreadable answer still fails it.
 - **After the merge**, a convoy that has a merged ticket still open, or in
   which this pass merged one, is handed to `bin/ticket-end settle <convoy>
   --repo <project repository>`. Reported under `ticket_end`: `closed` (the
@@ -290,6 +293,7 @@ the parking only):
 |---|---|
 | `operator_request` (its own Ticket Exit) | any answer given to the request of that ticket (`bin/escalation-door repondre`) after the parking |
 | `planning_exception` (its own Ticket Exit) | only the option that accepts the deviation: the last Planning Exception of the ticket is `accepted` (it was answered by its `accept_option`, `docs/CONVOY_STATE.md`; every exception raised since ADR-0030 L5 has one, with or without anchors). Any other answer leaves the ticket parked |
+| `planning_exception` (its Ticket Evaluation: the ticket is `finished`, its last evaluation's outcome is `planning_exception`, no entry under `planning_exceptions`) | only option `a`, « Juger ce qui est inobservable prouvé par son test de critère vert » (`bin/ticket-evaluation`); `lift-park` records what that evaluation found unobservable by the criterion under `proven_by_test`, and the evaluation the lift sends again counts it proven (`docs/TICKET_EVALUATION.md`). Option `b` (remove the ticket from the graph) or no answer: parked |
 | `resumes_exhausted` | option `a` of the convoy's grouped request (below), for the tickets that request names as lifted |
 
 The lift is `bin/convoy-state lift-park <convoy> <ticket> --request <bead>
@@ -325,7 +329,7 @@ ticket:
 | Cause | Read on the tracker |
 |---|---|
 | `interrupted` | the Ticket Exit is `interrupted`; or the ticket is `in_progress` with no Ticket Exit and its recorded session is not among the live ones (`gc session list`); or the bead of its last resume is closed and no session took the ticket since |
-| `returned` | the Ticket Exit is `finished` and the merge returned the ticket (`merge.outcome` `conflict` or `red`) at the tip of its branch |
+| `returned` | the Ticket Exit is `finished` and the merge returned the ticket (`merge.outcome` `conflict` or `red`) at the tip of its branch. Also on a ticket stopped `still_refused` whose every Blocking Finding the operator overrode, which `bin/spec-integration` merges as if at work: the resume lifts that stop, keeps it on its entry and withdraws its request; with no resume left the stop stays with the operator (af-n4bn62: F and G1 of af-strhoy, returned red on 21/10/2026, were neither merged again nor resumed) |
 | `unblocked` | the Ticket Exit is `technically_blocked` and no bead it waits for with a `blocks` edge is open any more (its repair is closed) |
 | `answered` | the Ticket Exit is `planning_exception` or `operator_request` and the ticket is no longer parked: its parking was lifted |
 | `behind` | the Ticket Exit is `finished`, the ticket is not merged, and `bin/code-review show <convoy> <ticket> --repo` reports `behind`: its branch does not contain the tip of the integration branch, so no reviewer is sent on it (T44, `docs/CODE_REVIEW.md`). The fact is `integration:<tip>/exit:<exit time>`: once per Ticket Exit |
@@ -790,7 +794,7 @@ it is named as CONVOY, carries `closed`, the record of its closing.
 | Exit | Meaning |
 |---|---|
 | 0 | the pass is done; what it started is listed, possibly nothing |
-| 1 | refused or could not run (settings, a bound, tracker), the door refused a ticket or a resume (named under `refused`), a ticket to resume has no `resume` setting or no project, a parking could not be lifted, an incident or a grouped request could not be raised or withdrawn, the repair of a red integration branch or of tracked elements could not be published, or the merge pass, the settlement of the code reviews, of the evaluations or of the correction rounds, a fidelity check, the ticket-end gate, the end-of-Spec gate, the Outcome Evaluation or the settlement of the end code review could not run, a repair the Evaluator of the end drafted could not be published, the Evidence Pack could not be generated, the « non conforme » request of stopped rounds could not be raised or recorded, the Acceptance Request of a Delivered Outcome or the repair of an Acceptance Session's outage could not be sent, published or recorded, or the merge or the closing that follows the operator's answer could not be made (`promotion.error`, `promotion.message`, `promotion.pending`, or the `repair` of a voided acceptance that could not be published) |
+| 1 | refused or could not run (settings, a bound, tracker), the door refused a ticket or a resume (named under `refused`), a ticket to resume has no `resume` setting or no project, a parking could not be lifted, an incident or a grouped request could not be raised or withdrawn, the repair of a red integration branch or of tracked elements could not be published, or the merge pass, the settlement of the code reviews, of the evaluations or of the correction rounds, the fidelity controller (not an informative measurement refusal), the ticket-end gate, the end-of-Spec gate, the Outcome Evaluation or the settlement of the end code review could not run, a repair the Evaluator of the end drafted could not be published, the Evidence Pack could not be generated, the « non conforme » request of stopped rounds could not be raised or recorded, the Acceptance Request of a Delivered Outcome or the repair of an Acceptance Session's outage could not be sent, published or recorded, or the merge or the closing that follows the operator's answer could not be made (`promotion.error`, `promotion.message`, `promotion.pending`, or the `repair` of a voided acceptance that could not be published) |
 | 3 | a convoy is in an « état sans règle »: none of its tickets is started, the anomalies are listed (0 with `--stopped-ok` once its incident is raised) |
 | 4 | the convoy does not carry the mark: « pas un convoi du nouveau flux » |
 

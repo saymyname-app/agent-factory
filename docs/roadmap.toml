@@ -16,7 +16,13 @@
 # ticket's graph -- a SayMyName-side operator step after T03 merges).
 #
 # Statuses below are the real statuses as of 2026-09-30, read from
-# knowledge/state.md on origin (the "Roadmap position" section).
+# knowledge/state.md on origin (the "Roadmap position" section), then read
+# again from the tracker on 2026-10-21 (E, af-8rbceu: the cockpit flags a
+# step "in_progress" whose chantier is closed): A5's convoy af-ly65d closed
+# 2026-09-28, A6's af-dsygc 2026-09-30 (closing note #343), C01's graph
+# convoy af-f71cgu 2026-10-01 and D01's af-wtjo2x 2026-10-11 -- all "done".
+# The cockpit's work goes on as C01-suite (Spec af-fgcw0d, convoy af-strhoy),
+# after the abandon of C01-reprise (Spec af-2zseit, convoy af-pqfxmd).
 
 [[step]]
 id = "A1"
@@ -51,25 +57,32 @@ id = "A5"
 title = "Planning Run \"Factory operations v2\" (orders, Mayor wake, orphan signals, campaign-pointer, exhaustion parking, ADR-0028 amendment, maintenance scripts, proposals flow)"
 done_when = "its graph delivered and closed"
 order = 5
-status = "in_progress"
+status = "done"
 
 [[step]]
 id = "A6"
 title = "Planning Run \"Parallel delivery\" (worktree per dispatch, declared file scope, hot-file leases, test isolation, up-to-date-before-merge, conflict-repair loop; first 2 workers on the Factory)"
 done_when = "its graph delivered and closed; 2 Factory workers ran a day with no broken main and no live-state collision"
 order = 6
-status = "in_progress"
+status = "done"
 
 [[step]]
 id = "C01"
 title = "Planning Run C01 \"Cockpit V2\" (cockpit + notifications + ritual reminders; called A7 in the SayMyName roadmap this step was migrated from)"
 done_when = "its graph delivered and closed"
 order = 7
-status = "in_progress"
+status = "done"
 
 [[step]]
 id = "D01"
 title = "Planning Run D01 \"Delivery Workflow\" (entry contract, per-ticket TDD proof, review and evaluation, end-of-Spec gate, Evidence Pack, acceptance; map af-0sayxf, Spec af-wf4w5r)"
 done_when = "its graph delivered, its final verification against the Spec judged by Benjamin, and Cockpit V2 redelivered through the new flow"
 order = 8
+status = "done"
+
+[[step]]
+id = "C01-suite"
+title = "Planning Run C01-suite \"Cockpit : ce que main ne couvre pas encore\" (Spec af-fgcw0d; the Cockpit V2 redelivered through the D01 flow)"
+done_when = "its graph delivered through the D01 flow and closed"
+order = 9
 status = "in_progress"
