@@ -1,21 +1,25 @@
 #!/usr/bin/env python3
-"""The single correction round of a ticket, the stop of a ticket still
-refused, and the override of the operator (T17, af-rx0ocp; Spec af-wf4w5r
-§8; user stories 43 to 45).
+"""The correction rounds of a ticket, the stop of a ticket still refused,
+and the override of the operator (T17, af-rx0ocp; Spec af-wf4w5r §8; user
+stories 43 to 45).
 
 The code review (bin/code-review) and the Ticket Evaluation
 (bin/ticket-evaluation) of a finished ticket run in parallel on the same tip.
 Once both have answered there and at least one refused, the flow -- never
-the author, never a reviewer -- opens the one correction round of the ticket
+the author, never a reviewer -- opens a correction round of the ticket
 and sends it to one fresh author session, started as routed work through
 bin/dispatch-door on the formula `mol-ticket-correction`. That session is
 given every finding of both (`brief`). The round counts among the resumes
-of the ticket.
+of the ticket. A ticket takes at most `bounds.correction_rounds` rounds
+(config/delivery-flow.json; Benjamin, 2026-10-21: two, af-bv0ikr): still
+refused after a round with one left, the next round opens the same way, on
+what still refuses it at the tip.
 
-A ticket still refused after that round -- its answers judged unfavorably, a
-criterion still not observed, a review replayed in full that blocks again, a
-session that ended without correcting -- is stopped: no second round starts,
-nothing of it is merged, and it is raised once to the operator through
+A ticket still refused after its last round -- its answers judged
+unfavorably, a criterion still not observed, a review replayed in full that
+blocks again, a session that ended without correcting -- is stopped: no
+round more starts, nothing of it is merged, and it is raised once to the
+operator through
 bin/escalation-door, as one item. So is a finished ticket both accept at its
 The fidelity to the Validated Prototype never stops a ticket: it is measured
 and joined for the finishing pass, not blocking (af-hcriwn, 2026-10-19).
@@ -24,10 +28,15 @@ On a stopped ticket the declared human approver of the project may override
 a Blocking Finding of the code review, with their words (`override`); it is
 then read as « dérogation enregistrée ». A criterion that was not observed
 is never waived: the command refuses it and names the Planning Exception.
+On a ticket stopped while the bound allows one round more (stopped when it
+was one), the same approver may grant that round, with their words
+(`grant`): the stop is lifted and kept on the round, and `settle` opens the
+next round once both controls answered at the tip.
 
     correction-round settle   CONVOY [--repo DIR]            bin/convoy-advance, at each pass
     correction-round brief    CONVOY TICKET [--repo DIR]     the author session of the round
     correction-round override CONVOY TICKET --finding ID --approved-by NAME --words TEXT [--repo DIR]
+    correction-round grant    CONVOY TICKET --approved-by NAME --words TEXT [--repo DIR]
     correction-round show     CONVOY TICKET [--repo DIR]
 
 The state lives in the tracker, read and written through bin/convoy-state
@@ -284,6 +293,10 @@ def review_position(ticket: dict[str, Any], tip: str) -> tuple[str, list[str], s
     if last["kind"] != "review":
         if last["commit"] != tip:
             return PENDING, unsettled, "la revue de code est à rejouer sur la pointe"
+        if correction is not None and correction["commit"] == last["commit"]:
+            # A later round corrects the answers judged unfavorably: no answer
+            # is given to a judgement, the review is replayed on the new tip.
+            return WITH_AUTHOR, unsettled, ""
         return REFUSED, unsettled, ""
     if correction is None:
         if last["commit"] == tip:
@@ -439,7 +452,7 @@ def raise_stop(convoy_id: str, ticket: dict[str, Any], stop: dict[str, Any]) -> 
                          REQUEST_LINE_MAX)
     payload = {
         "quoi": head + short(stop["detail"], REQUEST_LINE_MAX - len(head)),
-        "pourquoi": ("Un ticket n'a qu'un tour de correction : aucun second tour ne démarre, rien de ce ticket ne fusionne."
+        "pourquoi": ("Le ticket a pris tous ses tours de correction : aucun autre ne démarre, rien de ce ticket ne fusionne."
                      if ticket.get("correction") else
                      "Aucun tour de correction ne reprend un écart de fidélité au prototype : rien de ce ticket ne fusionne."),
         "que_faire": [
@@ -533,9 +546,19 @@ def settle_ticket(convoy: Convoy, ticket_id: str) -> dict[str, Any]:
                 return stop_ticket(convoy, ticket_id, still_refused(review, evaluation, not finished, fidelity))
             return {"ticket": ticket_id, "action": "pending", "commit": correction["commit"],
                     "reason": "la session de correction travaille"}
-        # After the only correction, an established refusal at the tip is
-        # final even when the other control has not answered. The pre-round
-        # path above still gathers both findings before opening the round.
+        # After the last correction, an established refusal at the tip is
+        # final even when the other control has not answered. With a round
+        # left, the next one gathers both findings first, as the first did.
+        if REFUSED in positions and ticket.get("correction_rounds_left"):
+            if PENDING in positions:
+                missing = review if review[0] == PENDING else evaluation
+                return {"ticket": ticket_id, "action": "waiting",
+                        "reason": f"{missing[2]} : le tour de correction suivant attend les deux contrôles"}
+            state_write("open-correction", convoy.id, ticket_id, "--commit", tip)
+            convoy.load()
+            correction = convoy.ticket(ticket_id)["correction"]
+            bead_id = launch(convoy, ticket_id, correction, load_settings())
+            return {"ticket": ticket_id, "action": "launched", "commit": correction["commit"], "bead": bead_id}
         if REFUSED in positions:
             return stop_ticket(convoy, ticket_id, still_refused(review, evaluation, False, fidelity))
         if PENDING in positions:
@@ -576,6 +599,19 @@ def cmd_settle(args: argparse.Namespace) -> int:
 # --- brief: what the author session of the round is given ---------------------------
 
 
+def round_text(ticket: dict[str, Any]) -> str:
+    """What the author session is told of its round and of what follows it."""
+    rounds = (ticket.get("counters") or {}).get("correction_rounds")
+    if ticket.get("correction_rounds_left"):
+        return (f"C'est le tour de correction {rounds} de ce ticket, revue de code et Ticket Evaluation confondues : "
+                "encore refusé après lui, un tour de plus s'ouvre sur ce qui le refuse encore à la pointe.")
+    if rounds == 1:
+        return ("C'est l'unique tour de correction de ce ticket, revue de code et Ticket Evaluation confondues : "
+                "encore refusé après lui, le ticket s'arrête sans fusionner et remonte à l'opérateur.")
+    return (f"C'est le dernier tour de correction de ce ticket ({rounds}), revue de code et Ticket Evaluation "
+            "confondues : encore refusé après lui, le ticket s'arrête sans fusionner et remonte à l'opérateur.")
+
+
 def cmd_brief(args: argparse.Namespace) -> int:
     convoy = Convoy(args.convoy, args.repo)
     ticket = convoy.ticket(args.ticket)
@@ -583,9 +619,17 @@ def cmd_brief(args: argparse.Namespace) -> int:
     if not correction:
         raise Refusal(f"aucun tour de correction n'est ouvert sur {args.ticket} : rien à corriger")
     commit = correction["commit"]
-    reviewed = next((round_ for round_ in reversed(review_of(ticket)["rounds"])
+    rounds = review_of(ticket)["rounds"]
+    reviewed = next((round_ for round_ in reversed(rounds)
                      if round_["kind"] == "review" and round_["commit"] == commit), None)
-    findings = (reviewed or {}).get("findings", [])
+    if reviewed is not None:
+        findings = reviewed.get("findings", [])
+    else:
+        # A round opened on a judgement: its findings are those of the
+        # reviews before it, the latest text of each.
+        latest = {finding["id"]: finding for round_ in rounds if round_["kind"] == "review"
+                  for finding in round_.get("findings", [])}
+        findings = [latest[name] for name in correction["blocking_findings"] if name in latest]
     kept = ("id", "axis", "summary", "citation", "question")
     blocking = [{name: finding[name] for name in kept if name in finding}
                 for finding in findings if finding["id"] in correction["blocking_findings"]]
@@ -605,14 +649,18 @@ def cmd_brief(args: argparse.Namespace) -> int:
     print(json.dumps({
         "ok": True, "convoy": args.convoy, "ticket": args.ticket, "commit": commit, "branch": ticket.get("branch"),
         "tip": ticket.get("tip"), "repo": str(convoy.repo),
-        "round": ("C'est l'unique tour de correction de ce ticket, revue de code et Ticket Evaluation confondues : "
-                  "encore refusé après lui, le ticket s'arrête sans fusionner et remonte à l'opérateur."),
+        "round": round_text(ticket),
         "code_review": {
             "commit": commit, "blocking_findings": blocking, "non_blocking_findings": recorded,
-            "respond": (f"bin/code-review respond {args.convoy} {args.ticket} --file <responses.json> : une réponse "
-                        "par Blocking Finding, et rien d'autre"),
-            "response_shape": {"responses": {"<finding id>": {"response": "fixed", "commit": "<commit of the correction>"},
-                                             "<other finding id>": {"response": "contested", "reason": "<one line>"}}},
+            **({"respond": (f"bin/code-review respond {args.convoy} {args.ticket} --file <responses.json> : une "
+                            "réponse par Blocking Finding, et rien d'autre"),
+                "response_shape": {"responses": {
+                    "<finding id>": {"response": "fixed", "commit": "<commit of the correction>"},
+                    "<other finding id>": {"response": "contested", "reason": "<one line>"}}}}
+               if reviewed is not None or not blocking else
+               {"respond": None,
+                "replayed": ("ces constats sont ceux que le jugement de tes réponses garde : aucune réponse ne "
+                             "s'enregistre, la revue de code est rejouée en entier sur ta nouvelle pointe")}),
         },
         "evaluation": {"commit": commit, "not_observed": not_observed},
         "counters": ticket.get("counters"),
@@ -664,6 +712,30 @@ def cmd_override(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_grant(args: argparse.Namespace) -> int:
+    """The approver grants a round more to a ticket stopped while the bound
+    allows one (af-bv0ikr): the stop is lifted and its request cleared."""
+    convoy = Convoy(args.convoy, args.repo)
+    convoy.ticket(args.ticket)
+    rig, approver = declared_human_approver(args.ticket)
+    if args.approved_by != approver:
+        raise Refusal(
+            f"{args.approved_by!r} n'est pas l'approbateur humain déclaré du projet {rig} ({approver!r}) : lui seul "
+            "accorde un tour de correction de plus ; rien n'est écrit")
+    words = (args.words or "").strip()
+    if not words:
+        raise Refusal("tour accordé sans mots : il s'enregistre avec les mots de l'approbateur (--words), non vides ; "
+                      "rien n'est écrit")
+    state_write("grant-correction", args.convoy, args.ticket, "--approver", approver, "--words", words)
+    cleared = run([str(ESCALATION_TOOL), "clear", args.ticket])
+    if cleared.returncode != 0:
+        raise Refusal(f"le tour est accordé à {args.ticket}, mais sa demande reste sur la liste de l'opérateur : "
+                      f"{detail_of(cleared)}")
+    print(json.dumps({"ok": True, "convoy": args.convoy, "ticket": args.ticket, "granted": True,
+                      "approver": approver, "words": words}, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
 def cmd_show(args: argparse.Namespace) -> int:
     convoy = Convoy(args.convoy, args.repo)
     ticket = convoy.ticket(args.ticket)
@@ -698,6 +770,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = command("override", cmd_override)
     p.add_argument("--finding")
     p.add_argument("--criterion")
+    p.add_argument("--approved-by")
+    p.add_argument("--words")
+    p = command("grant", cmd_grant)
     p.add_argument("--approved-by")
     p.add_argument("--words")
     p = sub.add_parser("settle")

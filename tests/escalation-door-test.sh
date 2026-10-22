@@ -495,6 +495,29 @@ written=$(bead af-shipped)
 [[ $(jq -r '.metadata["gc.needs_benjamin"] // "none"' "$TEST_TMP/beads/af-stillred.json") == *"non résolue après 2h"* ]] \
   || fail "a page about a PR that is not merged must still be promoted"
 
+# A page about a failing order is resolved once its bead is closed: the order
+# opens a new bead if it fails again (af-drwmqm, 2026-10-22: three closed
+# "convoy-advance failing" beads reached Benjamin after the fix had merged).
+reset_beads
+seed af-orderfixed "$(jq -nc '
+  {id: "af-orderfixed", status: "closed",
+   metadata: {"gc.escalation_mayor_paged_at": "2026-09-01T00:00:00Z",
+              "gc.escalation_mayor_reason": "on-order-failed: convoy-advance failed 5 times",
+              "gc.order_subject": "convoy-advance"},
+   notes: "", labels: []}')"
+seed af-orderopen "$(jq -nc '
+  {id: "af-orderopen", status: "open",
+   metadata: {"gc.escalation_mayor_paged_at": "2026-09-01T00:00:00Z",
+              "gc.escalation_mayor_reason": "on-order-failed: convoy-advance failed 5 times",
+              "gc.order_subject": "convoy-advance"},
+   notes: "", labels: []}')"
+TESTS_RUN=$((TESTS_RUN + 1))
+ESCALATION_DOOR_NOW=$((T0 + 7200)) door sweep >/dev/null || fail "sweep should succeed on a closed order failure"
+written=$(bead af-orderfixed)
+[[ $(jq -r '.metadata["gc.needs_benjamin"] // "none"' <<<"$written") == none ]]   || fail "a closed order-failure bead must not be promoted to Benjamin"
+[[ $(jq -r '.metadata["gc.escalation_mayor_paged_at"]' <<<"$written") == none ]]   || fail "the page of a closed order-failure bead must be cleared"
+[[ $(jq -r '.metadata["gc.needs_benjamin"] // "none"' "$TEST_TMP/beads/af-orderopen.json") == *"non résolue après 2h"* ]]   || fail "an order-failure bead still open must still be promoted"
+
 # --- clear -------------------------------------------------------------------
 reset_beads
 seed af-blocker '{"id":"af-blocker","status":"open","metadata":{"gc.needs_benjamin":"Cause"},"notes":"","labels":[]}'

@@ -350,8 +350,9 @@ and nothing else.
    product, one state per criterion; code computes the verdict). When the
    ticket touches a screen, `bin/prototype-fidelity` compares it to the
    Validated Prototype.
-6. **At most one correction round** (`bin/correction-round`), common to
-   both, by another fresh author session. Still refused: the ticket stops.
+6. **At most `bounds.correction_rounds` correction rounds** (two,
+   ADR-0033; `bin/correction-round`), common to both, each by another fresh
+   author session. Still refused after the last: the ticket stops.
 7. **Merge.** `bin/spec-integration merge` merges the ticket into the
    integration branch, one at a time, with tests on the merged result. No
    ticket opens a pull request toward the protected branch.

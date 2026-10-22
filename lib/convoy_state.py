@@ -82,6 +82,7 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state invalidate-verdicts CONVOY TICKET --tip SHA --kind KIND [--kind KIND]
     convoy-state open-correction   CONVOY TICKET --commit SHA
     convoy-state launch-correction CONVOY TICKET --bead BEAD
+    convoy-state grant-correction  CONVOY TICKET --approver NAME --words TEXT
     convoy-state override-finding  CONVOY TICKET --finding ID --approver NAME --words TEXT
     convoy-state record-incident CONVOY --bead BEAD [--signature sha256:HEX]
     convoy-state clear-incident  CONVOY
@@ -378,13 +379,15 @@ KIND_WITHOUT_RED = "prefactoring"
 # bin/convoy-advance resumes them as stage_removed).
 STOP_REASONS = ("criterion_already_green", "amendment_exhausted", "test_review_refused", "test_review_no_result",
                 "code_review_no_result", "evaluation_no_result", "evaluation_outage", "still_refused")
-# The correction round of a ticket (T17, Spec §8): one for its code review
-# and its Ticket Evaluation together, worked by one fresh author session. A
-# ticket still refused after it is stopped (`still_refused`); on a stopped
-# ticket the operator may override a Blocking Finding of the review, never a
-# criterion that was not observed.
+# The correction rounds of a ticket (T17, Spec §8): each one for its code
+# review and its Ticket Evaluation together, worked by one fresh author
+# session. Their number is a bound of the flow, `bounds.correction_rounds`
+# (one when the file does not set it; Benjamin, 2026-10-21: two, af-bv0ikr).
+# A ticket still refused after the last is stopped (`still_refused`); on a
+# stopped ticket the operator may override a Blocking Finding of the review,
+# never a criterion that was not observed, or grant a round the bound allows.
 STOP_STILL_REFUSED = "still_refused"
-CORRECTION_MAX_ROUNDS = 1
+BOUND_CORRECTION_ROUNDS = "correction_rounds"
 CORRECTION_MAX_LAUNCHES = 1
 OVERRIDE_RECORDED = "dérogation enregistrée"
 # The review of the criterion tests between red and freeze, removed by
@@ -472,8 +475,8 @@ def resume_lifts(cause: str, reason: str) -> bool:
 
 
 # A commit after a verdict counts a resume without an entry (T18): it is a
-# cause of its own. The correction round is not one: it has its own bound of
-# one round (CORRECTION_MAX_ROUNDS), held here, outside K.
+# cause of its own. The correction round is not one: it has its own bound
+# (`bounds.correction_rounds`, correction_rounds_bound), outside K.
 COMMIT_AFTER_VERDICT = "commit_after_verdict"
 BOUNDED_RESUME_CAUSES = RESUME_CAUSES + (COMMIT_AFTER_VERDICT,)
 RESUME_MAX_LAUNCHES = 1
@@ -667,6 +670,13 @@ def valid_bound(value: Any, name: str) -> int:
 
 def flow_bound(name: str) -> int:
     return valid_bound(flow_setting(name), f"bounds.{name}")
+
+
+def correction_rounds_bound() -> int:
+    """The correction rounds a ticket may take: `bounds.correction_rounds`,
+    one when the bounds do not set it (the single round of ADR-0030)."""
+    value = flow_setting(BOUND_CORRECTION_ROUNDS)
+    return 1 if value is None else valid_bound(value, f"bounds.{BOUND_CORRECTION_ROUNDS}")
 
 
 def resume_bounds() -> dict[str, int]:
@@ -1771,8 +1781,16 @@ def fidelity_rendered(record: dict[str, Any], accepted_anchors: list[str]) -> di
 def correction_record(raw: Any) -> dict[str, Any]:
     """The correction round of a ticket (T17): the commit both verdicts were
     given at, what each of them refused there, and the author session it was
-    sent to."""
-    record = stored_record(raw, ("commit", "blocking_findings", "not_observed", "launches", "at"))
+    sent to; with `grants`, each stop the operator lifted for a round more
+    (grant-correction), carried from round to round."""
+    record = stored_record(raw, ("commit", "blocking_findings", "not_observed", "launches", "at"), ("grants",))
+    grants = record.get("grants", [])
+    for grant in grants if isinstance(grants, list) and grants else [None] if "grants" in record else []:
+        if not isinstance(grant, dict) or set(grant) != {"approver", "words", "stop", "at"} \
+                or not isinstance(grant["words"], str) or not grant["words"].strip():
+            raise Refusal(f"levée d'arrêt du tour de correction mal formée : {grant!r}")
+        single_line(grant["approver"], "approbateur de la levée d'arrêt")
+        stop_record(encode(grant["stop"]))
     valid_commit(record["commit"], "commit du tour de correction")
     findings, not_observed, launches = record["blocking_findings"], record["not_observed"], record["launches"]
     if not isinstance(findings, list) or any(not isinstance(name, str) or not FINDING_ID_RE.match(name) for name in findings):
@@ -3115,6 +3133,12 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
     except Refusal:
         # The counter or the lifts are already flagged: no default.
         out["resumes_left"] = out["resumes_left_by_cause"] = None
+    # The correction rounds the ticket may still take (bounds.correction_rounds).
+    try:
+        out["correction_rounds_left"] = max(0, correction_rounds_bound() - counter_value(
+            metadata.get(COUNTER_PREFIX + "correction_rounds"), "correction_rounds"))
+    except Refusal:
+        out["correction_rounds_left"] = None
 
     def has_gate(name: str) -> bool:
         return "at" in gates.get(name, {})
@@ -3903,6 +3927,11 @@ def cmd_open_code_review(args: argparse.Namespace) -> int:
         # answer its findings (af-s31cvi).
         replayed = (kind == "review" and last is not None and last["kind"] == "review"
                     and last["commit"] != commit and not last.get("responses") and KEY_CORRECTION not in metadata)
+        # So is the judgement a later correction round took up (af-bv0ikr):
+        # no answer is given to it, the tip of that round is reviewed in full.
+        replayed = replayed or (kind == "review" and last is not None and last["kind"] == "judgement"
+                                and last["commit"] != commit and KEY_CORRECTION in metadata
+                                and correction_record(metadata[KEY_CORRECTION])["commit"] == last["commit"])
         if last and last["verdict"] == "unfavorable" and not replayed:
             if last["kind"] == "judgement":
                 raise Refusal(
@@ -5192,13 +5221,14 @@ def cmd_open_correction(args: argparse.Namespace) -> int:
     if KEY_PARK in metadata:
         raise Refusal(f"ticket parqué : aucun tour de correction ne s'ouvre sur {args.ticket}")
     counters = {name: counter_value(metadata.get(COUNTER_PREFIX + name), name) for name in TICKET_COUNTERS}
-    if KEY_CORRECTION in metadata:
-        if correction_record(metadata[KEY_CORRECTION])["commit"] == commit:
-            return done(args.convoy, args.ticket, {})
-    if KEY_CORRECTION in metadata or counters["correction_rounds"] >= CORRECTION_MAX_ROUNDS:
+    previous = correction_record(metadata[KEY_CORRECTION]) if KEY_CORRECTION in metadata else None
+    if previous is not None and previous["commit"] == commit:
+        return done(args.convoy, args.ticket, {})
+    bound = correction_rounds_bound()
+    if counters["correction_rounds"] >= bound:
         raise Refusal(
-            f"le ticket {args.ticket} a déjà pris son tour de correction : un seul tour de correction par ticket, "
-            "revue de code et Ticket Evaluation confondues")
+            f"le ticket {args.ticket} a déjà pris ses tours de correction : {bound} tour(s) de correction par "
+            "ticket (bounds.correction_rounds), revue de code et Ticket Evaluation confondues")
     finished_at(metadata, args.ticket, commit)
     # One session receives every finding: both have answered at that commit.
     review = code_review_record(metadata[KEY_CODE_REVIEW]) if KEY_CODE_REVIEW in metadata else {"rounds": []}
@@ -5216,17 +5246,20 @@ def cmd_open_correction(args: argparse.Namespace) -> int:
             "d'auteur reçoit tous les constats, ceux de l'évaluation compris")
     findings: list[str] = []
     if reviewed["verdict"] == "unfavorable":
-        if reviewed["kind"] != "review":
+        if reviewed["kind"] != "review" and previous is None:
             raise Refusal(
                 f"les réponses aux Blocking Findings de {args.ticket} sont déjà jugées défavorablement : "
                 "il n'y a plus de tour de correction à ouvrir")
-        findings = blocking_ids(reviewed)
+        # After a round, the answers judged unfavorably are what the next round corrects.
+        findings = blocking_ids(reviewed) if reviewed["kind"] == "review" else code_review_state(review)["unsettled"]
     not_observed = evaluation_state(evaluation)["not_observed"] if evaluated["outcome"] == "return_to_author" else []
     if not findings and not not_observed:
         raise Refusal(f"rien à corriger sur {args.ticket} au commit {commit} : ni Blocking Finding, ni état non observé")
     counters = {name: value + 1 for name, value in counters.items()}
     check_ticket_counters(counters)
     record = {"commit": commit, "blocking_findings": findings, "not_observed": not_observed, "launches": [], "at": now()}
+    if previous is not None and previous.get("grants"):
+        record["grants"] = previous["grants"]
     values: dict[str, Any] = {KEY_CORRECTION: encode(record),
                               **{COUNTER_PREFIX + name: value for name, value in counters.items()}}
     write_metadata(args.ticket, values)
@@ -5249,6 +5282,33 @@ def cmd_launch_correction(args: argparse.Namespace) -> int:
             f"une seule session de correction par ticket : {args.ticket} a déjà la sienne ({record['launches'][0]['bead']})")
     record["launches"].append({"bead": args.bead, "at": now()})
     values = {KEY_CORRECTION: encode(record)}
+    write_metadata(args.ticket, values)
+    return done(args.convoy, args.ticket, values)
+
+
+def cmd_grant_correction(args: argparse.Namespace) -> int:
+    """Lift the stop of a ticket still refused after its rounds when the
+    bound now allows one more (af-bv0ikr: the tickets stopped after one
+    round, when one was all), with the words of the approver: the stop is
+    kept on the round, and bin/correction-round opens the next one once both
+    controls answered at the tip."""
+    metadata = metadata_of(marked_ticket(args.convoy, args.ticket))
+    stop = stop_record(metadata[KEY_STOP]) if KEY_STOP in metadata else None
+    if stop is None or stop["reason"] != STOP_STILL_REFUSED or KEY_CORRECTION not in metadata:
+        raise Refusal(f"le ticket {args.ticket} n'est pas arrêté encore refusé après un tour de correction : "
+                      "rien à accorder")
+    bound = correction_rounds_bound()
+    if counter_value(metadata.get(COUNTER_PREFIX + "correction_rounds"), "correction_rounds") >= bound:
+        raise Refusal(f"le ticket {args.ticket} a déjà pris ses {bound} tour(s) de correction "
+                      "(bounds.correction_rounds) : aucun tour de plus ne s'accorde")
+    words = (args.words or "").strip()
+    if not words:
+        raise Refusal("levée sans mots : elle s'enregistre avec les mots de l'approbateur (--words), non vides")
+    record = correction_record(metadata[KEY_CORRECTION])
+    grant = {"approver": single_line(args.approver, "approbateur de la levée d'arrêt"), "words": words,
+             "stop": stop, "at": now()}
+    record["grants"] = [*record.get("grants", []), grant]
+    values = {KEY_CORRECTION: encode(record), KEY_STOP: None}
     write_metadata(args.ticket, values)
     return done(args.convoy, args.ticket, values)
 
@@ -7332,6 +7392,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--kind", action="append", default=[])
     command("open-correction", cmd_open_correction).add_argument("--commit")
     command("launch-correction", cmd_launch_correction).add_argument("--bead")
+    p = command("grant-correction", cmd_grant_correction)
+    p.add_argument("--approver")
+    p.add_argument("--words")
     p = command("override-finding", cmd_override_finding)
     p.add_argument("--finding")
     p.add_argument("--approver")

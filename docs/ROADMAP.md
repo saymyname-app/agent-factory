@@ -54,6 +54,12 @@ graph.
   af-wf4w5r). Delivered by today's flow; ends with a final verification
   against its Spec, then the Cockpit V2 redelivery as validation case.
 
+- **C01-suite** Planning Run "Cockpit : ce que main ne couvre pas encore"
+  (Spec af-fgcw0d): what the cockpit served on main still lacks, in large
+  tickets, delivered through the D01 flow -- the Cockpit V2 redelivery D01
+  named as its validation case. It follows C01-reprise (Spec af-2zseit),
+  whose convoy was abandoned on 2026-10-20.
+
 Everything past C01 (SayMyName's own B1 "test the app himself", B2 release
 scope, and horizon C "deliver SayMyName to release") stays on SayMyName's
 roadmap — it is that project's work, not the Factory's.

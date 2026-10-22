@@ -150,6 +150,19 @@ class Config:
         # and what the provider failover observed (.gc/provider-state.json,
         # city.provider.toml): the tree the cockpit runs from.
         self.factory_root = env.get("COCKPIT_FACTORY_ROOT", _REPO_ROOT)
+        # The isolated cockpit of a Runs state (bin/cockpit-isolated): the
+        # moment its clock starts at, and what the state selects -- the
+        # filter, the run, the job, the event a page opens when its address
+        # names none. Unset in service: the wall clock, nothing selected.
+        self.clock_start = env.get("COCKPIT_CLOCK_START") or None
+        # How long the isolated cockpit waits for the first reading of its
+        # sources before it answers; 0 in service.
+        self.first_read_seconds = float(env.get("COCKPIT_FIRST_READ_SECONDS", "0"))
+        try:
+            view = json.loads(env.get("COCKPIT_RUNS_VIEW") or "{}")
+        except ValueError:
+            view = {}
+        self.runs_view = view if isinstance(view, dict) else {}
         self.validity_seconds = dict(VALIDITY_WINDOWS_SECONDS)
         for source in list(self.validity_seconds):
             override = env.get("COCKPIT_VALIDITY_%s_SECONDS" % source.upper())

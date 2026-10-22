@@ -53,6 +53,22 @@
 //           `click` was activated, with `found` and `disabled` for that
 //           control; with `keys` too, activated by the keyboard -- focused,
 //           then Enter pressed on it -- rather than by a click
+// readings  the frame as first read, then read again after each of
+//           `steps` (a JSON list) was played: {click, within, keys}
+//           activates the control drawn inside the anchor `within` (the
+//           page when none) whose accessible name is or starts with
+//           `click`, else the first that holds it; {wait: ms} waits;
+//           {reload: true} reloads the page. Each reading after a step
+//           carries `step`: what it did, `found` false when the control it
+//           names is not on the page
+//
+// Each anchor also holds whether it is drawn (`drawn`), its rendered text
+// on one line (`text`, empty when not drawn) and its whole text, a closed
+// section included (`content`), whether it is open (a <details>), its box
+// in the page (`box`) and the colours it is drawn with (`colours`: its
+// text, its background, its left border, what its ::before and ::after
+// draw); each frame its address (`href`, path and query) and the dialogs
+// drawn (`dialogs`); each scrolling box the anchor that holds it (`anchor`).
 (function () {
   var query = new URLSearchParams(location.search);
   var out = document.getElementById('measure');
@@ -61,7 +77,30 @@
   var height = Number(query.get('height'));
   var click = query.get('click');
   var keys = query.get('keys') === '1';
+  var steps = JSON.parse(query.get('steps') || '[]');
   var SETTLE_MS = 2500;
+  var CONTENT_LIMIT = 6000;
+
+  function line(text) { return (text || '').replace(/\s+/g, ' ').trim(); }
+
+  function painted(value) {
+    return value && value !== 'transparent' && !/rgba\([^)]*,\s*0\)$/.test(value) ? value : null;
+  }
+
+  // The colours an element is drawn with: its text, its background, its
+  // left border when it is drawn, and what its ::before and ::after draw.
+  function colours(element, view) {
+    var style = view.getComputedStyle(element);
+    var found = [painted(style.color), painted(style.backgroundColor)];
+    if (parseFloat(style.borderLeftWidth) >= 2) { found.push(painted(style.borderLeftColor)); }
+    ['::before', '::after'].forEach(function (pseudo) {
+      var drawnPseudo = view.getComputedStyle(element, pseudo);
+      if (drawnPseudo.content && drawnPseudo.content !== 'none') {
+        found.push(painted(drawnPseudo.backgroundColor), painted(drawnPseudo.color));
+      }
+    });
+    return found.filter(Boolean);
+  }
 
   function visible(element, view) {
     if (!element.getClientRects().length) { return false; }
@@ -336,11 +375,17 @@
         if (up.hasAttribute('data-anchor')) { chain.push(up.getAttribute('data-anchor')); }
       }
       var name = element.getAttribute('data-anchor'), computed = view.getComputedStyle(element);
+      var box = element.getBoundingClientRect(), shown = visible(element, view);
       anchors.push({name: name, tag: element.tagName.toLowerCase(), chain: chain, styles: {
         'font-family': computed.getPropertyValue('font-family'),
         'line-height': computed.getPropertyValue('line-height'),
         'color': computed.getPropertyValue('color')
-      }});
+      }, drawn: shown, text: shown ? line(element.innerText).slice(0, CONTENT_LIMIT) : '',
+        content: line(element.textContent).slice(0, CONTENT_LIMIT),
+        open: element.tagName === 'DETAILS' ? element.open : null,
+        box: {top: box.top + view.scrollY, bottom: box.bottom + view.scrollY, left: box.left, right: box.right,
+              width: box.width, height: box.height},
+        colours: colours(element, view)});
       texts[name] = (element.innerText || element.textContent || '').split('\n').map(function (l) { return l.trim(); })
         .filter(Boolean).join('\n');
     });
@@ -353,8 +398,13 @@
     });
     var records = textRects(doc, view);
     var bg = backgroundOf(doc.body, view, doc);
+    var dialogs = [];
+    doc.querySelectorAll('dialog[open], [role=dialog], [role=alertdialog], [aria-modal=true]').forEach(function (element) {
+      if (visible(element, view)) { dialogs.push(line(accessibleName(element, doc)).slice(0, 80)); }
+    });
     var measured = {
-      width: width, path: view.location.pathname,
+      width: width, path: view.location.pathname, href: view.location.pathname + view.location.search,
+      dialogs: dialogs,
       text: doc.body ? doc.body.innerText : '',
       anchors: anchors, texts: texts, nav: nav, inside: {},
       overflow: Math.max(0, doc.documentElement.scrollWidth - view.innerWidth),
@@ -416,7 +466,9 @@
       var x = /auto|scroll/.test(s.overflowX) && element.scrollWidth > element.clientWidth + 1;
       var y = /auto|scroll/.test(s.overflowY) && element.scrollHeight > element.clientHeight + 1;
       if (x || y) {
+        var holding = element.closest('[data-anchor]');
         found.push({name: describe(element).slice(0, 60), scrolls: true,
+                    anchor: holding ? holding.getAttribute('data-anchor') : null,
                     keyboard: element.tabIndex >= 0 || !!element.querySelector(CONTROLS)});
       }
     });
@@ -469,6 +521,63 @@
     if (!handled && target.matches(NATIVE) && !target.disabled) { target.click(); }
   }
 
+  // The control drawn inside the anchor `within` (the page when none) whose
+  // accessible name is or starts with `name`, else the first that holds it.
+  function control(frame, name, within) {
+    var doc = frame.contentDocument, view = frame.contentWindow;
+    var scope = within ? doc.querySelector('[data-anchor="' + within + '"]') : doc;
+    if (!scope) { return null; }
+    var candidates = Array.prototype.filter.call(scope.querySelectorAll(CONTROLS), function (element) {
+      return visible(element, view);
+    });
+    var named = function (element) { return line(accessibleName(element, doc)); };
+    return candidates.find(function (element) { return named(element).indexOf(name) === 0; }) ||
+      candidates.find(function (element) { return named(element).indexOf(name) >= 0; }) || null;
+  }
+
+  // Play `step` in `frame`, then call `done` with what it did, once the page
+  // has settled (after the load it caused, if it caused one).
+  function play(frame, step, done) {
+    var finished = false;
+    function settle(what) {
+      if (finished) { return; }
+      finished = true;
+      done(what);
+    }
+    if (step.wait) {
+      setTimeout(function () { settle({wait: step.wait}); }, step.wait);
+      return;
+    }
+    if (step.reload) {
+      frame.addEventListener('load', function () { setTimeout(function () { settle({reload: true}); }, SETTLE_MS); },
+                             {once: true});
+      frame.contentWindow.location.reload();
+      return;
+    }
+    var target = control(frame, step.click, step.within);
+    if (!target) { settle({click: step.click, found: false}); return; }
+    frame.addEventListener('load', function () {
+      setTimeout(function () { settle({click: step.click, found: true}); }, SETTLE_MS);
+    }, {once: true});
+    if (step.keys) { press(target); } else { target.click(); }
+    setTimeout(function () { settle({click: step.click, found: true}); }, SETTLE_MS + 1500);
+  }
+
+  // The readings of `frame` after each of `steps`, from `position` on.
+  function playAll(frame, width, readings, position, done) {
+    if (position >= steps.length) { done(); return; }
+    play(frame, steps[position], function (what) {
+      var reading;
+      try { reading = read(frame, width); } catch (error) {
+        reading = {width: width, href: '', path: '', text: '', anchors: [], texts: {}, nav: [], controls: [],
+                   dialogs: [], scrolls: [], overflow: 0, unread: String(error)};
+      }
+      reading.step = what;
+      readings.push(reading);
+      playAll(frame, width, readings, position + 1, done);
+    });
+  }
+
   var results = new Array(widths.length), pending = widths.length;
   function finish() {
     pending -= 1;
@@ -487,6 +596,9 @@
           out.textContent = JSON.stringify({ok: false, error: String(error)});
           return;
         }
+        var readings = [results[index]];
+        results[index] = Object.assign({}, results[index], {readings: readings});
+        if (steps.length) { playAll(frame, width, readings, 0, finish); return; }
         if (!click) { finish(); return; }
         activate(frame, click, function (after) { results[index].after = after; finish(); });
       }, SETTLE_MS);

@@ -3,7 +3,7 @@
 - Statut : Accepté
 - Date : 2026-10-19
 - Autorité : Benjamin en conversation (2026-10-19, 16:39, 17:06 et 17:16 Paris) ; décision `af-hcriwn`, mise en œuvre `af-ledn95`
-- Portée : `bin/ticket-end` (condition 4), `bin/spec-end` (condition 3), `bin/correction-round` (arrêt sur fidélité rouge, af-ckbood)
+- Portée : `bin/ticket-end` (condition 4), `bin/spec-end` (condition 3), `bin/correction-round` (arrêt sur fidélité rouge, af-ckbood), `bin/convoy-advance` (résultat de la passe)
 - Remplace, pour ce qui bloque : la « combinaison B » de la Spec D01 (`af-wf4w5r` §3, user story 18)
 
 Intent (Benjamin, ses mots, 2026-10-19 16:39) : « Fidélité visuelle : ce qui
@@ -40,6 +40,9 @@ d'un état faux (9 %) : aucun seuil de code ne remplace l'œil.
    jour) ; `bin/ticket-exit fidelity` la mesure pour information, code 0.
 5. `bin/prototype-fidelity` et ses captures ne changent pas : les écarts sont
    lus dans le dossier de fin pour la passe de finition.
+6. Un refus de mesure reste rapporté sous `fidelity.refused`, mais ne fait pas
+   échouer la passe de `bin/convoy-advance`. Une erreur du contrôleur ou une
+   réponse illisible reste une panne de la passe.
 
 ## Conséquences
 
@@ -52,4 +55,5 @@ passe de finition.
 
 `tests/ticket-end-test.py`, `tests/spec-end-test.py`,
 `tests/correction-round-test.py` : une fidélité rouge à la pointe laisse la
-condition remplie et n'arrête pas le ticket.
+condition remplie et n'arrête pas le ticket. `tests/convoy-advance-test.py` :
+un écran déclaré qui ne répond pas reste rapporté sans faire échouer la passe.

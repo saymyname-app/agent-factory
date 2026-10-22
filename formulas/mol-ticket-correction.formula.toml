@@ -1,8 +1,8 @@
 description = """
 Correction round — one fresh author session receives every finding of the
-code review and of the Ticket Evaluation of one ticket, and corrects it: the
-single correction round of that ticket (T17, af-rx0ocp; Spec af-wf4w5r §8,
-user stories 43 and 44).
+code review and of the Ticket Evaluation of one ticket, and corrects it: one
+correction round of that ticket, at most `bounds.correction_rounds` (T17,
+af-rx0ocp; Spec af-wf4w5r §8, user stories 43 and 44; two since af-bv0ikr).
 
 Only `bin/correction-round` dispatches this formula, through
 `bin/dispatch-door --role author`, once the review and the evaluation have
@@ -14,9 +14,9 @@ the ticket, on the ticket branch, and never opens a pull request.
 What the session says closes nothing. After it, code decides from the
 tracker and the branch (`bin/correction-round settle`): the answers given to
 the Blocking Findings are judged by a second reviewer session, the product
-is evaluated again at the new tip, and a ticket still refused is stopped
-without being merged and raised to the operator as one item. There is no
-second round. The stored state and the stop are in docs/CORRECTION_ROUND.md.
+is evaluated again at the new tip; a ticket still refused gets the next
+round while the bound allows one, else it is stopped without being merged
+and raised to the operator as one item (`.round` of the brief says which). The stored state and the stop are in docs/CORRECTION_ROUND.md.
 
 ## Variables
 
@@ -33,7 +33,7 @@ formula_compiler = ">=2.0.0"
 id = "correct"
 title = "Correct one ticket from the findings of its code review and of its Ticket Evaluation, once"
 description = """
-You are the author of the single correction round of one ticket. Another
+You are the author of one correction round of one ticket. Another
 session wrote it; its code review and its Ticket Evaluation refused it.
 
 **1. Take the ticket and read what you are given:**
@@ -100,7 +100,8 @@ did (docs/TICKET_AUTHOR.md):
 **3. Answer every Blocking Finding, and nothing else** — `fixed` with the
 commit of the correction, or `contested` with a one-line reason, in the
 shape `.code_review.response_shape` shows (skip this when the brief holds no
-Blocking Finding):
+Blocking Finding, or when `.code_review.respond` is null: those findings are
+the answers a judgement kept, and the review is replayed in full at your tip):
 
 ```bash
 "$FACTORY_ROOT/bin/code-review" respond "$CONVOY" "$TICKET" --file <responses.json>

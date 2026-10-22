@@ -68,11 +68,13 @@ gave none either, parks a ticket whose criterion cannot be observed, and
 stops the products once the states are in. Review and evaluation are sent
 by the same pass: they run in parallel.
 
-A pass also holds the single correction round of a ticket (T17, af-rx0ocp;
-Spec §8): once the code review and the evaluation have both answered at the
-tip and one refused, it hands the convoy to bin/correction-round settle,
-which sends everything both refused to one fresh author session, and stops
-the ticket still refused after that round, raised once to the operator.
+A pass also holds the correction rounds of a ticket (T17, af-rx0ocp;
+Spec §8; bounds.correction_rounds, two since af-bv0ikr): once the code
+review and the evaluation have both answered at the tip and one refused, it
+hands the convoy to bin/correction-round settle, which sends everything both
+refused to one fresh author session, opens the next round while one is
+left, and stops the ticket still refused after its last round, raised once
+to the operator.
 
 A pass also closes the tickets (T19, af-iefuud; Spec §9): before the merge,
 it hands each convoy that has a finished interface ticket whose fidelity was
@@ -100,8 +102,8 @@ amendment once the operator answered « a » to its request (af-25o7vr,
 cause `amendment_granted`, one amendment more); every other stop stays
 with the operator. At the
 last resume of a same cause (bounds.resumes, one bound per cause, ADR-0030
-L2: these causes and a commit after a verdict; the correction round keeps
-its own bound of one round), the ticket is
+L2: these causes and a commit after a verdict; the correction rounds keep
+their own bound, bounds.correction_rounds), the ticket is
 parked with every ticket that waits for it and is not restarted; the others
 keep starting. When nothing but parked tickets is left in a convoy, the pass
 raises one request for the convoy, on a bead of its own, through
@@ -2249,9 +2251,9 @@ def settle_evaluations(convoy: Convoy) -> dict[str, Any] | None:
 
 
 def settle_corrections(convoy: Convoy) -> dict[str, Any] | None:
-    """Spec §8: code, not a session, opens the single correction round of a
-    ticket its code review or its evaluation refused, sends it to one fresh
-    author session, and stops the ticket still refused after it, through
+    """Spec §8: code, not a session, opens the correction rounds of a
+    ticket its code review or its evaluation refused, sends each to one fresh
+    author session, and stops the ticket still refused after the last, through
     bin/correction-round. None when the convoy has no finished ticket, or
     when nothing was refused: the settlement then had nothing to say."""
     if not convoy.corrections_due():
@@ -2368,7 +2370,7 @@ FAILING_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("non_conforme", ("error",)), ("acceptance", ("error",)), ("promotion", ("error", "message", "pending")),
     ("integration", ("error", "message")), ("tdd_stops", ("error",)), ("code_review", ("error", "refused")),
     ("standard_recurrence", ("error",)), ("evaluation", ("error", "refused")),
-    ("correction", ("error", "refused")), ("fidelity", ("error", "refused", "message")),
+    ("correction", ("error", "refused")), ("fidelity", ("error", "message")),
     ("ticket_end", ("error", "message")),
 )
 FAILURE_DETAIL_CHARS = 300
