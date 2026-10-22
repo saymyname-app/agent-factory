@@ -1,0 +1,13 @@
+# The net under bin/project-launch's guard (af-npz9v1, 22/10/2026): stops
+# every launched product whose owner has ended or whose lifetime is over,
+# whoever started it, and releases the copies left behind; each stop is a
+# line of ~/.local/state/agent-factory-launch/stops.jsonl. The condition
+# trigger spreads the first firing after a restart (orders-restart-stagger.sh,
+# see orders/escalation-door-sweep.toml); the cadence is every 5 minutes.
+[order]
+description = "Stop launched products whose owner has ended or whose lifetime is over, release copies left behind, trace each stop (bin/project-launch sweep)"
+trigger = "condition"
+interval = "5m"
+check = "/home/benja/agent-factory/orders/lib/orders-restart-stagger.sh project-launch-sweep 300"
+exec = "/home/benja/agent-factory/bin/project-launch sweep"
+timeout = "120s"
