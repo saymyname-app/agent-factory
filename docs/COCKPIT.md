@@ -1284,16 +1284,71 @@ Tests: `tests/cockpit-criteria/commands/runs-destination-*-test.py` (the
 held to the readability `problems` of `home_destination.py`),
 `tests/cockpit-runs-test.py`.
 
-## « Usine »: machine, sources, agents (direct build, 2026-10-19)
+## « Usine »: machine, connections, roles (G1, af-wrxrmg)
 
-`GET /usine` (`lib/cockpit/ui/factory/page.py`): the machine the cockpit
-runs on, read at each request (`os.getloadavg`, `/proc/meminfo`, the disk
-of the home); every source of the read model with its freshness and last
-read; the model of each delivery role as seen on the most recent run that
-launched it, and the sessions at work; then the health zone and the stop
-and access zones the home already had. Provider quotas, the configuration
-form and the clean-up of the reference are left out: the cockpit has no
-real reading of them yet. Test: `tests/cockpit-factory-page-test.py`.
+`GET /usine?role=<author|reviewer|evaluator>` (`lib/cockpit/ui/factory/page.py`),
+the Prototype Fold of the reference « Usine, configuration et maintenance »
+(Spec af-fgcw0d, user stories 63, 65, 160–162). Four sections, each shown
+as it was **last checked** (`lib/cockpit/factory/checks.py`), with the time
+of that check to the second and its own « Revérifier maintenant » button:
+
+- « Machine d’exécution »: the machine the cockpit runs on (host, system,
+  cores, time in service from `/proc/uptime`, load, memory, disk of the
+  home), read when checked;
+- « Connexions »: every source of the read model with its state, its
+  latency -- how long its last complete read took, timed by its poller
+  (`PollingSource`, the status read of `GcSsePoller`; `latency` in each row
+  of the read model) -- and when it was read. Whether a source is still
+  current is read now: one no longer current is greyed « Périmé · vu il y a
+  … » with its last latency; one failing since its last reading (unknown,
+  `cockpit.core.freshness`) is greyed « Inconnu — la source ne répond plus ·
+  vu il y a … », without a latency; one never read is « inconnu — la source
+  ne répond pas », never 0 and never a failure. The notifications say
+  whether they are configured; their delivery is not measured, so they are
+  never drawn as a connection verified;
+- « Fournisseurs et accès API »: each pool of quota of
+  `config/provider-policy.json`, the providers drawn on it, and what the
+  provider failover observed of it in `.gc/provider-state.json` (read as
+  `bin/provider-failover status` reads it: « Quota épuisé jusqu’à … »,
+  « Quota bas », « En erreur », or « Aucune limite détectée », which
+  measures no quota, for a pool the file records); « Aucun relevé du
+  repli », greyed, for a pool the file holds nothing of; « Disponibilité non
+  observée » where the host holds no such file. No key is shown;
+- « Agents dans le workflow »: the roles as the Factory's files configure
+  them (`lib/cockpit/factory/configuration.py`: `config/delivery-roles.json`,
+  the chains of `config/provider-policy.json` -- the first provider is the
+  one configured, the others its fallbacks --, the model and effort of each
+  provider in `city.toml`, the ceilings and bounds of
+  `config/delivery-flow.json`), drawn as the descending flow of delivery
+  (deterministic controller, the steps each role runs, integration, the
+  owner's judgment). A step is a link that opens the detail of its role:
+  configuration first, then what is observed apart -- the provider in
+  service from `city.provider.toml` when the host has one, the availability
+  the failover observed of each provider of its chain (a provider disabled
+  says it, with its reason), the sessions of that role at work -- greyed
+  « périmé, vu il y a … » once the sessions are no longer current, and
+  unknown, without a count, once their source fails. The bounds of the flow
+  shown are its resumes, open planning exceptions, end rounds and
+  correction rounds. The other
+  targets of the policy are listed outside the flow. A file that cannot be
+  read is named, nothing is guessed.
+
+The Factory's files are read under `COCKPIT_FACTORY_ROOT` (default: the tree
+the cockpit runs from).
+
+`POST /api/usine/reverifier` (form `section=machine|connexions|fournisseurs|agents`,
+`role=`) checks that section again -- the connections after every source was
+read again now -- and only that one, then answers 303 back to the page; it
+writes nothing. Viewing the page never checks a section again: a check older
+than five minutes (`COCKPIT_VALIDITY_USINE_SECONDS`) is kept, greyed
+« périmé, vu il y a … », until its « Revérifier maintenant ». Then come the health zone, and the panels « Suspension, reprise et
+arrêt » (with the stop and access zones the home already had) and
+« Nettoyer les espaces inutilisés », whose commands stay disabled until
+their tickets wire them (G2, H); the role detail's « Configurer » too.
+Nothing on the page is a value of the dataset: in an isolated launch the
+machine and the configuration are those of the tree launched. Tests:
+`tests/cockpit-factory-page-test.py`, and the criterion tests
+`tests/cockpit-criteria/commands/factory-*-test.py`.
 
 ## « Projets » in Panorama (direct build, 2026-10-19; Prototype Fold E, af-8rbceu)
 
