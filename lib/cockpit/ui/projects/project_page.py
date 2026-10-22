@@ -231,7 +231,8 @@ def _render_topbar(project, fresh_html):
     ) % (html.escape(BACK_TEXT), html.escape(project.display_name), roadmap, fresh_html)
 
 
-def render_project_page(project, hors_chantier=None, historique_html="", view=VIEW_TABLEAU, fresh_html=""):
+def render_project_page(project, hors_chantier=None, historique_html="", view=VIEW_TABLEAU, fresh_html="",
+                        topbar=True):
     """``project``: a :class:`cockpit.projects.model.Project` whose
     ``chantiers`` holds only its active chantiers
     (:func:`cockpit.projects.builder.build_projects`). ``hors_chantier``:
@@ -241,7 +242,9 @@ def render_project_page(project, hors_chantier=None, historique_html="", view=VI
     scoped to this project. ``view``: the view shown before
     :data:`VIEW_SCRIPT` runs. ``fresh_html``: the freshness headline
     (:func:`cockpit.ui.base.page.render_fresh`), shown top right as on the
-    prototype."""
+    prototype. ``topbar``: False under the Prototype Fold of the page
+    (:mod:`cockpit.ui.projects.fold`), which draws the way back and the
+    name of the project above: the freshness headline is shown alone."""
     hors_chantier = hors_chantier or []
     view = view if view in VIEWS else VIEW_TABLEAU
 
@@ -269,7 +272,7 @@ def render_project_page(project, hors_chantier=None, historique_html="", view=VI
     ) % (
         html.escape(project.project_id),
         html.escape(view),
-        _render_topbar(project, fresh_html),
+        _render_topbar(project, fresh_html) if topbar else '<div class="cockpit-pp-fresh">%s</div>' % fresh_html,
         _render_summary(project),
         _view_selector(),
         tableau_html,
