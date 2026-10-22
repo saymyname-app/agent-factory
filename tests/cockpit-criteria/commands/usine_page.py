@@ -168,35 +168,36 @@ def replaced(before: str, after: str) -> Callable[[str], str]:
 
 # --- how the destination renders (criterion 3 of G1) ---------------------------
 
-WIDTHS = (1440, 390)
-# The parts every state of the destination draws: its connections and the
-# drawing of the flow.
-PANELS = ("connection-row-1", "flow-down-1")
+# The configured models the roles-test cases look for, as a person reads them.
 GPT_5_6 = re.compile(r"gpt[\s-]*5[.,-]6", re.I)
 OPUS_5_5 = re.compile(r"opus[\s-]*5[.,-]5", re.I)
 
 
-def assert_usable(case, tree: LaunchTree, dataset: str, reference_sections: list[str] | None = None) -> None:
-    """GET /usine of the cockpit launched on `dataset`, rendered dark then
-    light at 1440 and 390 px, draws the connections and the flow with the
-    roles of the Factory's configuration (the reviewer on GPT-5.6, the
-    author on Opus 5.5, whatever the sources answer), and nothing makes it
-    unreadable or unusable (home_destination.problems: overflow, cut or
-    overlapping texts, contrast, controls without a name, out of reach of
-    the keyboard or without a visible focus, a lost local scroll, the wrong
-    theme). With `reference_sections`, the sections of the reference's
-    state, its page shows them in that order."""
+def assert_usable(case, tree: LaunchTree, dataset: str, *, themes: tuple[str, ...], widths: tuple[int, ...],
+                  panels: tuple[str, ...], agents_say: tuple[str, ...], section_order: list[str] | None) -> None:
+    """GET /usine of the cockpit launched on `dataset`, rendered in each
+    theme of `themes` at each width of `widths`, draws the anchors `panels`,
+    its section « Agents dans le workflow » matches each pattern of
+    `agents_say` (case-insensitive), and nothing makes it unreadable or
+    unusable (home_destination.problems: overflow, cut or overlapping
+    texts, contrast, controls without a name, out of reach of the keyboard
+    or without a visible focus, a lost local scroll, the wrong theme). With
+    `section_order`, the page shows sections beginning with those titles, in
+    that order. Every value checked is the case's own."""
     address = tree.launch(dataset)
     found = {}
-    for theme in ("dark", "light"):
-        frames = measure(address, PAGE, theme=theme, widths=WIDTHS)
-        found.update(problems(frames, theme, PANELS))
+    for theme in themes:
+        frames = measure(address, PAGE, theme=theme, widths=widths)
+        case.assertEqual(list(widths), [frame["width"] for frame in frames])
+        found.update(problems(frames, theme, panels))
         for frame in frames:
             agents = [text for text in sections(frame).values() if text.startswith("Agents dans le workflow")]
             case.assertTrue(agents, f"no section « Agents dans le workflow » at {frame['width']} px, {theme}")
-            case.assertRegex(agents[0], GPT_5_6, f"the reviewer's configured model is not said ({frame['width']} px)")
-            case.assertRegex(agents[0], OPUS_5_5, f"the author's configured model is not said ({frame['width']} px)")
-            if reference_sections is not None:
-                case.assertEqual([], in_order(reference_sections, section_titles(frame)),
-                                 f"sections of the reference missing or out of its order ({frame['width']} px, {theme})")
+            for pattern in agents_say:
+                case.assertRegex(agents[0], re.compile(pattern, re.I),
+                                 f"« {pattern} » is not said by the roles ({frame['width']} px, {theme})")
+            if section_order is not None:
+                case.assertEqual([], in_order(section_order, section_titles(frame)),
+                                 f"sections missing or out of their order ({frame['width']} px, {theme})")
     case.assertEqual({}, found)
+

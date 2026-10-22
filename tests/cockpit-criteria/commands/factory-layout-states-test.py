@@ -31,12 +31,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from usine_page import LaunchTree, assert_usable  # noqa: E402
 
-# The sections the reference's state draws, in its order
-# (prototype/cockpit-b-zones-20261012 at 632deea,
-# prototypes/c01-complete/frozen-panorama-factory/states/<state>.html).
-REFERENCE_SECTIONS = ["Machine d’exécution", "Connexions", "Fournisseurs et accès API", "Agents dans le workflow",
-                      "Suspension, reprise et arrêt", "Nettoyer les espaces inutilisés"]
-
 
 class FactoryLayoutStates(unittest.TestCase):
     maxDiff = None
@@ -53,13 +47,30 @@ class FactoryLayoutStates(unittest.TestCase):
         self.tree.stop_all()
 
     def test_health_empty_is_readable_and_usable_at_both_widths_in_both_themes(self):
-        assert_usable(self, self.tree, "health-empty")
+        # The reviewer on GPT-5.6 and the author on Opus 5.5, as the
+        # Factory's configuration says, whatever the dataset's sources answer.
+        assert_usable(self, self.tree, "health-empty", themes=("dark", "light"), widths=(1440, 390),
+                      panels=("connection-row-1", "flow-down-1"),
+                      agents_say=(r"gpt[\s-]*5[.,-]6", r"opus[\s-]*5[.,-]5"),
+                      section_order=None)
 
     def test_health_loading_is_readable_and_usable_at_both_widths_in_both_themes(self):
-        assert_usable(self, self.tree, "health-loading")
+        # The reviewer on GPT-5.6 and the author on Opus 5.5, as the
+        # Factory's configuration says, whatever the dataset's sources answer.
+        assert_usable(self, self.tree, "health-loading", themes=("dark", "light"), widths=(1440, 390),
+                      panels=("connection-row-1", "flow-down-1"),
+                      agents_say=(r"gpt[\s-]*5[.,-]6", r"opus[\s-]*5[.,-]5"),
+                      section_order=None)
 
     def test_health_light_is_readable_and_usable_at_both_widths_in_both_themes(self):
-        assert_usable(self, self.tree, "health-light", REFERENCE_SECTIONS)
+        # The reviewer on GPT-5.6 and the author on Opus 5.5, as the
+        # Factory's configuration says, whatever the dataset's sources answer.
+        assert_usable(self, self.tree, "health-light", themes=("dark", "light"), widths=(1440, 390),
+                      panels=("connection-row-1", "flow-down-1"),
+                      agents_say=(r"gpt[\s-]*5[.,-]6", r"opus[\s-]*5[.,-]5"),
+                      section_order=["Machine d’exécution", "Connexions", "Fournisseurs et accès API",
+                                     "Agents dans le workflow", "Suspension, reprise et arrêt",
+                                     "Nettoyer les espaces inutilisés"])
 
 
 if __name__ == "__main__":

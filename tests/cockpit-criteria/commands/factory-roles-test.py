@@ -30,7 +30,8 @@ the owner's judgment.
 False if a name or a figure of the prototype is shown as the real
 configuration, if the page does not follow a change of the configuration,
 if the configuration is not told apart from what is observed -- the
-availability the failover observed, or that none was --, if a role of the
+availability the failover observed, or that none was, a pool it holds no
+record of included --, if a role of the
 drawing cannot be selected, or if the sections or the flow are not in the
 order of the reference.
 """
@@ -178,8 +179,11 @@ class FactoryRoles(unittest.TestCase):
         _, providers = section_titled(self, frame, "Fournisseurs et accès API")
         self.assertRegex(providers, r"Anthropic[^·]*· Claude.*Quota épuisé jusqu’à \d{2}:\d{2}",
                          "the pool the failover found exhausted is not said exhausted")
-        self.assertRegex(providers, r"OpenAI.*Aucune limite détectée", "the pool the failover found nothing of is "
-                         "not said so")
+        # The state holds no record of the OpenAI pool: nothing was observed
+        # of it, which is not « no limit detected ».
+        self.assertRegex(providers, r"OpenAI[^·]*· Codex.*Aucun relevé du repli",
+                         "the pool the failover holds no record of is not said unobserved")
+        self.assertNotIn("Aucune limite détectée", providers, "a pool nothing was observed of is said without limit")
         detail = self.select(address, "Évaluateur")
         self.assertRegex(detail, OPUS_5_5, "the evaluator's configured model is not said")
         self.assertRegex(detail, r"Disponibilité observée Claude Opus 5\.5 : quota épuisé jusqu’à \d{2}:\d{2}",
@@ -190,6 +194,7 @@ class FactoryRoles(unittest.TestCase):
             document["max_sessions"] = 6
             document["max_reviewer_sessions"] = 3
             document["bounds"]["end_rounds"] = 5
+            document["bounds"]["correction_rounds"] = 4
 
         def policy(document):
             document["targets"]["delivery-reviewer"]["chain"] = ["claude-readonly", "codex-readonly"]
@@ -203,6 +208,7 @@ class FactoryRoles(unittest.TestCase):
         author = self.select(address, "Auteur")
         self.assertRegex(author, r"\b(6|six) sessions", "the authors' limit of sessions configured is not said")
         self.assertRegex(author, r"\b(5|cinq) tours de fin", "the end rounds configured are not said")
+        self.assertRegex(author, r"\b(4|quatre) tours de correction", "the correction rounds configured are not said")
         self.assertRegex(author, r"(?i)\b(faible|bas|low)\b", "the author's effort configured is not said")
         reviewer = self.select(address, "Relecteur")
         self.assertRegex(reviewer, OPUS_5_5, "the reviewer's model, first of its chain, is not said")
