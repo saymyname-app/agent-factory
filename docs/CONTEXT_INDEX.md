@@ -112,6 +112,7 @@ mechanisms: consult `decisions/PRE_REFACTOR.md` before relying on them.
 | Where a running convoy stands: active sessions, ready tickets, critical path and width per level (not `gc status`) | `FACTORY_TOOLS.md` (convoy-graph), `../bin/convoy-graph`, `../lib/ticket_graph.py` |
 | Factory maintenance PR: the exact local checks and tests, then the merge | `DELIVERY.md` (« Main-landing gate », table by kind of change: `../bin/ci-run-tests --rule-checks --changed-since origin/main`, which runs the `bin/*-check` tests and those naming a changed file), `DELIVERY.md` (« Réversibilité par défaut »: `../bin/reversibility-check --git . --base origin/main`; `--pr <n> --repo <owner/name>` is what `pr-autopilot` runs, `--diff-file <file>` any diff), `DELIVERY.md` (« Production stays gated »: `pr-autopilot` arms Factory `main` PRs; set `gc.work_branch` on the Bead) |
 | Record a new ADR: its catalogue entry, then the regeneration | `context-index/entries/` (one `NNNN-<slug>.md` Need/Read file per ADR, as `0288-why-a-serialized-ticket-graph-is-refused.md`; widen the range in `0280-structural-decisions.md`), then `../bin/generate-docs-catalogue`; the shape of an ADR: `decisions/ADR-0031-serialized-graph-refused.md` |
+| Pause or resume an order of the Factory without a PR (who, when, words); what is paused | `FACTORY_TOOLS.md` (order-pause), `../bin/order-pause` |
 
 ## Authority and minimal retrieval
 

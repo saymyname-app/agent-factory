@@ -9,5 +9,5 @@ description = "Stop launched products whose owner has ended or whose lifetime is
 trigger = "condition"
 interval = "5m"
 check = "/home/benja/agent-factory/orders/lib/orders-restart-stagger.sh project-launch-sweep 300"
-exec = "/home/benja/agent-factory/bin/project-launch sweep"
+exec = "/home/benja/agent-factory/bin/order-pause gate project-launch-sweep -- /home/benja/agent-factory/bin/project-launch sweep"
 timeout = "120s"

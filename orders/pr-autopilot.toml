@@ -7,5 +7,5 @@ description = "Deterministic zero-token merge actor: arm GitHub auto-merge on PR
 trigger = "condition"
 interval = "3m"
 check = "/home/benja/agent-factory/orders/lib/orders-restart-stagger.sh pr-autopilot 180"
-exec = "/home/benja/agent-factory/bin/pr-autopilot"
+exec = "/home/benja/agent-factory/bin/order-pause gate pr-autopilot -- /home/benja/agent-factory/bin/pr-autopilot"
 timeout = "120s"

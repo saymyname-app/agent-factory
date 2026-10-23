@@ -167,7 +167,7 @@ real runtime; they cost CI nothing):
 | Files | The journey |
 |---|---|
 | `tests/*-isolated-city-test.sh` (13) | the adoption trial of one mechanism in a disposable city, with a real controller |
-| `tests/*-real-tracker-test.sh` (5) | what a fake tracker assumes, replayed on the real one |
+| `tests/*-real-tracker-test.sh` (6) | what a fake tracker assumes, replayed on the real one |
 | `tests/*-demonstration-test.sh` (3) | the demonstration line of a ticket on the real tracker, and a real browser where it needs one |
 | `tests/*-real-session-test.sh` (2) | one real model session held to what a command hands it |
 

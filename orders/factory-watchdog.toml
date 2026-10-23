@@ -7,5 +7,5 @@ description = "Deterministic zero-token paging: an aged 'Gate: human' issue, a F
 trigger = "condition"
 interval = "5m"
 check = "/home/benja/agent-factory/orders/lib/orders-restart-stagger.sh factory-watchdog 300"
-exec = "/home/benja/agent-factory/bin/factory-watchdog --quiet"
+exec = "/home/benja/agent-factory/bin/order-pause gate factory-watchdog -- /home/benja/agent-factory/bin/factory-watchdog --quiet"
 timeout = "180s"
