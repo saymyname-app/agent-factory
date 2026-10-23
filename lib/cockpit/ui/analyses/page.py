@@ -91,9 +91,15 @@ def render_analyses(data, view):
     return draw
 
 
+def _unavailable(what, indicator):
+    """« Résultats indisponibles : les runs ne sont plus à jour (…) »: the
+    headline of an indicator without a value, its reason said."""
+    return "%s : %s" % (what, _e(indicator["reason"]))
+
+
 def _results(data, indicator, anchors):
     if indicator["value"] is None:
-        headline = "Résultats indisponibles"
+        return _unavailable("Résultats indisponibles", indicator), _chart(data, anchors)
     else:
         count = int(indicator["value"])
         headline = "<strong %s>%s</strong> sur sept jours · fusion prouvée" % (
@@ -109,9 +115,11 @@ def _results(data, indicator, anchors):
 
 
 def _delays(data, indicator, anchors):
+    if indicator["value"] is None:
+        return _unavailable("Délai médian indisponible", indicator), ""
     count = len(data["results"])
     headline = "Délai médian : <strong %s>%s</strong> · %d résultat%s fusionné%s" % (
-        anchors("strong"), _e(indicator["value"] or "indisponible"), count, "s" * (count > 1), "s" * (count > 1))
+        anchors("strong"), _e(indicator["value"]), count, "s" * (count > 1), "s" * (count > 1))
     key = ('<div class="an-key" %s><span style="--series:var(--accent)" %s>Travail et vérifications</span>'
            '<span style="--series:var(--warn)" %s>Attentes</span></div>'
            % (anchors("chart-key"), anchors("span"), anchors("span")))
@@ -129,7 +137,7 @@ def _delays(data, indicator, anchors):
 
 def _checks(data, indicator, anchors):
     if indicator["value"] is None:
-        headline = "Taux indisponible : la CI GitHub n’est pas lue"
+        headline = _unavailable("Taux indisponible", indicator)
     else:
         headline = "<strong %s>%s</strong> des exécutions CI terminées ont réussi · %s" % (
             anchors("strong"), _e(indicator["value"]), _e(indicator["calculation"]))
@@ -140,7 +148,7 @@ def _checks(data, indicator, anchors):
 
 def _decisions(data, indicator, anchors):
     if indicator["value"] is None:
-        return "Décisions indisponibles", ""
+        return _unavailable("Décisions indisponibles", indicator), ""
     count = int(indicator["value"])
     headline = "<strong %s>%s</strong> · elles attendent ta réponse" % (
         anchors("strong"), "%d décision%s ouverte%s" % (count, "s" * (count > 1), "s" * (count > 1))
@@ -179,6 +187,13 @@ def _chart(data, anchors):
            _e(serie["label"]), "" if serie["values"] is not None else " : indisponible")
         for serie in volumes)
     drawn = [serie for serie in volumes if serie["values"] is not None]
+    # The series not drawn, grouped by the reason their source gives.
+    reasons = {}
+    for serie in volumes:
+        if serie["values"] is None:
+            reasons.setdefault(serie["reason"], []).append(serie["label"])
+    missing = "".join('<p class="an-muted">Non tracées : %s — %s.</p>' % (_e(", ".join(labels)), _e(reason))
+                      for reason, labels in reasons.items())
     top = max([3] + [value for serie in drawn for value in serie["values"]])
     top = -(-top // 3) * 3
     step = (CHART_RIGHT - CHART_LEFT) / max(1, len(days) - 1)
@@ -205,8 +220,8 @@ def _chart(data, anchors):
                 "".join('<tr><th scope="row">%s</th>%s</tr>' % (
                     _e(serie["label"]), "".join("<td>%d</td>" % value for value in serie["values"])) for serie in drawn)))
     return ('<div class="an-key" %s>%s</div><svg class="an-chart" viewBox="0 0 720 235" role="img" aria-label="%s" '
-            'data-anchor="%s-1">%s</svg>%s' % (anchors("chart-key"), key, _e(CHART_LABEL), anchor_slug(CHART_LABEL),
-                                               "".join(shapes), table))
+            'data-anchor="%s-1">%s</svg>%s%s' % (anchors("chart-key"), key, _e(CHART_LABEL), anchor_slug(CHART_LABEL),
+                                                 "".join(shapes), missing, table))
 
 
 def _dash(dashes):

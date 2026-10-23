@@ -162,7 +162,13 @@ class AnalysesOfTheLaunchedCockpitTest(unittest.TestCase):
         self.start(settings={})
         text = self.until("verifications", lambda text: "Raison" in text)
         self.assertIn("Raison : aucun dépôt GitHub n’est déclaré pour la CI du cockpit (réglage github_repo)", text)
+        self.assertIn("Taux indisponible : aucun dépôt GitHub n’est déclaré pour la CI du cockpit", text,
+                      "the headline of the rate does not say why it is unavailable")
         self.assertNotIn("%", text)
+        chart = self.page("resultats")
+        self.assertIn("Non tracées : PR fusionnées, Exécutions CI réussies — aucun dépôt GitHub n’est déclaré pour la "
+                      "CI du cockpit (réglage github_repo).", chart,
+                      "the daily volumes not drawn do not say why")
 
     def test_more_runs_and_pull_requests_than_a_page_of_github_are_all_counted(self):
         """GitHub answers 100 items a page: 130 runs completed and 104 pull
@@ -190,6 +196,8 @@ class AnalysesOfTheLaunchedCockpitTest(unittest.TestCase):
         self.until_fresh_then("github", "stale")
         text = self.page("verifications")
         self.assertNotIn("%", text, "a stale rate of the CI is presented as current")
+        self.assertRegex(text, r"Taux indisponible : la CI GitHub n’est plus à jour \(dernière lecture le ",
+                         "the headline of the rate does not say why it is unavailable")
         self.assertRegex(text, r"Raison : la CI GitHub n’est plus à jour \(dernière lecture le \d\d/\d\d à \d\d:\d\d "
                                r"\(Paris\)\)")
 
@@ -205,12 +213,19 @@ class AnalysesOfTheLaunchedCockpitTest(unittest.TestCase):
         self.until_fresh_then("runs", "stale")
         text = self.page("resultats")
         self.assertNotIn("1 résultat sur sept jours", text, "a stale count of the results is presented as current")
-        self.assertIn("Résultats indisponibles", text)
+        self.assertIn("Résultats indisponibles : les runs ne sont plus à jour (dernière lecture le ", text,
+                      "the headline of the results does not say why they are unavailable")
+        self.assertNotIn("Aucun résultat fusionné sur la période", text, "stale runs are shown as no result")
+        self.assertIn("Non tracées : Résultats fusionnés, Tickets livrés — les runs ne sont plus à jour", text)
         self.assertRegex(text, r"Raison : les runs ne sont plus à jour \(dernière lecture le \d\d/\d\d à "
                                r"\d\d:\d\d \(Paris\)\)")
         delay = self.page("delais")
         self.assertNotIn("2 h 00", delay, "a stale delay is presented as current")
         self.assertIn("Raison : les runs ne sont plus à jour", delay)
+        self.assertIn("Délai médian indisponible : les runs ne sont plus à jour (dernière lecture le ", delay,
+                      "the headline of the delay does not say why it is unavailable")
+        self.assertNotIn("0 résultat", delay, "stale runs are shown as no result merged")
+        self.assertNotIn("non daté", delay, "stale runs are shown as portions the flow does not date")
 
     def test_the_open_decisions_are_read_from_the_journal_and_not_presented_as_current_once_stale(self):
         """The journal holds every decision asked of Benjamin: once it is
@@ -227,7 +242,9 @@ class AnalysesOfTheLaunchedCockpitTest(unittest.TestCase):
         self.until_fresh_then("journal", "stale")
         text = self.page("activite")
         self.assertNotIn("1 décision ouverte", text, "a stale count of the decisions is presented as current")
-        self.assertIn("Décisions indisponibles", text)
+        self.assertIn("Décisions indisponibles : le journal n’est plus à jour (dernière lecture le ", text,
+                      "the headline of the decisions does not say why they are unavailable")
+        self.assertNotIn("Aucune décision répondue", text, "a stale journal is shown as no decision answered")
         self.assertRegex(text, r"Raison : le journal n’est plus à jour \(dernière lecture le \d\d/\d\d à "
                                r"\d\d:\d\d \(Paris\)\)")
 
@@ -235,6 +252,8 @@ class AnalysesOfTheLaunchedCockpitTest(unittest.TestCase):
         self.start(COCKPIT_GITHUB_REPO="saymyname-app/notes", COCKPIT_GH_BIN=str(FIXTURES / "github" / "fake-gh"))
         text = self.until("verifications", lambda text: "dernier essai" in text)
         self.assertRegex(text, r"Raison : GitHub n’a pas répondu \(dernier essai le \d\d/\d\d à \d\d:\d\d \(Paris\)\)")
+        self.assertIn("Taux indisponible : GitHub n’a pas répondu (dernier essai le ", text,
+                      "the headline of the rate does not say why it is unavailable")
         self.assertNotIn("%", text)
 
 

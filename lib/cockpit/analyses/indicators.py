@@ -150,7 +150,8 @@ def analyses(snapshot, now, days=DAYS):
         DELAY: _indicator(
             DELAY, None if results_reason or not totals else delay_text(_median(totals)),
             results_reason or (None if totals else "aucun résultat fusionné sur la période"),
-            population="les %d résultats fusionnés de la période" % len(results),
+            population="les résultats fusionnés de la période" if results_reason
+            else "les %d résultats fusionnés de la période" % len(results),
             period=period, sources="la publication du graphe, la livraison, l’acceptation et la preuve de fusion "
                                    "de chaque résultat, aux %s" % results_sources, read=_read(rows["runs"]),
             calculation="la médiane des délais de la publication du graphe à la preuve de fusion ; chaque portion "
