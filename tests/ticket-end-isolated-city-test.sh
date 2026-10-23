@@ -223,7 +223,10 @@ while true; do
   CLAIM=$(gc hook --claim --json 2>/dev/null)
   ACTION=$(printf '%s' "$CLAIM" | jq -r '.action // empty' 2>/dev/null)
   BEAD=$(printf '%s' "$CLAIM" | jq -r '.bead_id // empty' 2>/dev/null)
-  if [ "$ACTION" != work ] || [ -z "$BEAD" ]; then sleep 3; continue; fi
+  if [ "$ACTION" != work ] || [ -z "$BEAD" ]; then
+    gc runtime drain-ack >/dev/null 2>&1
+    exit 0
+  fi
   ROOT_BEAD=$(gc bd show "$BEAD" --json | jq -r '.[0].metadata["gc.root_bead_id"]')
   INPUT=$(gc bd show "$ROOT_BEAD" --json | jq -r '.[0].metadata["gc.input_convoy_id"]')
   REVIEW_BEAD=$(gc convoy status "$INPUT" --json | jq -r '.children[0].id')
@@ -278,7 +281,10 @@ while true; do
   CLAIM=$(gc hook --claim --json 2>/dev/null)
   ACTION=$(printf '%s' "$CLAIM" | jq -r '.action // empty' 2>/dev/null)
   BEAD=$(printf '%s' "$CLAIM" | jq -r '.bead_id // empty' 2>/dev/null)
-  if [ "$ACTION" != work ] || [ -z "$BEAD" ]; then sleep 3; continue; fi
+  if [ "$ACTION" != work ] || [ -z "$BEAD" ]; then
+    gc runtime drain-ack >/dev/null 2>&1
+    exit 0
+  fi
   ROOT_BEAD=$(gc bd show "$BEAD" --json | jq -r '.[0].metadata["gc.root_bead_id"]')
   INPUT=$(gc bd show "$ROOT_BEAD" --json | jq -r '.[0].metadata["gc.input_convoy_id"]')
   EVALUATION_BEAD=$(gc convoy status "$INPUT" --json | jq -r '.children[0].id')
@@ -368,7 +374,10 @@ while true; do
   CLAIM=$(gc hook --claim --json 2>/dev/null)
   ACTION=$(printf '%s' "$CLAIM" | jq -r '.action // empty' 2>/dev/null)
   BEAD=$(printf '%s' "$CLAIM" | jq -r '.bead_id // empty' 2>/dev/null)
-  if [ "$ACTION" != work ] || [ -z "$BEAD" ]; then sleep 3; continue; fi
+  if [ "$ACTION" != work ] || [ -z "$BEAD" ]; then
+    gc runtime drain-ack >/dev/null 2>&1
+    exit 0
+  fi
   ROOT_BEAD=$(gc bd show "$BEAD" --json | jq -r '.[0].metadata["gc.root_bead_id"]')
   INPUT=$(gc bd show "$ROOT_BEAD" --json | jq -r '.[0].metadata["gc.input_convoy_id"]')
   CORRECTION_BEAD=$(gc convoy status "$INPUT" --json | jq -r '.children[0].id')
@@ -443,6 +452,13 @@ provider = "stub-$role"
 $([ "$role" = author ] || echo 'wake_mode = "fresh"')
 TOML
   echo "Scripted $role of the ticket-end trial." > "$CITY/agents/trial-$role/prompt.template.md"
+  if [ "$role" = reviewer ] || [ "$role" = evaluator ]; then
+    # Keep the production role's one-workflow-per-conversation query. A
+    # drained verification session may wake under the same name, but only a
+    # fresh conversation may serve another review or evaluation.
+    sed -n "/^work_query = /{s/ -- delivery-$role/ -- trial-$role/;p;}" \
+      "$ROOT/agents/delivery-$role/agent.toml" >> "$CITY/agents/trial-$role/agent.toml"
+  fi
 done
 for formula in mol-code-review mol-ticket-evaluation mol-ticket-correction; do
   cp "$ROOT/formulas/$formula.formula.toml" "$CITY/formulas/"
@@ -608,9 +624,11 @@ echo "$(date -u +%H:%M:%S) A : relu ($(field "$A" gc.flow.code_review | jq -r '.
 printf '%s' "$record" | jq -r '.conditions[] | "    condition \(.number) (\(.name)) : \(.detail)"'
 
 # --- B: one condition missing -> reviewed, evaluated, never merged, left open, named -----
-b_evaluated() { [ "$(field "$B" gc.flow.evaluation | jq -r '.rounds[-1].outcome // empty' 2>/dev/null)" = favorable ]; }
-wait_for 600 b_evaluated || { dump; fail "B was not evaluated within 600s"; }
-[ "$(field "$B" gc.flow.code_review | jq -r '.rounds[-1].verdict')" = favorable ] || fail "B was not reviewed favorably"
+b_ready() {
+  [ "$(field "$B" gc.flow.evaluation | jq -r '.rounds[-1].outcome // empty' 2>/dev/null)" = favorable ] \
+    && [ "$(field "$B" gc.flow.code_review | jq -r '.rounds[-1].verdict // empty' 2>/dev/null)" = favorable ]
+}
+wait_for 600 b_ready || { dump; fail "B was not reviewed and evaluated favorably within 600s"; }
 sleep 75   # at least two more passes of the order
 merged "$B" && fail "B was merged although its criteria are no longer the approved ones"
 on_integration "$TIP_B" && fail "the tip of B reached the integration branch"
