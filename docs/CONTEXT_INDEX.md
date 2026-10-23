@@ -23,7 +23,7 @@ mechanisms: consult `decisions/PRE_REFACTOR.md` before relying on them.
 | B12 blocked cutover and replacement slices | `planning/B12-redecomposition-planning-run-router.md` |
 | Planning Run: charter, No-fog, approval, graph publication | `PLANNING_RUN.md` |
 | Factory versus Direct Delivery | `PLANNING_RUN.md` |
-| Standing ADMIN upkeep allowlist | `../AGENTS.md` (Standing ADMIN allowlist) |
+| Standing ADMIN upkeep allowlist | `../AGENTS.md` (Standing ADMIN allowlist), `FACTORY_TOOLS.md` (`factory-maintain`) |
 | Wake the Mayor after publication; missed-wake safety net | `../bin/ticket-graph-publish` (notify_mayor), `../bin/idle-ready-work-wake` |
 | Watchdog: stale gates, stuck PRs, hidden failed workflows | `FACTORY_TOOLS.md` |
 | Health triage: actionable failures versus upstream | `FACTORY_TOOLS.md` (factory-doctor) |
