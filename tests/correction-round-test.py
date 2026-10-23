@@ -844,6 +844,58 @@ class CorrectionRoundTest(unittest.TestCase):
         self.assertEqual([given], self.shown()["correction"]["grants"])
         self.refused(*grant, "--approved-by", APPROVER, "--words", WORDS, mention="pas arrêté")
 
+    # --- the exceptional round (ADR-0034; Benjamin, 2026-10-23) -----------------------
+
+    def options(self, ticket=SLICE):
+        """The options the request raised for a stop offers the operator."""
+        metadata = json.loads(self.tracker.read_text())["beads"][ticket]["metadata"]
+        return [entry["option"] for entry in json.loads(metadata["gc.escalation_que_faire"])]
+
+    def test_a_ticket_stopped_at_the_bound_takes_one_exceptional_round_from_its_approver_and_no_second(self):
+        new_tip = self.refused_after_the_first_round()
+        self.assertEqual([SLICE], self.tickets(self.settle()["stopped"]))
+        self.assertTrue(any("tour exceptionnel" in option for option in self.options()), self.options())
+        grant = ("grant", CONVOY, SLICE, "--repo", self.repo)
+        self.refused(*grant, "--approved-by", APPROVER, "--words", WORDS, mention="--exceptional")
+        self.refused(*grant, "--exceptional", "--approved-by", "quelqu'un", "--words", WORDS,
+                     mention="approbateur humain")
+
+        granted = self.run_cmd(TOOL, *grant, "--exceptional", "--approved-by", APPROVER, "--words", WORDS)
+
+        self.assertEqual(0, granted.returncode, granted.stdout + granted.stderr)
+        self.assertIsNone(self.shown()["stop"])
+        (given,) = self.shown()["correction"]["grants"]
+        self.assertEqual((APPROVER, WORDS, True), (given["approver"], given["words"], given["exceptional"]))
+        self.assertEqual([], self.escalation_list())
+        self.assertEqual([SLICE], self.tickets(self.settle()["launched"]))
+        self.assertEqual({"resumes": 2, "correction_rounds": 2}, self.shown()["counters"])
+        self.assertIn("tour exceptionnel", self.brief_given(2)["round"])
+
+        # Still refused after it: stopped again, and no second exceptional round.
+        last_tip = self.corrected(new_tip, response=False)
+        self.reviewed(last_tip, CONTRADICTS)
+        self.evaluated(last_tip)
+        self.assertEqual([SLICE], self.tickets(self.settle()["stopped"]))
+        self.assertFalse(any("tour exceptionnel" in option for option in self.options()), self.options())
+        self.refused(*grant, "--exceptional", "--approved-by", APPROVER, "--words", WORDS,
+                     mention="un seul tour exceptionnel")
+        self.assertEqual(2, len(self.launches()))
+
+    def test_an_exceptional_round_is_refused_to_a_ticket_that_still_has_a_round(self):
+        self.refused_after_the_first_round()
+        self.settle()
+        self.rounds_bound(2)
+
+        self.refused("grant", CONVOY, SLICE, "--repo", self.repo, "--exceptional", "--approved-by", APPROVER,
+                     "--words", WORDS, mention="pas au plafond")
+
+    def test_an_exceptional_round_is_refused_when_the_correction_session_ended_without_correcting(self):
+        self.stopped_ticket()
+
+        self.refused("grant", CONVOY, SLICE, "--repo", self.repo, "--exceptional", "--approved-by", APPROVER,
+                     "--words", WORDS, mention="même commit")
+        self.assertFalse(any("tour exceptionnel" in option for option in self.options()), self.options())
+
     def red_fidelity(self, tip, ticket=SLICE):
         """The mechanical fidelity, red at `tip`, as bin/prototype-fidelity
         records it (its sealed piece, then bin/convoy-state set-fidelity)."""

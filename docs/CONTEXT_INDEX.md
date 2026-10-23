@@ -37,13 +37,14 @@ mechanisms: consult `decisions/PRE_REFACTOR.md` before relying on them.
 | External evidence and research format | `DELIVERY.md`, `RESEARCH_BRIEF.md` |
 | Multi-repo delivery proof | `DELIVERY.md` |
 | Secrets, trust boundaries and concurrency | `SECURITY.md` |
-| Structural decisions and historical ADR status | `decisions/ADR-0009-integrated-po-and-product-map.md` through `decisions/ADR-0033-two-correction-rounds.md`; `decisions/PRE_REFACTOR.md` |
+| Structural decisions and historical ADR status | `decisions/ADR-0009-integrated-po-and-product-map.md` through `decisions/ADR-0034-targeted-review-and-exceptional-round.md`; `decisions/PRE_REFACTOR.md` |
 | Decision versus maintenance proposals | `decisions/ADR-0029-proposal-classes.md` |
 | Why the D01 delivery flow was lightened (one review, regression before handoff, resumes per cause, model evaluation for interface tickets only) | `decisions/ADR-0030-lightened-delivery-flow.md` |
 | Why the graph review refuses a ticket graph whose critical path is too long (parallelism of the slicing) | `decisions/ADR-0031-serialized-graph-refused.md` |
 | Why the fidelity to the Validated Prototype is measured but no longer blocks a ticket or the end of a Spec | `decisions/ADR-0032-fidelity-not-blocking.md` |
 | Delivery-proof writes through doors | `../bin/deliver-close`, `decisions/ADR-0023-coordination-state-write-door.md` (delivery-proof half) |
 | Why a ticket takes two correction rounds before it stops, and how a ticket stopped after one is granted its second | `decisions/ADR-0033-two-correction-rounds.md` |
+| Why a review after the first one of a ticket is targeted, why the review never judges visual fidelity, and how a ticket stopped at the bound gets its one exceptional round | `decisions/ADR-0034-targeted-review-and-exceptional-round.md` |
 | Escalation door, Mayor-first and human notification | `../bin/escalation-door`, `../tests/escalation-door-test.sh` |
 | Proposal resolution from merge proof | `COCKPIT.md` |
 | Atomic graph publication from a planning Bead | `PLANNING_RUN.md` (graph publication), `../bin/ticket-graph-publish` |

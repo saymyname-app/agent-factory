@@ -137,7 +137,7 @@ Every answer is one JSON object on stdout.
 | Frozen criteria | `gc.flow.criteria` | ticket | `{digest, graph_digest, at}`: the fingerprint of the acceptance criteria of the ticket, in order, and the digest of the approved graph it was published under (`gc.graph_digest`, read only; null when the door wrote none). Written by `mark`; written again only when `gc.graph_digest` has changed since (a patch of the graph went through the publication door), never on a closed ticket (T19) |
 | TDD step | `gc.flow.tdd.<step>` | ticket | step: `red`, `freeze`, `green`, `amendment`, `prefactoring`; always with the full commit SHA it was proven at; `red` and `prefactoring` with their start commit (`base`), `amendment` with its one-line reason |
 | Stop | `gc.flow.stop` | ticket | reason: `criterion_already_green`, `amendment_exhausted`, `test_review_no_result` (written before ADR-0030 L3, read only), `code_review_no_result`, `evaluation_no_result`, `evaluation_outage`, `still_refused`; with a one-line detail, and `raised` once `stop-raised` wrote that the escalation door accepted it |
-| Code review | `gc.flow.code_review` | ticket | `rounds`: each recorded round (`kind`: `review` / `judgement`, `commit`, `base`, `verdict`, `models`, `recorded_by`, `conversation` when known, `at`; a review with `findings` — `id`, `axis`: `standards` / `spec` / `tests`, `blocking`, `summary`, and `citation` (`source`: `spec` / `ticket` / `repo_rule`, `quote`, `path`), `demoted` or `question` — its `answers` (question id → `oui` / `non` and a reason) and its `responses` (finding id → `fixed` with a commit, or `contested` with a reason); a judgement with `judgements`: finding id → `favorable` / `unfavorable` and a reason); `request` while a round is open (`kind`, `commit`, `base`, `questions`, `models`, `launches`: at most two `{bead, at}`, each with `refused`: `{session, at}` once a session that already served answered it, `at`) |
+| Code review | `gc.flow.code_review` | ticket | `rounds`: each recorded round (`kind`: `review` / `judgement`, `commit`, `base`, `verdict`, `models`, `recorded_by`, `conversation` when known, `at`; a review with `findings` — `id`, `axis`: `standards` / `spec` / `tests`, `blocking`, `summary`, and `citation` (`source`: `spec` / `ticket` / `repo_rule`, `quote`, `path`), `demoted` or `question`, and optionally `carries`, `location` (`path`, `line`), `finishing_pass` (ADR-0034) — its `scope` when targeted, its `answers` (question id → `oui` / `non` and a reason) and its `responses` (finding id → `fixed` with a commit, or `contested` with a reason); a judgement with `judgements`: finding id → `favorable` / `unfavorable` and a reason); `request` while a round is open (`kind`, `commit`, `base`, `questions`, `scope` for a targeted review, `models`, `launches`: at most two `{bead, at}`, each with `refused`: `{session, at}` once a session that already served answered it, `at`) |
 | Ticket Evaluation | `gc.flow.evaluation` | ticket | `rounds`: each recorded round — kind `evaluation` (`commit`, `criteria`: one `{number, text, state, evidence, reason, cause}` per approved criterion, in order; `demonstration_line`: `{text, state, evidence, reason, cause}`; state: `observed` / `not_observed` / `unobservable`, a `reason` unless observed, a `cause` (`criterion` / `environment`) for an unobservable; `outcome`: `favorable` / `return_to_author` / `planning_exception` / `environment_outage`; `verdict`: `favorable`, `unfavorable`, or `null` for an outage; `roles`; `environment`: `{dataset, address}` per launched product; `recorded_by`, `conversation` when known, `proven_by_test`: the items counted proven by their criterion test on the operator's answer (`park_lifts`), read as `observed` by the outcome, `at`) or kind `startup` (`commit`, `started`, then `evidence` and `environment`, or `detail`; `outcome`, `verdict`, `at`); `request` while an evaluation is open (`commit`, `criteria`, `demonstration_line`, `roles`: `{author, evaluator: {provider, supplier} or null, same_provider, other_declared}`, `environment`: `{dataset, address, state_file}` per launched product, `launches`: at most two `{bead, at}`, each with `refused`: `{session, at}` once a session that already served answered it, `at`); `live`: the launch records of the products still to stop |
 | Models per role | `gc.flow.models` | ticket | role: `author`, `reviewer`, `evaluator`; each with `agent`, `provider`, `model`, `at` |
 | Test review | `gc.flow.test_review` | ticket (`vertical_slice`, `repair`) | written before ADR-0030 L3 only, now read only: `rounds`: each recorded pass (`commit`, `files`: path → `sha256:`, `verdict`: `favorable` / `unfavorable`, `tests`: test id → `state` and, when unfavorable, `reason`, `recorded_by`, `conversation` when known, `at`); `request` while a review is open (`commit`, `files`, `criteria`: the criterion → test table, `launches`: at most two `{bead, at}`, each with `refused`: `{session, at}` once a session that already served answered it, `at`) |
@@ -265,7 +265,13 @@ Finding, and `--base` equal to the reviewed commit. After an unfavorable
 judgement neither opens. The request carries `models` — the models of the
 author and of the reviewer read on the ticket, and `same_model` (`null` when
 one is not recorded): the mention is stored, never left out. The same
-request again writes nothing; another one replaces it.
+request again writes nothing; another one replaces it. A review after the
+first round of the ticket may carry a targeted `scope` in the same file
+(ADR-0034: `from`, `unsettled`, `changed`); it is refused on a first review,
+from another commit than the last round's, or naming a finding that round
+did not leave unsettled. `record-code-review` then stores a finding given
+as blocking that neither `carries` an unsettled finding nor has a
+`location` in `changed` as non-blocking, `demoted` and `finishing_pass`.
 `launch-code-review` records each reviewer bead: the first, then one
 relaunch; a third is refused.
 
@@ -837,7 +843,10 @@ the review at that commit is a judgement, its Blocking Findings are the
 answers it judged unfavorably. `grant-correction` lifts the stop
 `still_refused` of a ticket that has a round left (stopped when the bound
 was lower), with the approver's words, kept under `grants` of the round;
-bin/correction-round grant calls it.
+bin/correction-round grant calls it. `grant-correction --exceptional`
+(ADR-0034) does the same on a ticket at its bound, once: the grant carries
+`exceptional: true` and the bound of that ticket is one more; a second one,
+or one on a ticket with a round left, is refused.
 It also refuses a code review that has no round at that commit or has
 one open; an evaluation that has no round at that commit, has one open, or
 whose outcome there is neither `favorable` nor `return_to_author` (one

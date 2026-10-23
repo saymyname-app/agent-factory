@@ -44,6 +44,7 @@ touched (exit 4).
 ./bin/correction-round brief    af-convoy af-t1                           # the author session of the round (formula mol-ticket-correction)
 ./bin/correction-round override af-convoy af-t1 --finding F1.1 --approved-by <human approver> --words "…"   # the operator, on a stopped ticket
 ./bin/correction-round grant    af-convoy af-t1 --approved-by <human approver> --words "…"   # the operator, on a ticket stopped with a round left
+./bin/correction-round grant    af-convoy af-t1 --approved-by <human approver> --words "…" --exceptional   # the operator, once per ticket, on a ticket stopped at the bound (ADR-0034)
 ./bin/correction-round show     af-convoy af-t1                           # the round, the overrides, the stop, the counters
 ```
 
@@ -131,10 +132,22 @@ one stops the ticket `amendment_exhausted` (af-vsni1n, `docs/TDD_STEP.md`).
 
 A round opened on a **judgement** (the answers of the round before, judged
 unfavorably) has no answers of its own: its brief gives `respond: null` and
-the findings the judgement kept, and the review is replayed in full at the
-tip its author finishes at (`bin/code-review`, `open-code-review`). A round
-opened on a **review** (one replayed in full after the round before) is
-answered and judged like the first.
+the findings the judgement kept, and the review is replayed at the tip its
+author finishes at (`bin/code-review`, `open-code-review`). A round opened
+on a **review** (one replayed after the round before) is answered and
+judged like the first.
+
+**Revue ciblée à partir du 2e passage (ADR-0034, Benjamin, 23/10/2026).**
+La revue rejouée n'est plus complète : elle ne bloque que sur les constats
+que la revue précédente laisse non soldés (une dérogation en solde un) et
+sur les lignes du ticket changées depuis la pointe relue — les commits
+d'intégration repris ne comptent pas. Un constat nouveau hors de ce
+périmètre est enregistré non bloquant, marqué `finishing_pass` pour la
+passe de fin (`bin/code-review show`, `docs/CODE_REVIEW.md`). Un défaut
+manqué au premier passage n'arrête donc plus le ticket. Les mesures qui
+l'ont décidé : au 2e tour, D (`af-ten1sp`) avait reçu 4 constats nouveaux,
+dont 2 manqués au premier passage ; C1 (`af-lzti7w`) 5, dont un présent au
+commit déjà accepté.
 
 **A red fidelity never stops a ticket** (ADR-0032, af-hcriwn, 2026-10-19;
 it replaced af-ckbood). The fidelity to the Validated Prototype is still
@@ -226,13 +239,44 @@ round once both answered there. Refused: from anyone else, without words,
 on a ticket that is not stopped `still_refused` after a round, or that has
 no round left.
 
+## Le tour exceptionnel (ADR-0034)
+
+Intent (Benjamin, ses mots, 2026-10-23 16:07 Paris) : « 4. je suis la
+recommandation que tu me donneras pour ca, fait le choix parfait pour moi
+stp. »
+Mechanism (interprétation agent) : au plafond, un seul tour de plus, sur
+décision humaine tracée.
+
+Un ticket arrêté `still_refused` après son dernier tour reçoit **un** tour
+de plus quand son approbateur humain déclaré l'accorde, avec ses mots :
+
+```bash
+./bin/correction-round grant af-convoy af-t1 --approved-by benjamin-hurand --words "…" --exceptional
+```
+
+`bin/convoy-state grant-correction --exceptional` lève l'arrêt et le garde
+sous `grants` du tour, avec `exceptional: true` ; la borne de ce ticket
+devient `bounds.correction_rounds + 1` (`correction_rounds_left` le dit) ;
+la demande est retirée de la liste de l'opérateur ; `settle` ouvre le tour
+suivant comme les autres, et sa consigne (`brief.round`) dit que c'est le
+tour exceptionnel. Encore refusé après lui, le ticket s'arrête.
+
+Refusé, sans rien écrire : par quelqu'un d'autre que l'approbateur déclaré ;
+sans mots ; sur un ticket qui a encore un tour (« pas au plafond » : `grant`
+sans `--exceptional`) ; quand aucun tour ne s'ouvrirait (la session de
+correction s'est terminée sans que le ticket soit terminé et refusé à une
+nouvelle pointe) ; et pour un second tour exceptionnel (« un seul tour
+exceptionnel par ticket »). Sans `--exceptional`, un `grant` au plafond le
+signale. La demande d'arrêt propose l'option « Accorder le tour
+exceptionnel » tant qu'elle est possible.
+
 ## Stored state
 
 On the ticket, written by `bin/convoy-state` only (`docs/CONVOY_STATE.md`):
 
 | Key | Value |
 |---|---|
-| `gc.flow.correction` | `commit`, `blocking_findings` (finding ids), `not_observed` (names), `launches` (at most one `{bead, at}`), `at` |
+| `gc.flow.correction` | `commit`, `blocking_findings` (finding ids), `not_observed` (names), `launches` (at most one `{bead, at}`), `at`; `grants` (`approver`, `words`, `stop`, `at`, and `exceptional: true` for the one exceptional round, ADR-0034) |
 | `gc.flow.counter.resumes`, `gc.flow.counter.correction_rounds` | each one more when the round is opened |
 | `gc.flow.stop` | reason `still_refused`, a one-line detail, and `raised` once the escalation door accepted the request |
 | `gc.flow.overrides` | `entries`: one `{finding, approver, words, commit, at}` per overridden Blocking Finding |
