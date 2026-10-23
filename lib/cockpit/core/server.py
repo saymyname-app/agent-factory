@@ -514,8 +514,10 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
     def _send_analyses_page(self, read_model):
         """GET /analyses?vue=: the four indicators, each its view, and the
         daily volumes, computed from the sources the cockpit reads
-        (cockpit.analyses.indicators)."""
-        snapshot = read_model.snapshot()
+        (cockpit.analyses.indicators). Served once the projects are read,
+        as the overview is: a result or a decision is named by its project,
+        not by its key."""
+        snapshot = self._first_reading(read_model)
         now = read_model.now()
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
         main = render_analyses(analyses(snapshot, now), (query.get("vue") or [None])[0])
