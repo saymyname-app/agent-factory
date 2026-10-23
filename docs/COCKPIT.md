@@ -1356,19 +1356,28 @@ last tried, or last read); its last known value is never presented as
 current, no count is ever zero by default, and none is a percentage. When
 the cockpit keeps as many runs as it reads (200) all updated within the
 period, the results, the delay and the tickets delivered are said
-unavailable rather than counted in part. Each view states, folded, its population, period, sources, when they
-were read (Paris) and calculation.
+unavailable rather than counted in part. The headline of a view without a
+value says that reason (« Taux indisponible : la CI GitHub n’est plus à
+jour (…) »), and nothing of the view shows a zero in its place. Each view
+states, folded, its population, period, sources, when they were read
+(Paris) and calculation.
 
 The daily volumes -- results merged, pull requests merged, tickets merged
 into the integration branch, CI runs that succeeded -- share one chart in
 one unit, a count a day, under « Résultats »; a series not read is said
-unavailable in its key and not drawn; the rate of the CI is in its own view.
+unavailable in its key and not drawn, and the reason of its source is said
+under the chart (« Non tracées : … — … »); the rate of the CI is in its own
+view.
 
 Corrective deviations from the reference (Testing Decisions 5): the chart
 draws the volumes its label names, each series told apart by its dashes
 too; a merged result is dated by its own day, where the reference says
-« avant-hier » of a day its chart counts none; the tabs are links to their
-view; the reference's « données synthétiques » note is not shown.
+« avant-hier » of a day its chart counts none, and every result counted is
+listed, not three of them; the tabs are links to their view; the method
+says each of its parts on its line; « Délais » shows the three portions
+the flow dates, not seven; the reference's « données synthétiques » note is
+not shown. Every other anchor of the reference is served, numbered as it
+numbers it, in its type, with its tokens.
 
 Tests: `tests/cockpit-analyses-test.py` (the launched cockpit on fake
 sources: the CI of the local settings file, every page of GitHub, a source

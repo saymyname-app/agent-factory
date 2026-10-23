@@ -12,9 +12,14 @@ the reason, never a zero.
 
 Corrective deviations from the reference, its rendering defects not copied:
 the chart draws the volumes its label names, one line a series, each told
-apart by its dashes too; a merged result is dated by its own day, where the
-reference says « avant-hier » of a day its chart counts none; the tabs are
-links to their view, opened with the keyboard as with a click.
+apart by its dashes too, and says its unit; a merged result is dated by its
+own day, where the reference says « avant-hier » of a day its chart counts
+none, and every result counted is listed, not three of them; the tabs are
+links to their view, opened with the keyboard as with a click; the method
+says each of its parts on its line; « Délais » shows the portions the flow
+dates, not those no record times. The anchors are numbered as the
+reference numbers them (tests/cockpit-criteria/commands/analyses-
+destination-layout-test.py holds every one).
 """
 import html
 from datetime import datetime, timedelta
@@ -81,7 +86,7 @@ def render_analyses(data, view):
         panel, h2, lead = anchors("panel"), anchors("h2"), anchors("p")
         body = {"resultats": _results, "delais": _delays, "verifications": _checks, "activite": _decisions}[view]
         headline, content = body(data, indicator, anchors)
-        method = "".join('<p>%s : %s</p>' % (label, _e(indicator[field]))
+        method = "".join('<p %s>%s : %s</p>' % (anchors("p"), label, _e(indicator[field]))
                          for field, label in METHOD if indicator.get(field))
         details = '<details class="an-def" %s><summary %s>%s</summary>%s</details>' % (
             anchors("details"), anchors("summary"), method_label, method)
@@ -198,21 +203,26 @@ def _chart(data, anchors):
     top = -(-top // 3) * 3
     step = (CHART_RIGHT - CHART_LEFT) / max(1, len(days) - 1)
     y = lambda value: CHART_ZERO - CHART_HEIGHT * value / top
-    shapes = ['<g stroke="var(--line)">%s</g>' % "".join(
-        '<line x1="40" y1="%.1f" x2="695" y2="%.1f"></line>' % (y(tick), y(tick)) for tick in (0, top / 3, 2 * top / 3, top))]
-    shapes.append('<g fill="var(--muted)" font-size="11">%s%s<text x="40" y="20">nombre par jour</text></g>' % (
-        "".join('<text x="20" y="%.1f">%d</text>' % (y(tick) + 4, tick) for tick in (0, top // 3, 2 * top // 3, top)),
-        "".join('<text x="%.1f" y="222" text-anchor="middle">%s</text>' % (CHART_LEFT + step * i, WEEKDAYS[day.weekday()])
-                for i, day in enumerate(days))))
+    shapes = ['<g stroke="var(--line)" %s>%s</g>' % (anchors("g"), "".join(
+        '<line x1="40" y1="%.1f" x2="695" y2="%.1f" %s></line>' % (y(tick), y(tick), anchors("line"))
+        for tick in (0, top / 3, 2 * top / 3, top)))]
+    shapes.append('<g fill="var(--muted)" font-size="11" %s>%s%s<text x="40" y="20" %s>nombre par jour</text></g>' % (
+        anchors("g"),
+        "".join('<text x="20" y="%.1f" %s>%d</text>' % (y(tick) + 4, anchors("text"), tick)
+                for tick in (0, top // 3, 2 * top // 3, top)),
+        "".join('<text x="%.1f" y="222" text-anchor="middle" %s>%s</text>'
+                % (CHART_LEFT + step * i, anchors("text"), WEEKDAYS[day.weekday()]) for i, day in enumerate(days)),
+        anchors("text")))
     for serie in drawn:
         colour, dashes = SERIES_STYLE[serie["label"]]
         points = [(CHART_LEFT + step * i, y(value)) for i, value in enumerate(serie["values"])]
         shapes.append('<polyline fill="none" stroke="%s" stroke-width="2.5" stroke-linejoin="round" '
-                      'stroke-linecap="round"%s points="%s"></polyline>'
+                      'stroke-linecap="round"%s points="%s" %s></polyline>'
                       % (colour, ' stroke-dasharray="%s"' % dashes if dashes else "",
-                         " ".join("%.1f,%.1f" % point for point in points)))
-        shapes += ['<circle cx="%.1f" cy="%.1f" r="4" fill="%s"><title>%s · %s %s : %d</title></circle>'
-                   % (x, cy, colour, _e(serie["label"]), WEEKDAYS[day.weekday()], day.strftime("%d/%m"), value)
+                         " ".join("%.1f,%.1f" % point for point in points), anchors("polyline")))
+        shapes += ['<circle cx="%.1f" cy="%.1f" r="4" fill="%s" %s><title %s>%s · %s %s : %d</title></circle>'
+                   % (x, cy, colour, anchors("circle"), anchors("title"), _e(serie["label"]),
+                      WEEKDAYS[day.weekday()], day.strftime("%d/%m"), value)
                    for (x, cy), day, value in zip(points, days, serie["values"])]
     table = ('<div class="an-sr-only"><table><caption>%s, par jour</caption><tr><th scope="col">Série</th>%s</tr>%s'
              '</table></div>'
@@ -242,6 +252,7 @@ CSS = """
 @media (prefers-color-scheme: dark){:root{--an-1:#91a7ff;--an-2:#52c9b1;--an-3:#e6ba70;--an-4:#d39cf0}}
 .an-title{font-size:27px;margin:0 0 6px}
 .an-lead{margin:0 0 16px;color:var(--pn-muted-text)}
+.pn-main .an-lead{line-height:1.6}
 .an-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
 .an-tab{padding:8px 13px;border:1px solid var(--pn-control-line);border-radius:8px;color:var(--ink);
   text-decoration:none;font-size:14px}
@@ -267,7 +278,7 @@ CSS = """
 .an-bar.wait{background:var(--warn)}
 .an-duration strong{text-align:right}
 .an-notice{margin-top:14px;padding:12px 14px;border:1px solid var(--line);border-radius:8px;font-size:14px;
-  line-height:1.5;color:var(--ink)}
+  line-height:normal;color:var(--ink)}
 .an-muted{color:var(--pn-muted-text)}
 .an-link{color:var(--ink)}
 .an-answered{margin:6px 0 0;padding-left:20px;font-size:14px;overflow-wrap:anywhere}
