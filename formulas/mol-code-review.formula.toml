@@ -138,6 +138,15 @@ line of the ticket (`source: ticket`) or the rule of
 `docs/TEST_GUIDELINE.md` it breaks (`source: repo_rule`). Do not judge the
 style of a test.
 
+**Never judge the visual fidelity to the prototype** (ADR-0032, ADR-0034).
+When a criterion also asks that the screen look like its reference
+(« rendu fidèle à la référence », the Validated Prototype, a capture),
+leave that part out: it is measured by `bin/prototype-fidelity` and judged
+by Benjamin in the finishing pass, never by this review. Judge only the
+rest of the criterion — the behaviour, the keyboard, the overflow, the
+focus, the values shown. A test that no longer compares the rendering with
+the prototype, or compares it loosely, is not a finding on that ground.
+
 **The closed questions on the tests.** Answer every question of `.questions`
 (there may be none) by `oui` or `non`, with a one-line `reason` when `non`:
 
@@ -149,10 +158,29 @@ style of a test.
   amended after the freeze. Read it at `.commit`, and the criteria of the
   ticket (`.ticket_text.criteria`): does each amended test still observe its
   criterion, and would it still fail on the observation that makes that
-  criterion false? Otherwise: `non`.
+  criterion false? Otherwise: `non`. The visual fidelity part of a
+  criterion is left out (above): an amendment that loosened or removed a
+  comparison with the prototype is `oui` if the test still observes the
+  rest of the criterion.
 
 A `non` is a Blocking Finding: code writes it. You give no overall verdict:
 code computes it.
+
+**A targeted review** (ADR-0034): when `.scope` is not null, this ticket was
+already reviewed at `.scope.from`. Review as above, then for each finding:
+
+- if it is one of `.scope.unsettled` (a Blocking Finding left unsettled
+  before) that still holds at `.commit`, give it again with
+  `"carries": "<its id>"`; one that no longer holds is not given again;
+- otherwise give `"location": {"path": "<file>", "line": <number>}`, a line
+  of `.commit` it is about; it can block only when that line is in
+  `.scope.changed` (the lines of the ticket changed since `.scope.from`).
+
+A finding given as blocking that does neither is recorded by code as
+non-blocking and marked for the end pass: give it anyway, it is not lost.
+The closed questions of a targeted review are asked only of the files it
+changed. When `.scope` is null the review is complete; `location` is
+welcome but changes nothing.
 
 Write `code-review-result.json` in the current directory in the shape
 `.review_shape` shows, then record it:
