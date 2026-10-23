@@ -39,6 +39,8 @@ gestures:
       Remove do-work worktrees that are clean (no uncommitted changes) and
       fully pushed, and whose branch is either merged into the default
       branch or has gone untouched for more than --idle-days (default 7).
+      An exact merged-PR head match also proves recoverability after GitHub
+      deletes a squash-merged branch; absent or mismatched proof fails closed.
       Refuses anything with uncommitted changes. A worktree with commits
       that were never pushed, or ahead of its pushed upstream, is reported
       through the escalation door instead of removed (unrecoverable).
@@ -92,6 +94,42 @@ default_base_branch() {
   else
     printf '%s\n' "main"
   fi
+}
+
+# merged_pr_for_exact_head <repo> <branch> <sha> — print one merged PR number
+# only when GitHub retains exact proof for the local head. This recovers the
+# safe cleanup case where GitHub deleted a squash-merged PR branch: neither an
+# upstream ref nor Git ancestry can prove that the local commit was published.
+merged_pr_for_exact_head() {
+  local repo="$1" branch="$2" sha="$3" pulls
+  command -v gh >/dev/null 2>&1 || return 1
+  pulls=$(
+    cd "$repo" || exit 1
+    timeout 20 gh pr list --state merged --head "$branch" \
+      --json number,headRefName,headRefOid,mergedAt --limit 100 2>/dev/null
+  ) || return 1
+  printf '%s' "$pulls" | python3 -c '
+import json
+import sys
+
+branch, sha = sys.argv[1:]
+try:
+    pulls = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+if not isinstance(pulls, list):
+    raise SystemExit(1)
+for pull in pulls:
+    if not isinstance(pull, dict):
+        continue
+    if (pull.get("headRefName") == branch
+            and pull.get("headRefOid") == sha
+            and pull.get("mergedAt")
+            and isinstance(pull.get("number"), int)):
+        print(pull["number"])
+        raise SystemExit(0)
+raise SystemExit(1)
+' "$branch" "$sha"
 }
 
 cmd_prune_merged_branches() {
@@ -234,7 +272,8 @@ cmd_clean_worktrees() {
       skipped=$((skipped+1)); continue   # uncommitted work
     fi
 
-    local upstream ahead=1
+    local sha upstream ahead=1 merged_pr=""
+    sha=$(git -C "$d" rev-parse HEAD)
     upstream=$(git -C "$d" for-each-ref --format='%(upstream)' "refs/heads/$branch")
     if [ -z "$upstream" ]; then
       if git -C "$d" show-ref --verify --quiet "refs/remotes/origin/$branch"; then
@@ -245,10 +284,12 @@ cmd_clean_worktrees() {
       ahead=$(git -C "$d" rev-list --count "$upstream..HEAD" 2>/dev/null || echo 1)
     fi
     if [ -z "$upstream" ] || [ "$ahead" != "0" ]; then
+      merged_pr=$(merged_pr_for_exact_head "$d" "$branch" "$sha" || true)
+    fi
+    if [ -z "$merged_pr" ] && { [ -z "$upstream" ] || [ "$ahead" != "0" ]; }; then
       # never pushed, or pushed but ahead of its upstream -- either way some
-      # commits here exist only on this machine; never remove, always escalate
-      local sha
-      sha=$(git -C "$d" rev-parse HEAD)
+      # commits may exist only on this machine; never remove without exact
+      # merged-PR proof, always escalate
       if [ "$dry_run" = "1" ]; then
         echo "would escalate: $d (branch=$branch sha=$sha, unpushed commits)"
       else
@@ -261,6 +302,12 @@ cmd_clean_worktrees() {
     local base_ref merged=0
     base_ref=$(git -C "$d" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || echo "")
     if [ -n "$base_ref" ] && git -C "$d" merge-base --is-ancestor HEAD "refs/remotes/$base_ref" 2>/dev/null; then
+      merged=1
+    fi
+    if [ "$merged" != "1" ] && [ -z "$merged_pr" ]; then
+      merged_pr=$(merged_pr_for_exact_head "$d" "$branch" "$sha" || true)
+    fi
+    if [ -n "$merged_pr" ]; then
       merged=1
     fi
 
@@ -276,8 +323,10 @@ cmd_clean_worktrees() {
       fi
     fi
 
-    local sha main_repo
-    sha=$(git -C "$d" rev-parse HEAD)
+    local main_repo proof_detail=""
+    if [ -n "$merged_pr" ]; then
+      proof_detail=" proof=github-pr-merged pr=$merged_pr"
+    fi
     main_repo=$(git -C "$d" rev-parse --git-common-dir 2>/dev/null)
     case "$main_repo" in /*) ;; *) main_repo="$d/$main_repo" ;; esac
     main_repo=$(cd -- "$(dirname -- "$main_repo")" && pwd -P)
@@ -288,7 +337,7 @@ cmd_clean_worktrees() {
       if git -C "$main_repo" worktree remove "$d" --force >/dev/null 2>&1; then
         removed=$((removed+1))
         log clean-worktrees removed \
-          "path=$d branch=$branch sha=$sha undo='factory-do-work-workspace enter recreates it from branch $branch while that branch exists'"
+          "path=$d branch=$branch sha=$sha${proof_detail} undo='factory-do-work-workspace enter recreates it from branch $branch while that branch exists'"
       fi
     fi
   done
