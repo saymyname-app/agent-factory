@@ -5,5 +5,5 @@ description = "Deterministic zero-token backstop: when the Mayor's current conve
 trigger = "condition"
 interval = "10m"
 check = "/home/benja/agent-factory/orders/lib/orders-restart-stagger.sh mayor-context-guard 600"
-exec = "/home/benja/agent-factory/bin/mayor-context-guard"
+exec = "/home/benja/agent-factory/bin/order-pause gate mayor-context-guard -- /home/benja/agent-factory/bin/mayor-context-guard"
 timeout = "120s"
