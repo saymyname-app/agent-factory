@@ -60,6 +60,9 @@ import uuid
 from pathlib import Path
 from types import ModuleType
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+from account_home import account_home  # noqa: E402
+
 
 def process_identity(pid: int) -> str | None:
     """The start time of a running `pid`: with the pid, it names one process
@@ -80,7 +83,7 @@ SWEEP_GRACE = 60
 # Where the guard and the sweep write each launch they stop: ~/.local/state
 # is writable inside bin/delivery-role-sandbox too.
 TRACE_FILE = Path(os.environ.get("FACTORY_LAUNCH_TRACE")
-                  or Path.home() / ".local" / "state" / "agent-factory-launch" / "stops.jsonl")
+                  or account_home() / ".local" / "state" / "agent-factory-launch" / "stops.jsonl")
 
 
 def trace(event: dict) -> None:
