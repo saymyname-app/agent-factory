@@ -10,8 +10,6 @@ destination load it.
   declared repository -- at a fixed time, the Monday 12/10/2026 at noon
   (Paris), so that the seven days of the page are the 06/10 to the 12/10.
   A case writes the records, and what it expects of them;
-- `declare`: a commit of the tree under test where the profile declares
-  more datasets, from which the launcher of the profile starts the cockpit;
 - `served`: the page the launched cockpit serves at one address, read over
   HTTP: the text of each anchor, the points of its daily chart, the views
   its tabs open;
@@ -28,7 +26,7 @@ import json
 import re
 from html.parser import HTMLParser
 
-from home_destination import PROFILE, LaunchTree, fetch, git
+from home_destination import LaunchTree, fetch
 
 # --- the records of a dataset ---------------------------------------------------
 #
@@ -92,23 +90,6 @@ def sources(name: str, *, results=(), tickets=(), decisions=(), repository: str 
     if repository is not None:
         dataset["github"] = {"repository": repository, "pull_requests": list(pulls), "workflow_runs": list(ci_runs)}
     return dataset
-
-
-def declare(tree: LaunchTree, datasets: dict[str, dict]) -> str:
-    """A commit where the profile declares each of `datasets` (name ->
-    content) beside its own. The tree stays at that commit: the launcher
-    reads the profile in the tree, and launches the commit it is given --
-    the datasets of the profile are those of the first commit."""
-    profile_path = tree.repo / PROFILE
-    profile = json.loads(profile_path.read_text(encoding="utf-8"))
-    for name, content in datasets.items():
-        relative = f"config/cockpit-datasets/{name}.json"
-        (tree.repo / relative).write_text(json.dumps(content, ensure_ascii=False, indent=2), encoding="utf-8")
-        profile["launch"]["datasets"][name] = relative
-    profile_path.write_text(json.dumps(profile, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    git(tree.repo, "add", "--all", "--force")
-    git(tree.repo, "commit", "--quiet", "--message", "the datasets of the Analyses on real records")
-    return git(tree.repo, "rev-parse", "HEAD")
 
 
 # --- the page, read over HTTP ----------------------------------------------------

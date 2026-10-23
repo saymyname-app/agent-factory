@@ -29,8 +29,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from analyses_destination import (  # noqa: E402
-    LaunchTree, ci_run, decision, declare, pull, result, served, sources, ticket,
+    LaunchTree, ci_run, decision, pull, result, served, sources, ticket,
 )
+from project_destination import launch_declared  # noqa: E402
 
 
 class AnalysesDestinationIndicators(unittest.TestCase):
@@ -49,11 +50,12 @@ class AnalysesDestinationIndicators(unittest.TestCase):
 
     def launch(self, dataset: dict | str) -> str:
         """The address of the cockpit launched on `dataset`, declared by the
-        case; a name of the profile's datasets is launched as it is."""
+        case in a commit of its own -- the tree is back at its first commit
+        afterwards, so no other case sees it --; a name of the profile's
+        datasets is launched as it is."""
         if isinstance(dataset, str):
             return self.tree.launch(dataset)
-        name = dataset["ui"]["id"]
-        return self.tree.launch(name, declare(self.tree, {name: dataset}))
+        return launch_declared(self.tree, dataset["ui"]["id"], dataset)
 
     # --- criterion 1 -------------------------------------------------------------
 
