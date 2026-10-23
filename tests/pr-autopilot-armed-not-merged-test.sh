@@ -99,7 +99,7 @@ merges_of() { grep -c "^pr merge $1 " "$TMP/gh.log" || true; }
 
 # --- dry run: named, nothing called ---
 out=$(pilot --dry-run)
-printf '%s\n' "$out" | grep -qF "DRY-RUN: gh pr merge 30 --repo $REPO --squash --match-head-commit af30" \
+grep -qF "DRY-RUN: gh pr merge 30 --repo $REPO --squash --match-head-commit af30" <<<"$out" \
   || { echo "$out" >&2; fail "--dry-run did not name the direct merge of PR #30"; }
 grep -q "^pr merge " "$TMP/gh.log" && { echo "$out" >&2; fail "--dry-run called gh pr merge"; }
 
@@ -111,7 +111,7 @@ out=$(pilot)
 grep -qxF "pr merge 30 --repo $REPO --squash --match-head-commit af30" "$TMP/gh.log" \
   || { echo "$out" >&2; fail "armed, green, CLEAN PR #30 still open after the delay was not merged directly"; }
 [ "$(merges_of 30)" = 1 ] || { echo "$out" >&2; fail "PR #30 got $(merges_of 30) merge calls, expected 1"; }
-printf '%s\n' "$out" | grep -qF "PR #30: armed, required check green for 1020s, CLEAN, still open -> direct squash merge" \
+grep -qF "PR #30: armed, required check green for 1020s, CLEAN, still open -> direct squash merge" <<<"$out" \
   || { echo "$out" >&2; fail "PR #30's direct merge was not logged with its reason"; }
 grep -q -- "--auto" "$TMP/gh.log" && { echo "$out" >&2; fail "an already armed PR was armed again"; }
 
@@ -127,12 +127,12 @@ grep -q -- "--auto" "$TMP/gh.log" && { echo "$out" >&2; fail "an already armed P
 grep -q "^pr view 33 --repo $REPO --json state" "$TMP/gh.log" \
   || { echo "$out" >&2; fail "PR #33's server state was not re-read after the non-zero exit"; }
 [ "$(merges_of 34)" = 1 ] || { echo "$out" >&2; fail "PR #34 got $(merges_of 34) merge calls after a non-zero exit, expected 1"; }
-printf '%s\n' "$out" | grep -qF "direct merge failed" \
+grep -qF "direct merge failed" <<<"$out" \
   || { echo "$out" >&2; fail "PR #34's refused direct merge was not logged"; }
 # The fixture has no backend/frontend rig dirs: each "SKIP: ... missing" is
 # one legitimate error. PR 34 adds exactly one; PR 33 (merged) adds none.
-missing=$(printf '%s\n' "$out" | grep -c "SKIP: .* missing" || true)
-printf '%s\n' "$out" | grep -qE "(^| )errors=$((missing + 1))( |$)" \
+missing=$(grep -c "SKIP: .* missing" <<<"$out" || true)
+grep -qE "(^| )errors=$((missing + 1))( |$)" <<<"$out" \
   || { echo "$out" >&2; fail "expected errors=$((missing + 1)): one for PR #34 still open, none for PR #33 merged server-side"; }
 
 # --- the delay is configurable ---

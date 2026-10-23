@@ -122,9 +122,13 @@ export TICKET_EVALUATION_STATE_DIR="$TRIAL/launches"
 export ESCALATION_DOOR_LOCK_FILE="$TRIAL/escalation-door.lock" PROPOSAL_DOOR_BIN="$TRIAL/proposal-door"
 export DISPATCH_DOOR_PROVIDER_FAILOVER_BIN="$TRIAL/provider-failover" DISPATCH_DOOR_ROLE_TRIAL_BIN="$TRIAL/role-adoption-trial"
 export DELIVERY_ROLE_PROVIDER_FAILOVER_BIN="$TRIAL/provider-failover"
+export GC_BIN=gc CORRECTION_ROUND_DISPATCH_DOOR_BIN="$ROOT/tests/fixtures/correction-round/author"
+export CORRECTION_ROUND_FAKE_LOG="$TRIAL/correction-door.log" CORRECTION_ROUND_FAKE_PLAN="$TRIAL/correction-plan.json"
+export CORRECTION_ROUND_FAKE_REPO="$PRODUCT" CORRECTION_ROUND_FAKE_BRIEFS="$TRIAL/correction-briefs"
 export GIT_AUTHOR_NAME=essai GIT_AUTHOR_EMAIL=essai@example.invalid GIT_COMMITTER_NAME=essai GIT_COMMITTER_EMAIL=essai@example.invalid
 ENV
 printf '#!/bin/sh\necho 0\n' > "$TRIAL/proposal-door"
+printf '%s\n' '["works"]' > "$TRIAL/correction-plan.json"
 cat > "$TRIAL/provider-failover" <<'SH'
 #!/bin/sh
 printf '%s\n' '{"total_exhaustion": {"active": false}, "targets": {"trial-author": {"effective": "stub-author"}, "trial-evaluator": {"effective": "stub-evaluator", "chain": [{"provider": "stub-evaluator", "state": "available", "pool": "fournisseur-essai"}]}}}'
@@ -167,7 +171,10 @@ while true; do
   CLAIM=\$(gc hook --claim --json 2>/dev/null)
   ACTION=\$(printf '%s' "\$CLAIM" | jq -r '.action // empty' 2>/dev/null)
   BEAD=\$(printf '%s' "\$CLAIM" | jq -r '.bead_id // empty' 2>/dev/null)
-  if [ "\$ACTION" != work ] || [ -z "\$BEAD" ]; then sleep 3; continue; fi
+  if [ "\$ACTION" != work ] || [ -z "\$BEAD" ]; then
+    gc runtime drain-ack >/dev/null 2>&1
+    exit 0
+  fi
   ROOT_BEAD=\$(gc bd show "\$BEAD" --json | jq -r '.[0].metadata["gc.root_bead_id"]')
   INPUT=\$(gc bd show "\$ROOT_BEAD" --json | jq -r '.[0].metadata["gc.input_convoy_id"]')
   EVALUATION_BEAD=\$(gc convoy status "\$INPUT" --json | jq -r '.children[0].id')
@@ -280,20 +287,21 @@ provider = "stub-evaluator"
 wake_mode = "fresh"
 TOML
 echo "Scripted Evaluator of the ticket-evaluation trial." > "$CITY/agents/trial-evaluator/prompt.template.md"
-cp "$ROOT/formulas/mol-ticket-evaluation.formula.toml" "$CITY/formulas/"
+cp "$ROOT/formulas/mol-ticket-evaluation.formula.toml" "$ROOT/formulas/mol-ticket-correction.formula.toml" "$CITY/formulas/"
 cat > "$CITY/config/projects/trial.toml" <<TOML
 rig_dir = "."
 repo = "example/trial"
 protected_branch = "main"
 required_ci = "CI"
 sling_target = "trial-evaluator"
-formulas = "mol-ticket-evaluation"
+formulas = "mol-ticket-evaluation,mol-ticket-correction"
 TOML
 jq '.rigs = ["trial"] | .stacks = {"trial": ["fixture-stack"]}' "$ROOT/$FIXTURE/descriptor.json" > "$CITY/config/project-descriptors/trial.json"
 jq -n --argjson n "$CEILING" '{contract: "agent-factory-delivery-flow/v1", max_sessions: $n,
   start: {formula: "mol-ticket-author", role: "author"},
   code_review: {formula: "mol-code-review", role: "reviewer", rig: "trial", timeout_seconds: 600},
-  evaluation: {formula: "mol-ticket-evaluation", role: "evaluator", rig: "trial", timeout_seconds: 600, start_timeout_seconds: 30}}' \
+  evaluation: {formula: "mol-ticket-evaluation", role: "evaluator", rig: "trial", timeout_seconds: 600, start_timeout_seconds: 30},
+  correction: {formula: "mol-ticket-correction", role: "author", rig: "trial"}}' \
   > "$CITY/config/delivery-flow.json"
 jq '.roles.author.agent = "trial-author" | .roles.evaluator.agent = "trial-evaluator"' "$ROOT/config/delivery-roles.json" \
   > "$CITY/config/delivery-roles.json"
@@ -502,6 +510,14 @@ on_integration "$TIP_P" || fail "the tip of P is not on the integration branch"
 echo "$(date -u +%H:%M:%S) P : prefactoring, aucune session d'Evaluator ; le contrôle a lancé le produit au commit $TIP_P, la sonde a répondu (preuve evaluation.startup à $(piece "$P" evaluation.startup | jq -r '.address')) ; verdict favorable ; ticket fusionné dans $INTEGRATION"
 
 # --- A again: corrected -> every state « observé », favorable, merged -------------------
+# This trial's stub has no production work query. Let the first Evaluator
+# session finish draining before creating the next evaluation, so the second
+# result necessarily comes from a fresh conversation as the real role requires.
+evaluator_stopped() {
+  gc session list --state all --json \
+    | jq -e '[.sessions[] | select(.template == "trial-evaluator" and .closed == false)] | length == 0' >/dev/null
+}
+wait_for 300 evaluator_stopped || fail "the first Evaluator session did not stop before the corrected evaluation"
 FIX_A=$(realize "$A")
 finish "$A" "$FIX_A" green
 wait_for 600 merged "$A" || { dump; fail "A was not merged within 600s once its criterion was realized"; }
