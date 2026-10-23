@@ -111,6 +111,15 @@ def _end(pids: list[int]) -> None:
 class ProjectLaunchTest(unittest.TestCase):
     def setUp(self) -> None:
         self._state_files: list[Path] = []
+        self._launch_env: dict | None = None  # the environment of _private_tmp's launches
+        # The stops the guard and the sweep trace go here, not to the host's.
+        trace_dir = Path(tempfile.mkdtemp(prefix="launch-trace-"))
+        self.addCleanup(shutil.rmtree, trace_dir, True)
+        self.trace = trace_dir / "stops.jsonl"
+        previous = os.environ.get("FACTORY_LAUNCH_TRACE")
+        os.environ["FACTORY_LAUNCH_TRACE"] = str(self.trace)
+        self.addCleanup(lambda: os.environ.pop("FACTORY_LAUNCH_TRACE") if previous is None
+                        else os.environ.__setitem__("FACTORY_LAUNCH_TRACE", previous))
 
     @functools.cached_property
     def product(self) -> Path:
@@ -165,6 +174,7 @@ class ProjectLaunchTest(unittest.TestCase):
         return subprocess.run(
             (str(TOOL), "stop", "--state-file", str(state_file)),
             cwd=ROOT,
+            env=self._launch_env,
             text=True,
             capture_output=True,
             check=check,
@@ -809,6 +819,190 @@ class ProjectLaunchTest(unittest.TestCase):
             with self.subTest(caller=path.name):
                 self.assertTrue('"--owner-pid", str(os.getpid())' in path.read_text(),
                                 f"{path.name} starts a product it does not own")
+        # They say so: no launch is left without an owner by omission.
+        for path in callers:
+            if path.name in detached:
+                with self.subTest(caller=path.name):
+                    self.assertIn('"start", "--detached"', path.read_text())
+
+    # --- every launch ends, whoever calls (22/10/2026, af-npz9v1) -----------
+
+    def _traced(self) -> list[dict]:
+        if not self.trace.exists():
+            return []
+        return [json.loads(line) for line in self.trace.read_text().splitlines()]
+
+    def _until_gone(self, record: dict, seconds: float = 30.0) -> None:
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline and Path(record["worktree"]).exists():
+            time.sleep(0.2)
+        self.assertFalse(Path(record["worktree"]).exists(), "the launch copy outlived the rule")
+        self.assertTrue(_port_is_free(record["port"]), "the launch still holds its port")
+
+    def test_a_launch_without_owner_pid_is_owned_by_its_caller(self):
+        # ticket-evaluation, outcome-evaluation and the criteria tests passed
+        # no --owner-pid: their products lived on after them.
+        with _adopting_orphans():
+            state_file = self.new_state_file()
+            caller = subprocess.Popen(
+                [sys.executable, "-c",
+                 "import subprocess, sys, time; "
+                 "r = subprocess.run([sys.argv[1], '--repo-root', sys.argv[4], 'start', sys.argv[2], '--dataset', 'content', "
+                 "'--state-file', sys.argv[3]], capture_output=True, text=True); "
+                 "print(r.stdout.strip(), flush=True); time.sleep(120)",
+                 str(TOOL), str(DESCRIPTOR), str(state_file), str(self.product)],
+                cwd=ROOT, stdout=subprocess.PIPE, text=True)
+            self.addCleanup(caller.stdout.close)
+            record = json.loads(caller.stdout.readline())
+            self.assertTrue(record["started"])
+            caller.kill()
+            caller.wait(timeout=5)
+            left = self._until_no_children()
+            _end(left)
+        self.assertEqual([], left, "a process of the launch outlived its caller")
+        self.assertFalse(state_file.exists())
+        self._until_gone(record)
+        self.assertEqual(["owner_ended"], [event["reason"] for event in self._traced()])
+
+    def test_a_detached_launch_outlives_its_caller_until_stop(self):
+        result, state_file = self.start("--dataset", "content", "--detached")
+        record = json.loads(result.stdout)
+        # `start` itself, its caller here, has ended: the product still answers.
+        self.assertEqual(200, _fetch(record["address"] + "/health")[0])
+        self.stop(state_file=state_file)
+        self._until_gone(record)
+        self.assertEqual([], self._traced(), "a stop asked for is not a stop of the guard")
+
+    def test_detached_and_an_owner_are_refused_together(self):
+        result, state_file = self.start("--dataset", "content", "--detached", "--owner-pid", str(os.getpid()),
+                                        check=False)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("--detached", json.loads(result.stdout)["error"])
+        self.assertFalse(state_file.exists())
+
+    def test_a_launch_ends_at_its_lifetime(self):
+        result, state_file = self.start("--dataset", "content", "--detached", "--max-lifetime", "8")
+        record = json.loads(result.stdout)
+        self._until_gone(record)
+        self.assertFalse(state_file.exists())
+        [event] = self._traced()
+        self.assertEqual(("guard", "lifetime_over", record["launch_id"], True),
+                         (event["by"], event["reason"], event["launch_id"], event["stopped"]))
+
+    def test_a_launch_whose_record_is_removed_without_stop_ends(self):
+        # 22/10/2026: the criteria tests deleted their folder, launch records
+        # included, after a stop that did not end the product; the guard
+        # took the missing record for a stop and left. 24 cockpits ran on
+        # for up to 283 minutes.
+        result, state_file = self.start("--dataset", "content")
+        record = json.loads(result.stdout)
+        state_file.unlink()
+        self._until_gone(record)
+        [event] = self._traced()
+        self.assertEqual(("guard", "record_removed", True), (event["by"], event["reason"], event["stopped"]))
+
+    def test_a_record_reused_by_another_launch_does_not_stop_it(self):
+        first, state_file = self.start("--dataset", "content")
+        record = json.loads(first.stdout)
+        self.stop(state_file=state_file)
+        result = subprocess.run([str(TOOL), "--repo-root", str(self.product), "start", str(DESCRIPTOR),
+                                 "--dataset", "content", "--state-file", str(state_file)],
+                                cwd=ROOT, text=True, capture_output=True, check=True)
+        second = json.loads(result.stdout)
+        time.sleep(3)  # longer than a round of the first launch's guard
+        self.assertEqual(200, _fetch(second["address"] + "/health")[0])
+        self.assertTrue(Path(record["worktree"]) != Path(second["worktree"]))
+        self.assertEqual([], self._traced())
+
+    def _private_tmp(self) -> dict:
+        """An environment whose launch copies live in a folder of this test:
+        the sweep it runs releases them, and nothing of the host's."""
+        folder = Path(tempfile.mkdtemp(prefix="launch-sweep-")).resolve()
+        self.addCleanup(shutil.rmtree, folder, True)
+        self._launch_env = {**os.environ, "TMPDIR": str(folder)}
+        return self._launch_env
+
+    def _guard_of(self, launch_id: str) -> int:
+        for cmdline in Path("/proc").glob("[0-9]*/cmdline"):
+            with contextlib.suppress(OSError):
+                argv = cmdline.read_bytes().split(b"\0")
+                if b"guard" in argv and launch_id.encode() in argv:
+                    return int(cmdline.parent.name)
+        self.fail(f"no guard for launch {launch_id}")
+
+    def test_the_sweep_stops_a_launch_whose_owner_and_guard_have_ended(self):
+        env = self._private_tmp()
+        owner = subprocess.Popen(["sleep", "120"])
+        self.addCleanup(lambda: owner.poll() is None and owner.kill())
+        result, state_file = self.start("--dataset", "content", "--owner-pid", str(owner.pid), env=env)
+        record = json.loads(result.stdout)
+        os.kill(self._guard_of(record["launch_id"]), signal.SIGKILL)  # a guard killed, a host restarted
+        owner.kill()
+        owner.wait(timeout=5)
+        sweep = [str(TOOL), "sweep", "--launch-id", record["launch_id"]]
+        dry = json.loads(subprocess.run([*sweep, "--dry-run"], env=env, text=True, capture_output=True,
+                                        check=True).stdout)
+        self.assertEqual(["owner_ended"], [event["reason"] for event in dry["stopped"]])
+        self.assertEqual(200, _fetch(record["address"] + "/health")[0], "a dry run stopped the launch")
+        swept = json.loads(subprocess.run(sweep, env=env, text=True, capture_output=True, check=True).stdout)
+        self.assertEqual([record["worktree"]], [event["worktree"] for event in swept["stopped"]])
+        self._until_gone(record, seconds=5)
+        [event] = self._traced()
+        self.assertEqual(("sweep", "owner_ended", True), (event["by"], event["reason"], event["stopped"]))
+
+    def test_the_sweep_keeps_a_launch_whose_owner_lives(self):
+        env = self._private_tmp()
+        result, state_file = self.start("--dataset", "content", env=env)
+        record = json.loads(result.stdout)
+        swept = json.loads(subprocess.run([str(TOOL), "sweep", "--launch-id", record["launch_id"]], env=env,
+                                          text=True, capture_output=True, check=True).stdout)
+        self.assertEqual(([], 1), (swept["stopped"], swept["running_kept"]))
+        self.assertEqual(200, _fetch(record["address"] + "/health")[0])
+        self.stop(state_file=state_file)
+
+    def test_a_launch_ends_with_its_owner_after_its_temporary_folder_is_removed(self):
+        # 22/10/2026: 25 fixture products of acceptance tests outlived them
+        # for up to 39 hours; each test had removed its TMPDIR, and the
+        # guard, which could no longer read it, ended on that error.
+        env = self._private_tmp()
+        with _adopting_orphans():
+            state_file = self.new_state_file()
+            caller = subprocess.Popen(
+                [sys.executable, "-c",
+                 "import subprocess, sys, time; "
+                 "r = subprocess.run([sys.argv[1], '--repo-root', sys.argv[4], 'start', sys.argv[2], '--dataset', 'content', "
+                 "'--state-file', sys.argv[3]], capture_output=True, text=True); "
+                 "print(r.stdout.strip(), flush=True); time.sleep(120)",
+                 str(TOOL), str(DESCRIPTOR), str(state_file), str(self.product)],
+                cwd=ROOT, env=env, stdout=subprocess.PIPE, text=True)
+            self.addCleanup(caller.stdout.close)
+            record = json.loads(caller.stdout.readline())
+            self.assertTrue(record["started"])
+            shutil.rmtree(env["TMPDIR"])
+            caller.kill()
+            caller.wait(timeout=5)
+            left = self._until_no_children()
+            _end(left)
+        self.assertEqual([], left, "a process of the launch outlived its caller")
+        self.assertFalse(state_file.exists())
+        self.assertTrue(_port_is_free(record["port"]))
+        self.assertEqual([("owner_ended", True)], [(event["reason"], event["stopped"]) for event in self._traced()])
+
+    def test_the_sweep_releases_a_copy_left_without_process(self):
+        env = self._private_tmp()
+        result, state_file = self.start("--dataset", "content", "--detached", env=env)
+        record = json.loads(result.stdout)
+        os.kill(self._guard_of(record["launch_id"]), signal.SIGKILL)
+        os.killpg(record["process_group"], signal.SIGKILL)  # the product died; its copy stayed
+        time.sleep(0.5)
+        old = time.time() - 7 * 3600
+        os.utime(f"{record['worktree']}.owner", (old, old))
+        swept = json.loads(subprocess.run([str(TOOL), "sweep", "--launch-id", record["launch_id"]], env=env,
+                                          text=True, capture_output=True, check=True).stdout)
+        self.assertEqual(["copy_left"], [event["reason"] for event in swept["released"]])
+        self.assertFalse(Path(record["worktree"]).exists())
+        self.assertFalse(Path(f"{record['worktree']}.owner").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
