@@ -1,0 +1,11 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/projects-roadmap-requires-test.py::ProjectsRoadmapRequires.test_a_step_done_before_a_required_step_is_flagged_and_one_whose_required_steps_are_done_is_not"
+    ],
+    "2": [
+      "tests/cockpit-criteria/commands/projects-roadmap-requires-test.py::ProjectsRoadmapRequires.test_the_roadmap_the_factory_delivers_has_d01_in_progress_requiring_c01_suite_and_stays_valid",
+      "tests/cockpit-criteria/commands/projects-roadmap-requires-test.py::ProjectsRoadmapRequires.test_the_roadmap_the_factory_delivers_shows_d01_in_progress"
+    ]
+  }
+}
