@@ -616,6 +616,16 @@ of the host's own runner (boxed and held to 8 cores and 4 GB:
 `ci-run-tests` started from inside a battery (the tests of the runner) do not
 wait. Proof: `tests/ci-run-tests-host-queue-test.sh`.
 
+The cockpit's regression command (`tests/cockpit-criteria/regression.py`,
+what `bin/tdd-step` and `bin/spec-integration` run) takes the same lock
+since 25/10/2026: on 22/10 it ran beside two authors' and a merge's,
+took 1.9 times as long and was refused at 600 s on tickets that were green
+(study C, `docs/research/2026-10-22-strategie-tests-budgets.md`). It waits
+at most `REGRESSION_HOST_WAIT` seconds (600), then runs within
+`REGRESSION_BUDGET` seconds (600) counted from the lock; past either it
+exits 75, NOT RUN, which the gates never count as a red. Proof:
+`tests/regression-host-queue-test.py`.
+
 What it does not cover:
 
 - The size of one battery: `--jobs J` still runs J files at once. Lots
