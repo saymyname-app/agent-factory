@@ -233,7 +233,8 @@
       "job-usage": "config/cockpit-datasets/job-usage.json",
       "job-usage-unavailable": "config/cockpit-datasets/job-usage-unavailable.json",
       "job-user-prompt-raw": "config/cockpit-datasets/job-user-prompt-raw.json",
-      "job-user-prompt-rendered": "config/cockpit-datasets/job-user-prompt-rendered.json"
+      "job-user-prompt-rendered": "config/cockpit-datasets/job-user-prompt-rendered.json",
+      "chantier-decisions": "config/cockpit-datasets/chantier-decisions.json"
     },
     "test_perimeter": [
       "tests/cockpit-criteria/"
