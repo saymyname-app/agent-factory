@@ -417,6 +417,11 @@ exhausted, option `a` only sends the operator to the request of each ticket,
 and lifts nothing. Option `b`, « Laisser ces tickets parqués »: nothing
 starts, the convoy stays open, the request does not come back.
 
+If option `a` is recorded while the same pass is resuming another ticket,
+the pass applies it before withdrawing the grouped request: the request-door
+lock orders the answer and the withdrawal, so the named exhausted tickets
+are lifted and their counted resumes are launched exactly once (af-g2ukoq).
+
 Two decisions taken here:
 
 - **A ticket parked for exhausted resumes raises no request of its own.**
@@ -950,8 +955,9 @@ the last resume (its bound) of a same cause parking the ticket and its descendan
 three different causes leaving it at work (ADR-0030 L2), the unrelated tickets still starting, exactly one
 grouped request naming each parked ticket and its cause, none while a
 ticket that is not parked is left, one for several passes, the answer that
-lifts and the one that leaves the tickets parked, and the answer to the
-request of a ticket its own exit parked. `tests/convoy-state-test.py`
+lifts (including one recorded while another ticket is resumed) and the one
+that leaves the tickets parked, and the answer to the request of a ticket
+its own exit parked. `tests/convoy-state-test.py`
 covers the state commands (`docs/CONVOY_STATE.md`). The cause `behind`
 (T44), through the real `bin/code-review`:
 `test_a_finished_ticket_behind_the_integration_tip_goes_back_to_its_author_once_and_is_counted`

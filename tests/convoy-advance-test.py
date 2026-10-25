@@ -191,7 +191,8 @@ class ConvoyAdvanceHarness(unittest.TestCase):
         }
         # The tests run the advance command as the controller's order does:
         # outside any agent session, even when an agent runs the suite.
-        for name in ("CONVOY_STATE_FAKE_SLING_FAIL", "CONVOY_STATE_FAKE_MAIL_FAIL", *SESSION_IDENTITY):
+        for name in ("CONVOY_STATE_FAKE_SLING_FAIL", "CONVOY_STATE_FAKE_MAIL_FAIL",
+                     "CONVOY_STATE_FAKE_ANSWER_ON_SLING", *SESSION_IDENTITY):
             self.env.pop(name, None)
         # No product a test launched outlives it: stopped before the next
         # test empties the directory.
