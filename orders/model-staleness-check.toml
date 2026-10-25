@@ -5,5 +5,5 @@ description = "Daily, zero-token model-id staleness check (ADR-0018 part 2, af-a
 # whenever it happened to fire); cron pins it to a fixed, predictable time.
 trigger = "cron"
 schedule = "0 3 * * *"
-exec = "./bin/provider-failover check-models --quiet"
+exec = "/home/benja/agent-factory/bin/order-pause gate model-staleness-check -- ./bin/provider-failover check-models --quiet"
 timeout = "60s"

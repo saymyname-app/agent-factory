@@ -8,5 +8,5 @@ description = "Close a reviewer or Evaluator session that has served its workflo
 trigger = "condition"
 interval = "2m"
 check = "/home/benja/agent-factory/orders/lib/orders-restart-stagger.sh delivery-seat-release 120"
-exec = "/home/benja/agent-factory/bin/delivery-seat-release"
+exec = "/home/benja/agent-factory/bin/order-pause gate delivery-seat-release -- /home/benja/agent-factory/bin/delivery-seat-release"
 timeout = "60s"

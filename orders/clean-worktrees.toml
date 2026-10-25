@@ -9,5 +9,5 @@
 description = "Daily cleanup of abandoned do-work worktrees: removes merged or long-idle clean/pushed ones, escalates any with unpushed commits instead of removing them"
 trigger = "cron"
 schedule = "0 5 * * *"
-exec = "/home/benja/agent-factory/bin/factory-maintain clean-worktrees"
+exec = "/home/benja/agent-factory/bin/order-pause gate clean-worktrees -- /home/benja/agent-factory/bin/factory-maintain clean-worktrees"
 timeout = "120s"

@@ -6,5 +6,5 @@
 description = "Daily zero-token metrics line for yesterday into var/factory-metrics.jsonl: merged tickets, attempts per ticket, tokens per merged ticket, order failure rate, sessions over 150k context; a field without a source is null and listed as unavailable"
 trigger = "cron"
 schedule = "30 0 * * *"
-exec = "/home/benja/agent-factory/bin/factory-metrics"
+exec = "/home/benja/agent-factory/bin/order-pause gate factory-metrics -- /home/benja/agent-factory/bin/factory-metrics"
 timeout = "300s"
