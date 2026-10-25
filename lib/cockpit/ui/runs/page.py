@@ -27,6 +27,18 @@ LEGEND = ("Origine 0 : déclencheur · traits : outils (turquoise), contrôles (
 NOT_COLLECTED = "Pas encore disponible : donnée non collectée."
 EVENT_KINDS = {TOOLS: "outil", CONTROLS: "contrôle", SESSIONS: "session", OTHERS: "autre"}
 TICKS = 5
+# How a job is drawn by its state: its mark, the word that says the state
+# beside its duration (none for a success, whose mark says it, nor for a
+# job open, whose duration says « en cours »), and the head of its detail.
+# Only a success is ticked.
+JOB_STATES = {
+    "passed": ("✓", None, "Terminé"), "open": ("●", None, "En cours"), "refused": ("✕", "refusé", "Refusé"),
+    "stopped": ("■", "arrêté", "Arrêté"), "waiting": ("○", "en attente", "En attente"),
+    "ended": ("–", "terminé", "Terminé"),
+}
+# The tone of a state, where the page draws one: a success, a refusal or a
+# stop; the others keep the colour of their lane.
+STATE_TONES = {"passed": "good", "refused": "bad", "stopped": "bad"}
 
 
 class RunAnchors:
@@ -256,7 +268,7 @@ def _box(item, elapsed):
     left = TRACK * item["offset"] / elapsed
     span = TRACK * min(item["lasted"], elapsed - item["offset"]) / elapsed
     name = (len(item["name"]) + 2) * NAME_CHAR
-    lasted = len(_lasted(item)) * SMALL_CHAR
+    lasted = len(_job_line(item)) * SMALL_CHAR
     marks = len(item["events"]) * (MARK + MARK_GAP) - MARK_GAP + 10
     width = max(span, min(name, NAME_MAX) + BOX_PAD, lasted + BOX_PAD, marks, 56)
     lines = max(1, -(-int(name) // int(width - BOX_PAD)))
@@ -265,6 +277,18 @@ def _box(item, elapsed):
 
 def _lasted(item):
     return "%s · en cours" % short(item["lasted"]) if item["open"] else short(item["lasted"])
+
+
+def _job_state(item):
+    """(mark, state word or None, head of the detail) of a job."""
+    return JOB_STATES.get(item.get("state")) or (JOB_STATES["open"] if item["open"] else JOB_STATES["ended"])
+
+
+def _job_line(item):
+    """What a job says under its name: the ticket it serves, its state when
+    the mark alone does not say it, its duration."""
+    _, word, _ = _job_state(item)
+    return " · ".join(part for part in (item.get("ticket"), word, _lasted(item)) if part)
 
 
 def _rows(items, elapsed):
@@ -289,7 +313,11 @@ def _render_frise(run, selected, anchors):
     lanes, widest = [], TRACK
     for lane in run["lanes"]:
         lane_anchor, name, track = anchors("lane"), anchors("lane-name"), anchors("track")
-        context = ('<small>Contexte · dernière session : non collecté</small>' if lane["kind"] == AGENT else "")
+        context = ""
+        if lane["kind"] == AGENT:
+            last = lane.get("last_session")
+            context = '<small>Contexte · dernière session%s : non collecté</small>' % (
+                " (%s)" % paris_time(last) if last else "")
         placed = _rows(lane["items"], elapsed)
         heights = {}
         for _, _, _, height, row in placed:
@@ -299,8 +327,9 @@ def _render_frise(run, selected, anchors):
         for item, left, width, height, row in placed:
             widest = max(widest, left + width)
             job, select, marks = anchors("job"), anchors("job-select"), anchors("marks")
-            mark = "●" if item["open"] else "✓"
-            lasted = _lasted(item)
+            mark, _, _ = _job_state(item)
+            tone = STATE_TONES.get(item.get("state"), "")
+            lasted = _job_line(item)
             drawn = "".join(
                 '<a class="rn-mark %s" href="%s" %s aria-label="Événement · %s · %s à %s (Paris)" title="%s · %s"></a>'
                 % (event["kind"], _e(_job_href(run, item, number)), anchors("mark"), _e(event["label"]),
@@ -311,12 +340,13 @@ def _render_frise(run, selected, anchors):
             jobs.append(
                 '<div class="rn-job %s%s%s" %s style="left:%spx;top:%spx;width:%spx;height:%spx">'
                 '<span class="rn-span" style="width:%spx" aria-hidden="true"></span>'
-                '<a class="rn-job-select" href="%s" title="%s" %s%s><strong>%s %s</strong><small>%s</small></a>'
+                '<a class="rn-job-select" href="%s" title="%s" %s%s><strong><span class="rn-state %s">%s</span> %s</strong>'
+                '<small>%s</small></a>'
                 '<div class="rn-marks" %s>%s</div></div>'
                 % (lane["kind"], " open" if item["open"] else "", " selected" if current else "", job,
                    _n(left), tops[row], _n(width), height, _n(max(span, 3)),
                    _e(_job_href(run, item)), _e("%s · %s" % (item["name"], lasted)), select,
-                   ' aria-current="true"' if current else "", mark,
+                   ' aria-current="true"' if current else "", tone, mark,
                    _e(item["name"]), _e(lasted), marks, drawn))
         height = max(111, 16 + sum(heights[r] + ROW_GAP for r in heights) + 6)
         lanes.append('<div class="rn-lane" %s><div class="rn-lane-name" %s><strong>%s</strong><small>%s</small>%s</div>'
@@ -345,12 +375,13 @@ def _said(text):
 def _render_detail(run, item, event, anchors):
     lane = next(lane for lane in run["lanes"] if lane["key"] == item["lane"])
     inspector, detail, head = anchors("inspector"), anchors("detail"), anchors("inspector-head")
-    state = "En cours" if item["open"] else "Terminé"
+    _, _, state = _job_state(item)
+    tone = STATE_TONES.get(item.get("state"), "")
     kind = {HUMAN: "humain", CODE: "code"}.get(lane["kind"], "agent")
     pills = ('<div><h2 %s>%s</h2><span class="rn-pill%s">%s</span><span class="rn-pill">%s</span></div>'
              '<div><span class="rn-pill">Responsable %s</span><span class="rn-pill">%s</span>'
              '<a class="rn-close" href="%s" aria-label="Fermer le détail du job">×</a></div>'
-             % (anchors("h2"), _e(item["name"]), "" if item["open"] else " good", state,
+             % (anchors("h2"), _e(item["name"]), " " + tone if tone else "", state,
                 _e(short(item["lasted"]) + (" · en cours" if item["open"] else "")), _e(lane["who"]), kind,
                 _e(run["href"])))
     sections = []
@@ -498,7 +529,8 @@ CSS = """
 .rn-inspector-head>div{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .rn-inspector-head h2{margin:0;font-size:18px;overflow-wrap:anywhere}
 .rn-pill{border:1px solid var(--line);border-radius:25px;padding:5px 9px;font-size:12px;color:var(--pn-muted-text)}
-.rn-pill.good{color:var(--ok)}
+.rn-pill.good{color:var(--ok)}.rn-pill.bad{color:var(--urgent)}
+.rn-state.good{color:var(--ok)}.rn-state.bad{color:var(--urgent)}
 .rn-close{display:inline-grid;place-items:center;width:32px;height:32px;border:1px solid var(--pn-control-line);border-radius:8px;color:var(--ink);text-decoration:none;font-size:18px}
 .rn-inspector-grid{display:grid;grid-template-columns:minmax(0,0.42fr) minmax(0,0.58fr);gap:20px;margin-top:18px}
 .rn-section{padding:14px 0;border-bottom:1px solid var(--line)}

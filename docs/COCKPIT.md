@@ -1241,15 +1241,34 @@ or one of kind ralph, retry, task or check; the specs, scopes, finalizers
 and cleanups are the engine's plumbing): routed to `benjamin`, the lane
 Humain; a check, the lane Code; else the lane of the agent whose session
 claimed it -- the step's own `gc.session_name`, or that of its attempts
-(`gc.logical_bead_id`) --, its `agent_name` as the supervisor lists it, so a
-new session of the same agent keeps its lane and two agents of the same
-role keep one each. Its start is its first claim, its end its closing; an
+(`gc.logical_bead_id`) --, its `agent_name` as the supervisor lists it, or,
+once the supervisor no longer lists that session, as its session bead says
+it (`gc.session_id`, else `gc.session_name`; the tracker keeps those beads
+apart, read with `--include-ephemeral`, and a tracker that cannot list them
+leaves the agents to the sessions the supervisor lists). So a new session of
+the same agent keeps its lane -- the slot of a pool, `delivery-author-2`,
+whatever session works for it -- and two agents of the same role keep one
+each; the lane says when the last session it saw claimed its work
+(« Contexte · dernière session (HH:MM) »). R2 (af-cifk1e) found 84 lanes on
+the run of a convoy, one per ended session, before this. Its start is its first claim, its end its closing; an
 open job lasts up to now, and the clock moves only that horizon. Status:
 « Fusionné » (a ticket merged), « Abandonné » (every ticket withdrawn),
 « Terminé » (the root closed), « Ta décision » (a job of Benjamin open),
 « En cours »; a run ended in a success is ticked « ✓ », one ended without
 (« Abandonné », « Fermé » sans fusion) crossed « ✕ » and drawn muted. The
-lanes Humain and Code are drawn even without a job. When a source the run
+lanes Humain and Code are drawn even without a job.
+
+Each job says the state it recorded, and only a success is ticked: a step
+or a check whose `gc.outcome` is pass, or a fact of a ticket that is one
+(its tests proven, a favourable fidelity, its merge) « ✓ »; a refusal (an
+outcome fail, an unfavourable fidelity) « ✕ … refusé »; the stop of a
+ticket (`gc.flow.stop`) « ■ … arrêté »; a question to Benjamin he has not
+answered « ○ … en attente »; a job open « ● … en cours »; any other closed
+job, that recorded no outcome, « – … terminé ». Under its name a job names
+the ticket it serves -- the label of the ticket in its graph
+(`gc.ticket_id`), else its title: the ticket its workflow was run on, or
+the one whose facts it shows --, then its state, then its duration. When a
+source the run
 is drawn from -- its workflow beads (`runs`) or the supervisor's sessions
 (`sessions`) -- is no longer current, the run says « Lecture périmée » with
 the moment it was last observed.

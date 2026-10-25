@@ -47,9 +47,13 @@ whose closing runs a check, ``gc.check_mode``: « contrôle »). Tool calls are 
 yet (C2b): no event is drawn « outil ».
 
 Lanes: « Humain », « Code », then one per logical agent -- the agent of the
-session (``agent_name`` as the supervisor lists it), so a new session of
-the same agent keeps its lane and two agents of the same role keep one
-each. What is not collected yet (sessions, configuration, prompts,
+session (``agent_name`` as the supervisor lists it, else as the bead of a
+session it no longer lists says it), so a new session of the same agent
+keeps its lane and two agents of the same role keep one each.
+
+Each job says what it recorded -- passed, refused, stopped, waiting, open,
+or ended without an outcome -- and the ticket it serves; only a success is
+a success. What is not collected yet (sessions, configuration, prompts,
 controls, usage, outputs: C2a and C2b) is said so, never filled in.
 """
 import json
@@ -59,7 +63,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from cockpit.core.readmodel import PARIS
-from cockpit.runs.derive import AGENT, CODE, DONE, HUMAN, LIVE, STOPPED, WAIT, _decoded, _ts, run_from_bead, tone
+from cockpit.runs.derive import (AGENT, CODE, DONE, HUMAN, LIVE, PASSED, REFUSED, STOPPED, WAIT, WAITING, _decoded, _ts,
+                                 run_from_bead, tone)
 
 READ_TIMEOUT_SECONDS = 20
 # What the reads ask the tracker for: the beads bearing each key, whatever
@@ -70,6 +75,9 @@ KEYS = ("gc.kind", "gc.root_bead_id", "gc.flow.mark", "gc.synthetic", "gc.flow.m
 # plumbing of the engine.
 JOB_KINDS = (None, "ralph", "retry", "task", "check")
 OPERATOR = "benjamin"
+# The agent of a session neither the supervisor nor the tracker names any
+# more (its session bead removed).
+UNRECORDED_AGENT = "Agent non enregistré"
 NEW_FLOW = "new-flow/"
 DONE_STEP = "Exécution terminée · historique disponible"
 UNRECORDED = "non enregistré"
@@ -89,6 +97,13 @@ ROLES = {"delivery-author": "Auteur", "delivery-reviewer": "Relecteur", "deliver
 STEP_NAMES = {"workspace": "Prendre le ticket", "red": "Préparer les tests", "code": "Réaliser",
               "demonstration": "Démontrer", "exit": "Rendre le ticket"}
 
+# A session as the tracker keeps it: a bead of that type, named after its
+# logical agent (``agent_name``: delivery-author-2, the slot of a pool) --
+# the agent a new session of the same slot works for again.
+SESSION, SESSION_AGENT = "session", "agent_name"
+# What a check or a step recorded of its end (gc.outcome), as a state.
+OUTCOME_STATES = {"pass": PASSED, "fail": REFUSED}
+
 # The kinds of event, as the legend of the frise colours them.
 TOOLS, CONTROLS, SESSIONS, OTHERS = "tools", "controls", "sessions", "others"
 
@@ -105,9 +120,23 @@ def read_workflow_beads(bd_bin="bd", timeout=READ_TIMEOUT_SECONDS):
         )
         return json.loads(completed.stdout) or []
 
+    def ended_sessions():
+        # The sessions the supervisor no longer lists: their beads, which
+        # the tracker keeps apart (ephemeral). A tracker that cannot list
+        # them leaves the agents to the sessions the supervisor lists.
+        try:
+            completed = subprocess.run(
+                [bd_bin, "list", "--all", "--limit", "0", "--include-ephemeral", "--has-metadata-key", SESSION_AGENT,
+                 "--json"], capture_output=True, text=True, timeout=timeout, check=True,
+            )
+            return [b for b in json.loads(completed.stdout) or [] if isinstance(b, dict) and b.get("issue_type") == SESSION]
+        except (OSError, subprocess.SubprocessError, ValueError):
+            return []
+
     seen = {}
-    with ThreadPoolExecutor(max_workers=len(KEYS)) as pool:
-        for beads in pool.map(read, KEYS):
+    with ThreadPoolExecutor(max_workers=len(KEYS) + 1) as pool:
+        sessions = pool.submit(ended_sessions)
+        for beads in [*pool.map(read, KEYS), sessions.result()]:
             for bead in beads:
                 if isinstance(bead, dict) and bead.get("id"):
                     seen[bead["id"]] = bead
@@ -140,7 +169,7 @@ def workflow_runs(beads, agents, now):
     beads = [b for b in beads or [] if isinstance(b, dict) and b.get("id")]
     meta = {b["id"]: _decoded(b.get("metadata")) for b in beads}
     by_id = {b["id"]: b for b in beads}
-    sessions = _sessions(agents)
+    sessions = _sessions(agents, beads)
 
     steps, attempts = {}, {}
     for bead in beads:
@@ -172,6 +201,9 @@ def workflow_runs(beads, agents, now):
         key = of_ticket.get(tracked) or _launched_for(by_id.get(tracked), of_ticket, d01) or bead["id"]
         group = groups.setdefault(key, {"kind": "workflow", "root": bead, "tickets": [], "roots": []})
         group["roots"].append(bead)
+        served = tracked if tracked in of_ticket else _ticket_named(by_id.get(tracked), of_ticket)
+        if served:
+            group.setdefault("served", {})[bead["id"]] = served
         if group["root"] is bead:
             group["tracked"] = by_id.get(tracked) or ({"id": tracked} if tracked else None)
 
@@ -183,14 +215,44 @@ def workflow_runs(beads, agents, now):
     return sorted(runs, key=lambda run: (run["start"], run["id"]), reverse=True)
 
 
-def _sessions(agents):
+def _sessions(agents, beads):
+    """Each session by its id and its name: those the supervisor lists, then
+    the beads of those it no longer lists -- ``agent_name``, ``template``,
+    ``provider`` alike."""
     found = {}
+    for bead in beads:
+        if bead.get("issue_type") != SESSION:
+            continue
+        m = _decoded(bead.get("metadata"))
+        if not m.get(SESSION_AGENT):
+            continue
+        said = {"agent_name": m[SESSION_AGENT], "template": m.get("template"), "provider": m.get("provider")}
+        for name in (bead["id"], m.get("session_name")):
+            if name:
+                found[name] = said
     for agent in agents or []:
         if isinstance(agent, dict):
-            for name in (agent.get("session_name"), agent.get("name")):
+            for name in (agent.get("id"), agent.get("session_name"), agent.get("name")):
                 if name:
                     found[name] = agent
     return found
+
+
+def _ticket_named(bead, of_ticket):
+    """The ticket a bead the dispatch door wrote launched work for, when the
+    run holds it; None."""
+    found = TICKET_LINE.search((bead or {}).get("description") or "")
+    return found.group(1) if found and found.group(1) in of_ticket else None
+
+
+def _ticket_label(bead, meta):
+    """How a job names the ticket it serves: its label in the graph
+    (``gc.ticket_id``), else its title."""
+    title = bead.get("title") or bead["id"]
+    label = meta[bead["id"]].get("gc.ticket_id")
+    if label:
+        return label
+    return title.split(" — ", 1)[1] if " — " in title else title
 
 
 def _launched_for(bead, of_ticket, d01):
@@ -248,22 +310,25 @@ def _run(key, group, meta, steps, attempts, sessions, now):
         derived = tickets.get(root["id"])
         return normalized(derived, now) if derived else None
 
+    labels = {t["id"]: _ticket_label(t, meta) for t in group["tickets"]}
     jobs = []
     for workflow in group["roots"]:
         formula = meta[workflow["id"]].get("gc.formula_name") or ""
+        served = labels.get((group.get("served") or {}).get(workflow["id"]))
         for step in steps.get(workflow["id"], []):
             job = _job(step, meta, attempts.get(step["id"], []), sessions, formula, workflow, now)
             if job:
-                jobs.append(job)
+                jobs.append(dict(job, ticket=served))
     # The facts the flow wrote on each ticket it launched: points on the
     # lanes Code and Humain.
-    for derived in tickets.values():
+    for ticket_id, derived in tickets.items():
         if derived:
-            jobs += _ticket_facts(derived)
+            jobs += _ticket_facts(derived, labels.get(ticket_id))
     start = _ts(root.get("created_at")) or min([j["start"] for j in jobs] or [None]) or None
     if not start:
         return None
     closed = _ts(root.get("closed_at")) if root.get("status") == "closed" else None
+    _unrecorded_lanes(jobs, closed or now)
     for job in jobs:
         job["start"] = max(job["start"], start)
     outcomes = [_outcome(meta[t["id"]]) for t in group["tickets"]]
@@ -295,13 +360,18 @@ def _job(step, meta, attempts, sessions, formula, workflow, now):
         lane = {"key": CODE, "kind": CODE}
     else:
         claim = meta[claims[-1][1]["id"]] if claims else (m if m.get("gc.session_name") else meta[workflow["id"]])
-        session = sessions.get(claim.get("gc.session_name") or "") or {}
+        session = sessions.get(claim.get("gc.session_id") or "") or sessions.get(claim.get("gc.session_name") or "") or {}
         template = session.get("template") or claim.get("gc.routed_to") or meta[workflow["id"]].get("gc.routed_to")
-        who = session.get("agent_name") or claim.get("gc.session_name") or template or "Agent inconnu"
         role = ROLES.get(template, template) if template else "rôle inconnu"
         provider = session.get("provider")
-        lane = {"key": "agent:%s" % who, "kind": AGENT, "who": who,
-                "role": "%s · %s" % (role, provider) if provider else role}
+        lane = {"kind": AGENT, "role": "%s · %s" % (role, provider) if provider else role}
+        if session.get("agent_name"):
+            lane.update(key="agent:%s" % session["agent_name"], who=session["agent_name"])
+        else:
+            # Neither the supervisor nor the tracker says its agent any more:
+            # :func:`_unrecorded_lanes` gives it a lane.
+            lane.update(key=None, who=UNRECORDED_AGENT,
+                        session=claim.get("gc.session_id") or claim.get("gc.session_name") or step["id"])
     name = (STEP_NAMES.get(m.get("gc.step_id")) if formula == "mol-ticket-author" else None) or step.get("title") or "?"
     sessions = [(at, meta[attempt["id"]].get("gc.session_name"), meta[attempt["id"]].get("gc.attempt"))
                 for at, attempt in claims if at and meta[attempt["id"]].get("gc.session_name")]
@@ -311,16 +381,47 @@ def _job(step, meta, attempts, sessions, formula, workflow, now):
     checked = [(_ts(attempt.get("closed_at")), meta[attempt["id"]].get("gc.attempt"), meta[attempt["id"]].get("gc.outcome"))
                for _, attempt in claims if m.get("gc.check_mode") and attempt.get("status") == "closed"
                and _ts(attempt.get("closed_at"))]
+    # What the step ended in: its own outcome, else that of its last attempt.
+    outcome = m.get("gc.outcome") or (meta[claims[-1][1]["id"]].get("gc.outcome") if claims else None)
     return {"id": step["id"], "name": name, "lane": lane, "start": begin, "end": end,
             "description": step.get("description") or step.get("close_reason") or "",
             "source": "étape %s du workflow %s" % (step["id"], workflow["id"]),
             "sessions": sessions, "checked": checked, "check": m.get("gc.kind") == "check",
-            "outcome": m.get("gc.outcome")}
+            "outcome": outcome, "state": OUTCOME_STATES.get(outcome)}
 
 
-def _ticket_facts(derived):
+def _unrecorded_lanes(jobs, horizon):
+    """Give a lane to each job whose agent is no longer recorded: the
+    sessions of one role share a lane « Agent non enregistré » one after the
+    other -- a new session is not an agent of its own --, and a session at
+    work while every such lane is busy opens the next, since two sessions at
+    once are two agents."""
+    spans = {}
+    for job in jobs:
+        lane = job["lane"]
+        if lane.get("kind") == AGENT and lane.get("key") is None:
+            begin, end = spans.get(lane["session"], (job["start"], job["start"]))
+            spans[lane["session"]] = (min(begin, job["start"]), max(end, job["end"] if job["end"] is not None else horizon))
+    taken, keys = {}, {}
+    for session, (begin, end) in sorted(spans.items(), key=lambda kv: (kv[1], kv[0])):
+        role = next(j["lane"]["role"] for j in jobs if j["lane"].get("session") == session)
+        ends = taken.setdefault(role, [])
+        number = next((n for n, last in enumerate(ends) if last <= begin), len(ends))
+        if number == len(ends):
+            ends.append(end)
+        ends[number] = end
+        keys[session] = (role, number)
+    for job in jobs:
+        lane = job["lane"]
+        if lane.get("kind") == AGENT and lane.get("key") is None:
+            role, number = keys[lane["session"]]
+            who = UNRECORDED_AGENT if number == 0 else "%s (%d)" % (UNRECORDED_AGENT, number + 1)
+            job["lane"] = {"key": "unrecorded:%s:%d" % (role, number), "kind": AGENT, "who": who, "role": role}
+
+
+def _ticket_facts(derived, label=None):
     """The facts of a ticket as jobs: each event of the lanes Code and
-    Humain a point."""
+    Humain a point, with what it observed and the ticket (``label``)."""
     jobs = []
     for number, event in enumerate(derived["events"]):
         lane = {"Code": CODE, "Humain": HUMAN}.get(event["lane"])
@@ -329,6 +430,7 @@ def _ticket_facts(derived):
         kind = CONTROLS if event["text"].startswith(("Tests", "Fidélité")) else OTHERS
         jobs.append({"id": "%s-fait-%d" % (derived["id"], number + 1), "name": event["text"],
                      "lane": {"key": lane, "kind": lane}, "start": event["at"], "end": event["at"], "point": kind,
+                     "state": event.get("state"), "ticket": label,
                      "description": event["text"], "source": "fait écrit sur le ticket %s" % derived["id"]})
     return jobs
 
@@ -395,6 +497,20 @@ def _events(job, now):
     return sorted(events, key=lambda event: (event["at"], event["label"] == "Fin", order[event["kind"]]))
 
 
+# The states a job is drawn in: what it observed (passed, refused, stopped,
+# waiting), open while it runs, ended when it closed without saying more.
+OPEN, ENDED = "open", "ended"
+
+
+def _item_state(job, is_open):
+    """The state a job is drawn in: a question waiting stays waiting, any
+    other open job is open; a closed one says what it recorded, else
+    ended -- never a success it did not record."""
+    if job.get("state") == WAITING or not is_open:
+        return job.get("state") or ENDED
+    return OPEN
+
+
 def _assemble(run, jobs, now):
     """``run`` with its lanes and jobs as the pages draw them: Humain and
     Code, even without a job, then the agents in the order they began."""
@@ -409,7 +525,8 @@ def _assemble(run, jobs, now):
             lanes[lane["key"]] = {**lane, "name": lane["who"]}
             order.append(lane["key"])
         stop = job["end"] if job["end"] is not None else (end if run["state"] == DONE else now)
-        items.append({**job, "lane": lane["key"], "open": job["end"] is None and run["state"] != DONE,
+        is_open = job["end"] is None and run["state"] != DONE
+        items.append({**job, "lane": lane["key"], "open": is_open, "state": _item_state(job, is_open),
                       "offset": max(0, job["start"] - start), "lasted": max(0, stop - job["start"]),
                       "events": _events(job, now)})
     drawn = []
@@ -418,6 +535,9 @@ def _assemble(run, jobs, now):
         mine = [item for item in items if item["lane"] == key]
         lane["title"] = "%s · %s" % (lane["who"], lane["role"])
         lane["items"] = mine
+        # The last session of the agent the run observed: when it claimed.
+        claimed = [at for item in mine for at, _, _ in item.get("sessions") or [] if at]
+        lane["last_session"] = max(claimed) if claimed else None
         lane["jobs"] = [(int(i["offset"]), int(min(i["offset"] + i["lasted"], end - start))) for i in mine]
         drawn.append(lane)
     run.update({"lanes": drawn, "items": items, "elapsed": int(end - start), "href": "/runs/run?id=%s" % run["id"],
@@ -445,6 +565,7 @@ def normalized(run, now):
                          "name": near[0]["text"] if s == e and near else lane["title"],
                          "lane": {"key": key, "kind": lane["kind"], "who": who, "role": role},
                          "start": start + s, "end": start + e if (e < run["elapsed"] or run["state"] == DONE) else None,
+                         "state": near[0].get("state") if s == e and near else None,
                          "description": " · ".join(ev["text"] for ev in near), "source": "ticket %s" % run["id"],
                          "facts": near})
     out = dict(run, models=run.get("models") or {})
