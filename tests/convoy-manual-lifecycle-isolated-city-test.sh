@@ -137,6 +137,8 @@ jq -e '.bounds | type == "object"' "$CITY/config/delivery-flow.json" >/dev/null 
 # only to record that it ran.
 grep -qF -- '-- gc convoy check --json"' "$ROOT/orders/convoy-parent-sweep.toml" \
   || fail "orders/convoy-parent-sweep.toml no longer runs gc convoy check --json"
+grep -qF -- 'timeout = "120s"' "$ROOT/orders/convoy-parent-sweep.toml" \
+  || fail "orders/convoy-parent-sweep.toml does not leave two minutes for the city-wide scan"
 cat > "$TRIAL/sweep" <<WRAP
 #!/bin/sh
 out=\$(gc convoy check --json); rc=\$?
