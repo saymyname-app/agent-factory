@@ -28,9 +28,10 @@ its folder): on 22/10/2026 24 cockpits of criteria tests whose folders were
 deleted held the VM at a load of 141 for up to 283 minutes.
 
 `sweep` is the net under the guard (a guard killed, a host restarted, a
-launch made before this rule): it stops every launch whose owner has ended
-or whose lifetime is over, and releases copies left behind, each stop
-written to TRACE_FILE. orders/project-launch-sweep.toml runs it.
+launch made before this rule): it stops every launch whose owner has ended,
+whose lifetime is over, or whose matching sidecar names a source repository
+that has disappeared, and releases copies left behind. Each stop is written
+to TRACE_FILE. orders/project-launch-sweep.toml runs it.
 
 `--repo-root` is the repository of the product (default: the Factory's own);
 the profile tool is always the one next to this launcher.
@@ -747,7 +748,8 @@ def process_age(pid: int) -> float | None:
     return uptime - started / os.sysconf("SC_CLK_TCK")
 
 
-def overdue(marks: dict[str, str], age: float | None, now: float) -> str | None:
+def overdue(marks: dict[str, str], age: float | None, now: float,
+            source_repository: str | None = None) -> str | None:
     """Why a running launch must end, from the marks its product carries."""
     owner = marks.get("FACTORY_LAUNCH_OWNER")
     if owner:
@@ -757,6 +759,13 @@ def overdue(marks: dict[str, str], age: float | None, now: float) -> str | None:
     deadline = marks.get("FACTORY_LAUNCH_DEADLINE")
     if deadline:
         return "lifetime_over" if now > float(deadline) + SWEEP_GRACE else None
+    # Revisions from before owner/deadline marks still have a launch id and
+    # an ownership sidecar. Criteria tests run such revisions from temporary
+    # repositories: once that repository is gone, no test can still own the
+    # product, so waiting DEFAULT_LIFETIME only lets an orphan consume the
+    # host (af-0uhmdl).
+    if source_repository and not Path(source_repository).exists():
+        return "source_repository_gone"
     # Launched before every launch had a deadline: its age is all there is.
     return "lifetime_over" if age is not None and age > DEFAULT_LIFETIME else None
 
@@ -800,12 +809,15 @@ def cmd_sweep(args: argparse.Namespace) -> int:
     stopped, kept = [], 0
     for launch_id, members in sorted(launches.items()):
         first = min(members)
-        reason = overdue(launch_marks(first), process_age(first), now)
+        worktree = launch_copy(members)
+        owner = copy_owner(worktree) if worktree else {}
+        source_repository = owner.get("repo_root")
+        if owner.get("launch_id") != launch_id or not isinstance(source_repository, str):
+            source_repository = None
+        reason = overdue(launch_marks(first), process_age(first), now, source_repository)
         if reason is None:
             kept += 1
             continue
-        worktree = launch_copy(members)
-        owner = copy_owner(worktree) if worktree else {}
         event = {"by": "sweep", "reason": reason, "launch_id": launch_id, "pids": sorted(members),
                  "worktree": worktree, "repo_root": owner.get("repo_root"), "dry_run": args.dry_run}
         if not args.dry_run:
