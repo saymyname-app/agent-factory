@@ -213,8 +213,8 @@ LIB
 
 # One stub per role: the header names the trial, the body is the session.
 stub() { # <name>: reads the body on stdin
-  printf '#!/bin/bash\nexport CLAUDE_CODE_SESSION_ID="trial-%s-$BASHPID"\n. "%s/env"\n. "%s/author-lib.sh"\n' \
-    "$1" "$TRIAL" "$TRIAL" > "$TRIAL/$1"
+  printf '#!/bin/bash\nexport CLAUDE_CODE_SESSION_ID=$(cat /proc/sys/kernel/random/uuid)\n. "%s/env"\n. "%s/author-lib.sh"\n' \
+    "$TRIAL" "$TRIAL" > "$TRIAL/$1"
   cat >> "$TRIAL/$1"
   chmod +x "$TRIAL/$1"
 }
