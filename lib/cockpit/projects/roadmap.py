@@ -122,6 +122,7 @@ def read_current_step(clone_dir, roadmap_path, remote="origin", git_bin="git", t
 STATUS_LABELS = {"done": "Terminé", "in_progress": "En cours", "todo": "À venir"}
 FLAG_CLOSED = "Incohérent : marqué en cours, son chantier est fermé"
 FLAG_MERGED = "Incohérent : marqué en cours, son résultat est fusionné"
+FLAG_REQUIRED = "Incohérent : marquée terminée, %s n'est pas terminée"
 
 
 def roadmap_rows(steps, chantiers_by_step):
@@ -131,14 +132,27 @@ def roadmap_rows(steps, chantiers_by_step):
     the chantiers that target each step (their Specs carry it as
     ``planning_run_target``). A step said in progress whose chantiers are
     all closed, or one of whose results is merged, is flagged: the roadmap
-    contradicts the tracker. ``flag`` is None otherwise -- a step no
-    chantier targets says nothing either way."""
+    contradicts the tracker. A step said done one of whose required steps
+    (``done_requires``, the step ids its end condition requires; R5,
+    af-3r1tmr) is not done is flagged too, naming that step: its end
+    condition is not met, so it is not counted as acquired. A step in
+    progress that still waits on a required step is not flagged for its own
+    chantiers being closed or merged: it is in progress until that step is
+    done. ``flag`` is None otherwise -- a step no chantier targets says
+    nothing either way."""
+    by_id = {str(step.get("id", "")): step for step in steps or []}
     rows = []
     for step in sorted(steps or [], key=lambda s: s.get("order", 0) if isinstance(s.get("order"), int) else 0):
         status = str(step.get("status", ""))
         chantiers = chantiers_by_step.get(str(step.get("id", ""))) or []
+        requires = step.get("done_requires") if isinstance(step.get("done_requires"), list) else []
+        pending = [str(required) for required in requires
+                   if str((by_id.get(str(required)) or {}).get("status", "")) != "done"]
         flag = None
-        if status == "in_progress" and chantiers:
+        if status == "done" and pending:
+            flag = FLAG_REQUIRED % ", ".join(
+                str((by_id.get(required) or {}).get("title") or required) for required in pending)
+        elif status == "in_progress" and chantiers and not pending:
             if any(c.get("merged") for c in chantiers):
                 flag = FLAG_MERGED
             elif all(c.get("closed") for c in chantiers):

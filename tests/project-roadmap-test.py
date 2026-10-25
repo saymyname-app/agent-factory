@@ -67,6 +67,27 @@ class ProjectRoadmapTest(unittest.TestCase):
         self.assertIn("X2", payload["error"])
         self.assertIn("blocked", payload["error"])
 
+    def test_done_requires_naming_steps_of_the_roadmap_validates_clean(self):
+        result = self.validate("done_requires.toml", check=True)
+        self.assertEqual({"valid": True}, json.loads(result.stdout))
+
+    def test_done_requires_naming_no_step_is_refused_and_names_both(self):
+        result = self.validate("done_requires_unknown.toml")
+        self.assertEqual(1, result.returncode)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["valid"])
+        self.assertIn("X2", payload["error"])
+        self.assertIn("X9", payload["error"])
+        self.assertIn("done_requires", payload["error"])
+
+    def test_done_requires_that_is_not_a_list_is_refused_and_names_the_step(self):
+        result = self.validate("done_requires_not_a_list.toml")
+        self.assertEqual(1, result.returncode)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["valid"])
+        self.assertIn("X2", payload["error"])
+        self.assertIn("done_requires", payload["error"])
+
     def test_check_target_finds_a_real_step(self):
         result = self.check_target("valid.toml", "X2", check=True)
         payload = json.loads(result.stdout)
