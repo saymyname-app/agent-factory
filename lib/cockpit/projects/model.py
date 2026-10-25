@@ -89,6 +89,9 @@ class RoadmapStep:
     id: str
     title: str
     status: str
+    # What the tracker says against presenting it as current (R3,
+    # af-plu8kn: cockpit.projects.roadmap.presented_step), else None.
+    reserve: str = None
 
 
 @dataclass

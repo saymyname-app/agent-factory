@@ -129,27 +129,61 @@ def read_current_step(clone_dir, roadmap_path, remote="origin", git_bin="git", t
 STATUS_LABELS = {"done": "Terminé", "in_progress": "En cours", "todo": "À venir"}
 FLAG_CLOSED = "Incohérent : marqué en cours, son chantier est fermé"
 FLAG_MERGED = "Incohérent : marqué en cours, son résultat est fusionné"
+FLAG_ACCEPTED = "Incohérent : marqué en cours, son résultat est accepté"
+FLAG_UNLINKED = "Aucun chantier relié : rien dans le suivi ne cible cette étape"
 
 
 def roadmap_rows(steps, chantiers_by_step):
-    """The lines of a structured roadmap, in its order (E, af-8rbceu; Spec
-    af-fgcw0d, user story 103): ``[{"id", "title", "status", "label",
-    "flag"}]``. ``chantiers_by_step``: ``{step id: [{"closed", "merged"}]}``,
-    the chantiers that target each step (their Specs carry it as
-    ``planning_run_target``). A step said in progress whose chantiers are
-    all closed, or one of whose results is merged, is flagged: the roadmap
-    contradicts the tracker. ``flag`` is None otherwise -- a step no
-    chantier targets says nothing either way."""
+    """The lines of a structured roadmap, in its order (E, af-8rbceu; R3,
+    af-plu8kn; Spec af-fgcw0d, user story 103): ``[{"id", "title",
+    "status", "label", "flag"}]``. ``chantiers_by_step``: ``{step id:
+    [{"closed", "merged", "accepted"}]}``, the chantiers that target each
+    step (their Specs carry it as ``planning_run_target``). A step said in
+    progress whose chantiers are all closed, one of whose results is merged
+    or accepted, is flagged: the roadmap contradicts the tracker. A step
+    said in progress that no chantier targets is flagged too: nothing in
+    the tracker vouches for it. ``flag`` is None otherwise."""
     rows = []
     for step in sorted(steps or [], key=lambda s: s.get("order", 0) if isinstance(s.get("order"), int) else 0):
         status = str(step.get("status", ""))
         chantiers = chantiers_by_step.get(str(step.get("id", ""))) or []
         flag = None
-        if status == "in_progress" and chantiers:
-            if any(c.get("merged") for c in chantiers):
+        if status == "in_progress":
+            if not chantiers:
+                flag = FLAG_UNLINKED
+            elif any(c.get("merged") for c in chantiers):
                 flag = FLAG_MERGED
             elif all(c.get("closed") for c in chantiers):
                 flag = FLAG_CLOSED
+            elif any(c.get("accepted") for c in chantiers):
+                flag = FLAG_ACCEPTED
         rows.append({"id": str(step.get("id", "")), "title": str(step.get("title", "")), "status": status,
                      "label": STATUS_LABELS.get(status, status or "Inconnu"), "flag": flag})
     return rows
+
+
+def current_step(rows):
+    """The row of :func:`roadmap_rows` a page presents as the current step
+    (R3, af-plu8kn): the first in progress without a flag; when no step is
+    in progress, the first to do. None when every step in progress carries
+    a reserve -- a step flagged is never presented as current for certain,
+    and a step to do does not stand in for a step in progress."""
+    in_progress = [r for r in rows if r["status"] == "in_progress"]
+    if in_progress:
+        return next((r for r in in_progress if not r["flag"]), None)
+    return next((r for r in rows if r["status"] == "todo" and not r["flag"]), None)
+
+
+def presented_step(rows):
+    """The step a line that names one step of the roadmap shows (« Roadmap :
+    … »): :func:`current_step`, else the first in progress, else the first
+    to do, with its flag -- a reserve shown beside the step, never left out
+    (R3, af-plu8kn). None for a roadmap with neither."""
+    current = current_step(rows)
+    if current is not None:
+        return current
+    for status in DEFAULT_STATUSES_BY_PRIORITY:
+        row = next((r for r in rows if r["status"] == status), None)
+        if row is not None:
+            return row
+    return None
