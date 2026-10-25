@@ -26,7 +26,8 @@ from pathlib import Path
 from cockpit.projects import promotion
 from cockpit.projects.model import RoadmapStep
 from cockpit.projects.release import ReleaseError, parse_release, release_path
-from cockpit.projects.roadmap import RoadmapReadError, parse_steps, pick_current_step, read_at_default_branch
+from cockpit.projects.roadmap import (RoadmapReadError, current_step, parse_steps, pick_current_step,
+                                      read_at_default_branch, roadmap_rows)
 
 REPO_URL_TEMPLATE = "https://github.com/%s.git"
 CLONE_TIMEOUT_SECONDS = 180
@@ -160,11 +161,15 @@ def read_depots(descriptors, rig_repos, clones_dir, url_template=REPO_URL_TEMPLA
     return {"roadmaps": roadmaps, "steps": steps_by_project, "releases": releases, "ecarts": ecarts}
 
 
-def apply_to_projects(projects, row):
+def apply_to_projects(projects, row, roadmap_chantiers=None):
     """Puts what the "depots" source holds on the projects about to be
     rendered. ``row``: the read model's row, or ``None`` when this cockpit
     reads no project repository -- the projects are then left without any
-    roadmap claim at all."""
+    roadmap claim at all. ``roadmap_chantiers``: ``{project_id: {step id:
+    [{"closed", "merged", "accepted"}]}}``, the chantiers the "projets"
+    source read for each step: the current step is then the one the page
+    of the project presents (:func:`cockpit.projects.roadmap.current_step`,
+    R3), none when every step left carries a reserve."""
     if row is None:
         return projects
     value = row.get("value")
@@ -176,7 +181,12 @@ def apply_to_projects(projects, row):
             continue
         roadmap = (value.get("roadmaps") or {}).get(project.project_id)
         if roadmap and roadmap.get("ok") and roadmap.get("step"):
-            project.roadmap_step = RoadmapStep(**roadmap["step"])
+            step = roadmap["step"]
+            steps = (value.get("steps") or {}).get(project.project_id)
+            if roadmap_chantiers is not None and steps:
+                current = current_step(roadmap_rows(steps, roadmap_chantiers.get(project.project_id) or {}))
+                step = {key: current[key] for key in ("id", "title", "status")} if current else None
+            project.roadmap_step = RoadmapStep(**step) if step else None
             project.roadmap_read_at = row.get("read_at")
         elif roadmap is not None:
             project.roadmap_unknown = True

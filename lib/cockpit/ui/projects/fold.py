@@ -23,7 +23,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from cockpit.projects.release import estimate_of
-from cockpit.projects.roadmap import roadmap_rows
+from cockpit.projects.roadmap import current_step, roadmap_rows
 from cockpit.ui.panorama.shell import open_button
 from cockpit.ui.projects.panorama import project_counts, project_runs
 
@@ -171,8 +171,7 @@ def _roadmap(anchors, roadmap, repo, milestone):
             "unknown": "Roadmap inconnue : son dépôt %s ne se lit pas." % repo,
         }.get(roadmap["state"], "Les dépôts des projets ne sont pas lus par ce cockpit : roadmap inconnue.")
         return '<section class="pn-panel" %s>%s<p %s>%s</p></section>' % (panel, head, anchors("p"), _e(said))
-    current = next((row for row in roadmap["rows"] if row["status"] == "in_progress"), None) or \
-        next((row for row in roadmap["rows"] if row["status"] == "todo"), None)
+    current = current_step(roadmap["rows"])
     title = '<h2 %s>%s</h2>' % (anchors("h2"), _e(current["title"])) if current else ""
     rows = "".join(
         '<div class="pf-row%s" %s><span %s>%s</span><span class="pf-status%s" %s>%s%s</span></div>'
@@ -249,7 +248,7 @@ def project_view(descriptor, project, chantiers_state, depots, roadmap_chantiers
     (:class:`cockpit.projects.model.Project`), None while they are not
     (``chantiers_state``: read, loading or failed); ``depots``: the row of
     the depots source, or None when this cockpit reads no repository;
-    ``roadmap_chantiers``: ``{step id: [{"closed", "merged"}]}``;
+    ``roadmap_chantiers``: ``{step id: [{"closed", "merged", "accepted"}]}``;
     ``historique``: the chantiers ended, most recent last; ``below``: HTML
     drawn under the parts of the reference."""
     release, roadmap = _knowledge(depots, descriptor)
