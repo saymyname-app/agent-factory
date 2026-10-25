@@ -9,5 +9,5 @@ description = "Closes open mail-reply beads (issue_type=message) whose body is r
 trigger = "condition"
 interval = "5m"
 check = "/home/benja/agent-factory/bin/mail-reply-reap sweep --dry-run"
-exec = "/home/benja/agent-factory/bin/mail-reply-reap sweep"
+exec = "/home/benja/agent-factory/bin/order-pause gate mail-reply-reap -- /home/benja/agent-factory/bin/mail-reply-reap sweep"
 timeout = "60s"

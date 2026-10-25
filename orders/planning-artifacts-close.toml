@@ -19,5 +19,5 @@
 description = "Closes the Spec bead and Ticket Graph Draft bead a convoy was published from, with a reason naming the convoy, once that convoy closes (W06, A6b)."
 trigger = "event"
 on = "bead.closed"
-exec = "/home/benja/agent-factory/bin/planning-artifacts-close"
+exec = "/home/benja/agent-factory/bin/order-pause gate planning-artifacts-close -- /home/benja/agent-factory/bin/planning-artifacts-close"
 timeout = "60s"

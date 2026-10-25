@@ -90,7 +90,7 @@ run_clean() {
 #    factory-watchdog-order-test.sh's static check).
 order=$(run_clean gc order show backup-freshness --city "$ROOT" --json)
 jq -e --arg source "$ROOT/orders/backup-freshness.toml" \
-      --arg exec "$ROOT/bin/backup-freshness --quiet" \
+      --arg exec "$ROOT/bin/order-pause gate backup-freshness -- $ROOT/bin/backup-freshness --quiet" \
       --arg check "$ROOT/bin/backup-freshness --check-only --quiet" '
   .ok == true and
   .order.type == "exec" and

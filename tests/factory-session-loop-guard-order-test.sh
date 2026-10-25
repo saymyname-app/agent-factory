@@ -5,7 +5,7 @@ set -Eeuo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 order=$(gc order show factory-session-loop-guard --city "$ROOT" --json)
-jq -e --arg source "$ROOT/orders/factory-session-loop-guard.toml" --arg exec "$ROOT/bin/factory-session-loop-guard --quiet" '
+jq -e --arg source "$ROOT/orders/factory-session-loop-guard.toml" --arg exec "$ROOT/bin/order-pause gate factory-session-loop-guard -- $ROOT/bin/factory-session-loop-guard --quiet" '
   .ok == true and
   .order.type == "exec" and
   .order.trigger == "condition" and

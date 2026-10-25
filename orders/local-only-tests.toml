@@ -11,5 +11,5 @@
 description = "Run the local-only test suite nightly and page the Mayor on failure"
 trigger = "cron"
 schedule = "0 4 * * *"
-exec = "/home/benja/agent-factory/bin/local-only-tests --quiet"
+exec = "/home/benja/agent-factory/bin/order-pause gate local-only-tests -- /home/benja/agent-factory/bin/local-only-tests --quiet"
 timeout = "6h"

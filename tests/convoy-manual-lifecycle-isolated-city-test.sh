@@ -135,7 +135,7 @@ jq -e '.bounds | type == "object"' "$CITY/config/delivery-flow.json" >/dev/null 
 
 # The three real orders. Each command is the one the order names, wrapped
 # only to record that it ran.
-grep -qxF 'exec = "gc convoy check --json"' "$ROOT/orders/convoy-parent-sweep.toml" \
+grep -qF -- '-- gc convoy check --json"' "$ROOT/orders/convoy-parent-sweep.toml" \
   || fail "orders/convoy-parent-sweep.toml no longer runs gc convoy check --json"
 cat > "$TRIAL/sweep" <<WRAP
 #!/bin/sh
@@ -143,7 +143,7 @@ out=\$(gc convoy check --json); rc=\$?
 printf '%s\n' "\$out" >> "$SWEEPS"
 exit "\$rc"
 WRAP
-sed "s#^exec = \"gc convoy check --json\"\$#exec = \"$TRIAL/sweep\"#" "$ROOT/orders/convoy-parent-sweep.toml" \
+sed "s#-- gc convoy check --json\"\$#-- $TRIAL/sweep\"#" "$ROOT/orders/convoy-parent-sweep.toml" \
   > "$CITY/orders/convoy-parent-sweep.toml"
 
 cat > "$TRIAL/artifacts" <<WRAP
@@ -155,7 +155,7 @@ exit "\$rc"
 WRAP
 sed "s#/home/benja/agent-factory/bin/planning-artifacts-close#$TRIAL/artifacts#g" "$ROOT/orders/planning-artifacts-close.toml" \
   > "$CITY/orders/planning-artifacts-close.toml"
-grep -qF "exec = \"$TRIAL/artifacts\"" "$CITY/orders/planning-artifacts-close.toml" \
+grep -qF -- "-- $TRIAL/artifacts\"" "$CITY/orders/planning-artifacts-close.toml" \
   || fail "the order does not run bin/planning-artifacts-close"
 
 cat > "$TRIAL/advance" <<WRAP

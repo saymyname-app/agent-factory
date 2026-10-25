@@ -167,7 +167,7 @@ real runtime; they cost CI nothing):
 | Files | The journey |
 |---|---|
 | `tests/*-isolated-city-test.sh` (13) | the adoption trial of one mechanism in a disposable city, with a real controller |
-| `tests/*-real-tracker-test.sh` (5) | what a fake tracker assumes, replayed on the real one |
+| `tests/*-real-tracker-test.sh` (6) | what a fake tracker assumes, replayed on the real one |
 | `tests/*-demonstration-test.sh` (3) | the demonstration line of a ticket on the real tracker, and a real browser where it needs one |
 | `tests/*-real-session-test.sh` (2) | one real model session held to what a command hands it |
 
@@ -177,6 +177,11 @@ exits 77 with a `SKIP: <reason, bead>` line, decided by a cheap, precise probe
 SKIPPED, not failed, on every run and in the bead of a failing run; exit 77
 without a `SKIP:` line counts as a failure. Any other
 failure of the probe lets the test run, so a real regression stays red.
+
+The intermittent correction-round journey keeps its latest failed disposable
+city at `~/.cache/af-rx0ocp-correction.last-failure` (a symlink to the original
+trial path); the next failure replaces it. `KEEP_TEST_CITY=1` still preserves
+any manually selected run without rotating that diagnostic.
 
 ## In this repository: the ceiling held by code
 

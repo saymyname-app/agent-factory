@@ -7,4 +7,4 @@ description = "Factory-owned replacement for gc's core orphan-sweep: resets bead
 trigger = "condition"
 interval = "5m"
 check = "/home/benja/agent-factory/orders/lib/orders-restart-stagger.sh factory-orphan-sweep 300"
-exec = "/home/benja/agent-factory/bin/factory-orphan-sweep"
+exec = "/home/benja/agent-factory/bin/order-pause gate factory-orphan-sweep -- /home/benja/agent-factory/bin/factory-orphan-sweep"

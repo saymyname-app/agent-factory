@@ -67,6 +67,8 @@ DOORS = {
     "proposal-door": (ROOT / "bin" / "proposal-door", "COCKPIT_PROPOSAL_DOOR_BIN"),
     "escalation-door": (ROOT / "bin" / "escalation-door", "COCKPIT_ESCALATION_DOOR_BIN"),
     "loop-guard": (ROOT / "bin" / "factory-session-loop-guard", "COCKPIT_LOOP_GUARD_BIN"),
+    # Pause and resume of an order (af-npz9v1.15), for B's « relancer un order ».
+    "order-pause": (ROOT / "bin" / "order-pause", "COCKPIT_ORDER_PAUSE_BIN"),
     "gc": (SYNTHETIC / "gc", "COCKPIT_GC_BIN"),
 }
 # How a dataset may say a door answers (`doors`): it never does, or it

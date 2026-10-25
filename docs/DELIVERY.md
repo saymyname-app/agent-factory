@@ -353,6 +353,11 @@ and nothing else.
 6. **At most `bounds.correction_rounds` correction rounds** (two,
    ADR-0033; `bin/correction-round`), common to both, each by another fresh
    author session. Still refused after the last: the ticket stops.
+   ADR-0034 : seule la première revue est complète ; les suivantes sont
+   ciblées (constats non soldés et lignes changées depuis la pointe relue,
+   le reste noté pour la passe de fin) ; la revue ne juge jamais la fidélité
+   visuelle ; au plafond, l'approbateur humain peut accorder un tour
+   exceptionnel, une fois par ticket (`correction-round grant --exceptional`).
 7. **Merge.** `bin/spec-integration merge` merges the ticket into the
    integration branch, one at a time, with tests on the merged result. No
    ticket opens a pull request toward the protected branch.

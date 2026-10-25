@@ -8,5 +8,5 @@
 description = "Page the Mayor when the off-box jsonl archive hasn't been pushed in 24h while beads changed"
 trigger = "condition"
 check = "/home/benja/agent-factory/bin/backup-freshness --check-only --quiet"
-exec = "/home/benja/agent-factory/bin/backup-freshness --quiet"
+exec = "/home/benja/agent-factory/bin/order-pause gate backup-freshness -- /home/benja/agent-factory/bin/backup-freshness --quiet"
 timeout = "60s"

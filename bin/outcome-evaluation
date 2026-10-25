@@ -484,7 +484,7 @@ def launch_products(convoy: Convoy, commit: str, settings: dict[str, Any],
             return [prepared[-1]]
     stamp = f"{commit[:12]}-{int(time.time() * 1000)}"
     state_file = folder / f"{stamp}-{chosen or 'product'}.json"
-    argv = [str(LAUNCH_TOOL), "--repo-root", str(convoy.repo), "start", str(profile), "--commit", commit,
+    argv = [str(LAUNCH_TOOL), "--repo-root", str(convoy.repo), "start", "--detached", str(profile), "--commit", commit,
             "--timeout", str(settings["start_timeout_seconds"]), "--state-file", str(state_file)]
     if chosen is not None:
         argv += ["--dataset", chosen]
