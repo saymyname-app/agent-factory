@@ -1065,9 +1065,16 @@ class ConvoyAdvanceTest(ConvoyAdvanceHarness):
             reached = False
             while first.poll() is None and time.monotonic() < deadline:
                 children = Path(f"/proc/{first.pid}/task/{first.pid}/children")
-                for child in children.read_text().split() if children.exists() else ():
-                    command = Path(f"/proc/{child}/cmdline")
-                    if command.exists() and b"escalation-door" in command.read_bytes():
+                try:
+                    child_ids = children.read_text().split()
+                except FileNotFoundError:
+                    child_ids = ()
+                for child in child_ids:
+                    try:
+                        command = Path(f"/proc/{child}/cmdline").read_bytes()
+                    except FileNotFoundError:
+                        continue  # The child exited between enumeration and inspection.
+                    if b"escalation-door" in command:
                         reached = True
                         break
                 if reached:
