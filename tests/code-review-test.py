@@ -845,6 +845,27 @@ class CodeReviewTest(unittest.TestCase):
         self.assertEqual(2, len(self.launches()))
         self.assertEqual([], self.merge()["merged"])
 
+    def test_a_judgement_left_unfavorable_and_overridden_is_reviewed_in_full_at_a_later_tip(self):
+        # 22/10/2026, F and G1 of af-strhoy: every unsettled Blocking Finding
+        # overridden, the ticket resumed and finished at a new tip; the merge
+        # waited for a review of that tip which was never opened.
+        self.finished_slice()
+        self.reviewer({"findings": [CONTRADICTS]}, {"judgements": {"F1.1": "le nombre manque toujours"}}, "favorable")
+        self.settle()
+        judged = self.corrected({NOTE: "toujours pas de nombre\n"})
+        self.responded({"F1.1": {"response": "fixed", "commit": judged}})
+        self.settle()
+        self.state("stop-ticket", CONVOY, SLICE, "--reason", "still_refused", "--detail", "revue de code (F1.1)")
+        self.state("stop-raised", CONVOY, SLICE)
+        self.state("override-finding", CONVOY, SLICE, "--finding", "F1.1", "--approver", "benjamin-hurand",
+                   "--words", "Je passe outre F1.1.")
+        self.state("open-resume", CONVOY, SLICE, "--cause", "returned", "--ref", "merge:essai")
+        tip = self.corrected({NOTE: "le nombre est affiché : 3\n"})
+
+        settled = self.settle()
+
+        self.assertEqual([("review", tip)], [(entry["kind"], entry["commit"]) for entry in settled["launched"]])
+
     def test_blocking_findings_without_an_answer_wait_and_no_judgement_is_sent(self):
         _, reviewed = self.finished_slice()
         self.reviewer({"findings": [CONTRADICTS]})

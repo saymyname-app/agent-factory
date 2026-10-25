@@ -1,0 +1,28 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/factory-connections-test.py::FactoryConnections.test_factory_machine_is_the_machine_the_cockpit_runs_on_not_the_example",
+      "tests/cockpit-criteria/commands/factory-connections-test.py::FactoryConnections.test_health_content_says_the_state_latency_and_freshness_of_each_connection_none_of_the_example",
+      "tests/cockpit-criteria/commands/factory-connections-test.py::FactoryConnections.test_health_error_says_the_supervisor_that_never_answered_unknown_neither_failed_nor_answered",
+      "tests/cockpit-criteria/commands/factory-connections-test.py::FactoryConnections.test_health_offline_says_the_supervisor_that_answers_no_more_seen_some_time_ago",
+      "tests/cockpit-criteria/commands/factory-connections-test.py::FactoryConnections.test_health_stale_says_the_supervisor_that_answers_no_more_seen_some_time_ago"
+    ],
+    "2": [
+      "tests/cockpit-criteria/commands/factory-recheck-test.py::FactoryRecheck.test_rechecking_the_connections_reads_them_again_and_no_other_section",
+      "tests/cockpit-criteria/commands/factory-recheck-test.py::FactoryRecheck.test_rechecking_the_machine_reads_it_again_and_no_other_section"
+    ],
+    "3": [
+      "tests/cockpit-criteria/commands/factory-layout-content-test.py::FactoryLayoutContent.test_health_content_is_readable_and_usable_at_both_widths_in_both_themes",
+      "tests/cockpit-criteria/commands/factory-layout-content-test.py::FactoryLayoutContent.test_health_long_is_readable_and_usable_at_both_widths_in_both_themes",
+      "tests/cockpit-criteria/commands/factory-layout-content-test.py::FactoryLayoutContent.test_health_narrow_is_readable_and_usable_at_both_widths_in_both_themes",
+      "tests/cockpit-criteria/commands/factory-layout-states-test.py::FactoryLayoutStates.test_health_empty_is_readable_and_usable_at_both_widths_in_both_themes",
+      "tests/cockpit-criteria/commands/factory-layout-states-test.py::FactoryLayoutStates.test_health_light_is_readable_and_usable_at_both_widths_in_both_themes",
+      "tests/cockpit-criteria/commands/factory-layout-states-test.py::FactoryLayoutStates.test_health_loading_is_readable_and_usable_at_both_widths_in_both_themes",
+      "tests/cockpit-criteria/commands/factory-roles-test.py::FactoryRoles.test_a_change_of_the_configuration_is_what_the_page_says",
+      "tests/cockpit-criteria/commands/factory-roles-test.py::FactoryRoles.test_selecting_the_evaluator_by_the_keyboard_shows_its_configuration",
+      "tests/cockpit-criteria/commands/factory-roles-test.py::FactoryRoles.test_selecting_the_reviewer_shows_its_configuration_apart_from_what_is_observed",
+      "tests/cockpit-criteria/commands/factory-roles-test.py::FactoryRoles.test_the_roles_and_their_flow_are_those_of_the_configuration_not_the_prototype",
+      "tests/cockpit-criteria/commands/factory-roles-test.py::FactoryRoles.test_what_the_failover_observed_is_the_availability_shown_apart_from_the_configuration"
+    ]
+  }
+}
