@@ -23,9 +23,11 @@ roadmap (project-roadmap validate, run as a process), as its criterion
 names it.
 
 False if a step done one of whose required steps is still in progress is
-shown « Terminé » without reserve, if a step done whose required steps are
-all done is flagged, or if the roadmap the Factory delivers does not show
-D01 in progress.
+shown « Terminé », with or without reserve, if a step done whose required
+steps are all done is flagged, if a step in progress whose required steps
+are done is no longer flagged when its chantier is closed or its result
+merged, or if the roadmap the Factory delivers does not show D01 in
+progress.
 """
 
 from __future__ import annotations
@@ -46,6 +48,27 @@ ROADMAP = "Roadmap"
 FACTORY = "agent-factory"
 SAYMYNAME = "saymyname"
 AT = "2026-10-25T16:00:00+01:00"
+
+
+def spec(bead_id: str, target: str, status: str) -> dict:
+    """A Spec of the Factory that targets the step `target`."""
+    return {"id": bead_id, "title": f"Spec {bead_id}", "status": status, "issue_type": "task", "labels": [],
+            "created_at": "2026-10-01T10:00:00+02:00",
+            "metadata": {"gc.project_id": FACTORY, "spec_state": "APPROVED_SPEC", "planning_run_target": target}}
+
+
+def convoy(bead_id: str, spec_id: str, status: str) -> dict:
+    """The convoy of the graph of the Spec `spec_id`."""
+    return {"id": bead_id, "title": f"Convoi {bead_id}", "status": status, "issue_type": "convoy",
+            "labels": ["approved-ticket-graph"], "created_at": "2026-10-02T10:00:00+02:00",
+            "metadata": {"gc.project_id": FACTORY, "gc.graph_digest": f"sha256:{bead_id}", "gc.spec_id": spec_id}}
+
+
+def ticket(bead_id: str, convoy_id: str, status: str, **metadata) -> dict:
+    """A ticket of the convoy `convoy_id`, as its graph was published."""
+    return {"id": bead_id, "title": f"Ticket {bead_id}", "status": status, "issue_type": "task",
+            "labels": ["approved-ticket-graph", "delivery-plane"], "created_at": "2026-10-02T10:00:00+02:00",
+            "metadata": {"gc.graph_digest": f"sha256:{convoy_id}", "gc.dispatch_rig": FACTORY, **metadata}}
 
 
 class ProjectsRoadmapRequires(unittest.TestCase):
@@ -143,11 +166,101 @@ status = "in_progress"
         early = self.line(lines, "Flux de livraison jugé")
         self.assertRegex(early, r"Incohérent : marquée terminée, «?\s*Cockpit relivré par le flux\s*»? n['’]est pas terminée",
                          "a step done whose required step « Cockpit relivré par le flux » is in progress is not flagged")
+        # Not counted as acquired (the ticket: « et ne la compte pas comme
+        # acquise »): the line does not say it done.
+        self.assertNotIn("Terminé", early, "a step done whose required step is in progress is still shown done")
         kept = self.line(lines, "Contrat d’entrée des tickets")
         self.assertIn("Terminé", kept, "a step done whose required steps are all done is not shown done")
         self.assertNotRegex(kept, r"(?i)incohéren", "a step done whose required steps are all done is flagged")
         self.assertNotRegex(self.line(lines, "Isoler l’ancien code"), r"(?i)incohéren",
                             "a step done that requires nothing is flagged")
+
+    def test_a_step_in_progress_waiting_on_a_required_step_is_not_flagged_for_its_ended_chantier_and_one_whose_required_steps_are_done_still_is(self):
+        # What `done_requires` leaves of the flags of E (Testing Decision 3,
+        # « projets/roadmaps/provenance »): a step in progress whose
+        # required steps are all done is flagged as before when its chantier
+        # is closed or its result merged; one still waiting on a required
+        # step is in progress until that step is done, whatever its own
+        # chantier.
+        factory_roadmap = """\
+[[step]]
+id = "G1"
+title = "Isoler l’ancien code"
+done_when = "plus aucune référence à l’ancien code"
+order = 1
+status = "done"
+
+[[step]]
+id = "G2"
+title = "Livraison parallèle"
+done_when = "deux auteurs livrent sans conflit, sur le code isolé"
+order = 2
+status = "in_progress"
+done_requires = ["G1"]
+
+[[step]]
+id = "G3"
+title = "Notifications groupées"
+done_when = "une notification par lot, sur le code isolé"
+order = 3
+status = "in_progress"
+done_requires = ["G1"]
+
+[[step]]
+id = "G4"
+title = "Flux de livraison jugé"
+done_when = "un résultat jugé puis fusionné, et le cockpit relivré par ce flux"
+order = 4
+status = "in_progress"
+done_requires = ["G5"]
+
+[[step]]
+id = "G5"
+title = "Cockpit relivré par le flux"
+done_when = "le cockpit livré par le flux jugé"
+order = 5
+status = "in_progress"
+"""
+        saymyname_roadmap = """\
+[[step]]
+id = "S1"
+title = "Inscription par lien magique"
+done_when = "un compte créé sans mot de passe"
+order = 1
+status = "in_progress"
+"""
+        factory, saymyname = descriptor_of(self.tree, FACTORY), descriptor_of(self.tree, SAYMYNAME)
+        work = self.tree.work / f"knowledge-{self.declared + 1}"
+        repos = {
+            factory["knowledge_repo"]: knowledge_repository(
+                work / "factory", {factory["roadmap_path"]: factory_roadmap}, "2026-10-24T10:00:00+02:00"),
+            saymyname["knowledge_repo"]: knowledge_repository(
+                work / "saymyname", {saymyname["roadmap_path"]: saymyname_roadmap}, "2026-10-14T09:30:00+02:00"),
+        }
+        beads = [
+            # G2: its chantier closed in the tracker.
+            spec("spec-g2", "G2", "closed"),
+            convoy("convoy-g2", "spec-g2", "closed"),
+            # G3: the PRs of its tickets merged, its Spec and convoy still open.
+            spec("spec-g3", "G3", "in_progress"),
+            convoy("convoy-g3", "spec-g3", "open"),
+            ticket("ticket-g3-a", "convoy-g3", "closed", **{"gc.merge_commit": "3" * 40}),
+            ticket("ticket-g3-b", "convoy-g3", "closed", **{"gc.merge_commit": "4" * 40}),
+            # G4: its chantier closed too, while G5 it requires is in progress.
+            spec("spec-g4", "G4", "closed"),
+            convoy("convoy-g4", "spec-g4", "closed"),
+        ]
+        lines = self.lines(self.serve(repos, beads), FACTORY)
+
+        self.assertIn("Incohérent : marqué en cours, son chantier est fermé", self.line(lines, "Livraison parallèle"),
+                      "a step in progress whose required steps are done and whose chantier is closed is not flagged")
+        self.assertIn("Incohérent : marqué en cours, son résultat est fusionné",
+                      self.line(lines, "Notifications groupées"),
+                      "a step in progress whose required steps are done and whose PRs are merged is not flagged")
+        waiting = self.line(lines, "Flux de livraison jugé")
+        self.assertIn("En cours", waiting, "a step in progress waiting on a required step is not shown in progress")
+        self.assertNotRegex(waiting, r"(?i)incohéren",
+                            "a step in progress waiting on a required step is flagged for its chantier being closed")
 
     # --- Criterion 2 ------------------------------------------------------------
 
