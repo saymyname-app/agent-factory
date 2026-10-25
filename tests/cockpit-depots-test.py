@@ -7,6 +7,7 @@ the real ``bin/cockpit`` clones throwaway local repositories (the "faux
 clone git de projet" of the Testing Decisions: real git, no network) and
 the test reads only ``GET /``, ``GET /projet/<id>`` and the JSON twins.
 """
+import html
 import json
 import os
 import socket
@@ -245,7 +246,9 @@ class DepotsTest(unittest.TestCase):
         # The page of the project shows its whole roadmap (E, af-8rbceu).
         self.assertRegex(page, r"ROADMAP</small></h2><h2[^>]*>Bêta privée</h2>")
         self.assertIn("demo-back : dev a 3 commits d'avance", page)
-        self.assertIn("Roadmap inconnue", self.get("/projet/brut"))
+        # Its page names the roadmap file its repository lacks (R4, af-6weijp).
+        self.assertIn("Aucune roadmap dans le dépôt org/brut-knowledge : le fichier roadmap.toml n’existe pas.",
+                      html.unescape(self.get("/projet/brut")))
 
         # The clones are the cockpit's own, with nothing checked out in them (AC5).
         for repo in ("org__demo-knowledge", "org__demo-back", "org__brut-knowledge"):

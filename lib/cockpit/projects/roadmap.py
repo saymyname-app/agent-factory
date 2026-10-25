@@ -75,6 +75,13 @@ def read_steps(clone_dir, roadmap_path, remote="origin", git_bin="git", timeout=
         [git_bin, "-C", str(clone_dir), "show", "%s/%s:%s" % (remote, branch, roadmap_path)],
         timeout,
     )
+    return parse_steps(raw, roadmap_path)
+
+
+def parse_steps(raw, roadmap_path):
+    """Every ``[[step]]`` of the roadmap text ``raw`` read at
+    ``roadmap_path``. Raises :class:`RoadmapReadError` when it is not valid
+    TOML or declares no step."""
     try:
         data = tomllib.loads(raw)
     except tomllib.TOMLDecodeError as exc:

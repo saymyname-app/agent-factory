@@ -49,13 +49,15 @@ def _paris(at):
 def _release_missing(release, repo):
     """Why the release of the project is not known: what lacks, and where."""
     state = release.get("state")
-    where = "le dépôt %s (%s)" % (repo, release.get("path", "")) if repo else ""
+    path = release.get("path", "")
     if state == "absent":
         return ("Cadrage et preuves non collectés. %s" % NO_PROGRESS,
-                "Aucun cadrage dans %s : ni cible, ni acquis, ni estimation à montrer." % where)
+                "Aucun cadrage dans le dépôt %s : le fichier %s n’existe pas. Ni cible, ni acquis, ni estimation "
+                "à montrer." % (repo, path))
     if state == "unreadable":
+        what = "Le fichier de cadrage %s du dépôt %s" % (path, repo) if path else "Le cadrage du dépôt %s" % repo
         return ("Cadrage illisible. %s" % NO_PROGRESS,
-                "Le cadrage de %s ne se lit pas : %s" % (where, release.get("reason", "")))
+                "%s ne se lit pas : %s" % (what, release.get("reason", "")))
     if state == "undeclared":
         return ("Cadrage et preuves non collectés. %s" % NO_PROGRESS,
                 "Ce projet ne déclare aucun dépôt de connaissance : aucun cadrage ne peut y être lu.")
@@ -162,6 +164,8 @@ def _roadmap(anchors, roadmap, repo, milestone):
         said = {
             "undeclared": "Ce projet ne déclare aucune roadmap structurée : aucune étape à montrer.",
             "reading": "Lecture de la roadmap en cours.",
+            "absent": "Aucune roadmap dans le dépôt %s : le fichier %s n’existe pas." % (repo, roadmap.get("path")),
+            "unreadable": "Roadmap illisible : le fichier %s du dépôt %s ne se lit pas." % (roadmap.get("path"), repo),
             "unknown": "Roadmap inconnue : son dépôt %s ne se lit pas." % repo,
         }.get(roadmap["state"], "Les dépôts des projets ne sont pas lus par ce cockpit : roadmap inconnue.")
         return '<section class="pn-panel" %s>%s<p %s>%s</p></section>' % (panel, head, anchors("p"), _e(said))
@@ -228,7 +232,10 @@ def _knowledge(depots, descriptor):
     release = (value.get("releases") or {}).get(project_id) or {"state": "not_read"}
     read = (value.get("roadmaps") or {}).get(project_id) or {}
     if not read.get("ok"):
-        return release, {"state": "unknown"}
+        # Which file lacks or does not read, as the depots source says; a
+        # read of an earlier cockpit says neither: its repository is unknown.
+        state = read.get("state") if read.get("state") in ("absent", "unreadable") else "unknown"
+        return release, {"state": state, "path": read.get("path") or descriptor["roadmap_path"]}
     return release, {"state": "read", "steps": (value.get("steps") or {}).get(project_id) or [],
                      "changed_at": read.get("changed_at"), "path": descriptor["roadmap_path"]}
 
