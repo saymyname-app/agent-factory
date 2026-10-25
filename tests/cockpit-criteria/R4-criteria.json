@@ -1,8 +1,7 @@
 {
   "criteria": {
     "1": [
-      "tests/cockpit-criteria/commands/projects-missing-files-test.py::ProjectsMissingFiles.test_a_missing_release_plan_and_a_missing_roadmap_each_name_their_own_file_and_reason",
-      "tests/cockpit-criteria/commands/projects-missing-files-test.py::ProjectsMissingFiles.test_an_unreadable_release_plan_gives_its_own_error_while_the_roadmap_is_missing"
+      "tests/cockpit-criteria/commands/projects-missing-files-test.py::ProjectsMissingFiles.test_a_missing_release_plan_and_a_missing_roadmap_each_name_their_own_file_and_reason"
     ]
   }
 }
