@@ -171,7 +171,7 @@ def _roadmap(anchors, roadmap, repo, milestone):
     rows = "".join(
         '<div class="pf-row%s" %s><span %s>%s</span><span class="pf-status%s" %s>%s%s</span></div>'
         % (" pf-flagged" if row["flag"] else "", anchors("row"), anchors("span"), _e(row["title"]),
-           " pf-done" if row["status"] == "done" else "", anchors("ok" if row["status"] == "done" else "span"),
+           " pf-done" if row["acquired"] else "", anchors("ok" if row["acquired"] else "span"),
            _e(row["label"]), (" · " + _e(row["flag"])) if row["flag"] else "") for row in roadmap["rows"])
     changed = _paris(roadmap.get("changed_at"))
     source = "Source : %s, %s" % (repo, roadmap["path"])
