@@ -72,6 +72,9 @@ class Chantier:
     # « Fusionné »…), in place of ``stage``.
     outcome: dict = None
     issue: str = None
+    # The tickets of its graph, by id: a request on one of them is a
+    # decision of this chantier (:mod:`cockpit.projects.decisions`).
+    tickets: tuple = ()
 
     @property
     def libelle(self):
