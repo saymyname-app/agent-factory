@@ -142,7 +142,9 @@ class ProjectLaunchTest(unittest.TestCase):
     def tearDown(self) -> None:
         for state_file in self._state_files:
             if state_file.exists():
-                self.stop(state_file=state_file)
+                stopped = self.stop(state_file=state_file, check=False)
+                if stopped.returncode and state_file.exists():
+                    self.fail(stopped.stdout + stopped.stderr)
 
     def new_state_file(self) -> Path:
         handle, path = tempfile.mkstemp(prefix="project-launch-state-")

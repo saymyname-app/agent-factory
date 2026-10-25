@@ -103,3 +103,32 @@ isolated_city_remove() {
   done
   rm -rf -- "$trial"
 }
+
+# isolated_city_preserve_latest_failure <trial-dir> <latest-link>
+#   Keeps one failed trial at its original path (its configs contain that
+#   path) and points a stable symlink at it. A later failure replaces only a
+#   sibling trial with the same name prefix. Refuses a regular file, a link
+#   outside the parent directory, or a differently named target.
+isolated_city_preserve_latest_failure() {
+  local trial=${1:-} latest=${2:-} parent stem previous
+  [ -d "$trial" ] && [ -n "$latest" ] || return 1
+  trial=$(realpath -m -- "$trial") || return 1
+  parent=$(realpath -m -- "$(dirname -- "$latest")") || return 1
+  latest="$parent/$(basename -- "$latest")"
+  stem=$(basename -- "$latest")
+  case "$stem" in
+    *.last-failure) stem=${stem%.last-failure} ;;
+    *) return 1 ;;
+  esac
+  _isolated_city_inside "$trial" "$parent" || return 1
+  case "$(basename -- "$trial")" in "$stem".*) ;; *) return 1 ;; esac
+  [ ! -e "$latest" ] || [ -L "$latest" ] || return 1
+  if [ -L "$latest" ]; then
+    previous=$(realpath -m -- "$latest") || return 1
+    _isolated_city_inside "$previous" "$parent" || return 1
+    case "$(basename -- "$previous")" in "$stem".*) ;; *) return 1 ;; esac
+    [ "$previous" = "$trial" ] || isolated_city_remove "$previous" || return 1
+  fi
+  rm -f -- "$latest"
+  ln -s -- "$trial" "$latest"
+}
