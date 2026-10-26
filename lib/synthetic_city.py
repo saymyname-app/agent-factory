@@ -27,6 +27,7 @@ import hashlib
 import html
 import json
 import re
+import tomllib
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -348,11 +349,14 @@ def _awaited(sections, tracker) -> list:
     return rows[2 * found:]
 
 
-def _chantier(tracker, project: str, title: str, said, card=None) -> None:
+def _chantier(tracker, project: str, title: str, said, card=None, target=None) -> None:
     """The open chantier of `project`, and what the screen says of it; with
     `card`, its card on the overview: its stage, its figures and the line of
-    its release."""
+    its release; with `target`, the Roadmap Step it targets
+    (`planning_run_target`)."""
     metadata = {"gc.graph_digest": f"synthetic:{project}"}
+    if target is not None:
+        metadata["planning_run_target"] = target
     if card is not None:
         metadata[PROJECT_CARD] = json.dumps(card, ensure_ascii=False)
     tracker.add(f"synthetic-chantier-{project}", title, said=said, project=project, issue_type="convoy",
@@ -673,15 +677,22 @@ def _project_page(lines, tracker) -> None:
     project = tracker.declare(about[0])
     tracker.add(f"synthetic-project-{project}", about[0], said=about[1:], project=project, labels=[SAID])
     tracker.keep(sections, PROJECT_SAID, project=project)
+    files = {}
+    steps = []
+    if sections.get(ROADMAP):
+        files[KNOWLEDGE_ROADMAP] = _roadmap(sections[ROADMAP])
+        steps = tomllib.loads(files[KNOWLEDGE_ROADMAP]).get("step", [])
     current = sections.get(CURRENT_CHANTIER)
     if current:
-        _chantier(tracker, project, current[0], current[1:])
-    files = {}
+        # The current chantier the page draws beside a step in progress of
+        # the same title is the chantier of that step: it targets it, as
+        # the Spec of a chantier carries it (R3, af-plu8kn).
+        target = next((step["id"] for step in steps
+                       if step["status"] == "in_progress" and step["title"] == current[0]), None)
+        _chantier(tracker, project, current[0], current[1:], target=target)
     plan = _release_plan(sections.get(RELEASE), sections.get(MILESTONE), tracker.release or {})
     if plan is not None:
         files[KNOWLEDGE_RELEASE] = plan
-    if sections.get(ROADMAP):
-        files[KNOWLEDGE_ROADMAP] = _roadmap(sections[ROADMAP])
     if files:
         if KNOWLEDGE_ROADMAP not in files:
             raise DatasetRefused("a release plan without the roadmap it stands beside (« ROADMAP »)")

@@ -184,6 +184,7 @@
       "release-expanded": "config/cockpit-datasets/release-expanded.json",
       "release-estimate": "config/cockpit-datasets/release-estimate.json",
       "project-missing": "config/cockpit-datasets/project-missing.json",
+      "projects-roadmap-unlinked": "config/cockpit-datasets/projects-roadmap-unlinked.json",
       "journal-content": "config/cockpit-datasets/journal-content.json",
       "journal-empty": "config/cockpit-datasets/journal-empty.json",
       "journal-loading": "config/cockpit-datasets/journal-loading.json",
