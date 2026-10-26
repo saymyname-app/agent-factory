@@ -952,6 +952,45 @@ class ProjectLaunchTest(unittest.TestCase):
         [event] = self._traced()
         self.assertEqual(("sweep", "owner_ended", True), (event["by"], event["reason"], event["stopped"]))
 
+    def test_the_sweep_stops_a_legacy_launch_when_its_source_repository_is_gone(self):
+        # af-0uhmdl: criteria tests can exercise a revision from before
+        # FACTORY_LAUNCH_OWNER and FACTORY_LAUNCH_DEADLINE. Its product still
+        # has a launch id and sidecar; the deleted temporary source repository
+        # proves that the owning test has ended, without a six-hour wait.
+        launch_id = "legacy-launch-whose-test-ended"
+        worktree = Path(tempfile.mkdtemp(prefix="project-launch-")).resolve()
+        sidecar = Path(f"{worktree}.owner")
+        product = self.product
+        sidecar.write_text(json.dumps({
+            "launch_id": launch_id,
+            "repo_root": str(product),
+            "commit": self.product_commit,
+        }))
+        proc = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            cwd=worktree,
+            env={**os.environ, "FACTORY_LAUNCH_ID": launch_id},
+            start_new_session=True,
+        )
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
+        self.addCleanup(shutil.rmtree, worktree, True)
+        self.addCleanup(sidecar.unlink, missing_ok=True)
+        sweep = [str(TOOL), "sweep", "--launch-id", launch_id]
+        kept = json.loads(subprocess.run(sweep, text=True, capture_output=True, check=True).stdout)
+        self.assertEqual(([], 1), (kept["stopped"], kept["running_kept"]))
+        self.assertIsNone(proc.poll())
+
+        shutil.rmtree(product)
+        swept = json.loads(subprocess.run(sweep, text=True, capture_output=True, check=True).stdout)
+
+        self.assertEqual(["source_repository_gone"], [event["reason"] for event in swept["stopped"]])
+        self.assertIsNotNone(proc.wait(timeout=1))
+        self.assertFalse(worktree.exists())
+        self.assertFalse(sidecar.exists())
+        [event] = self._traced()
+        self.assertEqual(("sweep", "source_repository_gone", True),
+                         (event["by"], event["reason"], event["stopped"]))
+
     def test_the_sweep_keeps_a_launch_whose_owner_lives(self):
         env = self._private_tmp()
         result, state_file = self.start("--dataset", "content", env=env)
