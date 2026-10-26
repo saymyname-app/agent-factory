@@ -49,21 +49,24 @@ def _paris(at):
 def _release_missing(release, repo):
     """Why the release of the project is not known: what lacks, and where."""
     state = release.get("state")
-    where = "le dépôt %s (%s)" % (repo, release.get("path", "")) if repo else ""
+    path = release.get("path", "")
     if state == "absent":
-        return ("Cadrage et preuves non collectés. %s" % NO_PROGRESS,
-                "Aucun cadrage dans %s : ni cible, ni acquis, ni estimation à montrer." % where)
+        return ("Cadrage de release et preuves non collectés. %s" % NO_PROGRESS,
+                "Aucun cadrage de release dans le dépôt %s : le fichier %s n’existe pas. Ni cible, ni acquis, "
+                "ni estimation à montrer." % (repo, path))
     if state == "unreadable":
-        return ("Cadrage illisible. %s" % NO_PROGRESS,
-                "Le cadrage de %s ne se lit pas : %s" % (where, release.get("reason", "")))
+        what = ("Le fichier de cadrage de release %s du dépôt %s" % (path, repo) if path
+                else "Le cadrage de release du dépôt %s" % repo)
+        return ("Cadrage de release illisible. %s" % NO_PROGRESS,
+                "%s ne se lit pas : %s" % (what, release.get("reason", "")))
     if state == "undeclared":
-        return ("Cadrage et preuves non collectés. %s" % NO_PROGRESS,
-                "Ce projet ne déclare aucun dépôt de connaissance : aucun cadrage ne peut y être lu.")
+        return ("Cadrage de release et preuves non collectés. %s" % NO_PROGRESS,
+                "Ce projet ne déclare aucun dépôt de connaissance : aucun cadrage de release ne peut y être lu.")
     if state == "reading":
         return ("Lecture du dépôt du projet en cours. %s" % NO_PROGRESS,
-                "Le cadrage s’affichera une fois le dépôt %s lu." % repo if repo else "")
-    return ("Cadrage inconnu. %s" % NO_PROGRESS,
-            "Les dépôts des projets ne sont pas lus par ce cockpit : le cadrage ne peut pas être lu.")
+                "Le cadrage de release s’affichera une fois le dépôt %s lu." % repo if repo else "")
+    return ("Cadrage de release inconnu. %s" % NO_PROGRESS,
+            "Les dépôts des projets ne sont pas lus par ce cockpit : le cadrage de release ne peut pas être lu.")
 
 
 DECISION_TITLES = {"open": "Décision ouverte", "deferred": "Décision reportée", "included": "Périmètre élargi"}
@@ -107,7 +110,7 @@ def _release(anchors, release, repo):
                         anchors("p"), _e(milestone["check"]), state))
     else:
         next_step = ('<div class="pf-milestone" %s><small %s>PROCHAIN JALON</small><p %s>Aucun jalon écrit dans le '
-                     'cadrage.</p></div>' % (anchors("release-milestone"), anchors("small"), anchors("p")))
+                     'cadrage de release.</p></div>' % (anchors("release-milestone"), anchors("small"), anchors("p")))
     estimate = estimate_of(plan)
     if estimate["shown"]:
         estimated = ('<div %s><strong %s>Fourchette indicative · %s</strong><p %s>%s</p><details %s>'
@@ -162,6 +165,9 @@ def _roadmap(anchors, roadmap, repo, milestone):
         said = {
             "undeclared": "Ce projet ne déclare aucune roadmap structurée : aucune étape à montrer.",
             "reading": "Lecture de la roadmap en cours.",
+            "absent": "Aucune roadmap dans le dépôt %s : le fichier %s n’existe pas." % (repo, roadmap.get("path")),
+            "unreadable": "Roadmap illisible : le fichier %s du dépôt %s ne se lit pas : %s" % (
+                roadmap.get("path"), repo, roadmap.get("reason", "")),
             "unknown": "Roadmap inconnue : son dépôt %s ne se lit pas." % repo,
         }.get(roadmap["state"], "Les dépôts des projets ne sont pas lus par ce cockpit : roadmap inconnue.")
         return '<section class="pn-panel" %s>%s<p %s>%s</p></section>' % (panel, head, anchors("p"), _e(said))
@@ -201,9 +207,9 @@ def _last_change(anchors, view):
 def _resources(anchors, view, release, repo):
     panel = anchors("panel")
     plan = release.get("plan") if release.get("state") == "read" else None
-    goal = _e(plan["target"]) if plan else "Aucun cadrage lu : objectif et périmètre inconnus."
-    sources = ("Chantiers et historique : suivi des tâches. Roadmap et cadrage : %s. Runs : livraisons de ce projet. "
-               "Une PR fusionnée ne compte pas comme un résultat accepté." % (
+    goal = _e(plan["target"]) if plan else "Aucun cadrage de release lu : objectif et périmètre inconnus."
+    sources = ("Chantiers et historique : suivi des tâches. Roadmap et cadrage de release : %s. "
+               "Runs : livraisons de ce projet. Une PR fusionnée ne compte pas comme un résultat accepté." % (
                    "dépôt %s" % repo if repo else "aucun dépôt déclaré"))
     return ('<section class="pn-panel" %s><h2 %s>Ressources du projet</h2>'
             '<details %s><summary %s>Objectif et périmètre</summary><p %s>%s</p></details>'
@@ -228,7 +234,11 @@ def _knowledge(depots, descriptor):
     release = (value.get("releases") or {}).get(project_id) or {"state": "not_read"}
     read = (value.get("roadmaps") or {}).get(project_id) or {}
     if not read.get("ok"):
-        return release, {"state": "unknown"}
+        # Which file lacks or does not read, as the depots source says; a
+        # read of an earlier cockpit says neither: its repository is unknown.
+        state = read.get("state") if read.get("state") in ("absent", "unreadable") else "unknown"
+        return release, {"state": state, "path": read.get("path") or descriptor["roadmap_path"],
+                         "reason": read.get("reason", "")}
     return release, {"state": "read", "steps": (value.get("steps") or {}).get(project_id) or [],
                      "changed_at": read.get("changed_at"), "path": descriptor["roadmap_path"]}
 

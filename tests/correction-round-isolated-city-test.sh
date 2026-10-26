@@ -70,7 +70,7 @@ CITY="$TRIAL/c"
 PRODUCT="$CITY"
 FIXTURE="tests/fixtures/delivery-fixture-city"
 cleanup() {
-  status=$?
+  status=$? latest_failure="$HOME/.cache/af-rx0ocp-correction.last-failure"
   trap - EXIT
   isolated_city_stop "$TRIAL" "$CITY" >/dev/null 2>&1 || true
   tmux -L "$(basename "$TRIAL")" kill-server >/dev/null 2>&1 || true
@@ -98,6 +98,12 @@ cleanup() {
   done
   if [ "${KEEP_TEST_CITY:-0}" = 1 ]; then
     echo "trial preserved at $TRIAL" >&2
+  elif [ "$status" != 0 ]; then
+    if isolated_city_preserve_latest_failure "$TRIAL" "$latest_failure"; then
+      echo "failed trial preserved at $TRIAL (latest: $latest_failure)" >&2
+    else
+      echo "FAIL: could not rotate latest failure; trial preserved at $TRIAL" >&2
+    fi
   else
     git -C "$PRODUCT" worktree prune >/dev/null 2>&1 || true
     isolated_city_remove "$TRIAL"
@@ -207,7 +213,8 @@ LIB
 
 # One stub per role: the header names the trial, the body is the session.
 stub() { # <name>: reads the body on stdin
-  printf '#!/bin/bash\n. "%s/env"\n. "%s/author-lib.sh"\n' "$TRIAL" "$TRIAL" > "$TRIAL/$1"
+  printf '#!/bin/bash\nexport CLAUDE_CODE_SESSION_ID=$(cat /proc/sys/kernel/random/uuid)\n. "%s/env"\n. "%s/author-lib.sh"\n' \
+    "$TRIAL" "$TRIAL" > "$TRIAL/$1"
   cat >> "$TRIAL/$1"
   chmod +x "$TRIAL/$1"
 }
@@ -676,6 +683,10 @@ field "$B" gc.flow.evaluation | jq -e --arg tip "$FIX_B" '.rounds[-1] | .commit 
 [ -z "$(field "$B" gc.flow.stop)" ] || fail "B was stopped although its round corrected it"
 [ "$(on_list "$B")" = 0 ] || fail "B is on the operator's list"
 echo "$(date -u +%H:%M:%S) B : une session de correction ($(grep "^$B " "$TRIAL/correction-sessions" | cut -d' ' -f3)) a corrigé au commit $FIX_B et répondu « corrigé » à F1.1 ; jugement favorable par une seconde session relecteur, évaluation rejouée et favorable à la nouvelle pointe ; ticket fusionné dans $INTEGRATION ; compteurs relus : $(shown "$B" | jq -c '.counters')"
+
+if grep -q 'a déjà rendu' "$TRIAL/reviewer.log" "$TRIAL/evaluator.log"; then
+  fail "one role conversation served more than one review or evaluation request"
+fi
 
 gc session list --state all --json | jq -e '[.sessions[] | select(.template | test("mayor"))] | length == 0' >/dev/null \
   || fail "a Mayor session exists in the trial city"

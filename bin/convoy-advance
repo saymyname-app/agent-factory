@@ -1306,7 +1306,7 @@ def record_grouped(convoy: Convoy, bead_id: str, signature: str | None = None, l
     state_write(*argv)
 
 
-def settle_grouped_request(convoy: Convoy) -> dict[str, Any] | None:
+def settle_grouped_request(convoy: Convoy, out: dict[str, Any]) -> dict[str, Any] | None:
     """Spec §8, user story 54: one request per convoy, on a bead of its own,
     when nothing but parked tickets is left -- never one per ticket; raised
     once per set of parkings, withdrawn once a ticket may advance again."""
@@ -1317,6 +1317,18 @@ def settle_grouped_request(convoy: Convoy) -> dict[str, Any] | None:
                 return None
             bead_id = convoy.grouped["bead"]
             passed(run([str(ESCALATION_BIN), "clear", bead_id]), "escalation-door clear")
+            # The answer may have landed after settle_lifts read the request,
+            # while this pass resumed another ticket. Clear holds the same
+            # door lock as the answer: read and apply it now, before dropping
+            # the only record that names the exhausted tickets (af-g2ukoq).
+            grouped = convoy.grouped
+            if grouped.get("lifts") \
+                    and request_answer(read_bead(bead_id), grouped["at"]) == grouped["lift_option"]:
+                settle_lifts(convoy, out)
+                remaining = [ticket_id for ticket_id in grouped["lifts"]
+                             if (convoy.ticket(ticket_id).get("park") or {}).get("cause") == PARK_EXHAUSTED]
+                if remaining:
+                    raise Refusal("la réponse de la demande groupée n'a pas levé " + ", ".join(remaining))
             if read_bead(bead_id).get("status") != "closed":
                 passed(run([GC_BIN, "--city", str(ROOT), "bd", "close", bead_id, "--reason",
                             f"Le convoi {convoy.id} n'est plus fait que de tickets parqués."]), "gc bd close")
@@ -2082,9 +2094,15 @@ def advance_convoy(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
     # Once the starts are made: is anything but parked tickets left?
     if out["started"] or out["resumed"] or out["parked"] or out["lifted"]:
         convoy.load()
-    grouped = settle_grouped_request(convoy)
+    lifted_before_grouped = len(out["lifted"])
+    grouped = settle_grouped_request(convoy, out)
     if grouped:
         out["grouped_request"] = grouped
+    if len(out["lifted"]) > lifted_before_grouped:
+        # A grouped answer recorded during the pass was applied just before
+        # withdrawal; give its already-counted resume the same-pass launch it
+        # would have received had the answer arrived before settle_lifts.
+        settle_resumes(convoy, settings, free, alive, out, only)
     return out
 
 

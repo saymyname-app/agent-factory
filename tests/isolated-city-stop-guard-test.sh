@@ -22,6 +22,8 @@
 #      is inside the trial directory, and refuses every other case;
 #   4. every trial disables the imported bd.dog pool, and the helper writes
 #      that patch once only inside the trial city.
+#   5. latest-failure retention replaces only an earlier sibling trial with
+#      the same prefix and refuses unsafe targets.
 
 set -Eeuo pipefail
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
@@ -150,5 +152,39 @@ if isolated_city_disable_dog "$trial" "$TMP/elsewhere" 2>/dev/null; then
   fail "the bd.dog patch accepted a city outside the trial"
 fi
 [ "$(cat "$city/city.toml")" = "$before" ] || fail "a refused bd.dog patch changed the trial city"
+
+# --- 5. a failed trial keeps one safely rotated diagnostic directory ------
+evidence="$TMP/evidence"
+latest="$evidence/af-rx0ocp-correction.last-failure"
+first="$evidence/af-rx0ocp-correction.first"
+second="$evidence/af-rx0ocp-correction.second"
+mkdir -p "$first" "$second"
+echo first > "$first/record"
+echo second > "$second/record"
+isolated_city_preserve_latest_failure "$first" "$latest" \
+  || fail "the first failed trial was not preserved"
+[ "$(readlink -- "$latest")" = "$first" ] \
+  || fail "the latest-failure link does not name the first trial"
+isolated_city_preserve_latest_failure "$second" "$latest" \
+  || fail "the second failed trial did not replace the first"
+[ ! -e "$first" ] || fail "the previous failed trial was not removed"
+[ "$(readlink -- "$latest")" = "$second" ] \
+  || fail "the latest-failure link does not name the second trial"
+
+unsafe="$TMP/outside"
+mkdir -p "$unsafe"
+rm -f -- "$latest"
+ln -s -- "$unsafe" "$latest"
+if isolated_city_preserve_latest_failure "$second" "$latest" 2>/dev/null; then
+  fail "latest-failure retention accepted a target outside its directory"
+fi
+[ -d "$unsafe" ] || fail "a refused latest-failure rotation removed its unsafe target"
+
+rm -f -- "$latest"
+echo occupied > "$latest"
+if isolated_city_preserve_latest_failure "$second" "$latest" 2>/dev/null; then
+  fail "latest-failure retention replaced a regular file"
+fi
+[ "$(cat "$latest")" = occupied ] || fail "a refused rotation changed a regular file"
 
 echo "PASS: $SELF"

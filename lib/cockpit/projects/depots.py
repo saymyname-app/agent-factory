@@ -26,7 +26,7 @@ from pathlib import Path
 from cockpit.projects import promotion
 from cockpit.projects.model import RoadmapStep
 from cockpit.projects.release import ReleaseError, parse_release, release_path
-from cockpit.projects.roadmap import RoadmapReadError, pick_current_step, read_at_default_branch, read_steps
+from cockpit.projects.roadmap import RoadmapReadError, parse_steps, pick_current_step, read_at_default_branch
 
 REPO_URL_TEMPLATE = "https://github.com/%s.git"
 CLONE_TIMEOUT_SECONDS = 180
@@ -69,6 +69,28 @@ def read_rig_repos(rig_files_dir):
     return out
 
 
+def read_roadmap(clone, roadmap_path, git_bin="git"):
+    """The structured roadmap of a project in its clone, as the last fetch
+    brought it: ``(roadmap, steps)``. ``roadmap`` is ``{"ok": True, "step",
+    "changed_at"}`` when read, else ``{"ok": False, "step": None, "state":
+    "absent" | "unreadable", "path", "reason"}``; ``steps`` is None unless
+    read."""
+    try:
+        text, changed_at = read_at_default_branch(clone, roadmap_path, git_bin=git_bin)
+        if text is None:
+            return {"ok": False, "step": None, "state": "absent", "path": roadmap_path,
+                    "reason": "aucun fichier %s" % roadmap_path}, None
+        steps = parse_steps(text, roadmap_path)
+    except RoadmapReadError as exc:
+        return {"ok": False, "step": None, "state": "unreadable", "path": roadmap_path, "reason": str(exc)}, None
+    step = pick_current_step(steps)
+    return {
+        "ok": True,
+        "step": {"id": str(step.get("id", "")), "title": str(step.get("title", "")), "status": str(step.get("status", ""))},
+        "changed_at": changed_at,
+    }, steps
+
+
 def read_release(clone, roadmap_path, git_bin="git"):
     """The release plan of a project in its clone (E, af-8rbceu;
     :mod:`cockpit.projects.release`), as plain data: ``{"state": "read",
@@ -85,8 +107,8 @@ def read_release(clone, roadmap_path, git_bin="git"):
 
 
 def read_depots(descriptors, rig_repos, clones_dir, url_template=REPO_URL_TEMPLATE, git_bin="git"):
-    """One read. Returns plain data: ``{"roadmaps": {project_id: {"ok",
-    "step", "changed_at"}}, "steps": {project_id: [{"id", "title",
+    """One read. Returns plain data: ``{"roadmaps": {project_id: the roadmap
+    of read_roadmap(…)}, "steps": {project_id: [{"id", "title",
     "status"}]}, "releases": {project_id: read_release(…), or {"state":
     "undeclared"} for a project that declares no knowledge repository},
     "ecarts": {project_id: {rig: n or None}}}``. Raises only when not a
@@ -101,27 +123,27 @@ def read_depots(descriptors, rig_repos, clones_dir, url_template=REPO_URL_TEMPLA
             attempts += 1
             try:
                 clone = ensure_clone(clones_dir, descriptor["knowledge_repo"], url_template, git_bin)
-                steps = read_steps(clone, descriptor["roadmap_path"], git_bin=git_bin)
-                _, changed_at = read_at_default_branch(clone, descriptor["roadmap_path"], git_bin=git_bin)
-                step = pick_current_step(steps)
-                roadmaps[project_id] = {
-                    "ok": True,
-                    "step": {"id": str(step.get("id", "")), "title": str(step.get("title", "")), "status": str(step.get("status", ""))},
-                    "changed_at": changed_at,
-                }
-                steps_by_project[project_id] = [
-                    {"id": str(s.get("id", "")), "title": str(s.get("title", "")), "status": str(s.get("status", "")),
-                     "order": s.get("order") if isinstance(s.get("order"), int) else 0,
-                     "done_requires": [str(r) for r in s.get("done_requires") or [] if isinstance(r, str)]
-                     if isinstance(s.get("done_requires"), list) else []}
-                    for s in steps
-                ]
-                releases[project_id] = read_release(clone, descriptor["roadmap_path"], git_bin=git_bin)
-                successes += 1
+                promotion.fetch(clone, git_bin=git_bin, timeout=30)
             except RoadmapReadError as exc:
-                roadmaps[project_id] = {"ok": False, "step": None}
+                # The repository itself does not answer: neither file is read.
+                roadmaps[project_id] = {"ok": False, "step": None, "state": "unknown",
+                                        "path": descriptor["roadmap_path"], "reason": str(exc)}
                 releases[project_id] = {"state": "unreadable", "path": release_path(descriptor["roadmap_path"]),
                                         "reason": str(exc)}
+            else:
+                # Each file of the repository is read on its own: one missing
+                # or unreadable never gives its reason to the other (R4).
+                roadmaps[project_id], steps = read_roadmap(clone, descriptor["roadmap_path"], git_bin=git_bin)
+                if steps is not None:
+                    steps_by_project[project_id] = [
+                        {"id": str(s.get("id", "")), "title": str(s.get("title", "")), "status": str(s.get("status", "")),
+                         "order": s.get("order") if isinstance(s.get("order"), int) else 0,
+                         "done_requires": [str(r) for r in s.get("done_requires") or [] if isinstance(r, str)]
+                         if isinstance(s.get("done_requires"), list) else []}
+                        for s in steps
+                    ]
+                releases[project_id] = read_release(clone, descriptor["roadmap_path"], git_bin=git_bin)
+                successes += 1
         for rig, branches in sorted((descriptor.get("promotion_branch") or {}).items()):
             attempts += 1
             n = None

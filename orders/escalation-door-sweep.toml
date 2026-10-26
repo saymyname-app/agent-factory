@@ -3,5 +3,5 @@ description = "Promote every Mayor-first escalation still unresolved 2 hours aft
 trigger = "condition"
 interval = "15m"
 check = "/home/benja/agent-factory/orders/lib/orders-restart-stagger.sh escalation-door-sweep 900"
-exec = "/home/benja/agent-factory/bin/escalation-door sweep"
+exec = "/home/benja/agent-factory/bin/order-pause gate escalation-door-sweep -- /home/benja/agent-factory/bin/escalation-door sweep"
 timeout = "60s"

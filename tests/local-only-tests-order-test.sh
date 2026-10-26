@@ -80,7 +80,7 @@ run_clean() {
 
 # 1. The order itself is discoverable and deterministic.
 order=$(run_clean gc order show local-only-tests --city "$ROOT" --json)
-jq -e --arg source "$ROOT/orders/local-only-tests.toml" --arg exec "$ROOT/bin/local-only-tests --quiet" '
+jq -e --arg source "$ROOT/orders/local-only-tests.toml" --arg exec "$ROOT/bin/order-pause gate local-only-tests -- $ROOT/bin/local-only-tests --quiet" '
   .ok == true and
   .order.type == "exec" and
   .order.trigger == "cron" and

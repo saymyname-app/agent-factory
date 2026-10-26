@@ -50,7 +50,9 @@ list in the Operator Language.
    (`--timeout`, default 1800 s) and prints the verdicts and the refusals.
 2. **Corrections**, with Benjamin, in the draft. Any change gives the draft
    another digest: the verdicts of the first pass no longer hold for it.
-3. **One second pass**, the same command, on the corrected draft.
+3. **One second pass**, the same command, on the corrected draft. Nothing
+   requires a new digest: a second pass on the unchanged draft is allowed
+   (after a fix of the tool, for instance) and is the last one.
 4. **Benjamin rules.** What the second pass still refuses is listed by
    `remaining`. He rules ticket by ticket (and on the graph, `--graph`, when
    the refusal is on the graph): `publish` (« publier tel quel ») or `rework`
@@ -88,6 +90,34 @@ refused as outside the list. An
 unfavorable measure is a graph refusal like the others: correct the draft
 (keep a link only where the blocked ticket consumes a deliverable its text
 cites), ask the second pass, or let Benjamin rule `--graph`.
+
+### Une révision se juge sur le graphe résultant (af-npz9v1.16)
+
+Une révision (`revises_digest`) ne porte que les tickets qu'elle ajoute ou
+change, et `bin/replacement-draft` comme `bd-patch` n'y gardent pas les
+bloqueurs déjà livrés. Le 23/10/2026, la passe 1 sur `af-r1f9ac6bc`
+(remplacement de B par BR, convoi `af-strhoy`) a ainsi refusé BR, A2, G2, I
+et le graphe : « consomme la page posée par A1/G1, mais A1/G1 ne sont pas
+dans le graphe », alors que A1 et G1 étaient livrés et fusionnés.
+
+Désormais, pour une révision, `brief` donne `resulting_graph` : le convoi
+qui porte le digest révisé et, dans `in_place`, chaque ticket qu'il suit et
+que la révision laisse tel quel (ni repris, ni retiré maintenant ou avant,
+ni fusionné ou remplacé), avec son identifiant de graphe, son bead, son
+statut, `delivered` (fermé), son titre, sa ligne de démonstration,
+`prototype_fold` et ses `blocked_by` ; c'est le graphe que `bd-patch`
+contrôle avant de demander `check`. La consigne (`rule`, et la formule
+`mol-graph-review`) dit qu'un ticket qui consomme le travail d'un ticket
+livré du convoi est démontrable seul et ordonné contre lui sans
+`blocked_by`, et qu'un ticket livré Prototype Fold ou qui pose un point
+d'assemblage l'a fait en premier ; un ticket en place non livré ne compte
+pas comme livré. `review` refuse, sans rien écrire ni router, une révision
+dont le convoi est introuvable ou ambigu.
+
+La règle « une révision ne garde pas les bloqueurs livrés » ne change pas :
+un bloqueur livré n'ordonne plus rien, et la seconde passe sur un brouillon
+inchangé (même digest) reste permise, la règle des deux passes ne comptant
+que les passes enregistrées.
 
 `record` refuses, before any write and with every reason listed: a verdict
 on another digest than the draft's; a ticket of the draft without answers, or

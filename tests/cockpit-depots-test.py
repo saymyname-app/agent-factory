@@ -7,6 +7,7 @@ the real ``bin/cockpit`` clones throwaway local repositories (the "faux
 clone git de projet" of the Testing Decisions: real git, no network) and
 the test reads only ``GET /``, ``GET /projet/<id>`` and the JSON twins.
 """
+import html
 import json
 import os
 import socket
@@ -245,7 +246,9 @@ class DepotsTest(unittest.TestCase):
         # The page of the project shows its whole roadmap (E, af-8rbceu).
         self.assertRegex(page, r"ROADMAP</small></h2><h2[^>]*>Bêta privée</h2>")
         self.assertIn("demo-back : dev a 3 commits d'avance", page)
-        self.assertIn("Roadmap inconnue", self.get("/projet/brut"))
+        # Its page names the roadmap file its repository lacks (R4, af-6weijp).
+        self.assertIn("Aucune roadmap dans le dépôt org/brut-knowledge : le fichier roadmap.toml n’existe pas.",
+                      html.unescape(self.get("/projet/brut")))
 
         # The clones are the cockpit's own, with nothing checked out in them (AC5).
         for repo in ("org__demo-knowledge", "org__demo-back", "org__brut-knowledge"):
@@ -276,6 +279,18 @@ class DepotsTest(unittest.TestCase):
             texts,
         )
         self.assertNotIn("af-conv1", " ".join(texts))
+
+    def test_an_unreadable_release_plan_and_an_unreadable_roadmap_each_give_their_own_reason(self):
+        # R4 (af-6weijp): each file of the repository is read on its own.
+        self.origins.commit("org/brut-knowledge", "main", {"roadmap.toml": "[[step]\n", "release.toml": "target = \n"})
+        self.start_cockpit()
+        page = wait_until(lambda: (lambda p: p if "illisible" in p else None)(html.unescape(self.get("/projet/brut"))))
+        self.assertIn("Roadmap illisible : le fichier roadmap.toml du dépôt org/brut-knowledge ne se lit pas : "
+                      "roadmap.toml is not valid TOML: ", page)
+        self.assertIn("Le fichier de cadrage de release release.toml du dépôt org/brut-knowledge ne se lit pas : "
+                      "TOML illisible : ", page)
+        self.assertEqual(1, page.count("roadmap.toml is not valid TOML"), "the release plan gives the roadmap's error")
+        self.assertNotIn("de le dépôt", page)
 
     def test_unreachable_repositories_are_unknown_then_read_again(self):
         hidden = self.dir / "origins-hidden"

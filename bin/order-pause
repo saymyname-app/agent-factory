@@ -1,0 +1,307 @@
+#!/usr/bin/env python3
+"""order-pause — mettre en pause et reprendre un ordre de l'usine, sans PR (af-npz9v1.15).
+
+    order-pause pause  ORDRE --by NOM --words TEXTE [--reason TEXTE]
+    order-pause resume ORDRE --by NOM --words TEXTE
+    order-pause show   [ORDRE] [--json]
+    order-pause gate   ORDRE -- COMMANDE [ARGUMENTS...]
+
+Intent (Benjamin, ses mots, 23/10/2026 16:07 Paris) : « Construisons la porte
+ou les portes dont on a besoin en premier ». Mechanism (interprétation agent) :
+le ticket B (af-4uzgzm, histoire 29 de la Spec af-fgcw0d) relance depuis le
+Cockpit un ordre que l'usine a mis en pause, par une porte existante ; avant
+cette porte, la seule pause était la ligne `[orders] skip` de city.toml, une
+PR et un rechargement par geste (#691 pour la pause, #701 pour la reprise).
+
+Une pause est un enregistrement du suivi (Beads) : un bead `order-pause`,
+ouvert tant que la pause dure, qui porte qui l'a posée, quand, ses mots et sa
+raison (métadonnées `gc.order_pause*`). La reprise le ferme en y ajoutant
+qui, quand et ses mots ; rien n'est effacé. `gate` est ce que chaque ordre de
+`orders/*.toml` exécute : il lit le suivi et, si l'ordre est en pause, dit
+pourquoi et ne lance rien (sortie 0) ; sinon il lance la commande de l'ordre
+à sa place (`exec`). Si le suivi ne répond pas, l'ordre est lancé : une pause
+n'arrête jamais un ordre de santé quand le suivi est justement en panne.
+
+Un ordre retiré par `[orders] skip` de city.toml reste une décision de config
+de Benjamin : cette porte ne le touche pas, `show` le signale.
+
+Sorties : 0 fait, ou déjà dans l'état demandé (rien n'est écrit) ; 1 le suivi
+ne se lit pas ou refuse l'écriture ; 2 refus (usage, ordre inconnu, retiré par
+city.toml, ou dont l'exec ne passe pas par `gate`).
+Doc : docs/FACTORY_TOOLS.md (`order-pause`).
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+import tomllib
+from datetime import datetime, timezone
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+PROGRAM = "order-pause"
+ROOT = Path(os.environ.get("ORDER_PAUSE_ROOT") or Path(__file__).resolve().parent.parent)
+GC = os.environ.get("GC_BIN", "gc")
+LABEL = "order-pause"
+KEY = "gc.order_pause"
+PARIS = ZoneInfo("Europe/Paris")
+NAME = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+# A tracker read that hangs must not hold an order forever: past this, the
+# gate lets the order run.
+READ_TIMEOUT_SECONDS = 20
+
+
+class Refused(Exception):
+    """A request this door refuses (exit 2)."""
+
+
+class TrackerError(Exception):
+    """The tracker could not be read or written (exit 1)."""
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def paris(iso: str | None) -> str:
+    if not iso:
+        return "?"
+    try:
+        moment = datetime.strptime(iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return iso
+    return moment.astimezone(PARIS).strftime("%d/%m/%Y %H:%M") + " (Paris)"
+
+
+# --- the orders of the Factory -------------------------------------------------------------
+
+def known_orders() -> dict[str, dict]:
+    """{name: [order] table} of every orders/<name>.toml of this repository."""
+    orders = {}
+    for path in sorted((ROOT / "orders").glob("*.toml")):
+        try:
+            orders[path.stem] = tomllib.loads(path.read_text(encoding="utf-8")).get("order") or {}
+        except (OSError, tomllib.TOMLDecodeError):
+            orders[path.stem] = {}
+    return orders
+
+
+def skipped_by_city() -> list[str]:
+    """The names city.toml `[orders] skip` removes from service."""
+    try:
+        city = tomllib.loads((ROOT / "city.toml").read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return []
+    return list((city.get("orders") or {}).get("skip") or [])
+
+
+def is_gated(name: str, order: dict) -> bool:
+    """Whether the exec of `order` goes through `order-pause gate <name> --`."""
+    try:
+        words = shlex.split(order.get("exec") or "")
+    except ValueError:
+        return False
+    return (len(words) > 4 and Path(words[0]).name == PROGRAM and words[1:4] == ["gate", name, "--"])
+
+
+def checked_order(name: str) -> None:
+    """Refuse, in French, a name the door cannot pause or resume."""
+    if name in skipped_by_city():
+        raise Refused(f"« {name} » est retiré du service par la ligne [orders] skip de city.toml : c'est une "
+                      "décision de config de Benjamin, que cette porte ne touche pas (il se reprend par une PR "
+                      "qui retire le nom de cette ligne).")
+    orders = known_orders()
+    if not NAME.match(name) or name not in orders:
+        raise Refused(f"« {name} » n'est pas un ordre de l'usine (aucun orders/{name}.toml). "
+                      f"Ordres connus : {', '.join(orders)}.")
+    if not is_gated(name, orders[name]):
+        raise Refused(f"l'ordre « {name} » ne passe pas par la porte (son exec ne commence pas par "
+                      f"`bin/{PROGRAM} gate {name} --`) : une pause n'y serait pas honorée.")
+
+
+# --- the tracker ---------------------------------------------------------------------------
+
+def gc_bd(*args: str, timeout: float | None = None, cwd: Path | None = ROOT) -> str:
+    """`gc bd ARGS` of the city at `cwd` (gc finds its city from the working
+    directory): the city this door belongs to, or None for the city that
+    runs the process (the gate, run by a controller from its city)."""
+    try:
+        done = subprocess.run([GC, "bd", *args], capture_output=True, text=True, timeout=timeout,
+                              stdin=subprocess.DEVNULL, cwd=cwd)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise TrackerError(f"gc bd {args[0]} : {exc}") from exc
+    if done.returncode != 0:
+        raise TrackerError(f"gc bd {args[0]} : {(done.stderr or done.stdout).strip()}")
+    return done.stdout
+
+
+def open_pauses(timeout: float | None = None, cwd: Path | None = ROOT) -> dict[str, list[dict]]:
+    """{order: [open pause records, oldest first]}."""
+    out = gc_bd("list", "--has-metadata-key", KEY, "--status", "open", "--limit", "0", "--json", timeout=timeout,
+                cwd=cwd)
+    try:
+        beads = json.loads(out or "[]")
+    except json.JSONDecodeError as exc:
+        raise TrackerError(f"gc bd list : réponse illisible ({exc})") from exc
+    pauses: dict[str, list[dict]] = {}
+    for bead in beads if isinstance(beads, list) else []:
+        metadata = bead.get("metadata") or {}
+        if bead.get("status") == "open" and metadata.get(KEY):
+            pauses.setdefault(metadata[KEY], []).append(bead)
+    for records in pauses.values():
+        records.sort(key=lambda bead: (bead.get("metadata") or {}).get("gc.order_pause_at") or "")
+    return pauses
+
+
+def describe(record: dict) -> dict:
+    metadata = record.get("metadata") or {}
+    return {
+        "record": record.get("id"),
+        "since": metadata.get("gc.order_pause_at"),
+        "by": metadata.get("gc.order_pause_by"),
+        "words": metadata.get("gc.order_pause_words"),
+        "reason": metadata.get("gc.order_pause_reason") or "",
+    }
+
+
+def said(entry: dict) -> str:
+    return f"depuis le {paris(entry['since'])}, par {entry['by']} (« {entry['words']} »), enregistrement {entry['record']}"
+
+
+# --- the commands --------------------------------------------------------------------------
+
+def required(value: str | None, flag: str) -> str:
+    if not value or not value.strip():
+        raise Refused(f"{flag} est obligatoire et ne peut pas être vide.")
+    return value.strip()
+
+
+def cmd_pause(args) -> int:
+    by, words = required(args.by, "--by"), required(args.words, "--words")
+    reason = (args.reason or "").strip()
+    checked_order(args.order)
+    existing = open_pauses().get(args.order)
+    if existing:
+        print(f"{args.order} est déjà en pause {said(describe(existing[0]))} : rien n'est écrit.")
+        return 0
+    at = now_iso()
+    metadata = {KEY: args.order, "gc.order_pause_by": by, "gc.order_pause_words": words,
+                "gc.order_pause_at": at, "gc.order_pause_reason": reason}
+    description = (f"L'ordre {args.order} est en pause : `gate` ne lance plus sa commande tant que cet "
+                   f"enregistrement est ouvert.\n\nPar : {by}\nLe : {paris(at)}\nSes mots : « {words} »\n"
+                   f"Raison : {reason or '(non donnée)'}\n\nReprendre : bin/{PROGRAM} resume {args.order} "
+                   "--by NOM --words TEXTE")
+    out = gc_bd("create", f"Ordre en pause : {args.order}", "-t", "task", "-l", LABEL, "-d", description,
+                "--metadata", json.dumps(metadata, ensure_ascii=False), "--silent").strip()
+    record = out.split()[-1] if out else "?"
+    print(f"{args.order} est en pause depuis le {paris(at)}, par {by} : enregistrement {record}. "
+          f"Retour arrière : bin/{PROGRAM} resume {args.order} --by NOM --words TEXTE")
+    return 0
+
+
+def cmd_resume(args) -> int:
+    by, words = required(args.by, "--by"), required(args.words, "--words")
+    checked_order(args.order)
+    records = open_pauses().get(args.order)
+    if not records:
+        print(f"{args.order} n'est pas en pause : rien n'est écrit.")
+        return 0
+    at = now_iso()
+    for record in records:
+        gc_bd("update", record["id"], "--status", "closed",
+              "--set-metadata", f"gc.order_resume_by={by}", "--set-metadata", f"gc.order_resume_words={words}",
+              "--set-metadata", f"gc.order_resume_at={at}",
+              "--append-notes", f"Repris le {paris(at)} par {by} : « {words} »")
+    print(f"{args.order} reprend : sa prochaine échéance le lance (repris le {paris(at)} par {by}, "
+          f"enregistrement {', '.join(record['id'] for record in records)} fermé).")
+    return 0
+
+
+def cmd_show(args) -> int:
+    orders, skipped = known_orders(), skipped_by_city()
+    if args.order and args.order not in orders and args.order not in skipped:
+        raise Refused(f"« {args.order} » n'est pas un ordre de l'usine (aucun orders/{args.order}.toml), "
+                      "ni une ligne [orders] skip de city.toml.")
+    pauses = open_pauses()
+    rows = []
+    for name in sorted(set(orders) | set(skipped)):
+        if args.order and name != args.order:
+            continue
+        if name in skipped:
+            rows.append({"order": name, "state": "skipped", "by_config": "city.toml [orders] skip"})
+        elif name in pauses:
+            rows.append({"order": name, "state": "paused", **describe(pauses[name][0])})
+        elif args.order or args.all:
+            rows.append({"order": name, "state": "active"})
+    if args.json:
+        print(json.dumps({"orders": rows}, ensure_ascii=False, indent=2))
+        return 0
+    if not any(row["state"] == "paused" for row in rows):
+        print("Aucun ordre en pause.")
+    for row in rows:
+        if row["state"] == "paused":
+            reason = f" ; raison : {row['reason']}" if row["reason"] else ""
+            print(f"{row['order']} : en pause {said(row)}{reason}")
+        elif row["state"] == "skipped":
+            print(f"{row['order']} : retiré par [orders] skip de city.toml (décision de config, hors de cette porte)")
+        else:
+            print(f"{row['order']} : en service")
+    return 0
+
+
+def cmd_gate(order: str, command: list[str]) -> int:
+    if not command:
+        print(f"usage: {PROGRAM} gate ORDRE -- COMMANDE [ARGUMENTS...]", file=sys.stderr)
+        return 2
+    try:
+        # The tracker of the city whose controller runs this order: a trial
+        # city's own, never the one this file belongs to.
+        records = open_pauses(timeout=READ_TIMEOUT_SECONDS, cwd=None).get(order)
+    except TrackerError as exc:
+        print(f"{PROGRAM}: le suivi ne se lit pas ({exc}) : {order} est lancé quand même.", file=sys.stderr)
+        records = None
+    if records:
+        print(f"{order} est en pause {said(describe(records[0]))} : rien n'est lancé.")
+        return 0
+    os.execvp(command[0], command)
+    return 127  # not reached
+
+
+def main(argv: list[str]) -> int:
+    if argv[:1] == ["gate"]:
+        rest = argv[1:]
+        if len(rest) < 2 or rest[1] != "--":
+            print(f"usage: {PROGRAM} gate ORDRE -- COMMANDE [ARGUMENTS...]", file=sys.stderr)
+            return 2
+        return cmd_gate(rest[0], rest[2:])
+    parser = argparse.ArgumentParser(prog=PROGRAM, description="Mettre en pause et reprendre un ordre de l'usine.")
+    sub = parser.add_subparsers(dest="command", required=True)
+    for name, text in (("pause", "met l'ordre en pause"), ("resume", "reprend l'ordre")):
+        command = sub.add_parser(name, help=text)
+        command.add_argument("order", metavar="ORDRE")
+        command.add_argument("--by", help="qui le demande")
+        command.add_argument("--words", help="ses mots exacts")
+        if name == "pause":
+            command.add_argument("--reason", help="pourquoi (facultatif)")
+    show = sub.add_parser("show", help="ce qui est en pause, depuis quand, par qui")
+    show.add_argument("order", metavar="ORDRE", nargs="?")
+    show.add_argument("--all", action="store_true", help="aussi les ordres en service")
+    show.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+    try:
+        return {"pause": cmd_pause, "resume": cmd_resume, "show": cmd_show}[args.command](args)
+    except Refused as exc:
+        print(f"{PROGRAM} : refusé : {exc}", file=sys.stderr)
+        return 2
+    except TrackerError as exc:
+        print(f"{PROGRAM} : le suivi ne répond pas, rien n'est fait : {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
