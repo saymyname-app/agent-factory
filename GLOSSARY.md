@@ -369,7 +369,7 @@ _French conversational alias_: projet (visible dans le cockpit)
 _Avoid_: Rig alone, City
 
 **Roadmap Step**:
-One entry of a Project's structured roadmap file (id, title, "done when" condition, order, and to-do / in-progress / done status), referenced by `planning_run_target` when a Planning Run targets it.
+One entry of a Project's structured roadmap file (id, title, "done when" condition, order, and to-do / in-progress / done status, optionally the steps its "done when" condition requires), referenced by `planning_run_target` when a Planning Run targets it.
 _French conversational alias_: étape de roadmap
 _Avoid_: milestone, Planning Run, Chantier
 

@@ -108,7 +108,11 @@ EXIT_UNRULED = 3
 EXIT_NOT_NEW_FLOW = 4
 
 UNRULED = "état sans règle"
-DEFAULT_TIMEOUT = 600
+# The regression command waits its turn on the host, then runs within its
+# budget (tests/cockpit-criteria/regression.py: 600 s each), plus a minute.
+# Exit 75 is its NOT RUN: no answer, never a red (study C, T1).
+DEFAULT_TIMEOUT = 600 + 600 + 60
+NOT_RUN = 75
 MAX_DETAIL = 300
 BRANCH_RE = re.compile(r"^[^\s~^:?*\[\\]+$")
 
@@ -594,6 +598,10 @@ class Pass:
             self.git("reset", "--quiet", "--hard", self.tip)
             raise Refusal(
                 f"la commande de régression n'a pas fini en {self.timeout:g} s sur {where} : rien n'est poussé") from exc
+        if proc.returncode == NOT_RUN:
+            self.git("reset", "--quiet", "--hard", self.tip)
+            raise Refusal(f"la commande de régression n'a pas été exécutée sur {where} (NOT RUN, exit 75) : "
+                          "rien n'est poussé, la passe suivante la relance")
         if proc.returncode != 0:
             self.git("reset", "--quiet", "--hard", self.tip)
             raise RedControl(
@@ -652,6 +660,10 @@ class Pass:
         except Refusal:
             self.git("reset", "--quiet", "--hard", held)
             raise
+        if tests["exit_code"] == NOT_RUN:
+            self.git("reset", "--quiet", "--hard", held)
+            raise Refusal(f"les tests du résultat fusionné de {ticket_id} n'ont pas été exécutés (NOT RUN, exit 75) : "
+                          "rien n'est fusionné ni renvoyé, la passe suivante les relance")
         entry.update(commit=result, tests=tests)
         if tests["exit_code"] != 0:
             # Not pushed: the integration branch stays on its tip.

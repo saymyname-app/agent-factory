@@ -667,6 +667,20 @@ class TddStepTest(unittest.TestCase):
 
         self.assertIn("commande de régression en échec", error)
 
+    def test_green_refuses_a_regression_not_run_as_no_failure_of_the_ticket(self):
+        """Study C, T1: exit 75 is the regression's NOT RUN (the host busy
+        past its wait, or its budget spent): a plain refusal that blames
+        nothing, never a red."""
+        self.frozen()
+        self.commit("code du ticket", {APP: self.green_app()})
+
+        error = self.refused("green", profile=self.descriptor(
+            regression_command="sh -c 'echo regression: NOT RUN; exit 75'"))
+
+        self.assertIn("commande de régression non exécutée", error)
+        self.assertIn("pas un échec du ticket", error)
+        self.assertNotIn("en échec", error)
+
     def test_green_runs_the_tests_3_times_when_the_profile_declares_no_k(self):
         self.frozen()
         self.commit("code du ticket", {APP: self.green_app()})

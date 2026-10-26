@@ -138,7 +138,9 @@ def read_depots(descriptors, rig_repos, clones_dir, url_template=REPO_URL_TEMPLA
                 if steps is not None:
                     steps_by_project[project_id] = [
                         {"id": str(s.get("id", "")), "title": str(s.get("title", "")), "status": str(s.get("status", "")),
-                         "order": s.get("order") if isinstance(s.get("order"), int) else 0}
+                         "order": s.get("order") if isinstance(s.get("order"), int) else 0,
+                         "done_requires": [str(r) for r in s.get("done_requires") or [] if isinstance(r, str)]
+                         if isinstance(s.get("done_requires"), list) else []}
                         for s in steps
                     ]
                 releases[project_id] = read_release(clone, descriptor["roadmap_path"], git_bin=git_bin)

@@ -304,12 +304,16 @@ The product carries its owner and its deadline in its environment
 (`FACTORY_LAUNCH_OWNER`, `FACTORY_LAUNCH_DEADLINE`, beside
 `FACTORY_LAUNCH_ID`), so `project-launch sweep`, run every 5 minutes by
 `orders/project-launch-sweep.toml`, stops what a guard missed (a guard
-killed, a host restarted, a launch made before this rule: older than the
-default lifetime) and releases copies left without process for longer than
-a lifetime. Each stop of the guard or of the sweep is one JSON line of
+killed, a host restarted, a launch made before this rule). A launch from an
+older tested revision, without owner/deadline marks, stops immediately when
+its matching sidecar names a temporary source repository that has disappeared;
+otherwise it stops after the default lifetime. The sweep also releases copies
+left without process for longer than a lifetime. Each stop of the guard or of
+the sweep is one JSON line of
 `~/.local/state/agent-factory-launch/stops.jsonl` (`FACTORY_LAUNCH_TRACE`):
 who stopped it, why (`owner_ended`, `start_ended`, `lifetime_over`,
-`record_removed`, `copy_left`), the launch, its copy and its repository.
+`source_repository_gone`, `record_removed`, `copy_left`), the launch, its copy
+and its repository.
 
 Intent (Benjamin, his words, 2026-10-12): « corriger le flow par tranches ordonnées et vérifiées ».
 Mechanism (agent interpretation): on Linux, `stop` recognises an exited process still awaiting collection by

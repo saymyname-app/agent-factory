@@ -131,37 +131,57 @@ FLAG_CLOSED = "Incohérent : marqué en cours, son chantier est fermé"
 FLAG_MERGED = "Incohérent : marqué en cours, son résultat est fusionné"
 FLAG_ACCEPTED = "Incohérent : marqué en cours, son résultat est accepté"
 FLAG_UNLINKED = "Aucun chantier relié : rien dans le suivi ne cible cette étape"
+FLAG_REQUIRED = "Incohérent : marquée terminée, %s n'est pas terminée"
+# What it says of a step said done that is not acquired (FLAG_REQUIRED).
+LABEL_NOT_ACQUIRED = "Non acquise"
 
 
 def roadmap_rows(steps, chantiers_by_step):
     """The lines of a structured roadmap, in its order (E, af-8rbceu; R3,
     af-plu8kn; Spec af-fgcw0d, user story 103): ``[{"id", "title",
-    "status", "label", "flag"}]``. ``chantiers_by_step``: ``{step id:
-    [{"closed", "merged", "accepted"}]}``, the chantiers that target each
-    step (their Specs carry it as ``planning_run_target``). A step said in
-    progress whose chantiers are all closed, one of whose results is merged
-    or accepted, is flagged: the roadmap contradicts the tracker. A step
-    said in progress that no chantier targets is flagged too: nothing in
-    the tracker vouches for it. ``chantiers_by_step`` None: the tracker is
-    not read (still read, or its reading failed), so it neither vouches
-    for a step nor contradicts one -- no step is flagged. ``flag`` is None
-    otherwise."""
+    "status", "label", "flag", "acquired"}]``. ``chantiers_by_step``:
+    ``{step id: [{"closed", "merged", "accepted"}]}``, the chantiers that
+    target each step (their Specs carry it as ``planning_run_target``). A
+    step said in progress whose chantiers are all closed, one of whose
+    results is merged or accepted, is flagged: the roadmap contradicts the
+    tracker. A step said in progress that no chantier targets is flagged
+    too: nothing in the tracker vouches for it. A step said done one of
+    whose required steps (``done_requires``, the step ids its end condition
+    requires; R5, af-3r1tmr) is not done is flagged too, naming that step:
+    its end condition is not met, so it is not counted as acquired --
+    ``label`` does not say it done and ``acquired`` is false; ``acquired``
+    is true for every other step done. A step in progress that still waits
+    on a required step is not flagged for its own chantiers being closed,
+    merged or accepted: it is in progress until that step is done.
+    ``chantiers_by_step`` None: the tracker is not read (still read, or its
+    reading failed), so it neither vouches for a step nor contradicts one
+    -- no step is flagged for its chantiers. ``flag`` is None otherwise."""
+    by_id = {str(step.get("id", "")): step for step in steps or []}
     rows = []
     for step in sorted(steps or [], key=lambda s: s.get("order", 0) if isinstance(s.get("order"), int) else 0):
         status = str(step.get("status", ""))
         chantiers = (chantiers_by_step or {}).get(str(step.get("id", ""))) or []
+        requires = step.get("done_requires") if isinstance(step.get("done_requires"), list) else []
+        pending = [str(required) for required in requires
+                   if str((by_id.get(str(required)) or {}).get("status", "")) != "done"]
         flag = None
-        if status == "in_progress" and chantiers_by_step is not None:
+        if status == "done" and pending:
+            flag = FLAG_REQUIRED % ", ".join(
+                str((by_id.get(required) or {}).get("title") or required) for required in pending)
+        elif status == "in_progress" and chantiers_by_step is not None:
             if not chantiers:
                 flag = FLAG_UNLINKED
-            elif any(c.get("merged") for c in chantiers):
-                flag = FLAG_MERGED
-            elif all(c.get("closed") for c in chantiers):
-                flag = FLAG_CLOSED
-            elif any(c.get("accepted") for c in chantiers):
-                flag = FLAG_ACCEPTED
+            elif not pending:
+                if any(c.get("merged") for c in chantiers):
+                    flag = FLAG_MERGED
+                elif all(c.get("closed") for c in chantiers):
+                    flag = FLAG_CLOSED
+                elif any(c.get("accepted") for c in chantiers):
+                    flag = FLAG_ACCEPTED
+        acquired = status == "done" and not pending
+        label = LABEL_NOT_ACQUIRED if status == "done" and pending else STATUS_LABELS.get(status, status or "Inconnu")
         rows.append({"id": str(step.get("id", "")), "title": str(step.get("title", "")), "status": status,
-                     "label": STATUS_LABELS.get(status, status or "Inconnu"), "flag": flag})
+                     "label": label, "flag": flag, "acquired": acquired})
     return rows
 
 

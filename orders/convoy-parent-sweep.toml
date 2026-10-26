@@ -11,4 +11,7 @@ description = "Deterministic zero-token cleanup (af-mu8j4): auto-close open conv
 trigger = "event"
 on = "bead.closed"
 exec = "/home/benja/agent-factory/bin/order-pause gate convoy-parent-sweep -- gc convoy check --json"
-timeout = "60s"
+# af-5e33u6: successful city-wide scans reached 58.88s and five runs then hit
+# this order's old 60s deadline under load. Two minutes keeps one bounded run
+# while leaving headroom for the pause-gate tracker read and convoy scan.
+timeout = "120s"

@@ -1,0 +1,14 @@
+[[step]]
+id = "X1"
+title = "First step"
+done_when = "the first thing works"
+order = 1
+status = "in_progress"
+
+[[step]]
+id = "X2"
+title = "Second step"
+done_when = "the second thing works, and the first"
+order = 2
+status = "in_progress"
+done_requires = [""]
