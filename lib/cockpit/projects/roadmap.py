@@ -142,13 +142,16 @@ def roadmap_rows(steps, chantiers_by_step):
     progress whose chantiers are all closed, one of whose results is merged
     or accepted, is flagged: the roadmap contradicts the tracker. A step
     said in progress that no chantier targets is flagged too: nothing in
-    the tracker vouches for it. ``flag`` is None otherwise."""
+    the tracker vouches for it. ``chantiers_by_step`` None: the tracker is
+    not read (still read, or its reading failed), so it neither vouches
+    for a step nor contradicts one -- no step is flagged. ``flag`` is None
+    otherwise."""
     rows = []
     for step in sorted(steps or [], key=lambda s: s.get("order", 0) if isinstance(s.get("order"), int) else 0):
         status = str(step.get("status", ""))
-        chantiers = chantiers_by_step.get(str(step.get("id", ""))) or []
+        chantiers = (chantiers_by_step or {}).get(str(step.get("id", ""))) or []
         flag = None
-        if status == "in_progress":
+        if status == "in_progress" and chantiers_by_step is not None:
             if not chantiers:
                 flag = FLAG_UNLINKED
             elif any(c.get("merged") for c in chantiers):

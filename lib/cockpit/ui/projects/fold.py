@@ -253,7 +253,8 @@ def project_view(descriptor, project, chantiers_state, depots, roadmap_chantiers
     drawn under the parts of the reference."""
     release, roadmap = _knowledge(depots, descriptor)
     if roadmap["state"] == "read":
-        roadmap["rows"] = roadmap_rows(roadmap["steps"], roadmap_chantiers or {})
+        # Chantiers not read: the tracker says nothing of the steps (R3).
+        roadmap["rows"] = roadmap_rows(roadmap["steps"], (roadmap_chantiers or {}) if project is not None else None)
     own = project_runs(runs, descriptor["project_id"])
     if project is None:
         metrics = [("—", "Décisions attendues · inconnu"), ("—", "Chantiers ouverts · inconnu"),
