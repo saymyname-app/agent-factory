@@ -194,6 +194,7 @@
       "journal-narrow": "config/cockpit-datasets/journal-narrow.json",
       "journal-light": "config/cockpit-datasets/journal-light.json",
       "journal-logs": "config/cockpit-datasets/journal-logs.json",
+      "journal-demonstration": "config/cockpit-datasets/journal-demonstration.json",
       "health-content": "config/cockpit-datasets/health-content.json",
       "health-empty": "config/cockpit-datasets/health-empty.json",
       "health-loading": "config/cockpit-datasets/health-loading.json",

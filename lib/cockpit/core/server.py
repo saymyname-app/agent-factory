@@ -34,6 +34,7 @@ from cockpit.projects.source import project_page_data
 from cockpit.requests.assemble import assemble_from_snapshot
 from cockpit.requests.defects import DefectCounter
 from cockpit.requests.journal import entries_from_value as journal_entries_from_value
+from cockpit.requests.journal import sources_from_value as journal_sources_from_value
 from cockpit.requests.sources.readability import ILLISIBLE_THRESHOLD_SECONDS
 from cockpit.runs.derive import runs_from_beads
 from cockpit.runs.workflows import workflow_runs
@@ -48,9 +49,8 @@ from cockpit.ui.home.page import render_requests_section
 from cockpit.ui.panorama.shell import CSS as PANORAMA_CSS
 from cockpit.ui.panorama.shell import HOME, NAVIGATION, render_not_folded, render_shell
 from cockpit.ui.stop.render import render_stop_section
-from cockpit.ui.journal.panorama import CSS as JOURNAL_PANORAMA_CSS, journal_items, render_journal_panorama
+from cockpit.ui.journal.panorama import CSS as JOURNAL_PANORAMA_CSS, journal_items, journal_view, render_journal_panorama
 from cockpit.ui.journal.render import CSS as JOURNAL_CSS
-from cockpit.ui.journal.render import render_journal_unknown
 from cockpit.ui.notify.render import render_envois_section
 from cockpit.ui.runs.page import CSS as RUNS_PAGE_CSS, render_run_page, render_runs_page
 from cockpit.ui.projects.page import (
@@ -632,33 +632,35 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                         snapshot=snapshot)
 
     def _send_journal_page(self, read_model):
-        """GET /journal (spec .18): what changed, day by day -- the requests
-        answered or cleared, re-read from the traces on the beads (the
-        cockpit keeps no copy of its own), and the deliveries merged or
-        stopped; filtered by ?filtre=."""
-        row = read_model.snapshot().get("journal")
+        """GET /journal?vue=&categorie=&source=&q= (spec .18; F, af-njwz8v):
+        the useful events day by day -- the requests answered or cleared,
+        re-read from the traces on the beads (the cockpit keeps no copy of
+        its own), the deliveries of the runs, the events held for the
+        journal --, the technical logs, and the coverage of their sources."""
+        snapshot = read_model.snapshot()
+        row = snapshot.get("journal")
         runs, _, _ = self._runs(read_model)
-        unknown_html, checked = "", None
-        if row is None or row["value"] is None or row["freshness"] == UNKNOWN:
-            items = journal_items([], runs)
-            unknown_html = render_journal_unknown(row["read_at"] if row else None)
-        else:
-            items = journal_items(journal_entries_from_value(row["value"]), runs)
-            checked = datetime.fromtimestamp(row["read_at"], tz=PARIS).strftime("%H:%M")
+        known = row is not None and row["value"] is not None and row["freshness"] != UNKNOWN
+        projects = {}
+        projets = snapshot.get("projets")
+        if projets is not None and projets["value"] is not None:
+            projects = {p.project_id: p.display_name for p in projects_from_value(projets["value"])[0]}
+        view = journal_view(row, journal_entries_from_value(row["value"]) if known else [], runs, projects,
+                            snapshot.get("gc"), journal_sources_from_value(row["value"]) if known else ())
         notify = self.server.notify
         envois = render_envois_section(notify.journal_entries(), notify.configured()) if notify is not None else ""
-        filtre = (urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("filtre") or ["utiles"])[0]
+        query = {key: values[0] for key, values in urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).items()}
         self._send_page(read_model, "journal",
-                        render_journal_panorama(items, filtre, read_model.now(), checked=checked, envois_html=envois,
-                                                unknown_html=unknown_html),
-                        extra_css=PROJECT_PAGE_CSS + JOURNAL_CSS + JOURNAL_PANORAMA_CSS)
+                        lambda anchors: render_journal_panorama(view, query, read_model.now(), anchors, envois_html=envois),
+                        extra_css=PROJECT_PAGE_CSS + JOURNAL_CSS + JOURNAL_PANORAMA_CSS, snapshot=snapshot)
 
     def _journal_payload(self, snapshot):
         """JSON twin of the journal page, for tests."""
         row = snapshot.get("journal")
         if row is None or row["value"] is None or row["freshness"] == UNKNOWN:
             return {"state": "unknown", "entries": []}
-        return {"state": "filled", "verified_at": row["read_at"], "entries": row["value"]["entries"]}
+        return {"state": "filled", "verified_at": row["read_at"], "entries": row["value"]["entries"],
+                "sources": journal_sources_from_value(row["value"])}
 
     def _projects_payload(self, snapshot):
         """JSON twin of :meth:`_render_projects_zone`, for tests."""

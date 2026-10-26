@@ -1,0 +1,58 @@
+{
+  "generated_at": "2026-10-12T12:00:00+02:00",
+  "synthetic": true,
+  "ui": {
+    "id": "journal-demonstration",
+    "page": "journal",
+    "state": "content"
+  },
+  "visible_text": "Journal\n\nLes changements qui comptent, leurs conséquences et la suite.\n\nÉvénements utiles\nLogs techniques\nSources disponibles\nTout\nBugs\nPropositions\nChangements\nDécisions\nÉvénements\nAujourd’hui\n14:48 (Paris) · Usine · Proposition\nDeux améliorations proposées après une revue\n\nTu peux choisir les problèmes à faire préparer.\n\nVoir les propositions\nDétail et source\n14:42 (Paris) · Usine · Changement\nLe cockpit est prêt à essayer\n\nUn résultat attend ton avis.\n\nVoir le résultat\nDétail et source\n14:36 (Paris) · Notes · Bug\nUne recherche sur des notes longues échoue\n\nLe défaut a été enregistré ; la correction reste à préparer.\n\nVoir le projet\nDétail et source\n14:20 (Paris) · Notes · Décision\nLe format CSV a été choisi\n\nL’usine peut poursuivre la préparation de l’export.\n\nVoir le projet\nDétail et source\n14:36 (Paris) · ci\nVérification échouée\n\nLa vérification de régression n’a pas réussi. Le résultat reste à corriger.\n\nÉvénement brut\n14:35 (Paris) · agents\nNouvelle session auteur\n\nUne nouvelle session reprend le même travail avec son contexte de départ.\n\nÉvénement brut\n14:34 (Paris) · delivery\nRésultat prêt à juger\n\nLes vérifications requises ont terminé ; ton jugement est attendu.\n\nÉvénement brut\n14:30 (Paris) · connections\nLecture du superviseur interrompue\n\nLa dernière valeur est conservée comme périmée.\n\nÉvénement brut\n14:25 (Paris) · maintenance\nNettoyage terminé\n\nLes espaces sans travail actif identifiés ont été retirés.\n\nÉvénement brut\n14:20 (Paris) · notifications\nNotification remise au service\n\nLe service a accepté l’envoi ; la lecture sur le téléphone n’est pas connue.\n\nÉvénement brut\n14:10 (Paris) · unknown\nÉvénement non reconnu\n\nLe type reçu ne possède pas encore de libellé. Le contenu brut reste accessible.\n\nÉvénement brut\n\nLibellés fixes par type d’événement ; aucun appel de modèle.\n\nHier\n18:10 (Paris) · Portfolio · Changement\nLa présentation a été fusionnée\n\nLe changement est intégré ; sa publication n’est pas attestée ici.\n\nVoir le projet\nDétail et source\n16:05 (Paris) · Usine · Événement\nLa connexion au superviseur a été rétablie\n\nLes lectures ont repris après 3 minutes d’interruption.\n\nVoir les connexions\nDétail et source",
+  "production_writes": 0,
+  "folded": {
+    "Deux améliorations proposées après une revue": [
+      "La revue regroupe les incidents par cause. Aucun travail lancé sans décision.",
+      "Événement synthétique · aucune action de production."
+    ],
+    "Le cockpit est prêt à essayer": [
+      "Dossier courant, essai disponible. Prêt à juger ne signifie pas accepté ni fusionné.",
+      "Événement synthétique · aucune action de production."
+    ],
+    "Une recherche sur des notes longues échoue": [
+      "Défaut d’exemple, regroupé avec les signalements de même cause.",
+      "Événement synthétique · aucune action de production."
+    ],
+    "Le format CSV a été choisi": [
+      "Choix enregistré explicitement. Aucun déploiement produit impliqué.",
+      "Événement synthétique · aucune action de production."
+    ],
+    "La présentation a été fusionnée": [
+      "Fusion et mise en production sont deux faits distincts.",
+      "Événement synthétique · aucune action de production."
+    ],
+    "La connexion au superviseur a été rétablie": [
+      "Événement technique ayant affecté la fraîcheur du cockpit. Les appels et logs détaillés restent dans les runs.",
+      "Événement synthétique · aucune action de production."
+    ],
+    "Vérification échouée": [
+      "ci.completed outcome=failure job=regression exit=1"
+    ],
+    "Nouvelle session auteur": [
+      "session.started role=author reason=context_refresh"
+    ],
+    "Résultat prêt à juger": [
+      "outcome.delivered evidence=current"
+    ],
+    "Lecture du superviseur interrompue": [
+      "source.read_failed source=supervisor timeout_ms=5000"
+    ],
+    "Nettoyage terminé": [
+      "maintenance.completed gesture=clean-worktrees removed=3"
+    ],
+    "Notification remise au service": [
+      "notification.accepted channel=push"
+    ],
+    "Événement non reconnu": [
+      "source=example event=unmapped_demo payload={\"sample\":true}"
+    ]
+  }
+}
