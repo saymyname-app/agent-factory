@@ -171,10 +171,11 @@ def current_step(rows):
     in progress, the first to do. None when every step in progress carries
     a reserve -- a step flagged is never presented as current for certain,
     and a step to do does not stand in for a step in progress."""
-    in_progress = [r for r in rows if r["status"] == "in_progress"]
+    started, upcoming = DEFAULT_STATUSES_BY_PRIORITY
+    in_progress = [r for r in rows if r["status"] == started]
     if in_progress:
         return next((r for r in in_progress if not r["flag"]), None)
-    return next((r for r in rows if r["status"] == "todo" and not r["flag"]), None)
+    return next((r for r in rows if r["status"] == upcoming and not r["flag"]), None)
 
 
 def presented_step(rows):
