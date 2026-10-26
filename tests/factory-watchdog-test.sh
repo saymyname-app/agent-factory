@@ -82,17 +82,20 @@ case "\$1 \$2" in
     fi
     echo '[]'; exit 0 ;;
   "bd show")
-    id="\$3"
-    if [[ "\$id" == af-1vr4 ]]; then cat "$COORD"; exit 0; fi
-    f="$BEADS_DIR/\$id.json"
-    if [[ -f "\$f" ]]; then
-      cat "\$f"
-    else
-      # Every id watchdog/escalation-door ever shows here is a real bead in
-      # production (gate ids included); synthesize a minimal open one so
-      # escalation-door's show_bead never dies on a fixture gap.
-      echo '[{"id":"'"\$id"'","status":"open","metadata":{}}]'
-    fi
+    shift 2
+    for id in "\$@"; do
+      [[ "\$id" == --json ]] && continue
+      if [[ "\$id" == af-1vr4 ]]; then cat "$COORD"; continue; fi
+      f="$BEADS_DIR/\$id.json"
+      if [[ -f "\$f" ]]; then
+        cat "\$f"
+      else
+        # Every id watchdog/escalation-door ever shows here is a real bead in
+        # production (gate ids included); synthesize a minimal open one so
+        # escalation-door's show_bead never dies on a fixture gap.
+        echo '[{"id":"'"\$id"'","status":"open","metadata":{}}]'
+      fi
+    done | jq -s 'add // []'
     exit 0 ;;
   "bd create")
     id="af-new\$RANDOM"
@@ -415,6 +418,17 @@ out=$(watchdog --check-only)
 grep -q "ticket sans suite — af-t9 (T09) du convoi af-cv1 : sans suite depuis" <<<"$out" \
   || { echo "$out" >&2; fail "--check-only should still report a ticket without a next step"; }
 [ "$(creates)" = "0" ] || fail "--check-only must never file a bead for a ticket without a next step"
+[ "$(grep -c '^bd show ' "$CALLS")" = "1" ] \
+  || fail "ticket scan must read the convoy and ticket in one batched tracker call"
+grep -q '^bd show af-cv1 af-t9 --json$' "$CALLS" \
+  || { cat "$CALLS" >&2; fail "ticket scan did not batch its tracker reads"; }
+
+printf '[{"id":"af-cv1","status":"open","metadata":{"gc.needs_benjamin":"Decision attendue"}}]' > "$BEADS_DIR/af-cv1.json"
+reset_logs
+out=$(watchdog --check-only)
+grep -q "ticket sans suite —" <<<"$out" \
+  && { echo "$out" >&2; fail "a ticket whose convoy is on the operator list must not be reported"; }
+unlink "$BEADS_DIR/af-cv1.json"
 
 reset_logs
 out=$(watchdog)
