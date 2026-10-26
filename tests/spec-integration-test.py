@@ -938,6 +938,38 @@ class SpecIntegrationTest(unittest.TestCase):
         self.addCleanup(lambda: subprocess.run(["kill", "-9", str(grandchild)], capture_output=True))
         self.assertFalse(Path(f"/proc/{grandchild}").exists(), "the control's own child still runs")
 
+    def not_run_profile(self):
+        descriptor = json.loads(self.profile.read_text())
+        descriptor["launch"]["regression_command"] = "sh -c 'echo regression: NOT RUN; exit 75'"
+        self.profile.write_text(json.dumps(descriptor))
+
+    def test_tests_not_run_on_the_merged_result_merge_nothing_and_return_no_ticket(self):
+        # Study C, T1: exit 75 is the regression's NOT RUN (the host busy
+        # past its wait, or its budget spent), never a red of the ticket.
+        self.two_finished_tickets()
+        before = self.remote_tip()
+        self.not_run_profile()
+
+        proc = self.merge()
+
+        self.assertEqual(EXIT_REFUSED, proc.returncode, proc.stdout + proc.stderr)
+        answer = json.loads(proc.stdout)
+        self.assertIn("NOT RUN", answer.get("error") or answer.get("message"))
+        self.assertNotIn("returned", answer)
+        self.assertEqual((None, None), (self.shown(T1)["merge"], self.shown(T2)["merge"]))
+        self.assertEqual(before, self.remote_tip())
+        self.assertEqual(1, len(self.worktrees()))
+
+    def test_a_take_up_not_run_records_no_red(self):
+        self.opened()
+        self.not_run_profile()
+
+        proc = self.take_up()
+
+        self.assertEqual(EXIT_REFUSED, proc.returncode, proc.stdout + proc.stderr)
+        self.assertIn("NOT RUN", json.loads(proc.stdout).get("error"))
+        self.assertIsNone(self.show()["convoy"]["integration_red"])
+
     def test_a_red_takeover_is_not_pushed_and_no_ticket_is_blamed(self):
         self.two_finished_tickets()
         self.advance_protected({DATASET: json.dumps({"state": "content", "items": []})})
