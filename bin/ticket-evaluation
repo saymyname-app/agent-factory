@@ -61,6 +61,7 @@ GC_BIN = os.environ.get("GC_BIN", "gc")
 STATE_TOOL = BIN / "convoy-state"
 LAUNCH_TOOL = BIN / "project-launch"
 CAPTURE_TOOL = BIN / "evidence-capture"
+DEMONSTRATION_PIECE = "demonstration"
 ESCALATION_TOOL = BIN / "escalation-door"
 OPERATOR_CONFIG_BIN = BIN / "operator-config"
 SETTINGS = ROOT / "config" / "delivery-flow.json"
@@ -367,8 +368,9 @@ class Convoy:
             raise Refusal(
                 f"le profil {path} ne déclare aucun jeu de données (launch.datasets) : le produit ne se lance "
                 "que sur un jeu de données nommé")
-        declared = sorted(declared)
         ticket = self.ticket(ticket_id)
+        commit = (evaluation_of(ticket).get("request") or {}).get("commit") or ticket.get("tip")
+        declared = sorted({*declared, *branch_datasets(self.repo, commit, path, launch)})
         criteria = [str(text) for text in ticket.get("criteria") or []]
         texts = [*criteria, str(ticket.get("demonstration_line") or "")]
         named = {name for name in declared
@@ -377,7 +379,33 @@ class Convoy:
                                [{"number": n, "text": t} for n, t in enumerate(criteria, 1)],
                                declared, "", ticket_id)
         named.update(entry.get("dataset") for entry in expectations if entry.get("dataset") in declared)
+        # af-npz9v1.18: the dataset the author's demonstration was proven on,
+        # when it holds a state no dataset of the criteria holds (B, af-4uzgzm).
+        shown = demonstration_dataset(self.id, ticket)
+        if shown in declared:
+            named.add(shown)
         return sorted(named) or declared[:1]
+
+
+def branch_datasets(repo: Path, commit: str | None, path: Path, launch: dict[str, Any]) -> list[str]:
+    """The datasets the evaluated commit's copy of the profile adds, which
+    bin/project-launch launches at that commit (af-npz9v1.18): a dataset a
+    ticket brings in its branch is one of its datasets (R1, af-d6anqb)."""
+    if not isinstance(commit, str) or not commit:
+        return []
+    top = run(["git", "-C", str(path.resolve().parent), "rev-parse", "--show-toplevel"])
+    if top.returncode:
+        return []
+    try:
+        relative = path.resolve().relative_to(Path(top.stdout.strip()).resolve()).as_posix()
+        copy = json.loads(run(["git", "-C", str(repo), "show", f"{commit}:{relative}"]).stdout or "null")
+        main = json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return []
+    if not isinstance(copy, dict) or not isinstance(main, dict)             or any(copy.get(key) != main.get(key) for key in ("project_id", "rigs")):
+        return []
+    datasets = copy.get("launch", {}).get("datasets") if isinstance(copy.get("launch"), dict) else None
+    return [name for name in datasets if name not in launch.get("datasets", {})] if isinstance(datasets, dict) else []
 
 
 def readable(ticket: dict[str, Any]) -> dict[str, Any]:
@@ -389,6 +417,22 @@ def readable(ticket: dict[str, Any]) -> dict[str, Any]:
         if isinstance(record, dict) and "unruled" in record:
             raise Refusal(f"état sans règle : {record['unruled']}")
     return ticket
+
+
+def demonstration_dataset(convoy_id: str, ticket: dict[str, Any]) -> str | None:
+    """The dataset of the product the author's demonstration was captured
+    on (bin/ticket-author demonstrate; bin/evidence-capture keeps it), or
+    None: no sealed demonstration, an older record without it, or a piece
+    the store does not verify."""
+    if not (ticket.get("evidence") or {}).get(DEMONSTRATION_PIECE):
+        return None
+    proc = run([str(CAPTURE_TOOL), "verify", convoy_id, str(ticket.get("id")), "--piece", DEMONSTRATION_PIECE])
+    try:
+        path = json.loads(proc.stdout)["pieces"][0]["path"]
+        dataset = json.loads(Path(path).read_text(encoding="utf-8")).get("dataset")
+    except (KeyError, IndexError, TypeError, OSError, ValueError):
+        return None
+    return dataset if proc.returncode == 0 and isinstance(dataset, str) else None
 
 
 def evaluation_of(ticket: dict[str, Any]) -> dict[str, Any]:

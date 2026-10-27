@@ -336,6 +336,13 @@ the address of the product in `PRODUCT_ADDRESS`), or a screenshot of a path:
   --dataset <a dataset of the profile> --path /<path of the page>
 ```
 
+The dataset is the one that holds the state your line shows: one your
+criteria name, or, for a state none of them holds, a dataset of your own,
+never one a frozen test of another ticket reads (changing it breaks that
+test). The Evaluator launches the dataset of your demonstration too.
+A new dataset goes in your branch's profile (`launch.datasets`): the launcher
+reads it at your commit, so pass the profile of main as usual.
+
 If the line is not observed, the ticket is not done: go back to the code,
 commit, prove it green again (`bin/tdd-step green`), and demonstrate again.
 The proof is tied to the head commit: any commit after it means a new
