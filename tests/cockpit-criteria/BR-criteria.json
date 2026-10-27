@@ -1,11 +1,8 @@
 {
   "criteria": {
     "1": [
-      "tests/cockpit-criteria/commands/pour-moi-visible-test.py::PourMoiVisible.test_home_content_full_opens_a_request_with_its_gesture_unfolded",
-      "tests/cockpit-criteria/commands/pour-moi-visible-test.py::PourMoiVisible.test_home_long_opens_a_request_with_its_gesture_unfolded",
-      "tests/cockpit-criteria/commands/pour-moi-gestures-test.py::PourMoiGestures.test_a_proposal_is_refused_with_its_reason_once_confirmed",
-      "tests/cockpit-criteria/commands/pour-moi-gestures-test.py::PourMoiGestures.test_a_proposal_is_put_off_once_confirmed",
-      "tests/cockpit-criteria/commands/pour-moi-gestures-test.py::PourMoiGestures.test_a_paused_session_is_relaunched_once_confirmed"
+      "tests/cockpit-criteria/commands/pour-moi-visible-test.py::PourMoiVisible.test_home_gestes_opens_each_request_with_its_gestures_unfolded",
+      "tests/cockpit-criteria/commands/pour-moi-gestures-test.py::PourMoiGestures.test_a_paused_order_is_relaunched_through_its_door_once_confirmed"
     ],
     "2": [
       "tests/cockpit-criteria/commands/action-expiry-test.py::ActionExpiry.test_a_command_that_expires_answers_a_readable_error_then_the_gesture_comes_back_once_reread",
