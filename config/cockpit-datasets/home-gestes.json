@@ -64,6 +64,26 @@
      "gc.escalation_horodatage": "2026-10-12T08:00:00Z",
      "gc.project_id": "notes"
     }
+   },
+   "af-o2d7k": {
+    "title": "Ordre en pause : convoy-advance",
+    "status": "open",
+    "issue_type": "task",
+    "priority": 2,
+    "labels": [
+     "order-pause"
+    ],
+    "description": "L'ordre convoy-advance est en pause : `gate` ne lance plus sa commande tant que cet enregistrement est ouvert.\n\nPar : mayor\nLe : 12/10/2026 10:00 (Paris)\nSes mots : « pause : intégration rouge »\nRaison : (non donnée)\n\nReprendre : bin/order-pause resume convoy-advance --by NOM --words TEXTE",
+    "notes": "",
+    "created_at": "2026-10-12T08:00:00Z",
+    "updated_at": "2026-10-12T08:00:00Z",
+    "metadata": {
+     "gc.order_pause": "convoy-advance",
+     "gc.order_pause_by": "mayor",
+     "gc.order_pause_words": "pause : intégration rouge",
+     "gc.order_pause_at": "2026-10-12T08:00:00Z",
+     "gc.order_pause_reason": ""
+    }
    }
   }
  },

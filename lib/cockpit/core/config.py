@@ -123,6 +123,11 @@ class Config:
         self.loop_guard_bin = env.get(
             "COCKPIT_LOOP_GUARD_BIN", os.path.join(_REPO_ROOT, "bin", "factory-session-loop-guard")
         )
+        # The door of pause and resume of an order (af-npz9v1.15), which
+        # relancer resumes an order through (BR, af-eyc5ah).
+        self.order_pause_bin = env.get(
+            "COCKPIT_ORDER_PAUSE_BIN", os.path.join(_REPO_ROOT, "bin", "order-pause")
+        )
         self.gc_bin = env.get("COCKPIT_GC_BIN", "gc")
         # Notifications and heartbeat (spec §"Notifications", §"Heartbeat et
         # usine muette"). Both secret files live outside the repository, on

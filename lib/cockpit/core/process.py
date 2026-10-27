@@ -133,7 +133,7 @@ def build(config, clock=None):
     # Out-of-scope touch (T14, af-peh3yy -- declared scope
     # lib/cockpit/actions/**, lib/cockpit/ui/actions/**): répondre,
     # accepter/rejeter/reporter une proposition, and relancer need the
-    # escalation-door/proposal-door/loop-guard/gc binaries wired through
+    # escalation-door/proposal-door/loop-guard/order-pause binaries wired through
     # from config, the same as bd_bin already is.
     action_handlers = build_action_handlers(
         config.bd_bin,
@@ -141,7 +141,7 @@ def build(config, clock=None):
         escalation_door_bin=config.escalation_door_bin,
         proposal_door_bin=config.proposal_door_bin,
         loop_guard_bin=config.loop_guard_bin,
-        gc_bin=config.gc_bin,
+        order_pause_bin=config.order_pause_bin,
         door_timeout=config.action_timeout_seconds,
     )
     server = make_server(

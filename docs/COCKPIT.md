@@ -369,7 +369,7 @@ dossier is read by `projects/source.py` in the folder its record names
 (`path`, the folder of the Evidence Pack; `read_pack_sections` opens its
 `index.html`: one rubric per `<section id="rubrique-N">`).
 
-## « Pour moi » au premier plan, gestes confirmés, commandes qui n'échouent plus en silence (B, af-4uzgzm)
+## « Pour moi » au premier plan, gestes confirmés, commandes qui n'échouent plus en silence (B, af-4uzgzm ; BR, af-eyc5ah)
 
 Spec af-fgcw0d, user stories 6, 27, 29, 34, 73, 75, 76, 79, 122 et 175 ;
 Validated Prototype `prototype/cockpit-b-zones-20261012` à 632deea, états
@@ -388,6 +388,7 @@ puis la vérification de ce qu’il a fait.
 | Geste | Avant B | Avec B |
 |---|---|---|
 | Ouvrir une demande et voir ses gestes | 1 clic de plus (déplier la zone technique) | 1 clic sur la ligne |
+| Relancer un ordre en pause | une PR qui retirait son nom de `[orders] skip` de `city.toml`, sa CI et un rechargement de la cité (#701), ou depuis le 23/10 une commande `bin/order-pause resume` tapée par un agent | 2 clics (armer, « Confirmer ») et aucun jeton ; la pause levée est relue à la source en moins de 20 s (`TRACED_SECONDS`) |
 | Relancer une session en pause | une session d’agent : quelques minutes de ton temps et les jetons d’une session (estimation, non mesurée : de l’ordre de 20 000 à 50 000 jetons pour relire le contexte) | 2 clics (armer, « Confirmer ») et aucun jeton ; l’écriture à la source est relue en moins de 20 s (mesuré par les tests de critère, `TRACED_SECONDS`) |
 | Reporter une proposition jusqu’à une heure | impossible sans agent : l’heure écrite en mots ne la cachait pas | 2 clics, la proposition est cachée jusqu’à l’heure choisie |
 | Une commande qui ne répond pas | le geste restait sans réponse, et le répéter risquait un doublon | une erreur lisible en 15 s au plus (`COCKPIT_ACTION_TIMEOUT_SECONDS`), puis une relecture de la source avant tout nouvel essai |
@@ -406,6 +407,7 @@ barre de gestes :
 | une question (NEEDS BENJAMIN) | ses options, chacune la réponse (armée, puis « Confirmer ? ») ; Continuer avec un agent ; Acquitter (Urgent) ; Reporter |
 | une proposition de classe décision | Accepter ; Refuser, avec la raison écrite dans son champ ; Reporter → « Dans 1 h », « Dans 4 h », « Demain 09:00 », chacun armé puis confirmé ; Continuer avec un agent |
 | une session mise en pause par l’usine (`[session-loop] <session>`, `gc.source=factory-session-loop-guard`, `lib/cockpit/requests/sources/paused_sessions.py`) | Relancer (armé, puis confirmé : `factory-session-loop-guard resume`, tracé sur sa fiche, « Relance demandée » au journal) ; Reporter |
+| un ordre en pause (« Un ordre de l’usine est en pause » : la fiche ouverte de `bin/order-pause pause`, `gc.order_pause=<ordre>`, `lib/cockpit/requests/sources/paused_orders.py`) ; le nom de l’ordre, qui l’a mis en pause et ses mots sont dans les détails | Relancer (armé, puis confirmé : `bin/order-pause resume <ordre> --by benjamin --words "relance depuis le cockpit"`, qui ferme la fiche de la pause ; « Relance demandée » au journal) ; Reporter |
 | « Usine muette » | Vérifier l’usine (la page Usine) ; Revérifier maintenant |
 | un signal non reconnu (`lib/cockpit/requests/sources/unknown_signal.py`) | Continuer avec un agent ; Reporter |
 
@@ -417,12 +419,13 @@ reporter` avec l’heure que le cockpit a calculée (ISO, heure de Paris) :
 `gc.cockpit_defer_until` cache toute autre demande ; une heure écrite en
 mots libres ne cache rien.
 
-**Un ordre en pause n’est pas relancé.** Rien dans l’usine ne met un ordre
-en pause : la seule pause d’un ordre est une décision de l’opérateur, son
-nom dans `[orders] skip` de `city.toml` (#691, #695). `gc order run` ne
-trouve pas un ordre ainsi mis de côté, et aucune porte ne lève cette pause.
-Aucune demande n’en est donc lue ; c’est l’écart que porte la Planning
-Exception de B.
+**Un ordre se relance par sa porte.** Depuis le 23/10, une pause d’ordre
+est une fiche du suivi posée par `bin/order-pause` (af-npz9v1.15, #724) ;
+BR la lit et la lève par cette porte, jamais par `gc order run`, qui
+lancerait l’ordre hors de son échéance sans lever la pause. Un ordre retiré
+par `[orders] skip` de `city.toml` reste ta décision de config : le cockpit
+n’en lit aucune demande, et la porte ne le touche pas. Le cockpit trouve la
+porte par `COCKPIT_ORDER_PAUSE_BIN` (par défaut `bin/order-pause` du dépôt).
 
 Sur une lecture qui n’est plus à jour, les gestes sont dessinés et
 indisponibles (« Lecture périmée : les gestes reviennent à la prochaine
@@ -1126,21 +1129,23 @@ copy. What it gives the cockpit to read:
 | supervisor | a synthetic one, `tests/fixtures/cockpit/core/fake_gc.py`, the fake `tests/cockpit-fake-gc-contract-test.py` holds to the installed supervisor; what it answers is what the dataset says (below) |
 | tracker | `tests/fixtures/cockpit/synthetic-city/bd`, which answers the beads written for this launch from the dataset as `tests/fixtures/cockpit/requests/fake-bd` does -- hiding the closed ones from a plain `list` as `bd` does --, and writes what the doors and the gestures write there (`update`, `create`, `show`), in the home of the launch only |
 | declared projects | one descriptor per project the dataset names, written for this launch; no file of the repository |
-| doors that change the Factory (`gc order run`, escalation door, proposal door, loop guard) | the real doors of the commit, run on the tracker of the launch through a synthetic `gc` (`tests/fixtures/cockpit/synthetic-city/gc`: `gc bd` is that tracker; a mail, the waking of a session, the run of an order are taken and change nothing else); the cockpit gives up on a door after 5 s (`COCKPIT_ACTION_TIMEOUT_SECONDS`). A dataset may say how a door answers (`doors`: `proposal-door`, `escalation-door`, `loop-guard` or `gc`, each `expires` -- it never answers, and writes nothing -- or `records-then-expires` -- it writes its record, then never answers); `bin/cockpit-isolated` refuses any other |
+| doors that change the Factory (`gc order run`, escalation door, proposal door, loop guard, `bin/order-pause`) | the real doors of the commit, run on the tracker of the launch through a synthetic `gc` (`tests/fixtures/cockpit/synthetic-city/gc`: `gc bd` is that tracker; a mail, the waking of a session, the run of an order are taken and change nothing else); the cockpit gives up on a door after 5 s (`COCKPIT_ACTION_TIMEOUT_SECONDS`). A dataset may say how a door answers (`doors`: `proposal-door`, `escalation-door`, `loop-guard`, `order-pause` or `gc`, each `expires` -- it never answers, and writes nothing -- or `records-then-expires` -- it writes its record, then never answers); `bin/cockpit-isolated` refuses any other |
 | silence of the main sources | said « Usine muette » after 20 s (`COCKPIT_SILENCE_ALERT_SECONDS`): a state that falls silent (home-stale, home-offline) is first seen as it is drawn |
 | local settings, secrets, notifications, heartbeat, project clones, Tailscale | none: a temporary HOME and no local settings file |
 
 `home-gestes` carries such a tracker: a proposal, a session the loop guard
-paused and a question, with the escalation door that expires. On it the
+paused, a question and the pause of the order `convoy-advance` as
+`bin/order-pause` records it, with the escalation door that expires. On it the
 gestures of « Ce qui t’attend » are confirmed and read back at their source,
-and an answer to the question expires (B, af-4uzgzm: its demonstration line;
+and an answer to the question expires (B, af-4uzgzm, then BR, af-eyc5ah: its demonstration line;
 for Benjamin, « Le jeu home-gestes » below says it in French).
 
 Le jeu `home-gestes` (pour Benjamin) : un suivi des tickets tel que les
-portes l’écrivent — une proposition, une session mise en pause par l’usine et
-une question —, la porte des questions ne répondant jamais. On y refuse une
-proposition avec sa raison, on relance la session, et une réponse à la
-question expire, puis la source est relue.
+portes l’écrivent — une proposition, une session mise en pause par l’usine,
+une question et l’ordre `convoy-advance` mis en pause —, la porte des
+questions ne répondant jamais. On y refuse une proposition avec sa raison,
+on relance la session et l’ordre, et une réponse à la question expire, puis
+la source est relue.
 
 No controller and no tracker is started. A dataset that is not marked
 `"synthetic": true`, carries no `generated_at`, names no state, or whose

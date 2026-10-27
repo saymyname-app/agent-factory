@@ -84,7 +84,7 @@ def _resolve_target(bd_bin, payload):
 
 def _run_door(args, timeout=DOOR_TIMEOUT_SECONDS):
     """Shells out to a door binary (escalation-door, proposal-door, the
-    loop-guard, or the order runner) the same way :mod:`cockpit.actions.
+    loop-guard, or the door of an order) the same way :mod:`cockpit.actions.
     trace` shells out to ``bd`` -- a non-zero exit becomes an
     :class:`ActionError` carrying the door's own refusal message, never
     swallowed; a door that does not answer within ``timeout`` is killed,
@@ -141,7 +141,7 @@ def build_action_handlers(
     escalation_door_bin="escalation-door",
     proposal_door_bin="proposal-door",
     loop_guard_bin="factory-session-loop-guard",
-    gc_bin="gc",
+    order_pause_bin="order-pause",
     door_timeout=DOOR_TIMEOUT_SECONDS,
 ):
     def run_door(args):
@@ -271,17 +271,19 @@ def build_action_handlers(
         return result
 
     def handle_relancer(payload):
-        """Relancer (T14 AC3): resumes a session or an order the
-        factory-session-loop-guard paused. Unlike the doors above, there is
-        no existing trace-writer for this -- the handler traces it itself
-        on the target bead/journal, exactly like acquitter/reporter do."""
+        """Relancer (T14 AC3): resumes a session the
+        factory-session-loop-guard paused, or an order bin/order-pause
+        paused (BR, af-eyc5ah). The doors trace their own resume on their
+        record; the handler traces the gesture itself on the target
+        bead/journal, exactly like acquitter/reporter do."""
         _require_confirm(payload)
         target_type = _require(payload, "target_type")
         session_id = payload.get("session_id")
         order_name = payload.get("order_name")
         try:
             args = relancer.build_relance_command(
-                target_type, loop_guard_bin, gc_bin, session_id=session_id, order_name=order_name
+                target_type, loop_guard_bin, order_pause_bin, session_id=session_id, order_name=order_name,
+                acteur=acteur,
             )
         except relancer.RelanceError as exc:
             raise ActionError(str(exc))

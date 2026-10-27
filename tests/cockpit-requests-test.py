@@ -618,6 +618,36 @@ class UnknownSignalSeamTest(CockpitOnFakes):
         self.assertIn(self.RAW_TITLE, details)
         self.assertIn(self.RAW_TEXT, details)
 
+    def test_an_order_paused_by_its_door_waits_on_the_operator_with_its_relaunch(self):
+        # As bin/order-pause (pause) records it (af-npz9v1.15); BR af-eyc5ah.
+        self.start_cockpit()
+        pause = {"gc.order_pause": "convoy-advance", "gc.order_pause_by": "mayor",
+                 "gc.order_pause_words": "pause : intégration rouge", "gc.order_pause_at": "2026-09-30T08:00:00Z",
+                 "gc.order_pause_reason": ""}
+        self.write_beads([
+            {"id": "af-ord1", "status": "open", "labels": ["order-pause"], "notes": "",
+             "title": "Ordre en pause : convoy-advance", "description": "", "metadata": pause},
+            # Resumed: its door closed the record.
+            {"id": "af-ord2", "status": "closed", "labels": ["order-pause"], "notes": "",
+             "title": "Ordre en pause : factory-guard", "description": "",
+             "metadata": {**pause, "gc.order_pause": "factory-guard"}},
+        ])
+        payload = self.wait_for_requests(lambda p: any(r["id"] == "af-ord1" for r in p["requests"]))
+        self.assertEqual(["af-ord1"], [r["id"] for r in payload["requests"]])
+        [request] = payload["requests"]
+        self.assertEqual("Un ordre de l’usine est en pause", request["quoi"])
+        self.assertEqual("À faire", request["niveau"])
+        self.assertEqual("ordre_en_pause", request["type"])
+
+        body = self.home_body()
+        start = body.index('id="d-af-ord1"')
+        article = body[start:body.index("</article>", start)]
+        main, details = article.split('<details class="more pn-request-details">', 1)
+        self.assertNotIn("convoy-advance", main, "the name of the order is shown as main text")
+        self.assertIn("convoy-advance", details)
+        self.assertIn('data-action="relancer"', article)
+        self.assertIn('data-target-type="order" data-order-name="convoy-advance"', article)
+
 
 class TextContractSeamTest(CockpitOnFakes):
     """The control of the main text (spec af-oohx2x « Compréhensible sans

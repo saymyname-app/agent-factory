@@ -117,8 +117,8 @@ class OperatorActionsSeamTest(unittest.TestCase):
         self.proposal_fail_flag_file = os.path.join(self.tmp.name, "proposal-fail")
         self.loop_guard_calls_file = os.path.join(self.tmp.name, "loop-guard-calls.jsonl")
         self.loop_guard_fail_flag_file = os.path.join(self.tmp.name, "loop-guard-fail")
-        self.gc_bin_calls_file = os.path.join(self.tmp.name, "gc-bin-calls.jsonl")
-        self.gc_bin_fail_flag_file = os.path.join(self.tmp.name, "gc-bin-fail")
+        self.order_pause_calls_file = os.path.join(self.tmp.name, "order-pause-calls.jsonl")
+        self.order_pause_fail_flag_file = os.path.join(self.tmp.name, "order-pause-fail")
         self.port = free_port()
         self.origin = "http://127.0.0.1:%d" % self.port
         self.proc = None
@@ -167,7 +167,7 @@ class OperatorActionsSeamTest(unittest.TestCase):
                 "COCKPIT_ESCALATION_DOOR_BIN": str(FIXTURES / "fake-escalation-door"),
                 "COCKPIT_PROPOSAL_DOOR_BIN": str(FIXTURES / "fake-proposal-door"),
                 "COCKPIT_LOOP_GUARD_BIN": str(FIXTURES / "fake-loop-guard"),
-                "COCKPIT_GC_BIN": str(FIXTURES / "fake-gc-bin"),
+                "COCKPIT_ORDER_PAUSE_BIN": str(FIXTURES / "fake-order-pause"),
                 "COCKPIT_PID_FILE": self.pid_file,
                 "COCKPIT_BEADS_POLL_SECONDS": "0.1",
                 "COCKPIT_BENJAMIN_LOGIN": BENJAMIN_LOGIN,
@@ -181,8 +181,8 @@ class OperatorActionsSeamTest(unittest.TestCase):
                 "FAKE_PROPOSAL_DOOR_FAIL_FLAG_FILE": self.proposal_fail_flag_file,
                 "FAKE_LOOP_GUARD_CALLS_FILE": self.loop_guard_calls_file,
                 "FAKE_LOOP_GUARD_FAIL_FLAG_FILE": self.loop_guard_fail_flag_file,
-                "FAKE_GC_BIN_CALLS_FILE": self.gc_bin_calls_file,
-                "FAKE_GC_BIN_FAIL_FLAG_FILE": self.gc_bin_fail_flag_file,
+                "FAKE_ORDER_PAUSE_CALLS_FILE": self.order_pause_calls_file,
+                "FAKE_ORDER_PAUSE_FAIL_FLAG_FILE": self.order_pause_fail_flag_file,
             }
         )
         if fake_door_now:
@@ -394,7 +394,8 @@ class OperatorActionsSeamTest(unittest.TestCase):
         self.assertEqual("ouverte", bead["metadata"]["gc.proposal_state"])
 
     # ------------------------------------------------------------------
-    # AC3 — relancer resumes a session (loop-guard) or an order (gc).
+    # AC3 — relancer resumes a session (loop-guard) or an order (its door,
+    # bin/order-pause; BR af-eyc5ah).
     # ------------------------------------------------------------------
     def test_relancer_session_via_loop_guard(self):
         self.write_beads([plain_bead("af-sess1")])
@@ -411,14 +412,14 @@ class OperatorActionsSeamTest(unittest.TestCase):
 
         calls = self.read_calls(self.loop_guard_calls_file)
         self.assertIn(["resume", "sess-123"], calls)
-        self.assertEqual([], self.read_calls(self.gc_bin_calls_file))
+        self.assertEqual([], self.read_calls(self.order_pause_calls_file))
 
         bead = self.read_bead("af-sess1")
         self.assertEqual("relancer", bead["metadata"]["gc.cockpit_action_quoi"])
         self.assertEqual("session", bead["metadata"]["gc.cockpit_action_detail"])
         self.assertIn("Cockpit: relancer", bead["notes"])
 
-    def test_relancer_order_via_loop_guard_or_gc(self):
+    def test_relancer_order_via_its_door(self):
         self.write_beads([plain_bead("af-sess2")])
         self.start_cockpit()
 
@@ -431,8 +432,8 @@ class OperatorActionsSeamTest(unittest.TestCase):
         self.assertEqual("order", payload["target_type"])
         self.assertEqual("nightly-build", payload["target"])
 
-        calls = self.read_calls(self.gc_bin_calls_file)
-        self.assertIn(["order", "run", "nightly-build"], calls)
+        calls = self.read_calls(self.order_pause_calls_file)
+        self.assertIn(["resume", "nightly-build", "--by", "benjamin", "--words", "relance depuis le cockpit"], calls)
         self.assertEqual([], self.read_calls(self.loop_guard_calls_file))
 
         bead = self.read_bead("af-sess2")
@@ -450,7 +451,7 @@ class OperatorActionsSeamTest(unittest.TestCase):
         self.assertIn("confirmation", payload["error"])
 
         self.assertEqual([], self.read_calls(self.loop_guard_calls_file))
-        self.assertEqual([], self.read_calls(self.gc_bin_calls_file))
+        self.assertEqual([], self.read_calls(self.order_pause_calls_file))
         bead = self.read_bead("af-sess3")
         self.assertNotIn("gc.cockpit_action_quoi", bead["metadata"])
         self.assertEqual("", bead.get("notes", ""))

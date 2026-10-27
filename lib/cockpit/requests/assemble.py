@@ -22,6 +22,7 @@ from cockpit.projects.demandes import chantier_demandes
 from cockpit.projects.source import from_value as projects_from_value
 from cockpit.requests.builder import build_requests, parse_ack_and_defer
 from cockpit.requests.sources.hitl import build_hitl_requests
+from cockpit.requests.sources.paused_orders import build_paused_order_requests
 from cockpit.requests.sources.paused_sessions import LOOP_GUARD, build_paused_session_requests
 from cockpit.requests.sources.readability import ILLISIBLE_THRESHOLD_SECONDS, build_readability_requests
 from cockpit.requests.sources.specs_and_graphs import build_specs_and_graphs_requests
@@ -52,6 +53,7 @@ def assemble_requests(
         by_id = {b["id"]: b for b in beads if isinstance(b, dict) and b.get("id")}
         for request in (build_specs_and_graphs_requests(beads, verifie_a) + build_hitl_requests(beads, verifie_a)
                         + build_paused_session_requests(beads, verifie_a)
+                        + build_paused_order_requests(beads, verifie_a)
                         + build_unknown_signal_requests(unknown_signals_of(beads, KNOWN_SOURCES), verifie_a)):
             # Reporter hides these exactly as it hides an À faire escalation
             # (spec .22): the same trace on the same bead.

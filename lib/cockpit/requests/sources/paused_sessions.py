@@ -10,8 +10,8 @@ session and closes that bead. While the bead is open, the session waits on
 the operator: a request « Une session de l’usine est en pause », whose
 gesture is « Relancer » (:mod:`cockpit.actions.relancer`).
 
-Nothing pauses an order yet: no door writes an order paused, so no request
-is read for one here.
+An order the Factory paused is read beside it
+(:mod:`cockpit.requests.sources.paused_orders`).
 
 Pure: a list of beads as ``bd list --json`` returns them.
 """

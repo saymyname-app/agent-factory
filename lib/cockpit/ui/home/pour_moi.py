@@ -9,8 +9,8 @@ result-confirmation).
 A request opens beside the list, where the result of a chantier opens: what
 it is about, its title, why it waits, what can be done (its prepared
 options), then its bar of gestures -- answer, acquit, put off, accept or
-refuse a proposal with a reason or put it off, relaunch a session the
-Factory paused, check the Factory when it fell silent. Every gesture that
+refuse a proposal with a reason or put it off, relaunch a session or an
+order the Factory paused, check the Factory when it fell silent. Every gesture that
 changes the Factory is armed by a first click and sent by a second one,
 « Confirmer ? » (:mod:`cockpit.ui.actions.render`). On a reading that is no
 longer current, the gestures are drawn unavailable.
@@ -26,6 +26,7 @@ import dataclasses
 import html
 
 from cockpit.requests.model import TYPE_ESCALATION, TYPE_PROPOSAL, URGENT
+from cockpit.requests.sources.paused_orders import TYPE_ORDRE_EN_PAUSE
 from cockpit.requests.sources.paused_sessions import TYPE_SESSION_EN_PAUSE
 from cockpit.requests.sources.readability import TYPE_SOURCE_ILLISIBLE
 from cockpit.requests.sources.silence import TYPE_USINE_MUETTE
@@ -39,6 +40,7 @@ KINDS = {
     TYPE_ESCALATION: "Question qui t’est posée",
     TYPE_PROPOSAL: "Proposition de décision",
     TYPE_SESSION_EN_PAUSE: "Session mise en pause par l’usine",
+    TYPE_ORDRE_EN_PAUSE: "Ordre mis en pause",
     TYPE_USINE_MUETTE: "Usine muette",
     TYPE_SOURCE_ILLISIBLE: "Source illisible",
     TYPE_SIGNAL_INCONNU: "Signal non reconnu",
@@ -62,7 +64,8 @@ def links_of(request, project_url):
     links = []
     if project_url:
         links.append((project_url, "Page du projet %s" % request.projet))
-    if request.type in (TYPE_SESSION_EN_PAUSE, TYPE_USINE_MUETTE, TYPE_SOURCE_ILLISIBLE) or not project_url:
+    if request.type in (TYPE_SESSION_EN_PAUSE, TYPE_ORDRE_EN_PAUSE, TYPE_USINE_MUETTE, TYPE_SOURCE_ILLISIBLE) \
+            or not project_url:
         links.append(FACTORY_PAGE)
     if request.type not in RAISED_BY_THE_COCKPIT:
         links.append(JOURNAL_PAGE)
@@ -144,6 +147,9 @@ def _gestures(request):
     elif request.type == TYPE_SESSION_EN_PAUSE:
         own = ('<button type="button" class="btn primary" data-action="relancer" data-bead-id="%s" '
                'data-target-type="session" data-session-id="%s">Relancer</button>' % (bead, _e(request.titre)))
+    elif request.type == TYPE_ORDRE_EN_PAUSE:
+        own = ('<button type="button" class="btn primary" data-action="relancer" data-bead-id="%s" '
+               'data-target-type="order" data-order-name="%s">Relancer</button>' % (bead, _e(request.titre)))
     elif request.type == TYPE_USINE_MUETTE:
         return ('<a class="btn primary" href="%s">Vérifier l’usine</a>'
                 '<form method="post" action="/api/health/recheck"><button type="submit" class="btn">'
