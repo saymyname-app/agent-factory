@@ -409,7 +409,7 @@ derived, never stored apart: the resume entries by their cause, and
 cause the first time its fact names a tip of the integration branch
 (`integration:<tip>/…`): the factory moved that tip, the ticket did not;
 a second `behind` entry on the same tip is counted (af-npz9v1.36,
-Benjamin 27/10/2026 15:45 Paris: « oui les 6 »; `docs/CONVOY_ADVANCE.md`).
+Benjamin 27/10/2026 16:27 Paris: « Oui : une mise à jour behind causée par l'usine ne compte plus dans les reprises d'un ticket. », after « oui les 6 » at 15:45; `docs/CONVOY_ADVANCE.md`).
 The counter `resumes` still holds every resume recorded. The correction round counts against no
 cause: its own bound is one round, held by `open-correction`. K is not held
 in this command: it is `bounds.resumes` of `config/delivery-flow.json`

@@ -376,8 +376,8 @@ ticket still refused — is never resumed.
 A `behind` resume is recorded like the others (an entry, one more
 `resumes`, a fresh author session) but **K does not count it**: the
 integration branch moved because another ticket merged, an event of the
-factory, not of the ticket. Intent (Benjamin, his words, 27/10/2026 15:45
-Paris): « oui les 6 », whose point 3 read « Un ticket a droit à 3 reprises
+factory, not of the ticket. Intent (Benjamin, his words, 27/10/2026 16:27
+Paris): « Oui : une mise à jour behind causée par l'usine ne compte plus dans les reprises d'un ticket. » Before, 15:45 Paris: « oui les 6 », whose point 3 read « Un ticket a droit à 3 reprises
 par cause […] une simple remise à jour, quand d'autres tickets ont fusionné
 avant lui, compte comme une reprise […] a (recommandé) : ne plus compter ces
 remises à jour. » Mechanism (agent interpretation, af-npz9v1.36): the first

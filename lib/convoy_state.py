@@ -489,8 +489,8 @@ BOUNDED_RESUME_CAUSES = RESUME_CAUSES + (COMMIT_AFTER_VERDICT,)
 # ticket merged and moved the integration branch (T44). It is recorded like
 # any resume (entry, counter `resumes`, fresh author session) but does not
 # count in K, once per tip of the integration branch. Intent (Benjamin, his
-# words, 27/10/2026 15:45 Paris): « oui les 6 », whose point 3 read « ne plus
-# compter ces remises à jour » (af-npz9v1.36). The guard: a second resume
+# words, 27/10/2026 16:27 Paris): « Oui : une mise à jour behind causée par
+# l'usine ne compte plus dans les reprises d'un ticket. » (af-npz9v1.36). The guard: a second resume
 # `behind` on a tip already resumed for -- the ticket did not take it -- is
 # counted against `bounds.resumes.behind`, so a ticket that never takes the
 # tip is still parked; a tip moves only when another ticket merges.
