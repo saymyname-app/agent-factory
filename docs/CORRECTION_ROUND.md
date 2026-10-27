@@ -237,7 +237,10 @@ round); `bin/escalation-door clear` withdraws its request. The next passes
 review and evaluate the tip again if needed, and `settle` opens the next
 round once both answered there. Refused: from anyone else, without words,
 on a ticket that is not stopped `still_refused` after a round, or that has
-no round left.
+no round left; and, with the same words as the exceptional round, when no
+round would open (« aucun tour ne s'ouvrirait » : the correction session
+ended without the ticket being finished and refused at a new tip; lifting
+the stop would only let the next pass stop it again, af-npz9v1.23).
 
 ## Le tour exceptionnel (ADR-0034)
 
