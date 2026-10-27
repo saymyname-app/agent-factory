@@ -32,9 +32,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from runs_destination import LaunchTree, observe, observe_themes, section, unreadable  # noqa: E402
 from runs_trace import head_says, history_links, line, prompts, raw_texts  # noqa: E402
 
-SYSTEM, USER = "Prompt système", "Prompt utilisateur"
-NOT_COLLECTED = "non collecté"
-
 
 class RunsTracePrompts(unittest.TestCase):
     maxDiff = None
@@ -76,9 +73,9 @@ class RunsTracePrompts(unittest.TestCase):
         listed = section(rendered, "Prompts envoyés")
         self.assertIsNotNone(listed, "the detail has no section « Prompts envoyés »")
         self.assertTrue(listed["open"], "job-system-prompt does not open the prompts sent")
-        self.assertNotIn(NOT_COLLECTED, listed["content"], "the prompts sent are said not collected")
+        self.assertNotIn("non collecté", listed["content"], "the prompts sent are said not collected")
         self.assertIn("demo-search-alex-2", listed["content"], "the prompts do not say the session they were sent to")
-        system = self.one(rendered, SYSTEM)
+        system = self.one(rendered, "Prompt système")
         self.assertTrue(system["open"], "job-system-prompt does not open the system prompt")
         for phrase in ("Auteur", "Réaliser sur le périmètre approuvé.",
                        "Utiliser les points d’entrée publics et les sources disponibles."):
@@ -87,7 +84,7 @@ class RunsTracePrompts(unittest.TestCase):
         self.assertEqual("", system["raw"], "the raw text is drawn beside the rendered one")
         self.assert_sent(address, rendered, sent, "sha256:b71a0f18acad")
         self.assertTrue(raw["step"]["found"], "no control « Brut » for the system prompt")
-        self.assertEqual(line(sent), self.one(raw, SYSTEM)["raw"], "the raw system prompt is not the text sent")
+        self.assertEqual(line(sent), self.one(raw, "Prompt système")["raw"], "the raw system prompt is not the text sent")
 
     def test_job_user_prompt_rendered_shows_the_user_prompt_sent_rendered(self):
         # What demo-search-alex-2 was sent as its user prompt, and its version.
@@ -98,7 +95,7 @@ class RunsTracePrompts(unittest.TestCase):
                 "# Résultat attendu\nUne observation et ses pièces, ou une limite explicite.")
         address = self.tree.launch("job-user-prompt-rendered")
         reading, = observe(address, "/runs/job")[0]
-        user = self.one(reading, USER)
+        user = self.one(reading, "Prompt utilisateur")
         self.assertTrue(user["open"], "job-user-prompt-rendered does not open the user prompt")
         for phrase in ("Tâche", "Contexte transmis", "Workflow : Recherche dans les notes", "Résultat attendu"):
             self.assertIn(phrase, user["text"], f"the user prompt rendered does not say « {phrase} »")
@@ -115,7 +112,7 @@ class RunsTracePrompts(unittest.TestCase):
                 "# Résultat attendu\nUne observation et ses pièces, ou une limite explicite.")
         address = self.tree.launch("job-user-prompt-raw")
         reading, = observe(address, "/runs/job")[0]
-        user = self.one(reading, USER)
+        user = self.one(reading, "Prompt utilisateur")
         self.assertTrue(user["open"], "job-user-prompt-raw does not open the user prompt")
         self.assertEqual(line(sent), user["raw"], "the raw user prompt drawn is not the text sent")
         self.assert_sent(address, reading, sent, "sha256:de74c319c517")
@@ -140,7 +137,7 @@ class RunsTracePrompts(unittest.TestCase):
                       "the session that worked « Revue du code » is not said")
         listed = section(reading, "Prompts envoyés")
         self.assertIsNotNone(listed, "the detail has no section « Prompts envoyés »")
-        self.assertIn(NOT_COLLECTED, listed["content"], "a prompt no trace recorded is not said not collected")
+        self.assertIn("non collecté", listed["content"], "a prompt no trace recorded is not said not collected")
         self.assertNotIn(description, listed["content"], "a prompt missing is rebuilt from the job")
         self.assertEqual({}, prompts(reading), "a prompt is drawn that no trace recorded")
         self.assertNotIn(system, "\n".join(raw_texts(address, reading["href"])),
@@ -169,7 +166,7 @@ class RunsTracePrompts(unittest.TestCase):
                               f"the session chosen is not marked but by a colour at {chosen['width']} px: {links}")
                 self.assertNotIn("affichée", links.get("demo-search-alex-2", "").lower(),
                                  f"a session not chosen is marked shown at {chosen['width']} px: {links}")
-                self.assertEqual(line(system), self.one(raw, SYSTEM)["raw"],
+                self.assertEqual(line(system), self.one(raw, "Prompt système")["raw"],
                                  f"the keyboard does not show the raw text at {raw['width']} px")
         self.assertEqual({}, unreadable(by_theme, ("chart", "detail")), "the prompts of a session are not readable")
 

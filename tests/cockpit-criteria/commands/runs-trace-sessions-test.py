@@ -38,11 +38,6 @@ from project_destination import dataset_of, launch_declared  # noqa: E402
 from runs_destination import LaunchTree, lanes, observe, section  # noqa: E402
 from runs_trace import head_says, percent, raw_texts  # noqa: E402
 
-# « Réaliser » (Alex, +3 min 10 s → +6 min 5 s) had two sessions, in this
-# order; « Revue du code », one of Léa's; no session of Noé was observed.
-FIRST, LAST = "demo-search-alex-1", "demo-search-alex-2"
-NOT_COLLECTED = "non collecté"
-
 
 class RunsTraceSessions(unittest.TestCase):
     maxDiff = None
@@ -71,10 +66,10 @@ class RunsTraceSessions(unittest.TestCase):
         self.assertIsNotNone(found, "the detail has no section « Sessions du job »")
         self.assertTrue(found["open"], "job-sessions does not open the history of the sessions")
         said = self.history(reading)
-        self.assertNotIn(NOT_COLLECTED, said, f"the sessions of the job are said not collected: « {said} »")
-        self.assertEqual(1, said.count(FIRST), f"the first session is not listed once: « {said} »")
-        self.assertEqual(1, said.count(LAST), f"the last session is not listed once: « {said} »")
-        first, last = said.index(FIRST), said.index(LAST)
+        self.assertNotIn("non collecté", said, f"the sessions of the job are said not collected: « {said} »")
+        self.assertEqual(1, said.count("demo-search-alex-1"), f"the first session is not listed once: « {said} »")
+        self.assertEqual(1, said.count("demo-search-alex-2"), f"the last session is not listed once: « {said} »")
+        first, last = said.index("demo-search-alex-1"), said.index("demo-search-alex-2")
         self.assertLess(first, last, "the sessions are not listed in the order they ran")
         # Each session, its own values, as the supervisor recorded them: the
         # first from +3 min 10 s to +4 min 37 s (context 27 %), the second
@@ -102,27 +97,27 @@ class RunsTraceSessions(unittest.TestCase):
         self.assertRegex(by_who["Léa"], percent(3), f"the lane of Léa does not say her context: « {by_who['Léa']} »")
         # No session of Noé was observed: his context is not known.
         noe = by_who["Noé"]
-        self.assertIn(NOT_COLLECTED, noe, f"the lane of Noé gives a context no session showed: « {noe} »")
+        self.assertIn("non collecté", noe, f"the lane of Noé gives a context no session showed: « {noe} »")
         self.assertNotRegex(noe, r"\d\s%", f"the lane of Noé gives a context no session showed: « {noe} »")
 
     def test_choosing_an_earlier_session_shows_its_own_configuration_and_prompts_and_a_reload_keeps_it(self):
         address = self.tree.launch("job-sessions")
         shown, chosen, reloaded = observe(address, "/runs/job", steps=(
-            {"click": FIRST, "within": "session-history"},
+            {"click": "demo-search-alex-1", "within": "session-history"},
             {"reload": True},
         ))[0]
         # By default, the last session of the job.
         configured = section(shown, "Configuration")
         self.assertIsNotNone(configured, "the detail has no section « Configuration »")
-        self.assertIn(LAST, configured["content"], "the configuration shown is not that of the last session")
+        self.assertIn("demo-search-alex-2", configured["content"], "the configuration shown is not that of the last session")
         last = "\n".join(raw_texts(address, shown["href"]))
         self.assertIn("Version : exemple synthétique\n", last, "the prompts shown are not those sent to the last session")
-        self.assertTrue(chosen["step"]["found"], f"no control to choose the session {FIRST} in the history")
+        self.assertTrue(chosen["step"]["found"], "no control to choose the session demo-search-alex-1 in the history")
         for reading in (chosen, reloaded):
             configured = section(reading, "Configuration")
             self.assertIsNotNone(configured, "the detail has no section « Configuration » once a session is chosen")
-            self.assertIn(FIRST, configured["content"], "the configuration is not that of the session chosen")
-            self.assertNotIn(LAST, configured["content"], "the configuration of the last session stays shown")
+            self.assertIn("demo-search-alex-1", configured["content"], "the configuration is not that of the session chosen")
+            self.assertNotIn("demo-search-alex-2", configured["content"], "the configuration of the last session stays shown")
             self.assertRegex(configured["content"], percent(27), "the configuration does not say the context "
                                                                    "of the session chosen")
             sent = "\n".join(raw_texts(address, reading["href"]))
@@ -146,15 +141,15 @@ class RunsTraceSessions(unittest.TestCase):
             session.pop("end", None)
         reading, = observe(launch_declared(self.tree, "job-sessions-no-end", dataset), "/runs/job")[0]
         said = self.history(reading)
-        for session in (FIRST, LAST):
-            self.assertIn(session, said, f"the session {session} is not listed: « {said} »")
-        first, last = said.index(FIRST), said.index(LAST)
+        self.assertIn("demo-search-alex-1", said, f"the first session is not listed: « {said} »")
+        self.assertIn("demo-search-alex-2", said, f"the last session is not listed: « {said} »")
+        first, last = said.index("demo-search-alex-1"), said.index("demo-search-alex-2")
         earlier, later = said[first:last], said[last:]
         self.assertIn("+3 min 10 s", earlier, f"the first session does not say its start: « {earlier} »")
-        self.assertIn(NOT_COLLECTED, earlier, f"the end of the first session is not said not collected: « {earlier} »")
+        self.assertIn("non collecté", earlier, f"the end of the first session is not said not collected: « {earlier} »")
         self.assertNotIn("+4 min 37 s", earlier, "the first session ends where the next one began")
         self.assertIn("+4 min 37 s", later, f"the last session does not say its start: « {later} »")
-        self.assertIn(NOT_COLLECTED, later, f"the end of the last session is not said not collected: « {later} »")
+        self.assertIn("non collecté", later, f"the end of the last session is not said not collected: « {later} »")
         self.assertNotIn("+6 min 5 s", later, "the last session ends where the job ended")
 
 
