@@ -13,12 +13,25 @@ worktree down and frees the port.
 
     ./bin/project-launch [--repo-root <product repo>] start <descriptor.json> --commit <sha> --dataset <name> --state-file <path>
     ./bin/project-launch stop --state-file <path>
+    ./bin/project-launch sweep
 
-A tool that starts a product passes `--owner-pid <its own pid>`: a guard
-then stops the launch as soon as that process ends, however it ends. A
+Every launch has an owner and a lifetime, whoever calls. The owner is the
+process named by `--owner-pid`, or else the caller of `start` itself; a
+guard stops the launch as soon as that process ends, however it ends. A
 `finally` that would have stopped it does not run on SIGKILL, and the
-product, in its own session, lived on for days (af-f7x7w7). Without
-`--owner-pid` (a launch typed in a shell) the product lives until `stop`.
+product, in its own session, lived on for days (af-f7x7w7). Only a caller
+whose product must outlive the command (an open Acceptance Session, a
+product an evaluation reuses between passes) says `--detached`: it has no
+owner. Every launch ends at `--max-lifetime` (DEFAULT_LIFETIME) at the
+latest, and when its record is removed without `stop` (a test that deletes
+its folder): on 22/10/2026 24 cockpits of criteria tests whose folders were
+deleted held the VM at a load of 141 for up to 283 minutes.
+
+`sweep` is the net under the guard (a guard killed, a host restarted, a
+launch made before this rule): it stops every launch whose owner has ended,
+whose lifetime is over, or whose matching sidecar names a source repository
+that has disappeared, and releases copies left behind. Each stop is written
+to TRACE_FILE. orders/project-launch-sweep.toml runs it.
 
 `--repo-root` is the repository of the product (default: the Factory's own);
 the profile tool is always the one next to this launcher.
@@ -48,6 +61,9 @@ import uuid
 from pathlib import Path
 from types import ModuleType
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+from account_home import account_home  # noqa: E402
+
 
 def process_identity(pid: int) -> str | None:
     """The start time of a running `pid`: with the pid, it names one process
@@ -59,20 +75,75 @@ def process_identity(pid: int) -> str | None:
     return None if fields[0] in {"Z", "X"} else fields[19]
 
 
+# The longest a launch lives without `--max-lifetime`: above the longest
+# evaluation of config/delivery-flow.json (24 datasets x 240 s = 5760 s),
+# relaunched once.
+DEFAULT_LIFETIME = 6 * 3600
+# What the sweep leaves to the guard, which acts within a second.
+SWEEP_GRACE = 60
+# Where the guard and the sweep write each launch they stop: ~/.local/state
+# is writable inside bin/delivery-role-sandbox too.
+TRACE_FILE = Path(os.environ.get("FACTORY_LAUNCH_TRACE")
+                  or account_home() / ".local" / "state" / "agent-factory-launch" / "stops.jsonl")
+
+
+def trace(event: dict) -> None:
+    """One line per launch stopped by the guard or the sweep; a trace that
+    cannot be written never keeps a launch alive."""
+    line = json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), **event}, sort_keys=True)
+    try:
+        TRACE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with TRACE_FILE.open("a") as out:
+            out.write(line + "\n")
+    except OSError:
+        print(line, file=sys.stderr)
+
+
 def guard(args: argparse.Namespace) -> int:
-    """Stop the launch of `--state-file` once its owner has ended, or once
-    `start` has ended before the product was healthy (killed while it
-    waited for the probe); leave when the record is gone."""
-    while Path(args.state_file).exists():
+    """Stop the launch `--launch-id` once its owner has ended, once `start`
+    has ended before the product was healthy (killed while it waited for
+    the probe), or once its lifetime is over. A record removed or replaced
+    without `stop` leaves the launch to this guard alone: it stops what
+    remains of it, then leaves."""
+    # Read once and kept by the module: a caller's TMPDIR removed while the
+    # launch runs (a test's folder) made every later read fail, and the
+    # guard ended on that error, its product left running.
+    tempfile.gettempdir()
+    known = None
+    while True:
         try:
-            started = json.loads(Path(args.state_file).read_text()).get("started")
+            record = json.loads(Path(args.state_file).read_text())
+        except FileNotFoundError:
+            record = None
         except (OSError, ValueError):
-            started = False  # replaced at this instant: read it again next round
-        if (process_identity(args.owner_pid) != args.owner_start
-                or (not started and process_identity(args.start_pid) != args.start_start)):
-            return cmd_stop(argparse.Namespace(state_file=args.state_file, pid=None, worktree=None))
+            time.sleep(1)  # replaced at this instant: read it again next round
+            continue
+        if not isinstance(record, dict) or record.get("launch_id") != args.launch_id:
+            if known and (owned_processes(args.launch_id) or Path(known["worktree"]).exists()):
+                return end_launch(known, "record_removed", None)
+            return 0
+        known = record
+        if args.owner_pid and process_identity(args.owner_pid) != args.owner_start:
+            return end_launch(record, "owner_ended", args.state_file)
+        if not record.get("started") and process_identity(args.start_pid) != args.start_start:
+            return end_launch(record, "start_ended", args.state_file)
+        if time.time() > args.deadline:
+            return end_launch(record, "lifetime_over", args.state_file)
         time.sleep(1)
-    return 0
+
+
+def end_launch(record: dict, reason: str, state_file: str | None) -> int:
+    """Stop the launch of `record` for `reason`, and trace it."""
+    try:
+        error = stop_record(record, legacy=False)
+    except Exception as exc:  # traced, and left to the sweep
+        error = f"{type(exc).__name__}: {exc}"
+    if error is None and state_file:
+        Path(state_file).unlink(missing_ok=True)
+    trace({"by": "guard", "reason": reason, "launch_id": record.get("launch_id"),
+           "worktree": record.get("worktree"), "repo_root": record.get("repo_root"),
+           "state_file": state_file, "stopped": error is None, "error": error})
+    return 0 if error is None else 1
 
 
 def write_record(path: str, record: dict) -> None:
@@ -361,12 +432,13 @@ def end_attempt(proc: subprocess.Popen, launch_id: str, worktree: str) -> bool:
     return stopped
 
 
-def spawn(recipe: list[str], worktree: str, port: int, dataset: str, launch_id: str) -> subprocess.Popen:
-    """Run `recipe` on `port`, in its own session, carrying the launch mark."""
+def spawn(recipe: list[str], worktree: str, port: int, dataset: str, marks: dict[str, str]) -> subprocess.Popen:
+    """Run `recipe` on `port`, in its own session, carrying the launch marks:
+    its identity, its owner and its deadline, which the sweep reads."""
     argv = [token.format(python=sys.executable, port=str(port), dataset=dataset) for token in recipe]
     with open(Path(worktree) / "launch.log", "a") as log_file:
         return subprocess.Popen(argv, cwd=worktree, stdout=log_file, stderr=subprocess.STDOUT,
-                                start_new_session=True, env={**os.environ, "FACTORY_LAUNCH_ID": launch_id})
+                                start_new_session=True, env={**os.environ, **marks})
 
 
 def probe_until_healthy(proc: subprocess.Popen, port: int, launch_id: str, probe_url: str,
@@ -393,18 +465,37 @@ def probe_until_healthy(proc: subprocess.Popen, port: int, launch_id: str, probe
     return "unhealthy"
 
 
+def release_guard(watch: subprocess.Popen, state_file: str) -> int:
+    """A refused start whose cleanup is confirmed leaves nothing, its guard
+    included; one that kept its record keeps its guard. The exit code of
+    the refusal."""
+    if not Path(state_file).exists():
+        watch.kill()
+        watch.wait()
+    return 1
+
+
 def cmd_start(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root).resolve()
     if args.state_file and Path(args.state_file).exists():
         print(json.dumps({"started": False, "error": "launch record still exists; stop it before retry"}, sort_keys=True))
         return 1
+    if args.detached and args.owner_pid is not None:
+        print(json.dumps({"started": False, "error": "--detached and --owner-pid name two owners"}, sort_keys=True))
+        return 1
+    if not args.max_lifetime > 0:
+        print(json.dumps({"started": False, "error": f"--max-lifetime must be positive: {args.max_lifetime}"},
+                         sort_keys=True))
+        return 1
+    owner_pid = None if args.detached else args.owner_pid if args.owner_pid is not None else os.getppid()
     owner_start = None
-    if args.owner_pid is not None:
-        owner_start = process_identity(args.owner_pid)
+    if owner_pid is not None:
+        owner_start = process_identity(owner_pid)
         if owner_start is None:
-            print(json.dumps({"started": False, "error": f"owner process {args.owner_pid} is not running"},
+            print(json.dumps({"started": False, "error": f"owner process {owner_pid} is not running"},
                              sort_keys=True))
             return 1
+    deadline = time.time() + args.max_lifetime
     descriptor_path = Path(args.descriptor).resolve()
     ppp = load_profile_module()
 
@@ -473,21 +564,24 @@ def cmd_start(args: argparse.Namespace) -> int:
     worktree = str(Path(tempfile.gettempdir()) / f"project-launch-{uuid.uuid4().hex}")
     launch_id = uuid.uuid4().hex
     record = {"started": False, "launch_id": launch_id, "worktree": worktree,
-              "repo_root": str(repo_root), "commit": resolved_commit, "dataset": args.dataset}
+              "repo_root": str(repo_root), "commit": resolved_commit, "dataset": args.dataset,
+              "owner_pid": owner_pid, "deadline": deadline}
+    marks = {"FACTORY_LAUNCH_ID": launch_id, "FACTORY_LAUNCH_DEADLINE": str(deadline),
+             "FACTORY_LAUNCH_OWNER": f"{owner_pid}:{owner_start}" if owner_pid is not None else ""}
     try:
         write_record(args.state_file, record)
     except OSError as exc:
         print(json.dumps({"started": False, "error": f"launch record could not be written: {exc}"}, sort_keys=True))
         return 1
-    if owner_start is not None:
-        # From the first record on: the owner can die while the product
-        # still answers its probe, and this start with it.
-        subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "guard",
-                          "--owner-pid", str(args.owner_pid), "--owner-start", owner_start,
-                          "--start-pid", str(os.getpid()), "--start-start", process_identity(os.getpid()),
-                          "--state-file", str(Path(args.state_file).resolve())],
-                         cwd="/", stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, start_new_session=True)
+    # From the first record on: the owner can die while the product still
+    # answers its probe, and this start with it.
+    watch = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "guard",
+                              "--owner-pid", str(owner_pid or 0), "--owner-start", owner_start or "",
+                              "--start-pid", str(os.getpid()), "--start-start", process_identity(os.getpid()),
+                              "--launch-id", launch_id, "--deadline", str(deadline),
+                              "--state-file", str(Path(args.state_file).resolve())],
+                             cwd="/", stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=True)
     try:
         Path(f"{worktree}.owner").write_text(json.dumps({
             "launch_id": launch_id, "repo_root": str(repo_root), "commit": resolved_commit}))
@@ -501,7 +595,7 @@ def cmd_start(args: argparse.Namespace) -> int:
             Path(args.state_file).unlink(missing_ok=True)
         print(json.dumps({"started": False, "error": str(exc),
                           "cleanup_confirmed": not Path(args.state_file).exists()}, sort_keys=True))
-        return 1
+        return release_guard(watch, args.state_file)
 
     dataset_abs = str(Path(worktree) / dataset_rel) if dataset_rel else ""
     probe_path = launch["health_probe"]["path"]
@@ -524,10 +618,10 @@ def cmd_start(args: argparse.Namespace) -> int:
                 Path(args.state_file).unlink(missing_ok=True)
             print(json.dumps({"started": False, "error": f"launch record could not be updated: {exc}",
                               "cleanup_confirmed": not Path(args.state_file).exists()}, sort_keys=True))
-            return 1
+            return release_guard(watch, args.state_file)
         address = f"http://127.0.0.1:{port}"
         try:
-            proc = spawn(launch["recipe"], worktree, port, dataset_abs, launch_id)
+            proc = spawn(launch["recipe"], worktree, port, dataset_abs, marks)
         except OSError as exc:
             # Nothing was started: the copy and the record are released below.
             outcome, stopped, error = "unhealthy", True, f"recipe could not be started: {exc}"
@@ -567,7 +661,7 @@ def cmd_start(args: argparse.Namespace) -> int:
             "cleanup_confirmed": cleaned,
             "state_file": args.state_file if not cleaned else None,
         }, sort_keys=True))
-        return 1
+        return release_guard(watch, args.state_file)
 
     record.update(started=True, address=address)
     write_record(args.state_file, record)
@@ -585,6 +679,21 @@ def cmd_stop(args: argparse.Namespace) -> int:
     else:
         record = {"pid": args.pid, "worktree": args.worktree, "repo_root": args.repo_root}
 
+    error = stop_record(record, legacy=bool(args.state_file))
+    if error is not None:
+        print(json.dumps({"stopped": False, "error": error}, sort_keys=True))
+        return 1
+    if args.state_file:
+        Path(args.state_file).unlink(missing_ok=True)
+
+    print(json.dumps({"stopped": True}, sort_keys=True))
+    return 0
+
+
+def stop_record(record: dict, legacy: bool) -> str | None:
+    """Stop the launch `record` describes and release its copy: None once
+    done, else why not. `legacy`: a record read from a file, which may
+    predate the launch marker."""
     pid = record.get("pid")
     worktree = record.get("worktree")
     repo_root = record.get("repo_root") or str(repo_root_default())
@@ -595,8 +704,7 @@ def cmd_stop(args: argparse.Namespace) -> int:
         try:
             verify_worktree(repo_root, worktree, launch_id, record.get("commit"))
         except RuntimeError as exc:
-            print(json.dumps({"stopped": False, "error": str(exc)}, sort_keys=True))
-            return 1
+            return str(exc)
     if launch_id:
         stopped = terminate_owned(launch_id)
         if stopped and worktree:
@@ -604,7 +712,7 @@ def cmd_stop(args: argparse.Namespace) -> int:
             stopped = all(terminate(pid) for pid in worktree_processes(worktree))
         if (group and group_members(int(group))) or (worktree and worktree_processes(worktree)):
             stopped = False
-    elif args.state_file:
+    elif legacy:
         # Old records had no launch marker. A PID may now belong to another
         # process; only stop processes still inside the verified worktree.
         stopped = all(terminate(member) for member in worktree_processes(worktree)) if worktree else False
@@ -613,19 +721,147 @@ def cmd_stop(args: argparse.Namespace) -> int:
     else:
         stopped = terminate(int(pid)) if pid else True
     if not stopped or (record.get("port") and not port_free(int(record["port"]))):
-        print(json.dumps({"stopped": False, "error": "product or port remains active"}, sort_keys=True))
-        return 1
+        return "product or port remains active"
     try:
         if worktree:
             remove_worktree(repo_root, worktree, launch_id, record.get("commit"))
     except (OSError, RuntimeError) as exc:
-        print(json.dumps({"stopped": False, "error": str(exc)}, sort_keys=True))
-        return 1
-    if args.state_file:
-        Path(args.state_file).unlink(missing_ok=True)
+        return str(exc)
+    return None
 
-    print(json.dumps({"stopped": True}, sort_keys=True))
-    return 0
+
+def launch_marks(pid: int) -> dict[str, str]:
+    try:
+        environ = Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
+    except OSError:
+        return {}
+    return {key: value for key, _, value in (entry.decode(errors="replace").partition("=") for entry in environ)
+            if key.startswith("FACTORY_LAUNCH_")}
+
+
+def process_age(pid: int) -> float | None:
+    try:
+        started = int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19])
+        uptime = float(Path("/proc/uptime").read_text().split()[0])
+    except (OSError, IndexError, ValueError):
+        return None
+    return uptime - started / os.sysconf("SC_CLK_TCK")
+
+
+def overdue(marks: dict[str, str], age: float | None, now: float,
+            source_repository: str | None = None) -> str | None:
+    """Why a running launch must end, from the marks its product carries."""
+    owner = marks.get("FACTORY_LAUNCH_OWNER")
+    if owner:
+        pid, _, start = owner.partition(":")
+        if process_identity(int(pid)) != start:
+            return "owner_ended"
+    deadline = marks.get("FACTORY_LAUNCH_DEADLINE")
+    if deadline:
+        return "lifetime_over" if now > float(deadline) + SWEEP_GRACE else None
+    # Revisions from before owner/deadline marks still have a launch id and
+    # an ownership sidecar. Criteria tests run such revisions from temporary
+    # repositories: once that repository is gone, no test can still own the
+    # product, so waiting DEFAULT_LIFETIME only lets an orphan consume the
+    # host (af-0uhmdl).
+    if source_repository and not Path(source_repository).exists():
+        return "source_repository_gone"
+    # Launched before every launch had a deadline: its age is all there is.
+    return "lifetime_over" if age is not None and age > DEFAULT_LIFETIME else None
+
+
+def launch_copy(members: list[int]) -> str | None:
+    """The launcher's copy a launch runs in, from its processes' folders."""
+    temporary = Path(tempfile.gettempdir()).resolve()
+    for pid in members:
+        try:
+            cwd = Path(os.readlink(f"/proc/{pid}/cwd"))
+        except OSError:
+            continue
+        for folder in (cwd, *cwd.parents):
+            if folder.parent == temporary and re.fullmatch(r"project-launch-[A-Za-z0-9_-]+", folder.name):
+                return str(folder)
+    return None
+
+
+def copy_owner(worktree: str) -> dict:
+    try:
+        owner = json.loads(Path(f"{worktree}.owner").read_text())
+    except (OSError, ValueError):
+        return {}
+    return owner if isinstance(owner, dict) else {}
+
+
+def cmd_sweep(args: argparse.Namespace) -> int:
+    """Stop every launch whose owner has ended or whose lifetime is over,
+    whoever started it, then release the copies no process holds any more
+    once they are older than a lifetime. Each stop is traced."""
+    now = time.time()
+    launches: dict[str, list[int]] = {}
+    for environ in Path("/proc").glob("[0-9]*/environ"):
+        try:
+            pid = int(environ.parent.name)
+            launch_id = launch_marks(pid).get("FACTORY_LAUNCH_ID")
+        except ValueError:
+            continue
+        if launch_id and process_alive(pid) and (not args.launch_id or launch_id in args.launch_id):
+            launches.setdefault(launch_id, []).append(pid)
+    stopped, kept = [], 0
+    for launch_id, members in sorted(launches.items()):
+        first = min(members)
+        worktree = launch_copy(members)
+        owner = copy_owner(worktree) if worktree else {}
+        source_repository = owner.get("repo_root")
+        if owner.get("launch_id") != launch_id or not isinstance(source_repository, str):
+            source_repository = None
+        reason = overdue(launch_marks(first), process_age(first), now, source_repository)
+        if reason is None:
+            kept += 1
+            continue
+        event = {"by": "sweep", "reason": reason, "launch_id": launch_id, "pids": sorted(members),
+                 "worktree": worktree, "repo_root": owner.get("repo_root"), "dry_run": args.dry_run}
+        if not args.dry_run:
+            error = None
+            if owner.get("launch_id") == launch_id:
+                error = stop_record({"launch_id": launch_id, "worktree": worktree, "repo_root": owner.get("repo_root"),
+                                     "commit": owner.get("commit")}, legacy=False)
+            elif not terminate_owned(launch_id):
+                error = "product remains active"
+            event.update(stopped=error is None, error=error)
+            trace(event)
+        stopped.append(event)
+    released = []
+    temporary = Path(tempfile.gettempdir())
+    for sidecar in sorted(temporary.glob("project-launch-*.owner")):
+        worktree = str(sidecar)[:-len(".owner")]
+        try:
+            age = now - sidecar.stat().st_mtime
+        except OSError:
+            continue
+        owner = copy_owner(worktree)
+        if args.launch_id and owner.get("launch_id") not in args.launch_id:
+            continue
+        if (age <= DEFAULT_LIFETIME or owner.get("launch_id") in launches
+                or (Path(worktree).exists() and worktree_processes(worktree))):
+            continue
+        event = {"by": "sweep", "reason": "copy_left", "launch_id": owner.get("launch_id"), "worktree": worktree,
+                 "repo_root": owner.get("repo_root"), "dry_run": args.dry_run}
+        if not args.dry_run:
+            error = None
+            try:
+                if Path(worktree).exists():
+                    remove_worktree(owner.get("repo_root") or str(repo_root_default()), worktree,
+                                    owner.get("launch_id"), owner.get("commit"))
+                sidecar.unlink(missing_ok=True)
+            except (OSError, RuntimeError) as exc:
+                error = str(exc)
+            event.update(released=error is None, error=error)
+            trace(event)
+        released.append(event)
+    print(json.dumps({"stopped": stopped, "released": released, "running_kept": kept}, sort_keys=True))
+    # A copy that cannot be released only takes disk, and is traced; a
+    # launch that cannot be stopped fails the order.
+    return 0 if all(event.get("error") is None for event in stopped) else 1
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -640,7 +876,11 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--timeout", type=float, default=15.0, help="seconds to wait for the health probe")
     start.add_argument("--state-file", required=True, help="where to write the recoverable launch record for stop")
     start.add_argument("--owner-pid", type=int, default=None,
-                       help="process whose end stops the launch (the calling tool's own pid)")
+                       help="process whose end stops the launch (default: the caller of start)")
+    start.add_argument("--detached", action="store_true",
+                       help="no owner: the product outlives the command, until stop or its lifetime")
+    start.add_argument("--max-lifetime", type=float, default=DEFAULT_LIFETIME,
+                       help=f"seconds after which the launch is stopped (default {DEFAULT_LIFETIME})")
     start.set_defaults(func=cmd_start)
 
     watch = subparsers.add_parser("guard", help=argparse.SUPPRESS)
@@ -648,8 +888,16 @@ def build_parser() -> argparse.ArgumentParser:
     watch.add_argument("--owner-start", required=True)
     watch.add_argument("--start-pid", type=int, required=True)
     watch.add_argument("--start-start", required=True)
+    watch.add_argument("--launch-id", required=True)
+    watch.add_argument("--deadline", type=float, required=True)
     watch.add_argument("--state-file", required=True)
     watch.set_defaults(func=guard)
+
+    sweep = subparsers.add_parser("sweep", help="stop launches whose owner ended or whose lifetime is over")
+    sweep.add_argument("--dry-run", action="store_true", help="name them without stopping anything")
+    sweep.add_argument("--launch-id", action="append", default=[],
+                       help="only this launch (repeatable): a test sweeps its own launches, not the host's")
+    sweep.set_defaults(func=cmd_sweep)
 
     stop = subparsers.add_parser("stop", help="stop a launched product and release its port")
     stop.add_argument("--state-file", default=None, help="launch record written by `start --state-file`")

@@ -153,7 +153,11 @@ is « test en échec », a mixed result is « test instable », a skipped test i
 refused. Last, the profile's `regression_command` runs once in a clean tree
 of HEAD (ADR-0030 L1): a non-zero exit is « commande de régression en échec
 à la pointe du ticket », a plain refusal — no stop, no resume — so the author
-fixes the code in the same session and runs `green` again. A change that
+fixes the code in the same session and runs `green` again. An exit 75 is
+the command's NOT RUN (« commande de régression non exécutée », the host
+busy past its wait or its budget spent): also a plain refusal, which says
+it is no failure of the ticket; run `green` again. The regression has
+1260 s (`REGRESSION_TIMEOUT`); each criterion test keeps its 600 s. A change that
 keeps its criterion tests green but breaks existing tests is caught at the
 author's handoff (the `code` gate of `bin/ticket-author` asks for `green` at
 the tip), not only at the merged regression of `bin/spec-integration`.

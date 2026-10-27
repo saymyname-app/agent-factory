@@ -31,12 +31,15 @@ is never waived: the command refuses it and names the Planning Exception.
 On a ticket stopped while the bound allows one round more (stopped when it
 was one), the same approver may grant that round, with their words
 (`grant`): the stop is lifted and kept on the round, and `settle` opens the
-next round once both controls answered at the tip.
+next round once both controls answered at the tip. On a ticket stopped at
+the bound, the same approver may grant one exceptional round, once per
+ticket (`grant --exceptional`, ADR-0034), when a control still refuses it
+at a tip its author finished: a round opens on that tip like the others.
 
     correction-round settle   CONVOY [--repo DIR]            bin/convoy-advance, at each pass
     correction-round brief    CONVOY TICKET [--repo DIR]     the author session of the round
     correction-round override CONVOY TICKET --finding ID --approved-by NAME --words TEXT [--repo DIR]
-    correction-round grant    CONVOY TICKET --approved-by NAME --words TEXT [--repo DIR]
+    correction-round grant    CONVOY TICKET --approved-by NAME --words TEXT [--exceptional] [--repo DIR]
     correction-round show     CONVOY TICKET [--repo DIR]
 
 The state lives in the tracker, read and written through bin/convoy-state
@@ -264,6 +267,11 @@ def evaluation_of(ticket: dict[str, Any]) -> dict[str, Any]:
     return ticket.get("evaluation") or {"rounds": [], "state": empty}
 
 
+def exceptional_granted(ticket: dict[str, Any]) -> bool:
+    """The ticket already took its one exceptional round (ADR-0034)."""
+    return any(grant.get("exceptional") for grant in (ticket.get("correction") or {}).get("grants") or [])
+
+
 def own_stop(ticket: dict[str, Any]) -> dict[str, Any] | None:
     """The stop of the ticket, when this command is what stopped it."""
     stop = ticket.get("stop")
@@ -458,6 +466,11 @@ def raise_stop(convoy_id: str, ticket: dict[str, Any], stop: dict[str, Any]) -> 
         "que_faire": [
             {"option": "Passer outre un Blocking Finding de la revue de code, avec tes mots",
              "consequence": override},
+            *([{"option": "Accorder le tour exceptionnel, avec tes mots (une fois par ticket)",
+                "consequence": short(f"bin/{PROGRAM} grant --exceptional : un tour de plus s'ouvre sur la pointe.",
+                                     REQUEST_LINE_MAX)}]
+              if ticket.get("correction") and not ticket.get("correction_rounds_left")
+              and not exceptional_granted(ticket) and round_would_open(ticket) else []),
             {"option": "Ouvrir une Planning Exception",
              "consequence": "Le ticket reste arrêté jusqu'à ta décision dans le Planning Run."},
             {"option": "Laisser le ticket arrêté",
@@ -602,6 +615,10 @@ def cmd_settle(args: argparse.Namespace) -> int:
 def round_text(ticket: dict[str, Any]) -> str:
     """What the author session is told of its round and of what follows it."""
     rounds = (ticket.get("counters") or {}).get("correction_rounds")
+    if exceptional_granted(ticket) and not ticket.get("correction_rounds_left"):
+        return (f"C'est le tour exceptionnel de ce ticket ({rounds}), accordé par son approbateur humain au-delà de la "
+                "borne, revue de code et Ticket Evaluation confondues : encore refusé après lui, le ticket s'arrête "
+                "sans fusionner, et aucun autre tour exceptionnel ne s'accorde.")
     if ticket.get("correction_rounds_left"):
         return (f"C'est le tour de correction {rounds} de ce ticket, revue de code et Ticket Evaluation confondues : "
                 "encore refusé après lui, un tour de plus s'ouvre sur ce qui le refuse encore à la pointe.")
@@ -633,7 +650,7 @@ def cmd_brief(args: argparse.Namespace) -> int:
     kept = ("id", "axis", "summary", "citation", "question")
     blocking = [{name: finding[name] for name in kept if name in finding}
                 for finding in findings if finding["id"] in correction["blocking_findings"]]
-    recorded = [{name: finding[name] for name in (*kept, "demoted") if name in finding}
+    recorded = [{name: finding[name] for name in (*kept, "demoted", "finishing_pass") if name in finding}
                 for finding in findings if not finding["blocking"]]
     evaluated = next((round_ for round_ in reversed(evaluation_of(ticket)["rounds"]) if round_["commit"] == commit), None)
     not_observed = []
@@ -712,11 +729,23 @@ def cmd_override(args: argparse.Namespace) -> int:
     return 0
 
 
+def round_would_open(ticket: dict[str, Any]) -> bool:
+    """A round granted now would open: the author finished at the tip and a
+    control refuses the ticket there. A correction session that ended
+    without correcting leaves the round with the author at the same commit,
+    where no other round opens."""
+    tip = ticket.get("tip") or ""
+    positions = (review_position(ticket, tip)[0], evaluation_position(ticket, tip)[0])
+    return finished_at(ticket, tip) and REFUSED in positions and WITH_AUTHOR not in positions
+
+
 def cmd_grant(args: argparse.Namespace) -> int:
     """The approver grants a round more to a ticket stopped while the bound
-    allows one (af-bv0ikr): the stop is lifted and its request cleared."""
+    allows one (af-bv0ikr), or the one exceptional round to a ticket stopped
+    at the bound (`--exceptional`, ADR-0034): the stop is lifted and its
+    request cleared."""
     convoy = Convoy(args.convoy, args.repo)
-    convoy.ticket(args.ticket)
+    ticket = convoy.ticket(args.ticket)
     rig, approver = declared_human_approver(args.ticket)
     if args.approved_by != approver:
         raise Refusal(
@@ -726,13 +755,20 @@ def cmd_grant(args: argparse.Namespace) -> int:
     if not words:
         raise Refusal("tour accordé sans mots : il s'enregistre avec les mots de l'approbateur (--words), non vides ; "
                       "rien n'est écrit")
-    state_write("grant-correction", args.convoy, args.ticket, "--approver", approver, "--words", words)
+    if args.exceptional and own_stop(ticket) and not round_would_open(ticket):
+        raise Refusal(
+            f"aucun tour ne s'ouvrirait sur {args.ticket} : sa session de correction s'est terminée sans que le ticket "
+            "soit terminé et refusé à une nouvelle pointe ; un tour exceptionnel ne relance pas le même commit ; "
+            "rien n'est écrit")
+    state_write("grant-correction", args.convoy, args.ticket, "--approver", approver, "--words", words,
+                *(("--exceptional",) if args.exceptional else ()))
     cleared = run([str(ESCALATION_TOOL), "clear", args.ticket])
     if cleared.returncode != 0:
         raise Refusal(f"le tour est accordé à {args.ticket}, mais sa demande reste sur la liste de l'opérateur : "
                       f"{detail_of(cleared)}")
     print(json.dumps({"ok": True, "convoy": args.convoy, "ticket": args.ticket, "granted": True,
-                      "approver": approver, "words": words}, indent=2, sort_keys=True, ensure_ascii=False))
+                      "exceptional": bool(args.exceptional), "approver": approver, "words": words},
+                     indent=2, sort_keys=True, ensure_ascii=False))
     return 0
 
 
@@ -775,6 +811,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = command("grant", cmd_grant)
     p.add_argument("--approved-by")
     p.add_argument("--words")
+    p.add_argument("--exceptional", action="store_true")
     p = sub.add_parser("settle")
     p.add_argument("convoy")
     p.add_argument("--repo")

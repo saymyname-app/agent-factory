@@ -7,5 +7,5 @@ description = "Zero-token provider failover (ADR-0018): detect quota walls in li
 trigger = "condition"
 interval = "2m"
 check = "/home/benja/agent-factory/orders/lib/orders-restart-stagger.sh provider-failover 120"
-exec = "./bin/provider-failover tick --quiet"
+exec = "/home/benja/agent-factory/bin/order-pause gate provider-failover -- ./bin/provider-failover tick --quiet"
 timeout = "100s"

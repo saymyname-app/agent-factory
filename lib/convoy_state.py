@@ -82,7 +82,7 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state invalidate-verdicts CONVOY TICKET --tip SHA --kind KIND [--kind KIND]
     convoy-state open-correction   CONVOY TICKET --commit SHA
     convoy-state launch-correction CONVOY TICKET --bead BEAD
-    convoy-state grant-correction  CONVOY TICKET --approver NAME --words TEXT
+    convoy-state grant-correction  CONVOY TICKET --approver NAME --words TEXT [--exceptional]
     convoy-state override-finding  CONVOY TICKET --finding ID --approver NAME --words TEXT
     convoy-state record-incident CONVOY --bead BEAD [--signature sha256:HEX]
     convoy-state clear-incident  CONVOY
@@ -408,6 +408,12 @@ QUESTION_ANSWERS = ("oui", "non")
 # The axis of a Blocking Finding made by code of a closed question answered « non ».
 AXIS_TESTS = "tests"
 FINDING_RESPONSES = ("fixed", "contested")
+# ADR-0034: a review after the first one of a ticket is targeted. It blocks
+# only on the Blocking Findings the round before left unsettled (`carries`)
+# and on the lines changed since the tip reviewed before (`location`); any
+# other finding given as blocking is recorded non-blocking, for the end pass.
+OUT_OF_SCOPE = ("hors du périmètre de la revue ciblée (ADR-0034) : ni un constat non soldé de la revue précédente "
+                "(carries), ni une ligne changée depuis la pointe relue {start} (location) ; noté pour la passe de fin")
 MODEL_ROLES = ("author", "reviewer", "evaluator")
 # The Ticket Evaluation of the launched product (T15, Spec §7): one state per
 # acceptance criterion and for the demonstration line, each with a captured
@@ -1120,12 +1126,66 @@ def citation_of(finding: dict[str, Any]) -> tuple[dict[str, str] | None, str | N
     return kept, None
 
 
+def finding_location(value: Any) -> dict[str, Any] | None:
+    """Where a finding points in the reviewed commit, `{path, line}`; None
+    when it is not that shape."""
+    if not isinstance(value, dict) or set(value) != {"path", "line"} or not isinstance(value["path"], str) \
+            or not value["path"].strip() or "\n" in value["path"] or isinstance(value["line"], bool) \
+            or not isinstance(value["line"], int) or value["line"] < 1:
+        return None
+    return {"path": value["path"].strip(), "line": value["line"]}
+
+
+def review_scope(value: Any) -> dict[str, Any]:
+    """The scope of a targeted review (ADR-0034): the tip reviewed before
+    (`from`), the Blocking Findings left unsettled there (`unsettled`), and
+    the lines of the ticket changed since, per file, as ranges of lines of
+    the reviewed commit (`changed`)."""
+    if not isinstance(value, dict) or set(value) != {"from", "unsettled", "changed"}:
+        raise Refusal(f"périmètre de revue ciblée mal formé : {value!r}")
+    valid_commit(value["from"], "pointe relue avant la revue ciblée")
+    unsettled, changed = value["unsettled"], value["changed"]
+    if not isinstance(unsettled, list) or any(not isinstance(name, str) or not FINDING_ID_RE.match(name)
+                                               for name in unsettled):
+        raise Refusal(f"constats non soldés du périmètre mal formés : {unsettled!r}")
+    if not isinstance(changed, dict):
+        raise Refusal(f"lignes changées du périmètre mal formées : {changed!r}")
+    for path, ranges in changed.items():
+        if not path.strip() or not isinstance(ranges, list) or not ranges or any(
+                not isinstance(pair, list) or len(pair) != 2
+                or any(isinstance(n, bool) or not isinstance(n, int) for n in pair) or not 1 <= pair[0] <= pair[1]
+                for pair in ranges):
+            raise Refusal(f"lignes changées du périmètre mal formées pour {path!r} : {ranges!r}")
+    return value
+
+
+def out_of_scope(finding: dict[str, Any], scope: dict[str, Any]) -> str | None:
+    """Why a finding of a targeted review is outside its scope, or None when
+    it carries a Blocking Finding left unsettled or points at a changed line."""
+    if finding.get("carries") in scope["unsettled"]:
+        return None
+    location = finding.get("location")
+    if location and any(start <= location["line"] <= end for start, end in scope["changed"].get(location["path"], [])):
+        return None
+    return OUT_OF_SCOPE.format(start=scope["from"][:12])
+
+
 def review_finding(value: Any) -> dict[str, Any]:
     """One Review Finding as stored. A Blocking Finding carries its
-    citation, or the closed question whose answer « non » made it."""
+    citation, or the closed question whose answer « non » made it. A finding
+    of a targeted review given as blocking outside its scope is stored
+    non-blocking and `finishing_pass` (ADR-0034)."""
     if not isinstance(value, dict) or not {"id", "axis", "blocking", "summary"} <= set(value) \
-            or set(value) - {"id", "axis", "blocking", "summary", "citation", "demoted", "question"}:
+            or set(value) - {"id", "axis", "blocking", "summary", "citation", "demoted", "question", "carries",
+                             "location", "finishing_pass"}:
         raise Refusal(f"constat de revue mal formé : {value!r}")
+    if "carries" in value and (not isinstance(value["carries"], str) or not FINDING_ID_RE.match(value["carries"])):
+        raise Refusal(f"constat {value.get('id')!r} : carries mal formé : {value['carries']!r}")
+    if "location" in value and finding_location(value["location"]) != value["location"]:
+        raise Refusal(f"constat {value.get('id')!r} : location mal formée : {value['location']!r}")
+    if "finishing_pass" in value and (value["finishing_pass"] is not True or value.get("blocking") is not False
+                                      or "demoted" not in value):
+        raise Refusal(f"constat {value.get('id')!r} : finishing_pass sur un constat qui n'a pas été rétrogradé")
     if not isinstance(value["id"], str) or not FINDING_ID_RE.match(value["id"]):
         raise Refusal(f"identifiant de constat mal formé : {value['id']!r}")
     one_of(value["axis"], (*REVIEW_AXES, AXIS_TESTS), "axe de revue")
@@ -1145,9 +1205,14 @@ def blocking_ids(round_: dict[str, Any]) -> list[str]:
 
 
 def code_review_request(value: Any) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) != {"kind", "commit", "base", "questions", "launches", "models", "at"}:
+    required = {"kind", "commit", "base", "questions", "launches", "models", "at"}
+    if not isinstance(value, dict) or not required <= set(value) or set(value) - required - {"scope"}:
         raise Refusal(f"demande de revue de code mal formée : {value!r}")
     one_of(value["kind"], CODE_REVIEW_KINDS, "genre de revue")
+    if "scope" in value:
+        if value["kind"] != "review":
+            raise Refusal("un jugement n'a pas de périmètre de revue ciblée : il juge la liste des Blocking Findings")
+        review_scope(value["scope"])
     valid_commit(value["commit"], "commit de la revue")
     valid_commit(value["base"], "commit de départ de la revue")
     review_questions(value["questions"])
@@ -1166,8 +1231,8 @@ def code_review_round(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict) or not common <= set(value):
         raise Refusal(f"passe de revue de code mal formée : {value!r}")
     kind = one_of(value["kind"], CODE_REVIEW_KINDS, "genre de revue")
-    own = {"findings", "answers", "responses"} if kind == "review" else {"judgements"}
-    required = own - {"responses"}
+    own = {"findings", "answers", "responses", "scope"} if kind == "review" else {"judgements"}
+    required = own - {"responses", "scope"}
     if set(value) - common - own - {"conversation"} or not required <= set(value):
         raise Refusal(f"passe de revue de code mal formée : {value!r}")
     stored_conversation(value)
@@ -1190,6 +1255,8 @@ def code_review_round(value: Any) -> dict[str, Any]:
             raise Refusal(f"passe de revue de code mal formée : {value!r}")
         for finding in value["findings"]:
             review_finding(finding)
+        if "scope" in value:
+            review_scope(value["scope"])
         for question_id, answer in value["answers"].items():
             if not isinstance(answer, dict) or answer.get("answer") not in QUESTION_ANSWERS \
                     or set(answer) - {"answer", "reason"} or (answer["answer"] == "non") != ("reason" in answer):
@@ -1786,7 +1853,9 @@ def correction_record(raw: Any) -> dict[str, Any]:
     record = stored_record(raw, ("commit", "blocking_findings", "not_observed", "launches", "at"), ("grants",))
     grants = record.get("grants", [])
     for grant in grants if isinstance(grants, list) and grants else [None] if "grants" in record else []:
-        if not isinstance(grant, dict) or set(grant) != {"approver", "words", "stop", "at"} \
+        # `exceptional`: a round beyond the bound, at most once (ADR-0034).
+        if not isinstance(grant, dict) or set(grant) - {"exceptional"} != {"approver", "words", "stop", "at"} \
+                or grant.get("exceptional", True) is not True \
                 or not isinstance(grant["words"], str) or not grant["words"].strip():
             raise Refusal(f"levée d'arrêt du tour de correction mal formée : {grant!r}")
         single_line(grant["approver"], "approbateur de la levée d'arrêt")
@@ -1805,7 +1874,23 @@ def correction_record(raw: Any) -> dict[str, Any]:
         if not isinstance(launch, dict) or set(launch) != {"bead", "at"} or not isinstance(launch["bead"], str) \
                 or not BEAD_ID_RE.match(launch["bead"]):
             raise Refusal(f"lancement du tour de correction mal formé : {launch!r}")
+    if sum(1 for grant in record.get("grants", []) if grant.get("exceptional")) > 1:
+        raise Refusal("deux tours exceptionnels sur un ticket : un seul s'accorde (ADR-0034)")
     return record
+
+
+def exceptional_grant(metadata: dict[str, Any]) -> dict[str, Any] | None:
+    """The exceptional round granted to the ticket, if any (ADR-0034)."""
+    if KEY_CORRECTION not in metadata:
+        return None
+    return next((grant for grant in correction_record(metadata[KEY_CORRECTION]).get("grants", [])
+                 if grant.get("exceptional")), None)
+
+
+def correction_rounds_allowed(metadata: dict[str, Any]) -> int:
+    """The rounds this ticket may take: `bounds.correction_rounds`, and one
+    more once its human approver granted the exceptional round (ADR-0034)."""
+    return correction_rounds_bound() + (1 if exceptional_grant(metadata) else 0)
 
 
 def overrides_record(raw: Any) -> list[dict[str, Any]]:
@@ -3135,7 +3220,7 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
         out["resumes_left"] = out["resumes_left_by_cause"] = None
     # The correction rounds the ticket may still take (bounds.correction_rounds).
     try:
-        out["correction_rounds_left"] = max(0, correction_rounds_bound() - counter_value(
+        out["correction_rounds_left"] = max(0, correction_rounds_allowed(metadata) - counter_value(
             metadata.get(COUNTER_PREFIX + "correction_rounds"), "correction_rounds"))
     except Refusal:
         out["correction_rounds_left"] = None
@@ -3888,6 +3973,27 @@ def models_of_review(metadata: dict[str, Any]) -> dict[str, Any]:
     return {"author": author, "reviewer": reviewer, "same_model": same}
 
 
+def targeted_scope(scope: dict[str, Any], kind: str, record: dict[str, Any], ticket_id: str) -> dict[str, Any]:
+    """The scope of a targeted review, held to what the tracker says
+    (ADR-0034): only a review after another round of the ticket is targeted
+    -- the first stays complete --, from the tip that round judged, on
+    Blocking Findings it left unsettled."""
+    last = record["rounds"][-1] if record["rounds"] else None
+    if kind != "review":
+        raise Refusal("un jugement n'a pas de périmètre de revue ciblée : il juge la liste des Blocking Findings")
+    if last is None:
+        raise Refusal(f"aucune revue n'est rendue sur {ticket_id} : le premier passage est une revue complète, sans "
+                      "périmètre ciblé (ADR-0034)")
+    if scope["from"] != last["commit"]:
+        raise Refusal(f"le périmètre ciblé part de {scope['from']}, la dernière revue de {ticket_id} a jugé "
+                      f"{last['commit']}")
+    unsettled = code_review_state(record)["unsettled"]
+    foreign = [name for name in scope["unsettled"] if name not in unsettled]
+    if foreign:
+        raise Refusal(f"constats du périmètre ciblé que la dernière revue ne laisse pas non soldés : {', '.join(foreign)}")
+    return scope
+
+
 def cmd_open_code_review(args: argparse.Namespace) -> int:
     """Open a round of the code review of a ticket (T14, Spec §6) at the
     commit its author finished at: the review itself, or the judgement of
@@ -3906,16 +4012,19 @@ def cmd_open_code_review(args: argparse.Namespace) -> int:
             f"le Ticket Handoff de {args.ticket} n'est pas complet au commit {commit} : la revue porte sur le commit "
             "où l'auteur a terminé")
     questions: list[dict[str, str]] = []
+    scope = None
     if args.file is not None:
         given = json_argument(args.file, "questions fermées de la revue")
-        unknown = sorted(set(given) - {"questions"})
+        unknown = sorted(set(given) - {"questions", "scope"})
         if unknown:
             raise Refusal(f"champs inconnus dans les questions fermées : {', '.join(unknown)}")
         questions = review_questions(given.get("questions"))
+        if given.get("scope") is not None:
+            scope = targeted_scope(review_scope(given["scope"]), kind, record, args.ticket)
     models = models_of_review(metadata)
     request = record.get("request")
-    wanted = (kind, commit, base, questions)
-    if request and tuple(request[name] for name in ("kind", "commit", "base", "questions")) == wanted:
+    wanted = (kind, commit, base, questions, scope)
+    if request and (*(request[name] for name in ("kind", "commit", "base", "questions")), request.get("scope")) == wanted:
         if request["models"] == models:
             return done(args.convoy, args.ticket, {})
         # The same review, sent to a reviewer of another model: its launches stay counted.
@@ -3964,7 +4073,7 @@ def cmd_open_code_review(args: argparse.Namespace) -> int:
         elif last and last["commit"] == commit:
             raise Refusal(f"le ticket {args.ticket} est déjà revu favorablement au commit {commit}")
         record["request"] = {"kind": kind, "commit": commit, "base": base, "questions": questions, "launches": [],
-                             "models": models, "at": now()}
+                             "models": models, "at": now(), **({"scope": scope} if scope is not None else {})}
     values = {KEY_CODE_REVIEW: encode(record)}
     write_metadata(args.ticket, values)
     return done(args.convoy, args.ticket, values)
@@ -3988,10 +4097,12 @@ def cmd_launch_code_review(args: argparse.Namespace) -> int:
     return done(args.convoy, args.ticket, values)
 
 
-def given_findings(given: dict[str, Any], number: int, problems: list[str]) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+def given_findings(given: dict[str, Any], number: int, problems: list[str],
+                   scope: dict[str, Any] | None = None) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     """The findings a reviewer hands in, as they are stored: a finding given
     as blocking whose citation does not hold is recorded as non-blocking,
-    with the reason (Spec §6)."""
+    with the reason (Spec §6); so is one of a targeted review outside its
+    scope, marked for the end pass (ADR-0034)."""
     findings: list[dict[str, Any]] = []
     demoted: list[dict[str, str]] = []
     raw = given.get("findings", [])
@@ -4003,7 +4114,8 @@ def given_findings(given: dict[str, Any], number: int, problems: list[str]) -> t
         if not isinstance(finding, dict):
             problems.append(f"{where} mal formé : un objet est attendu")
             continue
-        unknown = sorted(set(finding) - {"axis", "blocking", "summary", "citation", "citation_refused"})
+        unknown = sorted(set(finding) - {"axis", "blocking", "summary", "citation", "citation_refused", "carries",
+                                         "location"})
         if unknown:
             problems.append(f"{where} : champs inconnus : {', '.join(unknown)}")
         if finding.get("axis") not in REVIEW_AXES:
@@ -4019,9 +4131,25 @@ def given_findings(given: dict[str, Any], number: int, problems: list[str]) -> t
         citation, reason = citation_of(finding)
         if citation is not None:
             stored["citation"] = citation
+        carries = finding.get("carries")
+        if carries is not None:
+            if isinstance(carries, str) and FINDING_ID_RE.match(carries):
+                stored["carries"] = carries
+            else:
+                problems.append(f"{where} : carries mal formé : {carries!r} (attendu : l'identifiant d'un constat)")
+        if finding.get("location") is not None:
+            location = finding_location(finding["location"])
+            if location is None:
+                problems.append(f"{where} : location mal formée : {finding['location']!r} (attendu : "
+                                "{path, line}, une ligne du commit revu)")
+            else:
+                stored["location"] = location
         if stored["blocking"] and reason is not None:
             stored["blocking"] = False
             stored["demoted"] = f"refusé comme bloquant : {reason}"
+            demoted.append({"id": stored["id"], "reason": stored["demoted"]})
+        elif stored["blocking"] and scope is not None and out_of_scope(stored, scope):
+            stored.update(blocking=False, demoted=out_of_scope(stored, scope), finishing_pass=True)
             demoted.append({"id": stored["id"], "reason": stored["demoted"]})
         findings.append(stored)
     return findings, demoted
@@ -4054,7 +4182,9 @@ def cmd_record_code_review(args: argparse.Namespace) -> int:
     demoted: list[dict[str, str]] = []
     if review:
         number = len(record["rounds"]) + 1
-        findings, demoted = given_findings(given, number, problems)
+        findings, demoted = given_findings(given, number, problems, request.get("scope"))
+        if "scope" in request:
+            round_["scope"] = request["scope"]
         answers = given.get("answers") if isinstance(given.get("answers"), dict) else {}
         questions = {question["id"]: question for question in request["questions"]}
         problems += [f"réponse à une question qui n'est pas posée : {name}" for name in sorted(set(answers) - set(questions))]
@@ -5232,7 +5362,7 @@ def cmd_open_correction(args: argparse.Namespace) -> int:
     previous = correction_record(metadata[KEY_CORRECTION]) if KEY_CORRECTION in metadata else None
     if previous is not None and previous["commit"] == commit:
         return done(args.convoy, args.ticket, {})
-    bound = correction_rounds_bound()
+    bound = correction_rounds_allowed(metadata)
     if counters["correction_rounds"] >= bound:
         raise Refusal(
             f"le ticket {args.ticket} a déjà pris ses tours de correction : {bound} tour(s) de correction par "
@@ -5299,22 +5429,36 @@ def cmd_grant_correction(args: argparse.Namespace) -> int:
     bound now allows one more (af-bv0ikr: the tickets stopped after one
     round, when one was all), with the words of the approver: the stop is
     kept on the round, and bin/correction-round opens the next one once both
-    controls answered at the tip."""
+    controls answered at the tip. `--exceptional` (ADR-0034): the same on a
+    ticket at the bound, which then allows it one round more, once."""
     metadata = metadata_of(marked_ticket(args.convoy, args.ticket))
     stop = stop_record(metadata[KEY_STOP]) if KEY_STOP in metadata else None
     if stop is None or stop["reason"] != STOP_STILL_REFUSED or KEY_CORRECTION not in metadata:
         raise Refusal(f"le ticket {args.ticket} n'est pas arrêté encore refusé après un tour de correction : "
                       "rien à accorder")
-    bound = correction_rounds_bound()
-    if counter_value(metadata.get(COUNTER_PREFIX + "correction_rounds"), "correction_rounds") >= bound:
+    bound = correction_rounds_allowed(metadata)
+    taken = counter_value(metadata.get(COUNTER_PREFIX + "correction_rounds"), "correction_rounds")
+    exceptional = bool(getattr(args, "exceptional", False))
+    already = exceptional_grant(metadata)
+    if exceptional and already:
+        raise Refusal(
+            f"le ticket {args.ticket} a déjà reçu son tour exceptionnel ({already['approver']}, {already['at']}) : "
+            "un seul tour exceptionnel par ticket (ADR-0034) ; reste la dérogation ou la Planning Exception")
+    if exceptional and taken < bound:
+        raise Refusal(
+            f"le ticket {args.ticket} n'est pas au plafond : il lui reste {bound - taken} tour(s) de correction "
+            "(bounds.correction_rounds) ; accorde-le sans --exceptional")
+    if not exceptional and taken >= bound:
         raise Refusal(f"le ticket {args.ticket} a déjà pris ses {bound} tour(s) de correction "
-                      "(bounds.correction_rounds) : aucun tour de plus ne s'accorde")
+                      "(bounds.correction_rounds) : aucun tour de plus ne s'accorde"
+                      + ("" if already else " ; au plafond, seul un tour exceptionnel s'accorde (--exceptional), "
+                                            "une fois par ticket"))
     words = (args.words or "").strip()
     if not words:
         raise Refusal("levée sans mots : elle s'enregistre avec les mots de l'approbateur (--words), non vides")
     record = correction_record(metadata[KEY_CORRECTION])
     grant = {"approver": single_line(args.approver, "approbateur de la levée d'arrêt"), "words": words,
-             "stop": stop, "at": now()}
+             "stop": stop, "at": now(), **({"exceptional": True} if exceptional else {})}
     record["grants"] = [*record.get("grants", []), grant]
     values = {KEY_CORRECTION: encode(record), KEY_STOP: None}
     write_metadata(args.ticket, values)
@@ -7403,6 +7547,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = command("grant-correction", cmd_grant_correction)
     p.add_argument("--approver")
     p.add_argument("--words")
+    p.add_argument("--exceptional", action="store_true")
     p = command("override-finding", cmd_override_finding)
     p.add_argument("--finding")
     p.add_argument("--approver")

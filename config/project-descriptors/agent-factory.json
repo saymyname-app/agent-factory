@@ -130,6 +130,21 @@
       },
       {
         "kind": "command",
+        "method": "pause",
+        "path": "bin/order-pause"
+      },
+      {
+        "kind": "command",
+        "method": "resume",
+        "path": "bin/order-pause"
+      },
+      {
+        "kind": "command",
+        "method": "show",
+        "path": "bin/order-pause"
+      },
+      {
+        "kind": "command",
         "method": "bd-publish",
         "path": "bin/ticket-graph-publish"
       }
@@ -179,6 +194,7 @@
       "journal-narrow": "config/cockpit-datasets/journal-narrow.json",
       "journal-light": "config/cockpit-datasets/journal-light.json",
       "journal-logs": "config/cockpit-datasets/journal-logs.json",
+      "journal-demonstration": "config/cockpit-datasets/journal-demonstration.json",
       "health-content": "config/cockpit-datasets/health-content.json",
       "health-empty": "config/cockpit-datasets/health-empty.json",
       "health-loading": "config/cockpit-datasets/health-loading.json",
@@ -263,7 +279,7 @@
     ],
     "import_rule": {
       "product_import": "(?<![\\w/.-])bin/[a-z]|^\\s*(?:from|import)\\s+(?:cockpit|convoy_state|factory_[a-z_]+|delivery_role_identity|overlap_conflict_log|provider_failover|reversibility)\\b",
-      "entry_point_import": "(?<![\\w/.-])bin/(?:project-launch|project-planning-profile|prototype-conformance|acceptance-session|owner-answer|outcome-promote|escalation-door|proposal-door|ticket-graph-publish)(?![\\w-])"
+      "entry_point_import": "(?<![\\w/.-])bin/(?:project-launch|project-planning-profile|prototype-conformance|acceptance-session|owner-answer|outcome-promote|escalation-door|proposal-door|order-pause|ticket-graph-publish)(?![\\w-])"
     },
     "regression_command": "python3 tests/cockpit-criteria/regression.py",
     "k": 3,

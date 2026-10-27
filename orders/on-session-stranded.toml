@@ -2,4 +2,4 @@
 description = "Reopen and page the Mayor when a pool session terminates without a clean drain, leaving in-progress work beads orphaned (audit finding O4)"
 trigger = "event"
 on = "session.stranded"
-exec = "/home/benja/agent-factory/bin/on-session-stranded"
+exec = "/home/benja/agent-factory/bin/order-pause gate on-session-stranded -- /home/benja/agent-factory/bin/on-session-stranded"

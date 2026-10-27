@@ -108,6 +108,22 @@ class TheDoors(unittest.TestCase):
         self.assertIsNone(done, f"a door that expires answered: {done}")
         self.assertEqual("rejetee", (self.tracker(env)[bead].get("metadata") or {}).get("gc.proposal_state"))
 
+    def test_the_order_pause_door_writes_on_the_tracker_of_the_launch_and_may_expire(self):
+        # B's « relancer un order » (af-npz9v1.15): a dataset may name
+        # order-pause, and the real door writes its record there first.
+        env = self.launched({"order-pause": "records-then-expires"})
+        try:
+            done = subprocess.run([env["COCKPIT_ORDER_PAUSE_BIN"], "pause", "convoy-advance", "--by", "usine",
+                                   "--words", "pause d'essai"], env=env, capture_output=True, text=True,
+                                  timeout=PATIENCE)
+        except subprocess.TimeoutExpired:
+            done = None
+        self.assertIsNone(done, f"a door that expires answered: {done}")
+        [record] = [bead for bead in self.tracker(env).values()
+                    if (bead.get("metadata") or {}).get("gc.order_pause") == "convoy-advance"]
+        self.assertEqual("open", record["status"])
+        self.assertEqual("usine", record["metadata"]["gc.order_pause_by"])
+
     def test_doors_that_are_not_each_a_door_and_how_it_answers_are_refused(self):
         for doors in ({"proposal-door": "answers twice"}, {"merge-door": "expires"}):
             path = self.dataset(doors)

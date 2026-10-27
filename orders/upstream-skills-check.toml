@@ -9,5 +9,5 @@
 description = "Daily, read-only check for a mattpocock/skills release tag newer than the pinned Method Baseline; files one proposal bead on drift, never updates anything (W13, A6b)."
 trigger = "cron"
 schedule = "0 4 * * *"
-exec = "./bin/upstream-skills-check"
+exec = "/home/benja/agent-factory/bin/order-pause gate upstream-skills-check -- ./bin/upstream-skills-check"
 timeout = "60s"

@@ -202,10 +202,14 @@ check = "/home/benja/agent-factory/orders/lib/orders-restart-stagger.sh beads-he
 # gc order sweep-tracking --stale-after 10m is idempotent and only prunes;
 # a 10m sweep cadence still catches everything before its own 10m staleness
 # window closes.
+# af-8x3vwg: the sweep normally finishes in seconds, but Dolt contention made
+# five runs hit Gas City's inherited 300s exec deadline exactly. Give this
+# bounded maintenance scan 10m; the 24h retention below still bounds its work.
 # T10 (af-u61al3): see the dolt-health override above.
 name = "order-tracking-sweep"
 trigger = "condition"
 interval = "10m"
+timeout = "10m"
 check = "/home/benja/agent-factory/orders/lib/orders-restart-stagger.sh order-tracking-sweep 600"
 
 [[orders.overrides]]

@@ -186,9 +186,16 @@ if [ -n "$TICKET_GIT" ] && [ "$TICKET_GIT" = "$FACTORY_GIT" ]; then echo "test g
 
 On « applies », how a test is written (public interface, level, decor,
 durations) is the test guideline: read `"$WORKTREE/docs/TEST_GUIDELINE.md"`
-first; it is not restated here. On « not applied » the ticket belongs to
-another project, where the guideline is not yet applied (af-8cfygl): the
-`tdd` skill and the profile are your only rules.
+first; it is not restated here. Its closed list of whole journeys (point
+3) is held by code: a criterion test that launches the product and is not
+named there fails `tests/cockpit-criteria-closed-list-test.py`, in the
+regression of green. The reviews of convoy af-strhoy refused most often,
+after that list, on its point 4 (the values verified written in the case, a
+decor built once per file, nothing a case leaves seen by another) and on a
+test that enters the code instead of its public interface.
+On « not applied » the ticket belongs to another project, where the
+guideline is not yet applied (af-8cfygl): the `tdd` skill and the profile
+are your only rules.
 
 Commit, then have the red proven:
 

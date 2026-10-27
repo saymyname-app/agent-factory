@@ -121,6 +121,20 @@ chmod +x "$FAKE_BIN/gc"
 export PATH="$FAKE_BIN:$PATH"
 export GC_BIN="$FAKE_BIN/gc"
 
+cat > "$FAKE_BIN/gh" <<'FAKEGH'
+#!/usr/bin/env bash
+case " $* " in
+  *" pr list "*" --head squash-merged-deleted "*)
+    printf '[{"headRefName":"squash-merged-deleted","headRefOid":"%s","mergedAt":"2026-10-23T05:46:42Z","number":722}]\n' \
+      "$SQUASH_MERGED_HEAD"
+    ;;
+  *)
+    echo '[]'
+    ;;
+esac
+FAKEGH
+chmod +x "$FAKE_BIN/gh"
+
 mkdir -p "$FACTORY_ROOT/bin"
 ESCALATION_LOG="$TMP/escalation.log"
 : > "$ESCALATION_LOG"
@@ -167,6 +181,22 @@ git -C "$WT_ROOT/clean-pushed-recent" add -A
 git -C "$WT_ROOT/clean-pushed-recent" commit -qm recent
 git -C "$WT_ROOT/clean-pushed-recent" push -q origin clean-pushed-recent
 
+# a clean worktree whose branch was deleted after a squash merge -- the local
+# head is not an ancestor of main, but GitHub still proves that exact head was
+# merged and is therefore recoverable from the PR
+git -C "$REPO2" worktree add -q -b squash-merged-deleted "$WT_ROOT/squash-merged-deleted" main
+echo squash > "$WT_ROOT/squash-merged-deleted/squash.txt"
+git -C "$WT_ROOT/squash-merged-deleted" add -A
+git -C "$WT_ROOT/squash-merged-deleted" commit -qm squash
+git -C "$WT_ROOT/squash-merged-deleted" push -qu origin squash-merged-deleted
+SQUASH_MERGED_HEAD=$(git -C "$WT_ROOT/squash-merged-deleted" rev-parse HEAD)
+export SQUASH_MERGED_HEAD
+git -C "$REPO2" merge -q --squash squash-merged-deleted
+git -C "$REPO2" commit -qm "squash merge"
+git -C "$REPO2" push -q origin main
+git -C "$REPO2" push -q origin --delete squash-merged-deleted
+git -C "$REPO2" remote prune origin >/dev/null
+
 OUT2=$("$SCRIPT" clean-worktrees --worktree-root "$WT_ROOT" 2>&1) || fail "clean-worktrees exited non-zero: $OUT2"
 
 [ -d "$WT_ROOT/clean-merged-pushed" ] && fail "clean-worktrees did not remove a merged, fully-pushed, clean worktree"
@@ -174,6 +204,7 @@ OUT2=$("$SCRIPT" clean-worktrees --worktree-root "$WT_ROOT" 2>&1) || fail "clean
 [ -d "$WT_ROOT/unpushed-worktree" ] || fail "clean-worktrees removed a worktree with unpushed commits"
 [ -d "$WT_ROOT/clean-pushed-old" ] && fail "clean-worktrees did not remove a clean, pushed worktree untouched for over 7 days"
 [ -d "$WT_ROOT/clean-pushed-recent" ] || fail "clean-worktrees removed a clean, pushed worktree that was recently touched"
+[ -d "$WT_ROOT/squash-merged-deleted" ] && fail "clean-worktrees did not recover exact merged-PR proof after its squash-merged branch was deleted"
 
 grep -q "gesture=clean-worktrees.*status=removed.*path=$WT_ROOT/clean-merged-pushed" "$FACTORY_MAINTAIN_LOG" \
   || fail "clean-worktrees did not log the removal of the merged worktree"
@@ -182,6 +213,8 @@ grep -q "gesture=clean-worktrees.*undo=.*factory-do-work-workspace enter" "$FACT
   || fail "clean-worktrees log entry did not record how to undo it"
 grep -q "gesture=clean-worktrees.*status=removed.*path=$WT_ROOT/clean-pushed-old.*sha=$OLD_SHA" "$FACTORY_MAINTAIN_LOG" \
   || fail "clean-worktrees did not log the removal of the stale, clean, pushed worktree"
+grep -q "gesture=clean-worktrees.*status=removed.*path=$WT_ROOT/squash-merged-deleted.*sha=$SQUASH_MERGED_HEAD.*proof=github-pr-merged.*pr=722" "$FACTORY_MAINTAIN_LOG" \
+  || fail "clean-worktrees did not log its exact merged-PR proof"
 
 # the branch clean-worktrees removed the worktree for is still recoverable (undo path)
 git -C "$REPO2" show-ref --verify --quiet refs/heads/clean-merged-pushed \
