@@ -395,12 +395,18 @@ if [ -x "$CONVOY_STATE" ]; then
   for convoy_id in $("$CONVOY_STATE" list 2>/dev/null | jq -r '.convoys[]?' 2>/dev/null); do
     "$CONVOY_STATE" show "$convoy_id" > "$stall_show" 2>/dev/null || { stall_ok=0; continue; }
     open_ids=(); listed_ids=()
-    while IFS= read -r bead_id; do
-      [ -z "$bead_id" ] && continue
-      row=$(gc bd show "$bead_id" --json 2>/dev/null) || { stall_ok=0; continue; }
-      [ "$(jq -r '(.[0].status // "closed")' <<<"$row")" != "closed" ] && open_ids+=("$bead_id")
-      if [ -n "$(jq -r "$ON_OPERATOR_LIST" <<<"$row" 2>/dev/null)" ]; then listed_ids+=("$bead_id"); fi
-    done < <(python3 "$LIB/factory_watchdog.py" ticket-lookups < "$stall_show" 2>/dev/null)
+    mapfile -t lookup_ids < <(python3 "$LIB/factory_watchdog.py" ticket-lookups < "$stall_show" 2>/dev/null)
+    if [ "${#lookup_ids[@]}" -gt 0 ]; then
+      rows=$(gc bd show "${lookup_ids[@]}" --json 2>/dev/null) || { stall_ok=0; continue; }
+      lookup_state=$(jq -r '.[]? | [(.id // ""), (.status // "open"),
+        (((.metadata["gc.needs_benjamin"] // "") | tostring) as $n | ($n != "" and $n != "none"))] | @tsv' <<<"$rows") \
+        || { stall_ok=0; continue; }
+      while IFS=$'\t' read -r bead_id status listed; do
+        [ -z "$bead_id" ] && continue
+        [ "$status" != "closed" ] && open_ids+=("$bead_id")
+        [ "$listed" = "true" ] && listed_ids+=("$bead_id")
+      done <<<"$lookup_state"
+    fi
     jq -c --argjson alive "$alive_json" --arg open "${open_ids[*]:-}" --arg listed "${listed_ids[*]:-}" '{show: ., alive: $alive, open: ($open | split(" ") | map(select(. != ""))), listed: ($listed | split(" ") | map(select(. != "")))}' "$stall_show" > "$stall_payload"
     while IFS=$'\t' read -r ticket_id code msg; do
       [ -z "$ticket_id" ] && continue

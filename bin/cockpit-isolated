@@ -78,6 +78,8 @@ DOORS = {
     "proposal-door": (ROOT / "bin" / "proposal-door", "COCKPIT_PROPOSAL_DOOR_BIN"),
     "escalation-door": (ROOT / "bin" / "escalation-door", "COCKPIT_ESCALATION_DOOR_BIN"),
     "loop-guard": (ROOT / "bin" / "factory-session-loop-guard", "COCKPIT_LOOP_GUARD_BIN"),
+    # Pause and resume of an order (af-npz9v1.15), for B's « relancer un order ».
+    "order-pause": (ROOT / "bin" / "order-pause", "COCKPIT_ORDER_PAUSE_BIN"),
     "gc": (SYNTHETIC / "gc", "COCKPIT_GC_BIN"),
 }
 # How a dataset may say a door answers (`doors`): it never does, or it
@@ -312,6 +314,7 @@ def write_tracker_and_projects(city: synthetic_city.SyntheticCity, home: str) ->
         # A tracker that answers no read, and a cockpit that waits for it.
         env["COCKPIT_BD_BIN"] = str(FIXTURES / "requests" / "silent-bd")
         env["COCKPIT_BEADS_READ_TIMEOUT_SECONDS"] = UNANSWERED_READ_TIMEOUT_SECONDS
+        env["COCKPIT_JOURNAL_READ_TIMEOUT_SECONDS"] = UNANSWERED_READ_TIMEOUT_SECONDS
     return env
 
 

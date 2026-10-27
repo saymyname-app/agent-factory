@@ -41,7 +41,9 @@ filters by `--type`, `--status`, `--has-metadata-key` and `--metadata-field`;
 `sling TARGET BEAD --on FORMULA --reassign` attaches a workflow and leaves the
 bead open, unassigned and without new metadata. Every sling is appended to
 the write log as ["sling", TARGET, BEAD, FORMULA]; a bead id listed in
-CONVOY_STATE_FAKE_SLING_FAIL (comma-separated) makes its sling fail.
+CONVOY_STATE_FAKE_SLING_FAIL (comma-separated) makes its sling fail. For the
+grouped-answer race, CONVOY_STATE_FAKE_ANSWER_ON_SLING=REQUEST=OPTION records
+that response after the first successful sling.
 
 For the factory incident of bin/convoy-advance and for bin/escalation-door
 (T34, af-ckwina): `bd update` also takes `--unset-metadata KEY`, `--status
@@ -270,6 +272,25 @@ def sling(args):
     if bead_id in os.environ.get("CONVOY_STATE_FAKE_SLING_FAIL", "").split(","):
         fail(f"sling refused for {bead_id}")
     log_write(["sling", target, bead_id, formula])
+    answer = os.environ.get("CONVOY_STATE_FAKE_ANSWER_ON_SLING")
+    if answer:
+        request, separator, option = answer.partition("=")
+        if not separator or not request or not option:
+            fail("CONVOY_STATE_FAKE_ANSWER_ON_SLING must be REQUEST=OPTION")
+        with open(STATE_PATH, "r+", encoding="utf-8") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            state = json.loads(handle.read())
+            bead = state["beads"].get(request)
+            if bead is None:
+                fail(f"answer-on-sling request not found: {request}")
+            metadata = bead.setdefault("metadata", {})
+            if "gc.escalation_response_option" not in metadata:
+                metadata.update({"gc.needs_benjamin": "none", "gc.escalation_response_option": option,
+                                 "gc.escalation_response_at": "9999-01-01T00:00:00Z",
+                                 "gc.escalation_response_actor": "fake-sling"})
+                handle.seek(0)
+                handle.truncate()
+                handle.write(json.dumps(state, indent=2, sort_keys=True))
     print(f'Attached workflow wf-{bead_id} (formula "{formula}") to wf-{bead_id}')
 
 

@@ -56,8 +56,14 @@ PROJECT_CARD = "gc.project_card"
 RUN_CARD = "gc.run_card"
 # The label of a bead that keeps one section of a screen as it is said.
 SAID = "said"
-# What an event bead meant for the journal carries (cockpit.ui.journal.entries).
+# What an event bead meant for the journal carries (cockpit.ui.journal.entries):
+# its nature or source, the link it offers, what it holds folded.
 JOURNAL_EVENT_KEY = "gc.journal_event"
+JOURNAL_LINK_KEY = "gc.journal_link"
+JOURNAL_FOLDED_KEY = "gc.journal_folded"
+# The lines of the journal that are the page's own, not an event's: the
+# label of what unfolds under an event, and the note under the logs.
+JOURNAL_PAGE_LINES = ("Détail et source", "Événement brut", "Libellés fixes par type d’événement ; aucun appel de modèle.")
 
 # The step of the stop a Factory state is set up at (`ui.setup`).
 STOP_STEP = re.compile(r"shutdownState='([a-z]+)'")
@@ -280,6 +286,11 @@ def _panorama_city(name, at, ui, text, folded, drawn, runs, ui_result, release=N
     for number, run in enumerate(runs, start=1):
         tracker.add(f"synthetic-run-card-{number}", run["title"], issue_type="epic",
                     metadata={RUN_CARD: json.dumps(run, ensure_ascii=False)})
+    # What an event of the journal holds folded is said under its title.
+    folded = dict(folded)
+    for bead in tracker.beads:
+        if JOURNAL_EVENT_KEY in bead["metadata"] and bead["title"] in folded:
+            bead["metadata"][JOURNAL_FOLDED_KEY] = json.dumps(folded.pop(bead["title"]), ensure_ascii=False)
     dossier = next((bead for bead in tracker.beads if bead["id"] == DOSSIER), None)
     if result_state and dossier is None:
         raise DatasetRefused(f"« {lines[0]} » opens no dossier to be in the state {result_state!r} (ui.state)")
@@ -732,8 +743,14 @@ def _journal(lines, tracker) -> None:
     for number, (when, header, said) in enumerate(events, 1):
         if not said:
             raise DatasetRefused(f"an event of the journal without a title: {header.group(0)}")
-        tracker.add(f"synthetic-event-{number}", said[0], said=said[1:], at=when, issue_type="event",
-                    event_kind=header["kind"], labels=[header["kind"]], metadata={JOURNAL_EVENT_KEY: header["kind"]},
+        # Its link: the line « Voir … » under it; the rest, what it says.
+        rest = [line for line in said[1:] if line not in JOURNAL_PAGE_LINES]
+        link = next((line for line in rest if line.startswith("Voir ")), None)
+        metadata = {JOURNAL_EVENT_KEY: header["kind"]}
+        if link:
+            metadata[JOURNAL_LINK_KEY] = link
+        tracker.add(f"synthetic-event-{number}", said[0], said=[line for line in rest if line != link], at=when,
+                    issue_type="event", event_kind=header["kind"], labels=[header["kind"]], metadata=metadata,
                     project=header["project"] and tracker.declare(header["project"]))
 
 

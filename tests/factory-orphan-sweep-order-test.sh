@@ -91,7 +91,7 @@ run_clean() {
 #     replaces is skipped there.
 live_order=$(run_clean gc order show factory-orphan-sweep --city "$ROOT" --json)
 jq -e --arg source "$ROOT/orders/factory-orphan-sweep.toml" \
-      --arg exec "$ROOT/bin/factory-orphan-sweep" '
+      --arg exec "$ROOT/bin/order-pause gate factory-orphan-sweep -- $ROOT/bin/factory-orphan-sweep" '
   .ok == true and
   .order.type == "exec" and
   .order.trigger == "condition" and

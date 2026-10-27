@@ -9,7 +9,7 @@
 //
 // anchors   every element carrying data-anchor: name, element, the
 //           anchors that hold it, nearest first, and its computed
-//           font-family and line-height (`styles`)
+//           font-family, line-height and colour (`styles`)
 // texts     the rendered text of each anchor; of a frame (an iframe
 //           carrying data-anchor), the text of the document it shows
 // inside    for each frame carrying data-anchor, what the document it
@@ -378,7 +378,8 @@
       var box = element.getBoundingClientRect(), shown = visible(element, view);
       anchors.push({name: name, tag: element.tagName.toLowerCase(), chain: chain, styles: {
         'font-family': computed.getPropertyValue('font-family'),
-        'line-height': computed.getPropertyValue('line-height')
+        'line-height': computed.getPropertyValue('line-height'),
+        'color': computed.getPropertyValue('color')
       }, drawn: shown, text: shown ? line(element.innerText).slice(0, CONTENT_LIMIT) : '',
         content: line(element.textContent).slice(0, CONTENT_LIMIT),
         open: element.tagName === 'DETAILS' ? element.open : null,

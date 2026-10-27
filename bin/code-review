@@ -22,7 +22,11 @@ non-blocking. A closed question answered « non » is a Blocking Finding.
 Each Blocking Finding is answered « corrigé » or « contesté » (`respond`),
 and a second reviewer session judges that closed list against the correction
 diff. bin/spec-integration merges nothing without a favorable verdict at the
-tip. A review that gives no result is not a passed one: it is launched once
+tip. The first review of a ticket is complete; a later one is targeted
+(ADR-0034): it blocks only on the Blocking Findings left unsettled before
+(an override settles one) and on the lines of the ticket changed since the
+tip reviewed before; a finding given as blocking elsewhere is recorded
+non-blocking, `finishing_pass`, for the end pass. A review that gives no result is not a passed one: it is launched once
 more, then the ticket is stopped and raised to the operator once.
 
 No reviewer is sent on a branch that does not contain the tip of the
@@ -465,31 +469,104 @@ def frozen_tests(convoy_id: str, ticket: dict[str, Any]) -> dict[str, Any]:
             "satisfied": list(registry.get("satisfied") or [])}
 
 
-def closed_questions(convoy: Convoy, ticket: dict[str, Any], base: str, commit: str) -> list[dict[str, str]]:
+def closed_questions(convoy: Convoy, ticket: dict[str, Any], base: str, commit: str,
+                     scope: dict[str, Any] | None = None) -> list[dict[str, str]]:
     """Spec §6, « troisième vérification »: the closed questions on the
     tests, asked by code. One per test file of the diff that is not a frozen
     criterion test (is it on a listed seam?), one per frozen test file the
-    amendment changed (does the amended test still observe its
-    criterion?)."""
+    amendment changed (does the amended test still observe its criterion,
+    its visual fidelity to the prototype left out, ADR-0032/0034?). A
+    targeted review asks them only of the files changed in its scope."""
     launch = convoy.profile(ticket["id"])
     perimeter = [path for path in launch.get("test_perimeter") or [] if isinstance(path, str)]
     harness = [path for path in launch.get("frozen_harness_paths") or [] if isinstance(path, str)]
     frozen = frozen_tests(convoy.id, ticket)
+    asked = (lambda path: path in scope["changed"]) if scope is not None else (lambda path: True)
     questions: list[dict[str, str]] = []
     for entry in changed_files(convoy.repo, base, commit):
         path = entry["path"]
-        if entry["status"] == "D" or path in frozen["files"] or in_paths(path, harness):
+        if entry["status"] == "D" or path in frozen["files"] or in_paths(path, harness) or not asked(path):
             continue
         if in_paths(path, perimeter) or TEST_FILE_RE.search(path):
             questions.append({
                 "id": f"Q{len(questions) + 1}", "kind": "internal_test", "subject": path,
                 "text": f"Le fichier de test {path}, qui n'est pas un test de critère gelé, passe-t-il par un seam listé ?"})
     for path in frozen["amended"]:
-        if not in_paths(path, harness):
+        if not in_paths(path, harness) and asked(path):
             questions.append({
                 "id": f"Q{len(questions) + 1}", "kind": "amended_test", "subject": path,
-                "text": f"Le test de critère amendé {path} observe-t-il encore son critère ?"})
+                "text": (f"Le test de critère amendé {path} observe-t-il encore son critère (comportement, clavier, "
+                         "débordement, focus…) ? La fidélité visuelle au prototype n'est pas jugée ici (ADR-0032).")})
     return questions
+
+
+# --- the scope of a targeted review (ADR-0034) ---------------------------------------
+
+HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+
+
+def new_lines(repo: Path, start: str, end: str) -> dict[str, set[int]] | None:
+    """The lines of `end` that `git diff start end` adds or changes, per
+    file; for a hunk that only removes lines, the lines around the removal.
+    None when the diff cannot be read."""
+    proc = git(repo, "diff", "-U0", "--no-renames", "--no-color", "--no-ext-diff", start, end)
+    if proc.returncode != 0:
+        return None
+    lines: dict[str, set[int]] = {}
+    path = None
+    for line in proc.stdout.splitlines():
+        if line.startswith("+++ "):
+            path = line[6:] if line.startswith("+++ b/") else None
+            continue
+        hunk = HUNK_RE.match(line)
+        if hunk and path is not None:
+            first, count = int(hunk.group(1)), int(hunk.group(2) if hunk.group(2) is not None else 1)
+            numbers = range(first, first + count) if count else (first, first + 1)
+            lines.setdefault(path, set()).update(n for n in numbers if n >= 1)
+    return lines
+
+
+def ranges_of(numbers: set[int]) -> list[list[int]]:
+    out: list[list[int]] = []
+    for number in sorted(numbers):
+        if out and number == out[-1][1] + 1:
+            out[-1][1] = number
+        else:
+            out.append([number, number])
+    return out
+
+
+def review_scope(convoy: Convoy, ticket: dict[str, Any], base: str, commit: str) -> dict[str, Any] | None:
+    """What a review after the first one of the ticket judges, blocking
+    (ADR-0034): the Blocking Findings the last round left unsettled -- an
+    override settles one --, and the lines of the ticket changed since the
+    tip that round judged. The lines of the ticket are those of its own diff
+    from `base`, the merge base with the integration branch (as
+    bin/ticket-exit reads them, af-wrxrmg): the commits of the integration
+    the branch took in since are not lines of the ticket. None for the first
+    review of a ticket, which is complete."""
+    review = review_of(ticket)
+    last = review["rounds"][-1] if review["rounds"] else None
+    if last is None:
+        return None
+    overridden = {entry.get("finding") for entry in ticket.get("overrides") or [] if isinstance(entry, dict)}
+    unsettled = [name for name in review["state"]["unsettled"] if name not in overridden]
+    own = new_lines(convoy.repo, base, commit) or {}
+    since = new_lines(convoy.repo, last["commit"], commit)
+    changed = {path: ranges_of(numbers & since.get(path, set()) if since is not None else numbers)
+               for path, numbers in own.items()}
+    return {"from": last["commit"], "unsettled": unsettled,
+            "changed": {path: ranges for path, ranges in sorted(changed.items()) if ranges}}
+
+
+def scope_findings(ticket: dict[str, Any], scope: dict[str, Any]) -> list[dict[str, Any]]:
+    """The Blocking Findings a targeted review looks at again, the latest
+    text of each."""
+    latest = {finding["id"]: finding for round_ in review_of(ticket)["rounds"] if round_["kind"] == REVIEW
+              for finding in round_.get("findings", [])}
+    kept = ("id", "axis", "summary", "citation", "question", "location")
+    return [{name: latest[name_][name] for name in kept if name in latest[name_]}
+            for name_ in scope["unsettled"] if name_ in latest]
 
 
 def full_review(convoy: Convoy, tip: str) -> tuple[str, Any]:
@@ -535,6 +612,12 @@ def wanted_round(convoy: Convoy, ticket: dict[str, Any]) -> tuple[str, Any]:
         if (ticket.get("correction") or {}).get("commit") == last["commit"] and last["commit"] != tip:
             # A later correction round took up the answers judged unfavorably
             # (bin/correction-round, af-bv0ikr): its tip is reviewed in full.
+            return full_review(convoy, tip)
+        overridden = {entry.get("finding") for entry in ticket.get("overrides") or [] if isinstance(entry, dict)}
+        if last["commit"] != tip and set(review["state"]["unsettled"]) <= overridden:
+            # Every Blocking Finding left unsettled was overridden, which stands
+            # for a favorable verdict (bin/spec-integration): a commit added
+            # since is reviewed in full (F and G1 of af-strhoy, 22/10/2026).
             return full_review(convoy, tip)
         return "waiting", (f"encore refusé après son tour de correction ({', '.join(review['state']['unsettled'])}) : "
                            "aucune revue ne s'ouvre, rien ne fusionne")
@@ -591,8 +674,10 @@ def open_round(convoy: Convoy, ticket: dict[str, Any], kind: str, commit: str, b
     record_reviewer_model(convoy.id, ticket["id"])
     args = ("--kind", kind, "--commit", commit, "--base", base)
     if kind == REVIEW:
-        questions = closed_questions(convoy, ticket, base, commit)
-        state_write_file("open-code-review", convoy.id, ticket["id"], {"questions": questions}, *args)
+        scope = review_scope(convoy, ticket, base, commit)
+        questions = closed_questions(convoy, ticket, base, commit, scope)
+        state_write_file("open-code-review", convoy.id, ticket["id"],
+                         {"questions": questions, **({"scope": scope} if scope is not None else {})}, *args)
     else:
         state_write("open-code-review", convoy.id, ticket["id"], *args)
 
@@ -905,12 +990,23 @@ def cmd_brief(args: argparse.Namespace) -> int:
                           "entry_points": launch_.get("entry_points") or []},
             },
             "questions": request["questions"], "answers": list(ANSWERS),
+            # ADR-0034: null for the first review of the ticket, complete.
+            "scope": None if "scope" not in request else {
+                "from": request["scope"]["from"],
+                "unsettled": scope_findings(ticket, request["scope"]),
+                "changed": request["scope"]["changed"],
+                "rule": ("revue ciblée : seul bloque un constat qui redonne un constat non soldé de `unsettled` "
+                         "(carries) ou qui pointe une ligne de `changed` (location) ; tout autre constat donné "
+                         "bloquant est enregistré non bloquant pour la passe de fin"),
+            },
             "review_shape": {
                 "commit": commit,
                 "findings": [{
                     "axis": "|".join(AXES), "blocking": "true|false", "summary": "<one line>",
                     "citation": {"source": "|".join(CITATION_SOURCES), "quote": "<the cited line, copied>",
-                                 "path": "<file of the rule, for repo_rule only>"}}],
+                                 "path": "<file of the rule, for repo_rule only>"},
+                    "location": {"path": "<file>", "line": "<line number in the reviewed commit>"},
+                    "carries": "<id of the unsettled finding it gives again, targeted review only>"}],
                 "answers": {"<question id>": {"answer": "|".join(ANSWERS), "reason": "<required when non>"}},
             },
         })
@@ -1050,6 +1146,9 @@ def cmd_show(args: argparse.Namespace) -> int:
         "verdict": (ticket.get("verdicts") or {}).get("code_review"),
         "models": ticket.get("models"), "independence": independence(models) if models else None,
         "stop": ticket.get("stop"),
+        # ADR-0034: what a targeted review found outside its scope, kept for the end pass.
+        "finishing_pass": [{**finding, "commit": round_["commit"]} for round_ in review["rounds"]
+                           for finding in round_.get("findings", []) if finding.get("finishing_pass")],
     }, indent=2, sort_keys=True, ensure_ascii=False))
     return 0
 

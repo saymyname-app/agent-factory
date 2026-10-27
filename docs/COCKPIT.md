@@ -711,7 +711,9 @@ says what was asked, how it was resolved, when (Paris time), by whom, and
 by which way (spec .18); a bead resolved twice has two entries (spec .19).
 The cockpit keeps no copy: `requests/journal.py` `read_journal` is the
 read model's `journal` source (every `COCKPIT_JOURNAL_POLL_SECONDS`, 60 s)
-and re-reads the traces.
+and re-reads the traces; a read fails after
+`COCKPIT_JOURNAL_READ_TIMEOUT_SECONDS` (20 s), which the isolated recipe
+raises to a day with the tracker's, so that a journal being read stays so.
 
 What the tracker really holds, checked 2026-10-06 — T15 had assumed Beads
 comments, which are empty on a bead Benjamin answered:
@@ -1041,7 +1043,7 @@ cockpit reads those sources as it reads the real ones.
 A Runs dataset carries `fixtures` (lanes, runs, jobs). A Panorama dataset
 carries the text of one screen (`visible_text`), how the state is set
 (`ui`) and, when the screen has parts that unfold, what each says open
-(`folded`: its label, its lines), and, when it has a drawing, what its
+(`folded`: its label, its lines; for an event of the journal, its title and the lines it holds folded), and, when it has a drawing, what its
 marks say (`drawn`: its heading, its lines -- the titles of the points of a
 chart), which the text of a page leaves out. Its screen is known by the first line of the page, and read in two
 ways:
@@ -1068,13 +1070,13 @@ ways:
 | a drawing of the screen: `drawn` under « Activité sur 7 jours », one line a day and a series | one bead kept as said under that heading, whose description is those lines | `beads.value`; `GET /` |
 | « Vue d’ensemble »: `runs`, the cards under « Derniers runs » (workflow, status and its tone, title, step, start, elapsed seconds, lanes with the start and end of each job) | one bead `synthetic-run-card-N` per card, under the title of its run, whose `gc.run_card` is the card | `beads.value`; `GET /` |
 | the page of a project (« ← Projets »): its name, what is said above the first section; « CHANTIER ACTUEL »; « Derniers changements »; « Prochaine release » and « PROCHAIN JALON » (a target, its gains, what remains, its decisions, its milestone, its estimate -- unavailable and why, or a range and its conditions), with what they show folded (`release`: the proof of each gain by its title, each change of the target, and for a range what it rests on: `comparables`, `hypotheses`, `computed_at`); « ROADMAP » (a heading, then each step and its status) | the project is declared; one bead under its name (purpose, stage, indicators); its open chantier; « Derniers changements » kept as said; its knowledge repository `synthetic/<key>`, a Git repository of the launch committed at the fixed time of the dataset, holding `roadmap.toml` and, when the page shows a target, `release.toml` (`lib/cockpit/projects/release.py`) | `projets.value.projects`, `GET /projet/<key>`; `beads.value`; `depots.value` |
-| « Journal »: each event, « HH:MM (Paris) · projet · nature » or « HH:MM (Paris) · source », under « Aujourd’hui » or « Hier », its title and what follows | one bead of type `event` per event, as `bd create --type event` writes it: its title, its nature or source as `event_kind`, as label and as `gc.journal_event`, its project (declared), `created_at` the day of the dataset or the day before at that time, the other lines | `beads.value`; `projets.value.projects`; `GET /api/journal` `entries`: one entry per event, its title as `quoi`, its `created_at` as `quand`, its nature or source as `voie`, newest first (`lib/cockpit/ui/journal/entries.py`, T01R6 af-ltchro) |
+| « Journal »: each event, « HH:MM (Paris) · projet · nature » or « HH:MM (Paris) · source », under « Aujourd’hui » or « Hier », its title and what follows | one bead of type `event` per event, as `bd create --type event` writes it: its title, its nature or source as `event_kind`, as label and as `gc.journal_event`, its project (declared), `created_at` the day of the dataset or the day before at that time, its line « Voir … » as `gc.journal_link`, the other lines as its description (the labels « Détail et source », « Événement brut » and the note under the logs are the page's); what `folded` says under its title as `gc.journal_folded` | `beads.value`; `projets.value.projects`; `GET /api/journal` `entries`: one entry per event, its title as `quoi`, its `created_at` as `quand`, its nature or source as `voie`, newest first (`lib/cockpit/ui/journal/entries.py`, T01R6 af-ltchro) |
 | « Usine »: « Machine d’exécution », « Connexions », « Fournisseurs et accès API », « Agents dans le workflow », « Auteur livraison », « Autres rôles », « Suspension, reprise et arrêt », « Nettoyer les espaces inutilisés », « Ressources et libellés longs » | one bead kept as said per section | `beads.value` |
 | a suspended Factory: `ui.setup` sets `shutdownState='suspended'` | a suspended city | `gc.value.suspended` is true |
 | « Rituels »: each ritual (a line in capitals says how it is launched, then its title) | one bead per ritual under its title: how it is launched, what it is for, when it last ran | `beads.value` |
 | the page of a ritual (« ← Rituels », its title, « projet · … ») | one bead under the title of the ritual, its project declared; its steps and what the step it is at shows | `beads.value` |
 | « Analyses »: « Résultats fusionnés » or « Où passe le temps ? »; a merged result (« projet · hier ») | one bead kept as said for the view; the project of each merged result is declared | `beads.value`; `projets.value.projects` |
-| nothing read yet: `ui.state` is `loading` | a supervisor that never answers, and a tracker whose read never ends (the cockpit waits a day for it, `COCKPIT_BEADS_READ_TIMEOUT_SECONDS`) | every source `unknown`, without value, `beads.failed_at` empty; `GET /` says it is reading, however late it is looked at |
+| nothing read yet: `ui.state` is `loading` | a supervisor that never answers, and a tracker whose read never ends (the cockpit waits a day for it, `COCKPIT_BEADS_READ_TIMEOUT_SECONDS` and `COCKPIT_JOURNAL_READ_TIMEOUT_SECONDS`) | every source `unknown`, without value, `beads.failed_at` empty; `GET /` says it is reading, however late it is looked at |
 | nothing readable: `ui.state` is `error` | a supervisor that never answers, and a tracker whose read fails | every source `unknown`, without value, `beads.failed_at` set; `GET /` says the view is unavailable as soon as the first read failed |
 | a reading that is no longer current: `ui.state` is `stale` or `offline`, or `ui.stale` is true (Runs) | a supervisor that is read once, then answers no more | `gc.freshness` and `sessions.freshness` leave `fresh` within seconds (a 2 s Validity window instead of 2 min), the last `gc.value` and `sessions.value` kept |
 | the runs of a Runs state, each « Livraison D01 » or « Maintenance » | a workflow as the tracker holds one (C1, af-lzti7w): a « Livraison D01 » is a convoy carrying the new-flow mark, under the title of the run, written by `benjamin` for the project `agent-factory` (the datasets name none), its ticket (same `gc.graph_digest`; `gc.flow.merge` when the run says « Fusionné », `gc.flow.gate.withdrawn` when « Abandonné »), the workflow root `mol-ticket-author` run on an input convoy that tracks the ticket, and, when an agent of the run is a « Relect… » or an « Évaluat… », the workflow root `mol-code-review` or `mol-ticket-evaluation` run on an input convoy that tracks the bead the dispatch door writes to launch it (`gc.dispatched_via`, its description naming the convoy and the ticket); a « Maintenance » is a workflow root `mol-do-work` run on the work Benjamin asked for, under the title of the run; closed at the end of the run, open while it has none; the day of `generated_at` at the run's `started` (Paris) is its start | `runs.value`; `GET /runs` |
@@ -1165,6 +1167,11 @@ its states, which is what `bin/prototype-fidelity` compares:
 | `runs-liste` | `/runs` | `runs-*` (3) |
 | `run-frise` | `/runs/run` | `run-*` (5) |
 | `job-detail` | `/runs/job` | `job-*` (11) |
+
+Beside the states of the screens, the profile declares `journal-demonstration`:
+the useful events of `journal-content` and the technical logs of
+`journal-logs` on one launch, so that the demonstration line of the Journal
+Fold (F, af-njwz8v) is observed on one cockpit; it is no state of a reference.
 
 `/`, `/journal` and `/projet/notes` (the page of the project the six states
 of that screen are about) are served today; the other addresses are declared
@@ -1355,16 +1362,71 @@ Tests: `tests/cockpit-criteria/commands/runs-destination-*-test.py` (the
 held to the readability `problems` of `home_destination.py`),
 `tests/cockpit-runs-test.py`.
 
-## « Usine »: machine, sources, agents (direct build, 2026-10-19)
+## « Usine »: machine, connections, roles (G1, af-wrxrmg)
 
-`GET /usine` (`lib/cockpit/ui/factory/page.py`): the machine the cockpit
-runs on, read at each request (`os.getloadavg`, `/proc/meminfo`, the disk
-of the home); every source of the read model with its freshness and last
-read; the model of each delivery role as seen on the most recent run that
-launched it, and the sessions at work; then the health zone and the stop
-and access zones the home already had. Provider quotas, the configuration
-form and the clean-up of the reference are left out: the cockpit has no
-real reading of them yet. Test: `tests/cockpit-factory-page-test.py`.
+`GET /usine?role=<author|reviewer|evaluator>` (`lib/cockpit/ui/factory/page.py`),
+the Prototype Fold of the reference « Usine, configuration et maintenance »
+(Spec af-fgcw0d, user stories 63, 65, 160–162). Four sections, each shown
+as it was **last checked** (`lib/cockpit/factory/checks.py`), with the time
+of that check to the second and its own « Revérifier maintenant » button:
+
+- « Machine d’exécution »: the machine the cockpit runs on (host, system,
+  cores, time in service from `/proc/uptime`, load, memory, disk of the
+  home), read when checked;
+- « Connexions »: every source of the read model with its state, its
+  latency -- how long its last complete read took, timed by its poller
+  (`PollingSource`, the status read of `GcSsePoller`; `latency` in each row
+  of the read model) -- and when it was read. Whether a source is still
+  current is read now: one no longer current is greyed « Périmé · vu il y a
+  … » with its last latency; one failing since its last reading (unknown,
+  `cockpit.core.freshness`) is greyed « Inconnu — la source ne répond plus ·
+  vu il y a … », without a latency; one never read is « inconnu — la source
+  ne répond pas », never 0 and never a failure. The notifications say
+  whether they are configured; their delivery is not measured, so they are
+  never drawn as a connection verified;
+- « Fournisseurs et accès API »: each pool of quota of
+  `config/provider-policy.json`, the providers drawn on it, and what the
+  provider failover observed of it in `.gc/provider-state.json` (read as
+  `bin/provider-failover status` reads it: « Quota épuisé jusqu’à … »,
+  « Quota bas », « En erreur », or « Aucune limite détectée », which
+  measures no quota, for a pool the file records); « Aucun relevé du
+  repli », greyed, for a pool the file holds nothing of; « Disponibilité non
+  observée » where the host holds no such file. No key is shown;
+- « Agents dans le workflow »: the roles as the Factory's files configure
+  them (`lib/cockpit/factory/configuration.py`: `config/delivery-roles.json`,
+  the chains of `config/provider-policy.json` -- the first provider is the
+  one configured, the others its fallbacks --, the model and effort of each
+  provider in `city.toml`, the ceilings and bounds of
+  `config/delivery-flow.json`), drawn as the descending flow of delivery
+  (deterministic controller, the steps each role runs, integration, the
+  owner's judgment). A step is a link that opens the detail of its role:
+  configuration first, then what is observed apart -- the provider in
+  service from `city.provider.toml` when the host has one, the availability
+  the failover observed of each provider of its chain (a provider disabled
+  says it, with its reason), the sessions of that role at work -- greyed
+  « périmé, vu il y a … » once the sessions are no longer current, and
+  unknown, without a count, once their source fails. The bounds of the flow
+  shown are its resumes, open planning exceptions, end rounds and
+  correction rounds. The other
+  targets of the policy are listed outside the flow. A file that cannot be
+  read is named, nothing is guessed.
+
+The Factory's files are read under `COCKPIT_FACTORY_ROOT` (default: the tree
+the cockpit runs from).
+
+`POST /api/usine/reverifier` (form `section=machine|connexions|fournisseurs|agents`,
+`role=`) checks that section again -- the connections after every source was
+read again now -- and only that one, then answers 303 back to the page; it
+writes nothing. Viewing the page never checks a section again: a check older
+than five minutes (`COCKPIT_VALIDITY_USINE_SECONDS`) is kept, greyed
+« périmé, vu il y a … », until its « Revérifier maintenant ». Then come the health zone, and the panels « Suspension, reprise et
+arrêt » (with the stop and access zones the home already had) and
+« Nettoyer les espaces inutilisés », whose commands stay disabled until
+their tickets wire them (G2, H); the role detail's « Configurer » too.
+Nothing on the page is a value of the dataset: in an isolated launch the
+machine and the configuration are those of the tree launched. Tests:
+`tests/cockpit-factory-page-test.py`, and the criterion tests
+`tests/cockpit-criteria/commands/factory-*-test.py`.
 
 ## « Projets » in Panorama (direct build, 2026-10-19; Prototype Fold E, af-8rbceu)
 
@@ -1425,16 +1487,64 @@ Tests: `tests/cockpit-home-projects-test.py` (`GET /projets` and the page of
 a project, through the running process), and the criterion tests of E
 (`tests/cockpit-criteria/commands/projects-{release,roadmap,recette}-test.py`).
 
-## « Journal » in Panorama (direct build, 2026-10-19)
+## « Journal » in Panorama (F, af-njwz8v: the Prototype Fold of the Journal reference)
 
-`GET /journal` (`lib/cockpit/ui/journal/panorama.py`) is now one timeline
-by day (Paris): the requests answered or cleared, each drawn as the
-journal always drew it (what, when, by whom, which way, details), and the
-deliveries of the runs (launched, stopped, merged) with their link. Filters
-`?filtre=utiles` (default: everything but the cleared requests),
-`decisions`, `propositions`, `livraisons`, `evenements`, `effacees`, `tout`.
-The notification sends follow, folded. Tests:
-`tests/cockpit-journal-test.py`, `tests/cockpit-journal-panorama-test.py`.
+`GET /journal` (`lib/cockpit/ui/journal/panorama.py`) follows the Journal
+reference (prototypes/c01-complete/frozen-panorama-journal at 632deea) in its
+ten states, at its own address, its parts carrying the reference's anchors.
+Three tabs, each a button of a form sent by GET (no script):
+
+- **Événements utiles** (`?vue=utiles`, the default): one timeline by day
+  (Paris) of the requests answered or cleared -- each drawn as the journal
+  always drew it (what, when, by whom, which way, details) --, the
+  deliveries of the runs (launched, stopped, merged) with their link, and
+  the events held for the journal whose nature is a category: each with
+  its time, its project and its category, its title, its consequence (its
+  description), its link (`gc.journal_link`: « Voir le projet » opens the
+  page of its project, « Voir les connexions » `/usine`, « Voir le
+  résultat » and « Voir les propositions » `/`) and, folded, its detail and
+  its source (`gc.journal_folded`, a JSON list of lines). Categories
+  `?categorie=tout|bugs|propositions|changements|decisions|evenements`
+  (natures Bug, Proposition, Changement, Décision, Événement; the answered
+  requests are Décisions or Propositions, the deliveries Changements, the
+  cleared requests Événements). The former `?filtre=` still names its
+  category. An event of a nature no rule knows keeps its place, said
+  « Signal non reconnu venant de <project> » (or « d’une source inconnue »),
+  its nature, title and words folded, unchanged, and is under « Tout » only.
+  The notification sends follow, folded.
+- **Logs techniques** (`?vue=logs`): the events of the technical sources
+  (natures `ci`, `agents`, `delivery`/`livraison`, `connections`/`connexions`,
+  `maintenance`, `notifications`), each with its time and source, its title,
+  what it means and, folded, its raw event (`gc.journal_folded`), plus the
+  events of an unknown nature under « Autres », « Événement non reconnu ».
+  Filter `?source=tous|ci|agents|livraison|connexions|maintenance|notifications|autres`,
+  search `?q=` (the title, the meaning, the source and the raw event, case
+  ignored).
+- **Sources disponibles** (`?vue=sources`): each source of the logs,
+  « raccordée » when the factory declares it connected -- a bead whose
+  `gc.journal_source` names it, read with the journal, also in `GET
+  /api/journal` under `sources` -- or the cockpit read logs of it; a
+  connected source that sent nothing yet stays « raccordée — aucun log
+  reçu ». « absente » otherwise, « inconnue » while the journal is being
+  read or cannot be.
+
+Labels are fixed by the type of the event; no model reads or writes them.
+Every text of an event is read through `cockpit.text.redact`: a secret (a
+token of a known shape, the value of a field named as one) and a private
+reasoning (`reasoning`, `thinking`) are replaced where they are written,
+so neither a page nor `GET /api/journal` holds one. A field is `name=value`
+or `name: value`, its name quoted or not (a JSON key); its value a quoted
+text, an object or a list to its closing bracket, else the word that
+follows, and an unquoted reasoning to the end of its line. Neither the
+read nor the page calls a model: `tests/cockpit-journal-test.py` launches
+the cockpit with every way out to one recorded (a proxy, the providers'
+addresses, their commands) and sees none taken. A journal never read
+says « Lecture en cours… », one whose read failed « Cette vue est
+indisponible » (never an empty journal), and a journal read while it or the
+supervisor no longer answers keeps its events under the notice « État actuel
+inconnu · dernières données conservées. Actions indisponibles. ». Tests:
+`tests/cockpit-journal-test.py` (through the running process), the
+criterion tests `tests/cockpit-criteria/commands/journal-destination-*-test.py`.
 
 ## « Analyses » (direct build, 2026-10-19)
 

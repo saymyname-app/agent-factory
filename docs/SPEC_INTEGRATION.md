@@ -13,8 +13,8 @@ the acceptance, made by `bin/outcome-promote` (T30,
 
 ```bash
 ./bin/spec-integration open  af-convoy --repo <project repository> --protected main
-./bin/spec-integration merge af-convoy --repo <project repository> --profile <descriptor.json> [--limit 1] [--timeout 600]
-./bin/spec-integration take-up af-convoy --repo <project repository> --profile <descriptor.json> [--timeout 600] [--end-round]
+./bin/spec-integration merge af-convoy --repo <project repository> --profile <descriptor.json> [--limit 1] [--timeout 1260]
+./bin/spec-integration take-up af-convoy --repo <project repository> --profile <descriptor.json> [--timeout 1260] [--end-round]
 ```
 
 Who calls it: `bin/ticket-graph-publish bd-publish` calls `open` once the
@@ -174,7 +174,11 @@ is a refusal (exit 1) that carries the record under `red`.
   refuses.
 
 A regression command that does not finish in `--timeout` is a refusal, not
-a red. A takeover in conflict is one too: a conflict is not a red control.
+a red. So is one that exits 75, its NOT RUN (the host was busy past its
+wait, or its budget ran out): nothing is merged, no ticket is returned, the
+next pass runs it again; the `merged_tests` piece keeps that exit 75 until
+then. A takeover in conflict is a refusal too: a conflict is not a red
+control.
 
 A profile without `regression_command` is refused when a ticket is ready: no
 test, no merge. A pass with no ready ticket does not read the profile,
@@ -235,12 +239,16 @@ to a ticket, and this tip belongs to none.
 - A frozen harness file changed on the integration branch by another
   ticket's merge is still seen by `bin/tdd-step green` as modified
   (`docs/TDD_STEP.md`, Limits) when an author takes up the integration tip.
-- The order that runs `bin/convoy-advance` has a 30 min timeout, above the
-  two runs of the regression command a pass may make (the control after a
-  take-up, then the tests of the merged result), up to `--timeout` (600 s)
-  each. A run past `--timeout` is killed with every process it started (its
-  own session). A pass killed by the controller has pushed nothing; its work
-  tree is removed by the next.
+- The order that runs `bin/convoy-advance` has a 30 min timeout. A pass may
+  run the regression command twice (the control after a take-up, then the
+  tests of the merged result), up to `--timeout` (1260 s: the cockpit's
+  regression waits at most 600 s for the host, then runs within 600 s)
+  each. Unloaded both fit (about 6 min each on 22/10/2026); two long waits
+  in one pass do not, and the controller then kills the pass. A run past
+  `--timeout` is killed with every process it started (its own session). A
+  pass killed by the controller has pushed nothing; its work tree is removed
+  by the next. Deriving these numbers from measures is T3 of
+  `docs/research/2026-10-22-strategie-tests-budgets.md`.
 
 ## Proof
 

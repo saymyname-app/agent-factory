@@ -16,9 +16,9 @@
 # real tools the step names; and the author, whose finished tickets are
 # written through bin/convoy-state as bin/tdd-step and bin/ticket-exit
 # would (the author formula has its own trial,
-# tests/ticket-author-isolated-city-test.sh), each with the favorable Ticket
-# Evaluation the merge also asks for, written as bin/ticket-evaluation would
-# (its own trial: tests/ticket-evaluation-isolated-city-test.sh).
+# tests/ticket-author-isolated-city-test.sh), each with the favorable startup
+# control the merge asks for on a non-interface ticket (the full Ticket
+# Evaluation has its own trial: tests/ticket-evaluation-isolated-city-test.sh).
 #
 # Three tickets of the fixture, each finished by its author:
 #   A  its diff contradicts a line of the Spec: the review records a Blocking
@@ -153,7 +153,10 @@ while true; do
   CLAIM=\$(gc hook --claim --json 2>/dev/null)
   ACTION=\$(printf '%s' "\$CLAIM" | jq -r '.action // empty' 2>/dev/null)
   BEAD=\$(printf '%s' "\$CLAIM" | jq -r '.bead_id // empty' 2>/dev/null)
-  if [ "\$ACTION" != work ] || [ -z "\$BEAD" ]; then sleep 3; continue; fi
+  if [ "\$ACTION" != work ] || [ -z "\$BEAD" ]; then
+    gc runtime drain-ack >/dev/null 2>&1
+    exit 0
+  fi
   ROOT_BEAD=\$(gc bd show "\$BEAD" --json | jq -r '.[0].metadata["gc.root_bead_id"]')
   INPUT=\$(gc bd show "\$ROOT_BEAD" --json | jq -r '.[0].metadata["gc.input_convoy_id"]')
   REVIEW_BEAD=\$(gc convoy status "\$INPUT" --json | jq -r '.children[0].id')
@@ -233,6 +236,11 @@ provider = "stub-reviewer"
 wake_mode = "fresh"
 TOML
 echo "Scripted reviewer of the code-review trial." > "$CITY/agents/trial-reviewer/prompt.template.md"
+# Keep the production role's one-workflow-per-conversation query: the same
+# drained session may wake under the same name, but never serves another
+# review before that fresh wake.
+sed -n '/^work_query = /{s/ -- delivery-reviewer/ -- trial-reviewer/;p;}' \
+  "$ROOT/agents/delivery-reviewer/agent.toml" >> "$CITY/agents/trial-reviewer/agent.toml"
 cp "$ROOT/formulas/mol-code-review.formula.toml" "$CITY/formulas/"
 cat > "$CITY/config/projects/trial.toml" <<TOML
 rig_dir = "."
@@ -334,19 +342,13 @@ commit_on() { # <ticket> <path> <content> <message>: one commit on the branch of
   git -C "$wt" commit -q -m "$4"
   git -C "$wt" rev-parse HEAD
 }
-evaluated() {  # TICKET COMMIT REPO: a favorable Ticket Evaluation, as an Evaluator session records it (bin/ticket-evaluation, T15)
-  local shown
-  shown=$("$ROOT/bin/convoy-state" show "$CONVOY" --repo "$3" | jq -c --arg t "$1" '.tickets[] | select(.id == $t)')
-  jq -n '{roles: {author: null, evaluator: null, same_provider: null, other_declared: []},
-    environment: [{dataset: null, address: "http://127.0.0.1:1", state_file: "/launch.json"}]}' > "$TRIAL/evaluation-request-$1.json"
-  state open-evaluation "$CONVOY" "$1" --commit "$2" --file "$TRIAL/evaluation-request-$1.json" >/dev/null
-  python3 "$ROOT/tests/lib/ticket_proofs.py" capture "$CONVOY" "$1" evaluation.seen "$2" --repo "$3" >/dev/null
-  jq -n --arg commit "$2" --arg session "delivery-evaluator-trial-$1-${2:0:12}" --argjson t "$shown" '{commit: $commit, recorded_by: $session,
-    criteria: [$t.criteria | to_entries[] | {number: (.key + 1), text: .value, state: "observed", evidence: "evaluation.seen"}],
-    demonstration_line: {text: $t.demonstration_line, state: "observed", evidence: "evaluation.seen"}}' > "$TRIAL/evaluation-$1.json"
-  state record-evaluation "$CONVOY" "$1" --file "$TRIAL/evaluation-$1.json" >/dev/null
+evaluated() {  # TICKET COMMIT REPO: the favorable startup control of a non-interface ticket (ADR-0030 L4)
+  python3 "$ROOT/tests/lib/ticket_proofs.py" capture "$CONVOY" "$1" evaluation.startup "$2" --repo "$3" >/dev/null
+  jq -n '{environment: [{dataset: null, address: "http://127.0.0.1:1"}]}' > "$TRIAL/evaluation-startup-$1.json"
+  state record-startup "$CONVOY" "$1" --commit "$2" --piece evaluation.startup \
+    --file "$TRIAL/evaluation-startup-$1.json" >/dev/null
 }
-finish() { # <ticket> <tip>: every step of the TDD with its sealed report, the demonstration, the sealed records, the Handoff, the exit, a favorable evaluation
+finish() { # <ticket> <tip>: every step of the TDD with its sealed report, the demonstration, the sealed records, the Handoff, the exit, a favorable startup control
   python3 "$ROOT/tests/lib/ticket_proofs.py" finish "$CONVOY" "$1" "$2" --repo "$PRODUCT" --base "$BASE" --branch "ticket/$1" \
     --done "PROSE-DU-HANDOFF : fait à ma façon." --subject "PROSE-DU-COMMIT" >/dev/null
   evaluated "$1" "$2" "$PRODUCT"

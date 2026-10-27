@@ -1,0 +1,50 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/journal-destination-events-test.py::JournalDestinationEvents.test_an_event_of_an_unknown_nature_keeps_its_place_with_the_fallback_and_its_original",
+      "tests/cockpit-criteria/commands/journal-destination-events-test.py::JournalDestinationEvents.test_journal_content_lists_the_useful_events_with_their_consequence_source_and_link",
+      "tests/cockpit-criteria/commands/journal-destination-events-test.py::JournalDestinationEvents.test_journal_empty_says_there_is_nothing_to_show",
+      "tests/cockpit-criteria/commands/journal-destination-events-test.py::JournalDestinationEvents.test_journal_error_says_the_view_is_unavailable_and_offers_to_retry",
+      "tests/cockpit-criteria/commands/journal-destination-events-test.py::JournalDestinationEvents.test_journal_long_lists_the_useful_events_with_their_consequence_source_and_link",
+      "tests/cockpit-criteria/commands/journal-destination-fidelity-test.py::JournalDestinationFidelity.test_journal_content_carries_every_anchor_and_token_of_its_reference",
+      "tests/cockpit-criteria/commands/journal-destination-fidelity-test.py::JournalDestinationFidelity.test_journal_empty_carries_every_anchor_and_token_of_its_reference",
+      "tests/cockpit-criteria/commands/journal-destination-fidelity-test.py::JournalDestinationFidelity.test_journal_error_carries_every_anchor_and_token_of_its_reference",
+      "tests/cockpit-criteria/commands/journal-destination-fidelity-test.py::JournalDestinationFidelity.test_journal_long_carries_every_anchor_and_token_of_its_reference",
+      "tests/cockpit-criteria/commands/journal-destination-filters-test.py::JournalDestinationFilters.test_a_category_shows_its_own_events_only",
+      "tests/cockpit-criteria/commands/journal-destination-filters-test.py::JournalDestinationFilters.test_each_link_of_an_event_leads_where_it_says",
+      "tests/cockpit-criteria/commands/journal-destination-layout-test.py::JournalDestinationLayout.test_a_category_and_a_tab_are_chosen_with_the_keyboard",
+      "tests/cockpit-criteria/commands/journal-destination-layout-test.py::JournalDestinationLayout.test_journal_content_is_readable_and_usable_at_both_widths_in_both_themes",
+      "tests/cockpit-criteria/commands/journal-destination-layout-test.py::JournalDestinationLayout.test_journal_empty_is_readable_and_usable_at_both_widths_in_both_themes",
+      "tests/cockpit-criteria/commands/journal-destination-layout-test.py::JournalDestinationLayout.test_journal_error_is_readable_and_usable_at_both_widths_in_both_themes",
+      "tests/cockpit-criteria/commands/journal-destination-layout-test.py::JournalDestinationLayout.test_journal_long_is_readable_and_usable_at_both_widths_in_both_themes",
+      "tests/cockpit-criteria/commands/journal-destination-layout-test.py::JournalDestinationLayout.test_long_titles_and_words_stay_whole_and_inside_the_page_at_both_widths_in_both_themes"
+    ],
+    "2": [
+      "tests/cockpit-criteria/commands/journal-destination-fidelity-test.py::JournalDestinationFidelity.test_journal_logs_carries_every_anchor_and_token_of_its_reference",
+      "tests/cockpit-criteria/commands/journal-destination-layout-test.py::JournalDestinationLayout.test_journal_logs_is_readable_and_usable_at_both_widths_in_both_themes",
+      "tests/cockpit-criteria/commands/journal-destination-logs-search-test.py::JournalDestinationLogsSearch.test_a_source_filter_shows_the_logs_of_that_source_only",
+      "tests/cockpit-criteria/commands/journal-destination-logs-search-test.py::JournalDestinationLogsSearch.test_the_search_keeps_the_logs_that_say_the_words_searched",
+      "tests/cockpit-criteria/commands/journal-destination-logs-test.py::JournalDestinationLogs.test_a_secret_in_a_raw_event_is_never_served",
+      "tests/cockpit-criteria/commands/journal-destination-logs-test.py::JournalDestinationLogs.test_the_coverage_says_each_source_of_the_logs_connected_when_its_logs_are_read",
+      "tests/cockpit-criteria/commands/journal-destination-logs-test.py::JournalDestinationLogs.test_the_coverage_says_no_source_connected_when_none_answers",
+      "tests/cockpit-criteria/commands/journal-destination-logs-test.py::JournalDestinationLogs.test_the_technical_logs_are_a_tab_of_the_journal_with_each_log_and_its_raw_event"
+    ],
+    "3": [
+      "tests/cockpit-criteria/commands/journal-destination-freshness-test.py::JournalDestinationFreshness.test_journal_light_is_the_journal_in_the_light_theme",
+      "tests/cockpit-criteria/commands/journal-destination-freshness-test.py::JournalDestinationFreshness.test_journal_loading_says_the_reading_is_under_way_and_still_says_so_later",
+      "tests/cockpit-criteria/commands/journal-destination-freshness-test.py::JournalDestinationFreshness.test_journal_narrow_is_the_journal_at_390_px",
+      "tests/cockpit-criteria/commands/journal-destination-freshness-test.py::JournalDestinationFreshness.test_journal_offline_keeps_the_last_events_and_says_the_state_is_unknown",
+      "tests/cockpit-criteria/commands/journal-destination-freshness-test.py::JournalDestinationFreshness.test_journal_stale_keeps_the_last_events_and_says_the_state_is_unknown",
+      "tests/cockpit-criteria/commands/journal-destination-states-fidelity-test.py::JournalDestinationStatesFidelity.test_journal_light_carries_every_anchor_and_token_of_its_reference",
+      "tests/cockpit-criteria/commands/journal-destination-states-fidelity-test.py::JournalDestinationStatesFidelity.test_journal_loading_carries_every_anchor_and_token_of_its_reference",
+      "tests/cockpit-criteria/commands/journal-destination-states-fidelity-test.py::JournalDestinationStatesFidelity.test_journal_narrow_carries_every_anchor_and_token_of_its_reference",
+      "tests/cockpit-criteria/commands/journal-destination-states-fidelity-test.py::JournalDestinationStatesFidelity.test_journal_offline_carries_every_anchor_and_token_of_its_reference",
+      "tests/cockpit-criteria/commands/journal-destination-states-fidelity-test.py::JournalDestinationStatesFidelity.test_journal_stale_carries_every_anchor_and_token_of_its_reference",
+      "tests/cockpit-criteria/commands/journal-destination-states-layout-test.py::JournalDestinationStatesLayout.test_journal_light_is_readable_and_usable_at_both_widths_in_both_themes",
+      "tests/cockpit-criteria/commands/journal-destination-states-layout-test.py::JournalDestinationStatesLayout.test_journal_loading_is_readable_and_usable_at_both_widths_in_both_themes",
+      "tests/cockpit-criteria/commands/journal-destination-states-layout-test.py::JournalDestinationStatesLayout.test_journal_narrow_is_readable_and_usable_at_both_widths_in_both_themes",
+      "tests/cockpit-criteria/commands/journal-destination-states-layout-test.py::JournalDestinationStatesLayout.test_journal_offline_is_readable_and_usable_at_both_widths_in_both_themes",
+      "tests/cockpit-criteria/commands/journal-destination-states-layout-test.py::JournalDestinationStatesLayout.test_journal_stale_is_readable_and_usable_at_both_widths_in_both_themes"
+    ]
+  }
+}

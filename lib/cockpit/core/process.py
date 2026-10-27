@@ -102,7 +102,7 @@ def build(config, clock=None):
             PollingSource(
                 read_model,
                 "journal",
-                lambda: read_journal(bd_bin=config.bd_bin),
+                lambda: read_journal(bd_bin=config.bd_bin, timeout=config.journal_read_timeout_seconds),
                 config.journal_poll_seconds,
             )
         )
@@ -154,6 +154,8 @@ def build(config, clock=None):
         supervisor_unreachable_after_seconds=config.supervisor_unreachable_after_seconds,
         factory_stalled_after_seconds=config.factory_stalled_after_seconds,
         illisible_after_seconds=config.illisible_after_seconds,
+        factory_root=config.factory_root,
+        factory_check_validity_seconds=config.factory_check_validity_seconds,
     )
     server.runs_view = config.runs_view
     server.descriptors_dir = config.descriptors_dir
