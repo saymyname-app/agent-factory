@@ -101,7 +101,7 @@ def build(config, clock=None):
             PollingSource(
                 read_model,
                 "journal",
-                lambda: read_journal(bd_bin=config.bd_bin),
+                lambda: read_journal(bd_bin=config.bd_bin, timeout=config.journal_read_timeout_seconds),
                 config.journal_poll_seconds,
             )
         )

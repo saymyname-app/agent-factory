@@ -75,6 +75,13 @@ def read_steps(clone_dir, roadmap_path, remote="origin", git_bin="git", timeout=
         [git_bin, "-C", str(clone_dir), "show", "%s/%s:%s" % (remote, branch, roadmap_path)],
         timeout,
     )
+    return parse_steps(raw, roadmap_path)
+
+
+def parse_steps(raw, roadmap_path):
+    """Every ``[[step]]`` of the roadmap text ``raw`` read at
+    ``roadmap_path``. Raises :class:`RoadmapReadError` when it is not valid
+    TOML or declares no step."""
     try:
         data = tomllib.loads(raw)
     except tomllib.TOMLDecodeError as exc:
@@ -122,27 +129,47 @@ def read_current_step(clone_dir, roadmap_path, remote="origin", git_bin="git", t
 STATUS_LABELS = {"done": "Terminé", "in_progress": "En cours", "todo": "À venir"}
 FLAG_CLOSED = "Incohérent : marqué en cours, son chantier est fermé"
 FLAG_MERGED = "Incohérent : marqué en cours, son résultat est fusionné"
+FLAG_REQUIRED = "Incohérent : marquée terminée, %s n'est pas terminée"
+# What it says of a step said done that is not acquired (FLAG_REQUIRED).
+LABEL_NOT_ACQUIRED = "Non acquise"
 
 
 def roadmap_rows(steps, chantiers_by_step):
     """The lines of a structured roadmap, in its order (E, af-8rbceu; Spec
     af-fgcw0d, user story 103): ``[{"id", "title", "status", "label",
-    "flag"}]``. ``chantiers_by_step``: ``{step id: [{"closed", "merged"}]}``,
+    "flag", "acquired"}]``. ``chantiers_by_step``: ``{step id: [{"closed", "merged"}]}``,
     the chantiers that target each step (their Specs carry it as
     ``planning_run_target``). A step said in progress whose chantiers are
     all closed, or one of whose results is merged, is flagged: the roadmap
-    contradicts the tracker. ``flag`` is None otherwise -- a step no
-    chantier targets says nothing either way."""
+    contradicts the tracker. A step said done one of whose required steps
+    (``done_requires``, the step ids its end condition requires; R5,
+    af-3r1tmr) is not done is flagged too, naming that step: its end
+    condition is not met, so it is not counted as acquired -- ``label``
+    does not say it done and ``acquired`` is false; ``acquired`` is true
+    for every other step done. A step in
+    progress that still waits on a required step is not flagged for its own
+    chantiers being closed or merged: it is in progress until that step is
+    done. ``flag`` is None otherwise -- a step no chantier targets says
+    nothing either way."""
+    by_id = {str(step.get("id", "")): step for step in steps or []}
     rows = []
     for step in sorted(steps or [], key=lambda s: s.get("order", 0) if isinstance(s.get("order"), int) else 0):
         status = str(step.get("status", ""))
         chantiers = chantiers_by_step.get(str(step.get("id", ""))) or []
+        requires = step.get("done_requires") if isinstance(step.get("done_requires"), list) else []
+        pending = [str(required) for required in requires
+                   if str((by_id.get(str(required)) or {}).get("status", "")) != "done"]
         flag = None
-        if status == "in_progress" and chantiers:
+        if status == "done" and pending:
+            flag = FLAG_REQUIRED % ", ".join(
+                str((by_id.get(required) or {}).get("title") or required) for required in pending)
+        elif status == "in_progress" and chantiers and not pending:
             if any(c.get("merged") for c in chantiers):
                 flag = FLAG_MERGED
             elif all(c.get("closed") for c in chantiers):
                 flag = FLAG_CLOSED
+        acquired = status == "done" and not pending
+        label = LABEL_NOT_ACQUIRED if status == "done" and pending else STATUS_LABELS.get(status, status or "Inconnu")
         rows.append({"id": str(step.get("id", "")), "title": str(step.get("title", "")), "status": status,
-                     "label": STATUS_LABELS.get(status, status or "Inconnu"), "flag": flag})
+                     "label": label, "flag": flag, "acquired": acquired})
     return rows

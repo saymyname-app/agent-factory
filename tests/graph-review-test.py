@@ -326,12 +326,78 @@ class GraphReviewTest(unittest.TestCase):
 
     # --- af-2zmznz: a revision is judged on the graph that results from it --
 
-    def as_revision(self):
+    def as_revision(self, convoy=True):
         """The draft revises a published graph: it carries only the tickets
-        it adds or changes, the others stay in the convoy."""
+        it adds or changes, the others stay in the convoy. The convoy
+        tracks A0, delivered (closed, the Prototype Fold); H, open and left
+        out of the revision; T1, published and carried again by the draft;
+        W, withdrawn by this draft; and X, withdrawn by an earlier revision."""
+        self.rewrite_draft(lambda draft: draft.update(withdrawn=[{"ticket": "W", "planning_exception": "pe-1"}]))
         state = json.loads(self.state_path.read_text())
         state["beads"]["draft-1"]["metadata"]["revises_digest"] = "sha256:published"
+        if convoy:
+            def ticket(key, status, **meta):
+                return {"title": f"{key} — titre de {key}", "description": "", "status": status, "labels": [],
+                        "metadata": {"gc.ticket_id": key, "gc.ticket_kind": "vertical_slice",
+                                     "gc.graph_digest": "sha256:published", **meta}}
+            state["beads"].update({
+                "convoy-1": {"title": "Convoi", "description": "", "status": "open", "labels": [],
+                             "metadata": {"gc.graph_digest": "sha256:published"},
+                             "tracks": ["bead-a0", "bead-h", "bead-t1", "bead-w", "bead-x"]},
+                "bead-a0": ticket("A0", "closed", **{
+                    "gc.flow.demonstration_line": "Sur le produit lancé, GET / sert la page d'accueil.",
+                    "gc.flow.prototype_fold": True}),
+                "bead-h": ticket("H", "open", **{"gc.blocked_by": "A0",
+                                                 "gc.flow.demonstration_line": "Sur le produit lancé, GET /h répond."}),
+                "bead-t1": ticket("T1", "open"),
+                "bead-w": ticket("W", "in_progress"),
+                "bead-x": ticket("X", "closed", **{"gc.flow.gate.withdrawn": "{}"}),
+            })
         self.state_path.write_text(json.dumps(state))
+
+    def test_a_revision_brief_gives_the_delivered_tickets_of_the_resulting_graph(self):
+        self.as_revision()
+        self.requested()
+
+        brief = self.tool("brief", "draft-1").json
+
+        resulting = brief["resulting_graph"]
+        self.assertEqual(("convoy-1", "sha256:published"), (resulting["convoy"], resulting["revises_digest"]))
+        self.assertEqual({"A0": True, "H": False},
+                         {ticket["id"]: ticket["delivered"] for ticket in resulting["in_place"]})
+        a0 = next(ticket for ticket in resulting["in_place"] if ticket["id"] == "A0")
+        self.assertEqual(("titre de A0", "Sur le produit lancé, GET / sert la page d'accueil.", True),
+                         (a0["title"], a0["demonstration_line"], a0["prototype_fold"]))
+        self.assertIn("démontrable seul et ordonné", resulting["rule"])
+        self.assertIn("graphe résultant", resulting["rule"])
+
+    def test_a_first_publication_brief_has_no_resulting_graph(self):
+        self.requested()
+
+        self.assertNotIn("resulting_graph", self.tool("brief", "draft-1").json)
+
+    def test_a_revision_whose_convoy_cannot_be_read_is_not_sent_to_the_reviewer(self):
+        self.as_revision(convoy=False)
+
+        self.assert_refused_nothing_written(self.review, "0 convoi(s)", "graphe résultant")
+
+        self.assertEqual("", self.door_log.read_text())
+
+    def test_a_second_pass_on_the_unchanged_revision_is_judged_on_the_resulting_graph(self):
+        """23/10/2026, af-r1f9ac6bc: a first pass, blind to the delivered
+        tickets, refused a revision; once the tool gives them, the second
+        pass is asked on the same digest, the draft unchanged."""
+        self.as_revision()
+        refused_blind = {"T1": {"demonstrable_alone": "consomme la page posée par A0, qui n'est pas dans le graphe"}}
+        self.reviewer_refuses({"1": refused_blind})
+        first = self.reviewed()
+
+        second = self.reviewed()
+
+        self.assertEqual((1, 2), (first["pass"], second["pass"]))
+        self.assertEqual(first["digest"], second["digest"])
+        self.assertEqual([], second["refusals"])
+        self.assertEqual(0, self.tool("check", "draft-1").returncode)
 
     def test_a_revision_is_not_asked_for_orphan_stories_it_cannot_see(self):
         self.as_revision()

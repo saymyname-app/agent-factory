@@ -24,8 +24,8 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 
 # --- the workflow ---------------------------------------------------------
-grep -qF "runs-on: \${{ vars.FACTORY_CI_RUNNER == 'self-hosted' && 'factory-ci' || 'ubuntu-latest' }}" "$CI" \
-  || fail "$CI: runs-on must be GitHub's runner unless the variable says self-hosted"
+grep -qF "runs-on: \${{ vars.FACTORY_CI_RUNNER == 'self-hosted' && 'factory-ci' || 'ubuntu-24.04' }}" "$CI" \
+  || fail "$CI: the hosted lane must stay on Ubuntu 24.04 while its AppArmor profile is version-specific"
 grep -qF "LOTS: \${{ vars.FACTORY_CI_RUNNER == 'self-hosted' && '1' || '6' }}" "$CI" \
   || fail "$CI: one lot on the host's runner (it takes one job at a time: more lots wait on each other for ever)"
 grep -qF "fromJSON(vars.FACTORY_CI_RUNNER == 'self-hosted' && '[1]' ||" "$CI" \

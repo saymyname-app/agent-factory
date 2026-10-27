@@ -17,8 +17,6 @@ from cockpit.core.readmodel import PARIS
 
 SECTION_TITLE = "Journal des demandes résolues"
 EMPTY_TEXT = "Aucune demande résolue pour l'instant."
-UNKNOWN_TEXT = "Inconnu : journal illisible depuis %s"
-UNKNOWN_TEXT_NO_TIME = "Inconnu : journal illisible depuis toujours"
 UNDATED_TEXT = "date inconnue"
 NO_REQUEST_TEXT = "Demande sans texte enregistré"
 
@@ -67,18 +65,6 @@ def render_journal_section(entries):
         '<div class="zone-h"><h2>%s</h2><span class="mono muted">%d</span></div>'
         '<div class="panel cockpit-journal-list">%s</div></section>\n'
     ) % (title, len(entries), rows)
-
-
-def render_journal_unknown(last_known_at=None):
-    """The whole section when its read never succeeded or is failing —
-    never "aucune demande résolue" for a journal that could not be read."""
-    since = datetime.fromtimestamp(last_known_at, tz=PARIS).strftime("%H:%M") if last_known_at else None
-    text = UNKNOWN_TEXT % since if since else UNKNOWN_TEXT_NO_TIME
-    return (
-        '<section class="zone cockpit-journal" data-state="unknown">'
-        '<div class="zone-h"><h2>%s</h2></div>'
-        '<div class="unknown">%s</div></section>\n'
-    ) % (html.escape(SECTION_TITLE), html.escape(text))
 
 
 def _render_entry(entry):

@@ -20,9 +20,17 @@
 # again from the tracker on 2026-10-21 (E, af-8rbceu: the cockpit flags a
 # step "in_progress" whose chantier is closed): A5's convoy af-ly65d closed
 # 2026-09-28, A6's af-dsygc 2026-09-30 (closing note #343), C01's graph
-# convoy af-f71cgu 2026-10-01 and D01's af-wtjo2x 2026-10-11 -- all "done".
+# convoy af-f71cgu 2026-10-01 and D01's af-wtjo2x 2026-10-11 -- all "done"
+# then; D01 since back "in_progress" (below).
 # The cockpit's work goes on as C01-suite (Spec af-fgcw0d, convoy af-strhoy),
 # after the abandon of C01-reprise (Spec af-2zseit, convoy af-pqfxmd).
+#
+# D01 is back "in_progress" (R5, af-3r1tmr; Benjamin, 2026-10-25 15:37 Paris,
+# « Ok pour tes recommandations » on « D01 : le remettre « en cours » »): its
+# end condition requires "Cockpit V2 redelivered through the new flow", the
+# step C01-suite, still in progress -- declared in `done_requires`, so the
+# cockpit flags D01 if it is said done before C01-suite. The final
+# verification Benjamin judges stays in the prose of `done_when`.
 
 [[step]]
 id = "A1"
@@ -78,7 +86,8 @@ id = "D01"
 title = "Planning Run D01 \"Delivery Workflow\" (entry contract, per-ticket TDD proof, review and evaluation, end-of-Spec gate, Evidence Pack, acceptance; map af-0sayxf, Spec af-wf4w5r)"
 done_when = "its graph delivered, its final verification against the Spec judged by Benjamin, and Cockpit V2 redelivered through the new flow"
 order = 8
-status = "done"
+status = "in_progress"
+done_requires = ["C01-suite"]
 
 [[step]]
 id = "C01-suite"

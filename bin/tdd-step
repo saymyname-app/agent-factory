@@ -87,6 +87,12 @@ EXIT_STOPPED = 5
 
 # One run of the test command on one test, and one run of the regression command.
 COMMAND_TIMEOUT = 600
+# The regression command waits its turn on the host before its own budget
+# runs (tests/cockpit-criteria/regression.py: REGRESSION_HOST_WAIT and
+# REGRESSION_BUDGET, 600 s each): its deadline here covers both, and a
+# minute more. Exit 75 is its NOT RUN: no answer, never a red (study C, T1).
+REGRESSION_TIMEOUT = 600 + 600 + 60
+NOT_RUN = 75
 # The whole check of one step, as bin/evidence-capture bounds it.
 DEFAULT_TIMEOUT = 3600.0
 MAX_DETAIL = 300
@@ -740,12 +746,15 @@ def regression_run(check: Check, commit: str, moment: str) -> dict[str, Any]:
     command = shlex.split(check.launch["regression_command"])
     try:
         proc = subprocess.run(command, cwd=check.export(commit), stdin=subprocess.DEVNULL, capture_output=True,
-                              timeout=COMMAND_TIMEOUT, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+                              timeout=REGRESSION_TIMEOUT, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
     except subprocess.TimeoutExpired as exc:
-        raise Refusal(f"la commande de régression n'a pas fini en {COMMAND_TIMEOUT} s {moment}") from exc
+        raise Refusal(f"la commande de régression n'a pas fini en {REGRESSION_TIMEOUT} s {moment}") from exc
     except OSError as exc:
         raise Refusal(f"commande de régression impossible à exécuter : {command[0]} ({exc.strerror or exc})") from exc
     output = (proc.stdout + proc.stderr).decode(errors="replace")
+    if proc.returncode == NOT_RUN:
+        raise Refusal(f"commande de régression non exécutée {moment} (NOT RUN, exit 75 : hôte occupé ou budget "
+                      f"épuisé) ; ce n'est pas un échec du ticket, relancer l'étape : {short(output)}")
     if proc.returncode != 0:
         raise Refusal(
             f"commande de régression en échec {moment} (commit {commit}, exit {proc.returncode}) : {short(output)}")

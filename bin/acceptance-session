@@ -84,6 +84,9 @@ RULES = (
 )
 START_TIMEOUT = 30.0
 START_ATTEMPTS = 2
+# An open session is ended by close; a session Benjamin leaves open stops
+# its products after a day (bin/project-launch, af-npz9v1).
+SESSION_LIFETIME = 24 * 3600
 PORT_WAIT = 10.0
 
 EXIT_REFUSED = 1
@@ -332,8 +335,8 @@ def launch_products(convoy: Convoy, commit: str, folder: Path) -> list[dict[str,
     try:
         for dataset in datasets:
             state_file = folder / f"launch-{dataset}.json"
-            argv = [str(LAUNCH_TOOL), "--repo-root", str(convoy.repo()), "start", str(profile), "--commit", commit,
-                    "--timeout", str(START_TIMEOUT), "--state-file", str(state_file)]
+            argv = [str(LAUNCH_TOOL), "--repo-root", str(convoy.repo()), "start", "--detached", str(profile), "--commit", commit,
+                    "--timeout", str(START_TIMEOUT), "--max-lifetime", str(SESSION_LIFETIME), "--state-file", str(state_file)]
             argv += ["--dataset", dataset]
             for _ in range(START_ATTEMPTS):
                 started = run(argv, timeout=START_TIMEOUT + 60, detached=True)

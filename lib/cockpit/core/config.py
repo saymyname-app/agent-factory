@@ -13,6 +13,7 @@ from cockpit.core.gc_client import (
     STATUS_POLL_SECONDS,
     STREAM_SILENCE_SECONDS,
 )
+from cockpit.requests.journal import READ_TIMEOUT_SECONDS as JOURNAL_READ_TIMEOUT_SECONDS
 from cockpit.requests.sources.readability import ILLISIBLE_THRESHOLD_SECONDS
 from cockpit.notify.pushover import PUSHOVER_URL
 from cockpit.projects.depots import REPO_URL_TEMPLATE
@@ -64,6 +65,11 @@ class Config:
         # view of the page (bin/rituals-status reads the same file).
         self.rituals_file = env.get("COCKPIT_RITUALS_FILE", os.path.join(_REPO_ROOT, "docs", "rituals.toml"))
         self.journal_poll_seconds = float(env.get("COCKPIT_JOURNAL_POLL_SECONDS", "60"))
+        # How long one read of the journal may take before it counts as
+        # failed: « Lecture en cours… » until then, unavailable after.
+        self.journal_read_timeout_seconds = float(
+            env.get("COCKPIT_JOURNAL_READ_TIMEOUT_SECONDS", str(JOURNAL_READ_TIMEOUT_SECONDS))
+        )
         # spec .17: a source unreadable for longer than this is itself a request.
         self.illisible_after_seconds = float(
             env.get("COCKPIT_ILLISIBLE_SECONDS", str(ILLISIBLE_THRESHOLD_SECONDS))

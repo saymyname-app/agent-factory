@@ -10,5 +10,5 @@ description = "Re-wakes the Mayor when ready delivery-plane work has been idle >
 trigger = "condition"
 interval = "5m"
 check = "/home/benja/agent-factory/bin/idle-ready-work-wake --check-only"
-exec = "/home/benja/agent-factory/bin/idle-ready-work-wake"
+exec = "/home/benja/agent-factory/bin/order-pause gate idle-ready-work-wake -- /home/benja/agent-factory/bin/idle-ready-work-wake"
 timeout = "60s"

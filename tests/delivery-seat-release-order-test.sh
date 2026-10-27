@@ -5,7 +5,7 @@ set -Eeuo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 order=$(gc order show delivery-seat-release --city "$ROOT" --json)
-jq -e --arg source "$ROOT/orders/delivery-seat-release.toml" --arg exec "/home/benja/agent-factory/bin/delivery-seat-release" '
+jq -e --arg source "$ROOT/orders/delivery-seat-release.toml" --arg exec "/home/benja/agent-factory/bin/order-pause gate delivery-seat-release -- /home/benja/agent-factory/bin/delivery-seat-release" '
   .ok == true and
   .order.type == "exec" and
   .order.trigger == "condition" and
