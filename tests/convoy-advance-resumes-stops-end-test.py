@@ -55,13 +55,14 @@ session = first.session
 class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
     # --- resumes counted and bounded, parked tickets, one grouped request (T20) ---
 
-    def earlier_resumes(self, cause, count, ticket_id=T1):
+    def earlier_resumes(self, cause, count, ticket_id=T1, refs=None):
         """`count` resumes of `cause` the ticket took long before, written
         under its recorded ones, the counter with them (ADR-0030 L2: the
         bound is per cause)."""
         metadata = self.bead(ticket_id)["metadata"]
         record = json.loads(metadata.get("gc.flow.resume") or '{"entries": []}')
-        earlier = [{"cause": cause, "ref": f"earlier:{n}", "session": None, "exit": None, "launches": [],
+        refs = refs or [f"earlier:{n}" for n in range(count)]
+        earlier = [{"cause": cause, "ref": refs[n], "session": None, "exit": None, "launches": [],
                     "at": "2000-01-01T00:00:00Z"} for n in range(count)]
         record["entries"] = earlier + record["entries"]
         metadata["gc.flow.resume"] = json.dumps(record)
@@ -491,6 +492,45 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertNotIn(T1, [m["id"] for m in (self.integration_of(answer) or {}).get("merged", [])])
         self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
         self.assertEqual(1, self.resumes())
+
+    def test_a_ticket_behind_after_many_merges_of_others_is_resumed_and_never_parked(self):
+        # af-npz9v1.36 (Benjamin, 27/10/2026 15:45 Paris: « oui les 6 »): ticket
+        # D was parked on 23/10 after 8 resumes, each merge of another ticket
+        # moving the integration branch. Those resumes no longer count in K.
+        self.integrated()
+        self.resumable()
+        self.code_reviewed("favorable")
+        self.evaluated()
+        self.advance(CONVOY)
+        self.finished(T1)
+        self.earlier_resumes("behind", 8, refs=[f"integration:{n:040x}/exit:{n}" for n in range(8)])
+        self.integration_moved()
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "behind")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+        self.assertEqual([], self.of(answer, "parked"))
+        shown = self.shown_state(T1)
+        self.assertEqual((9, None, 3), (shown["counters"]["resumes"], shown["park"],
+                                        shown["resumes_left_by_cause"]["behind"]))
+
+    def test_a_ticket_that_never_takes_the_integration_tip_is_parked_by_the_guard(self):
+        # The guard against an endless loop: on a tip already resumed for, a
+        # finished ticket that did not take it is counted, and parked at the bound.
+        self.integrated()
+        self.resumable()
+        self.code_reviewed("favorable")
+        self.evaluated()
+        self.advance(CONVOY)
+        self.finished(T1)
+        tip = self.integration_moved()
+        self.earlier_resumes("behind", 3, refs=[f"integration:{tip}/exit:old{n}" for n in range(3)])
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "resumes_exhausted")], [(p["id"], p["cause"]) for p in self.of(answer, "parked")])
+        self.assertEqual([], self.of(answer, "resumed"))
+        self.assertIn("behind : une même pointe d'intégration reprise sans être prise", self.park_of(T1)["detail"])
 
     def test_a_finished_ticket_that_holds_the_integration_tip_is_reviewed_and_not_resumed(self):
         self.integrated()

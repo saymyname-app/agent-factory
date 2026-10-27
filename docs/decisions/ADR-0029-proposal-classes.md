@@ -66,9 +66,19 @@ son niveau, et ne voit pas celles qui le sont.
 ## Ce que cela ne veut pas dire
 
 - Pas d'auto-amélioration libre : le Mayor ne lance que la correction d'un
-  défaut constaté et tracé (observation, bead, mail), jamais un refactor,
-  un audit ou un « pendant que j'y suis ». ADR-0017 (quatre conditions)
-  reste en vigueur.
+  défaut constaté et tracé (observation, bead, mail), jamais un refactor
+  ou un audit sans défaut. ADR-0017 (quatre conditions) reste en vigueur.
+- Amendement du 27/10/2026 (af-npz9v1.25, étude B, PR #720 ; Benjamin, ses
+  mots, relayés le 25/10 15:13 Paris : « Ok pour tes recommandations pour
+  toutes decisions à prendre ») : la correction d'un défaut constaté
+  couvre **toutes ses occurrences de la même catégorie**
+  (`docs/DEFECT_CLASSES.md`) et le contrôle qui tient la catégorie. Ce
+  n'est pas un « pendant que j'y suis » : une occurrence du même défaut est
+  le même défaut. « Hors périmètre » ne vaut que pour une autre catégorie,
+  ou pour une occurrence cherchée, nommée et confiée à un Bead dans la
+  ligne « Où ailleurs : » de la PR. Du 15 au 22/10, la phrase « corriger ce
+  défaut constaté, rien d'autre » a fait revenir trois catégories 5 à 7
+  fois chacune.
 - Rien ne contourne la CI, la porte de dispatch ni la règle « jamais de
   merge rouge ».
 - La décision 2026-09-25 « agents propose, Benjamin decides » reste vraie

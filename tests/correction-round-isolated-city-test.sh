@@ -40,7 +40,7 @@
 #      recorded; the same from anybody else, and the override of the
 #      criterion that was not observed, are refused.
 #   B  its correction session corrects both: the answer is judged favorably
-#      by a second reviewer session, the product is evaluated again at the
+#      in a fresh reviewer conversation, the product is evaluated again at the
 #      new tip, the ticket is merged, and its round counted one resume.
 #
 # The trial prints its record (« relevé d'essai ») on stdout.
@@ -449,7 +449,7 @@ scope = "city"
 min_active_sessions = 0
 max_active_sessions = 2
 provider = "stub-$role"
-$([ "$role" = author ] || echo 'wake_mode = "fresh"')
+wake_mode = "fresh"
 TOML
   echo "Scripted $role of the correction-round trial." > "$CITY/agents/trial-$role/prompt.template.md"
 done
@@ -674,15 +674,16 @@ judgement=$(field "$B" gc.flow.code_review | jq -c '.rounds[-1]')
 printf '%s' "$judgement" | jq -e --arg tip "$FIX_B" --arg base "$TIP_B" \
   '.kind == "judgement" and .verdict == "favorable" and .commit == $tip and .base == $base' >/dev/null \
   || fail "the answers of B were not judged favorably at its corrected tip: $judgement"
-[ "$(printf '%s' "$judgement" | jq -r '.recorded_by')" != "$(field "$B" gc.flow.code_review | jq -r '.rounds[0].recorded_by')" ] \
-  || fail "the judgement of B was given by the session that reviewed it"
+reviewer=$(field "$B" gc.flow.code_review | jq -c '.rounds[0] | {recorded_by, conversation}')
+judge=$(printf '%s' "$judgement" | jq -c '{recorded_by, conversation}')
+[ "$judge" != "$reviewer" ] || fail "the judgement of B was given in the conversation that reviewed it"
 field "$B" gc.flow.evaluation | jq -e --arg tip "$FIX_B" '.rounds[-1] | .commit == $tip and .outcome == "favorable"' >/dev/null \
   || fail "B was not evaluated favorably at its corrected tip: $(field "$B" gc.flow.evaluation | jq -c '.rounds[-1]')"
 [ "$(shown "$B" | jq -c '.counters')" = '{"correction_rounds":1,"resumes":1}' ] \
   || fail "the correction round of B did not count exactly one resume: $(shown "$B" | jq -c '.counters')"
 [ -z "$(field "$B" gc.flow.stop)" ] || fail "B was stopped although its round corrected it"
 [ "$(on_list "$B")" = 0 ] || fail "B is on the operator's list"
-echo "$(date -u +%H:%M:%S) B : une session de correction ($(grep "^$B " "$TRIAL/correction-sessions" | cut -d' ' -f3)) a corrigé au commit $FIX_B et répondu « corrigé » à F1.1 ; jugement favorable par une seconde session relecteur, évaluation rejouée et favorable à la nouvelle pointe ; ticket fusionné dans $INTEGRATION ; compteurs relus : $(shown "$B" | jq -c '.counters')"
+echo "$(date -u +%H:%M:%S) B : une session de correction ($(grep "^$B " "$TRIAL/correction-sessions" | cut -d' ' -f3)) a corrigé au commit $FIX_B et répondu « corrigé » à F1.1 ; jugement favorable dans une conversation relecteur neuve, évaluation rejouée et favorable à la nouvelle pointe ; ticket fusionné dans $INTEGRATION ; compteurs relus : $(shown "$B" | jq -c '.counters')"
 
 if grep -q 'a déjà rendu' "$TRIAL/reviewer.log" "$TRIAL/evaluator.log"; then
   fail "one role conversation served more than one review or evaluation request"

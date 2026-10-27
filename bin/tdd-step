@@ -86,13 +86,18 @@ EXIT_NOT_NEW_FLOW = 4
 EXIT_STOPPED = 5
 
 # One run of the test command on one test, and one run of the regression command.
-COMMAND_TIMEOUT = 600
-# The regression command waits its turn on the host before its own budget
-# runs (tests/cockpit-criteria/regression.py: REGRESSION_HOST_WAIT and
-# REGRESSION_BUDGET, 600 s each): its deadline here covers both, and a
-# minute more. Exit 75 is its NOT RUN: no answer, never a red (study C, T1).
-REGRESSION_TIMEOUT = 600 + 600 + 60
+# Every deadline comes from config/test-budgets.json, measured (study C,
+# T3: lib/test_budgets.py). The regression command waits its turn on the
+# host, then runs within the budget of its kind -- green at a ticket's
+# green, full elsewhere -- and a minute more. Exit 75 is its NOT RUN: no
+# answer, never a red (study C, T1).
+sys.path.insert(0, str(BIN.parent / "lib"))
+import test_budgets  # noqa: E402
+
+BUDGETS = test_budgets.load(BIN.parent)
+COMMAND_TIMEOUT = int(BUDGETS["criterion_test_seconds"])
 NOT_RUN = 75
+TIMING = re.compile(r"^regression: (?:took|ALERT) .*$", re.MULTILINE)
 # The whole check of one step, as bin/evidence-capture bounds it.
 DEFAULT_TIMEOUT = 3600.0
 MAX_DETAIL = 300
@@ -740,15 +745,23 @@ def check_freeze(check: Check) -> dict[str, Any]:
             "files": files}
 
 
-def regression_run(check: Check, commit: str, moment: str) -> dict[str, Any]:
+def regression_run(check: Check, commit: str, moment: str, ticket_tests: list[str] | None = None) -> dict[str, Any]:
     """One run of the profile's regression command on a clean tree of
-    `commit`; refused unless it exits 0."""
+    `commit`; refused unless it exits 0. `ticket_tests`: the files of the
+    ticket's frozen tests, given to the command as TDD_STEP_TICKET_TESTS so
+    that it may keep to what the ticket can break (study C, T4); the merge
+    (bin/spec-integration) gives none and runs it whole."""
     command = shlex.split(check.launch["regression_command"])
+    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+    env.pop("TDD_STEP_TICKET_TESTS", None)
+    if ticket_tests:
+        env["TDD_STEP_TICKET_TESTS"] = " ".join(ticket_tests)
+    timeout = test_budgets.deadline(BUDGETS, "green" if ticket_tests else "full")
     try:
         proc = subprocess.run(command, cwd=check.export(commit), stdin=subprocess.DEVNULL, capture_output=True,
-                              timeout=REGRESSION_TIMEOUT, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+                              timeout=timeout, env=env)
     except subprocess.TimeoutExpired as exc:
-        raise Refusal(f"la commande de régression n'a pas fini en {REGRESSION_TIMEOUT} s {moment}") from exc
+        raise Refusal(f"la commande de régression n'a pas fini en {timeout} s {moment}") from exc
     except OSError as exc:
         raise Refusal(f"commande de régression impossible à exécuter : {command[0]} ({exc.strerror or exc})") from exc
     output = (proc.stdout + proc.stderr).decode(errors="replace")
@@ -758,7 +771,9 @@ def regression_run(check: Check, commit: str, moment: str) -> dict[str, Any]:
     if proc.returncode != 0:
         raise Refusal(
             f"commande de régression en échec {moment} (commit {commit}, exit {proc.returncode}) : {short(output)}")
-    return {"commit": commit, "exit_code": proc.returncode, "output": short(output)}
+    # Its own measure, whole: the output above is cut at 300 characters.
+    return {"commit": commit, "exit_code": proc.returncode, "output": short(output),
+            "timing": TIMING.findall(output)}
 
 
 def check_green(check: Check) -> dict[str, Any]:
@@ -814,7 +829,8 @@ def check_green(check: Check) -> dict[str, Any]:
         raise Refusal(" ; ".join(problems))
     # ADR-0030 L1: the handoff also proves the regression of the profile at
     # the tip, so a change that breaks existing tests never reaches a merge.
-    regression = [regression_run(check, check.head, "à la pointe du ticket")]
+    regression = [regression_run(check, check.head, "à la pointe du ticket",
+                                 sorted({test_id.partition("::")[0] for test_id in ids}))]
     tests = [{"id": test_id, "runs": runs[test_id], "entry_points": list(dict.fromkeys(asked[test_id])),
               "seam": seams[test_id]["name"], "seam_mode": seams[test_id]["mode"]} for test_id in ids]
     return {"step": "green", "verdict": "green", "commit": check.head, "k": k, "criteria": registry["criteria"],

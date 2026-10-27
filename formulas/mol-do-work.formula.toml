@@ -236,6 +236,20 @@ git add <files>
 git commit -m "<type>: <description>"
 ```
 
+On the Factory's own repository (agent-factory), a fix states where else its
+defect is: before coding, `bin/factory-fix-preflight --class <code> <paths>`
+(the code of its class in `docs/DEFECT_CLASSES.md`, or the entry it adds
+there); fix the open occurrences of that class with the observed one, never
+the observed case alone. Write these three lines in the PR body file below
+(`PR_BODY`); `pr-autopilot` does not merge a `do-work/` pull request of the
+Factory without them:
+```
+Catégorie : <code> — <the class in a few words>
+Où ailleurs : <the search made (command, paths) and what it found: fixed here, or a Bead per occurrence left>
+Contrôle de catégorie : <the test or lint that fails on the next occurrence, or why there is none>
+```
+A change that fixes no defect writes `Catégorie : aucune — <why>` instead.
+
 If the bead asks for sections in the PR description (for example « Non fait »,
 « Écarts », « Constats hors ticket »), you do not open the PR yourself —
 `push-and-pr` does. Write the sections, as Markdown headings each followed by
