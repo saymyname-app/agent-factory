@@ -152,8 +152,10 @@ def roadmap_rows(steps, chantiers_by_step):
     ``label`` does not say it done and ``acquired`` is false; ``acquired``
     is true for every other step done. A step in progress that still waits
     on a required step is not flagged for its own chantiers being closed,
-    merged or accepted: it is in progress until that step is done.
-    ``chantiers_by_step`` None: the tracker is not read (still read, or its
+    merged or accepted: it is in progress until that step is done, and
+    ``ended`` says so -- true for a step in progress whose chantiers are
+    all closed, or one of whose results is merged or accepted, flagged or
+    not. ``chantiers_by_step`` None: the tracker is not read (still read, or its
     reading failed), so it neither vouches for a step nor contradicts one
     -- no step is flagged for its chantiers. ``flag`` is None otherwise."""
     by_id = {str(step.get("id", "")): step for step in steps or []}
@@ -165,6 +167,8 @@ def roadmap_rows(steps, chantiers_by_step):
         pending = [str(required) for required in requires
                    if str((by_id.get(str(required)) or {}).get("status", "")) != "done"]
         flag = None
+        ended = status == "in_progress" and bool(chantiers) and (
+            any(c.get("merged") or c.get("accepted") for c in chantiers) or all(c.get("closed") for c in chantiers))
         if status == "done" and pending:
             flag = FLAG_REQUIRED % ", ".join(
                 str((by_id.get(required) or {}).get("title") or required) for required in pending)
@@ -181,20 +185,23 @@ def roadmap_rows(steps, chantiers_by_step):
         acquired = status == "done" and not pending
         label = LABEL_NOT_ACQUIRED if status == "done" and pending else STATUS_LABELS.get(status, status or "Inconnu")
         rows.append({"id": str(step.get("id", "")), "title": str(step.get("title", "")), "status": status,
-                     "label": label, "flag": flag, "acquired": acquired})
+                     "label": label, "flag": flag, "acquired": acquired,
+                     "ended": ended})
     return rows
 
 
 def current_step(rows):
     """The row of :func:`roadmap_rows` a page presents as the current step
-    (R3, af-plu8kn): the first in progress without a flag; when no step is
-    in progress, the first to do. None when every step in progress carries
-    a reserve -- a step flagged is never presented as current for certain,
-    and a step to do does not stand in for a step in progress."""
+    (R3, af-plu8kn): the first in progress without a flag whose chantier
+    has not ended (``ended``: closed, merged or accepted, even while it
+    waits on a required step); when no step is in progress, the first to
+    do. None when every step in progress carries a reserve or an ended
+    chantier -- such a step is never presented as current for certain, and
+    a step to do does not stand in for a step in progress."""
     started, upcoming = DEFAULT_STATUSES_BY_PRIORITY
     in_progress = [r for r in rows if r["status"] == started]
     if in_progress:
-        return next((r for r in in_progress if not r["flag"]), None)
+        return next((r for r in in_progress if not r["flag"] and not r["ended"]), None)
     return next((r for r in rows if r["status"] == upcoming and not r["flag"]), None)
 
 
@@ -202,7 +209,8 @@ def presented_step(rows):
     """The step a line that names one step of the roadmap shows (« Roadmap :
     … »): :func:`current_step`, else the first in progress, else the first
     to do, with its flag -- a reserve shown beside the step, never left out
-    (R3, af-plu8kn). None for a roadmap with neither."""
+    (R3, af-plu8kn); a roadmap all done, its last step, as
+    :func:`pick_current_step` names it. None for a roadmap without steps."""
     current = current_step(rows)
     if current is not None:
         return current
@@ -210,4 +218,4 @@ def presented_step(rows):
         row = next((r for r in rows if r["status"] == status), None)
         if row is not None:
             return row
-    return None
+    return rows[-1] if rows else None
