@@ -19,8 +19,9 @@ synthetic sources only:
   secret, no notification, no heartbeat and no project clone. Only the mark
   of the launch (`FACTORY_LAUNCH_ID`) is kept from the launcher's;
 - the doors that change the Factory (`bin/proposal-door`,
-  `bin/escalation-door`, `bin/factory-session-loop-guard`, `gc order run`)
-  are the real ones, run on the tracker of the launch through a synthetic
+  `bin/escalation-door`, `bin/factory-session-loop-guard`, `gc order run`,
+  `bin/order-pause`, and for the settings and the upkeep `bin/provider-failover`,
+  `bin/factory-maintain`, `bin/operator-config`) are the real ones, run on the tracker of the launch through a synthetic
   `gc` (`tests/fixtures/cockpit/synthetic-city/`): a gesture is recorded
   there as in service, and read back from there (B, af-4uzgzm). A dataset
   may say a door expires, or expires once its record is written
@@ -45,6 +46,7 @@ import os
 import shlex
 import shutil
 import signal
+import subprocess
 import sys
 import tempfile
 import threading
@@ -69,6 +71,11 @@ DOORS = {
     "loop-guard": (ROOT / "bin" / "factory-session-loop-guard", "COCKPIT_LOOP_GUARD_BIN"),
     # Pause and resume of an order (af-npz9v1.15), for B's « relancer un order ».
     "order-pause": (ROOT / "bin" / "order-pause", "COCKPIT_ORDER_PAUSE_BIN"),
+    # The settings and the upkeep of the Factory (G2, af-f8nlhr; af-npz9v1.20),
+    # each on what the launch holds (`door_environment`).
+    "provider-failover": (ROOT / "bin" / "provider-failover", "COCKPIT_PROVIDER_FAILOVER_BIN"),
+    "factory-maintain": (ROOT / "bin" / "factory-maintain", "COCKPIT_FACTORY_MAINTAIN_BIN"),
+    "operator-config": (ROOT / "bin" / "operator-config", "COCKPIT_OPERATOR_CONFIG_BIN"),
     "gc": (SYNTHETIC / "gc", "COCKPIT_GC_BIN"),
 }
 # How a dataset may say a door answers (`doors`): it never does, or it
@@ -173,16 +180,130 @@ def write_doors(answers: dict[str, str], home: str) -> dict[str, str]:
         "GC_BIN": str(SYNTHETIC / "gc"),
         "FACTORY_SESSION_LOOP_GUARD_LOG": os.path.join(home, "factory-session-loop-guard.log"),
         "COCKPIT_ACTION_TIMEOUT_SECONDS": ACTION_TIMEOUT_SECONDS,
+        "COCKPIT_FACTORY_ROOT": factory_tree(home),
     }
+    own = door_environment(home, doors)
     for name, (real, variable) in DOORS.items():
         how = answers.get(name, "acts")
         door = doors / name
-        door.write_text("#!/bin/sh\nexec %s %s %s %s \"$@\"\n" % (
+        door.write_text("#!/bin/sh\nexec env %s%s %s %s %s \"$@\"\n" % (
+            "".join(f"{key}={shlex.quote(value)} " for key, value in own.get(name, {}).items()),
             shlex.quote(sys.executable), shlex.quote(str(SYNTHETIC / "door")), how, shlex.quote(str(real))),
             encoding="utf-8")
         door.chmod(0o755)
         env[variable] = str(door)
     return env
+
+
+def door_environment(home: str, doors: Path) -> dict[str, dict[str, str]]:
+    """What each settings or upkeep door of the launch reads and writes, in
+    `home` and never in the Factory in service (af-npz9v1.20):
+
+    - provider-failover: the Factory tree of the launch (`factory_tree`):
+      its state and overlay there, the policy, the catalogue and city.toml
+      of the commit, no tmux session read, `gc` the synthetic one;
+    - factory-maintain: the throwaway repositories `throwaway_repositories`
+      makes (the copy of the commit shares the refs of the repository it
+      comes from: pruning its branches would prune those), `gc` the
+      synthetic one, no GitHub proof (a branch GitHub would prove merged is
+      kept, as when GitHub does not answer), its escalations through the
+      escalation door of the launch;
+    - operator-config reads config/operator.toml of the commit and writes
+      nothing."""
+    tools = Path(home, "maintain-bin")
+    tools.mkdir()
+    # A script, not a link: the synthetic gc finds its tracker beside its own path.
+    (tools / "gc").write_text(f"#!/bin/sh\nexec {shlex.quote(str(SYNTHETIC / 'gc'))} \"$@\"\n",
+                              encoding="utf-8")
+    (tools / "gc").chmod(0o755)
+    (tools / "gh").write_text("#!/bin/sh\necho 'trial cockpit: no GitHub' >&2\nexit 1\n", encoding="utf-8")
+    (tools / "gh").chmod(0o755)
+    path = f"{tools}{os.pathsep}{os.environ.get('PATH', os.defpath)}"
+    return {
+        "provider-failover": {
+            "FACTORY_ROOT": os.path.join(home, "factory"),
+            "PROVIDER_TMUX_BIN": shutil.which("false") or "false",
+            "PATH": path,
+        },
+        "factory-maintain": {
+            "FACTORY_ROOT": throwaway_repositories(home),
+            "FACTORY_MAINTAIN_LOG": os.path.join(home, "factory-maintain.log"),
+            "ESCALATION_DOOR_BIN": str(doors / "escalation-door"),
+            "PATH": path,
+        },
+    }
+
+
+# What bin/provider-failover writes in the Factory tree.
+WRITTEN = ("city.provider.toml", ".gc/provider-state.json")
+
+
+def factory_tree(home: str) -> str:
+    """The Factory tree of the launch, in `home`: every file of the commit,
+    by a link, but what the provider failover writes (WRITTEN), copied when
+    the commit holds it: a test may commit the state it observed. The page
+    Usine reads it (COCKPIT_FACTORY_ROOT) and provider-failover writes in it:
+    a setting is read back where it was written, never in the Factory in
+    service nor in the copy of the commit (af-npz9v1.20)."""
+    tree = Path(home, "factory")
+    tree.mkdir()
+    for entry in ROOT.iterdir():
+        if entry.name not in (".gc", ".git", *WRITTEN):
+            (tree / entry.name).symlink_to(entry)
+    for name in WRITTEN:
+        if (ROOT / name).is_file():
+            (tree / name).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / name, tree / name)
+    return str(tree)
+
+
+def throwaway_repositories(home: str) -> str:
+    """Throwaway Git repositories of the launch, as factory-maintain finds the
+    Factory's: a clone of a bare origin (FACTORY_ROOT) whose branch `merged`
+    is merged and pushed, and `unpushed` holds a commit origin lacks; and,
+    where clean-worktrees looks ($HOME/.local/share/agent-factory-runtime-
+    worktrees), a worktree merged and pushed (`af-merged`, a candidate) and
+    three it must keep: a local change (`af-modified`), a commit not pushed
+    (`af-unpushed`), work under way (`af-active`). Returns the clone."""
+    env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull,
+           "GIT_AUTHOR_NAME": "essai", "GIT_AUTHOR_EMAIL": "essai@example.invalid",
+           "GIT_COMMITTER_NAME": "essai", "GIT_COMMITTER_EMAIL": "essai@example.invalid"}
+    base = Path(home, "maintain")
+    origin, clone = base / "origin.git", base / "factory"
+    worktrees = Path(home, ".local", "share", "agent-factory-runtime-worktrees")
+    worktrees.mkdir(parents=True)
+    base.mkdir()
+
+    def git(where: Path, *args: str) -> None:
+        subprocess.run(["git", "-C", str(where), *args], env=env, check=True, capture_output=True)
+
+    def commit(where: Path, name: str) -> None:
+        Path(where, name).write_text(name + "\n", encoding="utf-8")
+        git(where, "add", name)
+        git(where, "commit", "-q", "-m", name)
+
+    git(base, "init", "-q", "--bare", "-b", "main", str(origin))
+    git(base, "clone", "-q", str(origin), str(clone))
+    git(clone, "checkout", "-q", "-B", "main")
+    commit(clone, "README")
+    git(clone, "push", "-q", "-u", "origin", "main")
+    git(clone, "remote", "set-head", "origin", "main")
+    for branch in ("merged", "wt-merged", "wt-modified"):
+        git(clone, "branch", branch)
+        git(clone, "push", "-q", "-u", "origin", branch)
+    git(clone, "checkout", "-q", "-b", "unpushed")
+    commit(clone, "unpushed")
+    git(clone, "checkout", "-q", "-b", "wt-active", "main")
+    commit(clone, "active")
+    git(clone, "push", "-q", "-u", "origin", "wt-active")
+    git(clone, "checkout", "-q", "-b", "wt-unpushed", "main")
+    commit(clone, "wt-unpushed")
+    git(clone, "checkout", "-q", "main")
+    for name, branch in (("af-merged", "wt-merged"), ("af-modified", "wt-modified"),
+                         ("af-unpushed", "wt-unpushed"), ("af-active", "wt-active")):
+        git(clone, "worktree", "add", "-q", str(worktrees / name), branch)
+    Path(worktrees, "af-modified", "README").write_text("local change\n", encoding="utf-8")
+    return str(clone)
 
 
 def write_tracker_and_projects(city: synthetic_city.SyntheticCity, home: str) -> dict[str, str]:
