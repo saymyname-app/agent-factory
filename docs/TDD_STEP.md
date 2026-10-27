@@ -160,8 +160,12 @@ it is no failure of the ticket; run `green` again. At `green` only, the
 command gets the files of the ticket's frozen tests in
 `TDD_STEP_TICKET_TESTS` and may keep to what the ticket can break: the
 cockpit's runs its fast tests, the end-to-end launch and the criterion
-tests of the ticket's families (study C, T4); the merge runs it whole. The regression has
-1260 s (`REGRESSION_TIMEOUT`); each criterion test keeps its 600 s. A change that
+tests of the ticket's families (study C, T4); the merge runs it whole. Every
+deadline comes from `config/test-budgets.json` (study C, T3): one criterion
+test has `criterion_test_seconds`; the regression has the wait for the host,
+the budget of its kind (green at `green`, full at `prefactoring`) and a
+margin, and the answer keeps its measure (`regression[].timing`, the lines
+« regression: took … » and « ALERT » that `bin/test-budgets` reads back). A change that
 keeps its criterion tests green but breaks existing tests is caught at the
 author's handoff (the `code` gate of `bin/ticket-author` asks for `green` at
 the tip), not only at the merged regression of `bin/spec-integration`.

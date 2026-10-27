@@ -660,10 +660,28 @@ what `bin/tdd-step` and `bin/spec-integration` run) takes the same lock
 since 25/10/2026: on 22/10 it ran beside two authors' and a merge's,
 took 1.9 times as long and was refused at 600 s on tickets that were green
 (study C, `docs/research/2026-10-22-strategie-tests-budgets.md`). It waits
-at most `REGRESSION_HOST_WAIT` seconds (600), then runs within
-`REGRESSION_BUDGET` seconds (600) counted from the lock; past either it
-exits 75, NOT RUN, which the gates never count as a red. Proof:
+at most `host_wait_seconds`, then runs within the budget of its kind
+(`green_seconds` at a ticket's green, `full_seconds` elsewhere) counted
+from the lock; past either it exits 75, NOT RUN, which the gates never
+count as a red. It ends with « regression: took Ns », and an « ALERT »
+line past `alert_ratio` of its budget. Proof:
 `tests/regression-host-queue-test.py`.
+
+**Time budgets, measured, in one file** (study C, T3, af-npz9v1.32).
+`config/test-budgets.json` holds every deadline of a ticket's tests; the
+regression, `bin/tdd-step` and `bin/spec-integration` read it through
+`lib/test_budgets.py`, and the order convoy-advance is derived from it.
+
+| When | Do |
+|---|---|
+| A run says « ALERT », or a refusal says NOT RUN for its budget | `bin/test-budgets show` (budgets, deadlines, last runs, classes left before the alert), then `bin/test-budgets refresh` and a maintenance PR with the new file |
+| `refresh` raised `full_seconds` | `bin/test-budgets check-order`; if it fails, raise `timeout` of `orders/convoy-advance.toml` to the `pass_seconds` it names, in the same PR |
+
+`refresh` sets each budget to 1.5 times the slowest of the last ten runs
+of its kind in the evidence store, rounded up to the minute; a kind with
+fewer than three runs keeps its figure (on 27/10/2026: full 780 s from
+495 s measured; green 600 s, not yet measured since T4). Proof:
+`tests/test-budgets-test.py`.
 
 What it does not cover:
 

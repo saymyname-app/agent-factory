@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# test-budgets — the time budgets of a ticket's tests, measured, in one file
+# (config/test-budgets.json; study C, T3, af-npz9v1.32). show | refresh |
+# check-order: lib/test_budgets.py says what each does.
+exec python3 "$(dirname "$(readlink -f "$0")")/../lib/test_budgets.py" "$@"

@@ -81,6 +81,8 @@ class RegressionHostQueue(unittest.TestCase):
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         self.assertEqual(sorted(Path(name).name + ".ran" for name in FILES), self.ran())
         self.assertIn("PASS tests/cockpit-criteria-test.py", proc.stdout)
+        self.assertIn("regression: took", proc.stdout)
+        self.assertIn("full budget 600s", proc.stdout)
 
     def test_a_host_held_past_the_wait_is_not_run_and_no_test_runs(self):
         self.hold_host(30)

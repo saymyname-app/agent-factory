@@ -108,6 +108,7 @@ mechanisms: consult `decisions/PRE_REFACTOR.md` before relying on them.
 | D01 accepted limits and final verification | `verification/D01-verification-finale.md` (§6, 7, 10, 12); `bd comments af-m23wru` |
 | Preserve cases/assertions when optimizing tests | `FACTORY_TOOLS.md` (test-cases-compare) |
 | Test-writing guideline and test-file ceilings | `TEST_GUIDELINE.md` |
+| Time budgets of a ticket's tests (wait, green, full, order), measured | `DELIVERY.md` (« Time budgets »), `../config/test-budgets.json`, `../bin/test-budgets` |
 | Claude MCP/tool profiles and context floor | `../city.toml` ([providers.claude]) |
 | Launch the cockpit isolated at a commit on a named synthetic dataset: recipe, datasets, screens, seams, regression command | `COCKPIT.md` (« Isolated launch »), `PROJECT_PLANNING_PROFILE.md` (« Launch declarations »), `../config/project-descriptors/agent-factory.json` (`launch`), `../bin/cockpit-isolated`, `../lib/synthetic_city.py` |
 | Where a running convoy stands: active sessions, ready tickets, critical path and width per level (not `gc status`) | `FACTORY_TOOLS.md` (convoy-graph), `../bin/convoy-graph`, `../lib/ticket_graph.py` |
