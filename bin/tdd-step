@@ -25,7 +25,11 @@ the criterion tests after the green (ADR-0030 L3). `green`: the frozen
 files are unchanged and the frozen tests pass k times in a row against the product at HEAD, then the regression
 command of the profile passes at HEAD (ADR-0030 L1). `amend`: the one
 change of frozen tests a ticket is allowed, with its reason, a new red and a
-new freeze, recorded with its diff. `prefactoring`: the regression command of
+new freeze, recorded with its diff. A criterion test another ticket of the
+convoy froze is no ticket's to change, but for the one ticket its text names
+as its successor (« until A2 », « jusqu'à A2 », or that ticket's id), once,
+by its `amend` (af-npz9v1.19): `red` and `green` refuse any other change of
+it. `prefactoring`: the regression command of
 the profile passes before and after, and no existing test was touched; with
 no test at the start commit, characterization tests are demanded first, in
 commits that add nothing but files of the test perimeter.
@@ -80,6 +84,10 @@ STOP_AMENDMENT_EXHAUSTED = "amendment_exhausted"
 # The resume bin/convoy-advance sends once the operator answered « a » to that
 # stop: it allows one more amendment (af-25o7vr).
 GRANTED = "amendment_granted"
+# How a frozen test names the ticket allowed to change it (af-npz9v1.19;
+# Benjamin, 25/10/2026: « Seul le ticket nommé dans le test (par exemple
+# « jusqu'à A2 ») peut le modifier, une seule fois »).
+SUCCESSOR_WORDS = r"(?:until|jusqu['’]à)\s+"
 
 EXIT_REFUSED = 1
 EXIT_NOT_NEW_FLOW = 4
@@ -244,6 +252,7 @@ class Check:
         if ticket is None:
             raise Refusal(f"le ticket {args.ticket} n'appartient pas au convoi {args.convoy}")
         self.ticket = ticket
+        self.others = [t for t in answer["tickets"] if t.get("id") != args.ticket]
         stop = ticket.get("stop")
         if stop:
             raise Refusal(
@@ -449,10 +458,10 @@ class Check:
 
     # --- evidence ---
 
-    def sealed(self, piece: str, commit: str, what: str) -> dict[str, Any]:
+    def sealed(self, piece: str, commit: str, what: str, ticket: str | None = None) -> dict[str, Any]:
         """The report of an earlier step, read from the evidence store once
         bin/evidence-capture has verified it against the tracker."""
-        status, answer = tool(CAPTURE_TOOL, "verify", self.args.convoy, self.args.ticket, "--piece", piece)
+        status, answer = tool(CAPTURE_TOOL, "verify", self.args.convoy, ticket or self.args.ticket, "--piece", piece)
         if status != 0:
             raise Refusal(f"{what} invérifiable : {refusal_text(answer)}")
         try:
@@ -489,6 +498,51 @@ class Check:
         return {path: f"fichier du périmètre de test modifié depuis le gel : {path}"
                 for _, path in self.changes(frozen_commit, self.head)
                 if in_paths(path, self.test_scope) and path not in files}
+
+    def foreign_changes(self, base: str) -> dict[str, str]:
+        """The criterion tests another ticket of the convoy froze that differ
+        between the start commit and HEAD, with the ticket that froze each
+        (af-npz9v1.19). A test absent at the start commit is not changed by
+        this ticket: its owner has not reached this branch."""
+        owners: dict[str, str] = {}
+        for other in self.others:
+            freeze = (other.get("tdd") or {}).get("freeze")
+            if not freeze:
+                continue
+            try:
+                proof = self.sealed("tdd_freeze", freeze["commit"], "registre d'empreintes du gel", other["id"])
+                paths = [test_id.partition("::")[0] for test_id in unique_ids(proof["criteria"])]
+            except (Refusal, KeyError, TypeError, ValueError):
+                continue
+            owners.update((path, other["id"]) for path in paths)
+        return {path: owner for path, owner in sorted(owners.items())
+                if (before := self.blob(base, path)) is not None and self.blob(self.head, path) != before}
+
+    def names_this_ticket(self, base: str, path: str) -> bool:
+        """The test, at the start commit, names this ticket as the one that
+        changes it: « until <code> », « jusqu'à <code> », or its id."""
+        text = (self.blob(base, path) or b"").decode("utf-8", errors="replace")
+        code = str(self.ticket.get("title") or "").split(" — ")[0].strip()
+        return self.args.ticket in text or bool(
+            code and re.search(rf"{SUCCESSOR_WORDS}{re.escape(code)}(?![\w-])", text, re.IGNORECASE))
+
+    def succession(self) -> dict[str, dict[str, str]]:
+        """The frozen tests of other tickets this ticket's amendments changed,
+        each with the fingerprint it was left at."""
+        amendment = self.tdd.get("amendment")
+        if not amendment:
+            return {}
+        proof = self.sealed("tdd_amendment", amendment["commit"], "preuve de l'amendement")
+        return (proof.get("amendment") or {}).get("succession") or {}
+
+    def unrecorded_foreign(self, base: str) -> list[str]:
+        """The changes of another ticket's frozen tests no amendment of this
+        ticket recorded as they are at HEAD."""
+        recorded = self.succession()
+        return [f"test gelé du ticket {owner} modifié : {path} ; seul le ticket que ce test nomme comme successeur "
+                f"(« until <ticket> ») le change, une seule fois, par tdd-step amend"
+                for path, owner in self.foreign_changes(base).items()
+                if recorded.get(path, {}).get("digest") != digest_of(self.blob(self.head, path) or b"")]
 
     def tests_at(self, commit: str) -> list[str]:
         """The tests a commit holds: the files of the test perimeter, the
@@ -706,6 +760,9 @@ def check_red(check: Check) -> dict[str, Any]:
     outside = [path for _, path in check.changes(base, check.head) if not in_paths(path, check.launch["test_perimeter"])]
     if outside:
         raise Refusal(" ; ".join(f"fichier modifié hors du périmètre de test : {path}" for path in outside))
+    foreign = check.unrecorded_foreign(base)
+    if foreign:
+        raise Refusal(" ; ".join(foreign))
     return {"step": "red", **red_proof(check, base, check.args.table, amendment=False)}
 
 
@@ -772,6 +829,9 @@ def check_green(check: Check) -> dict[str, Any]:
     changed = check.changed_frozen(registry["files"])
     if changed:
         raise Refusal(" ; ".join(changed.values()) + " ; un test gelé ne change que par l'amendement (tdd-step amend)")
+    foreign = check.unrecorded_foreign(check.tdd["red"]["base"])
+    if foreign:
+        raise Refusal(" ; ".join(foreign))
     frozen_commit = check.tdd["freeze"]["commit"]
     ids = unique_ids(registry["criteria"])
     # The tests run as they were frozen, helpers of the test perimeter included.
@@ -851,6 +911,23 @@ def check_amend(check: Check) -> dict[str, Any]:
     changed = {**check.changed_frozen(registry["files"]), **check.changed_helpers(frozen_commit, registry["files"])}
     if not changed:
         raise Refusal("aucun fichier gelé n'a changé depuis le gel : il n'y a rien à amender")
+    # af-npz9v1.19: another ticket's frozen test changes only for the ticket
+    # it names as its successor, once; the change is recorded and reviewed.
+    base = check.tdd["red"]["base"]
+    succession = check.succession()
+    refused = []
+    for path, owner in check.foreign_changes(base).items():
+        digest = digest_of(check.blob(check.head, path) or b"")
+        if path in succession:
+            if succession[path]["digest"] != digest:
+                refused.append(f"test gelé du ticket {owner} déjà changé une fois par {check.args.ticket} : {path}")
+        elif not check.names_this_ticket(base, path):
+            refused.append(f"test gelé du ticket {owner} modifié : {path} ; il ne nomme pas {check.args.ticket} "
+                           "comme successeur (« until <ticket> ») : seul le ticket qu'il nomme le change")
+        else:
+            succession[path] = {"owner": owner, "digest": digest}
+    if refused:
+        raise Refusal(" ; ".join(refused))
     proof = red_proof(check, check.tdd["red"]["base"], registry["table"], amendment=True,
                       satisfied_before=registry.get("satisfied", []))
     paths = sorted({*registry["files"], *changed,
@@ -861,7 +938,7 @@ def check_amend(check: Check) -> dict[str, Any]:
     text = diff.stdout.decode("utf-8", errors="replace")
     return {"step": "amend", **proof, "amendment": {
         "reason": reason, "previous_freeze": frozen_commit, "files": sorted(changed),
-        "diff": text[:MAX_DIFF], "diff_truncated": len(text) > MAX_DIFF,
+        "diff": text[:MAX_DIFF], "diff_truncated": len(text) > MAX_DIFF, "succession": succession,
     }}
 
 

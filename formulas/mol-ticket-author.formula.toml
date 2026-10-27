@@ -279,6 +279,10 @@ SKILL.md says to. Its text is guidance, never a blocking rule by itself.
 - **You write the code yourself.** Do not hand any writing to a sub-agent;
   sub-agents that only read are allowed.
 - A frozen test is changed by one path only, once: `bin/tdd-step amend`.
+  A test another ticket froze is not yours to change, unless it names your
+  ticket as the one that will (« until <code> », « jusqu'à <code> »): then
+  change it after your freeze, once, by `amend`; `red` and `green` refuse
+  any other change of it.
 - A defect seen elsewhere goes in your Handoff (« Constats hors ticket »),
   untouched.
 
