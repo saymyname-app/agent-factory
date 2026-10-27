@@ -405,7 +405,12 @@ reaches its bound. `resumes` stays the one counter that `open-resume`,
 `open-correction` and `invalidate-verdicts` add to; the count per cause is
 derived, never stored apart: the resume entries by their cause, and
 `commit_after_verdict` the rest of the counter once the entries and
-`correction_rounds` are taken out. The correction round counts against no
+`correction_rounds` are taken out. A `behind` entry is left out of its
+cause the first time its fact names a tip of the integration branch
+(`integration:<tip>/…`): the factory moved that tip, the ticket did not;
+a second `behind` entry on the same tip is counted (af-npz9v1.36,
+Benjamin 27/10/2026 15:45 Paris: « oui les 6 »; `docs/CONVOY_ADVANCE.md`).
+The counter `resumes` still holds every resume recorded. The correction round counts against no
 cause: its own bound is one round, held by `open-correction`. K is not held
 in this command: it is `bounds.resumes` of `config/delivery-flow.json`
 (3 for each cause; an object naming exactly the seven causes, or one
