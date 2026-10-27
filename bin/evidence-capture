@@ -289,6 +289,16 @@ def launched_product(state_file: str) -> tuple[str, str]:
     return address, commit
 
 
+def launched_dataset(state_file: str | None) -> str | None:
+    """The dataset a product launched by bin/project-launch serves, kept in
+    the record: bin/ticket-evaluation launches the one a demonstration was
+    proven on (af-npz9v1.18). Read when launched_product checks the file."""
+    if state_file is None:
+        return None
+    dataset = json.loads(Path(state_file).read_text(encoding="utf-8")).get("dataset")
+    return dataset if isinstance(dataset, str) else None
+
+
 # --- captures --------------------------------------------------------------------
 
 
@@ -605,6 +615,9 @@ def cmd_command(args: argparse.Namespace) -> int:
         address, commit = launched_product(args.launch_state)
     else:
         address, commit = None, head_of_clean_repo(Path(args.repo or "."))
+    # Read with the address: the command may stop the product, and its
+    # launch record with it.
+    dataset = launched_dataset(args.launch_state)
     attach = Path(args.attach) if args.attach else None
     if attach is not None and (attach.exists() or attach.is_symlink()):
         raise Refusal(f"--attach {attach} existe déjà : le fichier joint est écrit par la commande, pendant son exécution")
@@ -617,6 +630,7 @@ def cmd_command(args: argparse.Namespace) -> int:
         )
 
     record = new_record("command", spec, args.convoy, args.ticket, piece, commit, address)
+    record["dataset"] = dataset
     kept = output if len(output) <= MAX_OUTPUT_BYTES else output[: MAX_OUTPUT_BYTES // 2] + output[-MAX_OUTPUT_BYTES // 2:]
     record.update(
         command=args.argv, exit_code=exit_code, output=kept.decode("utf-8", errors="replace"),
@@ -657,9 +671,11 @@ def cmd_screenshot(args: argparse.Namespace) -> int:
     browser = find_browser()
     http_status = http_status_of(url)
 
+    dataset = launched_dataset(args.launch_state)
     image = take_screenshot(browser, url, window.group(1), window.group(2))
 
     record = new_record("screenshot", spec, args.convoy, args.ticket, piece, commit, url)
+    record["dataset"] = dataset
     record.update(
         image=f"{piece}.png", image_digest=digest_of(image), http_status=http_status,
         window_size=f"{window.group(1)}x{window.group(2)}",

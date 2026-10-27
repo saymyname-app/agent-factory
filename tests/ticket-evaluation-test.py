@@ -917,6 +917,57 @@ class TicketEvaluationTest(unittest.TestCase):
         self.recorded(self.handed(tip, request))
         self.assertTrue(self.tool("verdict")["favorable"])
 
+    def test_the_game_the_demonstration_was_proven_on_is_a_game_of_the_ticket(self):
+        """af-npz9v1.18: the author proved the demonstration on a game no
+        criterion names (B, af-4uzgzm); the Evaluator launches it too."""
+        profile = json.loads(self.profile.read_text())
+        original = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
+        profile["launch"]["datasets"]["empty"] = original["launch"]["datasets"]["empty"]
+        self.profile.write_text(json.dumps(profile))
+        tip = self.finished_slice(self.realized())
+        record = self.tmp / "demonstration-empty.json"
+        started = self.run_cmd(LAUNCH_TOOL, "--repo-root", self.repo, "start", self.profile,
+                               "--commit", tip, "--dataset", "empty", "--state-file", record)
+        self.assertEqual(0, started.returncode, started.stdout + started.stderr)
+        self.addCleanup(self.run_cmd, LAUNCH_TOOL, "stop", "--state-file", record)
+        shown = self.run_cmd(CAPTURE_TOOL, "command", CONVOY, SLICE, "--piece", "demonstration",
+                             "--launch-state", record, "--", "python3", "-c", "print('la page vide')")
+        self.assertEqual(0, shown.returncode, shown.stdout + shown.stderr)
+        self.assertEqual("empty", self.piece("demonstration")["dataset"])
+        self.evaluator("silent")
+        self.settle()
+        self.assertEqual(["content", "empty"], self.evaluation()["request"]["datasets"])
+
+    def test_a_game_the_branch_brings_is_launched_and_evaluated_at_its_commit(self):
+        """af-npz9v1.18: R1 (af-d6anqb) brought its dataset in its branch's
+        profile; the launcher read main's and refused it, and the Evaluator
+        launched main's datasets only. Both read the datasets the evaluated
+        commit adds; the recipe stays main's."""
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True, capture_output=True)
+        profile = json.loads(self.profile.read_text())
+        original = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
+        self.assertNotIn("empty", profile["launch"]["datasets"])
+        branch = json.loads(json.dumps(profile))
+        branch["launch"]["datasets"]["empty"] = original["launch"]["datasets"]["empty"]
+        relative = self.profile.relative_to(self.root).as_posix()
+        tip = self.finished_slice({**self.realized(), relative: json.dumps(branch)})
+        record = self.tmp / "demonstration-branch.json"
+        started = self.run_cmd(LAUNCH_TOOL, "--repo-root", self.repo, "start", self.profile,
+                               "--commit", tip, "--dataset", "empty", "--state-file", record)
+        self.assertEqual(0, started.returncode, started.stdout + started.stderr)
+        self.addCleanup(self.run_cmd, LAUNCH_TOOL, "stop", "--state-file", record)
+        shown = self.run_cmd(CAPTURE_TOOL, "command", CONVOY, SLICE, "--piece", "demonstration",
+                             "--launch-state", record, "--", "python3", "-c", "print('la page vide')")
+        self.assertEqual(0, shown.returncode, shown.stdout + shown.stderr)
+        self.evaluator("silent")
+        self.settle()
+        self.assertEqual(["content", "empty"], self.evaluation()["request"]["datasets"])
+        main = self.run_cmd(LAUNCH_TOOL, "--repo-root", self.repo, "start", self.profile,
+                            "--commit", self.base, "--dataset", "empty",
+                            "--state-file", self.tmp / "main-empty.json")
+        self.assertNotEqual(0, main.returncode, "main does not declare the branch's dataset")
+        self.assertIn("unknown dataset", main.stdout)
+
     def test_a_game_named_only_by_a_validated_expectation_is_a_game_of_the_ticket(self):
         profile = json.loads(self.profile.read_text())
         original = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
