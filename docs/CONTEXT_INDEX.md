@@ -23,7 +23,7 @@ mechanisms: consult `decisions/PRE_REFACTOR.md` before relying on them.
 | B12 blocked cutover and replacement slices | `planning/B12-redecomposition-planning-run-router.md` |
 | Planning Run: charter, No-fog, approval, graph publication | `PLANNING_RUN.md` |
 | Factory versus Direct Delivery | `PLANNING_RUN.md` |
-| Standing ADMIN upkeep allowlist | `../AGENTS.md` (Standing ADMIN allowlist) |
+| Standing ADMIN upkeep allowlist | `../AGENTS.md` (Standing ADMIN allowlist), `FACTORY_TOOLS.md` (`factory-maintain`) |
 | Wake the Mayor after publication; missed-wake safety net | `../bin/ticket-graph-publish` (notify_mayor), `../bin/idle-ready-work-wake` |
 | Watchdog: stale gates, stuck PRs, hidden failed workflows | `FACTORY_TOOLS.md` |
 | Health triage: actionable failures versus upstream | `FACTORY_TOOLS.md` (factory-doctor) |
@@ -37,13 +37,14 @@ mechanisms: consult `decisions/PRE_REFACTOR.md` before relying on them.
 | External evidence and research format | `DELIVERY.md`, `RESEARCH_BRIEF.md` |
 | Multi-repo delivery proof | `DELIVERY.md` |
 | Secrets, trust boundaries and concurrency | `SECURITY.md` |
-| Structural decisions and historical ADR status | `decisions/ADR-0009-integrated-po-and-product-map.md` through `decisions/ADR-0033-two-correction-rounds.md`; `decisions/PRE_REFACTOR.md` |
+| Structural decisions and historical ADR status | `decisions/ADR-0009-integrated-po-and-product-map.md` through `decisions/ADR-0034-targeted-review-and-exceptional-round.md`; `decisions/PRE_REFACTOR.md` |
 | Decision versus maintenance proposals | `decisions/ADR-0029-proposal-classes.md` |
 | Why the D01 delivery flow was lightened (one review, regression before handoff, resumes per cause, model evaluation for interface tickets only) | `decisions/ADR-0030-lightened-delivery-flow.md` |
 | Why the graph review refuses a ticket graph whose critical path is too long (parallelism of the slicing) | `decisions/ADR-0031-serialized-graph-refused.md` |
 | Why the fidelity to the Validated Prototype is measured but no longer blocks a ticket or the end of a Spec | `decisions/ADR-0032-fidelity-not-blocking.md` |
 | Delivery-proof writes through doors | `../bin/deliver-close`, `decisions/ADR-0023-coordination-state-write-door.md` (delivery-proof half) |
 | Why a ticket takes two correction rounds before it stops, and how a ticket stopped after one is granted its second | `decisions/ADR-0033-two-correction-rounds.md` |
+| Why a review after the first one of a ticket is targeted, why the review never judges visual fidelity, and how a ticket stopped at the bound gets its one exceptional round | `decisions/ADR-0034-targeted-review-and-exceptional-round.md` |
 | Escalation door, Mayor-first and human notification | `../bin/escalation-door`, `../tests/escalation-door-test.sh` |
 | Proposal resolution from merge proof | `COCKPIT.md` |
 | Atomic graph publication from a planning Bead | `PLANNING_RUN.md` (graph publication), `../bin/ticket-graph-publish` |
@@ -112,6 +113,7 @@ mechanisms: consult `decisions/PRE_REFACTOR.md` before relying on them.
 | Where a running convoy stands: active sessions, ready tickets, critical path and width per level (not `gc status`) | `FACTORY_TOOLS.md` (convoy-graph), `../bin/convoy-graph`, `../lib/ticket_graph.py` |
 | Factory maintenance PR: the exact local checks and tests, then the merge | `DELIVERY.md` (« Main-landing gate », table by kind of change: `../bin/ci-run-tests --rule-checks --changed-since origin/main`, which runs the `bin/*-check` tests and those naming a changed file), `DELIVERY.md` (« Réversibilité par défaut »: `../bin/reversibility-check --git . --base origin/main`; `--pr <n> --repo <owner/name>` is what `pr-autopilot` runs, `--diff-file <file>` any diff), `DELIVERY.md` (« Production stays gated »: `pr-autopilot` arms Factory `main` PRs; set `gc.work_branch` on the Bead) |
 | Record a new ADR: its catalogue entry, then the regeneration | `context-index/entries/` (one `NNNN-<slug>.md` Need/Read file per ADR, as `0288-why-a-serialized-ticket-graph-is-refused.md`; widen the range in `0280-structural-decisions.md`), then `../bin/generate-docs-catalogue`; the shape of an ADR: `decisions/ADR-0031-serialized-graph-refused.md` |
+| Pause or resume an order of the Factory without a PR (who, when, words); what is paused | `FACTORY_TOOLS.md` (order-pause), `../bin/order-pause` |
 
 ## Authority and minimal retrieval
 

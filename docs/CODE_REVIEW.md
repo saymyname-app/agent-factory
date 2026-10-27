@@ -88,13 +88,52 @@ author, cause `behind` (`docs/CONVOY_ADVANCE.md`).
 
 | State of the review | What `settle` does |
 |---|---|
-| none, or favorable at an older commit than the tip | opens a **review** at the tip: a commit added after a verdict has it replayed in full (Spec §8) |
+| none, or favorable at an older commit than the tip | opens a **review** at the tip: a commit added after a verdict has it replayed (Spec §8), targeted after the first (ADR-0034, below) |
 | favorable at the tip | nothing: the merge may follow |
-| unfavorable review at an older commit than the tip, no correction round taken and no answer given (the author was resumed outside the round, af-s31cvi) | opens a **review** at the tip, replayed in full: no session would answer the old findings |
+| unfavorable review at an older commit than the tip, no correction round taken and no answer given (the author was resumed outside the round, af-s31cvi) | opens a **review** at the tip, replayed (targeted, its old Blocking Findings unsettled): no session would answer the old findings |
 | unfavorable review, a Blocking Finding without an answer | waits (`respond`) |
 | unfavorable review, every Blocking Finding answered | opens a **judgement** at the tip, against the reviewed commit |
 | unfavorable judgement | nothing more opens, nothing merges; `bin/correction-round settle` stops the ticket, still refused after its correction round (`docs/CORRECTION_ROUND.md`) |
 | a round open at a commit the author has since left | replaced by one at the tip |
+
+## Revue ciblée après le premier passage (ADR-0034)
+
+Intent (Benjamin, ses mots, 2026-10-23 16:07 Paris) : « 3. ok pour ta
+recommandation D1. » et « 4. je suis la recommandation que tu me donneras
+pour ca, fait le choix parfait pour moi stp. »
+Mechanism (interprétation agent) : la première revue d'un ticket reste
+complète ; toute revue suivante (« replayed » dans le tableau ci-dessus :
+après un tour de correction, après des commits ajoutés à une revue
+favorable, après une revue défavorable dépassée, sur la pointe d'un ticket
+dont les constats ont reçu une dérogation) est **ciblée**.
+
+`bin/code-review` calcule son périmètre à l'ouverture et
+`bin/convoy-state open-code-review` le vérifie (`scope` de la demande puis
+de la passe) :
+
+| Champ | Contenu |
+|---|---|
+| `from` | la pointe jugée par la dernière passe |
+| `unsettled` | les Blocking Findings que cette passe laisse non soldés, moins ceux qui ont reçu une dérogation |
+| `changed` | par fichier, les plages de lignes du commit revu ajoutées ou modifiées à la fois dans le diff propre du ticket (depuis la base de fusion avec la branche d'intégration, comme `bin/ticket-exit`, #714) et dans `from..commit` : les commits d'intégration repris ne sont pas des lignes du ticket |
+
+Le relecteur reçoit tout le diff et, sous `.scope` du brief, ce périmètre
+(le texte de chaque constat non soldé). Un constat ne peut bloquer que s'il
+redonne un constat non soldé (`carries`) ou pointe une ligne de `changed`
+(`location: {path, line}`), en plus de la règle de citation. Un constat
+donné bloquant hors du périmètre est enregistré **non bloquant**, raison
+sous `demoted`, `finishing_pass: true` ; `show` les liste sous
+`finishing_pass`, pour la passe de fin (la revue de fin du diff assemblé,
+`bin/spec-end-review`, relit de toute façon tout le diff de la Spec). Les
+questions fermées d'une revue ciblée ne portent que sur les fichiers de
+`changed`. `.scope` vaut `null` pour la première revue, qui reste complète.
+
+**La revue ne juge pas la fidélité visuelle** (ADR-0032, ADR-0034) : la
+formule `mol-code-review` laisse de côté la part d'un critère qui demande
+que l'écran ressemble à sa référence, dans la lecture des tests de critère
+comme dans la question `amended_test`, dont le texte le redit. Seul le
+reste du critère est jugé (comportement, clavier, débordement, focus,
+valeurs affichées).
 
 ## What the reviewer is given
 
@@ -155,7 +194,7 @@ code, not found by the reviewer:
 | Kind | Asked for | Question |
 |---|---|---|
 | `internal_test` | each file of the diff that sits in the test perimeter of the profile, or looks like a test file, and is neither a frozen criterion test nor a frozen harness path | does it go through a listed seam? |
-| `amended_test` | each frozen criterion test file the one amendment changed (`amendment.files` of the piece `tdd_amendment`, `bin/tdd-step amend`) | does the amended test still observe its criterion? |
+| `amended_test` | each frozen criterion test file the one amendment changed (`amendment.files` of the piece `tdd_amendment`, `bin/tdd-step amend`) | does the amended test still observe its criterion (comportement, clavier, débordement, focus…)? Its visual fidelity to the prototype is not judged (ADR-0032, ADR-0034) |
 
 Each takes `oui` or `non` (with a reason). A « non » becomes a Blocking
 Finding of axis `tests`, written by code. An answer left out, or to a

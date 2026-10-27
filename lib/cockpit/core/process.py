@@ -17,7 +17,7 @@ from cockpit.access.guard import ActionGuard, new_session_token
 from cockpit.actions.registry import build_action_handlers
 from cockpit.analyses.sources import read_github
 from cockpit.core.beads_source import read_operator_beads
-from cockpit.core.clock import StartedClock, SystemClock
+from cockpit.core.clock import ShiftedClock, SystemClock
 from cockpit.core.freshness import UNKNOWN
 from cockpit.core.gc_client import GcSsePoller
 from cockpit.core.polling_source import PollingSource
@@ -35,7 +35,7 @@ from cockpit.projects.source import READ_TIMEOUT_SECONDS as PROJECTS_READ_TIMEOU
 from cockpit.requests.assemble import assemble_from_snapshot
 from cockpit.requests.defects import DefectCounter
 from cockpit.requests.journal import read_journal
-from cockpit.runs.derive import read_runs
+from cockpit.runs.workflows import read_workflow_beads
 
 # github/rituals sources are in the Validity window table (spec .3) for the
 # tickets that will wire up their producers; T11 builds the seam and wires
@@ -55,8 +55,9 @@ SHUTDOWN_BUDGET_SECONDS = 5.0
 
 def build(config, clock=None):
     """Returns (server, pollers) — nothing is started yet."""
-    clock = clock or (StartedClock(datetime.fromisoformat(config.clock_start).timestamp()) if config.clock_start
-                      else SystemClock())
+    if clock is None and config.clock_start:
+        clock = ShiftedClock(datetime.fromisoformat(config.clock_start).timestamp())
+    clock = clock or SystemClock()
     read_model = ReadModel(clock, validity_seconds=config.validity_seconds)
     for name, display_name in SOURCE_DISPLAY_NAMES.items():
         read_model.register(name, display_name=display_name)
@@ -101,12 +102,13 @@ def build(config, clock=None):
             PollingSource(
                 read_model,
                 "journal",
-                lambda: read_journal(bd_bin=config.bd_bin),
+                lambda: read_journal(bd_bin=config.bd_bin, timeout=config.journal_read_timeout_seconds),
                 config.journal_poll_seconds,
             )
         )
         read_model.register("runs", display_name="runs")
-        pollers.append(PollingSource(read_model, "runs", lambda: read_runs(bd_bin=config.bd_bin), config.journal_poll_seconds))
+        pollers.append(PollingSource(read_model, "runs", lambda: read_workflow_beads(bd_bin=config.bd_bin),
+                                     config.journal_poll_seconds))
     if config.github_repo:
         # The CI and the pull requests of the declared repository, over the
         # last eight days: the period of the Analyses and the day before it.
@@ -160,7 +162,10 @@ def build(config, clock=None):
         supervisor_unreachable_after_seconds=config.supervisor_unreachable_after_seconds,
         factory_stalled_after_seconds=config.factory_stalled_after_seconds,
         illisible_after_seconds=config.illisible_after_seconds,
+        factory_root=config.factory_root,
+        factory_check_validity_seconds=config.factory_check_validity_seconds,
     )
+    server.runs_view = config.runs_view
     server.descriptors_dir = config.descriptors_dir
 
     # Clean stop (T23, T24) -- read side only (af-mjfvwx 7a): the driver keeps
@@ -315,12 +320,26 @@ def shut_down(server, pollers, budget_seconds=SHUTDOWN_BUDGET_SECONDS, log=None)
     )
 
 
+def _wait_first_readings(read_model, seconds):
+    """Until each source was read once, or failed, or ``seconds`` passed:
+    the isolated cockpit answers its first page with what its sources
+    hold, not with a reading under way (``seconds`` 0 in service: the
+    cockpit answers at once)."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        rows = read_model.snapshot().values()
+        if all(row["read_at"] is not None or row["failed_at"] is not None for row in rows):
+            return
+        time.sleep(0.1)
+
+
 def run_foreground(config, clock=None, ready_callback=None):
     server, pollers = build(config, clock=clock)
     print("cockpit: pid %d listening since %s" % (os.getpid(), time.strftime("%Y-%m-%d %H:%M:%S%z")),
           file=sys.stderr, flush=True)
     for poller in pollers:
         poller.start()
+    _wait_first_readings(server.read_model, config.first_read_seconds)
 
     stop_requested = []
 

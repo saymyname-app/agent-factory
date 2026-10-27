@@ -23,7 +23,6 @@ from datetime import datetime, timezone
 from cockpit.core.readmodel import PARIS
 
 MODELS = "gc.flow.models"
-MARK, PROMOTION = "gc.flow.mark", "gc.flow.promotion"
 # How many runs the cockpit keeps: the most recently updated.
 RUNS_LIMIT = 200
 READ_TIMEOUT_SECONDS = 20
@@ -34,23 +33,15 @@ LIVE, WAIT, DONE, STOPPED = "live", "wait", "done", "stopped"
 
 
 def read_runs(bd_bin="bd", timeout=READ_TIMEOUT_SECONDS, limit=RUNS_LIMIT):
-    """The beads of the runs, the ``limit`` most recently updated, with
-    their metadata (the same read shape as the other sources: every bead
-    bearing the key): the ticket beads a delivery agent was launched on,
-    and the convoys the delivery flow marked whose result it merged
-    (``gc.flow.promotion``) -- the end of the run of a delivery, which no
-    ticket holds (D, af-ten1sp: the Analyses count the results merged and
-    their delay there). A convoy draws no run of its own here."""
-    by_id = {}
-    for key in (MODELS, MARK):
-        completed = subprocess.run(
-            [bd_bin, "list", "--all", "--limit", "0", "--has-metadata-key", key, "--json"],
-            capture_output=True, text=True, timeout=timeout, check=True,
-        )
-        for bead in json.loads(completed.stdout):
-            if isinstance(bead, dict) and (key == MODELS or (bead.get("metadata") or {}).get(PROMOTION)):
-                by_id.setdefault(bead.get("id"), bead)
-    return sorted(by_id.values(), key=lambda b: b.get("updated_at") or "", reverse=True)[:limit]
+    """The ticket beads a delivery agent was launched on, the ``limit`` most
+    recently updated, with their metadata (the same read shape as the other
+    sources: every bead bearing the key)."""
+    completed = subprocess.run(
+        [bd_bin, "list", "--all", "--limit", "0", "--has-metadata-key", MODELS, "--json"],
+        capture_output=True, text=True, timeout=timeout, check=True,
+    )
+    beads = [b for b in json.loads(completed.stdout) if isinstance(b, dict)]
+    return sorted(beads, key=lambda b: b.get("updated_at") or "", reverse=True)[:limit]
 
 
 def runs_from_beads(beads, now):
@@ -100,7 +91,7 @@ def paris(epoch, with_day=False):
 
 def run_from_bead(bead, now):
     """One run: ``id``, ``ticket``, ``type``, ``title``, ``step``, ``status``,
-    ``tone``, ``state`` (live / wait / done / stopped), ``start``, ``end``,
+    ``tone`` (:func:`tone`), ``state`` (live / wait / done / stopped), ``start``, ``end``,
     ``elapsed``, ``started``, ``lanes`` (``name``, ``kind``, ``jobs``: spans
     in seconds from the start, ``labels``), ``events`` (``at``, ``lane``,
     ``text``), ``models``, ``branch``; None for a bead no agent ran on."""
@@ -219,12 +210,25 @@ def run_from_bead(bead, now):
     return {
         "id": bead.get("id"), "ticket": ticket, "spec": m.get("gc.spec_id"),
         "type": "Livraison · %s" % ticket, "title": title, "step": step, "status": status,
-        "tone": {LIVE: "live", WAIT: "wait"}.get(state), "state": state,
+        "tone": tone(state, status), "state": state,
         "start": start, "end": end, "elapsed": int(end - start),
         "started": paris(start, with_day=True), "lanes": lanes,
         "events": sorted(events, key=lambda e: e["at"]), "models": models,
         "branch": m.get("gc.flow.branch"), "rig": m.get("gc.dispatch_rig"), "href": "/runs/run?id=%s" % bead.get("id"),
     }
+
+
+# A run ended that is not a success: abandoned, or closed without a merge.
+UNSUCCESSFUL = ("Abandonné", "Fermé")
+
+
+def tone(state, status):
+    """How the status of a run is drawn: « live » or « wait » while it is
+    open, « ended » when it ended without success, else None (a success,
+    or stopped)."""
+    if state == DONE:
+        return "ended" if status in UNSUCCESSFUL else None
+    return {LIVE: "live", WAIT: "wait"}.get(state)
 
 
 def _verdict(state):

@@ -285,8 +285,35 @@ their own run name themselves its owner (`bin/tdd-step`, `bin/ticket-author`,
 `bin/outcome-promote`, `bin/prototype-fidelity`); before that, a `finally`
 that SIGKILL never runs left products alive for days (af-f7x7w7). The tools
 whose products outlive them on purpose (`bin/acceptance-session`,
-`bin/ticket-evaluation`, `bin/outcome-evaluation`) and a launch typed in a
-shell pass no owner: those live until `stop`.
+`bin/ticket-evaluation`, `bin/outcome-evaluation`) say `start --detached`:
+no owner, they live until `stop`.
+
+Every launch has an owner and a lifetime, whoever calls (af-npz9v1). Without
+`--owner-pid` and without `--detached`, the owner is the caller of `start`
+(a launch typed in a shell ends with that shell). Every launch, detached
+or not, is stopped at `--max-lifetime` seconds (6 hours by default, above
+the longest Ticket Evaluation of `config/delivery-flow.json` relaunched
+once; an Acceptance Session asks for a day), and when its record is removed
+or replaced without `stop`. On 22/10/2026, 24 cockpits launched by the
+criteria tests outlived them for up to 283 minutes and held the VM at a load
+of 141: each test deleted its folder, launch records included, after a stop
+that had not ended the product, and the guard took the missing record for
+a stop; 25 products of the fixture outlived acceptance tests for up to 39
+hours because their guard ended on the error of reading a removed TMPDIR.
+The product carries its owner and its deadline in its environment
+(`FACTORY_LAUNCH_OWNER`, `FACTORY_LAUNCH_DEADLINE`, beside
+`FACTORY_LAUNCH_ID`), so `project-launch sweep`, run every 5 minutes by
+`orders/project-launch-sweep.toml`, stops what a guard missed (a guard
+killed, a host restarted, a launch made before this rule). A launch from an
+older tested revision, without owner/deadline marks, stops immediately when
+its matching sidecar names a temporary source repository that has disappeared;
+otherwise it stops after the default lifetime. The sweep also releases copies
+left without process for longer than a lifetime. Each stop of the guard or of
+the sweep is one JSON line of
+`~/.local/state/agent-factory-launch/stops.jsonl` (`FACTORY_LAUNCH_TRACE`):
+who stopped it, why (`owner_ended`, `start_ended`, `lifetime_over`,
+`source_repository_gone`, `record_removed`, `copy_left`), the launch, its copy
+and its repository.
 
 Intent (Benjamin, his words, 2026-10-12): « corriger le flow par tranches ordonnées et vérifiées ».
 Mechanism (agent interpretation): on Linux, `stop` recognises an exited process still awaiting collection by

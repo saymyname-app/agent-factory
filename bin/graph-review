@@ -117,6 +117,21 @@ REVISION_COVERAGE = {
     "reason": "révision d'un graphe publié : la couverture des stories se calcule sur le graphe résultant, "
               "par bin/ticket-graph-publish bd-patch, qui refuse toute story orpheline avant la relecture",
 }
+# A revision is judged on the graph that results from it (af-npz9v1.16): the
+# tickets of the convoy it does not carry stay in place, and a ticket already
+# delivered there is merged into the integration branch. replacement-draft and
+# bd-patch drop delivered blockers from a revision, so without them the
+# reviewer refuses as « undemonstrable » a ticket that consumes their work.
+WITHDRAWN_GATE = "gc.flow.gate.withdrawn"
+IN_PLACE_RULE = (
+    "Révision partielle d'un graphe publié : juger chaque question sur le graphe résultant, c'est-à-dire les "
+    "tickets du brouillon plus ceux de resulting_graph.in_place, que la révision laisse tels quels. Un ticket "
+    "in_place « delivered » est livré : son travail est fusionné dans la branche d'intégration du convoi. Un "
+    "ticket du brouillon qui consomme le travail d'un ticket livré est démontrable seul et ordonné contre lui sans "
+    "blocked_by (une révision ne garde pas les bloqueurs livrés) ; un ticket livré qui établit un point "
+    "d'assemblage ou qui est le Prototype Fold (prototype_fold) l'a établi en premier. Un ticket in_place ouvert "
+    "n'est pas livré : un ticket du brouillon qui en consomme le travail sans l'attendre n'est pas démontrable seul."
+)
 GRAPH_TARGET = "graphe"
 DECISIONS = {"publish": "publier tel quel", "rework": "à reprendre"}
 
@@ -189,6 +204,9 @@ class Draft:
         if any(not i for i in ids) or len(set(ids)) != len(ids) or GRAPH_TARGET in ids:
             raise Refusal(f"le brouillon {draft_id} a des identifiants de ticket vides, en double ou réservés")
         self.tickets: dict[str, dict[str, Any]] = dict(zip(ids, tickets))
+        self.revises = str(self.metadata.get("revises_digest") or "").strip()
+        withdrawn = parsed.get("withdrawn") if isinstance(parsed.get("withdrawn"), list) else []
+        self.withdrawn = {str(item.get("ticket")) for item in withdrawn if isinstance(item, dict) and item.get("ticket")}
         self.passes: dict[int, dict[str, Any]] = {}
         for number in range(1, MAX_PASSES + 1):
             record = stored(self.metadata, f"{KEY_PASS}{number}")
@@ -232,12 +250,72 @@ class Draft:
     def graph_checks(self) -> list[str]:
         """The graph questions asked of the reviewer: not the coverage of a
         revision, which only the resulting graph shows."""
-        revision = bool(str(self.metadata.get("revises_digest") or "").strip())
-        return [name for name in REVIEWER_GRAPH_CHECKS if not (revision and name == ORPHAN_CHECK)]
+        return [name for name in REVIEWER_GRAPH_CHECKS if not (self.revises and name == ORPHAN_CHECK)]
 
     @property
     def last(self) -> dict[str, Any] | None:
         return self.passes[max(self.passes)] if self.passes else None
+
+
+def shown(bead_id: str) -> dict[str, Any]:
+    try:
+        data = json.loads(bd("show", bead_id, "--json"))
+    except ValueError as exc:
+        raise Refusal(f"bd show {bead_id} n'a pas rendu de JSON : {exc}") from exc
+    bead = data[0] if isinstance(data, list) and data else data
+    if not isinstance(bead, dict) or not bead:
+        raise Refusal(f"bead introuvable : {bead_id}")
+    return bead
+
+
+def resulting_graph(draft: Draft) -> dict[str, Any] | None:
+    """For a revision: the tickets of the graph that results from it which it
+    does not carry -- tracked by the convoy it revises, as bd-patch builds
+    that graph (less the tickets withdrawn now or before, and the ones merged
+    or superseded) -- each with its state. None for a first publication.
+    Refuses when that convoy cannot be read: the reviewer would judge a
+    graph it cannot see."""
+    if not draft.revises:
+        return None
+    try:
+        issues = json.loads(bd("list", "--all", "--limit", "0",
+                               "--metadata-field", f"gc.graph_digest={draft.revises}", "--json"))
+    except ValueError as exc:
+        raise Refusal(f"bd list n'a pas rendu de JSON : {exc}") from exc
+    convoys = [
+        str(issue.get("id")) for issue in (issues if isinstance(issues, list) else [])
+        if isinstance(issue, dict) and (issue.get("metadata") or {}).get("gc.graph_digest") == draft.revises
+        and not (issue.get("metadata") or {}).get("gc.ticket_id")
+    ]
+    if len(convoys) != 1:
+        raise Refusal(
+            f"refus : le brouillon {draft.id} révise le digest {draft.revises} et {len(convoys)} convoi(s) le portent "
+            "(attendu : un) : sans le graphe résultant, le relecteur jugerait la révision sans les tickets déjà en "
+            "place ; rien n'est écrit"
+        )
+    convoy = shown(convoys[0])
+    tracked = [str(dep.get("id")) for dep in convoy.get("dependencies") or []
+               if isinstance(dep, dict) and dep.get("dependency_type") == "tracks"]
+    in_place = []
+    for bead_id in tracked:
+        bead = shown(bead_id)
+        meta = bead.get("metadata") or {}
+        key = str(meta.get("gc.ticket_id") or "").strip()
+        closed = bead.get("status") == "closed"
+        if not key or key in draft.tickets or key in draft.withdrawn:
+            continue
+        if closed and (WITHDRAWN_GATE in meta or meta.get("gc.merged_into") or meta.get("gc.superseded_by")):
+            continue
+        line = meta.get("gc.flow.demonstration_line")
+        in_place.append({
+            "id": key, "bead": bead_id, "status": str(bead.get("status") or ""), "delivered": closed,
+            "kind": meta.get("gc.ticket_kind"),
+            "title": str(bead.get("title") or "").removeprefix(f"{key} — "),
+            "demonstration_line": line if isinstance(line, str) else None,
+            "prototype_fold": meta.get("gc.flow.prototype_fold") in (True, "true"),
+            "blocked_by": [b for b in str(meta.get("gc.blocked_by") or "").split(",") if b],
+        })
+    return {"convoy": convoys[0], "revises_digest": draft.revises, "in_place": in_place, "rule": IN_PLACE_RULE}
 
 
 def critical_path(draft: Draft) -> dict[str, Any]:
@@ -467,6 +545,7 @@ def open_request(draft: Draft, author_model: str) -> dict[str, Any]:
             EXIT_THIRD_PASS, **{k: state[k] for k in ("remaining", "holds", "model_independence")},
         )
     agent, provider, model = reviewer_identity()
+    resulting_graph(draft)  # a revision whose resulting graph cannot be read is not sent to the reviewer
     request = {
         "pass": len(draft.passes) + 1, "digest": draft.digest, "requested_at": now(),
         "author_model": author_model, "reviewer_agent": agent, "reviewer_provider": provider,
@@ -501,10 +580,13 @@ def pending_request(draft: Draft) -> dict[str, Any]:
 
 def cmd_brief(args: argparse.Namespace) -> dict[str, Any]:
     """What the reviewer is given: the draft as it stands, its digest, the
-    closed questions, and the shape of the verdict it hands to `record`."""
+    closed questions, and the shape of the verdict it hands to `record`;
+    for a revision, the tickets of the resulting graph it leaves in place."""
     draft = Draft(args.draft)
     request = pending_request(draft)
+    resulting = resulting_graph(draft)
     return {
+        **({"resulting_graph": resulting} if resulting is not None else {}),
         "ok": True, "draft": draft.id, "pass": request["pass"], "digest": draft.digest,
         "spec_id": draft.metadata.get("spec_id"),
         "states": [FAVORABLE, UNFAVORABLE, NOT_APPLICABLE],

@@ -5,6 +5,7 @@
 - Autorité : Benjamin en conversation (2026-10-21, vers 22:50 Paris) ; mise en œuvre `af-bv0ikr`
 - Portée : `bin/correction-round`, `bin/convoy-state` (`open-correction`, `grant-correction`, `open-code-review`), `bin/code-review`, `config/delivery-flow.json` (`bounds.correction_rounds`), formule `mol-ticket-correction`
 - Remplace, pour le nombre de tours : « un seul tour de correction » d'ADR-0030 (L2) et de la Spec D01 (`af-wf4w5r` §8)
+- Précisé par : ADR-0034 (2026-10-23) — revue ciblée après le premier passage (la variante « seconde revue ciblée » ci-dessous, décidée sur la mesure), pas de jugement de fidélité visuelle, tour exceptionnel au plafond
 
 Intent (Benjamin, ses mots, 2026-10-21 vers 22:50 Paris) : « B. Deux tours
 (Recommandé) », à la question « Règle des tours de correction : laquelle ? »,

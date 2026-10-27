@@ -7,5 +7,5 @@ description = "Deterministic zero-token protection for the live Factory: pins th
 trigger = "condition"
 interval = "5m"
 check = "/home/benja/agent-factory/orders/lib/orders-restart-stagger.sh factory-guard 300"
-exec = "/home/benja/agent-factory/bin/factory-guard --quiet"
+exec = "/home/benja/agent-factory/bin/order-pause gate factory-guard -- /home/benja/agent-factory/bin/factory-guard --quiet"
 timeout = "180s"

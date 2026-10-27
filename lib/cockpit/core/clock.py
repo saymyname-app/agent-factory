@@ -15,11 +15,12 @@ class SystemClock:
         return time.time()
 
 
-class StartedClock:
-    """A clock that starts at a given instant and runs from there at the
-    pace of the wall clock: the fixed time of a synthetic dataset
-    (``generated_at``) is the cockpit's « now » when it starts, and the
-    freshness of its sources still moves with time."""
+class ShiftedClock:
+    """A clock that starts at ``start`` (epoch seconds) when it is made,
+    then runs at the pace of the wall clock: the isolated cockpit shows a
+    frozen state at the moment it was frozen, and what is open in it goes
+    on lasting (C1, af-lzti7w; Spec af-fgcw0d, « Fixtures et horloge sont
+    synthétiques »)."""
 
     def __init__(self, start):
         self._offset = start - time.time()

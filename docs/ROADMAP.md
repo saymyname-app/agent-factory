@@ -53,6 +53,9 @@ graph.
   published graph to an accepted Delivered Outcome (map af-0sayxf, Spec
   af-wf4w5r). Delivered by today's flow; ends with a final verification
   against its Spec, then the Cockpit V2 redelivery as validation case.
+  In progress until C01-suite is done: `docs/roadmap.toml` declares it in
+  D01's `done_requires`, and the cockpit flags D01 if it is said done
+  before (R5, af-3r1tmr).
 
 - **C01-suite** Planning Run "Cockpit : ce que main ne couvre pas encore"
   (Spec af-fgcw0d): what the cockpit served on main still lacks, in large

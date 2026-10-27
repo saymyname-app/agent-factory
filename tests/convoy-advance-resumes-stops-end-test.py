@@ -777,6 +777,33 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.close_through_gate(T1)
         self.assertEqual([T3], self.started(self.advance(CONVOY)))
 
+    def test_a_grouped_answer_recorded_during_another_resume_is_applied_before_withdrawal(self):
+        self.exhausted_and_alone()
+        metadata = {key: value for key, value in self.bead(T2)["metadata"].items()
+                    if key != "gc.flow.gate.ticket_end"}
+        self.edit(T2, status="in_progress", metadata=metadata)
+        request = {"quoi": "Accès à l'horloge", "pourquoi": "Le ticket attend cette donnée",
+                   "que_faire": [{"option": "Donner l'accès", "consequence": "Le ticket reprend."}],
+                   "langue": "fr", "bloquant": True}
+        self.run_ok(ESCALATION, "benjamin", T2, json.dumps(request))
+        self.run_ok(STATE, "park", CONVOY, T2, "--cause", "operator_request", "--detail", request["quoi"])
+        self.run_ok(STATE, "set-exit", CONVOY, T2, "--exit", "operator_request")
+        self.advance(CONVOY)
+        grouped = self.grouped_bead()
+        self.run_ok(ESCALATION, "repondre", T2, "a", "--actor", "operateur-test")
+        self.write_log.write_text("")
+
+        answer = self.advance(CONVOY, env={**self.env, "CONVOY_STATE_FAKE_ANSWER_ON_SLING": f"{grouped}=a"})
+
+        self.assertEqual({T1, T2}, {entry["id"] for entry in self.of(answer, "lifted")})
+        resumed = [entry["id"] for entry in self.of(answer, "resumed")]
+        self.assertEqual(1, resumed.count(T1))
+        self.assertEqual(1, resumed.count(T2))
+        self.assertIsNone(self.park_of(T1))
+        self.assertIsNone(self.park_of(T3))
+        self.assertEqual("closed", self.bead(grouped)["status"])
+        self.assertIsNone(self.grouped_bead())
+
     def test_the_answer_that_leaves_the_tickets_parked_lifts_nothing_and_is_not_asked_again(self):
         self.exhausted_and_alone()
         self.advance(CONVOY)

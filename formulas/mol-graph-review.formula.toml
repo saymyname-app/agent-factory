@@ -41,6 +41,7 @@ DRAFT=$(gc bd show "$REVIEW_BEAD" --json | jq -r '.[0].description' | sed -n 's/
 FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
 "$FACTORY_ROOT/bin/graph-review" brief "$DRAFT" > graph-review-brief.json
 jq -r '.draft_text' graph-review-brief.json
+jq '.resulting_graph // "first publication: the draft is the whole graph"' graph-review-brief.json
 SPEC=$(jq -r '.spec_id' graph-review-brief.json)
 gc bd show "$SPEC" --json | jq -r '.[0].description'
 ```
@@ -49,6 +50,20 @@ Read the draft and the Spec in full (`gc bd show` without `--json`
 truncates). `graph-review-brief.json` lists, per ticket (`.tickets`) and for
 the graph (`.graph_checks`), exactly the questions you must answer, and the
 digest your answers are bound to.
+
+**A revision is judged on the graph that results from it.** When the brief
+carries `resulting_graph`, the draft revises a published convoy and holds
+only the tickets it adds or changes; the tickets listed in
+`resulting_graph.in_place` stay in the convoy as they are, and are not
+yours to judge. Each question is answered on the draft's tickets *plus*
+those, following `resulting_graph.rule`: an in-place ticket with
+`"delivered": true` is merged into the convoy's integration branch, so a
+draft ticket that consumes its work is demonstrable alone and ordered
+against it, with no `blocked_by` (a revision never keeps delivered
+blockers); a delivered ticket that establishes an assembly point, or is the
+Prototype Fold (`prototype_fold`), established it first. An in-place ticket
+that is not delivered is not merged: consuming its work without waiting for
+it stays undemonstrable.
 
 **2. Answer every question, one ticket at a time:**
 

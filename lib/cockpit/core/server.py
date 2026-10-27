@@ -15,8 +15,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from cockpit.access.guard import session_cookie_header
 from cockpit.actions.registry import ActionError
 from cockpit.analyses.indicators import analyses
-from cockpit.core.freshness import FRESH, UNKNOWN
+from cockpit.core.freshness import FRESH, STALE, UNKNOWN
 from cockpit.core.readmodel import PARIS
+from cockpit.factory.checks import VALIDITY_SECONDS as CHECK_VALIDITY_SECONDS
+from cockpit.factory.checks import SectionChecks
+from cockpit.factory.configuration import ROOT as FACTORY_ROOT
+from cockpit.factory.configuration import read_configuration
 from cockpit.health import collectors
 from cockpit.health.engine import (
     FACTORY_STALLED_AFTER_SECONDS,
@@ -31,8 +35,10 @@ from cockpit.projects.source import project_page_data
 from cockpit.requests.assemble import assemble_from_snapshot
 from cockpit.requests.defects import DefectCounter
 from cockpit.requests.journal import entries_from_value as journal_entries_from_value
+from cockpit.requests.journal import sources_from_value as journal_sources_from_value
 from cockpit.requests.sources.readability import ILLISIBLE_THRESHOLD_SECONDS
 from cockpit.runs.derive import runs_from_beads
+from cockpit.runs.workflows import workflow_runs
 from cockpit.ui.analyses.page import CSS as ANALYSES_CSS, render_analyses
 from cockpit.ui.base.page import render_document, render_fresh, render_home_zones
 from cockpit.ui.health.page import render_health_zone, render_status_line
@@ -44,9 +50,8 @@ from cockpit.ui.home.page import render_requests_section
 from cockpit.ui.panorama.shell import CSS as PANORAMA_CSS
 from cockpit.ui.panorama.shell import HOME, NAVIGATION, render_not_folded, render_shell
 from cockpit.ui.stop.render import render_stop_section
-from cockpit.ui.journal.panorama import CSS as JOURNAL_PANORAMA_CSS, journal_items, render_journal_panorama
+from cockpit.ui.journal.panorama import CSS as JOURNAL_PANORAMA_CSS, journal_items, journal_view, render_journal_panorama
 from cockpit.ui.journal.render import CSS as JOURNAL_CSS
-from cockpit.ui.journal.render import render_journal_unknown
 from cockpit.ui.notify.render import render_envois_section
 from cockpit.ui.runs.page import CSS as RUNS_PAGE_CSS, render_run_page, render_runs_page
 from cockpit.ui.projects.page import (
@@ -66,7 +71,6 @@ ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
 NOT_FOLDED = {
     href: (key, label) for key, label, href in NAVIGATION if key not in (HOME, "projets", "journal", "runs", "usine", "rituels", "analyses")
 }
-NOT_FOLDED.update({"/runs/job": ("runs", "Runs")})
 
 
 
@@ -148,8 +152,8 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         if path == "/runs":
             self._send_runs_page(read_model)
             return
-        if path == "/runs/run":
-            self._send_run_page(read_model)
+        if path in ("/runs/run", "/runs/job"):
+            self._send_run_page(read_model, job=path == "/runs/job")
             return
         if path == "/":
             self._send_home(read_model)
@@ -165,6 +169,9 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         """Operator Actions (T13, af-cx20q9; spec af-oohx2x §"Actions
         opérateur"). Every write goes through the access guard first —
         refused, nothing downstream (Beads included) is ever touched."""
+        if self.path == "/api/usine/reverifier":
+            self._recheck_factory_section()
+            return
         if self.path == "/api/health/recheck":
             for poller in getattr(self.server, "pollers", ()):
                 poll_now = getattr(poller, "poll_now", None)
@@ -174,7 +181,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             # project's page.
             referer_path = urllib.parse.urlsplit(self.headers.get("Referer") or "").path
             location = "/"
-            if referer_path.startswith("/projet/") or referer_path in ("/projets", "/journal"):
+            if referer_path.startswith("/projet/") or referer_path in ("/projets", "/journal", "/usine"):
                 location = urllib.parse.quote(urllib.parse.unquote(referer_path), safe="/-_.~")
             self.send_response(303)
             self.send_header("Location", location)
@@ -210,11 +217,14 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             result["rafraichi"] = self._reread_after_action()
         self._send_json(result)
 
-    def _first_reading(self, read_model, knowledge=False):
+    def _first_reading(self, read_model, knowledge=False, agents=False):
         """The snapshot, once the projects had their first reading if the
         tracker had its own -- and, with ``knowledge``, once the projects
         and their repositories were read or failed, so that the page of a
-        project tells a reading under way from one that failed (E) --
+        project tells a reading under way from one that failed (E); with
+        ``agents``, once the sessions were tried after the tracker was read
+        (they are refused while it is not), so that a run names its agents
+        on the first page (C1) --
         waiting at most
         :data:`FIRST_READING_WAIT_SECONDS`: a page served the instant the
         cockpit started would show no project, and no result, of a source
@@ -227,6 +237,10 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                        and projets["read_at"] is None and projets.get("failed_at") is None)
             pending = pending or knowledge and any(
                 row is not None and row["read_at"] is None and row.get("failed_at") is None for row in (projets, depots))
+            sessions = snapshot.get("sessions")
+            pending = pending or agents and sessions is not None and sessions["read_at"] is None and (
+                sessions.get("failed_at") is None or beads is None or beads["read_at"] is None
+                or sessions["failed_at"] <= beads["read_at"])
             if not pending or time.monotonic() >= deadline:
                 return snapshot
             time.sleep(0.1)
@@ -524,65 +538,131 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         self._send_page(read_model, "analyses", main, extra_css=ANALYSES_CSS, snapshot=snapshot)
 
     def _send_factory_page(self, read_model):
-        """GET /usine: the machine, the sources, the agents seen at work,
-        then the health and the zones that change the factory."""
+        """GET /usine?role=: the machine, the connections and the roles,
+        each as its section was last checked, the role ``role`` open (the
+        author by default), then the health and the zones that change the
+        factory."""
         snapshot = read_model.snapshot()
         now = read_model.now()
-        runs, _, _ = self._runs(read_model)
+        checks = self.server.factory_checks
         health = self._compute_health(read_model)
         notify = self.server.notify
         actions_html = self._render_stop_zone(snapshot) + render_access_zone(
             self.server.benjamin_login, snapshot.get("tailscale"), now)
-        main = render_factory_page(
-            read_machine(), snapshot, runs, bool(notify and notify.configured()),
-            render_health_zone(health, checked_at=_latest_read_at(snapshot, ("beads", "git"))), actions_html, now)
+        agents = checks.get("agents")
+        wanted = (urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("role") or [""])[0]
+        keys = [role["key"] for role in agents["value"]["configuration"]["roles"]]
+        main = render_factory_page({
+            "machine": checks.get("machine"), "connections": checks.get("connexions"),
+            "providers": checks.get("fournisseurs"), "agents": agents,
+            "live": snapshot, "now": now, "notify_configured": bool(notify and notify.configured()),
+            "selected": wanted if wanted in keys else (keys[0] if keys else ""),
+            "health_html": render_health_zone(health, checked_at=_latest_read_at(snapshot, ("beads", "git"))),
+            "actions_html": actions_html,
+        })
         self._send_page(read_model, "usine", main, extra_css=FACTORY_PAGE_CSS,
                         headers={"Set-Cookie": session_cookie_header(self.server.session_token)}, snapshot=snapshot)
 
-    def _send_runs_page(self, read_model):
-        """GET /runs: the runs, filtered by ?filtre=tous|en-cours|termines."""
-        runs, failed, checked = self._runs(read_model)
-        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
-        filtre = (query.get("filtre") or ["tous"])[0]
-        self._send_page(read_model, "runs", render_runs_page(runs, filtre, checked=checked, error=failed),
-                        extra_css=RUNS_PAGE_CSS)
+    def _recheck_factory_section(self):
+        """POST /api/usine/reverifier (section=machine|connexions|fournisseurs|agents,
+        role=): reads that section of the page Usine again -- the
+        connections after every source was read again now -- and only that
+        one, then back to the page with the same role open. It writes
+        nothing."""
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        form = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8") if length else "")
+        section = (form.get("section") or [""])[0]
+        role = (form.get("role") or [""])[0]
+        if section not in ("machine", "connexions", "fournisseurs", "agents"):
+            self.send_response(400)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        if section == "connexions":
+            for poller in getattr(self.server, "pollers", ()):
+                poll_now = getattr(poller, "poll_now", None)
+                if poll_now is not None:
+                    poll_now()
+        self.server.factory_checks.recheck(section)
+        self.send_response(303)
+        self.send_header("Location", "/usine" + ("?" + urllib.parse.urlencode({"role": role}) if role else ""))
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
-    def _send_run_page(self, read_model):
-        """GET /runs/run?id=<bead>: one run, its frise and its events."""
-        runs, _, _ = self._runs(read_model)
-        wanted = (urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("id") or [""])[0]
+    def _workflow_runs(self, read_model, snapshot):
+        """The runs of the destination Runs (cockpit.runs.workflows), one
+        per complete workflow, most recent first: (runs or None while
+        unread, read failed, HH:MM of the reading)."""
+        row = snapshot.get("runs")
+        if row is None or row["value"] is None:
+            return None, bool(row and row.get("failed_at") is not None), None
+        checked = datetime.fromtimestamp(row["read_at"], tz=PARIS).strftime("%H:%M") if row["read_at"] else None
+        sessions = (snapshot.get("sessions") or {}).get("value") or {}
+        return workflow_runs(row["value"], sessions.get("agents"), read_model.now()), False, checked
+
+    def _query(self):
+        return urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+
+    def _send_runs_page(self, read_model):
+        """GET /runs: the runs, filtered by ?filtre=tous|en-cours|termines
+        (by default, the filter the frozen state selects, else Tous)."""
+        snapshot = self._first_reading(read_model, agents=True)
+        runs, failed, checked = self._workflow_runs(read_model, snapshot)
+        filtre = (self._query().get("filtre") or [self.server.runs_view.get("filter") or "tous"])[0]
+        self._send_page(read_model, "runs",
+                        render_runs_page(runs, filtre, checked=checked, error=failed, now=read_model.now()),
+                        extra_css=RUNS_PAGE_CSS, snapshot=snapshot)
+
+    def _send_run_page(self, read_model, job=False):
+        """GET /runs/run?id=<run>: one run and its frise; GET
+        /runs/job?run=<run>&job=<job>&event=<n>: the same, with the detail
+        of a job under the frise and one of its events open. An address
+        that names nothing opens what the frozen state selects. A reading
+        of a source the run is drawn from no longer current is said, with
+        when it was."""
+        snapshot = self._first_reading(read_model, agents=True)
+        runs, _, _ = self._workflow_runs(read_model, snapshot)
+        query, view = self._query(), self.server.runs_view
+        wanted = (query.get("run" if job else "id") or [view.get("run") or ""])[0]
         run = next((r for r in runs or [] if r["id"] == wanted), None)
-        self._send_page(read_model, "runs", render_run_page(run), extra_css=RUNS_PAGE_CSS,
-                        status=200 if run else 404)
+        job_id = (query.get("job") or [view.get("job") or ""])[0] if job else None
+        event = (query.get("event") or [str(view.get("event") or "")])[0] if job else ""
+        stale_at = _stale_at(snapshot, RUN_SOURCES)
+        main = render_run_page(run, now=read_model.now(), stale_at=stale_at, job_id=job_id,
+                               event=int(event) if event.isdigit() else None)
+        self._send_page(read_model, "runs", main, extra_css=RUNS_PAGE_CSS, status=200 if run else 404,
+                        snapshot=snapshot)
 
     def _send_journal_page(self, read_model):
-        """GET /journal (spec .18): what changed, day by day -- the requests
-        answered or cleared, re-read from the traces on the beads (the
-        cockpit keeps no copy of its own), and the deliveries merged or
-        stopped; filtered by ?filtre=."""
-        row = read_model.snapshot().get("journal")
+        """GET /journal?vue=&categorie=&source=&q= (spec .18; F, af-njwz8v):
+        the useful events day by day -- the requests answered or cleared,
+        re-read from the traces on the beads (the cockpit keeps no copy of
+        its own), the deliveries of the runs, the events held for the
+        journal --, the technical logs, and the coverage of their sources."""
+        snapshot = read_model.snapshot()
+        row = snapshot.get("journal")
         runs, _, _ = self._runs(read_model)
-        unknown_html, checked = "", None
-        if row is None or row["value"] is None or row["freshness"] == UNKNOWN:
-            items = journal_items([], runs)
-            unknown_html = render_journal_unknown(row["read_at"] if row else None)
-        else:
-            items = journal_items(journal_entries_from_value(row["value"]), runs)
-            checked = datetime.fromtimestamp(row["read_at"], tz=PARIS).strftime("%H:%M")
+        known = row is not None and row["value"] is not None and row["freshness"] != UNKNOWN
+        projects = {}
+        projets = snapshot.get("projets")
+        if projets is not None and projets["value"] is not None:
+            projects = {p.project_id: p.display_name for p in projects_from_value(projets["value"])[0]}
+        view = journal_view(row, journal_entries_from_value(row["value"]) if known else [], runs, projects,
+                            snapshot.get("gc"), journal_sources_from_value(row["value"]) if known else ())
         notify = self.server.notify
         envois = render_envois_section(notify.journal_entries(), notify.configured()) if notify is not None else ""
-        filtre = (urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("filtre") or ["utiles"])[0]
+        query = {key: values[0] for key, values in urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).items()}
         self._send_page(read_model, "journal",
-                        render_journal_panorama(items, filtre, read_model.now(), checked=checked, envois_html=envois,
-                                                unknown_html=unknown_html),
-                        extra_css=PROJECT_PAGE_CSS + JOURNAL_CSS + JOURNAL_PANORAMA_CSS)
+                        lambda anchors: render_journal_panorama(view, query, read_model.now(), anchors, envois_html=envois),
+                        extra_css=PROJECT_PAGE_CSS + JOURNAL_CSS + JOURNAL_PANORAMA_CSS, snapshot=snapshot)
 
     def _journal_payload(self, snapshot):
         """JSON twin of the journal page, for tests."""
         row = snapshot.get("journal")
         if row is None or row["value"] is None or row["freshness"] == UNKNOWN:
             return {"state": "unknown", "entries": []}
-        return {"state": "filled", "verified_at": row["read_at"], "entries": row["value"]["entries"]}
+        return {"state": "filled", "verified_at": row["read_at"], "entries": row["value"]["entries"],
+                "sources": journal_sources_from_value(row["value"])}
 
     def _projects_payload(self, snapshot):
         """JSON twin of :meth:`_render_projects_zone`, for tests."""
@@ -649,6 +729,20 @@ def _live_line(gc_row):
     return "● En marche · %d agent%s" % (agents, "s" if agents > 1 else "")
 
 
+# The sources a run is drawn from: its workflow beads, and the sessions the
+# supervisor lists for its agents.
+RUN_SOURCES = ("runs", "sessions")
+
+
+def _stale_at(snapshot, names):
+    """When the sources ``names`` no longer current were last read (the
+    oldest of them); None while each is current or was never read."""
+    read_ats = [snapshot[name]["read_at"] for name in names
+                if snapshot.get(name) and snapshot[name].get("freshness") in (STALE, UNKNOWN)
+                and snapshot[name].get("read_at") is not None]
+    return min(read_ats) if read_ats else None
+
+
 def _latest_read_at(snapshot, names):
     read_ats = [snapshot[name]["read_at"] for name in names if snapshot.get(name) and snapshot[name]["read_at"] is not None]
     return max(read_ats) if read_ats else None
@@ -665,6 +759,8 @@ def make_server(
     supervisor_unreachable_after_seconds=None,
     factory_stalled_after_seconds=None,
     illisible_after_seconds=None,
+    factory_root=None,
+    factory_check_validity_seconds=None,
 ):
     if host not in ALLOWED_HOSTS:
         raise ValueError(
@@ -702,6 +798,9 @@ def make_server(
     # without them (a narrow test) simply has no notifications to show.
     server.notify = None
     server.heartbeat = None
+    # What a Runs state selects when the address names nothing (the
+    # isolated cockpit of a frozen state; empty in service).
+    server.runs_view = {}
     server.stop_driver = None
     server.benjamin_login = ""
     # The rituals file of the Factory (« Rituels »): unset, nothing read.
@@ -710,6 +809,20 @@ def make_server(
     # page of a project names it from there while its chantiers are unread.
     server.descriptors_dir = None
     server.extra_requests = lambda snapshot, now: []
+    # The sections of the page Usine, each as it was last checked
+    # (cockpit.factory.checks): the machine, the connections as the read
+    # model held them, the providers and what the failover observed of
+    # them, the configuration of the roles with the sessions observed at
+    # work -- read in the Factory's files at ``factory_root``.
+    root = FACTORY_ROOT if factory_root is None else factory_root
+    server.factory_checks = SectionChecks({
+        "machine": read_machine,
+        "connexions": lambda: read_model.snapshot(),
+        "fournisseurs": lambda: read_configuration(root, read_model.now()),
+        "agents": lambda: {"configuration": read_configuration(root, read_model.now()),
+                           "sessions": read_model.snapshot().get("sessions")},
+    }, read_model.now, CHECK_VALIDITY_SECONDS if factory_check_validity_seconds is None
+        else factory_check_validity_seconds)
     server.illisible_after_seconds = (
         ILLISIBLE_THRESHOLD_SECONDS if illisible_after_seconds is None else illisible_after_seconds
     )

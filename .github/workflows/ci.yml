@@ -72,7 +72,9 @@ env:
 jobs:
   tests:
     name: ${{ matrix.lot == 1 && 'Tests' || format('Lot {0}', matrix.lot) }}
-    runs-on: ${{ vars.FACTORY_CI_RUNNER == 'self-hosted' && 'factory-ci' || 'ubuntu-latest' }}
+    # The sandbox profiles below target Ubuntu 24.04. Keep the hosted image
+    # pinned while GitHub migrates ubuntu-latest to 26.04 (October 2026).
+    runs-on: ${{ vars.FACTORY_CI_RUNNER == 'self-hosted' && 'factory-ci' || 'ubuntu-24.04' }}
     strategy:
       fail-fast: false
       matrix:

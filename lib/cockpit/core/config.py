@@ -13,6 +13,7 @@ from cockpit.core.gc_client import (
     STATUS_POLL_SECONDS,
     STREAM_SILENCE_SECONDS,
 )
+from cockpit.requests.journal import READ_TIMEOUT_SECONDS as JOURNAL_READ_TIMEOUT_SECONDS
 from cockpit.requests.sources.readability import ILLISIBLE_THRESHOLD_SECONDS
 from cockpit.notify.pushover import PUSHOVER_URL
 from cockpit.projects.depots import REPO_URL_TEMPLATE
@@ -64,6 +65,11 @@ class Config:
         # view of the page (bin/rituals-status reads the same file).
         self.rituals_file = env.get("COCKPIT_RITUALS_FILE", os.path.join(_REPO_ROOT, "docs", "rituals.toml"))
         self.journal_poll_seconds = float(env.get("COCKPIT_JOURNAL_POLL_SECONDS", "60"))
+        # How long one read of the journal may take before it counts as
+        # failed: « Lecture en cours… » until then, unavailable after.
+        self.journal_read_timeout_seconds = float(
+            env.get("COCKPIT_JOURNAL_READ_TIMEOUT_SECONDS", str(JOURNAL_READ_TIMEOUT_SECONDS))
+        )
         # spec .17: a source unreadable for longer than this is itself a request.
         self.illisible_after_seconds = float(
             env.get("COCKPIT_ILLISIBLE_SECONDS", str(ILLISIBLE_THRESHOLD_SECONDS))
@@ -154,9 +160,26 @@ class Config:
         self.github_repo = env.get("COCKPIT_GITHUB_REPO") or local.get("github_repo", "")
         self.gh_bin = env.get("COCKPIT_GH_BIN") or local.get("gh_bin", "") or "gh"
         self.github_poll_seconds = float(env.get("COCKPIT_GITHUB_POLL_SECONDS", "300"))
-        # When the cockpit starts, as an ISO instant: its « now » starts
-        # there (the fixed time of a synthetic dataset); unset, the wall clock.
+        # Where the page Usine reads the Factory's configuration of its roles
+        # and what the provider failover observed (.gc/provider-state.json,
+        # city.provider.toml): the tree the cockpit runs from.
+        self.factory_root = env.get("COCKPIT_FACTORY_ROOT", _REPO_ROOT)
+        # How long a check of a section of the page Usine stays current
+        # (cockpit.factory.checks): older, it is greyed with its age.
+        self.factory_check_validity_seconds = float(env.get("COCKPIT_VALIDITY_USINE_SECONDS", "300"))
+        # The isolated cockpit of a Runs state (bin/cockpit-isolated): the
+        # moment its clock starts at, and what the state selects -- the
+        # filter, the run, the job, the event a page opens when its address
+        # names none. Unset in service: the wall clock, nothing selected.
         self.clock_start = env.get("COCKPIT_CLOCK_START") or None
+        # How long the isolated cockpit waits for the first reading of its
+        # sources before it answers; 0 in service.
+        self.first_read_seconds = float(env.get("COCKPIT_FIRST_READ_SECONDS", "0"))
+        try:
+            view = json.loads(env.get("COCKPIT_RUNS_VIEW") or "{}")
+        except ValueError:
+            view = {}
+        self.runs_view = view if isinstance(view, dict) else {}
         self.validity_seconds = dict(VALIDITY_WINDOWS_SECONDS)
         for source in list(self.validity_seconds):
             override = env.get("COCKPIT_VALIDITY_%s_SECONDS" % source.upper())

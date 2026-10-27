@@ -38,7 +38,7 @@ from datetime import datetime, timedelta, timezone
 from cockpit.core.freshness import FRESH, STALE
 from cockpit.core.readmodel import PARIS
 from cockpit.requests.journal import entries_from_value, open_from_value
-from cockpit.runs.derive import RUNS_LIMIT, runs_from_beads
+from cockpit.runs.derive import runs_from_beads
 
 DAYS = 7
 DECISIONS, RESULTS, DELAY, CI = "decisions", "results", "delay", "ci"
@@ -77,14 +77,8 @@ def analyses(snapshot, now, days=DAYS):
     value = lambda name: None if reasons[name] else rows[name]["value"]
 
     # A ticket is delivered on its merge into the integration branch, and a
-    # result merged on the proof of its merge, as their runs say. The runs
-    # are the most recently updated ones: when as many as the cockpit keeps
-    # were updated within the period, older merges of the period may be
-    # missing, and none is counted.
+    # result merged on the proof of its merge, as their runs say.
     runs_reason = reasons["runs"]
-    if not runs_reason and _truncated(value("runs"), span[0]):
-        runs_reason = "plus de %d runs mis à jour sur la période : le cockpit n’en garde que %d" % (
-            RUNS_LIMIT, RUNS_LIMIT)
     results_reason = runs_reason
     results = [] if runs_reason else sorted(
         (r for r in map(_result, value("runs")) if r and within(r["merged"])), key=lambda r: -r["merged"])
@@ -199,16 +193,6 @@ def _unread(row, reading, failing, stale):
     if row is not None and row["value"] is not None:
         return "%s (dernière lecture le %s)" % (stale, _when(row["read_at"]))
     return reading
-
-
-def _truncated(beads, first_day):
-    """Whether the runs read are as many as the cockpit keeps, the least
-    recently updated of them within the period."""
-    if len(beads or []) < RUNS_LIMIT:
-        return False
-    oldest = min((_ts(bead.get("updated_at")) for bead in beads if isinstance(bead, dict)),
-                 key=lambda at: at if at is not None else float("inf"), default=None)
-    return oldest is None or _day(oldest) >= first_day
 
 
 def _read(row):

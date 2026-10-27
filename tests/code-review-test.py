@@ -708,7 +708,7 @@ class CodeReviewTest(unittest.TestCase):
         self.assertEqual(
             {"ok", "convoy", "ticket", "kind", "commit", "base", "repo", "diff", "spec", "ticket_text", "models",
              "independence", "skill", "axes", "citation_sources", "standards", "records", "tests", "questions",
-             "answers", "review_shape", "interface"}, set(brief))
+             "answers", "review_shape", "interface", "scope"}, set(brief))
         self.assertFalse(brief["interface"])
         self.assertNotIn("sections", json.dumps(brief["records"]))
 
@@ -845,6 +845,30 @@ class CodeReviewTest(unittest.TestCase):
         self.assertEqual(2, len(self.launches()))
         self.assertEqual([], self.merge()["merged"])
 
+    def test_a_judgement_left_unfavorable_and_overridden_is_reviewed_in_full_at_a_later_tip(self):
+        # 22/10/2026, F and G1 of af-strhoy: every unsettled Blocking Finding
+        # overridden, the ticket resumed and finished at a new tip; the merge
+        # waited for a review of that tip which was never opened.
+        self.finished_slice()
+        self.reviewer({"findings": [CONTRADICTS]}, {"judgements": {"F1.1": "le nombre manque toujours"}}, "favorable")
+        self.settle()
+        judged = self.corrected({NOTE: "toujours pas de nombre\n"})
+        self.responded({"F1.1": {"response": "fixed", "commit": judged}})
+        self.settle()
+        self.state("stop-ticket", CONVOY, SLICE, "--reason", "still_refused", "--detail", "revue de code (F1.1)")
+        self.state("stop-raised", CONVOY, SLICE)
+        self.state("override-finding", CONVOY, SLICE, "--finding", "F1.1", "--approver", "benjamin-hurand",
+                   "--words", "Je passe outre F1.1.")
+        self.state("open-resume", CONVOY, SLICE, "--cause", "returned", "--ref", "merge:essai")
+        tip = self.corrected({NOTE: "le nombre est affiché : 3\n"})
+
+        settled = self.settle()
+
+        self.assertEqual([("review", tip)], [(entry["kind"], entry["commit"]) for entry in settled["launched"]])
+        # ADR-0034: an override settles the finding; the review of that tip is targeted.
+        scope = json.loads(self.brief_given(3))["scope"]
+        self.assertEqual((judged, []), (scope["from"], scope["unsettled"]))
+
     def test_blocking_findings_without_an_answer_wait_and_no_judgement_is_sent(self):
         _, reviewed = self.finished_slice()
         self.reviewer({"findings": [CONTRADICTS]})
@@ -874,6 +898,95 @@ class CodeReviewTest(unittest.TestCase):
         review = self.review()
         self.assertEqual([("review", first), ("review", tip)], [(r["kind"], r["commit"]) for r in review["rounds"]])
         self.assertEqual({"verdict": "favorable", "commit": tip, "unsettled": []}, review["state"])
+
+    # --- ADR-0034: a review after the first one is targeted ---------------------------
+
+    def test_a_later_review_blocks_only_on_unsettled_findings_and_changed_lines_and_keeps_the_rest_for_the_end(self):
+        # D (af-ten1sp, 22/10) and C1 (af-lzti7w, 21/10): a review replayed in
+        # full found defects present at the first pass, and stopped them.
+        _, first = self.finished_slice()
+        carried = {**CONTRADICTS, "carries": "F1.1"}
+        on_changed = {"axis": "spec", "blocking": True, "summary": "La note ne nomme pas l'ancre fixture-count.",
+                      "citation": {"source": "ticket", "quote": CRITERION}, "location": {"path": NOTE, "line": 1}}
+        missed_before = {"axis": "standards", "blocking": True, "summary": "La table des critères n'a pas de docstring.",
+                         "citation": {"source": "repo_rule", "quote": RULE_LINE, "path": RULES},
+                         "location": {"path": TABLE, "line": 1}}
+        self.reviewer({"findings": [CONTRADICTS]}, {"findings": [carried, on_changed, missed_before]})
+        self.settle()
+        tip = self.corrected({NOTE: "le nombre est affiché : 3\n"})
+
+        self.settle()
+
+        scope = json.loads(self.brief_given(2))["scope"]
+        self.assertEqual((first, ["F1.1"], {NOTE: [[1, 1]]}),
+                         (scope["from"], [finding["id"] for finding in scope["unsettled"]], scope["changed"]))
+        review = self.review()
+        self.assertEqual({"verdict": "unfavorable", "commit": tip, "unsettled": ["F2.1", "F2.2"]}, review["state"])
+        kept = review["rounds"][1]["findings"][2]
+        self.assertEqual((False, True), (kept["blocking"], kept["finishing_pass"]))
+        self.assertIn("passe de fin", kept["demoted"])
+        self.assertEqual(["F2.3"], [finding["id"] for finding in self.tool_show()["finishing_pass"]])
+
+    def test_the_commits_of_the_integration_taken_in_are_not_lines_of_the_ticket_for_a_targeted_review(self):
+        _, first = self.finished_slice()
+        self.reviewer("favorable")
+        self.settle()
+        other = "docs/autre-ticket.md"
+        self.git("fetch", "-q", "origin")
+        self.git("checkout", "-q", "-B", "essai-integration", f"origin/{INTEGRATION}")
+        (self.repo / other).parent.mkdir(parents=True, exist_ok=True)
+        (self.repo / other).write_text("le travail d'un autre ticket\n")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "autre ticket fusionné")
+        self.git("push", "-q", "origin", f"HEAD:{INTEGRATION}")
+        self.git("fetch", "-q", "origin")
+        self.git("checkout", "-q", branch_of(SLICE))
+        self.git("merge", "-q", "--no-edit", f"origin/{INTEGRATION}")
+        (self.repo / NOTE).write_text("le nombre est affiché : 3\n")
+        self.git("commit", "-q", "-am", "reprise")
+        self.git("push", "-q", "origin", branch_of(SLICE))
+        tip = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "--detach", self.base)
+        self.green(SLICE, tip)
+        self.finish(SLICE, tip)
+
+        self.settle()
+
+        scope = json.loads(self.brief_given(2))["scope"]
+        self.assertEqual((first, [], {NOTE: [[1, 1]]}), (scope["from"], scope["unsettled"], scope["changed"]))
+
+    def test_the_first_review_of_a_ticket_is_complete_and_takes_no_targeted_scope(self):
+        _, tip = self.finished_slice()
+        self.reviewer("silent")
+        self.settle()
+        brief = self.run_cmd(TOOL, "brief", CONVOY, SLICE, "--repo", self.repo)
+        self.assertIsNone(json.loads(brief.stdout)["scope"])
+        scoped = self.json_file("scope.json", {"questions": [], "scope": {"from": tip, "unsettled": [], "changed": {}}})
+        before = self.tracker.read_bytes()
+
+        proc = self.run_cmd(STATE_TOOL, "open-code-review", CONVOY, SLICE, "--kind", "review", "--commit", tip,
+                            "--base", self.base, "--file", scoped)
+
+        self.assertEqual(EXIT_REFUSED, proc.returncode, proc.stdout + proc.stderr)
+        self.assertIn("premier passage est une revue complète", proc.stdout)
+        self.assertEqual(before, self.tracker.read_bytes())
+
+    def test_the_amended_test_question_leaves_the_visual_fidelity_to_the_prototype_out(self):
+        # D (af-ten1sp) F3.7, 22/10, and G1 (af-wrxrmg) F1.12, 21/10: « non »
+        # on an amended test for « Rendu fidèle à la référence », against ADR-0032.
+        self.finished_slice()
+        tip = self.commit_on(SLICE, {COUNT_FILE: "# le test ne compare plus la capture au prototype\n"})
+        self.state("set-tdd", CONVOY, SLICE, "--step", "amendment", "--commit", tip, "--reason", "capture trop stricte")
+        ticket_proofs.capture(self.env, self.repo, CONVOY, SLICE, "tdd_amendment", tip, {
+            "step": "amend", "amendment": {"reason": "capture trop stricte", "files": [COUNT_FILE]}})
+        self.green(SLICE, tip)
+        self.finish(SLICE, tip, amendment=tip)
+
+        self.settle()
+
+        (question,) = json.loads(self.brief_given())["questions"]
+        self.assertEqual("amended_test", question["kind"])
+        self.assertIn("La fidélité visuelle au prototype n'est pas jugée ici (ADR-0032)", question["text"])
 
     def test_respond_refuses_a_correction_commit_that_does_not_follow_the_reviewed_commit(self):
         red, _ = self.finished_slice()

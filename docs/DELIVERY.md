@@ -353,6 +353,11 @@ and nothing else.
 6. **At most `bounds.correction_rounds` correction rounds** (two,
    ADR-0033; `bin/correction-round`), common to both, each by another fresh
    author session. Still refused after the last: the ticket stops.
+   ADR-0034 : seule la première revue est complète ; les suivantes sont
+   ciblées (constats non soldés et lignes changées depuis la pointe relue,
+   le reste noté pour la passe de fin) ; la revue ne juge jamais la fidélité
+   visuelle ; au plafond, l'approbateur humain peut accorder un tour
+   exceptionnel, une fois par ticket (`correction-round grant --exceptional`).
 7. **Merge.** `bin/spec-integration merge` merges the ticket into the
    integration branch, one at a time, with tests on the merged result. No
    ticket opens a pull request toward the protected branch.
@@ -610,6 +615,16 @@ of the host's own runner (boxed and held to 8 cores and 4 GB:
 `docs/OPERATIONS.md`, "Factory CI on the host's own runner") and a
 `ci-run-tests` started from inside a battery (the tests of the runner) do not
 wait. Proof: `tests/ci-run-tests-host-queue-test.sh`.
+
+The cockpit's regression command (`tests/cockpit-criteria/regression.py`,
+what `bin/tdd-step` and `bin/spec-integration` run) takes the same lock
+since 25/10/2026: on 22/10 it ran beside two authors' and a merge's,
+took 1.9 times as long and was refused at 600 s on tickets that were green
+(study C, `docs/research/2026-10-22-strategie-tests-budgets.md`). It waits
+at most `REGRESSION_HOST_WAIT` seconds (600), then runs within
+`REGRESSION_BUDGET` seconds (600) counted from the lock; past either it
+exits 75, NOT RUN, which the gates never count as a red. Proof:
+`tests/regression-host-queue-test.py`.
 
 What it does not cover:
 

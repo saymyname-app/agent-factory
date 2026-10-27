@@ -191,7 +191,8 @@ class ConvoyAdvanceHarness(unittest.TestCase):
         }
         # The tests run the advance command as the controller's order does:
         # outside any agent session, even when an agent runs the suite.
-        for name in ("CONVOY_STATE_FAKE_SLING_FAIL", "CONVOY_STATE_FAKE_MAIL_FAIL", *SESSION_IDENTITY):
+        for name in ("CONVOY_STATE_FAKE_SLING_FAIL", "CONVOY_STATE_FAKE_MAIL_FAIL",
+                     "CONVOY_STATE_FAKE_ANSWER_ON_SLING", *SESSION_IDENTITY):
             self.env.pop(name, None)
         # No product a test launched outlives it: stopped before the next
         # test empties the directory.
@@ -484,6 +485,35 @@ class ConvoyAdvanceHarness(unittest.TestCase):
 
     def ticket_end_of(self, answer, convoy=CONVOY):
         return next(c for c in answer["convoys"] if c["id"] == convoy).get("ticket_end")
+
+    def finished_interface_ticket(self, screen_path="/"):
+        """A finished Prototype Fold slice whose declared screen may be
+        unavailable on the launched product."""
+        base = self.integrated()
+        descriptor_path = self.root / "config" / "project-descriptors" / "fx.json"
+        descriptor = json.loads(descriptor_path.read_text())
+        descriptor["launch"]["screens"][0]["path"] = screen_path
+        descriptor_path.write_text(json.dumps(descriptor))
+        self.env.update({
+            "EVIDENCE_CAPTURE_BROWSER": str(ROOT / "tests" / "fixtures" / "prototype-fidelity" / "browser"),
+            "EVIDENCE_FAKE_BROWSER_LOG": str(self.tmp / "browser.log"),
+            "TICKET_END_WORK_DIR": str(self.tmp / "gate-work"),
+        })
+        state = self.tracker_state()
+        for bead_id in (CONVOY, T1, T2, T3):
+            metadata = state["beads"][bead_id]["metadata"]
+            state["beads"][bead_id]["metadata"] = {k: v for k, v in metadata.items() if not k.startswith("gc.flow.")}
+        state["beads"][T1]["metadata"]["gc.ticket_kind"] = "vertical_slice"
+        state["beads"][T1]["description"] = (
+            "## Acceptance criteria\n\n- [ ] Point d'entrée : GET / — Observable : liste — Faux si : une ligne manque\n\n"
+            f"## Validated Prototype\n\n- branche : main\n- commit : {base}\n- chemin : {FIXTURE}/prototype\n"
+            "- états : empty, content\n- Prototype Fold : ce ticket\n\n## Target rigs\n\nfx-rig")
+        self.tracker.write_text(json.dumps(state))
+        self.run_ok(STATE, "mark", CONVOY, "--demonstration-line", f"{T1}=La page d'accueil affiche les trois éléments",
+                    "--user-stories", f"{T1}=1", "--prototype-fold", T1)
+        self.run_ok(INTEGRATION_TOOL, "open", CONVOY, "--repo", self.root, "--protected", "main")
+        self.advance(CONVOY)
+        return self.finished(T1)
 
     # --- one correction round, then the ticket stops (T17) ----------------------
 
@@ -1035,9 +1065,16 @@ class ConvoyAdvanceTest(ConvoyAdvanceHarness):
             reached = False
             while first.poll() is None and time.monotonic() < deadline:
                 children = Path(f"/proc/{first.pid}/task/{first.pid}/children")
-                for child in children.read_text().split() if children.exists() else ():
-                    command = Path(f"/proc/{child}/cmdline")
-                    if command.exists() and b"escalation-door" in command.read_bytes():
+                try:
+                    child_ids = children.read_text().split()
+                except FileNotFoundError:
+                    child_ids = ()
+                for child in child_ids:
+                    try:
+                        command = Path(f"/proc/{child}/cmdline").read_bytes()
+                    except FileNotFoundError:
+                        continue  # The child exited between enumeration and inspection.
+                    if b"escalation-door" in command:
                         reached = True
                         break
                 if reached:
@@ -1632,33 +1669,11 @@ class ConvoyAdvanceTest(ConvoyAdvanceHarness):
                     time.sleep(0.5)
 
     def test_a_pass_starts_the_fidelity_check_and_merges_an_interface_ticket_without_waiting_for_it(self):
-        base = self.integrated()
-        self.env.update({
-            "EVIDENCE_CAPTURE_BROWSER": str(ROOT / "tests" / "fixtures" / "prototype-fidelity" / "browser"),
-            "EVIDENCE_FAKE_BROWSER_LOG": str(self.tmp / "browser.log"),
-            "TICKET_END_WORK_DIR": str(self.tmp / "gate-work"),
-        })
+        tip = self.finished_interface_ticket()
         # The pass does not wait for the check by default (af-wz4dd8): it
         # outlives the pass that started it, which leaves it to a later one.
         self.env.pop("CONVOY_ADVANCE_FIDELITY_WAIT", None)
         self.addCleanup(self.fidelity_check_ended)
-        # An interface slice: the publication door posed the reference of
-        # the Validated Prototype in it, before the convoy was marked.
-        state = self.tracker_state()
-        for bead_id in (CONVOY, T1, T2, T3):
-            metadata = state["beads"][bead_id]["metadata"]
-            state["beads"][bead_id]["metadata"] = {k: v for k, v in metadata.items() if not k.startswith("gc.flow.")}
-        state["beads"][T1]["metadata"]["gc.ticket_kind"] = "vertical_slice"
-        state["beads"][T1]["description"] = (
-            "## Acceptance criteria\n\n- [ ] Point d'entrée : GET / — Observable : liste — Faux si : une ligne manque\n\n"
-            f"## Validated Prototype\n\n- branche : main\n- commit : {base}\n- chemin : {FIXTURE}/prototype\n"
-            "- états : empty, content\n- Prototype Fold : ce ticket\n\n## Target rigs\n\nfx-rig")
-        self.tracker.write_text(json.dumps(state))
-        self.run_ok(STATE, "mark", CONVOY, "--demonstration-line", f"{T1}=La page d'accueil affiche les trois éléments",
-                    "--user-stories", f"{T1}=1", "--prototype-fold", T1)
-        self.run_ok(INTEGRATION_TOOL, "open", CONVOY, "--repo", self.root, "--protected", "main")
-        self.advance(CONVOY)
-        tip = self.finished(T1)
 
         # ADR-0032 (af-hcriwn): the fidelity is measured and joined, never
         # waited for: the pass starts the check and the merge follows.
@@ -1678,6 +1693,17 @@ class ConvoyAdvanceTest(ConvoyAdvanceHarness):
         fidelity = self.shown(T1)["gates"]["ticket_end"]["conditions"][3]
         self.assertEqual(("fidelity", "pass"), (fidelity["name"], fidelity["verdict"]))
         self.assertIn(tip[:12], fidelity["detail"])
+
+    def test_an_unavailable_fidelity_screen_is_reported_without_failing_the_pass(self):
+        self.finished_interface_ticket("/unavailable")
+
+        answer = self.advance(CONVOY)
+        result = next(c for c in answer["convoys"] if c["id"] == CONVOY)
+
+        self.assertTrue(answer["ok"], answer)
+        self.assertEqual([T1], [entry["id"] for entry in result["fidelity"]["refused"]], result)
+        self.assertIn("ne répond pas", result["fidelity"]["refused"][0]["reason"])
+        self.assertEqual([T1], [entry["id"] for entry in result["integration"]["merged"]], result)
 
     def test_a_refusal_of_the_ticket_end_gate_is_a_failure_of_the_pass(self):
         self.integrated()
