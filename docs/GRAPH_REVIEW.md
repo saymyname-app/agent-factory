@@ -119,6 +119,62 @@ un bloqueur livré n'ordonne plus rien, et la seconde passe sur un brouillon
 inchangé (même digest) reste permise, la règle des deux passes ne comptant
 que les passes enregistrées.
 
+### Une révision ne juge que ce qui change (af-npz9v1.23)
+
+Intent (Benjamin, ses mots, 25/10/2026 15:13 Paris) : « Reponds pour moi
+que je suis Ok pour tes recommandations pour toutes decisions à prendre. »
+Recommandation appliquée (session opérateur, 23/10/2026 vers 18:00 Paris) :
+« la revue d'une révision ne juge que ce qui change ».
+Mechanism (interprétation agent) : une question déjà tranchée sur un ticket
+publié et laissé tel quel reprend sa décision au lieu d'être reposée.
+
+Le 23/10/2026, la seconde passe sur `af-r1f9ac6bc` (B remplacé par BR,
+convoi `af-strhoy`) a refusé « taille tenable » et « critères observables »
+sur A2, BR, G2 et I, alors que seuls les critères et la ligne de
+démonstration de BR changeaient, et que Benjamin avait déjà tranché
+« publier » ces mêmes refus sur le graphe d'origine `af-b2vlkt` le 20/10. Il
+a dû les retrancher.
+
+Désormais, pour une révision, `bin/graph-review` compare chaque ticket
+qu'elle porte au ticket publié : celui que le convoi suit sous le même
+identifiant, ou, pour un remplacement de `bin/replacement-draft`
+(`replacement_of`), le ticket remplacé. Le brouillon qui l'a publié est
+celui dont le texte a le digest `gc.graph_digest` du ticket ; sa dernière
+passe et ses décisions sont celles de ce digest. Chaque question lit des
+champs du ticket :
+
+| Question | Champs |
+|---|---|
+| `demonstrable_alone` | `kind`, `what_it_delivers`, `demonstration_line`, `acceptance_criteria`, `blocked_by` |
+| `criteria_observable_falsifiable` | `acceptance_criteria` |
+| `size_tenable` | `kind`, `title`, `what_it_delivers`, `user_stories`, `scope` |
+| `same_surface_ordered` | `what_it_delivers`, `scope`, `blocked_by` |
+| `declared_scope_includes_wiring` | `what_it_delivers`, `scope` |
+
+Une question dont aucun champ ne change, et qui était favorable (ou
+`not_applicable`) à la dernière passe du digest d'origine, ou refusée et
+tranchée « publier » par Benjamin à ce digest, n'est pas reposée : `brief`
+ne la met plus dans `checks` du ticket et la montre dans
+`revision.carried`, avec `revision.compared_to` et `revision.changed` (les
+champs qui changent) ; `record` la refuse comme hors liste et l'enregistre
+lui-même, `favorable` (ou `not_applicable`), avec une raison qui cite le
+digest, le brouillon et la décision reprise (mots de Benjamin compris), et
+`carried_from`. Une question sur un champ qui change est posée, et reste
+bloquante : une révision qui change vraiment un critère est jugée sur ce
+critère. Une décision « à reprendre », une question nouvelle ou un ticket
+dont le brouillon d'origine est introuvable sont jugés en entier. Un ticket
+sans question posée n'a pas besoin de réponse dans le verdict.
+
+La comparaison ignore ce qui n'est pas un changement du ticket : dans
+`blocked_by`, les bloqueurs livrés (la révision ne les garde pas) et le
+ticket remplacé nommé sous l'identifiant de son remplaçant ; dans `title` et
+`what_it_delivers`, ce que `bin/replacement-draft` ajoute (« — replacement
+of … », « Authorized replacement: decision … »). Rejouée en mémoire sur
+`af-r1f9ac6bc` dans l'état du 23/10, la règle ne pose plus que
+`demonstrable_alone` et `criteria_observable_falsifiable` sur BR, rien sur
+A2, G2 et I, et reprend les sept refus tranchés le 20/10. Les questions du
+graphe restent posées.
+
 `record` refuses, before any write and with every reason listed: a verdict
 on another digest than the draft's; a ticket of the draft without answers, or
 a ticket the draft does not have; a question left unanswered or outside the
