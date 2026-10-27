@@ -86,13 +86,18 @@ EXIT_NOT_NEW_FLOW = 4
 EXIT_STOPPED = 5
 
 # One run of the test command on one test, and one run of the regression command.
-COMMAND_TIMEOUT = 600
-# The regression command waits its turn on the host before its own budget
-# runs (tests/cockpit-criteria/regression.py: REGRESSION_HOST_WAIT and
-# REGRESSION_BUDGET, 600 s each): its deadline here covers both, and a
-# minute more. Exit 75 is its NOT RUN: no answer, never a red (study C, T1).
-REGRESSION_TIMEOUT = 600 + 600 + 60
+# Every deadline comes from config/test-budgets.json, measured (study C,
+# T3: lib/test_budgets.py). The regression command waits its turn on the
+# host, then runs within the budget of its kind -- green at a ticket's
+# green, full elsewhere -- and a minute more. Exit 75 is its NOT RUN: no
+# answer, never a red (study C, T1).
+sys.path.insert(0, str(BIN.parent / "lib"))
+import test_budgets  # noqa: E402
+
+BUDGETS = test_budgets.load(BIN.parent)
+COMMAND_TIMEOUT = int(BUDGETS["criterion_test_seconds"])
 NOT_RUN = 75
+TIMING = re.compile(r"^regression: (?:took|ALERT) .*$", re.MULTILINE)
 # The whole check of one step, as bin/evidence-capture bounds it.
 DEFAULT_TIMEOUT = 3600.0
 MAX_DETAIL = 300
@@ -751,11 +756,12 @@ def regression_run(check: Check, commit: str, moment: str, ticket_tests: list[st
     env.pop("TDD_STEP_TICKET_TESTS", None)
     if ticket_tests:
         env["TDD_STEP_TICKET_TESTS"] = " ".join(ticket_tests)
+    timeout = test_budgets.deadline(BUDGETS, "green" if ticket_tests else "full")
     try:
         proc = subprocess.run(command, cwd=check.export(commit), stdin=subprocess.DEVNULL, capture_output=True,
-                              timeout=REGRESSION_TIMEOUT, env=env)
+                              timeout=timeout, env=env)
     except subprocess.TimeoutExpired as exc:
-        raise Refusal(f"la commande de régression n'a pas fini en {REGRESSION_TIMEOUT} s {moment}") from exc
+        raise Refusal(f"la commande de régression n'a pas fini en {timeout} s {moment}") from exc
     except OSError as exc:
         raise Refusal(f"commande de régression impossible à exécuter : {command[0]} ({exc.strerror or exc})") from exc
     output = (proc.stdout + proc.stderr).decode(errors="replace")
@@ -765,7 +771,9 @@ def regression_run(check: Check, commit: str, moment: str, ticket_tests: list[st
     if proc.returncode != 0:
         raise Refusal(
             f"commande de régression en échec {moment} (commit {commit}, exit {proc.returncode}) : {short(output)}")
-    return {"commit": commit, "exit_code": proc.returncode, "output": short(output)}
+    # Its own measure, whole: the output above is cut at 300 characters.
+    return {"commit": commit, "exit_code": proc.returncode, "output": short(output),
+            "timing": TIMING.findall(output)}
 
 
 def check_green(check: Check) -> dict[str, Any]:

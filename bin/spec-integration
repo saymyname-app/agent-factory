@@ -108,10 +108,14 @@ EXIT_UNRULED = 3
 EXIT_NOT_NEW_FLOW = 4
 
 UNRULED = "état sans règle"
-# The regression command waits its turn on the host, then runs within its
-# budget (tests/cockpit-criteria/regression.py: 600 s each), plus a minute.
-# Exit 75 is its NOT RUN: no answer, never a red (study C, T1).
-DEFAULT_TIMEOUT = 600 + 600 + 60
+# The regression command waits its turn on the host, then runs the whole
+# series within its full budget, plus a minute: config/test-budgets.json,
+# measured (study C, T3). Exit 75 is its NOT RUN: no answer, never a red
+# (study C, T1).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+import test_budgets  # noqa: E402
+
+DEFAULT_TIMEOUT = test_budgets.deadline(test_budgets.load(Path(__file__).resolve().parents[1]), "full")
 NOT_RUN = 75
 MAX_DETAIL = 300
 BRANCH_RE = re.compile(r"^[^\s~^:?*\[\\]+$")

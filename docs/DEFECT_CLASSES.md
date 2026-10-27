@@ -55,11 +55,13 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 
 - Invariant : Tout ce qu'un outil lance meurt avec lui, quelle que soit la
   façon dont il finit ; tout délai vient d'une mesure.
-- Contrôle : `python3 tests/project-launch-test.py` — partiel : il tient le
+- Contrôle : `python3 tests/project-launch-test.py`,
+  `python3 tests/test-budgets-test.py` — partiel : le premier tient le
   lanceur des produits (`bin/project-launch`, son gardien et son balayage),
-  pas les autres façons de lancer un programme. Le lint « un seul lanceur
-  borné » est planifié (af-npz9v1.26) ; le registre des délais mesurés est
-  l'étude C.
+  pas les autres façons de lancer un programme ; le second tient les délais
+  des tests d'un ticket et de l'ordre convoy-advance
+  (`config/test-budgets.json`, étude C T3), pas les autres délais écrits à
+  la main. Le lint « un seul lanceur borné » est planifié (af-npz9v1.26).
 - Occurrences : #624, #628, #629, #630, #631, #636, #647, #657, #658, #661,
   #667, #694, #696, #705, #706, #708, #710, #713, #721 ; copies orphelines du
   22/10 (sans PR) ; af-kky570.

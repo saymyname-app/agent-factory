@@ -13,8 +13,8 @@ the acceptance, made by `bin/outcome-promote` (T30,
 
 ```bash
 ./bin/spec-integration open  af-convoy --repo <project repository> --protected main
-./bin/spec-integration merge af-convoy --repo <project repository> --profile <descriptor.json> [--limit 1] [--timeout 1260]
-./bin/spec-integration take-up af-convoy --repo <project repository> --profile <descriptor.json> [--timeout 1260] [--end-round]
+./bin/spec-integration merge af-convoy --repo <project repository> --profile <descriptor.json> [--limit 1] [--timeout SECONDS]
+./bin/spec-integration take-up af-convoy --repo <project repository> --profile <descriptor.json> [--timeout SECONDS] [--end-round]
 ```
 
 Who calls it: `bin/ticket-graph-publish bd-publish` calls `open` once the
@@ -239,16 +239,16 @@ to a ticket, and this tip belongs to none.
 - A frozen harness file changed on the integration branch by another
   ticket's merge is still seen by `bin/tdd-step green` as modified
   (`docs/TDD_STEP.md`, Limits) when an author takes up the integration tip.
-- The order that runs `bin/convoy-advance` has a 30 min timeout. A pass may
-  run the regression command twice (the control after a take-up, then the
-  tests of the merged result), up to `--timeout` (1260 s: the cockpit's
-  regression waits at most 600 s for the host, then runs within 600 s)
-  each. Unloaded both fit (about 6 min each on 22/10/2026); two long waits
-  in one pass do not, and the controller then kills the pass. A run past
-  `--timeout` is killed with every process it started (its own session). A
-  pass killed by the controller has pushed nothing; its work tree is removed
-  by the next. Deriving these numbers from measures is T3 of
-  `docs/research/2026-10-22-strategie-tests-budgets.md`.
+- `--timeout` defaults to the full deadline of `config/test-budgets.json`
+  (the wait for the host, the full budget, a margin: `bin/test-budgets
+  show`), measured from the merged runs (study C, T3). A pass may run the
+  regression command twice (the control after a take-up, then the tests of
+  the merged result): the order that runs `bin/convoy-advance` has 40 min,
+  derived from the same file, and `bin/test-budgets check-order` fails when
+  it no longer covers one wait and two full runs
+  (`tests/test-budgets-test.py`). A run past `--timeout` is killed with
+  every process it started (its own session). A pass killed by the
+  controller has pushed nothing; its work tree is removed by the next.
 
 ## Proof
 
