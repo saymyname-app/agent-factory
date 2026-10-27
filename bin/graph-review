@@ -132,6 +132,22 @@ IN_PLACE_RULE = (
     "d'assemblage ou qui est le Prototype Fold (prototype_fold) l'a établi en premier. Un ticket in_place ouvert "
     "n'est pas livré : un ticket du brouillon qui en consomme le travail sans l'attendre n'est pas démontrable seul."
 )
+# A revision judges only what it changes (af-npz9v1.23; Benjamin, 23/10/2026,
+# recommendation applied: « la revue d'une révision ne juge que ce qui change »).
+# Each ticket question reads these fields of the ticket; when a ticket the
+# revision carries leaves all of them as published, and the question was
+# favorable, or refused and ruled « publier » by Benjamin, at the digest that
+# published it, that ruling is carried instead of asked again.
+QUESTION_FIELDS = {
+    "demonstrable_alone": ("kind", "what_it_delivers", "demonstration_line", "acceptance_criteria", "blocked_by"),
+    "criteria_observable_falsifiable": ("acceptance_criteria",),
+    "size_tenable": ("kind", "title", "what_it_delivers", "user_stories", "scope"),
+    "same_surface_ordered": ("what_it_delivers", "scope", "blocked_by"),
+    SCOPE_CHECK: ("what_it_delivers", "scope"),
+}
+# What bin/replacement-draft adds to the ticket it copies, and is no change of it.
+REPLACEMENT_TITLE = " — replacement of {key}"
+REPLACEMENT_CITATION = " Authorized replacement: decision "
 GRAPH_TARGET = "graphe"
 DECISIONS = {"publish": "publier tel quel", "rework": "à reprendre"}
 
@@ -214,6 +230,8 @@ class Draft:
                 self.passes[number] = record
         self.request: dict[str, Any] | None = stored(self.metadata, KEY_REQUEST)
         self.decisions: dict[str, Any] = stored(self.metadata, KEY_DECISIONS) or {}
+        self._convoy: tuple[str, list[dict[str, Any]]] | None = None
+        self._carried: dict[str, dict[str, Any]] | None = None
 
     def write(self, key: str, value: Any) -> None:
         bd("update", self.id, "--set-metadata", f"{key}={json.dumps(value, ensure_ascii=False, sort_keys=True)}")
@@ -247,6 +265,12 @@ class Draft:
         datasets = (profile.get("launch") or {}).get("datasets") if isinstance(profile, dict) else None
         return sorted(datasets) if isinstance(datasets, dict) else []
 
+    def asked_checks(self, ticket_id: str) -> list[str]:
+        """The questions the reviewer answers for one ticket: those of
+        ticket_checks a revision does not carry from its published ruling."""
+        carried = carried_rulings(self).get(ticket_id, {}).get("checks", {})
+        return [name for name in self.ticket_checks(ticket_id) if name not in carried]
+
     def graph_checks(self) -> list[str]:
         """The graph questions asked of the reviewer: not the coverage of a
         revision, which only the resulting graph shows."""
@@ -268,15 +292,12 @@ def shown(bead_id: str) -> dict[str, Any]:
     return bead
 
 
-def resulting_graph(draft: Draft) -> dict[str, Any] | None:
-    """For a revision: the tickets of the graph that results from it which it
-    does not carry -- tracked by the convoy it revises, as bd-patch builds
-    that graph (less the tickets withdrawn now or before, and the ones merged
-    or superseded) -- each with its state. None for a first publication.
-    Refuses when that convoy cannot be read: the reviewer would judge a
-    graph it cannot see."""
-    if not draft.revises:
-        return None
+def convoy_of(draft: Draft) -> tuple[str, list[dict[str, Any]]]:
+    """The convoy that carries the digest a revision revises, and every bead
+    it tracks. Refuses when that convoy cannot be read: the reviewer would
+    judge a graph it cannot see."""
+    if draft._convoy is not None:
+        return draft._convoy
     try:
         issues = json.loads(bd("list", "--all", "--limit", "0",
                                "--metadata-field", f"gc.graph_digest={draft.revises}", "--json"))
@@ -294,17 +315,35 @@ def resulting_graph(draft: Draft) -> dict[str, Any] | None:
             "place ; rien n'est écrit"
         )
     convoy = shown(convoys[0])
-    tracked = [str(dep.get("id")) for dep in convoy.get("dependencies") or []
+    tracked = [shown(str(dep.get("id"))) for dep in convoy.get("dependencies") or []
                if isinstance(dep, dict) and dep.get("dependency_type") == "tracks"]
+    draft._convoy = (convoys[0], tracked)
+    return draft._convoy
+
+
+def closed_without_delivery(meta: dict[str, Any]) -> bool:
+    """A ticket closed because it was withdrawn, merged or superseded: its
+    work is not in the integration branch."""
+    return bool(WITHDRAWN_GATE in meta or meta.get("gc.merged_into") or meta.get("gc.superseded_by"))
+
+
+def resulting_graph(draft: Draft) -> dict[str, Any] | None:
+    """For a revision: the tickets of the graph that results from it which it
+    does not carry -- tracked by the convoy it revises, as bd-patch builds
+    that graph (less the tickets withdrawn now or before, and the ones merged
+    or superseded) -- each with its state. None for a first publication."""
+    if not draft.revises:
+        return None
+    convoy_id, tracked = convoy_of(draft)
     in_place = []
-    for bead_id in tracked:
-        bead = shown(bead_id)
+    for bead in tracked:
+        bead_id = str(bead.get("id"))
         meta = bead.get("metadata") or {}
         key = str(meta.get("gc.ticket_id") or "").strip()
         closed = bead.get("status") == "closed"
         if not key or key in draft.tickets or key in draft.withdrawn:
             continue
-        if closed and (WITHDRAWN_GATE in meta or meta.get("gc.merged_into") or meta.get("gc.superseded_by")):
+        if closed and closed_without_delivery(meta):
             continue
         line = meta.get("gc.flow.demonstration_line")
         in_place.append({
@@ -315,7 +354,110 @@ def resulting_graph(draft: Draft) -> dict[str, Any] | None:
             "prototype_fold": meta.get("gc.flow.prototype_fold") in (True, "true"),
             "blocked_by": [b for b in str(meta.get("gc.blocked_by") or "").split(",") if b],
         })
-    return {"convoy": convoys[0], "revises_digest": draft.revises, "in_place": in_place, "rule": IN_PLACE_RULE}
+    return {"convoy": convoy_id, "revises_digest": draft.revises, "in_place": in_place, "rule": IN_PLACE_RULE}
+
+
+def published_draft(digest: str) -> Draft | None:
+    """The new-flow draft whose text has this digest: the one that published
+    a ticket (its gc.graph_digest), with the review recorded on it. None
+    when no single draft has it: its tickets are then judged in full."""
+    try:
+        issues = json.loads(bd("list", "--all", "--limit", "0", "--metadata-field", f"approved_digest={digest}",
+                               "--json"))
+    except ValueError:
+        return None
+    found = [str(issue.get("id")) for issue in (issues if isinstance(issues, list) else [])
+             if isinstance(issue, dict) and (issue.get("metadata") or {}).get("approved_digest") == digest
+             and digest_of(str(issue.get("description") or "")) == digest]
+    if len(found) != 1:
+        return None
+    try:
+        return Draft(found[0])
+    except Refusal:
+        return None
+
+
+def comparable(ticket: dict[str, Any], name: str, delivered: set[str], renamed: dict[str, str]) -> Any:
+    """A field of a ticket as a revision is compared on it: blocked_by
+    without the delivered blockers a revision drops and with the replaced
+    ticket under its replacement's id; title and what_it_delivers without
+    what bin/replacement-draft appends."""
+    value = ticket.get(name)
+    if name == "blocked_by":
+        if not isinstance(value, list):
+            return value
+        return sorted({renamed.get(str(b), str(b)) for b in value if str(b) not in delivered})
+    if name == "title" and isinstance(value, str):
+        for key in renamed:
+            value = value.removesuffix(REPLACEMENT_TITLE.format(key=key))
+    if name == "what_it_delivers" and isinstance(value, str):
+        value = value.split(REPLACEMENT_CITATION, 1)[0].rstrip()
+    return value
+
+
+def carried_rulings(draft: Draft) -> dict[str, dict[str, Any]]:
+    """For a revision: per ticket it carries that is already published (or
+    replaces a published one, bin/replacement-draft), the fields it changes
+    and the questions it leaves unchanged that were already ruled at the
+    digest that published that ticket -- favorable in the last pass there, or
+    refused and ruled « publier » by Benjamin. Those are carried, not asked
+    again; a question on a changed field is asked. Empty for a first
+    publication, and for a ticket whose publishing draft cannot be read."""
+    if draft._carried is not None:
+        return draft._carried
+    draft._carried = {}
+    if not draft.revises:
+        return draft._carried
+    _, tracked = convoy_of(draft)
+    by_key = {str((bead.get("metadata") or {}).get("gc.ticket_id") or ""): bead for bead in tracked}
+    delivered = {key for key, bead in by_key.items() if key and bead.get("status") == "closed"
+                 and not closed_without_delivery(bead.get("metadata") or {})}
+    origins = {key: key for key in draft.tickets if key in by_key}
+    replaced = next((bead for bead in tracked if bead.get("id") == draft.metadata.get("replacement_of")), None)
+    renamed: dict[str, str] = {}
+    if replaced is not None:
+        old_key = str((replaced.get("metadata") or {}).get("gc.ticket_id") or "")
+        new_keys = [key for key, ticket in draft.tickets.items() if key not in by_key
+                    and str(ticket.get("title") or "").endswith(REPLACEMENT_TITLE.format(key=old_key))]
+        if old_key and len(new_keys) == 1:
+            origins[new_keys[0]] = old_key
+            renamed[old_key] = new_keys[0]
+    sources: dict[str, Draft | None] = {}
+    for key, origin in origins.items():
+        digest = str((by_key[origin].get("metadata") or {}).get("gc.graph_digest") or "")
+        if digest not in sources:
+            sources[digest] = published_draft(digest) if digest else None
+        source = sources[digest]
+        last = source.last if source is not None else None
+        published = source.tickets.get(origin) if source is not None else None
+        if source is None or last is None or last.get("digest") != digest or published is None:
+            continue
+        answers = ((last.get("tickets") or {}).get(origin) or {}).get("checks") or {}
+        decision = source.decisions.get(origin) or {}
+        ruled_publish = decision.get("decision") == "publish" and decision.get("digest") == digest
+        mine = draft.tickets[key]
+        changed = sorted({name for fields in QUESTION_FIELDS.values() for name in fields
+                          if comparable(mine, name, delivered, renamed)
+                          != comparable(published, name, delivered, renamed)})
+        checks = {}
+        for name in draft.ticket_checks(key):
+            answer = answers.get(name) or {}
+            state = answer.get("state")
+            if set(QUESTION_FIELDS[name]) & set(changed) or state not in (FAVORABLE, NOT_APPLICABLE, UNFAVORABLE):
+                continue
+            if state == UNFAVORABLE and not ruled_publish:
+                continue
+            ruling = (f"refus tranché « {DECISIONS['publish']} » par {decision.get('by')} — « {decision.get('words')} »"
+                      if state == UNFAVORABLE else f"{state} à la passe {last.get('pass')}")
+            checks[name] = {
+                "state": NOT_APPLICABLE if state == NOT_APPLICABLE else FAVORABLE,
+                "reason": f"inchangé depuis le ticket {origin} publié au digest {digest} (brouillon {source.id}) : {ruling}",
+                "carried_from": {"draft": source.id, "digest": digest, "ticket": origin, "pass": last.get("pass"),
+                                 "state": state, **({"decision": decision} if state == UNFAVORABLE else {})},
+            }
+        draft._carried[key] = {"compared_to": {"draft": source.id, "digest": digest, "ticket": origin},
+                               "changed": changed, "checks": checks}
+    return draft._carried
 
 
 def critical_path(draft: Draft) -> dict[str, Any]:
@@ -591,7 +733,9 @@ def cmd_brief(args: argparse.Namespace) -> dict[str, Any]:
         "spec_id": draft.metadata.get("spec_id"),
         "states": [FAVORABLE, UNFAVORABLE, NOT_APPLICABLE],
         "tickets": [
-            {"id": ticket_id, "checks": {name: TICKET_CHECKS[name] for name in draft.ticket_checks(ticket_id)}}
+            {"id": ticket_id, "checks": {name: TICKET_CHECKS[name] for name in draft.asked_checks(ticket_id)},
+             **({"revision": revision_of(carried_rulings(draft)[ticket_id])}
+                if ticket_id in carried_rulings(draft) else {})}
             for ticket_id in draft.tickets
         ],
         "graph_checks": {name: GRAPH_CHECKS[name] for name in draft.graph_checks()},
@@ -602,6 +746,14 @@ def cmd_brief(args: argparse.Namespace) -> dict[str, Any]:
         },
         "draft_text": draft.description,
     }
+
+
+def revision_of(carried: dict[str, Any]) -> dict[str, Any]:
+    """What the brief says of a ticket a revision carries: the published
+    ticket it is compared to, the fields it changes, and the questions it is
+    not asked again, each with the ruling it carries."""
+    return {"compared_to": carried["compared_to"], "changed": carried["changed"],
+            "carried": {name: check["reason"] for name, check in carried["checks"].items()}}
 
 
 def judged(where: str, given: Any, expected: list[str], problems: list[str]) -> dict[str, Any]:
@@ -656,11 +808,16 @@ def cmd_record(args: argparse.Namespace) -> dict[str, Any]:
         problems.append(f"{ticket_id} : ticket inconnu du brouillon")
     tickets = {}
     declared = draft.declared_datasets()
+    carried = carried_rulings(draft)
     for ticket_id in draft.tickets:
-        if ticket_id not in given:
+        asked = draft.asked_checks(ticket_id)
+        if ticket_id not in given and asked:
             problems.append(f"{ticket_id} : pas de verdict")
             continue
-        tickets[ticket_id] = judged(ticket_id, given[ticket_id], draft.ticket_checks(ticket_id), problems)
+        tickets[ticket_id] = judged(ticket_id, given.get(ticket_id, {"checks": {}}), asked, problems)
+        if tickets[ticket_id]:
+            tickets[ticket_id]["checks"].update(
+                {name: dict(check) for name, check in carried.get(ticket_id, {}).get("checks", {}).items()})
         if tickets[ticket_id] and not draft.declares_scope(ticket_id):
             tickets[ticket_id]["checks"][SCOPE_CHECK] = {"state": NOT_APPLICABLE, "reason": "aucun Declared Scope déclaré"}
         if tickets[ticket_id]:

@@ -92,9 +92,12 @@ whose request was answered is sent to one fresh author session on the same
 branch, through bin/dispatch-door, and the resume is counted
 (bin/convoy-state open-resume). So is a finished, unmerged ticket whose
 branch does not contain the tip of the integration branch (cause `behind`,
-T44: `behind` of bin/code-review show), once per Ticket Exit, and counted
+T44: `behind` of bin/code-review show), once per Ticket Exit, and recorded
 even when the ceiling makes its session wait: its exit is taken back, so
-neither the review nor the evaluation is sent on the old tip. So is a ticket
+neither the review nor the evaluation is sent on the old tip. That resume
+comes from the factory (another ticket merged), so K does not count it,
+once per tip of the integration branch; a second one on a tip already
+resumed for is counted (af-npz9v1.36, docs/CONVOY_ADVANCE.md). So is a ticket
 stopped because its Ticket Evaluation gave no result (af-xhc0sj), once per
 tip of the integration branch: the resume lifts the stop, keeps it on the
 resume, and withdraws its request; so is a ticket stopped at its second
@@ -1025,6 +1028,10 @@ def park_exhausted(convoy: Convoy, ticket: dict[str, Any]) -> dict[str, Any]:
     exhausted = ", ".join(cause for cause, count in left.items() if count == 0)
     named = f" pour la cause {exhausted}" if exhausted else ""
     detail = f"reprises épuisées{named} ({resumes} reprises en tout) : le ticket ne redémarre plus"
+    if left.get(BEHIND) == 0:
+        # Only a branch that did not take a tip it was already resumed for
+        # counts for `behind` (af-npz9v1.36).
+        detail += " ; behind : une même pointe d'intégration reprise sans être prise"
     # A commit after a verdict (T18) counts a resume without an entry: the
     # detail names the last one recorded.
     entries = (ticket.get("resume") or {}).get("entries") or []
@@ -1157,7 +1164,7 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
             if not rig:
                 raise Refusal("le ticket ne nomme pas un seul projet connu de config/projects sous « Target rigs »")
             full = len(out["started"]) + len(out["resumed"]) >= free
-            # A branch behind is counted at once, session or not: its exit
+            # A branch behind is recorded at once, session or not: its exit
             # is taken back, so neither the review nor the Ticket Evaluation
             # is sent on the old tip while the ticket waits for a session.
             if full and (what, cause) != ("new", BEHIND):

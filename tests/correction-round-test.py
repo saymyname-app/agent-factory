@@ -896,6 +896,16 @@ class CorrectionRoundTest(unittest.TestCase):
                      "--words", WORDS, mention="même commit")
         self.assertFalse(any("tour exceptionnel" in option for option in self.options()), self.options())
 
+    def test_an_ordinary_round_is_refused_when_the_correction_session_ended_without_correcting(self):
+        # The same guard as the exceptional round (af-npz9v1.23): lifting the
+        # stop would only let the next pass stop the ticket again.
+        self.stopped_ticket()
+        self.rounds_bound(2)
+
+        self.refused("grant", CONVOY, SLICE, "--repo", self.repo, "--approved-by", APPROVER, "--words", WORDS,
+                     mention="aucun tour ne s'ouvrirait")
+        self.assertEqual("still_refused", self.shown()["stop"]["reason"])
+
     def red_fidelity(self, tip, ticket=SLICE):
         """The mechanical fidelity, red at `tip`, as bin/prototype-fidelity
         records it (its sealed piece, then bin/convoy-state set-fidelity)."""

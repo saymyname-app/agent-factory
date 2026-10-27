@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""What else is changing these files? Run before a Factory fix is coded, and
-again before its pull request opens (af-frflvz, docs/DELIVERY.md).
+"""What else is changing these files, and where else is this defect? Run
+before a Factory fix is coded, and again before its pull request opens
+(af-frflvz, af-npz9v1.25, docs/DELIVERY.md).
 
-    factory-fix-preflight [--repo DIR] [--branch NAME] [--days N] PATH...
+    factory-fix-preflight --class CODE [--repo DIR] [--branch NAME] [--days N] PATH...
 
 On 19/10/2026 #681 made fidelity blocking at the author's exit while
 Benjamin, in another session, had just decided it would not be (af-hcriwn,
@@ -27,22 +28,40 @@ af-hcriwn named none. So `decisions_to_read` also lists every decision
 bead open or updated in those days, whatever it names. Read each one, and
 stop if it bears on the fix. Nothing is written anywhere.
 
+`--class` names the defect class of the fix, a code of the register
+docs/DEFECT_CLASSES.md of the repository (study B, PR #720): from 15 to
+22/10, three classes came back 5 to 7 times each, because every fix repaired
+the place it was seen and wrote the rest « hors périmètre ». The answer's
+`class` gives the class's invariant and its occurrences still open, which
+the fix looks for and corrects with its own; its `control` runs the
+commands the class's `Contrôle` field names, from the repository. A red
+control: exit 1. A class missing from the register: exit 2, and the fix
+adds its entry in its own branch first. A change that fixes no defect says
+`--class aucune`, as its pull request says `Catégorie : aucune — <why>`.
+
 Exit 0 clear, 1 something found, 2 refused: a source that cannot be read
-(git, `gh pr list`, `gc bd list`) is never read as clear.
+(git, `gh pr list`, `gc bd list`, the register) is never read as clear.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import signal
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+from defect_classes import NO_CLASS, RegistryError, load  # noqa: E402
+
 EXIT_FOUND, EXIT_REFUSED = 1, 2
 TIMEOUT = 120
+# A class's control is a rule check of a few seconds (config/ci-test-seconds.tsv);
+# its slowest today, tests/project-launch-test.py, takes 5.
+CONTROL_TIMEOUT = 300
 
 
 class Refusal(Exception):
@@ -114,6 +133,36 @@ def changed_by_branches(repo: Path, wanted: list[str], own: str, days: int) -> l
     return found
 
 
+def defect_class(repo: Path, code: str) -> dict[str, Any]:
+    if code == NO_CLASS:  # a change that fixes no defect: a decision carried out, a feature
+        return {"code": NO_CLASS, "title": "aucun défaut corrigé", "Invariant": "", "Ouvertes": "", "Contrôle": "",
+                "commands": []}
+    registry = repo / "docs" / "DEFECT_CLASSES.md"
+    try:
+        classes = load(registry)
+    except RegistryError as exc:
+        raise Refusal(str(exc)) from exc
+    if code not in classes:
+        raise Refusal(f"catégorie « {code} » absente de docs/DEFECT_CLASSES.md (codes : {', '.join(sorted(classes))}) :"
+                      " ajouter son entrée dans la branche du correctif, puis relancer")
+    return classes[code]
+
+
+def run_control(repo: Path, command: str) -> dict[str, Any]:
+    """One command of a class's control, in its own session: past the delay
+    its whole group is stopped, never only its first process (class P)."""
+    proc = subprocess.Popen(["bash", "-c", command], cwd=repo, text=True, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, start_new_session=True)
+    try:
+        out, _ = proc.communicate(timeout=CONTROL_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        out, _ = proc.communicate()
+        return {"command": command, "ok": False, "exit": None, "tail": [f"arrêté après {CONTROL_TIMEOUT} s"]}
+    return {"command": command, "ok": proc.returncode == 0, "exit": proc.returncode,
+            "tail": (out or "").strip().splitlines()[-5:]}
+
+
 def recent_decisions(days: int) -> list[dict[str, Any]]:
     since = datetime.now(timezone.utc) - timedelta(days=days)
     out = run([os.environ.get("GC_BIN") or "gc", "bd", "list", "--all", "--label-any", "decision",
@@ -145,12 +194,15 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="factory-fix-preflight", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("paths", nargs="+")
+    parser.add_argument("--class", dest="defect_class", required=True,
+                        help="the fix's defect class, a code of docs/DEFECT_CLASSES.md")
     parser.add_argument("--repo", default=".")
     parser.add_argument("--branch", help="the fix's own branch (default: the current one)")
     parser.add_argument("--days", type=int, default=2)
     args = parser.parse_args(argv)
     repo = Path(args.repo).resolve()
     try:
+        entry = defect_class(repo, args.defect_class)
         own = args.branch or run(["git", "rev-parse", "--abbrev-ref", "HEAD"], "git rev-parse", repo).strip()
         prs = changed_by_prs(repo, args.paths, own)
         branches = changed_by_branches(repo, args.paths, own, args.days)
@@ -161,7 +213,14 @@ def main(argv: list[str]) -> int:
     summary = [{"id": d.get("id"), "title": d.get("title"), "status": d.get("status"), "updated_at": d.get("updated_at")}
                for d in decisions]
     naming = [s for s, d in zip(summary, decisions) if any(names(d, path) for path in args.paths)]
-    answer = {"ok": not (prs or branches or naming), "paths": args.paths, "branch": own, "days": args.days,
+    control = [run_control(repo, command) for command in entry["commands"]]
+    klass = {"code": entry["code"], "title": entry["title"], "invariant": entry["Invariant"],
+             "open": entry["Ouvertes"], "control": entry["Contrôle"],
+             "to_do": "Chercher et corriger les occurrences ouvertes de la même catégorie avec ce correctif ;"
+                      " poser ou compléter le contrôle de catégorie ; la PR écrit « Catégorie : », « Où ailleurs : »"
+                      " et « Contrôle de catégorie : »."}
+    answer = {"ok": not (prs or branches or naming) and all(c["ok"] for c in control), "paths": args.paths,
+              "class": klass, "control": control, "branch": own, "days": args.days,
               "prs": prs, "branches": branches, "decisions_naming": naming,
               "decisions_to_read": [s for s in summary if s not in naming]}
     print(json.dumps(answer, indent=2, ensure_ascii=False))
