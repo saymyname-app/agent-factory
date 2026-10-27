@@ -527,12 +527,51 @@ now holds only for a repository whose runs are billed. It does not mean
 fewer tests in CI or a merge without the whole battery green.
 
 Before coding a Factory fix, and again before its pull request opens, run
-`bin/factory-fix-preflight <path>...` on the files the fix changes
-(af-frflvz). It names the open pull requests, the recent branches and the
+`bin/factory-fix-preflight --class <code> <path>...` on the files the fix
+changes (af-frflvz). It names the open pull requests, the recent branches and the
 decision beads on those files, and lists every recent decision to read. On
 exit 1, or on a decision that bears on the fix, stop and settle with that
 session or decision first. On 19/10/2026 #681 and a decision Benjamin was
 taking elsewhere (af-hcriwn) changed the same rule, and #682 undid #681.
+
+**Where else? (af-npz9v1.25).** Intent (Benjamin, his words, 22/10/2026
+13:12 Paris): « qu'on trouve une méthode […] pour que ça n'arrive plus, que
+tous ces problèmes-là ne puissent récidiver et ne réarriver sous une autre
+forme. Enfin, il faut qu'on puisse prévoir. »; relayed 25/10 15:13 Paris:
+« Ok pour tes recommandations pour toutes decisions à prendre. »
+Mechanism (agent interpretation): the minimal method of study B
+(`docs/research/2026-10-22-causes-racines-incidents.md`, § 6). From 15 to
+22/10 about 70 fixes fell into three classes, each back 5 to 7 times: every
+fix repaired the place it was seen and wrote the rest « hors périmètre ».
+
+- `--class` names the defect class of the fix, a code of
+  `docs/DEFECT_CLASSES.md`. The preflight gives the class's invariant and
+  its occurrences still open, and runs the class's control; a class missing
+  from the register is refused until the fix adds its entry.
+- A fix corrects the observed defect **and every occurrence of its class**,
+  and adds or completes the check that fails on the next one. Never a fix
+  limited to the case observed. « Hors périmètre » holds only for another
+  class, or for an occurrence searched, named and handed to a Bead.
+  ADR-0017 still holds: no refactor or audit without a defect.
+- The pull request of a Factory fix (branch `fix/…`, or a `do-work/…` of
+  this repository) carries three lines, which `bin/pr-autopilot` reads
+  before it arms the merge; without them it holds the pull request, label
+  `maintenance-form-missing`, explained once on it:
+
+  ```
+  Catégorie : <code> — <the class in a few words>
+  Où ailleurs : <the search made and what it found: fixed here, or a Bead per occurrence left>
+  Contrôle de catégorie : <the test or lint that fails on the next occurrence, or why there is none>
+  ```
+
+  A change that fixes no defect (a decision carried out, a feature) writes
+  `Catégorie : aucune — <why>`. To complete a held pull request: `gh api -X
+  PATCH repos/<owner>/<repo>/pulls/<n> -F body=@<file>` (the host's `gh pr
+  edit` fails, see `tests/pr-autopilot-project-hold-test.sh`).
+- The measure: `python3 lib/defect_classes.py count --since <date>` counts
+  the merged pull requests of each class from those lines. A class that
+  comes back while it has a check means the check is incomplete: complete
+  it and update its entry, not a ticket.
 
 | Kind of change | Where CI runs | Before the pull request | Why |
 |---|---|---|---|
