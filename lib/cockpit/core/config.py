@@ -15,6 +15,8 @@ from cockpit.core.gc_client import (
 )
 from cockpit.requests.journal import READ_TIMEOUT_SECONDS as JOURNAL_READ_TIMEOUT_SECONDS
 from cockpit.requests.sources.readability import ILLISIBLE_THRESHOLD_SECONDS
+from cockpit.requests.sources.silence import SILENCE_ALERT_SECONDS
+from cockpit.actions.registry import DOOR_TIMEOUT_SECONDS
 from cockpit.notify.pushover import PUSHOVER_URL
 from cockpit.projects.depots import REPO_URL_TEMPLATE
 from cockpit.health.engine import (
@@ -74,6 +76,14 @@ class Config:
         self.illisible_after_seconds = float(
             env.get("COCKPIT_ILLISIBLE_SECONDS", str(ILLISIBLE_THRESHOLD_SECONDS))
         )
+        # « Usine muette » (B, af-4uzgzm): how long the supervisor or the
+        # tracker may stay silent before the cockpit says so, Urgent.
+        self.silence_alert_seconds = float(
+            env.get("COCKPIT_SILENCE_ALERT_SECONDS", str(SILENCE_ALERT_SECONDS))
+        )
+        # How long a door of an Operator Action is waited for before its
+        # command counts as expired, its outcome uncertain (af-fksj2c).
+        self.action_timeout_seconds = float(env.get("COCKPIT_ACTION_TIMEOUT_SECONDS", str(DOOR_TIMEOUT_SECONDS)))
         # How long one read of the tracker may take before it counts as
         # failed (T02, af-0gonc9: « Vue d’ensemble » says it is reading until
         # a read ends, and unavailable when the read failed).

@@ -1,0 +1,20 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/pour-moi-visible-test.py::PourMoiVisible.test_home_content_full_opens_a_request_with_its_gesture_unfolded",
+      "tests/cockpit-criteria/commands/pour-moi-visible-test.py::PourMoiVisible.test_home_long_opens_a_request_with_its_gesture_unfolded",
+      "tests/cockpit-criteria/commands/pour-moi-gestures-test.py::PourMoiGestures.test_a_proposal_is_refused_with_its_reason_once_confirmed",
+      "tests/cockpit-criteria/commands/pour-moi-gestures-test.py::PourMoiGestures.test_a_proposal_is_put_off_once_confirmed",
+      "tests/cockpit-criteria/commands/pour-moi-gestures-test.py::PourMoiGestures.test_a_paused_session_is_relaunched_once_confirmed"
+    ],
+    "2": [
+      "tests/cockpit-criteria/commands/action-expiry-test.py::ActionExpiry.test_a_command_that_expires_answers_a_readable_error_then_the_gesture_comes_back_once_reread",
+      "tests/cockpit-criteria/commands/action-expiry-test.py::ActionExpiry.test_an_uncertain_outcome_blocks_the_gesture_until_reread_and_keeps_the_success_recorded"
+    ],
+    "3": [
+      "tests/cockpit-criteria/commands/usine-muette-test.py::UsineMuette.test_home_offline_says_the_factory_muette_urgent_in_clean_words_with_its_details_folded",
+      "tests/cockpit-criteria/commands/usine-muette-test.py::UsineMuette.test_home_loading_says_the_factory_muette_urgent",
+      "tests/cockpit-criteria/commands/usine-muette-test.py::UsineMuette.test_a_producer_text_with_identifiers_is_shown_without_them_and_kept_whole_in_its_details"
+    ]
+  }
+}

@@ -8,13 +8,9 @@ grow/close a NEEDS BENJAMIN or a proposal across polls). Every assertion
 reads what GET / and GET /api/requests hand back — never an internal
 function.
 
-The one exception (matching cockpit-heartbeat-test.py's own precedent):
-``cockpit.text.validate`` has no CLI or HTTP surface of its own — its
-whole public interface is ``violations()`` — so ``TextValidateTest`` drives
-that function directly. The runtime half of the same acceptance criterion
-("a validation failure produces the fallback plus a counted defect") is
-still proven end to end through the HTTP seam in
-``RequestsSeamTest.test_validation_failure_falls_back_and_counts_a_defect``.
+The control of the main text (``TextContractSeamTest``) is read the same
+way: what GET /api/requests replaced, never ``cockpit.text.validate``
+itself (B, af-4uzgzm: the test went through that function before).
 """
 import json
 import os
@@ -32,12 +28,10 @@ CORE_FIXTURES = ROOT / "tests" / "fixtures" / "cockpit" / "core"
 REQUESTS_FIXTURES = ROOT / "tests" / "fixtures" / "cockpit" / "requests"
 COCKPIT_BIN = ROOT / "bin" / "cockpit"
 
-sys.path.insert(0, str(ROOT / "lib"))
 sys.path.insert(0, str(CORE_FIXTURES))
 
 from fake_gc import FakeGc  # noqa: E402
 
-from cockpit.text import validate  # noqa: E402
 
 
 def free_port():
@@ -114,8 +108,8 @@ SOME_OPTIONS = [
 ]
 
 
-class RequestsSeamTest(unittest.TestCase):
-    """The cockpit process started on faked sources — AC1-AC6 of T12."""
+class CockpitOnFakes(unittest.TestCase):
+    """The cockpit process started on faked sources."""
 
     def setUp(self):
         self.fake_gc = FakeGc().start()
@@ -188,6 +182,11 @@ class RequestsSeamTest(unittest.TestCase):
         payload = self.requests_payload()
         return payload if predicate(payload) else None
 
+
+
+class RequestsSeamTest(CockpitOnFakes):
+    """« Ce qui t'attend » on the process — AC1-AC6 of T12."""
+
     # ------------------------------------------------------------------
     # AC1 — levels, sort order, fields, project fallback, depuis quand,
     # vérifié à.
@@ -238,14 +237,16 @@ class RequestsSeamTest(unittest.TestCase):
         self.assertEqual("proposal", proposal["type"])
 
         body = self.home_body()
-        self.assertIn("Ce qui t&#x27;attend", body)
+        self.assertIn("Ce qui t’attend", body)
         self.assertIn("usine est muette", body)
         self.assertIn("Recommandé", body)
 
     # ------------------------------------------------------------------
     # af-mjfvwx — the home screen is the validated variant D: one status
     # line, a short list, one detail per request, and the answer /
-    # accept / refuse controls where the prototype puts them.
+    # accept / refuse controls where the prototype puts them. Since B
+    # (af-4uzgzm) the list and its details are « Pour moi » of the
+    # overview: one line per request, each request opened in its article.
     # ------------------------------------------------------------------
     def test_home_is_the_variant_d_inbox(self):
         lettered = [dict(option, lettre=lettre) for option, lettre in zip(SOME_OPTIONS, "ab")]
@@ -273,14 +274,16 @@ class RequestsSeamTest(unittest.TestCase):
         body = wait_until(lambda: self.home_body() if "Tout est à jour à <time>" in self.home_body() else None)
         self.assertIn('action="/api/health/recheck"', body)
 
-        # One list row and one detail per request; the first is selected.
-        self.assertEqual(3, body.count('<a class="li"'))
-        self.assertEqual(3, body.count('<article class="detail'))
-        self.assertEqual(1, body.count('<article class="detail zone-body cockpit-request on"'))
-        self.assertIn('href="#d-af-aaaa" data-id="af-aaaa" aria-current="true"', body)
-        self.assertIn("Retour à la liste", body)
+        # One line and one opened article per request; the first is open.
+        self.assertEqual(3, body.count('<button type="button" class="pn-request"'))
+        self.assertEqual(3, body.count('<article class="pn-panel pn-result pn-open-request cockpit-request"'))
+        self.assertEqual(2, body.count('data-open="af-cccc" data-level="info" hidden')
+                         + body.count('data-open="af-dddd" data-level="normal" hidden'))
+        opening = body[body.index('id="d-af-aaaa"'):]
+        self.assertNotIn(" hidden", opening[:opening.index(">")], "the first request is not the one open")
+        self.assertIn('aria-current="true" data-request="af-aaaa"', body)
         # A request from another day never shows a bare hour.
-        self.assertIn("<time>30/09 ", body)
+        self.assertIn("depuis 30/09 ", body)
 
         def detail(bead_id):
             start = body.index('id="d-%s"' % bead_id)
@@ -569,31 +572,105 @@ class RequestsSeamTest(unittest.TestCase):
         self.assertNotIn("repeated order failure", body)
 
 
-class TextValidateTest(unittest.TestCase):
-    """cockpit.text.validate's whole public interface is ``violations()``
-    (no CLI/HTTP of its own — same precedent as cockpit-heartbeat-test.py
-    driving HeartbeatEmitter directly). AC5's "test" half."""
+class UnknownSignalSeamTest(CockpitOnFakes):
+    """A signal of a type the cockpit does not know (spec af-fgcw0d user
+    story 76, B af-4uzgzm): « Signal non reconnu venant de … », its raw
+    text in the folded details only -- the cockpit never invents a
+    meaning, and never drops it."""
 
-    def test_accepts_a_clean_field(self):
-        self.assertEqual([], validate.violations("quoi", "une Spec attend ton accord"))
+    RAW_TITLE = "Disk quota at 92% on /var"
+    RAW_TEXT = "backup volume nearly full, nothing rotated since Monday"
 
-    def test_rejects_missing_field(self):
-        self.assertTrue(validate.violations("quoi", ""))
-        self.assertTrue(validate.violations("quoi", None))
+    def test_a_signal_of_an_unknown_producer_is_shown_with_its_raw_text_folded(self):
+        self.start_cockpit()
+        self.write_beads([
+            {"id": "af-sig1", "status": "open", "labels": [], "notes": "", "title": self.RAW_TITLE,
+             "description": self.RAW_TEXT, "created_at": "2026-09-30T08:00:00Z",
+             "metadata": {"gc.source": "disk-watch"}},
+            # Known: a producer that paged the Mayor first (spec .9), and a
+            # session the Factory paused.
+            {"id": "af-sig2", "status": "open", "labels": [], "notes": "", "title": "order failing",
+             "description": "", "metadata": {"gc.source": "on-order-failed",
+                                              "gc.escalation_mayor_paged_at": "2026-09-30T08:00:00Z"}},
+            {"id": "af-sig3", "status": "open", "labels": [], "notes": "", "title": "[session-loop] s-1",
+             "description": "", "metadata": {"gc.source": "factory-session-loop-guard", "gc.session_id": "s-1",
+                                              "gc.escalation_mayor_paged_at": "2026-09-30T08:00:00Z"}},
+            # Closed: it signals nothing any more.
+            {"id": "af-sig4", "status": "closed", "labels": [], "notes": "", "title": "old", "description": "",
+             "metadata": {"gc.source": "disk-watch"}},
+        ])
+        payload = self.wait_for_requests(lambda p: any(r["id"] == "af-sig1" for r in p["requests"]))
+        by_id = {r["id"]: r for r in payload["requests"]}
+        self.assertEqual(["af-sig1", "af-sig3"], sorted(by_id))
+        signal = by_id["af-sig1"]
+        self.assertEqual("Signal non reconnu venant de disk-watch", signal["quoi"])
+        self.assertEqual("Quand tu veux", signal["niveau"])
+        self.assertEqual("session_en_pause", by_id["af-sig3"]["type"])
 
-    def test_rejects_an_identifier(self):
-        self.assertTrue(validate.violations("quoi", "voir af-is5e97 pour la suite"))
-        self.assertTrue(validate.violations("quoi", "cf. #300 pour le contexte"))
+        body = self.home_body()
+        start = body.index('id="d-af-sig1"')
+        article = body[start:body.index("</article>", start)]
+        main, details = article.split('<details class="more pn-request-details">', 1)
+        self.assertIn("Signal non reconnu venant de disk-watch", main)
+        self.assertNotIn(self.RAW_TITLE, main, "the raw text is shown as main text")
+        self.assertNotIn("backup volume", main, "the raw text is shown as main text")
+        self.assertIn("Texte brut", details)
+        self.assertIn(self.RAW_TITLE, details)
+        self.assertIn(self.RAW_TEXT, details)
 
-    def test_rejects_an_internal_term_outside_the_lexicon(self):
-        self.assertTrue(validate.violations("quoi", "le bead est bloqué"))
-        self.assertTrue(validate.violations("quoi", "un convoi est ouvert"))
-        self.assertTrue(validate.violations("quoi", "le Mayor a redémarré"))
 
-    def test_rejects_a_line_over_140_characters(self):
-        long_text = "x" * 141
-        self.assertTrue(validate.violations("quoi", long_text))
-        self.assertEqual([], validate.violations("quoi", "x" * 140))
+class TextContractSeamTest(CockpitOnFakes):
+    """The control of the main text (spec af-oohx2x « Compréhensible sans
+    IA », af-fgcw0d user story 73), read where the operator meets it: a
+    request whose producer wrote a field outside the contract is listed by
+    GET /api/requests with that field replaced by its repli
+    (``missing_fields``), one written within it as written. AC5's "test"
+    half."""
+
+    def replaced(self, cases):
+        """``{bead id: the fields of its request that were replaced}`` for
+        escalations whose ``quoi`` and ``pourquoi`` are ``cases[id]``."""
+        self.start_cockpit()
+        self.write_beads([escalation_bead(bead_id, quoi, pourquoi, SOME_OPTIONS, "2026-09-30T08:00:00Z")
+                          for bead_id, (quoi, pourquoi) in cases.items()])
+        payload = self.wait_for_requests(lambda p: len(p["requests"]) == len(cases))
+        return {r["id"]: [f for f in r["missing_fields"] if f in ("quoi", "pourquoi")] for r in payload["requests"]}
+
+    def test_a_clean_field_is_shown_as_written(self):
+        self.assertEqual({"af-ok01": []}, self.replaced({"af-ok01": ("une Spec attend ton accord", "elle change la portée")}))
+
+    def test_a_missing_field_is_replaced(self):
+        self.assertEqual({"af-mi01": ["pourquoi"]}, self.replaced({"af-mi01": ("une Spec attend ton accord", "")}))
+
+    def test_an_identifier_is_replaced(self):
+        self.assertEqual(
+            {"af-id01": ["quoi"], "af-id02": ["quoi"]},
+            self.replaced({"af-id01": ("voir af-is5e97 pour la suite", "elle change la portée"),
+                           "af-id02": ("cf. #300 pour le contexte", "elle change la portée")}))
+
+    def test_an_internal_term_outside_the_lexicon_is_replaced(self):
+        self.assertEqual(
+            {"af-te01": ["quoi"], "af-te02": ["quoi"], "af-te03": ["quoi"]},
+            self.replaced({"af-te01": ("le bead est bloqué", "elle change la portée"),
+                           "af-te02": ("un convoi est ouvert", "elle change la portée"),
+                           "af-te03": ("le Mayor a redémarré", "elle change la portée")}))
+
+    def test_a_line_over_140_characters_is_replaced(self):
+        self.assertEqual({"af-lo01": ["quoi"], "af-lo02": []},
+                         self.replaced({"af-lo01": ("x" * 141, "elle change la portée"),
+                                        "af-lo02": ("x" * 140, "elle change la portée")}))
+
+    def test_a_field_that_is_not_french_is_replaced(self):
+        # User story 73: the main text is in the operator's language. A
+        # sentence in English with neither an identifier nor an internal
+        # term is not French either.
+        self.assertEqual(
+            {"af-en01": ["quoi"], "af-en02": ["pourquoi"], "af-fr01": []},
+            self.replaced({
+                "af-en01": ("The export format is waiting for your choice", "le projet attend ton choix"),
+                "af-en02": ("Choisir le format d’export", "Readers want to keep their notes outside the project"),
+                "af-fr01": ("Ajouter un export des notes en CSV", "Plusieurs lecteurs le demandent"),
+            }))
 
 
 if __name__ == "__main__":

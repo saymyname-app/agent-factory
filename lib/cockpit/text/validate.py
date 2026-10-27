@@ -15,6 +15,8 @@ What it refuses:
     Mayor/Maire — spec .73, .74);
   * a line over 140 characters (spec .10, .73: readable on an iPhone
     without unfolding);
+  * a sentence that is not French (spec af-fgcw0d .73: « en français (la
+    langue de l'opérateur) »), told by its grammatical words, below;
   * an empty/missing value.
 
 A failure never raises past the caller: :func:`violations` always returns a
@@ -68,6 +70,38 @@ BANNED_INTERNAL_TERMS = frozenset(
 )
 
 
+# The grammatical words of English and of French: a sentence is told by them,
+# not by its vocabulary (« export », « session », « format » are both). A
+# field is not French when it holds English grammatical words and fewer
+# French ones -- or, on three words or more, English ones and no French one.
+# No word of one list is a word of the other language (« a », « on », « an »
+# are French too and are left out).
+_ENGLISH_WORDS = frozenset((
+    "the", "and", "is", "are", "was", "were", "of", "for", "with", "this", "that", "these", "those", "it", "its",
+    "be", "been", "not", "should", "would", "will", "has", "have", "had", "please", "from", "by", "which", "what",
+    "when", "there", "their", "they", "you", "your", "we", "our", "to", "does", "do", "can", "must", "needs",
+    "waiting", "into", "about",
+))
+_FRENCH_WORDS = frozenset((
+    "le", "la", "les", "l", "un", "une", "des", "du", "de", "d", "et", "est", "sont", "pour", "avec", "dans", "sur",
+    "ce", "cette", "ces", "qui", "que", "qu", "ne", "n", "pas", "plus", "au", "aux", "en", "il", "elle", "ils",
+    "elles", "tu", "ton", "ta", "tes", "je", "j", "nous", "vous", "son", "sa", "ses", "se", "s", "à", "où", "par",
+    "mais", "ou", "leur", "leurs", "t", "y", "c", "m",
+))
+_WORD = re.compile(r"[^\W\d_]+", re.UNICODE)
+
+
+def speaks_french(value):
+    """Whether ``value`` reads as French, as far as its grammatical words
+    tell: a text without any (« Session », « x ») is not refused."""
+    words = [word.lower() for word in _WORD.findall(value or "")]
+    english = sum(1 for word in words if word in _ENGLISH_WORDS)
+    french = sum(1 for word in words if word in _FRENCH_WORDS)
+    if english == 0:
+        return True
+    return french > english or (french > 0 and english < 2 and len(words) < 3)
+
+
 def violations(label, value, max_length=MAX_LINE_LENGTH):
     """Reasons (French, possibly empty) ``value`` fails the main-text
     control for a field displayed as ``label`` (e.g. "quoi")."""
@@ -96,7 +130,20 @@ def violations(label, value, max_length=MAX_LINE_LENGTH):
                 % (label, term)
             )
             break
+    if not speaks_french(value):
+        reasons.append("champ « %s » n'est pas en français" % label)
     return reasons
+
+
+def speaks_plainly(value):
+    """Whether ``value`` is French and holds neither an identifier nor an
+    internal term (spec .73): what may be shown as main text, whatever its
+    length or shape."""
+    if not isinstance(value, str):
+        return False
+    lowered = value.lower()
+    return speaks_french(value) and not any(pattern.search(value) for pattern in _IDENTIFIER_PATTERNS) and not any(
+        re.search(r"\b%s\b" % re.escape(term), lowered) for term in BANNED_INTERNAL_TERMS)
 
 
 def is_valid(label, value, max_length=MAX_LINE_LENGTH):
