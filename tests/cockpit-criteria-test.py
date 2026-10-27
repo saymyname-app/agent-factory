@@ -32,13 +32,36 @@ COMMANDS = ROOT / "tests" / "cockpit-criteria" / "commands"
 # fidelity judged by his eye). On a CI runner the browser measured nothing
 # (PR #683): they run where `bin/tdd-step` and a person run them, not in CI.
 FIDELITY_GLOB = "*-fidelity-test.py"
+# The end-to-end test kept in every selection: it launches a real cockpit.
+SMOKE = "isolated-launch-test.py"
+
+
+def family(path: str) -> str:
+    """The screen a criterion test file belongs to: its name up to the
+    first dash (`runs-destination-job-test.py` -> `runs`)."""
+    return Path(path).name.split("-", 1)[0]
+
+
+def selected(paths: list[Path], ticket_tests: str) -> list[Path]:
+    """At a ticket's green, `bin/tdd-step` names the ticket's own test files
+    (TDD_STEP_TICKET_TESTS): only the files of their families and the
+    end-to-end test run, as the tests a ticket can break are those of the
+    screen it changes (study C, T4, af-npz9v1.31). Run whole on 22/10/2026
+    they grew with each ticket delivered, about 9 s a class, and refused
+    green tickets at 600 s. Anything else -- a merge, CI, no name -- runs
+    every file: a break elsewhere is caught at the merge."""
+    families = {family(name) for name in ticket_tests.split()}
+    if not families:
+        return paths
+    return [path for path in paths if path.name == SMOKE or family(path.name) in families]
 
 
 def criterion_tests() -> list[str]:
     """One id per test class of each criterion test file."""
     ids = []
     skipped = set(COMMANDS.glob(FIDELITY_GLOB)) if os.environ.get("CI") else set()
-    for path in sorted(set(COMMANDS.glob("*-test.py")) - skipped):
+    paths = selected(sorted(set(COMMANDS.glob("*-test.py")) - skipped), os.environ.get("TDD_STEP_TICKET_TESTS", ""))
+    for path in paths:
         spec = importlib.util.spec_from_file_location("criterion_test", path)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)

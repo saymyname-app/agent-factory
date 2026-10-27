@@ -740,13 +740,20 @@ def check_freeze(check: Check) -> dict[str, Any]:
             "files": files}
 
 
-def regression_run(check: Check, commit: str, moment: str) -> dict[str, Any]:
+def regression_run(check: Check, commit: str, moment: str, ticket_tests: list[str] | None = None) -> dict[str, Any]:
     """One run of the profile's regression command on a clean tree of
-    `commit`; refused unless it exits 0."""
+    `commit`; refused unless it exits 0. `ticket_tests`: the files of the
+    ticket's frozen tests, given to the command as TDD_STEP_TICKET_TESTS so
+    that it may keep to what the ticket can break (study C, T4); the merge
+    (bin/spec-integration) gives none and runs it whole."""
     command = shlex.split(check.launch["regression_command"])
+    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+    env.pop("TDD_STEP_TICKET_TESTS", None)
+    if ticket_tests:
+        env["TDD_STEP_TICKET_TESTS"] = " ".join(ticket_tests)
     try:
         proc = subprocess.run(command, cwd=check.export(commit), stdin=subprocess.DEVNULL, capture_output=True,
-                              timeout=REGRESSION_TIMEOUT, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+                              timeout=REGRESSION_TIMEOUT, env=env)
     except subprocess.TimeoutExpired as exc:
         raise Refusal(f"la commande de régression n'a pas fini en {REGRESSION_TIMEOUT} s {moment}") from exc
     except OSError as exc:
@@ -814,7 +821,8 @@ def check_green(check: Check) -> dict[str, Any]:
         raise Refusal(" ; ".join(problems))
     # ADR-0030 L1: the handoff also proves the regression of the profile at
     # the tip, so a change that breaks existing tests never reaches a merge.
-    regression = [regression_run(check, check.head, "à la pointe du ticket")]
+    regression = [regression_run(check, check.head, "à la pointe du ticket",
+                                 sorted({test_id.partition("::")[0] for test_id in ids}))]
     tests = [{"id": test_id, "runs": runs[test_id], "entry_points": list(dict.fromkeys(asked[test_id])),
               "seam": seams[test_id]["name"], "seam_mode": seams[test_id]["mode"]} for test_id in ids]
     return {"step": "green", "verdict": "green", "commit": check.head, "k": k, "criteria": registry["criteria"],
