@@ -390,8 +390,12 @@ creation; in doubt, `decision`:
   itself. It mails you only when that dispatch did not go through: you then
   dispatch it with `./bin/factory-work-dispatch <bead>` as you would
   a guard-filed repair. It authorizes the correction of **that observed
-  defect only** — ADR-0017's four conditions still hold: no refactor, no
-  audit, no "while I'm here", nothing without a traced observation. A
+  defect and every occurrence of its class** (`docs/DEFECT_CLASSES.md`,
+  study B): never a fix limited to the case observed; « hors périmètre »
+  holds only for another class, or for an occurrence searched, named and
+  handed to a Bead in the pull request's `Où ailleurs :` line.
+  ADR-0017's four conditions still hold: no refactor, no audit without a
+  defect, nothing without a traced observation. A
   maintenance bead with no observed defect behind it is a violation of
   ADR-0017, not work.
 - `decision` — changes what Benjamin sees or must do, a method rule (the

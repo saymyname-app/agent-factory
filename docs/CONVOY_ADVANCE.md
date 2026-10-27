@@ -373,8 +373,24 @@ A review without result is most often a defect of the factory (T59 and T62R,
 af-epkrcv). Every other stop — `evaluation_outage`, `amendment_exhausted`, a
 ticket still refused — is never resumed.
 
-A `behind` resume is counted like the others (K; the third parks the
-ticket), and, unlike them, it is counted even when the ceiling N is reached
+A `behind` resume is recorded like the others (an entry, one more
+`resumes`, a fresh author session) but **K does not count it**: the
+integration branch moved because another ticket merged, an event of the
+factory, not of the ticket. Intent (Benjamin, his words, 27/10/2026 16:27
+Paris): « Oui : une mise à jour behind causée par l'usine ne compte plus dans les reprises d'un ticket. » Before, 15:45 Paris: « oui les 6 », whose point 3 read « Un ticket a droit à 3 reprises
+par cause […] une simple remise à jour, quand d'autres tickets ont fusionné
+avant lui, compte comme une reprise […] a (recommandé) : ne plus compter ces
+remises à jour. » Mechanism (agent interpretation, af-npz9v1.36): the first
+`behind` resume on each tip of the integration branch (the `<tip>` of its
+fact) is free; a second one on a tip already resumed for means the author
+finished without taking it, and is counted against `bounds.resumes.behind`
+(3): a ticket that never takes the tip is still parked, its detail saying
+« behind : une même pointe d'intégration reprise sans être prise ». A tip
+moves only when a ticket or a repair merges, so the free resumes are
+finite. Ticket D (`af-ten1sp`) was parked on 23/10 at 17:36 Paris after 8
+resumes, each merge of another ticket costing it one.
+
+Unlike the other resumes, a `behind` one is recorded even when the ceiling N is reached
 and its session has to wait for a later pass (`waiting`, « reprise (behind)
 : plafond N=… atteint »): with the Ticket Exit taken back, neither the code
 review nor the Ticket Evaluation is sent on the old tip meanwhile. Its
@@ -1276,7 +1292,8 @@ closing of its Spec and its draft replayed.
 
 **What it leaves open.**
 
-- The merge is made inside the pass, under the 30 min timeout of the order;
+- The merge is made inside the pass, under the timeout of the order (40 min, derived from
+  `config/test-budgets.json`);
   a replay of the mechanical controls killed there is taken up by the next
   pass (`docs/OUTCOME_PROMOTE.md`, Limits).
 - Once an answer that ends the judgement stands, `settle_acceptance` no
