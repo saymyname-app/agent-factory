@@ -163,6 +163,40 @@ def serve_synthetic_supervisor(
     shutil.rmtree(home, ignore_errors=True)
 
 
+# A host restarted during a stop (af-npz9v1.21, for H af-69qhlk): the
+# stop was asked this long before the launch, which is the restart.
+STOP_ASKED_BEFORE_RESTART_SECONDS = 10 * 60
+
+
+def read_restart(path: Path) -> bool:
+    """Whether the dataset at `path` says the host restarted during a stop
+    (`host_restarted_during_stop`); exits when it is not true or false."""
+    restarted = json.loads(path.read_text(encoding="utf-8")).get("host_restarted_during_stop", False)
+    if not isinstance(restarted, bool):
+        sys.exit(f"cockpit-isolated: {path}: host_restarted_during_stop is true or false")
+    return restarted
+
+
+def write_stop(restarted: bool, city: synthetic_city.SyntheticCity, home: str) -> dict[str, str]:
+    """The state of the clean stop the cockpit starts from, in `home`, and
+    the environment that makes it read it every second. A host restarted
+    during a stop (`read_restart`) leaves it as it was: a stop asked ten
+    minutes before, the tickets in flight then (the photo: the tracker of
+    the launch), the cockpit restarted since. The stop driver then reads the
+    supervisor: unsuspended, as after a reboot, it is « Arrêt interrompu »
+    with the tickets whose assignment changed; still suspended, the stop
+    goes on."""
+    state = Path(home, "cockpit-stop-state.json")
+    if restarted:
+        asked = time.time() - STOP_ASKED_BEFORE_RESTART_SECONDS
+        photo = {bead["id"]: {"status": bead.get("status"),
+                              "assignee": (bead.get("metadata") or {}).get("gc.session_name") or bead.get("assignee")}
+                 for bead in city.beads if isinstance(bead, dict) and bead.get("id")}
+        state.write_text(json.dumps({"state": "arret_en_cours", "started_at": asked, "last_progress_at": asked,
+                                     "snapshot": {"beads": photo}}), encoding="utf-8")
+    return {"COCKPIT_STOP_STATE_FILE": str(state), "COCKPIT_STOP_TICK_SECONDS": POLL_SECONDS}
+
+
 def write_doors(answers: dict[str, str], home: str) -> dict[str, str]:
     """The doors of the launch, in `home`: each the real door, or the way
     the dataset says it answers; the environment that makes the cockpit
@@ -218,6 +252,7 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     city = read_city(Path(args.dataset))
     doors = read_doors(Path(args.dataset))
+    restarted = read_restart(Path(args.dataset))
     cockpit_url = f"http://127.0.0.1:{args.port}"
 
     home = tempfile.mkdtemp(prefix="cockpit-isolated-")
@@ -261,6 +296,7 @@ def main(argv: list[str]) -> int:
     }
     if LAUNCH_MARK in os.environ:
         env[LAUNCH_MARK] = os.environ[LAUNCH_MARK]
+    env.update(write_stop(restarted, city, home))
     if city.reading == synthetic_city.READ_ONCE:
         env["COCKPIT_VALIDITY_GC_SECONDS"] = SILENT_VALIDITY_SECONDS
     os.execve(sys.executable, [sys.executable, str(ROOT / "bin" / "cockpit"), "run"], env)
