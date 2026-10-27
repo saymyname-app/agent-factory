@@ -175,6 +175,52 @@ def serve_synthetic_supervisor(
 STOP_ASKED_BEFORE_RESTART_SECONDS = 10 * 60
 
 
+def read_https(path: Path) -> bool:
+    """Whether the dataset at `path` puts the cockpit behind the synthetic
+    identity proxy (`https_identity_proxy`); exits when it is not true or
+    false."""
+    https = json.loads(path.read_text(encoding="utf-8")).get("https_identity_proxy", False)
+    if not isinstance(https, bool):
+        sys.exit(f"cockpit-isolated: {path}: https_identity_proxy is true or false")
+    return https
+
+
+def start_identity_proxy(cockpit_port: int, home: str, held: list[int]) -> dict[str, str]:
+    """The synthetic identity proxy in front of the cockpit (af-npz9v1.22,
+    for I af-cp4fzd; `tests/fixtures/cockpit/synthetic-city/identity_proxy.py`):
+    HTTPS on 127.0.0.1 with a certificate of the launch, as Tailscale Serve
+    is in service. It lives until the cockpit ends; `held` are the ends of
+    the other pipes it must not keep open. The environment says its address
+    and the authority to trust (COCKPIT_TRIAL_HTTPS_URL, _CA), and makes its
+    origin the cockpit's own, as behind Serve."""
+    announce_read, announce_write = os.pipe()
+    alive_read, alive_write = os.pipe()
+    if os.fork() == 0:
+        os.close(announce_read)
+        os.close(alive_write)
+        for fd in held:
+            os.close(fd)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        try:
+            sys.path.insert(0, str(SYNTHETIC))
+            import identity_proxy
+
+            identity_proxy.serve(cockpit_port, home, announce_write, alive_read)
+        finally:
+            os._exit(0)
+    os.close(announce_write)
+    os.close(alive_read)
+    with os.fdopen(announce_read, "rb") as announced:
+        url = announced.read().decode("ascii")
+    if not url:
+        sys.exit("cockpit-isolated: the synthetic identity proxy did not start")
+    # Kept open by the cockpit for as long as it lives, and by nothing else.
+    os.set_inheritable(alive_write, True)
+    return {"COCKPIT_ALLOWED_ORIGIN": url, "COCKPIT_TRIAL_HTTPS_URL": url,
+            "COCKPIT_TRIAL_HTTPS_CA": os.path.join(home, "https", "cert.pem")}
+
+
 def read_restart(path: Path) -> bool:
     """Whether the dataset at `path` says the host restarted during a stop
     (`host_restarted_during_stop`); exits when it is not true or false."""
@@ -374,6 +420,7 @@ def main(argv: list[str]) -> int:
     city = read_city(Path(args.dataset))
     doors = read_doors(Path(args.dataset))
     restarted = read_restart(Path(args.dataset))
+    https = read_https(Path(args.dataset))
     cockpit_url = f"http://127.0.0.1:{args.port}"
 
     home = tempfile.mkdtemp(prefix="cockpit-isolated-")
@@ -418,6 +465,8 @@ def main(argv: list[str]) -> int:
     if LAUNCH_MARK in os.environ:
         env[LAUNCH_MARK] = os.environ[LAUNCH_MARK]
     env.update(write_stop(restarted, city, home))
+    if https:
+        env.update(start_identity_proxy(args.port, home, [alive_write]))
     if city.reading == synthetic_city.READ_ONCE:
         env["COCKPIT_VALIDITY_GC_SECONDS"] = SILENT_VALIDITY_SECONDS
     os.execve(sys.executable, [sys.executable, str(ROOT / "bin" / "cockpit"), "run"], env)
