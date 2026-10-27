@@ -70,6 +70,15 @@ cites the decision, stopped ticket, convoy, approved Spec/digest, criteria,
 scope and useful commit. It never edits or closes the stopped ticket, never
 removes `gc.flow.stop`, never publishes the patch and never launches work.
 
+The useful commit is what the replacement starts with: the draft records it
+as `replacement_commit`, and once the patch is published and the replacement
+started, `bin/ticket-author start` creates `ticket/<replacement>` at that
+commit and merges the tip of the integration branch into it; on a conflict
+the branch stays at the useful commit and its author merges first
+(`docs/TICKET_AUTHOR.md`). Before af-npz9v1.24 nothing read it: BR
+(af-eyc5ah, 25/10/2026) started at the integration tip without the work of B
+(5169bb09). A replacement whose branch already existed then is not moved.
+
 Human and agent entry is the same command, from the live Factory root:
 
 ```bash

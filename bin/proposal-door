@@ -263,7 +263,7 @@ take_over_maintenance() {
   options=$(jq -r '.[] | "- \(.lettre). \(.option) — \(.consequence)"' <<<"$que_faire")
   description="$pourquoi
 
-Proposition $proposal, classe $CLASSE_MAINTENANCE, autorisée par $AUTHORIZING_ADR : corriger ce défaut constaté, rien d'autre (ADR-0017 : pas de refactor, d'audit ni de « pendant que j'y suis »).
+Proposition $proposal, classe $CLASSE_MAINTENANCE, autorisée par $AUTHORIZING_ADR : corriger ce défaut constaté et toutes ses occurrences de la même catégorie (docs/DEFECT_CLASSES.md), avec un contrôle qui tient la catégorie ; ne jamais limiter la correction au cas observé ; « hors périmètre » ne vaut que pour une autre catégorie, ou pour une occurrence cherchée, nommée et confiée à un Bead dans « Où ailleurs : ». Avant de coder : bin/factory-fix-preflight --class <code> <chemins>. La PR écrit « Catégorie : », « Où ailleurs : » et « Contrôle de catégorie : » (docs/DELIVERY.md). ADR-0017 tient toujours : pas de refactor ni d'audit sans défaut constaté.
 Options proposées :
 $options
 

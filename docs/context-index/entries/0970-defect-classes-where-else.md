@@ -1,0 +1,2 @@
+Need: A Factory fix: its defect class, where else the defect is, the three lines of its pull request, recurrences by class
+Read: `DEFECT_CLASSES.md` (the register: invariant, control, occurrences known and open), `DELIVERY.md` (« Where else? »: `../bin/factory-fix-preflight --class <code>`, the lines `Catégorie :`, `Où ailleurs :`, `Contrôle de catégorie :` that `pr-autopilot` reads, `python3 ../lib/defect_classes.py count --since <date>`)

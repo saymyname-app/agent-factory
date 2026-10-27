@@ -410,6 +410,82 @@ class TicketAuthorTest(unittest.TestCase):
         self.assertEqual("main", self.git("symbolic-ref", "--short", "HEAD"))
         self.assertEqual("La page d'accueil affiche 3", answer["demonstration_line"])
 
+    # --- a replacement starts with its useful commit (af-npz9v1.24) -------------
+
+    def replacement(self, files, cite=True):
+        """T1 made the replacement of a stopped ticket whose handoff commit,
+        on its own branch left from `main`, adds `files`: the draft that
+        published T1 records it (bin/replacement-draft) and, when `cite`,
+        T1's text cites it. Returns the useful commit."""
+        self.git("checkout", "-q", "-b", "ticket/fx-old", self.main)
+        useful = self.commit("le travail utile du ticket remplacé", files)
+        self.git("checkout", "-q", "main")
+        state = json.loads(self.tracker.read_text())
+        state["beads"]["fx-draft"] = {"title": "Replacement BR for B", "status": "open", "issue_type": "task",
+                                      "metadata": {"replacement_commit": useful, "replacement_of": "fx-old"}}
+        ticket = state["beads"][T1]
+        ticket["metadata"]["gc.artifact_id"] = "fx-draft"
+        if cite:
+            ticket["description"] += f"\n\nAuthorized replacement: useful commit {useful}."
+        self.tracker.write_text(json.dumps(state))
+        return useful
+
+    def test_a_replacement_starts_at_its_useful_commit_caught_up_on_the_integration_branch(self):
+        useful = self.replacement({"USEFUL.md": "le travail de B\n"})
+
+        answer, worktree = self.start(real=True)
+
+        head = self.git("rev-parse", "HEAD", repo=worktree)
+        self.assertEqual([useful, self.integration], self.git("rev-list", "--parents", "-n", "1", head).split()[1:])
+        self.assertTrue((worktree / "USEFUL.md").is_file())
+        self.assertTrue((worktree / "MERGED.md").is_file())
+        self.assertEqual(head, answer["base"])
+        self.assertEqual({"useful_commit": useful, "caught_up": True, "conflicts": []}, answer["replacement"])
+        self.gate("workspace")
+        # Run again after a commit of the author: the same start commit.
+        self.commit("un test de critère", {f"{TESTS}/test_more.py": "# plus\n"}, repo=worktree)
+        again = self.ok("start", CONVOY, T1, session=SESSION)
+        self.assertEqual(head, again["base"])
+        self.assertTrue(again["replacement"]["caught_up"])
+
+    def test_a_replacement_whose_catch_up_conflicts_stays_at_its_useful_commit_and_names_the_conflict(self):
+        useful = self.replacement({"MERGED.md": "une autre version\n"})
+
+        answer, worktree = self.start(real=True)
+
+        self.assertEqual(useful, self.git("rev-parse", "HEAD", repo=worktree))
+        self.assertEqual("", self.git("status", "--porcelain", repo=worktree))
+        self.assertEqual({"useful_commit": useful, "caught_up": False, "conflicts": ["MERGED.md"]},
+                         answer["replacement"])
+        self.assertEqual(useful, answer["base"])
+        self.gate("workspace")
+
+    def test_a_ticket_the_replacement_draft_republished_without_citing_a_useful_commit_starts_at_the_integration_tip(self):
+        self.replacement({"USEFUL.md": "le travail de B\n"}, cite=False)
+
+        answer, worktree = self.start(real=True)
+
+        self.assertEqual(self.integration, self.git("rev-parse", "HEAD", repo=worktree))
+        self.assertIsNone(answer["replacement"])
+
+    def test_the_useful_commit_is_read_where_replacement_draft_writes_it(self):
+        # The writer and its reader hold one rule (defect class R): the key
+        # on the draft and the sentence in the ticket's text.
+        writer = (ROOT / "bin" / "replacement-draft").read_text()
+        self.assertIn('"replacement_commit": args.useful_commit', writer)
+        self.assertIn("useful commit {args.useful_commit}", writer)
+
+    def test_a_replacement_whose_useful_commit_cannot_be_found_is_refused_without_writing(self):
+        state = json.loads(self.tracker.read_text())
+        missing = "ab" * 20
+        state["beads"]["fx-draft"] = {"title": "Replacement BR for B", "status": "open", "issue_type": "task",
+                                      "metadata": {"replacement_commit": missing}}
+        state["beads"][T1]["metadata"]["gc.artifact_id"] = "fx-draft"
+        state["beads"][T1]["description"] += f"\n\nuseful commit {missing}."
+        self.tracker.write_text(json.dumps(state))
+
+        self.refused("start", CONVOY, T1, session=SESSION, mention="commit utile")
+
     def test_start_exposes_an_interface_ticket_to_its_formula(self):
         tracker = json.loads(self.tracker.read_text())
         tracker["beads"][T1]["description"] += "\n\n## Validated Prototype\n\n- branche : prototype/interface\n- commit : " + self.main + "\n- chemin : prototype.html\n- états : accueil\n"

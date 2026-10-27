@@ -3140,6 +3140,43 @@ class ConvoyStateTest(unittest.TestCase):
                          ticket["resumes_left_by_cause"])
         self.assertEqual(["interrupted", "returned", "unblocked"], [e["cause"] for e in ticket["resume"]["entries"]])
 
+    def test_a_behind_resume_on_each_new_integration_tip_is_recorded_but_not_counted(self):
+        # af-npz9v1.36: ticket D (af-ten1sp) was parked after 8 resumes, each
+        # merge of another ticket moving the integration branch it had to take.
+        self.interrupted_ticket()
+        for n in range(8):
+            self.ok("open-resume", CONVOY, T1, "--cause", "behind", "--ref", f"integration:{n:040x}/exit:{n}")
+
+        ticket = self.ticket(self.show(), T1)
+
+        self.assertEqual(8, ticket["counters"]["resumes"])
+        self.assertEqual(["behind"] * 8, [e["cause"] for e in ticket["resume"]["entries"]])
+        self.assertEqual((3, 3), (ticket["resumes_left"], ticket["resumes_left_by_cause"]["behind"]))
+        self.assert_refused_and_nothing_written(
+            "park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "x", mention="reprises")
+
+    def test_a_second_behind_resume_on_a_tip_already_resumed_for_is_counted_up_to_the_bound(self):
+        # The guard: the author finished without taking the tip it was sent
+        # back for; a ticket that never takes it is still parked.
+        self.interrupted_ticket()
+        tip = "a" * 40
+        self.ok("open-resume", CONVOY, T1, "--cause", "behind", "--ref", f"integration:{tip}/exit:1")
+        self.assertEqual(3, self.ticket(self.show(), T1)["resumes_left_by_cause"]["behind"])
+        self.ok("open-resume", CONVOY, T1, "--cause", "behind", "--ref", f"integration:{tip}/exit:2")
+        # A fact that names no tip is counted.
+        self.ok("open-resume", CONVOY, T1, "--cause", "behind", "--ref", "exit:3")
+        self.assertEqual(1, self.ticket(self.show(), T1)["resumes_left_by_cause"]["behind"])
+        self.ok("open-resume", CONVOY, T1, "--cause", "behind", "--ref", f"integration:{tip}/exit:4")
+
+        ticket = self.ticket(self.show(), T1)
+
+        self.assertEqual((4, 0, 0), (ticket["counters"]["resumes"], ticket["resumes_left"],
+                                     ticket["resumes_left_by_cause"]["behind"]))
+        self.assert_refused_and_nothing_written(
+            "open-resume", CONVOY, T1, "--cause", "behind", "--ref", f"integration:{'b' * 40}/exit:5",
+            mention="reprises épuisées")
+        self.ok("park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "behind")
+
     def test_an_interruption_a_correction_round_and_a_red_merge_do_not_park_the_ticket(self):
         # The af-ltchro case: interrupted, corrected, returned by a red merge.
         self.interrupted_ticket()

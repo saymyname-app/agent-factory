@@ -65,6 +65,14 @@ Prototype Fold (`prototype_fold`), established it first. An in-place ticket
 that is not delivered is not merged: consuming its work without waiting for
 it stays undemonstrable.
 
+**A revision judges only what it changes.** For a ticket already published
+(or the ticket a replacement replaces), the brief carries `revision`: the
+published ticket it is compared to (`compared_to`), the fields it changes
+(`changed`), and the questions already ruled on the unchanged fields
+(`carried`, with the ruling). Those are not yours to answer again: `checks`
+lists only the questions left, and a ticket with no question left needs no
+answer. Judge the asked questions on what changed.
+
 **2. Answer every question, one ticket at a time:**
 
 Per ticket:
