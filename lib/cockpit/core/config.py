@@ -107,18 +107,6 @@ class Config:
         self.loop_guard_bin = env.get(
             "COCKPIT_LOOP_GUARD_BIN", os.path.join(_REPO_ROOT, "bin", "factory-session-loop-guard")
         )
-        # The settings and the upkeep of the Factory (G2, af-f8nlhr): the
-        # isolated cockpit points them at what its launch holds
-        # (bin/cockpit-isolated, af-npz9v1.20).
-        self.provider_failover_bin = env.get(
-            "COCKPIT_PROVIDER_FAILOVER_BIN", os.path.join(_REPO_ROOT, "bin", "provider-failover")
-        )
-        self.factory_maintain_bin = env.get(
-            "COCKPIT_FACTORY_MAINTAIN_BIN", os.path.join(_REPO_ROOT, "bin", "factory-maintain")
-        )
-        self.operator_config_bin = env.get(
-            "COCKPIT_OPERATOR_CONFIG_BIN", os.path.join(_REPO_ROOT, "bin", "operator-config")
-        )
         self.gc_bin = env.get("COCKPIT_GC_BIN", "gc")
         # Notifications and heartbeat (spec §"Notifications", §"Heartbeat et
         # usine muette"). Both secret files live outside the repository, on
