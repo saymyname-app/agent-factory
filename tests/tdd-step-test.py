@@ -681,6 +681,31 @@ class TddStepTest(unittest.TestCase):
         self.assertIn("pas un échec du ticket", error)
         self.assertNotIn("en échec", error)
 
+    def ticket_tests_seen(self, out):
+        lines = [line for line in out.read_text().splitlines() if line.startswith("TDD_STEP_TICKET_TESTS=")]
+        return lines[0].partition("=")[2].split() if lines else None
+
+    def test_green_names_the_files_of_the_ticket_s_frozen_tests_to_the_regression(self):
+        """Study C, T4: the regression at green may keep to what the ticket
+        can break; it is told which tests are the ticket's."""
+        self.frozen()
+        self.commit("code du ticket", {APP: self.green_app()})
+        out = self.tmp / "regression-env"
+
+        self.ok("green", profile=self.descriptor(regression_command=f"sh -c 'env > {out}'"))
+
+        self.assertEqual(sorted({COUNT_FILE, HEALTH_FILE}), self.ticket_tests_seen(out))
+
+    def test_prefactoring_names_no_ticket_tests_to_the_regression(self):
+        self.commit("rendu rangé", {APP: self.refactored_app(), f"{TESTS}/test_caracterisation.py": "import unittest\n"})
+        out = self.tmp / "regression-env"
+        env = {**self.env, "TDD_STEP_TICKET_TESTS": "inherited/from-the-caller-test.py"}
+
+        self.ok("prefactoring", PREFACTORING, "--base", self.base, env=env,
+                profile=self.descriptor(regression_command=f"sh -c 'env > {out}'"))
+
+        self.assertIsNone(self.ticket_tests_seen(out))
+
     def test_green_runs_the_tests_3_times_when_the_profile_declares_no_k(self):
         self.frozen()
         self.commit("code du ticket", {APP: self.green_app()})

@@ -156,7 +156,11 @@ of HEAD (ADR-0030 L1): a non-zero exit is « commande de régression en échec
 fixes the code in the same session and runs `green` again. An exit 75 is
 the command's NOT RUN (« commande de régression non exécutée », the host
 busy past its wait or its budget spent): also a plain refusal, which says
-it is no failure of the ticket; run `green` again. The regression has
+it is no failure of the ticket; run `green` again. At `green` only, the
+command gets the files of the ticket's frozen tests in
+`TDD_STEP_TICKET_TESTS` and may keep to what the ticket can break: the
+cockpit's runs its fast tests, the end-to-end launch and the criterion
+tests of the ticket's families (study C, T4); the merge runs it whole. The regression has
 1260 s (`REGRESSION_TIMEOUT`); each criterion test keeps its 600 s. A change that
 keeps its criterion tests green but breaks existing tests is caught at the
 author's handoff (the `code` gate of `bin/ticket-author` asks for `green` at
