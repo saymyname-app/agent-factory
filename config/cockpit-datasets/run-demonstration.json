@@ -1,0 +1,451 @@
+{
+ "generated_at": "2026-10-22T12:00:00+02:00",
+ "synthetic": true,
+ "ui": {
+  "id": "run-demonstration"
+ },
+ "tracker": {
+  "beads": {
+   "af-r2conv": {
+    "title": "Notes partagées",
+    "issue_type": "convoy",
+    "status": "open",
+    "created_at": "2026-10-22T10:00:00Z",
+    "created_by": "benjamin",
+    "metadata": {
+     "gc.flow.mark": "new-flow/v1",
+     "gc.graph_digest": "sha256:r2-graph",
+     "gc.project_id": "agent-factory",
+     "gc.spec_id": "af-r2spec"
+    }
+   },
+   "af-r2t1": {
+    "title": "N1 — Recherche dans les notes",
+    "issue_type": "task",
+    "status": "open",
+    "created_at": "2026-10-22T10:00:00Z",
+    "metadata": {
+     "gc.flow.mark": "new-flow/v1",
+     "gc.graph_digest": "sha256:r2-graph",
+     "gc.ticket_id": "N1",
+     "gc.flow.gate.dispatch": "{\"at\": \"2026-10-22T10:01:00Z\"}",
+     "gc.flow.models": "{\"author\": {\"agent\": \"delivery-author\", \"at\": \"2026-10-22T10:01:00Z\", \"model\": \"claude-opus-5-5\", \"provider\": \"claude-standard\"}}",
+     "gc.flow.stop": "{\"at\": \"2026-10-22T10:15:00Z\", \"reason\": \"technically_blocked\", \"detail\": \"Le produit ne d\\u00e9marre pas au commit de d\\u00e9part\"}"
+    }
+   },
+   "af-r2t2": {
+    "title": "N2 — Export des notes",
+    "issue_type": "task",
+    "status": "open",
+    "created_at": "2026-10-22T10:00:00Z",
+    "metadata": {
+     "gc.flow.mark": "new-flow/v1",
+     "gc.graph_digest": "sha256:r2-graph",
+     "gc.ticket_id": "N2",
+     "gc.flow.gate.dispatch": "{\"at\": \"2026-10-22T10:02:00Z\"}",
+     "gc.flow.models": "{\"author\": {\"agent\": \"delivery-author\", \"at\": \"2026-10-22T10:02:00Z\", \"model\": \"claude-opus-5-5\", \"provider\": \"claude-standard\"}}",
+     "gc.flow.verdict.fidelity": "{\"at\": \"2026-10-22T10:18:00Z\", \"commit\": \"5b2b3bd\", \"state\": \"unfavorable\"}"
+    }
+   },
+   "af-r2t3": {
+    "title": "N3 — Partage des notes",
+    "issue_type": "task",
+    "status": "open",
+    "created_at": "2026-10-22T10:00:00Z",
+    "metadata": {
+     "gc.flow.mark": "new-flow/v1",
+     "gc.graph_digest": "sha256:r2-graph",
+     "gc.ticket_id": "N3",
+     "gc.flow.gate.dispatch": "{\"at\": \"2026-10-22T10:20:00Z\"}",
+     "gc.flow.models": "{\"author\": {\"agent\": \"delivery-author\", \"at\": \"2026-10-22T10:20:00Z\", \"model\": \"claude-opus-5-5\", \"provider\": \"claude-standard\"}}",
+     "gc.escalation_horodatage": "2026-10-22T10:25:00Z",
+     "gc.escalation_pourquoi": "Quel format de lien garder ?"
+    }
+   },
+   "af-wisp-r2s1": {
+    "title": "delivery-author-1",
+    "issue_type": "session",
+    "status": "closed",
+    "created_at": "2026-10-22T10:01:00Z",
+    "closed_at": "2026-10-22T10:15:00Z",
+    "close_reason": "session drained: pool slot retired by reconciler",
+    "labels": [
+     "agent:delivery-author-1",
+     "gc:session"
+    ],
+    "metadata": {
+     "agent_name": "delivery-author-1",
+     "template": "delivery-author",
+     "provider": "claude-standard",
+     "session_name": "delivery-author-af-wisp-r2s1",
+     "pool_slot": "1"
+    }
+   },
+   "af-wisp-r2s2": {
+    "title": "delivery-author-2",
+    "issue_type": "session",
+    "status": "closed",
+    "created_at": "2026-10-22T10:02:00Z",
+    "closed_at": "2026-10-22T10:14:00Z",
+    "close_reason": "session drained: pool slot retired by reconciler",
+    "labels": [
+     "agent:delivery-author-2",
+     "gc:session"
+    ],
+    "metadata": {
+     "agent_name": "delivery-author-2",
+     "template": "delivery-author",
+     "provider": "claude-standard",
+     "session_name": "delivery-author-af-wisp-r2s2",
+     "pool_slot": "2"
+    }
+   },
+   "af-wisp-r2s3": {
+    "title": "delivery-author-1",
+    "issue_type": "session",
+    "status": "closed",
+    "created_at": "2026-10-22T10:20:00Z",
+    "closed_at": "2026-10-22T10:35:00Z",
+    "close_reason": "session drained: pool slot retired by reconciler",
+    "labels": [
+     "agent:delivery-author-1",
+     "gc:session"
+    ],
+    "metadata": {
+     "agent_name": "delivery-author-1",
+     "template": "delivery-author",
+     "provider": "claude-standard",
+     "session_name": "delivery-author-af-wisp-r2s3",
+     "pool_slot": "1"
+    }
+   },
+   "af-r2w1-input": {
+    "title": "input convoy for af-r2t1",
+    "issue_type": "convoy",
+    "status": "open",
+    "created_at": "2026-10-22T10:01:00Z",
+    "metadata": {
+     "gc.synthetic": "true"
+    },
+    "dependencies": [
+     {
+      "issue_id": "af-r2w1-input",
+      "depends_on_id": "af-r2t1",
+      "type": "tracks"
+     }
+    ]
+   },
+   "af-r2w1": {
+    "title": "mol-ticket-author",
+    "issue_type": "task",
+    "status": "in_progress",
+    "created_at": "2026-10-22T10:01:00Z",
+    "metadata": {
+     "gc.kind": "workflow",
+     "gc.formula_name": "mol-ticket-author",
+     "gc.input_convoy_id": "af-r2w1-input",
+     "gc.routed_to": "delivery-author",
+     "gc.step_id": "mol-ticket-author"
+    }
+   },
+   "af-r2w1-workspace": {
+    "title": "workspace",
+    "issue_type": "task",
+    "status": "closed",
+    "created_at": "2026-10-22T10:01:00Z",
+    "closed_at": "2026-10-22T10:03:00Z",
+    "metadata": {
+     "gc.kind": "ralph",
+     "gc.check_mode": "exec",
+     "gc.root_bead_id": "af-r2w1",
+     "gc.step_id": "workspace",
+     "gc.routed_to": "core.control-dispatcher",
+     "gc.outcome": "pass"
+    }
+   },
+   "af-r2w1-workspace-attempt-1": {
+    "title": "workspace",
+    "issue_type": "task",
+    "status": "closed",
+    "created_at": "2026-10-22T10:01:00Z",
+    "closed_at": "2026-10-22T10:03:00Z",
+    "assignee": "af-wisp-r2s1",
+    "metadata": {
+     "gc.logical_bead_id": "af-r2w1-workspace",
+     "gc.root_bead_id": "af-r2w1",
+     "gc.attempt": "1",
+     "gc.step_id": "workspace",
+     "gc.ralph_step_id": "workspace",
+     "gc.control_for": "workspace",
+     "gc.routed_to": "delivery-author",
+     "gc.session_id": "af-wisp-r2s1",
+     "gc.session_name": "delivery-author-af-wisp-r2s1",
+     "gc.claimed_at": "2026-10-22T10:01:00Z",
+     "gc.outcome": "pass"
+    }
+   },
+   "af-r2w1-red": {
+    "title": "red",
+    "issue_type": "task",
+    "status": "closed",
+    "created_at": "2026-10-22T10:03:00Z",
+    "closed_at": "2026-10-22T10:11:00Z",
+    "metadata": {
+     "gc.kind": "ralph",
+     "gc.check_mode": "exec",
+     "gc.root_bead_id": "af-r2w1",
+     "gc.step_id": "red",
+     "gc.routed_to": "core.control-dispatcher",
+     "gc.outcome": "pass"
+    }
+   },
+   "af-r2w1-red-attempt-1": {
+    "title": "red",
+    "issue_type": "task",
+    "status": "closed",
+    "created_at": "2026-10-22T10:03:00Z",
+    "closed_at": "2026-10-22T10:11:00Z",
+    "assignee": "af-wisp-r2s1",
+    "metadata": {
+     "gc.logical_bead_id": "af-r2w1-red",
+     "gc.root_bead_id": "af-r2w1",
+     "gc.attempt": "1",
+     "gc.step_id": "red",
+     "gc.ralph_step_id": "red",
+     "gc.control_for": "red",
+     "gc.routed_to": "delivery-author",
+     "gc.session_id": "af-wisp-r2s1",
+     "gc.session_name": "delivery-author-af-wisp-r2s1",
+     "gc.claimed_at": "2026-10-22T10:03:00Z",
+     "gc.outcome": "pass"
+    }
+   },
+   "af-r2w2-input": {
+    "title": "input convoy for af-r2t2",
+    "issue_type": "convoy",
+    "status": "open",
+    "created_at": "2026-10-22T10:02:00Z",
+    "metadata": {
+     "gc.synthetic": "true"
+    },
+    "dependencies": [
+     {
+      "issue_id": "af-r2w2-input",
+      "depends_on_id": "af-r2t2",
+      "type": "tracks"
+     }
+    ]
+   },
+   "af-r2w2": {
+    "title": "mol-ticket-author",
+    "issue_type": "task",
+    "status": "in_progress",
+    "created_at": "2026-10-22T10:02:00Z",
+    "metadata": {
+     "gc.kind": "workflow",
+     "gc.formula_name": "mol-ticket-author",
+     "gc.input_convoy_id": "af-r2w2-input",
+     "gc.routed_to": "delivery-author",
+     "gc.step_id": "mol-ticket-author"
+    }
+   },
+   "af-r2w2-workspace": {
+    "title": "workspace",
+    "issue_type": "task",
+    "status": "closed",
+    "created_at": "2026-10-22T10:02:00Z",
+    "closed_at": "2026-10-22T10:06:00Z",
+    "metadata": {
+     "gc.kind": "ralph",
+     "gc.check_mode": "exec",
+     "gc.root_bead_id": "af-r2w2",
+     "gc.step_id": "workspace",
+     "gc.routed_to": "core.control-dispatcher",
+     "gc.outcome": "pass"
+    }
+   },
+   "af-r2w2-workspace-attempt-1": {
+    "title": "workspace",
+    "issue_type": "task",
+    "status": "closed",
+    "created_at": "2026-10-22T10:02:00Z",
+    "closed_at": "2026-10-22T10:06:00Z",
+    "assignee": "af-wisp-r2s2",
+    "metadata": {
+     "gc.logical_bead_id": "af-r2w2-workspace",
+     "gc.root_bead_id": "af-r2w2",
+     "gc.attempt": "1",
+     "gc.step_id": "workspace",
+     "gc.ralph_step_id": "workspace",
+     "gc.control_for": "workspace",
+     "gc.routed_to": "delivery-author",
+     "gc.session_id": "af-wisp-r2s2",
+     "gc.session_name": "delivery-author-af-wisp-r2s2",
+     "gc.claimed_at": "2026-10-22T10:02:00Z",
+     "gc.outcome": "pass"
+    }
+   },
+   "af-r2w2-scope": {
+    "title": "Contrôle du périmètre",
+    "issue_type": "task",
+    "status": "closed",
+    "created_at": "2026-10-22T10:04:00Z",
+    "closed_at": "2026-10-22T10:05:00Z",
+    "metadata": {
+     "gc.kind": "check",
+     "gc.root_bead_id": "af-r2w2",
+     "gc.outcome": "pass"
+    }
+   },
+   "af-r2w2-red": {
+    "title": "red",
+    "issue_type": "task",
+    "status": "closed",
+    "created_at": "2026-10-22T10:06:00Z",
+    "closed_at": "2026-10-22T10:13:00Z",
+    "metadata": {
+     "gc.kind": "ralph",
+     "gc.check_mode": "exec",
+     "gc.root_bead_id": "af-r2w2",
+     "gc.step_id": "red",
+     "gc.routed_to": "core.control-dispatcher",
+     "gc.outcome": "pass"
+    }
+   },
+   "af-r2w2-red-attempt-1": {
+    "title": "red",
+    "issue_type": "task",
+    "status": "closed",
+    "created_at": "2026-10-22T10:06:00Z",
+    "closed_at": "2026-10-22T10:13:00Z",
+    "assignee": "af-wisp-r2s2",
+    "metadata": {
+     "gc.logical_bead_id": "af-r2w2-red",
+     "gc.root_bead_id": "af-r2w2",
+     "gc.attempt": "1",
+     "gc.step_id": "red",
+     "gc.ralph_step_id": "red",
+     "gc.control_for": "red",
+     "gc.routed_to": "delivery-author",
+     "gc.session_id": "af-wisp-r2s2",
+     "gc.session_name": "delivery-author-af-wisp-r2s2",
+     "gc.claimed_at": "2026-10-22T10:06:00Z",
+     "gc.outcome": "pass"
+    }
+   },
+   "af-r2w3-input": {
+    "title": "input convoy for af-r2t3",
+    "issue_type": "convoy",
+    "status": "open",
+    "created_at": "2026-10-22T10:20:00Z",
+    "metadata": {
+     "gc.synthetic": "true"
+    },
+    "dependencies": [
+     {
+      "issue_id": "af-r2w3-input",
+      "depends_on_id": "af-r2t3",
+      "type": "tracks"
+     }
+    ]
+   },
+   "af-r2w3": {
+    "title": "mol-ticket-author",
+    "issue_type": "task",
+    "status": "in_progress",
+    "created_at": "2026-10-22T10:20:00Z",
+    "metadata": {
+     "gc.kind": "workflow",
+     "gc.formula_name": "mol-ticket-author",
+     "gc.input_convoy_id": "af-r2w3-input",
+     "gc.routed_to": "delivery-author",
+     "gc.step_id": "mol-ticket-author"
+    }
+   },
+   "af-r2w3-workspace": {
+    "title": "workspace",
+    "issue_type": "task",
+    "status": "closed",
+    "created_at": "2026-10-22T10:20:00Z",
+    "closed_at": "2026-10-22T10:23:00Z",
+    "metadata": {
+     "gc.kind": "ralph",
+     "gc.check_mode": "exec",
+     "gc.root_bead_id": "af-r2w3",
+     "gc.step_id": "workspace",
+     "gc.routed_to": "core.control-dispatcher",
+     "gc.outcome": "pass"
+    }
+   },
+   "af-r2w3-workspace-attempt-1": {
+    "title": "workspace",
+    "issue_type": "task",
+    "status": "closed",
+    "created_at": "2026-10-22T10:20:00Z",
+    "closed_at": "2026-10-22T10:23:00Z",
+    "assignee": "af-wisp-r2s3",
+    "metadata": {
+     "gc.logical_bead_id": "af-r2w3-workspace",
+     "gc.root_bead_id": "af-r2w3",
+     "gc.attempt": "1",
+     "gc.step_id": "workspace",
+     "gc.ralph_step_id": "workspace",
+     "gc.control_for": "workspace",
+     "gc.routed_to": "delivery-author",
+     "gc.session_id": "af-wisp-r2s3",
+     "gc.session_name": "delivery-author-af-wisp-r2s3",
+     "gc.claimed_at": "2026-10-22T10:20:00Z",
+     "gc.outcome": "pass"
+    }
+   },
+   "af-r2w3-demo": {
+    "title": "Contrôle de la démonstration",
+    "issue_type": "task",
+    "status": "closed",
+    "created_at": "2026-10-22T10:21:00Z",
+    "closed_at": "2026-10-22T10:22:00Z",
+    "metadata": {
+     "gc.kind": "check",
+     "gc.root_bead_id": "af-r2w3",
+     "gc.outcome": "fail"
+    }
+   },
+   "af-r2w3-red": {
+    "title": "red",
+    "issue_type": "task",
+    "status": "closed",
+    "created_at": "2026-10-22T10:23:00Z",
+    "closed_at": "2026-10-22T10:34:00Z",
+    "metadata": {
+     "gc.kind": "ralph",
+     "gc.check_mode": "exec",
+     "gc.root_bead_id": "af-r2w3",
+     "gc.step_id": "red",
+     "gc.routed_to": "core.control-dispatcher",
+     "gc.outcome": "pass"
+    }
+   },
+   "af-r2w3-red-attempt-1": {
+    "title": "red",
+    "issue_type": "task",
+    "status": "closed",
+    "created_at": "2026-10-22T10:23:00Z",
+    "closed_at": "2026-10-22T10:34:00Z",
+    "assignee": "af-wisp-r2s3",
+    "metadata": {
+     "gc.logical_bead_id": "af-r2w3-red",
+     "gc.root_bead_id": "af-r2w3",
+     "gc.attempt": "1",
+     "gc.step_id": "red",
+     "gc.ralph_step_id": "red",
+     "gc.control_for": "red",
+     "gc.routed_to": "delivery-author",
+     "gc.session_id": "af-wisp-r2s3",
+     "gc.session_name": "delivery-author-af-wisp-r2s3",
+     "gc.claimed_at": "2026-10-22T10:23:00Z",
+     "gc.outcome": "pass"
+    }
+   }
+  }
+ }
+}

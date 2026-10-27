@@ -1162,6 +1162,13 @@ Beside the states of the screens, the profile declares `journal-demonstration`:
 the useful events of `journal-content` and the technical logs of
 `journal-logs` on one launch, so that the demonstration line of the Journal
 Fold (F, af-njwz8v) is observed on one cockpit; it is no state of a reference.
+It declares `run-demonstration` as well: a tracker as the commands of the flow
+write it, whose sessions have all ended -- `delivery-author-1` in two
+successive sessions, `delivery-author-2` at work at the same time, a ticket
+stopped, an unfavourable fidelity verdict, a refused check and a question to
+Benjamin without an answer -- so that the demonstration line of R2 (af-cifk1e)
+is observed on one cockpit, at `/runs/run?id=af-r2conv`; it is no state of a
+reference either.
 
 `/`, `/journal` and `/projet/notes` (the page of the project the six states
 of that screen are about) are served today; the other addresses are declared
