@@ -88,6 +88,15 @@ line of the ticket. `start` can be run again at any step to read them
 again: it changes nothing. If it refuses, stop: do not create a work tree
 or a branch by hand.
 
+A replacement ticket (`replacement` in the answer is not null) starts with
+the work of the ticket it replaces: its branch was created at that ticket's
+useful commit and caught up on the integration branch, and `base` is that
+start commit. If `replacement.caught_up` is false and `replacement.conflicts`
+names files, merge the integration branch into your branch first
+(`git merge origin/<integration_branch>`), resolve those conflicts and
+commit the merge alone, before anything else: `start` then names that merge
+as `base`.
+
 **2. Read the ticket as its author receives it:**
 
 ```bash
