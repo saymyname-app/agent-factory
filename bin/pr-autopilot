@@ -487,6 +487,73 @@ project_descriptor_gate() {  # repo num sha labels armed -> 0 proceed, 1 hold
   return 1
 }
 
+# ---------- maintenance form gate (af-npz9v1.25) ----------
+# A fix of the Factory itself (rig ".", branch fix/... or do-work/...) is
+# armed only once its body says where else its defect is: « Catégorie : »
+# a code of docs/DEFECT_CLASSES.md, « Où ailleurs : », « Contrôle de
+# catégorie : » (docs/DELIVERY.md, study B). From 15 to 22/10/2026 three
+# defect classes came back 5 to 7 times each: every fix repaired the place
+# it was seen and wrote the rest « hors périmètre ». The class is read from
+# the register of main, then from the PR's own head when main does not know
+# it yet: the fix that finds a new class adds its entry in the same PR.
+MAINTENANCE_FORM_LABEL="maintenance-form-missing"
+DEFECT_CLASSES_TOOL="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/lib/defect_classes.py"
+
+maintenance_form_gate() {  # repo rig_dir num sha branch labels armed -> 0 proceed, 1 hold
+  local repo=$1 rig_dir=$2 num=$3 sha=$4 branch=$5 labels=" $6 " armed=$7
+  local body rc problems
+  [ "$rig_dir" = "." ] || return 0
+  case "$branch" in fix/*|do-work/*) ;; *) return 0 ;; esac
+  body=$(bounded "$AP_READ_CAP" gh pr view "$num" --repo "$repo" --json body --jq .body 2>/dev/null); rc=$?
+  if [ "$rc" != 0 ]; then
+    log "  PR #$num: body unreadable -> maintenance form unknown, not arming this pass (retried next tick)"
+    return 1
+  fi
+  problems=$(printf '%s' "$body" | python3 "$DEFECT_CLASSES_TOOL" check-pr-body 2>&1); rc=$?
+  if [ "$rc" = 1 ] && grep -q 'absente de docs/DEFECT_CLASSES.md' <<<"$problems"; then
+    if bounded "$AP_READ_CAP" gh api -H "Accept: application/vnd.github.raw" \
+        "repos/$repo/contents/docs/DEFECT_CLASSES.md?ref=$sha" > "$TMPDIR_AP/defect-classes-$num.md" 2>/dev/null; then
+      problems=$(printf '%s' "$body" | python3 "$DEFECT_CLASSES_TOOL" --registry "$TMPDIR_AP/defect-classes-$num.md" \
+        check-pr-body 2>&1); rc=$?
+    fi
+  fi
+  if [ "$rc" = 0 ]; then
+    case "$labels" in *" $MAINTENANCE_FORM_LABEL "*)
+      log "  PR #$num: maintenance form complete -> removing '$MAINTENANCE_FORM_LABEL'"
+      remove_label "$repo" "$num" "$MAINTENANCE_FORM_LABEL" ;;
+    esac
+    return 0
+  fi
+  if [ "$rc" != 1 ]; then
+    log "  PR #$num: maintenance form could not be checked ($problems) -> not arming this pass (fail closed)"
+    return 1
+  fi
+  if [ "$armed" != "null" ] && [ -n "$armed" ]; then
+    log "  PR #$num: disarming auto-merge (maintenance form missing)"
+    run gh pr merge "$num" --repo "$repo" --disable-auto >/dev/null 2>&1
+  fi
+  case "$labels" in
+    *" $MAINTENANCE_FORM_LABEL "*) vlog "PR #$num: held ($MAINTENANCE_FORM_LABEL), already explained on the PR" ;;
+    *)
+      log "  PR #$num: HELD -> $MAINTENANCE_FORM_LABEL"
+      {
+        printf '### Où ailleurs ? Lignes de maintenance manquantes\n\n'
+        printf 'Un correctif de l'"'"'usine dit où ailleurs est son défaut avant que pr-autopilot arme sa fusion (`docs/DELIVERY.md`, af-npz9v1.25) :\n\n'
+        printf '%s\n' "$problems" | sed 's/^/- /'
+        printf '\nÀ écrire dans la description de la PR :\n\n```\nCatégorie : <code de docs/DEFECT_CLASSES.md> — <la catégorie en quelques mots>\nOù ailleurs : <la recherche faite et ce qu'"'"'elle a trouvé : corrigé ici, ou un Bead par occurrence laissée>\nContrôle de catégorie : <le test ou lint qui échouera sur la prochaine occurrence, ou pourquoi il n'"'"'y en a pas>\n```\n\n'
+        printf 'Un changement qui ne corrige aucun défaut écrit `Catégorie : aucune — <raison>`. pr-autopilot relit la description à chaque passe.\n'
+      } > "$TMPDIR_AP/maintenance-form.md"
+      if explain_once "$repo" "$num" "$MAINTENANCE_FORM_LABEL" "$TMPDIR_AP/maintenance-form.md" || [ $? = 2 ]; then
+        run gh label create "$MAINTENANCE_FORM_LABEL" --repo "$repo" --color FBCA04 --force \
+          --description "pr-autopilot: Catégorie / Où ailleurs / Contrôle de catégorie manquants" >/dev/null 2>&1
+        add_label "$repo" "$num" "$MAINTENANCE_FORM_LABEL"
+      fi
+      ;;
+  esac
+  HELD=$((HELD+1))
+  return 1
+}
+
 # af-grln2: a draft, DIRTY, BLOCKED, or zero-check PR used to get one
 # identical log line every pass, forever -- indistinguishable from one
 # quietly waiting its natural turn. This acts directly on data the loop
@@ -905,10 +972,10 @@ for entry in "${RIGS[@]}"; do
   # ---------- 1. ARM open PRs targeting dev ----------
   mark=$(tmo_mark)
   open_prs=$(bounded "$AP_READ_CAP" gh pr list --repo "$repo" --state open --base "$dev" --limit 50 \
-    --json number,isDraft,autoMergeRequest,mergeStateStatus,statusCheckRollup,headRefOid,labels,author,isCrossRepository 2>/dev/null)
+    --json number,isDraft,autoMergeRequest,mergeStateStatus,statusCheckRollup,headRefOid,headRefName,labels,author,isCrossRepository 2>/dev/null)
   # A fine-grained token cannot read check runs; rebuild them from Actions runs.
   [ -n "$open_prs" ] || cut_since "$mark" || open_prs=$(bounded "$AP_READ_CAP" gh pr list --repo "$repo" --state open --base "$dev" --limit 50 \
-    --json number,isDraft,autoMergeRequest,mergeStateStatus,headRefOid,labels,author,isCrossRepository 2>/dev/null \
+    --json number,isDraft,autoMergeRequest,mergeStateStatus,headRefOid,headRefName,labels,author,isCrossRepository 2>/dev/null \
     | bounded "$AP_WRITE_CAP" "$(dirname "${BASH_SOURCE[0]}")/factory-gh-rollup" "$repo" 2>/dev/null)
   if cut_since "$mark"; then
     log "  open PRs unknown (a gh call timed out) -- nothing armed or flagged for $repo this tick"; open_prs='[]'
@@ -916,7 +983,7 @@ for entry in "${RIGS[@]}"; do
     log "  (could not list open PRs)"; ERRORS=$((ERRORS+1)); open_prs='[]'
   fi
 
-  while IFS=$'\t' read -r num draft armed state checks sha green_at origin labels; do
+  while IFS=$'\t' read -r num draft armed state checks sha green_at origin branch labels; do
     [ -z "${num:-}" ] && continue
     if over_budget; then not_checked "$repo open PR #$num and any open PR after it"; PRS_UNSEEN=1; break; fi
     # af-996mmd: before anything else, so that nothing below (arming, direct
@@ -1026,6 +1093,7 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
     # is never empty -- jq writes "-" -- because read would swallow it.)
     reversibility_gate "$repo" "$num" "$sha" "${labels//,/ }" "$armed" || continue
     project_descriptor_gate "$repo" "$num" "${labels//,/ }" "$armed" || continue
+    maintenance_form_gate "$repo" "$rig_dir" "$num" "$sha" "$branch" "${labels//,/ }" "$armed" || continue
 
     # af-s6lef (P04): BEHIND is never armable -- GitHub would happily arm
     # auto-merge and, on a non-strict ruleset, merge without the base's
@@ -1124,6 +1192,7 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
        | if .isCrossRepository==false and $who!=""
             and (($authors|split(",")|map(gsub("^\\s+|\\s+$";""))|index($who))!=null)
          then "own" else "outside" end),
+      (.headRefName//"-"),
       ((.labels//[])|map(.name)|join(",")|if .=="" then "-" else . end)
     ]|@tsv' 2>/dev/null)
 
