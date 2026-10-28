@@ -25,6 +25,16 @@ cockpit; through it:
 False if an access is public (a client outside the tailnet, an address
 that is not the host's own), a new recipient is let in, or a POST without
 Origin is accepted.
+
+What this case proves that the cases below it do not (docs/TEST_GUIDELINE.md
+§2, §6): the refusals of a reader and of a POST without the cockpit's
+Origin are proven once, on the guard itself, in tests/cockpit-access-test.py
+(ReaderGuardTest, PagePostGuardTest), and the proxy's own rules in
+tests/cockpit-isolated-https-test.py. Here they are the transmission, through
+the launched host: the identity the proxy sets in front of the cockpit
+reaches the guard on every page, reading and POST the cockpit routes, the
+address « Accès » gives is that of the proxy, and the supervisor stays
+behind it.
 """
 
 from __future__ import annotations

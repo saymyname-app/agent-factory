@@ -22,6 +22,16 @@ no ping came for fifteen minutes -- six seconds at this pace.
 
 False if a heartbeat goes out without a fresh reading, or the silence does
 not alert.
+
+What this case proves that the cases below it do not (docs/TEST_GUIDELINE.md
+§2, §6): tests/cockpit-heartbeat-test.py and tests/cockpit-notifications-test.py
+prove the rule of the emitter -- a ping only on fresh readings -- on a
+read model or a cockpit started by hand. Here the cockpit is the one the
+launch recipe starts on a dataset of the profile, its sources read for
+real; its heartbeat comes from the setting of the dataset; and the host
+falls silent as a whole -- the launch stopped, which no case below can
+do --, the check, run beside it as Healthchecks.io runs it, alerting on
+the silence of the whole host and not of one emitter.
 """
 
 from __future__ import annotations
@@ -56,11 +66,17 @@ IN_FLIGHT_SECONDS = 1.0
 
 
 class Recorder:
-    """The check: when each ping arrived (time.monotonic)."""
+    """The check « Usine muette », as Healthchecks.io runs it: when each ping
+    arrived (time.monotonic) and, once pings have begun, when it alerted --
+    the moment no ping came for its period and its grace."""
+
+    WATCH_SECONDS = 0.05
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
         self.pings: list[float] = []
+        self.alerts: list[float] = []
+        self.watching = threading.Event()
         recorder = self
 
         class Ping(BaseHTTPRequestHandler):
@@ -80,13 +96,29 @@ class Recorder:
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Ping)
         self.server.daemon_threads = True
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        threading.Thread(target=self.watch, daemon=True).start()
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}/ping/usine-muette"
+
+    def watch(self) -> None:
+        """Alerts once per silence: when the last ping is older than the
+        period and the grace, and no alert was sent since that ping."""
+        while not self.watching.wait(self.WATCH_SECONDS):
+            now = time.monotonic()
+            with self.lock:
+                if (self.pings and now - self.pings[-1] >= SILENCE_SECONDS
+                        and not (self.alerts and self.alerts[-1] > self.pings[-1])):
+                    self.alerts.append(now)
 
     def seen(self) -> list[float]:
         with self.lock:
             return list(self.pings)
 
+    def alerted(self) -> list[float]:
+        with self.lock:
+            return list(self.alerts)
+
     def close(self) -> None:
+        self.watching.set()
         self.server.shutdown()
         self.server.server_close()
 
@@ -137,20 +169,17 @@ class HeartbeatSilence(unittest.TestCase):
         time.sleep(WATCHED_SECONDS)
         alive = [at for at in self.check.seen() if at >= started]
         self.assertGreaterEqual(len(alive), 3, f"the heartbeats of fresh readings did not go out: {len(alive)} seen")
-        gaps = [later - earlier for earlier, later in zip([started] + alive, alive + [time.monotonic()])]
-        self.assertLess(max(gaps[1:]), SILENCE_SECONDS,
-                        f"the check alerted while the host answered: heartbeats {gaps} s apart")
-        silent = time.monotonic()
+        self.assertEqual([], self.check.alerted(), "the check alerted while the host answered")
+        # The host is silent once its launch is stopped.
         self.tree.stop_all()
-        time.sleep(SILENCE_SECONDS + IN_FLIGHT_SECONDS)
+        silent = time.monotonic()
+        time.sleep(ALERT_WITHIN_MINUTES * SECONDS_PER_MINUTE + IN_FLIGHT_SECONDS)
         after = [at for at in self.check.seen() if at > silent + IN_FLIGHT_SECONDS]
         self.assertEqual([], after, "a heartbeat went out after the host fell silent")
-        last = max(at for at in self.check.seen() if at >= started)
-        alerted = last + SILENCE_SECONDS
-        self.assertLessEqual(alerted - silent, ALERT_WITHIN_MINUTES * SECONDS_PER_MINUTE,
+        alerts = self.check.alerted()
+        self.assertEqual(1, len(alerts), f"the check did not alert once on the silence of the host: {alerts}")
+        self.assertLessEqual(alerts[0] - silent, ALERT_WITHIN_MINUTES * SECONDS_PER_MINUTE,
                              "the check alerts more than fifteen minutes after the silence")
-        self.assertLessEqual(alerted, time.monotonic(), "the check has not alerted yet")
-
 
 if __name__ == "__main__":
     unittest.main()

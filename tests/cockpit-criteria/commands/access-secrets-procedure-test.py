@@ -16,13 +16,24 @@ launch (`heartbeat`), whose value the case knows.
   Benjamin's hand on the VM: it opens, says Pushover, the heartbeat and the
   access through Tailscale, the VM, and no Windows path.
 - The value of the secret is in no page, no reading, no technical log of
-  the cockpit, not in the procedure and not in the log of the launch.
+  the cockpit, not in the procedure, not in the log of the launch, and not
+  in the prompts the cockpit prepares for the operator to copy (« Copier
+  le prompt » : « Continuer », « Pas bon → agent »), asked as a page of the
+  cockpit asks them.
 
 False if the value of a secret shows in a page, a log or a prompt.
+
+What this case proves that the cases below it do not (docs/TEST_GUIDELINE.md
+§2, §6): tests/cockpit-procedure-test.py proves what the procedure says of
+a host it is told about, and tests/cockpit-notifications-test.py the line
+of the health without the secrets file. Here the host is the one the launch
+recipe makes, its secret written by the launch, and every channel the
+cockpit serves and writes is searched for its value at once.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 import time
@@ -32,9 +43,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from acces_vm import declare, launch_logs, page, section, text_of  # noqa: E402
+from acces_vm import BENJAMIN, declare, launch_logs, page, section, text_of  # noqa: E402
 from home_destination import LaunchTree  # noqa: E402
-from pour_moi import read_json, wait_for  # noqa: E402
+from pour_moi import read_json, requests_of, wait_for  # noqa: E402
 
 # The secret of the launch: the ping address of the heartbeat, a value
 # nothing else says.
@@ -47,6 +58,8 @@ WINDOWS_PATH = re.compile(r"(?i)\b[a-z]:\\|/mnt/[a-z]/|\\\\wsl|%[a-z]+%|\bAppDat
 # What the cockpit serves: its pages, its readings, its technical logs.
 SERVED = ("/", "/usine", "/journal", "/journal?vue=logs", "/journal?vue=sources", "/runs", "/projets",
           "/api/status", "/api/health", "/api/requests", "/api/notifications", "/api/journal")
+# The prompts a page of the cockpit asks for, to copy (« Copier le prompt »).
+PROMPTS = ("continuer", "pas_bon_vers_agent")
 # Long enough for the heartbeat to be tried on fresh readings, and its
 # failure written where the cockpit writes.
 TRIED_SECONDS = 8
@@ -117,6 +130,28 @@ class AccessSecretsProcedure(unittest.TestCase):
         logs = launch_logs(self.tree)
         self.assertEqual(1, len(logs), "the log of the launch is not found")
         self.assertNotIn(SECRET, logs[0], "the value of a secret shows in the log of the launch")
+        for name, prompt in self.prompts(address).items():
+            self.assertNotIn(SECRET, prompt, f"the value of a secret shows in the prompt « {name} »")
+
+    def prompts(self, address: str) -> dict[str, str]:
+        """Each prompt of PROMPTS, as the cockpit prepares it for the
+        operator on a request it shows: asked by POST with the cockpit's
+        Origin, its session cookie and the operator's identity."""
+        with urllib.request.urlopen(address + "/", timeout=20) as response:
+            cookie = (response.headers.get("Set-Cookie") or "").split(";", 1)[0]
+        bead = next((r["bead_id"] for r in requests_of(address) if r.get("bead_id")), "af-x1y2z")
+        prepared = {}
+        for name in PROMPTS:
+            asked = urllib.request.Request(
+                f"{address}/api/actions/{name}", method="POST",
+                data=json.dumps({"bead_id": bead, "quoi": "la demande", "titre": "la demande"}).encode("utf-8"),
+                headers={"Content-Type": "application/json", "Origin": address, "Cookie": cookie,
+                         "Tailscale-User-Login": BENJAMIN})
+            with urllib.request.urlopen(asked, timeout=20) as response:
+                answer = json.loads(response.read().decode("utf-8"))
+            self.assertTrue(answer.get("prompt"), f"the cockpit prepares no prompt « {name} »: {answer}")
+            prepared[name] = answer["prompt"]
+        return prepared
 
 
 if __name__ == "__main__":
