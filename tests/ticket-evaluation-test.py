@@ -1380,6 +1380,7 @@ class TicketEvaluationTest(unittest.TestCase):
         answered = self.run_cmd(ESCALATION_TOOL, "repondre", SLICE, option, "--actor", "benjamin",
                                 env={"ESCALATION_DOOR_NOW": "4102444800"})  # after the parking
         self.assertEqual(0, answered.returncode, answered.stdout + answered.stderr)
+        time.sleep(1.1)  # The lift after the parked round, at a later second (retry_after_lift).
         self.state("lift-park", CONVOY, SLICE, "--request", SLICE, "--option", option)
         self.evaluator("silent")
         self.assertEqual([SLICE], [e["ticket"] for e in self.settle()["launched"]])

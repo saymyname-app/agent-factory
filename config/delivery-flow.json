@@ -15,6 +15,7 @@
       "stage_removed": 3,
       "code_review_no_result": 3,
       "amendment_granted": 3,
+      "inherited_change": 3,
       "commit_after_verdict": 3
     },
     "open_planning_exceptions": 2,
