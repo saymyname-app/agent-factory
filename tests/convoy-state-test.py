@@ -3680,8 +3680,7 @@ class ConvoyStateTest(unittest.TestCase):
         self.interrupted_ticket()
         per_cause = {"interrupted": 1, "returned": 2, "unblocked": 3, "answered": 3, "behind": 3,
                      "evaluation_no_result": 3, "stage_removed": 3, "code_review_no_result": 3, "amendment_granted": 3,
-                          "inherited_change": 3,
-                     "commit_after_verdict": 3}
+                     "inherited_change": 3, "commit_after_verdict": 3}
         self.bounds(resumes=per_cause, open_planning_exceptions=2)
 
         self.ok("open-resume", CONVOY, T1, "--cause", "returned", "--ref", "merge:1")
