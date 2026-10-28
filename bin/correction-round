@@ -79,7 +79,7 @@ PROGRAM = "correction-round"
 BIN = Path(__file__).resolve().parent
 sys.path.insert(0, str(BIN.parent / "lib"))
 import delivery_reads  # noqa: E402
-from convoy_state import ARBITRATED_ROUNDS_MAX  # noqa: E402
+from convoy_state import ARBITRATED_ROUNDS_MAX, STOP_COUNT_WHY as COUNT_WHY  # noqa: E402
 ROOT = Path(os.environ.get("FACTORY_ROOT") or BIN.parent)
 GC_BIN = os.environ.get("GC_BIN", "gc")
 STATE_TOOL = BIN / "convoy-state"
@@ -457,11 +457,6 @@ def refusals_at_tip(ticket: dict[str, Any]) -> list[str]:
     tip = ticket.get("tip") or ""
     return [name for position, names, _ in (review_position(ticket, tip), evaluation_position(ticket, tip))
             if position == REFUSED for name in names]
-
-
-# The reason the request of a stop at the bound gave the operator before
-# ADR-0035: the number of rounds alone.
-COUNT_WHY = "Le ticket a pris tous ses tours de correction : aucun autre ne démarre, rien de ce ticket ne fusionne."
 
 
 def open_request_why(ticket: dict[str, Any]) -> str | None:
