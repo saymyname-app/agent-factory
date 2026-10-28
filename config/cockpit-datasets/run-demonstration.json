@@ -78,7 +78,8 @@
      "template": "delivery-author",
      "provider": "claude-standard",
      "session_name": "delivery-author-af-wisp-r2s1",
-     "pool_slot": "1"
+     "pool_slot": "1",
+     "command": "/home/benja/.local/bin/claude --strict-mcp-config --model claude-opus-5-5 --effort medium"
     }
    },
    "af-wisp-r2s2": {
@@ -97,7 +98,8 @@
      "template": "delivery-author",
      "provider": "claude-standard",
      "session_name": "delivery-author-af-wisp-r2s2",
-     "pool_slot": "2"
+     "pool_slot": "2",
+     "command": "/home/benja/.local/bin/claude --strict-mcp-config --model claude-opus-5-5 --effort medium"
     }
    },
    "af-wisp-r2s3": {
@@ -116,7 +118,8 @@
      "template": "delivery-author",
      "provider": "claude-standard",
      "session_name": "delivery-author-af-wisp-r2s3",
-     "pool_slot": "1"
+     "pool_slot": "1",
+     "command": "/home/benja/.local/bin/claude --strict-mcp-config --model claude-opus-5-5 --effort medium"
     }
    },
    "af-r2w1-input": {

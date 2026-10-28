@@ -101,6 +101,9 @@ STEP_NAMES = {"workspace": "Prendre le ticket", "red": "Préparer les tests", "c
 # logical agent (``agent_name``: delivery-author-2, the slot of a pool) --
 # the agent a new session of the same slot works for again.
 SESSION, SESSION_AGENT = "session", "agent_name"
+# The model a session was started with: the ``--model`` of its command, as
+# the supervisor lists it and as its bead keeps it.
+MODEL_FLAG = re.compile(r"(?:^|\s)--model[ =](\S+)")
 # What a check or a step recorded of its end (gc.outcome), as a state.
 OUTCOME_STATES = {"pass": PASSED, "fail": REFUSED}
 
@@ -122,16 +125,13 @@ def read_workflow_beads(bd_bin="bd", timeout=READ_TIMEOUT_SECONDS):
 
     def ended_sessions():
         # The sessions the supervisor no longer lists: their beads, which
-        # the tracker keeps apart (ephemeral). A tracker that cannot list
-        # them leaves the agents to the sessions the supervisor lists.
-        try:
-            completed = subprocess.run(
-                [bd_bin, "list", "--all", "--limit", "0", "--include-ephemeral", "--has-metadata-key", SESSION_AGENT,
-                 "--json"], capture_output=True, text=True, timeout=timeout, check=True,
-            )
-            return [b for b in json.loads(completed.stdout) or [] if isinstance(b, dict) and b.get("issue_type") == SESSION]
-        except (OSError, subprocess.SubprocessError, ValueError):
-            return []
+        # the tracker keeps apart (ephemeral). A read that fails is the read
+        # of the runs failing -- never an agent observed absent.
+        completed = subprocess.run(
+            [bd_bin, "list", "--all", "--limit", "0", "--include-ephemeral", "--has-metadata-key", SESSION_AGENT,
+             "--json"], capture_output=True, text=True, timeout=timeout, check=True,
+        )
+        return [b for b in json.loads(completed.stdout) or [] if isinstance(b, dict) and b.get("issue_type") == SESSION]
 
     seen = {}
     with ThreadPoolExecutor(max_workers=len(KEYS) + 1) as pool:
@@ -218,7 +218,7 @@ def workflow_runs(beads, agents, now):
 def _sessions(agents, beads):
     """Each session by its id and its name: those the supervisor lists, then
     the beads of those it no longer lists -- ``agent_name``, ``template``,
-    ``provider`` alike."""
+    ``provider``, ``command`` alike."""
     found = {}
     for bead in beads:
         if bead.get("issue_type") != SESSION:
@@ -226,7 +226,8 @@ def _sessions(agents, beads):
         m = _decoded(bead.get("metadata"))
         if not m.get(SESSION_AGENT):
             continue
-        said = {"agent_name": m[SESSION_AGENT], "template": m.get("template"), "provider": m.get("provider")}
+        said = {"agent_name": m[SESSION_AGENT], "template": m.get("template"), "provider": m.get("provider"),
+                "command": m.get("command")}
         for name in (bead["id"], m.get("session_name")):
             if name:
                 found[name] = said
@@ -363,8 +364,11 @@ def _job(step, meta, attempts, sessions, formula, workflow, now):
         session = sessions.get(claim.get("gc.session_id") or "") or sessions.get(claim.get("gc.session_name") or "") or {}
         template = session.get("template") or claim.get("gc.routed_to") or meta[workflow["id"]].get("gc.routed_to")
         role = ROLES.get(template, template) if template else "rôle inconnu"
-        provider = session.get("provider")
-        lane = {"kind": AGENT, "role": "%s · %s" % (role, provider) if provider else role}
+        model = MODEL_FLAG.search(session.get("command") or "")
+        # The model the session ran with, else its provider when only that
+        # is known.
+        known = model.group(1) if model else session.get("provider")
+        lane = {"kind": AGENT, "role": "%s · %s" % (role, known) if known else role}
         if session.get("agent_name"):
             lane.update(key="agent:%s" % session["agent_name"], who=session["agent_name"])
         else:
@@ -564,8 +568,10 @@ def normalized(run, now):
             jobs.append({"id": "%s-%d-%d" % (run["id"], number + 1, index + 1),
                          "name": near[0]["text"] if s == e and near else lane["title"],
                          "lane": {"key": key, "kind": lane["kind"], "who": who, "role": role},
-                         "start": start + s, "end": start + e if (e < run["elapsed"] or run["state"] == DONE) else None,
-                         "state": near[0].get("state") if s == e and near else None,
+                         # A fact is an instant, never open: only a span reaching now is.
+                         "start": start + s,
+                         "end": start + e if (s == e or e < run["elapsed"] or run["state"] == DONE) else None,
+                         "state": near[0].get("state") if s == e and near else None, "ticket": run.get("ticket"),
                          "description": " · ".join(ev["text"] for ev in near), "source": "ticket %s" % run["id"],
                          "facts": near})
     out = dict(run, models=run.get("models") or {})
