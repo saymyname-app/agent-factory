@@ -427,6 +427,10 @@ EVALUATION_OUTCOMES = ("favorable", "return_to_author", "planning_exception", "e
 # (bin/ticket-evaluation) that judges what it could not observe proven by
 # its criterion test (Benjamin, 21/10/2026, af-ten1sp).
 PROVEN_BY_TEST_OPTION = "a"
+# The option of that request that has it evaluated again on the products
+# launched again, judging nothing proven (af-npz9v1.38). Benjamin, 28/10/2026
+# 01:20 Paris, relayed from the central chat: « Oui aux deux recommandations : fais ajouter puis utiliser l’option de réévaluation réelle pour les trois tickets, et accorde le tour de correction exceptionnel. Coordonne tout et vérifie que ça repart. »
+REEVALUATE_OPTION = "c"
 EVALUATION_MAX_LAUNCHES = 2
 KIND_WITHOUT_EVALUATOR = "prefactoring"
 ADDRESS_RE = re.compile(r"^http://127\.0\.0\.1:[0-9]{1,5}$")
@@ -485,6 +489,17 @@ def resume_lifts(cause: str, reason: str) -> bool:
 # (`bounds.correction_rounds`, correction_rounds_bound), outside K.
 COMMIT_AFTER_VERDICT = "commit_after_verdict"
 BOUNDED_RESUME_CAUSES = RESUME_CAUSES + (COMMIT_AFTER_VERDICT,)
+# A resume `behind` comes from the factory, not from the ticket: another
+# ticket merged and moved the integration branch (T44). It is recorded like
+# any resume (entry, counter `resumes`, fresh author session) but does not
+# count in K, once per tip of the integration branch. Intent (Benjamin, his
+# words, 27/10/2026 16:27 Paris): « Oui : une mise à jour behind causée par
+# l'usine ne compte plus dans les reprises d'un ticket. » (af-npz9v1.36). The guard: a second resume
+# `behind` on a tip already resumed for -- the ticket did not take it -- is
+# counted against `bounds.resumes.behind`, so a ticket that never takes the
+# tip is still parked; a tip moves only when another ticket merges.
+BEHIND = "behind"
+BEHIND_REF = re.compile(r"^integration:([^/\s]+)/")
 RESUME_MAX_LAUNCHES = 1
 # What bin/spec-integration did of a ticket (Spec §4): merged into the
 # integration branch, or returned to its author by a conflict or by red tests
@@ -2051,10 +2066,27 @@ def resumes_taken(metadata: dict[str, Any]) -> dict[str, int]:
     corrections = counter_value(metadata.get(COUNTER_PREFIX + "correction_rounds"), "correction_rounds")
     entries = resume_record(metadata[KEY_RESUME])["entries"] if KEY_RESUME in metadata else []
     taken = dict.fromkeys(BOUNDED_RESUME_CAUSES, 0)
-    for entry in entries:
+    for entry in counted_entries(entries):
         taken[entry["cause"]] += 1
+    # The counter holds every resume recorded, those K does not count too.
     taken[COMMIT_AFTER_VERDICT] = max(0, resumes - corrections - len(entries))
     return taken
+
+
+def counted_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The resume entries K counts, oldest first: all of them but the first
+    resume `behind` on each tip of the integration branch (BEHIND). A ref
+    that names no tip is counted."""
+    tips: set[str] = set()
+    counted = []
+    for entry in entries:
+        if entry["cause"] == BEHIND:
+            match = BEHIND_REF.match(entry["ref"])
+            if match and match.group(1) not in tips:
+                tips.add(match.group(1))
+                continue
+        counted.append(entry)
+    return counted
 
 
 def taken_at_lift(lift: dict[str, Any], metadata: dict[str, Any]) -> dict[str, int]:
@@ -2067,7 +2099,7 @@ def taken_at_lift(lift: dict[str, Any], metadata: dict[str, Any]) -> dict[str, i
     entries = resume_record(metadata[KEY_RESUME])["entries"] if KEY_RESUME in metadata else []
     before = [entry for entry in entries if entry["at"] < lift["at"]]
     taken = dict.fromkeys(BOUNDED_RESUME_CAUSES, 0)
-    for entry in before:
+    for entry in counted_entries(before):
         taken[entry["cause"]] += 1
     corrections = counter_value(metadata.get(COUNTER_PREFIX + "correction_rounds"), "correction_rounds")
     if KEY_CORRECTION in metadata and correction_record(metadata[KEY_CORRECTION])["at"] >= lift["at"]:

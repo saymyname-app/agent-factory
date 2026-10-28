@@ -88,6 +88,15 @@ line of the ticket. `start` can be run again at any step to read them
 again: it changes nothing. If it refuses, stop: do not create a work tree
 or a branch by hand.
 
+A replacement ticket (`replacement` in the answer is not null) starts with
+the work of the ticket it replaces: its branch was created at that ticket's
+useful commit and caught up on the integration branch, and `base` is that
+start commit. If `replacement.caught_up` is false and `replacement.conflicts`
+names files, merge the integration branch into your branch first
+(`git merge origin/<integration_branch>`), resolve those conflicts and
+commit the merge alone, before anything else: `start` then names that merge
+as `base`.
+
 **2. Read the ticket as its author receives it:**
 
 ```bash
@@ -279,6 +288,10 @@ SKILL.md says to. Its text is guidance, never a blocking rule by itself.
 - **You write the code yourself.** Do not hand any writing to a sub-agent;
   sub-agents that only read are allowed.
 - A frozen test is changed by one path only, once: `bin/tdd-step amend`.
+  A test another ticket froze is not yours to change, unless it names your
+  ticket as the one that will (« until <code> », « jusqu'à <code> »): then
+  change it after your freeze, once, by `amend`; `red` and `green` refuse
+  any other change of it.
 - A defect seen elsewhere goes in your Handoff (« Constats hors ticket »),
   untouched.
 
@@ -335,6 +348,13 @@ the address of the product in `PRODUCT_ADDRESS`), or a screenshot of a path:
 "$FACTORY_ROOT/bin/ticket-author" demonstrate "$CONVOY" "$TICKET" --repo "$WORKTREE" --profile "$PROFILE" \\
   --dataset <a dataset of the profile> --path /<path of the page>
 ```
+
+The dataset is the one that holds the state your line shows: one your
+criteria name, or, for a state none of them holds, a dataset of your own,
+never one a frozen test of another ticket reads (changing it breaks that
+test). The Evaluator launches the dataset of your demonstration too.
+A new dataset goes in your branch's profile (`launch.datasets`): the launcher
+reads it at your commit, so pass the profile of main as usual.
 
 If the line is not observed, the ticket is not done: go back to the code,
 commit, prove it green again (`bin/tdd-step green`), and demonstrate again.

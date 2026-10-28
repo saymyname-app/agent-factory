@@ -375,6 +375,17 @@ class EvidenceCaptureTest(unittest.TestCase):
         self.assertEqual(launch["address"], record["address"])
         self.assertEqual(launch["commit"], record["commit"])
 
+    def test_a_command_that_stops_the_product_keeps_the_dataset_it_was_launched_on(self):
+        # af-npz9v1.18: the dataset is read with the address; a command that
+        # stops the product removes its launch record (bin/acceptance-session).
+        state_file, launch = self.launch()
+        self.ok("command", CONVOY, T1, "--piece", "demo.arret", "--launch-state", state_file,
+                "--", str(LAUNCH_TOOL), "stop", "--state-file", str(state_file))
+        self.assertFalse(state_file.exists())
+        record = self.record("demo.arret")
+        self.assertEqual("content", record["dataset"])
+        self.assertEqual(launch["commit"], record["commit"])
+
     def test_screenshot_refused_when_the_product_is_not_running(self):
         state_file, _ = self.launch()
         stopped = self.tmp / "stopped.json"

@@ -755,10 +755,12 @@ def cmd_grant(args: argparse.Namespace) -> int:
     if not words:
         raise Refusal("tour accordé sans mots : il s'enregistre avec les mots de l'approbateur (--words), non vides ; "
                       "rien n'est écrit")
-    if args.exceptional and own_stop(ticket) and not round_would_open(ticket):
+    # Ordinary or exceptional, a grant that would open no round only lifts
+    # the stop for the next pass to stop the ticket again (af-npz9v1.23).
+    if own_stop(ticket) and not round_would_open(ticket):
         raise Refusal(
             f"aucun tour ne s'ouvrirait sur {args.ticket} : sa session de correction s'est terminée sans que le ticket "
-            "soit terminé et refusé à une nouvelle pointe ; un tour exceptionnel ne relance pas le même commit ; "
+            "soit terminé et refusé à une nouvelle pointe ; un tour accordé ne relance pas le même commit ; "
             "rien n'est écrit")
     state_write("grant-correction", args.convoy, args.ticket, "--approver", approver, "--words", words,
                 *(("--exceptional",) if args.exceptional else ()))

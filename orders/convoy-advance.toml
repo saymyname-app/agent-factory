@@ -26,4 +26,8 @@ trigger = "condition"
 interval = "1m"
 check = "/home/benja/agent-factory/bin/convoy-advance --check-only"
 exec = "/home/benja/agent-factory/bin/order-pause gate convoy-advance -- /home/benja/agent-factory/bin/convoy-advance --all --stopped-ok"
-timeout = "30m"
+# 40 min, derived from config/test-budgets.json: one wait for the host and
+# two full regressions (a take-up control, then the tests of the merged
+# result), two margins. `bin/test-budgets check-order` holds it
+# (tests/test-budgets-test.py; study C, T3).
+timeout = "40m"

@@ -22,7 +22,7 @@ is run, nothing is written.
 # a command: its argv, its real output, its exit code, the time and the commit
 ./bin/evidence-capture command af-convoy af-t1 --piece demo.tests --repo rigs/product -- python3 -m pytest -q
 
-# a command against the product launched by bin/project-launch (its address and commit are recorded)
+# a command against the product launched by bin/project-launch (its address, commit and dataset are recorded)
 ./bin/project-launch start <descriptor.json> --commit <sha> --dataset content --state-file /tmp/launch.json
 ./bin/evidence-capture command af-convoy af-t1 --piece demo.sonde --launch-state /tmp/launch.json -- curl -s http://127.0.0.1:<port>/health
 
