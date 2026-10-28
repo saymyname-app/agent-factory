@@ -49,10 +49,6 @@ AT = "2026-10-22T12:00:00+02:00"
 CONVOY = "convoy-panorama"
 GRAPH = "sha256:" + "c" * 64
 
-FIRST_REQUEST = "Le critère de la page Usine demande un réglage que la Spec ne fixe pas"
-SECOND_REQUEST = "La régression du profil dépasse le plafond de durée de la vérification"
-ANSWERED_REQUEST = "Le jeu de données du journal manque une source de logs"
-
 
 def options() -> str:
     return json.dumps([
@@ -129,11 +125,14 @@ class ChantierDecisions(unittest.TestCase):
              "description": "",
              "metadata": {"gc.project_id": FACTORY, "gc.graph_digest": GRAPH, "gc.spec_id": "spec-panorama",
                           "gc.flow.mark": "new-flow/v1"}},
-            ticket("ticket-usine", "Usine — réglages", **request(FIRST_REQUEST, "2026-10-22T10:30:00+02:00")),
-            ticket("ticket-runs", "Runs — sessions", **request(SECOND_REQUEST, "2026-10-22T10:45:00+02:00")),
+            ticket("ticket-usine", "Usine — réglages", **request(
+                "Le critère de la page Usine demande un réglage que la Spec ne fixe pas", "2026-10-22T10:30:00+02:00")),
+            ticket("ticket-runs", "Runs — sessions", **request(
+                "La régression du profil dépasse le plafond de durée de la vérification", "2026-10-22T10:45:00+02:00")),
             # A request Benjamin already answered: nothing waits on it.
             ticket("ticket-journal", "Journal — logs", **{
-                **request(ANSWERED_REQUEST, "2026-10-22T09:00:00+02:00"), "gc.needs_benjamin": "none",
+                **request("Le jeu de données du journal manque une source de logs", "2026-10-22T09:00:00+02:00"),
+                "gc.needs_benjamin": "none",
                 "gc.escalation_response_at": "2026-10-22T09:20:00+02:00", "gc.escalation_response_option": "a"}),
             ticket("ticket-analyses", "Analyses — courbes"),
         ]
@@ -150,9 +149,11 @@ class ChantierDecisions(unittest.TestCase):
                          f"the indicator « Décisions à prendre » does not say 2: « {indicator.group(0)} »")
         inbox = re.search(r'(?is)<div class="pn-inbox"[^>]*>(.*)', home)
         self.assertIsNotNone(inbox, "the home shows no inbox")
-        for what in (FIRST_REQUEST, SECOND_REQUEST):
+        for what in ("Le critère de la page Usine demande un réglage que la Spec ne fixe pas",
+                     "La régression du profil dépasse le plafond de durée de la vérification"):
             self.assertIn(what, text(inbox.group(1)), f"the open request « {what} » is not among the home's decisions")
-        self.assertNotIn(ANSWERED_REQUEST, text(inbox.group(1)), "a request already answered is among the decisions")
+        self.assertNotIn("Le jeu de données du journal manque une source de logs", text(inbox.group(1)),
+                         "a request already answered is among the decisions")
 
         # The run of the chantier: waiting for Benjamin, two decisions.
         run = self.page(address, f"/runs/run?id={CONVOY}")
