@@ -3136,6 +3136,7 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertEqual(2, ticket["resumes_left"])
         self.assertEqual({"interrupted": 2, "returned": 2, "unblocked": 2, "answered": 3, "behind": 3,
                           "evaluation_no_result": 3, "stage_removed": 3, "code_review_no_result": 3, "amendment_granted": 3,
+                          "inherited_change": 3,
                           "commit_after_verdict": 3},
                          ticket["resumes_left_by_cause"])
         self.assertEqual(["interrupted", "returned", "unblocked"], [e["cause"] for e in ticket["resume"]["entries"]])
@@ -3679,6 +3680,7 @@ class ConvoyStateTest(unittest.TestCase):
         self.interrupted_ticket()
         per_cause = {"interrupted": 1, "returned": 2, "unblocked": 3, "answered": 3, "behind": 3,
                      "evaluation_no_result": 3, "stage_removed": 3, "code_review_no_result": 3, "amendment_granted": 3,
+                          "inherited_change": 3,
                      "commit_after_verdict": 3}
         self.bounds(resumes=per_cause, open_planning_exceptions=2)
 
