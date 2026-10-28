@@ -11,6 +11,7 @@ checked out in `--repo`, at its HEAD:
     tdd-step green        CONVOY TICKET --repo DIR --profile DESCRIPTOR [--dataset NAME]
     tdd-step amend        CONVOY TICKET --repo DIR --profile DESCRIPTOR [--dataset NAME] --reason TEXT
     tdd-step prefactoring CONVOY TICKET --repo DIR --profile DESCRIPTOR --base SHA
+    tdd-step changes      CONVOY TICKET --repo DIR --profile DESCRIPTOR [--at SHA]   # reads only
 
 `red`: only the test perimeter of the profile changed since the start commit
 `--base`, the criterion -> test table is complete, the product launched at the
@@ -29,7 +30,10 @@ new freeze, recorded with its diff. A criterion test another ticket of the
 convoy froze is no ticket's to change, but for the one ticket its text names
 as its successor (« until A2 », « jusqu'à A2 », or that ticket's id), once,
 by its `amend` (af-npz9v1.19): `red` and `green` refuse any other change of
-it. `prefactoring`: the regression command of
+it. A file the ticket branch holds as the base it last merged holds it (a
+harness main's maintenance changed) is the base's change, not the ticket's:
+`green` runs the tests with it and `amend` does not count it
+(af-npz9v1.39); `changes` says which are which. `prefactoring`: the regression command of
 the profile passes before and after, and no existing test was touched; with
 no test at the start commit, characterization tests are demanded first, in
 commits that add nothing but files of the test perimeter.
@@ -247,7 +251,7 @@ class Check:
     def __init__(self, args: argparse.Namespace, work: Path):
         self.args, self.work = args, work
         self.repo = Path(args.repo or ".").resolve()
-        self.head = self.commit("HEAD", "HEAD")
+        self.head = self.commit(getattr(args, "at", None) or "HEAD", "HEAD")
         status, answer = tool(STATE_TOOL, "show", args.convoy, "--repo", str(self.repo))
         if status == EXIT_NOT_NEW_FLOW:
             raise NotNewFlow(answer)
@@ -258,8 +262,10 @@ class Check:
             raise Refusal(f"le ticket {args.ticket} n'appartient pas au convoi {args.convoy}")
         self.ticket = ticket
         self.others = [t for t in answer["tickets"] if t.get("id") != args.ticket]
+        self.integration = ((answer.get("convoy") or {}).get("integration") or {}).get("branch")
         stop = ticket.get("stop")
-        if stop:
+        # `changes` reads a stopped ticket: it decides whether that stop is lifted.
+        if stop and not getattr(args, "reads_only", False):
             raise Refusal(
                 f"ticket arrêté ({stop.get('reason', 'raison illisible')} : {stop.get('detail', stop.get('unruled'))}) : "
                 "aucune étape ne s'exécute tant que l'arrêt n'est pas levé"
@@ -272,6 +278,7 @@ class Check:
         if unruled:
             raise Refusal(f"état sans règle : {' ; '.join(unruled)}")
         self._launch: dict[str, Any] | None = None
+        self._bases: list[str] | None = None
         self._counter = 0
 
     # --- git ---
@@ -302,6 +309,32 @@ class Check:
             raise Refusal(f"git diff {base}..{head} a échoué : {short(proc.stderr.decode(errors='replace'))}")
         fields = proc.stdout.decode(errors="surrogateescape").split("\0")
         return [(fields[i], fields[i + 1]) for i in range(0, len(fields) - 1, 2)]
+
+    def merged_bases(self) -> list[str]:
+        """The base the ticket branch last took since the freeze: the other
+        parents of the last merge of its first-parent history that main or
+        the integration branch of the convoy already holds (af-npz9v1.39).
+        A branch of the ticket's own, merged into it, is no base."""
+        if self._bases is None:
+            freeze = (self.tdd.get("freeze") or {}).get("commit")
+            proc = git(self.repo, "rev-list", "--first-parent", "--merges", "-n1", f"{freeze}..{self.head}") \
+                if freeze else None
+            merge = proc.stdout.decode().strip() if proc is not None and proc.returncode == 0 else ""
+            parents = git(self.repo, "rev-list", "--parents", "-n1", merge).stdout.decode().split()[2:] if merge else []
+            refs = [ref for branch in dict.fromkeys(filter(None, (self.integration, "main")))
+                    for ref in (f"refs/remotes/origin/{branch}", f"refs/heads/{branch}")
+                    if git(self.repo, "rev-parse", "--verify", "--quiet", ref).returncode == 0]
+            self._bases = [parent for parent in parents
+                           if any(git(self.repo, "merge-base", "--is-ancestor", parent, ref).returncode == 0
+                                  for ref in refs)]
+        return self._bases
+
+    def inherited(self, path: str) -> bool:
+        """HEAD holds the file as the base it merged holds it: a change of it
+        since the freeze is the base's (main's maintenance, another ticket's
+        merge), not the ticket's (af-npz9v1.39)."""
+        data = self.blob(self.head, path)
+        return any(self.blob(base, path) == data for base in self.merged_bases())
 
     def export(self, commit: str, keep: list[str] | None = None, into: Path | None = None) -> Path:
         """A clean tree of one commit, outside the work tree; with `keep`,
@@ -421,6 +454,18 @@ class Check:
             tests = self.export(tests_commit, keep=self.test_scope)
             shutil.copytree(tests, tree, symlinks=True, dirs_exist_ok=True)
             trees[mode] = tree
+        # The tests run as frozen, with what the base merged since changed in
+        # their scope (a harness main's maintenance changed, af-npz9v1.39).
+        for path in [path for _, path in self.changes(tests_commit, self.head)
+                     if tests_commit != self.head and in_paths(path, self.test_scope) and self.inherited(path)]:
+            data = self.blob(self.head, path)
+            for tree in trees.values():
+                target = tree / path
+                if data is None:
+                    target.unlink(missing_ok=True)
+                else:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(data)
         return trees
 
     def run_test(self, test_id: str, tree: Path, address: str) -> list[dict[str, str]]:
@@ -490,10 +535,10 @@ class Check:
         changed = {}
         for path in sorted(files):
             data = self.blob(self.head, path)
-            if data is None:
-                changed[path] = f"fichier gelé supprimé ou déplacé : {path}"
-            elif digest_of(data) != files[path]:
-                changed[path] = f"fichier gelé modifié : {path}"
+            if (data is not None and digest_of(data) == files[path]) or self.inherited(path):
+                continue
+            changed[path] = (f"fichier gelé supprimé ou déplacé : {path}" if data is None
+                             else f"fichier gelé modifié : {path}")
         return changed
 
     def changed_helpers(self, frozen_commit: str, files: dict[str, str]) -> dict[str, str]:
@@ -502,7 +547,7 @@ class Check:
         HEAD (af-7lmvys)."""
         return {path: f"fichier du périmètre de test modifié depuis le gel : {path}"
                 for _, path in self.changes(frozen_commit, self.head)
-                if in_paths(path, self.test_scope) and path not in files}
+                if in_paths(path, self.test_scope) and path not in files and not self.inherited(path)}
 
     def foreign_changes(self, base: str) -> dict[str, str]:
         """The criterion tests another ticket of the convoy froze that differ
@@ -907,6 +952,15 @@ def check_amend(check: Check) -> dict[str, Any]:
         raise Refusal("raison absente : un amendement porte sa raison, écrite sur une ligne (--reason)")
     if "freeze" not in check.tdd or "red" not in check.tdd:
         raise Refusal("aucun gel enregistré pour ce ticket : un amendement change des tests gelés, il n'y a rien à amender")
+    registry = check.registry()
+    frozen_commit = check.tdd["freeze"]["commit"]
+    # The green runs the whole test perimeter as frozen: a helper outside the
+    # registry is amended like a frozen file (af-7lmvys). What the merged base
+    # changed is not the ticket's to amend (af-npz9v1.39).
+    changed = {**check.changed_frozen(registry["files"]), **check.changed_helpers(frozen_commit, registry["files"])}
+    if not changed:
+        raise Refusal("aucun fichier gelé n'a changé depuis le gel, ou seulement par la base fusionnée : "
+                      "il n'y a rien à amender")
     entries = (check.ticket.get("resume") or {}).get("entries") or []
     correction = check.ticket.get("correction") or {}
     if "amendment" in check.tdd and not any(
@@ -920,13 +974,6 @@ def check_amend(check: Check) -> dict[str, Any]:
             f"{check.tdd['amendment']['commit']}",
             stop=STOP_AMENDMENT_EXHAUSTED,
         )
-    registry = check.registry()
-    frozen_commit = check.tdd["freeze"]["commit"]
-    # The green runs the whole test perimeter as frozen: a helper outside the
-    # registry is amended like a frozen file (af-7lmvys).
-    changed = {**check.changed_frozen(registry["files"]), **check.changed_helpers(frozen_commit, registry["files"])}
-    if not changed:
-        raise Refusal("aucun fichier gelé n'a changé depuis le gel : il n'y a rien à amender")
     # af-npz9v1.19: another ticket's frozen test changes only for the ticket
     # it names as its successor, once; the change is recorded and reviewed.
     base = check.tdd["red"]["base"]
@@ -1003,6 +1050,36 @@ def cmd_check(args: argparse.Namespace) -> int:
     finally:
         shutil.rmtree(work, ignore_errors=True)
     print(json.dumps(proof, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+def cmd_changes(args: argparse.Namespace) -> int:
+    """What changed since the freeze in the frozen files and the test
+    perimeter, at `--at` (HEAD by default): the ticket's own, and what the
+    base it merged brought (af-npz9v1.39). Reads only; bin/convoy-advance
+    lifts on it a stop at the second amendment whose every change is the
+    base's."""
+    work = Path(tempfile.mkdtemp(prefix="tdd-step-"))
+    try:
+        check = Check(args, work)
+        if "freeze" not in check.tdd:
+            raise Refusal("aucun gel enregistré pour ce ticket : rien n'a changé depuis un gel")
+        registry = check.registry()
+        frozen_commit = check.tdd["freeze"]["commit"]
+        own = {**check.changed_frozen(registry["files"]), **check.changed_helpers(frozen_commit, registry["files"])}
+        inherited = [path for _, path in check.changes(frozen_commit, check.head)
+                     if (path in registry["files"] or in_paths(path, check.test_scope)) and check.inherited(path)]
+    except NotNewFlow as exc:
+        print(json.dumps(exc.answer, sort_keys=True, ensure_ascii=False))
+        return EXIT_NOT_NEW_FLOW
+    except Refusal as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, sort_keys=True, ensure_ascii=False))
+        return EXIT_REFUSED
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    print(json.dumps({"ok": True, "ticket": args.ticket, "commit": check.head, "own": sorted(own),
+                      "inherited": sorted(inherited), "bases": check.merged_bases()},
+                     indent=2, sort_keys=True, ensure_ascii=False))
     return 0
 
 
@@ -1121,6 +1198,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("step", choices=tuple(PIECES))
     options(p)
     p.set_defaults(handler=cmd_check)
+    p = sub.add_parser("changes")
+    options(p)
+    p.add_argument("--at")
+    p.set_defaults(handler=cmd_changes, reads_only=True)
     return parser
 
 

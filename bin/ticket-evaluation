@@ -360,6 +360,7 @@ class Convoy:
 
         Only the declared datasets the ticket names -- in its frozen criteria,
         its demonstration line or a validated expectation of its criteria --,
+        the one its demonstration was proven on, and those its branch brings,
         else the first declared one. Every declared dataset for every ticket
         made one evaluation outlast its deadline (af-kdxk6k)."""
         path, launch = self.profile(ticket_id)
@@ -370,11 +371,16 @@ class Convoy:
                 "que sur un jeu de données nommé")
         ticket = self.ticket(ticket_id)
         commit = (evaluation_of(ticket).get("request") or {}).get("commit") or ticket.get("tip")
-        declared = sorted({*declared, *branch_datasets(self.repo, commit, path, launch)})
+        brought = branch_datasets(self.repo, commit, path, launch)
+        declared = sorted({*declared, *brought})
         criteria = [str(text) for text in ticket.get("criteria") or []]
         texts = [*criteria, str(ticket.get("demonstration_line") or "")]
         named = {name for name in declared
                  if any(re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", text) for text in texts)}
+        # A dataset the branch brings is the ticket's own, named or not: it
+        # holds a state no dataset of main holds (af-npz9v1.18; R1 and R2 were
+        # evaluated again on 28/10/2026 on the first dataset of main only).
+        named.update(brought)
         expectations = planned(json.loads(path.read_text(encoding="utf-8")), "ticket",
                                [{"number": n, "text": t} for n, t in enumerate(criteria, 1)],
                                declared, "", ticket_id)

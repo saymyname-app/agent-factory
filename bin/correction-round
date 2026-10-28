@@ -18,9 +18,14 @@ what still refuses it at the tip.
 A ticket still refused after its last round -- its answers judged
 unfavorably, a criterion still not observed, a review replayed in full that
 blocks again, a session that ended without correcting -- is stopped: no
-round more starts, nothing of it is merged, and it is raised once to the
-operator through
-bin/escalation-door, as one item. So is a finished ticket both accept at its
+round more starts, nothing of it is merged. At the bound, the number of
+rounds alone asks the operator nothing (ADR-0035, Benjamin 2026-10-28):
+the Mayor is woken, once, and arbitrates -- a round more with its motive
+and the refusals it targets (`grant --arbitrated`, at most
+ARBITRATED_ROUNDS_MAX per ticket), a diagnosis, the ticket left stopped or
+replanned -- and raises the request to the operator (`escalate`) only for
+a decision that is the operator's. Any other stop is raised once to the
+operator through bin/escalation-door, as one item. So is a finished ticket both accept at its
 The fidelity to the Validated Prototype never stops a ticket: it is measured
 and joined for the finishing pass, not blocking (af-hcriwn, 2026-10-19).
 
@@ -40,6 +45,8 @@ at a tip its author finished: a round opens on that tip like the others.
     correction-round brief    CONVOY TICKET [--repo DIR]     the author session of the round
     correction-round override CONVOY TICKET --finding ID --approved-by NAME --words TEXT [--repo DIR]
     correction-round grant    CONVOY TICKET --approved-by NAME --words TEXT [--exceptional] [--repo DIR]
+    correction-round grant    CONVOY TICKET --arbitrated --approved-by ACTOR --words MOTIVE --target NAME... [--repo DIR]
+    correction-round escalate CONVOY TICKET --why TEXT [--repo DIR]   the Mayor, for a decision that is the operator's
     correction-round show     CONVOY TICKET [--repo DIR]
 
 The state lives in the tracker, read and written through bin/convoy-state
@@ -72,6 +79,7 @@ PROGRAM = "correction-round"
 BIN = Path(__file__).resolve().parent
 sys.path.insert(0, str(BIN.parent / "lib"))
 import delivery_reads  # noqa: E402
+from convoy_state import ARBITRATED_ROUNDS_MAX  # noqa: E402
 ROOT = Path(os.environ.get("FACTORY_ROOT") or BIN.parent)
 GC_BIN = os.environ.get("GC_BIN", "gc")
 STATE_TOOL = BIN / "convoy-state"
@@ -438,12 +446,94 @@ def session_over(launched: dict[str, Any]) -> bool:
 # --- a stopped ticket reaches the operator ------------------------------------------
 
 
+def at_bound(ticket: dict[str, Any]) -> bool:
+    """The ticket took every round it may take (ADR-0035)."""
+    return bool(ticket.get("correction")) and not ticket.get("correction_rounds_left")
+
+
+def refusals_at_tip(ticket: dict[str, Any]) -> list[str]:
+    """What still refuses the ticket at its tip: the Blocking Findings of
+    the review, the states the evaluation did not observe."""
+    tip = ticket.get("tip") or ""
+    return [name for position, names, _ in (review_position(ticket, tip), evaluation_position(ticket, tip))
+            if position == REFUSED for name in names]
+
+
+# The reason the request of a stop at the bound gave the operator before
+# ADR-0035: the number of rounds alone.
+COUNT_WHY = "Le ticket a pris tous ses tours de correction : aucun autre ne démarre, rien de ce ticket ne fusionne."
+
+
+def open_request_why(ticket: dict[str, Any]) -> str | None:
+    """The reason of the request of the ticket still unanswered on the
+    operator's list, if any."""
+    metadata = read_bead(ticket["id"]).get("metadata") or {}
+    if metadata.get("gc.needs_benjamin") in (None, "none"):
+        return None
+    return str(metadata.get("gc.escalation_pourquoi") or "")
+
+
+def count_request_open(ticket: dict[str, Any]) -> bool:
+    """The operator's list still holds, unanswered, the request a stop at
+    the bound raised for the count alone (before ADR-0035)."""
+    return open_request_why(ticket) == COUNT_WHY
+
+
+def clear_request(ticket_id: str, what: str) -> None:
+    cleared = run([str(ESCALATION_TOOL), "clear", ticket_id])
+    if cleared.returncode != 0:
+        raise Refusal(f"{what}, mais la demande de {ticket_id} reste sur la liste de l'opérateur : {detail_of(cleared)}")
+
+
 def raise_stop(convoy_id: str, ticket: dict[str, Any], stop: dict[str, Any]) -> bool:
-    """One request per stopped ticket, whatever refused it: the escalation
-    door puts it on the operator's list, and bin/convoy-state records that
-    it did."""
+    """One raise per stopped ticket, whatever refused it: at the bound, to
+    the Mayor, who arbitrates (ADR-0035); otherwise the escalation door puts
+    the request on the operator's list. bin/convoy-state records that it
+    was raised."""
     if "raised" in stop:
-        return False
+        if not (at_bound(ticket) and count_request_open(ticket)):
+            return False
+        # Raised to the operator for the count alone before ADR-0035: the
+        # Mayor is woken, then that request (no other, not an answered one)
+        # leaves the list; the bead keeps its trace (af-npz9v1.40).
+        page_mayor(convoy_id, ticket, stop)
+        clear_request(ticket["id"], "le Mayor est réveillé sur l'arrêt au plafond")
+        return True
+    if at_bound(ticket):
+        page_mayor(convoy_id, ticket, stop)
+    else:
+        operator_request(ticket, stop, None)
+    state_write("stop-raised", convoy_id, ticket["id"])
+    return True
+
+
+def page_mayor(convoy_id: str, ticket: dict[str, Any], stop: dict[str, Any]) -> None:
+    """Wake the Mayor on a ticket stopped at the bound: no escalation
+    door, whose sweep would raise it to the operator after a delay alone."""
+    grants = (ticket.get("correction") or {}).get("grants") or []
+    left = ARBITRATED_ROUNDS_MAX - sum(1 for grant in grants if grant.get("arbitrated"))
+    base = f"bin/{PROGRAM} {{}} {convoy_id} {ticket['id']}"
+    body = "\n".join((
+        f"ACTION: correction-round a arrêté {ticket['id']} au plafond de ses tours de correction ; le compteur seul ne "
+        "demande rien à l'opérateur (ADR-0035) : tu arbitres",
+        f"STATE: {stop['detail']} ; refus à la pointe : {', '.join(refusals_at_tip(ticket)) or 'aucun'} ; "
+        f"tours arbitrés restants : {max(0, left)} ; un tour s'ouvrirait : {'oui' if round_would_open(ticket) else 'non'}",
+        f"EVIDENCE: {base.format('show')}",
+        f"NEXT: un tour de plus, motivé et ciblé : {base.format('grant')} --arbitrated --approved-by <ton acteur> "
+        "--words \"<motif>\" --target <refus à la pointe>... ; sinon diagnostique, laisse arrêté ou replanifie ; "
+        f"{base.format('escalate')} --why \"<décision>\" seulement pour une décision de l'opérateur (produit, "
+        "critères, données, accès, dépense, autorité)",
+    ))
+    proc = run([GC_BIN, "mail", "send", "mayor", "--notify", "-s", f"Plafond des tours de correction : {ticket['id']}",
+                "-m", body])
+    if proc.returncode != 0:
+        raise Refusal(f"le ticket {ticket['id']} est arrêté au plafond mais le Mayor n'a pas été réveillé : "
+                      f"{detail_of(proc)} ; {PROGRAM} settle {convoy_id} le rejoue")
+
+
+def operator_request(ticket: dict[str, Any], stop: dict[str, Any], why: str | None) -> None:
+    """The request of a stopped ticket on the operator's list; `why`: the
+    decision the Mayor found to be the operator's (ADR-0035)."""
     language = run([str(OPERATOR_CONFIG_BIN), "language"])
     if language.returncode != 0:
         raise Refusal(f"la langue de l'opérateur est illisible : {detail_of(language)}")
@@ -460,8 +550,8 @@ def raise_stop(convoy_id: str, ticket: dict[str, Any], stop: dict[str, Any]) -> 
                          REQUEST_LINE_MAX)
     payload = {
         "quoi": head + short(stop["detail"], REQUEST_LINE_MAX - len(head)),
-        "pourquoi": ("Le ticket a pris tous ses tours de correction : aucun autre ne démarre, rien de ce ticket ne fusionne."
-                     if ticket.get("correction") else
+        "pourquoi": (short(f"Le Mayor demande ta décision : {why}", REQUEST_LINE_MAX) if why else
+                     COUNT_WHY if ticket.get("correction") else
                      "Aucun tour de correction ne reprend un écart de fidélité au prototype : rien de ce ticket ne fusionne."),
         "que_faire": [
             {"option": "Passer outre un Blocking Finding de la revue de code, avec tes mots",
@@ -482,9 +572,7 @@ def raise_stop(convoy_id: str, ticket: dict[str, Any], stop: dict[str, Any]) -> 
     if proc.returncode != 0:
         raise Refusal(
             f"le ticket {ticket['id']} est arrêté ({stop['reason']}) mais la porte d'escalade a refusé sa remontée : "
-            f"{detail_of(proc)} ; {PROGRAM} settle {convoy_id} la rejoue")
-    state_write("stop-raised", convoy_id, ticket["id"])
-    return True
+            f"{detail_of(proc)} ; rien n'est enregistré, l'appel se rejoue")
 
 
 def cleanup_stop(convoy: Convoy, ticket_id: str) -> None:
@@ -615,6 +703,12 @@ def cmd_settle(args: argparse.Namespace) -> int:
 def round_text(ticket: dict[str, Any]) -> str:
     """What the author session is told of its round and of what follows it."""
     rounds = (ticket.get("counters") or {}).get("correction_rounds")
+    grants = (ticket.get("correction") or {}).get("grants") or []
+    if grants and grants[-1].get("arbitrated") and not ticket.get("correction_rounds_left"):
+        grant = grants[-1]
+        return (f"C'est un tour arbitré par {grant['approver']} au-delà de la borne ({rounds}) : motif « "
+                f"{grant['words']} » ; il vise {', '.join(grant['targets'])}. Encore refusé après lui, le ticket "
+                "s'arrête sans fusionner et le Mayor arbitre de nouveau.")
     if exceptional_granted(ticket) and not ticket.get("correction_rounds_left"):
         return (f"C'est le tour exceptionnel de ce ticket ({rounds}), accordé par son approbateur humain au-delà de la "
                 "borne, revue de code et Ticket Evaluation confondues : encore refusé après lui, le ticket s'arrête "
@@ -747,6 +841,8 @@ def cmd_grant(args: argparse.Namespace) -> int:
     convoy = Convoy(args.convoy, args.repo)
     ticket = convoy.ticket(args.ticket)
     rig, approver = declared_human_approver(args.ticket)
+    if args.arbitrated:
+        return grant_arbitrated(convoy, ticket, approver, args)
     if args.approved_by != approver:
         raise Refusal(
             f"{args.approved_by!r} n'est pas l'approbateur humain déclaré du projet {rig} ({approver!r}) : lui seul "
@@ -770,6 +866,65 @@ def cmd_grant(args: argparse.Namespace) -> int:
                       f"{detail_of(cleared)}")
     print(json.dumps({"ok": True, "convoy": args.convoy, "ticket": args.ticket, "granted": True,
                       "exceptional": bool(args.exceptional), "approver": approver, "words": words},
+                     indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+def grant_arbitrated(convoy: Convoy, ticket: dict[str, Any], approver: str, args: argparse.Namespace) -> int:
+    """The Mayor grants a ticket stopped at the bound a round more, with
+    its motive and the refusals at the tip it targets (ADR-0035): a
+    decision of an agent, never recorded as the operator's."""
+    actor = (args.approved_by or "").strip()
+    if not actor or "\n" in actor:
+        raise Refusal("tour arbitré sans arbitre : --approved-by nomme l'acteur qui arbitre ; rien n'est écrit")
+    if actor == approver:
+        raise Refusal(f"{actor!r} est l'approbateur humain du projet : un tour arbitré est une décision d'agent, "
+                      "l'approbateur humain accorde le tour exceptionnel (--exceptional) ; rien n'est écrit")
+    words = (args.words or "").strip()
+    if not words:
+        raise Refusal("tour arbitré sans motif : --words le dit, non vide ; rien n'est écrit")
+    if not own_stop(ticket) or not at_bound(ticket):
+        raise Refusal(f"{args.ticket} n'est pas arrêté au plafond de ses tours de correction : rien à arbitrer")
+    if not round_would_open(ticket):
+        raise Refusal(
+            f"aucun tour ne s'ouvrirait sur {args.ticket} : sa session de correction s'est terminée sans que le ticket "
+            "soit terminé et refusé à une nouvelle pointe ; un tour arbitré ne relance pas le même commit ; "
+            "rien n'est écrit")
+    # A decision raised to the operator (escalate) is theirs until answered:
+    # only the request of the count alone gives way to the arbitration.
+    why = open_request_why(ticket)
+    if why is not None and why != COUNT_WHY:
+        raise Refusal(f"une décision de l'opérateur est ouverte sur {args.ticket} (« {why} ») : aucun tour arbitré "
+                      "tant qu'elle est sans réponse ; rien n'est écrit")
+    refusals = refusals_at_tip(ticket)
+    targets = [target.strip() for target in args.target or []]
+    stray = [target for target in targets if target not in refusals]
+    if not targets or stray:
+        raise Refusal(f"un tour arbitré vise des refus à la pointe ({', '.join(refusals) or 'aucun'}) : "
+                      f"{', '.join(stray) or 'aucune cible'} n'en est pas un ; rien n'est écrit")
+    state_write("grant-correction", convoy.id, args.ticket, "--approver", actor, "--words", words, "--arbitrated",
+                *(part for target in targets for part in ("--target", target)))
+    clear_request(args.ticket, f"le tour arbitré est accordé à {args.ticket}")
+    print(json.dumps({"ok": True, "convoy": convoy.id, "ticket": args.ticket, "granted": True, "arbitrated": True,
+                      "approver": actor, "words": words, "targets": targets},
+                     indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+def cmd_escalate(args: argparse.Namespace) -> int:
+    """The Mayor raises the request of a ticket stopped at the bound to the
+    operator, for a decision that is theirs (ADR-0035): its words are the
+    reason the request gives."""
+    convoy = Convoy(args.convoy, args.repo)
+    ticket = convoy.ticket(args.ticket)
+    stop = own_stop(ticket)
+    if not stop:
+        raise Refusal(f"{args.ticket} n'est pas arrêté encore refusé : aucune demande à poser")
+    why = (args.why or "").strip()
+    if not why or "\n" in why:
+        raise Refusal("--why absent : la décision qui revient à l'opérateur, sur une ligne ; rien n'est écrit")
+    operator_request(ticket, stop, why)
+    print(json.dumps({"ok": True, "convoy": convoy.id, "ticket": args.ticket, "escalated": True, "why": why},
                      indent=2, sort_keys=True, ensure_ascii=False))
     return 0
 
@@ -814,6 +969,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--approved-by")
     p.add_argument("--words")
     p.add_argument("--exceptional", action="store_true")
+    p.add_argument("--arbitrated", action="store_true")
+    p.add_argument("--target", action="append", default=[])
+    p = command("escalate", cmd_escalate)
+    p.add_argument("--why")
     p = sub.add_parser("settle")
     p.add_argument("convoy")
     p.add_argument("--repo")

@@ -808,6 +808,51 @@ class TddStepTest(unittest.TestCase):
 
         self.assertIn(f"fichier gelé modifié : {harness}", self.refused("green"))
 
+    # --- a change the merged base brought is not the ticket's (af-npz9v1.39) ---
+
+    HARNESS = f"{TESTS}/harness.py"
+
+    def ticket_merges(self, side):
+        """Frozen on main, the ticket goes on on its own branch; `side` (main,
+        or a branch of the ticket's own) changes the frozen harness, and the
+        ticket branch, with its code, merges it."""
+        self.frozen()
+        self.git("checkout", "-q", "-b", "ticket")
+        if side != "main":
+            self.git("checkout", "-q", "-b", side)
+        else:
+            self.git("checkout", "-q", "main")
+        self.commit("maintenance du harnais", {self.HARNESS: (self.repo / self.HARNESS).read_text() + "\n# maintenance\n"})
+        self.git("checkout", "-q", "ticket")
+        self.commit("code", {APP: self.green_app()})
+        self.git("merge", "-q", "--no-edit", side)
+
+    def test_green_takes_a_frozen_harness_file_main_changed_and_the_branch_merged(self):
+        self.ticket_merges("main")
+
+        self.ok("green")
+
+    def test_green_refuses_a_frozen_harness_file_a_branch_of_the_ticket_changed(self):
+        self.ticket_merges("auxiliaire")
+
+        self.assertIn(f"fichier gelé modifié : {self.HARNESS}", self.refused("green"))
+
+    def test_amendment_of_what_only_the_merged_base_changed_is_refused_without_a_stop(self):
+        self.ticket_merges("main")
+
+        error = self.refused("amend", SLICE, "--reason", "le harnais a changé")
+
+        self.assertIn("seulement par la base fusionnée", error)
+
+    def test_changes_reads_a_stopped_ticket_and_tells_its_own_from_the_base_s(self):
+        self.ticket_merges("main")
+        self.state("stop-ticket", CONVOY, SLICE, "--reason", "amendment_exhausted", "--detail", "second amendement")
+
+        answer = self.ok("changes")
+
+        self.assertEqual(([], [self.HARNESS]), (answer["own"], answer["inherited"]))
+        self.assertIn("ticket arrêté", self.refused("green"))
+
     def test_green_refuses_a_registry_that_was_altered(self):
         """The fingerprints are compared with the registry the freeze sealed:
         rewriting the registry does not make a modified test acceptable."""
