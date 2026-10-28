@@ -573,17 +573,21 @@ class RequestsSeamTest(CockpitOnFakes):
 
 
 class UnknownSignalSeamTest(CockpitOnFakes):
-    """A signal of a producer the cockpit has no reading for is
-    information, not an Operator Request (GLOSSARY.md: « it needs a
-    decision at the operator's tier or a physical action on the operator's
-    side; it is not information »): it waits on no one in Pour moi. The
-    journal keeps its place, « Signal non reconnu venant de … » (spec
-    af-fgcw0d user story 76)."""
+    """A signal of a producer the cockpit has no reading for (spec
+    af-fgcw0d user story 76): Pour moi shows it « Signal non reconnu venant
+    de … », its raw text in the folded details only -- the cockpit never
+    invents a meaning, and never drops it. It is information, not an
+    Operator Request (GLOSSARY.md: « it is not information »): no request
+    of the list, no count, no gesture."""
 
     RAW_TITLE = "Disk quota at 92% on /var"
     RAW_TEXT = "backup volume nearly full, nothing rotated since Monday"
 
-    def test_a_signal_of_an_unknown_producer_waits_on_no_one(self):
+    def _signal(self, body, signal_id):
+        start = body.index('id="s-%s"' % signal_id)
+        return body[start:body.index("</details>", start)]
+
+    def test_a_signal_of_an_unknown_producer_is_shown_in_pour_moi_as_information(self):
         self.start_cockpit()
         self.write_beads([
             {"id": "af-sig1", "status": "open", "labels": [], "notes": "", "title": self.RAW_TITLE,
@@ -596,16 +600,42 @@ class UnknownSignalSeamTest(CockpitOnFakes):
             {"id": "af-sig3", "status": "open", "labels": [], "notes": "", "title": "[session-loop] s-1",
              "description": "", "metadata": {"gc.source": "factory-session-loop-guard", "gc.session_id": "s-1",
                                               "gc.escalation_mayor_paged_at": "2026-09-30T08:00:00Z"}},
+            # A producer that paged the Mayor first stays the Mayor's (spec .9).
+            {"id": "af-sig2", "status": "open", "labels": [], "notes": "", "title": "order failing",
+             "description": "", "metadata": {"gc.source": "on-order-failed",
+                                              "gc.escalation_mayor_paged_at": "2026-09-30T08:00:00Z"}},
+            # Closed: it signals nothing any more.
+            {"id": "af-sig4", "status": "closed", "labels": [], "notes": "", "title": "old", "description": "",
+             "metadata": {"gc.source": "disk-watch"}},
         ])
         payload = self.wait_for_requests(lambda p: any(r["id"] == "af-sig3" for r in p["requests"]))
         self.assertEqual(["af-sig3"], sorted(r["id"] for r in payload["requests"]))
-        self.assertEqual([], [r for r in payload["requests"] if r["type"] == "signal_inconnu"])
 
-        body = self.home_body()
-        self.assertNotIn('id="d-af-sig1"', body)
-        self.assertNotIn('id="d-af-sig5"', body)
-        self.assertNotIn("Signal non reconnu", body)
-        self.assertNotIn(self.RAW_TITLE, body)
+        body = wait_until(lambda: (lambda b: b if 'id="s-af-sig1"' in b else None)(self.home_body()))
+        inbox = body[body.index('id="pn-inbox"'):]
+        self.assertIn('id="s-af-sig1"', inbox, "the signal is not in Pour moi")
+        self.assertNotIn('id="d-af-sig1"', body, "the signal is drawn as a request")
+        self.assertNotIn('data-request="af-sig1"', body, "the signal is a line of the requests")
+        self.assertNotIn('id="s-af-sig2"', body)
+        self.assertNotIn('id="s-af-sig4"', body)
+        self.assertNotIn('id="s-af-sig3"', body)
+
+        signal = self._signal(body, "af-sig1")
+        main, details = signal.split("</summary>", 1)
+        # User story 73: the name of the producer is no main text when it
+        # reads as an identifier (« disk-watch »); it is in the details.
+        self.assertIn("Signal non reconnu venant d’une source nommée dans les détails", main)
+        self.assertNotIn("disk-watch", main, "the name of the producer is shown as main text")
+        self.assertNotIn(self.RAW_TITLE, main, "the raw text is shown as main text")
+        self.assertIn("disk-watch", details)
+        self.assertIn("Texte brut", details)
+        self.assertIn(self.RAW_TITLE, details)
+        self.assertIn(self.RAW_TEXT, details)
+        self.assertIn("af-sig1", details)
+        self.assertNotIn("<button", signal, "a signal offers a gesture")
+        self.assertIn("Signal non reconnu venant de sauvegarde nocturne", self._signal(body, "af-sig5"))
+        # Information waits on no one: the count says the one request.
+        self.assertRegex(body, r"<strong[^>]*>1</strong><small[^>]*>Maintenant · demandes ouvertes")
 
     def test_an_order_paused_by_its_door_waits_on_the_operator_with_its_relaunch(self):
         # As bin/order-pause (pause) records it (af-npz9v1.15); BR af-eyc5ah.

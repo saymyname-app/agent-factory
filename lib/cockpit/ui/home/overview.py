@@ -52,11 +52,12 @@ from cockpit.projects import outcome as outcome_mod
 from cockpit.projects.model import Chantier
 from cockpit.projects.source import from_value as projects_from_value
 from cockpit.requests.model import URGENT
+from cockpit.requests.sources.unknown_signal import unknown_signals_of
 from cockpit.text.validate import speaks_plainly
 from cockpit.runs.derive import runs_from_beads
 from cockpit.ui.runs.page import duration
 from cockpit.ui.home.page import UNKNOWN_TEXT, UNKNOWN_TEXT_NO_TIME
-from cockpit.ui.home.pour_moi import CSS as POUR_MOI_CSS, links_of, render_details, render_request
+from cockpit.ui.home.pour_moi import CSS as POUR_MOI_CSS, links_of, render_details, render_request, render_signals
 from cockpit.ui.panorama.shell import Anchors, anchor_slug, open_button
 from cockpit.ui.projects.page import RESULT_PANEL_ID
 from cockpit.ui.projects.project_page import project_page_url
@@ -131,7 +132,7 @@ def overview_view(snapshot, requests, stop_trial_passed=False, now=None, undeliv
     beads_row = snapshot.get("beads")
     view = {"state": CONTENT, "stale": False, "checked": None, "requests": [], "indicators": [],
             "activity": {}, "runs": [], "dossier": None, "projects": [], "projects_unread": False, "now": now,
-            "unknown": _unknown(beads_row)}
+            "unknown": _unknown(beads_row), "signals": []}
     urls = _project_urls(snapshot.get("projets"))
     view["requests"] = [
         {"id": r.id, "quoi": r.quoi, "projet": r.projet, "pourquoi": r.pourquoi, "request": r,
@@ -148,6 +149,8 @@ def overview_view(snapshot, requests, stop_trial_passed=False, now=None, undeliv
         view["state"] = ERROR if (beads_row or {}).get("failed_at") is not None else LOADING
         return view
     beads = [bead for bead in beads_row["value"] if isinstance(bead, dict)]
+    # Information, beside the requests: not counted among the decisions.
+    view["signals"] = unknown_signals_of(beads)
     rows = [snapshot[name] for name in ("gc", "beads") if snapshot.get(name)]
     view["stale"] = any(row["freshness"] != FRESH for row in rows)
     read_ats = [row["read_at"] for row in rows if row["read_at"] is not None]
@@ -167,7 +170,7 @@ def overview_view(snapshot, requests, stop_trial_passed=False, now=None, undeliv
     view["projects"] = _projects(snapshot.get("projets"), beads, view["requests"])
     projets = snapshot.get("projets")
     view["projects_unread"] = projets is not None and projets["value"] is None
-    if not (view["requests"] or view["dossier"] or view["projects"] or view["activity"] or view["runs"]
+    if not (view["requests"] or view["signals"] or view["dossier"] or view["projects"] or view["activity"] or view["runs"]
             or any(said.get(label) for label in SAID_INDICATORS)):
         view["state"] = EMPTY
     return view
@@ -403,8 +406,9 @@ def _render_content(view, anchors):
     opened = result["chantier"] if result else (view["requests"][0]["id"] if view["requests"] else None)
     lines = _render_lines(view["requests"], opened, anchors)
     opened_html = _render_result(view, anchors)
-    parts.append('<div class="pn-inbox" id="pn-inbox" %s><div class="pn-panel pn-requests" %s>%s%s%s</div>%s</div>'
-                 % (inbox, requests_panel, title, _unknown_notice(view), lines, opened_html))
+    parts.append('<div class="pn-inbox" id="pn-inbox" %s><div class="pn-panel pn-requests" %s>%s%s%s%s</div>%s</div>'
+                 % (inbox, requests_panel, title, _unknown_notice(view), lines,
+                    render_signals(view["signals"], view["now"]), opened_html))
     parts.append(_render_projects(view["projects"], anchors, view["projects_unread"]))
     return "".join(parts)
 

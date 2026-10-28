@@ -30,7 +30,6 @@ from cockpit.requests.sources.paused_orders import TYPE_ORDRE_EN_PAUSE
 from cockpit.requests.sources.paused_sessions import TYPE_SESSION_EN_PAUSE
 from cockpit.requests.sources.readability import TYPE_SOURCE_ILLISIBLE
 from cockpit.requests.sources.silence import TYPE_USINE_MUETTE
-from cockpit.requests.sources.unknown_signal import TYPE_SIGNAL_INCONNU
 from cockpit.text.fallback import FALLBACK_NO_RECOMMENDATION, FIELD_LABELS, incomplete_label
 from cockpit.ui.actions.render import REPORT_OPTIONS, FREE_TIME_OPTION, render_actions
 from cockpit.ui.home.page import LEVEL_CLASS, _render_option, _since
@@ -43,7 +42,6 @@ KINDS = {
     TYPE_ORDRE_EN_PAUSE: "Ordre mis en pause",
     TYPE_USINE_MUETTE: "Usine muette",
     TYPE_SOURCE_ILLISIBLE: "Source illisible",
-    TYPE_SIGNAL_INCONNU: "Signal non reconnu",
 }
 # The kinds that come from no bead: the cockpit raised them itself.
 RAISED_BY_THE_COCKPIT = (TYPE_USINE_MUETTE, TYPE_SOURCE_ILLISIBLE)
@@ -180,7 +178,7 @@ def render_details(request, links):
     the producer's own words, why a field was replaced, the precise source,
     and the links to where it lives."""
     rows = [("Identifiant", "<code>%s</code>" % _e(request.id)),
-            ("Nature", "%s <code>%s</code>" % (_e(KINDS.get(request.type, "Signal non reconnu")), _e(request.type)))]
+            ("Nature", "%s <code>%s</code>" % (_e(KINDS.get(request.type, request.type)), _e(request.type)))]
     for field_name in request.missing_fields:
         for reason in request.motifs.get(field_name, []):
             rows.append(("Remplacé (%s)" % FIELD_LABELS.get(field_name, field_name), _e(reason)))
@@ -198,7 +196,38 @@ def render_details(request, links):
             % body)
 
 
+SIGNALS_TITLE = "À savoir · signaux non reconnus"
+SIGNALS_LEAD = "Ils n’attendent ni décision ni geste : le cockpit ne sait pas les lire et n’en invente pas le sens."
+
+
+def render_signals(signals, now):
+    """The signals of the tracker the cockpit cannot read (spec .76), apart
+    from the requests of Pour moi: each said « Signal non reconnu venant de
+    … », its identifier, its producer and its raw text, as written, folded
+    under it. Information, not a request: no level, no gesture."""
+    if not signals:
+        return ""
+    items = []
+    for signal in signals:
+        since = _since(signal.depuis_quand, now)
+        rows = [("Identifiant", "<code>%s</code>" % _e(signal.id)),
+                ("Source", "<code>%s</code>" % _e(signal.source)),
+                ("Texte brut", "<pre>%s</pre>" % _e(signal.texte_brut))]
+        body = "".join('<div class="row"><span>%s</span><span>%s</span></div>' % (_e(label), value)
+                       for label, value in rows)
+        items.append('<details class="more pn-request-details pn-signal" id="s-%s"><summary>%s%s</summary>'
+                     '<div class="det">%s</div></details>'
+                     % (_e(signal.id), _e(signal.titre), " · depuis %s" % _e(since) if since else "", body))
+    return ('<section class="pn-signals" aria-label="%s"><h3>%s</h3><p>%s</p>%s</section>'
+            % (_e(SIGNALS_TITLE), _e(SIGNALS_TITLE), _e(SIGNALS_LEAD), "".join(items)))
+
+
 CSS = """
+.pn-signals{margin-top:16px;border-top:1px solid var(--line);padding-top:12px}
+.pn-signals h3{font-size:13px;margin:0 0 4px;color:var(--pn-muted-text);font-weight:600}
+.pn-signals>p{margin:0 0 8px;font-size:13px;color:var(--pn-muted-text)}
+.pn-signals .pn-signal{margin-top:8px}
+.pn-signals .pn-signal>summary{min-height:44px;overflow-wrap:anywhere}
 .pn-open-request>small{display:block}
 .pn-open-request>p{margin:0 0 10px;overflow-wrap:anywhere}
 .pn-request-status{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin-bottom:12px}

@@ -1,25 +1,44 @@
-"""Signal de type inconnu -> Quand tu veux (T15, af-icxjc4 — Spec
-af-oohx2x §"Demandes opérateur" and .76: "qu'un signal de type inconnu
-s'affiche « Signal non reconnu venant de … » avec son texte brut en
-détails, afin que le cockpit n'invente jamais de sens").
+"""Signal de type inconnu (Spec af-fgcw0d user story 76: "qu'un signal de
+type inconnu s'affiche « Signal non reconnu venant de … » avec son texte
+brut en détails, afin que le cockpit n'invente jamais de sens").
 
-Input: ``signals``, one dict per unrecognised machine event a source
-handed the cockpit and that matched none of its known shapes —
-``{"id": str, "source": str, "texte_brut": str, "depuis_quand": iso str
-or None}``. No source of Pour moi calls it: a bead of a producer the
-cockpit has no reading for is information, not an Operator Request
-(GLOSSARY.md); the journal keeps its place (user story 76,
-:mod:`cockpit.ui.journal.panorama`). The cockpit never tries to interpret ``texte_brut``: it is
-shown verbatim, only in the folded details, exactly as received. A
-signal exits the moment its emitting source stops reporting it (e.g. a
-newer read no longer includes that id) — exit at-source, same rule as
-every other type here.
+    unknown_signals_of(beads) -> [UnknownSignal]
+
+A signal is an open bead a producer of the Factory filed (``gc.source``)
+that is none of the shapes the cockpit reads, and that paged no one. It is
+information, not an Operator Request (GLOSSARY.md: an Operator Request "is
+not information"): Pour moi shows it apart from its requests, with no
+level, no gesture and no count (:mod:`cockpit.ui.home.overview`). The
+cockpit never tries to interpret its raw text (its title and its
+description, as written): it is shown verbatim, only in the folded
+details. A signal exits the moment its bead is closed or no longer read.
 """
-from cockpit.requests.model import DEFAULT_PROJECT, OperatorRequest, QUAND_TU_VEUX
+import dataclasses
+
+from cockpit.requests.proposals import is_proposal
 from cockpit.requests.sources._util import parse_iso
+from cockpit.requests.sources.paused_sessions import LOOP_GUARD
 from cockpit.text.validate import speaks_plainly
 
-TYPE_SIGNAL_INCONNU = "signal_inconnu"
+SOURCE_KEY = "gc.source"
+# The producers whose beads the cockpit reads into a request of its own.
+KNOWN_SOURCES = frozenset({LOOP_GUARD})
+# What makes a bead one of the shapes the cockpit already reads, or one the
+# Mayor was paged about first (spec af-oohx2x .9: never the operator's until
+# promoted): a question to the operator, a page of the Mayor.
+ROUTED_KEYS = ("gc.needs_benjamin", "gc.escalation_mayor_paged_at")
+
+
+@dataclasses.dataclass(frozen=True)
+class UnknownSignal:
+    """``titre``: the fixed phrase « Signal non reconnu venant de … », the
+    only main text; ``source``, ``texte_brut``: as the producer wrote them,
+    for the folded details; ``depuis_quand``: epoch seconds or ``None``."""
+    id: str
+    titre: str
+    source: str
+    texte_brut: str
+    depuis_quand: float = None
 
 
 def _coming_from(source):
@@ -34,38 +53,28 @@ def _coming_from(source):
     return "Signal non reconnu venant d’une source nommée dans les détails"
 
 
-def build_unknown_signal_requests(signals, verifie_a=None):
-    requests = []
-    for signal in signals or []:
-        if not isinstance(signal, dict):
+def unknown_signals_of(beads):
+    """The signals of the tracker the cockpit has no reading for: each open
+    bead whose producer (``gc.source``) is none of :data:`KNOWN_SOURCES`,
+    that is no proposal and that neither asks the operator nor paged the
+    Mayor; oldest first."""
+    signals = []
+    for bead in beads or ():
+        if not isinstance(bead, dict) or bead.get("status") == "closed" or is_proposal(bead):
             continue
-        signal_id = signal.get("id") or ""
-        source = signal.get("source") or ""
-        requests.append(
-            OperatorRequest(
-                id=signal_id,
-                type=TYPE_SIGNAL_INCONNU,
-                niveau=QUAND_TU_VEUX,
-                quoi=_coming_from(source),
-                pourquoi="Ce signal ne correspond à aucun type connu du cockpit.",
-                que_faire=[
-                    {
-                        "lettre": "a",
-                        "option": "Voir le texte brut",
-                        "consequence": "Affiche le signal tel que reçu, sans interprétation.",
-                        "recommande": False,
-                        "raison": "",
-                    }
-                ],
-                projet=DEFAULT_PROJECT,
-                depuis_quand=parse_iso(signal.get("depuis_quand")),
-                verifie_a=verifie_a,
-                lien=signal_id,
-                texte_brut=signal.get("texte_brut") or "",
-                precisions="Source : %s" % source if source else "",
-            )
-        )
-    requests.sort(key=lambda r: r.sort_key())
-    # ``texte_brut`` is no main field (quoi/pourquoi are the fixed phrases):
-    # it is kept apart, for the folded details only.
-    return requests
+        metadata = bead.get("metadata") or {}
+        source = metadata.get(SOURCE_KEY)
+        if not isinstance(source, str) or not source or source in KNOWN_SOURCES:
+            continue
+        if any(metadata.get(key) for key in ROUTED_KEYS):
+            continue
+        signals.append(UnknownSignal(
+            id=bead.get("id") or "",
+            titre=_coming_from(source),
+            source=source,
+            texte_brut="\n\n".join(text for text in (bead.get("title"), bead.get("description"))
+                                   if isinstance(text, str) and text),
+            depuis_quand=parse_iso(bead.get("created_at")),
+        ))
+    signals.sort(key=lambda signal: (signal.depuis_quand is None, signal.depuis_quand or 0, signal.id))
+    return signals

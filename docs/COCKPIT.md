@@ -458,11 +458,21 @@ liens où elle vit (la page de son projet, la page Usine, le journal).
 
 **Signal non reconnu** (user story 76) : une fiche ouverte du suivi des
 tickets qu’un producteur de l’usine a déposée (`gc.source`) et que le
-cockpit ne sait pas lire n’est pas une demande opérateur : elle informe,
-elle n’attend ni décision ni geste de l’opérateur (GLOSSARY.md, « Operator
-Request »). Elle n’apparaît pas dans Pour moi. Le journal garde sa place,
-« Signal non reconnu venant de … », avec les mots du producteur repliés,
-tels qu’écrits (`lib/cockpit/ui/journal/panorama.py`).
+cockpit ne sait pas lire, qui n’est d’aucune forme qu’il lit (question,
+proposition, session en pause) et qui n’a alerté personne (ni
+`gc.needs_benjamin`, ni `gc.escalation_mayor_paged_at` : une alerte d’abord
+adressée au Maire reste au Maire), n’est pas une demande opérateur : elle
+informe, elle n’attend ni décision ni geste de l’opérateur (GLOSSARY.md,
+« Operator Request »). Pour moi la montre à part de ses demandes, sous
+« À savoir · signaux non reconnus » : « Signal non reconnu venant de
+<producteur> », sans niveau, sans geste, hors du compte des décisions
+(`lib/cockpit/requests/sources/unknown_signal.py`,
+`cockpit.ui.home.pour_moi.render_signals`). Le nom du producteur n’y est dit
+que s’il passe le même contrôle (`speaks_plainly`) ; sinon (« disk-watch » a
+la forme d’un identifiant) elle dit « Signal non reconnu venant d’une source
+nommée dans les détails ». Son identifiant, son producteur, son titre et sa
+description, tels qu’écrits, sont dans son repli sous « Texte brut », jamais
+en texte principal : le cockpit n’invente aucun sens.
 
 **Usine muette** (`lib/cockpit/requests/sources/silence.py`) : le heartbeat
 ne part que tant que le superviseur et le suivi des tickets sont lus à jour ;
@@ -688,10 +698,11 @@ served:
   illisible » notice, and `/api/requests` says `state: "unknown"`.
 
 Not wired yet: « rituel dû » (each project's status command lives in its
-own repository — the slice that gives the cockpit its clones),
-and `requests/sources/unknown_signal.py` (a signal the cockpit cannot read
-is information, not an Operator Request: it waits in no list of Pour moi,
-and the journal keeps its place).
+own repository — the slice that gives the cockpit its clones).
+
+A signal the cockpit cannot read (`requests/sources/unknown_signal.py`) is
+information, not an Operator Request: Pour moi shows it apart, uncounted,
+and `/api/requests` does not list it.
 
 `tests/cockpit-other-requests-test.py` covers all of the above through the
 process's HTTP surface.
