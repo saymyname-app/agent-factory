@@ -11,6 +11,7 @@ import signal
 import sys
 import threading
 import time
+import urllib.parse
 from datetime import datetime
 
 from cockpit.access.guard import ActionGuard, new_session_token
@@ -24,6 +25,8 @@ from cockpit.core.readmodel import ReadModel
 from cockpit.core.server import make_server
 from cockpit.health.git_source import count_commits_behind
 from cockpit.access.tailscale import build_key_expiry_request, key_expiry_epoch, read_status
+from cockpit.heartbeat.emitter import read_url_from_file
+from cockpit.notify.secrets import read_secrets_from_file
 from cockpit.notify.service import HeartbeatService, NotifyService, Ticker
 from cockpit.requests.sources.silence import build_silence_request
 from cockpit.notify.state_store import JsonFileStateStore
@@ -251,12 +254,22 @@ def build(config, clock=None):
     server.stop_driver = stop_driver
     server.benjamin_login = config.benjamin_login
     server.public_url = config.public_url
-    # What the procedure of the VM settings says of this host: paths only,
-    # never what a secret file holds (I, af-cp4fzd).
-    server.procedure_settings = {
-        "local_config": config.local_config_file, "pushover_file": config.pushover_secrets_file,
-        "heartbeat_file": config.heartbeat_url_file, "public_url": config.public_url, "port": config.port,
-    }
+    # What the procedure of the VM settings says of this host, read each
+    # time it opens: paths, and whether the cockpit reads each secret file
+    # -- never what one holds (I, af-cp4fzd).
+    supervisor_port = urllib.parse.urlsplit(config.gc_base_url).port
+
+    def procedure_settings():
+        return {
+            "local_config": config.local_config_file,
+            "pushover_file": config.pushover_secrets_file,
+            "pushover_ready": read_secrets_from_file(config.pushover_secrets_file) is not None,
+            "heartbeat_file": config.heartbeat_url_file,
+            "heartbeat_ready": read_url_from_file(config.heartbeat_url_file) is not None,
+            "public_url": config.public_url, "port": config.port, "supervisor_port": supervisor_port,
+        }
+
+    server.procedure_settings = procedure_settings
     server.rituals_file = config.rituals_file
     server.extra_requests = extra_requests
 

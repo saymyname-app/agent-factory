@@ -48,10 +48,14 @@ def _cmd(text):
     return '<span class="pr-cmd">%s</span>' % html.escape(text)
 
 
-def _state(configured, path, what):
-    """Whether the setting is in place on this host, by its path alone."""
-    if configured:
+def _state(path, ready, what):
+    """Whether the setting is in place on this host: its file set and read
+    by the cockpit (``ready``), set but absent or invalid, or not set."""
+    if path and ready:
         return '<p class="pr-state">En place sur cette VM : %s lu dans %s.</p>' % (html.escape(what), _code(path))
+    if path:
+        return ('<p class="pr-state">Pas en place sur cette VM : %s est attendu dans %s, mais ce fichier est '
+                'absent ou invalide.</p>' % (html.escape(what), _code(path)))
     return '<p class="pr-state">Pas encore en place sur cette VM : %s absent.</p>' % html.escape(what)
 
 
@@ -64,13 +68,16 @@ def render_procedure(settings):
     """``settings``: what this host says of itself, paths only --
     ``local_config`` (the local settings file of the cockpit),
     ``pushover_file`` and ``heartbeat_file`` (the secret files, empty when
-    unset), ``public_url`` (the address the cockpit is opened at, empty
-    when unset), ``port`` (the cockpit's own port)."""
+    unset), ``pushover_ready`` and ``heartbeat_ready`` (whether the cockpit
+    reads them), ``public_url`` (the address the cockpit is opened at,
+    empty when unset), ``port`` (the cockpit's own port),
+    ``supervisor_port`` (the port of the supervisor it reads)."""
     local = settings.get("local_config") or ""
     pushover = settings.get("pushover_file") or ""
     heartbeat = settings.get("heartbeat_file") or ""
     public_url = settings.get("public_url") or ""
     port = settings.get("port") or 0
+    supervisor_port = settings.get("supervisor_port") or 0
     pushover_path = pushover or SUGGESTED_PUSHOVER_FILE
     heartbeat_path = heartbeat or SUGGESTED_HEARTBEAT_FILE
     https = public_url.startswith("https://")
@@ -88,7 +95,7 @@ def render_procedure(settings):
     steps = [
         _step(
             "1. Notifications iPhone (Pushover)",
-            _state(bool(pushover), pushover, "le fichier de secrets Pushover"),
+            _state(pushover, settings.get("pushover_ready"), "le fichier de secrets Pushover"),
             [
                 "Dans ton compte Pushover, relève le jeton de l’application, ta clé utilisateur et la clé "
                 "de chiffrement de bout en bout que montre l’app iPhone.",
@@ -101,7 +108,7 @@ def render_procedure(settings):
         ),
         _step(
             "2. Signal de vie de l’usine (heartbeat Healthchecks.io)",
-            _state(bool(heartbeat), heartbeat, "l’adresse du signal de vie"),
+            _state(heartbeat, settings.get("heartbeat_ready"), "l’adresse du signal de vie"),
             [
                 "Dans ton compte Healthchecks.io, crée ou garde le contrôle « Usine muette » : période "
                 "%d min, délai de grâce %d min, notification de retour désactivée, alerte Pushover en "
@@ -123,8 +130,9 @@ def render_procedure(settings):
             else '<p class="pr-state">Pas encore en place : aucune adresse HTTPS configurée.</p>',
             [
                 "Sur la VM, expose le cockpit à ton réseau Tailscale seul, en HTTPS. La commande refuse "
-                "Funnel (l’accès public) et le port du superviseur, qui n’est jamais exposé."
-                + _cmd("%s serve --target-port %s --gc-port <port du superviseur>" % (WIZARD, port or "<port>")),
+                "Funnel (l’accès public) et le port du superviseur (%s, celui que le cockpit lit), qui "
+                "n’est jamais exposé." % supervisor_port
+                + _cmd("%s serve --target-port %s --gc-port %s" % (WIZARD, port, supervisor_port)),
                 "Ajoute au fichier de réglages local l’adresse HTTPS du nœud de l’usine, en %s et %s, et "
                 "ton identité Tailscale en %s : le cockpit refuse toute autre identité, en lecture comme en "
                 "action." % (_code('"public_url"'), _code('"allowed_origin"'), _code('"benjamin_login"')),

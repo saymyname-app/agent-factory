@@ -171,7 +171,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             self._send_factory_page(read_model)
             return
         if path == PROCEDURE_PATH:
-            self._send_page(read_model, "usine", render_procedure(self.server.procedure_settings),
+            self._send_page(read_model, "usine", render_procedure(self.server.procedure_settings()),
                             extra_css=PROCEDURE_CSS)
             return
         if path == "/rituels":
@@ -864,7 +864,7 @@ def make_server(
     # The address the operator opens the cockpit at: the HTTPS address of
     # the node behind Tailscale Serve once it is set (I, af-cp4fzd).
     server.public_url = ""
-    server.procedure_settings = {}
+    server.procedure_settings = dict
     # The rituals file of the Factory (« Rituels »): unset, nothing read.
     server.rituals_file = None
     # Where the projects are declared (cockpit.projects.descriptors): the

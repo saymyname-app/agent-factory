@@ -6,7 +6,8 @@ af-npz9v1.22, for I af-cp4fzd):
   the launch (`<home>/https/cert.pem`, the authority a client trusts);
 - who connects is said by the client itself, in `X-Synthetic-Tailnet-Login`
   -- the member of the tailnet Serve would have recognised. A request
-  without it is not from the tailnet: 403, nothing reaches the cockpit;
+  without it is not from the tailnet: 403, nothing reaches the cockpit,
+  and the refusal says how a member is named;
 - it forwards the request to the cockpit alone, never to the supervisor,
   with `Tailscale-User-Login` and `Tailscale-User-Name` set from that login
   and every `Tailscale-User-*` header the client sent removed, as Serve
@@ -27,7 +28,15 @@ IDENTITY = "X-Synthetic-Tailnet-Login"
 SERVE_HEADERS = ("Tailscale-User-Login", "Tailscale-User-Name", "Tailscale-User-Profile-Pic")
 # Never forwarded as the client sent them.
 DROPPED = {name.lower() for name in (*SERVE_HEADERS, IDENTITY, "Host", "Connection", "Keep-Alive")}
-NOT_ON_THE_TAILNET = b"synthetic identity proxy: not a member of the tailnet\n"
+# What a client outside the tailnet reads: the refusal, and how a member is
+# named to this proxy -- a header of Serve the client sends is not one
+# (I, af-cp4fzd).
+NOT_ON_THE_TAILNET = (
+    b"synthetic identity proxy: not a member of the tailnet\n"
+    b"A member of the tailnet is named by the header X-Synthetic-Tailnet-Login: <login>, "
+    b"e.g. X-Synthetic-Tailnet-Login: synthetic@example.ts.net, the operator of this launch. "
+    b"Tailscale-User-* headers sent by a client are dropped, as Tailscale Serve drops them.\n"
+)
 
 
 def certificate(folder: Path) -> tuple[Path, Path]:

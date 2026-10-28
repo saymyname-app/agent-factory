@@ -971,18 +971,23 @@ adapter and emitter against it.
 ## Local settings file (af-mjfvwx)
 
 Intent (Benjamin, his words, 2026-10-06): « ok pour l'emplacement ».
-Mechanism (agent interpretation): the two secret files live under his
-Windows profile, in `C:\Users\<lui>\.agent-factory-cockpit\`, and one
-local, unversioned JSON file tells the cockpit where — it does NOT hold a
-secret itself, and nothing in the repository names his profile.
-
-`cockpit-local.json`, beside the pid file (`.gc/runtime/` on the live
-root; `COCKPIT_LOCAL_CONFIG` to put it elsewhere):
+Mechanism (agent interpretation): one local, unversioned JSON file tells
+the cockpit where the two secret files are — it does NOT hold a secret
+itself, and nothing in the repository names his account.
 
 On the VM (I, af-cp4fzd; Spec af-fgcw0d, user story 98), the secret files
 are private files of the account that runs the cockpit, outside every
-repository; the procedure linked from « Accès » (below) proposes
-`~/.config/agent-factory/`:
+repository, readable by that account alone (`bin/cockpit-setup-wizard`
+writes them `0600`, and makes a file that was already there `0600` before
+writing in it); the procedure linked from « Accès » (below) proposes
+`~/.config/agent-factory/`. A path of the file that starts with `~/` is
+read in the home of that account (`HOME`). The Windows profile of
+af-mjfvwx (`C:\Users\<lui>\.agent-factory-cockpit\`, read through
+`/mnt/c`) is no longer where they live: the cockpit runs on the VM, which
+has no such path.
+
+`cockpit-local.json`, beside the pid file (`.gc/runtime/` on the live
+root; `COCKPIT_LOCAL_CONFIG` to put it elsewhere):
 
 ```json
 {
@@ -1063,8 +1068,12 @@ Mechanism (agent interpretation):
   the heartbeat (the check « Usine muette », period 5 min and grace 10 min,
   an alert within fifteen minutes) and the access through Tailscale Serve,
   each with the command of `bin/cockpit-setup-wizard` that writes it and
-  whether it is in place on this host. It names paths, never what a secret
-  file holds, and no Windows path.
+  whether it is in place on this host: a secret is « en place » only when
+  the cockpit reads its file, read again each time the page opens; a path
+  set whose file is absent or invalid is said so. The command of Serve
+  names the ports of this host, the cockpit's and the supervisor's (the
+  port of `COCKPIT_GC_BASE_URL`). It names paths, never what a secret file
+  holds, and no Windows path.
 - The health zone already says a missing secret file (« Notifications
   iPhone inactives : le fichier de secrets est absent ou invalide »),
   without its value.
@@ -1197,7 +1206,7 @@ copy. What it gives the cockpit to read:
 | silence of the main sources | said « Usine muette » after 20 s (`COCKPIT_SILENCE_ALERT_SECONDS`): a state that falls silent (home-stale, home-offline) is first seen as it is drawn |
 | local settings, secrets, notifications, heartbeat, project clones, Tailscale | none: a temporary HOME and no local settings file |
 | a heartbeat (I, af-cp4fzd) | a dataset that says `"heartbeat": {"ping_url": "<http(s) address>", "interval_seconds": <n>}` gives the cockpit that address as its heartbeat secret, written in a private file of the temporary HOME (`COCKPIT_HEARTBEAT_URL_FILE`), at that pace (`COCKPIT_HEARTBEAT_INTERVAL_SECONDS`, the five minutes of service), ticked four times as often; anything else is refused |
-| Tailscale Serve in front of the cockpit | a dataset that says `"https_identity_proxy": true` puts a synthetic identity proxy in front of it (`tests/fixtures/cockpit/synthetic-city/identity_proxy.py`, af-npz9v1.22): HTTPS on 127.0.0.1 with a certificate made for the launch, its address and the authority to trust in the cockpit's environment (`COCKPIT_TRIAL_HTTPS_URL`, `COCKPIT_TRIAL_HTTPS_CA`), its origin and the address « Accès » gives the cockpit's own (`COCKPIT_ALLOWED_ORIGIN`, `COCKPIT_PUBLIC_URL`). Who connects is said in `X-Synthetic-Tailnet-Login`: without it, 403 (not on the tailnet); with it, the request goes to the cockpit alone with `Tailscale-User-Login` and `Tailscale-User-Name` set from it, every `Tailscale-User-*` the client sent removed. Benjamin's login is `synthetic@example.ts.net` (`COCKPIT_BENJAMIN_LOGIN`). Nothing of the tailnet is used |
+| Tailscale Serve in front of the cockpit | a dataset that says `"https_identity_proxy": true` puts a synthetic identity proxy in front of it (`tests/fixtures/cockpit/synthetic-city/identity_proxy.py`, af-npz9v1.22): HTTPS on 127.0.0.1 with a certificate made for the launch, its address and the authority to trust in the cockpit's environment (`COCKPIT_TRIAL_HTTPS_URL`, `COCKPIT_TRIAL_HTTPS_CA`), its origin and the address « Accès » gives the cockpit's own (`COCKPIT_ALLOWED_ORIGIN`, `COCKPIT_PUBLIC_URL`). Who connects is said in `X-Synthetic-Tailnet-Login`: without it, 403 (not on the tailnet), the refusal naming that header (I, af-cp4fzd); with it, the request goes to the cockpit alone with `Tailscale-User-Login` and `Tailscale-User-Name` set from it, every `Tailscale-User-*` the client sent removed. Benjamin's login is `synthetic@example.ts.net` (`COCKPIT_BENJAMIN_LOGIN`). Nothing of the tailnet is used |
 
 `home-gestes` carries such a tracker: a proposal, a session the loop guard
 paused, a question and the pause of the order `convoy-advance` as
