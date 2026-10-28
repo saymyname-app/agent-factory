@@ -13,8 +13,8 @@ bin/project-launch, on a dataset:
   heartbeat goes out only on fresh readings, so it stops;
 - home-loading: nothing is ever read -- no heartbeat goes out;
 - a tracker as bin/escalation-door (benjamin) leaves a question whose
-  producer wrote an identifier in its words, and one whose producer wrote
-  English (pour_moi.serve_tracker).
+  producer wrote an identifier in its words, and others whose producers
+  wrote English, German and Spanish (pour_moi.serve_tracker).
 
 The silence is waited for longer than the threshold of the launch: the
 request « usine muette » is read at GET /api/requests, Urgent, and on the
@@ -23,7 +23,12 @@ details are read in the HTML served (pour_moi.folded), apart from the old
 zone « Détails techniques et actions ».
 
 A main text is French: no request of « Ce qui t’attend » says a sentence
-told English by its grammatical words (« the », « is », « your »…).
+told English by its grammatical words (« the », « is », « your »…), and
+the words a producer wrote in another language than French are not shown
+as main text.
+
+On each dataset, every request of « Ce qui t’attend » has its folded
+details, which give its identifier and at least one link.
 
 False if the silent Factory is not Urgent, or an internal identifier shows
 in a main text.
@@ -66,9 +71,22 @@ QUESTION_IN_ENGLISH = "af-e7n2w"
 # The words of a producer that wrote English, with no identifier and no
 # internal term in them.
 WRITTEN_IN_ENGLISH = "Please review the export before the merge"
+# The words of producers that wrote German and Spanish: no English word in
+# them, and no French sentence either (user story 73: French, the
+# operator's language, not merely « not English »).
+QUESTION_IN_GERMAN = "af-g4d8m"
+WRITTEN_IN_GERMAN = "Bitte die Karte vor der Zusammenführung prüfen"
+QUESTION_IN_SPANISH = "af-s5p6n"
+WRITTEN_IN_SPANISH = "Revisar el mapa antes de la fusión, por favor"
+WRITTEN_BY = {QUESTION: WRITTEN, QUESTION_IN_ENGLISH: WRITTEN_IN_ENGLISH, QUESTION_IN_GERMAN: WRITTEN_IN_GERMAN,
+              QUESTION_IN_SPANISH: WRITTEN_IN_SPANISH}
 TRACKER = {
     QUESTION: escalation(WRITTEN, "La relecture de la carte attend ton avis.", OPTIONS, AT, "notes"),
     QUESTION_IN_ENGLISH: escalation(WRITTEN_IN_ENGLISH, "La relecture de l’export attend ton avis.", OPTIONS, AT,
+                                    "notes"),
+    QUESTION_IN_GERMAN: escalation(WRITTEN_IN_GERMAN, "La relecture de la carte attend ton avis.", OPTIONS, AT,
+                                   "notes"),
+    QUESTION_IN_SPANISH: escalation(WRITTEN_IN_SPANISH, "La relecture de la carte attend ton avis.", OPTIONS, AT,
                                     "notes"),
 }
 
@@ -122,36 +140,44 @@ class UsineMuette(unittest.TestCase):
         `request`, apart from the old technical zone."""
         return [d for d in folded(address) if request["id"] in d["text"]]
 
-    # --- Criterion 3 ------------------------------------------------------------
-
-    def test_home_offline_says_the_factory_muette_urgent_in_clean_words_with_its_details_folded(self):
-        address, muette, requests = self.silent("home-offline")
-        shown = self.assert_shown(address, muette)
-        self.assert_main_texts_clean(shown, requests)
+    def assert_details_folded(self, address: str, requests: list[dict]) -> None:
+        """Each request has folded details that give its identifier and a
+        link (user story 75)."""
         for request in requests:
             details = self.details_of(address, request)
             self.assertTrue(details, f"no folded details give the identifier of « {request['quoi']} »")
             self.assertTrue(any(d["links"] for d in details),
                             f"the folded details of « {request['quoi']} » give no link: {details}")
 
+    # --- Criterion 3 ------------------------------------------------------------
+
+    def test_home_offline_says_the_factory_muette_urgent_in_clean_words_with_its_details_folded(self):
+        address, muette, requests = self.silent("home-offline")
+        shown = self.assert_shown(address, muette)
+        self.assert_main_texts_clean(shown, requests)
+        self.assert_details_folded(address, requests)
+
     def test_home_loading_says_the_factory_muette_urgent(self):
         address, muette, requests = self.silent("home-loading")
         self.assert_main_texts_clean(self.assert_shown(address, muette), requests)
+        self.assert_details_folded(address, requests)
 
     def test_a_producer_text_with_identifiers_is_shown_without_them_and_kept_whole_in_its_details(self):
         address = serve_tracker(self.tree, TRACKER)
         requests = wait_for(lambda: requests_of(address),
-                            lambda found: {QUESTION, QUESTION_IN_ENGLISH} <= {r["id"] for r in found}, 20)
-        for bead_id in (QUESTION, QUESTION_IN_ENGLISH):
+                            lambda found: set(WRITTEN_BY) <= {r["id"] for r in found}, 20)
+        for bead_id in WRITTEN_BY:
             self.assertIn(bead_id, [r["id"] for r in requests], f"« Ce qui t’attend » does not list {bead_id}")
         shown = visible_text(walk(address, [])["start"])
         self.assertIn("Ce qui t’attend", shown)
         self.assert_main_texts_clean(shown, requests)
-        self.assertNotIn(WRITTEN_IN_ENGLISH, shown, "the words a producer wrote in English show as main text")
-        for bead_id, written in ((QUESTION, WRITTEN), (QUESTION_IN_ENGLISH, WRITTEN_IN_ENGLISH)):
+        for written in (WRITTEN_IN_ENGLISH, WRITTEN_IN_GERMAN, WRITTEN_IN_SPANISH):
+            self.assertNotIn(written, shown, f"the words a producer wrote in another language show as main text: "
+                                             f"« {written} »")
+        self.assert_details_folded(address, requests)
+        for bead_id, written in WRITTEN_BY.items():
             question = next(r for r in requests if r["id"] == bead_id)
             details = self.details_of(address, question)
-            self.assertTrue(details, f"no folded details give the identifier of {bead_id}")
             self.assertTrue(any(written in d["text"] for d in details),
                             f"the folded details of {bead_id} do not keep the words of its producer as written: "
                             f"{details}")
