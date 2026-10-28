@@ -851,7 +851,11 @@ was lower), with the approver's words, kept under `grants` of the round;
 bin/correction-round grant calls it. `grant-correction --exceptional`
 (ADR-0034) does the same on a ticket at its bound, once: the grant carries
 `exceptional: true` and the bound of that ticket is one more; a second one,
-or one on a ticket with a round left, is refused.
+or one on a ticket with a round left, is refused. `grant-correction
+--arbitrated --target NAME...` (ADR-0035) is the round the Mayor grants at
+the bound: the grant carries `arbitrated: true` and its `targets`, each
+adds one to the bound of that ticket, at most `ARBITRATED_ROUNDS_MAX` (2)
+per ticket; refused on a ticket with a round left, or without a target.
 It also refuses a code review that has no round at that commit or has
 one open; an evaluation that has no round at that commit, has one open, or
 whose outcome there is neither `favorable` nor `return_to_author` (one

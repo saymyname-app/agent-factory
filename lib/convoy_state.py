@@ -82,7 +82,7 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state invalidate-verdicts CONVOY TICKET --tip SHA --kind KIND [--kind KIND]
     convoy-state open-correction   CONVOY TICKET --commit SHA
     convoy-state launch-correction CONVOY TICKET --bead BEAD
-    convoy-state grant-correction  CONVOY TICKET --approver NAME --words TEXT [--exceptional]
+    convoy-state grant-correction  CONVOY TICKET --approver NAME --words TEXT [--exceptional | --arbitrated --target NAME...]
     convoy-state override-finding  CONVOY TICKET --finding ID --approver NAME --words TEXT
     convoy-state record-incident CONVOY --bead BEAD [--signature sha256:HEX]
     convoy-state clear-incident  CONVOY
@@ -388,6 +388,10 @@ STOP_REASONS = ("criterion_already_green", "amendment_exhausted", "test_review_r
 # never a criterion that was not observed, or grant a round the bound allows.
 STOP_STILL_REFUSED = "still_refused"
 BOUND_CORRECTION_ROUNDS = "correction_rounds"
+# ADR-0035 (af-npz9v1.40): at the bound, the Mayor arbitrates; it may grant a
+# round more, with its motive and the refusals it targets, at most that many
+# times per ticket: the bound of the blind relaunches.
+ARBITRATED_ROUNDS_MAX = 2
 CORRECTION_MAX_LAUNCHES = 1
 OVERRIDE_RECORDED = "dérogation enregistrée"
 # The review of the criterion tests between red and freeze, removed by
@@ -1868,9 +1872,15 @@ def correction_record(raw: Any) -> dict[str, Any]:
     record = stored_record(raw, ("commit", "blocking_findings", "not_observed", "launches", "at"), ("grants",))
     grants = record.get("grants", [])
     for grant in grants if isinstance(grants, list) and grants else [None] if "grants" in record else []:
-        # `exceptional`: a round beyond the bound, at most once (ADR-0034).
-        if not isinstance(grant, dict) or set(grant) - {"exceptional"} != {"approver", "words", "stop", "at"} \
-                or grant.get("exceptional", True) is not True \
+        # `exceptional`: a round beyond the bound, at most once (ADR-0034);
+        # `arbitrated`: one the Mayor granted, with the refusals it targets (ADR-0035).
+        targets = grant.get("targets") if isinstance(grant, dict) else None
+        if not isinstance(grant, dict) \
+                or set(grant) - {"exceptional", "arbitrated", "targets"} != {"approver", "words", "stop", "at"} \
+                or grant.get("exceptional", True) is not True or grant.get("arbitrated", True) is not True \
+                or ("arbitrated" in grant) != ("targets" in grant) or {"arbitrated", "exceptional"} <= set(grant) \
+                or ("targets" in grant and (not isinstance(targets, list) or not targets
+                                            or any(not isinstance(t, str) or not t.strip() for t in targets))) \
                 or not isinstance(grant["words"], str) or not grant["words"].strip():
             raise Refusal(f"levée d'arrêt du tour de correction mal formée : {grant!r}")
         single_line(grant["approver"], "approbateur de la levée d'arrêt")
@@ -1902,10 +1912,18 @@ def exceptional_grant(metadata: dict[str, Any]) -> dict[str, Any] | None:
                  if grant.get("exceptional")), None)
 
 
+def arbitrated_grants(metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    """The rounds the Mayor granted the ticket at the bound (ADR-0035)."""
+    if KEY_CORRECTION not in metadata:
+        return []
+    return [grant for grant in correction_record(metadata[KEY_CORRECTION]).get("grants", []) if grant.get("arbitrated")]
+
+
 def correction_rounds_allowed(metadata: dict[str, Any]) -> int:
-    """The rounds this ticket may take: `bounds.correction_rounds`, and one
-    more once its human approver granted the exceptional round (ADR-0034)."""
-    return correction_rounds_bound() + (1 if exceptional_grant(metadata) else 0)
+    """The rounds this ticket may take: `bounds.correction_rounds`, one
+    more once its human approver granted the exceptional round (ADR-0034),
+    and one more for each round the Mayor granted at the bound (ADR-0035)."""
+    return correction_rounds_bound() + (1 if exceptional_grant(metadata) else 0) + len(arbitrated_grants(metadata))
 
 
 def overrides_record(raw: Any) -> list[dict[str, Any]]:
@@ -5462,7 +5480,10 @@ def cmd_grant_correction(args: argparse.Namespace) -> int:
     round, when one was all), with the words of the approver: the stop is
     kept on the round, and bin/correction-round opens the next one once both
     controls answered at the tip. `--exceptional` (ADR-0034): the same on a
-    ticket at the bound, which then allows it one round more, once."""
+    ticket at the bound, which then allows it one round more, once.
+    `--arbitrated` (ADR-0035): the same, granted by the Mayor at the bound
+    with its motive and the refusals it targets, at most
+    ARBITRATED_ROUNDS_MAX times per ticket."""
     metadata = metadata_of(marked_ticket(args.convoy, args.ticket))
     stop = stop_record(metadata[KEY_STOP]) if KEY_STOP in metadata else None
     if stop is None or stop["reason"] != STOP_STILL_REFUSED or KEY_CORRECTION not in metadata:
@@ -5471,7 +5492,20 @@ def cmd_grant_correction(args: argparse.Namespace) -> int:
     bound = correction_rounds_allowed(metadata)
     taken = counter_value(metadata.get(COUNTER_PREFIX + "correction_rounds"), "correction_rounds")
     exceptional = bool(getattr(args, "exceptional", False))
+    arbitrated = bool(getattr(args, "arbitrated", False))
+    targets = [target.strip() for target in getattr(args, "target", None) or []]
     already = exceptional_grant(metadata)
+    if arbitrated and exceptional:
+        raise Refusal("un tour est arbitré par le Mayor ou exceptionnel par l'approbateur humain, pas les deux")
+    if arbitrated:
+        if taken < bound:
+            raise Refusal(f"le ticket {args.ticket} n'est pas au plafond : il lui reste {bound - taken} tour(s) de "
+                          "correction ; aucun arbitrage n'est dû")
+        if len(arbitrated_grants(metadata)) >= ARBITRATED_ROUNDS_MAX:
+            raise Refusal(f"le ticket {args.ticket} a déjà pris ses {ARBITRATED_ROUNDS_MAX} tours arbitrés : borne des "
+                          "relances ; reste le diagnostic, l'arrêt ou la replanification (ADR-0035)")
+        if not targets or any(not target or "\n" in target for target in targets):
+            raise Refusal("tour arbitré sans cible : il nomme les refus à la pointe qu'il vise (--target)")
     if exceptional and already:
         raise Refusal(
             f"le ticket {args.ticket} a déjà reçu son tour exceptionnel ({already['approver']}, {already['at']}) : "
@@ -5480,7 +5514,7 @@ def cmd_grant_correction(args: argparse.Namespace) -> int:
         raise Refusal(
             f"le ticket {args.ticket} n'est pas au plafond : il lui reste {bound - taken} tour(s) de correction "
             "(bounds.correction_rounds) ; accorde-le sans --exceptional")
-    if not exceptional and taken >= bound:
+    if not exceptional and not arbitrated and taken >= bound:
         raise Refusal(f"le ticket {args.ticket} a déjà pris ses {bound} tour(s) de correction "
                       "(bounds.correction_rounds) : aucun tour de plus ne s'accorde"
                       + ("" if already else " ; au plafond, seul un tour exceptionnel s'accorde (--exceptional), "
@@ -5490,7 +5524,8 @@ def cmd_grant_correction(args: argparse.Namespace) -> int:
         raise Refusal("levée sans mots : elle s'enregistre avec les mots de l'approbateur (--words), non vides")
     record = correction_record(metadata[KEY_CORRECTION])
     grant = {"approver": single_line(args.approver, "approbateur de la levée d'arrêt"), "words": words,
-             "stop": stop, "at": now(), **({"exceptional": True} if exceptional else {})}
+             "stop": stop, "at": now(), **({"exceptional": True} if exceptional else {}),
+             **({"arbitrated": True, "targets": targets} if arbitrated else {})}
     record["grants"] = [*record.get("grants", []), grant]
     values = {KEY_CORRECTION: encode(record), KEY_STOP: None}
     write_metadata(args.ticket, values)
@@ -7552,6 +7587,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--approver")
     p.add_argument("--words")
     p.add_argument("--exceptional", action="store_true")
+    p.add_argument("--arbitrated", action="store_true")
+    p.add_argument("--target", action="append", default=[])
     p = command("override-finding", cmd_override_finding)
     p.add_argument("--finding")
     p.add_argument("--approver")
