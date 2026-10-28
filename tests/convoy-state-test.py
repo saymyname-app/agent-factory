@@ -3134,8 +3134,8 @@ class ConvoyStateTest(unittest.TestCase):
 
         self.assertEqual(3, ticket["counters"]["resumes"])
         self.assertEqual(2, ticket["resumes_left"])
-        self.assertEqual({"interrupted": 2, "returned": 2, "unblocked": 2, "answered": 3, "behind": 3,
-                          "evaluation_no_result": 3, "stage_removed": 3, "code_review_no_result": 3, "amendment_granted": 3,
+        self.assertEqual({"interrupted": 2, "returned": 2, "unblocked": 2, "behind": 3,
+                          "evaluation_no_result": 3, "stage_removed": 3, "code_review_no_result": 3,
                           "inherited_change": 3,
                           "commit_after_verdict": 3},
                          ticket["resumes_left_by_cause"])
@@ -3153,6 +3153,20 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertEqual(8, ticket["counters"]["resumes"])
         self.assertEqual(["behind"] * 8, [e["cause"] for e in ticket["resume"]["entries"]])
         self.assertEqual((3, 3), (ticket["resumes_left"], ticket["resumes_left_by_cause"]["behind"]))
+        self.assert_refused_and_nothing_written(
+            "park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "x", mention="reprises")
+
+    def test_a_resume_an_answer_opened_takes_no_bound_and_is_counted(self):
+        # af-npz9v1.41: R2 (af-cifk1e) was parked at its third answer.
+        self.interrupted_ticket()
+        for n in range(5):
+            self.ok("open-resume", CONVOY, T1, "--cause", "answered", "--ref", f"exit:{n}")
+
+        ticket = self.ticket(self.show(), T1)
+
+        self.assertEqual((5, 3), (ticket["counters"]["resumes"], ticket["resumes_left"]))
+        self.assertNotIn("answered", ticket["resumes_left_by_cause"])
+        self.assertNotIn("amendment_granted", ticket["resumes_left_by_cause"])
         self.assert_refused_and_nothing_written(
             "park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "x", mention="reprises")
 
@@ -3678,8 +3692,8 @@ class ConvoyStateTest(unittest.TestCase):
 
     def test_the_bound_of_the_resumes_may_be_set_per_cause(self):
         self.interrupted_ticket()
-        per_cause = {"interrupted": 1, "returned": 2, "unblocked": 3, "answered": 3, "behind": 3,
-                     "evaluation_no_result": 3, "stage_removed": 3, "code_review_no_result": 3, "amendment_granted": 3,
+        per_cause = {"interrupted": 1, "returned": 2, "unblocked": 3, "behind": 3,
+                     "evaluation_no_result": 3, "stage_removed": 3, "code_review_no_result": 3,
                      "inherited_change": 3, "commit_after_verdict": 3}
         self.bounds(resumes=per_cause, open_planning_exceptions=2)
 
@@ -3694,8 +3708,8 @@ class ConvoyStateTest(unittest.TestCase):
 
     def test_a_malformed_bound_of_the_resumes_is_refused_and_nothing_is_written(self):
         self.interrupted_ticket()
-        all_causes = ("interrupted", "returned", "unblocked", "answered", "behind", "evaluation_no_result",
-                      "stage_removed", "code_review_no_result", "commit_after_verdict")
+        all_causes = ("interrupted", "returned", "unblocked", "behind", "evaluation_no_result",
+                      "stage_removed", "code_review_no_result", "inherited_change", "commit_after_verdict")
         missing = {cause: 3 for cause in all_causes[1:]}
         unknown = {**missing, "interrupted": 3, "fatigue": 3}
         zero = {**missing, "interrupted": 0}

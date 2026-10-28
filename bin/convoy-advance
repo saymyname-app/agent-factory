@@ -236,7 +236,7 @@ from typing import Any, Iterator
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
-from convoy_state import PROVEN_BY_TEST_OPTION, REEVALUATE_OPTION, overridden_ticket  # noqa: E402
+from convoy_state import PROVEN_BY_TEST_OPTION, REEVALUATE_OPTION, STOP_COUNT_WHY, overridden_ticket  # noqa: E402
 
 
 PROGRAM = "convoy-advance"
@@ -579,13 +579,14 @@ class Convoy:
         """Tickets whose author has finished and that are not merged yet --
         their review or their evaluation may have refused them -- or that
         were stopped still refused without the stop having reached the
-        operator: what makes a settlement of the correction rounds worth
-        running."""
+        operator, or that were stopped at the bound under the old rule and
+        still hold the request it raised for the count alone (ADR-0035): what
+        makes a settlement of the correction rounds worth running."""
         due = []
         for t in self.tickets:
             stop = t.get("stop") or {}
             if stop:
-                if stop.get("reason") == CORRECTION_STOP and "raised" not in stop:
+                if stop.get("reason") == CORRECTION_STOP and ("raised" not in stop or count_request_open(t)):
                     due.append(t["id"])
             elif not t.get("park") and t["id"] in self.finished_unmerged():
                 due.append(t["id"])
@@ -1224,6 +1225,17 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
             out["refused"].append({"id": ticket_id, "reason": str(exc)})
 
 
+def count_request_open(ticket: dict[str, Any]) -> bool:
+    """A ticket stopped at the bound whose request, raised before ADR-0035
+    for the count alone, is still open and unanswered: bin/correction-round
+    settle wakes the Mayor and withdraws it, once (af-npz9v1.40)."""
+    if not ticket.get("correction") or ticket.get("correction_rounds_left"):
+        return False
+    metadata = read_bead(ticket["id"]).get("metadata") or {}
+    return metadata.get("gc.needs_benjamin") not in (None, "none") \
+        and metadata.get("gc.escalation_pourquoi") == STOP_COUNT_WHY
+
+
 def request_answer(bead: dict[str, Any], since: str) -> str | None:
     """The letter the operator answered a request with
     (bin/escalation-door repondre), once it is no longer open."""
@@ -1242,10 +1254,16 @@ def settle_lifts(convoy: Convoy, out: dict[str, Any]) -> None:
     Exception could not observe, or the one that has it evaluated again on
     the products launched again (af-npz9v1.38); the lifting option of the convoy's grouped
     request, for the tickets it names. Any other answer leaves the ticket
-    parked."""
-    lifts: list[tuple[str, str, str]] = []
+    parked. A ticket parked for exhausted resumes that has resumes left
+    under the bounds of now is lifted without an answer: an answered resume
+    takes no bound since af-npz9v1.41, and nothing is left to ask."""
+    lifts: list[tuple[str, str, str | None]] = []
     for ticket in convoy.tickets:
         park = ticket.get("park") or {}
+        if ticket.get("status") != "closed" and park.get("origin") == ticket["id"] \
+                and park.get("cause") == PARK_EXHAUSTED and ticket.get("resumes_left"):
+            lifts.append((ticket["id"], ticket["id"], None))
+            continue
         answer = park.get("answer")
         if ticket.get("status") == "closed" or park.get("origin") != ticket["id"] or not answer:
             continue
@@ -1271,7 +1289,8 @@ def settle_lifts(convoy: Convoy, out: dict[str, Any]) -> None:
         out["refused"].append({"id": convoy.id, "reason": str(exc)})
     for ticket_id, request, letter in lifts:
         try:
-            answer = state_write("lift-park", convoy.id, ticket_id, "--request", request, "--option", letter)
+            option = ["--option", letter] if letter else []
+            answer = state_write("lift-park", convoy.id, ticket_id, "--request", request, *option)
             out["lifted"].append({"id": ticket_id, "option": letter, "request": request, "lifted": answer["lifted"]})
         except Refusal as exc:
             out["refused"].append({"id": ticket_id, "reason": str(exc)})

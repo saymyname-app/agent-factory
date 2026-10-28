@@ -401,7 +401,11 @@ The bound is K (Spec §8: a starting value, not a measure), **per cause**
 (ADR-0030 L2): each cause of `open-resume`, and `commit_after_verdict` (a
 commit after a verdict, which `invalidate-verdicts` counts without an
 entry), has its own bound, and the ticket is out of resumes once one cause
-reaches its bound. `resumes` stays the one counter that `open-resume`,
+reaches its bound. A resume an answer of the operator opened
+(`answered`, `amendment_granted`) has no bound: each one needs a new request
+and a new answer, so the answer bounds it; it is recorded and counted in
+`resumes` like any other (af-npz9v1.41: R2, af-cifk1e, was parked on
+28/10/2026 at its third answer). `resumes` stays the one counter that `open-resume`,
 `open-correction` and `invalidate-verdicts` add to; the count per cause is
 derived, never stored apart: the resume entries by their cause, and
 `commit_after_verdict` the rest of the counter once the entries and
@@ -413,7 +417,7 @@ Benjamin 27/10/2026 16:27 Paris: « Oui : une mise à jour behind causée par l'
 The counter `resumes` still holds every resume recorded. The correction round counts against no
 cause: its own bound is one round, held by `open-correction`. K is not held
 in this command: it is `bounds.resumes` of `config/delivery-flow.json`
-(3 for each cause; an object naming exactly the seven causes, or one
+(3 for each cause; an object naming exactly the bounded causes, or one
 integer for every cause, as a trial root may set), the one place the
 bounds of the flow are set (T21, `docs/CONVOY_ADVANCE.md`), read under
 `FACTORY_ROOT` (default: the repository of the command) and, when that root
@@ -425,7 +429,10 @@ bound minus the resumes of that cause counted since the last lift of a
 none), never below 0; and `resumes_left`, the fewest of them. `lift-park`
 keeps on the lift what the ticket had taken per cause (`taken`); a lift
 written before L2 has none, and what it had taken is read from the entries
-older than the lift and the counter it kept.
+older than the lift and the counter it kept. Without `--option`, a
+`resumes_exhausted` parking is lifted only while the ticket has resumes left
+under the bounds of now (`bin/convoy-advance`, af-npz9v1.41); that lift
+keeps `taken` as the last such lift kept it, so it gives no resume back.
 
 **The red of the integration branch (T21).** `record-integration-red`
 writes that the integration branch of the convoy is red: the control,
