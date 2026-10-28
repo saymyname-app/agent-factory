@@ -370,6 +370,39 @@ def resolve_commit(repo_root: Path, commit: str) -> str:
     return result.stdout.strip()
 
 
+def branch_datasets(repo_root: Path, commit: str | None, descriptor_path: Path,
+                    descriptor: dict) -> dict[str, str]:
+    """The datasets the launched commit's own copy of this profile adds
+    (af-npz9v1.18): a ticket that needs a new state brings its dataset in its
+    branch, and the profile read here is the one of main (R1, af-d6anqb).
+    Only names main does not declare; the recipe and every other field stay
+    main's. Nothing when the profile is not in the launched repository, or
+    when its copy there names another project or other rigs."""
+    if not commit:
+        return {}
+    top = subprocess.run(["git", "-C", str(descriptor_path.parent), "rev-parse", "--show-toplevel"],
+                         text=True, capture_output=True)
+    if top.returncode:
+        return {}
+    try:
+        relative = descriptor_path.relative_to(Path(top.stdout.strip()).resolve()).as_posix()
+    except ValueError:
+        return {}
+    shown = subprocess.run(["git", "-C", str(repo_root), "show", f"{commit}:{relative}"],
+                           text=True, capture_output=True)
+    try:
+        copy = json.loads(shown.stdout) if shown.returncode == 0 else None
+    except ValueError:
+        return {}
+    if not isinstance(copy, dict) or any(copy.get(key) != descriptor.get(key) for key in ("project_id", "rigs")):
+        return {}
+    datasets = (copy.get("launch") or {}).get("datasets") if isinstance(copy.get("launch"), dict) else None
+    if not isinstance(datasets, dict):
+        return {}
+    return {name: path for name, path in datasets.items()
+            if name not in descriptor["launch"]["datasets"] and isinstance(path, str)}
+
+
 def add_worktree(repo_root: Path, commit: str, worktree: str) -> None:
     result = subprocess.run(
         ["git", "-C", str(repo_root), "worktree", "add", "--detach", worktree, commit],
@@ -561,6 +594,9 @@ def cmd_start(args: argparse.Namespace) -> int:
             )
         )
         return 1
+    if args.dataset not in launch["datasets"]:
+        launch = {**launch, "datasets": {**launch["datasets"],
+                                         **branch_datasets(repo_root, args.commit, descriptor_path, descriptor)}}
     if args.dataset not in launch["datasets"]:
         print(
             json.dumps(
