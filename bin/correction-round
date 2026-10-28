@@ -514,7 +514,7 @@ def page_mayor(convoy_id: str, ticket: dict[str, Any], stop: dict[str, Any]) -> 
     left = ARBITRATED_ROUNDS_MAX - sum(1 for grant in grants if grant.get("arbitrated"))
     base = f"bin/{PROGRAM} {{}} {convoy_id} {ticket['id']}"
     body = "\n".join((
-        f"ACTION: {PROGRAM} a arrêté {ticket['id']} au plafond de ses tours de correction ; le compteur seul ne "
+        f"ACTION: correction-round a arrêté {ticket['id']} au plafond de ses tours de correction ; le compteur seul ne "
         "demande rien à l'opérateur (ADR-0035) : tu arbitres",
         f"STATE: {stop['detail']} ; refus à la pointe : {', '.join(refusals_at_tip(ticket)) or 'aucun'} ; "
         f"tours arbitrés restants : {max(0, left)} ; un tour s'ouvrirait : {'oui' if round_would_open(ticket) else 'non'}",
