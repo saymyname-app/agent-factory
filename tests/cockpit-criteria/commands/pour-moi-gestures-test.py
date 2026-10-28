@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Criterion test 1 of BR « Pour moi au premier plan, gestes complets et
-commandes qui n'échouent plus en silence » (af-eyc5ah, replacement of B
-af-4uzgzm; Spec af-fgcw0d, user stories 27, 29 and 34, Testing Decisions 1,
-3 and 8), its second half: on home-gestes, the gestures Pour moi lacked --
-refuse a proposal with a reason, put it off, relaunch a session the Factory
-paused, relaunch an order paused by the door of pause and resume of an
-order (bin/order-pause) --, each confirmed, then traced at its source.
+"""Criterion test 1 of B « Pour moi au premier plan, gestes complets et
+commandes qui n'échouent plus en silence » (af-4uzgzm; Spec af-fgcw0d, user
+stories 27, 29 and 34, Testing Decisions 1, 3 and 8), its second half: the
+gestures Pour moi lacked -- refuse a proposal with a reason, put it off,
+relaunch a session the Factory paused --, each confirmed, then traced at
+its source.
 
-home-gestes carries a tracker as the doors of the Factory write it: a
+The datasets the criterion names, home-content-full and home-long, hold no
+proposal and no paused session: each case launches the real cockpit with
+the launcher of the profile, bin/project-launch, on a dataset that carries
+a tracker as the doors of the Factory write it (pour_moi.serve_tracker): a
 proposal of class decision as bin/proposal-door (create) leaves it, a
 session the loop guard of the Factory paused (its bead, the Mayor paged
-first by bin/escalation-door), a question as bin/escalation-door
-(benjamin) leaves it, and an order paused as bin/order-pause (pause) leaves
-it. Each case launches the real cockpit on it with the launcher of the
-profile, bin/project-launch; the doors of that launch act on that tracker
-as the doors of the Factory do.
+first by bin/escalation-door), and a question as bin/escalation-door
+(benjamin) leaves it. The doors of that launch act on that tracker as the
+doors of the Factory do.
 
 Each gesture is done at GET / as a person does it, in a headless Chromium
 (pour_moi.walk) behind the identity proxy of the host: the line of the
@@ -24,11 +24,14 @@ GET /api/journal, from the page): nothing was written, the request is
 still waiting. After it, the source says what was done: the journal of the
 requests resolved at their source holds the refusal and its reason, or the
 relaunch; the tracker as the cockpit reads it at its source (GET
-/api/status) holds the time a proposal is put off until, and no more the
-pause of the order; the request has left « Ce qui t’attend ».
+/api/status) holds the time a proposal is put off until; the request has
+left « Ce qui t’attend ».
 
 False if a gesture stays under the technical details, or if a gesture that
 changes the Factory goes without its confirmation.
+
+Only a session is relaunched here: nothing in the Factory pauses an order
+yet (no door writes an order paused), so no tracker can hold one as written.
 """
 
 from __future__ import annotations
@@ -44,18 +47,29 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from home_destination import LaunchTree  # noqa: E402
 from pour_moi import (  # noqa: E402
-    LEGACY_SUMMARY, control, journal_of, read_json, requests_of, wait_for, walk,
+    LEGACY_SUMMARY, control, escalation, journal_of, paused_session, proposal, read_json, requests_of,
+    serve_tracker, wait_for, walk,
 )
 
-DATASET = "home-gestes"
-# What home-gestes holds, by the beads its doors wrote.
+AT = "2026-10-12T08:00:00Z"
 PROPOSAL = "af-p7k2m"
+PROPOSAL_QUOI = "Ajouter un export des notes en CSV"
 SESSION_BEAD = "af-s4l9q"
-# The pause of the order convoy-advance, as bin/order-pause (pause) records it.
-ORDER_PAUSE = "af-o2d7k"
-ORDER = "convoy-advance"
-# What bin/order-pause writes on the record of a pause: the order it holds.
-PAUSE_KEY = "gc.order_pause"
+SESSION = "delivery-author-af-wisp-x1y2z3"
+QUESTION = "af-q8n3v"
+TRACKER = {
+    PROPOSAL: proposal(PROPOSAL_QUOI, "Plusieurs lecteurs demandent à garder leurs notes hors du projet.", [
+        {"lettre": "a", "option": "Ajouter l’export", "consequence": "un ticket de carte est préparé",
+         "recommande": True, "raison": "la demande revient souvent"},
+        {"lettre": "b", "option": "Ne rien faire", "consequence": "les notes restent dans le projet"},
+    ], AT),
+    SESSION_BEAD: paused_session(SESSION, 14, AT),
+    QUESTION: escalation("Choisir le nom de la page d’accueil", "Le projet attend ton choix.", [
+        {"lettre": "a", "option": "Accueil", "consequence": "le menu dit Accueil", "recommande": True,
+         "raison": "c’est le mot le plus court"},
+        {"lettre": "b", "option": "Tableau de bord", "consequence": "le menu dit Tableau de bord"},
+    ], AT, "notes"),
+}
 REASON = "Les notes restent dans le projet pour cette version."
 # The delay a proposal is put off by, among those the cockpit offers.
 UNTIL = "Demain 09:00"
@@ -75,12 +89,6 @@ def tracker_read(address: str) -> tuple[dict, float]:
     return {b.get("id"): b for b in beads.get("value") or [] if isinstance(b, dict)}, beads.get("read_at") or 0.0
 
 
-def paused(beads: dict, order: str) -> list[str]:
-    """The open records of a pause of `order` among `beads`."""
-    return [bead_id for bead_id, bead in beads.items()
-            if (bead.get("metadata") or {}).get(PAUSE_KEY) == order and bead.get("status") != "closed"]
-
-
 class PourMoiGestures(unittest.TestCase):
     maxDiff = None
 
@@ -98,7 +106,7 @@ class PourMoiGestures(unittest.TestCase):
     def launched(self, bead_id: str) -> tuple[str, str]:
         """The cockpit on the tracker, and the title its « Ce qui t’attend »
         gives the request of `bead_id`."""
-        address = self.tree.launch(DATASET)
+        address = serve_tracker(self.tree, TRACKER)
         requests = wait_for(lambda: requests_of(address), lambda found: any(r["id"] == bead_id for r in found), 20)
         mine = [r for r in requests if r["id"] == bead_id]
         self.assertEqual(1, len(mine), f"« Ce qui t’attend » does not list {bead_id}: {[r['id'] for r in requests]}")
@@ -191,24 +199,6 @@ class PourMoiGestures(unittest.TestCase):
                          "the source does not hold the relaunch, once")
         self.assertEqual("benjamin", relaunched[0]["par"], "the relaunch is not the operator's")
         self.assert_left(address, SESSION_BEAD)
-
-    def test_a_paused_order_is_relaunched_through_its_door_once_confirmed(self):
-        address, line = self.launched(ORDER_PAUSE)
-        walked = self.walked(address, line, [{"click": "Relancer"}])
-        self.assert_unfolded(walked[0]["page"], "Relancer")
-        self.assert_nothing_written_before(walked, ORDER_PAUSE)
-        # The door of the order took it back into service: the tracker the
-        # cockpit reads at its source holds no open pause of it any more.
-        beads, _ = wait_for(lambda: tracker_read(address),
-                            lambda read: not paused(read[0], ORDER), TRACED_SECONDS)
-        self.assertEqual([], paused(beads, ORDER), f"the source still holds {ORDER} paused once relaunched")
-        journal = wait_for(lambda: journal_of(address),
-                           lambda found: any(e["bead_id"] == ORDER_PAUSE for e in found), TRACED_SECONDS)
-        relaunched = [e for e in journal if e["bead_id"] == ORDER_PAUSE]
-        self.assertEqual(["Relance demandée"], [e["quoi"] for e in relaunched],
-                         "the source does not hold the relaunch of the order, once")
-        self.assertEqual("benjamin", relaunched[0]["par"], "the relaunch of the order is not the operator's")
-        self.assert_left(address, ORDER_PAUSE)
 
 
 if __name__ == "__main__":

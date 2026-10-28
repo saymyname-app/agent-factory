@@ -24,7 +24,7 @@ Chromium (home_destination.measure) at both widths:
   cut or drawn on another, a contrast too low, a control without a name).
 
 At 390 pixels, each gesture of the request open is also held by no folded
-part of the page (pour_moi.walk), as at 1440 (pour-moi-visible-test.py).
+part of the page (pour_moi.walk), as at 1440 (pour-moi-unfolded-test.py).
 
 False if a gesture or the field of its reason cannot be reached or
 activated with the keyboard, or if the request open does not read at 390
