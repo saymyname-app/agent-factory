@@ -72,9 +72,11 @@ tour arbitré ne passe outre rien, il donne un tour de plus à l'auteur.
   remontée automatique : c'est le prix de « pas de demande due au délai ».
 - Le Mayor reçoit une décision de plus ; ses consignes la décrivent.
 
-Revenir en arrière : revert de la PR de `af-npz9v1.40`. Les tours déjà
-accordés restent lisibles (`arbitrated`, `targets` sont facultatifs dans
-`grants`) ; un arrêt au plafond redevient une demande à l'opérateur.
+Revenir en arrière : remettre la demande à l'opérateur dans `raise_stop`
+et retirer `grant --arbitrated`, en gardant la lecture de `arbitrated` et
+`targets` dans `grants` (`correction_record`) et leur compte dans la borne.
+Un revert intégral ramènerait le validateur aux seules clés d'avant : un
+tour arbitré déjà écrit rendrait le ticket illisible.
 
 ## Preuve
 
