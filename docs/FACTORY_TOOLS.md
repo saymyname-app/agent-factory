@@ -1247,7 +1247,10 @@ nouveau flux**.
 - **Encore refusé après ce tour, le ticket s'arrête** (`still_refused`) :
   aucun second tour, rien ne fusionne, et le ticket apparaît **une seule
   fois** dans `./bin/escalation-door list`, que la revue, l'évaluation ou
-  les deux l'aient refusé.
+  les deux l'aient refusé. **Au plafond**, c'est le Mayor qui est réveillé,
+  pas Benjamin (ADR-0035) : il accorde un tour arbitré, motivé et ciblé
+  (`grant --arbitrated --target …`, deux au plus par ticket), diagnostique,
+  ou pose la demande (`escalate --why …`) pour une décision de Benjamin.
 - **Dérogation** (`override`) : sur un ticket arrêté, l'approbateur humain
   déclaré du projet (`human_approver` de `config/projects/<projet>.toml`)
   peut passer outre **un Blocking Finding de la revue**, avec ses mots, non
