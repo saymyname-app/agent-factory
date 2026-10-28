@@ -1,0 +1,17 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/factory-configure-test.py::FactoryConfigure.test_a_supported_setting_says_its_value_scope_and_consequences_is_confirmed_then_read_back",
+      "tests/cockpit-criteria/commands/factory-configure-test.py::FactoryConfigure.test_a_setting_whose_door_does_nothing_is_not_written_around_it_nor_said_done",
+      "tests/cockpit-criteria/commands/factory-configure-proposal-test.py::FactoryConfigureProposal.test_a_change_of_model_no_door_supports_is_prepared_as_a_proposal_and_changes_nothing"
+    ],
+    "2": [
+      "tests/cockpit-criteria/commands/factory-clean-test.py::FactoryClean.test_the_confirmed_scope_is_cleaned_and_each_element_has_its_result",
+      "tests/cockpit-criteria/commands/factory-clean-test.py::FactoryClean.test_a_scope_changed_since_its_preview_is_recomputed_and_asks_a_new_confirmation"
+    ],
+    "3": [
+      "tests/cockpit-criteria/commands/factory-configure-stale-test.py::FactoryConfigureStale.test_a_stale_configuration_disables_the_setting_with_its_reason_and_refuses_it_until_read_again",
+      "tests/cockpit-criteria/commands/factory-configure-stale-test.py::FactoryConfigureStale.test_an_uncertain_setting_is_not_sent_again_before_a_reading_and_its_record_is_then_shown"
+    ]
+  }
+}
