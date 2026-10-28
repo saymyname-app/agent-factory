@@ -273,12 +273,7 @@ def project_view(descriptor, project, chantiers_state, depots, roadmap_chantiers
         current = None
         if chantier is not None:
             count = None if decisions is None else decisions.get(chantier.id, 0)
-            if count is None:
-                line = "Décisions attendues · inconnu"
-            elif not count and chantier.etat == "a_toi_de_jouer":
-                line = "À toi de jouer"
-            else:
-                line = decisions_line(count)
+            line = "Décisions attendues · inconnu" if count is None else decisions_line(count)
             run = next((r for r in own if r.get("href")), None)
             current = {"title": chantier.titre, "line": "%s · %s" % (chantier.detail, line) if chantier.detail else line,
                        "run": run["href"] if run else None}
