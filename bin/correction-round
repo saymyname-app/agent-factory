@@ -464,11 +464,19 @@ def refusals_at_tip(ticket: dict[str, Any]) -> list[str]:
 COUNT_WHY = "Le ticket a pris tous ses tours de correction : aucun autre ne démarre, rien de ce ticket ne fusionne."
 
 
+def open_request_why(ticket: dict[str, Any]) -> str | None:
+    """The reason of the request of the ticket still unanswered on the
+    operator's list, if any."""
+    metadata = read_bead(ticket["id"]).get("metadata") or {}
+    if metadata.get("gc.needs_benjamin") in (None, "none"):
+        return None
+    return str(metadata.get("gc.escalation_pourquoi") or "")
+
+
 def count_request_open(ticket: dict[str, Any]) -> bool:
     """The operator's list still holds, unanswered, the request a stop at
     the bound raised for the count alone (before ADR-0035)."""
-    metadata = read_bead(ticket["id"]).get("metadata") or {}
-    return metadata.get("gc.needs_benjamin") not in (None, "none") and metadata.get("gc.escalation_pourquoi") == COUNT_WHY
+    return open_request_why(ticket) == COUNT_WHY
 
 
 def clear_request(ticket_id: str, what: str) -> None:
@@ -882,6 +890,12 @@ def grant_arbitrated(convoy: Convoy, ticket: dict[str, Any], approver: str, args
             f"aucun tour ne s'ouvrirait sur {args.ticket} : sa session de correction s'est terminée sans que le ticket "
             "soit terminé et refusé à une nouvelle pointe ; un tour arbitré ne relance pas le même commit ; "
             "rien n'est écrit")
+    # A decision raised to the operator (escalate) is theirs until answered:
+    # only the request of the count alone gives way to the arbitration.
+    why = open_request_why(ticket)
+    if why is not None and why != COUNT_WHY:
+        raise Refusal(f"une décision de l'opérateur est ouverte sur {args.ticket} (« {why} ») : aucun tour arbitré "
+                      "tant qu'elle est sans réponse ; rien n'est écrit")
     refusals = refusals_at_tip(ticket)
     targets = [target.strip() for target in args.target or []]
     stray = [target for target in targets if target not in refusals]
