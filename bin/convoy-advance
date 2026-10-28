@@ -236,7 +236,7 @@ from typing import Any, Iterator
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
-from convoy_state import PROVEN_BY_TEST_OPTION, REEVALUATE_OPTION, overridden_ticket  # noqa: E402
+from convoy_state import PROVEN_BY_TEST_OPTION, REEVALUATE_OPTION, STOP_COUNT_WHY, overridden_ticket  # noqa: E402
 
 
 PROGRAM = "convoy-advance"
@@ -579,13 +579,14 @@ class Convoy:
         """Tickets whose author has finished and that are not merged yet --
         their review or their evaluation may have refused them -- or that
         were stopped still refused without the stop having reached the
-        operator: what makes a settlement of the correction rounds worth
-        running."""
+        operator, or that were stopped at the bound under the old rule and
+        still hold the request it raised for the count alone (ADR-0035): what
+        makes a settlement of the correction rounds worth running."""
         due = []
         for t in self.tickets:
             stop = t.get("stop") or {}
             if stop:
-                if stop.get("reason") == CORRECTION_STOP and "raised" not in stop:
+                if stop.get("reason") == CORRECTION_STOP and ("raised" not in stop or count_request_open(t)):
                     due.append(t["id"])
             elif not t.get("park") and t["id"] in self.finished_unmerged():
                 due.append(t["id"])
@@ -1222,6 +1223,17 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
             out["deferred"].append({"id": ticket_id, "reason": str(exc)})
         except Refusal as exc:
             out["refused"].append({"id": ticket_id, "reason": str(exc)})
+
+
+def count_request_open(ticket: dict[str, Any]) -> bool:
+    """A ticket stopped at the bound whose request, raised before ADR-0035
+    for the count alone, is still open and unanswered: bin/correction-round
+    settle wakes the Mayor and withdraws it, once (af-npz9v1.40)."""
+    if not ticket.get("correction") or ticket.get("correction_rounds_left"):
+        return False
+    metadata = read_bead(ticket["id"]).get("metadata") or {}
+    return metadata.get("gc.needs_benjamin") not in (None, "none") \
+        and metadata.get("gc.escalation_pourquoi") == STOP_COUNT_WHY
 
 
 def request_answer(bead: dict[str, Any], since: str) -> str | None:

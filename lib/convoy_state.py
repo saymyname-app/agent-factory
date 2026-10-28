@@ -392,6 +392,10 @@ BOUND_CORRECTION_ROUNDS = "correction_rounds"
 # round more, with its motive and the refusals it targets, at most that many
 # times per ticket: the bound of the blind relaunches.
 ARBITRATED_ROUNDS_MAX = 2
+# The reason the request of a stop at the bound gave the operator before
+# ADR-0035: the number of rounds alone. Such a request, still open, is
+# withdrawn once the Mayor is woken (bin/correction-round, bin/convoy-advance).
+STOP_COUNT_WHY = "Le ticket a pris tous ses tours de correction : aucun autre ne démarre, rien de ce ticket ne fusionne."
 CORRECTION_MAX_LAUNCHES = 1
 OVERRIDE_RECORDED = "dérogation enregistrée"
 # The review of the criterion tests between red and freeze, removed by
