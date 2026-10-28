@@ -35,7 +35,7 @@ gestures:
       and have no unpushed commits. Refuses anything unmerged, unpushed,
       the current branch, or a rig's protected branch.
 
-  clean-worktrees [--worktree-root <path>] [--idle-days N] [--dry-run]
+  clean-worktrees [--worktree-root <path>] [--idle-days N] [--only <name>]... [--dry-run]
       Remove do-work worktrees that are clean (no uncommitted changes) and
       fully pushed, and whose branch is either merged into the default
       branch or has gone untouched for more than --idle-days (default 7).
@@ -44,6 +44,11 @@ gestures:
       Refuses anything with uncommitted changes. A worktree with commits
       that were never pushed, or ahead of its pushed upstream, is reported
       through the escalation door instead of removed (unrecoverable).
+      --only <name> (repeatable) looks at those worktrees only, by the name
+      of their folder: a scope confirmed after a dry run never grows.
+      One line per worktree looked at: "would remove|removed: <path> ...",
+      "would escalate|escalated: <path> ...", "would keep|kept: <path>
+      (<reason>)", the reason one of detached, local-changes, not-merged.
 
   rotate-logs [--dir <path>] [--max-bytes N] [--keep N]
       Gzip-archive and truncate *.log files over --max-bytes (default 10MiB)
@@ -244,13 +249,19 @@ print(data.get("id", "") if isinstance(data, dict) else "")
   fi
 }
 
+# kept_line <dry_run> <path> <reason> -- the line of a worktree left in place.
+kept_line() {
+  if [ "$1" = "1" ]; then echo "would keep: $2 ($3)"; else echo "kept: $2 ($3)"; fi
+}
+
 cmd_clean_worktrees() {
   local wt_root="${HOME}/.local/share/agent-factory-runtime-worktrees" dry_run=0
-  local idle_days=7
+  local idle_days=7 only=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --worktree-root) wt_root="$2"; shift 2 ;;
       --idle-days) idle_days="$2"; shift 2 ;;
+      --only) only="$only/$2/"; shift 2 ;;
       --dry-run) dry_run=1; shift ;;
       *) echo "factory-maintain clean-worktrees: unknown arg $1" >&2; return 2 ;;
     esac
@@ -262,14 +273,19 @@ cmd_clean_worktrees() {
   for d in "$wt_root"/*/; do
     [ -d "$d" ] || continue
     d="${d%/}"
+    if [ -n "$only" ]; then
+      case "$only" in *"/${d##*/}/"*) ;; *) continue ;; esac
+    fi
     git -C "$d" rev-parse --git-dir >/dev/null 2>&1 || continue
 
     local branch
     branch=$(git -C "$d" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-    if [ -z "$branch" ] || [ "$branch" = "HEAD" ]; then skipped=$((skipped+1)); continue; fi
+    if [ -z "$branch" ] || [ "$branch" = "HEAD" ]; then
+      kept_line "$dry_run" "$d" detached; skipped=$((skipped+1)); continue
+    fi
 
     if [ -n "$(git -C "$d" status --porcelain 2>/dev/null)" ]; then
-      skipped=$((skipped+1)); continue   # uncommitted work
+      kept_line "$dry_run" "$d" local-changes; skipped=$((skipped+1)); continue   # uncommitted work
     fi
 
     local sha upstream ahead=1 merged_pr=""
@@ -294,6 +310,7 @@ cmd_clean_worktrees() {
         echo "would escalate: $d (branch=$branch sha=$sha, unpushed commits)"
       else
         escalate_unpushed_worktree "$d" "$branch" || true
+        echo "escalated: $d (branch=$branch sha=$sha, unpushed commits)"
       fi
       escalated=$((escalated+1))
       continue
@@ -319,7 +336,7 @@ cmd_clean_worktrees() {
       now=$(date +%s)
       age=$((now - last_commit_epoch))
       if [ "$age" -lt "$idle_seconds" ]; then
-        skipped=$((skipped+1)); continue
+        kept_line "$dry_run" "$d" not-merged; skipped=$((skipped+1)); continue
       fi
     fi
 
@@ -336,8 +353,11 @@ cmd_clean_worktrees() {
     else
       if git -C "$main_repo" worktree remove "$d" --force >/dev/null 2>&1; then
         removed=$((removed+1))
+        echo "removed: $d (branch=$branch sha=$sha)"
         log clean-worktrees removed \
           "path=$d branch=$branch sha=$sha${proof_detail} undo='factory-do-work-workspace enter recreates it from branch $branch while that branch exists'"
+      else
+        echo "not removed: $d (branch=$branch sha=$sha, git worktree remove failed)"
       fi
     fi
   done

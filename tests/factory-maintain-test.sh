@@ -197,7 +197,31 @@ git -C "$REPO2" push -q origin main
 git -C "$REPO2" push -q origin --delete squash-merged-deleted
 git -C "$REPO2" remote prune origin >/dev/null
 
+# one line per worktree, each kept one with its reason (G2, af-f8nlhr: the
+# cockpit previews the scope from these lines)
+DRY=$("$SCRIPT" clean-worktrees --worktree-root "$WT_ROOT" --dry-run 2>&1) || fail "clean-worktrees --dry-run exited non-zero: $DRY"
+printf '%s\n' "$DRY" | grep -qx "would remove: $WT_ROOT/clean-merged-pushed (branch=clean-merged-pushed sha=$CLEAN_SHA)" \
+  || fail "the dry run does not name the merged worktree it would remove: $DRY"
+printf '%s\n' "$DRY" | grep -qx "would keep: $WT_ROOT/dirty-worktree (local-changes)" \
+  || fail "the dry run does not say it keeps the worktree with local changes: $DRY"
+printf '%s\n' "$DRY" | grep -qx "would keep: $WT_ROOT/clean-pushed-recent (not-merged)" \
+  || fail "the dry run does not say it keeps the recent unmerged worktree: $DRY"
+printf '%s\n' "$DRY" | grep -q "^would escalate: $WT_ROOT/unpushed-worktree " \
+  || fail "the dry run does not say it escalates the unpushed worktree: $DRY"
+
+# --only looks at the worktrees it names, and no other: the scope confirmed
+# after a dry run never grows
+ONLY=$("$SCRIPT" clean-worktrees --worktree-root "$WT_ROOT" --only dirty-worktree --only clean-pushed-recent 2>&1) \
+  || fail "clean-worktrees --only exited non-zero: $ONLY"
+[ -d "$WT_ROOT/clean-merged-pushed" ] || fail "clean-worktrees --only removed a worktree it was not given"
+[ -d "$WT_ROOT/clean-pushed-old" ] || fail "clean-worktrees --only removed a worktree it was not given"
+printf '%s\n' "$ONLY" | grep -qx "kept: $WT_ROOT/dirty-worktree (local-changes)" \
+  || fail "clean-worktrees --only does not say it kept the worktree it was given: $ONLY"
+printf '%s\n' "$ONLY" | grep -q "clean-merged-pushed" && fail "clean-worktrees --only spoke of a worktree it was not given: $ONLY"
+
 OUT2=$("$SCRIPT" clean-worktrees --worktree-root "$WT_ROOT" 2>&1) || fail "clean-worktrees exited non-zero: $OUT2"
+printf '%s\n' "$OUT2" | grep -qx "removed: $WT_ROOT/clean-merged-pushed (branch=clean-merged-pushed sha=$CLEAN_SHA)" \
+  || fail "clean-worktrees does not say it removed the merged worktree: $OUT2"
 
 [ -d "$WT_ROOT/clean-merged-pushed" ] && fail "clean-worktrees did not remove a merged, fully-pushed, clean worktree"
 [ -d "$WT_ROOT/dirty-worktree" ] || fail "clean-worktrees removed a worktree with uncommitted changes"

@@ -15,7 +15,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from cockpit.access.guard import session_cookie_header
-from cockpit.actions.registry import ActionError, ActionUncertain, expired
+from cockpit.actions.registry import DOOR_TIMEOUT_SECONDS, ActionError, ActionUncertain, expired
 from cockpit.actions.uncertain import UncertainOutcomes
 from cockpit.core.freshness import FRESH, STALE, UNKNOWN
 from cockpit.core.readmodel import PARIS
@@ -23,6 +23,8 @@ from cockpit.factory.checks import VALIDITY_SECONDS as CHECK_VALIDITY_SECONDS
 from cockpit.factory.checks import SectionChecks
 from cockpit.factory.configuration import ROOT as FACTORY_ROOT
 from cockpit.factory.configuration import read_configuration
+from cockpit.factory import cleanup, settings
+from cockpit.text.validate import operator_language
 from cockpit.health import collectors
 from cockpit.health.engine import (
     FACTORY_STALLED_AFTER_SECONDS,
@@ -86,6 +88,9 @@ UNEXPECTED_ACTION_ERROR = ("Le cockpit n’a pas pu faire ce geste à cause d’
 # nothing of the cockpit.
 READER_REFUSED_TEXT = ("Accès refusé : ce cockpit est réservé à l’opérateur de l’usine. "
                        "Ton identité Tailscale n’y est pas autorisée.\n")
+# The gestures of the page Usine (G2, af-f8nlhr), served by
+# CockpitRequestHandler._usine_action, each through its door.
+USINE_ACTIONS = frozenset({"regler", "preparer_reglage", "nettoyer"})
 ACTIONS_WITHOUT_WRITE = frozenset({"continuer", "pas_bon_vers_agent", "notifier_test"})
 # What "Ce qui t'attend", the projects and the journal are built from.
 SOURCES_REREAD_AFTER_ACTION = frozenset({"beads", "projets", "journal"})
@@ -231,6 +236,18 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         guard_result = self.server.action_guard.check("POST", self.headers)
         if not guard_result.allowed:
             self._send_json({"error": guard_result.reason}, status=403)
+            return
+        if action in USINE_ACTIONS:
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            try:
+                payload = json.loads((self.rfile.read(length) if length else b"{}").decode("utf-8") or "{}")
+            except ValueError:
+                payload = None
+            if not isinstance(payload, dict):
+                self._send_json({"error": "bad_json"}, status=400)
+                return
+            status, body = self._usine_action(action, payload)
+            self._send_json(body, status=status)
             return
         handler = self.server.action_handlers.get(action)
         if handler is None:
@@ -609,7 +626,10 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         agents = checks.get("agents")
         wanted = (urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("role") or [""])[0]
         keys = [role["key"] for role in agents["value"]["configuration"]["roles"]]
+        setting, cleaning = self._usine_views(urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query), agents,
+                                              wanted if wanted in keys else (keys[0] if keys else ""))
         main = render_factory_page({
+            "setting": setting, "cleanup": cleaning,
             "machine": checks.get("machine"), "connections": checks.get("connexions"),
             "providers": checks.get("fournisseurs"), "agents": agents,
             "live": snapshot, "now": now, "notify_configured": bool(notify and notify.configured()),
@@ -619,6 +639,133 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         })
         self._send_page(read_model, "usine", main, extra_css=FACTORY_PAGE_CSS,
                         headers={"Set-Cookie": session_cookie_header(self.server.session_token)}, snapshot=snapshot)
+
+    def _setting_blocked(self, agents, role_key):
+        """Why the setting of ``role_key`` may not be made now, or None: the
+        configuration read is unreadable or stale, or the last setting of
+        the role had an uncertain outcome the configuration was not read
+        again since (that reading lifts it)."""
+        configuration = agents["value"]["configuration"]
+        if configuration["unreadable"]:
+            return ("Réglage indisponible : la configuration est illisible (%s) ; revérifie-la une fois les "
+                    "fichiers rétablis." % ", ".join(configuration["unreadable"]))
+        if agents.get("stale"):
+            return "Réglage indisponible : la configuration lue est périmée ; revérifie-la avant de régler."
+        mark = self.server.setting_uncertain.get(role_key)
+        if mark is not None:
+            if agents["at"] > mark:
+                self.server.setting_uncertain.pop(role_key, None)
+            else:
+                return ("Réglage indisponible : la dernière commande de réglage a une issue incertaine ; "
+                        "revérifie la configuration avant de réessayer.")
+        return None
+
+    def _cleanup_blocked(self):
+        mark = self.server.cleanup_uncertain
+        if mark is None:
+            return None
+        previewed = self.server.cleanup_previewed_at
+        if previewed is not None and previewed > mark:
+            self.server.cleanup_uncertain = None
+            return None
+        return ("Nettoyage indisponible : le dernier nettoyage a une issue incertaine ; examine de nouveau le "
+                "périmètre avant de confirmer.")
+
+    def _usine_action(self, action, payload):
+        """POST /api/actions/regler, preparer_reglage, nettoyer (G2,
+        af-f8nlhr): (status, body). Each goes through its door; a door
+        that does not answer leaves an uncertain outcome, and the same
+        gesture waits for a new reading of its source."""
+        server = self.server
+        now = server.read_model.now()
+        if payload.get("confirm") is not True:
+            return 400, {"error": "Confirmation requise : rien n’a été envoyé."}
+        if action == "nettoyer":
+            blocked = self._cleanup_blocked()
+            if blocked:
+                return 409, {"error": blocked, "incertain": True}
+            try:
+                elements = cleanup.clean(server.factory_maintain_bin, payload.get("perimetre"), server.door_timeout)
+            except cleanup.ScopeChanged as exc:
+                server.cleanup_previewed_at = now
+                return 409, {"error": str(exc), "perimetre": [e["name"] for e in exc.scope["candidates"]]}
+            except ActionUncertain as exc:
+                server.cleanup_uncertain = server.read_model.now()
+                return exc.status, {"error": str(exc), "incertain": True}
+            except ActionError as exc:
+                return 400, {"error": str(exc)}
+            server.cleanup_result = {"at": datetime.fromtimestamp(server.read_model.now(), tz=PARIS)
+                                     .strftime("%d/%m à %H:%M:%S"), "elements": elements}
+            return 200, {"ok": True, "elements": elements}
+        role_key = payload.get("role") or ""
+        agents = server.factory_checks.get("agents")
+        blocked = self._setting_blocked(agents, role_key)
+        if blocked:
+            return 409, {"error": blocked, "incertain": role_key in server.setting_uncertain}
+        configuration = agents["value"]["configuration"]
+        try:
+            planned = settings.plan(configuration, role_key, payload.get("principal") or "")
+            if action == "regler":
+                read_back = settings.apply(server.provider_failover_bin, planned, server.door_timeout)
+            else:
+                if planned["supported"]:
+                    raise ActionError("Ce changement se règle par sa porte : applique-le au lieu d’en faire une "
+                                      "proposition.")
+                quoi = settings.propose(server.proposal_door_bin, planned, operator_language(), server.door_timeout)
+        except ActionUncertain as exc:
+            server.setting_uncertain[role_key] = server.read_model.now()
+            return exc.status, {"error": str(exc), "incertain": True}
+        except ActionError as exc:
+            return 400, {"error": str(exc)}
+        if action == "regler":
+            server.factory_checks.recheck("agents")
+            provider = configuration["providers"].get(read_back["provider"]) or {}
+            server.setting_outcomes[role_key] = (
+                "Réglage appliqué et relu par la porte à %s : les prochaines sessions du rôle %s démarrent sur %s ; "
+                "les sessions ouvertes gardent le leur." % (
+                    datetime.fromtimestamp(server.read_model.now(), tz=PARIS).strftime("%H:%M:%S"),
+                    planned["label"].lower(), provider.get("label") or read_back["provider"]))
+            return 200, {"ok": True, "lu": read_back}
+        server.setting_outcomes[("proposition", role_key)] = (
+            "Proposition préparée : « %s ». Elle attend ta décision dans Pour moi ; rien n’a changé pour ce rôle."
+            % quoi)
+        for poller in getattr(server, "pollers", ()):
+            poll_now = getattr(poller, "poll_now", None)
+            if poll_now is not None:
+                poll_now()
+        return 200, {"ok": True, "quoi": quoi}
+
+    def _usine_views(self, query, agents, selected):
+        """What the role panel and the cleaning panel of the page show,
+        from the address: ``reglage=modifier|portee|fait|propose``
+        (``principal=`` for the scope), ``nettoyage=apercu|fait``."""
+        server = self.server
+        mode = (query.get("reglage") or [""])[0]
+        configuration = agents["value"]["configuration"]
+        setting = {"mode": "role", "blocked": self._setting_blocked(agents, selected) if selected else None,
+                   "outcome": server.setting_outcomes.get(selected)}
+        try:
+            if mode == "modifier":
+                setting.update(mode="modifier", offered=settings.offered(configuration, selected))
+            elif mode == "portee":
+                setting.update(mode="portee", plan=settings.plan(configuration, selected,
+                                                                 (query.get("principal") or [""])[0]))
+            elif mode == "propose":
+                setting.update(mode="propose", outcome=server.setting_outcomes.get(("proposition", selected)))
+        except ActionError as exc:
+            setting.update(mode="role", outcome=str(exc))
+        cleaning = {"result": server.cleanup_result, "blocked": None}
+        if (query.get("nettoyage") or [""])[0] == "apercu":
+            cleaning["mode"] = "apercu"
+            try:
+                cleaning["preview"] = cleanup.preview(server.factory_maintain_bin, server.door_timeout)
+                server.cleanup_previewed_at = server.read_model.now()
+                self._cleanup_blocked()
+            except ActionError as exc:
+                cleaning.update(preview=None, error=str(exc))
+        else:
+            cleaning["blocked"] = self._cleanup_blocked()
+        return setting, cleaning
 
     def _recheck_factory_section(self):
         """POST /api/usine/reverifier (section=machine|connexions|fournisseurs|agents,
@@ -859,6 +1006,20 @@ def make_server(
     # What a Runs state selects when the address names nothing (the
     # isolated cockpit of a frozen state; empty in service).
     server.runs_view = {}
+    # The settings and the upkeep of the page Usine (G2, af-f8nlhr): their
+    # doors (unset: refused as unknown commands), and what the page keeps
+    # between two readings -- the last outcome of a role's setting, the
+    # moment a setting or a cleaning had an uncertain outcome, the last
+    # cleaning and the last preview of its scope.
+    server.provider_failover_bin = None
+    server.factory_maintain_bin = None
+    server.proposal_door_bin = None
+    server.door_timeout = DOOR_TIMEOUT_SECONDS
+    server.setting_outcomes = {}
+    server.setting_uncertain = {}
+    server.cleanup_result = None
+    server.cleanup_uncertain = None
+    server.cleanup_previewed_at = None
     server.stop_driver = None
     server.benjamin_login = ""
     # The address the operator opens the cockpit at: the HTTPS address of

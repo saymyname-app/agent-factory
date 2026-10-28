@@ -38,6 +38,7 @@ on its real sources; settings, clean-up and stop stay visibly unavailable
 until their tickets (G2, H).
 """
 import html
+import json
 import os
 import platform
 import shutil
@@ -389,8 +390,76 @@ def _availability_of(role, availability):
                       for p in chain)
 
 
-def render_role(a, configuration, sessions_row, live_sessions, in_service, key, now):
+def _form_hidden(fields):
+    return "".join('<input type="hidden" name="%s" value="%s">' % (_e(k), _e(v)) for k, v in fields.items())
+
+
+def render_setting(a, role, setting):
+    """What the role panel shows of its setting (G2, af-f8nlhr): the
+    control « Configurer », available or not with its reason, and the last
+    outcome; or the editor, the scope of a change, a proposal prepared."""
+    key = role["key"]
+    mode = setting.get("mode") or "role"
+    alert = '<p class="fa-alert" role="alert" data-usine-alert hidden></p>'
+    if mode == "modifier":
+        choices = "".join(
+            '<label class="fa-choice"><input type="radio" name="principal" value="%s" aria-label="%s" '
+            'aria-describedby="choix-%d"%s> %s <small id="choix-%d">%s</small></label>'
+            % (_e(p["name"]), _e(p["label"]), index, " checked" if p["current"] else "", _e(p["label"]), index,
+               _e("en tête aujourd’hui" if p["current"] else "dans l’ordre du rôle · réglable" if p["supported"]
+                  else "essai d’adoption du rôle à faire · proposition"))
+            for index, p in enumerate(setting["offered"]))
+        return (
+            '<form class="fa-setting" method="get" action="/usine#role">%s'
+            '<fieldset><legend>Fournisseur en tête des prochaines sessions</legend>%s</fieldset>'
+            '<p class="fa-muted">Un fournisseur qui n’a pas passé l’essai d’adoption du rôle ne devient pas utilisable '
+            'par simple sélection : il est préparé comme proposition.</p>'
+            '<div class="fa-actions"><a class="fa-link" href="/usine?role=%s#role">Annuler</a>'
+            '<button type="submit">Voir la portée</button></div></form>'
+        ) % (_form_hidden({"role": key, "reglage": "portee"}), choices, _e(key))
+    if mode == "portee":
+        plan = setting["plan"]
+        rows = [("Valeur actuelle", plan["current_text"]), ("Nouvelle valeur", plan["new_text"]),
+                ("Portée", "%s · Nouvelles sessions uniquement : les sessions ouvertes gardent leur fournisseur."
+                 % plan["label"]),
+                ("Conséquences", plan["consequences"])]
+        if not plan["changes"]:
+            act = ""
+        else:
+            action, label = (("regler", "Appliquer ce changement") if plan["supported"]
+                             else ("preparer_reglage", "Préparer ce changement"))
+            act = ('<button type="button" data-usine-action="%s" data-body="%s" data-next="%s">%s</button>'
+                   % (action, _e(json.dumps({"role": key, "principal": plan["principal"], "confirm": True})),
+                      _e("/usine?role=%s&reglage=%s#role" % (key, "fait" if plan["supported"] else "propose")),
+                      label))
+        blocked = setting.get("blocked")
+        if blocked and act:
+            act = act.replace("<button ", "<button disabled ", 1)
+        return (
+            '<div class="fa-setting"><p class="fa-kicker">Changement à confirmer</p><dl class="fa-rows">%s</dl>%s'
+            '<div class="fa-actions"><a class="fa-link" href="/usine?role=%s&amp;reglage=modifier#role">Retour</a>%s</div>'
+            '%s</div>'
+        ) % ("".join("<div><dt>%s</dt><dd>%s</dd></div>" % (_e(k), _e(v)) for k, v in rows),
+             '<p class="fa-muted">%s</p>' % _e(blocked) if blocked else "", _e(key), act, alert)
+    outcome = setting.get("outcome")
+    said = '<p class="fa-outcome" role="status">%s</p>' % _e(outcome) if outcome else ""
+    blocked = setting.get("blocked")
+    return (
+        '%s<form class="fa-setting" method="get" action="/usine#role">%s<button type="submit"%s>Configurer</button>'
+        '</form><p class="fa-muted">%s</p>'
+    ) % (said, _form_hidden({"role": key, "reglage": "modifier"}), " disabled" if blocked else "",
+         _e(blocked or "Change le fournisseur en tête de ce rôle ; tu vois la portée avant de confirmer."))
+
+
+def render_role(a, configuration, sessions_row, live_sessions, in_service, key, now, setting=None):
+    setting = setting or {}
     role = _role_of(configuration, key)
+    if setting.get("mode") == "propose" and role is not None:
+        return ('<section class="fa-role" id="role" %s><h3 %s>%s</h3><p class="fa-outcome" role="status">%s</p>'
+                '<p><a class="fa-link" href="/">Voir la proposition dans Pour moi</a> · '
+                '<a class="fa-link" href="/usine?role=%s#role">Revenir au rôle</a></p></section>'
+                % (a("section"), a("h3"), _e(role["label"]), _e(setting.get("outcome") or
+                   "Aucune proposition préparée depuis ce rôle."), _e(key)))
     if role is None:
         return ('<section class="fa-role" id="role" %s><h3 %s>Rôle inconnu</h3><p>Ce rôle n’est pas dans la '
                 'configuration lue.</p></section>' % (a("section"), a("h3")))
@@ -418,16 +487,15 @@ def render_role(a, configuration, sessions_row, live_sessions, in_service, key, 
         '<p class="fa-muted">%s</p>'
         '<p class="fa-kicker">Observé</p><dl class="fa-rows"><div><dt>Fournisseur en service</dt><dd>%s</dd></div>'
         '<div><dt>Disponibilité observée</dt><dd>%s</dd></div>'
-        '<div><dt>Sessions de ce rôle au travail</dt><dd>%s</dd></div></dl>'
-        '<button type="button" disabled>Configurer</button>'
-        '<p class="fa-muted">Les réglages ne sont pas encore raccordés à leur porte.</p></section>'
+        '<div><dt>Sessions de ce rôle au travail</dt><dd>%s</dd></div></dl>%s</section>'
     ) % (a("section"), a("h3"), _e(role["label"]),
          "".join("<div><dt>%s</dt><dd>%s</dd></div>" % (_e(k), _e(v)) for k, v in rows), _e(fallbacks),
          _e(_bounds_line(configuration["bounds"])), _e(serving),
-         _e(_availability_of(role, configuration["availability"])), _e(_sessions_of(role, sessions_row, live_sessions, now)))
+         _e(_availability_of(role, configuration["availability"])), _e(_sessions_of(role, sessions_row, live_sessions, now)),
+         render_setting(a, role, setting))
 
 
-def render_agents(a, check, live, selected, now):
+def render_agents(a, check, live, selected, now, setting=None):
     configuration, sessions_row = check["value"]["configuration"], check["value"]["sessions"]
     others = "".join(
         "<li><strong>%s</strong> · %s</li>" % (_e(other["label"]), _e(_provider_line(other["configured"])))
@@ -447,8 +515,144 @@ def render_agents(a, check, live, selected, now):
         'remplace pas les transitions du moteur.</p></details></section>'
     ) % (a("panel"), _checked("Configuration lue", check, "agents", selected, now), unreadable, a("section-grid"),
          render_flow(a, configuration, selected),
-         render_role(a, configuration, sessions_row, live.get("sessions"), configuration["in_service"], selected, now),
+         render_role(a, configuration, sessions_row, live.get("sessions"), configuration["in_service"], selected, now,
+                     setting),
          others)
+
+
+CLEAN_REASONS = {
+    "local-changes": ("avec modifications locales", "conservé", "Modifications locales : rien n’est retiré"),
+    "not-merged": ("en cours", "conservé", "Travail en cours : branche pas encore fusionnée"),
+    "unpushed": ("non publié", "protégé", "Commits non poussés : exclusion et examen requis"),
+    "detached": ("sans branche", "conservé", "Aucune branche : examen requis"),
+    "kept": ("laissé en place", "conservé", "Laissé en place par la porte"),
+}
+
+
+def _espaces(count, words, state):
+    """« 1 espace en cours · conservé », « 2 espaces en cours · conservés »."""
+    plural = count > 1
+    return "%d espace%s %s · %s%s" % (count, "s" if plural else "", words, state, "s" if plural else "")
+
+
+def _kept_groups(kept):
+    groups = []
+    for reason, (words, state, note) in CLEAN_REASONS.items():
+        found = [element for element in kept if element["reason"] == reason]
+        if found:
+            groups.append('<li><strong>%s</strong><small>%s</small></li>' % (_e(_espaces(len(found), words, state)),
+                                                                             _e(note)))
+    return "".join(groups)
+
+
+def _element_line(element):
+    if element.get("outcome") == "removed":
+        said = "retiré"
+    elif element.get("outcome") == "not-removed":
+        said = "non retiré : la porte n’a pas pu le retirer"
+    else:
+        words, state, note = CLEAN_REASONS.get(element.get("reason"), CLEAN_REASONS["kept"])
+        said = "%s : %s" % (state, note.split(" :")[0].lower())
+    return "<li>%s — %s</li>" % (_e(element["name"]), _e(said))
+
+
+def render_cleanup(a, cleanup):
+    """« Nettoyer les espaces inutilisés » (G2, af-f8nlhr): the control that
+    previews the scope, the preview itself -- candidates, then what is kept
+    and why, each element named in the folded details -- with the
+    confirmation of that scope, and the result of the last cleaning, one
+    line per element."""
+    cleanup = cleanup or {}
+    head = '<section class="pn-panel" %s><h2>Nettoyer les espaces inutilisés</h2>' % a("panel")
+    alert = '<p class="fa-alert" role="alert" data-usine-alert hidden></p>'
+    if cleanup.get("mode") == "apercu":
+        preview, error = cleanup.get("preview"), cleanup.get("error")
+        if preview is None:
+            return head + ('<p class="fa-warn">Aperçu impossible : %s</p><div class="fa-actions">'
+                           '<a class="fa-link" href="/usine">Retour</a></div></section>' % _e(error or "porte muette"))
+        candidates, kept = preview["candidates"], preview["kept"]
+        count = len(candidates)
+        found = ('<li><strong>%s</strong><small>Branches déjà fusionnées et publiées · aucun changement local</small>'
+                 '</li>' % _e(_espaces(count, "terminé%s" % ("s" if count > 1 else ""), "candidat"))
+                 if count else '<li><strong>Aucun espace terminé à retirer</strong></li>')
+        listed = ("".join("<li>%s — candidat</li>" % _e(element["name"]) for element in candidates)
+                  + "".join(_element_line(element) for element in kept))
+        confirm = ""
+        if count:
+            label = "Confirmer 1 candidat" if count == 1 else "Confirmer les %d candidats" % count
+            confirm = ('<button type="button" data-usine-action="nettoyer" data-body="%s" data-next="/usine?nettoyage=fait">'
+                       '%s</button>' % (_e(json.dumps({"perimetre": [e["name"] for e in candidates], "confirm": True})),
+                                        label))
+        return head + (
+            '<p>Périmètre relu à l’instant par la porte de maintenance. Seuls les candidats confirmés sont retirés ; '
+            'un périmètre qui change avant ta confirmation est recalculé.</p><ul class="fa-list fa-clean">%s%s</ul>'
+            '<details><summary>Voir chaque espace</summary><ul>%s</ul></details>'
+            '<div class="fa-actions"><a class="fa-link" href="/usine">Annuler</a>%s</div>%s</section>'
+        ) % (found, _kept_groups(kept), listed, confirm, alert)
+    result = cleanup.get("result")
+    done = ""
+    if result:
+        elements = result["elements"]
+        removed = sum(1 for e in elements if e["outcome"] == "removed")
+        left = len(elements) - removed
+        summary = "%d espace%s retiré%s · %d espace%s conservé%s" % (
+            removed, "s" if removed > 1 else "", "s" if removed > 1 else "", left, "s" if left > 1 else "",
+            "s" if left > 1 else "")
+        done = ('<p class="fa-outcome" role="status">Nettoyage du %s : %s.</p>'
+                '<details><summary>Résultat par élément</summary><ul>%s</ul></details>'
+                % (_e(result["at"]), _e(summary), "".join(_element_line(e) for e in elements)))
+    blocked = cleanup.get("blocked")
+    return head + (
+        '<p>Prévisualiser les candidats et protéger les travaux encore utiles.</p>%s'
+        '<form class="fa-actions" method="get" action="/usine"><input type="hidden" name="nettoyage" value="apercu">'
+        '<button type="submit"%s>Examiner le périmètre</button></form>%s</section>'
+    ) % (done, " disabled" if blocked else "",
+         '<p class="fa-muted">%s</p>' % _e(blocked) if blocked else "")
+
+
+# The gestures of the page (G2, af-f8nlhr): a button `data-usine-action`
+# sends its `data-body` (JSON) to POST /api/actions/<action>, as the page's
+# own origin, with its session cookie. Done: the page `data-next` is opened,
+# which shows what the cockpit read back. Refused or expired: the words of
+# the cockpit are shown beside it and nothing is said done; after an
+# uncertain outcome the button stays off -- the page says to read the
+# source again first.
+USINE_SCRIPT = """<script>
+(function () {
+  document.addEventListener('click', function (event) {
+    var button = event.target.closest ? event.target.closest('[data-usine-action]') : null;
+    if (!button || button.disabled) { return; }
+    var holder = button.closest('.fa-setting, .pn-panel') || document.body;
+    var alert = holder.querySelector('[data-usine-alert]');
+    var label = button.textContent;
+    button.disabled = true;
+    button.textContent = 'Envoi à la porte…';
+    if (alert) { alert.hidden = true; alert.textContent = ''; }
+    fetch('/api/actions/' + button.getAttribute('data-usine-action'), {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'same-origin',
+      body: button.getAttribute('data-body')
+    }).then(function (response) {
+      return response.json().catch(function () { return {}; }).then(function (body) {
+        if (response.ok && body.ok) { window.location.assign(button.getAttribute('data-next')); return; }
+        button.textContent = label;
+        button.disabled = body.incertain === true;
+        if (alert) {
+          alert.textContent = body.error || ('Le cockpit a refusé la commande (' + response.status + ').');
+          alert.hidden = false;
+        }
+      });
+    }, function () {
+      button.textContent = label;
+      button.disabled = true;
+      if (alert) {
+        alert.textContent = 'Le cockpit ne répond pas : l’issue de la commande est incertaine. '
+          + 'Revérifie la section avant de réessayer.';
+        alert.hidden = false;
+      }
+    });
+  });
+})();
+</script>"""
 
 
 def render_unavailable(a, actions_html):
@@ -459,11 +663,7 @@ def render_unavailable(a, actions_html):
         '<button type="button" disabled>Préparer l’arrêt de la machine</button></div>'
         '<p class="fa-muted">Indisponible : l’arrêt propre et la reprise vérifiée ne sont pas encore raccordés.</p>'
         '<div class="fa-legacy">%s</div></section>'
-        '<section class="pn-panel" %s><h2>Nettoyer les espaces inutilisés</h2><p>Prévisualiser les candidats et '
-        'protéger les travaux encore utiles.</p><div class="fa-actions">'
-        '<button type="button" disabled>Examiner le périmètre</button></div>'
-        '<p class="fa-muted">Indisponible : le nettoyage n’est pas encore raccordé.</p></section>'
-    ) % (a("panel"), actions_html, a("panel"))
+    ) % (a("panel"), actions_html)
 
 
 def render_factory_page(view):
@@ -476,12 +676,25 @@ def render_factory_page(view):
         ) % (a("h1"), a("page-lead"), render_machine(a, view["machine"], view["selected"], view["now"]), a("section-grid"),
              render_connections(a, view["connections"], view["live"], view["notify_configured"], view["now"],
                                 view["selected"]) + render_providers(a, view["providers"], view["selected"], view["now"]),
-             render_agents(a, view["agents"], view["live"], view["selected"], view["now"]), view["health_html"],
-             render_unavailable(a, view["actions_html"]))
+             render_agents(a, view["agents"], view["live"], view["selected"], view["now"], view.get("setting")),
+             view["health_html"], render_unavailable(a, view["actions_html"]) + render_cleanup(a, view.get("cleanup"))
+             + USINE_SCRIPT)
     return draw
 
 
 CSS = """
+.fa-setting{margin-top:14px}
+.fa-setting fieldset{border:1px solid var(--line);border-radius:8px;margin:0 0 10px;padding:10px 12px;min-width:0}
+.fa-setting legend{padding:0 4px;font-size:13px;color:var(--pn-muted-text)}
+.fa-choice{display:block;padding:8px 0;overflow-wrap:anywhere}
+.fa-choice small{display:block;margin-left:26px;font-size:12px;color:var(--pn-muted-text)}
+.fa-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:10px}
+.fa-link{color:var(--ink);text-underline-offset:3px}
+.fa-outcome{border-left:3px solid var(--accent);padding:6px 10px;margin:12px 0}
+.fa-alert{border-left:3px solid var(--pn-warn-text);color:var(--pn-warn-text);padding:6px 10px;margin:12px 0}
+.fa-clean li{display:block;padding:10px 0;border-bottom:1px solid var(--line)}
+.fa-clean li:last-child{border-bottom:0}
+.fa-clean small{display:block;font-size:12px;color:var(--pn-muted-text);margin-top:3px}
 .fa-sub{margin:0 0 20px;color:var(--pn-muted-text)}
 .fa-muted{color:var(--pn-muted-text);font-size:13px}
 .fa-warn{color:var(--pn-warn-text)}

@@ -162,6 +162,10 @@ def build(config, clock=None):
         factory_check_validity_seconds=config.factory_check_validity_seconds,
     )
     server.runs_view = config.runs_view
+    server.provider_failover_bin = config.provider_failover_bin
+    server.factory_maintain_bin = config.factory_maintain_bin
+    server.proposal_door_bin = config.proposal_door_bin
+    server.door_timeout = config.action_timeout_seconds
     server.descriptors_dir = config.descriptors_dir
 
     # Clean stop (T23, T24) -- read side only (af-mjfvwx 7a): the driver keeps
