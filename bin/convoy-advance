@@ -102,7 +102,9 @@ stopped because its Ticket Evaluation gave no result (af-xhc0sj), once per
 tip of the integration branch: the resume lifts the stop, keeps it on the
 resume, and withdraws its request; so is a ticket stopped at its second
 amendment once the operator answered « a » to its request (af-25o7vr,
-cause `amendment_granted`, one amendment more); every other stop stays
+cause `amendment_granted`, one amendment more), or whose every change
+since the freeze is the base's it merged (af-npz9v1.39, cause
+`inherited_change`, no answer asked); every other stop stays
 with the operator. At the
 last resume of a same cause (bounds.resumes, one bound per cause, ADR-0030
 L2: these causes and a commit after a verdict; the correction rounds keep
@@ -246,6 +248,7 @@ DOOR_BIN = BIN / "dispatch-door"
 ESCALATION_BIN = BIN / "escalation-door"
 INTEGRATION_BIN = BIN / "spec-integration"
 CODE_REVIEW_BIN = BIN / "code-review"
+TDD_STEP_BIN = Path(os.environ.get("CONVOY_ADVANCE_TDD_STEP_BIN") or BIN / "tdd-step")
 PROJECT_STANDARDS_BIN = BIN / "project-standards"
 EVALUATION_BIN = BIN / "ticket-evaluation"
 CORRECTION_BIN = BIN / "correction-round"
@@ -328,6 +331,10 @@ NO_RESULT = "evaluation_no_result"
 AMENDMENT_STOP = "amendment_exhausted"
 AMENDMENT_GRANTED = "amendment_granted"
 AMENDMENT_RESUME_OPTION = "a"
+# The resume that lifts that stop when every change since the freeze is the
+# base's the branch merged, not the ticket's (af-npz9v1.39): no amendment
+# was the ticket's to take, so no answer of the operator is asked.
+INHERITED_CHANGE = "inherited_change"
 # ADR-0030 L3 removed the test review: a ticket it stopped before is resumed
 # on itself, once per stop, its request withdrawn (af-pjvsgo). A code review
 # without result is resumed the same way (af-wu6xj7): most often a defect of
@@ -1088,6 +1095,29 @@ def amendment_granted_due(ticket: dict[str, Any]) -> tuple[str, str, str] | None
     return "new", AMENDMENT_GRANTED, f"stop:{stop['reason']}/{stop['at']}"
 
 
+def inherited_change_due(convoy: Convoy, ticket: dict[str, Any]) -> tuple[str, str, str] | None:
+    """The resume a stop at the second amendment asks for when, at the
+    tip, no frozen file and no file of the test perimeter changed since the
+    freeze but as the base the branch merged holds it (af-npz9v1.39): once
+    per stop, none once the operator answered it, none when the ticket has
+    no resume left, none when bin/tdd-step cannot say. The fact is
+    `stop:<reason>/<time>`."""
+    stop = ticket["stop"]
+    if ticket.get("resumes_left") == 0 or not ticket.get("tip"):
+        return None
+    if request_answer(read_bead(ticket["id"]), stop["at"]) is not None:
+        return None
+    try:
+        proc = run([str(TDD_STEP_BIN), "changes", convoy.id, ticket["id"], "--repo", str(convoy.repo),
+                    "--profile", str(rig_profile(convoy.rig)), "--at", ticket["tip"]])
+        answer = json.loads(proc.stdout)
+    except (Refusal, json.JSONDecodeError):
+        return None
+    if proc.returncode != 0 or not isinstance(answer, dict) or answer.get("own") != [] or not answer.get("inherited"):
+        return None
+    return "new", INHERITED_CHANGE, f"stop:{stop['reason']}/{stop['at']}"
+
+
 def once_per_stop_due(ticket: dict[str, Any], cause: str) -> tuple[str, str, str] | None:
     """The resume a stop of a removed stage, or of a code review without
     result, asks for: once per stop, none once the operator answered it,
@@ -1147,7 +1177,7 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
             elif ticket["stop"]["reason"] == CODE_REVIEW_STOP:
                 due = once_per_stop_due(ticket, CODE_REVIEW_STOP)
             elif ticket["stop"]["reason"] == AMENDMENT_STOP:
-                due = amendment_granted_due(ticket)
+                due = amendment_granted_due(ticket) or inherited_change_due(convoy, ticket)
             elif overridden_at_work(ticket):
                 # Only the merge that returned it lifts its stop; no resume left, it stays with the operator.
                 due = resume_due(ticket, alive) if ticket.get("resumes_left") != 0 else None

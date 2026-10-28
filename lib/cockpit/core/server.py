@@ -5,6 +5,8 @@ config: a local process already has every power on this host (spec .9
 threat model), but the cockpit is still not allowed to become reachable
 from the tailnet or LAN by an operator mistake in a config file.
 """
+import logging
+import subprocess
 import time
 import threading
 import json
@@ -13,7 +15,8 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from cockpit.access.guard import session_cookie_header
-from cockpit.actions.registry import ActionError
+from cockpit.actions.registry import ActionError, ActionUncertain, expired
+from cockpit.actions.uncertain import UncertainOutcomes
 from cockpit.core.freshness import FRESH, STALE, UNKNOWN
 from cockpit.core.readmodel import PARIS
 from cockpit.factory.checks import VALIDITY_SECONDS as CHECK_VALIDITY_SECONDS
@@ -46,7 +49,6 @@ from cockpit.ui.access.page import render_access_zone
 from cockpit.ui.factory.page import CSS as FACTORY_PAGE_CSS, read_machine, render_factory_page
 from cockpit.ui.home.overview import CSS as OVERVIEW_CSS
 from cockpit.ui.home.overview import overview_view, render_overview
-from cockpit.ui.home.page import render_requests_section
 from cockpit.ui.panorama.shell import CSS as PANORAMA_CSS
 from cockpit.ui.panorama.shell import HOME, NAVIGATION, render_not_folded, render_shell
 from cockpit.ui.stop.render import render_stop_section
@@ -76,6 +78,10 @@ NOT_FOLDED = {
 
 # Actions that write nothing on a bead (a prompt to copy, a test push): no
 # re-read after them.
+# What a gesture that failed in an unforeseen way answers: nothing is said
+# done, and the request is to be read again before anything else.
+UNEXPECTED_ACTION_ERROR = ("Le cockpit n’a pas pu faire ce geste à cause d’une erreur interne. Rien n’est confirmé : "
+                           "relis la demande avant de réessayer.")
 ACTIONS_WITHOUT_WRITE = frozenset({"continuer", "pas_bon_vers_agent", "notifier_test"})
 # What "Ce qui t'attend", the projects and the journal are built from.
 SOURCES_REREAD_AFTER_ACTION = frozenset({"beads", "projets", "journal"})
@@ -208,14 +214,43 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         except ValueError:
             self._send_json({"error": "bad_json"}, status=400)
             return
+        writes = action not in ACTIONS_WITHOUT_WRITE
+        target = (payload.get("bead_id") or payload.get("source_key")) if isinstance(payload, dict) else None
+        if writes and target:
+            # After an uncertain outcome, not again before the source was
+            # read again, nor once it shows the gesture done (af-fksj2c).
+            refusal = self._uncertain_refusal(target)
+            if refusal:
+                self._send_json({"error": refusal, "incertain": True}, status=409)
+                return
         try:
             result = handler(payload)
+        except (ActionUncertain, subprocess.TimeoutExpired) as exc:
+            # The command expired, or did its work and what follows it
+            # failed: said as it is, and the source read again at once.
+            if isinstance(exc, subprocess.TimeoutExpired):
+                exc = expired(exc.timeout)
+            self.server.uncertain.record(target, self.server.read_model.now())
+            self._send_json({"error": str(exc), "incertain": True, "rafraichi": self._reread_after_action()},
+                            status=exc.status)
+            return
         except ActionError as exc:
             self._send_json({"error": str(exc)}, status=400)
             return
-        if action not in ACTIONS_WITHOUT_WRITE and isinstance(result, dict):
+        except Exception:
+            logging.getLogger(__name__).exception("action %s failed", action)
+            self._send_json({"error": UNEXPECTED_ACTION_ERROR}, status=500)
+            return
+        if writes and isinstance(result, dict):
             result["rafraichi"] = self._reread_after_action()
         self._send_json(result)
+
+    def _uncertain_refusal(self, target):
+        read_model = self.server.read_model
+        snapshot = read_model.snapshot()
+        requests, beads_row, _ = self._assemble_requests(snapshot, read_model.now())
+        read_at = beads_row["read_at"] if beads_row else None
+        return self.server.uncertain.refusal(target, read_at, {request.id for request in requests})
 
     def _first_reading(self, read_model, knowledge=False, agents=False):
         """The snapshot, once the projects had their first reading if the
@@ -251,12 +286,17 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         Panorama holds yet folded under it."""
         snapshot = self._first_reading(read_model)
         now = read_model.now()
-        requests, _, beads_known = self._assemble_requests(snapshot, now)
+        requests, beads_row, _ = self._assemble_requests(snapshot, now)
+        # A gesture whose outcome is uncertain is drawn unavailable for as
+        # long as a POST on it would be refused (af-fksj2c).
+        uncertain = self.server.uncertain.pending(beads_row["read_at"] if beads_row else None,
+                                                  {request.id for request in requests})
         health = self._compute_health(read_model)
+        # « Ce qui t’attend » is « Pour moi » of the overview itself (B,
+        # af-4uzgzm): the zones folded under it no longer hold it.
         zones_html = render_home_zones(
             read_model.headline(),
             read_model.stale_or_unknown(),
-            requests_section_html=self._render_requests_section(snapshot, now),
             extra_sections_html=(
                 self._render_projects_zone(snapshot)
                 + self._render_stop_zone(snapshot)
@@ -266,7 +306,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             status_html=render_status_line(snapshot.get("gc"), health),
         )
         driver = getattr(self.server, "stop_driver", None)
-        view = overview_view(snapshot, requests if beads_known else [],
+        view = overview_view(snapshot, requests, now=now, undelivered=self._undelivered(), uncertain=uncertain,
                              stop_trial_passed=bool(driver is not None and driver.essai_reussi()))
         # T13, af-cx20q9: the SameSite=Strict cookie an action POST must
         # echo back -- a cross-site POST never carries it, so its presence
@@ -353,20 +393,8 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         notify = self.server.notify
         return notify.undelivered() if notify is not None else set()
 
-    def _render_requests_section(self, snapshot, now):
-        requests, beads_row, beads_known = self._assemble_requests(snapshot, now)
-        if not beads_known:
-            last_known_at = beads_row["read_at"] if beads_row else None
-            return render_requests_section(
-                requests, verified_at=now, source_unknown=True, last_known_at=last_known_at,
-                undelivered=self._undelivered(),
-            )
-        return render_requests_section(
-            requests, verified_at=beads_row["read_at"], undelivered=self._undelivered()
-        )
-
     def _requests_payload(self, snapshot, now):
-        """JSON twin of :meth:`_render_requests_section` (T12, af-is5e97):
+        """JSON twin of « Ce qui t’attend » (T12, af-is5e97):
         lets a test assert on structured fields and the producer-defect
         count without scraping the rendered HTML. ``state`` is "unknown"
         whenever Beads is: the list is then not the whole list."""
@@ -790,6 +818,7 @@ def make_server(
         server.server_close()
         raise ValueError("cockpit bound to %r, not 127.0.0.1 — refusing" % (sockname[0],))
     server.read_model = read_model
+    server.uncertain = UncertainOutcomes()
     server.defect_counter = DefectCounter()
     # T13, af-cx20q9: no guard supplied (a caller that only wants GET /,
     # e.g. an older test) means every action is refused rather than left

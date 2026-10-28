@@ -164,6 +164,7 @@
       "home-content-full": "config/cockpit-datasets/home-content-full.json",
       "home-narrow": "config/cockpit-datasets/home-narrow.json",
       "home-light": "config/cockpit-datasets/home-light.json",
+      "home-gestes": "config/cockpit-datasets/home-gestes.json",
       "result-ready": "config/cockpit-datasets/result-ready.json",
       "result-dossier": "config/cockpit-datasets/result-dossier.json",
       "result-findings": "config/cockpit-datasets/result-findings.json",

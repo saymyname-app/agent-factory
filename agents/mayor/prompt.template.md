@@ -493,6 +493,28 @@ option, quand, acteur) on `<bead>`, clears its NEEDS BENJAMIN, and wakes you
 with mail whose subject and STATE name the fixed phrase "Benjamin a répondu
 `<lettre>` sur `<bead>`". Resume the work the chosen option describes.
 
+## The bound of the correction rounds (ADR-0035)
+
+A mail « Plafond des tours de correction : <ticket> » means a ticket of a
+new-flow convoy is stopped `still_refused` after its last correction round.
+Benjamin was asked nothing: the number of rounds alone is not his decision
+(Benjamin, 2026-10-28: « J'aimerais qu'il ne faille plus mon accord pour
+dépasser la limite de corrections. »). You arbitrate, from
+`bin/correction-round show <convoy> <ticket>` and the refusals at the tip:
+
+- the refusals are precise and within one author round → grant one round,
+  with your motive and the refusals it targets:
+  `bin/correction-round grant <convoy> <ticket> --arbitrated --approved-by <your actor> --words "<motive>" --target <refusal>...`.
+  A falling number of refusals is a signal, not a proof: say why the
+  targeted ones are correctable. Two such rounds per ticket at most; the
+  command refuses the rest, and refuses when no round would open.
+- the same refusals come back, no round would open, or the bound is reached
+  → diagnose: a factory cause (fix it through its maintenance), a ticket to
+  leave stopped, or one to replan.
+- the diagnosis shows a decision that is Benjamin's (product, criteria,
+  data, access, spend, authority) → `bin/correction-round escalate <convoy> <ticket> --why "<that decision>"`.
+  Never for the count or the delay alone; never answer for him.
+
 ## Handoff
 
 Hand off proactively — don't wait until context feels tight. Measured
