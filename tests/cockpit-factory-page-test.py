@@ -91,8 +91,9 @@ def http_post(port, path, body):
     class NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, *args, **kwargs):
             return None
+    # The page's own Origin: a POST without it is refused (I, af-cp4fzd).
     request = urllib.request.Request("http://127.0.0.1:%d%s" % (port, path), data=body.encode("utf-8"),
-                                     method="POST")
+                                     method="POST", headers={"Origin": "http://127.0.0.1:%d" % port})
     try:
         urllib.request.build_opener(NoRedirect).open(request, timeout=10)
     except urllib.error.HTTPError as answer:

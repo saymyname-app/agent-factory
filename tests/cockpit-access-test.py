@@ -18,6 +18,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
+from cockpit.access.guard import (  # noqa: E402
+    REFUSED_IDENTITY,
+    REFUSED_METHOD,
+    REFUSED_ORIGIN,
+    ActionGuard,
+)
 from cockpit.access.tailscale import (  # noqa: E402
     WARNING_WINDOW_SECONDS,
     build_key_expiry_request,
@@ -161,6 +167,62 @@ class DisconnectedBannerTest(unittest.TestCase):
         banner_pos = html_out.index('id="cockpit-disconnected-banner"')
         headline_pos = html_out.index('class="fresh cockpit-headline"')
         self.assertLess(banner_pos, headline_pos)
+
+
+# The operator, the origin of the cockpit behind Serve, and a token (I,
+# af-cp4fzd).
+OPERATOR = "benjamin@example.ts.net"
+COCKPIT_ORIGIN = "https://usine.example.ts.net"
+
+
+class ReaderGuardTest(unittest.TestCase):
+    """Who may read the cockpit through Tailscale Serve (I, af-cp4fzd; Spec
+    af-fgcw0d « Accès hôte » : « identité autorisée […] aucun nouveau
+    destinataire »)."""
+
+    def setUp(self):
+        self.guard = ActionGuard(OPERATOR, COCKPIT_ORIGIN, "jeton")
+
+    def test_the_operator_behind_serve_reads(self):
+        self.assertTrue(self.guard.check_reader({"Tailscale-User-Login": OPERATOR}))
+
+    def test_another_member_of_the_tailnet_is_refused(self):
+        result = self.guard.check_reader({"Tailscale-User-Login": "autre@example.ts.net"})
+        self.assertEqual((False, REFUSED_IDENTITY), (result.allowed, result.reason))
+
+    def test_a_request_of_the_host_itself_reads(self):
+        # Without the header of Serve, the request came from loopback.
+        self.assertTrue(self.guard.check_reader({}))
+
+
+class PagePostGuardTest(unittest.TestCase):
+    """The POSTs a page sends that are no Operator Action -- a section read
+    again, the health checked again (I, af-cp4fzd; Spec af-fgcw0d « Accès
+    hôte » : « POST/Origin/SameSite conservés »)."""
+
+    def setUp(self):
+        self.guard = ActionGuard(OPERATOR, COCKPIT_ORIGIN, "jeton")
+
+    def check(self, method="POST", **headers):
+        result = self.guard.check_page_post(method, {"Tailscale-User-Login": OPERATOR, **headers})
+        return result.allowed, result.reason
+
+    def test_with_the_origin_of_the_cockpit_it_is_taken(self):
+        self.assertEqual((True, ""), self.check(Origin=COCKPIT_ORIGIN))
+
+    def test_without_origin_it_is_refused(self):
+        self.assertEqual((False, REFUSED_ORIGIN), self.check())
+
+    def test_from_another_origin_it_is_refused(self):
+        self.assertEqual((False, REFUSED_ORIGIN), self.check(Origin="https://ailleurs.example"))
+
+    def test_another_method_is_refused(self):
+        self.assertEqual((False, REFUSED_METHOD), self.check("GET", Origin=COCKPIT_ORIGIN))
+
+    def test_another_member_of_the_tailnet_is_refused_even_with_the_origin(self):
+        result = self.guard.check_page_post("POST", {"Tailscale-User-Login": "autre@example.ts.net",
+                                                     "Origin": COCKPIT_ORIGIN})
+        self.assertEqual((False, REFUSED_IDENTITY), (result.allowed, result.reason))
 
 
 if __name__ == "__main__":

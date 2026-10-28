@@ -68,7 +68,7 @@ def _refuse_outside_repo(path):
     if resolved == repo_root or resolved.startswith(repo_root + os.sep):
         raise WizardError(
             "refus : %s est à l'intérieur du dépôt git — le secret doit vivre "
-            "hors dépôt, côté Windows (accessible depuis WSL via /mnt/c)" % path
+            "hors dépôt, dans un fichier privé de la VM (par exemple sous ~/.config/agent-factory)" % path
         )
 
 
@@ -78,11 +78,12 @@ def _write_secret_file(path, content, mode=0o600):
     if directory:
         os.makedirs(directory, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
-    try:
-        with os.fdopen(fd, "w") as fh:
-            fh.write(content)
-    finally:
-        pass
+    # The mode of open() only applies to a file it creates: one that was
+    # already there keeps its own, perhaps readable by other accounts. It
+    # is made private before the secret is written in it (I, af-cp4fzd).
+    os.fchmod(fd, mode)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(content)
 
 
 # ---------------------------------------------------------------------

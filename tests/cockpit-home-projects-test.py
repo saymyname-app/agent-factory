@@ -464,7 +464,8 @@ class HomeProjectsZoneTest(unittest.TestCase):
         opener = urllib.request.build_opener(NoRedirect)
         req = urllib.request.Request(
             "http://127.0.0.1:%d/api/health/recheck" % self.port, data=b"", method="POST",
-            headers={"Referer": self.origin + "/projet/saymyname"},
+            # The page's own Origin: a POST without it is refused (I, af-cp4fzd).
+            headers={"Referer": self.origin + "/projet/saymyname", "Origin": self.origin},
         )
         try:
             opener.open(req, timeout=20)
