@@ -925,6 +925,78 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertIsNone(self.park_of(T3))
         self.assertEqual(1, self.resumes())
 
+    def request_answered(self, name):
+        """The session `name` took T1 and left it by an operator request,
+        which parks it; the operator answered it."""
+        self.taken(T1, name)
+        request = {"quoi": f"Demande de {name}", "pourquoi": "L'auteur n'a pas cet accès",
+                   "que_faire": [{"option": "Donner l'accès", "consequence": "Le ticket reprend."}],
+                   "langue": "fr", "bloquant": True}
+        self.run_ok(ESCALATION, "benjamin", T1, json.dumps(request))
+        self.run_ok(STATE, "park", CONVOY, T1, "--cause", "operator_request", "--detail", request["quoi"])
+        self.run_ok(STATE, "set-exit", CONVOY, T1, "--exit", "operator_request")
+        self.env["ESCALATION_DOOR_NOW"] = "4102444800"  # the answer comes after the parking
+        self.run_ok(ESCALATION, "repondre", T1, "a", "--actor", "operateur-test")
+
+    def test_each_answered_request_resumes_its_ticket_beyond_any_bound_and_asks_benjamin_nothing(self):
+        # af-npz9v1.41: R2 (af-cifk1e), its third answer counted on 28/10/2026
+        # at 18:28 Paris, was parked for exhausted resumes, never sent.
+        self.started_convoy()
+        for name in ("auteur-1", "auteur-2", "auteur-3", "auteur-4"):
+            self.request_answered(name)
+            answer = self.advance(CONVOY)
+            self.assertEqual([(T1, "answered")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")], name)
+            self.assertEqual([], self.of(answer, "parked"), name)
+
+        self.assertIsNone(self.park_of(T1))
+        self.assertEqual(4, len(self.resume_launches()))
+        self.assertEqual(4, self.resumes())
+        self.assertEqual([], self.needs())
+
+    def test_a_ticket_parked_at_its_third_answer_is_lifted_and_its_counted_resume_sent_once(self):
+        # af-npz9v1.41: the state R2 (af-cifk1e) was left in on 28/10/2026 at
+        # 18:29 Paris, as the pass then wrote it: its third answered resume
+        # counted, no session sent, the ticket parked for exhausted resumes.
+        self.started_convoy()
+        for name in ("auteur-1", "auteur-2"):
+            self.request_answered(name)
+            self.advance(CONVOY)
+        self.request_answered("auteur-3")
+        self.run_ok(STATE, "lift-park", CONVOY, T1, "--request", T1, "--option", "a")
+        self.run_ok(STATE, "open-resume", CONVOY, T1, "--cause", "answered", "--ref", "exit:troisième")
+        metadata = self.bead(T1)["metadata"]
+        park = {"cause": "resumes_exhausted", "origin": T1, "at": "2026-10-28T17:29:01Z",
+                "detail": "reprises épuisées pour la cause answered (3 reprises en tout)"}
+        self.edit(T1, metadata={**metadata, "gc.flow.park": json.dumps(park)})
+        self.edit(T3, metadata={**self.bead(T3)["metadata"], "gc.flow.park": json.dumps(park)})
+        self.write_log.write_text("")
+
+        answer = self.advance(CONVOY)
+
+        [lifted] = self.of(answer, "lifted")
+        self.assertEqual((T1, None, T1, [T1, T3]), (lifted["id"], lifted["option"], lifted["request"], lifted["lifted"]))
+        self.assertEqual([(T1, "answered")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+        self.assertEqual((None, None), (self.park_of(T1), self.park_of(T3)))
+        self.assertEqual(1, len(self.resume_launches()))
+        self.assertEqual(3, self.resumes())
+        self.assertEqual([], self.needs())
+        # The same state again: nothing more is lifted nor sent.
+        again = self.advance(CONVOY)
+        self.assertEqual(([], []), (self.of(again, "lifted"), self.of(again, "resumed")))
+        self.assertEqual(1, len(self.resume_launches()))
+
+    def test_a_ticket_parked_at_the_bound_of_a_bounded_cause_is_not_lifted_without_an_answer(self):
+        self.exhausted_and_alone()
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([], self.of(answer, "lifted"))
+        self.assertEqual("resumes_exhausted", self.park_of(T1)["cause"])
+        proc = self.run_cmd(STATE, "lift-park", CONVOY, T1, "--request", T1)
+        self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
+        self.assertIn("demande groupée", proc.stdout)
+        self.assertEqual("resumes_exhausted", self.park_of(T1)["cause"])
+
     def test_the_accepting_answer_to_a_planning_exception_naming_no_anchor_lifts_it_and_resumes_it(self):
         # ADR-0030 L5: every Planning Exception has an accept path.
         self.started_convoy()

@@ -498,7 +498,14 @@ def resume_lifts(cause: str, reason: str) -> bool:
 # cause of its own. The correction round is not one: it has its own bound
 # (`bounds.correction_rounds`, correction_rounds_bound), outside K.
 COMMIT_AFTER_VERDICT = "commit_after_verdict"
-BOUNDED_RESUME_CAUSES = RESUME_CAUSES + (COMMIT_AFTER_VERDICT,)
+# A resume an answer of the operator opened is bounded by that answer: each
+# one needs a new request and a new answer, so no loop runs blind. It is
+# recorded and counted in `resumes`, takes no bound and never parks its
+# ticket for exhausted resumes (af-npz9v1.41: R2, af-cifk1e, parked on
+# 28/10/2026 at its third answer, the resume that answer opened never sent).
+ANSWERED_CAUSES = ("answered", "amendment_granted")
+BOUNDED_RESUME_CAUSES = tuple(cause for cause in RESUME_CAUSES if cause not in ANSWERED_CAUSES) \
+    + (COMMIT_AFTER_VERDICT,)
 # A resume `behind` comes from the factory, not from the ticket: another
 # ticket merged and moved the integration branch (T44). It is recorded like
 # any resume (entry, counter `resumes`, fresh author session) but does not
@@ -2062,7 +2069,9 @@ def park_lifts_record(raw: Any) -> list[dict[str, Any]]:
                     or not all(isinstance(v, str) for v in item.values()) for item in proven):
                 raise Refusal(f"éléments jugés prouvés par leur test mal formés : {proven!r}")
         if "taken" in entry:
-            if not isinstance(entry["taken"], dict) or set(entry["taken"]) - set(BOUNDED_RESUME_CAUSES):
+            # A lift written before af-npz9v1.41 also kept the answered causes.
+            if not isinstance(entry["taken"], dict) \
+                    or set(entry["taken"]) - set(BOUNDED_RESUME_CAUSES) - set(ANSWERED_CAUSES):
                 raise Refusal(f"reprises prises au parcage levé mal formées : {entry['taken']!r}")
             for cause, value in entry["taken"].items():
                 counter_value(value, cause)
@@ -2091,7 +2100,8 @@ def resumes_taken(metadata: dict[str, Any]) -> dict[str, int]:
     entries = resume_record(metadata[KEY_RESUME])["entries"] if KEY_RESUME in metadata else []
     taken = dict.fromkeys(BOUNDED_RESUME_CAUSES, 0)
     for entry in counted_entries(entries):
-        taken[entry["cause"]] += 1
+        if entry["cause"] in taken:
+            taken[entry["cause"]] += 1
     # The counter holds every resume recorded, those K does not count too.
     taken[COMMIT_AFTER_VERDICT] = max(0, resumes - corrections - len(entries))
     return taken
@@ -2124,7 +2134,8 @@ def taken_at_lift(lift: dict[str, Any], metadata: dict[str, Any]) -> dict[str, i
     before = [entry for entry in entries if entry["at"] < lift["at"]]
     taken = dict.fromkeys(BOUNDED_RESUME_CAUSES, 0)
     for entry in counted_entries(before):
-        taken[entry["cause"]] += 1
+        if entry["cause"] in taken:
+            taken[entry["cause"]] += 1
     corrections = counter_value(metadata.get(COUNTER_PREFIX + "correction_rounds"), "correction_rounds")
     if KEY_CORRECTION in metadata and correction_record(metadata[KEY_CORRECTION])["at"] >= lift["at"]:
         corrections = 0
@@ -5193,8 +5204,19 @@ def cmd_lift_park(args: argparse.Namespace) -> int:
     option = option_letter(args.option) if args.option is not None else None
     lifts = park_lifts_record(metadata[KEY_PARK_LIFTS]) if KEY_PARK_LIFTS in metadata else []
     resumes = counter_value(metadata.get(COUNTER_PREFIX + "resumes"), "resumes")
+    taken = resumes_taken(metadata)
+    if park["cause"] == PARK_EXHAUSTED and option is None:
+        # No answer: the exhaustion no longer holds under the bounds of now
+        # (af-npz9v1.41). The bounds keep counting from where they did: the
+        # lift gives no resume back.
+        if resumes_left(metadata) == 0:
+            raise Refusal(
+                f"reprises épuisées : le ticket {args.ticket} a pris {exhausted_causes(metadata)} ; "
+                "seule la réponse de la demande groupée (--option) le lève")
+        exhausted = [lift for lift in lifts if lift["cause"] == PARK_EXHAUSTED]
+        taken = taken_at_lift(exhausted[-1], metadata) if exhausted else dict.fromkeys(BOUNDED_RESUME_CAUSES, 0)
     lifts.append({"cause": park["cause"], "detail": park["detail"], "parked_at": park["at"], "request": args.request,
-                  "option": option, "resumes": resumes, "taken": resumes_taken(metadata), "at": now()})
+                  "option": option, "resumes": resumes, "taken": taken, "at": now()})
     proven = proven_by_test_at_lift(park, option, metadata)
     if proven:
         lifts[-1]["proven_by_test"] = proven
