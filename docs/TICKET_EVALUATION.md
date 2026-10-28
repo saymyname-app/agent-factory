@@ -82,7 +82,7 @@ decided (af-x11w4x: reading the convoy again for each of 62 tickets made
 | none at the tip (none yet, or a commit was added after the last one) | launches the products at the tip and opens an **evaluation**: a commit added after a verdict has it replayed in full (Spec §8). For a `prefactoring` or a ticket without interface (ADR-0030 L4): the **startup control**, no session. A startup control that stood for the evaluation (the product started) does not stand for a ticket that has since become interface: it gets its model evaluation at the same tip; a product that did not start stays the verdict at that tip |
 | favorable at the tip | nothing: the merge may follow |
 | `not_observed` at the tip | waits: back to the author, nothing merges before a new commit. `bin/correction-round settle` sends what was not observed, with the findings of the code review, to the one author session of the ticket's correction round, and stops the ticket still not observed after it (`docs/CORRECTION_ROUND.md`) |
-| `unobservable` by the criterion at the tip | **Planning Exception**: one request on the operator's list (`bin/escalation-door`), the ticket and those that wait for it are parked (`bin/convoy-state park`). Its option `a` judges what was unobservable proven by its criterion test: `bin/convoy-advance` lifts the parking and the evaluation is made again at the tip (below) |
+| `unobservable` by the criterion at the tip | **Planning Exception**: one request on the operator's list (`bin/escalation-door`), the ticket and those that wait for it are parked (`bin/convoy-state park`). Its option `a` judges what was unobservable proven by its criterion test: `bin/convoy-advance` lifts the parking and the evaluation is made again at the tip (below). Its option `c`, « Réévaluer sur le produit relancé », lifts it too and judges nothing proven: the evaluation is made again on products launched again, for an unobservable the factory caused (af-npz9v1.38, R1, R2 and BR on 27/10/2026: a dataset of the branch the launcher refused). A request raised before option `c` existed is asked again once, with it, while it is not answered |
 | `unobservable` by the environment only | an **outage**: no verdict, nothing counted as a refusal; the evaluation is made once more on products launched again. A second outage at the same commit stops the ticket (`evaluation_outage`) |
 | open, launched, within its time | waits |
 | open on a ticket that is no longer to be evaluated at that commit (its author added a commit, it was parked, or it has no interface: a model evaluation opened before ADR-0030 L4) | withdraws it and stops its products: what its session hands in later is refused |
@@ -136,8 +136,12 @@ product never run together.
 **The games of a ticket** (af-kdxk6k) are the declared datasets the ticket
 names: in its frozen criteria or its demonstration line (the exact name,
 not inside a longer one), or as the `dataset` of a validated expectation of
-its criteria. A ticket that names none is evaluated on the first declared
-dataset only. Every declared dataset for every ticket made one evaluation
+its criteria; and the dataset of the product the author's demonstration
+was captured on (`dataset` of the piece `demonstration`, af-npz9v1.18): B
+(af-4uzgzm) proved its line on a state no dataset of its criteria held, which
+the Evaluator never launched. A dataset the evaluated commit's copy of the
+profile adds is a declared dataset (R1, af-d6anqb; `docs/PROJECT_PLANNING_PROFILE.md`). A ticket that names none is evaluated on the
+first declared dataset only. Every declared dataset for every ticket made one evaluation
 need about 95 two-minute coverages against a 3,600-second deadline, and
 stopped T01R, T01R2 and T01R3 without a result (Benjamin, 2026-10-15:
 « l'évaluation […] limitée aux datasets du ticket »). The Evaluator can

@@ -49,7 +49,7 @@ order of the steps under its lock.
 | `red` | `tdd_red` | `verdict: red`, `base`, `table`, `criteria` {number: [test id]}, `satisfied` [the numbers of the criteria already green at `base`], `tests` [{`id`, `outcome`, `seam`, `seam_mode`, `entry_points` for a black-box test}], `seam_mode` (the modes the tests went through, joined by `+`: `black_box`, `black_box+import_rule`), `launch.healthy` |
 | `freeze` | `tdd_freeze` | `files` {path: `sha256:`}, `table`, `criteria`, `satisfied` (from the red): the **registry of fingerprints** |
 | `green` | `tdd_green` | `verdict: green`, `k`, `satisfied` (from the registry), `tests` [{`id`, `runs`: k outcomes, `seam`, `seam_mode`}], `frozen` (the commit of the freeze), `regression` [{`commit`, `exit_code`}] at HEAD |
-| `amend` | `tdd_amendment` | the red report of the amended tests, plus `amendment` {`reason`, `diff`, `files`, `previous_freeze`} |
+| `amend` | `tdd_amendment` | the red report of the amended tests, plus `amendment` {`reason`, `diff`, `files`, `previous_freeze`, `succession` {path: {`owner`, `digest`}}} |
 | `prefactoring` | `tdd_prefactoring` | `verdict: unchanged`, `regression` [{`commit`, `exit_code`}] before and after |
 
 ## What the profile declares
@@ -202,6 +202,26 @@ end in that stop (af-vsni1n). The next pass of `bin/convoy-advance` raises that 
 once (`docs/CONVOY_ADVANCE.md`, « A ticket stopped at its second amendment
 reaches the operator »). If the freeze that ends an amendment could not be recorded, `tdd-step
 freeze` at the same commit completes it.
+
+### Another ticket's frozen test: succession (af-npz9v1.19)
+
+Intent (Benjamin, his words, 25/10/2026 15:37 Paris, approving point 3a: « Ok
+pour tes recommandations »): « Test figé : droit encadré. Seul le ticket nommé
+dans le test (par exemple « jusqu'à A2 ») peut le modifier, une seule fois. La
+modification est visible dans la PR et le relecteur la vérifie. »
+Mechanism (agent interpretation): a criterion test another ticket of the
+convoy froze (its `tdd_freeze` registry) is no other ticket's to change.
+`red` and `green` refuse it changed between the start commit and HEAD,
+naming the ticket that froze it, unless an amendment of this ticket recorded
+it as it is at HEAD. `amend` records it in `amendment.succession` only when
+the test, at the start commit, names this ticket as its successor
+(« until <code> », « jusqu'à <code> », the code being the title of the ticket
+before « — », or its id); `amend` refuses it otherwise, and refuses a second
+change of a test already recorded. The change is in the diff of the
+amendment and among its `files`, so the code review asks of it as of any
+amended test. The first case: A1's `home-result-states-test.py` holds Essai
+and Avis unusable « until A2 ». A test absent at the start commit is not
+changed by the ticket: its owner has not reached that branch.
 
 ## Prefactoring
 
