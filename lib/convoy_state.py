@@ -462,7 +462,7 @@ BOUND_END_ROUNDS = "end_rounds"
 # (af-25o7vr): those resumes lift the stop. The correction round and a commit after a
 # verdict are counted where they are written.
 RESUME_CAUSES = ("interrupted", "returned", "unblocked", "answered", "behind", "evaluation_no_result",
-                 "stage_removed", "code_review_no_result", "amendment_granted")
+                 "stage_removed", "code_review_no_result", "amendment_granted", "inherited_change")
 # The stops a resume lifts, by the cause that lifts them: a Ticket Evaluation
 # without result (af-xhc0sj), the stops of the test review, a stage
 # ADR-0030 L3 removed (af-pjvsgo), a code review without result
@@ -470,7 +470,9 @@ RESUME_CAUSES = ("interrupted", "returned", "unblocked", "answered", "behind", "
 RESUMABLE_STOPS = {"evaluation_no_result": ("evaluation_no_result",),
                    "stage_removed": ("test_review_refused", "test_review_no_result"),
                    "code_review_no_result": ("code_review_no_result",),
-                   "amendment_granted": ("amendment_exhausted",)}
+                   "amendment_granted": ("amendment_exhausted",),
+                   # af-npz9v1.39: every change since the freeze is the merged base's.
+                   "inherited_change": ("amendment_exhausted",)}
 # A ticket stopped still refused whose every Blocking Finding the operator
 # overrode is merged as if at work; the merge that returns it lifts its stop
 # like a resumable one (af-n4bn62). The cause stays one of a ticket not

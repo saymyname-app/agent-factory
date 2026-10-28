@@ -436,6 +436,51 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
         self.assertEqual(1, self.resumes())
 
+    # --- an exhausted amendment whose every change is the merged base's is resumed (af-npz9v1.39) ---
+
+    def tdd_changes(self, own, inherited):
+        """bin/tdd-step changes answers what changed since the freeze."""
+        fake = self.tmp / "tdd-step-changes"
+        fake.write_text("#!/bin/sh\necho '" + json.dumps({"ok": True, "own": own, "inherited": inherited}) + "'\n")
+        fake.chmod(0o755)
+        self.env["CONVOY_ADVANCE_TDD_STEP_BIN"] = str(fake)
+        # The profile of its project, and its tip: what bin/tdd-step changes is asked about.
+        descriptors = self.root / "config" / "project-descriptors"
+        descriptors.mkdir(parents=True, exist_ok=True)
+        (descriptors / "fx.json").write_text(json.dumps({"rigs": ["fx-rig"]}))
+        if not (self.root / ".git").exists():
+            self.git("init", "-q", "-b", "main")
+            self.git("commit", "-q", "--allow-empty", "-m", "base")
+        self.git("branch", "-f", f"ticket/{T1}", "HEAD")
+        self.run_ok(STATE, "set-branch", CONVOY, T1, "--branch", f"ticket/{T1}")
+
+    def test_an_exhausted_amendment_whose_every_change_is_the_merged_base_s_is_resumed_without_an_answer(self):
+        """A harness main's maintenance changed, taken with the integration
+        branch, is no amendment of the ticket's: no answer is asked."""
+        self.amendment_exhausted()
+        self.advance(CONVOY)
+        self.write_log.write_text("")
+        self.tdd_changes([], ["tests/fixtures/cockpit/core/fake_gc.py"])
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "inherited_change")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+        shown = self.shown_state(T1)
+        self.assertIsNone(shown["stop"])
+        self.assertEqual("amendment_exhausted", shown["resume"]["entries"][-1]["stop"]["reason"])
+        self.assertEqual([], [line for line in self.needs() if T1 in line])
+        self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
+
+    def test_an_exhausted_amendment_with_a_change_of_its_own_stays_stopped(self):
+        self.amendment_exhausted()
+        self.advance(CONVOY)
+        self.tdd_changes(["tests/criterion-test.py"], ["tests/fixtures/cockpit/core/fake_gc.py"])
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([], self.of(answer, "resumed"))
+        self.assertEqual("amendment_exhausted", self.shown_state(T1)["stop"]["reason"])
+
     def test_an_exhausted_amendment_answered_b_stays_stopped(self):
         self.amendment_answered("b")
         before = self.tickets_snapshot()

@@ -735,7 +735,11 @@ other causes; the resume keeps the stop it lifted) and sends a fresh author
 session on the same branch. That resume allows the author one amendment more
 (`docs/TDD_STEP.md`); a further amendment stops the ticket again, and the
 next pass raises that new stop. Answered **b**, or not answered, the ticket
-stays stopped. Before af-25o7vr (2026-10-21) no code carried out answer a.
+stays stopped, unless every change at its tip since the freeze is the
+base's it merged (`bin/tdd-step changes`: `own` empty, `inherited` not):
+then no amendment was the ticket's to take, and the pass lifts the stop by
+a resume of cause `inherited_change` (af-npz9v1.39), its request withdrawn,
+once per stop. Before af-25o7vr (2026-10-21) no code carried out answer a.
 
 ## The end code review of the assembled diff (T25)
 
