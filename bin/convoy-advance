@@ -1254,10 +1254,16 @@ def settle_lifts(convoy: Convoy, out: dict[str, Any]) -> None:
     Exception could not observe, or the one that has it evaluated again on
     the products launched again (af-npz9v1.38); the lifting option of the convoy's grouped
     request, for the tickets it names. Any other answer leaves the ticket
-    parked."""
-    lifts: list[tuple[str, str, str]] = []
+    parked. A ticket parked for exhausted resumes that has resumes left
+    under the bounds of now is lifted without an answer: an answered resume
+    takes no bound since af-npz9v1.41, and nothing is left to ask."""
+    lifts: list[tuple[str, str, str | None]] = []
     for ticket in convoy.tickets:
         park = ticket.get("park") or {}
+        if ticket.get("status") != "closed" and park.get("origin") == ticket["id"] \
+                and park.get("cause") == PARK_EXHAUSTED and ticket.get("resumes_left"):
+            lifts.append((ticket["id"], ticket["id"], None))
+            continue
         answer = park.get("answer")
         if ticket.get("status") == "closed" or park.get("origin") != ticket["id"] or not answer:
             continue
@@ -1283,7 +1289,8 @@ def settle_lifts(convoy: Convoy, out: dict[str, Any]) -> None:
         out["refused"].append({"id": convoy.id, "reason": str(exc)})
     for ticket_id, request, letter in lifts:
         try:
-            answer = state_write("lift-park", convoy.id, ticket_id, "--request", request, "--option", letter)
+            option = ["--option", letter] if letter else []
+            answer = state_write("lift-park", convoy.id, ticket_id, "--request", request, *option)
             out["lifted"].append({"id": ticket_id, "option": letter, "request": request, "lifted": answer["lifted"]})
         except Refusal as exc:
             out["refused"].append({"id": ticket_id, "reason": str(exc)})
