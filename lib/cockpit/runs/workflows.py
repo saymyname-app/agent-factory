@@ -58,9 +58,10 @@ The sessions of a job (C2a, af-k2rbw1) are those the tracker records of it
 (its claims) and those the trace of the sessions saw working it or one of
 its attempts (cockpit.runs.trace), in the order they began: each from its
 claim, or its creation when it was created later (a session that took
-over an attempt), to when the supervisor stopped it -- an end it did not
-record is none, never the beginning of the next session or the end of the
-job. What the trace observed of each -- its configuration, what it was
+over an attempt), to when the supervisor stopped it -- a start neither
+recorded (a session the trace alone saw, with no creation) is none, never
+the beginning of the job, and an end it did not record is none, never the
+beginning of the next session or the end of the job. What the trace observed of each -- its configuration, what it was
 sent -- is carried as it is; a session the trace has nothing of has
 nothing observed. The configuration declared for the role of a job is the
 one the flow wrote on the ticket when its session took it
@@ -364,7 +365,7 @@ def _job(step, meta, attempts, sessions, formula, workflow, now):
 
 def _place_sessions(jobs, sessions, trace, now):
     """Give each job of an agent its sessions (``trace_sessions``: each its
-    name, its start and end, what the trace observed of it or None), and a
+    name, its start and end or None, what the trace observed of it or None), and a
     job no session is recorded for the lane of the one agent of its
     workflow, when one agent alone worked it."""
     for job in jobs:
@@ -373,7 +374,7 @@ def _place_sessions(jobs, sessions, trace, now):
         found = {name: at for at, name, _ in job.get("sessions") or []}
         for name, observed in trace.items():
             if name not in found and set(observed.get("beads") or []) & set(job["beads"]):
-                found[name] = job["start"]
+                found[name] = None
         # A session begins when it was created, not before: the tracker keeps
         # the first claim of an attempt that a later session took over.
         for name in found:
@@ -381,16 +382,16 @@ def _place_sessions(jobs, sessions, trace, now):
             if created:
                 found[name] = max(found[name] or 0, created)
         if found and job["lane"].get("unattributed"):
-            first = sessions.get(min(found, key=found.get)) or {}
+            first = sessions.get(min(found, key=lambda name: (found[name] or 0, name))) or {}
             if first.get("agent_name"):
                 job["lane"] = dict(job["lane"], key="agent:%s" % first["agent_name"], who=first["agent_name"])
                 job["lane"].pop("unattributed")
         ordered = sorted(found.items(), key=lambda pair: (max(pair[1] or 0, job["start"]), pair[0]))
         placed = []
         for name, at in ordered:
-            begin = max(at or job["start"], job["start"])
+            begin = max(at, job["start"]) if at is not None else None
             end = (trace.get(name) or {}).get("ended_at")
-            placed.append({"name": name, "start": begin, "end": max(end, begin) if end is not None else None,
+            placed.append({"name": name, "start": begin, "end": max(end, begin or end) if end is not None else None,
                            "observed": trace.get(name)})
         job["trace_sessions"] = placed
     for job in jobs:
@@ -413,7 +414,7 @@ def _last_sessions(run):
         if lane["kind"] != AGENT:
             continue
         placed = [s for item in lane["items"] for s in item.get("trace_sessions") or []]
-        last = max(placed, key=lambda s: (s["start"], s["name"]), default=None)
+        last = max(placed, key=lambda s: (s["start"] if s["start"] is not None else -1, s["name"]), default=None)
         lane["last_session"] = last
     return run
 

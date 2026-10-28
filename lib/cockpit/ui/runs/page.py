@@ -477,7 +477,7 @@ def _sessions(run, item, placed, chosen):
     """The sessions of the job, in the order they ran: each a link that
     shows its own configuration and prompts, the one shown saying so. An
     end the supervisor did not record is said not collected (in progress
-    for the last session of a job that runs)."""
+    for the last session of a job that runs), and so is a start."""
     if not placed:
         return _said("Aucune session n’est enregistrée pour ce job : %s." % UNCOLLECTED)
     out = []
@@ -494,7 +494,8 @@ def _sessions(run, item, placed, chosen):
                    % (_e(_session_href(run, item, session["name"])),
                       ' aria-current="true"' if session is chosen else "", _e(session["name"]),
                       ' <em class="rn-session-shown">Affichée</em>' if session is chosen else "",
-                      relative(session["start"] - run["start"]), end, _e(said)))
+                      relative(session["start"] - run["start"]) if session["start"] is not None else UNCOLLECTED,
+                      end, _e(said)))
     return ('<div class="rn-sessions">%s</div><p class="rn-muted">Historique du job ; la lane affiche seulement la '
             'dernière session de cet agent dans le run.</p>' % "".join(out))
 

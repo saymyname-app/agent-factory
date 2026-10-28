@@ -17,13 +17,14 @@ trigger of the run, its model and the context observed in it; the lane of
 an agent shows the context of the last session of that agent observed in
 the run, the history of the job keeps the values of each session. Choosing
 a session of the history shows its own configuration and its own prompts.
-A session whose end the supervisor did not record says its end not
+A session whose start or end the supervisor did not record says it not
 collected.
 
 False if the history of a job shows the values of its last session for an
 earlier one, if choosing an earlier session keeps the prompts of the last,
 if a reload loses the session chosen, if an agent with no session observed
-gets a context, or if an end nothing recorded is taken from another time.
+gets a context, or if a start or an end nothing recorded is taken from
+another time.
 """
 
 from __future__ import annotations
@@ -151,6 +152,29 @@ class RunsTraceSessions(unittest.TestCase):
         self.assertIn("+4 min 37 s", later, f"the last session does not say its start: « {later} »")
         self.assertIn("non collecté", later, f"the end of the last session is not said not collected: « {later} »")
         self.assertNotIn("+6 min 5 s", later, "the last session ends where the job ended")
+
+    def test_a_session_whose_start_the_supervisor_did_not_record_says_it_not_collected(self):
+        # job-sessions, but the supervisor recorded neither the creation nor
+        # the waking of the first session of « Réaliser »: its start is not
+        # the start of the job (+3 min 10 s), nor its claim.
+        dataset = dataset_of(self.tree, "job-sessions")
+        run = next(run for run in dataset["fixtures"]["runs"] if run["id"] == "search")
+        build = next(job for job in run["jobs"] if job["id"] == "build")
+        build["sessions"][0].pop("start")
+        reading, = observe(launch_declared(self.tree, "job-sessions-no-start", dataset), "/runs/job")[0]
+        said = self.history(reading)
+        self.assertEqual(1, said.count("demo-search-alex-1"), f"the first session is not listed once: « {said} »")
+        self.assertEqual(1, said.count("demo-search-alex-2"), f"the last session is not listed once: « {said} »")
+        first, last = said.index("demo-search-alex-1"), said.index("demo-search-alex-2")
+        earlier = said[first:last] if first < last else said[first:]
+        later = said[last:first] if last < first else said[last:]
+        self.assertIn("non collecté", earlier, f"the start of the first session is not said not collected: « {earlier} »")
+        self.assertNotIn("+3 min 10 s", earlier, "the first session begins when the job began")
+        self.assertIn("+4 min 37 s", earlier, f"the first session does not say its end: « {earlier} »")
+        # The last session keeps what was recorded of it.
+        for phrase in ("+4 min 37 s", "+6 min 5 s"):
+            self.assertIn(phrase, later, f"the last session does not say « {phrase} »: « {later} »")
+        self.assertNotIn("non collecté", later, f"a time recorded of the last session is said not collected: « {later} »")
 
 
 if __name__ == "__main__":

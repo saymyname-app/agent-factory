@@ -829,7 +829,8 @@ SCREENS = {
 # are of the Factory's own, RUN_PROJECT.
 #
 # A job may say its sessions (`sessions`, C2a): each one the supervisor
-# lists as it ran it -- its name, its start from the trigger, its provider,
+# lists as it ran it -- its name, its start from the trigger (absent, no
+# creation nor waking is recorded), its provider,
 # model, effort, permission mode, context and work directory, the attempt
 # of the job it worked -- and what its provider recorded (`transcript`,
 # records in the provider's own format, read as the supervisor answers
@@ -998,7 +999,8 @@ def _run_records(run, lanes, moment, sessions, opened, ui, view, trace) -> list:
                 }
                 if isinstance(said, list):
                     record["active_bead"] = attempt
-                    record["created_at"] = at(one.get("start", job["start"]))
+                    if isinstance(one.get("start"), (int, float)):
+                        record["created_at"] = at(one["start"])
                     record.update({field_name: one[field_name] for field_name in SESSION_SAID if field_name in one})
                     options = {name: one[name] for name in ("effort", "permission_mode") if name in one}
                     if options:
@@ -1006,7 +1008,7 @@ def _run_records(run, lanes, moment, sessions, opened, ui, view, trace) -> list:
                     if isinstance(one.get("transcript"), list):
                         trace["transcripts"][one["name"]] = one["transcript"]
                     end = one.get("end")
-                    trace["log"][one["name"]] = {"woke": record["created_at"],
+                    trace["log"][one["name"]] = {"woke": record.get("created_at"),
                                                  "stopped": at(end) if isinstance(end, (int, float)) else None}
                     if isinstance(one.get("dispatched"), dict):
                         trace["dispatched"][one["name"]] = dict(one["dispatched"])

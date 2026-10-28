@@ -177,9 +177,10 @@ def serve_sessions(supervisor, city: synthetic_city.SyntheticCity) -> None:
                        "subject": sessions[name].get("template") or "", "session_id": name,
                        "payload": {"session_id": name, "template": sessions[name].get("template") or ""}})
 
-    for name, logged in sorted(city.session_log.items(), key=lambda pair: pair[1]["woke"]):
+    for name, logged in sorted(city.session_log.items(), key=lambda pair: pair[1]["woke"] or ""):
         if name in known and name in sessions:
-            record("session.woke", name, logged["woke"])
+            if logged["woke"]:
+                record("session.woke", name, logged["woke"])
             if logged["stopped"]:
                 record("session.stopped", name, logged["stopped"])
 
@@ -215,7 +216,8 @@ def serve_sessions(supervisor, city: synthetic_city.SyntheticCity) -> None:
         running = float(said.get("running_seconds") or 0)
         logged = city.session_log.get(name) or {}
         with lock:
-            record("session.woke", name, logged.get("woke") or sessions[name].get("created_at") or "")
+            if logged.get("woke") or sessions[name].get("created_at"):
+                record("session.woke", name, logged.get("woke") or sessions[name]["created_at"])
             sessions[name]["running"] = running > 0
             known[name] = said.get("recorded_while_running") if running > 0 else None
             supervisor.set_sessions(listed())

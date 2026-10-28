@@ -72,6 +72,13 @@ class RunsTraceConfiguration(unittest.TestCase):
         for phrase in ("codex", "gpt-6.1-sol", "high", "read · rg · exec · write", "demo-search-alex-2"):
             self.assertIn(phrase, effective, f"the configuration in effect does not say « {phrase} »: « {effective} »")
         self.assertRegex(effective, percent(7), f"the configuration in effect does not say its context: « {effective} »")
+        # Its environment, as the supervisor reported it: the directory it
+        # worked in and its permission mode.
+        environment = re.search(r"Environnement\s*(.*?)\s*Mission", effective, re.S)
+        self.assertIsNotNone(environment, f"the configuration in effect does not say its environment: « {effective} »")
+        for phrase in ("/srv/synthetic/worktrees/recherche-dans-les-notes", "workspace-write"):
+            self.assertIn(phrase, environment.group(1),
+                          f"the environment in effect does not say « {phrase} »: « {environment.group(1)} »")
         # No source reports the mission of a session: it is not taken from
         # the name of the job.
         mission = re.compile(r"Mission\s*" + "non collecté")
@@ -84,6 +91,7 @@ class RunsTraceConfiguration(unittest.TestCase):
             self.assertIn(phrase, declared, f"the configuration declared does not say « {phrase} »: « {declared} »")
         self.assertNotRegex(declared, percent(7), "the context observed is said declared")
         self.assertNotIn("demo-search-alex-2", declared, "the session observed is said declared")
+        self.assertNotIn("workspace-write", declared, "the environment observed is said declared")
 
     def test_a_value_the_supervisor_did_not_report_stays_not_collected_beside_the_declared_one(self):
         _, reading = observe(self.tree.launch("job-configuration"), "/runs/job", steps=(
