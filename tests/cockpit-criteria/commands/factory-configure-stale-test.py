@@ -8,8 +8,8 @@ when a setting had an uncertain outcome.
 
 The setting is the one of criterion 1 (factory-configure-test.py): the
 reviewer of delivery on Claude Opus 5.5 · effort élevé · lecture seule first,
-through `bin/provider-failover set`. Each case launches the real cockpit
-with the launcher of the profile on the Usine of health-content
+through the door provider-failover (set). Each case launches the real
+cockpit with the launcher of the profile, bin/project-launch, on the Usine of health-content
 (usine_reglages.serve_usine):
 
 - the configuration read goes stale: a check of a section of the page stays

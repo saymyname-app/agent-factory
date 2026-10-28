@@ -12,8 +12,8 @@ door puts a provider in a chain it was not tried for. The change is prepared
 as a proposal, through the door of proposals, and nothing of the role
 changes.
 
-The case launches the real cockpit with the launcher of the profile on the
-Usine of health-content (usine_reglages.serve_usine), walks GET
+The case launches the real cockpit with the launcher of the profile,
+bin/project-launch, on the Usine of health-content (usine_reglages.serve_usine), walks GET
 /usine?role=author in a headless Chromium behind the identity proxy of the
 host, and reads what waits for the operator at GET /api/requests.
 

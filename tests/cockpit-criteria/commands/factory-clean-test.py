@@ -8,9 +8,9 @@ par élément. Périmètre modifié entre aperçu et commande : recalcul et
 nouvelle confirmation, pas extension silencieuse. »; Testing Decisions 1 and
 8): cleaning the unused work spaces.
 
-Each case launches the real cockpit with the launcher of the profile on the
-Usine of health-content (usine_reglages.serve_usine): `bin/factory-maintain`
-works there on throwaway Git repositories, whose worktrees are `af-merged`,
+Each case launches the real cockpit with the launcher of the profile,
+bin/project-launch, on the Usine of health-content
+(usine_reglages.serve_usine): the door factory-maintain works there on throwaway Git repositories, whose worktrees are `af-merged`,
 merged and pushed, the one candidate, and three to keep -- `af-modified` (a
 local change), `af-unpushed` (a commit not pushed), `af-active` (work under
 way). The page GET /usine is walked in a headless Chromium behind the

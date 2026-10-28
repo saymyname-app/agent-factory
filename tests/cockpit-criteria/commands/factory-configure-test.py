@@ -11,11 +11,11 @@ supports.
 The setting: which provider the reviewer of delivery runs on first. Its
 chain, config/provider-policy.json at the commit, is GPT-5.6 Sol (Codex) ·
 lecture seule, then Claude Opus 5.5 · effort élevé · lecture seule; both
-passed the trial of adoption of the role, and `bin/provider-failover set
---action chain` is the door that orders it.
+passed the trial of adoption of the role, and the door provider-failover
+(set --action chain) orders it.
 
-Each case launches the real cockpit with the launcher of the profile on the
-Usine of health-content (usine_reglages.serve_usine), walks GET
+Each case launches the real cockpit with the launcher of the profile,
+bin/project-launch, on the Usine of health-content (usine_reglages.serve_usine), walks GET
 /usine?role=reviewer in a headless Chromium behind the identity proxy of the
 host, and reads the page again afterwards.
 

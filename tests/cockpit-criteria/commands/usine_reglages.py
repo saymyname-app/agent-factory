@@ -12,8 +12,8 @@ criterion test files of G2 load it.
   (`usine_check_validity_seconds`, the five minutes of service otherwise);
 - the settings and the upkeep of the launch are the real doors of the
   commit on what the launch holds (docs/COCKPIT.md, « settings and upkeep of
-  the Factory »): `bin/provider-failover` in the Factory tree of the launch,
-  `bin/factory-maintain` on its throwaway Git repositories, where the
+  the Factory »): the door provider-failover in the Factory tree of the launch,
+  the door factory-maintain on its throwaway Git repositories, where the
   worktree `af-merged` is merged and pushed (the one candidate), and
   `af-modified` (a local change), `af-unpushed` (a commit not pushed) and
   `af-active` (work under way) are the ones to keep;
@@ -42,7 +42,7 @@ from usine_page import PAGE, recheck_of, section_titled, sections  # noqa: F401 
 # The state of the Usine the cases start from.
 BASE_DATASET = "config/cockpit-datasets/health-content.json"
 # How long a command of the cockpit is waited for in an isolated launch
-# (bin/cockpit-isolated, ACTION_TIMEOUT_SECONDS): a gesture answered sooner
+# (the isolated recipe, ACTION_TIMEOUT_SECONDS): a gesture answered sooner
 # than this was not sent to a door that never answers.
 DOOR_SECONDS = 5
 
