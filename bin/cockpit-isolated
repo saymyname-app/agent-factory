@@ -163,11 +163,14 @@ def serve_sessions(supervisor, city: synthetic_city.SyntheticCity) -> None:
     as it lists it; ``…/session/<id>/transcript?format=raw``, what its
     provider recorded (``{"id", "format": "raw", "messages"}``); ``GET
     /v0/city/<city>/events?type=session.woke|session.stopped``, when it
-    woke and stopped, the latest first -- a 404 for a session it knows
+    woke and stopped, and ``…?type=execution.step_started``, the bead it
+    took (the subject), the latest first -- a 404 for a session it knows
     nothing of. Then send the sessions `city` dispatches once the cockpit is
     up: each wakes, is listed at work for a while with only its first
-    records, then stops and is listed no more, as the installed supervisor
-    lists only the sessions it runs."""
+    records and the bead it works (``active_bead``), then stops and is
+    listed no more, as the installed supervisor lists only the sessions it
+    runs; a session it keeps once stopped says no bead (gc 1.5.0 on the
+    live host, 2026-10-28: no ``active_bead``)."""
     handler = supervisor._server.RequestHandlerClass
     answer_other = handler.do_GET
     prefix = "/v0/city/%s/" % city.name
@@ -183,10 +186,19 @@ def serve_sessions(supervisor, city: synthetic_city.SyntheticCity) -> None:
                        "subject": sessions[name].get("template") or "", "session_id": name,
                        "payload": {"session_id": name, "template": sessions[name].get("template") or ""}})
 
+    def took(name: str, started: dict | None) -> None:
+        # As the installed supervisor logs a session taking a step: the
+        # bead it took is the subject, the session acts.
+        if started:
+            events.append({"seq": len(events) + 1, "type": "execution.step_started", "ts": started["at"],
+                           "actor": name, "subject": started["bead"], "payload": {}, "run_id": started["run"],
+                           "session_id": name, "step_id": started["step"], "depends_on_step_ids": []})
+
     for name, logged in sorted(city.session_log.items(), key=lambda pair: pair[1]["woke"] or ""):
         if name in known and name in sessions:
             if logged["woke"]:
                 record("session.woke", name, logged["woke"])
+            took(name, logged.get("started"))
             if logged["stopped"]:
                 record("session.stopped", name, logged["stopped"])
 
@@ -224,13 +236,17 @@ def serve_sessions(supervisor, city: synthetic_city.SyntheticCity) -> None:
         with lock:
             if logged.get("woke") or sessions[name].get("created_at"):
                 record("session.woke", name, logged.get("woke") or sessions[name]["created_at"])
+            took(name, logged.get("started"))
             sessions[name]["running"] = running > 0
+            if running > 0 and logged.get("started"):
+                sessions[name]["active_bead"] = logged["started"]["bead"]
             known[name] = said.get("recorded_while_running") if running > 0 else None
             supervisor.set_sessions(listed())
         if running > 0:
             time.sleep(running)
         with lock:
             sessions[name]["running"] = False
+            sessions[name].pop("active_bead", None)
             known[name] = None
             if logged.get("stopped"):
                 record("session.stopped", name, logged["stopped"])

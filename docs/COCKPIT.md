@@ -1238,7 +1238,7 @@ ways:
 | the runs of a Runs state, each « Livraison D01 » or « Maintenance » | a workflow as the tracker holds one (C1, af-lzti7w): a « Livraison D01 » is a convoy carrying the new-flow mark, under the title of the run, written by `benjamin` for the project `agent-factory` (the datasets name none), its ticket (same `gc.graph_digest`; `gc.flow.merge` when the run says « Fusionné », `gc.flow.gate.withdrawn` when « Abandonné »), the workflow root `mol-ticket-author` run on an input convoy that tracks the ticket, and, when an agent of the run is a « Relect… » or an « Évaluat… », the workflow root `mol-code-review` or `mol-ticket-evaluation` run on an input convoy that tracks the bead the dispatch door writes to launch it (`gc.dispatched_via`, its description naming the convoy and the ticket); a « Maintenance » is a workflow root `mol-do-work` run on the work Benjamin asked for, under the title of the run; closed at the end of the run, open while it has none; the day of `generated_at` at the run's `started` (Paris) is its start | `runs.value`; `GET /runs` |
 | the jobs of a run | one step per job, of the workflow root of its agent's role (the author's for Benjamin's and the code's), under its name, from its start to its end (open without one): a job of the lane `human` a plain step routed to `benjamin`, of the lane `code` a `check` (`gc.outcome` pass once closed), of an agent lane a `ralph` whose closing runs a check (`gc.check_mode`), claimed by an attempt of the session of that agent (`gc.logical_bead_id`, `gc.claimed_at`, `gc.outcome` pass once closed); its prompt as description, its result as close reason | `runs.value`; `GET /runs/run`, `GET /runs/job` |
 | the agent lanes | one session per job of an agent (`synthetic-session-<lane>-<run>-<job>`): its `agent_name` the name of the lane, its `template` and `provider` the two halves of its role (« Relectrice · Claude »), running on the open job it holds | `sessions.value.agents`, `sessions.value.sessions`, `gc.value.agents_running` |
-| the sessions a job says (`sessions`: each its `name`, its `start` and `end` from the trigger, and as the supervisor lists it its `provider`, `model`, `effort`, `permission_mode`, `context_pct`, `context_window`, `work_dir`; its `transcript`, records in the provider's own format) (C2a, af-k2rbw1) | in place of the one session of the job: each listed by the supervisor as it ran it, created at its start, working the attempt of the job (`active_bead`), its effort and permission mode under `options`, its waking (at its start) and its stop (at its `end`; none without one) in the supervisor's log; the attempt claimed at the start of the job under the name of the last (gc keeps the session that took over); what its provider recorded served as its transcript; an empty list, a job no session is recorded for (no attempt) | the trace of the sessions; `GET /runs/job` |
+| the sessions a job says (`sessions`: each its `name`, its `start` and `end` from the trigger, and as the supervisor lists it its `provider`, `model`, `effort`, `permission_mode`, `context_pct`, `context_window`, `work_dir`; its `transcript`, records in the provider's own format) (C2a, af-k2rbw1) | in place of the one session of the job: each listed by the supervisor as it ran it, created at its start, its effort and permission mode under `options`, working the attempt of the job (`active_bead`) while it runs only, as the installed supervisor lists it; its waking (at its start), the attempt it took (`execution.step_started`, at the start of the job) and its stop (at its `end`; none without one) in the supervisor's log; the attempt claimed at the start of the job under the name of the last (gc keeps the session that took over); what its provider recorded served as its transcript; an empty list, a job no session is recorded for (no attempt) | the trace of the sessions; `GET /runs/job` |
 | a session a job says sent once the cockpit is up (`dispatched`: `after_seconds` from the launch, `running_seconds`, `recorded_while_running`) | nothing of it until then, as for a ticket not yet dispatched; then its waking in the log, listed at work for `running_seconds` with only its first `recorded_while_running` records served, then its stop in the log, all its records served, listed no more (the installed supervisor lists only the sessions it runs) -- with `running_seconds` 0, a session that woke and stopped between two readings | the collection at the waking and stop of the sessions |
 | where the cockpit keeps its trace of the sessions (`session_trace`, an absolute path) | `COCKPIT_TRACE_FILE`; else in the home of the launch, removed with it | the projection a case reads, and keeps from one launch to the next |
 | what the flow declared for each role of a run (`declared`: `{role: {agent, provider, model, at}}`) | written on its ticket as the flow writes it (`gc.flow.models`) | the configuration declared in `GET /runs/job` |
@@ -1450,15 +1450,19 @@ them.
 
 At each reading of the sessions (`sessions`, every 15 s: no reading of its
 own), the cockpit reads the supervisor's log of the sessions it woke and
-stopped since the last event it read (`GET
-/v0/city/<city>/events?type=session.woke`, `session.stopped`; on a first
+stopped, and of the beads each took, since the last event it read (`GET
+/v0/city/<city>/events?type=session.woke`, `session.stopped`,
+`execution.step_started`: the bead its `subject`, the session its
+`session_id`; on a first
 reading, the latest 50 of each), and records in a private file
 (`COCKPIT_TRACE_FILE`, by default `cockpit-session-trace.jsonl` beside its
 pid file, 0600, appended only) each of those moments, then, of each session
 listed or named by that log (`GET /v0/city/<city>/session/<id>`: the
 supervisor keeps a session it stopped and no longer lists), its identity,
 provider, model, effort and permission mode, context observed and its
-window, work directory, creation, the bead it works -- and, the first time,
+window, work directory, creation, the bead it works while it runs (a
+session kept once stopped says none: only the log says the bead of a
+session past, 2026-10-28) -- and, the first time,
 at most every minute while it runs, and once more when it stopped, what its
 provider recorded (`GET
 /v0/city/<city>/session/<id>/transcript?format=raw`): the system prompt
@@ -1477,7 +1481,8 @@ session belongs to an earlier one its trace replays
 first collection took 18 s for 40 sessions, the next ones 1.5 s.
 
 The sessions of a job are those the tracker records (its claims) and those
-the trace saw working it or one of its attempts, each from its claim -- or
+the trace saw working it or one of its attempts, or the log says took one
+(the tracker keeps the name of one session per bead), each from its claim -- or
 its creation, for a session that took over -- to when the supervisor
 stopped it; an end it did not record is said « non collecté » (« en
 cours » for the last session of a job that runs). The detail

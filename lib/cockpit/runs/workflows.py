@@ -56,7 +56,9 @@ of that agent in the run (C2a).
 
 The sessions of a job (C2a, af-k2rbw1) are those the tracker records of it
 (its claims) and those the trace of the sessions saw working it or one of
-its attempts (cockpit.runs.trace), in the order they began: each from its
+its attempts (cockpit.runs.trace: the bead a session works while it runs,
+each bead the supervisor's log says a session took -- the tracker keeps one
+session per bead), in the order they began: each from its
 claim, or its creation when it was created later (a session that took
 over an attempt), to when the supervisor stopped it -- a start neither
 recorded (a session the trace alone saw, with no creation) is none, never

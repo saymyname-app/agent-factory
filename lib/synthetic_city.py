@@ -113,8 +113,10 @@ class SyntheticCity:
     # supervisor answers it (``GET …/session/<id>/transcript?format=raw``).
     transcripts: dict = field(default_factory=dict)
     # When the supervisor recorded each session woke and stopped, by its id:
-    # `{"woke": ISO date, "stopped": ISO date or None}` (its events
-    # ``session.woke`` and ``session.stopped``).
+    # `{"woke": ISO date, "stopped": ISO date or None, "started": {"bead",
+    # "at", "run", "step"}}` (its events ``session.woke``,
+    # ``session.stopped``, and ``execution.step_started``: the bead the
+    # session took, when, of which workflow and step).
     session_log: dict = field(default_factory=dict)
     # The sessions the supervisor sends once the cockpit is up, as it does
     # when a ticket is dispatched, by their id: `{"after_seconds",
@@ -832,7 +834,8 @@ SCREENS = {
 # lists as it ran it -- its name, its start from the trigger (absent, no
 # creation nor waking is recorded), its provider,
 # model, effort, permission mode, context and work directory, the attempt
-# of the job it worked -- and what its provider recorded (`transcript`,
+# of the job it worked while it runs (none once stopped), the attempt it
+# took in its log -- and what its provider recorded (`transcript`,
 # records in the provider's own format, read as the supervisor answers
 # them), and when the supervisor recorded it stopped (`end`, from the
 # trigger; absent, no stop is recorded). A session may be sent once the
@@ -998,7 +1001,10 @@ def _run_records(run, lanes, moment, sessions, opened, ui, view, trace) -> list:
                     **({"active_bead": step_id} if running and last and not isinstance(said, list) else {}),
                 }
                 if isinstance(said, list):
-                    record["active_bead"] = attempt
+                    # The supervisor says the bead a session works only
+                    # while it runs it; a session stopped says none.
+                    if record["running"]:
+                        record["active_bead"] = attempt
                     if isinstance(one.get("start"), (int, float)):
                         record["created_at"] = at(one["start"])
                     record.update({field_name: one[field_name] for field_name in SESSION_SAID if field_name in one})
@@ -1009,7 +1015,9 @@ def _run_records(run, lanes, moment, sessions, opened, ui, view, trace) -> list:
                         trace["transcripts"][one["name"]] = one["transcript"]
                     end = one.get("end")
                     trace["log"][one["name"]] = {"woke": record.get("created_at"),
-                                                 "stopped": at(end) if isinstance(end, (int, float)) else None}
+                                                 "stopped": at(end) if isinstance(end, (int, float)) else None,
+                                                 "started": {"bead": attempt, "at": at(job["start"]),
+                                                             "run": root_id, "step": job["id"]}}
                     if isinstance(one.get("dispatched"), dict):
                         trace["dispatched"][one["name"]] = dict(one["dispatched"])
                 sessions.setdefault(lane["id"], {})[one["name"]] = record

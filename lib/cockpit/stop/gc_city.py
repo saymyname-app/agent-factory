@@ -15,7 +15,12 @@ serves (checked on the live host, 2026-10-06):
   ``…/session/<id>/transcript?format=raw``, what its provider recorded
   (``messages``), kept likewise; ``GET
   /v0/city/<city>/events?type=session.woke`` (and ``session.stopped``),
-  when the supervisor woke and stopped each session, the latest first,
+  when the supervisor woke and stopped each session, and
+  ``execution.step_started``, each bead a session took (its ``subject``)
+  -- the only record of the bead a session worked once it stopped: the
+  session it keeps then says no ``active_bead`` (2026-10-28), and the
+  bead keeps one ``gc.session_name`` of all the sessions that took it --,
+  the latest first,
   ``limit`` at a time, the next page at ``cursor=<next_cursor>``. Each
   page further back costs more (under load on the live host, 2026-10-22:
   0.9 s, 1.5 s, then 3 s for pages of 50, and 8 s for ``since=10m``), so
@@ -41,9 +46,11 @@ from datetime import datetime, timezone
 
 
 # What the trace reads of the log of the supervisor: the moments it woke
-# and stopped a session -- on a first reading, the latest page of each; then
-# back to the last one read, at most that many pages.
-SESSION_EVENT_TYPES = ("session.woke", "session.stopped")
+# and stopped a session, and each step a session took -- on a first reading,
+# the latest page of each; then back to the last one read, at most that many
+# pages.
+STEP_STARTED = "execution.step_started"
+SESSION_EVENT_TYPES = ("session.woke", "session.stopped", STEP_STARTED)
 SESSION_EVENTS_PAGE = 50
 SESSION_EVENTS_PAGES = 10
 
@@ -141,10 +148,11 @@ class GcCityReader:
             raise ValueError("gc illisible : %s" % exc)
 
     def session_events(self, after=None):
-        """The moments the supervisor woke and stopped a session after its
-        event ``after`` (a ``seq``; None, the latest SESSION_EVENTS_PAGE of
-        each), the oldest first: each ``{"seq", "type", "ts",
-        "session_id"}``."""
+        """The moments the supervisor woke and stopped a session, or a
+        session took a step, after its event ``after`` (a ``seq``; None, the
+        latest SESSION_EVENTS_PAGE of each), the oldest first: each
+        ``{"seq", "type", "ts", "session_id"}``, and the ``bead`` taken for
+        a step."""
         found = {}
         for kind in SESSION_EVENT_TYPES:
             query = {"type": kind, "limit": str(SESSION_EVENTS_PAGE)}
@@ -160,6 +168,8 @@ class GcCityReader:
                     if session_id and isinstance(item.get("ts"), str):
                         found[item["seq"]] = {"seq": item["seq"], "type": kind, "ts": item["ts"],
                                               "session_id": str(session_id)}
+                        if kind == STEP_STARTED:
+                            found[item["seq"]]["bead"] = item.get("subject") or None
                 if len(fresh) < len(items) or not items or not answer.get("next_cursor"):
                     break
                 query["cursor"] = answer["next_cursor"]

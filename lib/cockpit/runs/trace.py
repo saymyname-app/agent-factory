@@ -8,9 +8,11 @@ collected from the supervisor that sends them, kept in a private projection
 
 The supervisor is what sends the sessions their work: it wakes a session,
 sends it its prompts, and stops it. It records each of those moments in its
-log (``session.woke``, ``session.stopped``: ``supervisor.session_events``),
-keeps each session it sent (``supervisor.session``: its provider, model,
-context, options, work directory, the bead it works) and the record its
+log (``session.woke``, ``session.stopped``, and ``execution.step_started``
+for each bead a session took: ``supervisor.session_events``), keeps each
+session it sent (``supervisor.session``: its provider, model, context,
+options, work directory, the bead it works while it runs -- none once it
+stopped, so the log alone says the bead of a session past) and the record its
 provider wrote of it (``supervisor.transcript``) -- also once the session
 stopped and it no longer lists it among those it runs (the ``agents`` of a
 reading). The collection follows that log: a session that woke and stopped
@@ -30,7 +32,8 @@ What a record keeps is chosen field by field, never copied whole:
 - of a session: its identity (id, name, agent, template), its provider,
   model, effort and permission mode, its context observed and the window
   it is a part of, its work directory, when it was created, the bead it
-  was working; when the supervisor woke it and stopped it;
+  was working; when the supervisor woke it and stopped it, and each bead
+  its log says the session took;
 - of what it was sent: the system prompt (Codex records it,
   ``session_meta.base_instructions``; Claude Code does not, it is then not
   collected), each user prompt (the message the provider records as typed
@@ -62,7 +65,7 @@ OPTION_FIELDS = ("effort", "permission_mode")
 TRANSCRIPT_EVERY_SECONDS = 60
 SYSTEM, USER = "system", "user"
 # The moments of the log of the supervisor a record keeps.
-LOGGED = {"session.woke": "woke", "session.stopped": "stopped"}
+LOGGED = {"session.woke": "woke", "session.stopped": "stopped", "execution.step_started": "started"}
 
 
 def version(text):
@@ -189,7 +192,9 @@ class SessionTrace:
         for event in events:
             self._after = max(self._after or 0, event["seq"])
             moment = {"kind": LOGGED[event["type"]], "id": event["session_id"], "at": _epoch(event["ts"])}
-            if moment["at"] is not None:
+            if moment["kind"] == "started":
+                moment["bead"] = event.get("bead")
+            if moment["at"] is not None and (moment["kind"] != "started" or moment["bead"]):
                 logged.setdefault(event["session_id"], []).append(moment)
         # A moment the projection already holds was collected with its
         # session (another cockpit read the same log): it is not read again.
@@ -289,10 +294,13 @@ class SessionTrace:
             if self._read[0] == size:
                 return json.loads(json.dumps(self._read[1]))
             lines = self._lines()
-        found, moments = {}, {}
+        found, moments, took = {}, {}, {}
         for line in lines:
             if line.get("kind") in ("woke", "stopped") and line.get("id"):
                 moments.setdefault(line["id"], []).append((line.get("at") or 0, line["kind"]))
+                continue
+            if line.get("kind") == "started" and line.get("id"):
+                took.setdefault(line["id"], []).append(line.get("bead"))
                 continue
             name = line.get("session")
             if not name:
@@ -308,6 +316,8 @@ class SessionTrace:
             elif line.get("kind") == "tools":
                 seen["tools"] = list(line.get("tools") or [])
         for seen in found.values():
+            seen["beads"] += [bead for bead in took.get(seen.get("id") or seen["session"]) or []
+                              if bead and bead not in seen["beads"]]
             seen["prompts"].sort(key=lambda p: (p["role"] != SYSTEM, p.get("at") or 0))
             last = max(moments.get(seen.get("id") or seen["session"]) or [(0, None)])
             seen["ended_at"] = last[0] if last[1] == "stopped" else None
