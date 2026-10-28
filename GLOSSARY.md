@@ -25,8 +25,9 @@ _French conversational alias_: langue de l'opérateur
 _Avoid_: locale, i18n, per-project UI language
 
 **Cockpit Lexicon**:
-The fixed starting set of domain words the Cockpit may show at the interface without translation, held as this glossary's own conversational aliases (each marked "visible dans le cockpit" where its canonical term is defined above or below) rather than as a second list anywhere else in code or docs; growing it is a pull request on this file. Starting lexicon: usine, projet, agent, ticket, PR, tests automatiques (CI), Spec, carte de planification, graphe de tickets, proposition, rituel, décision.
+The fixed starting set of domain words the Cockpit may show at the interface without translation, held as this glossary's own conversational aliases (each marked "visible dans le cockpit" where its canonical term is defined above or below) rather than as a second list anywhere else in code or docs; growing it is a pull request on this file. Starting lexicon: usine, projet, agent, ticket, PR, tests automatiques (CI), Spec, carte de planification, graphe de tickets, proposition, rituel, décision. The internal terms a Cockpit main text never shows are held here too, under « _Never shown in the cockpit_ », and read from there by the Cockpit's text control (`lib/cockpit/text/validate.py`).
 _French conversational alias_: lexique du cockpit
+_Never shown in the cockpit_: bead, beads, convoy, convoi, order, orders, molecule, wisp, rig, rigs, Mayor, Maire, Gas City, orchestrator, harness, control plane
 _Avoid_: UI copy list, second glossary, translation table
 
 **Operator Action**:

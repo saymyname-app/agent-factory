@@ -33,7 +33,7 @@ from cockpit.requests.sources.specs_and_graphs import (  # noqa: E402
     TYPE_SPEC_A_APPROUVER,
     build_specs_and_graphs_requests,
 )
-from cockpit.requests.sources.unknown_signal import build_unknown_signal_requests  # noqa: E402
+from cockpit.requests.sources.unknown_signal import UnknownSignal, unknown_signals_of  # noqa: E402
 from cockpit.ui.actions.render import render_actions  # noqa: E402
 from cockpit.ui.journal.entries import JournalEntry, build_journal, parse_trace_note  # noqa: E402
 from cockpit.ui.journal.render import render_journal_section  # noqa: E402
@@ -153,18 +153,30 @@ class ReadabilityTest(unittest.TestCase):
 
 
 class UnknownSignalTest(unittest.TestCase):
-    def test_unknown_signal_is_quand_tu_veux_and_names_its_source(self):
-        signals = [{"id": "sig-1", "source": "loop-guard", "texte_brut": "wat=42"}]
-        requests = build_unknown_signal_requests(signals, verifie_a=1000.0)
-        self.assertEqual(1, len(requests))
-        self.assertEqual(QUAND_TU_VEUX, requests[0].niveau)
-        self.assertIn("loop-guard", requests[0].quoi)
-        self.assertIn("Signal non reconnu venant de", requests[0].quoi)
+    @staticmethod
+    def _bead(bead_id, source, **fields):
+        return dict({"id": bead_id, "status": "open", "title": "wat=42", "description": "",
+                     "metadata": {"gc.source": source}}, **fields)
+
+    def test_unknown_signal_is_information_and_names_its_source(self):
+        plain, coded = unknown_signals_of([
+            self._bead("sig-1", "sauvegarde nocturne", created_at="2026-09-30T08:00:00Z"),
+            self._bead("sig-2", "loop-guard", created_at="2026-09-30T09:00:00Z")])
+        # Information, not an Operator Request (GLOSSARY.md): no level, no
+        # gesture.
+        self.assertIsInstance(plain, UnknownSignal)
+        self.assertEqual("Signal non reconnu venant de sauvegarde nocturne", plain.titre)
+        self.assertEqual("wat=42", plain.texte_brut)
+        # A name shaped as an identifier is no main text (spec .73): the
+        # signal names it in its details only.
+        self.assertNotIn("loop-guard", coded.titre)
+        self.assertIn("Signal non reconnu venant d", coded.titre)
+        self.assertEqual("loop-guard", coded.source)
 
     def test_unknown_signal_exits_when_the_source_stops_reporting_it(self):
-        signals = [{"id": "sig-1", "source": "loop-guard", "texte_brut": "wat=42"}]
-        self.assertEqual(1, len(build_unknown_signal_requests(signals, verifie_a=1000.0)))
-        self.assertEqual([], build_unknown_signal_requests([], verifie_a=1000.0))
+        self.assertEqual(1, len(unknown_signals_of([self._bead("sig-1", "disk-watch")])))
+        self.assertEqual([], unknown_signals_of([self._bead("sig-1", "disk-watch", status="closed")]))
+        self.assertEqual([], unknown_signals_of([]))
 
 
 class JournalTest(unittest.TestCase):

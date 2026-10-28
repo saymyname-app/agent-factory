@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+"""A controllable fake `bin/order-pause` for the Operator Actions seam
+test's `relancer` action on an order target (T14 af-peh3yy; BR af-eyc5ah).
+Understands `resume <order> --by NAME --words TEXT` -- the only command
+cockpit.actions.registry's `relancer` handler ever calls for an order
+target. Logs the call and exits 0; exits 1 if
+$FAKE_ORDER_PAUSE_FAIL_FLAG_FILE exists.
+
+Every invocation is appended, one JSON line per call, to
+$FAKE_ORDER_PAUSE_CALLS_FILE.
+"""
+import json
+import os
+import sys
+
+
+def _log_call(args):
+    log_path = os.environ.get("FAKE_ORDER_PAUSE_CALLS_FILE")
+    if not log_path:
+        return
+    with open(log_path, "a") as fh:
+        fh.write(json.dumps(args) + "\n")
+
+
+def _fail_if_flagged():
+    fail_flag = os.environ.get("FAKE_ORDER_PAUSE_FAIL_FLAG_FILE")
+    if fail_flag and os.path.exists(fail_flag):
+        sys.stderr.write("order-pause : le suivi ne répond pas, rien n'est fait : échec forcé\n")
+        sys.exit(1)
+
+
+def main():
+    argv = sys.argv[1:]
+    _log_call(argv)
+    _fail_if_flagged()
+    if len(argv) == 6 and argv[0] == "resume" and argv[2] == "--by" and argv[4] == "--words":
+        sys.stdout.write("%s reprend : sa prochaine échéance le lance\n" % argv[1])
+        sys.exit(0)
+    sys.stderr.write("fake order-pause: unsupported invocation %r\n" % (argv,))
+    sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()
