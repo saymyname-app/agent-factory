@@ -924,7 +924,8 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
                    "pourquoi": "Un critère gelé que l'Evaluator ne peut pas observer ne se dispense ni ne se reformule.",
                    "que_faire": [{"option": "Juger ce qui est inobservable prouvé par son test de critère vert",
                                   "consequence": "Le parcage est levé."},
-                                 {"option": "Retirer le ticket du graphe", "consequence": "La couverture est recalculée."}],
+                                 {"option": "Retirer le ticket du graphe", "consequence": "La couverture est recalculée."},
+                                 {"option": "Réévaluer sur le produit relancé", "consequence": "Rien n'est prouvé."}],
                    "langue": "fr", "bloquant": True}
         self.run_ok(ESCALATION, "benjamin", T1, json.dumps(request))
         self.run_ok(STATE, "park", CONVOY, T1, "--cause", "planning_exception", "--detail", request["quoi"])
@@ -943,6 +944,17 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertIsNone(self.park_of(T1))
         self.assertEqual([{"what": "ligne de démonstration", "text": "la ligne de démonstration"}],
                          self.shown_state(T1)["park_lifts"][-1]["proven_by_test"])
+
+    def test_the_answer_c_to_an_evaluation_planning_exception_lifts_it_and_judges_nothing_proven(self):
+        # af-npz9v1.38: evaluated again on the products launched again.
+        self.evaluation_parked()
+        self.run_ok(ESCALATION, "repondre", T1, "c", "--actor", "benjamin")
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "c")], [(entry["id"], entry["option"]) for entry in self.of(answer, "lifted")])
+        self.assertIsNone(self.park_of(T1))
+        self.assertNotIn("proven_by_test", self.shown_state(T1)["park_lifts"][-1])
 
     def test_the_answer_b_to_an_evaluation_planning_exception_leaves_it_parked(self):
         self.evaluation_parked()
