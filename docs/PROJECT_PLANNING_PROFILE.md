@@ -276,6 +276,14 @@ into `recipe`, and polls `health_probe` until it answers or `--timeout`
 the port. Two concurrent launches each get their own port and worktree and
 do not disturb each other; stopping one leaves the other answering.
 
+A dataset the launched commit's own copy of the profile adds is launched too
+(af-npz9v1.18): a ticket that needs a new state brings its dataset in its
+branch, while the profile named is main's (R1, af-d6anqb). Only names main
+does not declare, read at `--commit` when the profile lies in the launched
+repository and its copy there names the same project and rigs; the recipe
+and every other field stay main's. `bin/ticket-evaluation` counts these
+datasets among the ticket's.
+
 `start --owner-pid <pid>` ties the launch to a process: a detached guard,
 left from the first launch record on, stops it as soon as that process
 ends, however it ends (SIGTERM, SIGKILL, a timeout that kills its group),

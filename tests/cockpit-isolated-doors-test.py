@@ -124,6 +124,67 @@ class TheDoors(unittest.TestCase):
         self.assertEqual("open", record["status"])
         self.assertEqual("usine", record["metadata"]["gc.order_pause_by"])
 
+    def door(self, env, variable, *args):
+        return subprocess.run([env[variable], *args], env=env, capture_output=True, text=True, timeout=60)
+
+    def test_a_setting_goes_through_provider_failover_onto_the_state_of_the_launch(self):
+        # G2 (af-f8nlhr; af-npz9v1.20): a setting the door takes in charge,
+        # then read back by the same door, never the Factory's own state.
+        served = ROOT / ".gc" / "provider-state.json"
+        before = served.stat().st_mtime if served.exists() else None
+        env = self.launched()
+        done = self.door(env, "COCKPIT_PROVIDER_FAILOVER_BIN", "set", "--action", "disable",
+                         "--args", json.dumps({"provider": "codex", "reason": "essai"}), "--by", "usine")
+        self.assertEqual(0, done.returncode, done.stdout + done.stderr)
+        self.assertTrue(json.loads(done.stdout)["ok"])
+        # Written in the Factory tree the page Usine reads, of the launch.
+        self.assertEqual(str(Path(env["HOME"], "factory")), env["COCKPIT_FACTORY_ROOT"])
+        state = Path(env["COCKPIT_FACTORY_ROOT"], ".gc", "provider-state.json")
+        self.assertIn("codex", state.read_text(encoding="utf-8"))
+        read = self.door(env, "COCKPIT_PROVIDER_FAILOVER_BIN", "status", "--json")
+        self.assertEqual(0, read.returncode, read.stdout + read.stderr)
+        self.assertIn("codex", read.stdout)
+        self.assertEqual(before, served.stat().st_mtime if served.exists() else None)
+
+    def test_an_upkeep_cleans_throwaway_repositories_and_keeps_what_it_must(self):
+        # G2: a preview, then the cleaning of the scope, on Git repositories
+        # of the launch; an active worktree, a local change and a commit not
+        # pushed are kept, and the commit not pushed is escalated on the
+        # tracker of the launch. The repository of the commit keeps its own.
+        own = subprocess.run(["git", "-C", str(ROOT), "for-each-ref", "refs/heads/"],
+                             capture_output=True, text=True).stdout
+        env = self.launched()
+        worktrees = Path(env["HOME"], ".local", "share", "agent-factory-runtime-worktrees")
+        preview = self.door(env, "COCKPIT_FACTORY_MAINTAIN_BIN", "clean-worktrees", "--dry-run")
+        self.assertEqual(0, preview.returncode, preview.stdout + preview.stderr)
+        self.assertIn(f"would remove: {worktrees / 'af-merged'} ", preview.stdout)
+        self.assertIn(f"would escalate: {worktrees / 'af-unpushed'} ", preview.stdout)
+        done = self.door(env, "COCKPIT_FACTORY_MAINTAIN_BIN", "clean-worktrees")
+        self.assertEqual(0, done.returncode, done.stdout + done.stderr)
+        self.assertEqual(["af-active", "af-modified", "af-unpushed"], sorted(p.name for p in worktrees.iterdir()))
+        self.assertTrue([bead for bead in self.tracker(env).values()
+                         if bead["title"].startswith("[clean-worktrees] unpushed commits")])
+        pruned = self.door(env, "COCKPIT_FACTORY_MAINTAIN_BIN", "prune-merged-branches")
+        self.assertEqual(0, pruned.returncode, pruned.stdout + pruned.stderr)
+        branches = subprocess.run(["git", "-C", str(Path(env["HOME"], "maintain", "factory")), "for-each-ref",
+                                   "--format=%(refname:short)", "refs/heads/"], capture_output=True, text=True)
+        self.assertNotIn("merged", branches.stdout.split())
+        self.assertIn("unpushed", branches.stdout.split())
+        self.assertEqual(own, subprocess.run(["git", "-C", str(ROOT), "for-each-ref", "refs/heads/"],
+                                             capture_output=True, text=True).stdout)
+
+    def test_the_operator_settings_are_read_from_the_commit(self):
+        read = subprocess.run([sys.executable, str(ROOT / "bin" / "operator-config"), "language"],
+                              capture_output=True, text=True)
+        self.assertEqual(0, read.returncode, read.stderr)
+        acting = self.launched()
+        self.assertEqual(read.stdout, self.door(acting, "COCKPIT_OPERATOR_CONFIG_BIN", "language").stdout)
+        # A dataset may say the door expires, as any door of the launch.
+        expiring = self.launched({"operator-config": "expires"})
+        with self.assertRaises(subprocess.TimeoutExpired):
+            subprocess.run([expiring["COCKPIT_OPERATOR_CONFIG_BIN"], "language"], env=expiring,
+                           capture_output=True, timeout=PATIENCE)
+
     def test_doors_that_are_not_each_a_door_and_how_it_answers_are_refused(self):
         for doors in ({"proposal-door": "answers twice"}, {"merge-door": "expires"}):
             path = self.dataset(doors)

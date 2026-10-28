@@ -61,6 +61,7 @@ GC_BIN = os.environ.get("GC_BIN", "gc")
 STATE_TOOL = BIN / "convoy-state"
 LAUNCH_TOOL = BIN / "project-launch"
 CAPTURE_TOOL = BIN / "evidence-capture"
+DEMONSTRATION_PIECE = "demonstration"
 ESCALATION_TOOL = BIN / "escalation-door"
 OPERATOR_CONFIG_BIN = BIN / "operator-config"
 SETTINGS = ROOT / "config" / "delivery-flow.json"
@@ -367,8 +368,9 @@ class Convoy:
             raise Refusal(
                 f"le profil {path} ne déclare aucun jeu de données (launch.datasets) : le produit ne se lance "
                 "que sur un jeu de données nommé")
-        declared = sorted(declared)
         ticket = self.ticket(ticket_id)
+        commit = (evaluation_of(ticket).get("request") or {}).get("commit") or ticket.get("tip")
+        declared = sorted({*declared, *branch_datasets(self.repo, commit, path, launch)})
         criteria = [str(text) for text in ticket.get("criteria") or []]
         texts = [*criteria, str(ticket.get("demonstration_line") or "")]
         named = {name for name in declared
@@ -377,7 +379,33 @@ class Convoy:
                                [{"number": n, "text": t} for n, t in enumerate(criteria, 1)],
                                declared, "", ticket_id)
         named.update(entry.get("dataset") for entry in expectations if entry.get("dataset") in declared)
+        # af-npz9v1.18: the dataset the author's demonstration was proven on,
+        # when it holds a state no dataset of the criteria holds (B, af-4uzgzm).
+        shown = demonstration_dataset(self.id, ticket)
+        if shown in declared:
+            named.add(shown)
         return sorted(named) or declared[:1]
+
+
+def branch_datasets(repo: Path, commit: str | None, path: Path, launch: dict[str, Any]) -> list[str]:
+    """The datasets the evaluated commit's copy of the profile adds, which
+    bin/project-launch launches at that commit (af-npz9v1.18): a dataset a
+    ticket brings in its branch is one of its datasets (R1, af-d6anqb)."""
+    if not isinstance(commit, str) or not commit:
+        return []
+    top = run(["git", "-C", str(path.resolve().parent), "rev-parse", "--show-toplevel"])
+    if top.returncode:
+        return []
+    try:
+        relative = path.resolve().relative_to(Path(top.stdout.strip()).resolve()).as_posix()
+        copy = json.loads(run(["git", "-C", str(repo), "show", f"{commit}:{relative}"]).stdout or "null")
+        main = json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return []
+    if not isinstance(copy, dict) or not isinstance(main, dict)             or any(copy.get(key) != main.get(key) for key in ("project_id", "rigs")):
+        return []
+    datasets = copy.get("launch", {}).get("datasets") if isinstance(copy.get("launch"), dict) else None
+    return [name for name in datasets if name not in launch.get("datasets", {})] if isinstance(datasets, dict) else []
 
 
 def readable(ticket: dict[str, Any]) -> dict[str, Any]:
@@ -389,6 +417,22 @@ def readable(ticket: dict[str, Any]) -> dict[str, Any]:
         if isinstance(record, dict) and "unruled" in record:
             raise Refusal(f"état sans règle : {record['unruled']}")
     return ticket
+
+
+def demonstration_dataset(convoy_id: str, ticket: dict[str, Any]) -> str | None:
+    """The dataset of the product the author's demonstration was captured
+    on (bin/ticket-author demonstrate; bin/evidence-capture keeps it), or
+    None: no sealed demonstration, an older record without it, or a piece
+    the store does not verify."""
+    if not (ticket.get("evidence") or {}).get(DEMONSTRATION_PIECE):
+        return None
+    proc = run([str(CAPTURE_TOOL), "verify", convoy_id, str(ticket.get("id")), "--piece", DEMONSTRATION_PIECE])
+    try:
+        path = json.loads(proc.stdout)["pieces"][0]["path"]
+        dataset = json.loads(Path(path).read_text(encoding="utf-8")).get("dataset")
+    except (KeyError, IndexError, TypeError, OSError, ValueError):
+        return None
+    return dataset if proc.returncode == 0 and isinstance(dataset, str) else None
 
 
 def evaluation_of(ticket: dict[str, Any]) -> dict[str, Any]:
@@ -885,6 +929,33 @@ def raise_stop(convoy_id: str, ticket: dict[str, Any], stop: dict[str, Any]) -> 
     return True
 
 
+# The third option of an evaluation's Planning Exception (af-npz9v1.38).
+REEVALUATE = "Réévaluer sur le produit relancé"
+
+
+def planning_exception_request(what: str) -> dict[str, Any]:
+    """The request an evaluation's Planning Exception puts on the operator's
+    list: a judges the unobservable proven by its criterion test (af-ten1sp),
+    b removes the ticket, c has it evaluated again on the products launched
+    again, judging nothing proven -- an unobservable the factory caused, as
+    a dataset of the branch the launcher refused (af-npz9v1.38: R1, R2, BR,
+    27/10/2026)."""
+    return {
+        "quoi": what,
+        "pourquoi": "Un critère gelé que l'Evaluator ne peut pas observer ne se dispense ni ne se reformule.",
+        "que_faire": [
+            {"option": "Juger ce qui est inobservable prouvé par son test de critère vert",
+             "consequence": "Le parcage est levé ; l'évaluation suivante le compte prouvé par le test, "
+                            "sans le voir sur le produit lancé avant ta recette."},
+            {"option": "Retirer le ticket du graphe",
+             "consequence": "Le graphe révisé passe par la porte de patch ; la couverture est recalculée."},
+            {"option": REEVALUATE,
+             "consequence": "Le parcage est levé ; l'évaluation est refaite sur les produits relancés, "
+                            "rien n'est compté prouvé sans être vu."},
+        ],
+    }
+
+
 def raise_planning_exception(convoy_id: str, ticket: dict[str, Any], state: dict[str, Any]) -> list[str]:
     """Spec §7: a criterion the Evaluator could not observe because of the
     criterion itself goes back to the Planning Run, so to the operator. The
@@ -894,19 +965,32 @@ def raise_planning_exception(convoy_id: str, ticket: dict[str, Any], state: dict
     names = ", ".join(entry["what"] for entry in state["unobservable"] if entry["cause"] == "criterion")
     head = f"Planning Exception sur {ticket['id']} : "
     what = head + short(f"inobservable sur le produit lancé ({names})", REQUEST_LINE_MAX - len(head))
-    request = {
-        "quoi": what,
-        "pourquoi": "Un critère gelé que l'Evaluator ne peut pas observer ne se dispense ni ne se reformule.",
-        "que_faire": [
-            {"option": "Juger ce qui est inobservable prouvé par son test de critère vert",
-             "consequence": "Le parcage est levé ; l'évaluation suivante le compte prouvé par le test, "
-                            "sans le voir sur le produit lancé avant ta recette."},
-            {"option": "Retirer le ticket du graphe",
-             "consequence": "Le graphe révisé passe par la porte de patch ; la couverture est recalculée."},
-        ],
-    }
-    escalate(ticket["id"], request, f"le ticket {ticket['id']} a un critère inobservable")
+    escalate(ticket["id"], planning_exception_request(what), f"le ticket {ticket['id']} a un critère inobservable")
     return state_write("park", convoy_id, ticket["id"], "--cause", "planning_exception", "--detail", what)["parked"]
+
+
+def reoffer_reevaluation(ticket: dict[str, Any]) -> bool:
+    """A request an evaluation's Planning Exception raised before option c
+    existed offers a and b only, and the escalation door answers no other
+    letter: while it is not answered, it is asked again once, the same
+    question with the three options (af-npz9v1.38)."""
+    park = ticket.get("park") or {}
+    evaluated = ((ticket.get("exit") or {}).get("exit") == "finished"
+                 and ((ticket.get("evaluation") or {}).get("state") or {}).get("outcome") == PLANNING_EXCEPTION)
+    if (ticket.get("status") == "closed" or not evaluated or park.get("cause") != "planning_exception"
+            or park.get("origin") != ticket["id"] or park.get("answer") or not park.get("detail")):
+        return False
+    offered = (read_bead(ticket["id"]).get("metadata") or {}).get("gc.escalation_que_faire")
+    try:
+        offered = json.loads(offered) if isinstance(offered, str) else offered
+    except ValueError:
+        return False
+    if not isinstance(offered, list) or any(isinstance(entry, dict) and entry.get("option") == REEVALUATE
+                                            for entry in offered):
+        return False
+    escalate(ticket["id"], planning_exception_request(park["detail"]),
+             f"le ticket {ticket['id']} a un critère inobservable")
+    return True
 
 
 # --- settle: what is due on one ticket ----------------------------------------------
@@ -987,6 +1071,8 @@ def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> d
         stop = own_stop(ticket)
         if stop:
             return {"ticket": ticket_id, "action": "escalated" if raise_stop(convoy.id, ticket, stop) else "none"}
+        if what == "skip" and reoffer_reevaluation(ticket):
+            return {"ticket": ticket_id, "action": "escalated"}
         if what in ("skip", "evaluated"):
             return {"ticket": ticket_id, "action": "none"}
         if what == "waiting":

@@ -427,6 +427,10 @@ EVALUATION_OUTCOMES = ("favorable", "return_to_author", "planning_exception", "e
 # (bin/ticket-evaluation) that judges what it could not observe proven by
 # its criterion test (Benjamin, 21/10/2026, af-ten1sp).
 PROVEN_BY_TEST_OPTION = "a"
+# The option of that request that has it evaluated again on the products
+# launched again, judging nothing proven (af-npz9v1.38). Benjamin, 28/10/2026
+# 01:20 Paris, relayed from the central chat: « Oui aux deux recommandations : fais ajouter puis utiliser l’option de réévaluation réelle pour les trois tickets, et accorde le tour de correction exceptionnel. Coordonne tout et vérifie que ça repart. »
+REEVALUATE_OPTION = "c"
 EVALUATION_MAX_LAUNCHES = 2
 KIND_WITHOUT_EVALUATOR = "prefactoring"
 ADDRESS_RE = re.compile(r"^http://127\.0\.0\.1:[0-9]{1,5}$")
