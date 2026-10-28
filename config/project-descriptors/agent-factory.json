@@ -205,6 +205,7 @@
       "health-offline": "config/cockpit-datasets/health-offline.json",
       "health-narrow": "config/cockpit-datasets/health-narrow.json",
       "health-light": "config/cockpit-datasets/health-light.json",
+      "acces-https": "config/cockpit-datasets/acces-https.json",
       "factory-draining": "config/cockpit-datasets/factory-draining.json",
       "factory-suspended": "config/cockpit-datasets/factory-suspended.json",
       "factory-resuming": "config/cockpit-datasets/factory-resuming.json",
