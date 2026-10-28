@@ -971,6 +971,21 @@ class TicketEvaluationTest(unittest.TestCase):
         self.assertNotEqual(0, main.returncode, "main does not declare the branch's dataset")
         self.assertIn("unknown dataset", main.stdout)
 
+    def test_a_game_the_branch_brings_is_a_game_of_the_ticket_even_named_nowhere(self):
+        """af-npz9v1.18: R1 and R2 brought their datasets in their branch,
+        named in no criterion, no demonstration line and no piece; their
+        evaluation of 28/10/2026 launched the first dataset of main only."""
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True, capture_output=True)
+        profile = json.loads(self.profile.read_text())
+        original = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
+        branch = json.loads(json.dumps(profile))
+        branch["launch"]["datasets"]["empty"] = original["launch"]["datasets"]["empty"]
+        relative = self.profile.relative_to(self.root).as_posix()
+        self.finished_slice({**self.realized(), relative: json.dumps(branch)})
+        self.evaluator("silent")
+        self.settle()
+        self.assertEqual(["content", "empty"], self.evaluation()["request"]["datasets"])
+
     def test_a_game_named_only_by_a_validated_expectation_is_a_game_of_the_ticket(self):
         profile = json.loads(self.profile.read_text())
         original = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
