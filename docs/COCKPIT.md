@@ -1258,9 +1258,9 @@ claimed it -- the step's own `gc.session_name`, or that of its attempts
 (`gc.logical_bead_id`) --, its `agent_name` as the supervisor lists it, or,
 once the supervisor no longer lists that session, as its session bead says
 it (`gc.session_id`, else `gc.session_name`; the tracker keeps those beads
-apart, read with `--include-ephemeral`, and that read failing is the read of
-the runs failing -- the run says « Lecture périmée » --, never an agent seen
-absent). So a new session of
+apart, read with `--include-ephemeral`; when that read fails, such a job is
+on a lane « Agent inconnu · sessions terminées illisibles », never on the
+lane « Agent non enregistré » of a session whose bead is gone). So a new session of
 the same agent keeps its lane -- the slot of a pool, `delivery-author-2`,
 whatever session works for it -- and two agents of the same role keep one
 each; the lane says its role and the model its session was started with

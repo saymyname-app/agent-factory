@@ -78,6 +78,12 @@ OPERATOR = "benjamin"
 # The agent of a session neither the supervisor nor the tracker names any
 # more (its session bead removed).
 UNRECORDED_AGENT = "Agent non enregistré"
+# The agent of a session the supervisor no longer lists, when the tracker
+# could not be asked for the beads of the ended sessions: not known, which
+# is not an agent seen absent.
+UNKNOWN_AGENT = "Agent inconnu · sessions terminées illisibles"
+# What the read of the runs holds, beside the beads, when that read failed.
+SESSIONS_UNREAD = "cockpit:ended-sessions-unread"
 NEW_FLOW = "new-flow/"
 DONE_STEP = "Exécution terminée · historique disponible"
 UNRECORDED = "non enregistré"
@@ -125,13 +131,18 @@ def read_workflow_beads(bd_bin="bd", timeout=READ_TIMEOUT_SECONDS):
 
     def ended_sessions():
         # The sessions the supervisor no longer lists: their beads, which
-        # the tracker keeps apart (ephemeral). A read that fails is the read
-        # of the runs failing -- never an agent observed absent.
-        completed = subprocess.run(
-            [bd_bin, "list", "--all", "--limit", "0", "--include-ephemeral", "--has-metadata-key", SESSION_AGENT,
-             "--json"], capture_output=True, text=True, timeout=timeout, check=True,
-        )
-        return [b for b in json.loads(completed.stdout) or [] if isinstance(b, dict) and b.get("issue_type") == SESSION]
+        # the tracker keeps apart (ephemeral). A read that fails is said
+        # (:data:`SESSIONS_UNREAD`): their agents are unknown, never seen
+        # absent.
+        try:
+            completed = subprocess.run(
+                [bd_bin, "list", "--all", "--limit", "0", "--include-ephemeral", "--has-metadata-key", SESSION_AGENT,
+                 "--json"], capture_output=True, text=True, timeout=timeout, check=True,
+            )
+            return [b for b in json.loads(completed.stdout) or []
+                    if isinstance(b, dict) and b.get("issue_type") == SESSION]
+        except (OSError, subprocess.SubprocessError, ValueError):
+            return [{"id": SESSIONS_UNREAD, "issue_type": SESSIONS_UNREAD}]
 
     seen = {}
     with ThreadPoolExecutor(max_workers=len(KEYS) + 1) as pool:
@@ -167,6 +178,10 @@ def workflow_runs(beads, agents, now):
     ``agents``: the sessions the supervisor lists (``session_name`` or
     ``name``, ``agent_name``, ``template``, ``provider``), or None."""
     beads = [b for b in beads or [] if isinstance(b, dict) and b.get("id")]
+    # A job whose agent the read could not find: unknown when the beads of
+    # the ended sessions were not read, else no longer recorded.
+    absent = UNKNOWN_AGENT if any(b["id"] == SESSIONS_UNREAD for b in beads) else UNRECORDED_AGENT
+    beads = [b for b in beads if b["id"] != SESSIONS_UNREAD]
     meta = {b["id"]: _decoded(b.get("metadata")) for b in beads}
     by_id = {b["id"]: b for b in beads}
     sessions = _sessions(agents, beads)
@@ -209,7 +224,7 @@ def workflow_runs(beads, agents, now):
 
     runs = []
     for key, group in groups.items():
-        run = _run(key, group, meta, steps, attempts, sessions, now)
+        run = _run(key, group, meta, steps, attempts, sessions, now, absent)
         if run:
             runs.append(run)
     return sorted(runs, key=lambda run: (run["start"], run["id"]), reverse=True)
@@ -304,7 +319,7 @@ def _type(group, meta):
     return next((label for prefix, label in TYPES if formula.startswith(prefix)), "Workflow")
 
 
-def _run(key, group, meta, steps, attempts, sessions, now):
+def _run(key, group, meta, steps, attempts, sessions, now, absent=UNRECORDED_AGENT):
     root = group["root"]
     tickets = {t["id"]: run_from_bead(t, now) for t in group["tickets"]}
     if not group["roots"] and group["kind"] == "ticket":
@@ -317,7 +332,7 @@ def _run(key, group, meta, steps, attempts, sessions, now):
         formula = meta[workflow["id"]].get("gc.formula_name") or ""
         served = labels.get((group.get("served") or {}).get(workflow["id"]))
         for step in steps.get(workflow["id"], []):
-            job = _job(step, meta, attempts.get(step["id"], []), sessions, formula, workflow, now)
+            job = _job(step, meta, attempts.get(step["id"], []), sessions, formula, workflow, now, absent)
             if job:
                 jobs.append(dict(job, ticket=served))
     # The facts the flow wrote on each ticket it launched: points on the
@@ -347,7 +362,7 @@ def _run(key, group, meta, steps, attempts, sessions, now):
     }, jobs, now)
 
 
-def _job(step, meta, attempts, sessions, formula, workflow, now):
+def _job(step, meta, attempts, sessions, formula, workflow, now, absent=UNRECORDED_AGENT):
     m = meta[step["id"]]
     claims = sorted((_ts(meta[a["id"]].get("gc.claimed_at")) or _ts(a.get("created_at")) or 0, a) for a in attempts)
     begin = (claims[0][0] if claims else None) or _ts(m.get("gc.claimed_at")) or _ts(step.get("created_at"))
@@ -372,9 +387,9 @@ def _job(step, meta, attempts, sessions, formula, workflow, now):
         if session.get("agent_name"):
             lane.update(key="agent:%s" % session["agent_name"], who=session["agent_name"])
         else:
-            # Neither the supervisor nor the tracker says its agent any more:
-            # :func:`_unrecorded_lanes` gives it a lane.
-            lane.update(key=None, who=UNRECORDED_AGENT,
+            # Neither the supervisor nor the tracker says its agent (`absent`
+            # says why): :func:`_unrecorded_lanes` gives it a lane.
+            lane.update(key=None, who=absent,
                         session=claim.get("gc.session_id") or claim.get("gc.session_name") or step["id"])
     name = (STEP_NAMES.get(m.get("gc.step_id")) if formula == "mol-ticket-author" else None) or step.get("title") or "?"
     sessions = [(at, meta[attempt["id"]].get("gc.session_name"), meta[attempt["id"]].get("gc.attempt"))
@@ -395,8 +410,9 @@ def _job(step, meta, attempts, sessions, formula, workflow, now):
 
 
 def _unrecorded_lanes(jobs, horizon):
-    """Give a lane to each job whose agent is no longer recorded: the
-    sessions of one role share a lane « Agent non enregistré » one after the
+    """Give a lane to each job whose agent is not said: the sessions of one
+    role share a lane « Agent non enregistré » (or « Agent inconnu … ») one
+    after the
     other -- a new session is not an agent of its own --, and a session at
     work while every such lane is busy opens the next, since two sessions at
     once are two agents."""
@@ -408,18 +424,18 @@ def _unrecorded_lanes(jobs, horizon):
             spans[lane["session"]] = (min(begin, job["start"]), max(end, job["end"] if job["end"] is not None else horizon))
     taken, keys = {}, {}
     for session, (begin, end) in sorted(spans.items(), key=lambda kv: (kv[1], kv[0])):
-        role = next(j["lane"]["role"] for j in jobs if j["lane"].get("session") == session)
+        role, absent = next((j["lane"]["role"], j["lane"]["who"]) for j in jobs if j["lane"].get("session") == session)
         ends = taken.setdefault(role, [])
         number = next((n for n, last in enumerate(ends) if last <= begin), len(ends))
         if number == len(ends):
             ends.append(end)
         ends[number] = end
-        keys[session] = (role, number)
+        keys[session] = (role, number, absent)
     for job in jobs:
         lane = job["lane"]
         if lane.get("kind") == AGENT and lane.get("key") is None:
-            role, number = keys[lane["session"]]
-            who = UNRECORDED_AGENT if number == 0 else "%s (%d)" % (UNRECORDED_AGENT, number + 1)
+            role, number, absent = keys[lane["session"]]
+            who = absent if number == 0 else "%s (%d)" % (absent, number + 1)
             job["lane"] = {"key": "unrecorded:%s:%d" % (role, number), "kind": AGENT, "who": who, "role": role}
 
 
