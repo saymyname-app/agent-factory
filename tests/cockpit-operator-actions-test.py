@@ -440,6 +440,28 @@ class OperatorActionsSeamTest(unittest.TestCase):
         self.assertEqual("relancer", bead["metadata"]["gc.cockpit_action_quoi"])
         self.assertEqual("order", bead["metadata"]["gc.cockpit_action_detail"])
 
+    def test_relancer_whose_trace_fails_after_its_door_is_uncertain_and_not_sent_again(self):
+        # The door relaunched the session, then the trace could not be
+        # written: the relaunch is done, so the gesture is not refused as
+        # if nothing happened -- it is uncertain until the source is read
+        # again, and a second click sends nothing (Spec af-fgcw0d, user
+        # story 122; BR af-eyc5ah, criterion 2).
+        self.write_beads([plain_bead("af-sess4")])
+        self.start_cockpit()
+        open(self.bd_fail_flag_file, "w").close()
+        body = {"target_type": "session", "session_id": "sess-456", "bead_id": "af-sess4", "confirm": True}
+
+        status, payload = self.post_action("relancer", body)
+        self.assertEqual(502, status)
+        self.assertTrue(payload["incertain"])
+        self.assertIn("relit la source", payload["error"])
+        self.assertEqual([["resume", "sess-456"]], self.read_calls(self.loop_guard_calls_file))
+
+        status, payload = self.post_action("relancer", body)
+        self.assertEqual(409, status)
+        self.assertTrue(payload["incertain"])
+        self.assertEqual([["resume", "sess-456"]], self.read_calls(self.loop_guard_calls_file))
+
     def test_relancer_without_confirm_writes_nothing(self):
         self.write_beads([plain_bead("af-sess3")])
         self.start_cockpit()

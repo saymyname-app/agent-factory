@@ -17,6 +17,7 @@ every other type here.
 from cockpit.requests.model import DEFAULT_PROJECT, OperatorRequest, QUAND_TU_VEUX
 from cockpit.requests.proposals import is_proposal
 from cockpit.requests.sources._util import parse_iso
+from cockpit.text.validate import speaks_plainly
 
 TYPE_SIGNAL_INCONNU = "signal_inconnu"
 SOURCE_KEY = "gc.source"
@@ -51,19 +52,31 @@ def unknown_signals_of(beads, known_sources):
     return signals
 
 
+def _coming_from(source):
+    """« Signal non reconnu venant de … » (spec .76) -- the name of its
+    producer only when it may be shown as main text (spec .73: it is
+    written by a producer, never checked, and may read as an identifier or
+    an internal term); else it is named in the details only."""
+    if not source:
+        return "Signal non reconnu venant d’une source inconnue"
+    if speaks_plainly(source):
+        return "Signal non reconnu venant de %s" % source
+    return "Signal non reconnu venant d’une source nommée dans les détails"
+
+
 def build_unknown_signal_requests(signals, verifie_a=None):
     requests = []
     for signal in signals or []:
         if not isinstance(signal, dict):
             continue
         signal_id = signal.get("id") or ""
-        source_name = signal.get("source") or "une source inconnue"
+        source = signal.get("source") or ""
         requests.append(
             OperatorRequest(
                 id=signal_id,
                 type=TYPE_SIGNAL_INCONNU,
                 niveau=QUAND_TU_VEUX,
-                quoi="Signal non reconnu venant de %s" % source_name,
+                quoi=_coming_from(source),
                 pourquoi="Ce signal ne correspond à aucun type connu du cockpit.",
                 que_faire=[
                     {
@@ -79,6 +92,7 @@ def build_unknown_signal_requests(signals, verifie_a=None):
                 verifie_a=verifie_a,
                 lien=signal_id,
                 texte_brut=signal.get("texte_brut") or "",
+                precisions="Source : %s" % source if source else "",
             )
         )
     requests.sort(key=lambda r: r.sort_key())

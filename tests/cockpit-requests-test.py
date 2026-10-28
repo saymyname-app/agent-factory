@@ -598,12 +598,19 @@ class UnknownSignalSeamTest(CockpitOnFakes):
             # Closed: it signals nothing any more.
             {"id": "af-sig4", "status": "closed", "labels": [], "notes": "", "title": "old", "description": "",
              "metadata": {"gc.source": "disk-watch"}},
+            # A producer whose name the operator reads as it is.
+            {"id": "af-sig5", "status": "open", "labels": [], "notes": "", "title": "volume plein",
+             "description": "", "created_at": "2026-09-30T08:00:00Z",
+             "metadata": {"gc.source": "sauvegarde nocturne"}},
         ])
         payload = self.wait_for_requests(lambda p: any(r["id"] == "af-sig1" for r in p["requests"]))
         by_id = {r["id"]: r for r in payload["requests"]}
-        self.assertEqual(["af-sig1", "af-sig3"], sorted(by_id))
+        self.assertEqual(["af-sig1", "af-sig3", "af-sig5"], sorted(by_id))
         signal = by_id["af-sig1"]
-        self.assertEqual("Signal non reconnu venant de disk-watch", signal["quoi"])
+        # User story 73: the name of the producer is no main text when it
+        # reads as an identifier (« disk-watch »); it is in the details.
+        self.assertEqual("Signal non reconnu venant d’une source nommée dans les détails", signal["quoi"])
+        self.assertEqual("Signal non reconnu venant de sauvegarde nocturne", by_id["af-sig5"]["quoi"])
         self.assertEqual("Quand tu veux", signal["niveau"])
         self.assertEqual("session_en_pause", by_id["af-sig3"]["type"])
 
@@ -611,7 +618,9 @@ class UnknownSignalSeamTest(CockpitOnFakes):
         start = body.index('id="d-af-sig1"')
         article = body[start:body.index("</article>", start)]
         main, details = article.split('<details class="more pn-request-details">', 1)
-        self.assertIn("Signal non reconnu venant de disk-watch", main)
+        self.assertIn("Signal non reconnu venant d’une source nommée dans les détails", main)
+        self.assertNotIn("disk-watch", main, "the name of the producer is shown as main text")
+        self.assertIn("disk-watch", details)
         self.assertNotIn(self.RAW_TITLE, main, "the raw text is shown as main text")
         self.assertNotIn("backup volume", main, "the raw text is shown as main text")
         self.assertIn("Texte brut", details)
@@ -657,10 +666,10 @@ class TextContractSeamTest(CockpitOnFakes):
     (``missing_fields``), one written within it as written. AC5's "test"
     half."""
 
-    def replaced(self, cases):
+    def replaced(self, cases, extra_env=None):
         """``{bead id: the fields of its request that were replaced}`` for
         escalations whose ``quoi`` and ``pourquoi`` are ``cases[id]``."""
-        self.start_cockpit()
+        self.start_cockpit(extra_env)
         self.write_beads([escalation_bead(bead_id, quoi, pourquoi, SOME_OPTIONS, "2026-09-30T08:00:00Z")
                           for bead_id, (quoi, pourquoi) in cases.items()])
         payload = self.wait_for_requests(lambda p: len(p["requests"]) == len(cases))
@@ -701,6 +710,52 @@ class TextContractSeamTest(CockpitOnFakes):
                 "af-en02": ("Choisir le format d’export", "Readers want to keep their notes outside the project"),
                 "af-fr01": ("Ajouter un export des notes en CSV", "Plusieurs lecteurs le demandent"),
             }))
+
+    def test_a_field_in_another_language_than_english_is_replaced_too(self):
+        # User story 73: French, not merely « not English ». German and
+        # Spanish hold no English word, and are not French either.
+        self.assertEqual(
+            {"af-de01": ["quoi"], "af-es01": ["quoi"], "af-es02": ["pourquoi"], "af-fr02": []},
+            self.replaced({
+                "af-de01": ("Die Fabrik wartet auf deine Entscheidung", "le projet attend ton choix"),
+                "af-es01": ("La fábrica no responde desde hace una hora", "le projet attend ton choix"),
+                "af-es02": ("Choisir le format d’export", "Los lectores quieren guardar sus notas fuera del proyecto"),
+                "af-fr02": ("La relecture de la carte attend ton avis", "Elle change le parcours des lecteurs"),
+            }))
+
+    def operator_config(self, language):
+        """A door of the operator's settings that answers `language`, as
+        bin/operator-config language does."""
+        path = os.path.join(self.tmp.name, "operator-config")
+        with open(path, "w") as fh:
+            fh.write("#!/bin/sh\n[ \"$1\" = language ] && echo %s\n" % language)
+        os.chmod(path, 0o755)
+        return path
+
+    def test_the_language_of_the_main_text_is_the_operators_as_its_settings_say(self):
+        # GLOSSARY.md « Operator Language »: set once in config/operator.toml,
+        # read through bin/operator-config language. An operator who reads
+        # English sees English, and French is not his language.
+        self.assertEqual(
+            {"af-en03": [], "af-fr03": ["quoi"]},
+            self.replaced({
+                "af-en03": ("The export format is waiting for your choice", "Readers want to keep their notes"),
+                "af-fr03": ("Le format de l’export attend ton choix", "Readers want to keep their notes"),
+            }, extra_env={"COCKPIT_OPERATOR_CONFIG_BIN": self.operator_config("en")}))
+
+    def test_the_internal_terms_a_main_text_never_shows_are_the_glossarys(self):
+        # User story 79: one vocabulary, the glossary's. A term the glossary
+        # puts out of the cockpit is replaced; one it does not, shown.
+        glossary = os.path.join(self.tmp.name, "GLOSSARY.md")
+        with open(glossary, "w") as fh:
+            fh.write("# Glossaire\n\n**Cockpit Lexicon**:\nThe words the Cockpit may show.\n"
+                     "_Never shown in the cockpit_: chantier, molécule\n_Avoid_: second glossary\n")
+        self.assertEqual(
+            {"af-gl01": ["quoi"], "af-gl02": []},
+            self.replaced({
+                "af-gl01": ("Le chantier des notes attend ton accord", "elle change la portée"),
+                "af-gl02": ("Le bead des notes attend ton accord", "elle change la portée"),
+            }, extra_env={"COCKPIT_GLOSSARY_FILE": glossary}))
 
 
 if __name__ == "__main__":

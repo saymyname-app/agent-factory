@@ -213,7 +213,7 @@ CSS = """
 .pn-overview .pn-dock>.btn,.pn-overview .pn-dock .acts>.btn,.pn-overview .pn-dock .pn-refuse .btn{flex:0 1 auto;
   min-height:44px}
 .pn-dock .pn-refuse{display:flex;flex-wrap:wrap;gap:8px;align-items:center;flex:1 1 280px}
-.pn-dock .pn-refuse .field{flex:1 1 180px;min-height:44px;color:var(--ink)}
+.pn-dock .pn-refuse .field{flex:1 1 180px;min-height:44px;color:var(--ink);border-color:var(--muted)}
 .pn-dock .snoozemenu{flex-basis:100%}
 .pn-dock .snoozemenu:not([hidden]){display:flex}
 .pn-dock .cockpit-actions-explication,.pn-dock .hint{flex-basis:100%;margin:0;font-size:13px;color:var(--pn-muted-text)}

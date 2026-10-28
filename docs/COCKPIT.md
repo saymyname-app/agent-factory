@@ -435,14 +435,22 @@ lecture. »). Tant que le suivi des tickets est illisible, la boîte dit
 **Texte principal en français, détails repliés.** Une ligne et une demande
 ouverte disent le français du cockpit. Le texte d’un producteur passe le
 contrôle de `cockpit.text.validate` : pas d’identifiant, pas de terme
-interne, une ligne de 140 caractères au plus, et en français — une phrase
-dont les mots grammaticaux sont anglais (« the », « is », « your »…) et plus
-nombreux que les mots grammaticaux français est refusée
-(`speaks_french`). Un champ refusé est remplacé par sa phrase de repli et le
+interne, une ligne de 140 caractères au plus, et dans la langue de
+l’opérateur. Les termes internes sont ceux que `GLOSSARY.md` met hors du
+cockpit (ligne « _Never shown in the cockpit_ » du Cockpit Lexicon) : le
+glossaire est le seul vocabulaire, aucune liste n’est recopiée dans le
+code. La langue est celle que donne `bin/operator-config language` (« fr »
+aujourd’hui) ; une phrase est refusée quand elle tient autant ou plus de
+mots grammaticaux d’une autre langue (anglais, espagnol, allemand, italien,
+portugais) que de la sienne, ou, à partir de cinq mots, aucun des siens
+(`speaks`). Le cockpit trouve le glossaire par `COCKPIT_GLOSSARY_FILE` et
+la porte des réglages par `COCKPIT_OPERATOR_CONFIG_BIN` (par défaut ceux du
+dépôt) ; s’il ne peut lire l’un ou l’autre, chaque champ est remplacé et le
+motif le dit, rien n’est montré sans contrôle. Un champ refusé est remplacé par sa phrase de repli et le
 défaut du producteur est compté ; les portes (`bin/proposal-door`, par
 `bin/operator-text-check`) appliquent le même contrôle avant d’écrire. Un
 titre écrit hors de ce contrat est redit en entier après le libellé du
-cockpit (« Texte écrit : « … » ») seulement s’il est français et ne porte ni
+cockpit (« Texte écrit : « … » ») seulement s’il est dans la langue de l’opérateur et ne porte ni
 identifiant ni terme interne (`speaks_plainly`) ; sinon les mots du
 producteur ne sont que dans les détails repliés. Les « Détails » repliés de
 chaque demande donnent son identifiant, sa nature, pourquoi un champ a été
@@ -455,7 +463,10 @@ d’aucune forme que le cockpit lit (question, proposition, session en pause)
 et qui n’a alerté personne (ni `gc.needs_benjamin`, ni
 `gc.escalation_mayor_paged_at` : une alerte d’abord adressée au Maire reste
 au Maire), devient une demande Quand tu veux « Signal non reconnu venant de
-<producteur> ». Son titre et sa description, tels qu’écrits, sont dans les
+<producteur> ». Le nom du producteur n’y est dit que s’il passe le même
+contrôle (`speaks_plainly`) ; sinon (« disk-watch » a la forme d’un
+identifiant) la demande dit « Signal non reconnu venant d’une source nommée
+dans les détails », et le nom est sous « Précisions ». Son titre et sa description, tels qu’écrits, sont dans les
 détails repliés sous « Texte brut », jamais en texte principal : le cockpit
 n’invente aucun sens. Aujourd’hui chaque producteur connu alerte le Maire
 d’abord : aucun signal de ce type n’apparaît, sauf d’un producteur nouveau.
@@ -481,7 +492,14 @@ n’attend plus — la commande avait fait son travail —, 409 pour de bon (« 
 geste précédent a été enregistré à la source … ») et la page montre le
 succès lu ; si elle attend encore, le geste part. Tant qu’un geste serait
 refusé, la page le dessine indisponible avec la même raison, même quand la
-relecture a échoué (`UncertainOutcomes.pending`). Une erreur imprévue d’un
+relecture a échoué (`UncertainOutcomes.pending`). Il en va de même quand la
+porte a fait son travail et que ce que le cockpit fait après elle échoue —
+écrire la trace d’une relance, relire la réponse qu’`escalation-door` a
+écrite (`FollowUpFailed`) : le geste est fait, il n’est donc pas refusé
+comme si rien n’était parti ; le POST répond 502 avec `incertain: true`
+(« La commande a été exécutée, mais la suite n’a pas pu être enregistrée :
+… ») et un second clic n’envoie rien avant relecture. La cible d’une
+relance est résolue avant que sa porte parte. Une erreur imprévue d’un
 geste répond 500 avec une phrase lisible au lieu de casser la requête. La
 page montre l’erreur sur la demande et se relit.
 

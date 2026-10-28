@@ -39,15 +39,41 @@ class ActionUncertain(ActionError):
     """The command of a gesture did not answer in time (af-fksj2c): it may
     have done its work, or not. The cockpit says so, then reads the source
     again before the gesture can be tried again (:mod:`cockpit.actions.
-    uncertain`)."""
+    uncertain`). ``status``: the HTTP status the cockpit answers it with."""
+
+    status = 504
+
+
+class FollowUpFailed(ActionUncertain):
+    """The door of a gesture did its work, then what the cockpit does after
+    it -- write its trace, read back what the door wrote -- failed: the
+    gesture is done, so it is uncertain like an expired one, never refused
+    as if nothing had happened (a second click would repeat it)."""
+
+    status = 502
 
 
 EXPIRED = ("La commande n’a pas répondu en %d s : elle a expiré. Son issue est incertaine ; "
            "le cockpit relit la source avant tout nouvel essai.")
 
 
+FOLLOW_UP_FAILED = ("La commande a été exécutée, mais la suite n’a pas pu être enregistrée : %s. "
+                    "Le cockpit relit la source avant tout nouvel essai.")
+
+
 def expired(seconds):
     return ActionUncertain(EXPIRED % round(seconds))
+
+
+def _after_door(step, *args, **kwargs):
+    """``step(*args, **kwargs)``, run once a door did its work: its failure
+    is a :class:`FollowUpFailed`, never a plain refusal."""
+    try:
+        return step(*args, **kwargs)
+    except ActionUncertain:
+        raise
+    except (ActionError, trace.TraceError) as exc:
+        raise FollowUpFailed(FOLLOW_UP_FAILED % exc)
 
 
 def _require(payload, field):
@@ -212,7 +238,7 @@ def build_action_handlers(
         # The click is Benjamin's own, confirmed gesture: the door records
         # him as the one who answered (af-zkdvur).
         run_door([escalation_door_bin, "repondre", bead_id, lettre, "--actor", "benjamin"])
-        bead = _show_bead(bd_bin, bead_id, timeout=door_timeout)
+        bead = _after_door(_show_bead, bd_bin, bead_id, timeout=door_timeout)
         metadata = bead.get("metadata") or {}
         option = metadata.get("gc.escalation_response_option", lettre)
         quand_iso = metadata.get("gc.escalation_response_at")
@@ -287,22 +313,22 @@ def build_action_handlers(
             )
         except relancer.RelanceError as exc:
             raise ActionError(str(exc))
-        run_door(args)
+        # The target is known before the door runs: once it ran, the
+        # relaunch is done, and only its trace is left to write.
         target_id = _resolve_target(bd_bin, payload)
+        run_door(args)
         label = relancer.relance_target_label(target_type, session_id=session_id, order_name=order_name)
         quand = trace.now_iso(clock)
-        try:
-            trace.write_trace(
-                bd_bin,
-                target_id,
-                quoi="relancer",
-                sur_quoi=label,
-                option_ou_raison=target_type,
-                quand_iso=quand,
-                acteur=acteur,
-            )
-        except trace.TraceError as exc:
-            raise ActionError(str(exc))
+        _after_door(
+            trace.write_trace,
+            bd_bin,
+            target_id,
+            quoi="relancer",
+            sur_quoi=label,
+            option_ou_raison=target_type,
+            quand_iso=quand,
+            acteur=acteur,
+        )
         return {"ok": True, "bead_id": target_id, "target_type": target_type, "target": label}
 
     def handle_accepter_chantier(payload):

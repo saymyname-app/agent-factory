@@ -225,13 +225,13 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         try:
             result = handler(payload)
         except (ActionUncertain, subprocess.TimeoutExpired) as exc:
-            # The command expired: it may have done its work. Said as it
-            # is, and the source read again at once.
+            # The command expired, or did its work and what follows it
+            # failed: said as it is, and the source read again at once.
             if isinstance(exc, subprocess.TimeoutExpired):
                 exc = expired(exc.timeout)
             self.server.uncertain.record(target, self.server.read_model.now())
             self._send_json({"error": str(exc), "incertain": True, "rafraichi": self._reread_after_action()},
-                            status=504)
+                            status=exc.status)
             return
         except ActionError as exc:
             self._send_json({"error": str(exc)}, status=400)
