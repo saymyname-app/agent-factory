@@ -1,7 +1,8 @@
 """The "other" Operator Request sources (T15, af-icxjc4 — Spec af-oohx2x
 §"Demandes opérateur : types, niveaux, sortie"): Spec/graphe à approuver,
 rituel dû, ticket de carte HITL prêt non lancé, source illisible depuis
-plus de 15 min, signal de type inconnu.
+plus de 15 min. A signal of unknown type is information, not a request
+(:mod:`cockpit.requests.sources.unknown_signal`).
 
 Each module here is a pure function from a source's already-read raw
 signals (the same shape :mod:`cockpit.requests.builder` takes for beads)
@@ -18,12 +19,10 @@ from cockpit.requests.sources.hitl import build_hitl_requests
 from cockpit.requests.sources.readability import build_readability_requests
 from cockpit.requests.sources.rituals import build_ritual_requests
 from cockpit.requests.sources.specs_and_graphs import build_specs_and_graphs_requests
-from cockpit.requests.sources.unknown_signal import build_unknown_signal_requests
 
 __all__ = [
     "build_hitl_requests",
     "build_readability_requests",
     "build_ritual_requests",
     "build_specs_and_graphs_requests",
-    "build_unknown_signal_requests",
 ]

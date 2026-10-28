@@ -145,7 +145,7 @@ Every answer is one JSON object on stdout.
 | Correction round | `gc.flow.correction` | ticket | `commit` (the full SHA both the code review and the evaluation answered at), `blocking_findings` (the ids of the Blocking Findings of that review), `not_observed` (what the evaluation did not observe there), at least one of the two not empty; `launches`: at most one `{bead, at}`; `at` |
 | Overrides | `gc.flow.overrides` | ticket | `entries`, oldest first, one per overridden Blocking Finding: `finding`, `approver`, `words` (not empty, as given), `commit` (the one of the review), `at` |
 | Parking | `gc.flow.park` | ticket | cause: `planning_exception`, `operator_request`, `resumes_exhausted` (T20); the ticket that caused it (`origin`: the one whose Ticket Exit parked it, or that is out of resumes); a one-line detail |
-| Resumes | `gc.flow.resume` | ticket | `entries`, oldest first, one per resume code opened (T20): `cause` (`interrupted`, `returned`, `unblocked`, `answered`, `behind`, `evaluation_no_result`, `stage_removed`, `code_review_no_result`, `amendment_granted`), `ref` (the one-line fact that asked for it), `session` (the author session it takes over from, or null), `exit` (the Ticket Exit it replaced, `{exit, at}`, or null), `stop` (only for `evaluation_no_result`, and for `stage_removed` a stop `test_review_refused` or `test_review_no_result`, and for `code_review_no_result`, whose resume also drops the `request` of `gc.flow.code_review`, and for `amendment_granted` a stop `amendment_exhausted` the operator answered « a », which allows one amendment more: the stop it lifted, as it was), `launches`: at most one `{bead, at}`; `at` |
+| Resumes | `gc.flow.resume` | ticket | `entries`, oldest first, one per resume code opened (T20): `cause` (`interrupted`, `returned`, `unblocked`, `answered`, `behind`, `evaluation_no_result`, `stage_removed`, `code_review_no_result`, `amendment_granted`, `inherited_change`), `ref` (the one-line fact that asked for it), `session` (the author session it takes over from, or null), `exit` (the Ticket Exit it replaced, `{exit, at}`, or null), `stop` (only for `evaluation_no_result`, and for `stage_removed` a stop `test_review_refused` or `test_review_no_result`, and for `code_review_no_result`, whose resume also drops the `request` of `gc.flow.code_review`, and for `amendment_granted` a stop `amendment_exhausted` the operator answered « a », which allows one amendment more: the stop it lifted, as it was), `launches`: at most one `{bead, at}`; `at` |
 | Parkings lifted | `gc.flow.park_lifts` | ticket | `entries`, oldest first, one per parking lifted on the ticket that caused it (T20): `cause`, `detail`, `parked_at`, `request` (the bead of the answered request), `option` (the letter taken, or null), `resumes` (the counter at that moment), `at`; `proven_by_test`: `{what, text}` per item the operator's answer `a` to an evaluation's Planning Exception judged proven by its criterion test (af-ten1sp) |
 | Grouped request | `gc.flow.grouped_request` | convoy | the bead that carries the one request of a convoy in which nothing but parked tickets is left (T20) and, once it reached the escalation door, the `sha256:` signature of the parkings it names, with `lift_option` (a letter) and `lifts` (the tickets that option lifts), both or neither |
 | Fidelity result | `gc.flow.fidelity` | ticket | `commit`, `verdict` (`favorable` / `unfavorable`, computed), `piece` (the sealed record), `screens`, `states` (state → `viewports`, `anchors` compared), `deviations`: each `state`, `viewport`, `anchor`, `kind` (`absent`, `structure`, `style`, `token`, `theme`), `property`; a `token` deviation has neither viewport nor anchor, a `theme` one (a theme not measurable on the prototype) a viewport and no anchor; past 100 deviations, the first 100 only, with `deviation_count` (all of them) and `deviation_anchors` (the anchors of all, `null` for a token deviation) |
@@ -401,7 +401,11 @@ The bound is K (Spec §8: a starting value, not a measure), **per cause**
 (ADR-0030 L2): each cause of `open-resume`, and `commit_after_verdict` (a
 commit after a verdict, which `invalidate-verdicts` counts without an
 entry), has its own bound, and the ticket is out of resumes once one cause
-reaches its bound. `resumes` stays the one counter that `open-resume`,
+reaches its bound. A resume an answer of the operator opened
+(`answered`, `amendment_granted`) has no bound: each one needs a new request
+and a new answer, so the answer bounds it; it is recorded and counted in
+`resumes` like any other (af-npz9v1.41: R2, af-cifk1e, was parked on
+28/10/2026 at its third answer). `resumes` stays the one counter that `open-resume`,
 `open-correction` and `invalidate-verdicts` add to; the count per cause is
 derived, never stored apart: the resume entries by their cause, and
 `commit_after_verdict` the rest of the counter once the entries and
@@ -413,7 +417,7 @@ Benjamin 27/10/2026 16:27 Paris: « Oui : une mise à jour behind causée par l'
 The counter `resumes` still holds every resume recorded. The correction round counts against no
 cause: its own bound is one round, held by `open-correction`. K is not held
 in this command: it is `bounds.resumes` of `config/delivery-flow.json`
-(3 for each cause; an object naming exactly the seven causes, or one
+(3 for each cause; an object naming exactly the bounded causes, or one
 integer for every cause, as a trial root may set), the one place the
 bounds of the flow are set (T21, `docs/CONVOY_ADVANCE.md`), read under
 `FACTORY_ROOT` (default: the repository of the command) and, when that root
@@ -425,7 +429,10 @@ bound minus the resumes of that cause counted since the last lift of a
 none), never below 0; and `resumes_left`, the fewest of them. `lift-park`
 keeps on the lift what the ticket had taken per cause (`taken`); a lift
 written before L2 has none, and what it had taken is read from the entries
-older than the lift and the counter it kept.
+older than the lift and the counter it kept. Without `--option`, a
+`resumes_exhausted` parking is lifted only while the ticket has resumes left
+under the bounds of now (`bin/convoy-advance`, af-npz9v1.41); that lift
+keeps `taken` as the last such lift kept it, so it gives no resume back.
 
 **The red of the integration branch (T21).** `record-integration-red`
 writes that the integration branch of the convoy is red: the control,
@@ -851,7 +858,11 @@ was lower), with the approver's words, kept under `grants` of the round;
 bin/correction-round grant calls it. `grant-correction --exceptional`
 (ADR-0034) does the same on a ticket at its bound, once: the grant carries
 `exceptional: true` and the bound of that ticket is one more; a second one,
-or one on a ticket with a round left, is refused.
+or one on a ticket with a round left, is refused. `grant-correction
+--arbitrated --target NAME...` (ADR-0035) is the round the Mayor grants at
+the bound: the grant carries `arbitrated: true` and its `targets`, each
+adds one to the bound of that ticket, at most `ARBITRATED_ROUNDS_MAX` (2)
+per ticket; refused on a ticket with a round left, or without a target.
 It also refuses a code review that has no round at that commit or has
 one open; an evaluation that has no round at that commit, has one open, or
 whose outcome there is neither `favorable` nor `return_to_author` (one

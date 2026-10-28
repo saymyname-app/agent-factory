@@ -140,7 +140,8 @@ its criteria; and the dataset of the product the author's demonstration
 was captured on (`dataset` of the piece `demonstration`, af-npz9v1.18): B
 (af-4uzgzm) proved its line on a state no dataset of its criteria held, which
 the Evaluator never launched. A dataset the evaluated commit's copy of the
-profile adds is a declared dataset (R1, af-d6anqb; `docs/PROJECT_PLANNING_PROFILE.md`). A ticket that names none is evaluated on the
+profile adds is a declared dataset, and one of the ticket's, named or not (R1, af-d6anqb, and R2,
+af-cifk1e; `docs/PROJECT_PLANNING_PROFILE.md`). A ticket that names none is evaluated on the
 first declared dataset only. Every declared dataset for every ticket made one evaluation
 need about 95 two-minute coverages against a 3,600-second deadline, and
 stopped T01R, T01R2 and T01R3 without a result (Benjamin, 2026-10-15:

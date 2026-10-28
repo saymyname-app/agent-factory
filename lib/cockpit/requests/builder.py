@@ -219,6 +219,12 @@ def _parse_ack_and_defer(bead):
     metadata = bead.get("metadata") or {}
     acquittee = str(metadata.get("gc.cockpit_ack", "")).lower() == "true"
     defer_until = _parse_iso(metadata.get("gc.cockpit_defer_until"))
+    # A proposal put off through bin/proposal-door (reporter) until a time
+    # the cockpit wrote (B, af-4uzgzm): hidden the same way. A time written
+    # in free words (« demain 10h ») is no time, and hides nothing.
+    proposal_until = _parse_iso(metadata.get("gc.proposal_report_until"))
+    if proposal_until is not None and (defer_until is None or proposal_until > defer_until):
+        defer_until = proposal_until
     return acquittee, defer_until
 
 

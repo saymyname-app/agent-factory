@@ -233,6 +233,51 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual(base, self.git("rev-parse", self.INTEGRATION))
         self.assertTrue(after["ok"])
 
+    # --- ADR-0035 (af-npz9v1.40): a stop at the bound reaches the Mayor -------------
+
+    def stopped_at_the_bound_with(self, why):
+        """T1, the only ticket of the convoy, stopped at the bound, its stop
+        raised, and on the operator's list a request with that reason."""
+        self.refused_by_its_review("leaves")
+        settings = self.root / "config" / "delivery-flow.json"
+        data = json.loads(settings.read_text())
+        bounds = json.loads((first.ROOT / "config" / "delivery-flow.json").read_text())["bounds"]
+        data["bounds"] = {**bounds, **data.get("bounds", {}), "correction_rounds": 1}
+        settings.write_text(json.dumps(data))
+        self.advance(CONVOY)
+        self.advance(CONVOY)
+        self.run_ok(first.ROOT / "bin" / "correction-round", "escalate", CONVOY, T1, "--repo", self.root, "--why", why)
+        if why == "compteur":
+            self.edit(T1, metadata={**self.bead(T1)["metadata"], "gc.escalation_pourquoi": (
+                "Le ticket a pris tous ses tours de correction : aucun autre ne démarre, rien de ce ticket ne fusionne.")})
+        self.assertEqual(1, self.run_ok(ESCALATION, "list").stdout.count(f"{T1} — "))
+        self.write_log.write_text("")
+
+    def mayor_mails(self):
+        return [entry for entry in self.write_log.read_text().splitlines()
+                if entry.startswith('["mail"') and '"mayor"' in entry]
+
+    def test_a_request_raised_for_the_count_alone_leaves_the_list_once_and_the_mayor_is_woken(self):
+        self.stopped_at_the_bound_with("compteur")
+
+        answer = self.advance(CONVOY)
+        again = self.advance(CONVOY)
+
+        self.assertEqual([T1], [entry["ticket"] for entry in self.correction_of(answer)["escalated"]])
+        self.assertIsNone(self.correction_of(again))
+        self.assertEqual(0, self.run_ok(ESCALATION, "list").stdout.count(f"{T1} — "))
+        self.assertEqual(1, len(self.mayor_mails()))
+        self.assertEqual("still_refused", json.loads(self.bead(T1)["metadata"]["gc.flow.stop"])["reason"])
+
+    def test_a_decision_the_mayor_raised_stays_on_the_list(self):
+        self.stopped_at_the_bound_with("le critère contredit la Spec : décision de produit")
+
+        answer = self.advance(CONVOY)
+
+        self.assertIsNone(self.correction_of(answer))
+        self.assertEqual(1, self.run_ok(ESCALATION, "list").stdout.count(f"{T1} — "))
+        self.assertEqual([], self.mayor_mails())
+
     def test_a_correction_round_that_cannot_be_sent_fails_the_pass(self):
         base, _ = self.refused_by_its_review("door-refuses")
 

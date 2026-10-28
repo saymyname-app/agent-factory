@@ -15,6 +15,8 @@ from cockpit.core.gc_client import (
 )
 from cockpit.requests.journal import READ_TIMEOUT_SECONDS as JOURNAL_READ_TIMEOUT_SECONDS
 from cockpit.requests.sources.readability import ILLISIBLE_THRESHOLD_SECONDS
+from cockpit.requests.sources.silence import SILENCE_ALERT_SECONDS
+from cockpit.actions.registry import DOOR_TIMEOUT_SECONDS
 from cockpit.notify.pushover import PUSHOVER_URL
 from cockpit.projects.depots import REPO_URL_TEMPLATE
 from cockpit.health.engine import (
@@ -74,6 +76,14 @@ class Config:
         self.illisible_after_seconds = float(
             env.get("COCKPIT_ILLISIBLE_SECONDS", str(ILLISIBLE_THRESHOLD_SECONDS))
         )
+        # « Usine muette » (B, af-4uzgzm): how long the supervisor or the
+        # tracker may stay silent before the cockpit says so, Urgent.
+        self.silence_alert_seconds = float(
+            env.get("COCKPIT_SILENCE_ALERT_SECONDS", str(SILENCE_ALERT_SECONDS))
+        )
+        # How long a door of an Operator Action is waited for before its
+        # command counts as expired, its outcome uncertain (af-fksj2c).
+        self.action_timeout_seconds = float(env.get("COCKPIT_ACTION_TIMEOUT_SECONDS", str(DOOR_TIMEOUT_SECONDS)))
         # How long one read of the tracker may take before it counts as
         # failed (T02, af-0gonc9: « Vue d’ensemble » says it is reading until
         # a read ends, and unavailable when the read failed).
@@ -85,9 +95,9 @@ class Config:
         # address the cockpit is reached at, Benjamin's Tailscale login --
         # lives in one local, unversioned file beside the pid file. An
         # environment variable still wins over it.
-        local = _read_local_config(
-            env.get("COCKPIT_LOCAL_CONFIG") or os.path.join(os.path.dirname(self.pid_file), LOCAL_CONFIG_NAME)
-        )
+        self.local_config_file = env.get("COCKPIT_LOCAL_CONFIG") or os.path.join(
+            os.path.dirname(self.pid_file), LOCAL_CONFIG_NAME)
+        local = _read_local_config(self.local_config_file)
         # Out-of-scope touch (T13, af-cx20q9 -- declared scope
         # lib/cockpit/access/**, lib/cockpit/actions/**): the access
         # guard needs Benjamin's Tailscale login and the origin the
@@ -113,12 +123,19 @@ class Config:
         self.loop_guard_bin = env.get(
             "COCKPIT_LOOP_GUARD_BIN", os.path.join(_REPO_ROOT, "bin", "factory-session-loop-guard")
         )
+        # The door of pause and resume of an order (af-npz9v1.15), which
+        # relancer resumes an order through (BR, af-eyc5ah).
+        self.order_pause_bin = env.get(
+            "COCKPIT_ORDER_PAUSE_BIN", os.path.join(_REPO_ROOT, "bin", "order-pause")
+        )
         self.gc_bin = env.get("COCKPIT_GC_BIN", "gc")
         # Notifications and heartbeat (spec §"Notifications", §"Heartbeat et
-        # usine muette"). Both secret files live outside the repository, on
-        # the Windows side; unset or unreadable, nothing is sent or pinged
-        # and the health zone says so (spec .98).
-        self.pushover_secrets_file = env.get("COCKPIT_PUSHOVER_SECRETS_FILE") or local.get("pushover_secrets_file", "")
+        # usine muette"). Both secret files live outside the repository, in
+        # private files of the VM (I, af-cp4fzd: the procedure linked from
+        # « Accès » says where); unset or unreadable, nothing is sent or
+        # pinged and the health zone says so (spec .98).
+        self.pushover_secrets_file = _from_home(
+            env.get("COCKPIT_PUSHOVER_SECRETS_FILE") or local.get("pushover_secrets_file", ""), env)
         self.pushover_url = env.get("COCKPIT_PUSHOVER_URL", PUSHOVER_URL)
         self.notify_state_file = env.get("COCKPIT_NOTIFY_STATE_FILE") or os.path.join(
             os.path.dirname(self.pid_file), "cockpit-notify-state.json"
@@ -127,7 +144,8 @@ class Config:
         # The address a push links back to: the ts.net URL once Tailscale
         # Serve exposes the cockpit; the local origin until then.
         self.public_url = env.get("COCKPIT_PUBLIC_URL") or local.get("public_url") or self.allowed_origin
-        self.heartbeat_url_file = env.get("COCKPIT_HEARTBEAT_URL_FILE") or local.get("heartbeat_url_file", "")
+        self.heartbeat_url_file = _from_home(
+            env.get("COCKPIT_HEARTBEAT_URL_FILE") or local.get("heartbeat_url_file", ""), env)
         self.heartbeat_tick_seconds = float(env.get("COCKPIT_HEARTBEAT_TICK_SECONDS", "30"))
         self.heartbeat_interval_seconds = float(env.get("COCKPIT_HEARTBEAT_INTERVAL_SECONDS", "300"))
         # Clean stop (spec §"Arrêt propre et redémarrage"): the driver's state
@@ -227,6 +245,17 @@ def _read_local_config(path):
     return {
         key: data[key] for key in LOCAL_CONFIG_KEYS if isinstance(data.get(key), str) and data[key]
     }
+
+
+def _from_home(path, env):
+    """``path`` with a leading ``~/`` read as the home of the account that
+    runs the cockpit (``HOME`` of ``env``): the procedure of the VM settings
+    proposes the secret files there, and a JSON file is expanded by no
+    shell (I, af-cp4fzd)."""
+    home = env.get("HOME") or os.path.expanduser("~")
+    if path == "~" or path.startswith("~/"):
+        return home + path[1:]
+    return path
 
 
 def _default_pid_file(env):

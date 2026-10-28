@@ -96,6 +96,13 @@ class TheProxyAlone(unittest.TestCase):
         self.assertEqual(403, status)
         self.assertIn(b"not a member of the tailnet", body)
 
+    def test_its_refusal_says_how_a_member_of_the_tailnet_is_named(self):
+        # Whoever tries the address with the header of Serve learns, from
+        # the refusal, the one the synthetic proxy reads (I, af-cp4fzd:
+        # the Evaluator met the refusal and nothing else).
+        _, _, body = fetch(self.url + "/", self.ca, {"Tailscale-User-Login": BENJAMIN})
+        self.assertIn(b"X-Synthetic-Tailnet-Login", body)
+
     def test_it_speaks_https_with_the_certificate_of_the_launch_only(self):
         with self.assertRaises(OSError):
             urllib.request.urlopen(self.url.replace("https:", "http:") + "/", timeout=5)

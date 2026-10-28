@@ -5,6 +5,8 @@ config: a local process already has every power on this host (spec .9
 threat model), but the cockpit is still not allowed to become reachable
 from the tailnet or LAN by an operator mistake in a config file.
 """
+import logging
+import subprocess
 import time
 import threading
 import json
@@ -13,7 +15,8 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from cockpit.access.guard import session_cookie_header
-from cockpit.actions.registry import ActionError
+from cockpit.actions.registry import ActionError, ActionUncertain, expired
+from cockpit.actions.uncertain import UncertainOutcomes
 from cockpit.core.freshness import FRESH, STALE, UNKNOWN
 from cockpit.core.readmodel import PARIS
 from cockpit.factory.checks import VALIDITY_SECONDS as CHECK_VALIDITY_SECONDS
@@ -41,11 +44,11 @@ from cockpit.runs.workflows import workflow_runs
 from cockpit.ui.analyses.page import CSS as ANALYSES_CSS, render_analyses
 from cockpit.ui.base.page import render_document, render_fresh, render_home_zones
 from cockpit.ui.health.page import render_health_zone, render_status_line
-from cockpit.ui.access.page import render_access_zone
+from cockpit.ui.access.page import PROCEDURE_PATH, render_access_zone
+from cockpit.ui.access.procedure import CSS as PROCEDURE_CSS, render_procedure
 from cockpit.ui.factory.page import CSS as FACTORY_PAGE_CSS, read_machine, render_factory_page
 from cockpit.ui.home.overview import CSS as OVERVIEW_CSS
 from cockpit.ui.home.overview import overview_view, render_overview
-from cockpit.ui.home.page import render_requests_section
 from cockpit.ui.panorama.shell import CSS as PANORAMA_CSS
 from cockpit.ui.panorama.shell import HOME, NAVIGATION, render_not_folded, render_shell
 from cockpit.ui.stop.render import render_stop_section
@@ -75,6 +78,14 @@ NOT_FOLDED = {
 
 # Actions that write nothing on a bead (a prompt to copy, a test push): no
 # re-read after them.
+# What a gesture that failed in an unforeseen way answers: nothing is said
+# done, and the request is to be read again before anything else.
+UNEXPECTED_ACTION_ERROR = ("Le cockpit n’a pas pu faire ce geste à cause d’une erreur interne. Rien n’est confirmé : "
+                           "relis la demande avant de réessayer.")
+# What a member of the tailnet who is not the operator reads (I, af-cp4fzd):
+# nothing of the cockpit.
+READER_REFUSED_TEXT = ("Accès refusé : ce cockpit est réservé à l’opérateur de l’usine. "
+                       "Ton identité Tailscale n’y est pas autorisée.\n")
 ACTIONS_WITHOUT_WRITE = frozenset({"continuer", "pas_bon_vers_agent", "notifier_test"})
 # What "Ce qui t'attend", the projects and the journal are built from.
 SOURCES_REREAD_AFTER_ACTION = frozenset({"beads", "projets", "journal"})
@@ -91,7 +102,23 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):  # quiet by default; tests read the body
         pass
 
+    def _refuse_reader(self):
+        """A member of the tailnet who is not the operator: nothing of the
+        cockpit is read or served to them (I, af-cp4fzd). True when the
+        request was refused."""
+        if self.server.action_guard.check_reader(self.headers):
+            return False
+        body = READER_REFUSED_TEXT.encode("utf-8")
+        self.send_response(403)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
     def do_GET(self):
+        if self._refuse_reader():
+            return
         read_model = self.server.read_model
         # A page is the path of its address: a query (« /runs? », which a
         # button of the navigation sends) names the same page.
@@ -143,6 +170,10 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         if path == "/usine":
             self._send_factory_page(read_model)
             return
+        if path == PROCEDURE_PATH:
+            self._send_page(read_model, "usine", render_procedure(self.server.procedure_settings()),
+                            extra_css=PROCEDURE_CSS)
+            return
         if path == "/rituels":
             rituals = read_rituals(self.server.rituals_file)
             self._send_page(read_model, "rituels", lambda anchors: render_rituals(rituals, anchors),
@@ -168,6 +199,11 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         """Operator Actions (T13, af-cx20q9; spec af-oohx2x §"Actions
         opérateur"). Every write goes through the access guard first —
         refused, nothing downstream (Beads included) is ever touched."""
+        if self.path in ("/api/usine/reverifier", "/api/health/recheck"):
+            guard_result = self.server.action_guard.check_page_post("POST", self.headers)
+            if not guard_result.allowed:
+                self._send_json({"error": guard_result.reason}, status=403)
+                return
         if self.path == "/api/usine/reverifier":
             self._recheck_factory_section()
             return
@@ -207,14 +243,43 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         except ValueError:
             self._send_json({"error": "bad_json"}, status=400)
             return
+        writes = action not in ACTIONS_WITHOUT_WRITE
+        target = (payload.get("bead_id") or payload.get("source_key")) if isinstance(payload, dict) else None
+        if writes and target:
+            # After an uncertain outcome, not again before the source was
+            # read again, nor once it shows the gesture done (af-fksj2c).
+            refusal = self._uncertain_refusal(target)
+            if refusal:
+                self._send_json({"error": refusal, "incertain": True}, status=409)
+                return
         try:
             result = handler(payload)
+        except (ActionUncertain, subprocess.TimeoutExpired) as exc:
+            # The command expired, or did its work and what follows it
+            # failed: said as it is, and the source read again at once.
+            if isinstance(exc, subprocess.TimeoutExpired):
+                exc = expired(exc.timeout)
+            self.server.uncertain.record(target, self.server.read_model.now())
+            self._send_json({"error": str(exc), "incertain": True, "rafraichi": self._reread_after_action()},
+                            status=exc.status)
+            return
         except ActionError as exc:
             self._send_json({"error": str(exc)}, status=400)
             return
-        if action not in ACTIONS_WITHOUT_WRITE and isinstance(result, dict):
+        except Exception:
+            logging.getLogger(__name__).exception("action %s failed", action)
+            self._send_json({"error": UNEXPECTED_ACTION_ERROR}, status=500)
+            return
+        if writes and isinstance(result, dict):
             result["rafraichi"] = self._reread_after_action()
         self._send_json(result)
+
+    def _uncertain_refusal(self, target):
+        read_model = self.server.read_model
+        snapshot = read_model.snapshot()
+        requests, beads_row, _ = self._assemble_requests(snapshot, read_model.now())
+        read_at = beads_row["read_at"] if beads_row else None
+        return self.server.uncertain.refusal(target, read_at, {request.id for request in requests})
 
     def _first_reading(self, read_model, knowledge=False, agents=False):
         """The snapshot, once the projects had their first reading if the
@@ -250,22 +315,28 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         Panorama holds yet folded under it."""
         snapshot = self._first_reading(read_model)
         now = read_model.now()
-        requests, _, beads_known = self._assemble_requests(snapshot, now)
+        requests, beads_row, _ = self._assemble_requests(snapshot, now)
+        # A gesture whose outcome is uncertain is drawn unavailable for as
+        # long as a POST on it would be refused (af-fksj2c).
+        uncertain = self.server.uncertain.pending(beads_row["read_at"] if beads_row else None,
+                                                  {request.id for request in requests})
         health = self._compute_health(read_model)
+        # « Ce qui t’attend » is « Pour moi » of the overview itself (B,
+        # af-4uzgzm): the zones folded under it no longer hold it.
         zones_html = render_home_zones(
             read_model.headline(),
             read_model.stale_or_unknown(),
-            requests_section_html=self._render_requests_section(snapshot, now),
             extra_sections_html=(
                 self._render_projects_zone(snapshot)
                 + self._render_stop_zone(snapshot)
-                + render_access_zone(self.server.benjamin_login, snapshot.get("tailscale"), now)
+                + render_access_zone(self.server.benjamin_login, snapshot.get("tailscale"), now,
+                                   public_url=self.server.public_url)
                 + render_health_zone(health, checked_at=_latest_read_at(snapshot, ("beads", "git")))
             ),
             status_html=render_status_line(snapshot.get("gc"), health),
         )
         driver = getattr(self.server, "stop_driver", None)
-        view = overview_view(snapshot, requests if beads_known else [],
+        view = overview_view(snapshot, requests, now=now, undelivered=self._undelivered(), uncertain=uncertain,
                              stop_trial_passed=bool(driver is not None and driver.essai_reussi()))
         # T13, af-cx20q9: the SameSite=Strict cookie an action POST must
         # echo back -- a cross-site POST never carries it, so its presence
@@ -340,20 +411,8 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         notify = self.server.notify
         return notify.undelivered() if notify is not None else set()
 
-    def _render_requests_section(self, snapshot, now):
-        requests, beads_row, beads_known = self._assemble_requests(snapshot, now)
-        if not beads_known:
-            last_known_at = beads_row["read_at"] if beads_row else None
-            return render_requests_section(
-                requests, verified_at=now, source_unknown=True, last_known_at=last_known_at,
-                undelivered=self._undelivered(),
-            )
-        return render_requests_section(
-            requests, verified_at=beads_row["read_at"], undelivered=self._undelivered()
-        )
-
     def _requests_payload(self, snapshot, now):
-        """JSON twin of :meth:`_render_requests_section` (T12, af-is5e97):
+        """JSON twin of « Ce qui t’attend » (T12, af-is5e97):
         lets a test assert on structured fields and the producer-defect
         count without scraping the rendered HTML. ``state`` is "unknown"
         whenever Beads is: the list is then not the whole list."""
@@ -546,7 +605,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         health = self._compute_health(read_model)
         notify = self.server.notify
         actions_html = self._render_stop_zone(snapshot) + render_access_zone(
-            self.server.benjamin_login, snapshot.get("tailscale"), now)
+            self.server.benjamin_login, snapshot.get("tailscale"), now, public_url=self.server.public_url)
         agents = checks.get("agents")
         wanted = (urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("role") or [""])[0]
         keys = [role["key"] for role in agents["value"]["configuration"]["roles"]]
@@ -774,6 +833,7 @@ def make_server(
         server.server_close()
         raise ValueError("cockpit bound to %r, not 127.0.0.1 — refusing" % (sockname[0],))
     server.read_model = read_model
+    server.uncertain = UncertainOutcomes()
     server.defect_counter = DefectCounter()
     # T13, af-cx20q9: no guard supplied (a caller that only wants GET /,
     # e.g. an older test) means every action is refused rather than left
@@ -801,6 +861,10 @@ def make_server(
     server.runs_view = {}
     server.stop_driver = None
     server.benjamin_login = ""
+    # The address the operator opens the cockpit at: the HTTPS address of
+    # the node behind Tailscale Serve once it is set (I, af-cp4fzd).
+    server.public_url = ""
+    server.procedure_settings = dict
     # The rituals file of the Factory (« Rituels »): unset, nothing read.
     server.rituals_file = None
     # Where the projects are declared (cockpit.projects.descriptors): the
@@ -832,3 +896,12 @@ class _AlwaysRefuseGuard:
         from cockpit.access.guard import GuardResult, REFUSED_SESSION
 
         return GuardResult(False, REFUSED_SESSION)
+
+    def check_page_post(self, method, headers):
+        return self.check(method, headers)
+
+    def check_reader(self, headers):
+        """No identity configured: nothing to tell a reader from another."""
+        from cockpit.access.guard import GuardResult
+
+        return GuardResult(True, "")

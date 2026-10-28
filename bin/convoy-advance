@@ -102,7 +102,9 @@ stopped because its Ticket Evaluation gave no result (af-xhc0sj), once per
 tip of the integration branch: the resume lifts the stop, keeps it on the
 resume, and withdraws its request; so is a ticket stopped at its second
 amendment once the operator answered « a » to its request (af-25o7vr,
-cause `amendment_granted`, one amendment more); every other stop stays
+cause `amendment_granted`, one amendment more), or whose every change
+since the freeze is the base's it merged (af-npz9v1.39, cause
+`inherited_change`, no answer asked); every other stop stays
 with the operator. At the
 last resume of a same cause (bounds.resumes, one bound per cause, ADR-0030
 L2: these causes and a commit after a verdict; the correction rounds keep
@@ -234,7 +236,7 @@ from typing import Any, Iterator
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
-from convoy_state import PROVEN_BY_TEST_OPTION, REEVALUATE_OPTION, overridden_ticket  # noqa: E402
+from convoy_state import PROVEN_BY_TEST_OPTION, REEVALUATE_OPTION, STOP_COUNT_WHY, overridden_ticket  # noqa: E402
 
 
 PROGRAM = "convoy-advance"
@@ -246,6 +248,7 @@ DOOR_BIN = BIN / "dispatch-door"
 ESCALATION_BIN = BIN / "escalation-door"
 INTEGRATION_BIN = BIN / "spec-integration"
 CODE_REVIEW_BIN = BIN / "code-review"
+TDD_STEP_BIN = Path(os.environ.get("CONVOY_ADVANCE_TDD_STEP_BIN") or BIN / "tdd-step")
 PROJECT_STANDARDS_BIN = BIN / "project-standards"
 EVALUATION_BIN = BIN / "ticket-evaluation"
 CORRECTION_BIN = BIN / "correction-round"
@@ -328,6 +331,10 @@ NO_RESULT = "evaluation_no_result"
 AMENDMENT_STOP = "amendment_exhausted"
 AMENDMENT_GRANTED = "amendment_granted"
 AMENDMENT_RESUME_OPTION = "a"
+# The resume that lifts that stop when every change since the freeze is the
+# base's the branch merged, not the ticket's (af-npz9v1.39): no amendment
+# was the ticket's to take, so no answer of the operator is asked.
+INHERITED_CHANGE = "inherited_change"
 # ADR-0030 L3 removed the test review: a ticket it stopped before is resumed
 # on itself, once per stop, its request withdrawn (af-pjvsgo). A code review
 # without result is resumed the same way (af-wu6xj7): most often a defect of
@@ -572,13 +579,14 @@ class Convoy:
         """Tickets whose author has finished and that are not merged yet --
         their review or their evaluation may have refused them -- or that
         were stopped still refused without the stop having reached the
-        operator: what makes a settlement of the correction rounds worth
-        running."""
+        operator, or that were stopped at the bound under the old rule and
+        still hold the request it raised for the count alone (ADR-0035): what
+        makes a settlement of the correction rounds worth running."""
         due = []
         for t in self.tickets:
             stop = t.get("stop") or {}
             if stop:
-                if stop.get("reason") == CORRECTION_STOP and "raised" not in stop:
+                if stop.get("reason") == CORRECTION_STOP and ("raised" not in stop or count_request_open(t)):
                     due.append(t["id"])
             elif not t.get("park") and t["id"] in self.finished_unmerged():
                 due.append(t["id"])
@@ -1088,6 +1096,29 @@ def amendment_granted_due(ticket: dict[str, Any]) -> tuple[str, str, str] | None
     return "new", AMENDMENT_GRANTED, f"stop:{stop['reason']}/{stop['at']}"
 
 
+def inherited_change_due(convoy: Convoy, ticket: dict[str, Any]) -> tuple[str, str, str] | None:
+    """The resume a stop at the second amendment asks for when, at the
+    tip, no frozen file and no file of the test perimeter changed since the
+    freeze but as the base the branch merged holds it (af-npz9v1.39): once
+    per stop, none once the operator answered it, none when the ticket has
+    no resume left, none when bin/tdd-step cannot say. The fact is
+    `stop:<reason>/<time>`."""
+    stop = ticket["stop"]
+    if ticket.get("resumes_left") == 0 or not ticket.get("tip"):
+        return None
+    if request_answer(read_bead(ticket["id"]), stop["at"]) is not None:
+        return None
+    try:
+        proc = run([str(TDD_STEP_BIN), "changes", convoy.id, ticket["id"], "--repo", str(convoy.repo),
+                    "--profile", str(rig_profile(convoy.rig)), "--at", ticket["tip"]])
+        answer = json.loads(proc.stdout)
+    except (Refusal, json.JSONDecodeError):
+        return None
+    if proc.returncode != 0 or not isinstance(answer, dict) or answer.get("own") != [] or not answer.get("inherited"):
+        return None
+    return "new", INHERITED_CHANGE, f"stop:{stop['reason']}/{stop['at']}"
+
+
 def once_per_stop_due(ticket: dict[str, Any], cause: str) -> tuple[str, str, str] | None:
     """The resume a stop of a removed stage, or of a code review without
     result, asks for: once per stop, none once the operator answered it,
@@ -1147,7 +1178,7 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
             elif ticket["stop"]["reason"] == CODE_REVIEW_STOP:
                 due = once_per_stop_due(ticket, CODE_REVIEW_STOP)
             elif ticket["stop"]["reason"] == AMENDMENT_STOP:
-                due = amendment_granted_due(ticket)
+                due = amendment_granted_due(ticket) or inherited_change_due(convoy, ticket)
             elif overridden_at_work(ticket):
                 # Only the merge that returned it lifts its stop; no resume left, it stays with the operator.
                 due = resume_due(ticket, alive) if ticket.get("resumes_left") != 0 else None
@@ -1194,6 +1225,17 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
             out["refused"].append({"id": ticket_id, "reason": str(exc)})
 
 
+def count_request_open(ticket: dict[str, Any]) -> bool:
+    """A ticket stopped at the bound whose request, raised before ADR-0035
+    for the count alone, is still open and unanswered: bin/correction-round
+    settle wakes the Mayor and withdraws it, once (af-npz9v1.40)."""
+    if not ticket.get("correction") or ticket.get("correction_rounds_left"):
+        return False
+    metadata = read_bead(ticket["id"]).get("metadata") or {}
+    return metadata.get("gc.needs_benjamin") not in (None, "none") \
+        and metadata.get("gc.escalation_pourquoi") == STOP_COUNT_WHY
+
+
 def request_answer(bead: dict[str, Any], since: str) -> str | None:
     """The letter the operator answered a request with
     (bin/escalation-door repondre), once it is no longer open."""
@@ -1212,10 +1254,16 @@ def settle_lifts(convoy: Convoy, out: dict[str, Any]) -> None:
     Exception could not observe, or the one that has it evaluated again on
     the products launched again (af-npz9v1.38); the lifting option of the convoy's grouped
     request, for the tickets it names. Any other answer leaves the ticket
-    parked."""
-    lifts: list[tuple[str, str, str]] = []
+    parked. A ticket parked for exhausted resumes that has resumes left
+    under the bounds of now is lifted without an answer: an answered resume
+    takes no bound since af-npz9v1.41, and nothing is left to ask."""
+    lifts: list[tuple[str, str, str | None]] = []
     for ticket in convoy.tickets:
         park = ticket.get("park") or {}
+        if ticket.get("status") != "closed" and park.get("origin") == ticket["id"] \
+                and park.get("cause") == PARK_EXHAUSTED and ticket.get("resumes_left"):
+            lifts.append((ticket["id"], ticket["id"], None))
+            continue
         answer = park.get("answer")
         if ticket.get("status") == "closed" or park.get("origin") != ticket["id"] or not answer:
             continue
@@ -1241,7 +1289,8 @@ def settle_lifts(convoy: Convoy, out: dict[str, Any]) -> None:
         out["refused"].append({"id": convoy.id, "reason": str(exc)})
     for ticket_id, request, letter in lifts:
         try:
-            answer = state_write("lift-park", convoy.id, ticket_id, "--request", request, "--option", letter)
+            option = ["--option", letter] if letter else []
+            answer = state_write("lift-park", convoy.id, ticket_id, "--request", request, *option)
             out["lifted"].append({"id": ticket_id, "option": letter, "request": request, "lifted": answer["lifted"]})
         except Refusal as exc:
             out["refused"].append({"id": ticket_id, "reason": str(exc)})

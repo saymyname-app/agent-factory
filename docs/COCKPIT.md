@@ -369,6 +369,143 @@ dossier is read by `projects/source.py` in the folder its record names
 (`path`, the folder of the Evidence Pack; `read_pack_sections` opens its
 `index.html`: one rubric per `<section id="rubrique-N">`).
 
+## « Pour moi » au premier plan, gestes confirmés, commandes qui n'échouent plus en silence (B, af-4uzgzm ; BR, af-eyc5ah)
+
+Spec af-fgcw0d, user stories 6, 27, 29, 34, 73, 75, 76, 79, 122 et 175 ;
+Validated Prototype `prototype/cockpit-b-zones-20261012` à 632deea, états
+result-request et result-confirmation. Cette section est écrite pour
+Benjamin, qui se sert de ces gestes lui-même (ADR-0017, condition 4).
+
+**Ce que tu y gagnes** (ADR-0017, condition 3 : temps humain et jetons).
+Avant B, « Ce qui t’attend » était replié sous « Détails techniques et
+actions », aucune demande ni bouton « Relancer » n’existait pour une session
+mise en pause par l’usine, une proposition ne se reportait qu’à une heure
+écrite en mots (qui ne la cachait pas), et une commande qui ne répondait pas
+laissait le geste sans réponse. Relancer une session en pause passait donc
+par une session d’agent : une demande écrite, le contexte relu par l’agent,
+puis la vérification de ce qu’il a fait.
+
+| Geste | Avant B | Avec B |
+|---|---|---|
+| Ouvrir une demande et voir ses gestes | 1 clic de plus (déplier la zone technique) | 1 clic sur la ligne |
+| Relancer un ordre en pause | une PR qui retirait son nom de `[orders] skip` de `city.toml`, sa CI et un rechargement de la cité (#701), ou depuis le 23/10 une commande `bin/order-pause resume` tapée par un agent | 2 clics (armer, « Confirmer ») et aucun jeton ; la pause levée est relue à la source en moins de 20 s (`TRACED_SECONDS`) |
+| Relancer une session en pause | une session d’agent : quelques minutes de ton temps et les jetons d’une session (estimation, non mesurée : de l’ordre de 20 000 à 50 000 jetons pour relire le contexte) | 2 clics (armer, « Confirmer ») et aucun jeton ; l’écriture à la source est relue en moins de 20 s (mesuré par les tests de critère, `TRACED_SECONDS`) |
+| Reporter une proposition jusqu’à une heure | impossible sans agent : l’heure écrite en mots ne la cachait pas | 2 clics, la proposition est cachée jusqu’à l’heure choisie |
+| Une commande qui ne répond pas | le geste restait sans réponse, et le répéter risquait un doublon | une erreur lisible en 15 s au plus (`COCKPIT_ACTION_TIMEOUT_SECONDS`), puis une relecture de la source avant tout nouvel essai |
+| L’usine se tait | rien ne le disait sur l’accueil | une demande Urgent « Usine muette » après 15 min de silence |
+
+**Pour moi est la boîte de décision de la Vue d’ensemble.** « Ce qui
+t’attend » n’est plus replié sous « Détails techniques et actions » : chaque
+ligne ouvre sa demande à côté de la liste, là où s’ouvre le résultat d’un
+chantier (`lib/cockpit/ui/home/pour_moi.py`). La demande propre au résultat
+(sa demande d’acceptation) ouvre le résultat. Une demande ouverte dit de quoi
+il s’agit, son titre, pourquoi elle t’attend, les options préparées, puis sa
+barre de gestes :
+
+| Demande | Gestes |
+|---|---|
+| une question (NEEDS BENJAMIN) | ses options, chacune la réponse (armée, puis « Confirmer ? ») ; Continuer avec un agent ; Acquitter (Urgent) ; Reporter |
+| une proposition de classe décision | Accepter ; Refuser, avec la raison écrite dans son champ ; Reporter → « Dans 1 h », « Dans 4 h », « Demain 09:00 », chacun armé puis confirmé ; Continuer avec un agent |
+| une session mise en pause par l’usine (`[session-loop] <session>`, `gc.source=factory-session-loop-guard`, `lib/cockpit/requests/sources/paused_sessions.py`) | Relancer (armé, puis confirmé : `factory-session-loop-guard resume`, tracé sur sa fiche, « Relance demandée » au journal) ; Reporter |
+| un ordre en pause (« Un ordre de l’usine est en pause » : la fiche ouverte de `bin/order-pause pause`, `gc.order_pause=<ordre>`, `lib/cockpit/requests/sources/paused_orders.py`) ; le nom de l’ordre, qui l’a mis en pause et ses mots sont dans les détails | Relancer (armé, puis confirmé : `bin/order-pause resume <ordre> --by benjamin --words "relance depuis le cockpit"`, qui ferme la fiche de la pause ; « Relance demandée » au journal) ; Reporter |
+| « Usine muette » | Vérifier l’usine (la page Usine) ; Revérifier maintenant |
+
+Chaque geste qui modifie l’usine se fait en deux temps
+(`cockpit.ui.actions.render`) : un premier clic l’arme, « Confirmer ? », un
+second l’envoie. Une proposition reportée passe par `bin/proposal-door
+reporter` avec l’heure que le cockpit a calculée (ISO, heure de Paris) :
+`gc.proposal_report_until` la cache jusqu’à cette heure, comme
+`gc.cockpit_defer_until` cache toute autre demande ; une heure écrite en
+mots libres ne cache rien.
+
+**Un ordre se relance par sa porte.** Depuis le 23/10, une pause d’ordre
+est une fiche du suivi posée par `bin/order-pause` (af-npz9v1.15, #724) ;
+BR la lit et la lève par cette porte, jamais par `gc order run`, qui
+lancerait l’ordre hors de son échéance sans lever la pause. Un ordre retiré
+par `[orders] skip` de `city.toml` reste ta décision de config : le cockpit
+n’en lit aucune demande, et la porte ne le touche pas. Le cockpit trouve la
+porte par `COCKPIT_ORDER_PAUSE_BIN` (par défaut `bin/order-pause` du dépôt).
+
+Sur une lecture qui n’est plus à jour, les gestes sont dessinés et
+indisponibles (« Lecture périmée : les gestes reviennent à la prochaine
+lecture. »). Tant que le suivi des tickets est illisible, la boîte dit
+« Inconnu : illisible depuis HH:MM » et liste ce qui ne vient pas de lui.
+
+**Texte principal en français, détails repliés.** Une ligne et une demande
+ouverte disent le français du cockpit. Le texte d’un producteur passe le
+contrôle de `cockpit.text.validate` : pas d’identifiant, pas de terme
+interne, une ligne de 140 caractères au plus, et dans la langue de
+l’opérateur. Les termes internes sont ceux que `GLOSSARY.md` met hors du
+cockpit (ligne « _Never shown in the cockpit_ » du Cockpit Lexicon) : le
+glossaire est le seul vocabulaire, aucune liste n’est recopiée dans le
+code. La langue est celle que donne `bin/operator-config language` (« fr »
+aujourd’hui) ; une phrase est refusée quand elle tient autant ou plus de
+mots grammaticaux d’une autre langue (anglais, espagnol, allemand, italien,
+portugais) que de la sienne, ou, à partir de cinq mots, aucun des siens
+(`speaks`). Le cockpit trouve le glossaire par `COCKPIT_GLOSSARY_FILE` et
+la porte des réglages par `COCKPIT_OPERATOR_CONFIG_BIN` (par défaut ceux du
+dépôt) ; s’il ne peut lire l’un ou l’autre, chaque champ est remplacé et le
+motif le dit, rien n’est montré sans contrôle. Un champ refusé est remplacé par sa phrase de repli et le
+défaut du producteur est compté ; les portes (`bin/proposal-door`, par
+`bin/operator-text-check`) appliquent le même contrôle avant d’écrire. Un
+titre écrit hors de ce contrat est redit en entier après le libellé du
+cockpit (« Texte écrit : « … » ») seulement s’il est dans la langue de l’opérateur et ne porte ni
+identifiant ni terme interne (`speaks_plainly`) ; sinon les mots du
+producteur ne sont que dans les détails repliés. Les « Détails » repliés de
+chaque demande donnent son identifiant, sa nature, pourquoi un champ a été
+remplacé, les mots du producteur tels qu’écrits, la source précise et les
+liens où elle vit (la page de son projet, la page Usine, le journal).
+
+**Signal non reconnu** (user story 76) : une fiche ouverte du suivi des
+tickets qu’un producteur de l’usine a déposée (`gc.source`) et que le
+cockpit ne sait pas lire, qui n’est d’aucune forme qu’il lit (question,
+proposition, session en pause) et qui n’a alerté personne (ni
+`gc.needs_benjamin`, ni `gc.escalation_mayor_paged_at` : une alerte d’abord
+adressée au Maire reste au Maire), n’est pas une demande opérateur : elle
+informe, elle n’attend ni décision ni geste de l’opérateur (GLOSSARY.md,
+« Operator Request »). Pour moi la montre à part de ses demandes, sous
+« À savoir · signaux non reconnus » : « Signal non reconnu venant de
+<producteur> », sans niveau, sans geste, hors du compte des décisions
+(`lib/cockpit/requests/sources/unknown_signal.py`,
+`cockpit.ui.home.pour_moi.render_signals`). Le nom du producteur n’y est dit
+que s’il passe le même contrôle (`speaks_plainly`) ; sinon (« disk-watch » a
+la forme d’un identifiant) elle dit « Signal non reconnu venant d’une source
+nommée dans les détails ». Son identifiant, son producteur, son titre et sa
+description, tels qu’écrits, sont dans son repli sous « Texte brut », jamais
+en texte principal : le cockpit n’invente aucun sens.
+
+**Usine muette** (`lib/cockpit/requests/sources/silence.py`) : le heartbeat
+ne part que tant que le superviseur et le suivi des tickets sont lus à jour ;
+dès que l’un d’eux se tait plus longtemps que `COCKPIT_SILENCE_ALERT_SECONDS`
+(900 s, le délai d’alerte du heartbeat), le cockpit lève une demande Urgent
+« Usine muette » qui nomme les sources et depuis quand. Elle part quand les
+deux sont de nouveau lus à jour ; elle est envoyée comme toute demande
+Urgent. Elle s’affiche même quand le suivi des tickets n’a jamais été lu
+(home-loading, home-error), hors des parties que la référence numérote.
+
+**Une commande qui expire** (af-fksj2c, `cockpit.actions.registry`,
+`cockpit.actions.uncertain`) : une porte qui ne répond pas dans
+`COCKPIT_ACTION_TIMEOUT_SECONDS` (15 s) est arrêtée. Le POST répond 504 avec
+une erreur lisible (« La commande n’a pas répondu en N s : elle a expiré.
+Son issue est incertaine ; le cockpit relit la source avant tout nouvel
+essai. ») et `incertain: true`, et le suivi des tickets est relu aussitôt.
+Sa cible est marquée incertaine : un nouveau geste sur elle répond 409 tant
+que le suivi n’a pas été relu après la marque ; ensuite, si la demande
+n’attend plus — la commande avait fait son travail —, 409 pour de bon (« Le
+geste précédent a été enregistré à la source … ») et la page montre le
+succès lu ; si elle attend encore, le geste part. Tant qu’un geste serait
+refusé, la page le dessine indisponible avec la même raison, même quand la
+relecture a échoué (`UncertainOutcomes.pending`). Il en va de même quand la
+porte a fait son travail et que ce que le cockpit fait après elle échoue —
+écrire la trace d’une relance, relire la réponse qu’`escalation-door` a
+écrite (`FollowUpFailed`) : le geste est fait, il n’est donc pas refusé
+comme si rien n’était parti ; le POST répond 502 avec `incertain: true`
+(« La commande a été exécutée, mais la suite n’a pas pu être enregistrée :
+… ») et un second clic n’envoie rien avant relecture. La cible d’une
+relance est résolue avant que sa porte parte. Une erreur imprévue d’un
+geste répond 500 avec une phrase lisible au lieu de casser la requête. La
+page montre l’erreur sur la demande et se relit.
+
 ## Home screen, as the validated prototype shows it (af-mjfvwx)
 
 Since T02 (above), this variant D is folded under « Détails techniques et
@@ -561,9 +698,11 @@ served:
   illisible » notice, and `/api/requests` says `state: "unknown"`.
 
 Not wired yet: « rituel dû » (each project's status command lives in its
-own repository — the slice that gives the cockpit its clones),
-and `requests/sources/unknown_signal.py` (no source hands the cockpit an
-unrecognised signal today).
+own repository — the slice that gives the cockpit its clones).
+
+A signal the cockpit cannot read (`requests/sources/unknown_signal.py`) is
+information, not an Operator Request: Pour moi shows it apart, uncounted,
+and `/api/requests` does not list it.
 
 `tests/cockpit-other-requests-test.py` covers all of the above through the
 process's HTTP surface.
@@ -832,18 +971,28 @@ adapter and emitter against it.
 ## Local settings file (af-mjfvwx)
 
 Intent (Benjamin, his words, 2026-10-06): « ok pour l'emplacement ».
-Mechanism (agent interpretation): the two secret files live under his
-Windows profile, in `C:\Users\<lui>\.agent-factory-cockpit\`, and one
-local, unversioned JSON file tells the cockpit where — it does NOT hold a
-secret itself, and nothing in the repository names his profile.
+Mechanism (agent interpretation): one local, unversioned JSON file tells
+the cockpit where the two secret files are — it does NOT hold a secret
+itself, and nothing in the repository names his account.
+
+On the VM (I, af-cp4fzd; Spec af-fgcw0d, user story 98), the secret files
+are private files of the account that runs the cockpit, outside every
+repository, readable by that account alone (`bin/cockpit-setup-wizard`
+writes them `0600`, and makes a file that was already there `0600` before
+writing in it); the procedure linked from « Accès » (below) proposes
+`~/.config/agent-factory/`. A path of the file that starts with `~/` is
+read in the home of that account (`HOME`). The Windows profile of
+af-mjfvwx (`C:\Users\<lui>\.agent-factory-cockpit\`, read through
+`/mnt/c`) is no longer where they live: the cockpit runs on the VM, which
+has no such path.
 
 `cockpit-local.json`, beside the pid file (`.gc/runtime/` on the live
 root; `COCKPIT_LOCAL_CONFIG` to put it elsewhere):
 
 ```json
 {
-  "pushover_secrets_file": "/mnt/c/Users/<lui>/.agent-factory-cockpit/pushover.json",
-  "heartbeat_url_file": "/mnt/c/Users/<lui>/.agent-factory-cockpit/heartbeat-url.txt",
+  "pushover_secrets_file": "/home/<compte>/.config/agent-factory/pushover.json",
+  "heartbeat_url_file": "/home/<compte>/.config/agent-factory/heartbeat-url",
   "public_url": "https://<machine>.<tailnet>.ts.net",
   "benjamin_login": "<login Tailscale>",
   "allowed_origin": "https://<machine>.<tailnet>.ts.net"
@@ -893,6 +1042,44 @@ Python object, and the shape it expects is not the one gc serves.
 
 `tests/cockpit-stop-access-test.py` covers this through HTTP, including
 that every plausible stop action answers 404.
+
+## Access on the VM: HTTPS, identity, procedure (I, af-cp4fzd)
+
+Intent (Spec af-fgcw0d, user stories 61, 93 and 98, decision « Accès hôte
+» : « Loopback, Tailscale Serve tailnet seul, HTTPS, identité autorisée,
+POST/Origin/SameSite conservés. L'API superviseur reste non exposée. »).
+Mechanism (agent interpretation):
+
+- **A reader is the operator, or the host itself.** Behind Tailscale Serve
+  every request carries `Tailscale-User-Login`. One that is not
+  `benjamin_login` is refused, 403, before anything is read or served:
+  pages, readings and POSTs alike (`ActionGuard.check_reader`). A request
+  without that header did not come through Serve: it came from the host
+  itself, the cockpit listening on loopback only.
+- **Every POST a page sends carries the cockpit's Origin.** The Operator
+  Actions keep their four checks; the other POSTs of a page,
+  `/api/usine/reverifier` and `/api/health/recheck`, which write nothing,
+  are refused without the cockpit's own Origin, or from another identity
+  behind Serve (`ActionGuard.check_page_post`).
+- **« Accès » gives the address** the cockpit is opened at from the PC and
+  the iPhone (`public_url`, when it is an HTTPS one; « Adresse HTTPS non
+  configurée » otherwise), and links to **the procedure of the VM
+  settings**, `GET /usine/procedure` (`ui/access/procedure.py`): Pushover,
+  the heartbeat (the check « Usine muette », period 5 min and grace 10 min,
+  an alert within fifteen minutes) and the access through Tailscale Serve,
+  each with the command of `bin/cockpit-setup-wizard` that writes it and
+  whether it is in place on this host: a secret is « en place » only when
+  the cockpit reads its file, read again each time the page opens; a path
+  set whose file is absent or invalid is said so. The command of Serve
+  names the ports of this host, the cockpit's and the supervisor's (the
+  port of `COCKPIT_GC_BASE_URL`). It names paths, never what a secret file
+  holds, and no Windows path.
+- The health zone already says a missing secret file (« Notifications
+  iPhone inactives : le fichier de secrets est absent ou invalide »),
+  without its value.
+
+The real proof -- the iPhone, a VM that falls silent live -- is a human
+trial after Delivered (Spec af-fgcw0d, Testing Decisions 4).
 
 ## Project repositories: roadmap step, commits ahead (af-mjfvwx)
 
@@ -1014,11 +1201,26 @@ copy. What it gives the cockpit to read:
 | clean stop | its state starts empty, in the home of the launch (`COCKPIT_STOP_STATE_FILE`), read every second. A dataset that says `"host_restarted_during_stop": true` starts it as a host restarted during a stop leaves it: a stop asked ten minutes before the launch, the tickets of the tracker of the launch as its photo. The driver then reads the supervisor: unsuspended, as after a reboot, « Arrêt interrompu » with the tickets whose assignment changed; still suspended, the stop goes on. Thirty minutes without progress are not simulated here: the driver measures them on the cockpit's clock (af-npz9v1.21) |
 | tracker | `tests/fixtures/cockpit/synthetic-city/bd`, which answers the beads written for this launch from the dataset as `tests/fixtures/cockpit/requests/fake-bd` does -- hiding the closed ones from a plain `list` as `bd` does --, and writes what the doors and the gestures write there (`update`, `create`, `show`), in the home of the launch only |
 | declared projects | one descriptor per project the dataset names, written for this launch; no file of the repository |
-| doors that change the Factory (`gc order run`, escalation door, proposal door, loop guard) | the real doors of the commit, run on the tracker of the launch through a synthetic `gc` (`tests/fixtures/cockpit/synthetic-city/gc`: `gc bd` is that tracker; a mail, the waking of a session, the run of an order are taken and change nothing else); the cockpit gives up on a door after 5 s (`COCKPIT_ACTION_TIMEOUT_SECONDS`). A dataset may say how a door answers (`doors`: `proposal-door`, `escalation-door`, `loop-guard`, `order-pause`, `provider-failover`, `factory-maintain`, `operator-config` or `gc`, each `expires` -- it never answers, and writes nothing -- or `records-then-expires` -- it writes its record, then never answers); `bin/cockpit-isolated` refuses any other |
+| doors that change the Factory (`gc order run`, escalation door, proposal door, loop guard, `bin/order-pause`) | the real doors of the commit, run on the tracker of the launch through a synthetic `gc` (`tests/fixtures/cockpit/synthetic-city/gc`: `gc bd` is that tracker; a mail, the waking of a session, the run of an order are taken and change nothing else); the cockpit gives up on a door after 5 s (`COCKPIT_ACTION_TIMEOUT_SECONDS`). A dataset may say how a door answers (`doors`: `proposal-door`, `escalation-door`, `loop-guard`, `order-pause`, `provider-failover`, `factory-maintain`, `operator-config` or `gc`, each `expires` -- it never answers, and writes nothing -- or `records-then-expires` -- it writes its record, then never answers); `bin/cockpit-isolated` refuses any other |
 | settings and upkeep of the Factory (G2, af-npz9v1.20) | the real doors of the commit, each on what the launch holds: `provider-failover` (`COCKPIT_PROVIDER_FAILOVER_BIN`) works in the Factory tree of the launch (`$HOME/factory`, the page Usine's `COCKPIT_FACTORY_ROOT`: every file of the commit by a link, but `city.provider.toml` and `.gc/provider-state.json`, copied when the commit holds them), so a setting is read back where it was written; it reads no tmux session, and its reload is taken by the synthetic `gc`; `factory-maintain` (`COCKPIT_FACTORY_MAINTAIN_BIN`) works on throwaway Git repositories of the launch -- a clone of a bare origin (its `FACTORY_ROOT`) with a branch merged and pushed (`merged`) and one not pushed (`unpushed`), and under `$HOME/.local/share/agent-factory-runtime-worktrees` a worktree merged and pushed (`af-merged`, the candidate) and three it keeps: a local change (`af-modified`), a commit not pushed (`af-unpushed`, escalated on the tracker of the launch), work under way (`af-active`) --, never on the copy of the commit, whose refs are those of the repository it comes from; `gc` is the synthetic one and `gh` answers nothing, so no branch is proved merged by GitHub; `operator-config` (`COCKPIT_OPERATOR_CONFIG_BIN`) reads config/operator.toml of the commit |
 | silence of the main sources | said « Usine muette » after 20 s (`COCKPIT_SILENCE_ALERT_SECONDS`): a state that falls silent (home-stale, home-offline) is first seen as it is drawn |
 | local settings, secrets, notifications, heartbeat, project clones, Tailscale | none: a temporary HOME and no local settings file |
-| Tailscale Serve in front of the cockpit | a dataset that says `"https_identity_proxy": true` puts a synthetic identity proxy in front of it (`tests/fixtures/cockpit/synthetic-city/identity_proxy.py`, af-npz9v1.22): HTTPS on 127.0.0.1 with a certificate made for the launch, its address and the authority to trust in the cockpit's environment (`COCKPIT_TRIAL_HTTPS_URL`, `COCKPIT_TRIAL_HTTPS_CA`), its origin the cockpit's own. Who connects is said in `X-Synthetic-Tailnet-Login`: without it, 403 (not on the tailnet); with it, the request goes to the cockpit alone with `Tailscale-User-Login` and `Tailscale-User-Name` set from it, every `Tailscale-User-*` the client sent removed. Benjamin's login is `synthetic@example.ts.net` (`COCKPIT_BENJAMIN_LOGIN`). Nothing of the tailnet is used |
+| a heartbeat (I, af-cp4fzd) | a dataset that says `"heartbeat": {"ping_url": "<http(s) address>", "interval_seconds": <n>}` gives the cockpit that address as its heartbeat secret, written in a private file of the temporary HOME (`COCKPIT_HEARTBEAT_URL_FILE`), at that pace (`COCKPIT_HEARTBEAT_INTERVAL_SECONDS`, the five minutes of service), ticked four times as often; anything else is refused |
+| Tailscale Serve in front of the cockpit | a dataset that says `"https_identity_proxy": true` puts a synthetic identity proxy in front of it (`tests/fixtures/cockpit/synthetic-city/identity_proxy.py`, af-npz9v1.22): HTTPS on 127.0.0.1 with a certificate made for the launch, its address and the authority to trust in the cockpit's environment (`COCKPIT_TRIAL_HTTPS_URL`, `COCKPIT_TRIAL_HTTPS_CA`), its origin and the address « Accès » gives the cockpit's own (`COCKPIT_ALLOWED_ORIGIN`, `COCKPIT_PUBLIC_URL`). Who connects is said in `X-Synthetic-Tailnet-Login`: without it, 403 (not on the tailnet), the refusal naming that header (I, af-cp4fzd); with it, the request goes to the cockpit alone with `Tailscale-User-Login` and `Tailscale-User-Name` set from it, every `Tailscale-User-*` the client sent removed. Benjamin's login is `synthetic@example.ts.net` (`COCKPIT_BENJAMIN_LOGIN`). Nothing of the tailnet is used |
+
+`home-gestes` carries such a tracker: a proposal, a session the loop guard
+paused, a question and the pause of the order `convoy-advance` as
+`bin/order-pause` records it, with the escalation door that expires. On it the
+gestures of « Ce qui t’attend » are confirmed and read back at their source,
+and an answer to the question expires (B, af-4uzgzm, then BR, af-eyc5ah: its demonstration line;
+for Benjamin, « Le jeu home-gestes » below says it in French).
+
+Le jeu `home-gestes` (pour Benjamin) : un suivi des tickets tel que les
+portes l’écrivent — une proposition, une session mise en pause par l’usine,
+une question et l’ordre `convoy-advance` mis en pause —, la porte des
+questions ne répondant jamais. On y refuse une proposition avec sa raison,
+on relance la session et l’ordre, et une réponse à la question expire, puis
+la source est relue.
 
 No controller and no tracker is started. A dataset that is not marked
 `"synthetic": true`, carries no `generated_at`, names no state, or whose
