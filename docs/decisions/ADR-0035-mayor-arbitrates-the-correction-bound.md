@@ -42,7 +42,9 @@ mais elle attendait Benjamin.
    arbitré est une décision d'agent, jamais un accord humain ; l'humain
    garde `--exceptional`) ; sans motif ; sans cible, ou avec une cible qui
    n'est pas un refus à la pointe (Blocking Finding non soldé, état non
-   observé) ; sur un ticket qui n'est pas arrêté au plafond ; quand aucun
+   observé) ; tant qu'une décision posée à l'opérateur par `escalate` est
+   ouverte et sans réponse (seule l'ancienne demande due au compteur cède) ;
+   sur un ticket qui n'est pas arrêté au plafond ; quand aucun
    tour ne s'ouvrirait (même pointe, session terminée sans corriger) ;
    au-delà de `ARBITRATED_ROUNDS_MAX` (2) tours arbitrés par ticket, la
    borne des relances aveugles. Le tour est gardé sous `grants` avec

@@ -971,6 +971,11 @@ class CorrectionRoundTest(unittest.TestCase):
         (line,) = self.escalation_list()
         self.assertIn(SLICE, line)
         self.assertEqual([], self.mayor_mails())
+        # Open and unanswered, that decision is the operator's: no arbitrated round.
+        target = self.tool_show()["code_review"]["unsettled"][0]
+        self.refused("grant", CONVOY, SLICE, "--repo", self.repo, "--arbitrated", "--approved-by", self.MAYOR,
+                     "--words", self.MOTIVE, "--target", target, mention="décision de l'opérateur est ouverte")
+        self.assertEqual(1, len(self.escalation_list()))
 
     def test_the_mayor_raises_to_the_operator_only_a_decision_that_is_theirs(self):
         self.refused_after_the_first_round()

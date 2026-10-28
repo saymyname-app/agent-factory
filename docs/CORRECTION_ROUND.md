@@ -295,7 +295,8 @@ restants, si un tour s'ouvrirait, et les commandes. Le Mayor :
   `arbitrated: true`, le motif et les cibles, que la consigne de l'auteur
   (`brief.round`) redit. Refusé sans rien écrire : par l'approbateur humain
   déclaré, sans motif, sans cible ou avec une cible qui n'est pas un refus à
-  la pointe, sur un ticket qui n'est pas arrêté au plafond, quand aucun
+  la pointe, tant qu'une décision posée à l'opérateur (`escalate`) est
+  ouverte et sans réponse, sur un ticket qui n'est pas arrêté au plafond, quand aucun
   tour ne s'ouvrirait, et au-delà de `ARBITRATED_ROUNDS_MAX` (2) par ticket ;
 - à cette borne, ou sans tour possible, **diagnostique** : laisse arrêté,
   fait réparer une cause d'usine, replanifie ;
