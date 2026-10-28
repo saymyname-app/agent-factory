@@ -262,7 +262,7 @@ class Check:
             raise Refusal(f"le ticket {args.ticket} n'appartient pas au convoi {args.convoy}")
         self.ticket = ticket
         self.others = [t for t in answer["tickets"] if t.get("id") != args.ticket]
-        self.integration = (answer.get("integration") or {}).get("branch")
+        self.integration = ((answer.get("convoy") or {}).get("integration") or {}).get("branch")
         stop = ticket.get("stop")
         # `changes` reads a stopped ticket: it decides whether that stop is lifted.
         if stop and not getattr(args, "reads_only", False):
