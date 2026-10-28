@@ -74,7 +74,12 @@ class FactoryConfigureProposal(unittest.TestCase):
 
         # Prepared: a proposal waits for the operator, nothing is said done.
         self.assertRegex(prepared, r"(?i)proposition", f"the page does not say a proposal was prepared: « {prepared} »")
-        self.assertNotRegex(prepared, r"(?i)\b(appliqué|configuré|relu)\b", f"a success is shown: « {prepared} »")
+        self.assertNotRegex(prepared, r"(?i)\b(appliqué|relu)\b", f"a success is shown: « {prepared} »")
+        # The page Usine says elsewhere what is « configuré » (a provider's
+        # account, an effort no file sets): what it says of the proposal is
+        # never that.
+        said = re.findall(r"(?i)\bproposition\b[^.]*", prepared)
+        self.assertNotRegex(" ".join(said), r"(?i)\bconfiguré\b", f"the proposal is said configured: {said}")
         waiting = wait_for(lambda: requests_of(address),
                            lambda found: any(r["id"] not in waiting_before for r in found), 20)
         new = [r for r in waiting if r["id"] not in waiting_before]
