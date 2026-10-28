@@ -7,8 +7,10 @@ proposals into requests. T15 and T20 built the other kinds as pure
 functions nothing called; this is their caller:
 
 - a Spec or a ticket graph to approve, a ready HITL card ticket, a session
-  the Factory paused, a signal of a producer the cockpit has no reading
-  for (:mod:`cockpit.requests.sources`), from the same beads;
+  or an order the Factory paused (:mod:`cockpit.requests.sources`), from
+  the same beads. A bead of a producer the cockpit has no reading for is
+  information, not an Operator Request (GLOSSARY.md): it waits on no one
+  here;
 - a delivered chantier not yet accepted, an accepted one not yet promoted
   (:mod:`cockpit.projects.demandes`), from the read model's "projets";
 - a source unreadable for more than 15 min
@@ -23,13 +25,9 @@ from cockpit.projects.source import from_value as projects_from_value
 from cockpit.requests.builder import build_requests, parse_ack_and_defer
 from cockpit.requests.sources.hitl import build_hitl_requests
 from cockpit.requests.sources.paused_orders import build_paused_order_requests
-from cockpit.requests.sources.paused_sessions import LOOP_GUARD, build_paused_session_requests
+from cockpit.requests.sources.paused_sessions import build_paused_session_requests
 from cockpit.requests.sources.readability import ILLISIBLE_THRESHOLD_SECONDS, build_readability_requests
 from cockpit.requests.sources.specs_and_graphs import build_specs_and_graphs_requests
-from cockpit.requests.sources.unknown_signal import build_unknown_signal_requests, unknown_signals_of
-
-# The producers whose beads the cockpit reads into a request of its own.
-KNOWN_SOURCES = frozenset({LOOP_GUARD})
 
 
 def assemble_requests(
@@ -53,8 +51,7 @@ def assemble_requests(
         by_id = {b["id"]: b for b in beads if isinstance(b, dict) and b.get("id")}
         for request in (build_specs_and_graphs_requests(beads, verifie_a) + build_hitl_requests(beads, verifie_a)
                         + build_paused_session_requests(beads, verifie_a)
-                        + build_paused_order_requests(beads, verifie_a)
-                        + build_unknown_signal_requests(unknown_signals_of(beads, KNOWN_SOURCES), verifie_a)):
+                        + build_paused_order_requests(beads, verifie_a)):
             # Reporter hides these exactly as it hides an À faire escalation
             # (spec .22): the same trace on the same bead.
             _, defer_until = parse_ack_and_defer(by_id.get(request.id) or {})

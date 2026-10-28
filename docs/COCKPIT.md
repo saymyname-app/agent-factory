@@ -409,7 +409,6 @@ barre de gestes :
 | une session mise en pause par l’usine (`[session-loop] <session>`, `gc.source=factory-session-loop-guard`, `lib/cockpit/requests/sources/paused_sessions.py`) | Relancer (armé, puis confirmé : `factory-session-loop-guard resume`, tracé sur sa fiche, « Relance demandée » au journal) ; Reporter |
 | un ordre en pause (« Un ordre de l’usine est en pause » : la fiche ouverte de `bin/order-pause pause`, `gc.order_pause=<ordre>`, `lib/cockpit/requests/sources/paused_orders.py`) ; le nom de l’ordre, qui l’a mis en pause et ses mots sont dans les détails | Relancer (armé, puis confirmé : `bin/order-pause resume <ordre> --by benjamin --words "relance depuis le cockpit"`, qui ferme la fiche de la pause ; « Relance demandée » au journal) ; Reporter |
 | « Usine muette » | Vérifier l’usine (la page Usine) ; Revérifier maintenant |
-| un signal non reconnu (`lib/cockpit/requests/sources/unknown_signal.py`) | Continuer avec un agent ; Reporter |
 
 Chaque geste qui modifie l’usine se fait en deux temps
 (`cockpit.ui.actions.render`) : un premier clic l’arme, « Confirmer ? », un
@@ -458,18 +457,12 @@ remplacé, les mots du producteur tels qu’écrits, la source précise et les
 liens où elle vit (la page de son projet, la page Usine, le journal).
 
 **Signal non reconnu** (user story 76) : une fiche ouverte du suivi des
-tickets qu’un producteur de l’usine a déposée (`gc.source`), qui n’est
-d’aucune forme que le cockpit lit (question, proposition, session en pause)
-et qui n’a alerté personne (ni `gc.needs_benjamin`, ni
-`gc.escalation_mayor_paged_at` : une alerte d’abord adressée au Maire reste
-au Maire), devient une demande Quand tu veux « Signal non reconnu venant de
-<producteur> ». Le nom du producteur n’y est dit que s’il passe le même
-contrôle (`speaks_plainly`) ; sinon (« disk-watch » a la forme d’un
-identifiant) la demande dit « Signal non reconnu venant d’une source nommée
-dans les détails », et le nom est sous « Précisions ». Son titre et sa description, tels qu’écrits, sont dans les
-détails repliés sous « Texte brut », jamais en texte principal : le cockpit
-n’invente aucun sens. Aujourd’hui chaque producteur connu alerte le Maire
-d’abord : aucun signal de ce type n’apparaît, sauf d’un producteur nouveau.
+tickets qu’un producteur de l’usine a déposée (`gc.source`) et que le
+cockpit ne sait pas lire n’est pas une demande opérateur : elle informe,
+elle n’attend ni décision ni geste de l’opérateur (GLOSSARY.md, « Operator
+Request »). Elle n’apparaît pas dans Pour moi. Le journal garde sa place,
+« Signal non reconnu venant de … », avec les mots du producteur repliés,
+tels qu’écrits (`lib/cockpit/ui/journal/panorama.py`).
 
 **Usine muette** (`lib/cockpit/requests/sources/silence.py`) : le heartbeat
 ne part que tant que le superviseur et le suivi des tickets sont lus à jour ;
@@ -696,8 +689,9 @@ served:
 
 Not wired yet: « rituel dû » (each project's status command lives in its
 own repository — the slice that gives the cockpit its clones),
-and `requests/sources/unknown_signal.py` (no source hands the cockpit an
-unrecognised signal today).
+and `requests/sources/unknown_signal.py` (a signal the cockpit cannot read
+is information, not an Operator Request: it waits in no list of Pour moi,
+and the journal keeps its place).
 
 `tests/cockpit-other-requests-test.py` covers all of the above through the
 process's HTTP surface.

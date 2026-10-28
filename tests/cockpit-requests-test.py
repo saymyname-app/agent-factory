@@ -573,59 +573,39 @@ class RequestsSeamTest(CockpitOnFakes):
 
 
 class UnknownSignalSeamTest(CockpitOnFakes):
-    """A signal of a type the cockpit does not know (spec af-fgcw0d user
-    story 76, B af-4uzgzm): « Signal non reconnu venant de … », its raw
-    text in the folded details only -- the cockpit never invents a
-    meaning, and never drops it."""
+    """A signal of a producer the cockpit has no reading for is
+    information, not an Operator Request (GLOSSARY.md: « it needs a
+    decision at the operator's tier or a physical action on the operator's
+    side; it is not information »): it waits on no one in Pour moi. The
+    journal keeps its place, « Signal non reconnu venant de … » (spec
+    af-fgcw0d user story 76)."""
 
     RAW_TITLE = "Disk quota at 92% on /var"
     RAW_TEXT = "backup volume nearly full, nothing rotated since Monday"
 
-    def test_a_signal_of_an_unknown_producer_is_shown_with_its_raw_text_folded(self):
+    def test_a_signal_of_an_unknown_producer_waits_on_no_one(self):
         self.start_cockpit()
         self.write_beads([
             {"id": "af-sig1", "status": "open", "labels": [], "notes": "", "title": self.RAW_TITLE,
              "description": self.RAW_TEXT, "created_at": "2026-09-30T08:00:00Z",
              "metadata": {"gc.source": "disk-watch"}},
-            # Known: a producer that paged the Mayor first (spec .9), and a
-            # session the Factory paused.
-            {"id": "af-sig2", "status": "open", "labels": [], "notes": "", "title": "order failing",
-             "description": "", "metadata": {"gc.source": "on-order-failed",
-                                              "gc.escalation_mayor_paged_at": "2026-09-30T08:00:00Z"}},
-            {"id": "af-sig3", "status": "open", "labels": [], "notes": "", "title": "[session-loop] s-1",
-             "description": "", "metadata": {"gc.source": "factory-session-loop-guard", "gc.session_id": "s-1",
-                                              "gc.escalation_mayor_paged_at": "2026-09-30T08:00:00Z"}},
-            # Closed: it signals nothing any more.
-            {"id": "af-sig4", "status": "closed", "labels": [], "notes": "", "title": "old", "description": "",
-             "metadata": {"gc.source": "disk-watch"}},
-            # A producer whose name the operator reads as it is.
             {"id": "af-sig5", "status": "open", "labels": [], "notes": "", "title": "volume plein",
              "description": "", "created_at": "2026-09-30T08:00:00Z",
              "metadata": {"gc.source": "sauvegarde nocturne"}},
+            # Known: a session the Factory paused waits on the operator.
+            {"id": "af-sig3", "status": "open", "labels": [], "notes": "", "title": "[session-loop] s-1",
+             "description": "", "metadata": {"gc.source": "factory-session-loop-guard", "gc.session_id": "s-1",
+                                              "gc.escalation_mayor_paged_at": "2026-09-30T08:00:00Z"}},
         ])
-        payload = self.wait_for_requests(lambda p: any(r["id"] == "af-sig1" for r in p["requests"]))
-        by_id = {r["id"]: r for r in payload["requests"]}
-        self.assertEqual(["af-sig1", "af-sig3", "af-sig5"], sorted(by_id))
-        signal = by_id["af-sig1"]
-        # User story 73: the name of the producer is no main text when it
-        # reads as an identifier (« disk-watch »); it is in the details.
-        self.assertEqual("Signal non reconnu venant d’une source nommée dans les détails", signal["quoi"])
-        self.assertEqual("Signal non reconnu venant de sauvegarde nocturne", by_id["af-sig5"]["quoi"])
-        self.assertEqual("Quand tu veux", signal["niveau"])
-        self.assertEqual("session_en_pause", by_id["af-sig3"]["type"])
+        payload = self.wait_for_requests(lambda p: any(r["id"] == "af-sig3" for r in p["requests"]))
+        self.assertEqual(["af-sig3"], sorted(r["id"] for r in payload["requests"]))
+        self.assertEqual([], [r for r in payload["requests"] if r["type"] == "signal_inconnu"])
 
         body = self.home_body()
-        start = body.index('id="d-af-sig1"')
-        article = body[start:body.index("</article>", start)]
-        main, details = article.split('<details class="more pn-request-details">', 1)
-        self.assertIn("Signal non reconnu venant d’une source nommée dans les détails", main)
-        self.assertNotIn("disk-watch", main, "the name of the producer is shown as main text")
-        self.assertIn("disk-watch", details)
-        self.assertNotIn(self.RAW_TITLE, main, "the raw text is shown as main text")
-        self.assertNotIn("backup volume", main, "the raw text is shown as main text")
-        self.assertIn("Texte brut", details)
-        self.assertIn(self.RAW_TITLE, details)
-        self.assertIn(self.RAW_TEXT, details)
+        self.assertNotIn('id="d-af-sig1"', body)
+        self.assertNotIn('id="d-af-sig5"', body)
+        self.assertNotIn("Signal non reconnu", body)
+        self.assertNotIn(self.RAW_TITLE, body)
 
     def test_an_order_paused_by_its_door_waits_on_the_operator_with_its_relaunch(self):
         # As bin/order-pause (pause) records it (af-npz9v1.15); BR af-eyc5ah.

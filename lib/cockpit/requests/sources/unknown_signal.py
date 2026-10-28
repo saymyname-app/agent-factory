@@ -6,50 +6,20 @@ détails, afin que le cockpit n'invente jamais de sens").
 Input: ``signals``, one dict per unrecognised machine event a source
 handed the cockpit and that matched none of its known shapes —
 ``{"id": str, "source": str, "texte_brut": str, "depuis_quand": iso str
-or None}`` -- read from the tracker by :func:`unknown_signals_of` (B,
-af-4uzgzm): an open bead a producer of the Factory filed (``gc.source``)
-that is none of the shapes the cockpit reads, and that paged no one. The cockpit never tries to interpret ``texte_brut``: it is
+or None}``. No source of Pour moi calls it: a bead of a producer the
+cockpit has no reading for is information, not an Operator Request
+(GLOSSARY.md); the journal keeps its place (user story 76,
+:mod:`cockpit.ui.journal.panorama`). The cockpit never tries to interpret ``texte_brut``: it is
 shown verbatim, only in the folded details, exactly as received. A
 signal exits the moment its emitting source stops reporting it (e.g. a
 newer read no longer includes that id) — exit at-source, same rule as
 every other type here.
 """
 from cockpit.requests.model import DEFAULT_PROJECT, OperatorRequest, QUAND_TU_VEUX
-from cockpit.requests.proposals import is_proposal
 from cockpit.requests.sources._util import parse_iso
 from cockpit.text.validate import speaks_plainly
 
 TYPE_SIGNAL_INCONNU = "signal_inconnu"
-SOURCE_KEY = "gc.source"
-# What makes a bead one of the shapes the cockpit already reads, or one the
-# Mayor was paged about first (spec af-oohx2x .9: never the operator's until
-# promoted): a question to the operator, a page of the Mayor.
-ROUTED_KEYS = ("gc.needs_benjamin", "gc.escalation_mayor_paged_at")
-
-
-def unknown_signals_of(beads, known_sources):
-    """The signals of the tracker the cockpit has no reading for: each open
-    bead whose producer (``gc.source``) is none of ``known_sources``, that
-    is no proposal and that neither asks the operator nor paged the Mayor.
-    Its raw text is its title and its description, as written."""
-    signals = []
-    for bead in beads or ():
-        if not isinstance(bead, dict) or bead.get("status") == "closed" or is_proposal(bead):
-            continue
-        metadata = bead.get("metadata") or {}
-        source = metadata.get(SOURCE_KEY)
-        if not isinstance(source, str) or not source or source in known_sources:
-            continue
-        if any(metadata.get(key) for key in ROUTED_KEYS):
-            continue
-        signals.append({
-            "id": bead.get("id") or "",
-            "source": source,
-            "texte_brut": "\n\n".join(text for text in (bead.get("title"), bead.get("description"))
-                                       if isinstance(text, str) and text),
-            "depuis_quand": bead.get("created_at"),
-        })
-    return signals
 
 
 def _coming_from(source):
