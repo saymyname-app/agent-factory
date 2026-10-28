@@ -37,7 +37,7 @@ mechanisms: consult `decisions/PRE_REFACTOR.md` before relying on them.
 | External evidence and research format | `DELIVERY.md`, `RESEARCH_BRIEF.md` |
 | Multi-repo delivery proof | `DELIVERY.md` |
 | Secrets, trust boundaries and concurrency | `SECURITY.md` |
-| Structural decisions and historical ADR status | `decisions/ADR-0009-integrated-po-and-product-map.md` through `decisions/ADR-0034-targeted-review-and-exceptional-round.md`; `decisions/PRE_REFACTOR.md` |
+| Structural decisions and historical ADR status | `decisions/ADR-0009-integrated-po-and-product-map.md` through `decisions/ADR-0035-mayor-arbitrates-the-correction-bound.md`; `decisions/PRE_REFACTOR.md` |
 | Decision versus maintenance proposals | `decisions/ADR-0029-proposal-classes.md` |
 | Why the D01 delivery flow was lightened (one review, regression before handoff, resumes per cause, model evaluation for interface tickets only) | `decisions/ADR-0030-lightened-delivery-flow.md` |
 | Why the graph review refuses a ticket graph whose critical path is too long (parallelism of the slicing) | `decisions/ADR-0031-serialized-graph-refused.md` |
