@@ -93,13 +93,14 @@ class PourMoiUnfolded(unittest.TestCase):
         self.assertNotIn(LEGACY_SUMMARY, gesture["folds"], f"« {PUT_OFF} » is still under « {LEGACY_SUMMARY} »")
         self.assertEqual([], gesture["folds"], f"« {PUT_OFF} » is reached only by unfolding {gesture['folds']}")
 
-    def test_home_content_full_opens_a_request_with_its_gesture_unfolded(self):
+    def test_each_dataset_opens_its_requests_with_their_gestures_unfolded(self):
+        # The criterion names three datasets: Pour moi is visible without
+        # unfolding on each, one criterion observed whole.
         self.assert_open_with_its_gesture("home-content-full")
-
-    def test_home_long_opens_a_request_with_its_gesture_unfolded(self):
         self.assert_open_with_its_gesture("home-long")
+        self.assert_each_request_of_home_gestes_unfolded()
 
-    def test_home_gestes_opens_each_request_with_its_gestures_unfolded(self):
+    def assert_each_request_of_home_gestes_unfolded(self) -> None:
         address = self.tree.launch("home-gestes")
         requests = wait_for(lambda: requests_of(address),
                             lambda found: set(GESTES) <= {r["id"] for r in found}, 20)

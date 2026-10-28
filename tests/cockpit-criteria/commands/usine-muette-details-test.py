@@ -151,18 +151,26 @@ class UsineMuetteDetails(unittest.TestCase):
 
     # --- Criterion 3 ------------------------------------------------------------
 
-    def test_home_offline_says_the_factory_muette_urgent_in_clean_words_with_its_details_folded(self):
+    def test_the_silent_factory_is_urgent_and_every_main_text_clean_with_its_details_folded(self):
+        # The criterion names home-offline and home-loading, French main
+        # texts without identifiers, and folded details with identifiers,
+        # links and the original text: one criterion observed whole.
+        self.assert_home_offline_says_the_factory_muette_urgent_in_clean_words_with_its_details_folded()
+        self.assert_home_loading_says_the_factory_muette_urgent()
+        self.assert_a_producer_text_is_shown_clean_and_kept_whole_in_its_details()
+
+    def assert_home_offline_says_the_factory_muette_urgent_in_clean_words_with_its_details_folded(self) -> None:
         address, muette, requests = self.silent("home-offline")
         shown = self.assert_shown(address, muette)
         self.assert_main_texts_clean(shown, requests)
         self.assert_details_folded(address, requests)
 
-    def test_home_loading_says_the_factory_muette_urgent(self):
+    def assert_home_loading_says_the_factory_muette_urgent(self) -> None:
         address, muette, requests = self.silent("home-loading")
         self.assert_main_texts_clean(self.assert_shown(address, muette), requests)
         self.assert_details_folded(address, requests)
 
-    def test_a_producer_text_with_identifiers_is_shown_without_them_and_kept_whole_in_its_details(self):
+    def assert_a_producer_text_is_shown_clean_and_kept_whole_in_its_details(self) -> None:
         address = serve_tracker(self.tree, TRACKER)
         requests = wait_for(lambda: requests_of(address),
                             lambda found: set(WRITTEN_BY) <= {r["id"] for r in found}, 20)

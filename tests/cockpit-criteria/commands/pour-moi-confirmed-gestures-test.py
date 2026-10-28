@@ -142,7 +142,15 @@ class PourMoiConfirmedGestures(unittest.TestCase):
 
     # --- Criterion 1 ------------------------------------------------------------
 
-    def test_a_proposal_is_refused_with_its_reason_once_confirmed(self):
+    def test_each_gesture_of_home_gestes_is_done_once_confirmed_and_traced_at_its_source(self):
+        # The criterion names four gestures on home-gestes: each one is done,
+        # on a cockpit of its own, one criterion observed whole.
+        self.assert_a_proposal_is_refused_with_its_reason_once_confirmed()
+        self.assert_a_proposal_is_put_off_once_confirmed()
+        self.assert_a_paused_session_is_relaunched_once_confirmed()
+        self.assert_a_paused_order_is_relaunched_through_its_door_once_confirmed()
+
+    def assert_a_proposal_is_refused_with_its_reason_once_confirmed(self) -> None:
         address, line = self.launched(PROPOSAL)
         walked = self.walked(address, line, [{"fill": "Raison", "value": REASON}, {"click": "Refuser"}])
         self.assert_unfolded(walked[0]["page"], "Refuser")
@@ -155,7 +163,7 @@ class PourMoiConfirmedGestures(unittest.TestCase):
         self.assertEqual(["benjamin"], [e["par"] for e in refused], "the refusal is not the operator's")
         self.assert_left(address, PROPOSAL)
 
-    def test_a_proposal_is_put_off_once_confirmed(self):
+    def assert_a_proposal_is_put_off_once_confirmed(self) -> None:
         address, line = self.launched(PROPOSAL)
         walked = self.walked(address, line, [{"click": "Reporter"}, {"click": UNTIL}])
         self.assert_unfolded(walked[0]["page"], "Reporter")
@@ -177,7 +185,7 @@ class PourMoiConfirmedGestures(unittest.TestCase):
         self.assertEqual([], [e for e in journal_of(address) if e["bead_id"] == PROPOSAL],
                          "putting the proposal off was written as its decision")
 
-    def test_a_paused_session_is_relaunched_once_confirmed(self):
+    def assert_a_paused_session_is_relaunched_once_confirmed(self) -> None:
         address, line = self.launched(SESSION_BEAD)
         walked = self.walked(address, line, [{"click": "Relancer"}])
         self.assert_unfolded(walked[0]["page"], "Relancer")
@@ -192,7 +200,7 @@ class PourMoiConfirmedGestures(unittest.TestCase):
         self.assertEqual("benjamin", relaunched[0]["par"], "the relaunch is not the operator's")
         self.assert_left(address, SESSION_BEAD)
 
-    def test_a_paused_order_is_relaunched_through_its_door_once_confirmed(self):
+    def assert_a_paused_order_is_relaunched_through_its_door_once_confirmed(self) -> None:
         address, line = self.launched(ORDER_PAUSE)
         walked = self.walked(address, line, [{"click": "Relancer"}])
         self.assert_unfolded(walked[0]["page"], "Relancer")

@@ -1,13 +1,8 @@
 {
   "criteria": {
     "1": [
-      "tests/cockpit-criteria/commands/pour-moi-unfolded-test.py::PourMoiUnfolded.test_home_content_full_opens_a_request_with_its_gesture_unfolded",
-      "tests/cockpit-criteria/commands/pour-moi-unfolded-test.py::PourMoiUnfolded.test_home_long_opens_a_request_with_its_gesture_unfolded",
-      "tests/cockpit-criteria/commands/pour-moi-unfolded-test.py::PourMoiUnfolded.test_home_gestes_opens_each_request_with_its_gestures_unfolded",
-      "tests/cockpit-criteria/commands/pour-moi-confirmed-gestures-test.py::PourMoiConfirmedGestures.test_a_proposal_is_refused_with_its_reason_once_confirmed",
-      "tests/cockpit-criteria/commands/pour-moi-confirmed-gestures-test.py::PourMoiConfirmedGestures.test_a_proposal_is_put_off_once_confirmed",
-      "tests/cockpit-criteria/commands/pour-moi-confirmed-gestures-test.py::PourMoiConfirmedGestures.test_a_paused_session_is_relaunched_once_confirmed",
-      "tests/cockpit-criteria/commands/pour-moi-confirmed-gestures-test.py::PourMoiConfirmedGestures.test_a_paused_order_is_relaunched_through_its_door_once_confirmed",
+      "tests/cockpit-criteria/commands/pour-moi-unfolded-test.py::PourMoiUnfolded.test_each_dataset_opens_its_requests_with_their_gestures_unfolded",
+      "tests/cockpit-criteria/commands/pour-moi-confirmed-gestures-test.py::PourMoiConfirmedGestures.test_each_gesture_of_home_gestes_is_done_once_confirmed_and_traced_at_its_source",
       "tests/cockpit-criteria/commands/pour-moi-keyboard-test.py::PourMoiKeyboard.test_home_gestes_opens_each_request_and_its_gestures_by_the_keyboard_at_1440_and_390",
       "tests/cockpit-criteria/commands/pour-moi-keyboard-test.py::PourMoiKeyboard.test_home_gestes_holds_each_gesture_unfolded_at_390"
     ],
@@ -16,9 +11,7 @@
       "tests/cockpit-criteria/commands/action-expiry-test.py::ActionExpiry.test_an_uncertain_outcome_blocks_the_gesture_until_reread_and_keeps_the_success_recorded"
     ],
     "3": [
-      "tests/cockpit-criteria/commands/usine-muette-details-test.py::UsineMuetteDetails.test_home_offline_says_the_factory_muette_urgent_in_clean_words_with_its_details_folded",
-      "tests/cockpit-criteria/commands/usine-muette-details-test.py::UsineMuetteDetails.test_home_loading_says_the_factory_muette_urgent",
-      "tests/cockpit-criteria/commands/usine-muette-details-test.py::UsineMuetteDetails.test_a_producer_text_with_identifiers_is_shown_without_them_and_kept_whole_in_its_details"
+      "tests/cockpit-criteria/commands/usine-muette-details-test.py::UsineMuetteDetails.test_the_silent_factory_is_urgent_and_every_main_text_clean_with_its_details_folded"
     ]
   }
 }
