@@ -234,7 +234,7 @@ from typing import Any, Iterator
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
-from convoy_state import PROVEN_BY_TEST_OPTION, overridden_ticket  # noqa: E402
+from convoy_state import PROVEN_BY_TEST_OPTION, REEVALUATE_OPTION, overridden_ticket  # noqa: E402
 
 
 PROGRAM = "convoy-advance"
@@ -1209,7 +1209,8 @@ def settle_lifts(convoy: Convoy, out: dict[str, Any]) -> None:
     pass: any answer to the request an operator request left on its ticket;
     the option that accepts the deviation a Planning Exception asked about;
     the option that judges proven by its test what an evaluation's Planning
-    Exception could not observe; the lifting option of the convoy's grouped
+    Exception could not observe, or the one that has it evaluated again on
+    the products launched again (af-npz9v1.38); the lifting option of the convoy's grouped
     request, for the tickets it names. Any other answer leaves the ticket
     parked."""
     lifts: list[tuple[str, str, str]] = []
@@ -1224,7 +1225,7 @@ def settle_lifts(convoy: Convoy, out: dict[str, Any]) -> None:
         # `planning_exceptions` (Benjamin, 21/10/2026, af-ten1sp).
         evaluated = ((ticket.get("exit") or {}).get("exit") == "finished"
                      and ((ticket.get("evaluation") or {}).get("state") or {}).get("outcome") == "planning_exception")
-        proven = evaluated and answer["option"] == PROVEN_BY_TEST_OPTION
+        proven = evaluated and answer["option"] in (PROVEN_BY_TEST_OPTION, REEVALUATE_OPTION)
         if park.get("cause") == "operator_request" or (park.get("cause") == "planning_exception" and (accepted or proven)):
             lifts.append((ticket["id"], ticket["id"], answer["option"]))
     try:

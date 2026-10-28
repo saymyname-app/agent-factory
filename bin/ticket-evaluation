@@ -929,6 +929,33 @@ def raise_stop(convoy_id: str, ticket: dict[str, Any], stop: dict[str, Any]) -> 
     return True
 
 
+# The third option of an evaluation's Planning Exception (af-npz9v1.38).
+REEVALUATE = "Réévaluer sur le produit relancé"
+
+
+def planning_exception_request(what: str) -> dict[str, Any]:
+    """The request an evaluation's Planning Exception puts on the operator's
+    list: a judges the unobservable proven by its criterion test (af-ten1sp),
+    b removes the ticket, c has it evaluated again on the products launched
+    again, judging nothing proven -- an unobservable the factory caused, as
+    a dataset of the branch the launcher refused (af-npz9v1.38: R1, R2, BR,
+    27/10/2026)."""
+    return {
+        "quoi": what,
+        "pourquoi": "Un critère gelé que l'Evaluator ne peut pas observer ne se dispense ni ne se reformule.",
+        "que_faire": [
+            {"option": "Juger ce qui est inobservable prouvé par son test de critère vert",
+             "consequence": "Le parcage est levé ; l'évaluation suivante le compte prouvé par le test, "
+                            "sans le voir sur le produit lancé avant ta recette."},
+            {"option": "Retirer le ticket du graphe",
+             "consequence": "Le graphe révisé passe par la porte de patch ; la couverture est recalculée."},
+            {"option": REEVALUATE,
+             "consequence": "Le parcage est levé ; l'évaluation est refaite sur les produits relancés, "
+                            "rien n'est compté prouvé sans être vu."},
+        ],
+    }
+
+
 def raise_planning_exception(convoy_id: str, ticket: dict[str, Any], state: dict[str, Any]) -> list[str]:
     """Spec §7: a criterion the Evaluator could not observe because of the
     criterion itself goes back to the Planning Run, so to the operator. The
@@ -938,19 +965,32 @@ def raise_planning_exception(convoy_id: str, ticket: dict[str, Any], state: dict
     names = ", ".join(entry["what"] for entry in state["unobservable"] if entry["cause"] == "criterion")
     head = f"Planning Exception sur {ticket['id']} : "
     what = head + short(f"inobservable sur le produit lancé ({names})", REQUEST_LINE_MAX - len(head))
-    request = {
-        "quoi": what,
-        "pourquoi": "Un critère gelé que l'Evaluator ne peut pas observer ne se dispense ni ne se reformule.",
-        "que_faire": [
-            {"option": "Juger ce qui est inobservable prouvé par son test de critère vert",
-             "consequence": "Le parcage est levé ; l'évaluation suivante le compte prouvé par le test, "
-                            "sans le voir sur le produit lancé avant ta recette."},
-            {"option": "Retirer le ticket du graphe",
-             "consequence": "Le graphe révisé passe par la porte de patch ; la couverture est recalculée."},
-        ],
-    }
-    escalate(ticket["id"], request, f"le ticket {ticket['id']} a un critère inobservable")
+    escalate(ticket["id"], planning_exception_request(what), f"le ticket {ticket['id']} a un critère inobservable")
     return state_write("park", convoy_id, ticket["id"], "--cause", "planning_exception", "--detail", what)["parked"]
+
+
+def reoffer_reevaluation(ticket: dict[str, Any]) -> bool:
+    """A request an evaluation's Planning Exception raised before option c
+    existed offers a and b only, and the escalation door answers no other
+    letter: while it is not answered, it is asked again once, the same
+    question with the three options (af-npz9v1.38)."""
+    park = ticket.get("park") or {}
+    evaluated = ((ticket.get("exit") or {}).get("exit") == "finished"
+                 and ((ticket.get("evaluation") or {}).get("state") or {}).get("outcome") == PLANNING_EXCEPTION)
+    if (ticket.get("status") == "closed" or not evaluated or park.get("cause") != "planning_exception"
+            or park.get("origin") != ticket["id"] or park.get("answer") or not park.get("detail")):
+        return False
+    offered = (read_bead(ticket["id"]).get("metadata") or {}).get("gc.escalation_que_faire")
+    try:
+        offered = json.loads(offered) if isinstance(offered, str) else offered
+    except ValueError:
+        return False
+    if not isinstance(offered, list) or any(isinstance(entry, dict) and entry.get("option") == REEVALUATE
+                                            for entry in offered):
+        return False
+    escalate(ticket["id"], planning_exception_request(park["detail"]),
+             f"le ticket {ticket['id']} a un critère inobservable")
+    return True
 
 
 # --- settle: what is due on one ticket ----------------------------------------------
@@ -1031,6 +1071,8 @@ def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> d
         stop = own_stop(ticket)
         if stop:
             return {"ticket": ticket_id, "action": "escalated" if raise_stop(convoy.id, ticket, stop) else "none"}
+        if what == "skip" and reoffer_reevaluation(ticket):
+            return {"ticket": ticket_id, "action": "escalated"}
         if what in ("skip", "evaluated"):
             return {"ticket": ticket_id, "action": "none"}
         if what == "waiting":

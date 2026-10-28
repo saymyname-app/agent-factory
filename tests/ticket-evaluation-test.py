@@ -479,6 +479,9 @@ class TicketEvaluationTest(unittest.TestCase):
         """What the preparation command handed to the Evaluator session of that launch."""
         return (self.briefs / f"brief-{number}.json").read_text()
 
+    def bead_metadata(self, bead_id):
+        return json.loads(self.tracker.read_text())["beads"][bead_id]["metadata"]
+
     def escalation_list(self):
         proc = self.run_cmd(ESCALATION_TOOL, "list")
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
@@ -1385,6 +1388,59 @@ class TicketEvaluationTest(unittest.TestCase):
         settled = self.settle()
         self.assertEqual(([], []), (settled["planning_exception"], settled["launched"]))
         self.assertIsNone(self.shown()["park"])
+
+    def test_the_operator_answer_c_evaluates_again_on_the_launched_products_and_judges_nothing_proven(self):
+        # af-npz9v1.38 (R1, R2, BR): what the factory hid is looked at again.
+        tip, request = self.open_evaluation()
+        handed = self.handed(tip, request)
+        handed["demonstration_line"].update(state="unobservable", cause="criterion", reason="jeu de la branche refusé")
+        self.recorded(handed)
+        self.settle()
+        (request_line,) = self.escalation_list()
+        answered = self.run_cmd(ESCALATION_TOOL, "repondre", SLICE, "c", "--actor", "benjamin",
+                                env={"ESCALATION_DOOR_NOW": "4102444800"})  # after the parking
+        self.assertEqual(0, answered.returncode, answered.stdout + answered.stderr)
+        self.state("lift-park", CONVOY, SLICE, "--request", SLICE, "--option", "c")
+        self.assertNotIn("proven_by_test", self.shown()["park_lifts"][-1])
+        self.evaluator("silent")
+        self.assertEqual([SLICE], [e["ticket"] for e in self.settle()["launched"]])
+        # Seen this time: favorable, nothing counted proven by its test.
+        self.tool("record", SLICE, "--file", self.json_file("seen.json", self.handed(tip, self.evaluation()["request"])),
+                  env={**SESSION, "GC_SESSION_NAME": "delivery-evaluator-fx-replay"})
+        last = self.evaluation()["rounds"][-1]
+        self.assertEqual(("favorable", False), (last["outcome"], "proven_by_test" in last))
+        self.assertTrue(self.tool("verdict")["favorable"])
+
+    def test_a_request_raised_before_option_c_is_asked_again_once_with_it(self):
+        # R1, R2 and BR were parked on 27/10/2026 by a request offering a and b.
+        tip, request = self.open_evaluation()
+        handed = self.handed(tip, request)
+        handed["demonstration_line"].update(state="unobservable", cause="criterion", reason="jeu de la branche refusé")
+        self.recorded(handed)
+        self.settle()
+        quoi = self.shown()["park"]["detail"]
+        old = {"quoi": quoi, "pourquoi": "Un critère gelé que l'Evaluator ne peut pas observer ne se dispense ni ne se "
+                                         "reformule.",
+               "que_faire": [{"option": "Juger ce qui est inobservable prouvé par son test de critère vert",
+                              "consequence": "Le parcage est levé."},
+                             {"option": "Retirer le ticket du graphe", "consequence": "La couverture est recalculée."}],
+               "langue": "fr", "bloquant": True}
+        put = self.run_cmd(ESCALATION_TOOL, "benjamin", SLICE, json.dumps(old, ensure_ascii=False))
+        self.assertEqual(0, put.returncode, put.stdout + put.stderr)
+        refused = self.run_cmd(ESCALATION_TOOL, "repondre", SLICE, "c", "--actor", "benjamin")
+        self.assertNotEqual(0, refused.returncode, "the old request answers c")
+
+        self.settle()
+
+        offered = self.bead_metadata(SLICE)["gc.escalation_que_faire"]
+        offered = json.loads(offered) if isinstance(offered, str) else offered
+        self.assertEqual(["a", "b", "c"], [entry["lettre"] for entry in offered])
+        self.assertEqual("Réévaluer sur le produit relancé", offered[2]["option"])
+        self.assertEqual(quoi, self.bead_metadata(SLICE)["gc.needs_benjamin"])
+        again = self.bead_metadata(SLICE)["gc.escalation_horodatage"]
+        time.sleep(1.1)  # a second request would carry a later time
+        self.settle()
+        self.assertEqual(again, self.bead_metadata(SLICE)["gc.escalation_horodatage"], "asked twice")
 
     def test_any_other_answer_leaves_the_unobservable_a_planning_exception(self):
         # A frozen criterion is never waived without the operator's « a ».
