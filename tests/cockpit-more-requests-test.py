@@ -154,12 +154,16 @@ class ReadabilityTest(unittest.TestCase):
 
 class UnknownSignalTest(unittest.TestCase):
     def test_unknown_signal_is_quand_tu_veux_and_names_its_source(self):
-        signals = [{"id": "sig-1", "source": "loop-guard", "texte_brut": "wat=42"}]
-        requests = build_unknown_signal_requests(signals, verifie_a=1000.0)
-        self.assertEqual(1, len(requests))
-        self.assertEqual(QUAND_TU_VEUX, requests[0].niveau)
-        self.assertIn("loop-guard", requests[0].quoi)
-        self.assertIn("Signal non reconnu venant de", requests[0].quoi)
+        signals = [{"id": "sig-1", "source": "sauvegarde nocturne", "texte_brut": "wat=42"},
+                   {"id": "sig-2", "source": "loop-guard", "texte_brut": "wat=43"}]
+        plain, coded = build_unknown_signal_requests(signals, verifie_a=1000.0)
+        self.assertEqual(QUAND_TU_VEUX, plain.niveau)
+        self.assertEqual("Signal non reconnu venant de sauvegarde nocturne", plain.quoi)
+        # A name shaped as an identifier is no main text (spec .73): the
+        # request names it in its details only.
+        self.assertNotIn("loop-guard", coded.quoi)
+        self.assertIn("Signal non reconnu venant d", coded.quoi)
+        self.assertIn("loop-guard", coded.precisions)
 
     def test_unknown_signal_exits_when_the_source_stops_reporting_it(self):
         signals = [{"id": "sig-1", "source": "loop-guard", "texte_brut": "wat=42"}]
