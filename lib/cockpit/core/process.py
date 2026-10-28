@@ -250,6 +250,13 @@ def build(config, clock=None):
 
     server.stop_driver = stop_driver
     server.benjamin_login = config.benjamin_login
+    server.public_url = config.public_url
+    # What the procedure of the VM settings says of this host: paths only,
+    # never what a secret file holds (I, af-cp4fzd).
+    server.procedure_settings = {
+        "local_config": config.local_config_file, "pushover_file": config.pushover_secrets_file,
+        "heartbeat_file": config.heartbeat_url_file, "public_url": config.public_url, "port": config.port,
+    }
     server.rituals_file = config.rituals_file
     server.extra_requests = extra_requests
 

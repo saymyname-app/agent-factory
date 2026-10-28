@@ -95,9 +95,9 @@ class Config:
         # address the cockpit is reached at, Benjamin's Tailscale login --
         # lives in one local, unversioned file beside the pid file. An
         # environment variable still wins over it.
-        local = _read_local_config(
-            env.get("COCKPIT_LOCAL_CONFIG") or os.path.join(os.path.dirname(self.pid_file), LOCAL_CONFIG_NAME)
-        )
+        self.local_config_file = env.get("COCKPIT_LOCAL_CONFIG") or os.path.join(
+            os.path.dirname(self.pid_file), LOCAL_CONFIG_NAME)
+        local = _read_local_config(self.local_config_file)
         # Out-of-scope touch (T13, af-cx20q9 -- declared scope
         # lib/cockpit/access/**, lib/cockpit/actions/**): the access
         # guard needs Benjamin's Tailscale login and the origin the
@@ -130,9 +130,10 @@ class Config:
         )
         self.gc_bin = env.get("COCKPIT_GC_BIN", "gc")
         # Notifications and heartbeat (spec §"Notifications", §"Heartbeat et
-        # usine muette"). Both secret files live outside the repository, on
-        # the Windows side; unset or unreadable, nothing is sent or pinged
-        # and the health zone says so (spec .98).
+        # usine muette"). Both secret files live outside the repository, in
+        # private files of the VM (I, af-cp4fzd: the procedure linked from
+        # « Accès » says where); unset or unreadable, nothing is sent or
+        # pinged and the health zone says so (spec .98).
         self.pushover_secrets_file = env.get("COCKPIT_PUSHOVER_SECRETS_FILE") or local.get("pushover_secrets_file", "")
         self.pushover_url = env.get("COCKPIT_PUSHOVER_URL", PUSHOVER_URL)
         self.notify_state_file = env.get("COCKPIT_NOTIFY_STATE_FILE") or os.path.join(

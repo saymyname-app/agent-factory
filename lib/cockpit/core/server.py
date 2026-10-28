@@ -44,7 +44,8 @@ from cockpit.runs.workflows import workflow_runs
 from cockpit.ui.analyses.page import CSS as ANALYSES_CSS, render_analyses
 from cockpit.ui.base.page import render_document, render_fresh, render_home_zones
 from cockpit.ui.health.page import render_health_zone, render_status_line
-from cockpit.ui.access.page import render_access_zone
+from cockpit.ui.access.page import PROCEDURE_PATH, render_access_zone
+from cockpit.ui.access.procedure import CSS as PROCEDURE_CSS, render_procedure
 from cockpit.ui.factory.page import CSS as FACTORY_PAGE_CSS, read_machine, render_factory_page
 from cockpit.ui.home.overview import CSS as OVERVIEW_CSS
 from cockpit.ui.home.overview import overview_view, render_overview
@@ -81,6 +82,10 @@ NOT_FOLDED = {
 # done, and the request is to be read again before anything else.
 UNEXPECTED_ACTION_ERROR = ("Le cockpit n’a pas pu faire ce geste à cause d’une erreur interne. Rien n’est confirmé : "
                            "relis la demande avant de réessayer.")
+# What a member of the tailnet who is not the operator reads (I, af-cp4fzd):
+# nothing of the cockpit.
+READER_REFUSED_TEXT = ("Accès refusé : ce cockpit est réservé à l’opérateur de l’usine. "
+                       "Ton identité Tailscale n’y est pas autorisée.\n")
 ACTIONS_WITHOUT_WRITE = frozenset({"continuer", "pas_bon_vers_agent", "notifier_test"})
 # What "Ce qui t'attend", the projects and the journal are built from.
 SOURCES_REREAD_AFTER_ACTION = frozenset({"beads", "projets", "journal"})
@@ -97,7 +102,23 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):  # quiet by default; tests read the body
         pass
 
+    def _refuse_reader(self):
+        """A member of the tailnet who is not the operator: nothing of the
+        cockpit is read or served to them (I, af-cp4fzd). True when the
+        request was refused."""
+        if self.server.action_guard.check_reader(self.headers):
+            return False
+        body = READER_REFUSED_TEXT.encode("utf-8")
+        self.send_response(403)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
     def do_GET(self):
+        if self._refuse_reader():
+            return
         read_model = self.server.read_model
         # A page is the path of its address: a query (« /runs? », which a
         # button of the navigation sends) names the same page.
@@ -149,6 +170,10 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         if path == "/usine":
             self._send_factory_page(read_model)
             return
+        if path == PROCEDURE_PATH:
+            self._send_page(read_model, "usine", render_procedure(self.server.procedure_settings),
+                            extra_css=PROCEDURE_CSS)
+            return
         if path == "/rituels":
             rituals = read_rituals(self.server.rituals_file)
             self._send_page(read_model, "rituels", lambda anchors: render_rituals(rituals, anchors),
@@ -174,6 +199,11 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         """Operator Actions (T13, af-cx20q9; spec af-oohx2x §"Actions
         opérateur"). Every write goes through the access guard first —
         refused, nothing downstream (Beads included) is ever touched."""
+        if self.path in ("/api/usine/reverifier", "/api/health/recheck"):
+            guard_result = self.server.action_guard.check_page_post("POST", self.headers)
+            if not guard_result.allowed:
+                self._send_json({"error": guard_result.reason}, status=403)
+                return
         if self.path == "/api/usine/reverifier":
             self._recheck_factory_section()
             return
@@ -299,7 +329,8 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             extra_sections_html=(
                 self._render_projects_zone(snapshot)
                 + self._render_stop_zone(snapshot)
-                + render_access_zone(self.server.benjamin_login, snapshot.get("tailscale"), now)
+                + render_access_zone(self.server.benjamin_login, snapshot.get("tailscale"), now,
+                                   public_url=self.server.public_url)
                 + render_health_zone(health, checked_at=_latest_read_at(snapshot, ("beads", "git")))
             ),
             status_html=render_status_line(snapshot.get("gc"), health),
@@ -574,7 +605,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         health = self._compute_health(read_model)
         notify = self.server.notify
         actions_html = self._render_stop_zone(snapshot) + render_access_zone(
-            self.server.benjamin_login, snapshot.get("tailscale"), now)
+            self.server.benjamin_login, snapshot.get("tailscale"), now, public_url=self.server.public_url)
         agents = checks.get("agents")
         wanted = (urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("role") or [""])[0]
         keys = [role["key"] for role in agents["value"]["configuration"]["roles"]]
@@ -830,6 +861,10 @@ def make_server(
     server.runs_view = {}
     server.stop_driver = None
     server.benjamin_login = ""
+    # The address the operator opens the cockpit at: the HTTPS address of
+    # the node behind Tailscale Serve once it is set (I, af-cp4fzd).
+    server.public_url = ""
+    server.procedure_settings = {}
     # The rituals file of the Factory (« Rituels »): unset, nothing read.
     server.rituals_file = None
     # Where the projects are declared (cockpit.projects.descriptors): the
@@ -861,3 +896,12 @@ class _AlwaysRefuseGuard:
         from cockpit.access.guard import GuardResult, REFUSED_SESSION
 
         return GuardResult(False, REFUSED_SESSION)
+
+    def check_page_post(self, method, headers):
+        return self.check(method, headers)
+
+    def check_reader(self, headers):
+        """No identity configured: nothing to tell a reader from another."""
+        from cockpit.access.guard import GuardResult
+
+        return GuardResult(True, "")

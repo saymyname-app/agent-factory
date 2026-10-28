@@ -19,8 +19,11 @@ synthetic sources only:
   plan), Git repositories in the temporary HOME -- or links to ones on this
   host a dataset names --, read in clones of the cockpit's own;
 - an empty environment: a temporary HOME, no local settings file, so no
-  secret, no notification, no heartbeat and no project clone. Only the mark
-  of the launch (`FACTORY_LAUNCH_ID`) is kept from the launcher's;
+  secret, no notification, no heartbeat and no project clone -- but the
+  heartbeat a dataset declares (`heartbeat`: where it goes, at what pace;
+  I, af-cp4fzd), its address written as the secret it is in service, in a
+  private file of the temporary HOME. Only the mark of the launch
+  (`FACTORY_LAUNCH_ID`) is kept from the launcher's;
 - the doors that change the Factory (`bin/proposal-door`,
   `bin/escalation-door`, `bin/factory-session-loop-guard`, `gc order run`,
   `bin/order-pause`, and for the settings and the upkeep `bin/provider-failover`,
@@ -201,7 +204,8 @@ def start_identity_proxy(cockpit_port: int, home: str, held: list[int]) -> dict[
     is in service. It lives until the cockpit ends; `held` are the ends of
     the other pipes it must not keep open. The environment says its address
     and the authority to trust (COCKPIT_TRIAL_HTTPS_URL, _CA), and makes its
-    origin the cockpit's own, as behind Serve."""
+    origin the cockpit's own and the address it gives (COCKPIT_PUBLIC_URL),
+    as behind Serve."""
     announce_read, announce_write = os.pipe()
     alive_read, alive_write = os.pipe()
     if os.fork() == 0:
@@ -226,8 +230,42 @@ def start_identity_proxy(cockpit_port: int, home: str, held: list[int]) -> dict[
         sys.exit("cockpit-isolated: the synthetic identity proxy did not start")
     # Kept open by the cockpit for as long as it lives, and by nothing else.
     os.set_inheritable(alive_write, True)
-    return {"COCKPIT_ALLOWED_ORIGIN": url, "COCKPIT_TRIAL_HTTPS_URL": url,
+    return {"COCKPIT_ALLOWED_ORIGIN": url, "COCKPIT_PUBLIC_URL": url, "COCKPIT_TRIAL_HTTPS_URL": url,
             "COCKPIT_TRIAL_HTTPS_CA": os.path.join(home, "https", "cert.pem")}
+
+
+def read_heartbeat(path: Path) -> dict | None:
+    """The heartbeat the dataset at `path` declares (`heartbeat`: its
+    `ping_url`, an http(s) address, and its `interval_seconds`, the pace
+    that stands for the five minutes of service), or None; exits when it is
+    not one."""
+    heartbeat = json.loads(path.read_text(encoding="utf-8")).get("heartbeat")
+    if heartbeat is None:
+        return None
+    url = heartbeat.get("ping_url") if isinstance(heartbeat, dict) else None
+    interval = heartbeat.get("interval_seconds") if isinstance(heartbeat, dict) else None
+    if (not isinstance(url, str) or not url.startswith(("http://", "https://"))
+            or isinstance(interval, bool) or not isinstance(interval, (int, float)) or interval <= 0):
+        sys.exit(f"cockpit-isolated: {path}: heartbeat is a ping_url (http or https) and an interval_seconds above 0")
+    return {"ping_url": url, "interval_seconds": float(interval)}
+
+
+def write_heartbeat(heartbeat: dict | None, home: str) -> dict[str, str]:
+    """The environment of the heartbeat the dataset declares: its address in
+    a file of the temporary HOME that only this account reads, as the secret
+    file of the VM (the cockpit reads it and shows it nowhere), its pace,
+    and a tick four times as frequent. Nothing when it declares none."""
+    if heartbeat is None:
+        return {}
+    folder = Path(home, "secrets")
+    folder.mkdir(mode=0o700)
+    secret = folder / "heartbeat-url"
+    descriptor = os.open(secret, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as written:
+        written.write(heartbeat["ping_url"] + "\n")
+    interval = heartbeat["interval_seconds"]
+    return {"COCKPIT_HEARTBEAT_URL_FILE": str(secret), "COCKPIT_HEARTBEAT_INTERVAL_SECONDS": str(interval),
+            "COCKPIT_HEARTBEAT_TICK_SECONDS": str(interval / 4)}
 
 
 def read_restart(path: Path) -> bool:
@@ -471,6 +509,7 @@ def main(argv: list[str]) -> int:
     doors = read_doors(Path(args.dataset))
     restarted = read_restart(Path(args.dataset))
     https = read_https(Path(args.dataset))
+    heartbeat = read_heartbeat(Path(args.dataset))
     cockpit_url = f"http://127.0.0.1:{args.port}"
 
     home = tempfile.mkdtemp(prefix="cockpit-isolated-")
@@ -517,6 +556,7 @@ def main(argv: list[str]) -> int:
     if LAUNCH_MARK in os.environ:
         env[LAUNCH_MARK] = os.environ[LAUNCH_MARK]
     env.update(write_stop(restarted, city, home))
+    env.update(write_heartbeat(heartbeat, home))
     if https:
         env.update(start_identity_proxy(args.port, home, [alive_write]))
     if city.reading == synthetic_city.READ_ONCE:

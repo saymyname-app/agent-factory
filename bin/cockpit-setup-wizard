@@ -68,7 +68,7 @@ def _refuse_outside_repo(path):
     if resolved == repo_root or resolved.startswith(repo_root + os.sep):
         raise WizardError(
             "refus : %s est à l'intérieur du dépôt git — le secret doit vivre "
-            "hors dépôt, côté Windows (accessible depuis WSL via /mnt/c)" % path
+            "hors dépôt, dans un fichier privé de la VM (par exemple sous ~/.config/agent-factory)" % path
         )
 
 
