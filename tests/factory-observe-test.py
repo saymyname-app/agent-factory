@@ -149,6 +149,217 @@ class WakeQualificationTest(unittest.TestCase, ToolMixin):
             )
 
 
+class LiveToolCase(ToolCase):
+    """Public-CLI fixture with the minimal shapes of the R2/A2 live incident."""
+
+    def setUp(self):
+        super().setUp()
+        self.bin_dir = self.tmp / "bin"
+        self.bin_dir.mkdir()
+        self.calls = self.tmp / "calls.jsonl"
+        self.mail_rc = self.tmp / "mail-rc"
+        self.mail_rc.write_text("0")
+        self.active = self.tmp / "active.json"
+        self.requests = self.tmp / "requests.json"
+        self.prs = self.tmp / "prs.json"
+        self.git_head = self.tmp / "git-head"
+        self.git_main = self.tmp / "git-main"
+        self.git_head.write_text("1" * 40)
+        self.git_main.write_text("1" * 40)
+        self.prs.write_text(json.dumps([{
+            "number": 765,
+            "state": "MERGED",
+            "isDraft": False,
+            "mergeStateStatus": "CLEAN",
+            "headRefName": "do-work/af-npz9v1.48",
+            "headRefOid": "d1505a17434e98d438332c45333876af16074ef9",
+            "baseRefName": "main",
+            "statusCheckRollup": [{"name": "Tests", "status": "COMPLETED", "conclusion": "SUCCESS"}],
+            "closedAt": "2026-10-29T14:19:00Z",
+            "mergedAt": "2026-10-29T14:19:00Z",
+        }]))
+        self.write_incident(resumed=False, request_active=True)
+        self._write_fakes()
+
+    def write_incident(self, *, resumed, request_active):
+        resumes = [{
+            "cause": "unblocked",
+            "ref": "repair:af-npz9v1.48",
+            "at": "2026-10-29T14:20:00Z",
+        }] if resumed else []
+        technical = {
+            "id": "af-cifk1e",
+            "status": "in_progress",
+            "issue_type": "task",
+            "metadata": {
+                "gc.session_name": "factory-worker-af-fixture",
+                "gc.flow.exit": json.dumps({"exit": "operator_request", "at": "2026-10-29T14:00:00Z"}),
+                "gc.flow.park": json.dumps({"cause": "operator_request", "at": "2026-10-29T14:00:01Z"}),
+                "gc.flow.technical_repairs": json.dumps({
+                    "exit_at": "2026-10-29T14:00:00Z",
+                    "entries": [{"id": "af-npz9v1.48", "at": "2026-10-29T14:01:00Z"}],
+                }),
+                "gc.flow.resume": json.dumps({"entries": resumes}),
+            },
+        }
+        human = {
+            "id": "af-ocz64w",
+            "status": "blocked",
+            "issue_type": "task",
+            "metadata": {
+                "gc.plane": "planning",
+                "gc.needs_benjamin": (
+                    "A2 doit rendre Essai et Avis utilisables jusqu'à A2"
+                    if request_active else "none"
+                ),
+                **({} if request_active else {
+                    "gc.escalation_quoi": "A2 doit rendre Essai et Avis utilisables jusqu'à A2",
+                    "gc.escalation_response_option": "a",
+                    "gc.escalation_response_actor": "Benjamin",
+                    "gc.escalation_response_at": "2026-10-29T16:00:00Z",
+                }),
+            },
+        }
+        self.active.write_text(json.dumps([technical, human]))
+        self.requests.write_text(json.dumps([human]))
+
+    def _write_fakes(self):
+        gc = self.bin_dir / "gc"
+        gc.write_text(f"""#!/usr/bin/env python3
+import json, pathlib, sys
+args = sys.argv[1:]
+with pathlib.Path({str(self.calls)!r}).open('a') as handle:
+    handle.write(json.dumps(args) + '\\n')
+if args[:2] == ['bd', 'list']:
+    source = {str(self.requests)!r} if 'gc.needs_benjamin' in args else {str(self.active)!r}
+    print(pathlib.Path(source).read_text())
+elif args[:2] == ['session', 'list']:
+    print(json.dumps({{'sessions': [{{'name': 'factory-worker-af-fixture', 'state': 'active'}}]}}))
+elif args[:2] == ['mail', 'send']:
+    raise SystemExit(int(pathlib.Path({str(self.mail_rc)!r}).read_text()))
+else:
+    raise SystemExit(2)
+""")
+        gh = self.bin_dir / "gh"
+        gh.write_text(f"""#!/usr/bin/env python3
+import pathlib, sys
+if sys.argv[1:3] != ['pr', 'list']:
+    raise SystemExit(2)
+print(pathlib.Path({str(self.prs)!r}).read_text())
+""")
+        git = self.bin_dir / "git"
+        git.write_text(f"""#!/usr/bin/env python3
+import pathlib, sys
+args = sys.argv[1:]
+if args[-3:] == ['config', '--get', 'remote.origin.url']:
+    print('git@github.com:acme/factory.git')
+elif args[-2:] == ['rev-parse', 'HEAD']:
+    print(pathlib.Path({str(self.git_head)!r}).read_text())
+elif args[-2:] == ['rev-parse', 'refs/remotes/origin/main']:
+    print(pathlib.Path({str(self.git_main)!r}).read_text())
+elif args[-3:] == ['rev-parse', '--abbrev-ref', 'HEAD']:
+    print('main')
+else:
+    raise SystemExit(2)
+""")
+        for executable in (gc, gh, git):
+            executable.chmod(0o755)
+
+    def live_env(self, now):
+        return {
+            "FACTORY_ROOT": str(self.tmp),
+            "FACTORY_OBSERVE_NOW": str(now),
+            "FACTORY_OBSERVE_REPO": "acme/factory",
+            "FACTORY_OBSERVE_GC_BIN": str(self.bin_dir / "gc"),
+            "FACTORY_OBSERVE_GH_BIN": str(self.bin_dir / "gh"),
+            "FACTORY_OBSERVE_GIT_BIN": str(self.bin_dir / "git"),
+        }
+
+    def run_live(self, now, check=True):
+        return self.run_tool("live", env=self.live_env(now), check=check)
+
+    def calls_matching(self, prefix):
+        if not self.calls.exists():
+            return []
+        calls = [json.loads(line) for line in self.calls.read_text().splitlines()]
+        return [call for call in calls if call[:len(prefix)] == prefix]
+
+
+class LiveObservationTest(unittest.TestCase):
+    def test_identical_live_reads_create_a_baseline_then_wake_nobody(self):
+        with LiveToolCase() as case:
+            first = json.loads(case.run_live(1000).stdout)
+            second = json.loads(case.run_live(1300).stdout)
+            self.assertEqual((first["action"], second["action"]), ("none", "none"))
+            self.assertEqual([], case.calls_matching(["mail", "send"]))
+            status = json.loads(case.run_tool("status", "--json", env=case.live_env(1300), check=True).stdout)
+            self.assertEqual(
+                {"delivery", "planning_runs", "human_requests"},
+                set(status["live"]["areas_observed"]),
+            )
+            self.assertEqual("1970-01-01T02:16:40Z", status["live"]["window"]["due_at"])
+
+    def test_a_new_unblocked_resume_routes_once_to_the_holding_worker(self):
+        with LiveToolCase() as case:
+            case.run_live(1000)
+            case.write_incident(resumed=True, request_active=True)
+            changed = json.loads(case.run_live(1300).stdout)
+            repeat = json.loads(case.run_live(1600).stdout)
+            self.assertEqual("wake", changed["action"])
+            self.assertEqual("none", repeat["action"])
+            resume = next(event for event in changed["events"] if event["id"] == "af-cifk1e")
+            stored_ref = resume["evidence"]["after"]["signals"]["gc.flow.resume"]["entries"][0]["ref"]
+            self.assertEqual({"fingerprint"}, set(stored_ref))
+            self.assertNotIn("repair:af-npz9v1.48", json.dumps(resume))
+            mails = case.calls_matching(["mail", "send"])
+            self.assertEqual(1, len(mails))
+            self.assertEqual("factory-worker-af-fixture", mails[0][2])
+
+    def test_answering_a2_is_preserved_and_wakes_the_mayor_once(self):
+        with LiveToolCase() as case:
+            case.run_live(1000)
+            case.write_incident(resumed=False, request_active=False)
+            changed = json.loads(case.run_live(1300).stdout)
+            self.assertEqual("wake", changed["action"])
+            mails = case.calls_matching(["mail", "send"])
+            self.assertEqual(1, len(mails))
+            self.assertEqual("mayor", mails[0][2])
+            status = json.loads(case.run_tool("status", "--json", env=case.live_env(1300), check=True).stdout)
+            request_events = [
+                event for event in status["live"]["events"]
+                if event.get("area") == "human_requests" and event.get("id") == "af-ocz64w"
+            ]
+            self.assertEqual(1, len(request_events))
+            self.assertTrue(request_events[0]["evidence"]["before"]["active"])
+            self.assertFalse(request_events[0]["evidence"]["after"]["active"])
+            self.assertEqual("a", request_events[0]["evidence"]["after"]["response"]["option"])
+
+    def test_the_two_hour_final_read_wakes_the_mayor_once(self):
+        with LiveToolCase() as case:
+            case.run_live(1000)
+            final = json.loads(case.run_live(8201).stdout)
+            repeat = json.loads(case.run_live(8202).stdout)
+            self.assertEqual("wake", final["action"])
+            self.assertEqual("1970-01-01T02:16:41Z", final["window"]["final_at"])
+            self.assertEqual("none", repeat["action"])
+            mails = case.calls_matching(["mail", "send"])
+            self.assertEqual(1, len(mails))
+            self.assertEqual("mayor", mails[0][2])
+
+    def test_a_failed_route_is_retried_without_rediscovering_the_transition(self):
+        with LiveToolCase() as case:
+            case.run_live(1000)
+            case.write_incident(resumed=True, request_active=True)
+            case.mail_rc.write_text("1")
+            failed = json.loads(case.run_live(1300, check=False).stdout)
+            self.assertFalse(failed["ok"])
+            case.mail_rc.write_text("0")
+            retried = json.loads(case.run_live(1600).stdout)
+            quiet = json.loads(case.run_live(1900).stdout)
+            self.assertEqual((retried["action"], quiet["action"]), ("none", "none"))
+            self.assertEqual(2, len(case.calls_matching(["mail", "send"])))
+
+
 # --- AC3: measures separate by comparable work class ------------------------
 
 
