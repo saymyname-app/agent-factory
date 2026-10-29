@@ -349,6 +349,15 @@ class CodeReviewTest(unittest.TestCase):
         state["beads"][bead_id]["status"] = status
         self.tracker.write_text(json.dumps(state))
 
+    def forget_latest_judgement_contract(self):
+        """Make the last judgement look like one recorded before its contract was versioned."""
+        state = json.loads(self.tracker.read_text())
+        metadata = state["beads"][SLICE]["metadata"]
+        review = json.loads(metadata["gc.flow.code_review"])
+        review["rounds"][-1].pop("contract", None)
+        metadata["gc.flow.code_review"] = json.dumps(review)
+        self.tracker.write_text(json.dumps(state))
+
     def commit_on(self, ticket, files, message=COMMIT_PROSE):
         """Add one commit to the branch of a ticket (created from the
         integration branch if new) and push it; return its SHA."""
@@ -838,6 +847,7 @@ class CodeReviewTest(unittest.TestCase):
         self.responded({"F1.1": {"response": "fixed", "commit": tip}})
         self.settle()
         self.assertEqual({"verdict": "unfavorable", "commit": tip, "unsettled": ["F1.1"]}, self.review()["state"])
+        self.assertEqual("code-review-attribution/v2", self.review()["rounds"][-1]["contract"])
 
         again = self.settle()
 
@@ -845,6 +855,31 @@ class CodeReviewTest(unittest.TestCase):
         self.assertIn("tour de correction", again["waiting"][0]["reason"])
         self.assertEqual(2, len(self.launches()))
         self.assertEqual([], self.merge()["merged"])
+
+    def test_an_unfavorable_judgement_from_the_previous_contract_is_rejudged_once_at_the_same_tip(self):
+        self.finished_slice()
+        still = "le correctif n'affiche toujours pas le nombre"
+        self.reviewer({"findings": [CONTRADICTS]}, {"judgements": {"F1.1": still}}, "favorable")
+        self.settle()
+        tip = self.corrected({NOTE: "toujours pas de nombre\n"})
+        self.responded({"F1.1": {"response": "fixed", "commit": tip}})
+        self.settle()
+        self.assertEqual({"verdict": "unfavorable", "commit": tip, "unsettled": ["F1.1"]}, self.review()["state"])
+        self.state("stop-ticket", CONVOY, SLICE, "--reason", "still_refused", "--detail",
+                   "encore refusé après son tour de correction : revue de code (F1.1)")
+        self.forget_latest_judgement_contract()
+
+        settled = self.settle()
+
+        self.assertEqual([("judgement", tip)], [(entry["kind"], entry["commit"]) for entry in settled["launched"]])
+        rounds = self.review()["rounds"]
+        self.assertEqual(["review", "judgement", "judgement"], [round_["kind"] for round_ in rounds])
+        self.assertEqual("code-review-attribution/v2", rounds[1]["invalidated"]["contract"])
+        self.assertEqual("code-review-attribution/v2", rounds[2]["contract"])
+        self.assertEqual(3, len({round_["recorded_by"] for round_ in rounds}))
+        self.assertEqual({"verdict": "favorable", "commit": tip, "unsettled": []}, self.review()["state"])
+        self.assertIsNone(self.shown()["stop"])
+        self.assertEqual([], self.settle()["launched"])
 
     def test_a_judgement_left_unfavorable_and_overridden_is_reviewed_in_full_at_a_later_tip(self):
         # 22/10/2026, F and G1 of af-strhoy: every unsettled Blocking Finding

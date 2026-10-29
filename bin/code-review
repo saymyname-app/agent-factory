@@ -91,8 +91,13 @@ NEW_FLOW = "new-flow/v1"
 KIND_PREFACTORING = "prefactoring"
 REVIEW, JUDGEMENT = "review", "judgement"
 FAVORABLE, UNFAVORABLE = "favorable", "unfavorable"
+# The inputs and instructions used to judge attribution after PR #759.
+# Bump this when that judgement contract changes: an unfavorable judgement
+# carrying an older value is invalidated and replayed once at the same tip.
+JUDGEMENT_CONTRACT = "code-review-attribution/v2"
 REVIEWER_ROLE = "reviewer"
 STOP_NO_RESULT = "code_review_no_result"
+STOP_STILL_REFUSED = "still_refused"
 # bin/convoy-state holds the bound (launch-code-review refuses a third
 # launch): the first launch, then one relaunch.
 MAX_LAUNCHES = 2
@@ -388,6 +393,19 @@ def blocking_findings(round_: dict[str, Any]) -> list[dict[str, Any]]:
     return [finding for finding in round_.get("findings", []) if finding["blocking"]]
 
 
+def reviewed_round(review: dict[str, Any]) -> dict[str, Any]:
+    """The review whose closed findings the next judgement judges."""
+    return next(round_ for round_ in reversed(review["rounds"]) if round_["kind"] == REVIEW)
+
+
+def stale_judgement(ticket: dict[str, Any], tip: str | None) -> bool:
+    """An unfavorable judgement at the tip made under an older contract."""
+    rounds = review_of(ticket)["rounds"]
+    last = rounds[-1] if rounds else None
+    return bool(last and last["kind"] == JUDGEMENT and last["verdict"] == UNFAVORABLE
+                and last["commit"] == tip and last.get("contract") != JUDGEMENT_CONTRACT)
+
+
 def review_stop(ticket: dict[str, Any]) -> dict[str, Any] | None:
     """The stop of the ticket, when its code review is what stopped it."""
     stop = ticket.get("stop")
@@ -586,9 +604,12 @@ def wanted_round(convoy: Convoy, ticket: dict[str, Any]) -> tuple[str, Any]:
     business), `waiting` (with the reason), `reviewed` (favorable at the
     tip), or `open` with the round to hold: (kind, commit, base)."""
     exit_record = ticket.get("exit") or {}
-    if ticket.get("status") == "closed" or exit_record.get("exit") != "finished" or ticket.get("park") or ticket.get("stop"):
-        return "skip", None
     tip = ticket.get("tip")
+    stale = stale_judgement(ticket, tip)
+    stop = ticket.get("stop")
+    if (ticket.get("status") == "closed" or exit_record.get("exit") != "finished" or ticket.get("park")
+            or (stop and not (stale and stop.get("reason") == STOP_STILL_REFUSED))):
+        return "skip", None
     if not ticket.get("branch") or not tip:
         return "waiting", "branche du ticket introuvable dans le dépôt"
     merge = ticket.get("merge") or {}
@@ -609,6 +630,8 @@ def wanted_round(convoy: Convoy, ticket: dict[str, Any]) -> tuple[str, Any]:
         # is replayed in full on the new tip (Spec §8).
         return full_review(convoy, tip)
     if last["kind"] == JUDGEMENT:
+        if stale:
+            return "open", (JUDGEMENT, tip, last["base"])
         if (ticket.get("correction") or {}).get("commit") == last["commit"] and last["commit"] != tip:
             # A later correction round took up the answers judged unfavorably
             # (bin/correction-round, af-bv0ikr): its tip is reviewed in full.
@@ -679,7 +702,7 @@ def open_round(convoy: Convoy, ticket: dict[str, Any], kind: str, commit: str, b
         state_write_file("open-code-review", convoy.id, ticket["id"],
                          {"questions": questions, **({"scope": scope} if scope is not None else {})}, *args)
     else:
-        state_write("open-code-review", convoy.id, ticket["id"], *args)
+        state_write("open-code-review", convoy.id, ticket["id"], *args, "--contract", JUDGEMENT_CONTRACT)
 
 
 def launch(convoy: Convoy, ticket_id: str, request: dict[str, Any], settings: dict[str, Any]) -> str:
@@ -781,7 +804,8 @@ def raise_stop(convoy_id: str, ticket: dict[str, Any], stop: dict[str, Any]) -> 
 def held_request(ticket: dict[str, Any], kind: str, commit: str, base: str) -> dict[str, Any] | None:
     """The open request of the review, when it is the round that is due."""
     request = review_of(ticket).get("request")
-    if request and (request["kind"], request["commit"], request["base"]) == (kind, commit, base):
+    contract_matches = kind != JUDGEMENT or request and request.get("contract") == JUDGEMENT_CONTRACT
+    if request and contract_matches and (request["kind"], request["commit"], request["base"]) == (kind, commit, base):
         return request
     return None
 
@@ -1011,8 +1035,9 @@ def cmd_brief(args: argparse.Namespace) -> int:
             },
         })
     else:
-        reviewed = review["rounds"][-1]
+        reviewed = reviewed_round(review)
         brief.update({
+            "contract": request.get("contract"),
             "reviewed_commit": reviewed["commit"],
             # A contested finding from a targeted review may concern
             # behaviour that already existed at the ticket's fixed point,

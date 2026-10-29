@@ -198,6 +198,8 @@ citation), and each received an answer (`.responses`): `fixed`, with the
 commit of the correction, or `contested`, with a reason. You are a second
 reviewer: judge each answer against the correction diff (`.diff.command`,
 from the reviewed commit `.base` to `.commit`) and the cited line.
+`.contract` identifies the versioned inputs and instructions for this
+judgement; report under that contract without changing it.
 
 `.reviewed_diff` is the original diff that produced the findings: its
 `base`, `commit`, `command`, and the targeted `scope` when that review was
