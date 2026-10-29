@@ -43,7 +43,9 @@ assert_file docs/decisions/ADR-0016-standing-delegation-and-non-stop-campaign.md
 assert_contains AGENTS.md 'Full access'
 assert_contains README.md 'docs/OPERATOR_BRIDGE.md'
 # sandbox: allow-live-root -- real operator-facing doc text (P10, af-ygibh)
-assert_contains README.md 'wsl -d Ubuntu-24.04 -u benja --cd /home/benja/agent-factory'
+assert_contains README.md 'C:/Dev/Factory'
+assert_contains README.md 'ssh factory-vm'
+assert_absent README.md 'wsl -d Ubuntu-24.04 -u benja --cd /home/benja/agent-factory'
 assert_contains docs/CONTEXT_INDEX.md 'OPERATOR_BRIDGE.md'
 # The structural-decisions row must span ADR-0001 through the HIGHEST ADR that
 # actually exists. Both context tests used to hardcode ADR-0014, which meant
@@ -74,7 +76,11 @@ assert_contains agents/mayor/prompt.template.md 'bin/proposal-door create'
 ! grep -qi 'saymyname' "$REPO_ROOT/agents/mayor/prompt.template.md" \
   || fail 'the Mayor prompt names a project; project rules belong in its rig AGENTS.md'
 assert_absent docs/OPERATOR_BRIDGE.md './bin/saymyname-product-status'
-assert_contains docs/OPERATOR_BRIDGE.md 'C:\Dev\Projects\AgentFactory'
+assert_contains docs/OPERATOR_BRIDGE.md 'C:/Dev/Factory'
+assert_contains docs/OPERATOR_BRIDGE.md 'ssh factory-vm'
+assert_contains docs/OPERATOR_BRIDGE.md 'Historical only (disabled)'
+assert_contains docs/OPERATOR_BRIDGE.md 'wsl -d Ubuntu-24.04 -u benja --cd /home/benja/agent-factory'
+assert_absent docs/OPERATOR_BRIDGE.md 'C:\Dev\Projects\AgentFactory'
 assert_absent docs/OPERATOR_BRIDGE.md './bin/factory-cockpit'
 assert_contains docs/OPERATOR_BRIDGE.md 'capability of the connected host, not standing authority'
 assert_absent README.md 'No production City is configured or proven yet.'
