@@ -660,35 +660,68 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                         "revérifie la configuration avant de réessayer.")
         return None
 
-    def _cleanup_blocked(self):
-        mark = self.server.cleanup_uncertain
+    def _proposal_blocked(self, role_key):
+        """Why a proposal for ``role_key`` may not be prepared now, or None.
+        Its source is what waits for the operator, the tracker -- not the
+        configuration: after an uncertain outcome, nothing goes before the
+        tracker was read again; then, if the proposal the door may have
+        written waits, it was recorded, and is never prepared twice."""
+        server = self.server
+        mark = server.proposal_uncertain.get(role_key)
         if mark is None:
             return None
-        previewed = self.server.cleanup_previewed_at
-        if previewed is not None and previewed > mark:
-            self.server.cleanup_uncertain = None
-            return None
-        return ("Nettoyage indisponible : le dernier nettoyage a une issue incertaine ; examine de nouveau le "
-                "périmètre avant de confirmer.")
+        at, quoi = mark
+        read_model = server.read_model
+        requests, beads_row, _ = self._assemble_requests(read_model.snapshot(), read_model.now())
+        read_at = beads_row["read_at"] if beads_row else None
+        if read_at is None or read_at <= at:
+            return ("Proposition indisponible : la dernière préparation a une issue incertaine ; le cockpit relit "
+                    "ce qui t’attend avant tout nouvel essai.")
+        if any(request.quoi == quoi for request in requests):
+            return ("Proposition déjà enregistrée : « %s » attend ta décision dans Pour moi. Rien n’a été envoyé "
+                    "de nouveau." % quoi)
+        server.proposal_uncertain.pop(role_key, None)
+        return None
+
+    def _cleanup_blocked(self):
+        """Why the cleaning may not be confirmed now, or None: no preview of
+        its scope was read, the one read is stale, or the last cleaning had
+        an uncertain outcome no preview was read since."""
+        server = self.server
+        previewed = server.cleanup_previewed_at
+        if previewed is None:
+            return ("Nettoyage indisponible : aucun aperçu du périmètre n’a été lu ; examine le périmètre avant de "
+                    "le confirmer.")
+        mark = server.cleanup_uncertain
+        if mark is not None:
+            if previewed <= mark:
+                return ("Nettoyage indisponible : le dernier nettoyage a une issue incertaine ; examine de nouveau "
+                        "le périmètre avant de confirmer.")
+            server.cleanup_uncertain = None
+        if server.read_model.now() - previewed > server.cleanup_validity_seconds:
+            return ("Nettoyage indisponible : l’aperçu du périmètre est périmé ; examine-le de nouveau avant de "
+                    "confirmer.")
+        return None
 
     def _usine_action(self, action, payload):
         """POST /api/actions/regler, preparer_reglage, nettoyer (G2,
         af-f8nlhr): (status, body). Each goes through its door; a door
         that does not answer leaves an uncertain outcome, and the same
-        gesture waits for a new reading of its source."""
+        gesture waits for a new reading of its source: the configuration
+        for a setting, what waits for the operator for a proposal, the
+        scope for a cleaning."""
         server = self.server
-        now = server.read_model.now()
         if payload.get("confirm") is not True:
             return 400, {"error": "Confirmation requise : rien n’a été envoyé."}
         if action == "nettoyer":
             blocked = self._cleanup_blocked()
             if blocked:
-                return 409, {"error": blocked, "incertain": True}
+                return 409, {"error": blocked, "incertain": server.cleanup_uncertain is not None}
             try:
                 elements = cleanup.clean(server.factory_maintain_bin, payload.get("perimetre"), server.door_timeout)
             except cleanup.ScopeChanged as exc:
-                server.cleanup_previewed_at = now
-                return 409, {"error": str(exc), "perimetre": [e["name"] for e in exc.scope["candidates"]]}
+                server.cleanup_previewed_at = server.read_model.now()
+                return 409, {"error": str(exc), "perimetre": exc.scope["candidates"]}
             except ActionUncertain as exc:
                 server.cleanup_uncertain = server.read_model.now()
                 return exc.status, {"error": str(exc), "incertain": True}
@@ -699,12 +732,15 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             return 200, {"ok": True, "elements": elements}
         role_key = payload.get("role") or ""
         agents = server.factory_checks.get("agents")
-        blocked = self._setting_blocked(agents, role_key)
+        blocked = self._setting_blocked(agents, role_key) if action == "regler" else (
+            self._configuration_blocked(agents) or self._proposal_blocked(role_key))
         if blocked:
-            return 409, {"error": blocked, "incertain": role_key in server.setting_uncertain}
+            uncertain = server.setting_uncertain if action == "regler" else server.proposal_uncertain
+            return 409, {"error": blocked, "incertain": role_key in uncertain}
         configuration = agents["value"]["configuration"]
         try:
-            planned = settings.plan(configuration, role_key, payload.get("principal") or "")
+            planned = settings.plan(configuration, role_key, payload.get("principal") or "",
+                                    payload.get("effort") or "", payload.get("secours") or "")
             if action == "regler":
                 read_back = settings.apply(server.provider_failover_bin, planned, server.door_timeout)
             else:
@@ -713,7 +749,11 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                                       "proposition.")
                 quoi = settings.propose(server.proposal_door_bin, planned, operator_language(), server.door_timeout)
         except ActionUncertain as exc:
-            server.setting_uncertain[role_key] = server.read_model.now()
+            if action == "regler":
+                server.setting_uncertain[role_key] = server.read_model.now()
+            else:
+                server.proposal_uncertain[role_key] = (server.read_model.now(), planned["quoi"])
+                self._poll_soon()
             return exc.status, {"error": str(exc), "incertain": True}
         except ActionError as exc:
             return 400, {"error": str(exc)}
@@ -729,16 +769,30 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         server.setting_outcomes[("proposition", role_key)] = (
             "Proposition préparée : « %s ». Elle attend ta décision dans Pour moi ; rien n’a changé pour ce rôle."
             % quoi)
-        for poller in getattr(server, "pollers", ()):
+        self._poll_soon()
+        return 200, {"ok": True, "quoi": quoi}
+
+    def _configuration_blocked(self, agents):
+        """Why nothing may be planned on the configuration read, or None:
+        unreadable or stale."""
+        configuration = agents["value"]["configuration"]
+        if configuration["unreadable"] or agents.get("stale"):
+            return self._setting_blocked(agents, None)
+        return None
+
+    def _poll_soon(self):
+        """Reads the sources of the cockpit again, in the background: what
+        waits for the operator shows a proposal just written."""
+        for poller in getattr(self.server, "pollers", ()):
             poll_now = getattr(poller, "poll_now", None)
             if poll_now is not None:
-                poll_now()
-        return 200, {"ok": True, "quoi": quoi}
+                threading.Thread(target=poll_now, daemon=True).start()
 
     def _usine_views(self, query, agents, selected):
         """What the role panel and the cleaning panel of the page show,
         from the address: ``reglage=modifier|portee|fait|propose``
-        (``principal=`` for the scope), ``nettoyage=apercu|fait``."""
+        (``principal=``, ``effort=``, ``secours=`` for the scope),
+        ``nettoyage=apercu|fait``."""
         server = self.server
         mode = (query.get("reglage") or [""])[0]
         configuration = agents["value"]["configuration"]
@@ -748,23 +802,25 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             if mode == "modifier":
                 setting.update(mode="modifier", offered=settings.offered(configuration, selected))
             elif mode == "portee":
-                setting.update(mode="portee", plan=settings.plan(configuration, selected,
-                                                                 (query.get("principal") or [""])[0]))
+                planned = settings.plan(configuration, selected, *((query.get(name) or [""])[0]
+                                                                   for name in ("principal", "effort", "secours")))
+                blocked = self._setting_blocked(agents, selected) if planned["supported"] else (
+                    self._configuration_blocked(agents) or self._proposal_blocked(selected))
+                setting.update(mode="portee", plan=planned, blocked=blocked)
             elif mode == "propose":
                 setting.update(mode="propose", outcome=server.setting_outcomes.get(("proposition", selected)))
         except ActionError as exc:
             setting.update(mode="role", outcome=str(exc))
-        cleaning = {"result": server.cleanup_result, "blocked": None}
+        cleaning = {"result": server.cleanup_result, "blocked": None,
+                    "validity_seconds": server.cleanup_validity_seconds}
         if (query.get("nettoyage") or [""])[0] == "apercu":
             cleaning["mode"] = "apercu"
             try:
                 cleaning["preview"] = cleanup.preview(server.factory_maintain_bin, server.door_timeout)
                 server.cleanup_previewed_at = server.read_model.now()
-                self._cleanup_blocked()
+                cleaning["blocked"] = self._cleanup_blocked()
             except ActionError as exc:
                 cleaning.update(preview=None, error=str(exc))
-        else:
-            cleaning["blocked"] = self._cleanup_blocked()
         return setting, cleaning
 
     def _recheck_factory_section(self):
@@ -1034,14 +1090,15 @@ def make_server(
     # The settings and the upkeep of the page Usine (G2, af-f8nlhr): their
     # doors (unset: refused as unknown commands), and what the page keeps
     # between two readings -- the last outcome of a role's setting, the
-    # moment a setting or a cleaning had an uncertain outcome, the last
-    # cleaning and the last preview of its scope.
+    # moment a setting, a proposal (with its words) or a cleaning had an
+    # uncertain outcome, the last cleaning and the last preview of its scope.
     server.provider_failover_bin = None
     server.factory_maintain_bin = None
     server.proposal_door_bin = None
     server.door_timeout = DOOR_TIMEOUT_SECONDS
     server.setting_outcomes = {}
     server.setting_uncertain = {}
+    server.proposal_uncertain = {}
     server.cleanup_result = None
     server.cleanup_uncertain = None
     server.cleanup_previewed_at = None
@@ -1072,6 +1129,10 @@ def make_server(
                            "sessions": read_model.snapshot().get("sessions")},
     }, read_model.now, CHECK_VALIDITY_SECONDS if factory_check_validity_seconds is None
         else factory_check_validity_seconds)
+    # A preview of the scope of the cleaning stays current as long as a
+    # check of a section of the page does.
+    server.cleanup_validity_seconds = (CHECK_VALIDITY_SECONDS if factory_check_validity_seconds is None
+                                       else factory_check_validity_seconds)
     server.illisible_after_seconds = (
         ILLISIBLE_THRESHOLD_SECONDS if illisible_after_seconds is None else illisible_after_seconds
     )

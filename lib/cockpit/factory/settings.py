@@ -8,7 +8,8 @@ existants ; aucune écriture brute de configuration contournant leur
 contrôle. »).
 
     offered(configuration, role_key)             -> the choices of the editor
-    plan(configuration, role_key, principal)     -> what choosing ``principal`` changes
+    plan(configuration, role_key, principal, effort="", fallback="")
+                                                 -> what that choice changes
     apply(failover_bin, plan, timeout)           -> what the door reads back
     propose(proposal_door_bin, plan, language, timeout) -> the proposal's words
 
@@ -16,9 +17,11 @@ The one setting a door supports is which provider of the role's own chain
 it runs on first, the next ones its fallbacks: every provider of that chain,
 config/provider-policy.json, passed the trial of adoption of the role
 (bin/role-adoption-trial), and ``bin/provider-failover set --action chain``
-orders it. Any other provider -- another model, another effort -- is not in
-the chain because it was not tried for the role: choosing it prepares a
-proposal through bin/proposal-door, and changes nothing.
+orders it. Any other change is prepared as a proposal through
+bin/proposal-door, and changes nothing: another provider first -- another
+model --, or added as a fallback, is not in the chain because it was not
+tried for the role; another effort is set by no door (a provider runs at the
+effort city.toml gives it).
 
 A setting changes which provider the role's next sessions start on; the
 sessions already open keep theirs. ``apply`` returns what the door read
@@ -34,6 +37,8 @@ import subprocess
 
 from cockpit.actions.registry import ActionError, ActionUncertain, expired
 
+# The efforts the editor offers, as the page says them in a sentence.
+EFFORTS = {"low": "faible", "medium": "moyen", "high": "élevé", "xhigh": "très élevé"}
 UNREAD_BACK = ("La porte a répondu, mais sa relecture ne montre pas le réglage demandé. Son issue est "
                "incertaine ; revérifie la configuration avant de réessayer.")
 
@@ -53,41 +58,83 @@ def order_of(configuration, role):
 
 
 def offered(configuration, role_key):
-    """The providers the editor of ``role_key`` offers first: those of its
-    order, each ``supported``, then the other providers of the same access
-    (read only or not), each not tried for the role."""
+    """The choices of the editor of ``role_key``: ``providers``, to run on
+    first -- those of its order, each ``supported``, then the other
+    providers of the same access (read only or not), each not tried for the
+    role --; ``efforts``, each ``{"key", "words", "current"}``, the current
+    one the effort of the provider in front; ``fallbacks``, the providers of
+    the same access its order does not hold, to add after it (none is
+    supported)."""
     role = _role(configuration, role_key)
     providers = configuration["providers"]
     order = order_of(configuration, role)
     chain = [providers[name] for name in order if name in providers]
     others = [p for name, p in providers.items()
               if name not in order and p["read_only"] == role["configured"]["read_only"]]
-    return ([dict(p, supported=True, current=index == 0) for index, p in enumerate(chain)]
-            + [dict(p, supported=False, current=False) for p in others])
+    effort = providers[order[0]]["effort"] if order and order[0] in providers else None
+    return {
+        "providers": ([dict(p, supported=True, current=index == 0) for index, p in enumerate(chain)]
+                      + [dict(p, supported=False, current=False) for p in others]),
+        "efforts": [{"key": key, "words": words, "current": key == effort} for key, words in EFFORTS.items()],
+        "fallbacks": others,
+    }
 
 
-def _say_order(providers, order):
+def _sentence(words):
+    """``words`` with its first letter upper case, the others as they are."""
+    return words[:1].upper() + words[1:]
+
+
+def _say_order(providers, order, effort=None):
     first = providers[order[0]]["label"]
+    if effort:
+        first = "%s, passé à l’effort %s" % (first, EFFORTS[effort])
     rest = [providers[name]["label"] for name in order[1:]]
     if not rest:
         return "%s, sans secours" % first
     return "%s, puis %s en secours" % (first, " puis ".join(rest))
 
 
-def plan(configuration, role_key, principal):
-    """What choosing ``principal`` first for ``role_key`` changes."""
+def plan(configuration, role_key, principal, effort="", fallback=""):
+    """What choosing ``principal`` first for ``role_key``, at ``effort``
+    (a key of EFFORTS; empty: the provider's own) and with ``fallback``
+    added after its order (empty: none) changes. ``supported``: the door
+    orders the role's providers so; otherwise ``quoi`` is what a proposal
+    would ask."""
     role = _role(configuration, role_key)
     providers = configuration["providers"]
     if principal not in providers:
         raise ActionError("Fournisseur inconnu de la configuration lue : %s." % principal)
+    if effort and effort not in EFFORTS:
+        raise ActionError("Effort inconnu : %s." % effort)
     current = order_of(configuration, role)
-    supported = principal in current
     new = [principal] + [name for name in current if name != principal]
+    if fallback:
+        if fallback not in providers:
+            raise ActionError("Fournisseur inconnu de la configuration lue : %s." % fallback)
+        if fallback in new:
+            raise ActionError("%s est déjà dans l’ordre de ce rôle." % providers[fallback]["label"])
+        new.append(fallback)
+    effort = effort if effort and effort != providers[principal]["effort"] else ""
     label, chosen = role["label"], providers[principal]["label"]
+    untried = [name for name in new if name not in current]
+    supported = not untried and not effort
+    asked = []
+    if principal != current[0]:
+        asked.append("sur %s" % chosen)
+    if effort:
+        asked.append("à l’effort %s" % EFFORTS[effort])
+    if fallback:
+        asked.append("avec %s en secours" % providers[fallback]["label"])
     if not supported:
-        consequences = ("Rien ne change maintenant : une proposition est préparée pour toi. %s n’a pas passé "
-                        "l’essai d’adoption du rôle %s ; cet essai, puis la validation de l’ordre de ses "
-                        "fournisseurs, viennent avant tout changement." % (chosen, label.lower()))
+        why = ["%s n’a pas passé l’essai d’adoption du rôle %s" % (providers[name]["label"], label.lower())
+               for name in untried]
+        if effort:
+            why.append("aucune porte ne règle l’effort d’un fournisseur : l’effort %s demande un fournisseur "
+                       "déclaré à cet effort et essayé pour le rôle" % EFFORTS[effort])
+        consequences = ("Rien ne change maintenant : une proposition est préparée pour toi. %s ; cet essai, puis la "
+                        "validation de l’ordre de ses fournisseurs, viennent avant tout changement."
+                        % _sentence(" ; ".join(why)))
     elif new == current:
         consequences = "Rien ne change : %s est déjà en tête." % chosen
     else:
@@ -96,10 +143,12 @@ def plan(configuration, role_key, principal):
             "%s devient son secours" % " puis ".join(providers[name]["label"] for name in new[1:])
             if len(new) > 1 else "il n’a pas de secours"))
     return {
-        "role": role_key, "label": label, "agent": role["agent"], "principal": principal,
-        "current": current, "new": new, "supported": supported, "changes": new != current,
-        "current_text": _say_order(providers, current), "new_text": _say_order(providers, new),
+        "role": role_key, "label": label, "agent": role["agent"], "principal": principal, "effort": effort,
+        "fallback": fallback, "current": current, "new": new, "supported": supported,
+        "changes": new != current or bool(effort),
+        "current_text": _say_order(providers, current), "new_text": _say_order(providers, new, effort),
         "chosen": chosen, "consequences": consequences,
+        "quoi": "Passer le rôle %s %s" % (label.lower(), ", ".join(asked)) if asked else "",
     }
 
 
@@ -136,10 +185,10 @@ def apply(failover_bin, planned, timeout):
 def propose(proposal_door_bin, planned, language, timeout):
     """Prepares the change ``planned`` as a proposal of class decision
     through the door of proposals; returns its « quoi »."""
-    quoi = "Passer le rôle %s sur %s" % (planned["label"].lower(), planned["chosen"])
+    quoi = planned["quoi"]
     body = {
         "quoi": quoi,
-        "pourquoi": "Demandé depuis l’Usine ; ce fournisseur n’a pas passé l’essai d’adoption de ce rôle.",
+        "pourquoi": "Demandé depuis l’Usine : aucune porte ne fait ce changement, il attend ta décision.",
         "que_faire": [
             {"option": "Faire l’essai d’adoption du rôle sur ce fournisseur, puis valider son ordre",
              "consequence": "le rôle pourra tourner dessus une fois l’essai réussi",
@@ -148,8 +197,9 @@ def propose(proposal_door_bin, planned, language, timeout):
         ],
         "langue": language,
         "classe": "decision",
-        "details": "role=%s agent=%s demande=%s ordre_actuel=%s" % (
-            planned["role"], planned["agent"], planned["principal"], ",".join(planned["current"])),
+        "details": "role=%s agent=%s demande=%s effort=%s secours=%s ordre_actuel=%s" % (
+            planned["role"], planned["agent"], planned["principal"], planned["effort"] or "-",
+            planned["fallback"] or "-", ",".join(planned["current"])),
     }
     done = _door([proposal_door_bin, "create", json.dumps(body, ensure_ascii=False)], timeout)
     if done.returncode != 0:

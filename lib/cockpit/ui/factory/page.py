@@ -402,23 +402,45 @@ def render_setting(a, role, setting):
     mode = setting.get("mode") or "role"
     alert = '<p class="fa-alert" role="alert" data-usine-alert hidden></p>'
     if mode == "modifier":
-        choices = "".join(
-            '<label class="fa-choice"><input type="radio" name="principal" value="%s" aria-label="%s" '
-            'aria-describedby="choix-%d"%s> %s <small id="choix-%d">%s</small></label>'
-            % (_e(p["name"]), _e(p["label"]), index, " checked" if p["current"] else "", _e(p["label"]), index,
-               _e("en tête aujourd’hui" if p["current"] else "dans l’ordre du rôle · réglable" if p["supported"]
-                  else "essai d’adoption du rôle à faire · proposition"))
-            for index, p in enumerate(setting["offered"]))
+        offered = setting["offered"]
+
+        def choice(field, value, name, note, checked):
+            index = next(counter)
+            return ('<label class="fa-choice"><input type="radio" name="%s" value="%s" aria-label="%s" '
+                    'aria-describedby="choix-%d"%s> %s <small id="choix-%d">%s</small></label>'
+                    % (field, _e(value), _e(name), index, " checked" if checked else "", _e(name), index, _e(note)))
+
+        counter = iter(range(10 ** 6))
+        providers = "".join(
+            choice("principal", p["name"], p["label"],
+                   "en tête aujourd’hui" if p["current"] else "dans l’ordre du rôle · réglable" if p["supported"]
+                   else "essai d’adoption du rôle à faire · proposition", p["current"])
+            for p in offered["providers"])
+        efforts = "".join(
+            choice("effort", "" if e["current"] else e["key"], "Effort : %s" % EFFORTS.get(e["key"], e["key"]),
+                   "celui du fournisseur en tête aujourd’hui" if e["current"] else "aucune porte ne le règle · proposition",
+                   e["current"])
+            for e in offered["efforts"])
+        if not any(e["current"] for e in offered["efforts"]):
+            efforts = choice("effort", "", "Effort inchangé", "celui du fournisseur choisi", True) + efforts
+        fallbacks = choice("secours", "", "Secours inchangés", "l’ordre du rôle, sans ajout", True) + "".join(
+            choice("secours", p["name"], "Ajouter en secours : %s" % p["label"],
+                   "essai d’adoption du rôle à faire · proposition", False)
+            for p in offered["fallbacks"])
         return (
             '<form class="fa-setting" method="get" action="/usine#role">%s'
             '<fieldset><legend>Fournisseur en tête des prochaines sessions</legend>%s</fieldset>'
-            '<p class="fa-muted">Un fournisseur qui n’a pas passé l’essai d’adoption du rôle ne devient pas utilisable '
-            'par simple sélection : il est préparé comme proposition.</p>'
+            '<fieldset><legend>Effort de raisonnement</legend>%s</fieldset>'
+            '<fieldset><legend>Secours</legend>%s</fieldset>'
+            '<p class="fa-muted">Seul l’ordre des fournisseurs déjà essayés pour le rôle se règle par sa porte. Un '
+            'autre fournisseur, un autre effort ou un nouveau secours ne devient pas utilisable par simple sélection : '
+            'il est préparé comme proposition.</p>'
             '<div class="fa-actions"><a class="fa-link" href="/usine?role=%s#role">Annuler</a>'
             '<button type="submit">Voir la portée</button></div></form>'
-        ) % (_form_hidden({"role": key, "reglage": "portee"}), choices, _e(key))
+        ) % (_form_hidden({"role": key, "reglage": "portee"}), providers, efforts, fallbacks, _e(key))
     if mode == "portee":
         plan = setting["plan"]
+        back = "/usine?role=%s&reglage=modifier#role" % key
         rows = [("Valeur actuelle", plan["current_text"]), ("Nouvelle valeur", plan["new_text"]),
                 ("Portée", "%s · Nouvelles sessions uniquement : les sessions ouvertes gardent leur fournisseur."
                  % plan["label"]),
@@ -429,7 +451,8 @@ def render_setting(a, role, setting):
             action, label = (("regler", "Appliquer ce changement") if plan["supported"]
                              else ("preparer_reglage", "Préparer ce changement"))
             act = ('<button type="button" data-usine-action="%s" data-body="%s" data-next="%s">%s</button>'
-                   % (action, _e(json.dumps({"role": key, "principal": plan["principal"], "confirm": True})),
+                   % (action, _e(json.dumps({"role": key, "principal": plan["principal"], "effort": plan["effort"],
+                                             "secours": plan["fallback"], "confirm": True})),
                       _e("/usine?role=%s&reglage=%s#role" % (key, "fait" if plan["supported"] else "propose")),
                       label))
         blocked = setting.get("blocked")
@@ -437,10 +460,10 @@ def render_setting(a, role, setting):
             act = act.replace("<button ", "<button disabled ", 1)
         return (
             '<div class="fa-setting"><p class="fa-kicker">Changement à confirmer</p><dl class="fa-rows">%s</dl>%s'
-            '<div class="fa-actions"><a class="fa-link" href="/usine?role=%s&amp;reglage=modifier#role">Retour</a>%s</div>'
+            '<div class="fa-actions"><a class="fa-link" href="%s">Retour</a>%s</div>'
             '%s</div>'
         ) % ("".join("<div><dt>%s</dt><dd>%s</dd></div>" % (_e(k), _e(v)) for k, v in rows),
-             '<p class="fa-muted">%s</p>' % _e(blocked) if blocked else "", _e(key), act, alert)
+             '<p class="fa-muted">%s</p>' % _e(blocked) if blocked else "", _e(back), act, alert)
     outcome = setting.get("outcome")
     said = '<p class="fa-outcome" role="status">%s</p>' % _e(outcome) if outcome else ""
     blocked = setting.get("blocked")
@@ -448,7 +471,8 @@ def render_setting(a, role, setting):
         '%s<form class="fa-setting" method="get" action="/usine#role">%s<button type="submit"%s>Configurer</button>'
         '</form><p class="fa-muted">%s</p>'
     ) % (said, _form_hidden({"role": key, "reglage": "modifier"}), " disabled" if blocked else "",
-         _e(blocked or "Change le fournisseur en tête de ce rôle ; tu vois la portée avant de confirmer."))
+         _e(blocked or "Change le fournisseur en tête de ce rôle, son effort ou ses secours ; tu vois la portée "
+                       "avant de confirmer."))
 
 
 def render_role(a, configuration, sessions_row, live_sessions, in_service, key, now, setting=None):
@@ -524,6 +548,9 @@ CLEAN_REASONS = {
     "local-changes": ("avec modifications locales", "conservé", "Modifications locales : rien n’est retiré"),
     "not-merged": ("en cours", "conservé", "Travail en cours : branche pas encore fusionnée"),
     "unpushed": ("non publié", "protégé", "Commits non poussés : exclusion et examen requis"),
+    "unpushed-unreported": ("non publié", "protégé",
+                            "Commits non poussés : exclusion, mais leur signalement a échoué ; examine-le toi-même"),
+    "changed": ("remplacé depuis l’aperçu", "conservé", "Autre espace sous ce nom : rien n’est retiré"),
     "detached": ("sans branche", "conservé", "Aucune branche : examen requis"),
     "kept": ("laissé en place", "conservé", "Laissé en place par la porte"),
 }
@@ -545,7 +572,20 @@ def _kept_groups(kept):
     return "".join(groups)
 
 
+# Why the door makes a work space a candidate (bin/factory-maintain
+# clean-worktrees): its branch merged, or untouched past its idle days.
+CANDIDATE_WHY = {
+    "merged": ("terminé", "Branches fusionnées et publiées · aucun changement local"),
+    "idle": ("inactif", "Branches publiées mais non fusionnées, sans commit depuis plus de 7 jours · aucun changement "
+             "local"),
+}
+
+
 def _element_line(element):
+    if element.get("outcome") == "candidate":
+        said = "candidat : %s" % ("branche fusionnée" if element.get("why") == "merged"
+                                  else "branche non fusionnée, inactive")
+        return "<li>%s — %s%s</li>" % (_e(element["name"]), _e(said), _e(_at_commit(element)))
     if element.get("outcome") == "removed":
         said = "retiré"
     elif element.get("outcome") == "not-removed":
@@ -553,7 +593,11 @@ def _element_line(element):
     else:
         words, state, note = CLEAN_REASONS.get(element.get("reason"), CLEAN_REASONS["kept"])
         said = "%s : %s" % (state, note.split(" :")[0].lower())
-    return "<li>%s — %s</li>" % (_e(element["name"]), _e(said))
+    return "<li>%s — %s%s</li>" % (_e(element["name"]), _e(said), _e(_at_commit(element)))
+
+
+def _at_commit(element):
+    return " (commit %s)" % element["sha"][:12] if element.get("sha") else ""
 
 
 def render_cleanup(a, cleanup):
@@ -572,23 +616,32 @@ def render_cleanup(a, cleanup):
                            '<a class="fa-link" href="/usine">Retour</a></div></section>' % _e(error or "porte muette"))
         candidates, kept = preview["candidates"], preview["kept"]
         count = len(candidates)
-        found = ('<li><strong>%s</strong><small>Branches déjà fusionnées et publiées · aucun changement local</small>'
-                 '</li>' % _e(_espaces(count, "terminé%s" % ("s" if count > 1 else ""), "candidat"))
-                 if count else '<li><strong>Aucun espace terminé à retirer</strong></li>')
-        listed = ("".join("<li>%s — candidat</li>" % _e(element["name"]) for element in candidates)
+        found = "".join(
+            '<li><strong>%s</strong><small>%s</small></li>'
+            % (_e(_espaces(len(group), words + ("s" if len(group) > 1 else ""), "candidat")), _e(note))
+            for words, note, group in ((words, note, [e for e in candidates if e.get("why") == why])
+                                       for why, (words, note) in CANDIDATE_WHY.items()) if group
+        ) or '<li><strong>Aucun espace à retirer</strong></li>'
+        listed = ("".join(_element_line(dict(element, outcome="candidate")) for element in candidates)
                   + "".join(_element_line(element) for element in kept))
-        confirm = ""
+        confirm, blocked = "", cleanup.get("blocked")
         if count:
             label = "Confirmer 1 candidat" if count == 1 else "Confirmer les %d candidats" % count
-            confirm = ('<button type="button" data-usine-action="nettoyer" data-body="%s" data-next="/usine?nettoyage=fait">'
-                       '%s</button>' % (_e(json.dumps({"perimetre": [e["name"] for e in candidates], "confirm": True})),
-                                        label))
+            confirm = ('<button type="button" data-usine-action="nettoyer" data-body="%s" data-next="/usine?nettoyage=fait"'
+                       ' data-expires-in="%s" data-expired="%s"%s>%s</button>'
+                       % (_e(json.dumps({"perimetre": [{"name": e["name"], "sha": e["sha"]} for e in candidates],
+                                         "confirm": True})),
+                          _e("%g" % cleanup.get("validity_seconds", 300)),
+                          _e("Nettoyage indisponible : l’aperçu du périmètre est périmé ; examine-le de nouveau avant "
+                             "de confirmer."), " disabled" if blocked else "", label))
         return head + (
             '<p>Périmètre relu à l’instant par la porte de maintenance. Seuls les candidats confirmés sont retirés ; '
             'un périmètre qui change avant ta confirmation est recalculé.</p><ul class="fa-list fa-clean">%s%s</ul>'
             '<details><summary>Voir chaque espace</summary><ul>%s</ul></details>'
-            '<div class="fa-actions"><a class="fa-link" href="/usine">Annuler</a>%s</div>%s</section>'
-        ) % (found, _kept_groups(kept), listed, confirm, alert)
+            '<div class="fa-actions"><a class="fa-link" href="/usine?nettoyage=apercu">Examiner de nouveau</a>'
+            '<a class="fa-link" href="/usine">Annuler</a>%s</div><p class="fa-muted" data-usine-expired%s>%s</p>%s'
+            '</section>'
+        ) % (found, _kept_groups(kept), listed, confirm, "" if blocked else " hidden", _e(blocked or ""), alert)
     result = cleanup.get("result")
     done = ""
     if result:
@@ -616,9 +669,33 @@ def render_cleanup(a, cleanup):
 # which shows what the cockpit read back. Refused or expired: the words of
 # the cockpit are shown beside it and nothing is said done; after an
 # uncertain outcome the button stays off -- the page says to read the
-# source again first.
+# source again first, as after a scope recomputed. The focus, taken from the button while it is off,
+# comes back to it, or to the words of the refusal when it stays off. A
+# button `data-expires-in` (seconds) goes off once what it confirms is
+# stale, its `data-expired` words shown in the `data-usine-expired` beside it.
 USINE_SCRIPT = """<script>
 (function () {
+  function say(alert, words) {
+    if (!alert) { return; }
+    alert.textContent = words;
+    alert.hidden = false;
+  }
+  function settle(button, label, off, alert) {
+    button.textContent = label;
+    button.disabled = off;
+    if (!off) { button.focus(); return; }
+    if (alert) { alert.setAttribute('tabindex', '-1'); alert.focus(); }
+  }
+  document.querySelectorAll('[data-expires-in]').forEach(function (button) {
+    var seconds = parseFloat(button.getAttribute('data-expires-in'));
+    if (!(seconds > 0)) { return; }
+    setTimeout(function () {
+      button.disabled = true;
+      var holder = button.closest('.pn-panel') || document.body;
+      var note = holder.querySelector('[data-usine-expired]');
+      if (note) { note.textContent = button.getAttribute('data-expired'); note.hidden = false; }
+    }, seconds * 1000);
+  });
   document.addEventListener('click', function (event) {
     var button = event.target.closest ? event.target.closest('[data-usine-action]') : null;
     if (!button || button.disabled) { return; }
@@ -634,21 +711,14 @@ USINE_SCRIPT = """<script>
     }).then(function (response) {
       return response.json().catch(function () { return {}; }).then(function (body) {
         if (response.ok && body.ok) { window.location.assign(button.getAttribute('data-next')); return; }
-        button.textContent = label;
-        button.disabled = body.incertain === true;
-        if (alert) {
-          alert.textContent = body.error || ('Le cockpit a refusé la commande (' + response.status + ').');
-          alert.hidden = false;
-        }
+        say(alert, body.error || ('Le cockpit a refusé la commande (' + response.status + ').'));
+        // A scope recomputed asks a new preview: this one confirms no more.
+        settle(button, label, body.incertain === true || Array.isArray(body.perimetre), alert);
       });
     }, function () {
-      button.textContent = label;
-      button.disabled = true;
-      if (alert) {
-        alert.textContent = 'Le cockpit ne répond pas : l’issue de la commande est incertaine. '
-          + 'Revérifie la section avant de réessayer.';
-        alert.hidden = false;
-      }
+      say(alert, 'Le cockpit ne répond pas : l’issue de la commande est incertaine. '
+        + 'Revérifie la section avant de réessayer.');
+      settle(button, label, true, alert);
     });
   });
 })();
