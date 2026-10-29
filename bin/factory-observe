@@ -233,7 +233,7 @@ def github_repo() -> str:
     return match.group(1)
 
 
-def collect_live_snapshot() -> dict[str, dict[str, Any]]:
+def collect_live_snapshot() -> tuple[dict[str, dict[str, Any]], set[str]]:
     marked = command_json([
         GC_BIN, "bd", "list", "--status", "open,in_progress,blocked",
         "--has-metadata-key", "gc.flow.mark",
@@ -320,7 +320,7 @@ def collect_live_snapshot() -> dict[str, dict[str, Any]]:
         "branch": command_text([GIT_BIN, "-C", str(FACTORY_ROOT), "rev-parse", "--abbrev-ref", "HEAD"]),
         "owner": None,
     }
-    return areas
+    return areas, live_sessions
 
 
 def wake_recipient(wake: dict[str, Any]) -> str:
@@ -356,13 +356,16 @@ def queue_routes(live: dict[str, Any], events: list[dict[str, Any]]) -> None:
             existing["event_ids"].append(event["event_id"])
 
 
-def route_pending(live: dict[str, Any], moment: str) -> list[str]:
+def route_pending(live: dict[str, Any], moment: str, live_sessions: set[str]) -> list[str]:
     failures: list[str] = []
     remaining: list[dict[str, Any]] = []
     routes = live.setdefault("routes", [])
     for route in live.get("pending", []):
         event_ids = route.get("event_ids") if isinstance(route.get("event_ids"), list) else []
         recipient = route.get("recipient") or "mayor"
+        if recipient != "mayor" and recipient not in live_sessions:
+            recipient = "mayor"
+            route["recipient"] = recipient
         facts = ", ".join(event_ids)
         message = (
             f"ACTION: factory-observe recorded {len(event_ids)} new live transition(s)\n"
@@ -413,7 +416,7 @@ def cmd_observe(args: argparse.Namespace) -> int:
 
 def cmd_live(args: argparse.Namespace) -> int:
     policy = load_policy()
-    current_areas = collect_live_snapshot()
+    current_areas, live_sessions = collect_live_snapshot()
     epoch = now()
     moment = iso(epoch)
     new_events: list[dict[str, Any]] = []
@@ -477,7 +480,7 @@ def cmd_live(args: argparse.Namespace) -> int:
             window.setdefault("transition_event_ids", []).extend(event["event_id"] for event in new_events)
             queue_routes(live, new_events)
 
-        failures = route_pending(live, moment)
+        failures = route_pending(live, moment, live_sessions)
         state["live"] = live
         save_state(state)
 
