@@ -131,15 +131,18 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 - Invariant : Une alerte dit vrai et une situation qui demande quelqu'un
   produit une alerte.
 - Contrôle : `bash tests/on-order-failed-test.sh`,
+  `python3 tests/factory-observe-test.py LiveObservationTest`,
   `bash tests/pr-autopilot-armed-not-merged-test.sh` — partiel : le premier
   tient la frontière entre un report explicite (sortie 75, rejoué sans
-  alerte) et une vraie panne répétée (bead et page Mayor) ; le second refuse
-  qu'une sortie locale 0 compte comme armement sans relecture GitHub et tient
-  la fusion directe au head, à CLEAN et au contrôle requis vert ; le contrôle
-  9 du gardien (#688) couvre les tickets que personne ne bouge, pas les autres
-  signaux.
-- Occurrences : #651, #679, #688, #717 ; #767 (armement local annoncé mais
-  `autoMergeRequest=null`, af-npz9v1.50.1).
+  alerte) et une vraie panne répétée (bead et page Mayor) ; le deuxième tient
+  la collecte VM Beads/Git/GitHub, le silence sur état inchangé, la route
+  unique au plus petit propriétaire présent, la conservation d'une demande
+  humaine et le relevé final à +2 h ; le troisième refuse qu'une sortie locale
+  0 compte comme armement sans relecture GitHub et tient la fusion directe au
+  head, à CLEAN et au contrôle requis vert. Le contrôle 9 du gardien (#688)
+  couvre les tickets que personne ne bouge, pas les autres signaux.
+- Occurrences : #651, #679, #688, #717 ; af-npz9v1.50 ; #767 (armement local
+  annoncé mais `autoMergeRequest=null`, af-npz9v1.50.1).
 - Ouvertes : aucune connue.
 
 ## A — Autre
