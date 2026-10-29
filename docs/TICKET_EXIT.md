@@ -134,12 +134,14 @@ tickets behind it are startable again.
 
 A Factory defect is still classified `operator_request` (not
 `technically_blocked`), but once its maintenance bead is known code may link
-it with `bin/convoy-state link-technical-repair`. That explicit link changes
+it through `bin/factory-work-dispatch --technical-request <convoy> <ticket>`
+(`--link-only` for an already-delivered repair). That explicit link changes
 only this request into a code-owned technical wait: open, failed or
 structurally unproven repair work waits; once every linked repair has merge
 and exact-head CI proof, `bin/convoy-advance` withdraws the request, lifts
-the parking and uses the existing `unblocked` resume. Requests without a
-link keep the human-answer rule above.
+the parking and uses the existing `unblocked` resume. The link remains the
+release marker until it is consumed atomically with that resume; later
+requests without their own link keep the human-answer rule above.
 
 **Technically blocked.** `--repair` is a JSON object with exactly `title`,
 `what_it_delivers`, `restores` (`{kind, ref}`), `demonstration_line` and

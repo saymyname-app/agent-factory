@@ -2102,10 +2102,14 @@ def resume_record(raw: Any) -> dict[str, Any]:
     return record
 
 
-def technical_repairs_record(raw: Any) -> list[dict[str, str]]:
+def technical_repairs_record(raw: Any) -> dict[str, Any]:
     """Factory-maintenance beads explicitly linked to one technical
-    operator request, in the order code linked them."""
-    entries = stored_record(raw, ("entries",))["entries"]
+    operator request, bound to that request's exit and parking."""
+    record = stored_record(raw, ("exit_at", "parked_at", "entries"))
+    if any(not isinstance(record[name], str) or not record[name] or "\n" in record[name]
+           for name in ("exit_at", "parked_at")):
+        raise Refusal(f"génération de demande technique mal formée : {record!r}")
+    entries = record["entries"]
     if not isinstance(entries, list) or not entries:
         raise Refusal(f"réparations techniques liées mal formées : {entries!r}")
     seen = set()
@@ -2116,7 +2120,7 @@ def technical_repairs_record(raw: Any) -> list[dict[str, str]]:
                 or entry["id"] in seen:
             raise Refusal(f"réparation technique liée mal formée : {entry!r}")
         seen.add(entry["id"])
-    return entries
+    return record
 
 
 def park_lifts_record(raw: Any) -> list[dict[str, Any]]:
@@ -2130,7 +2134,7 @@ def park_lifts_record(raw: Any) -> list[dict[str, Any]]:
         raise Refusal(f"parcages levés mal formés : {entries!r}")
     for entry in entries:
         if not isinstance(entry, dict) \
-                or set(entry) - {"taken", "proven_by_test", "repairs"} != {"cause", "detail", "parked_at", "request", "option", "resumes", "at"}:
+                or set(entry) - {"taken", "proven_by_test", "repairs", "exit_at"} != {"cause", "detail", "parked_at", "request", "option", "resumes", "at"}:
             raise Refusal(f"parcage levé mal formé : {entry!r}")
         if "proven_by_test" in entry:
             proven = entry["proven_by_test"]
@@ -2154,8 +2158,11 @@ def park_lifts_record(raw: Any) -> list[dict[str, Any]]:
             repairs = entry["repairs"]
             if entry["cause"] != "operator_request" or entry["option"] is not None \
                     or not isinstance(repairs, list) or not repairs or len(set(repairs)) != len(repairs) \
-                    or any(not isinstance(repair, str) or not BEAD_ID_RE.match(repair) for repair in repairs):
+                    or any(not isinstance(repair, str) or not BEAD_ID_RE.match(repair) for repair in repairs) \
+                    or not isinstance(entry.get("exit_at"), str) or not entry["exit_at"] or "\n" in entry["exit_at"]:
                 raise Refusal(f"réparations du parcage levé mal formées : {repairs!r}")
+        elif "exit_at" in entry:
+            raise Refusal(f"sortie de demande sans réparations liées : {entry['exit_at']!r}")
         counter_value(entry["resumes"], "resumes")
     return entries
 
@@ -5302,16 +5309,25 @@ def cmd_link_technical_repair(args: argparse.Namespace) -> int:
     repair = load_bead(args.repair)
     # Imported only on this rare write, not on every convoy-state read.
     from factory_delivery_proof import requires_pr_delivery_proof
+    repair_metadata = metadata_of(repair)
+    authorized_maintenance = repair.get("issue_type") == "bug" \
+        and "maintenance" in (repair.get("labels") or []) \
+        and isinstance(repair_metadata.get("gc.authorized_by"), str) \
+        and bool(repair_metadata["gc.authorized_by"].strip())
     if metadata_of(repair).get("gc.delivery_contract") != "pr-ci-merged-v1" \
-            and not requires_pr_delivery_proof(repair):
+            and not requires_pr_delivery_proof(repair) and not authorized_maintenance:
         raise Refusal(
-            f"{args.repair} ne porte aucun contrat de livraison PR+CI : "
-            "une demande technique ne se lie qu'à une réparation dont la livraison peut être prouvée")
-    entries = technical_repairs_record(metadata[KEY_TECHNICAL_REPAIRS]) if KEY_TECHNICAL_REPAIRS in metadata else []
+            f"{args.repair} n'est ni une maintenance autorisée ni gouverné par un contrat de livraison PR+CI : "
+            "une demande technique ne se lie qu'à une réparation dont la livraison pourra être prouvée")
+    record = technical_repairs_record(metadata[KEY_TECHNICAL_REPAIRS]) if KEY_TECHNICAL_REPAIRS in metadata else None
+    generation = {"exit_at": exit_record["at"], "parked_at": park["at"]}
+    if record is None or any(record[name] != generation[name] for name in generation):
+        record = {**generation, "entries": []}
+    entries = record["entries"]
     if any(entry["id"] == args.repair for entry in entries):
         return done(args.convoy, args.ticket, {})
     entries.append({"id": args.repair, "at": now()})
-    value = encode({"entries": entries})
+    value = encode(record)
     write_metadata(args.ticket, {KEY_TECHNICAL_REPAIRS: value})
     return done(args.convoy, args.ticket, {KEY_TECHNICAL_REPAIRS: value})
 
@@ -5337,10 +5353,15 @@ def cmd_lift_park(args: argparse.Namespace) -> int:
         raise Refusal(f"bead de la demande absent ou mal formé : {args.request!r} (--request)")
     option = option_letter(args.option) if args.option is not None else None
     repairs = list(args.repair or [])
+    linked_record = None
     if repairs:
-        linked = [entry["id"] for entry in technical_repairs_record(metadata[KEY_TECHNICAL_REPAIRS])] \
-            if KEY_TECHNICAL_REPAIRS in metadata else []
-        if park["cause"] != "operator_request" or option is not None or repairs != linked:
+        linked_record = technical_repairs_record(metadata[KEY_TECHNICAL_REPAIRS]) \
+            if KEY_TECHNICAL_REPAIRS in metadata else None
+        linked = [entry["id"] for entry in linked_record["entries"]] if linked_record else []
+        exit_record = stored_record(metadata[KEY_EXIT], ("exit", "at")) if KEY_EXIT in metadata else None
+        if park["cause"] != "operator_request" or option is not None or repairs != linked \
+                or exit_record is None or exit_record["exit"] != "operator_request" \
+                or linked_record["parked_at"] != park["at"] or linked_record["exit_at"] != exit_record["at"]:
             raise Refusal(
                 f"réparations techniques de la levée incohérentes : {repairs!r} "
                 f"(liées au ticket : {linked!r})")
@@ -5370,6 +5391,7 @@ def cmd_lift_park(args: argparse.Namespace) -> int:
             "option": option, "resumes": resumes, "taken": taken, "at": now()}
     if repairs:
         lift["repairs"] = repairs
+        lift["exit_at"] = linked_record["exit_at"]
     lifts.append(lift)
     proven = proven_by_test_at_lift(park, option, metadata)
     if proven:
@@ -5458,7 +5480,9 @@ def cmd_open_resume(args: argparse.Namespace) -> int:
         if review.pop("request", None) is not None:
             values[KEY_CODE_REVIEW] = encode(review)
             update += ["--set-metadata", f"{KEY_CODE_REVIEW}={values[KEY_CODE_REVIEW]}"]
-    unset = {KEY_EXIT: replaced, KEY_STOP: lifted}
+    technical_release = technical_repairs_record(metadata[KEY_TECHNICAL_REPAIRS]) \
+        if cause == "unblocked" and KEY_TECHNICAL_REPAIRS in metadata else None
+    unset = {KEY_EXIT: replaced, KEY_STOP: lifted, KEY_TECHNICAL_REPAIRS: technical_release}
     for key, was in unset.items():
         if was is not None:
             # A resumed ticket is at work again: it exits again.

@@ -176,8 +176,10 @@ stopped the ticket is what raises it to the operator.
   `operator_request`, not `technically_blocked`, and in doubt as well. Its
   `que_faire` holds one option « Corriger par maintenance sur main ». The
   fix goes through Factory maintenance (`docs/DELIVERY.md`, marked convoys,
-  « Stops and bounds »). Once the maintenance bead exists, code links it by
-  `bin/convoy-state link-technical-repair`; `bin/convoy-advance` then waits
+  « Stops and bounds »). Once the maintenance bead exists, the Mayor routes
+  it with `bin/factory-work-dispatch <repair> --technical-request <convoy>
+  <ticket>` (`--link-only` if it was already delivered); that door asks
+  `bin/convoy-state` to bind the current request. `bin/convoy-advance` then waits
   for its structural merge and exact-head CI proof, withdraws the technical
   request and resumes the ticket as `unblocked`, exactly once. A repair
   merely open, failed, closed without proof, or not explicitly linked lifts

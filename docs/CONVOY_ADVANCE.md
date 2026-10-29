@@ -420,10 +420,14 @@ An `unblocked` resume brings the integration branch into the ticket branch
 too: the repair the ticket waited for landed there, not on the ticket's
 branch, and without it the ticket meets the same defect again (af-m4np8z;
 T59 met the regression its repair had fixed). For a linked Factory request,
-the same pass clears its escalation through `bin/escalation-door`, records
-the repair ids on the parking lift, and opens this resume. The explicit
-links remain as history; the repair ids, never request text or R-codes,
-make the transition idempotent.
+the same pass first lifts the parking, then clears its escalation through
+`bin/escalation-door`, and only then opens this resume. The active link
+remains the release marker until `open-resume` consumes it atomically with
+the Ticket Exit. A refusal or interruption before that write therefore
+preserves the request and the next pass retries it. The repair ids and exact
+Ticket Exit time remain on the parking lift as history; neither request text,
+a second-resolution timestamp alone, nor R-codes can let a later human
+request reuse the old release.
 
 A ticket to resume that names no single known project, or when the
 settings have no `resume` entry, is listed under `refused` (exit 1) before
