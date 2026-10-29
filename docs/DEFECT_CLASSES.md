@@ -60,11 +60,12 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   lanceur des produits (`bin/project-launch`, son gardien et son balayage),
   pas les autres façons de lancer un programme ; le second tient les délais
   des tests d'un ticket et de l'ordre convoy-advance
-  (`config/test-budgets.json`, étude C T3), pas les autres délais écrits à
-  la main. Le lint « un seul lanceur borné » est planifié (af-npz9v1.26).
+  (`config/test-budgets.json`, étude C T3), dont l'exclusion d'un run rouge
+  des mesures, pas les autres délais écrits à la main. Le lint « un seul
+  lanceur borné » est planifié (af-npz9v1.26).
 - Occurrences : #624, #628, #629, #630, #631, #636, #647, #657, #658, #661,
   #667, #694, #696, #705, #706, #708, #710, #713, #721 ; copies orphelines du
-  22/10 (sans PR) ; af-kky570.
+  22/10 (sans PR) ; af-kky570 ; af-npz9v1.46.
 - Ouvertes : `subprocess.run(..., timeout=)` sans arrêt du groupe dans
   `bin/tdd-step`, `bin/ticket-author`, `bin/fixture-city-oracle`,
   `lib/evaluation_observations.py`, `bin/provider-failover` (étude B § 4.1,

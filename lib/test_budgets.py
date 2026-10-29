@@ -22,7 +22,7 @@ them all, and every reader takes them from here:
 - `margin_seconds`, `alert_ratio`.
 
 `refresh` sets `green_seconds` and `full_seconds` to 1.5 times the slowest of
-the last ten runs of each kind found in the evidence store (the line
+the last ten successful runs of each kind found in the evidence store (the line
 « regression: took Ns » the regression prints, or for older merged runs its
 per-file seconds), rounded up to the minute; a kind with fewer than three
 runs keeps its figure. `show` prints the budgets, the deadlines derived from
@@ -85,6 +85,8 @@ def runs(store: Path) -> list[dict]:
         try:
             record = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
+            continue
+        if path.name == "merged_tests.json" and str(record.get("exit_code")) != "0":
             continue
         output = record.get("output") or ""
         took = TOOK.findall(output)
