@@ -105,10 +105,11 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 
 - Invariant : Une règle, une fonction : un écrivain et son lecteur, ou deux
   outils, lisent la règle au même endroit.
-- Contrôle : aucun — paires connues listées ci-dessous, lint planifié
-  (af-npz9v1.29).
+- Contrôle : `bash tests/operator-bd-test.sh` — partiel : il tient l'identité
+  `po-agent/<session>` entre l'écrivain opérateur et `factory-orphan-sweep` ;
+  les autres paires connues restent sans lint commun (af-npz9v1.29).
 - Occurrences : #620, #625, #659, #660, #681, #685, #686, #693, #695, #703,
-  #716.
+  #716 ; af-npz9v1.42.
 - Ouvertes : `wanted_round` (`bin/code-review`) et `open-code-review`
   (`lib/convoy_state.py`) ; la preuve du rouge lue par `ticket-end` et
   `tdd-step` ; les « jeux nommés » de `ticket-evaluation` et `ticket-end`
