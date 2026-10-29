@@ -663,25 +663,63 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
     def _proposal_blocked(self, role_key):
         """Why a proposal for ``role_key`` may not be prepared now, or None.
         Its source is what waits for the operator, the tracker -- not the
-        configuration: after an uncertain outcome, nothing goes before the
-        tracker was read again; then, if the proposal the door may have
-        written waits, it was recorded, and is never prepared twice."""
+        configuration. After an uncertain outcome, nothing goes before a
+        read of the tracker the cockpit started after it ended
+        (:meth:`_reread_proposals`): a read that ends later but began
+        before may not hold what the door wrote. A proposal with the same
+        words seen waiting was recorded, and is never prepared twice; one a
+        read started after the outcome does not show lifts the mark."""
         server = self.server
-        mark = server.proposal_uncertain.get(role_key)
+        with server.proposal_lock:
+            mark = server.proposal_uncertain.get(role_key)
         if mark is None:
             return None
-        at, quoi = mark
         read_model = server.read_model
-        requests, beads_row, _ = self._assemble_requests(read_model.snapshot(), read_model.now())
-        read_at = beads_row["read_at"] if beads_row else None
-        if read_at is None or read_at <= at:
-            return ("Proposition indisponible : la dernière préparation a une issue incertaine ; le cockpit relit "
-                    "ce qui t’attend avant tout nouvel essai.")
-        if any(request.quoi == quoi for request in requests):
+        requests, _, _ = self._assemble_requests(read_model.snapshot(), read_model.now())
+        with server.proposal_lock:
+            if any(request.quoi == mark["quoi"] for request in requests):
+                mark["verdict"] = "recorded"
+            verdict = mark["verdict"]
+            if verdict == "absent":
+                server.proposal_uncertain.pop(role_key, None)
+                return None
+        if verdict == "recorded":
             return ("Proposition déjà enregistrée : « %s » attend ta décision dans Pour moi. Rien n’a été envoyé "
-                    "de nouveau." % quoi)
-        server.proposal_uncertain.pop(role_key, None)
-        return None
+                    "de nouveau." % mark["quoi"])
+        self._reread_proposals(role_key)
+        return ("Proposition indisponible : la dernière préparation a une issue incertaine ; le cockpit relit "
+                "ce qui t’attend avant tout nouvel essai.")
+
+    def _reread_proposals(self, role_key):
+        """Reads the tracker again in the background, once at a time per
+        role, and says from that read whether the proposal of the uncertain
+        outcome of ``role_key`` waits (``recorded``) or not (``absent``).
+        A read that failed, or that another read ended after, says nothing:
+        the next gesture starts another."""
+        server = self.server
+        with server.proposal_lock:
+            mark = server.proposal_uncertain.get(role_key)
+            if mark is None or mark["rereading"]:
+                return
+            mark["rereading"] = True
+        poller = next((p for p in getattr(server, "pollers", ()) if getattr(p, "source", None) == "beads"), None)
+
+        def reread():
+            started = server.read_model.now()
+            verdict = None
+            try:
+                if poller is not None and poller.poll_now():
+                    read_model = server.read_model
+                    requests, beads_row, _ = self._assemble_requests(read_model.snapshot(), read_model.now())
+                    if beads_row and beads_row["read_at"] is not None and beads_row["read_at"] >= started:
+                        verdict = ("recorded" if any(r.quoi == mark["quoi"] for r in requests) else "absent")
+            finally:
+                with server.proposal_lock:
+                    if verdict is not None and mark["verdict"] != "recorded":
+                        mark["verdict"] = verdict
+                    mark["rereading"] = False
+
+        threading.Thread(target=reread, daemon=True).start()
 
     def _cleanup_blocked(self):
         """Why the cleaning may not be confirmed now, or None: no preview of
@@ -752,8 +790,10 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             if action == "regler":
                 server.setting_uncertain[role_key] = server.read_model.now()
             else:
-                server.proposal_uncertain[role_key] = (server.read_model.now(), planned["quoi"])
-                self._poll_soon()
+                with server.proposal_lock:
+                    server.proposal_uncertain[role_key] = {"at": server.read_model.now(), "quoi": planned["quoi"],
+                                                           "verdict": None, "rereading": False}
+                self._reread_proposals(role_key)
             return exc.status, {"error": str(exc), "incertain": True}
         except ActionError as exc:
             return 400, {"error": str(exc)}
@@ -1099,6 +1139,7 @@ def make_server(
     server.setting_outcomes = {}
     server.setting_uncertain = {}
     server.proposal_uncertain = {}
+    server.proposal_lock = threading.Lock()
     server.cleanup_result = None
     server.cleanup_uncertain = None
     server.cleanup_previewed_at = None
