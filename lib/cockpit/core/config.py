@@ -16,6 +16,7 @@ from cockpit.core.gc_client import (
 from cockpit.requests.journal import READ_TIMEOUT_SECONDS as JOURNAL_READ_TIMEOUT_SECONDS
 from cockpit.requests.sources.readability import ILLISIBLE_THRESHOLD_SECONDS
 from cockpit.requests.sources.silence import SILENCE_ALERT_SECONDS
+from cockpit.runs.evidence import store_dir
 from cockpit.actions.registry import DOOR_TIMEOUT_SECONDS
 from cockpit.notify.pushover import PUSHOVER_URL
 from cockpit.projects.depots import REPO_URL_TEMPLATE
@@ -160,6 +161,9 @@ class Config:
         self.trace_file = env.get("COCKPIT_TRACE_FILE") or os.path.join(
             os.path.dirname(self.pid_file), "cockpit-session-trace.jsonl"
         )
+        # The evidence store of the flow (bin/evidence-capture): where the
+        # pages of Runs check that a piece a control captured is still there.
+        self.evidence_store = store_dir(env)
         # Access (spec .71): the `tailscale` client to ask for the key's
         # expiry -- on this host a Windows binary reached from WSL, so it is
         # named in the local settings file; unset, Tailscale is not read.

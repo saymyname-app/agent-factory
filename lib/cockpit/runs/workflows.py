@@ -43,8 +43,9 @@ attempts of a ralph or retry step, ``gc.logical_bead_id``, carry them). Its star
 The events of a job are what was recorded of it: its start and its end
 (« autre »), each session that claimed it (« session »), a check run and
 its outcome (``gc.outcome`` of a check step, or of each attempt of a step
-whose closing runs a check, ``gc.check_mode``: « contrôle »). Tool calls are not collected
-yet (C2b): no event is drawn « outil ».
+whose closing runs a check, ``gc.check_mode``: « contrôle »), and each tool
+a session of the job called while it worked it (« outil »: what the trace
+of the sessions collected, C2b).
 
 Lanes: « Humain », « Code », then one per logical agent -- the agent of the
 session (``agent_name`` as the supervisor lists it), so a new session of
@@ -67,8 +68,31 @@ beginning of the next session or the end of the job. What the trace observed of 
 sent -- is carried as it is; a session the trace has nothing of has
 nothing observed. The configuration declared for the role of a job is the
 one the flow wrote on the ticket when its session took it
-(``gc.flow.models``). What is not collected yet (controls, usage, outputs:
-C2b) is said so, never filled in.
+(``gc.flow.models``).
+
+What a job did (C2b, af-ofz29f):
+
+- **its controls**: each attempt of a step whose closing runs a check --
+  its state (passed, refused, awaited while it is open, its issue not
+  recorded), when it closed, what the check printed (``gc.attempt_log`` of
+  the step, the record of that attempt), and the pieces of the evidence
+  store the ticket of its workflow fingerprints (``gc.flow.evidence.<piece>``)
+  captured during it, each present, absent -- purged -- or changed
+  (:mod:`cockpit.runs.evidence`). A session at work proves nothing: an open
+  attempt is awaited, never passed;
+- **its outputs**: the structured output each attempt recorded
+  (``gc.output_json``), as recorded, valid when it reads as JSON and its
+  check did not refuse it as invalid (``gc.failure_reason``), with the
+  artifacts it names;
+- **its usage**: what each of its sessions used while it worked the job --
+  the provider's count at its end less its count at its start, so a
+  session that worked several jobs counts in each only its part --,
+  added by provider and category; complete only when every session
+  counted its usage and stopped. A session that counted nothing is not
+  counted zero: it is listed missing. The run counts each session once,
+  whole.
+
+What is not collected is said so, never filled in.
 """
 import json
 import re
@@ -158,12 +182,14 @@ def find_job(runs, run_id, job_id):
 
 # --- the runs ------------------------------------------------------------------------
 
-def workflow_runs(beads, agents, now, trace=None):
+def workflow_runs(beads, agents, now, trace=None, pieces=None):
     """Every run the beads hold, the most recently started first.
     ``agents``: the sessions the supervisor lists (``session_name`` or
     ``name``, ``agent_name``, ``template``, ``provider``), or None;
     ``trace``: what the trace of the sessions holds
-    (:meth:`cockpit.runs.trace.SessionTrace.read`), or None."""
+    (:meth:`cockpit.runs.trace.SessionTrace.read`), or None; ``pieces``:
+    the evidence store (:class:`cockpit.runs.evidence.EvidencePieces`), or
+    None, a piece then not checked."""
     beads = [b for b in beads or [] if isinstance(b, dict) and b.get("id")]
     meta = {b["id"]: _decoded(b.get("metadata")) for b in beads}
     by_id = {b["id"]: b for b in beads}
@@ -203,12 +229,14 @@ def workflow_runs(beads, agents, now, trace=None):
         key = of_ticket.get(tracked) or _launched_for(by_id.get(tracked), of_ticket, d01) or bead["id"]
         group = groups.setdefault(key, {"kind": "workflow", "root": bead, "tickets": [], "roots": []})
         group["roots"].append(bead)
+        group.setdefault("ticket_of", {})[bead["id"]] = (
+            tracked if tracked in of_ticket else _ticket_named(by_id.get(tracked), of_ticket))
         if group["root"] is bead:
             group["tracked"] = by_id.get(tracked) or ({"id": tracked} if tracked else None)
 
     runs = []
     for key, group in groups.items():
-        run = _run(key, group, meta, steps, attempts, sessions, now, trace)
+        run = _run(key, group, meta, steps, attempts, sessions, now, trace, pieces)
         if run:
             runs.append(run)
     return sorted(runs, key=lambda run: (run["start"], run["id"]), reverse=True)
@@ -232,6 +260,13 @@ def _launched_for(bead, of_ticket, d01):
     if ticket and ticket.group(1) in of_ticket:
         return of_ticket[ticket.group(1)]
     return convoy.group(1) if convoy and convoy.group(1) in d01 else None
+
+
+def _ticket_named(bead, of_ticket):
+    """The ticket a bead the dispatch door wrote names, when it is one of a
+    run; None."""
+    found = TICKET_LINE.search((bead or {}).get("description") or "")
+    return found.group(1) if found and found.group(1) in of_ticket else None
 
 
 def _origin(group, meta):
@@ -272,7 +307,7 @@ def _type(group, meta):
     return next((label for prefix, label in TYPES if formula.startswith(prefix)), "Workflow")
 
 
-def _run(key, group, meta, steps, attempts, sessions, now, trace):
+def _run(key, group, meta, steps, attempts, sessions, now, trace, pieces=None):
     root = group["root"]
     tickets = {t["id"]: run_from_bead(t, now) for t in group["tickets"]}
     if not group["roots"] and group["kind"] == "ticket":
@@ -287,6 +322,14 @@ def _run(key, group, meta, steps, attempts, sessions, now, trace):
             if job:
                 jobs.append(job)
     _place_sessions(jobs, sessions, trace, now)
+    spec = meta[root["id"]].get("gc.spec_id")
+    filed = {ticket["id"]: _filed(meta[ticket["id"]]) for ticket in group["tickets"]}
+    for job in jobs:
+        ticket = (group.get("ticket_of") or {}).get(job["workflow"])
+        job["controls"] = _controls(job, filed.get(ticket) or [], spec, ticket, pieces, now)
+        job["outputs"] = _outputs(job)
+        if job["lane"]["kind"] == AGENT:
+            job["usage"] = _usage(job, now)
     # The facts the flow wrote on each ticket it launched: points on the
     # lanes Code and Humain.
     for derived in tickets.values():
@@ -313,14 +356,14 @@ def _run(key, group, meta, steps, attempts, sessions, now, trace):
                 models = None
         if isinstance(models, dict):
             declared.update({role: value for role, value in models.items() if isinstance(value, dict)})
-    return _last_sessions(_assemble({
+    return _run_usage(_last_sessions(_assemble({
         "id": key, "ticket": meta[root["id"]].get("gc.ticket_id") or key, "spec": meta[root["id"]].get("gc.spec_id"),
         "type": _type(group, meta), "title": title or root.get("title") or key, "step": step, "status": status,
         "trigger": trigger, "project": project,
         "tone": tone(state, status), "state": state, "start": start, "end": max(end, start + 1),
         "branch": meta[root["id"]].get("gc.flow.branch"), "rig": meta[root["id"]].get("gc.dispatch_rig"),
         "models": {}, "workflow": True, "declared": declared,
-    }, jobs, now))
+    }, jobs, now)))
 
 
 def _job(step, meta, attempts, sessions, formula, workflow, now):
@@ -356,13 +399,26 @@ def _job(step, meta, attempts, sessions, formula, workflow, now):
                and _ts(attempt.get("closed_at"))]
     if lane["kind"] == AGENT and not sessions:
         lane["unattributed"] = True
+    # Each attempt as it was recorded: when it ran, its outcome, the output
+    # it recorded as written (the raw metadata, not decoded).
+    tries = []
+    for at, attempt in claims:
+        am, raw = meta[attempt["id"]], attempt.get("metadata") or {}
+        output = raw.get("gc.output_json")
+        tries.append({"number": str(am.get("gc.attempt") or len(tries) + 1), "start": at,
+                      "end": _ts(attempt.get("closed_at")) if attempt.get("status") == "closed" else None,
+                      "outcome": am.get("gc.outcome"), "failure": am.get("gc.failure_reason"),
+                      "output": output if isinstance(output, str) else (
+                          json.dumps(output, ensure_ascii=False) if output is not None else None)})
+    log = m.get("gc.attempt_log") if isinstance(m.get("gc.attempt_log"), list) else []
     role = next((key for prefix, key in FORMULA_ROLES if formula.startswith(prefix)), None)
     return {"id": step["id"], "name": name, "lane": lane, "start": begin, "end": end,
             "workflow": workflow["id"], "role": role, "beads": [step["id"], *(a["id"] for _, a in claims)],
             "description": step.get("description") or step.get("close_reason") or "",
             "source": "étape %s du workflow %s" % (step["id"], workflow["id"]),
             "sessions": sessions, "checked": checked, "check": m.get("gc.kind") == "check",
-            "outcome": m.get("gc.outcome")}
+            "outcome": m.get("gc.outcome"), "tries": tries, "attempt_log": log,
+            "checked_step": bool(m.get("gc.check_mode"))}
 
 
 def _place_sessions(jobs, sessions, trace, now):
@@ -467,6 +523,147 @@ def _state(jobs, tickets, outcomes, closed):
     return LIVE, "En cours", "En attente d'un agent"
 
 
+# --- what a job did (C2b) ------------------------------------------------------------
+
+EVIDENCE_PREFIX = "gc.flow.evidence."
+# The reasons a check gives for an output it refuses as invalid.
+INVALID_OUTPUT = ("invalid_required_output_json", "missing_required_output_json")
+# What a check printed, under the name its record gives it.
+PRINTED = ("stderr", "error", "reason", "message", "log", "stdout")
+AWAITED, PASSED, REFUSED = "en attente", "passé", "refusé"
+
+
+def _filed(m):
+    """The pieces a ticket fingerprints: [(piece, when it was captured,
+    its fingerprint)], in the order captured."""
+    found = []
+    for key, value in m.items():
+        if key.startswith(EVIDENCE_PREFIX) and isinstance(value, dict) and isinstance(value.get("digest"), str):
+            at = _ts(value.get("at"))
+            if at is not None:
+                found.append((key[len(EVIDENCE_PREFIX):], at, value["digest"]))
+    return sorted(found, key=lambda piece: (piece[1], piece[0]))
+
+
+def _printed(entry):
+    for key in PRINTED:
+        value = (entry or {}).get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _controls(job, filed, spec, ticket, pieces, now):
+    """Each attempt of a step whose closing runs a check, as recorded (see
+    the module); None for a job that is no such step."""
+    if job.get("check") or not job.get("checked_step"):
+        return None
+    entries = {}
+    for entry in job.get("attempt_log") or []:
+        if isinstance(entry, dict) and entry.get("attempt") is not None:
+            entries[str(entry["attempt"])] = entry
+    controls, previous = [], job["start"]
+    for attempt in sorted(job.get("tries") or [], key=lambda t: (int(t["number"]) if t["number"].isdigit() else 0)):
+        entry = entries.get(attempt["number"])
+        start = attempt["start"] or previous
+        if attempt["end"] is None:
+            state = AWAITED
+        else:
+            state = OUTCOMES.get(attempt["outcome"] or (entry or {}).get("outcome"), "issue %s" % UNRECORDED)
+        stop = attempt["end"] if attempt["end"] is not None else now
+        captured = [{"name": name, "at": at,
+                     "state": pieces.state(spec, ticket, name, digest) if pieces is not None else "non vérifiée"}
+                    for name, at, digest in filed if start <= at <= stop]
+        controls.append({"attempt": attempt["number"], "state": state, "end": attempt["end"],
+                         "printed": _printed(entry), "logged": entry is not None, "pieces": captured})
+        previous = attempt["end"] or previous
+    return controls
+
+
+def _outputs(job):
+    """The structured output each attempt recorded: {attempt, text, valid,
+    artifacts}, in the order of the attempts."""
+    found = []
+    entries = {str(e.get("attempt")): e for e in job.get("attempt_log") or [] if isinstance(e, dict)}
+    for attempt in job.get("tries") or []:
+        text = attempt.get("output")
+        if text is None:
+            continue
+        try:
+            parsed, readable = json.loads(text), True
+        except ValueError:
+            parsed, readable = None, False
+        refused = {attempt.get("failure"), (entries.get(attempt["number"]) or {}).get("reason")} & set(INVALID_OUTPUT)
+        artifacts = parsed.get("artifacts") if isinstance(parsed, dict) else None
+        found.append({"attempt": attempt["number"], "text": text, "parsed": parsed if readable else None,
+                      "valid": readable and not refused,
+                      "artifacts": [a for a in artifacts if isinstance(a, str)] if isinstance(artifacts, list) else []})
+    return found
+
+
+def _usage(job, now):
+    """What the sessions of a job used while they worked it (see the
+    module): {"providers": {provider: {category: count}}, "sessions":
+    [{name, total or None, running}], "complete"}."""
+    end = job["end"] if job["end"] is not None else now
+    providers, lines, complete = {}, [], bool(job.get("trace_sessions"))
+    for session in job.get("trace_sessions") or []:
+        points = ((session.get("observed") or {}).get("usage")) or []
+        running = session.get("end") is None
+        if running:
+            complete = False
+        if not points:
+            lines.append({"name": session["name"], "total": None, "running": running})
+            complete = False
+            continue
+        before = next((p for p in reversed(points) if (p.get("at") or 0) <= job["start"]), None)
+        after = next((p for p in reversed(points) if (p.get("at") or 0) <= end), None)
+        base = before["counts"] if before else {}
+        used = {key: value - base.get(key, 0) for key, value in after["counts"].items()} if after else {}
+        counted = providers.setdefault((after or points[-1]).get("provider") or "inconnu", {})
+        for key, value in used.items():
+            counted[key] = counted.get(key, 0) + value
+        lines.append({"name": session["name"], "total": used.get("total", 0), "running": running})
+    return {"providers": providers, "sessions": lines, "complete": complete}
+
+
+def _run_usage(run):
+    """``run`` with the tokens its sessions counted (``usage``: {tokens,
+    partial}, each session counted once, whole), or None when none
+    counted any."""
+    if run is None:
+        return run
+    totals, partial = {}, False
+    for item in run["items"]:
+        usage = item.get("usage")
+        if usage is None:
+            continue
+        partial = partial or not usage["complete"]
+        for session in item.get("trace_sessions") or []:
+            points = ((session.get("observed") or {}).get("usage")) or []
+            if points:
+                totals[session["name"]] = points[-1]["counts"].get("total") or 0
+    run["usage"] = {"tokens": sum(totals.values()), "partial": partial} if totals else None
+    return run
+
+
+def _tool_events(job, now):
+    """Each tool a session of the job called while it worked it."""
+    end = job["end"] if job["end"] is not None else now
+    found = []
+    for session in job.get("trace_sessions") or []:
+        for call in ((session.get("observed") or {}).get("calls")) or []:
+            at = call.get("at")
+            if at is None or not job["start"] <= at <= end:
+                continue
+            given = " ".join(str(call.get("input") or "").split())
+            found.append({"at": at, "kind": TOOLS, "label": "Outil",
+                          "text": "%s · %s" % (call.get("tool"), given) if given else str(call.get("tool")),
+                          "session": session["name"], "seconds": call.get("seconds"),
+                          "input": call.get("input") or ""})
+    return found
+
+
 # --- the shape the pages draw -------------------------------------------------------
 
 def _events(job, now):
@@ -491,9 +688,10 @@ def _events(job, now):
         said = OUTCOMES.get(outcome, "issue %s" % UNRECORDED)
         events.append({"at": max(at, job["start"]), "kind": CONTROLS, "label": "Contrôle",
                        "text": "Contrôle de l’étape%s : %s" % (" · tentative %s" % attempt if attempt else "", said)})
+    events += _tool_events(job, now)
     if job["end"] is not None:
         events.append({"at": job["end"], "kind": OTHERS, "label": "Fin", "text": job["name"]})
-    order = {OTHERS: 0, SESSIONS: 1, CONTROLS: 2}
+    order = {OTHERS: 0, SESSIONS: 1, TOOLS: 2, CONTROLS: 3}
     # The same instant: the start first, then the session, the check, the end.
     return sorted(events, key=lambda event: (event["at"], event["label"] == "Fin", order[event["kind"]]))
 

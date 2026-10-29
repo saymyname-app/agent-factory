@@ -656,7 +656,8 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         checked = datetime.fromtimestamp(row["read_at"], tz=PARIS).strftime("%H:%M") if row["read_at"] else None
         sessions = (snapshot.get("sessions") or {}).get("value") or {}
         trace = self.server.session_trace.read() if self.server.session_trace is not None else None
-        return workflow_runs(row["value"], sessions.get("agents"), read_model.now(), trace), False, checked
+        return (workflow_runs(row["value"], sessions.get("agents"), read_model.now(), trace,
+                              getattr(self.server, "evidence_pieces", None)), False, checked)
 
     def _query(self):
         return urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
@@ -885,6 +886,7 @@ def make_server(
     # isolated cockpit of a frozen state; empty in service).
     server.runs_view = {}
     server.session_trace = None
+    server.evidence_pieces = None
     server.stop_driver = None
     server.benjamin_login = ""
     # The address the operator opens the cockpit at: the HTTPS address of

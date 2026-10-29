@@ -126,6 +126,12 @@ class SyntheticCity:
     # Where the cockpit keeps its trace of the sessions, when the dataset
     # says it (`session_trace`); else in the home of the launch.
     session_trace: str | None = None
+    # The pieces the flow filed in its evidence store, by their path in it
+    # (`<spec>/<ticket>/<piece>.json`), their fingerprints on the ticket
+    # (C2b); and where that store is, when the dataset says it
+    # (`evidence_store`), else in the home of the launch.
+    evidence: dict = field(default_factory=dict)
+    evidence_store: str | None = None
 
 
 # Where a value of a source names a file of `SyntheticCity.files`.
@@ -145,12 +151,14 @@ def from_dataset(dataset) -> SyntheticCity:
         raise DatasetRefused("names no state (ui.id, or state)")
     if "fixtures" in dataset:
         city = _runs_city(name, at, ui, dataset["fixtures"])
-        trace = dataset.get("session_trace")
-        if trace is None:
-            return city
-        if not isinstance(trace, str) or not os.path.isabs(trace):
-            raise DatasetRefused(f"its session_trace is not an absolute path: {trace!r}")
-        return replace(city, session_trace=trace)
+        for key in ("session_trace", "evidence_store"):
+            path = dataset.get(key)
+            if path is None:
+                continue
+            if not isinstance(path, str) or not os.path.isabs(path):
+                raise DatasetRefused(f"its {key} is not an absolute path: {path!r}")
+            city = replace(city, **{key: path})
+        return city
     if "tracker" in dataset:
         return _tracker_city(name, dataset["tracker"], dataset.get("projects"), dataset.get("repos"))
     return _panorama_city(name, _fixed_time(at), ui, dataset.get("visible_text"), _folded(dataset.get("folded")),
@@ -858,6 +866,63 @@ RUN_TRIGGERED_BY = "benjamin"
 DISPATCHED = (("Relect", "mol-code-review", "Revue de code"), ("Évaluat", "mol-ticket-evaluation", "Ticket Evaluation"))
 
 
+# The attempts of a job, when it says them (`attempts`, C2b): each closed
+# at `end` (from the trigger; absent, still at work) with its `outcome`
+# (pass, fail), what its check printed (`log`), the structured output it
+# recorded (`output`, as written) and whether its check refused it as
+# invalid (`output_valid` false), the pieces it captured (`pieces`: names,
+# filed in the evidence store a second before its end, fingerprinted on the
+# ticket as bin/evidence-capture does). The step keeps what its check said
+# of each closed attempt (gc.attempt_log), as Gas City writes it.
+INVALID_OUTPUT = "invalid_required_output_json"
+
+
+def _attempts(tries, job, step, step_id, root_id, template, listed, at, ended, filed, trace) -> list:
+    """The beads of the attempts of `job`; what their check said written on
+    `step`, the pieces they captured filed and fingerprinted (`filed`: the
+    spec, the ticket and its metadata, or None)."""
+    records, log, begin, outcome = [], [], job["start"], None
+    for number, one in enumerate(tries, start=1):
+        end, outcome = one.get("end"), one.get("outcome")
+        meta = {"gc.logical_bead_id": step_id, "gc.root_bead_id": root_id, "gc.attempt": str(number),
+                "gc.routed_to": template, "gc.claimed_at": at(begin)}
+        if listed:
+            meta["gc.session_name"] = listed[-1]["name"]
+        if end is not None and outcome:
+            meta["gc.outcome"] = outcome
+        output = one.get("output")
+        if output is not None:
+            meta["gc.output_json"] = output if isinstance(output, str) else json.dumps(output, ensure_ascii=False)
+        if one.get("output_valid") is False:
+            meta["gc.failure_reason"] = INVALID_OUTPUT
+        records.append({"id": f"{step_id}-attempt-{number}", "title": job["name"], "issue_type": "task",
+                        "created_at": at(begin), **ended(end), "metadata": meta})
+        if end is None:
+            continue
+        entry = {"action": "close", "attempt": str(number), "outcome": outcome or ""}
+        if one.get("log"):
+            entry["stderr"] = one["log"]
+        if one.get("output_valid") is False:
+            entry["reason"] = INVALID_OUTPUT
+        log.append(entry)
+        for piece in one.get("pieces") or []:
+            if filed is None:
+                continue
+            spec, ticket_id, ticket = filed
+            piece_record = {"contract": "synthetic", "kind": "command", "spec": spec, "ticket": ticket_id,
+                            "piece": piece, "at": at(end - 1), "commit": "synthetic"}
+            text = json.dumps(piece_record, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+            trace["evidence"][f"{spec}/{ticket_id}/{piece}.json"] = text
+            ticket[f"gc.flow.evidence.{piece}"] = json.dumps(
+                {"at": at(end - 1), "commit": "synthetic",
+                 "digest": "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()})
+        begin = end
+    step["gc.attempt_log"] = json.dumps(log)
+    if job["end"] is not None and outcome:
+        step["gc.outcome"] = outcome
+    return records
+
+
 def _runs_city(name, at, ui, fixtures) -> SyntheticCity:
     moment = _fixed_time(at)
     if moment.tzinfo is None:
@@ -865,7 +930,7 @@ def _runs_city(name, at, ui, fixtures) -> SyntheticCity:
     try:
         lanes = {lane["id"]: lane for lane in fixtures["lanes"]}
         beads, sessions, opened, view = [], {}, [], {}
-        trace = {"transcripts": {}, "log": {}, "dispatched": {}}
+        trace = {"transcripts": {}, "log": {}, "dispatched": {}, "evidence": {}}
         for run in fixtures["runs"]:
             beads += _run_records(run, lanes, moment, sessions, opened, ui, view, trace)
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
@@ -881,6 +946,7 @@ def _runs_city(name, at, ui, fixtures) -> SyntheticCity:
         name=name, reading=READ_ONCE if ui.get("stale") is True else READ,
         beads=beads, sessions=[session for lane in lanes for session in sessions.get(lane, {}).values()],
         clock_start=clock.isoformat(), view=view, transcripts=trace["transcripts"], session_log=trace["log"],
+        evidence=trace["evidence"],
         dispatched=trace["dispatched"],
     )
 
@@ -934,7 +1000,7 @@ def _run_records(run, lanes, moment, sessions, opened, ui, view, trace) -> list:
                                      "gc.dispatch_rig": RUN_PROJECT}})
         return bead_id
 
-    roots = {}
+    roots, filed = {}, None
     if formula == "mol-ticket-author":
         run_id, ticket_id, digest = f"synthetic-run-{key}", f"synthetic-ticket-{key}", f"sha256:synthetic-{key}"
         records.append({"id": run_id, "title": run["title"], "issue_type": "convoy", "created_at": at(0),
@@ -950,6 +1016,7 @@ def _run_records(run, lanes, moment, sessions, opened, ui, view, trace) -> list:
             ticket["gc.flow.models"] = json.dumps(run["declared"], ensure_ascii=False)
         records.append({"id": ticket_id, "title": run["title"], "issue_type": "task", "created_at": at(0),
                         **ended(run["end"]), "metadata": ticket})
+        filed = (f"synthetic-spec-{key}", ticket_id, ticket)
         roots[None] = workflow("", formula, ticket_id, formula)
         for prefix, workflow_formula, title in DISPATCHED:
             if any(lanes[job["lane"]]["role"].startswith(prefix) for job in run["jobs"]):
@@ -981,12 +1048,15 @@ def _run_records(run, lanes, moment, sessions, opened, ui, view, trace) -> list:
         if lane["kind"] == "agent":
             template, _, provider = lane["role"].partition(" · ")
             running = job["end"] is None and run["end"] is None
-            attempt = f"{step_id}-attempt-1"
             # Each job of an agent is claimed by a session of its own (or
             # those it says): the agent keeps one lane across them.
             said = job.get("sessions")
             listed = said if isinstance(said, list) else [{"name": f"synthetic-session-{lane['id']}-{key}-{job['id']}"}]
-            if listed:
+            tries = job.get("attempts") if isinstance(job.get("attempts"), list) else None
+            attempt = f"{step_id}-attempt-{len(tries) if tries else 1}"
+            if tries:
+                records += _attempts(tries, job, step, step_id, root_id, template, listed, at, ended, filed, trace)
+            elif listed:
                 records.append({"id": attempt, "title": job["name"], "issue_type": "task",
                                 "created_at": at(job["start"]), **ended(job["end"]),
                                 "metadata": {"gc.logical_bead_id": step_id, "gc.root_bead_id": root_id,
@@ -1014,10 +1084,14 @@ def _run_records(run, lanes, moment, sessions, opened, ui, view, trace) -> list:
                     if isinstance(one.get("transcript"), list):
                         trace["transcripts"][one["name"]] = one["transcript"]
                     end = one.get("end")
-                    trace["log"][one["name"]] = {"woke": record.get("created_at"),
-                                                 "stopped": at(end) if isinstance(end, (int, float)) else None,
-                                                 "started": {"bead": attempt, "at": at(job["start"]),
-                                                             "run": root_id, "step": job["id"]}}
+                    # A session that works several jobs (as an author
+                    # session works the steps of its ticket) takes each.
+                    started = {"bead": attempt, "at": at(job["start"]), "run": root_id, "step": job["id"]}
+                    logged = trace["log"].setdefault(one["name"], {"woke": record.get("created_at"), "stopped": None,
+                                                                   "started": []})
+                    logged["started"].append(started)
+                    if isinstance(end, (int, float)):
+                        logged["stopped"] = at(end)
                     if isinstance(one.get("dispatched"), dict):
                         trace["dispatched"][one["name"]] = dict(one["dispatched"])
                 sessions.setdefault(lane["id"], {})[one["name"]] = record

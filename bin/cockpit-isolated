@@ -117,6 +117,9 @@ UNANSWERED_READ_TIMEOUT_SECONDS = "86400"
 # long: a source that never answers (a state under reading) is served as
 # such once it is over.
 FIRST_READ_SECONDS = "8"
+# The seal key of an evidence store (bin/evidence-capture): written with the
+# first piece, kept by a purge.
+SEAL_KEY_FILE = ".seal-key"
 # The mark bin/project-launch gives what it launches: the launcher stops
 # the processes that carry it, and the controller of an evaluation attests
 # that the process listening on the port carries it. The cockpit keeps it.
@@ -189,13 +192,14 @@ def serve_sessions(supervisor, city: synthetic_city.SyntheticCity) -> None:
                        "subject": sessions[name].get("template") or "", "session_id": name,
                        "payload": {"session_id": name, "template": sessions[name].get("template") or ""}})
 
-    def took(name: str, started: dict | None) -> None:
+    def took(name: str, started: list) -> None:
         # As the installed supervisor logs a session taking a step: the
-        # bead it took is the subject, the session acts.
-        if started:
-            events.append({"seq": len(events) + 1, "type": "execution.step_started", "ts": started["at"],
-                           "actor": name, "subject": started["bead"], "payload": {}, "run_id": started["run"],
-                           "session_id": name, "step_id": started["step"], "depends_on_step_ids": []})
+        # bead it took is the subject, the session acts -- once for each
+        # step it takes.
+        for step in started or []:
+            events.append({"seq": len(events) + 1, "type": "execution.step_started", "ts": step["at"],
+                           "actor": name, "subject": step["bead"], "payload": {}, "run_id": step["run"],
+                           "session_id": name, "step_id": step["step"], "depends_on_step_ids": []})
 
     for name, logged in sorted(city.session_log.items(), key=lambda pair: pair[1]["woke"] or ""):
         if name in known and name in sessions:
@@ -242,7 +246,7 @@ def serve_sessions(supervisor, city: synthetic_city.SyntheticCity) -> None:
             took(name, logged.get("started"))
             sessions[name]["running"] = running > 0
             if running > 0 and logged.get("started"):
-                sessions[name]["active_bead"] = logged["started"]["bead"]
+                sessions[name]["active_bead"] = logged["started"][-1]["bead"]
             known[name] = said.get("recorded_while_running") if running > 0 else None
             supervisor.set_sessions(listed())
         if running > 0:
@@ -574,6 +578,24 @@ def write_tracker_and_projects(city: synthetic_city.SyntheticCity, home: str) ->
     return env
 
 
+def write_evidence(city: synthetic_city.SyntheticCity, home: str) -> dict[str, str]:
+    """File the pieces of `city` in its evidence store -- the one the
+    dataset names, else one in `home` -- as bin/evidence-capture files them,
+    and its seal key with them; a store already sealed is left as it is,
+    so a purge done since (its key kept, the folder of a Spec removed)
+    stays done. The environment that makes the cockpit read that store, and
+    never the account's."""
+    store = Path(city.evidence_store or os.path.join(home, "evidence"))
+    if city.evidence and not (store / SEAL_KEY_FILE).exists():
+        for path, text in city.evidence.items():
+            Path(store, path).parent.mkdir(parents=True, exist_ok=True)
+            Path(store, path).write_text(text, encoding="utf-8")
+        descriptor = os.open(store / SEAL_KEY_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as key:
+            key.write(os.urandom(32))
+    return {"EVIDENCE_STORE_DIR": str(store)}
+
+
 def write_knowledge_repos(city: synthetic_city.SyntheticCity, home: str) -> dict[str, str]:
     """Put the knowledge repositories of the projects under `home`: a Git
     repository for each one the city writes, its files committed at the
@@ -660,6 +682,7 @@ def main(argv: list[str]) -> int:
         **write_doors(doors, home),
         **write_tracker_and_projects(city, home),
         **write_knowledge_repos(city, home),
+        **write_evidence(city, home),
     }
     if LAUNCH_MARK in os.environ:
         env[LAUNCH_MARK] = os.environ[LAUNCH_MARK]

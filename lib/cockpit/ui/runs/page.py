@@ -14,9 +14,11 @@ What a run holds is :mod:`cockpit.runs.workflows`'s: the page draws it and
 says what is not collected, never a value of its own.
 """
 import html
+import json
 import urllib.parse
 
 from cockpit.runs.derive import AGENT, CODE, DONE, HUMAN, WAIT
+from cockpit.runs.evidence import PRESENT
 from cockpit.runs.workflows import CONTROLS, OTHERS, SESSIONS, TOOLS, normalized, paris_time
 
 # The cards drawn at most; the analyses read every run the cockpit keeps.
@@ -216,7 +218,7 @@ def _render_head(run, now, stale_at, anchors):
     parts = ['<span class="rn-badge %s" %s>%s%s</span>' % (tone, badge, dot, _e(_status(run))),
              "<span>Déclenché à %s (Paris)</span>" % _e(paris_time(run["start"], now)),
              '<span class="rn-mono" %s>%s</span>' % (anchors("mono"), duration(run["elapsed"])),
-             "<span>%s</span>" % horizon, "<span>Usage et coût non collectés</span>"]
+             "<span>%s</span>" % horizon, "<span>%s</span>" % _e(_run_usage(run))]
     origin = ('<p class="rn-origin" %s><span>Déclencheur : %s</span><span>Projet : %s</span></p>'
               % (anchors("origin"), _e(_trigger(run)), _e(_project(run))))
     out = ('<div class="pn-head rn-head"><small class="rn-crumb" %s><a href="/runs" %s>← Runs</a> · '
@@ -371,7 +373,7 @@ def _render_detail(run, item, event, anchors, session=None, opened=frozenset(), 
         sent = ((chosen or {}).get("observed") or {}).get("prompts") or []
         sections.append(_section(anchors, "Prompts envoyés (%d)" % len(sent) if sent else "Prompts envoyés",
                                  _prompts(chosen, anchors, opened, raw), open_="prompts" in opened, key="prompts"))
-        usage = _said(NOT_COLLECTED)
+        usage = None
     else:
         who = "Ce job est un geste de Benjamin" if lane["kind"] == HUMAN else "Ce job est exécuté par le code"
         sections.append(_section(anchors, "Configuration de l’agent",
@@ -380,26 +382,42 @@ def _render_detail(run, item, event, anchors, session=None, opened=frozenset(), 
                                  + timing))
         sections.append(_section(anchors, "Prompts envoyés", _said("Sans objet : aucune instruction à un modèle.")))
         usage = _said("Aucun appel modèle pour ce job.")
-    sections.append(_section(anchors, "Contrôles", _said(NOT_COLLECTED)))
-    sections.append(_section(anchors, "Tokens et coût", usage))
-    sections.append(_section(anchors, "Sorties", _said(NOT_COLLECTED)))
+    controls = item.get("controls")
+    if lane["kind"] == AGENT:
+        usage = _usage(item.get("usage"), anchors)
+    sections.append(_section(anchors, "Contrôles (%d)" % len(controls) if controls else "Contrôles",
+                             _controls(controls, lane["kind"], anchors), open_="controles" in opened,
+                             key="controles"))
+    sections.append(_section(anchors, "Tokens et coût", usage, open_="usage" in opened, key="usage"))
+    outputs = item.get("outputs") or []
+    sections.append(_section(anchors, "Sorties (%d)" % len(outputs) if outputs else "Sorties",
+                             _outputs(outputs, anchors), open_="sorties" in opened, key="sorties"))
     events_anchor, events_title, events_note, events_list = (anchors("events"), anchors("h3"), anchors("muted"),
                                                               anchors("event-list"))
     rows = []
     for number, recorded in enumerate(item["events"], start=1):
         at = paris_time(recorded["at"], None, True)
-        content = ('<dl class="rn-event-facts"><div><dt>Instant</dt><dd>%s (Paris) · %s depuis le déclencheur</dd></div>'
-                   '<div><dt>Nature</dt><dd>%s · %s</dd></div><div><dt>Contenu</dt><dd>%s</dd></div>'
-                   '<div><dt>Job</dt><dd>%s</dd></div><div><dt>Source</dt><dd>%s</dd></div></dl>'
-                   % (at, relative(max(0, recorded["at"] - run["start"])), _e(recorded["label"]),
-                      EVENT_KINDS[recorded["kind"]], _e(recorded["text"]), _e(item["name"]),
-                      _e(item.get("source") or "tracker")))
+        lasted = _lasted_call(recorded.get("seconds")) if recorded["kind"] == TOOLS else None
+        facts = [("Instant", "%s (Paris) · %s depuis le déclencheur"
+                  % (at, relative(max(0, recorded["at"] - run["start"])))),
+                 ("Nature", "%s · %s" % (recorded["label"], EVENT_KINDS[recorded["kind"]])),
+                 ("Contenu", recorded.get("input") or recorded["text"])]
+        if recorded.get("session"):
+            facts.append(("Session", recorded["session"]))
+        if recorded["kind"] == TOOLS:
+            facts.append(("Durée", lasted or "non collectée : rien de ce que l’outil a rendu n’est enregistré"))
+        facts += [("Job", item["name"]),
+                  ("Source", "trace de la session %s" % recorded["session"] if recorded.get("session")
+                   else item.get("source") or "tracker")]
+        content = '<dl class="rn-event-facts">%s</dl>' % "\n".join(
+            "<div><dt>%s</dt><dd>%s</dd></div>" % (_e(label), _e(value)) for label, value in facts)
         rows.append('<details class="rn-event" data-run-event="%d" %s%s><summary %s><time %s>%s</time>'
-                    '<span class="rn-event-type %s" %s>%s</span><span class="rn-event-label" %s>%s</span></summary>%s'
+                    '<span class="rn-event-type %s" %s>%s</span><span class="rn-event-label" %s>%s</span>%s</summary>%s'
                     '</details>'
                     % (number, anchors("event"), " open" if event == number else "", anchors("summary"),
                        anchors("time"), at, recorded["kind"], anchors("event-type"), _e(recorded["label"]),
-                       anchors("event-label"), _e(recorded["text"]), content))
+                       anchors("event-label"), _e(recorded["text"]),
+                       '<small class="rn-event-lasted">%s</small>\n' % _e(lasted) if lasted else "", content))
     return (
         '<div class="rn-inspector" %s><section class="rn-detail" aria-label="Détail du job %s" %s>'
         '<header class="rn-inspector-head" %s>%s</header><div class="rn-inspector-grid" %s>'
@@ -409,6 +427,137 @@ def _render_detail(run, item, event, anchors, session=None, opened=frozenset(), 
         '</div></section></div>%s'
     ) % (inspector, _e(item["name"]), detail, head, pills, anchors("inspector-grid"), anchors("inspector-sections"),
          "".join(sections), events_anchor, events_title, len(rows), events_note, events_list, "".join(rows), EVENT_SCRIPT)
+
+
+# --- what a job did (C2b) ---------------------------------------------------------------
+
+# The categories of a usage, in the order of the table, as named there.
+USAGE_ROWS = (("input", "Entrée"), ("cache_read", "Cache lu"), ("cache_write", "Cache écrit"), ("output", "Sortie"),
+              ("reasoning", "Raisonnement"), ("total", "Total"))
+PROVIDERS = {"codex": "Codex", "claude": "Claude Code"}
+# How each provider counts, said under its table: what a total adds.
+COUNTED = {
+    "codex": "Codex compte le cache lu dans l’entrée et le raisonnement dans la sortie : le total est le sien, "
+             "entrée plus sortie, pas la somme des lignes.",
+    "claude": "Claude Code compte l’entrée, le cache écrit, le cache lu et la sortie à part, le raisonnement dans "
+              "la sortie : le total est la somme des quatre, chaque message compté une fois.",
+}
+COST = "Non collecté"
+STATES = {"passé": "good", "refusé": "bad", "en attente": "wait"}
+
+
+def tokens(count):
+    """« 54 537 »: a count of tokens, its thousands apart."""
+    return "{:,}".format(int(count)).replace(",", "\u00a0")
+
+
+def _run_usage(run):
+    """What the head of a run says of its usage."""
+    usage = run.get("usage")
+    if not usage:
+        return "Usage et coût non collectés"
+    return "Tokens observés %s · usage %s · coût non collecté" % (tokens(usage["tokens"]),
+                                                                  "partiel" if usage["partial"] else "complet")
+
+
+def _lasted_call(seconds):
+    """« 0,64 s », « 2,5 s », « 1 min 20 s »: how long a tool call lasted."""
+    if not isinstance(seconds, (int, float)):
+        return None
+    if seconds >= 60:
+        return duration(seconds)
+    return "%s s" % _n(round(seconds, 2)).replace(".", ",")
+
+
+def _controls(controls, kind, anchors):
+    """Each attempt of the check of the job: its state, when it closed,
+    what the check printed, the pieces it captured and whether the store
+    still holds each."""
+    if controls is None:
+        if kind == HUMAN:
+            return _said("Aucun contrôle : ce job est un geste de Benjamin.")
+        return _said(NOT_COLLECTED)
+    if not controls:
+        return _said("Aucune tentative enregistrée : le contrôle n’a pas encore tourné.")
+    out = []
+    for number, control in enumerate(controls):
+        state = control["state"]
+        when = paris_time(control["end"], None, True) if control["end"] is not None else None
+        title = " · ".join(part for part in ("Tentative %s" % control["attempt"], state, when) if part)
+        if state == "en attente":
+            body = _said("Verdict attendu ; pas de réussite enregistrée tant que la tentative n’est pas close.")
+        elif control["printed"]:
+            body = ('<p class="rn-muted">Ce que le contrôle a écrit :</p><pre class="rn-gate-log">%s</pre>'
+                    % _e(control["printed"]))
+        elif control["logged"]:
+            body = _said("Le contrôle n’a rien écrit.")
+        else:
+            body = _said("Journal du contrôle %s." % UNCOLLECTED)
+        if control["pieces"]:
+            body += '<ul class="rn-pieces">%s</ul>' % "".join(
+                '<li class="%s">%s · %s</li>' % ("" if piece["state"] == PRESENT else "missing", _e(piece["name"]),
+                                                 _e(piece["state"]) + ("" if piece["state"] == PRESENT else
+                                                                       " du magasin de preuves"))
+                for piece in control["pieces"])
+        elif state != "en attente":
+            body += _said("Aucune pièce capturée pendant cette tentative.")
+        out.append('<details class="rn-gate" %s%s><summary %s><span class="rn-gate-state %s">%s</span></summary>%s'
+                   '</details>' % (anchors("gate"), " open" if number == len(controls) - 1 else "", anchors("summary"),
+                                   STATES.get(state, ""), _e(title), body))
+    return "".join(out)
+
+
+def _usage(usage, anchors):
+    """The usage of the job by provider and category, its cost, whether it
+    is complete, and what each session counted."""
+    if not usage or not usage["sessions"]:
+        return _said("Usage non collecté : aucune session n’est enregistrée pour ce job.")
+    if not usage["providers"]:
+        return _said("Usage non collecté : aucun compteur de tokens n’est enregistré par le fournisseur.")
+    out = []
+    for provider, counts in sorted(usage["providers"].items()):
+        rows = "".join("<tr><th scope=\"row\">%s</th><td>%s</td><td>%s</td></tr>"
+                       % (label, tokens(counts[key]) if key in counts else "non fourni", COST)
+                       for key, label in USAGE_ROWS)
+        out.append('<table class="rn-usage" %s><caption>%s</caption><thead><tr><th scope="col">Catégorie</th>'
+                   '<th scope="col">Tokens</th><th scope="col">Coût</th></tr></thead><tbody>%s</tbody></table>'
+                   '<p class="rn-muted">%s Aucun tarif n’est collecté : le coût n’est pas calculé.</p>'
+                   % (anchors("usage"), _e(PROVIDERS.get(provider, provider)), rows,
+                      _e(COUNTED.get(provider, "Catégories telles que le fournisseur les donne."))))
+    sessions = usage["sessions"]
+    counted = [line for line in sessions if line["total"] is not None]
+    if usage["complete"]:
+        out.append(_said("Usage complet : %d session%s sur %d, chacune comptée jusqu’à son arrêt."
+                         % (len(counted), "" if len(counted) == 1 else "s", len(sessions))))
+    else:
+        out.append(_said("Usage partiel : %d session%s sur %d avec un compteur%s."
+                         % (len(counted), "" if len(counted) == 1 else "s", len(sessions),
+                            ", une session encore en cours" if any(line["running"] for line in sessions) else "")))
+    out.append('<ul class="rn-usage-sessions">%s</ul>' % "".join(
+        "<li><strong>%s</strong> · %s</li>" % (
+            _e(line["name"]),
+            UNCOLLECTED if line["total"] is None else "%s tokens%s" % (tokens(line["total"]),
+                                                                        " · en cours" if line["running"] else ""))
+        for line in sessions))
+    return "".join(out)
+
+
+def _outputs(outputs, anchors):
+    """The structured output each attempt recorded, as recorded, its
+    validity and the artifacts it names."""
+    if not outputs:
+        return _said("Aucune sortie enregistrée · sortie structurée %se." % UNCOLLECTED)
+    out = []
+    for number, output in enumerate(outputs):
+        valid = "valide" if output["valid"] else "non valide"
+        text = (json.dumps(output["parsed"], ensure_ascii=False, indent=2) if output["valid"] else output["text"])
+        artifacts = ('<p class="rn-muted">Artefacts : %s</p>' % " · ".join(_e(a) for a in output["artifacts"])
+                     if output["artifacts"] else _said("Aucun artefact nommé."))
+        out.append('<details class="rn-output" %s%s><summary %s>Sortie · tentative %s · <span class="%s">%s</span>'
+                   '</summary><pre class="rn-output-text">%s</pre>%s</details>'
+                   % (anchors("output"), " open" if number == len(outputs) - 1 else "", anchors("summary"),
+                      _e(output["attempt"]), "good" if output["valid"] else "bad", valid, _e(text), artifacts))
+    return "".join(out)
 
 
 # --- what the trace of the sessions observed (C2a) --------------------------------------
@@ -689,7 +838,7 @@ CSS = """
 .rn-events h3{margin:0;font-size:16px}
 .rn-event-list{max-height:570px;overflow:auto}
 .rn-event{border-bottom:1px solid var(--line)}
-.rn-event>summary{display:grid;grid-template-columns:66px 92px minmax(0,1fr);gap:8px;font:12px ui-monospace,monospace;padding:12px 0;align-items:center}
+.rn-event>summary{display:grid;grid-template-columns:66px 92px minmax(0,1fr) auto;gap:8px;font:12px ui-monospace,monospace;padding:12px 0;align-items:center}
 .rn-event-label{overflow-wrap:anywhere}
 .rn-event-type{color:var(--rn-other)}
 .rn-event-type.tools{color:var(--rn-code)}.rn-event-type.controls{color:var(--rn-ok)}.rn-event-type.sessions{color:var(--rn-agent)}
@@ -720,9 +869,25 @@ CSS = """
 .rn-prompt-rendered h5{font-size:14px;margin:14px 0 6px}
 .rn-prompt-rendered p{margin:4px 0}
 .rn-prompt-raw{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 ui-monospace,monospace;background:var(--pn-surface-2);padding:10px;border-radius:6px}
+/* What a job did (C2b): its controls, its usage, its outputs, the duration of a tool call. */
+.rn-section:not([open]) .rn-gate,.rn-section:not([open]) .rn-output{display:none}
+.rn-gate,.rn-output{margin-top:12px;border:1px solid var(--line);border-radius:8px;padding:12px;min-width:0}
+.rn-gate>summary,.rn-output>summary{cursor:pointer;font-weight:600;font-size:13px;overflow-wrap:anywhere}
+.rn-gate>summary:focus-visible,.rn-output>summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.rn-gate-state.good,.rn-output .good{color:var(--ok)}.rn-gate-state.bad,.rn-output .bad{color:var(--pn-warn-text)}
+.rn-gate-state.wait{color:var(--pn-muted-text)}
+.rn-gate-log,.rn-output-text{margin:8px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 ui-monospace,monospace;background:var(--pn-surface-2);padding:10px;border-radius:6px}
+.rn-pieces,.rn-usage-sessions{margin:10px 0 0;padding-left:18px;font-size:13px;overflow-wrap:anywhere}
+.rn-pieces li.missing{color:var(--pn-warn-text)}
+.rn-usage{width:100%;border-collapse:collapse;font-size:13px;margin-top:12px}
+.rn-usage caption{text-align:left;font-weight:600;padding-bottom:4px}
+.rn-usage th,.rn-usage td{border-bottom:1px solid var(--line);padding:8px 3px;text-align:right;font-weight:400}
+.rn-usage th:first-child{text-align:left}.rn-usage thead th{color:var(--pn-muted-text);font-size:12px}
+.rn-usage tbody tr:last-child th,.rn-usage tbody tr:last-child td{font-weight:600}
+.rn-event-lasted{font-size:11px;color:var(--pn-muted-text);white-space:nowrap}
 @media (max-width:800px){.rn-config>div{grid-template-columns:1fr;gap:2px}}
 @media (max-width:1100px){.rn-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:800px){.rn-grid{grid-template-columns:1fr}.rn-inspector-grid{grid-template-columns:1fr}
   :root{--rn-name:120px}.rn-lane-name{padding:14px 10px}
-  .rn-detail{padding:15px}.rn-event>summary{grid-template-columns:62px 70px minmax(0,1fr);font-size:11px}}
+  .rn-detail{padding:15px}.rn-event>summary{grid-template-columns:62px 70px minmax(0,1fr) auto;font-size:11px}}
 """

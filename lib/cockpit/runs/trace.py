@@ -41,14 +41,28 @@ What a record keeps is chosen field by field, never copied whole:
   text), each with its version (``sha256:`` and the first twelve digits of
   the digest of its exact text), and the names of the tools it called.
 
-Everything else the provider recorded -- what tools printed and were
-given, reasoning, environment, tokens -- is never read into a record. A
-record written before the session was created belongs to an earlier
-session the trace replays, and is not what this one was sent.
+- of what it did (C2b, af-ofz29f): each tool it called -- its name, what
+  it was given, credentials masked (:func:`masked`), when, and how long
+  until what the tool printed was recorded (Codex a ``custom_tool_call``
+  or ``function_call`` and its output sharing a ``call_id``; Claude Code a
+  ``tool_use`` and the ``tool_result`` naming it) --, and its usage as the
+  provider counts it, so far, at each moment it counted it: Codex its
+  ``token_count`` (``total_token_usage``: what it was given, of which read
+  from the cache; what it printed, of which reasoning; written to the
+  cache; its total), Claude Code the ``usage`` of each message, counted
+  once however many records repeat it (what it was given, written to and
+  read from the cache, printed, of which thinking; its total, these
+  added, as none is a part of another).
+
+Everything else the provider recorded -- what tools printed, reasoning,
+environment -- is never read into a record. A record written before the
+session was created belongs to an earlier session the trace replays, and
+is not what this one was sent nor did.
 """
 import hashlib
 import json
 import os
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -66,6 +80,32 @@ TRANSCRIPT_EVERY_SECONDS = 60
 SYSTEM, USER = "system", "user"
 # The moments of the log of the supervisor a record keeps.
 LOGGED = {"session.woke": "woke", "session.stopped": "stopped", "execution.step_started": "started"}
+
+
+# The categories of a usage, as the page names them: what the session was
+# given, read from and written to the cache, printed, of which reasoning,
+# and the total its provider counts.
+USAGE_KEYS = ("input", "cache_read", "cache_write", "output", "reasoning", "total")
+# What a tool was given is kept up to this many characters.
+CALL_INPUT_CHARACTERS = 2000
+# What a credential looks like where a tool was given it: a token of a
+# known service, a secret after a name that says so, the password of an
+# address. Each is replaced by MASK, what names it kept.
+CREDENTIALS = (
+    re.compile(r"()\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{12,}"
+               r"|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|glpat-[A-Za-z0-9_-]{16,})"),
+    re.compile(r"(?i)(\b[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD)[A-Z0-9_]*\s*[=:]\s*)[^\s\"']+"),
+    re.compile(r"(?i)(\bauthorization:\s*(?:bearer|basic|token)\s+)[^\s\"']+"),
+    re.compile(r"(://)[^/\s@]+@"),
+)
+MASK = "•••"
+
+
+def masked(text):
+    """`text` with every credential it shows replaced by MASK."""
+    for pattern in CREDENTIALS:
+        text = pattern.sub(lambda found: found.group(1) + MASK + ("@" if found.group(0).endswith("@") else ""), text)
+    return text
 
 
 def version(text):
@@ -156,6 +196,99 @@ def sent(records, created_at=None):
     return prompts, tools
 
 
+def _given(value):
+    """What a tool was given, as one text, credentials masked."""
+    if isinstance(value, str):
+        text = value
+    elif isinstance(value, dict) and len(value) == 1 and isinstance(next(iter(value.values())), str):
+        text = next(iter(value.values()))
+    else:
+        text = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return masked(text)[:CALL_INPUT_CHARACTERS]
+
+
+def _count(value):
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def _counts(said, fields):
+    found = {key: _count(said.get(field)) for key, field in fields}
+    return {key: value for key, value in found.items() if value is not None}
+
+
+CODEX_USAGE = (("input", "input_tokens"), ("cache_read", "cached_input_tokens"),
+               ("cache_write", "cache_write_input_tokens"), ("output", "output_tokens"),
+               ("reasoning", "reasoning_output_tokens"), ("total", "total_tokens"))
+CLAUDE_USAGE = (("input", "input_tokens"), ("cache_write", "cache_creation_input_tokens"),
+                ("cache_read", "cache_read_input_tokens"), ("output", "output_tokens"))
+
+
+def done(records, created_at=None):
+    """What the records of a provider say a session did: (calls, usage) --
+    each tool call {call, tool, input, at, seconds} in the order made
+    (``seconds`` None while nothing the tool printed is recorded); the
+    usage of the session so far at each moment its provider counted it
+    {at, provider, counts}, counts by USAGE_KEYS, those the provider gives.
+    Records before `created_at` (epoch) are those of an earlier session it
+    replays."""
+    calls, ended, usage, messages = {}, {}, [], {}
+    for record in records or []:
+        if not isinstance(record, dict):
+            continue
+        at = _epoch(record.get("timestamp"))
+        if at is None or (created_at is not None and at < created_at):
+            continue
+        kind, payload = record.get("type"), record.get("payload") if isinstance(record.get("payload"), dict) else {}
+        message = record.get("message") if isinstance(record.get("message"), dict) else {}
+        # Codex: a tool called, what it printed, a count of the usage.
+        if kind == "response_item" and payload.get("type") in ("custom_tool_call", "function_call"):
+            if isinstance(payload.get("call_id"), str) and isinstance(payload.get("name"), str):
+                given = payload.get("input") if payload["type"] == "custom_tool_call" else payload.get("arguments")
+                calls.setdefault(payload["call_id"], {"call": payload["call_id"], "tool": payload["name"],
+                                                      "input": _given(given if given is not None else ""), "at": at})
+        elif kind == "response_item" and payload.get("type") in ("custom_tool_call_output", "function_call_output"):
+            if isinstance(payload.get("call_id"), str):
+                ended.setdefault(payload["call_id"], at)
+        elif kind == "event_msg" and payload.get("type") == "token_count":
+            info = payload.get("info") if isinstance(payload.get("info"), dict) else {}
+            total = info.get("total_token_usage")
+            counts = _counts(total, CODEX_USAGE) if isinstance(total, dict) else {}
+            if "total" in counts:
+                usage.append({"at": at, "provider": "codex", "counts": counts})
+        # Claude Code: a message of the model -- the tools it calls, its
+        # usage, repeated on each of its records --, the result of a tool.
+        elif kind == "assistant":
+            for part in message.get("content") or []:
+                if isinstance(part, dict) and part.get("type") == "tool_use" and isinstance(part.get("id"), str) \
+                        and isinstance(part.get("name"), str):
+                    calls.setdefault(part["id"], {"call": part["id"], "tool": part["name"],
+                                                  "input": _given(part.get("input")), "at": at})
+            said = message.get("usage")
+            if not isinstance(said, dict) or not isinstance(message.get("id"), str) or message["id"] in messages:
+                continue
+            counts = _counts(said, CLAUDE_USAGE)
+            details = said.get("output_tokens_details")
+            thinking = _count(details.get("thinking_tokens")) if isinstance(details, dict) else None
+            if thinking is not None:
+                counts["reasoning"] = thinking
+            messages[message["id"]] = counts
+            sums = {}
+            for one in messages.values():
+                for key, value in one.items():
+                    sums[key] = sums.get(key, 0) + value
+            sums["total"] = sum(sums.get(key, 0) for key, _ in CLAUDE_USAGE)
+            usage.append({"at": at, "provider": "claude", "counts": sums})
+        elif kind == "user" and isinstance(message.get("content"), list):
+            for part in message["content"]:
+                if isinstance(part, dict) and part.get("type") == "tool_result" and isinstance(part.get("tool_use_id"), str):
+                    ended.setdefault(part["tool_use_id"], at)
+    found = []
+    for call in sorted(calls.values(), key=lambda call: call["at"]):
+        end = ended.get(call["call"])
+        found.append(dict(call, seconds=round(max(0.0, end - call["at"]), 3) if end is not None else None))
+    return found, usage
+
+
 class SessionTrace:
     """The projection at `path` (created private on first write)."""
 
@@ -227,6 +360,9 @@ class SessionTrace:
             records += [{"kind": "prompt", "session": name, **prompt} for prompt in prompts]
             if tools:
                 records.append({"kind": "tools", "session": name, "tools": tools})
+            calls, usage = done(provider_records, _epoch(record.get("created_at")))
+            records += [{"kind": "call", "session": name, **call} for call in calls]
+            records += [{"kind": "usage", "session": name, **point} for point in usage]
         # A session that could not be read keeps its moments out of the
         # projection, and the log is read again from where it was: the next
         # collection reads it once more.
@@ -284,8 +420,10 @@ class SessionTrace:
         """{session name: {the fields observed of it, the latest one of each
         kept; "beads": every bead it was seen working; "prompts": what it
         was sent, each version once, in the order sent; "tools": the tools
-        it called; "ended_at": when the supervisor stopped it, if it did and
-        did not wake it again since, else None}}."""
+        it called; "calls": each tool call once, in the order made, with how
+        long it lasted once known; "usage": its usage so far at each moment
+        its provider counted it, in order; "ended_at": when the supervisor
+        stopped it, if it did and did not wake it again since, else None}}."""
         try:
             size = os.stat(self.path).st_size
         except FileNotFoundError:
@@ -305,7 +443,8 @@ class SessionTrace:
             name = line.get("session")
             if not name:
                 continue
-            seen = found.setdefault(name, {"session": name, "prompts": [], "tools": [], "beads": []})
+            seen = found.setdefault(name, {"session": name, "prompts": [], "tools": [], "beads": [], "calls": [],
+                                           "usage": []})
             if line.get("kind") == "session":
                 seen.update({key: value for key, value in line.items() if key not in ("key", "kind")})
                 if line.get("active_bead") and line["active_bead"] not in seen["beads"]:
@@ -315,7 +454,20 @@ class SessionTrace:
                     seen["prompts"].append({key: line.get(key) for key in ("role", "text", "version", "at")})
             elif line.get("kind") == "tools":
                 seen["tools"] = list(line.get("tools") or [])
+            elif line.get("kind") == "call" and line.get("call"):
+                call = {key: line.get(key) for key in ("call", "tool", "input", "at", "seconds")}
+                known = next((c for c in seen["calls"] if c["call"] == call["call"]), None)
+                if known is None:
+                    seen["calls"].append(call)
+                elif known["seconds"] is None:
+                    known.update(call)
+            elif line.get("kind") == "usage" and isinstance(line.get("counts"), dict):
+                point = {key: line.get(key) for key in ("at", "provider", "counts")}
+                if point not in seen["usage"]:
+                    seen["usage"].append(point)
         for seen in found.values():
+            seen["calls"].sort(key=lambda c: (c.get("at") or 0, c["call"]))
+            seen["usage"].sort(key=lambda u: (u.get("at") or 0, u["counts"].get("total") or 0))
             seen["beads"] += [bead for bead in took.get(seen.get("id") or seen["session"]) or []
                               if bead and bead not in seen["beads"]]
             seen["prompts"].sort(key=lambda p: (p["role"] != SYSTEM, p.get("at") or 0))
