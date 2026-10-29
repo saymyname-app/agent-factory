@@ -79,14 +79,17 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   Benjamin, par telle porte ».
 - Contrôle : `python3 tests/convoy-state-test.py ConvoyStateTest.test_a_stopped_unfavorable_judgement_from_an_older_contract_is_invalidated_and_rejudged`,
   `python3 tests/code-review-test.py CodeReviewTest.test_an_unfavorable_judgement_from_the_previous_contract_is_rejudged_once_at_the_same_tip`,
-  `python3 tests/tdd-step-test.py TddStepTest.test_an_ambiguous_short_successor_does_not_name_either_ticket`
+  `python3 tests/tdd-step-test.py TddStepTest.test_an_ambiguous_short_successor_does_not_name_either_ticket`,
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_factory_technical_request_waits_for_every_linked_repair_s_delivery_proof_then_resumes_once`,
+  `bash tests/factory-work-dispatch-test.sh`
   — partiel : ils tiennent la sortie codée d'un arrêt `still_refused` quand
   le contrat de jugement change, au niveau de la porte d'état puis de sa
-  transmission par `settle`, et la porte de succession refuse un code court
-  qui nomme plusieurs tickets ; le test « chaque arrêt × chaque option »
+  transmission par `settle`, la porte de succession refuse un code court
+  qui nomme plusieurs tickets, et une demande technique explicitement liée
+  attend toutes ses preuves de livraison avant une seule reprise ; le test « chaque arrêt × chaque option »
   reste planifié (af-npz9v1.27).
 - Occurrences : #635, #637, #650, #653, #662, #666, #672, #673, #679, #682,
-  #687, #702, #704, #709, #711, #712, #718 ; af-npz9v1.44 ; af-npz9v1.47.
+  #687, #702, #704, #709, #711, #712, #718 ; af-npz9v1.44 ; af-npz9v1.47 ; af-npz9v1.48.
 - Ouvertes : `evaluation_outage`, `criterion_already_green`,
   `outcome_evaluation_no_result`, `outcome_evaluation_outage`,
   `story_unobservable` sans reprise dans `lib/convoy_state.py` (étude B
