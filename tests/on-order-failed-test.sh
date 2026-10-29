@@ -28,12 +28,13 @@ mkdir -p "$TMP/bin" "$TMP/beads"
 CALLS="$TMP/calls.log"; : > "$CALLS"
 EVENTS_FILE="$TMP/events.jsonl"
 
-events_n() {  # events_n <subject> <count>
-  local subject=$1 count=$2 i
+events_n() {  # events_n <subject> <count> [message]
+  local subject=$1 count=$2 message=${3:-exit status 1} i
   : > "$EVENTS_FILE"
   for ((i = 0; i < count; i++)); do
-    printf '{"actor":"controller","message":"exit status 1","payload":{},"subject":"%s","ts":"2026-09-17T12:%02d:00Z","type":"order.failed","ok":true}\n' \
-      "$subject" "$i" >> "$EVENTS_FILE"
+    jq -nc --arg message "$message" --arg subject "$subject" --arg ts "2026-09-17T12:$(printf '%02d' "$i"):00Z" \
+      '{actor:"controller",message:$message,payload:{},subject:$subject,ts:$ts,type:"order.failed",ok:true}' \
+      >> "$EVENTS_FILE"
   done
 }
 
@@ -93,7 +94,15 @@ touch "$TMP/city.toml" 2>/dev/null || true
 
 run() { FACTORY_ROOT="$TMP" "$SCRIPT" "$@" 2>&1; }
 
+# --- an explicit capacity deferral is replayable, not a chronic failure ----
+events_n convoy-advance 5 \
+  "exit status 75: convoy-advance: échec de la passe -- af-strhoy integration.error: refus : tests NOT RUN, exit 75; retry next pass"
+out=$(run)
+grep -q "^bd create" "$CALLS" && fail "filed a bead for explicit NOT RUN/75 capacity deferrals"
+grep -q "^mail send" "$CALLS" && fail "paged the Mayor for explicit NOT RUN/75 capacity deferrals"
+
 # --- below the streak threshold: nothing happens -----------------------------
+: > "$CALLS"
 events_n dolt-remotes-patrol 4
 out=$(run)
 grep -q "mail send mayor" "$CALLS" && fail "paged below the failure streak threshold"

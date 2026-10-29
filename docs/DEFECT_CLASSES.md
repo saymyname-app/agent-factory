@@ -119,8 +119,10 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 
 - Invariant : Une alerte dit vrai et une situation qui demande quelqu'un
   produit une alerte.
-- Contrôle : aucun — le contrôle 9 du gardien (#688) couvre les tickets que
-  personne ne bouge ; pas de contrôle de catégorie.
+- Contrôle : `bash tests/on-order-failed-test.sh` — partiel : il tient la
+  frontière entre un report explicite (sortie 75, rejoué sans alerte) et une
+  vraie panne répétée (bead et page Mayor) ; le contrôle 9 du gardien (#688)
+  couvre les tickets que personne ne bouge, pas les autres signaux.
 - Occurrences : #651, #679, #688, #717.
 - Ouvertes : aucune connue.
 

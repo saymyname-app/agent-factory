@@ -63,6 +63,7 @@ COMMIT = "0123456789abcdef0123456789abcdef01234567"
 EXIT_REFUSED = 1
 EXIT_UNRULED = 3
 EXIT_NOT_NEW_FLOW = 4
+EXIT_DEFERRED = 75
 
 DOOR_STAMP = "gc.dispatched_via"
 DISPATCH_GATE = "gc.flow.gate.dispatch"
@@ -1559,6 +1560,17 @@ class ConvoyAdvanceTest(ConvoyAdvanceHarness):
         self.assertFalse(answer["ok"])
         self.assertIn("profil", self.integration_of(answer)["error"])
         self.assertEqual(before, self.git("rev-parse", self.INTEGRATION))
+        self.assertIsNone(self.shown(T1)["merge"])
+
+    def test_tests_not_run_on_the_merged_result_defer_the_pass(self):
+        self.integrated(regression="sh -c 'echo NOT RUN; exit 75'")
+        self.advance(CONVOY)
+        self.finished(T1)
+
+        answer = self.advance(CONVOY, expect=EXIT_DEFERRED)
+
+        self.assertFalse(answer["ok"])
+        self.assertIn("NOT RUN, exit 75", self.integration_of(answer)["error"])
         self.assertIsNone(self.shown(T1)["merge"])
 
     def test_a_stopped_convoy_merges_nothing(self):
