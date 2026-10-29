@@ -228,9 +228,10 @@ convoy froze (its `tdd_freeze` registry) is no other ticket's to change.
 naming the ticket that froze it, unless an amendment of this ticket recorded
 it as it is at HEAD. `amend` records it in `amendment.succession` only when
 the test, at the start commit, names this ticket as its successor
-(« until <code> », « jusqu'à <code> », the code being the title of the ticket
-before « — », or its id); `amend` refuses it otherwise, and refuses a second
-change of a test already recorded. The change is in the diff of the
+(« until <code> », « jusqu'à <code> », the code being the title of exactly one
+ticket of the published graph before « — », or its id); a clause that names
+several published codes is ambiguous and names none. `amend` refuses the file
+otherwise, and refuses a second change of a test already recorded. The change is in the diff of the
 amendment and among its `files`, so the code review asks of it as of any
 amended test. The first case: A1's `home-result-states-test.py` holds Essai
 and Avis unusable « until A2 ». A test absent at the start commit is not

@@ -112,6 +112,27 @@ class CapacityTest(unittest.TestCase):
                     third.write_text("running")
                 self.assertTrue(third.exists())
 
+    def test_fully_gone_launch_records_do_not_hold_product_slots(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            ticket = root / "ticket"
+            outcome = root / "outcome"
+            ticket.mkdir()
+            outcome.mkdir()
+            for number, folder in enumerate((ticket, outcome), start=1):
+                (folder / f"gone-{number}.json").write_text(json.dumps({
+                    "launch_id": f"gone-{number}",
+                    "pid": 999_999_990 + number,
+                    "process_group": 999_999_990 + number,
+                    "worktree": str(root / f"gone-worktree-{number}"),
+                }))
+            env = {"TICKET_EVALUATION_STATE_DIR": str(ticket),
+                   "OUTCOME_EVALUATION_STATE_DIR": str(outcome),
+                   "EVALUATION_CAPACITY_STATE_DIR": str(root / "capacity")}
+
+            with patch.dict(os.environ, env), admission(ticket / "next.json"):
+                pass
+
     def test_child_holds_admission_if_parent_crashes_before_record(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

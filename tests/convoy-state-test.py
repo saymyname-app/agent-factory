@@ -1573,11 +1573,13 @@ class ConvoyStateTest(unittest.TestCase):
         self.ok("set-handoff", CONVOY, T1, "--file", self.handoff_file(commit=commit))
         self.ok("set-exit", CONVOY, T1, "--exit", "finished")
 
-    def open_code_review(self, kind="review", commit=None, base=None, questions=None):
+    def open_code_review(self, kind="review", commit=None, base=None, questions=None, contract=None):
         args = ["open-code-review", CONVOY, T1, "--kind", kind, "--commit", commit or self.REVIEWED,
                 "--base", base or self.REVIEW_BASE]
         if questions is not None:
             args += ["--file", self.json_file("questions.json", {"questions": questions})]
+        if contract is not None:
+            args += ["--contract", contract]
         return self.ok(*args)
 
     def review_file(self, findings=(), answers=None, commit=None, **extra):
@@ -1594,7 +1596,8 @@ class ConvoyStateTest(unittest.TestCase):
     def judgement_file(self, judgements, commit=None):
         self.reviews = getattr(self, "reviews", 0) + 1
         return self.json_file(f"judgement-{self.reviews}.json", {
-            "commit": commit or self.CORRECTED, "recorded_by": "delivery-reviewer-fx2", "judgements": judgements})
+            "commit": commit or self.CORRECTED, "recorded_by": f"delivery-reviewer-fx{self.reviews}",
+            "judgements": judgements})
 
     def respond(self, responses):
         return self.ok("respond-code-review", CONVOY, T1, "--file",
@@ -1934,6 +1937,36 @@ class ConvoyStateTest(unittest.TestCase):
             self.assert_refused_and_nothing_written(
                 "open-code-review", CONVOY, T1, "--kind", kind, "--commit", self.CORRECTED, "--base", base,
                 mention="tour de correction")
+
+    def test_a_stopped_unfavorable_judgement_from_an_older_contract_is_invalidated_and_rejudged(self):
+        self.corrected_review()
+        self.open_code_review("judgement", self.CORRECTED, self.REVIEWED)
+        self.ok("record-code-review", CONVOY, T1, "--file", self.judgement_file(
+            {"F1.1": {"state": "unfavorable", "reason": "le nombre manque toujours"}}))
+        self.ok("stop-ticket", CONVOY, T1, "--reason", "still_refused", "--detail",
+                "encore refusé après son tour de correction : revue de code (F1.1)")
+
+        self.open_code_review("judgement", self.CORRECTED, self.REVIEWED,
+                              contract="code-review-attribution/v2")
+
+        ticket = self.ticket(self.show(), T1)
+        self.assertIsNone(ticket["stop"])
+        self.assertEqual("code-review-attribution/v2",
+                         ticket["code_review"]["rounds"][-1]["invalidated"]["contract"])
+        self.assertEqual("code-review-attribution/v2", ticket["code_review"]["request"]["contract"])
+        self.assertEqual((False, "code-review-attribution/v2"),
+                         (ticket["verdicts"]["code_review"]["valid"],
+                          ticket["verdicts"]["code_review"]["invalidated"]["contract"]))
+
+        self.ok("record-code-review", CONVOY, T1, "--file", self.judgement_file({"F1.1": {"state": "favorable"}}))
+
+        ticket = self.ticket(self.show(), T1)
+        rounds = ticket["code_review"]["rounds"]
+        self.assertEqual(["review", "judgement", "judgement"], [round_["kind"] for round_ in rounds])
+        self.assertEqual("code-review-attribution/v2", rounds[-1]["contract"])
+        self.assertEqual({"verdict": "favorable", "commit": self.CORRECTED, "unsettled": []},
+                         ticket["code_review"]["state"])
+        self.assertNotIn("invalidated", ticket["verdicts"]["code_review"])
 
     def test_a_judgement_given_by_the_session_that_reviewed_is_refused(self):
         self.corrected_review()

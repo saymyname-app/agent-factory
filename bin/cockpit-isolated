@@ -358,6 +358,20 @@ def read_heartbeat(path: Path) -> dict | None:
     return {"ping_url": url, "interval_seconds": float(interval)}
 
 
+def read_usine_validity(path: Path) -> dict[str, str]:
+    """How long a check of a section of the page Usine stays current, as the
+    dataset at `path` declares it (`usine_check_validity_seconds`, above 0:
+    a configuration read goes stale in seconds, not the five minutes of
+    service; G2, af-f8nlhr); nothing when it declares none. Exits when it is
+    not a number above 0."""
+    seconds = json.loads(path.read_text(encoding="utf-8")).get("usine_check_validity_seconds")
+    if seconds is None:
+        return {}
+    if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or seconds <= 0:
+        sys.exit(f"cockpit-isolated: {path}: usine_check_validity_seconds is a number of seconds above 0")
+    return {"COCKPIT_VALIDITY_USINE_SECONDS": str(float(seconds))}
+
+
 def write_heartbeat(heartbeat: dict | None, home: str) -> dict[str, str]:
     """The environment of the heartbeat the dataset declares: its address in
     a file of the temporary HOME that only this account reads, as the secret
@@ -618,6 +632,7 @@ def main(argv: list[str]) -> int:
     restarted = read_restart(Path(args.dataset))
     https = read_https(Path(args.dataset))
     heartbeat = read_heartbeat(Path(args.dataset))
+    usine_validity = read_usine_validity(Path(args.dataset))
     cockpit_url = f"http://127.0.0.1:{args.port}"
 
     home = tempfile.mkdtemp(prefix="cockpit-isolated-")
@@ -665,6 +680,7 @@ def main(argv: list[str]) -> int:
         env[LAUNCH_MARK] = os.environ[LAUNCH_MARK]
     env.update(write_stop(restarted, city, home))
     env.update(write_heartbeat(heartbeat, home))
+    env.update(usine_validity)
     if https:
         env.update(start_identity_proxy(args.port, home, [alive_write]))
     if city.reading == synthetic_city.READ_ONCE:

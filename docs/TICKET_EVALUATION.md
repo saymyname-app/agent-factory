@@ -123,7 +123,9 @@ record receives `ready=false`; an HTTP response or port alone is insufficient
 
 Ticket and Outcome Evaluation share two host slots and allow one active
 product per evaluation. Startup and shutdown count as occupied. An
-unconfirmed stop keeps its record and slot. Waiting for admission before
+unconfirmed stop keeps its record and slot; a valid launch record proven to
+have no PID, process group, marked descendant or worktree left does not.
+Unreadable records still occupy a slot. Waiting for admission before
 the first Evaluator session starts does not consume that session's deadline.
 `project-launch` writes a provisional record before spawning, so an
 interrupted pass recovers the exact repository, commit and game or stops it.

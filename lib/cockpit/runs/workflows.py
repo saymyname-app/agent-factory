@@ -82,6 +82,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from cockpit.core.readmodel import PARIS
+from cockpit.projects.decisions import decisions_line
 from cockpit.runs.derive import (AGENT, CODE, DONE, HUMAN, LIVE, PASSED, REFUSED, STOPPED, WAIT, WAITING, _decoded, _ts,
                                  run_from_bead, tone)
 from cockpit.runs.trace import _epoch
@@ -260,6 +261,23 @@ def workflow_runs(beads, agents, now, trace=None):
         if run:
             runs.append(run)
     return sorted(runs, key=lambda run: (run["start"], run["id"]), reverse=True)
+
+
+def waiting_on(runs, decisions):
+    """``runs`` with the open decisions of the chantier each one delivers
+    (``decisions``: :func:`cockpit.projects.decisions.chantier_decisions`,
+    by chantier id -- the convoy of a D01 run is its id): a run still open
+    whose chantier has some waits for Benjamin and says how many
+    (``decisions``), as the page of its project does. The runs are copied,
+    never changed."""
+    out = []
+    for run in runs or []:
+        count = (decisions or {}).get(run["id"], 0)
+        if count and run["state"] != DONE:
+            run = dict(run, state=WAIT, status="Ta décision", step=decisions_line(count),
+                       tone=tone(WAIT, "Ta décision"), decisions=count)
+        out.append(run)
+    return out
 
 
 def _sessions(agents, beads):
