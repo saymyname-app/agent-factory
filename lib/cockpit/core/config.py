@@ -128,6 +128,15 @@ class Config:
         self.order_pause_bin = env.get(
             "COCKPIT_ORDER_PAUSE_BIN", os.path.join(_REPO_ROOT, "bin", "order-pause")
         )
+        # The doors of the settings and the upkeep of the page Usine (G2,
+        # af-f8nlhr): the provider order of a role, and the cleaning of the
+        # unused work spaces.
+        self.provider_failover_bin = env.get(
+            "COCKPIT_PROVIDER_FAILOVER_BIN", os.path.join(_REPO_ROOT, "bin", "provider-failover")
+        )
+        self.factory_maintain_bin = env.get(
+            "COCKPIT_FACTORY_MAINTAIN_BIN", os.path.join(_REPO_ROOT, "bin", "factory-maintain")
+        )
         self.gc_bin = env.get("COCKPIT_GC_BIN", "gc")
         # Notifications and heartbeat (spec §"Notifications", §"Heartbeat et
         # usine muette"). Both secret files live outside the repository, in
