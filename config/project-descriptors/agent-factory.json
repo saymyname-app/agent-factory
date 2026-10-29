@@ -241,6 +241,7 @@
       "run-completed": "config/cockpit-datasets/run-completed.json",
       "run-stale": "config/cockpit-datasets/run-stale.json",
       "run-waiting": "config/cockpit-datasets/run-waiting.json",
+      "run-demonstration": "config/cockpit-datasets/run-demonstration.json",
       "job-code": "config/cockpit-datasets/job-code.json",
       "job-configuration": "config/cockpit-datasets/job-configuration.json",
       "job-event": "config/cockpit-datasets/job-event.json",
