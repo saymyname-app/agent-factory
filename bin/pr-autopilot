@@ -1129,35 +1129,49 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
       log "  DRY-RUN: gh pr merge $num --repo $repo --auto --squash"
       ARMED=$((ARMED+1))
     else
-      bounded "$AP_WRITE_CAP" gh pr merge "$num" --repo "$repo" --auto --squash >/dev/null 2>&1; rc=$?
-      if [ "$rc" = 0 ]; then
-        ARMED=$((ARMED+1))
-      elif timed_out "$rc"; then
+      bounded "$AP_WRITE_CAP" gh pr merge "$num" --repo "$repo" --auto --squash >/dev/null 2>&1; arm_rc=$?
+      if timed_out "$arm_rc"; then
         # Unknown, not failed: no re-read and no direct merge on a guess -- the
         # next tick reads autoMergeRequest from the server like any other PR.
         log "    arm request timed out -- outcome unknown, re-read next tick"
       else
-        # Hard rule (gastown land-and-deploy): never retry `gh pr merge` after a
-        # non-zero exit. Re-read authoritative server state instead.
-        after=$(bounded "$AP_READ_CAP" gh pr view "$num" --repo "$repo" --json state,autoMergeRequest \
-          --jq '[.state,(.autoMergeRequest!=null)]|@tsv' 2>/dev/null); rc=$?
-        timed_out "$rc" && after="TIMEOUT"
-        case "$after" in
-          TIMEOUT) log "    state re-read timed out -- unknown, not merging this pass" ;;
-          MERGED*) log "    already merged server-side"; ARMED=$((ARMED+1)) ;;
-          *true)   log "    auto-merge is armed server-side"; ARMED=$((ARMED+1)) ;;
-          *)
-            # GitHub refuses allow_auto_merge on a private repo without Pro, so
-            # arming is simply unavailable there. Fall back to the documented
-            # direct path: merge only once the required checks are actually
-            # green, which is the same gate auto-merge would have waited for.
-            if [ "$checks" = "OK" ] && [ "$state" = "CLEAN" ]; then
-              log "    auto-merge unavailable; checks green -> direct squash merge"
-              direct_merge "$repo" "$num" "$sha"
-            else
-              log "    not armable and checks are '$checks'/'$state' — waiting, not merging"
-            fi ;;
-        esac
+        # A zero exit means the request was accepted locally, not that GitHub
+        # persisted it (PR #767). Re-read the complete merge gate after every
+        # definite response, including the exact head; stale pre-request data
+        # must never authorize the fallback direct merge.
+        after_json=$(bounded "$AP_READ_CAP" gh pr view "$num" --repo "$repo" \
+          --json state,autoMergeRequest,mergeStateStatus,statusCheckRollup,headRefOid 2>/dev/null); after_rc=$?
+        after=""
+        if [ "$after_rc" = 0 ] && ! after=$(printf '%s' "$after_json" | jq -r --arg reqcheck "$required_check" '[
+            .state, (.autoMergeRequest!=null), (.mergeStateStatus//"?"),
+            ((.statusCheckRollup//[]) as $roll
+             | ($roll|map(select((((.name//.context//"")=="") or ((.name//.context//"")==$reqcheck))))) as $req
+             | if ($req|length)==0 then "NONE"
+               elif ($req|map(.conclusion//.state//"")|any(.=="FAILURE" or .=="ERROR" or .=="TIMED_OUT")) then "FAILURE"
+               elif ($req|any((.status//"COMPLETED")!="COMPLETED" or .state=="PENDING" or .state=="EXPECTED")) then "PENDING"
+               else "OK" end),
+            (.headRefOid//"unknown")
+          ]|@tsv' 2>/dev/null); then
+          after_rc=1
+        fi
+        if timed_out "$after_rc"; then
+          log "    state re-read timed out -- unknown, not merging this pass"
+        elif [ "$after_rc" != 0 ] || [ -z "$after" ]; then
+          log "    state re-read failed -- unknown, not merging this pass"
+        else
+          IFS=$'\t' read -r after_state after_armed after_merge_state after_checks after_sha <<<"$after"
+          if [ "$after_state" = "MERGED" ]; then
+            log "    already merged server-side"; ARMED=$((ARMED+1))
+          elif [ "$after_armed" = "true" ]; then
+            log "    auto-merge is armed server-side"; ARMED=$((ARMED+1))
+          elif [ "$after_state" = "OPEN" ] && [ "$after_merge_state" = "CLEAN" ] \
+              && [ "$after_checks" = "OK" ] && [ "$sha" != "unknown" ] && [ "$after_sha" = "$sha" ]; then
+            log "    auto-merge unavailable after local exit $arm_rc; same head is green and CLEAN -> direct squash merge"
+            direct_merge "$repo" "$num" "$sha"
+          else
+            log "    auto-merge not confirmed; server gate is '$after_state'/'$after_merge_state'/'$after_checks' head '$after_sha' — waiting, not merging"
+          fi
+        fi
       fi
     fi
   done < <(printf '%s' "$open_prs" | jq -r --arg reqcheck "$required_check" --arg authors "$PR_AUTHORS" '
