@@ -6,9 +6,16 @@ Planning Run A6b. Its `## Agent skills` pointer is in `AGENTS.md`, not
 `CLAUDE.md` as the skill says, so Codex reads it too (Benjamin, 2026-09-29).
 
 Issues for this repo live as **Beads** in the Factory's HQ Beads database
-(Dolt-backed). Use the `bd` CLI (v1.3.1), run **only from the live root**
-`/home/benja/agent-factory`, with `--actor po-agent/<session-id>` (one actor per
-operator session, see Claim) when the operator session writes. Never create a second tracker (GitHub Issues, `.scratch/`) for this repo.
+(Dolt-backed). An operator Codex session writes only through
+`bin/operator-bd`: it runs `bd` from `/home/benja/agent-factory` with the
+non-overridable actor `po-agent/<Codex-thread-id>` (one actor per operator
+session, see Claim), and refuses to write without a Codex session identity.
+This executable boundary keeps the writer aligned with
+`factory-orphan-sweep`, which preserves `po-agent/*` reservations. Native
+`bd` examples below describe tracker semantics; on the operator path, replace
+the command and its explicit `--actor po-agent/<session-id>` with
+`bin/operator-bd`. Never create a second tracker (GitHub Issues, `.scratch/`)
+for this repo.
 
 ## Conventions
 
@@ -55,7 +62,7 @@ Used by `/wayfinder`. The **map** is one bead (the Planning Map Bead) with
 - **Child ticket**: `bd create --parent <map> --no-inherit-labels --type task --title "<name>" --labels wayfinder:<type> --metadata '{"gc.plane":"planning"}' --body-file q.md`, where `<type>` is `research`/`prototype`/`grilling`/`task` and the body is `## Question`. `--no-inherit-labels` is required: `bd create --parent` copies the parent's labels by default, which would tag every ticket `wayfinder:map` (seen on af-0aiero).
 - **Blocking**: Beads' native `blocks` dependency: `bd dep add <blocked> <blocker>`. A ticket is unblocked when every blocker is closed.
 - **Frontier query**: `bd ready --parent <map> --unassigned --json` (ready already drops blocked and in-progress beads); first by creation order wins.
-- **Claim**: `bd --actor po-agent/<session-id> update <id> --claim`, the session's first write. Only `--claim` is atomic, and only between distinct actors: exit 1 ("already claimed") means take the next frontier ticket. Never claim with `--assignee` (last writer wins silently). Research: branch `research/a6b-beads-claim`, af-0aiero.2.
+- **Claim**: `bin/operator-bd update <id> --claim`, the session's first write. Only `--claim` is atomic, and only between distinct actors: exit 1 ("already claimed") means take the next frontier ticket. Never claim with `--assignee` (last writer wins silently). Research: branch `research/a6b-beads-claim`, af-0aiero.2.
 - **Benjamin-invoked skills**: `/wayfinder`, `/to-spec` and `/to-tickets` (Method Baseline, as written) carry `disable-model-invocation: true`: only Benjamin starts them, by typing the slash command in a session. An agent's Skill tool call is refused, and the agent must not replay the skill's steps by hand instead (seen on the C01 `/to-spec` chip, 2026-09-30). So a launch chip or ready-to-paste prompt for one of them does the Take over and the reads (`bd show`, `bd comments`), then asks Benjamin to type the command (e.g. `/to-spec <map>`) in that session; it never tells the agent to call the Skill tool or to invoke the skill itself.
 - **Offer (launch chip)**: a session that proposes a ready ticket for another session to run (a launch chip or a ready-to-paste prompt) reserves it first, because a chip lives only in its own conversation and the frontier keeps showing the ticket until someone claims it (duplicate chips seen on af-arlph5, 2026-09-30). Run `bd --actor po-agent/<own-session-id> update <id> --claim`; only on exit 0, run `bd --actor po-agent/<own-session-id> update <id> --set-metadata wayfinder.offered_by=po-agent/<own-session-id>` and create the chip, whose prompt names that offerer. Exit 1 means another session offered or runs it: no chip.
 - **Take over**: the launched session's first write replaces Claim. `bd show <id> --json`: if the assignee is the offerer its prompt names and `wayfinder.offered_by` is set, run `bd --actor po-agent/<own-session-id> update <id> --if-assignee po-agent/<offerer-session-id> --assignee po-agent/<own-session-id> --unset-metadata wayfinder.offered_by`: one compare-and-set write, accepted while the offerer's claim is live. Exit 0: the ticket is yours. Exit 13 ("assignee mismatch", nothing written), or an assignee that is not the offerer at the read: another session took it, stop and say so. Never the bare `--assignee`: Beads 1.3 refuses to reassign a bead another actor holds in progress (exit 1, "cannot reassign ... held by"), whatever the state of the lease. Never `--force`: it cannot be combined with `--if-assignee`, so it takes the ticket from whoever holds it (measured on Beads 1.3.1, af-tql60u). A ticket reached without an offer (a plain `/wayfinder <map>`) uses Claim.

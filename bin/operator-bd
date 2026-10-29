@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# operator-bd: Beads entry point for Codex operator sessions. Force the
+# per-thread po-agent identity that factory-orphan-sweep preserves instead of
+# inheriting a shell actor that the sweep cannot verify.
+set -Eeuo pipefail
+
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+BD_BIN="${BD_BIN:-bd}"
+SESSION_ID="${CODEX_THREAD_ID:-${CODEX_SESSION_ID:-}}"
+
+if [ -z "$SESSION_ID" ]; then
+  echo "operator-bd: CODEX_THREAD_ID or CODEX_SESSION_ID is required" >&2
+  exit 2
+fi
+for arg in "$@"; do
+  case "$arg" in
+    --actor|--actor=*)
+      echo "operator-bd: --actor is fixed to po-agent/<Codex-session>" >&2
+      exit 2
+      ;;
+  esac
+done
+
+cd "$ROOT"
+exec "$BD_BIN" --actor "po-agent/$SESSION_ID" "$@"
