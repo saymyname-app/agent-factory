@@ -668,6 +668,27 @@ def convoy_lock(convoy_id: str) -> Iterator[None]:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
+@contextmanager
+def convoy_advance_close_lock() -> Iterator[None]:
+    """Keep an external close out of a convoy-advance pass.
+
+    A close launched by that pass inherits the marker and already owns the
+    lock.  Taking this lock before the per-convoy lock avoids reversing the
+    order used by the pass and deadlocking with another writer.
+    """
+    if os.environ.get("CONVOY_ADVANCE_LOCK_HELD_BY_PASS") == "1":
+        yield
+        return
+    lock_dir = Path(os.environ.get("CONVOY_ADVANCE_LOCK_DIR") or os.environ.get("XDG_RUNTIME_DIR") or "/tmp")
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    with (lock_dir / "agent-factory-convoy-advance.lock").open("w") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 def now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
@@ -7792,6 +7813,10 @@ def main(argv: list[str]) -> int:
     try:
         if args.handler in (cmd_list, cmd_show, cmd_ticket):
             return args.handler(args)
+        if args.handler == cmd_close_convoy:
+            with convoy_advance_close_lock():
+                with convoy_lock(args.convoy):
+                    return args.handler(args)
         with convoy_lock(args.convoy):
             return args.handler(args)
     except NotNewFlow as exc:
