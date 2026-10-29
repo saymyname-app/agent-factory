@@ -82,6 +82,14 @@ dérogation constat par constat ou la Planning Exception.
    ticket ne l'a ni changé sémantiquement ni mis en interaction ; un
    comportement introduit par le ticket ou une vraie interaction avec le
    contexte hérité reste défavorable.
+   Amendement af-npz9v1.44 (2026-10-29) : les entrées et consignes de ce
+   jugement portent la version déterministe `code-review-attribution/v2`.
+   Un jugement défavorable rendu sous une version antérieure est invalidé et
+   rejoué exactement une fois à la même pointe sous la version courante, sans
+   nouveau tour auteur. Son éventuel arrêt `still_refused` est levé par la
+   même écriture codée ; la session neuve et la borne de deux lancements
+   restent celles de toute demande de jugement. Un jugement défavorable déjà
+   courant reste terminal.
 3. **Tour exceptionnel.**
    `bin/correction-round grant CONVOI TICKET --approved-by <approbateur> --words "…" --exceptional`
    accorde un tour au-delà de la borne, seulement :
@@ -131,7 +139,9 @@ qui les lit disparaît.
 constat redonné et la ligne changée, garde le reste pour la passe de fin ;
 les commits d'intégration repris ne sont pas des lignes du ticket ; une
 dérogation solde le constat ; la première revue n'accepte pas de périmètre ;
-la question `amended_test` exclut la fidélité visuelle.
+la question `amended_test` exclut la fidélité visuelle ; un ancien jugement
+défavorable arrêté à la pointe est invalidé puis rejugé une fois sous le
+contrat courant, dont le verdict redevient terminal.
 `tests/correction-round-test.py` : un ticket arrêté au plafond reçoit un
 tour exceptionnel de son approbateur, puis aucun second ; refusé à un ticket
 qui a encore un tour, et quand la session de correction s'est terminée sans

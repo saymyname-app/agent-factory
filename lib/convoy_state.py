@@ -133,11 +133,14 @@ reads the bead from stdin, as `gc bd show --json` printed it, instead of
 reading the tracker again (what bin/dispatch-door does before a dispatch).
 
 A verdict is valid only while its commit is the tip of the ticket's branch
-in `--repo` (default: the current directory): a commit added after it makes
-it invalid, a commit that is not on the branch at all is an "état sans
-règle". `invalidate-verdicts` writes that on the verdicts the merge command
-found outdated, and counts one resume for it -- none when the commit is the
-one of the correction round, which `open-correction` already counted.
+in `--repo` (default: the current directory) and no coded door invalidated
+it: a commit added after it makes it invalid, as does a newer code-review
+judgement contract at the same tip; a commit that is not on the branch at
+all is an "état sans règle". `invalidate-verdicts` writes the first case on
+the verdicts the merge command found outdated, and counts one resume for it
+-- none when the commit is the one of the correction round, which
+`open-correction` already counted. `open-code-review` writes the second and
+opens the replacement judgement without an author resume.
 
 The bound of the resumes of a ticket (K), one per cause (ADR-0030 L2), is
 read in the one place the bounds of the flow are set: `bounds.resumes` of
@@ -1238,9 +1241,13 @@ def blocking_ids(round_: dict[str, Any]) -> list[str]:
 
 def code_review_request(value: Any) -> dict[str, Any]:
     required = {"kind", "commit", "base", "questions", "launches", "models", "at"}
-    if not isinstance(value, dict) or not required <= set(value) or set(value) - required - {"scope"}:
+    if not isinstance(value, dict) or not required <= set(value) or set(value) - required - {"scope", "contract"}:
         raise Refusal(f"demande de revue de code mal formée : {value!r}")
     one_of(value["kind"], CODE_REVIEW_KINDS, "genre de revue")
+    if "contract" in value:
+        if value["kind"] != "judgement":
+            raise Refusal("une revue ne porte pas de version du contrat de jugement")
+        single_line(value["contract"], "contrat de jugement")
     if "scope" in value:
         if value["kind"] != "review":
             raise Refusal("un jugement n'a pas de périmètre de revue ciblée : il juge la liste des Blocking Findings")
@@ -1263,8 +1270,8 @@ def code_review_round(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict) or not common <= set(value):
         raise Refusal(f"passe de revue de code mal formée : {value!r}")
     kind = one_of(value["kind"], CODE_REVIEW_KINDS, "genre de revue")
-    own = {"findings", "answers", "responses", "scope"} if kind == "review" else {"judgements"}
-    required = own - {"responses", "scope"}
+    own = {"findings", "answers", "responses", "scope"} if kind == "review" else {"judgements", "contract", "invalidated"}
+    required = {"findings", "answers"} if kind == "review" else {"judgements"}
     if set(value) - common - own - {"conversation"} or not required <= set(value):
         raise Refusal(f"passe de revue de code mal formée : {value!r}")
     stored_conversation(value)
@@ -1274,6 +1281,13 @@ def code_review_round(value: Any) -> dict[str, Any]:
     review_models(value["models"])
     single_line(value["recorded_by"], "session du relecteur")
     if kind == "judgement":
+        if "contract" in value:
+            single_line(value["contract"], "contrat de jugement")
+        if "invalidated" in value:
+            invalidated = value["invalidated"]
+            if not isinstance(invalidated, dict) or set(invalidated) != {"contract", "at"}:
+                raise Refusal(f"invalidation de jugement mal formée : {invalidated!r}")
+            single_line(invalidated["contract"], "nouveau contrat de jugement")
         judgements = value["judgements"]
         if not isinstance(judgements, dict) or not judgements:
             raise Refusal(f"jugement sans réponse par constat : {judgements!r}")
@@ -1313,12 +1327,14 @@ def code_review_record(raw: Any) -> dict[str, Any]:
     record = stored_record(raw, ("rounds",), ("request",))
     if not isinstance(record["rounds"], list):
         raise Refusal(f"passes de revue de code mal formées : {record['rounds']!r}")
-    previous = None
+    previous = reviewed = None
     for value in record["rounds"]:
         code_review_round(value)
-        if value["kind"] == "judgement" and (
-                previous is None or previous["kind"] != "review" or previous["verdict"] != "unfavorable"
-                or set(value["judgements"]) != set(blocking_ids(previous))):
+        if value["kind"] == "review":
+            reviewed = value
+        elif (reviewed is None or reviewed["verdict"] != "unfavorable"
+              or set(value["judgements"]) != set(blocking_ids(reviewed))
+              or (previous is not None and previous["kind"] == "judgement" and "invalidated" not in previous)):
             raise Refusal("jugement qui ne suit pas la revue défavorable qu'il juge")
         previous = value
     if "request" in record:
@@ -1330,7 +1346,7 @@ def code_review_state(record: dict[str, Any]) -> dict[str, Any]:
     """What the code review says of the ticket now: the verdict of its last
     round, the commit it judged, and the Blocking Findings that have no
     favorable verdict (Spec §6: code refuses the merge while there is one)."""
-    last = record["rounds"][-1] if record["rounds"] else None
+    last = next((round_ for round_ in reversed(record["rounds"]) if "invalidated" not in round_), None)
     if last is None:
         return {"verdict": None, "commit": None, "unsettled": []}
     if last["kind"] == "review":
@@ -2888,9 +2904,11 @@ def verdict_record(raw: Any) -> dict[str, Any]:
     valid_commit(record["commit"])
     if "invalidated" in record:
         invalidated = record["invalidated"]
-        if not isinstance(invalidated, dict) or set(invalidated) != {"tip", "at"}:
+        if not isinstance(invalidated, dict) or set(invalidated) not in ({"tip", "at"}, {"tip", "contract", "at"}):
             raise Refusal(f"invalidation mal formée : {invalidated!r}")
         valid_commit(invalidated["tip"], "pointe qui invalide le verdict")
+        if "contract" in invalidated:
+            single_line(invalidated["contract"], "nouveau contrat de jugement")
     return record
 
 
@@ -4023,11 +4041,11 @@ def cmd_set_model(args: argparse.Namespace) -> int:
     return done(args.convoy, args.ticket, values)
 
 
-def code_review_target(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any]]:
+def code_review_target(args: argparse.Namespace, allow_stop: bool = False) -> tuple[dict[str, Any], dict[str, Any]]:
     """The metadata of the ticket a code-review write lands on, and its
     code review so far."""
     metadata = metadata_of(marked_ticket(args.convoy, args.ticket))
-    if KEY_STOP in metadata:
+    if KEY_STOP in metadata and not allow_stop:
         raise Refusal(f"ticket arrêté : aucune revue ne s'enregistre sur {args.ticket} tant que l'arrêt n'est pas levé")
     record = code_review_record(metadata[KEY_CODE_REVIEW]) if KEY_CODE_REVIEW in metadata else {"rounds": []}
     return metadata, record
@@ -4066,10 +4084,13 @@ def cmd_open_code_review(args: argparse.Namespace) -> int:
     commit its author finished at: the review itself, or the judgement of
     the answers given to its Blocking Findings. The same request again
     writes nothing."""
-    metadata, record = code_review_target(args)
+    metadata, record = code_review_target(args, allow_stop=True)
     kind = one_of(args.kind, CODE_REVIEW_KINDS, "genre de revue")
     commit = valid_commit(args.commit, "commit de la revue")
     base = valid_commit(args.base, "commit de départ de la revue")
+    contract = single_line(args.contract, "contrat de jugement") if args.contract is not None else None
+    if contract is not None and kind != "judgement":
+        raise Refusal("une revue ne porte pas de version du contrat de jugement")
     finished = KEY_EXIT in metadata and stored_record(metadata[KEY_EXIT], ("exit", "at"))["exit"] == "finished"
     if not finished:
         raise Refusal(f"le ticket {args.ticket} n'est pas terminé : la revue de code suit la sortie « terminé »")
@@ -4090,14 +4111,22 @@ def cmd_open_code_review(args: argparse.Namespace) -> int:
             scope = targeted_scope(review_scope(given["scope"]), kind, record, args.ticket)
     models = models_of_review(metadata)
     request = record.get("request")
-    wanted = (kind, commit, base, questions, scope)
-    if request and (*(request[name] for name in ("kind", "commit", "base", "questions")), request.get("scope")) == wanted:
+    last = record["rounds"][-1] if record["rounds"] else None
+    contract_replay = bool(
+        kind == "judgement" and contract is not None and last is not None and last["kind"] == "judgement"
+        and last["verdict"] == "unfavorable" and last["commit"] == commit and last["base"] == base
+        and last.get("contract") != contract)
+    stop = stop_record(metadata[KEY_STOP]) if KEY_STOP in metadata else None
+    if stop is not None and not (contract_replay and stop["reason"] == STOP_STILL_REFUSED):
+        raise Refusal(f"ticket arrêté : aucune revue ne s'enregistre sur {args.ticket} tant que l'arrêt n'est pas levé")
+    wanted = (kind, commit, base, questions, scope, contract)
+    if request and (*(request[name] for name in ("kind", "commit", "base", "questions")), request.get("scope"),
+                    request.get("contract")) == wanted:
         if request["models"] == models:
             return done(args.convoy, args.ticket, {})
         # The same review, sent to a reviewer of another model: its launches stay counted.
         request["models"] = models
     else:
-        last = record["rounds"][-1] if record["rounds"] else None
         # A review outdated by commits made outside the correction round
         # (a resume) is replayed in full at the new tip: no session will
         # answer its findings (af-s31cvi).
@@ -4116,7 +4145,7 @@ def cmd_open_code_review(args: argparse.Namespace) -> int:
         replayed = replayed or (kind == "review" and last is not None and last["kind"] == "judgement"
                                 and last["commit"] != commit
                                 and set(code_review_state(record)["unsettled"]) <= overridden)
-        if last and last["verdict"] == "unfavorable" and not replayed:
+        if last and last["verdict"] == "unfavorable" and not replayed and not contract_replay:
             if last["kind"] == "judgement":
                 raise Refusal(
                     f"le ticket {args.ticket} est encore refusé après son tour de correction : aucune revue ne s'ouvre")
@@ -4135,13 +4164,23 @@ def cmd_open_code_review(args: argparse.Namespace) -> int:
                     f"le jugement porte sur la correction faite depuis le commit revu ({last['commit']}), non depuis {base}")
             if questions:
                 raise Refusal("un jugement ne pose pas de questions fermées : il juge la liste des Blocking Findings")
-        elif kind == "judgement":
+        elif kind == "judgement" and not contract_replay:
             raise Refusal(f"aucun Blocking Finding à juger sur {args.ticket} : le jugement suit une revue défavorable")
-        elif last and last["commit"] == commit:
+        elif last and last["commit"] == commit and not contract_replay:
             raise Refusal(f"le ticket {args.ticket} est déjà revu favorablement au commit {commit}")
+        at = now()
+        if contract_replay:
+            last["invalidated"] = {"contract": contract, "at": at}
         record["request"] = {"kind": kind, "commit": commit, "base": base, "questions": questions, "launches": [],
-                             "models": models, "at": now(), **({"scope": scope} if scope is not None else {})}
+                             "models": models, "at": at, **({"scope": scope} if scope is not None else {}),
+                             **({"contract": contract} if contract is not None else {})}
     values = {KEY_CODE_REVIEW: encode(record)}
+    if contract_replay:
+        verdict = verdict_record(metadata[VERDICT_PREFIX + "code_review"])
+        values[VERDICT_PREFIX + "code_review"] = encode({
+            **verdict, "invalidated": {"tip": commit, "contract": contract, "at": now()}})
+        if KEY_STOP in metadata:
+            values[KEY_STOP] = None
     write_metadata(args.ticket, values)
     return done(args.convoy, args.ticket, values)
 
@@ -4277,7 +4316,7 @@ def cmd_record_code_review(args: argparse.Namespace) -> int:
         round_.update(findings=findings, answers=kept)
         refused = [finding["id"] for finding in findings if finding["blocking"]]
     else:
-        reviewed = record["rounds"][-1]
+        reviewed = next(round_ for round_ in reversed(record["rounds"]) if round_["kind"] == "review")
         expected = blocking_ids(reviewed)
         judgements = given.get("judgements") if isinstance(given.get("judgements"), dict) else {}
         problems += [f"{name} n'est pas un Blocking Finding de la revue jugée" for name in sorted(set(judgements) - set(expected))]
@@ -4300,7 +4339,8 @@ def cmd_record_code_review(args: argparse.Namespace) -> int:
         raise Refusal("revue de code hors contrat : " + " ; ".join(problems))
     verdict = "unfavorable" if refused else "favorable"
     at = now()
-    round_.update(verdict=verdict, models=request["models"], recorded_by=recorded_by.strip(), **conversation_of(given), at=at)
+    round_.update(verdict=verdict, models=request["models"], recorded_by=recorded_by.strip(), **conversation_of(given), at=at,
+                  **({"contract": request["contract"]} if "contract" in request else {}))
     record["rounds"].append(code_review_round(round_))
     del record["request"]
     values = {KEY_CODE_REVIEW: encode(record),
@@ -7548,6 +7588,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--commit")
     p.add_argument("--base")
     p.add_argument("--file")
+    p.add_argument("--contract")
     command("launch-code-review", cmd_launch_code_review).add_argument("--bead")
     command("record-code-review", cmd_record_code_review).add_argument("--file")
     command("respond-code-review", cmd_respond_code_review).add_argument("--file")
