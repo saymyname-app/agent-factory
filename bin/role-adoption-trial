@@ -279,18 +279,20 @@ def providers_toml(providers: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def trial_provider_profiles(assignments: dict[str, str]) -> dict[str, Any]:
+def trial_provider_profiles(assignments: dict[str, str], city: Path) -> dict[str, Any]:
     """Profiles for the isolated city, including its automation-only Codex trust."""
     providers = json.loads(json.dumps(city_providers()))
     for profile in providers.values():
         if Path(str(profile.get("command", ""))).name == SANDBOX.name:
             profile["command"] = str(SANDBOX)
-    for provider in assignments.values():
+    for agent, provider in assignments.items():
         profile = providers[provider]
         if str(profile.get("base", "")).endswith("codex"):
             args = profile.setdefault("args_append", [])
             if "--dangerously-bypass-hook-trust" not in args:
                 args.append("--dangerously-bypass-hook-trust")
+            work_dir = city / ".gc" / "agents" / agent
+            args += ["-c", f'projects.{json.dumps(str(work_dir))}.trust_level="trusted"']
     return providers
 
 
@@ -349,7 +351,7 @@ class TrialCity:
         pack.write_text(trial_pack(pack.read_text()))
         shutil.rmtree(self.city / "agents" / "mayor", ignore_errors=True)
 
-        providers = trial_provider_profiles(assignments)
+        providers = trial_provider_profiles(assignments, self.city)
         patches = "".join(f'\n[[patches.agent]]\nname = "{agent}"\nprovider = "{provider}"\n'
                           for agent, provider in assignments.items())
         (self.city / "city.toml").write_text(f'[workspace]\nprovider = "{first}"\n\n{providers_toml(providers)}{patches}')

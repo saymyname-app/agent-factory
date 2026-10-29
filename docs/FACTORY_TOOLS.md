@@ -545,12 +545,13 @@ skills du compte claude.ai, dont un autre `code-review`.
   CLI n'expose pas la transition `busy` brève que `session submit` attend pour
   confirmer la livraison. L'essai tolère donc ce retour non nul et exige à la
   place son oracle fort, le nonce de fin lu dans le rollout. La cité isolée
-  ajoute aussi `--dangerously-bypass-hook-trust` à ses seules commandes Codex :
-  ses hooks viennent de Gas City et de la distribution versionnée que l'essai
-  vient de construire ; Codex 0.165 demanderait sinon « Trust this folder? »
-  avant de créer son rollout. Cette exception ne modifie ni la confiance
-  globale ni les profils live. Un profil sans observateur échoue et la porte
-  tient le rôle hors de ce profil.
+  ajoute à ses seules commandes Codex `--dangerously-bypass-hook-trust` pour
+  les hooks Gas City/versionnés qu'elle vient de construire, et une surcharge
+  `-c projects."<workdir isolé>".trust_level="trusted"` pour le dialogue
+  « Trust this folder? » de Codex 0.165. Ces deux confiances valent uniquement
+  pour l'invocation d'essai : elles ne modifient ni `~/.codex/config.toml`, ni
+  les profils live. Un profil sans observateur échoue et la porte tient le rôle
+  hors de ce profil.
 - **Stabilité de session** : `active` et `awake` sont tous deux des états
   utilisables. Au premier démarrage Codex, Gas City matérialise ses hooks après
   avoir pris l'empreinte de configuration puis draine la session avant la

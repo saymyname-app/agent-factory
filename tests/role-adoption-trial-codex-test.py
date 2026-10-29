@@ -228,10 +228,16 @@ class WaitActiveTest(unittest.TestCase):
 class TrialProviderProfileTest(unittest.TestCase):
     def test_codex_bypasses_only_hook_trust_in_the_isolated_trial(self):
         profiles = trial.trial_provider_profiles(
-            {"delivery-author": "codex", "delivery-evaluator": "claude-readonly"})
+            {"delivery-author": "codex", "delivery-evaluator": "claude-readonly"},
+            Path("/tmp/trial/c"),
+        )
         self.assertIn("--dangerously-bypass-hook-trust", profiles["codex"]["args_append"])
+        self.assertIn(
+            'projects."/tmp/trial/c/.gc/agents/delivery-author".trust_level="trusted"',
+            profiles["codex"]["args_append"],
+        )
         self.assertNotIn("--dangerously-bypass-hook-trust", profiles["claude-readonly"].get("args_append", []))
-        self.assertNotIn("projects.", str(profiles))
+        self.assertNotIn("projects.", str(profiles["claude-readonly"]))
         self.assertNotIn("args_append", trial.city_providers()["codex"])
 
 
