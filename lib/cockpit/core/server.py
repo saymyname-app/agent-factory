@@ -802,7 +802,8 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             return None, bool(row and row.get("failed_at") is not None), None
         checked = datetime.fromtimestamp(row["read_at"], tz=PARIS).strftime("%H:%M") if row["read_at"] else None
         sessions = (snapshot.get("sessions") or {}).get("value") or {}
-        return workflow_runs(row["value"], sessions.get("agents"), read_model.now()), False, checked
+        trace = self.server.session_trace.read() if self.server.session_trace is not None else None
+        return workflow_runs(row["value"], sessions.get("agents"), read_model.now(), trace), False, checked
 
     def _query(self):
         return urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
@@ -831,9 +832,16 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         run = next((r for r in runs or [] if r["id"] == wanted), None)
         job_id = (query.get("job") or [view.get("job") or ""])[0] if job else None
         event = (query.get("event") or [str(view.get("event") or "")])[0] if job else ""
+        # What the detail opens: what the address says, else -- an address
+        # that names no job -- what the frozen state shows.
+        named = "job" in query
+        shown = {} if named else VIEW_DETAILS.get(view.get("detail") or "", {})
+        opened = _listed(query, "ouvert", shown.get("open", ()))
+        raw = _listed(query, "brut", shown.get("raw", ()))
+        session = (query.get("session") or [""])[0] or None
         stale_at = _stale_at(snapshot, RUN_SOURCES)
         main = render_run_page(run, now=read_model.now(), stale_at=stale_at, job_id=job_id,
-                               event=int(event) if event.isdigit() else None)
+                               event=int(event) if event.isdigit() else None, session=session, opened=opened, raw=raw)
         self._send_page(read_model, "runs", main, extra_css=RUNS_PAGE_CSS, status=200 if run else 404,
                         snapshot=snapshot)
 
@@ -933,6 +941,23 @@ def _live_line(gc_row):
     return "● En marche · %d agent%s" % (agents, "s" if agents > 1 else "")
 
 
+# What the detail of a job opens in each frozen state of a job (the prototype
+# Runs): its sections and the prompts it shows raw.
+VIEW_DETAILS = {
+    "job-configuration": {"open": ("configuration",)},
+    "job-system-prompt": {"open": ("prompts", "system")},
+    "job-user-prompt-rendered": {"open": ("prompts", "user")},
+    "job-user-prompt-raw": {"open": ("prompts", "user"), "raw": ("user",)},
+}
+
+
+def _listed(query, name, default):
+    """The comma-separated values of `name` in the address, else `default`."""
+    if name not in query:
+        return tuple(default)
+    return tuple(value for value in query[name][0].split(",") if value)
+
+
 # The sources a run is drawn from: its workflow beads, and the sessions the
 # supervisor lists for its agents.
 RUN_SOURCES = ("runs", "sessions")
@@ -1020,6 +1045,7 @@ def make_server(
     server.cleanup_result = None
     server.cleanup_uncertain = None
     server.cleanup_previewed_at = None
+    server.session_trace = None
     server.stop_driver = None
     server.benjamin_login = ""
     # The address the operator opens the cockpit at: the HTTPS address of

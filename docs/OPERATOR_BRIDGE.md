@@ -93,6 +93,16 @@ its sender — is treated as an agent's request, not a standing order:
 Benjamin's decisions reach the Factory only through an approved Spec and its
 published ticket graph.
 
+## Writing Beads from the operator path
+
+Use `bin/operator-bd <bd arguments>`, never raw `bd` or `gc bd`, for a tracker
+write from Codex. The door runs from the Factory root and forces the unique
+actor `po-agent/<Codex-thread-id>` even when the parent shell exports another
+`BEADS_ACTOR`; it refuses a caller-supplied `--actor` and refuses to write when
+Codex exposes no session identity. This is the same identity family
+`factory-orphan-sweep` preserves while the operator session owns a ticket.
+Read-only tracker commands may remain raw.
+
 ## Project status contract
 
 For `Où en est <projet> ?`, Codex reads that project's own repository and the

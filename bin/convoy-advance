@@ -214,7 +214,10 @@ or the closing that follows the operator's answer could not be made; 3 a
 convoy is in an "état sans règle": nothing of it is started (0 with
 --stopped-ok once its incident is raised: what the order runs, so that a
 stopped convoy is not also an order failure);
-4 the convoy does not carry the mark: nothing is started, nothing is written.
+4 the convoy does not carry the mark: nothing is started, nothing is written;
+75 every failure of the pass is an explicit capacity deferral (`NOT RUN,
+exit 75`): nothing is accepted, and the next order pass retries without a
+chronic-failure alert.
 Settings, reads and the order that runs it: docs/CONVOY_ADVANCE.md.
 """
 
@@ -275,7 +278,8 @@ DESCRIPTORS = ROOT / "config" / "project-descriptors"
 EXIT_REFUSED = 1
 EXIT_UNRULED = 3
 EXIT_NOT_NEW_FLOW = 4
-DOOR_DEFERRED = 75
+EXIT_DEFERRED = 75
+DOOR_DEFERRED = EXIT_DEFERRED
 # One ticket is merged per pass and per convoy: the merges stay serial, and a
 # pass stays short however many tickets finished at once.
 MERGES_PER_PASS = 1
@@ -2582,6 +2586,7 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
     # merge pass that could not run is a failure of it.
     failed = [failure for result in results for failure in pass_failures(result)]
     refused = bool(failed)
+    capacity_deferred = refused and all("NOT RUN, exit 75" in failure for failure in failed)
     answer: dict[str, Any] = {
         "ok": not (unruled or refused), "ceiling": settings["ceiling"], "sessions": sessions,
         "awaiting_a_session": awaiting, "occupied": occupied, "convoys": results,
@@ -2594,7 +2599,8 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
         # what made it fail is named last, where that tail still reads it.
         sys.stdout.flush()
         print(failure_line(answer.get("message"), failed), file=sys.stderr)
-    return EXIT_UNRULED if unruled and not stopped_ok else EXIT_REFUSED if refused else 0
+    return (EXIT_UNRULED if unruled and not stopped_ok else
+            EXIT_DEFERRED if capacity_deferred else EXIT_REFUSED if refused else 0)
 
 
 def main(argv: list[str]) -> int:

@@ -49,8 +49,26 @@ yet (C2b): no event is drawn « outil ».
 Lanes: « Humain », « Code », then one per logical agent -- the agent of the
 session (``agent_name`` as the supervisor lists it), so a new session of
 the same agent keeps its lane and two agents of the same role keep one
-each. What is not collected yet (sessions, configuration, prompts,
-controls, usage, outputs: C2a and C2b) is said so, never filled in.
+each. A job of an agent no session is recorded for is drawn on the lane of
+the agent of its workflow when one agent alone worked it; its detail says
+that no session is recorded. Each lane of an agent carries the last session
+of that agent in the run (C2a).
+
+The sessions of a job (C2a, af-k2rbw1) are those the tracker records of it
+(its claims) and those the trace of the sessions saw working it or one of
+its attempts (cockpit.runs.trace: the bead a session works while it runs,
+each bead the supervisor's log says a session took -- the tracker keeps one
+session per bead), in the order they began: each from its
+claim, or its creation when it was created later (a session that took
+over an attempt), to when the supervisor stopped it -- a start neither
+recorded (a session the trace alone saw, with no creation) is none, never
+the beginning of the job, and an end it did not record is none, never the
+beginning of the next session or the end of the job. What the trace observed of each -- its configuration, what it was
+sent -- is carried as it is; a session the trace has nothing of has
+nothing observed. The configuration declared for the role of a job is the
+one the flow wrote on the ticket when its session took it
+(``gc.flow.models``). What is not collected yet (controls, usage, outputs:
+C2b) is said so, never filled in.
 """
 import json
 import re
@@ -60,6 +78,7 @@ from datetime import datetime
 
 from cockpit.core.readmodel import PARIS
 from cockpit.runs.derive import AGENT, CODE, DONE, HUMAN, LIVE, STOPPED, WAIT, _decoded, _ts, run_from_bead, tone
+from cockpit.runs.trace import _epoch
 
 READ_TIMEOUT_SECONDS = 20
 # What the reads ask the tracker for: the beads bearing each key, whatever
@@ -88,6 +107,12 @@ ROLES = {"delivery-author": "Auteur", "delivery-reviewer": "Relecteur", "deliver
 # them; the steps of other formulas keep their title.
 STEP_NAMES = {"workspace": "Prendre le ticket", "red": "Préparer les tests", "code": "Réaliser",
               "demonstration": "Démontrer", "exit": "Rendre le ticket"}
+
+# The role of the agent of a job, by the formula of its workflow: the key
+# under which the flow records the configuration declared for it
+# (gc.flow.models).
+FORMULA_ROLES = (("mol-ticket-author", "author"), ("mol-code-review", "reviewer"),
+                 ("mol-ticket-evaluation", "evaluator"))
 
 # The kinds of event, as the legend of the frise colours them.
 TOOLS, CONTROLS, SESSIONS, OTHERS = "tools", "controls", "sessions", "others"
@@ -133,14 +158,20 @@ def find_job(runs, run_id, job_id):
 
 # --- the runs ------------------------------------------------------------------------
 
-def workflow_runs(beads, agents, now):
+def workflow_runs(beads, agents, now, trace=None):
     """Every run the beads hold, the most recently started first.
     ``agents``: the sessions the supervisor lists (``session_name`` or
-    ``name``, ``agent_name``, ``template``, ``provider``), or None."""
+    ``name``, ``agent_name``, ``template``, ``provider``), or None;
+    ``trace``: what the trace of the sessions holds
+    (:meth:`cockpit.runs.trace.SessionTrace.read`), or None."""
     beads = [b for b in beads or [] if isinstance(b, dict) and b.get("id")]
     meta = {b["id"]: _decoded(b.get("metadata")) for b in beads}
     by_id = {b["id"]: b for b in beads}
+    trace = trace or {}
     sessions = _sessions(agents)
+    for name, observed in trace.items():
+        sessions.setdefault(name, {key: observed.get(key) for key in ("session_name", "agent_name", "template",
+                                                                       "provider")})
 
     steps, attempts = {}, {}
     for bead in beads:
@@ -177,7 +208,7 @@ def workflow_runs(beads, agents, now):
 
     runs = []
     for key, group in groups.items():
-        run = _run(key, group, meta, steps, attempts, sessions, now)
+        run = _run(key, group, meta, steps, attempts, sessions, now, trace)
         if run:
             runs.append(run)
     return sorted(runs, key=lambda run: (run["start"], run["id"]), reverse=True)
@@ -241,7 +272,7 @@ def _type(group, meta):
     return next((label for prefix, label in TYPES if formula.startswith(prefix)), "Workflow")
 
 
-def _run(key, group, meta, steps, attempts, sessions, now):
+def _run(key, group, meta, steps, attempts, sessions, now, trace):
     root = group["root"]
     tickets = {t["id"]: run_from_bead(t, now) for t in group["tickets"]}
     if not group["roots"] and group["kind"] == "ticket":
@@ -255,6 +286,7 @@ def _run(key, group, meta, steps, attempts, sessions, now):
             job = _job(step, meta, attempts.get(step["id"], []), sessions, formula, workflow, now)
             if job:
                 jobs.append(job)
+    _place_sessions(jobs, sessions, trace, now)
     # The facts the flow wrote on each ticket it launched: points on the
     # lanes Code and Humain.
     for derived in tickets.values():
@@ -271,14 +303,24 @@ def _run(key, group, meta, steps, attempts, sessions, now):
     end = closed or now
     trigger, project = _origin(group, meta)
     title = (group.get("tracked") or {}).get("title") if group["kind"] == "workflow" else None
-    return _assemble({
+    declared = {}
+    for ticket in group["tickets"]:
+        models = meta[ticket["id"]].get("gc.flow.models")
+        if isinstance(models, str):
+            try:
+                models = json.loads(models)
+            except ValueError:
+                models = None
+        if isinstance(models, dict):
+            declared.update({role: value for role, value in models.items() if isinstance(value, dict)})
+    return _last_sessions(_assemble({
         "id": key, "ticket": meta[root["id"]].get("gc.ticket_id") or key, "spec": meta[root["id"]].get("gc.spec_id"),
         "type": _type(group, meta), "title": title or root.get("title") or key, "step": step, "status": status,
         "trigger": trigger, "project": project,
         "tone": tone(state, status), "state": state, "start": start, "end": max(end, start + 1),
         "branch": meta[root["id"]].get("gc.flow.branch"), "rig": meta[root["id"]].get("gc.dispatch_rig"),
-        "models": {}, "workflow": True,
-    }, jobs, now)
+        "models": {}, "workflow": True, "declared": declared,
+    }, jobs, now))
 
 
 def _job(step, meta, attempts, sessions, formula, workflow, now):
@@ -294,7 +336,8 @@ def _job(step, meta, attempts, sessions, formula, workflow, now):
     elif m.get("gc.kind") == "check":
         lane = {"key": CODE, "kind": CODE}
     else:
-        claim = meta[claims[-1][1]["id"]] if claims else (m if m.get("gc.session_name") else meta[workflow["id"]])
+        claim = meta[claims[-1][1]["id"]] if claims and meta[claims[-1][1]["id"]].get("gc.session_name") else (
+            m if m.get("gc.session_name") else meta[workflow["id"]])
         session = sessions.get(claim.get("gc.session_name") or "") or {}
         template = session.get("template") or claim.get("gc.routed_to") or meta[workflow["id"]].get("gc.routed_to")
         who = session.get("agent_name") or claim.get("gc.session_name") or template or "Agent inconnu"
@@ -311,11 +354,71 @@ def _job(step, meta, attempts, sessions, formula, workflow, now):
     checked = [(_ts(attempt.get("closed_at")), meta[attempt["id"]].get("gc.attempt"), meta[attempt["id"]].get("gc.outcome"))
                for _, attempt in claims if m.get("gc.check_mode") and attempt.get("status") == "closed"
                and _ts(attempt.get("closed_at"))]
+    if lane["kind"] == AGENT and not sessions:
+        lane["unattributed"] = True
+    role = next((key for prefix, key in FORMULA_ROLES if formula.startswith(prefix)), None)
     return {"id": step["id"], "name": name, "lane": lane, "start": begin, "end": end,
+            "workflow": workflow["id"], "role": role, "beads": [step["id"], *(a["id"] for _, a in claims)],
             "description": step.get("description") or step.get("close_reason") or "",
             "source": "étape %s du workflow %s" % (step["id"], workflow["id"]),
             "sessions": sessions, "checked": checked, "check": m.get("gc.kind") == "check",
             "outcome": m.get("gc.outcome")}
+
+
+def _place_sessions(jobs, sessions, trace, now):
+    """Give each job of an agent its sessions (``trace_sessions``: each its
+    name, its start and end or None, what the trace observed of it or None), and a
+    job no session is recorded for the lane of the one agent of its
+    workflow, when one agent alone worked it."""
+    for job in jobs:
+        if job["lane"]["kind"] != AGENT:
+            continue
+        found = {name: at for at, name, _ in job.get("sessions") or []}
+        for name, observed in trace.items():
+            if name not in found and set(observed.get("beads") or []) & set(job["beads"]):
+                found[name] = None
+        # A session begins when it was created, not before: the tracker keeps
+        # the first claim of an attempt that a later session took over.
+        for name in found:
+            created = _epoch((trace.get(name) or {}).get("created_at"))
+            if created:
+                found[name] = max(found[name] or 0, created)
+        if found and job["lane"].get("unattributed"):
+            first = sessions.get(min(found, key=lambda name: (found[name] or 0, name))) or {}
+            if first.get("agent_name"):
+                job["lane"] = dict(job["lane"], key="agent:%s" % first["agent_name"], who=first["agent_name"])
+                job["lane"].pop("unattributed")
+        ordered = sorted(found.items(), key=lambda pair: (max(pair[1] or 0, job["start"]), pair[0]))
+        placed = []
+        for name, at in ordered:
+            begin = max(at, job["start"]) if at is not None else None
+            end = (trace.get(name) or {}).get("ended_at")
+            placed.append({"name": name, "start": begin, "end": max(end, begin or end) if end is not None else None,
+                           "observed": trace.get(name)})
+        job["trace_sessions"] = placed
+    for job in jobs:
+        if not job["lane"].get("unattributed"):
+            continue
+        others = {other["lane"]["key"]: other["lane"] for other in jobs
+                  if other is not job and other["workflow"] == job["workflow"] and other["lane"]["kind"] == AGENT
+                  and not other["lane"].get("unattributed")}
+        if len(others) == 1:
+            job["lane"] = dict(next(iter(others.values())))
+
+
+def _last_sessions(run):
+    """Each lane of an agent with the last session of that agent in the
+    run (``last_session``: its name and what the trace observed of it, or
+    None)."""
+    if run is None:
+        return run
+    for lane in run["lanes"]:
+        if lane["kind"] != AGENT:
+            continue
+        placed = [s for item in lane["items"] for s in item.get("trace_sessions") or []]
+        last = max(placed, key=lambda s: (s["start"] if s["start"] is not None else -1, s["name"]), default=None)
+        lane["last_session"] = last
+    return run
 
 
 def _ticket_facts(derived):
