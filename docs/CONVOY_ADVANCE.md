@@ -104,6 +104,12 @@ order ran during the wait, and five passes were killed (af-wz4dd8). On
 same reads and writes until they exceeded the same deadline (af-ebqm1y); the
 lock now stays held through the whole pass.
 
+The manual `convoy-state close-convoy` command uses that same lock before
+reading and closing a convoy.  An external close therefore waits for the
+current pass to finish; a close launched by `outcome-promote` from inside the
+pass inherits its ownership and does not take the lock twice.  A pass never
+reports work for a convoy after that convoy was closed by the command.
+
 ## Finished tickets are merged by the pass (T18)
 
 Once the starts are made and the reviews settled (below), under the same

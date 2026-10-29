@@ -2488,7 +2488,9 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
     settings = load_settings()
     for convoy_id in marked_convoys():
         if convoy_id not in convoys:
-            convoys[convoy_id] = Convoy(convoy_id)
+            convoy = Convoy(convoy_id)
+            if not convoy.closed:
+                convoys[convoy_id] = convoy
     sessions = role_sessions(live)
     awaiting = sorted(ticket for convoy in convoys.values() for ticket in convoy.awaiting_a_session())
     # N counts authors only: a reviewer or Evaluator session, even idle
@@ -2621,7 +2623,15 @@ def main(argv: list[str]) -> int:
                 print(json.dumps({"ok": True, "skipped": PASS_RUNNING}, indent=2,
                                  sort_keys=True, ensure_ascii=False))
                 return 0
-            return one_pass(None if args.all else [args.convoy], args.stopped_ok)
+            prior_lock_marker = os.environ.get("CONVOY_ADVANCE_LOCK_HELD_BY_PASS")
+            os.environ["CONVOY_ADVANCE_LOCK_HELD_BY_PASS"] = "1"
+            try:
+                return one_pass(None if args.all else [args.convoy], args.stopped_ok)
+            finally:
+                if prior_lock_marker is None:
+                    os.environ.pop("CONVOY_ADVANCE_LOCK_HELD_BY_PASS", None)
+                else:
+                    os.environ["CONVOY_ADVANCE_LOCK_HELD_BY_PASS"] = prior_lock_marker
     except NotNewFlow as exc:
         print(json.dumps(json.loads(str(exc)), indent=2, sort_keys=True, ensure_ascii=False))
         return EXIT_NOT_NEW_FLOW
