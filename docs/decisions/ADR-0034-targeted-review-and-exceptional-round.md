@@ -75,8 +75,13 @@ dérogation constat par constat ou la Planning Exception.
    bloquant, avec la raison sous `demoted` et `finishing_pass: true` ;
    `bin/code-review show` les liste sous `finishing_pass`. Les questions
    fermées d'une revue ciblée ne portent que sur les fichiers de `changed`.
-   Le jugement des réponses (`judgement`) est inchangé : il ne juge que la
-   liste fermée.
+   Le jugement des réponses (`judgement`) ne juge que la liste fermée.
+   Amendement af-npz9v1.43 (2026-10-29) : il reçoit aussi le diff original
+   `base...commit` et le périmètre de la revue ciblée. Il solde une
+   contestation quand le comportement existait déjà dans la base et que le
+   ticket ne l'a ni changé sémantiquement ni mis en interaction ; un
+   comportement introduit par le ticket ou une vraie interaction avec le
+   contexte hérité reste défavorable.
 3. **Tour exceptionnel.**
    `bin/correction-round grant CONVOI TICKET --approved-by <approbateur> --words "…" --exceptional`
    accorde un tour au-delà de la borne, seulement :
@@ -102,6 +107,9 @@ dérogation constat par constat ou la Planning Exception.
   le ticket ; il part en non bloquant, marqué pour la passe de fin. La revue
   de fin du diff assemblé (`bin/spec-end-review`) relit tout le diff de la
   Spec et peut encore le bloquer à ce moment-là.
+- Une ligne changée n'est qu'une attribution provisoire : si elle enveloppe
+  un comportement hérité, le jugement de la contestation relit le diff du
+  ticket contre sa base avant de maintenir ou solder le constat.
 - Le relecteur doit localiser ses constats (`location`) ou les rattacher
   (`carries`) dans une revue ciblée ; un constat bloquant sans l'un ni
   l'autre ne bloque pas. Code borne le périmètre ; il ne vérifie pas qu'un
