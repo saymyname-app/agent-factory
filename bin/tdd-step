@@ -572,9 +572,21 @@ class Check:
         """The test, at the start commit, names this ticket as the one that
         changes it: « until <code> », « jusqu'à <code> », or its id."""
         text = (self.blob(base, path) or b"").decode("utf-8", errors="replace")
-        code = str(self.ticket.get("title") or "").split(" — ")[0].strip()
-        return self.args.ticket in text or bool(
-            code and re.search(rf"{SUCCESSOR_WORDS}{re.escape(code)}(?![\w-])", text, re.IGNORECASE))
+        if self.args.ticket in text:
+            return True
+        by_code: dict[str, set[str]] = {}
+        for ticket in [self.ticket, *self.others]:
+            code = str(ticket.get("title") or "").split(" — ")[0].strip()
+            ticket_id = str(ticket.get("id") or "")
+            if code and ticket_id:
+                by_code.setdefault(code.casefold(), set()).add(ticket_id)
+        named: set[str] = set()
+        for clause in re.findall(rf"{SUCCESSOR_WORDS}([^\n]*)", text, re.IGNORECASE):
+            mention = re.match(r"\s*([\w.-]+)(.*)", clause)
+            while mention:
+                named.update(by_code.get(mention.group(1).casefold(), set()))
+                mention = re.match(r"\s*(?:/|\bor\b|\bou\b)\s*([\w.-]+)(.*)", mention.group(2), re.IGNORECASE)
+        return named == {self.args.ticket}
 
     def succession(self) -> dict[str, dict[str, str]]:
         """The frozen tests of other tickets this ticket's amendments changed,
