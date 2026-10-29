@@ -136,13 +136,14 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   tient la frontière entre un report explicite (sortie 75, rejoué sans
   alerte) et une vraie panne répétée (bead et page Mayor) ; le deuxième tient
   la collecte VM Beads/Git/GitHub, le silence sur état inchangé, la route
-  unique au plus petit propriétaire présent, la conservation d'une demande
-  humaine et le relevé final à +2 h ; le troisième refuse qu'une sortie locale
-  0 compte comme armement sans relecture GitHub et tient la fusion directe au
-  head, à CLEAN et au contrôle requis vert. Le contrôle 9 du gardien (#688)
-  couvre les tickets que personne ne bouge, pas les autres signaux.
+  unique au plus petit propriétaire présent, la preuve durable avant l'alerte,
+  sa clé stable de dédoublonnage, la conservation d'une demande humaine et le
+  relevé final à +2 h ; le troisième refuse qu'une sortie locale 0 compte comme
+  armement sans relecture GitHub et tient la fusion directe au head, à CLEAN et
+  au contrôle requis vert. Le contrôle 9 du gardien (#688) couvre les tickets
+  que personne ne bouge, pas les autres signaux.
 - Occurrences : #651, #679, #688, #717 ; af-npz9v1.50 ; #767 (armement local
-  annoncé mais `autoMergeRequest=null`, af-npz9v1.50.1).
+  annoncé mais `autoMergeRequest=null`, af-npz9v1.50.1) ; af-ncg9qy.
 - Ouvertes : aucune connue.
 
 ## A — Autre

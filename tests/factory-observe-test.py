@@ -157,6 +157,7 @@ class LiveToolCase(ToolCase):
         self.bin_dir = self.tmp / "bin"
         self.bin_dir.mkdir()
         self.calls = self.tmp / "calls.jsonl"
+        self.mail_state = self.tmp / "mail-state.json"
         self.mail_rc = self.tmp / "mail-rc"
         self.mail_rc.write_text("0")
         self.active = self.tmp / "active.json"
@@ -240,6 +241,7 @@ if args[:2] == ['bd', 'list']:
 elif args[:2] == ['session', 'list']:
     print(pathlib.Path({str(self.sessions)!r}).read_text())
 elif args[:2] == ['mail', 'send']:
+    pathlib.Path({str(self.mail_state)!r}).write_text(pathlib.Path({str(self.state_file)!r}).read_text())
     active = {{
         session['name']
         for session in json.loads(pathlib.Path({str(self.sessions)!r}).read_text())['sessions']
@@ -325,6 +327,20 @@ class LiveObservationTest(unittest.TestCase):
             mails = case.calls_matching(["mail", "send"])
             self.assertEqual(1, len(mails))
             self.assertEqual("factory-worker-af-fixture", mails[0][2])
+
+    def test_a_transition_is_durable_before_its_deduplicated_alert(self):
+        with LiveToolCase() as case:
+            case.run_live(1000)
+            case.write_incident(resumed=True, request_active=True)
+            changed = json.loads(case.run_live(1300).stdout)
+
+            event_id = changed["events"][0]["event_id"]
+            state_at_send = json.loads(case.mail_state.read_text())
+            live = state_at_send["live"]
+            self.assertIn(event_id, [event["event_id"] for event in live["events"]])
+            route = next(route for route in live["pending"] if event_id in route["event_ids"])
+            mail = case.calls_matching(["mail", "send"])[0]
+            self.assertEqual(route["route_id"], mail[mail.index("--dedup") + 1])
 
     def test_answering_a2_is_preserved_and_wakes_the_mayor_once(self):
         with LiveToolCase() as case:

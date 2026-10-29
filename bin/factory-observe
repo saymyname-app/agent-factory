@@ -374,7 +374,11 @@ def route_pending(live: dict[str, Any], moment: str, live_sessions: set[str]) ->
             "NEXT: inspect ./bin/factory-observe status --json and act only on the cited transition(s)"
         )
         result = subprocess.run(
-            [GC_BIN, "mail", "send", str(recipient), "--notify", "-s", "factory-observe: live transition", "-m", message],
+            [
+                GC_BIN, "mail", "send", str(recipient), "--notify",
+                "--dedup", str(route["route_id"]),
+                "-s", "factory-observe: live transition", "-m", message,
+            ],
             text=True, capture_output=True,
         )
         if result.returncode != 0:
@@ -480,8 +484,9 @@ def cmd_live(args: argparse.Namespace) -> int:
             window.setdefault("transition_event_ids", []).extend(event["event_id"] for event in new_events)
             queue_routes(live, new_events)
 
-        failures = route_pending(live, moment, live_sessions)
         state["live"] = live
+        save_state(state)
+        failures = route_pending(live, moment, live_sessions)
         save_state(state)
 
     payload = {
