@@ -162,6 +162,7 @@ class LiveToolCase(ToolCase):
         self.active = self.tmp / "active.json"
         self.requests = self.tmp / "requests.json"
         self.prs = self.tmp / "prs.json"
+        self.sessions = self.tmp / "sessions.json"
         self.git_head = self.tmp / "git-head"
         self.git_main = self.tmp / "git-main"
         self.git_head.write_text("1" * 40)
@@ -178,6 +179,9 @@ class LiveToolCase(ToolCase):
             "closedAt": "2026-10-29T14:19:00Z",
             "mergedAt": "2026-10-29T14:19:00Z",
         }]))
+        self.sessions.write_text(json.dumps({
+            "sessions": [{"name": "factory-worker-af-fixture", "state": "active"}],
+        }))
         self.write_incident(resumed=False, request_active=True)
         self._write_fakes()
 
@@ -234,8 +238,15 @@ if args[:2] == ['bd', 'list']:
     source = {str(self.requests)!r} if 'gc.needs_benjamin' in args else {str(self.active)!r}
     print(pathlib.Path(source).read_text())
 elif args[:2] == ['session', 'list']:
-    print(json.dumps({{'sessions': [{{'name': 'factory-worker-af-fixture', 'state': 'active'}}]}}))
+    print(pathlib.Path({str(self.sessions)!r}).read_text())
 elif args[:2] == ['mail', 'send']:
+    active = {{
+        session['name']
+        for session in json.loads(pathlib.Path({str(self.sessions)!r}).read_text())['sessions']
+        if session.get('state') == 'active'
+    }}
+    if args[2] != 'mayor' and args[2] not in active:
+        raise SystemExit(1)
     raise SystemExit(int(pathlib.Path({str(self.mail_rc)!r}).read_text()))
 else:
     raise SystemExit(2)
@@ -358,6 +369,35 @@ class LiveObservationTest(unittest.TestCase):
             quiet = json.loads(case.run_live(1900).stdout)
             self.assertEqual((retried["action"], quiet["action"]), ("none", "none"))
             self.assertEqual(2, len(case.calls_matching(["mail", "send"])))
+
+    def test_a_failed_route_falls_back_to_mayor_when_its_worker_disappears(self):
+        with LiveToolCase() as case:
+            case.run_live(1000)
+            case.write_incident(resumed=True, request_active=True)
+            case.mail_rc.write_text("1")
+            failed = json.loads(case.run_live(1300, check=False).stdout)
+            self.assertFalse(failed["ok"])
+
+            case.sessions.write_text(json.dumps({"sessions": []}))
+            case.mail_rc.write_text("0")
+            reassignment = case.run_live(1600, check=False)
+            reassigned = json.loads(reassignment.stdout)
+            quiet = json.loads(case.run_live(1900).stdout)
+
+            self.assertEqual(0, reassignment.returncode)
+            self.assertTrue(reassigned["ok"])
+            self.assertEqual([], reassigned["route_failures"])
+            self.assertEqual((reassigned["action"], quiet["action"]), ("wake", "none"))
+            mails = case.calls_matching(["mail", "send"])
+            self.assertEqual(2, len(mails))
+            self.assertEqual("mayor", mails[1][2])
+            status = json.loads(case.run_tool(
+                "status", "--json", env=case.live_env(1900), check=True,
+            ).stdout)
+            route = status["live"]["routes"][0]
+            self.assertEqual("mayor", route["recipient"])
+            self.assertEqual(len(route["event_ids"]), len(set(route["event_ids"])))
+            self.assertEqual(1, route["event_ids"].count(failed["events"][0]["event_id"]))
 
 
 # --- AC3: measures separate by comparable work class ------------------------
