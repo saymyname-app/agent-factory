@@ -45,6 +45,7 @@ assert_contains README.md 'docs/OPERATOR_BRIDGE.md'
 # sandbox: allow-live-root -- real operator-facing doc text (P10, af-ygibh)
 assert_contains README.md 'C:/Dev/Factory'
 assert_contains README.md 'ssh factory-vm'
+# sandbox: allow-live-root -- stale operator recipe must stay absent
 assert_absent README.md 'wsl -d Ubuntu-24.04 -u benja --cd /home/benja/agent-factory'
 assert_contains docs/CONTEXT_INDEX.md 'OPERATOR_BRIDGE.md'
 # The structural-decisions row must span ADR-0001 through the HIGHEST ADR that
@@ -79,6 +80,7 @@ assert_absent docs/OPERATOR_BRIDGE.md './bin/saymyname-product-status'
 assert_contains docs/OPERATOR_BRIDGE.md 'C:/Dev/Factory'
 assert_contains docs/OPERATOR_BRIDGE.md 'ssh factory-vm'
 assert_contains docs/OPERATOR_BRIDGE.md 'Historical only (disabled)'
+# sandbox: allow-live-root -- historical operator-facing doc text
 assert_contains docs/OPERATOR_BRIDGE.md 'wsl -d Ubuntu-24.04 -u benja --cd /home/benja/agent-factory'
 assert_absent docs/OPERATOR_BRIDGE.md 'C:\Dev\Projects\AgentFactory'
 assert_absent docs/OPERATOR_BRIDGE.md './bin/factory-cockpit'
