@@ -17,14 +17,24 @@
   },
   "providers": {
     "codex": {
-      "label": "GPT-5.6 Sol (Codex)",
+      "label": "GPT-6.1 Sol · effort moyen · Standard (Codex)",
       "pool": "openai",
       "tier": "premium"
     },
-    "codex-readonly": {
-      "label": "GPT-5.6 Sol (Codex) · lecture seule",
+    "codex-astra": {
+      "label": "GPT-6 Astra · effort élevé · Standard (Codex)",
       "pool": "openai",
       "tier": "premium"
+    },
+    "codex-astra-readonly": {
+      "label": "GPT-6 Astra · effort élevé · Standard · lecture seule (Codex)",
+      "pool": "openai",
+      "tier": "premium"
+    },
+    "codex-luna": {
+      "label": "GPT-6 Luna · effort élevé · Standard (Codex, profil simple non assigné)",
+      "pool": "openai",
+      "tier": "standard"
     },
     "claude": {
       "label": "Claude Opus 5.5 · effort élevé",
@@ -45,7 +55,7 @@
   "targets": {
     "workspace": {
       "label": "Ouvriers des rigs (par défaut)",
-      "why": "Codex en tête restauré (af-wpjgu, 2026-09-21) : le quota Codex standard est revenu (reset 2026-09-21T05:22Z, pool openai confirmé 'available') et gpt-5.3-codex-spark est retiré de toute chaîne (af-i6018) plutôt que rendu sain -- les deux conditions de l'ADR sont réunies. Claude reste juste derrière comme repli.",
+      "why": "af-npz9v1.51 (Benjamin, 2026-10-29) : le travail courant utilise GPT-6.1 Sol en effort moyen et Standard ; Claude standard reste le repli.",
       "chain": [
         "codex",
         "claude-standard"
@@ -53,7 +63,7 @@
     },
     "mayor": {
       "label": "Mayor (orchestration)",
-      "why": "Codex en tête restauré (af-wpjgu, 2026-09-21), même raison que workspace.",
+      "why": "af-npz9v1.51 : l'orchestration courante suit GPT-6.1 Sol/medium/Standard ; Claude standard reste le repli.",
       "chain": [
         "codex",
         "claude-standard"
@@ -61,30 +71,31 @@
     },
     "ux-reviewer": {
       "label": "Relecteur UX",
-      "why": "Codex en tête restauré (af-wpjgu, 2026-09-21) : l'auteur (workspace/mayor) est repassé sur Codex, donc ce relecteur retrouve son indépendance de modèle voulue à l'origine en gardant Codex en tête, Claude en repli.",
+      "why": "af-npz9v1.51 : la revue UX difficile utilise GPT-6 Astra/high ; Claude high reste le repli.",
       "chain": [
-        "codex",
+        "codex-astra",
         "claude"
       ]
     },
     "delivery-author": {
       "label": "Auteur de ticket (rôle de livraison)",
-      "why": "T03 (af-pbxbgj) : un rôle ne tourne que sur un fournisseur où le chargement de ses skills a été essayé (bin/role-adoption-trial) ; bin/dispatch-door refuse tout autre fournisseur. Essayé sur Claude seulement : Codex n'entre dans cette chaîne qu'après son propre essai.",
+      "why": "af-npz9v1.51 : l'auteur courant utilise GPT-6.1 Sol/medium après essai d'adoption réel ; Claude standard reste le repli essayé.",
       "chain": [
+        "codex",
         "claude-standard"
       ]
     },
     "delivery-reviewer": {
       "label": "Relecteur de code (rôle de livraison, lecture seule)",
-      "why": "T03 (af-pbxbgj) : même règle que delivery-author. Lecture seule : seul un profil lancé par bin/delivery-role-sandbox convient. Codex en tête (af-npz9v1.12, Benjamin 2026-10-17 « Essayer un autre fournisseur ») : la revue tourne sur un autre modèle que l'auteur (Claude), après son essai d'adoption ; Claude lecture seule en repli quand le pool openai est épuisé ou en erreur.",
+      "why": "af-npz9v1.51 : la revue significative utilise GPT-6 Astra/high, distinct du modèle Sol de l'auteur, dans le sandbox lecture seule ; Claude lecture seule reste le repli essayé.",
       "chain": [
-        "codex-readonly",
+        "codex-astra-readonly",
         "claude-readonly"
       ]
     },
     "delivery-evaluator": {
       "label": "Evaluator (rôle de livraison, lecture seule)",
-      "why": "T03 (af-pbxbgj) : même règle que delivery-reviewer.",
+      "why": "af-npz9v1.51 : l'Evaluator reste sur Claude lecture seule pour être d'un autre fournisseur que l'auteur Sol ; Luna partage OpenAI avec Sol et reste donc un profil simple explicite mais non assigné.",
       "chain": [
         "claude-readonly"
       ]

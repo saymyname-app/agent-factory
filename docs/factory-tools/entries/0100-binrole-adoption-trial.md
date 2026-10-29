@@ -12,7 +12,8 @@ af-wf4w5r §1) :
 Ce qu'une session reçoit vraiment dépend de Gas City et du CLI du
 fournisseur : cela ne se lit pas dans un fichier, cela s'essaie. `run` monte
 une **cité isolée** (son propre `GC_HOME`, son port de superviseur, jamais la
-cité live), ouvre une session réelle par rôle et par fournisseur déclaré, et
+cité live, sans Mayor ni pool `bd.dog` étranger à l'essai), ouvre une session
+réelle par rôle et par fournisseur déclaré, et
 relève : les skills chargés (lus dans le transcript de la session), l'empreinte
 du `code-review` chargé par le relecteur, le résultat d'une demande de lancer
 `code-review`, `security-review` et `review` faite à chaque rôle, et le résultat
@@ -49,8 +50,23 @@ skills du compte claude.ai, dont un autre `code-review`.
   `bin/dispatch-door --role <rôle>` refuse, jusqu'au nouvel essai.
 - **Fournisseurs déclarés** d'un rôle : la chaîne de la cible de son agent dans
   `config/provider-policy.json`. N'y ajouter un fournisseur qu'avec son essai.
-  Seul Claude Code est observable aujourd'hui (aucun observateur pour Codex :
-  un essai sur Codex échoue, donc la porte tient le rôle hors de Codex).
+  Claude Code et Codex sont observables : l'observateur Codex lit le rollout
+  de la session, sa liste de skills, les `SKILL.md` ouverts et les refus du
+  sandbox. Avec Codex CLI 0.165, l'essai livre ses instructions par
+  `gc session nudge --delivery immediate` : le prompt est bien reçu, mais le
+  CLI n'expose pas la transition `busy` brève que `session submit` attend pour
+  confirmer la livraison. L'essai tolère donc ce retour non nul et exige à la
+  place son oracle fort, le nonce de fin lu dans le rollout. La cité isolée
+  ajoute aussi `--dangerously-bypass-hook-trust` à ses seules commandes Codex :
+  ses hooks viennent de Gas City et de la distribution versionnée que l'essai
+  vient de construire ; Codex 0.165 demanderait sinon « Trust this folder? »
+  avant de créer son rollout. Cette exception ne modifie ni la confiance
+  globale ni les profils live. Un profil sans observateur échoue et la porte
+  tient le rôle hors de ce profil.
+- **Stabilité de session** : `active` et `awake` sont tous deux des états
+  utilisables et comptent dans la minute de stabilité. La transition normale
+  `active` → `awake` ne remet donc pas le compteur à zéro ; `asleep` déclenche
+  encore un réveil et tout autre état interrompt la fenêtre.
 - **Lecture seule** : le relecteur et l'Evaluator tournent sur un profil
   `*-readonly`, lancé par `bin/delivery-role-sandbox` (Bubblewrap : tout en
   lecture seule sauf le répertoire de travail de la session, l'état du

@@ -228,12 +228,12 @@ When they are the same, the review still runs and is **flagged, never
 silent**: `same_model: true` is stored with the verdicts, and
 `model_independence` says « relecture non indépendante… » in the output of
 `review`, of `remaining` (text included), of `check` and of the publication
-door. Since af-npz9v1.12 (Benjamin, 2026-10-17: « Essayer un autre
-fournisseur ») the reviewer role runs on Codex first (`codex-readonly`,
-tried by `bin/role-adoption-trial`, chain in `config/provider-policy.json`),
-so a graph written by a Claude session gets an independent reviewer; it is
-flagged this way again only while the OpenAI pool is exhausted and
-`bin/provider-failover` falls back to `claude-readonly`. A review whose
+door. Since af-npz9v1.51 (Benjamin, 2026-10-29), the reviewer role runs on
+GPT-6 Astra/high first (`codex-astra-readonly`, tried by
+`bin/role-adoption-trial`, chain in `config/provider-policy.json`), distinct
+from the GPT-6.1 Sol/medium author. It is flagged as non-independent only
+while the OpenAI pool is exhausted and `bin/provider-failover` falls back to
+the same Claude model as the author. A review whose
 author model is not declared, or
 whose reviewer model cannot be read, is refused.
 

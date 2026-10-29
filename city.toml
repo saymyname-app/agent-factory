@@ -13,9 +13,23 @@ provider = "claude-standard"
 [providers]
 [providers.codex]
 base = "builtin:codex"
-args_append = ["-m", "gpt-5.6-sol"]
 ready_delay_ms = 0
 accept_startup_dialogs = true
+
+[providers.codex.option_defaults]
+model = "gpt-6.1-sol"
+effort = "medium"
+
+# Astra for difficult UX review. This role is not one of the delivery roles
+# that require the Bubblewrap read-only boundary.
+[providers.codex-astra]
+base = "builtin:codex"
+ready_delay_ms = 0
+accept_startup_dialogs = true
+
+[providers.codex-astra.option_defaults]
+model = "gpt-6-astra"
+effort = "high"
 
 [providers.claude]
 base = "builtin:claude"
@@ -116,27 +130,39 @@ DELIVERY_ROLE_SANDBOX_EXEC = "/home/benja/.local/bin/claude"
 permission_mode = "unrestricted"
 effort = "high"
 
-# Read-only Codex profile for the code reviewer (af-npz9v1.12).
-# Intent (Benjamin, his words, 2026-10-17): « Essayer un autre fournisseur »,
-# to the question of reviews running on the authors' model (Opus 5.5).
-# Mechanism (agent interpretation): same model and pool as [providers.codex]
-# (gpt-5.6-sol, ChatGPT Pro subscription), launched like
-# [providers.claude-readonly] through bin/delivery-role-sandbox; Codex's own
-# sandbox is bypassed inside it, the Bubblewrap mount is what holds.
-# `--model` (not `-m`) so lib/delivery_role_identity.py reads the model that
-# bin/code-review compares with the author's.
-[providers.codex-readonly]
+# Read-only Astra profile for significant code review (af-npz9v1.51).
+# It is deliberately a different model from the Sol author. Like the Claude
+# read-only profile it runs through bin/delivery-role-sandbox; Codex's own
+# sandbox is bypassed inside it, and the Bubblewrap mount is what holds.
+# Gas City renders option_defaults.model once as `--model`, which
+# lib/delivery_role_identity.py reads for the author/reviewer comparison.
+[providers.codex-astra-readonly]
 base = "builtin:codex"
 command = "/home/benja/agent-factory/bin/delivery-role-sandbox"
-args_append = ["--model", "gpt-5.6-sol"]
 # gc refuses a wrapper of a subcommand-style resume provider without its own
 # resume invocation; the role wakes fresh (wake_mode), this is the required form.
-resume_command = "/home/benja/agent-factory/bin/delivery-role-sandbox --model gpt-5.6-sol resume {{.SessionKey}}"
+resume_command = "/home/benja/agent-factory/bin/delivery-role-sandbox resume {{.SessionKey}}"
 ready_delay_ms = 0
 accept_startup_dialogs = true
 
-[providers.codex-readonly.env]
+[providers.codex-astra-readonly.env]
 DELIVERY_ROLE_SANDBOX_EXEC = "/home/benja/.local/bin/codex"
+
+[providers.codex-astra-readonly.option_defaults]
+model = "gpt-6-astra"
+effort = "high"
+
+# Luna is explicit for future simple bounded work, but deliberately unassigned:
+# an Evaluator on Luna would share OpenAI with the Sol author while the existing
+# Claude Evaluator is available, violating the delivery independence gate.
+[providers.codex-luna]
+base = "builtin:codex"
+ready_delay_ms = 0
+accept_startup_dialogs = true
+
+[providers.codex-luna.option_defaults]
+model = "gpt-6-luna"
+effort = "high"
 
 [defaults]
 [defaults.rig]

@@ -238,6 +238,35 @@ clears only the target's assignee after the claim while preserving its
 `in_progress` state and explicit session evidence. Routed formula steps remain
 bound to the same session and therefore win the next continuation claim.
 
+### 13. Sol 6.1, Luna and Astra by workload (af-npz9v1.51, 2026-10-29)
+
+Benjamin approved GPT-6.1 Sol/medium/Standard for ordinary work, GPT-6
+Luna/high for simple bounded work, and GPT-6 Astra/high for difficult review.
+Codex CLI 0.155.1 rejected `gpt-6.1-sol`; the isolated 0.165.0 client
+accepted it with the same account, so the installer pin moves to 0.165.0
+before any profile becomes effective. No Codex profile opts into Fast or
+Priority service; the pool remains Standard.
+
+The primary mapping is one model per compatible workload: `workspace`, `mayor`
+and the delivery author use `codex` (`gpt-6.1-sol`, medium); the read-only
+delivery reviewer uses `codex-astra-readonly` (`gpt-6-astra`, high); and the UX
+reviewer uses writable `codex-astra`. `codex-luna` (`gpt-6-luna`, high) is
+explicit but unassigned until a simple workload has a compatible role.
+The Evaluator stays on `claude-readonly`: assigning Luna would put it on the
+same OpenAI supplier as the Sol author while an Anthropic evaluator is
+available, and the existing independence gate correctly refuses that launch.
+The author and significant reviewer use distinct primary models, and every
+modified chain retains its existing Claude fallback.
+
+New delivery-role profiles are unusable until `bin/role-adoption-trial` has
+recorded a passing real session for the current profile digest. After merge,
+`provider-failover` loads the versioned policy through its existing door. A
+running Codex conversation is replaced once only at a safe boundary: its
+command has finished and its Bead, branch, worktree, PR and working tree are
+saved. Any session temporarily left on the old model records the event that
+will trigger its replacement; no blanket restart, new daemon or LLM router is
+introduced.
+
 ## Evidence
 
 - `af-a0aku` — traceability payload for the corrected `factory-worker`
@@ -261,6 +290,12 @@ bound to the same session and therefore win the next continuation claim.
   missing overlay, and reports a failure to do so.
 - `tests/factory-cockpit-test.py` — the bridge only calls the tool, and the
   route requires its own confirmation header.
+- `tests/city-codex-profiles-test.py` — exact model, effort, Standard-tier,
+  read-only and role mapping; `tests/ticket-evaluation-test.py` and
+  `tests/outcome-evaluation-test.py` — a Sol author and a mixed Sol/Claude
+  convoy can start the only declared Claude Evaluator;
+  `config/role-adoption-trials.json` — real author and reviewer sessions on
+  their new Codex profiles, plus the retained Claude Evaluator trial.
 - Live, 2026-09-16: overlay activated with no session restart; a forced switch
   moved a running session and back; mark and restore round-tripped from the
   cockpit on desktop and at phone width.

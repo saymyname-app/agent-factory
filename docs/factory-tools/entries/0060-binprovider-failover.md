@@ -30,8 +30,18 @@ Trois fichiers, un seul écrivain :
 régénère, mais autant ne pas lui en donner l'occasion.
 
 Un quota s'applique à un **pool** : les trois profils Claude partagent le même
-compte, donc une limite Claude les épuise tous. Codex standard est son propre
-pool.
+compte, donc une limite Claude les épuise tous. Les quatre profils Codex
+(`codex` Sol, `codex-astra`, `codex-astra-readonly`,
+`codex-luna`) partagent le pool OpenAI Standard ; aucun ne configure
+`service_tier=fast` ou `priority`.
+
+Profils primaires (af-npz9v1.51) : travail courant et auteur de ticket sur
+GPT-6.1 Sol/medium ; relecteur de code significatif sur GPT-6 Astra/high en
+lecture seule ; revue UX difficile sur GPT-6 Astra/high. Luna/high est un
+profil explicite pour une classe simple future, mais n'est assigné à aucun
+rôle : l'Evaluator reste sur Claude lecture seule afin d'être d'un autre
+fournisseur que l'auteur Sol. L'auteur Sol et le relecteur Astra restent de
+modèles distincts. Les chaînes modifiées gardent leur repli Claude antérieur.
 
 Si **aucun** fournisseur ne reste pour aucun pool (épuisement total, O08,
 af-harft), `bin/dispatch-door` (et donc `bin/factory-work-dispatch`) refuse
@@ -61,8 +71,8 @@ Cette porte choisit elle-même `factory-worker`, `mol-do-work` et
 `workspace` est la **classe de fournisseur** pilotée par le repli automatique,
 pas un agent Gas City, et `bd.dog` ne fait que la maintenance Dolt. L'ouvrier
 Factory ne fixe aucun fournisseur dans son `agent.toml`; il prend donc celui
-que `provider-failover` a résolu pour `workspace` (Codex aujourd'hui, puis le
-repli configuré si nécessaire). `--technical-request` est l'entrée autorisée
+que `provider-failover` a résolu pour `workspace` (GPT-6.1 Sol/medium
+aujourd'hui, puis le repli configuré si nécessaire). `--technical-request` est l'entrée autorisée
 qui lie un défaut de l'usine au parcage exact qu'il répare ; la levée et la
 reprise restent ensuite la propriété de `convoy-advance`.
 

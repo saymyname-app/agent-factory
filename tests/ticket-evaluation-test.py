@@ -270,13 +270,13 @@ class TicketEvaluationTest(unittest.TestCase):
             "evaluation": {"formula": "mol-ticket-evaluation", "role": "evaluator", "rig": "agent-factory",
                            "start_timeout_seconds": 15, **evaluation}}))
 
-    def providers(self, evaluator, unavailable=()):
+    def providers(self, evaluator, unavailable=(), author="p-claude"):
         """What bin/provider-failover answers: the chain of the Evaluator
         role, its first available provider being the one it runs on."""
         pools = {"p-claude": "anthropic", "p-claude-ro": "anthropic", "p-codex": "openai"}
         chain = [{"provider": name, "pool": pools[name], "state": "held" if name in unavailable else "available"}
                  for name in evaluator]
-        targets = {"delivery-author": {"effective": "p-claude"}}
+        targets = {"delivery-author": {"effective": author}}
         running = [entry["provider"] for entry in chain if entry["state"] == "available"]
         if running:
             targets["delivery-evaluator"] = {"effective": running[0], "chain": chain}
@@ -1872,6 +1872,20 @@ class TicketEvaluationTest(unittest.TestCase):
         self.assertIsNone(shown["independence"])
         self.assertEqual("p-codex", shown["models"]["evaluator"]["provider"])
         self.assertIsNone(json.loads(self.brief_given())["independence"])
+
+    def test_a_sol_author_can_start_the_declared_claude_evaluator(self):
+        self.finished_slice(self.realized())
+        self.state("set-model", CONVOY, SLICE, "--role", "author", "--agent", "delivery-author",
+                   "--provider", "p-codex", "--model", "gpt-6.1-sol")
+        self.providers(evaluator=["p-claude-ro"], author="p-codex")
+
+        self.settle()
+
+        (round_,) = self.evaluation()["rounds"]
+        self.assertEqual({"author": {"provider": "p-codex", "supplier": "openai"},
+                          "evaluator": {"provider": "p-claude-ro", "supplier": "anthropic"},
+                          "same_provider": False, "other_declared": ["anthropic"]}, round_["roles"])
+        self.assertIsNone(self.tool("show")["independence"])
 
     def test_an_evaluator_of_the_authors_supplier_is_recorded_with_the_mention_when_no_other_is_declared(self):
         self.finished_slice(self.realized())

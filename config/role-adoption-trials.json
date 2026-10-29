@@ -68,6 +68,30 @@
         "gc": "1.5.0"
       }
     },
+    "author/codex": {
+      "agent": "delivery-author",
+      "digest": "sha256:f3190ca5a8c5358232aab4ac45dd5c8955739c945b4bb0f412e404bb0f31e979",
+      "expected_skills": [
+        "apple-design",
+        "better-writing",
+        "codebase-design",
+        "impeccable",
+        "tdd"
+      ],
+      "failures": [
+        "the session never became active"
+      ],
+      "observed_at": "2026-10-29T19:27:49Z",
+      "passed": false,
+      "provider": "codex",
+      "role": "author",
+      "versions": {
+        "bwrap": "bubblewrap 0.9.0",
+        "claude": "2.1.290 (Claude Code)",
+        "codex": "codex-cli 0.165.0",
+        "gc": "1.5.0"
+      }
+    },
     "evaluator/claude-readonly": {
       "agent": "delivery-evaluator",
       "digest": "sha256:4317e5eb7a315c78ab49a9edb14ee3413a0b39d6d112a4b3aaeff54dc35eb580",

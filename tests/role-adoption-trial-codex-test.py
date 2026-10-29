@@ -5,8 +5,8 @@ Benjamin, 2026-10-17 (« Essayer un autre fournisseur »): the code reviewer
 runs on Codex so that its review is independent of the author's model. The
 trial only understood Claude Code's transcript and refused every other base
 (« no observer for provider base »). These cases give it a synthetic Codex
-rollout (~/.codex/sessions/.../rollout-*.jsonl, the format of codex-cli
-0.155) and check what it reads: the session found by its work directory, the
+rollout (~/.codex/sessions/.../rollout-*.jsonl, the format used through
+codex-cli 0.165) and check what it reads: the session found by its work directory, the
 final answer, the skill list, a skill opened through the shell, and a write
 refused by the read-only sandbox."""
 
@@ -19,6 +19,8 @@ import subprocess
 import tempfile
 import time
 import unittest
+from types import SimpleNamespace
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -162,6 +164,76 @@ class ObserverTest(unittest.TestCase):
         self.assertIs(trial.observer_class({"base": "builtin:claude"}), trial.ClaudeTranscript)
         self.assertIs(trial.observer_class({"base": "builtin:codex"}), trial.CodexTranscript)
         self.assertIsNone(trial.observer_class({"base": "builtin:gemini"}))
+
+
+class AskTransportTest(unittest.TestCase):
+    def ask_with(self, transcript):
+        city = mock.Mock()
+        transcript.said = mock.Mock(return_value=True)
+        with mock.patch.object(trial.time, "sleep"):
+            self.assertTrue(trial.ask(city, "trial-author", transcript, "check", timeout=1))
+        return city.gc.call_args
+
+    def test_codex_uses_an_immediate_nudge_that_does_not_wait_for_busy_detection(self):
+        transcript = trial.CodexTranscript(Path("/tmp/codex"), Path("/tmp/work"), 0)
+        args, kwargs = self.ask_with(transcript)
+        self.assertEqual(("session", "nudge", "trial-author"), args[:3])
+        self.assertEqual(("--delivery", "immediate"), args[-2:])
+        self.assertFalse(kwargs["check"])
+
+    def test_claude_keeps_semantic_submit_delivery(self):
+        transcript = trial.ClaudeTranscript(Path("/tmp/claude"), Path("/tmp/work"), 0)
+        args, kwargs = self.ask_with(transcript)
+        self.assertEqual(("session", "submit", "trial-author"), args[:3])
+        self.assertNotIn("check", kwargs)
+
+
+class WaitActiveTest(unittest.TestCase):
+    def test_active_and_awake_both_count_toward_the_stability_window(self):
+        states = iter(["active"] * 4 + ["awake"] * 8)
+        city = mock.Mock()
+
+        def gc(*_args, **_kwargs):
+            state = next(states, "missing")
+            sessions = [] if state == "missing" else [{"alias": "trial-author", "provider": "codex", "state": state}]
+            return SimpleNamespace(stdout=json.dumps({"sessions": sessions}))
+
+        city.gc.side_effect = gc
+        with mock.patch.object(trial.time, "time", side_effect=range(100)), \
+             mock.patch.object(trial.time, "sleep"):
+            self.assertEqual("codex", trial.wait_active(city, "trial-author", timeout=20))
+
+
+class TrialProviderProfileTest(unittest.TestCase):
+    def test_codex_bypasses_only_hook_trust_in_the_isolated_trial(self):
+        profiles = trial.trial_provider_profiles(
+            {"delivery-author": "codex", "delivery-evaluator": "claude-readonly"})
+        self.assertIn("--dangerously-bypass-hook-trust", profiles["codex"]["args_append"])
+        self.assertNotIn("--dangerously-bypass-hook-trust", profiles["claude-readonly"].get("args_append", []))
+        self.assertNotIn("projects.", str(profiles))
+        self.assertNotIn("args_append", trial.city_providers()["codex"])
+
+
+class TrialCityIsolationTest(unittest.TestCase):
+    def test_the_trial_does_not_start_unrelated_mayor_or_dolt_dog_sessions(self):
+        source = ('[imports]\n[imports.bd]\nsource = "bd"\nversion = "1"\n'
+                  '[imports.core]\nsource = "core"\nversion = "1"\n'
+                  '[[named_session]]\ntemplate = "mayor"\nmode = "always"\n')
+        rendered = trial.trial_pack(source)
+        self.assertNotIn("[imports.bd]", rendered)
+        self.assertNotIn('template = "mayor"', rendered)
+        self.assertIn("[imports.core]", rendered)
+
+
+class RecordedAdoptionTest(unittest.TestCase):
+    def test_each_new_primary_delivery_profile_has_a_current_real_trial(self):
+        data = trial.load_roles()
+        record = trial.load_record()
+        for role, provider in (("author", "codex"),
+                               ("reviewer", "codex-astra-readonly"),
+                               ("evaluator", "claude-readonly")):
+            ok, reason = trial.trial_verdict(data, record, role, provider)
+            self.assertTrue(ok, reason)
 
 
 if __name__ == "__main__":

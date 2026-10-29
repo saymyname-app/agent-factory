@@ -279,6 +279,27 @@ def providers_toml(providers: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def trial_provider_profiles(assignments: dict[str, str]) -> dict[str, Any]:
+    """Profiles for the isolated city, including its automation-only Codex trust."""
+    providers = json.loads(json.dumps(city_providers()))
+    for profile in providers.values():
+        if Path(str(profile.get("command", ""))).name == SANDBOX.name:
+            profile["command"] = str(SANDBOX)
+    for provider in assignments.values():
+        profile = providers[provider]
+        if str(profile.get("base", "")).endswith("codex"):
+            args = profile.setdefault("args_append", [])
+            if "--dangerously-bypass-hook-trust" not in args:
+                args.append("--dangerously-bypass-hook-trust")
+    return providers
+
+
+def trial_pack(source: str) -> str:
+    """Keep the isolated trial free of unrelated named and maintenance sessions."""
+    source = re.sub(r'\n?\[imports\.bd\]\n.*?(?=\n\[|\Z)', "\n", source, flags=re.S)
+    return re.sub(r'\n\[\[named_session\]\]\ntemplate = "mayor"\nmode = "always"\n', "\n", source)
+
+
 class TrialCity:
     def __init__(self, trial_dir: Path, port: int) -> None:
         self.dir = trial_dir
@@ -325,13 +346,10 @@ class TrialCity:
         self.run("gc", "init", "--template", "minimal", "--default-provider", "claude", "--skip-provider-readiness",
                  "--no-start", "--yes", "--name", self.dir.name, str(self.city))
         pack = self.city / "pack.toml"
-        pack.write_text(re.sub(r'\n\[\[named_session\]\]\ntemplate = "mayor"\nmode = "always"\n', "\n", pack.read_text()))
+        pack.write_text(trial_pack(pack.read_text()))
         shutil.rmtree(self.city / "agents" / "mayor", ignore_errors=True)
 
-        providers = json.loads(json.dumps(city_providers()))
-        for profile in providers.values():
-            if Path(str(profile.get("command", ""))).name == SANDBOX.name:
-                profile["command"] = str(SANDBOX)
+        providers = trial_provider_profiles(assignments)
         patches = "".join(f'\n[[patches.agent]]\nname = "{agent}"\nprovider = "{provider}"\n'
                           for agent, provider in assignments.items())
         (self.city / "city.toml").write_text(f'[workspace]\nprovider = "{first}"\n\n{providers_toml(providers)}{patches}')
@@ -618,8 +636,14 @@ def excerpt(text: Any, limit: int = 160) -> str:
 
 def ask(city: TrialCity, alias: str, transcript: ClaudeTranscript | CodexTranscript, instruction: str, timeout: int = 300) -> bool:
     nonce = f"TRIAL-DONE-{uuid.uuid4().hex[:10]}"
-    city.gc("session", "submit", alias,
-            f"Adoption trial. {instruction} Do nothing else. When you have finished, reply with exactly this line: {nonce}")
+    message = f"Adoption trial. {instruction} Do nothing else. When you have finished, reply with exactly this line: {nonce}"
+    if isinstance(transcript, CodexTranscript):
+        # Codex 0.165 accepts the prompt but does not expose the brief busy
+        # transition that semantic submit waits for. Immediate nudge delivers
+        # to tmux without turning that missing UI signal into a false failure.
+        city.gc("session", "nudge", alias, message, "--delivery", "immediate", check=False)
+    else:
+        city.gc("session", "submit", alias, message)
     deadline = time.time() + timeout
     while time.time() < deadline:
         time.sleep(5)
@@ -646,10 +670,11 @@ def wait_active(city: TrialCity, alias: str, timeout: int = 300) -> str | None:
             if isinstance(session, dict) and alias in (session.get("alias"), session.get("name"), session.get("id")):
                 provider = session.get("provider") or provider
                 state = str(session.get("state", "")).lower()
-                active = state == "active"
+                active = state in ("active", "awake")
                 if state == "asleep":
                     city.gc("session", "wake", alias, check=False)
-        # Active for a minute in a row: a Codex session is drained for config
+        # Usable for a minute in a row (`active` while starting, then `awake`
+        # once settled): a Codex session is drained for config
         # drift about 35 s after its first start (seen twice, af-npz9v1.12),
         # and woken again above; it is not usable before that has passed.
         active_polls = active_polls + 1 if active else 0

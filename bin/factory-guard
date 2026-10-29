@@ -229,7 +229,7 @@ if grep -qE '^\s*permission_mode\s*=\s*"plan"' city.toml 2>/dev/null; then
 fi
 # A timed-out probe is unknown, not broken: it must not trigger section 3's
 # self-heal checkout.
-for p in codex codex-readonly claude claude-readonly claude-standard; do
+for p in codex codex-astra codex-astra-readonly codex-luna claude claude-readonly claude-standard; do
   bounded 15 gc config explain --provider "$p" >/dev/null 2>&1; cfg_rc=$?
   if timed_out "$cfg_rc"; then
     CFG_UNKNOWN=1; bad "config-invariants — provider '$p' not checked (gc config explain timed out)"
@@ -269,7 +269,7 @@ fi
 [ -n "$MISSING" ] && bad "missing critical runtime file(s):$MISSING"
 [ -z "$MISSING" ] && say "✓ runtime-files — all present"
 [ -n "$BROKEN_CFG" ] && bad "config invariant broken: $BROKEN_CFG"
-[ -z "$BROKEN_CFG$CFG_UNKNOWN" ] && say "✓ config-invariants — permission_mode sane, all 4 checked providers resolve"
+[ -z "$BROKEN_CFG$CFG_UNKNOWN" ] && say "✓ config-invariants — permission_mode sane, all 7 checked providers resolve"
 
 # Unattended agents run with permissions skipped and push rights. With
 # enableAllProjectMcpServers=true, any .mcp.json that lands in a checkout (a PR

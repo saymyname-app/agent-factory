@@ -896,6 +896,21 @@ class OutcomeEvaluationTest(Harness):
         self.assertTrue(shown["roles"]["same_provider"])
         self.assertIn("même fournisseur qu'un auteur (anthropic)", shown["independence"])
 
+    def test_a_mixed_sol_and_claude_convoy_starts_the_only_declared_claude_evaluator(self):
+        self.verified()
+        self.state("set-model", CONVOY, SLICE, "--role", "author", "--agent", "delivery-author",
+                   "--provider", "p-codex", "--model", "gpt-6.1-sol")
+        self.state("set-model", CONVOY, SCREEN, "--role", "author", "--agent", "delivery-author",
+                   "--provider", "p-claude", "--model", "claude-opus-5-5")
+        self.providers(evaluator=["p-claude-ro"])
+
+        self.settle()
+
+        shown = self.outcome()
+        self.assertTrue(shown["roles"]["same_provider"])
+        self.assertEqual([], shown["roles"]["other_declared"])
+        self.assertIn("même fournisseur qu'un auteur (anthropic)", shown["independence"])
+
     def test_full_host_product_capacity_defers_without_stopping_the_evaluation(self):
         self.verified()
         occupied = Path(self.env["TICKET_EVALUATION_STATE_DIR"])

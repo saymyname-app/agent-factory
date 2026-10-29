@@ -31,7 +31,7 @@ Ce qu'il contrôle :
 | `branch` | la racine vive est sur sa branche épinglée ; restaure si la dérive a cassé un invariant |
 | `runtime-files` | `pr-autopilot`, `factory-guard` et leurs orders existent encore sur le disque |
 | `exec-bits` | (af-ogg8z) chaque fichier que git suit en mode `100755` sous `bin/` est bien exécutable sur disque — restaure le bit avec `chmod +x` sinon ; `runtime-files` ne teste que l'existence (`-e`), pas l'exécutabilité, ce qui a laissé `bin/provider-failover` échouer en silence (exit 126) pendant ~2h le 2026-09-17 |
-| `config-invariants` | `permission_mode` est sain et les 5 providers vérifiés (`codex`, `codex-readonly`, `claude`, `claude-readonly`, `claude-standard`) résolvent |
+| `config-invariants` | `permission_mode` est sain et les 7 providers vérifiés (`codex`, `codex-astra`, `codex-astra-readonly`, `codex-luna`, `claude`, `claude-readonly`, `claude-standard`) résolvent |
 | `work-backup` | **pousse** toute branche qui n'existe que sur cette machine |
 | `work-tree` | **sauvegarde** l'arbre de travail modifié ou non suivi (voir plus bas) |
 | `rig:*` | un rig suspendu bloque la livraison ; un dispatcher au repos, non |
@@ -371,8 +371,18 @@ Trois fichiers, un seul écrivain :
 régénère, mais autant ne pas lui en donner l'occasion.
 
 Un quota s'applique à un **pool** : les trois profils Claude partagent le même
-compte, donc une limite Claude les épuise tous. Codex standard est son propre
-pool.
+compte, donc une limite Claude les épuise tous. Les quatre profils Codex
+(`codex` Sol, `codex-astra`, `codex-astra-readonly`,
+`codex-luna`) partagent le pool OpenAI Standard ; aucun ne configure
+`service_tier=fast` ou `priority`.
+
+Profils primaires (af-npz9v1.51) : travail courant et auteur de ticket sur
+GPT-6.1 Sol/medium ; relecteur de code significatif sur GPT-6 Astra/high en
+lecture seule ; revue UX difficile sur GPT-6 Astra/high. Luna/high est un
+profil explicite pour une classe simple future, mais n'est assigné à aucun
+rôle : l'Evaluator reste sur Claude lecture seule afin d'être d'un autre
+fournisseur que l'auteur Sol. L'auteur Sol et le relecteur Astra restent de
+modèles distincts. Les chaînes modifiées gardent leur repli Claude antérieur.
 
 Si **aucun** fournisseur ne reste pour aucun pool (épuisement total, O08,
 af-harft), `bin/dispatch-door` (et donc `bin/factory-work-dispatch`) refuse
@@ -402,8 +412,8 @@ Cette porte choisit elle-même `factory-worker`, `mol-do-work` et
 `workspace` est la **classe de fournisseur** pilotée par le repli automatique,
 pas un agent Gas City, et `bd.dog` ne fait que la maintenance Dolt. L'ouvrier
 Factory ne fixe aucun fournisseur dans son `agent.toml`; il prend donc celui
-que `provider-failover` a résolu pour `workspace` (Codex aujourd'hui, puis le
-repli configuré si nécessaire). `--technical-request` est l'entrée autorisée
+que `provider-failover` a résolu pour `workspace` (GPT-6.1 Sol/medium
+aujourd'hui, puis le repli configuré si nécessaire). `--technical-request` est l'entrée autorisée
 qui lie un défaut de l'usine au parcage exact qu'il répare ; la levée et la
 reprise restent ensuite la propriété de `convoy-advance`.
 
@@ -490,7 +500,8 @@ af-wf4w5r §1) :
 Ce qu'une session reçoit vraiment dépend de Gas City et du CLI du
 fournisseur : cela ne se lit pas dans un fichier, cela s'essaie. `run` monte
 une **cité isolée** (son propre `GC_HOME`, son port de superviseur, jamais la
-cité live), ouvre une session réelle par rôle et par fournisseur déclaré, et
+cité live, sans Mayor ni pool `bd.dog` étranger à l'essai), ouvre une session
+réelle par rôle et par fournisseur déclaré, et
 relève : les skills chargés (lus dans le transcript de la session), l'empreinte
 du `code-review` chargé par le relecteur, le résultat d'une demande de lancer
 `code-review`, `security-review` et `review` faite à chaque rôle, et le résultat
@@ -527,8 +538,23 @@ skills du compte claude.ai, dont un autre `code-review`.
   `bin/dispatch-door --role <rôle>` refuse, jusqu'au nouvel essai.
 - **Fournisseurs déclarés** d'un rôle : la chaîne de la cible de son agent dans
   `config/provider-policy.json`. N'y ajouter un fournisseur qu'avec son essai.
-  Seul Claude Code est observable aujourd'hui (aucun observateur pour Codex :
-  un essai sur Codex échoue, donc la porte tient le rôle hors de Codex).
+  Claude Code et Codex sont observables : l'observateur Codex lit le rollout
+  de la session, sa liste de skills, les `SKILL.md` ouverts et les refus du
+  sandbox. Avec Codex CLI 0.165, l'essai livre ses instructions par
+  `gc session nudge --delivery immediate` : le prompt est bien reçu, mais le
+  CLI n'expose pas la transition `busy` brève que `session submit` attend pour
+  confirmer la livraison. L'essai tolère donc ce retour non nul et exige à la
+  place son oracle fort, le nonce de fin lu dans le rollout. La cité isolée
+  ajoute aussi `--dangerously-bypass-hook-trust` à ses seules commandes Codex :
+  ses hooks viennent de Gas City et de la distribution versionnée que l'essai
+  vient de construire ; Codex 0.165 demanderait sinon « Trust this folder? »
+  avant de créer son rollout. Cette exception ne modifie ni la confiance
+  globale ni les profils live. Un profil sans observateur échoue et la porte
+  tient le rôle hors de ce profil.
+- **Stabilité de session** : `active` et `awake` sont tous deux des états
+  utilisables et comptent dans la minute de stabilité. La transition normale
+  `active` → `awake` ne remet donc pas le compteur à zéro ; `asleep` déclenche
+  encore un réveil et tout autre état interrompt la fenêtre.
 - **Lecture seule** : le relecteur et l'Evaluator tournent sur un profil
   `*-readonly`, lancé par `bin/delivery-role-sandbox` (Bubblewrap : tout en
   lecture seule sauf le répertoire de travail de la session, l'état du

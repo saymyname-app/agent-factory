@@ -346,8 +346,27 @@ happens as an emergency after the tailnet has already gone dark.
 ## Secondary provider qualification
 
 Gas City `v1.4.1` supplies both `builtin:claude` and `builtin:opencode`; use
-provider inheritance rather than an adapter. The workspace default remains
-`codex`/`gpt-5.6-sol`.
+provider inheritance rather than an adapter. The workspace primary is
+`codex`/`gpt-6.1-sol` at medium reasoning effort on Standard service.
+
+The versioned Codex CLI pin is `0.165.0`. The OpenAI profiles are Sol/medium
+for ordinary writing, Astra/high for significant read-only code review and
+difficult UX review, and an explicit but unassigned Luna/high profile for a
+future simple class. The read-only Evaluator stays on Claude: Luna and the Sol
+author share the OpenAI supplier, which would make the evaluation gate defer
+while Claude is available. Standard means no Codex profile passes
+`service_tier=fast` or `priority`. `tests/city-codex-profiles-test.py` holds
+this mapping, the Sol/Astra model separation and the Sol/Claude supplier
+separation.
+
+After a profile-changing PR merges, load it through `bin/provider-failover`.
+Do not restart every Codex conversation at once. For each existing session,
+wait until its command is finished and its ticket, branch, worktree, PR and
+working tree are saved; then replace that session once so the next turn starts
+on the configured profile. Record any session intentionally left on the old
+model on its active Bead, with the concrete event that will trigger its
+replacement. This keeps in-flight commands single-run and gives every old
+conversation a durable cutover trigger.
 
 The host-local Claude provider uses CLI `2.1.290` (Opus 5.5 needs `2.1.280`
 or newer), the existing Claude.ai subscription, `claude-opus-5-5`, and plan mode. Its authentication
