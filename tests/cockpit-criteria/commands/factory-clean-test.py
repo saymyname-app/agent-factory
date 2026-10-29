@@ -16,11 +16,12 @@ local change), `af-unpushed` (a commit not pushed), `af-active` (work under
 way). The page GET /usine is walked in a headless Chromium behind the
 identity proxy of the host; its folded details are read in the HTML it
 serves; a confirmation sent from an older preview is sent as the browser
-sends it (pour_moi.Operator).
+sends it (pour_moi.Operator): the worktrees it names, each at the commit
+the preview read (`{"name", "sha"}`).
 
 False if a worktree under way, with a local change or with a commit not
-pushed is removed, or if a scope grown since its preview is cleaned without
-a new confirmation.
+pushed is removed, or if a scope grown since its preview, or a worktree
+replaced under the same name, is cleaned without a new confirmation.
 """
 
 from __future__ import annotations
@@ -38,6 +39,8 @@ from usine_reglages import Operator, PAGE, control, folded, serve_usine, visible
 PREVIEW = [{"click": "Examiner le périmètre"}]
 CLEAN = [{"click": "Examiner le périmètre"}, {"click": "Confirmer"}]
 KEPT = ("af-modified", "af-unpushed", "af-active")
+# A commit no worktree of the launch is at.
+ELSEWHERE = "0123456789abcdef0123456789abcdef01234567"
 
 
 def said_of(text: str, name: str, names: tuple[str, ...]) -> str:
@@ -53,16 +56,13 @@ def said_of(text: str, name: str, names: tuple[str, ...]) -> str:
 class FactoryClean(unittest.TestCase):
     maxDiff = None
 
-    @classmethod
-    def setUpClass(cls) -> None:
-        cls.tree = LaunchTree()
-
-    @classmethod
-    def tearDownClass(cls) -> None:
-        cls.tree.remove()
+    def setUp(self) -> None:
+        # A tree of its own per case: serve_usine commits the dataset of the
+        # case in it, and a case never sees what another case left.
+        self.tree = LaunchTree()
 
     def tearDown(self) -> None:
-        self.tree.stop_all()
+        self.tree.remove()
 
     def assert_walked(self, walked: dict, steps: list[dict]) -> list[dict]:
         found = walked["steps"]
@@ -109,19 +109,29 @@ class FactoryClean(unittest.TestCase):
         self.assertRegex(again, r"(?i)non (poussé|publié)", f"the commits not pushed are gone: « {again} »")
         self.assertRegex(again, r"(?i)en cours|actif", f"the work under way is gone: « {again} »")
 
+    def assert_recomputed(self, answer, what: str) -> None:
+        self.assertEqual("", answer.broken, f"the request broke: {answer}")
+        self.assertIsNotNone(answer.status, f"no HTTP answer: {answer}")
+        self.assertGreaterEqual(answer.status, 400, f"a scope that changed is cleaned ({what}): {answer}")
+        self.assertNotEqual(500, answer.status, f"the cockpit broke: {answer}")
+        self.assertIsInstance(answer.body, dict, f"the answer is no readable error: {answer}")
+        self.assertRegex(answer.error(), r"(?i)périmètre", f"the refusal does not say the scope changed ({what}): {answer}")
+        self.assertRegex(answer.error(), r"(?i)confirm", f"the refusal does not ask a new confirmation ({what}): {answer}")
+
     def test_a_scope_changed_since_its_preview_is_recomputed_and_asks_a_new_confirmation(self):
         address = serve_usine(self.tree)
         operator = Operator(address)
+        # The preview of the scope is read now, as the operator reads it
+        # before confirming.
+        self.assert_walked(walk(address, PREVIEW, path=PAGE), PREVIEW)
         # Confirmed from a preview that listed a worktree since gone, and not
         # af-merged: the scope now is another one.
-        answer = operator.gesture("nettoyer", {"perimetre": ["af-gone"], "confirm": True})
-        self.assertEqual("", answer.broken, f"the request broke: {answer}")
-        self.assertIsNotNone(answer.status, f"no HTTP answer: {answer}")
-        self.assertGreaterEqual(answer.status, 400, f"a scope that changed is cleaned: {answer}")
-        self.assertNotEqual(500, answer.status, f"the cockpit broke: {answer}")
-        self.assertIsInstance(answer.body, dict, f"the answer is no readable error: {answer}")
-        self.assertRegex(answer.error(), r"(?i)périmètre", f"the refusal does not say the scope changed: {answer}")
-        self.assertRegex(answer.error(), r"(?i)confirm", f"the refusal does not ask a new confirmation: {answer}")
+        self.assert_recomputed(operator.gesture("nettoyer", {"perimetre": [{"name": "af-gone", "sha": ELSEWHERE}],
+                                                             "confirm": True}), "a worktree since gone")
+        # Confirmed from a preview where the worktree af-merged was at another
+        # commit: the same name, another worktree -- never removed on a name.
+        self.assert_recomputed(operator.gesture("nettoyer", {"perimetre": [{"name": "af-merged", "sha": ELSEWHERE}],
+                                                             "confirm": True}), "af-merged at another commit")
 
         # Recomputed: af-merged is still there, waiting for its own confirmation.
         page = self.assert_walked(walk(address, PREVIEW, path=PAGE), PREVIEW)[0]

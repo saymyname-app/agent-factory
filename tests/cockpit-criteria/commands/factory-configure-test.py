@@ -51,16 +51,13 @@ SESSIONS_CHANGED = re.compile(
 class FactoryConfigure(unittest.TestCase):
     maxDiff = None
 
-    @classmethod
-    def setUpClass(cls) -> None:
-        cls.tree = LaunchTree()
-
-    @classmethod
-    def tearDownClass(cls) -> None:
-        cls.tree.remove()
+    def setUp(self) -> None:
+        # A tree of its own per case: serve_usine commits the dataset of the
+        # case in it, and a case never sees what another case left.
+        self.tree = LaunchTree()
 
     def tearDown(self) -> None:
-        self.tree.stop_all()
+        self.tree.remove()
 
     def walked(self, walked: dict, count: int) -> list[dict]:
         """The pages after the first `count` steps; fails the case when one
