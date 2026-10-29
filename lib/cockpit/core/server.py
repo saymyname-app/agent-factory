@@ -32,6 +32,7 @@ from cockpit.health.engine import (
     compute_health,
 )
 from cockpit.projects import anomalies as project_anomalies
+from cockpit.projects.decisions import chantier_decisions
 from cockpit.projects.depots import apply_to_projects
 from cockpit.projects.descriptors import load_descriptors
 from cockpit.projects.source import from_value as projects_from_value
@@ -42,7 +43,7 @@ from cockpit.requests.journal import entries_from_value as journal_entries_from_
 from cockpit.requests.journal import sources_from_value as journal_sources_from_value
 from cockpit.requests.sources.readability import ILLISIBLE_THRESHOLD_SECONDS
 from cockpit.runs.derive import runs_from_beads
-from cockpit.runs.workflows import workflow_runs
+from cockpit.runs.workflows import waiting_on, workflow_runs
 from cockpit.ui.analyses.page import CSS as ANALYSES_CSS, render_analyses
 from cockpit.ui.base.page import render_document, render_fresh, render_home_zones
 from cockpit.ui.health.page import render_health_zone, render_status_line
@@ -423,6 +424,18 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             extra_requests=self.server.extra_requests(snapshot, now),
         )
 
+    def _chantier_decisions(self, snapshot, now):
+        """The open decisions of each chantier
+        (cockpit.projects.decisions), counted on the requests the home
+        counts: ``{chantier id: count}``, or None while the tracker or the
+        chantiers are not known -- an unknown count is never 0."""
+        requests, _, beads_known = self._assemble_requests(snapshot, now)
+        row = snapshot.get("projets")
+        if not beads_known or row is None or row["value"] is None or row["freshness"] == UNKNOWN:
+            return None
+        projects, sans_projet = projects_from_value(row["value"])
+        return chantier_decisions([c for p in projects for c in p.chantiers] + sans_projet, requests)
+
     def _undelivered(self):
         """Ids whose push could not be delivered yet (spec .59)."""
         notify = self.server.notify
@@ -541,7 +554,8 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         else:
             projects, _ = projects_from_value(row["value"])
             runs, _, checked = self._runs(read_model)
-            inner = render_projects_list(projects, runs, read_model.now(), checked=checked)
+            inner = render_projects_list(projects, runs, read_model.now(),
+                                         self._chantier_decisions(snapshot, read_model.now()), checked=checked)
         self._send_page(read_model, "projets", inner, extra_css=PROJECT_PAGE_CSS + PROJECTS_PANORAMA_CSS,
                         snapshot=snapshot)
 
@@ -586,7 +600,8 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                 targets = (row["value"].get("roadmap_chantiers") or {}).get(project_id) or {}
                 inner = render_project_fold(project_view(
                     descriptor or {"project_id": project.project_id, "display_name": project.display_name},
-                    project, "read", snapshot.get("depots"), targets, runs, now, historique.chantiers, below))
+                    project, "read", snapshot.get("depots"), targets, runs, now, historique.chantiers, below,
+                    self._chantier_decisions(snapshot, now)))
         self._send_page(read_model, "projets", inner,
                         extra_css=PROJECT_PAGE_CSS + PROJECTS_PANORAMA_CSS + RUNS_PAGE_CSS + PROJECT_FOLD_CSS,
                         status=status, snapshot=snapshot)
@@ -899,7 +914,8 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         checked = datetime.fromtimestamp(row["read_at"], tz=PARIS).strftime("%H:%M") if row["read_at"] else None
         sessions = (snapshot.get("sessions") or {}).get("value") or {}
         trace = self.server.session_trace.read() if self.server.session_trace is not None else None
-        return workflow_runs(row["value"], sessions.get("agents"), read_model.now(), trace), False, checked
+        runs = workflow_runs(row["value"], sessions.get("agents"), read_model.now(), trace)
+        return waiting_on(runs, self._chantier_decisions(snapshot, read_model.now())), False, checked
 
     def _query(self):
         return urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
