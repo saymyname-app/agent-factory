@@ -248,6 +248,10 @@ def create(state, rest):
 def close(state, bead_id, rest):
     if bead_id not in state["beads"] or rest[:1] != ["--reason"] or rest[2:] not in ([], ["--json"]):
         fail(f"no canned response configured for: bd close {bead_id} {' '.join(rest)}")
+    blockers = [dep for dep in state["beads"][bead_id].get("blocks") or []
+                if (state["beads"].get(dep) or {}).get("status") != "closed"]
+    if blockers:
+        fail(f"cannot close blocked issue: {bead_id} is blocked by [{' '.join(blockers)}]")
     state["beads"][bead_id]["status"] = "closed"
     log_write(["close", bead_id])
     print(json.dumps([{"id": bead_id, "status": "closed"}]))

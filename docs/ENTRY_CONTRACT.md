@@ -388,5 +388,7 @@ pass of `bin/convoy-advance` leaves the blocked repair waiting, and it is
 ready once its blocker is closed. In CI the same is asked of the fake
 tracker (`test_added_repair_waits_for_the_added_ticket_that_blocks_it`,
 `test_bd_patch_added_ticket_waits_for_its_blocker`), and
-`tests/fake-tool-contract-test.py` (local-only) runs that fake beside the
-real `bd` to prove both pose each dependency the same way round.
+`tests/fake-tool-contract-test.py` runs in CI against its closed behavior
+oracle; on an equipped Factory host it first runs the same cases beside the
+real `bd` in a disposable city, so an upstream behavior change refuses the
+oracle before a fake can be judged against stale expectations.
