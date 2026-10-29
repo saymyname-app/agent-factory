@@ -18,6 +18,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -73,6 +74,7 @@ def criterion_tests() -> list[str]:
 
 def run(test_id: str) -> str | None:
     """Run one criterion test class through the harness. What failed, or None."""
+    started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="cockpit-criteria-") as tmp:
         report = Path(tmp) / "report.xml"
         proc = subprocess.run(
@@ -80,6 +82,7 @@ def run(test_id: str) -> str | None:
             cwd=ROOT, text=True, capture_output=True, stdin=subprocess.DEVNULL,
             env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
         )
+        print(f"regression: took {time.monotonic() - started:.0f}s for criterion class {test_id}", flush=True)
         if proc.returncode == 0:
             return None
         return f"{test_id}: {report.read_text(encoding='utf-8') if report.exists() else proc.stderr}"
