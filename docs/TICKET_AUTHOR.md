@@ -176,8 +176,13 @@ stopped the ticket is what raises it to the operator.
   `operator_request`, not `technically_blocked`, and in doubt as well. Its
   `que_faire` holds one option « Corriger par maintenance sur main ». The
   fix goes through Factory maintenance (`docs/DELIVERY.md`, marked convoys,
-  « Stops and bounds »); the operator answers the request once it is
-  merged, and that answer lifts the parking (a merge alone lifts nothing).
+  « Stops and bounds »). Once the maintenance bead exists, code links it by
+  `bin/convoy-state link-technical-repair`; `bin/convoy-advance` then waits
+  for its structural merge and exact-head CI proof, withdraws the technical
+  request and resumes the ticket as `unblocked`, exactly once. A repair
+  merely open, failed, closed without proof, or not explicitly linked lifts
+  nothing. An ordinary operator request without that link still needs the
+  operator's answer.
   No gate reads it: the rule is the text of the author formulas, verified
   by reading.
   Intent (Benjamin, his words, 2026-10-17 00:13 Paris): « Décision 2: ok

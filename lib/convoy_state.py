@@ -71,6 +71,7 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state release-evaluation CONVOY TICKET --state-file PATH [--state-file PATH] [--withdraw]
     convoy-state set-handoff  CONVOY TICKET --file PATH
     convoy-state park         CONVOY TICKET --cause CAUSE --detail LINE
+    convoy-state link-technical-repair CONVOY TICKET --repair BEAD
     convoy-state set-fidelity CONVOY TICKET --commit SHA --piece NAME --file PATH
     convoy-state raise-planning-exception CONVOY TICKET --kind KIND --summary LINE [--anchor NAME ...] [--item ID ...]
                                           [--accept-option LETTER]
@@ -240,6 +241,7 @@ KEY_OVERRIDES = PREFIX + "overrides"
 KEY_CRITERIA = PREFIX + "criteria"
 KEY_RESUME = PREFIX + "resume"
 KEY_PARK_LIFTS = PREFIX + "park_lifts"
+KEY_TECHNICAL_REPAIRS = PREFIX + "technical_repairs"
 KEY_GROUPED_REQUEST = PREFIX + "grouped_request"
 KEY_SPEC_END = PREFIX + "spec_end"
 KEY_END_REVIEW = PREFIX + "end_review"
@@ -611,6 +613,20 @@ def load_convoy(convoy_id: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         if isinstance(dep, dict) and dep.get("dependency_type") == "tracks"
     ]
     return data, tickets
+
+
+def load_bead(bead_id: str) -> dict[str, Any]:
+    """One bead by id, for an explicit cross-work link held by convoy state."""
+    out = run_gc(["bd", "show", bead_id, "--json"])
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError as exc:
+        raise Refusal(f"gc bd show {bead_id} a rendu un JSON illisible : {exc}") from exc
+    if isinstance(data, list):
+        data = data[0] if data else None
+    if not isinstance(data, dict) or data.get("id") not in (None, bead_id):
+        raise Refusal(f"bead introuvable : {bead_id}")
+    return data
 
 
 def metadata_of(bead: dict[str, Any]) -> dict[str, Any]:
@@ -2086,6 +2102,23 @@ def resume_record(raw: Any) -> dict[str, Any]:
     return record
 
 
+def technical_repairs_record(raw: Any) -> list[dict[str, str]]:
+    """Factory-maintenance beads explicitly linked to one technical
+    operator request, in the order code linked them."""
+    entries = stored_record(raw, ("entries",))["entries"]
+    if not isinstance(entries, list) or not entries:
+        raise Refusal(f"réparations techniques liées mal formées : {entries!r}")
+    seen = set()
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != {"id", "at"} \
+                or not isinstance(entry["id"], str) or not BEAD_ID_RE.match(entry["id"]) \
+                or not isinstance(entry["at"], str) or not entry["at"] or "\n" in entry["at"] \
+                or entry["id"] in seen:
+            raise Refusal(f"réparation technique liée mal formée : {entry!r}")
+        seen.add(entry["id"])
+    return entries
+
+
 def park_lifts_record(raw: Any) -> list[dict[str, Any]]:
     """The parkings lifted on a ticket (T20), oldest first: what parked it,
     the request that was answered, the option taken, the count of its
@@ -2097,7 +2130,7 @@ def park_lifts_record(raw: Any) -> list[dict[str, Any]]:
         raise Refusal(f"parcages levés mal formés : {entries!r}")
     for entry in entries:
         if not isinstance(entry, dict) \
-                or set(entry) - {"taken", "proven_by_test"} != {"cause", "detail", "parked_at", "request", "option", "resumes", "at"}:
+                or set(entry) - {"taken", "proven_by_test", "repairs"} != {"cause", "detail", "parked_at", "request", "option", "resumes", "at"}:
             raise Refusal(f"parcage levé mal formé : {entry!r}")
         if "proven_by_test" in entry:
             proven = entry["proven_by_test"]
@@ -2117,6 +2150,12 @@ def park_lifts_record(raw: Any) -> list[dict[str, Any]]:
             raise Refusal(f"bead de la demande absent ou mal formé : {entry['request']!r}")
         if entry["option"] is not None:
             option_letter(entry["option"])
+        if "repairs" in entry:
+            repairs = entry["repairs"]
+            if entry["cause"] != "operator_request" or entry["option"] is not None \
+                    or not isinstance(repairs, list) or not repairs or len(set(repairs)) != len(repairs) \
+                    or any(not isinstance(repair, str) or not BEAD_ID_RE.match(repair) for repair in repairs):
+                raise Refusal(f"réparations du parcage levé mal formées : {repairs!r}")
         counter_value(entry["resumes"], "resumes")
     return entries
 
@@ -3197,7 +3236,7 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
             KEY_MARK, KEY_DEMONSTRATION, KEY_USER_STORIES, KEY_LAUNCH_RECIPE, KEY_PROTOTYPE_FOLD, KEY_BRANCH, KEY_EXIT,
             KEY_STOP, KEY_HANDOFF, KEY_PARK, KEY_MERGE, KEY_SESSION, KEY_TEST_REVIEW, KEY_CODE_REVIEW, KEY_MODELS,
             KEY_EVALUATION, KEY_FIDELITY, KEY_PLANNING_EXCEPTIONS, KEY_CORRECTION, KEY_OVERRIDES, KEY_CRITERIA,
-            KEY_RESUME, KEY_PARK_LIFTS, KEY_FINDINGS, KEY_BLOCKING_RED,
+            KEY_RESUME, KEY_PARK_LIFTS, KEY_TECHNICAL_REPAIRS, KEY_FINDINGS, KEY_BLOCKING_RED,
         ):
             continue
         raw = metadata[key]
@@ -3270,6 +3309,7 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
         ("merge", KEY_MERGE, merge_record),
         ("session", KEY_SESSION, session_record),
         ("resume", KEY_RESUME, resume_record),
+        ("technical_repairs", KEY_TECHNICAL_REPAIRS, technical_repairs_record),
         ("finding_classifications", KEY_FINDINGS, findings_record),
         ("blocking_red", KEY_BLOCKING_RED, blocking_red_record),
     ):
@@ -5243,6 +5283,39 @@ def cmd_park(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_link_technical_repair(args: argparse.Namespace) -> int:
+    """Turn only an explicitly linked Factory defect request into a
+    code-owned wait. The pass lifts it after every repair has structural
+    merge and exact-head CI proof; an ordinary operator request has no such
+    record and keeps its human answer contract."""
+    ticket = marked_ticket(args.convoy, args.ticket)
+    metadata = metadata_of(ticket)
+    exit_record = stored_record(metadata.get(KEY_EXIT), ("exit", "at")) if KEY_EXIT in metadata else None
+    park = park_record(metadata[KEY_PARK]) if KEY_PARK in metadata else None
+    if exit_record is None or exit_record["exit"] != "operator_request" \
+            or park is None or park["cause"] != "operator_request" or park["origin"] != args.ticket:
+        raise Refusal(
+            f"{args.ticket} n'est pas parqué par sa propre demande opérateur : "
+            "seule cette classe peut être reliée à une réparation technique")
+    if not isinstance(args.repair, str) or not BEAD_ID_RE.match(args.repair) or args.repair == args.ticket:
+        raise Refusal(f"bead de réparation absent ou mal formé : {args.repair!r}")
+    repair = load_bead(args.repair)
+    # Imported only on this rare write, not on every convoy-state read.
+    from factory_delivery_proof import requires_pr_delivery_proof
+    if metadata_of(repair).get("gc.delivery_contract") != "pr-ci-merged-v1" \
+            and not requires_pr_delivery_proof(repair):
+        raise Refusal(
+            f"{args.repair} ne porte aucun contrat de livraison PR+CI : "
+            "une demande technique ne se lie qu'à une réparation dont la livraison peut être prouvée")
+    entries = technical_repairs_record(metadata[KEY_TECHNICAL_REPAIRS]) if KEY_TECHNICAL_REPAIRS in metadata else []
+    if any(entry["id"] == args.repair for entry in entries):
+        return done(args.convoy, args.ticket, {})
+    entries.append({"id": args.repair, "at": now()})
+    value = encode({"entries": entries})
+    write_metadata(args.ticket, {KEY_TECHNICAL_REPAIRS: value})
+    return done(args.convoy, args.ticket, {KEY_TECHNICAL_REPAIRS: value})
+
+
 def cmd_lift_park(args: argparse.Namespace) -> int:
     """Lift the parking a ticket caused (T20): on itself and on every ticket
     parked behind it, once the request `--request` was answered. A ticket
@@ -5263,6 +5336,23 @@ def cmd_lift_park(args: argparse.Namespace) -> int:
     if not isinstance(args.request, str) or not BEAD_ID_RE.match(args.request):
         raise Refusal(f"bead de la demande absent ou mal formé : {args.request!r} (--request)")
     option = option_letter(args.option) if args.option is not None else None
+    repairs = list(args.repair or [])
+    if repairs:
+        linked = [entry["id"] for entry in technical_repairs_record(metadata[KEY_TECHNICAL_REPAIRS])] \
+            if KEY_TECHNICAL_REPAIRS in metadata else []
+        if park["cause"] != "operator_request" or option is not None or repairs != linked:
+            raise Refusal(
+                f"réparations techniques de la levée incohérentes : {repairs!r} "
+                f"(liées au ticket : {linked!r})")
+        # Imported only on this rare transition, not on every state read.
+        from factory_delivery_proof import delivery_readiness
+        waiting = []
+        for repair_id in repairs:
+            readiness = delivery_readiness(load_bead(repair_id))
+            if not readiness["ready"] or not readiness["pr_backed"]:
+                waiting.append(f"{repair_id} ({readiness['reason']})")
+        if waiting:
+            raise Refusal("réparations techniques sans preuve de livraison : " + ", ".join(waiting))
     lifts = park_lifts_record(metadata[KEY_PARK_LIFTS]) if KEY_PARK_LIFTS in metadata else []
     resumes = counter_value(metadata.get(COUNTER_PREFIX + "resumes"), "resumes")
     taken = resumes_taken(metadata)
@@ -5276,8 +5366,11 @@ def cmd_lift_park(args: argparse.Namespace) -> int:
                 "seule la réponse de la demande groupée (--option) le lève")
         exhausted = [lift for lift in lifts if lift["cause"] == PARK_EXHAUSTED]
         taken = taken_at_lift(exhausted[-1], metadata) if exhausted else dict.fromkeys(BOUNDED_RESUME_CAUSES, 0)
-    lifts.append({"cause": park["cause"], "detail": park["detail"], "parked_at": park["at"], "request": args.request,
-                  "option": option, "resumes": resumes, "taken": taken, "at": now()})
+    lift = {"cause": park["cause"], "detail": park["detail"], "parked_at": park["at"], "request": args.request,
+            "option": option, "resumes": resumes, "taken": taken, "at": now()}
+    if repairs:
+        lift["repairs"] = repairs
+    lifts.append(lift)
     proven = proven_by_test_at_lift(park, option, metadata)
     if proven:
         lifts[-1]["proven_by_test"] = proven
@@ -7639,9 +7732,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = command("park", cmd_park)
     p.add_argument("--cause")
     p.add_argument("--detail")
+    command("link-technical-repair", cmd_link_technical_repair).add_argument("--repair")
     p = command("lift-park", cmd_lift_park)
     p.add_argument("--request")
     p.add_argument("--option")
+    p.add_argument("--repair", action="append", default=[])
     p = command("open-resume", cmd_open_resume)
     p.add_argument("--cause")
     p.add_argument("--ref")

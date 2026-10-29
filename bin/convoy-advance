@@ -240,6 +240,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 from convoy_state import PROVEN_BY_TEST_OPTION, REEVALUATE_OPTION, STOP_COUNT_WHY, overridden_ticket  # noqa: E402
+from factory_delivery_proof import delivery_readiness  # noqa: E402
 
 
 PROGRAM = "convoy-advance"
@@ -954,6 +955,23 @@ def resume_on_its_way(ticket: dict[str, Any]) -> bool:
     return read_bead(last["launches"][-1]["bead"]).get("status") != "closed"
 
 
+def technical_repairs(ticket: dict[str, Any]) -> list[str]:
+    """The explicit Factory-maintenance links convoy-state rendered."""
+    entries = ticket.get("technical_repairs")
+    return [entry["id"] for entry in entries] if isinstance(entries, list) else []
+
+
+def delivered_technical_repairs(ticket: dict[str, Any]) -> list[str]:
+    """Every linked repair, only after structural PR merge and exact-head
+    CI proof. Open, failed and merely closed work keeps waiting."""
+    repairs = technical_repairs(ticket)
+    for repair_id in repairs:
+        readiness = delivery_readiness(read_bead(repair_id))
+        if not readiness["ready"] or not readiness["pr_backed"]:
+            return []
+    return repairs
+
+
 def resume_due(ticket: dict[str, Any], alive: set[str]) -> tuple[str, str, str] | None:
     """What the pass owes a ticket at work, read on the tracker alone:
     ("new", cause, ref) a fact that asks for a resume not counted yet;
@@ -976,6 +994,10 @@ def resume_due(ticket: dict[str, Any], alive: set[str]) -> tuple[str, str, str] 
         return "new", "interrupted", f"session:{session}" if session else f"exit:{exit_at}"
     if exit_name == "technically_blocked":
         return None if open_blockers(ticket["id"]) else ("new", "unblocked", f"exit:{exit_at}")
+    if exit_name == "operator_request" and technical_repairs(ticket):
+        repairs = ",".join(technical_repairs(ticket))
+        ref = hashlib.sha256(repairs.encode("utf-8")).hexdigest()[:16]
+        return "new", "unblocked", f"repairs:{ref}/exit:{exit_at}"
     if exit_name in PARKING_EXITS:
         # Its parking was lifted: the answer goes to a fresh session.
         return "new", "answered", f"exit:{exit_at}"
@@ -1261,12 +1283,20 @@ def settle_lifts(convoy: Convoy, out: dict[str, Any]) -> None:
     parked. A ticket parked for exhausted resumes that has resumes left
     under the bounds of now is lifted without an answer: an answered resume
     takes no bound since af-npz9v1.41, and nothing is left to ask."""
-    lifts: list[tuple[str, str, str | None]] = []
+    lifts: list[tuple[str, str, str | None, list[str]]] = []
     for ticket in convoy.tickets:
         park = ticket.get("park") or {}
         if ticket.get("status") != "closed" and park.get("origin") == ticket["id"] \
                 and park.get("cause") == PARK_EXHAUSTED and ticket.get("resumes_left"):
-            lifts.append((ticket["id"], ticket["id"], None))
+            lifts.append((ticket["id"], ticket["id"], None, []))
+            continue
+        if ticket.get("status") != "closed" and park.get("origin") == ticket["id"] \
+                and park.get("cause") == "operator_request" and technical_repairs(ticket):
+            repairs = delivered_technical_repairs(ticket)
+            if repairs:
+                lifts.append((ticket["id"], ticket["id"], None, repairs))
+            # Once explicitly linked, this is a code-owned technical wait:
+            # an old or new human answer never releases it before delivery.
             continue
         answer = park.get("answer")
         if ticket.get("status") == "closed" or park.get("origin") != ticket["id"] or not answer:
@@ -1279,7 +1309,7 @@ def settle_lifts(convoy: Convoy, out: dict[str, Any]) -> None:
                      and ((ticket.get("evaluation") or {}).get("state") or {}).get("outcome") == "planning_exception")
         proven = evaluated and answer["option"] in (PROVEN_BY_TEST_OPTION, REEVALUATE_OPTION)
         if park.get("cause") == "operator_request" or (park.get("cause") == "planning_exception" and (accepted or proven)):
-            lifts.append((ticket["id"], ticket["id"], answer["option"]))
+            lifts.append((ticket["id"], ticket["id"], answer["option"], []))
     try:
         grouped = convoy.grouped or {}
         if grouped.get("lifts"):
@@ -1288,14 +1318,20 @@ def settle_lifts(convoy: Convoy, out: dict[str, Any]) -> None:
                 for ticket_id in grouped["lifts"]:
                     park = convoy.ticket(ticket_id).get("park") or {}
                     if park.get("origin") == ticket_id and park.get("cause") == PARK_EXHAUSTED:
-                        lifts.append((ticket_id, grouped["bead"], letter))
+                        lifts.append((ticket_id, grouped["bead"], letter, []))
     except Refusal as exc:
         out["refused"].append({"id": convoy.id, "reason": str(exc)})
-    for ticket_id, request, letter in lifts:
+    for ticket_id, request, letter, repairs in lifts:
         try:
             option = ["--option", letter] if letter else []
-            answer = state_write("lift-park", convoy.id, ticket_id, "--request", request, *option)
-            out["lifted"].append({"id": ticket_id, "option": letter, "request": request, "lifted": answer["lifted"]})
+            repair_args = [part for repair in repairs for part in ("--repair", repair)]
+            if repairs:
+                passed(run([str(ESCALATION_BIN), "clear", ticket_id]), "escalation-door clear")
+            answer = state_write("lift-park", convoy.id, ticket_id, "--request", request, *option, *repair_args)
+            lifted = {"id": ticket_id, "option": letter, "request": request, "lifted": answer["lifted"]}
+            if repairs:
+                lifted["repairs"] = repairs
+            out["lifted"].append(lifted)
         except Refusal as exc:
             out["refused"].append({"id": ticket_id, "reason": str(exc)})
     if lifts:
@@ -1308,12 +1344,16 @@ def parked_origins(convoy: Convoy) -> dict[str, list[str]] | None:
     left = [t for t in convoy.tickets if t.get("status") != "closed"]
     if not left or not all(isinstance(t.get("park"), dict) and "origin" in t["park"] for t in left):
         return None
+    technical = {t["id"] for t in left if technical_repairs(t)}
     origins: dict[str, list[str]] = {}
     for ticket in left:
-        origins.setdefault(ticket["park"]["origin"], [])
+        origin = ticket["park"]["origin"]
+        if origin in technical:
+            continue
+        origins.setdefault(origin, [])
         if ticket["park"]["origin"] != ticket["id"]:
-            origins[ticket["park"]["origin"]].append(ticket["id"])
-    return origins
+            origins[origin].append(ticket["id"])
+    return origins or None
 
 
 def grouped_request(convoy: Convoy, origins: dict[str, list[str]]) -> tuple[dict[str, Any], str, list[str]]:
@@ -1351,9 +1391,10 @@ def grouped_request(convoy: Convoy, origins: dict[str, list[str]]) -> tuple[dict
     return request, text, exhausted
 
 
-def parkings_signature(convoy: Convoy) -> str:
+def parkings_signature(convoy: Convoy, origins: dict[str, list[str]]) -> str:
+    named = set(origins) | {ticket_id for behind in origins.values() for ticket_id in behind}
     rows = sorted([t["id"], str(t["park"].get("cause")), str(t["park"].get("origin")), str(t["park"].get("at"))]
-                  for t in convoy.tickets if t.get("status") != "closed" and isinstance(t.get("park"), dict))
+                  for t in convoy.tickets if t["id"] in named and isinstance(t.get("park"), dict))
     return "sha256:" + hashlib.sha256(json.dumps(rows, ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
@@ -1395,7 +1436,7 @@ def settle_grouped_request(convoy: Convoy, out: dict[str, Any]) -> dict[str, Any
                             f"Le convoi {convoy.id} n'est plus fait que de tickets parqués."]), "gc bd close")
             state_write("clear-grouped-request", convoy.id)
             return {"bead": bead_id, "withdrawn": True}
-        signature = parkings_signature(convoy)
+        signature = parkings_signature(convoy, origins)
         if convoy.grouped and convoy.grouped.get("signature") == signature:
             return {"bead": convoy.grouped["bead"], "raised": False}
         request, text, lifts = grouped_request(convoy, origins)

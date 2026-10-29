@@ -302,13 +302,14 @@ the parking only):
 
 | Parked for | Lifted by |
 |---|---|
+| `operator_request` explicitly linked to Factory-maintenance bead(s) (`gc.flow.technical_repairs`) | code only, once every linked bead has the existing structural PR merge and exact-head CI proof; an open, failed or merely closed repair waits, any human answer is ignored for this linked technical class |
 | `operator_request` (its own Ticket Exit) | any answer given to the request of that ticket (`bin/escalation-door repondre`) after the parking |
 | `planning_exception` (its own Ticket Exit) | only the option that accepts the deviation: the last Planning Exception of the ticket is `accepted` (it was answered by its `accept_option`, `docs/CONVOY_STATE.md`; every exception raised since ADR-0030 L5 has one, with or without anchors). Any other answer leaves the ticket parked |
 | `planning_exception` (its Ticket Evaluation: the ticket is `finished`, its last evaluation's outcome is `planning_exception`, no entry under `planning_exceptions`) | only option `a`, « Juger ce qui est inobservable prouvé par son test de critère vert » (`bin/ticket-evaluation`); `lift-park` records what that evaluation found unobservable by the criterion under `proven_by_test`, and the evaluation the lift sends again counts it proven (`docs/TICKET_EVALUATION.md`); or option `c`, « Réévaluer sur le produit relancé » (af-npz9v1.38): the lift records nothing proven, and the evaluation it sends again judges every item on the products launched again. Option `b` (remove the ticket from the graph) or no answer: parked |
 | `resumes_exhausted` | option `a` of the convoy's grouped request (below), for the tickets that request names as lifted; or, without an answer, the ticket has resumes left under the bounds of now (`resumes_left` above 0): a parking left by a bound that no longer holds, such as the one an answered resume took before af-npz9v1.41. That lift gives no resume back |
 
 The lift is `bin/convoy-state lift-park <convoy> <ticket> --request <bead>
---option <letter>`: the parking is removed from the ticket and from those
+[--option <letter> | --repair <bead> ...]`: the parking is removed from the ticket and from those
 parked behind it — a ticket that still waits for another parked ticket is
 parked behind that one instead — and kept on the ticket under `park_lifts`.
 An exhausted ticket takes its resumes again, three per cause, counted from
@@ -348,7 +349,7 @@ ticket:
 |---|---|
 | `interrupted` | the Ticket Exit is `interrupted`; or the ticket is `in_progress` with no Ticket Exit and its recorded session is not among the live ones (`gc session list`); or the bead of its last resume is closed and no session took the ticket since |
 | `returned` | the Ticket Exit is `finished` and the merge returned the ticket (`merge.outcome` `conflict` or `red`) at the tip of its branch. Also on a ticket stopped `still_refused` whose every Blocking Finding the operator overrode, which `bin/spec-integration` merges as if at work: the resume lifts that stop, keeps it on its entry and withdraws its request; with no resume left the stop stays with the operator (af-n4bn62: F and G1 of af-strhoy, returned red on 21/10/2026, were neither merged again nor resumed) |
-| `unblocked` | the Ticket Exit is `technically_blocked` and no bead it waits for with a `blocks` edge is open any more (its repair is closed) |
+| `unblocked` | the Ticket Exit is `technically_blocked` and no bead it waits for with a `blocks` edge is open any more; or it is an `operator_request` carrying explicit Factory-maintenance links whose every bead has structural delivery proof, after code lifted its parking |
 | `answered` | the Ticket Exit is `planning_exception` or `operator_request` and the ticket is no longer parked: its parking was lifted |
 | `behind` | the Ticket Exit is `finished`, the ticket is not merged, and `bin/code-review show <convoy> <ticket> --repo` reports `behind`: its branch does not contain the tip of the integration branch, so no reviewer is sent on it (T44, `docs/CODE_REVIEW.md`). The fact is `integration:<tip>/exit:<exit time>`: once per Ticket Exit |
 | `evaluation_no_result` | the ticket is stopped `evaluation_no_result` (its Ticket Evaluation gave no result, relaunch included, `docs/TICKET_EVALUATION.md`), it is neither parked nor closed, it has a resume left, the operator has not answered the request of that stop, and no resume of this cause was opened yet on the current tip of the integration branch (on `origin` when it is there, else local). The fact is `integration:<tip>/stop:<stop time>`: once per tip of the integration branch (af-xhc0sj) |
@@ -418,7 +419,11 @@ commits and finishes again; the review then runs on the new tip.
 An `unblocked` resume brings the integration branch into the ticket branch
 too: the repair the ticket waited for landed there, not on the ticket's
 branch, and without it the ticket meets the same defect again (af-m4np8z;
-T59 met the regression its repair had fixed).
+T59 met the regression its repair had fixed). For a linked Factory request,
+the same pass clears its escalation through `bin/escalation-door`, records
+the repair ids on the parking lift, and opens this resume. The explicit
+links remain as history; the repair ids, never request text or R-codes,
+make the transition idempotent.
 
 A ticket to resume that names no single known project, or when the
 settings have no `resume` entry, is listed under `refused` (exit 1) before

@@ -146,7 +146,8 @@ Every answer is one JSON object on stdout.
 | Overrides | `gc.flow.overrides` | ticket | `entries`, oldest first, one per overridden Blocking Finding: `finding`, `approver`, `words` (not empty, as given), `commit` (the one of the review), `at` |
 | Parking | `gc.flow.park` | ticket | cause: `planning_exception`, `operator_request`, `resumes_exhausted` (T20); the ticket that caused it (`origin`: the one whose Ticket Exit parked it, or that is out of resumes); a one-line detail |
 | Resumes | `gc.flow.resume` | ticket | `entries`, oldest first, one per resume code opened (T20): `cause` (`interrupted`, `returned`, `unblocked`, `answered`, `behind`, `evaluation_no_result`, `stage_removed`, `code_review_no_result`, `amendment_granted`, `inherited_change`), `ref` (the one-line fact that asked for it), `session` (the author session it takes over from, or null), `exit` (the Ticket Exit it replaced, `{exit, at}`, or null), `stop` (only for `evaluation_no_result`, and for `stage_removed` a stop `test_review_refused` or `test_review_no_result`, and for `code_review_no_result`, whose resume also drops the `request` of `gc.flow.code_review`, and for `amendment_granted` a stop `amendment_exhausted` the operator answered « a », which allows one amendment more: the stop it lifted, as it was), `launches`: at most one `{bead, at}`; `at` |
-| Parkings lifted | `gc.flow.park_lifts` | ticket | `entries`, oldest first, one per parking lifted on the ticket that caused it (T20): `cause`, `detail`, `parked_at`, `request` (the bead of the answered request), `option` (the letter taken, or null), `resumes` (the counter at that moment), `at`; `proven_by_test`: `{what, text}` per item the operator's answer `a` to an evaluation's Planning Exception judged proven by its criterion test (af-ten1sp) |
+| Linked technical repairs | `gc.flow.technical_repairs` | ticket | `entries`, oldest first: `{id, at}` for each Factory-maintenance bead explicitly linked by `link-technical-repair` to this ticket's own `operator_request`; absent on ordinary operator, product, planning and human requests |
+| Parkings lifted | `gc.flow.park_lifts` | ticket | `entries`, oldest first, one per parking lifted on the ticket that caused it (T20): `cause`, `detail`, `parked_at`, `request` (the bead of the answered or withdrawn request), `option` (the letter taken, or null), `resumes` (the counter at that moment), `at`; `repairs` (optional: every explicitly linked Factory-maintenance bead whose structural delivery proof released this technical request); `proven_by_test`: `{what, text}` per item the operator's answer `a` to an evaluation's Planning Exception judged proven by its criterion test (af-ten1sp) |
 | Grouped request | `gc.flow.grouped_request` | convoy | the bead that carries the one request of a convoy in which nothing but parked tickets is left (T20) and, once it reached the escalation door, the `sha256:` signature of the parkings it names, with `lift_option` (a letter) and `lifts` (the tickets that option lifts), both or neither |
 | Fidelity result | `gc.flow.fidelity` | ticket | `commit`, `verdict` (`favorable` / `unfavorable`, computed), `piece` (the sealed record), `screens`, `states` (state → `viewports`, `anchors` compared), `deviations`: each `state`, `viewport`, `anchor`, `kind` (`absent`, `structure`, `style`, `token`, `theme`), `property`; a `token` deviation has neither viewport nor anchor, a `theme` one (a theme not measurable on the prototype) a viewport and no anchor; past 100 deviations, the first 100 only, with `deviation_count` (all of them) and `deviation_anchors` (the anchors of all, `null` for a token deviation) |
 | Planning Exceptions | `gc.flow.planning_exceptions` | ticket | `entries`, oldest first: `kind` (`semantic`, `topology`), `summary`, `anchors` (the anchors whose deviation it asks to accept, possibly none), `accept_option` (the letter of the request's option that accepts it; with anchors or items only), `prior_response_at`, `at`, and `resolution` (`option`, `at`) once a later one was raised; T23: `items` (the tracked elements of the Ticket Handoff it names, `deviations.N` / `not_done.N`; absent when none) and `repair` (the `repair` ticket code published once the operator asked for one, with the answer frozen beside it) |
@@ -799,9 +800,18 @@ that record is the one its judgement calls for, `null` otherwise; and
 Delivered and Accepted are two states: an Outcome is Accepted once merged
 and its convoy closed on his words, not when « accepté » is recorded.
 
+`link-technical-repair` accepts only a ticket parked by its own
+`operator_request` and a repair bead governed by the PR+CI delivery
+contract. Repeating the same link writes nothing. The link neither closes,
+launches nor changes either bead; it gives `bin/convoy-advance` the durable
+identity it needs to wait for delivery proof without guessing from a title,
+option or ticket code.
+
 `lift-park` lifts the parking a ticket caused, once the request `--request`
 (a bead id) was answered, with the letter of the option taken (`--option`,
-optional). It removes the parking from every ticket parked behind it, then
+optional), or once every repeatable `--repair` exactly matches the linked
+technical repairs and carries structural merge and exact-head CI proof. It
+removes the parking from every ticket parked behind it, then
 from the ticket itself — those behind first, so that the same call
 completes an interrupted one — and appends the lift to `park_lifts` with the
 count of `resumes` at that moment: an exhausted ticket takes its three
@@ -810,9 +820,9 @@ that still waits for another ticket that parks is parked behind that one
 instead of being freed. It refuses a ticket that is not parked, a ticket
 parked by another one (a parking is lifted on the ticket that caused it), a
 `--request` that is not a bead id and an `--option` that is not one
-lowercase letter. Whether the answer is one that lifts is the caller's
-decision (`bin/convoy-advance`), not checked here. Nothing here lifts a
-stop.
+lowercase letter. Whether a human answer is one that lifts is the caller's
+decision (`bin/convoy-advance`); linked repair delivery is checked here and
+fails closed. Nothing here lifts a stop.
 
 `record-grouped-request` writes on the convoy the bead of its grouped
 request, first alone, then with `--signature`, `--lift-option` and `--lifts`

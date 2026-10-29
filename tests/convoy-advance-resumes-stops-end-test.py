@@ -515,6 +515,75 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual([(T1, "unblocked")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
         self.assertEqual(1, self.resumes())
 
+    def test_a_factory_technical_request_waits_for_every_linked_repair_s_delivery_proof_then_resumes_once(self):
+        self.started_convoy()
+        self.taken(T1, "auteur-1")
+        request = {
+            "quoi": "Le contrôle de l'usine est rouge",
+            "pourquoi": "Le défaut est dans un test de l'usine, hors du ticket",
+            "que_faire": [{"option": "Corriger par maintenance sur main", "consequence": "Le ticket reprend après livraison."}],
+            "langue": "fr", "bloquant": True,
+        }
+        self.run_ok(ESCALATION, "benjamin", T1, json.dumps(request))
+        self.run_ok(STATE, "park", CONVOY, T1, "--cause", "operator_request", "--detail", request["quoi"])
+        self.run_ok(STATE, "set-exit", CONVOY, T1, "--exit", "operator_request")
+
+        repair1, repair2 = "fx-repair1", "fx-repair2"
+        state = self.tracker_state()
+        state["beads"][repair1] = {
+            "title": "réparation ouverte", "status": "open", "issue_type": "bug",
+            "metadata": {"gc.delivery_contract": "pr-ci-merged-v1"},
+        }
+        state["beads"][repair2] = {
+            "title": "réparation échouée", "status": "closed", "issue_type": "bug",
+            "metadata": {"gc.delivery_contract": "pr-ci-merged-v1", "gc.work_outcome": "abandoned"},
+        }
+        self.tracker.write_text(json.dumps(state))
+        for repair in (repair1, repair2, repair1):
+            self.run_ok(STATE, "link-technical-repair", CONVOY, T1, "--repair", repair)
+        self.assertEqual(
+            [repair1, repair2],
+            [entry["id"] for entry in self.shown_state(T1)["technical_repairs"]],
+        )
+
+        waiting = self.advance(CONVOY)
+        self.assertEqual(([], []), (self.of(waiting, "lifted"), self.of(waiting, "resumed")))
+        self.assertEqual("operator_request", self.park_of(T1)["cause"])
+
+        sha1, sha2, merge1, merge2 = "1" * 40, "2" * 40, "3" * 40, "4" * 40
+
+        def delivered(number, head, merge):
+            return {
+                "gc.delivery_contract": "pr-ci-merged-v1",
+                "gc.delivery_status": "merged", "gc.work_outcome": "shipped",
+                "gc.github_repo": "example/factory", "gc.pr_number": number,
+                "gc.pr_head": head, "gc.merge_commit": merge,
+                "gc.pr_url": f"https://github.com/example/factory/pull/{number}",
+                "pr_number": number, "merge_result": "merged", "merged_sha": merge,
+                "merged_target": "main", "gc.required_ci_workflow": "Factory CI",
+                "gc.ci_run_id": number, "gc.ci_head_sha": head, "gc.ci_conclusion": "success",
+            }
+
+        # One delivered repair cannot release a request whose other linked
+        # repair is merely closed without merge/CI proof.
+        self.edit(repair1, status="closed", metadata={"gc.delivery_contract": "pr-ci-merged-v1"})
+        self.edit(repair2, status="closed", metadata=delivered(42, sha2, merge2))
+        unproven = self.advance(CONVOY)
+        self.assertEqual(([], []), (self.of(unproven, "lifted"), self.of(unproven, "resumed")))
+        self.assertEqual("operator_request", self.park_of(T1)["cause"])
+
+        self.edit(repair1, status="closed", metadata=delivered(41, sha1, merge1))
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "unblocked")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+        self.assertEqual([(T1, [T1, T3])], [(entry["id"], entry["lifted"]) for entry in self.of(answer, "lifted")])
+        self.assertEqual([repair1, repair2], self.shown_state(T1)["park_lifts"][-1]["repairs"])
+        self.assertEqual((None, None), (self.park_of(T1), self.park_of(T3)))
+        self.assertEqual([], [line for line in self.needs() if T1 in line])
+        self.assertEqual(1, self.resumes())
+        self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
+        self.assertEqual(1, self.resumes())
+
     def test_a_finished_ticket_behind_the_integration_tip_goes_back_to_its_author_once_and_is_counted(self):
         self.integrated()
         self.resumable()
