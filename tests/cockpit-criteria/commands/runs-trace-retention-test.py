@@ -16,9 +16,10 @@ with the pieces it captured and the structured output it recorded. The
 case reads GET /runs/job -- the job « Réaliser » -- as a headless Chromium
 renders it and over HTTP.
 
-Then the cockpit stops, the evidence store of the Spec is purged as
-bin/evidence-capture purge --spec does once the Outcome is promoted -- its
-folder removed, the fingerprints left in the tracker -- and the supervisor
+Then the cockpit stops, the evidence store of the Spec is purged as the
+purge of the evidence capture (« purge --spec ») does once the Outcome is
+promoted -- its folder removed, the fingerprints left in the tracker -- and
+the supervisor
 no longer holds what the providers recorded of those sessions; the cockpit
 is launched again on the same projection and the same store, and the case
 reads the same job.
@@ -148,8 +149,8 @@ class RunsTraceRetention(unittest.TestCase):
         for piece in ("tdd_green", "demonstration"):
             self.assertIn(f"{piece} · présente", passed["content"], f"the piece {piece} is not said present")
         # The cockpit stops; the purge removes the folder of the Spec from
-        # the store -- the only one it holds -- as bin/evidence-capture
-        # purge --spec does.
+        # the store -- the only one it holds -- as the purge of the evidence
+        # capture (« purge --spec ») does.
         self.tree.stop_all()
         folders = [folder for folder in self.store.iterdir() if folder.is_dir()] if self.store.is_dir() else []
         self.assertEqual(1, len(folders), f"the store does not hold the folder of one Spec: {folders}")
