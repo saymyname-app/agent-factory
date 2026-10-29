@@ -652,11 +652,13 @@ def ask(city: TrialCity, alias: str, transcript: ClaudeTranscript | CodexTranscr
     return False
 
 
-def wait_active(city: TrialCity, alias: str, timeout: int = 300) -> str | None:
+def wait_active(city: TrialCity, alias: str, timeout: int = 300, fresh_after_drain: bool = False) -> str | None:
     """Wait for the session to be usable; returns the provider gc reports for it, if any."""
     deadline = time.time() + timeout
     provider = None
     active_polls = 0
+    seen_active = False
+    reset_after_drain = False
     while time.time() < deadline:
         time.sleep(5)
         proc = city.gc("session", "list", "--json", check=False)
@@ -671,12 +673,21 @@ def wait_active(city: TrialCity, alias: str, timeout: int = 300) -> str | None:
                 provider = session.get("provider") or provider
                 state = str(session.get("state", "")).lower()
                 active = state in ("active", "awake")
+                if active:
+                    seen_active = True
+                    if reset_after_drain:
+                        return provider or ""
                 if state == "asleep":
-                    city.gc("session", "wake", alias, check=False)
-        # Usable for a minute in a row (`active` while starting, then `awake`
-        # once settled): a Codex session is drained for config
-        # drift about 35 s after its first start (seen twice, af-npz9v1.12),
-        # and woken again above; it is not usable before that has passed.
+                    if fresh_after_drain and seen_active and not reset_after_drain:
+                        # The first Codex start materializes its hooks after gc
+                        # took the config hash. Config drift drains it before a
+                        # provider thread exists, so resume exits dead; restart
+                        # this empty trial conversation fresh exactly once.
+                        city.gc("session", "reset", alias)
+                        reset_after_drain = True
+                    else:
+                        city.gc("session", "wake", alias, check=False)
+        # Without a seen drain/reset, require the historical stability window.
         active_polls = active_polls + 1 if active else 0
         if active_polls >= 12:
             return provider or ""
@@ -714,7 +725,7 @@ def trial_one(city: TrialCity, data: dict[str, Any], role: str, provider: str) -
     # it asleep (af-npz9v1.12). Pinned and woken (wait_active), it comes back.
     city.gc("session", "pin", alias, check=False)
     try:
-        reported = wait_active(city, alias)
+        reported = wait_active(city, alias, fresh_after_drain=observer is CodexTranscript)
         if reported is None:
             trial.update(passed=False, failures=["the session never became active"])
             return trial

@@ -203,6 +203,27 @@ class WaitActiveTest(unittest.TestCase):
              mock.patch.object(trial.time, "sleep"):
             self.assertEqual("codex", trial.wait_active(city, "trial-author", timeout=20))
 
+    def test_codex_resets_fresh_after_the_pre_thread_config_drift(self):
+        states = iter(["active", "draining", "asleep", "creating", "active"])
+        city = mock.Mock()
+
+        def gc(*args, **_kwargs):
+            if args[:2] == ("session", "list"):
+                state = next(states)
+                return SimpleNamespace(stdout=json.dumps({"sessions": [
+                    {"alias": "trial-author", "provider": "codex", "state": state}
+                ]}))
+            return SimpleNamespace(stdout="")
+
+        city.gc.side_effect = gc
+        with mock.patch.object(trial.time, "time", side_effect=range(100)), \
+             mock.patch.object(trial.time, "sleep"):
+            self.assertEqual(
+                "codex",
+                trial.wait_active(city, "trial-author", timeout=20, fresh_after_drain=True),
+            )
+        city.gc.assert_any_call("session", "reset", "trial-author")
+
 
 class TrialProviderProfileTest(unittest.TestCase):
     def test_codex_bypasses_only_hook_trust_in_the_isolated_trial(self):

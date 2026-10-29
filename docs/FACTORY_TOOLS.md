@@ -552,9 +552,14 @@ skills du compte claude.ai, dont un autre `code-review`.
   globale ni les profils live. Un profil sans observateur échoue et la porte
   tient le rôle hors de ce profil.
 - **Stabilité de session** : `active` et `awake` sont tous deux des états
-  utilisables et comptent dans la minute de stabilité. La transition normale
-  `active` → `awake` ne remet donc pas le compteur à zéro ; `asleep` déclenche
-  encore un réveil et tout autre état interrompt la fenêtre.
+  utilisables. Au premier démarrage Codex, Gas City matérialise ses hooks après
+  avoir pris l'empreinte de configuration puis draine la session avant la
+  création d'un thread fournisseur. Après cette unique transition vers
+  `asleep`, l'essai fait `gc session reset` dans sa cité isolée : un redémarrage
+  frais sur le même bead et alias, sans tentative de reprendre un thread qui
+  n'existe pas. Le premier état `active` ou `awake` suivant autorise le probe.
+  Sans ce drain observé, la minute de stabilité historique reste requise ; un
+  autre `asleep` déclenche un réveil normal.
 - **Lecture seule** : le relecteur et l'Evaluator tournent sur un profil
   `*-readonly`, lancé par `bin/delivery-role-sandbox` (Bubblewrap : tout en
   lecture seule sauf le répertoire de travail de la session, l'état du
