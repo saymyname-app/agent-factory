@@ -225,7 +225,11 @@ def _render_head(run, now, stale_at, anchors):
     if run["state"] != DONE:
         current = [item["name"] for item in run["items"] if item["open"]]
         said = "Derniers jobs observés" if stale_at else "Job courant"
-        if run["state"] == WAIT and not current:
+        if run.get("decisions"):
+            # The open decisions of its chantier, counted as its project
+            # page counts them (cockpit.runs.workflows.waiting_on).
+            current.append(run["step"])
+        elif run["state"] == WAIT and not current:
             current = [run["step"]]
         out += '<p class="rn-current" %s>%s : %s</p>' % (anchors("p"), said, _e(" · ".join(current) or run["step"]))
         if stale_at:
