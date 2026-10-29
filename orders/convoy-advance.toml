@@ -33,4 +33,4 @@ exec = "/home/benja/agent-factory/bin/order-pause gate convoy-advance -- /home/b
 # two full regressions (a take-up control, then the tests of the merged
 # result), two margins. `bin/test-budgets check-order` holds it
 # (tests/test-budgets-test.py; study C, T3).
-timeout = "40m"
+timeout = "50m"
