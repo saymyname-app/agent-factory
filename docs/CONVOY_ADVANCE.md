@@ -28,12 +28,17 @@ open or was closed outside its commands. A convoy closed by command, on
 Benjamin's words (T30), is neither walked by `--all` nor a reason for the
 order to run.
 
-A pass that exits 1 or 3 prints its answer on stdout, then one last line on
+A pass that exits 1, 3 or 75 prints its answer on stdout, then one last line on
 stderr: `convoy-advance: échec de la passe -- <convoy> <step>.<key>: <detail>
 ; …`, each step that failed it (the « état sans règle » message first). The
 controller keeps only the tail of a failed order's output (af-ypj2g0), so
 this line is what the `order.failed` event and its `on-order-failed` bead
-show.
+show. Exit 75 means every failure on that line is the explicit capacity
+deferral `NOT RUN, exit 75`: nothing was accepted and the next order pass
+retries it. Gas City still records that non-zero result as `order.failed`, but
+`bin/on-order-failed` excludes top-level exit 75 from its chronic-failure
+threshold. If the same pass also carries a genuine error it exits 1, so the
+error remains alertable.
 
 ## What one pass does
 
@@ -294,7 +299,7 @@ the parking only):
 | `operator_request` (its own Ticket Exit) | any answer given to the request of that ticket (`bin/escalation-door repondre`) after the parking |
 | `planning_exception` (its own Ticket Exit) | only the option that accepts the deviation: the last Planning Exception of the ticket is `accepted` (it was answered by its `accept_option`, `docs/CONVOY_STATE.md`; every exception raised since ADR-0030 L5 has one, with or without anchors). Any other answer leaves the ticket parked |
 | `planning_exception` (its Ticket Evaluation: the ticket is `finished`, its last evaluation's outcome is `planning_exception`, no entry under `planning_exceptions`) | only option `a`, « Juger ce qui est inobservable prouvé par son test de critère vert » (`bin/ticket-evaluation`); `lift-park` records what that evaluation found unobservable by the criterion under `proven_by_test`, and the evaluation the lift sends again counts it proven (`docs/TICKET_EVALUATION.md`); or option `c`, « Réévaluer sur le produit relancé » (af-npz9v1.38): the lift records nothing proven, and the evaluation it sends again judges every item on the products launched again. Option `b` (remove the ticket from the graph) or no answer: parked |
-| `resumes_exhausted` | option `a` of the convoy's grouped request (below), for the tickets that request names as lifted |
+| `resumes_exhausted` | option `a` of the convoy's grouped request (below), for the tickets that request names as lifted; or, without an answer, the ticket has resumes left under the bounds of now (`resumes_left` above 0): a parking left by a bound that no longer holds, such as the one an answered resume took before af-npz9v1.41. That lift gives no resume back |
 
 The lift is `bin/convoy-state lift-park <convoy> <ticket> --request <bead>
 --option <letter>`: the parking is removed from the ticket and from those
@@ -311,7 +316,14 @@ or not: `bin/convoy-state park --cause resumes_exhausted`. The bound is K
 `bin/convoy-state` (T21, « The bounds are set in one place » below), **per
 cause** (ADR-0030 L2): each cause of a resume of this section, and a commit
 added after a verdict (T18), counts against its own bound; the correction
-round (T17) is not one of them, it keeps its own bound of one round. A red
+round (T17) is not one of them, it keeps its own bound of one round. A
+resume an answer of the operator opened (`answered`, `amendment_granted`)
+takes no bound either: each one needs a new request and a new answer, so no
+loop runs blind, and a bound on it could only ask the operator again for
+what they just answered (af-npz9v1.41: R2, af-cifk1e, parked on 28/10/2026
+at its third answer, the resume that answer opened counted and never sent).
+Intent (Benjamin, his words, 28/10/2026, relayed by Codex): « je ne veux pas
+devoir autoriser un dépassement purement technique ». A red
 merge returned to its author takes nothing of the interruptions' bound, and
 `resumes_left` is the fewest any one cause has left (`resumes_left_by_cause`
 of `bin/convoy-state show` names each). Its value is a starting one with

@@ -168,6 +168,8 @@ def main() -> int:
             print(f"LATE {name} ({took:.0f}s)", flush=True)
             continue
         print(f"{'PASS' if status == 0 else 'FAIL'} {name} ({took:.0f}s)", flush=True)
+        for timing in (line for line in output.splitlines() if line.startswith("regression: took ")):
+            print(timing, flush=True)
         if status != 0:
             failed += 1
             print(output, flush=True)

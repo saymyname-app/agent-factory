@@ -186,12 +186,14 @@ def render_runs_page(runs, filtre, checked=None, error=False, now=None):
 
 # --- one run, and the detail of a job --------------------------------------------------
 
-def render_run_page(run, now=None, stale_at=None, job_id=None, event=None):
+def render_run_page(run, now=None, stale_at=None, job_id=None, event=None, session=None, opened=(), raw=()):
     """Main part of /runs/run?id=… (and of /runs/job, with ``job_id``): the
     head of the run, its frise, and under it the detail of the job
-    ``job_id`` with its event ``event`` (its number) open. ``stale_at``:
-    when the activity was last observed, if the reading is no longer
-    current."""
+    ``job_id`` with its event ``event`` (its number) open, its session
+    ``session`` chosen (by default its last), the sections ``opened`` open
+    (configuration, prompts, system, user) and the prompts ``raw`` (system,
+    user) shown raw. ``stale_at``: when the activity was last observed, if
+    the reading is no longer current."""
     anchors = RunAnchors()
     if run is None:
         return ('<div class="pn-head"><small class="rn-crumb" %s><a href="/runs" %s>← Runs</a></small>'
@@ -202,7 +204,7 @@ def render_run_page(run, now=None, stale_at=None, job_id=None, event=None):
     run = normalized(run, now)
     job = next((item for item in run["items"] if item["id"] == job_id), None)
     return (_render_head(run, now, stale_at, anchors) + _render_frise(run, job, anchors)
-            + (_render_detail(run, job, event, anchors) if job else ""))
+            + (_render_detail(run, job, event, anchors, session, set(opened), set(raw)) if job else ""))
 
 
 def _render_head(run, now, stale_at, anchors):
@@ -293,7 +295,7 @@ def _render_frise(run, selected, anchors):
     lanes, widest = [], TRACK
     for lane in run["lanes"]:
         lane_anchor, name, track = anchors("lane"), anchors("lane-name"), anchors("track")
-        context = ('<small>Contexte · dernière session : non collecté</small>' if lane["kind"] == AGENT else "")
+        context = _lane_context(lane) if lane["kind"] == AGENT else ""
         placed = _rows(lane["items"], elapsed)
         heights = {}
         for _, _, _, height, row in placed:
@@ -337,16 +339,17 @@ def _render_frise(run, selected, anchors):
          anchors("legend"), LEGEND)
 
 
-def _section(anchors, title, body, name="details"):
-    return ('<details class="rn-section" %s><summary %s>%s</summary>%s</details>'
-            % (anchors(name), anchors("summary"), _e(title), body))
+def _section(anchors, title, body, name="details", open_=False, key=None):
+    return ('<details class="rn-section" %s%s%s><summary %s>%s</summary>%s</details>'
+            % (anchors(name), ' data-open-key="%s"' % key if key else "", " open" if open_ else "",
+               anchors("summary"), _e(title), body))
 
 
 def _said(text):
     return "<p>%s</p>" % _e(text)
 
 
-def _render_detail(run, item, event, anchors):
+def _render_detail(run, item, event, anchors, session=None, opened=frozenset(), raw=frozenset()):
     lane = next(lane for lane in run["lanes"] if lane["key"] == item["lane"])
     inspector, detail, head = anchors("inspector"), anchors("detail"), anchors("inspector-head")
     state = "En cours" if item["open"] else "Terminé"
@@ -361,10 +364,17 @@ def _render_detail(run, item, event, anchors):
     end = "en cours" if item["open"] else relative(item["offset"] + item["lasted"])
     timing = '<p class="rn-muted">Début %s · fin %s</p>' % (relative(item["offset"]), end)
     if lane["kind"] == AGENT:
-        sections.append(_section(anchors, "Configuration de l’agent", _said(NOT_COLLECTED)))
-        sections.append(_section(anchors, "Sessions du job", _said(NOT_COLLECTED), name="session-history"))
+        placed = item.get("trace_sessions") or []
+        chosen = next((s for s in placed if s["name"] == session), placed[-1] if placed else None)
+        sections.append(_section(anchors, "Configuration de l’agent",
+                                 _configuration(run, item, lane, chosen, anchors), open_="configuration" in opened,
+                                 key="configuration"))
+        sections.append(_section(anchors, "Sessions du job (%d)" % len(placed) if placed else "Sessions du job",
+                                 _sessions(run, item, placed, chosen), name="session-history", open_=True))
         sections.append(_section(anchors, "Description", _said(item["description"] or NOT_COLLECTED) + timing))
-        sections.append(_section(anchors, "Prompts envoyés", _said(NOT_COLLECTED)))
+        sent = ((chosen or {}).get("observed") or {}).get("prompts") or []
+        sections.append(_section(anchors, "Prompts envoyés (%d)" % len(sent) if sent else "Prompts envoyés",
+                                 _prompts(chosen, anchors, opened, raw), open_="prompts" in opened, key="prompts"))
         usage = _said(NOT_COLLECTED)
     else:
         who = "Ce job est un geste de Benjamin" if lane["kind"] == HUMAN else "Ce job est exécuté par le code"
@@ -405,6 +415,140 @@ def _render_detail(run, item, event, anchors):
          "".join(sections), events_anchor, events_title, len(rows), events_note, events_list, "".join(rows), EVENT_SCRIPT)
 
 
+# --- what the trace of the sessions observed (C2a) --------------------------------------
+
+UNCOLLECTED = "non collecté"
+PROMPT_TITLES = {"system": "Prompt système", "user": "Prompt utilisateur"}
+
+
+def _percent(observed):
+    value = (observed or {}).get("context_pct")
+    return "%s %%" % _n(float(value)) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _lane_context(lane):
+    """« Contexte · dernière session : 7 % · gpt-6.1-sol »: what the trace
+    observed of the last session of the agent in the run."""
+    last = lane.get("last_session") or {}
+    observed = last.get("observed") or {}
+    said = " · ".join(part for part in (_percent(observed), observed.get("model")) if part) or UNCOLLECTED
+    return '<small>Contexte · dernière session : %s</small>' % _e(said)
+
+
+def _configuration(run, item, lane, chosen, anchors):
+    """The configuration in effect for the session `chosen`, as observed,
+    then the one declared for the role of the job: never one for the
+    other."""
+    def rows(pairs):
+        return '<dl class="rn-config">%s</dl>' % "".join(
+            "<div><dt>%s</dt><dd>%s</dd></div>" % (_e(label), _e(value if value else UNCOLLECTED))
+            for label, value in pairs)
+
+    if chosen is None:
+        effective = _said("Aucune session n’est enregistrée pour ce job : configuration effective %s." % UNCOLLECTED)
+    else:
+        observed = chosen.get("observed") or {}
+        window = observed.get("context_window")
+        context = _percent(observed)
+        if context and isinstance(window, (int, float)):
+            context += " d’une fenêtre de %s tokens" % "{:,}".format(int(window)).replace(",", "\u202f")
+        environment = " · ".join(part for part in (observed.get("work_dir"), observed.get("permission_mode") and
+                                                   "permissions %s" % observed["permission_mode"]) if part)
+        effective = rows((("Agent", "%s · %s" % (lane["who"], lane["role"])), ("Session", chosen["name"]),
+                          ("Fournisseur", observed.get("provider")), ("Modèle", observed.get("model")),
+                          ("Effort", observed.get("effort")), ("Outils", " · ".join(observed.get("tools") or [])),
+                          # No source reports the mission of a session: the
+                          # name of its job is not one.
+                          ("Environnement", environment), ("Mission", None), ("Contexte observé", context)))
+    declared = (run.get("declared") or {}).get(item.get("role") or "")
+    if declared:
+        when = declared.get("at")
+        said = rows((("Agent", declared.get("agent")), ("Fournisseur", declared.get("provider")),
+                     ("Modèle", declared.get("model"))))
+        said += ('<p class="rn-muted">Écrite par l’usine quand la session a pris le ticket%s.</p>'
+                 % (" (%s)" % _e(when) if when else ""))
+    else:
+        said = _said("Aucune configuration n’est déclarée pour ce rôle sur le ticket : %s." % UNCOLLECTED)
+    return ('<h4 class="rn-config-title">Configuration effective</h4>%s'
+            '<h4 class="rn-config-title">Configuration déclarée</h4>%s' % (effective, said))
+
+
+def _session_href(run, item, name):
+    return "/runs/job?" + urllib.parse.urlencode({"run": run["id"], "job": item["id"], "session": name})
+
+
+def _sessions(run, item, placed, chosen):
+    """The sessions of the job, in the order they ran: each a link that
+    shows its own configuration and prompts, the one shown saying so. An
+    end the supervisor did not record is said not collected (in progress
+    for the last session of a job that runs), and so is a start."""
+    if not placed:
+        return _said("Aucune session n’est enregistrée pour ce job : %s." % UNCOLLECTED)
+    out = []
+    for session in placed:
+        observed = session.get("observed") or {}
+        if session["end"] is not None:
+            end = relative(session["end"] - run["start"])
+        else:
+            end = "en cours" if item["open"] and session is placed[-1] else UNCOLLECTED
+        said = "%s · contexte observé %s" % (observed.get("model") or "modèle %s" % UNCOLLECTED,
+                                             _percent(observed) or UNCOLLECTED)
+        out.append('<a class="rn-session" href="%s" data-session-link%s><strong>%s%s</strong><small>%s → %s</small>'
+                   '<span>%s</span></a>'
+                   % (_e(_session_href(run, item, session["name"])),
+                      ' aria-current="true"' if session is chosen else "", _e(session["name"]),
+                      ' <em class="rn-session-shown">Affichée</em>' if session is chosen else "",
+                      relative(session["start"] - run["start"]) if session["start"] is not None else UNCOLLECTED,
+                      end, _e(said)))
+    return ('<div class="rn-sessions">%s</div><p class="rn-muted">Historique du job ; la lane affiche seulement la '
+            'dernière session de cet agent dans le run.</p>' % "".join(out))
+
+
+def _rendered(text):
+    """A prompt as it reads: its titles, its paragraphs, its lists."""
+    out = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("#"):
+            out.append("<h5>%s</h5>" % _e(stripped.lstrip("#").strip()))
+        elif stripped.startswith(("- ", "* ")):
+            out.append("<p>• %s</p>" % _e(stripped[2:]))
+        else:
+            out.append("<p>%s</p>" % _e(stripped))
+    return "".join(out)
+
+
+def _prompts(chosen, anchors, opened, raw):
+    """What the session `chosen` was sent, exactly: each prompt rendered or
+    raw, with its version; what no trace recorded is said not collected."""
+    if chosen is None:
+        return _said("Aucune session n’est enregistrée pour ce job : prompts %ss." % UNCOLLECTED)
+    sent = (chosen.get("observed") or {}).get("prompts") or []
+    if not sent:
+        return _said("Aucun prompt n’est enregistré pour la session %s : %s." % (chosen["name"], UNCOLLECTED))
+    out = ['<p class="rn-muted">Session %s · le texte exact transmis, avec sa version.</p>' % _e(chosen["name"])]
+    if not any(prompt["role"] == "system" for prompt in sent):
+        out.append(_said("Prompt système : %s (le fournisseur de la session ne l’enregistre pas)." % UNCOLLECTED))
+    for prompt in sent:
+        role = prompt["role"]
+        lines = len(prompt["text"].splitlines()) or 1
+        shown_raw = role in raw
+        out.append(
+            '<details class="rn-prompt" %s data-open-key="%s"%s><summary %s>%s<span>%d ligne%s · version %s</span>'
+            '</summary><div class="rn-format" role="group" aria-label="Affichage du %s">'
+            '<button type="button" data-format="rendered" data-role="%s" aria-pressed="%s">Rendu</button>'
+            '<button type="button" data-format="raw" data-role="%s" aria-pressed="%s">Brut</button></div>'
+            '<div class="rn-prompt-rendered" %s%s>%s</div><pre class="rn-prompt-raw" %s%s>%s</pre></details>'
+            % (anchors("prompt-section"), role, " open" if role in opened else "", anchors("summary"),
+               PROMPT_TITLES.get(role, "Prompt"), lines, "" if lines == 1 else "s", _e(prompt["version"]),
+               _e(PROMPT_TITLES.get(role, "prompt").lower()), role, "false" if shown_raw else "true", role,
+               "true" if shown_raw else "false", anchors("prompt-rendered"), " hidden" if shown_raw else "",
+               _rendered(prompt["text"]), anchors("prompt-raw"), "" if shown_raw else " hidden", _e(prompt["text"])))
+    return "".join(out)
+
+
 # An event opened or closed is written in the address, so a reload of the
 # page opens the same one; opening one closes the others.
 EVENT_SCRIPT = """<script>
@@ -420,6 +564,43 @@ document.querySelectorAll('[data-run-event]').forEach(function (item) {
       address.searchParams.delete('event');
     }
     history.replaceState(null, '', address.toString());
+  });
+});
+
+// The sections open and the prompts shown raw are written in the address,
+// and carried by a session chosen in the history: a reload, or another
+// session, keeps them.
+function rnKeep(address) {
+  var open = [], raw = [];
+  document.querySelectorAll('[data-open-key]').forEach(function (item) {
+    if (item.open && open.indexOf(item.getAttribute('data-open-key')) < 0) { open.push(item.getAttribute('data-open-key')); }
+  });
+  document.querySelectorAll('[data-format="raw"][aria-pressed="true"]').forEach(function (button) {
+    raw.push(button.getAttribute('data-role'));
+  });
+  address.searchParams.set('ouvert', open.join(','));
+  if (raw.length) { address.searchParams.set('brut', raw.join(',')); } else { address.searchParams.delete('brut'); }
+  return address;
+}
+document.querySelectorAll('[data-open-key]').forEach(function (item) {
+  item.addEventListener('toggle', function () {
+    history.replaceState(null, '', rnKeep(new URL(location.href)).toString());
+  });
+});
+document.querySelectorAll('.rn-format button').forEach(function (button) {
+  button.addEventListener('click', function () {
+    var prompt = button.closest('.rn-prompt'), raw = button.getAttribute('data-format') === 'raw';
+    prompt.querySelector('.rn-prompt-rendered').hidden = raw;
+    prompt.querySelector('.rn-prompt-raw').hidden = !raw;
+    prompt.querySelectorAll('.rn-format button').forEach(function (other) {
+      other.setAttribute('aria-pressed', String(other === button));
+    });
+    history.replaceState(null, '', rnKeep(new URL(location.href)).toString());
+  });
+});
+document.querySelectorAll('[data-session-link]').forEach(function (link) {
+  link.addEventListener('click', function () {
+    link.href = rnKeep(new URL(link.href, location.href)).toString();
   });
 });
 </script>"""
@@ -518,6 +699,32 @@ CSS = """
 .rn-event-type.tools{color:var(--rn-code)}.rn-event-type.controls{color:var(--rn-ok)}.rn-event-type.sessions{color:var(--rn-agent)}
 .rn-event-facts{display:grid;gap:8px;margin:4px 0 14px;font-size:13px}
 .rn-event-facts dt{font-size:12px;color:var(--pn-muted-text)}.rn-event-facts dd{margin:2px 0 0;overflow-wrap:anywhere}
+.rn-config-title{margin:14px 0 6px;font-size:13px;font-weight:600}
+.rn-config{display:grid;gap:8px;margin:0;font-size:13px}
+.rn-config>div{display:grid;grid-template-columns:120px minmax(0,1fr);gap:12px}
+.rn-config dt{color:var(--pn-muted-text)}.rn-config dd{margin:0;overflow-wrap:anywhere}
+.rn-sessions{display:grid;gap:8px;margin-top:12px}
+.rn-session{display:grid;gap:3px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;color:inherit;text-decoration:none;font-size:13px}
+.rn-session strong{font:13px ui-monospace,monospace;overflow-wrap:anywhere}
+.rn-session small{color:var(--pn-muted-text);font-size:12px}
+.rn-session span{overflow-wrap:anywhere}
+.rn-session[aria-current]{border-color:var(--accent);box-shadow:inset 3px 0 0 var(--accent)}
+.rn-session-shown{margin-left:8px;padding:1px 6px;border:1px solid currentColor;border-radius:4px;font:600 11px system-ui,sans-serif;font-style:normal;white-space:nowrap}
+.rn-session:hover{border-color:var(--accent)}
+.rn-session:focus-visible,.rn-prompt>summary:focus-visible,.rn-format button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* A prompt of a closed section is not laid out: its title is no control to reach. */
+.rn-section:not([open]) .rn-prompt{display:none}
+.rn-prompt{margin-top:12px;border:1px solid var(--line);border-radius:8px;padding:12px;min-width:0}
+.rn-prompt>summary{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;cursor:pointer;font-weight:600;font-size:13px}
+.rn-prompt>summary span{font-size:12px;font-weight:400;color:var(--pn-muted-text);overflow-wrap:anywhere}
+.rn-format{display:flex;gap:6px;margin:12px 0}
+.rn-format button{padding:5px 10px;font-size:12px;border:1px solid var(--pn-control-line);border-radius:6px;background:transparent;color:var(--ink);cursor:pointer;min-height:24px}
+.rn-format button[aria-pressed="true"]{border-color:var(--accent);background:var(--pn-surface-2)}
+.rn-prompt-rendered{overflow-wrap:anywhere;font-size:13px}
+.rn-prompt-rendered h5{font-size:14px;margin:14px 0 6px}
+.rn-prompt-rendered p{margin:4px 0}
+.rn-prompt-raw{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 ui-monospace,monospace;background:var(--pn-surface-2);padding:10px;border-radius:6px}
+@media (max-width:800px){.rn-config>div{grid-template-columns:1fr;gap:2px}}
 @media (max-width:1100px){.rn-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:800px){.rn-grid{grid-template-columns:1fr}.rn-inspector-grid{grid-template-columns:1fr}
   :root{--rn-name:120px}.rn-lane-name{padding:14px 10px}

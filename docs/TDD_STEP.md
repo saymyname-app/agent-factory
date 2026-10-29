@@ -165,7 +165,8 @@ deadline comes from `config/test-budgets.json` (study C, T3): one criterion
 test has `criterion_test_seconds`; the regression has the wait for the host,
 the budget of its kind (green at `green`, full at `prefactoring`) and a
 margin, and the answer keeps its measure (`regression[].timing`, the lines
-« regression: took … » and « ALERT » that `bin/test-budgets` reads back). A change that
+« regression: took … » for the whole regression and for each criterion class,
+plus « ALERT »; `bin/test-budgets` reads the whole-regression line back). A change that
 keeps its criterion tests green but breaks existing tests is caught at the
 author's handoff (the `code` gate of `bin/ticket-author` asks for `green` at
 the tip), not only at the merged regression of `bin/spec-integration`.

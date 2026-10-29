@@ -216,8 +216,9 @@ class ActionsSeamTest(unittest.TestCase):
         polling interval under a loaded CI runner's subprocess-spawn
         latency is what made this flaky (observed: PR #372 CI runs
         36788068757, 36795195349)."""
+        # The page's own Origin: a POST without it is refused (I, af-cp4fzd).
         req = urllib.request.Request(
-            "http://127.0.0.1:%d/api/health/recheck" % self.port, method="POST"
+            "http://127.0.0.1:%d/api/health/recheck" % self.port, method="POST", headers={"Origin": self.origin}
         )
         with urllib.request.urlopen(req, timeout=DEADLINE_SECONDS) as resp:
             resp.read()

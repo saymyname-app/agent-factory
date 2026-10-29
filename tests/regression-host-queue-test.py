@@ -37,6 +37,8 @@ if os.environ.get("SLOW") == name:
     child = subprocess.Popen(["sleep", "60"])
     (marks / "grandchild.pid").write_text(str(child.pid))
     time.sleep(60)
+if os.environ.get("CLASS_TIMING") == name:
+    print("regression: took 7s for criterion class example.py::Example")
 """
 FILES = ("tests/cockpit-a-test.py", "tests/cockpit-criteria-test.py",
          "tests/project-launch-test.py", "tests/project-planning-profile-test.py")
@@ -77,10 +79,11 @@ class RegressionHostQueue(unittest.TestCase):
         return sorted(path.name for path in self.marks.glob("*.ran"))
 
     def test_a_free_host_runs_every_file_and_is_green(self):
-        proc, _ = self.regression()
+        proc, _ = self.regression(CLASS_TIMING="cockpit-criteria-test.py")
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         self.assertEqual(sorted(Path(name).name + ".ran" for name in FILES), self.ran())
         self.assertIn("PASS tests/cockpit-criteria-test.py", proc.stdout)
+        self.assertIn("regression: took 7s for criterion class example.py::Example", proc.stdout)
         self.assertIn("regression: took", proc.stdout)
         self.assertIn("full budget 600s", proc.stdout)
 
