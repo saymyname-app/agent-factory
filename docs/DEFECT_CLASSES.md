@@ -102,15 +102,22 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 - Invariant : Un faux outil refuse ce que le vrai refuse ; un instrument qui
   juge est étalonné sur un cas connu avant de servir ; on juge l'état
   résultant, jamais un morceau.
-- Contrôle : `python3 tests/account-home-lint-test.py` — partiel : il tient
-  le dossier personnel (#690). `tests/fake-tool-contract-test.py` compare la
-  forme des commandes des faux déclarés, local seulement ; le contrôle de
-  comportement des faux est planifié (af-npz9v1.28).
+- Contrôle : `python3 tests/account-home-lint-test.py`,
+  `python3 tests/fake-tool-contract-test.py` — complet pour le dossier
+  personnel et les faux exécutables `bd`/`gc` : le second tient en CI la
+  liste fermée des 27 faux, rejoue la limite d'un argument sur chacun, la
+  fermeture d'un bloqué sur les 11 qui écrivent l'état et les huit formes
+  de dépendance sur les deux qui les acceptent. Sur l'hôte de l'usine il
+  étalonne d'abord le même oracle sur les vrais `bd`/`gc` dans une cité
+  jetable ; les 16 faux de lecture ou de transport sans état mutable ont
+  chacun leur exception datée dans le contrôle (af-npz9v1.28).
 - Occurrences : #566, #618, #641, #648, #656, #664, #665, #669, #671, #674,
   #675, #676, #680, #689, #690, #692, #699, #700, #714, #715.
-- Ouvertes : 38 faux exécutables sous `tests/fixtures/`, un seul comparé au
-  vrai sur son comportement ; relecture de code non reproductible (étude B
-  § 4.3, af-npz9v1.28).
+- Ouvertes : exception datée du 29/10/2026 : la relecture de code par modèle
+  n'est pas rejouée sur un cas connu (étude B § 4.3). Elle reste bornée par
+  ses citations vérifiées et ses passes ciblées, mais n'est pas déclarée
+  étalonnée par ce contrôle déterministe. Aucun faux `bd`/`gc` connu n'est
+  hors du contrôle.
 
 ## R — Une même règle tenue à deux endroits qui divergent
 
