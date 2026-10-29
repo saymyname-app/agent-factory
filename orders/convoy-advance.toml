@@ -11,6 +11,9 @@
 # pass, which raises one factory incident through bin/escalation-door.
 # --stopped-ok keeps that from also being an order failure on every tick
 # (on-order-failed would page the Mayor about a convoy he must not touch).
+# A pass whose only failures are explicit capacity deferrals exits 75: the
+# controller retries it, while on-order-failed excludes that non-actionable
+# exit from its chronic-failure threshold. A mixed or genuine error exits 1.
 # The order still fails when an incident could not be raised or a step of the
 # pass could not run; a ticket refused, returned or stopped is an outcome of
 # the pass, not an order failure.

@@ -28,12 +28,17 @@ open or was closed outside its commands. A convoy closed by command, on
 Benjamin's words (T30), is neither walked by `--all` nor a reason for the
 order to run.
 
-A pass that exits 1 or 3 prints its answer on stdout, then one last line on
+A pass that exits 1, 3 or 75 prints its answer on stdout, then one last line on
 stderr: `convoy-advance: échec de la passe -- <convoy> <step>.<key>: <detail>
 ; …`, each step that failed it (the « état sans règle » message first). The
 controller keeps only the tail of a failed order's output (af-ypj2g0), so
 this line is what the `order.failed` event and its `on-order-failed` bead
-show.
+show. Exit 75 means every failure on that line is the explicit capacity
+deferral `NOT RUN, exit 75`: nothing was accepted and the next order pass
+retries it. Gas City still records that non-zero result as `order.failed`, but
+`bin/on-order-failed` excludes top-level exit 75 from its chronic-failure
+threshold. If the same pass also carries a genuine error it exits 1, so the
+error remains alertable.
 
 ## What one pass does
 
