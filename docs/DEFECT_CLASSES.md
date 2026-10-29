@@ -130,11 +130,16 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 
 - Invariant : Une alerte dit vrai et une situation qui demande quelqu'un
   produit une alerte.
-- Contrôle : `bash tests/on-order-failed-test.sh` — partiel : il tient la
-  frontière entre un report explicite (sortie 75, rejoué sans alerte) et une
-  vraie panne répétée (bead et page Mayor) ; le contrôle 9 du gardien (#688)
-  couvre les tickets que personne ne bouge, pas les autres signaux.
-- Occurrences : #651, #679, #688, #717.
+- Contrôle : `bash tests/on-order-failed-test.sh`,
+  `bash tests/pr-autopilot-armed-not-merged-test.sh` — partiel : le premier
+  tient la frontière entre un report explicite (sortie 75, rejoué sans
+  alerte) et une vraie panne répétée (bead et page Mayor) ; le second refuse
+  qu'une sortie locale 0 compte comme armement sans relecture GitHub et tient
+  la fusion directe au head, à CLEAN et au contrôle requis vert ; le contrôle
+  9 du gardien (#688) couvre les tickets que personne ne bouge, pas les autres
+  signaux.
+- Occurrences : #651, #679, #688, #717 ; #767 (armement local annoncé mais
+  `autoMergeRequest=null`, af-npz9v1.50.1).
 - Ouvertes : aucune connue.
 
 ## A — Autre
