@@ -88,33 +88,43 @@ class HomeResultAvis(unittest.TestCase):
 
     # --- Criterion 2 ------------------------------------------------------------
 
-    def test_one_essai_and_one_avis_at_the_same_level_and_avis_opens_in_the_bar_of_the_result(self):
-        for dataset in ("result-request", "result-confirmation", "result-findings"):
-            with self.subTest(dataset=dataset):
-                walked = walk(serve(self.tree, dataset), opened_result())
-                self.assert_found(walked)
-                start, result, avis = walked["start"], walked["steps"][0]["page"], walked["steps"][1]["page"]
-                self.assertLessEqual(len(controls(start, "Essai")), 1, "Essai is offered twice")
-                self.assertLessEqual(len(controls(start, "Avis")), 1, "Avis is offered twice")
+    def assert_one_essai_and_one_avis_and_avis_in_the_bar(self, dataset: str) -> None:
+        """On `dataset`, the result to judge open in « Ce qui t’attend »:
+        one Essai and one Avis side by side; Avis open in the result, its
+        actions in the same bar as the one Essai."""
+        walked = walk(serve(self.tree, dataset), opened_result())
+        self.assert_found(walked)
+        start, result, avis = walked["start"], walked["steps"][0]["page"], walked["steps"][1]["page"]
+        self.assertLessEqual(len(controls(start, "Essai")), 1, "Essai is offered twice")
+        self.assertLessEqual(len(controls(start, "Avis")), 1, "Avis is offered twice")
 
-                # The result open: one Essai, one Avis, side by side.
-                essai, entry = controls(result, "Essai"), controls(result, "Avis")
-                self.assertEqual((1, 1), (len(essai), len(entry)), "the result has not one Essai and one Avis")
-                self.assertEqual([False, False], [essai[0]["disabled"], entry[0]["disabled"]],
-                                 "Essai or Avis cannot be used on a result to judge")
-                self.assertEqual(essai[0]["holder"], entry[0]["holder"], "Essai and Avis are not at the same level")
+        # The result open: one Essai, one Avis, side by side.
+        essai, entry = controls(result, "Essai"), controls(result, "Avis")
+        self.assertEqual((1, 1), (len(essai), len(entry)), "the result has not one Essai and one Avis")
+        self.assertEqual([False, False], [essai[0]["disabled"], entry[0]["disabled"]],
+                         "Essai or Avis cannot be used on a result to judge")
+        self.assertEqual(essai[0]["holder"], entry[0]["holder"], "Essai and Avis are not at the same level")
 
-                # Avis open: the panel in the result, its context kept, its
-                # actions in the same bar as the one Essai.
-                self.assertIn(CONTEXT, shown(avis), "the result is no longer shown beside Avis")
-                self.assertEqual(1, len(controls(avis, "Essai")), "Avis open, Essai is not offered once")
-                self.assertEqual([], controls(avis, "Avis"), "Avis open, a second entry Avis is offered")
-                bar = {c["name"]: c["holder"] for c in avis["controls"] if c["name"] in (CLOSE, PREPARE)}
-                self.assertEqual({CLOSE: essai[0]["holder"], PREPARE: essai[0]["holder"]}, bar,
-                                 "the actions of Avis are not in the bar of the result")
-                self.assertEqual([True], [c["field"] for c in controls(avis, WORDS)], f"Avis has no field « {WORDS} »")
-                self.assertEqual([[name] for name in ANSWERS], [[c["name"] for c in controls(avis, name)] for name in ANSWERS],
-                                 "Avis does not offer the three answers of D01")
+        # Avis open: the panel in the result, its context kept, its
+        # actions in the same bar as the one Essai.
+        self.assertIn(CONTEXT, shown(avis), "the result is no longer shown beside Avis")
+        self.assertEqual(1, len(controls(avis, "Essai")), "Avis open, Essai is not offered once")
+        self.assertEqual([], controls(avis, "Avis"), "Avis open, a second entry Avis is offered")
+        bar = {c["name"]: c["holder"] for c in avis["controls"] if c["name"] in (CLOSE, PREPARE)}
+        self.assertEqual({CLOSE: essai[0]["holder"], PREPARE: essai[0]["holder"]}, bar,
+                         "the actions of Avis are not in the bar of the result")
+        self.assertEqual([True], [c["field"] for c in controls(avis, WORDS)], f"Avis has no field « {WORDS} »")
+        self.assertEqual([[name] for name in ANSWERS], [[c["name"] for c in controls(avis, name)] for name in ANSWERS],
+                         "Avis does not offer the three answers of D01")
+
+    def test_result_request_offers_one_essai_and_one_avis_at_the_same_level_and_avis_opens_in_the_bar(self):
+        self.assert_one_essai_and_one_avis_and_avis_in_the_bar("result-request")
+
+    def test_result_confirmation_offers_one_essai_and_one_avis_at_the_same_level_and_avis_opens_in_the_bar(self):
+        self.assert_one_essai_and_one_avis_and_avis_in_the_bar("result-confirmation")
+
+    def test_result_findings_offers_one_essai_and_one_avis_at_the_same_level_and_avis_opens_in_the_bar(self):
+        self.assert_one_essai_and_one_avis_and_avis_in_the_bar("result-findings")
 
     def test_abandon_needs_its_reason_a_changed_draft_withdraws_the_message_and_copying_records_nothing(self):
         address = serve(self.tree, "result-findings")

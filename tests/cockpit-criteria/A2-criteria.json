@@ -7,7 +7,9 @@
       "tests/cockpit-criteria/commands/home-result-essai-test.py::HomeResultEssai.test_result_repairing_says_the_correction_of_the_findings_and_no_outage"
     ],
     "2": [
-      "tests/cockpit-criteria/commands/home-result-avis-test.py::HomeResultAvis.test_one_essai_and_one_avis_at_the_same_level_and_avis_opens_in_the_bar_of_the_result",
+      "tests/cockpit-criteria/commands/home-result-avis-test.py::HomeResultAvis.test_result_request_offers_one_essai_and_one_avis_at_the_same_level_and_avis_opens_in_the_bar",
+      "tests/cockpit-criteria/commands/home-result-avis-test.py::HomeResultAvis.test_result_confirmation_offers_one_essai_and_one_avis_at_the_same_level_and_avis_opens_in_the_bar",
+      "tests/cockpit-criteria/commands/home-result-avis-test.py::HomeResultAvis.test_result_findings_offers_one_essai_and_one_avis_at_the_same_level_and_avis_opens_in_the_bar",
       "tests/cockpit-criteria/commands/home-result-avis-test.py::HomeResultAvis.test_abandon_needs_its_reason_a_changed_draft_withdraws_the_message_and_copying_records_nothing",
       "tests/cockpit-criteria/commands/home-result-avis-records-test.py::HomeResultAvisRecords.test_acceptance_needs_a_verdict_on_each_proposition_then_the_session_records_the_message_copied"
     ],
