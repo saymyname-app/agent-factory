@@ -182,7 +182,546 @@
             "start": 190,
             "end": 365,
             "prompt": "Implémenter le périmètre approuvé du cockpit en conservant la boîte de réception. Utiliser les sources D01 existantes. Ne pas changer les portes de jugement. Fournir les preuves des critères au commit de sortie.",
-            "result": "Changement et démonstration enregistrés."
+            "result": "Changement et démonstration enregistrés.",
+            "sessions": [
+              {
+                "provider": "codex",
+                "model": "gpt-6.1-sol",
+                "effort": "high",
+                "permission_mode": "workspace-write",
+                "context_window": 258400,
+                "work_dir": "/srv/synthetic/worktrees/recherche-dans-les-notes",
+                "name": "demo-search-alex-1",
+                "start": 190,
+                "end": 277,
+                "context_pct": 27,
+                "transcript": [
+                  {
+                    "timestamp": "2026-10-12T12:13:10.000Z",
+                    "type": "session_meta",
+                    "payload": {
+                      "id": "demo-search-alex-1",
+                      "cwd": "/srv/synthetic/worktrees/recherche-dans-les-notes",
+                      "originator": "codex_exec",
+                      "model_provider": "openai",
+                      "base_instructions": {
+                        "text": "# Auteur\n\n# Mission\nRéaliser sur le périmètre approuvé.\n\n# Règles\n- Utiliser les points d’entrée publics et les sources disponibles.\n- Conserver les mots du propriétaire ; ne pas inventer une preuve.\n- Signaler une donnée absente ou une limite.\n- Rendre un résultat lié à la version observée."
+                      }
+                    }
+                  },
+                  {
+                    "timestamp": "2026-10-12T12:13:10.000Z",
+                    "type": "turn_context",
+                    "payload": {
+                      "cwd": "/srv/synthetic/worktrees/recherche-dans-les-notes",
+                      "approval_policy": "never",
+                      "sandbox_policy": {
+                        "type": "workspace-write"
+                      },
+                      "model": "gpt-6.1-sol",
+                      "collaboration_mode": {
+                        "mode": "default",
+                        "settings": {
+                          "model": "gpt-6.1-sol",
+                          "reasoning_effort": "high"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "timestamp": "2026-10-12T12:13:11.000Z",
+                    "type": "event_msg",
+                    "payload": {
+                      "type": "item_completed",
+                      "item": {
+                        "type": "UserMessage",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "# Tâche\nImplémenter le périmètre approuvé du cockpit en conservant la boîte de réception. Utiliser les sources D01 existantes. Ne pas changer les portes de jugement. Fournir les preuves des critères au commit de sortie.\n\n# Contexte transmis\nWorkflow : Recherche dans les notes\nJob : Réaliser\nVersion : exemple synthétique, première session\n\n# Résultat attendu\nUne observation et ses pièces, ou une limite explicite."
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "timestamp": "2026-10-12T12:13:11.000Z",
+                    "type": "response_item",
+                    "payload": {
+                      "type": "message",
+                      "role": "user",
+                      "content": [
+                        {
+                          "type": "input_text",
+                          "text": "# Tâche\nImplémenter le périmètre approuvé du cockpit en conservant la boîte de réception. Utiliser les sources D01 existantes. Ne pas changer les portes de jugement. Fournir les preuves des critères au commit de sortie.\n\n# Contexte transmis\nWorkflow : Recherche dans les notes\nJob : Réaliser\nVersion : exemple synthétique, première session\n\n# Résultat attendu\nUne observation et ses pièces, ou une limite explicite."
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "timestamp": "2026-10-12T12:13:13.000Z",
+                    "type": "response_item",
+                    "payload": {
+                      "type": "reasoning",
+                      "summary": [
+                        {
+                          "type": "summary_text",
+                          "text": "Lire le dossier."
+                        }
+                      ],
+                      "encrypted_content": "gAAAAsynthetique"
+                    }
+                  },
+                  {
+                    "timestamp": "2026-10-12T12:13:15.000Z",
+                    "type": "response_item",
+                    "payload": {
+                      "type": "custom_tool_call",
+                      "status": "completed",
+                      "call_id": "call_demo-search-alex-1_0",
+                      "name": "read",
+                      "input": "read"
+                    }
+                  },
+                  {
+                    "timestamp": "2026-10-12T12:13:16.000Z",
+                    "type": "response_item",
+                    "payload": {
+                      "type": "custom_tool_call_output",
+                      "call_id": "call_demo-search-alex-1_0",
+                      "output": [
+                        {
+                          "type": "input_text",
+                          "text": "ok"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "timestamp": "2026-10-12T12:13:17.000Z",
+                    "type": "response_item",
+                    "payload": {
+                      "type": "custom_tool_call",
+                      "status": "completed",
+                      "call_id": "call_demo-search-alex-1_1",
+                      "name": "rg",
+                      "input": "rg"
+                    }
+                  },
+                  {
+                    "timestamp": "2026-10-12T12:13:18.000Z",
+                    "type": "response_item",
+                    "payload": {
+                      "type": "custom_tool_call_output",
+                      "call_id": "call_demo-search-alex-1_1",
+                      "output": [
+                        {
+                          "type": "input_text",
+                          "text": "ok"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "timestamp": "2026-10-12T12:14:20.000Z",
+                    "type": "event_msg",
+                    "payload": {
+                      "type": "token_count",
+                      "info": {
+                        "total_token_usage": {
+                          "input_tokens": 31554,
+                          "cached_input_tokens": 24000,
+                          "cache_write_input_tokens": 0,
+                          "output_tokens": 2537,
+                          "reasoning_output_tokens": 673,
+                          "total_tokens": 34091
+                        },
+                        "last_token_usage": {
+                          "input_tokens": 31554,
+                          "cached_input_tokens": 24000,
+                          "cache_write_input_tokens": 0,
+                          "output_tokens": 2537,
+                          "reasoning_output_tokens": 673,
+                          "total_tokens": 34091
+                        },
+                        "model_context_window": 258400
+                      },
+                      "rate_limits": {
+                        "limit_id": "codex",
+                        "primary": {
+                          "used_percent": 26.0
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "provider": "codex",
+                "model": "gpt-6.1-sol",
+                "effort": "high",
+                "permission_mode": "workspace-write",
+                "context_window": 258400,
+                "work_dir": "/srv/synthetic/worktrees/recherche-dans-les-notes",
+                "name": "demo-search-alex-2",
+                "start": 277,
+                "end": 365,
+                "context_pct": 7,
+                "transcript": [
+                  {
+                    "timestamp": "2026-10-12T12:13:10.000Z",
+                    "type": "session_meta",
+                    "payload": {
+                      "id": "demo-search-alex-1",
+                      "cwd": "/srv/synthetic/worktrees/recherche-dans-les-notes",
+                      "originator": "codex_exec",
+                      "model_provider": "openai",
+                      "base_instructions": {
+                        "text": "# Auteur\n\n# Mission\nRéaliser sur le périmètre approuvé.\n\n# Règles\n- Utiliser les points d’entrée publics et les sources disponibles.\n- Conserver les mots du propriétaire ; ne pas inventer une preuve.\n- Signaler une donnée absente ou une limite.\n- Rendre un résultat lié à la version observée."
+                      }
+                    }
+                  },
+                  {
+                    "timestamp": "2026-10-12T12:13:10.000Z",
+                    "type": "turn_context",
+                    "payload": {
+                      "cwd": "/srv/synthetic/worktrees/recherche-dans-les-notes",
+                      "approval_policy": "never",
+                      "sandbox_policy": {
+                        "type": "workspace-write"
+                      },
+                      "model": "gpt-6.1-sol",
+                      "collaboration_mode": {
+                        "mode": "default",
+                        "settings": {
+                          "model": "gpt-6.1-sol",
+                          "reasoning_effort": "high"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "timestamp": "2026-10-12T12:13:11.000Z",
+                    "type": "event_msg",
+                    "payload": {
+                      "type": "item_completed",
+                      "item": {
+                        "type": "UserMessage",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "# Tâche\nImplémenter le périmètre approuvé du cockpit en conservant la boîte de réception. Utiliser les sources D01 existantes. Ne pas changer les portes de jugement. Fournir les preuves des critères au commit de sortie.\n\n# Contexte transmis\nWorkflow : Recherche dans les notes\nJob : Réaliser\nVersion : exemple synthétique, première session\n\n# Résultat attendu\nUne observation et ses pièces, ou une limite explicite."
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "timestamp": "2026-10-12T12:13:11.000Z",
+                    "type": "response_item",
+                    "payload": {
+                      "type": "message",
+                      "role": "user",
+                      "content": [
+                        {
+                          "type": "input_text",
+                          "text": "# Tâche\nImplémenter le périmètre approuvé du cockpit en conservant la boîte de réception. Utiliser les sources D01 existantes. Ne pas changer les portes de jugement. Fournir les preuves des critères au commit de sortie.\n\n# Contexte transmis\nWorkflow : Recherche dans les notes\nJob : Réaliser\nVersion : exemple synthétique, première session\n\n# Résultat attendu\nUne observation et ses pièces, ou une limite explicite."
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "timestamp": "2026-10-12T12:13:13.000Z",
+                    "type": "response_item",
+                    "payload": {
+                      "type": "reasoning",
+                      "summary": [
+                        {
+                          "type": "summary_text",
+                          "text": "Lire le dossier."
+                        }
+                      ],
+                      "encrypted_content": "gAAAAsynthetique"
+                    }
+                  },
+                  {
+                    "timestamp": "2026-10-12T12:13:15.000Z",
+                    "type": "response_item",
+                    "payload": {
+                      "type": "custom_tool_call",
+                      "status": "completed",
+                      "call_id": "call_demo-search-alex-1_0",
+                      "name": "read",
+                      "input": "read"
+                    }
+                  },
+                  {
+                    "timestamp": "2026-10-12T12:13:16.000Z",
+                    "type": "response_item",
+                    "payload": {
+                      "type": "custom_tool_call_output",
+                      "call_id": "call_demo-search-alex-1_0",
+                      "output": [
+                        {
+                          "type": "input_text",
+                          "text": "ok"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "timestamp": "2026-10-12T12:13:17.000Z",
+                    "type": "response_item",
+                    "payload": {
+                      "type": "custom_tool_call",
+                      "status": "completed",
+                      "call_id": "call_demo-search-alex-1_1",
+                      "name": "rg",
+                      "input": "rg"
+                    }
+                  },
+                  {
+                    "timestamp": "2026-10-12T12:13:18.000Z",
+                    "type": "response_item",
+                    "payload": {
+                      "type": "custom_tool_call_output",
+                      "call_id": "call_demo-search-alex-1_1",
+                      "output": [
+                        {
+                          "type": "input_text",
+                          "text": "ok"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "timestamp": "2026-10-12T12:14:37.000Z",
+                    "type": "session_meta",
+                    "payload": {
+                      "id": "demo-search-alex-2",
+                      "cwd": "/srv/synthetic/worktrees/recherche-dans-les-notes",
+                      "originator": "codex_exec",
+                      "model_provider": "openai",
+                      "base_instructions": {
+                        "text": "# Auteur\n\n# Mission\nRéaliser sur le périmètre approuvé.\n\n# Règles\n- Utiliser les points d’entrée publics et les sources disponibles.\n- Conserver les mots du propriétaire ; ne pas inventer une preuve.\n- Signaler une donnée absente ou une limite.\n- Rendre un résultat lié à la version observée."
+                      }
+                    }
+                  },
+                  {
+                    "timestamp": "2026-10-12T12:14:37.000Z",
+                    "type": "turn_context",
+                    "payload": {
+                      "cwd": "/srv/synthetic/worktrees/recherche-dans-les-notes",
+                      "approval_policy": "never",
+                      "sandbox_policy": {
+                        "type": "workspace-write"
+                      },
+                      "model": "gpt-6.1-sol",
+                      "collaboration_mode": {
+                        "mode": "default",
+                        "settings": {
+                          "model": "gpt-6.1-sol",
+                          "reasoning_effort": "high"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "timestamp": "2026-10-12T12:14:38.000Z",
+                    "type": "event_msg",
+                    "payload": {
+                      "type": "item_completed",
+                      "item": {
+                        "type": "UserMessage",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "# Tâche\nImplémenter le périmètre approuvé du cockpit en conservant la boîte de réception. Utiliser les sources D01 existantes. Ne pas changer les portes de jugement. Fournir les preuves des critères au commit de sortie.\n\n# Contexte transmis\nWorkflow : Recherche dans les notes\nJob : Réaliser\nVersion : exemple synthétique\n\n# Résultat attendu\nUne observation et ses pièces, ou une limite explicite."
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "timestamp": "2026-10-12T12:14:38.000Z",
+                    "type": "response_item",
+                    "payload": {
+                      "type": "message",
+                      "role": "user",
+                      "content": [
+                        {
+                          "type": "input_text",
+                          "text": "# Tâche\nImplémenter le périmètre approuvé du cockpit en conservant la boîte de réception. Utiliser les sources D01 existantes. Ne pas changer les portes de jugement. Fournir les preuves des critères au commit de sortie.\n\n# Contexte transmis\nWorkflow : Recherche dans les notes\nJob : Réaliser\nVersion : exemple synthétique\n\n# Résultat attendu\nUne observation et ses pièces, ou une limite explicite."
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "timestamp": "2026-10-12T12:14:40.000Z",
+                    "type": "response_item",
+                    "payload": {
+                      "type": "reasoning",
+                      "summary": [
+                        {
+                          "type": "summary_text",
+                          "text": "RAISONNEMENT-PRIVE-de-la-session"
+                        }
+                      ],
+                      "encrypted_content": "gAAAAsynthetique"
+                    }
+                  },
+                  {
+                    "timestamp": "2026-10-12T12:14:42.000Z",
+                    "type": "response_item",
+                    "payload": {
+                      "type": "custom_tool_call",
+                      "status": "completed",
+                      "call_id": "call_demo-search-alex-2_0",
+                      "name": "read",
+                      "input": "read"
+                    }
+                  },
+                  {
+                    "timestamp": "2026-10-12T12:14:43.000Z",
+                    "type": "response_item",
+                    "payload": {
+                      "type": "custom_tool_call_output",
+                      "call_id": "call_demo-search-alex-2_0",
+                      "output": [
+                        {
+                          "type": "input_text",
+                          "text": "ok"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "timestamp": "2026-10-12T12:14:44.000Z",
+                    "type": "response_item",
+                    "payload": {
+                      "type": "custom_tool_call",
+                      "status": "completed",
+                      "call_id": "call_demo-search-alex-2_1",
+                      "name": "rg",
+                      "input": "rg"
+                    }
+                  },
+                  {
+                    "timestamp": "2026-10-12T12:14:45.000Z",
+                    "type": "response_item",
+                    "payload": {
+                      "type": "custom_tool_call_output",
+                      "call_id": "call_demo-search-alex-2_1",
+                      "output": [
+                        {
+                          "type": "input_text",
+                          "text": "ok"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "timestamp": "2026-10-12T12:14:46.000Z",
+                    "type": "response_item",
+                    "payload": {
+                      "type": "custom_tool_call",
+                      "status": "completed",
+                      "call_id": "call_demo-search-alex-2_2",
+                      "name": "exec",
+                      "input": "git push https://ghp_SYNTHETIQUEnepascollecter0000000000@example.invalid"
+                    }
+                  },
+                  {
+                    "timestamp": "2026-10-12T12:14:47.000Z",
+                    "type": "response_item",
+                    "payload": {
+                      "type": "custom_tool_call_output",
+                      "call_id": "call_demo-search-alex-2_2",
+                      "output": [
+                        {
+                          "type": "input_text",
+                          "text": "OPENAI_API_KEY=sk-proj-SYNTHETIQUE-ne-pas-collecter"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "timestamp": "2026-10-12T12:14:48.000Z",
+                    "type": "response_item",
+                    "payload": {
+                      "type": "custom_tool_call",
+                      "status": "completed",
+                      "call_id": "call_demo-search-alex-2_3",
+                      "name": "write",
+                      "input": "write"
+                    }
+                  },
+                  {
+                    "timestamp": "2026-10-12T12:14:49.000Z",
+                    "type": "response_item",
+                    "payload": {
+                      "type": "custom_tool_call_output",
+                      "call_id": "call_demo-search-alex-2_3",
+                      "output": [
+                        {
+                          "type": "input_text",
+                          "text": "ok"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "timestamp": "2026-10-12T12:15:50.000Z",
+                    "type": "event_msg",
+                    "payload": {
+                      "type": "token_count",
+                      "info": {
+                        "total_token_usage": {
+                          "input_tokens": 18446,
+                          "cached_input_tokens": 16616,
+                          "cache_write_input_tokens": 0,
+                          "output_tokens": 2000,
+                          "reasoning_output_tokens": 300,
+                          "total_tokens": 20446
+                        },
+                        "last_token_usage": {
+                          "input_tokens": 18446,
+                          "cached_input_tokens": 16616,
+                          "cache_write_input_tokens": 0,
+                          "output_tokens": 2000,
+                          "reasoning_output_tokens": 300,
+                          "total_tokens": 20446
+                        },
+                        "model_context_window": 258400
+                      },
+                      "rate_limits": {
+                        "limit_id": "codex",
+                        "primary": {
+                          "used_percent": 26.0
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "attempts": [
+              {
+                "end": 290,
+                "outcome": "fail",
+                "log": "refus : test en échec : tests/notes/test_search.py::test_accents"
+              },
+              {
+                "end": 365,
+                "outcome": "pass",
+                "pieces": [
+                  "tdd_green",
+                  "demonstration"
+                ],
+                "output": "{\n  \"status\": \"success\",\n  \"summary\": \"Changement et démonstration enregistrés.\",\n  \"artifacts\": [\n    \"demo/search/build/result.json\"\n  ],\n  \"version\": \"exemple synthétique\"\n}",
+                "output_valid": true
+              }
+            ]
           },
           {
             "id": "code-review",

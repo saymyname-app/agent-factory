@@ -429,7 +429,11 @@ def _place_sessions(jobs, sessions, trace, now):
     for job in jobs:
         if job["lane"]["kind"] != AGENT:
             continue
-        found = {name: at for at, name, _ in job.get("sessions") or []}
+        # A session that claimed several attempts of the job began at its
+        # first claim.
+        found = {}
+        for at, name, _ in sorted(job.get("sessions") or [], key=lambda claim: claim[0]):
+            found.setdefault(name, at)
         for name, observed in trace.items():
             if name not in found and set(observed.get("beads") or []) & set(job["beads"]):
                 found[name] = None
@@ -658,7 +662,8 @@ def _tool_events(job, now):
                 continue
             given = " ".join(str(call.get("input") or "").split())
             found.append({"at": at, "kind": TOOLS, "label": "Outil",
-                          "text": "%s · %s" % (call.get("tool"), given) if given else str(call.get("tool")),
+                          "text": "%s · %s" % (call.get("tool"), given) if given and given != call.get("tool")
+                          else str(call.get("tool")),
                           "session": session["name"], "seconds": call.get("seconds"),
                           "input": call.get("input") or ""})
     return found

@@ -802,6 +802,10 @@ VIEW_DETAILS = {
     "job-system-prompt": {"open": ("prompts", "system")},
     "job-user-prompt-rendered": {"open": ("prompts", "user")},
     "job-user-prompt-raw": {"open": ("prompts", "user"), "raw": ("user",)},
+    "job-gates": {"open": ("controles",)},
+    "job-output": {"open": ("sorties",)},
+    "job-usage": {"open": ("usage",)},
+    "job-usage-unavailable": {"open": ("usage",)},
 }
 
 

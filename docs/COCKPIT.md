@@ -1287,9 +1287,11 @@ ways:
 | the runs of a Runs state, each « Livraison D01 » or « Maintenance » | a workflow as the tracker holds one (C1, af-lzti7w): a « Livraison D01 » is a convoy carrying the new-flow mark, under the title of the run, written by `benjamin` for the project `agent-factory` (the datasets name none), its ticket (same `gc.graph_digest`; `gc.flow.merge` when the run says « Fusionné », `gc.flow.gate.withdrawn` when « Abandonné »), the workflow root `mol-ticket-author` run on an input convoy that tracks the ticket, and, when an agent of the run is a « Relect… » or an « Évaluat… », the workflow root `mol-code-review` or `mol-ticket-evaluation` run on an input convoy that tracks the bead the dispatch door writes to launch it (`gc.dispatched_via`, its description naming the convoy and the ticket); a « Maintenance » is a workflow root `mol-do-work` run on the work Benjamin asked for, under the title of the run; closed at the end of the run, open while it has none; the day of `generated_at` at the run's `started` (Paris) is its start | `runs.value`; `GET /runs` |
 | the jobs of a run | one step per job, of the workflow root of its agent's role (the author's for Benjamin's and the code's), under its name, from its start to its end (open without one): a job of the lane `human` a plain step routed to `benjamin`, of the lane `code` a `check` (`gc.outcome` pass once closed), of an agent lane a `ralph` whose closing runs a check (`gc.check_mode`), claimed by an attempt of the session of that agent (`gc.logical_bead_id`, `gc.claimed_at`, `gc.outcome` pass once closed); its prompt as description, its result as close reason | `runs.value`; `GET /runs/run`, `GET /runs/job` |
 | the agent lanes | one session per job of an agent (`synthetic-session-<lane>-<run>-<job>`): its `agent_name` the name of the lane, its `template` and `provider` the two halves of its role (« Relectrice · Claude »), running on the open job it holds | `sessions.value.agents`, `sessions.value.sessions`, `gc.value.agents_running` |
-| the sessions a job says (`sessions`: each its `name`, its `start` and `end` from the trigger, and as the supervisor lists it its `provider`, `model`, `effort`, `permission_mode`, `context_pct`, `context_window`, `work_dir`; its `transcript`, records in the provider's own format) (C2a, af-k2rbw1) | in place of the one session of the job: each listed by the supervisor as it ran it, created at its start, its effort and permission mode under `options`, working the attempt of the job (`active_bead`) while it runs only, as the installed supervisor lists it; its waking (at its start), the attempt it took (`execution.step_started`, at the start of the job) and its stop (at its `end`; none without one) in the supervisor's log; the attempt claimed at the start of the job under the name of the last (gc keeps the session that took over); what its provider recorded served as its transcript; an empty list, a job no session is recorded for (no attempt) | the trace of the sessions; `GET /runs/job` |
+| the sessions a job says (`sessions`: each its `name`, its `start` and `end` from the trigger, and as the supervisor lists it its `provider`, `model`, `effort`, `permission_mode`, `context_pct`, `context_window`, `work_dir`; its `transcript`, records in the provider's own format) (C2a, af-k2rbw1) | in place of the one session of the job: each listed by the supervisor as it ran it, created at its start, its effort and permission mode under `options`, working the attempt of the job (`active_bead`) while it runs only, as the installed supervisor lists it; its waking (at its start), the attempt it took in each job that says it (`execution.step_started`, at the start of the job: a session listed in two jobs takes both) and its stop (at its `end`; none without one) in the supervisor's log; the attempt claimed at the start of the job under the name of the last (gc keeps the session that took over); what its provider recorded served as its transcript; an empty list, a job no session is recorded for (no attempt) | the trace of the sessions; `GET /runs/job` |
 | a session a job says sent once the cockpit is up (`dispatched`: `after_seconds` from the launch, `running_seconds`, `recorded_while_running`) | nothing of it until then, as for a ticket not yet dispatched; then its waking in the log, listed at work for `running_seconds` with only its first `recorded_while_running` records served, then its stop in the log, all its records served, listed no more (the installed supervisor lists only the sessions it runs) -- with `running_seconds` 0, a session that woke and stopped between two readings | the collection at the waking and stop of the sessions |
 | where the cockpit keeps its trace of the sessions (`session_trace`, an absolute path) | `COCKPIT_TRACE_FILE`; else in the home of the launch, removed with it | the projection a case reads, and keeps from one launch to the next |
+| the attempts a job of an agent says (`attempts`: each its `end` from the trigger -- none, still at work --, its `outcome`, `pass` or `fail`, what its check printed, `log`, the structured output it recorded, `output`, as written, `output_valid` false when its check refused it, and the pieces it captured, `pieces`) (C2b, af-ofz29f) | in place of the one attempt of the job: one attempt per entry (`gc.attempt`, claimed at the end of the one before, closed at its `end` with its `gc.outcome`, its `gc.output_json`, `gc.failure_reason` `invalid_required_output_json` for an output refused); what the check said of each closed attempt on the step (`gc.attempt_log`: `action`, `attempt`, `outcome`, `stderr`, `reason`), as Gas City writes it; each piece filed in the evidence store a second before the end of its attempt (`<spec>/<ticket>/<piece>.json`) and fingerprinted on the ticket (`gc.flow.evidence.<piece>`), as `bin/evidence-capture` does | the controls and outputs of `GET /runs/job` |
+| where the flow files its pieces (`evidence_store`, an absolute path) | `EVIDENCE_STORE_DIR` of the cockpit, else a store in the home of the launch; the pieces are filed with a seal key only into a store that has none, so a store purged since (its key kept) stays purged | the pieces a control says present or absent, and the purge a case does |
 | what the flow declared for each role of a run (`declared`: `{role: {agent, provider, model, at}}`) | written on its ticket as the flow writes it (`gc.flow.models`) | the configuration declared in `GET /runs/job` |
 | what a Runs state selects: `ui.filter`, `ui.run`, `ui.selected_job`, `ui.selected_event`, `ui.detail` | the filter, the run, the job, the event and the state of the detail (the sections it opens, the prompts it shows raw) a page opens when its address names none (`COCKPIT_RUNS_VIEW`) | `GET /runs`, `GET /runs/run`, `GET /runs/job` |
 | the moment a Runs state shows (the latest `started` + `elapsed` of an open run) | the clock of the cockpit starts there and runs on (`COCKPIT_CLOCK_START`) | the horizon of the open runs, `read_at` |
@@ -1315,11 +1317,11 @@ What is left out, and why:
 - in what a Runs state selects, an event (`ui.selected_event`) that is
   not among the events the job holds: the fixtures hold of a job only its
   start, its end, the session that claimed it and the check its closing
-  ran, the tool calls the prototype draws are not collected yet (C2b); the
-  Runs datasets carry the same fixtures, byte for byte -- but for the
-  sessions and the declarations of the run « Recherche dans les notes »
-  in the five states of the trace (below) -- and are served the same
-  workflows;
+  ran, and the tool calls only where the sessions of the job say what
+  their provider recorded (C2b); the Runs datasets carry the same
+  fixtures, byte for byte -- but for the sessions, declarations and
+  attempts of the run « Recherche dans les notes » in the eight states of
+  the trace (below) -- and are served the same workflows;
 - the lines of a page above its first section (title, subtitle, tabs, the
   banner of a reading that is no longer current, « Rien à afficher ici »)
   and the sections that hold links only (« Ressources du projet »);
@@ -1345,7 +1347,11 @@ the frozen prototype, byte for byte (Panorama at `632deea`, Runs at
 and declarations of « Recherche dans les notes » in `job-sessions`,
 `job-configuration`, `job-system-prompt`, `job-user-prompt-rendered` and
 `job-user-prompt-raw` (C2a, af-k2rbw1: what the prototype drew as example
-values, written as the sources the cockpit reads), for the `folded` of
+values, written as the sources the cockpit reads), but for the sessions
+-- those of `job-sessions`, with the usage Codex counted -- and the
+attempts of « Réaliser » in `job-gates`, `job-output` and `job-usage`
+(C2b, af-ofz29f: the same, for the controls, outputs and usage the
+prototype drew), for the `folded` of
 the `home-*` states that open a result: the parts of « Ce qui t’attend »
 that unfold, copied from the frozen state drawn (`states/<state>.html`),
 since the prototype's dataset keeps only the text of the page (T02R,
@@ -1480,11 +1486,11 @@ The events of a job are what the tracker recorded of it: its start and its
 end (« autre », grey), each session that claimed it, at its claim
 (« session », purple), a check step run and its outcome, or the outcome of
 the check each attempt's closing ran (`gc.check_mode`, `gc.outcome` passed
-or refused: « contrôle », green). Tool calls are not collected yet (C2b):
-no event is drawn turquoise. The detail of a job says, of each section that
-has no source yet (controls, usage, outputs), that it is not collected; an
-event opened says its text whole. Its configuration, sessions and prompts
-are those of the trace of the sessions (below).
+or refused: « contrôle », green), and each tool a session of the job called
+while it worked it (« outil », turquoise: below). An event opened says its
+text whole. Its configuration, sessions and prompts are those of the trace
+of the sessions (below); its controls, usage and outputs, what the job did
+(below).
 
 ### The trace of the sessions (C2a, af-k2rbw1)
 
@@ -1519,9 +1525,10 @@ where the provider records it (Codex, `session_meta`; Claude Code does not:
 it is said not collected), each user prompt as typed (Codex, `event_msg`
 UserMessage; Claude Code, a `user` record of text), with its version
 (`sha256:` and twelve digits of its exact text), and the names of the tools
-it called. A session that woke and stopped between two readings is so
+it called; and (C2b) each tool call and the usage its provider counted
+(below). A session that woke and stopped between two readings is so
 collected, and what a session was sent after it was last read. Nothing else
-is read: what tools were given and printed, reasoning, environment, tokens.
+is read: what tools printed, reasoning, environment.
 A record already written is not written again -- another cockpit reading
 the same log adds nothing --, a session that could not be read keeps its
 moments out until it is, and a record of the provider older than the
@@ -1550,6 +1557,81 @@ the one agent of its workflow, its detail saying that no session is
 recorded. Sections open and prompts shown raw are kept in the address
 (`&ouvert=…`, `&brut=…`). Tests:
 `tests/cockpit-criteria/commands/runs-trace-*-test.py`.
+
+### What a job did: events, controls, outputs, usage (C2b, af-ofz29f)
+
+Intent: Spec af-fgcw0d, user stories 140 to 144 (« consulter les contrôles
+du job, tentatives, états, horaires et pièces », « les compteurs de tokens
+et coûts collectés avec catégories fournisseur et complétude explicites »,
+« les sorties structurées avec contenu, validité, tentative et artefacts »,
+« les événements chronologiques et contenus des appels d’outils avec heure
+Paris, durée et session », « retrouver les résumés et traces conservés des
+runs terminés après redémarrage et purge des pièces temporaires D01, avec
+pièce absente signalée »). Mechanism (agent interpretation): the same
+collection as C2a, at the same point; the controls and outputs read from
+what Gas City already records on the steps; the pieces checked against the
+evidence store, never copied.
+
+- **Tool calls.** From what the provider recorded of each session
+  (`lib/cockpit/runs/trace.py`, `done`): Codex a `custom_tool_call` or
+  `function_call` and its output sharing a `call_id`, Claude Code a
+  `tool_use` and the `tool_result` naming it -- the tool, what it was given
+  (credentials masked, `•••`: a token of a known service, a value after a
+  name holding KEY, TOKEN, SECRET or PASSWORD, an Authorization header, the
+  password of an address; 2 000 characters at most), when, and how long
+  until what it printed was recorded. Each is an event « Outil » of the job
+  the session worked at that moment, its duration on its line, its session
+  and what it was given when opened. A call a later session replays at its
+  head is the earlier session's, not listed again.
+- **Controls.** Each attempt of a step whose closing runs a check
+  (`gc.check_mode`): « passé » or « refusé » once closed (its `gc.outcome`,
+  else its entry in `gc.attempt_log`), « en attente » while open -- a
+  session at work proves nothing --, the time it closed, what the check
+  printed (the entry of that attempt in `gc.attempt_log` of the step), and
+  the pieces the ticket of its workflow fingerprints that were captured
+  during it (`gc.flow.evidence.<piece>`, its `at`), each « présente »,
+  « absente » (the file is gone: purged after promotion, or never on this
+  host) or « modifiée » (`lib/cockpit/runs/evidence.py`, against
+  `<store>/<spec>/<ticket>/<piece>.json`; the store is `EVIDENCE_STORE_DIR`,
+  else the account's, as `bin/evidence-capture` finds it). No link is drawn
+  to a piece. A job of the code says its check in its events; its section
+  says the controls not collected.
+- **Outputs.** The structured output each attempt recorded
+  (`gc.output_json`), shown as recorded -- pretty when it reads as JSON --,
+  « valide » when it reads as JSON and its check did not refuse it
+  (`gc.failure_reason` or the `reason` of its log entry
+  `invalid_required_output_json`, `missing_required_output_json`), with the
+  `artifacts` it names. None recorded: « Aucune sortie enregistrée ».
+- **Usage.** What the provider counted, so far, at each moment: Codex its
+  `token_count` (`total_token_usage`: `input_tokens`, of which
+  `cached_input_tokens`; `output_tokens`, of which
+  `reasoning_output_tokens`; `cache_write_input_tokens`; `total_tokens`),
+  Claude Code the `usage` of each message, once however many of its records
+  repeat it (`input_tokens`, `cache_creation_input_tokens`,
+  `cache_read_input_tokens`, `output_tokens`, of which
+  `output_tokens_details.thinking_tokens`; its total, the four added). A job
+  counts, of each session, its count at the end of the job less its count
+  at its start, so a session that worked several jobs counts in each only
+  its part; the counts are added by provider, one table each, every row
+  said as the provider counts it -- the total its own, never the rows added
+  -- and a category it does not give « non fourni ». The cost is « Non
+  collecté »: no source gives a price. « Usage complet » only when every
+  session counted its usage and stopped; else « Usage partiel », the
+  session that counted nothing « non collecté », never zero, the one still
+  at work « en cours ». The head of the run says the tokens observed,
+  each session counted once, whole, and whether the usage is partial.
+- **Kept.** The tool calls and usage are records of the projection of the
+  trace, like the prompts: once collected they are read from it, so a
+  restart of the cockpit, a supervisor that no longer keeps a session, or a
+  purge of the evidence store loses none, and none is listed twice. The
+  controls and outputs are on the beads of the tracker, which the purge
+  does not touch; the pieces are only pointed at, and said absent once
+  purged.
+
+The states `job-gates`, `job-output`, `job-usage` and
+`job-usage-unavailable` open « Contrôles », « Sorties » and « Tokens et
+coût ». Tests:
+`tests/cockpit-criteria/commands/runs-trace-{events,controls,outputs,usage,layout,retention}-test.py`.
 
 The frise is drawn on a track of 720 px, scrolled in its box on a narrower
 screen. A job is a box at its start, as wide as its time and at least as
