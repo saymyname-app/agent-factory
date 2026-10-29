@@ -177,7 +177,13 @@ Rigs and agents already exist; you almost never add one. The real flow is:
    the named `factory-worker` implementation role, selects `mol-do-work`, and
    passes `--reassign`. `workspace` is its provider-failover policy class, not
    a configured sling target. `bd.dog` is Dolt maintenance only and must never
-   receive product or Factory implementation workflows. For every other rig
+   receive product or Factory implementation workflows. When that maintenance
+   bead repairs a marked delivery ticket's current Factory `operator_request`,
+   route it with `./bin/factory-work-dispatch <repair> --technical-request
+   <convoy> <ticket>`; if the repair was already routed or delivered, use the
+   same command with `--link-only` so it is not dispatched twice. Never call
+   `convoy-state link-technical-repair` by hand: the HQ door is the authorized
+   producer of that relation. For every other rig
    and role-specific formula (including `build-basic`), run
    `./bin/dispatch-door <bead-id> --rig <project-name> --formula <formula>`
    with the formula from the routing table below — `<project-name>` matches
