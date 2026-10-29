@@ -1014,6 +1014,16 @@ def cmd_brief(args: argparse.Namespace) -> int:
         reviewed = review["rounds"][-1]
         brief.update({
             "reviewed_commit": reviewed["commit"],
+            # A contested finding from a targeted review may concern
+            # behaviour that already existed at the ticket's fixed point,
+            # even when its line was reshaped by the ticket. The correction
+            # diff alone is empty in that case; give the second reviewer the
+            # original reviewed diff and scope so attribution can be judged.
+            "reviewed_diff": {
+                "base": reviewed["base"], "commit": reviewed["commit"],
+                "command": f"git -C {repo} diff {reviewed['base']}...{reviewed['commit']}",
+                "scope": reviewed.get("scope"),
+            },
             "findings": blocking_findings(reviewed), "responses": reviewed.get("responses") or {},
             "states": [FAVORABLE, UNFAVORABLE],
             "judgement_shape": {

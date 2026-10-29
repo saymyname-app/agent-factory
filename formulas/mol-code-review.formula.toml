@@ -199,10 +199,22 @@ commit of the correction, or `contested`, with a reason. You are a second
 reviewer: judge each answer against the correction diff (`.diff.command`,
 from the reviewed commit `.base` to `.commit`) and the cited line.
 
+`.reviewed_diff` is the original diff that produced the findings: its
+`base`, `commit`, `command`, and the targeted `scope` when that review was
+targeted. For a contested finding from a targeted review, inspect that diff
+as well as the correction diff. A behavior already present at
+`.reviewed_diff.base`, unchanged in meaning by the ticket, is inherited and
+the contest is `favorable` even when the ticket reshaped its line. A behavior
+introduced by the ticket, or a real semantic interaction between the ticket's
+change and inherited context, remains `unfavorable`; do not ignore inherited
+context globally.
+
 - `favorable` — a `fixed` finding is really fixed at `.commit`: what the
   cited line asks is now true of the code. A `contested` finding is rightly
-  contested: the cited line does not say what the finding claims, or the
-  code already did what it asks.
+  contested: the cited line does not say what the finding claims, the code
+  already did what it asks, or a targeted finding concerns behavior already
+  present at `.reviewed_diff.base` that the ticket did not change or interact
+  with semantically.
 - `unfavorable` — anything else, with a one-line `reason`.
 
 Judge only that list: no new finding. Write `code-review-result.json` in the

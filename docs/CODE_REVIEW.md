@@ -128,6 +128,15 @@ sous `demoted`, `finishing_pass: true` ; `show` les liste sous
 questions fermées d'une revue ciblée ne portent que sur les fichiers de
 `changed`. `.scope` vaut `null` pour la première revue, qui reste complète.
 
+Une ligne de `changed` attribue provisoirement le constat au ticket : une
+modification syntaxique peut envelopper un comportement déjà présent dans la
+base du ticket sans l'introduire. Si l'auteur le conteste, le jugement reçoit
+donc aussi `reviewed_diff`, le diff original `base...commit` qui a produit le
+constat et son `scope`. Le second relecteur juge l'attribution : un comportement
+déjà présent dans `base`, inchangé sémantiquement par le ticket, est soldé ; un
+comportement introduit par le ticket ou une vraie interaction entre son
+changement et le contexte hérité reste défavorable.
+
 **La revue ne juge pas la fidélité visuelle** (ADR-0032, ADR-0034) : la
 formule `mol-code-review` laisse de côté la part d'un critère qui demande
 que l'écran ressemble à sa référence, dans la lecture des tests de critère
@@ -221,6 +230,11 @@ to a new reviewer session, which gives one state per Blocking Finding —
 `favorable`, or `unfavorable` with a reason — and no new finding. A
 judgement recorded by the session that made the review is refused. The
 verdict is favorable only if every Blocking Finding is judged favorably.
+The judgement brief carries both `.diff` (the correction diff) and
+`.reviewed_diff` (the original reviewed diff, including the targeted scope),
+so a contest that says the behavior was inherited can be checked against the
+ticket base instead of being rejected merely because the behavior still
+exists at the tip.
 
 The fresh author session that answers is the one of the ticket's single
 correction round, started by `bin/correction-round` once this review and the
