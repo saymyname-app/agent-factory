@@ -63,7 +63,7 @@ FIDELITY_TOOL = BIN / "prototype-fidelity"
 PROFILE_TOOL = BIN / "project-planning-profile"
 
 sys.path.insert(0, str(BIN.parent / "lib"))
-from delivery_rules import names_in_texts, tdd_evidence_piece  # noqa: E402
+from delivery_rules import evaluation_proven_by_test, names_in_texts, tdd_evidence_piece  # noqa: E402
 
 # The closed list (Spec §9), versioned: a change of the list is a new
 # version. bin/convoy-state holds the same names and refuses any other record.
@@ -360,12 +360,18 @@ def condition_evaluation(ticket: dict[str, Any], tip: str, evidence: Evidence, r
         return False, "le démarrage du produit ne vaut évaluation que pour un prefactoring ou un ticket sans interface"
     # ADR-0030 L4: the demonstration line; the criteria are proven by the frozen tests.
     line = last.get("demonstration_line") or {}
-    if line.get("state") != "observed":
+    proven = evaluation_proven_by_test(last, rounds[:-1], ticket.get("park_lifts") or [])
+    declared = last.get("proven_by_test") or []
+    if line.get("state") != "observed" and not (
+            declared == proven and "ligne de démonstration" in proven):
         return False, f"état « {line.get('state')} » : {short(line.get('text'), 80)}"
-    problem = evidence.at(str(line.get("evidence")), tip, "preuve d'un état observé")
+    what = "preuve d'un état observé" if line.get("state") == "observed" else "relevé de l'état prouvé par son test"
+    problem = evidence.at(str(line.get("evidence")), tip, what)
     if problem:
         return False, problem
-    return True, f"la ligne de démonstration observée avec preuve à {sha(tip)}"
+    if line.get("state") == "observed":
+        return True, f"la ligne de démonstration observée avec preuve à {sha(tip)}"
+    return True, f"la ligne de démonstration prouvée par son test après la décision humaine satisfaite à {sha(tip)}"
 
 
 def condition_fidelity(ticket: dict[str, Any], tip: str, evidence: Evidence, repo: Path, convoy: dict[str, Any]) -> Verdict:

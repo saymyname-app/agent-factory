@@ -1211,6 +1211,54 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual([{"what": "ligne de démonstration", "text": "la ligne de démonstration"}],
                          self.shown_state(T1)["park_lifts"][-1]["proven_by_test"])
 
+    def test_the_answer_a_proof_reaches_ticket_end_and_the_next_pass_is_idempotent(self):
+        tip = self.finished_interface_ticket()
+        line = {"text": self.shown_state(T1)["demonstration_line"], "state": "unobservable",
+                "evidence": "evaluation.demo", "reason": "la demi-phrase ne se voit pas sur le produit lancé",
+                "cause": "criterion"}
+        round_ = {"kind": "evaluation", "commit": tip, "criteria": [], "demonstration_line": line,
+                  "roles": {"author": None, "evaluator": None, "same_provider": None, "other_declared": []},
+                  "environment": [{"dataset": "content", "address": "http://127.0.0.1:40000"}],
+                  "recorded_by": "delivery-evaluator-fx", "outcome": "planning_exception", "verdict": "unfavorable",
+                  "at": "2026-10-21T04:13:02Z"}
+        metadata = self.bead(T1)["metadata"]
+        self.edit(T1, metadata={**metadata,
+                                "gc.flow.evaluation": json.dumps({"rounds": [round_]}),
+                                "gc.flow.verdict.evaluation": json.dumps({
+                                    "state": "unfavorable", "commit": tip, "at": round_["at"]})})
+        request = {"quoi": f"Planning Exception sur {T1} : ligne de démonstration inobservable",
+                   "pourquoi": "Le produit lancé ne peut pas montrer cette demi-phrase.",
+                   "que_faire": [{"option": "Juger ce qui est inobservable prouvé par son test de critère vert",
+                                   "consequence": "Le parcage est levé."},
+                                  {"option": "Retirer le ticket du graphe", "consequence": "La couverture est recalculée."},
+                                  {"option": "Réévaluer sur le produit relancé", "consequence": "Rien n'est prouvé."}],
+                   "langue": "fr", "bloquant": True}
+        self.run_ok(ESCALATION, "benjamin", T1, json.dumps(request))
+        self.run_ok(STATE, "park", CONVOY, T1, "--cause", "planning_exception", "--detail", request["quoi"])
+        self.evaluated({"states": {"demo": {"state": "unobservable", "cause": "criterion",
+                                             "reason": "toujours invisible sur le produit lancé"}}})
+        self.env["ESCALATION_DOOR_NOW"] = "4102444800"
+        self.run_ok(ESCALATION, "repondre", T1, "a", "--actor", "benjamin")
+
+        answer = self.advance(CONVOY)
+
+        shown = self.shown_state(T1)
+        last = shown["evaluation"]["rounds"][-1]
+        self.assertEqual(("favorable", ["ligne de démonstration"]),
+                         (last["outcome"], last["proven_by_test"]))
+        self.assertEqual([T1], [entry["id"] for entry in self.of(answer, "lifted")])
+        self.assertEqual([T1], [entry["id"] for entry in self.of(answer, "integration")["merged"]])
+        self.assertEqual([T1], [entry["id"] for entry in self.of(answer, "ticket_end")["closed"]])
+        self.assertEqual("closed", shown["status"])
+        self.assertIn("prouvée par son test", shown["gates"]["ticket_end"]["conditions"][2]["detail"])
+        gate = shown["gates"]["ticket_end"]
+
+        again = self.advance(CONVOY)
+
+        self.assertIsNone(self.ticket_end_of(again))
+        after = self.shown_state(T1)
+        self.assertEqual(("closed", gate), (after["status"], after["gates"]["ticket_end"]))
+
     def test_the_answer_c_to_an_evaluation_planning_exception_lifts_it_and_judges_nothing_proven(self):
         # af-npz9v1.38: evaluated again on the products launched again.
         self.evaluation_parked()
