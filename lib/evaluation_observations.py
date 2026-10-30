@@ -1,15 +1,19 @@
 """Controller observations of launch recipes; no author report or verdict."""
 import hashlib
 import json
+import os
 import socket
 import subprocess
 from pathlib import Path
 
+from bounded_process import run as bounded_run
 from evaluation_capacity import admission
+
+LAUNCH_TOOL = 'project-launch'
 
 
 def command(argv, pass_fds=()):
-    proc = subprocess.run([str(v) for v in argv], capture_output=True, text=True, timeout=90, pass_fds=pass_fds)
+    proc = bounded_run([str(v) for v in argv], capture_output=True, text=True, timeout=90, pass_fds=pass_fds)
     return {"command": [str(v) for v in argv], "exit_code": proc.returncode,
             "output": proc.stdout, "stderr": proc.stderr}
 
@@ -71,7 +75,7 @@ def lifecycle_preflight(bin_dir, repo, profile, commit, dataset, state):
         before = listeners()
         if state.exists():
             raise ValueError('an interrupted lifecycle trial still needs cleanup')
-        argv = [bin_dir / 'project-launch', '--repo-root', repo, 'start', profile,
+        argv = [bin_dir / LAUNCH_TOOL, '--repo-root', repo, 'start', '--owner-pid', str(os.getpid()), profile,
                 '--commit', commit, '--dataset', dataset, '--state-file', state]
         with admission(state) as lock_fd:
             started = command(argv, pass_fds=(lock_fd,))
@@ -85,14 +89,14 @@ def lifecycle_preflight(bin_dir, repo, profile, commit, dataset, state):
                     lifecycle['port_open_before_stop'] = connects(trial['port'])
                 if trial.get('worktree'):
                     lifecycle['processes_before_stop'] = processes_in(trial['worktree'])
-                lifecycle['stop'] = command([bin_dir / 'project-launch', 'stop', '--state-file', state])
+                lifecycle['stop'] = command([bin_dir / LAUNCH_TOOL, 'stop', '--state-file', state])
                 lifecycle['process_alive_after_stop'] = alive(trial['pid']) if trial.get('pid') else False
                 lifecycle['processes_after_stop'] = sorted(set(processes_in(trial['worktree'])) |
                     {pid for pid in lifecycle.get('processes_before_stop', []) if alive(pid)}) if trial.get('worktree') else []
                 lifecycle['port_open_after_stop'] = connects(trial['port']) if trial.get('port') else False
         finally:
             if state.exists():
-                command([bin_dir / 'project-launch', 'stop', '--state-file', state])
+                command([bin_dir / LAUNCH_TOOL, 'stop', '--state-file', state])
         if state.exists():
             raise RuntimeError(f'lifecycle trial cleanup unconfirmed: {state}')
         lifecycle['existing_ports_after'] = sorted(p for p in before if connects(p))
@@ -126,7 +130,7 @@ def observe(bin_dir, repo, profile, commit, launch_state, references, lifecycle)
         try:
             states = {s['id']: s for s in json.loads(manifest['output'])['states']}
             for name in ref['states']:
-                source = subprocess.run(['git', '-C', str(tree), 'show',
+                source = bounded_run(['git', '-C', str(tree), 'show',
                     f"{ref['commit']}:{ref['path']}/{states[name]['dataset']}"], capture_output=True, timeout=10)
                 path = (tree / declared['datasets'][name]).resolve()
                 if not path.is_relative_to(tree.resolve()):

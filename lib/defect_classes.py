@@ -31,6 +31,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from bounded_process import run as bounded_run
+
 REGISTRY = Path(__file__).resolve().parents[1] / "docs" / "DEFECT_CLASSES.md"
 FIELDS = ("Invariant", "Contrôle", "Occurrences", "Ouvertes")
 NO_CLASS = "aucune"
@@ -126,7 +128,7 @@ def merged_since(since: str, repo: Path) -> list[dict]:
     gh = os.environ.get("GH_BIN") or "gh"
     argv = [gh, "pr", "list", "--state", "merged", "--limit", "500", "--search", f"merged:>={since}",
             "--json", "number,title,body,mergedAt"]
-    proc = subprocess.run(argv, cwd=repo, text=True, capture_output=True, timeout=120)
+    proc = bounded_run(argv, cwd=repo, text=True, capture_output=True, timeout=120)
     if proc.returncode:
         raise RegistryError(f"gh pr list a échoué : {(proc.stderr or proc.stdout).strip()[:300]}")
     return json.loads(proc.stdout or "[]")
