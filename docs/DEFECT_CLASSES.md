@@ -67,8 +67,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   les délais mesurés des tests d'un ticket et de l'ordre convoy-advance
   (`config/test-budgets.json`, étude C T3), pas les autres délais écrits à
   la main. Le quatrième refuse une attente de formule qui peut atteindre les
-  cinq minutes sans `gc runtime heartbeat`, et tient la même règle dans les
-  prompts des rôles.
+  cinq minutes sans `gc runtime heartbeat`.
 - Occurrences : #624, #628, #629, #630, #631, #636, #647, #657, #658, #661,
   #667, #694, #696, #705, #706, #708, #710, #713, #721 ; copies orphelines du
   22/10 (sans PR) ; af-kky570 ; af-npz9v1.46 ; af-npz9v1.26 ; af-30zwwu ;
