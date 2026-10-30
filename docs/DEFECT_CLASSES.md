@@ -89,9 +89,12 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/code-review-test.py CodeReviewTest.test_an_unfavorable_judgement_from_the_previous_contract_is_rejudged_once_at_the_same_tip`,
   `python3 tests/tdd-step-test.py TddStepTest.test_an_ambiguous_short_successor_does_not_name_either_ticket`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_factory_technical_request_waits_for_every_linked_repair_s_delivery_proof_then_resumes_once`,
-  `bash tests/factory-work-dispatch-test.sh`.
+  `bash tests/factory-work-dispatch-test.sh`. Les courses réponse/retrait qui
+  pourraient consommer une réponse sont tenues par
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_an_evaluation_stop_answered_while_its_request_is_cleared_is_not_resumed ConvoyAdvanceTest.test_a_removed_stage_stop_answered_while_its_request_is_cleared_is_not_resumed ConvoyAdvanceTest.test_a_grouped_answer_recorded_while_changed_parkings_are_re_raised_is_applied_first`
+  et `python3 tests/convoy-advance-review-evaluation-correction-test.py ConvoyAdvanceTest.test_a_code_review_stop_answered_while_its_request_is_cleared_is_not_resumed`.
 - Occurrences : #635, #637, #650, #653, #662, #666, #672, #673, #679, #682,
-  #687, #702, #704, #709, #711, #712, #718 ; af-npz9v1.44 ; af-npz9v1.47 ; af-npz9v1.48.
+  #687, #702, #704, #709, #711, #712, #718 ; af-npz9v1.44 ; af-npz9v1.47 ; af-npz9v1.48 ; af-npz9v1.35.
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
   contrôle : `evaluation_outage` reste à la porte du ticket et à la
   maintenance d'usine ; `criterion_already_green` reste au Planning Run ;
