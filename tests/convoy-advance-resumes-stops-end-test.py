@@ -290,6 +290,14 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual(([], 0), (self.of(answer, "resumed"), self.resumes()))
         self.assertEqual(self.NO_RESULT, self.shown_state(T1)["stop"]["reason"])
 
+    def test_an_evaluation_stop_answered_while_its_request_is_cleared_is_not_resumed(self):
+        self.evaluation_stopped()
+
+        answer = self.advance(CONVOY, env={**self.env, "CONVOY_STATE_FAKE_ANSWER_ON_CLEAR": f"{T1}=a"})
+
+        self.assertEqual(([], 0), (self.of(answer, "resumed"), self.resumes()))
+        self.assertEqual(self.NO_RESULT, self.shown_state(T1)["stop"]["reason"])
+
     # --- a ticket stopped by a stage the flow removed is resumed on itself (ADR-0030 L3, af-pjvsgo) ---
 
     def stopped_by_the_test_review(self, raised=True):
@@ -335,6 +343,14 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.run_ok(ESCALATION, "repondre", T1, "a", "--actor", "operateur-test")
 
         answer = self.advance(CONVOY)
+
+        self.assertEqual(([], 0), (self.of(answer, "resumed"), self.resumes()))
+        self.assertEqual("test_review_no_result", self.shown_state(T1)["stop"]["reason"])
+
+    def test_a_removed_stage_stop_answered_while_its_request_is_cleared_is_not_resumed(self):
+        self.stopped_by_the_test_review()
+
+        answer = self.advance(CONVOY, env={**self.env, "CONVOY_STATE_FAKE_ANSWER_ON_CLEAR": f"{T1}=a"})
 
         self.assertEqual(([], 0), (self.of(answer, "resumed"), self.resumes()))
         self.assertEqual("test_review_no_result", self.shown_state(T1)["stop"]["reason"])
@@ -998,6 +1014,25 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         resumed = [entry["id"] for entry in self.of(answer, "resumed")]
         self.assertEqual(1, resumed.count(T1))
         self.assertEqual(1, resumed.count(T2))
+        self.assertIsNone(self.park_of(T1))
+        self.assertIsNone(self.park_of(T3))
+        self.assertEqual("closed", self.bead(grouped)["status"])
+        self.assertIsNone(self.grouped_bead())
+
+    def test_a_grouped_answer_recorded_while_changed_parkings_are_re_raised_is_applied_first(self):
+        self.exhausted_and_alone()
+        self.advance(CONVOY)
+        grouped = self.grouped_bead()
+        metadata = self.bead(T1)["metadata"]
+        park = json.loads(metadata["gc.flow.park"])
+        park["at"] = "9998-01-01T00:00:00Z"
+        metadata["gc.flow.park"] = json.dumps(park)
+        self.edit(T1, metadata=metadata)
+
+        answer = self.advance(
+            CONVOY, env={**self.env, "CONVOY_STATE_FAKE_ANSWER_ON_GROUPED_NOTE": f"{grouped}=a"})
+
+        self.assertEqual([T1], [entry["id"] for entry in self.of(answer, "lifted")])
         self.assertIsNone(self.park_of(T1))
         self.assertIsNone(self.park_of(T3))
         self.assertEqual("closed", self.bead(grouped)["status"])
