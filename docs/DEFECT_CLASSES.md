@@ -129,15 +129,17 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 
 - Invariant : Une règle, une fonction : un écrivain et son lecteur, ou deux
   outils, lisent la règle au même endroit.
-- Contrôle : `python3 tests/delivery-rules-test.py` tient les trois paires
+- Contrôle : `python3 tests/delivery-rules-test.py` tient les quatre paires
   connues sur leurs fonctions communes ; `bash tests/operator-bd-test.sh`
   tient l'identité `po-agent/<session>` entre l'écrivain opérateur et
   `factory-orphan-sweep`.
 - Occurrences : #620, #625, #659, #660, #681, #685, #686, #693, #695, #703,
-  #716 ; af-npz9v1.42.
+  #716 ; af-npz9v1.42 ; af-npz9v1.52.
 - Ouvertes : aucune ; `review_replay_due`, `tdd_evidence_piece` et
-  `names_in_texts` (`lib/delivery_rules.py`) ont remplacé les trois paires
-  ouvertes de l'étude B § 4.4 (af-npz9v1.29, 2026-10-30).
+  `names_in_texts` ont remplacé les trois paires ouvertes de l'étude B § 4.4
+  (af-npz9v1.29), et `evaluation_proven_by_test` tient l'écrivain de la
+  Ticket Evaluation avec son lecteur de fin de ticket (`lib/delivery_rules.py`,
+  af-npz9v1.52, 2026-10-30).
 
 ## S — Signal faux ou manquant
 

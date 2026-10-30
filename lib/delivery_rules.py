@@ -13,6 +13,10 @@ TDD_EVIDENCE_PIECES = {
     "prefactoring": "tdd_prefactoring",
 }
 
+# The answer to an evaluation's Planning Exception that judges its
+# unobservable item proven by the frozen criterion test.
+PROVEN_BY_TEST_OPTION = "a"
+
 
 def review_replay_due(last: dict, tip: str, correction_commit: str | None,
                       unsettled, overridden) -> bool:
@@ -38,3 +42,37 @@ def names_in_texts(candidates, texts) -> list[str]:
     texts = list(texts)
     return [name for name in candidates
             if any(re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", text) for text in texts)]
+
+
+def evaluation_proven_by_test(round_: dict, previous_rounds: list[dict], lifts: list[dict]) -> list[str]:
+    """Items the current evaluation may count proven by their criterion test.
+
+    The immediately preceding evaluation must have raised the Planning
+    Exception at the same commit, and the answered lift must carry the exact
+    item and text between that refusal and this round.
+    """
+    previous = next((entry for entry in reversed(previous_rounds)
+                     if entry.get("kind", "evaluation") == "evaluation"), None)
+    if not previous or previous.get("outcome") != "planning_exception" \
+            or previous.get("commit") != round_.get("commit"):
+        return []
+
+    def items(entry):
+        named = [(f"critère {item.get('number')}", item) for item in entry.get("criteria", [])]
+        return named + [("ligne de démonstration", entry.get("demonstration_line") or {})]
+
+    before = dict(items(previous))
+    valid = []
+    for name, item in items(round_):
+        source = before.get(name) or {}
+        exact = {"what": name, "text": item.get("text")}
+        if (item.get("state"), item.get("cause")) != ("unobservable", "criterion") \
+                or (source.get("state"), source.get("cause"), source.get("text")) != (
+                    "unobservable", "criterion", item.get("text")):
+            continue
+        if any(lift.get("cause") == "planning_exception"
+               and lift.get("option") == PROVEN_BY_TEST_OPTION
+               and previous.get("at", "") <= lift.get("parked_at", "") <= lift.get("at", "") <= round_.get("at", "")
+               and exact in lift.get("proven_by_test", []) for lift in lifts):
+            valid.append(name)
+    return valid

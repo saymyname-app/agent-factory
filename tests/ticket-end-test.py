@@ -274,6 +274,24 @@ class TicketEndTest(unittest.TestCase):
                                   for number, text in enumerate(shown["criteria"], start=1)]
         return self.state("record-evaluation", CONVOY, ticket, "--file", self.json_file(f"evaluation-{ticket}.json", handed))
 
+    def set_proven_by_test_evaluation(self, ticket):
+        """Replace the observed round with the exact answered replay the gate reads."""
+        metadata = self.metadata(ticket)
+        evaluation = json.loads(metadata["gc.flow.evaluation"])
+        current = evaluation["rounds"][-1]
+        line = {**current["demonstration_line"], "state": "unobservable", "cause": "criterion",
+                "reason": "la demi-phrase ne se voit pas sur le produit lancé"}
+        source = {**current, "demonstration_line": line, "outcome": "planning_exception", "verdict": "unfavorable",
+                  "at": "2026-10-30T10:00:00Z"}
+        current = {**current, "demonstration_line": line, "outcome": "favorable", "verdict": "favorable",
+                   "proven_by_test": ["ligne de démonstration"], "at": "2026-10-30T10:03:00Z"}
+        evaluation["rounds"] = [source, current]
+        lift = {"cause": "planning_exception", "detail": "ligne inobservable", "parked_at": "2026-10-30T10:01:00Z",
+                "request": ticket, "option": "a", "resumes": 0, "at": "2026-10-30T10:02:00Z",
+                "proven_by_test": [{"what": "ligne de démonstration", "text": line["text"]}]}
+        self.edit(ticket, **{"gc.flow.evaluation": json.dumps(evaluation),
+                             "gc.flow.park_lifts": json.dumps({"entries": [lift]})})
+
     def finished(self, ticket, findings=(), markers=(), legacy=False, amended=False):
         """A ticket walked by its author to the exit « terminé », then
         reviewed and evaluated at its tip: every step proven by a sealed
@@ -457,6 +475,51 @@ class TicketEndTest(unittest.TestCase):
         status, answer = self.close(SLICE)
 
         self.assertEqual(0, status, answer)
+
+    def test_condition_3_accepts_the_exact_current_proof_from_the_satisfied_human_decision(self):
+        self.merged(SLICE)
+        self.set_proven_by_test_evaluation(SLICE)
+
+        status, answer = self.close(SLICE)
+
+        self.assertEqual(0, status, answer)
+        evaluation = self.shown(SLICE)["gates"]["ticket_end"]["conditions"][2]
+        self.assertEqual((3, "pass"), (evaluation["number"], evaluation["verdict"]))
+        self.assertIn("prouvée par son test", evaluation["detail"])
+
+    def test_condition_3_refuses_an_absent_stale_or_different_proof_and_an_unsatisfied_decision(self):
+        self.merged(SLICE)
+        self.set_proven_by_test_evaluation(SLICE)
+        valid = self.tracker.read_bytes()
+
+        def change(case):
+            metadata = self.metadata(SLICE)
+            evaluation = json.loads(metadata["gc.flow.evaluation"])
+            lifts = json.loads(metadata["gc.flow.park_lifts"])
+            if case == "absent":
+                evaluation["rounds"][-1].pop("proven_by_test")
+                evaluation["rounds"][-1].update(outcome="planning_exception", verdict="unfavorable")
+            elif case == "unsatisfied":
+                lifts["entries"] = []
+                metadata.pop("gc.flow.park_lifts")
+            elif case == "stale":
+                lifts["entries"][0]["at"] = "9999-01-01T00:00:00Z"
+            elif case == "different text":
+                lifts["entries"][0]["proven_by_test"][0]["text"] = "une autre ligne"
+            elif case == "different commit":
+                evaluation["rounds"][0]["commit"] = "b" * 40
+            metadata["gc.flow.evaluation"] = json.dumps(evaluation)
+            if case != "unsatisfied":
+                metadata["gc.flow.park_lifts"] = json.dumps(lifts)
+            self.edit(SLICE, unset=("gc.flow.park_lifts",) if case == "unsatisfied" else (), **metadata)
+
+        for case in ("absent", "unsatisfied", "stale", "different text", "different commit"):
+            with self.subTest(case=case):
+                self.tracker.write_bytes(valid)
+                change(case)
+                status, answer = self.check(SLICE)
+                self.assertEqual((EXIT_REFUSED, [3]), (status, answer["missing"]), answer)
+                self.assertIn("Ticket Evaluation", answer["conditions"][2]["label"])
 
     def test_closing_is_one_tracker_write_that_carries_the_record_and_the_status(self):
         self.merged(SLICE)

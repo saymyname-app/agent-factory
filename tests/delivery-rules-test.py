@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
-from delivery_rules import names_in_texts, review_replay_due, tdd_evidence_piece  # noqa: E402
+from delivery_rules import evaluation_proven_by_test, names_in_texts, review_replay_due, tdd_evidence_piece  # noqa: E402
 
 
 RULE_READERS = {
@@ -25,6 +25,10 @@ RULE_READERS = {
     "names_in_texts": (
         ("bin/ticket-evaluation", "Convoy.datasets"),
         ("bin/ticket-end", "named_states"),
+    ),
+    "evaluation_proven_by_test": (
+        ("lib/convoy_state.py", "cmd_record_evaluation"),
+        ("bin/ticket-end", "condition_evaluation"),
     ),
 }
 
@@ -66,6 +70,27 @@ class SharedRules(unittest.TestCase):
         candidates = ["A", "state-one", "state"]
         self.assertEqual(names_in_texts(candidates, ["A and state-one, not estate or state-two"]),
                          ["A", "state-one"])
+
+    def test_proven_by_test_is_exact_current_and_from_the_answered_lift(self):
+        item = {"text": "la ligne", "state": "unobservable", "cause": "criterion"}
+        refused = {"kind": "evaluation", "commit": "a" * 40, "criteria": [], "demonstration_line": item,
+                   "outcome": "planning_exception", "at": "2026-10-30T10:00:00Z"}
+        replay = {**refused, "outcome": "favorable", "at": "2026-10-30T10:03:00Z"}
+        lift = {"cause": "planning_exception", "option": "a", "parked_at": "2026-10-30T10:01:00Z",
+                "at": "2026-10-30T10:02:00Z",
+                "proven_by_test": [{"what": "ligne de démonstration", "text": "la ligne"}]}
+        self.assertEqual(["ligne de démonstration"], evaluation_proven_by_test(replay, [refused], [lift]))
+        for name, changed in (
+            ("absent", []),
+            ("unanswered", [{**lift, "option": "b"}]),
+            ("stale", [{**lift, "at": "2026-10-30T10:04:00Z"}]),
+            ("different text", [{**lift, "proven_by_test": [
+                {"what": "ligne de démonstration", "text": "une autre ligne"}]}]),
+        ):
+            with self.subTest(name=name):
+                self.assertEqual([], evaluation_proven_by_test(replay, [refused], changed))
+        self.assertEqual([], evaluation_proven_by_test(
+            {**replay, "commit": "b" * 40}, [refused], [lift]))
 
 
 class OneRuleOneFunctionLint(unittest.TestCase):
