@@ -32,7 +32,7 @@ session launched a review skill other than its own code-review is refused by
 name, whatever the record's `passed` says (T47).
 
 usage:
-  role-adoption-trial run [--role R]... [--trial-dir DIR] [--port N] [--no-record]
+  role-adoption-trial run [--role R | --pair R/P]... [--trial-dir DIR] [--port N] [--no-record]
   role-adoption-trial check --role R --provider P
   role-adoption-trial status
   role-adoption-trial digest --role R --provider P
@@ -850,13 +850,33 @@ def tool_versions(city: TrialCity) -> dict[str, str]:
     return out
 
 
+def trial_plan(data: dict[str, Any], roles: list[str] | None = None,
+               pairs: list[str] | None = None) -> dict[str, list[str]]:
+    if roles and pairs:
+        raise Refusal("--role and --pair cannot be combined")
+    if not pairs:
+        selected = roles or sorted(data["roles"])
+        return {role: declared_providers(role_entry(data, role)["agent"]) for role in selected}
+
+    plan: dict[str, list[str]] = {}
+    for pair in pairs:
+        role, separator, provider = pair.partition("/")
+        if not separator or not role or not provider or "/" in provider:
+            raise Refusal(f"invalid pair '{pair}'; expected ROLE/PROVIDER")
+        declared = declared_providers(role_entry(data, role)["agent"])
+        if provider not in declared:
+            raise Refusal(f"provider '{provider}' is not declared for role '{role}'")
+        if provider not in plan.setdefault(role, []):
+            plan[role].append(provider)
+    return plan
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     data = load_roles()
     problems = distribution_problems(data)
     if problems:
         raise Refusal("the role distribution is not coherent, nothing to try:\n  " + "\n  ".join(problems))
-    roles = args.role or sorted(data["roles"])
-    plan = {role: declared_providers(role_entry(data, role)["agent"]) for role in roles}
+    plan = trial_plan(data, args.role, args.pair)
     city = TrialCity(Path(args.trial_dir).expanduser(), args.port)
     trials: list[dict[str, Any]] = []
     versions: dict[str, str] = {}
@@ -960,7 +980,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(prog=PROGRAM, description="Adoption trial of the delivery roles (T03).")
     sub = parser.add_subparsers(dest="command", required=True)
     run = sub.add_parser("run", help="try each role on each declared provider, on real sessions in an isolated city")
-    run.add_argument("--role", action="append", help="limit the trial to this role (repeatable)")
+    selection = run.add_mutually_exclusive_group()
+    selection.add_argument("--role", action="append", help="limit the trial to this role (repeatable)")
+    selection.add_argument("--pair", action="append", metavar="ROLE/PROVIDER",
+                           help="try exactly this declared role/provider pair (repeatable)")
     run.add_argument("--trial-dir", default="~/.local/share/af-role-trial",
                      help="where the isolated city is built; keep it short (unix socket paths) and stable (Claude Code folder trust)")
     run.add_argument("--port", type=int, default=18372, help="supervisor port of the isolated city")

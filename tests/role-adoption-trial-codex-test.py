@@ -241,6 +241,23 @@ class TrialProviderProfileTest(unittest.TestCase):
         self.assertNotIn("args_append", trial.city_providers()["codex"])
 
 
+class TrialPlanTest(unittest.TestCase):
+    def test_exact_pairs_exclude_declared_fallbacks(self):
+        plan = trial.trial_plan(
+            trial.load_roles(),
+            pairs=["author/codex", "reviewer/codex-astra-readonly"],
+        )
+        self.assertEqual(plan, {
+            "author": ["codex"],
+            "reviewer": ["codex-astra-readonly"],
+        })
+        self.assertNotIn("claude", json.dumps(plan))
+
+    def test_a_pair_must_be_declared_for_the_role(self):
+        with self.assertRaisesRegex(trial.Refusal, "is not declared"):
+            trial.trial_plan(trial.load_roles(), pairs=["author/codex-astra-readonly"])
+
+
 class TrialCityIsolationTest(unittest.TestCase):
     def test_the_trial_does_not_start_unrelated_mayor_or_dolt_dog_sessions(self):
         source = ('[imports]\n[imports.bd]\nsource = "bd"\nversion = "1"\n'

@@ -521,6 +521,8 @@ skills du compte claude.ai, dont un autre `code-review`.
 ./bin/role-adoption-trial status                # chaque rôle × fournisseur déclaré : essai valide ou non
 ./bin/role-adoption-trial run                   # essai réel (~1 min par rôle, consomme du quota), écrit le relevé
 ./bin/role-adoption-trial run --role reviewer   # un seul rôle
+./bin/role-adoption-trial run --pair author/codex --pair reviewer/codex-astra-readonly
+                                                # exactement ces deux paires, sans essayer leurs replis
 ./bin/role-adoption-trial verify-distribution   # les copies par rôle = la distribution, octet pour octet
 ```
 
