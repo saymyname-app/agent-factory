@@ -1,7 +1,7 @@
 {
   "host_wait_seconds": 600,
-  "green_seconds": 600,
-  "full_seconds": 780,
+  "green_seconds": 900,
+  "full_seconds": 1140,
   "criterion_test_seconds": 600,
   "margin_seconds": 60,
   "alert_ratio": 0.8

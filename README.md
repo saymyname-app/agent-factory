@@ -21,11 +21,13 @@ starting its City, and reaching the first Planning Run: see
 
 ## Pilot it with Codex
 
-Open Codex on host **BenForge** with `/home/benja/agent-factory` as the working
-folder, or start it from PowerShell:
+From PowerShell, enter the Windows Factory workspace, connect to the Factory
+VM, then start Codex in the canonical repository:
 
 ```powershell
-wsl -d Ubuntu-24.04 -u benja --cd /home/benja/agent-factory
+Set-Location C:/Dev/Factory
+ssh factory-vm
+cd /home/benja/agent-factory
 codex
 ```
 

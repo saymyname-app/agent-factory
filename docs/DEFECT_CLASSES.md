@@ -60,11 +60,12 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   lanceur des produits (`bin/project-launch`, son gardien et son balayage),
   pas les autres façons de lancer un programme ; le second tient les délais
   des tests d'un ticket et de l'ordre convoy-advance
-  (`config/test-budgets.json`, étude C T3), pas les autres délais écrits à
-  la main. Le lint « un seul lanceur borné » est planifié (af-npz9v1.26).
+  (`config/test-budgets.json`, étude C T3), dont l'exclusion d'un run rouge
+  des mesures, pas les autres délais écrits à la main. Le lint « un seul
+  lanceur borné » est planifié (af-npz9v1.26).
 - Occurrences : #624, #628, #629, #630, #631, #636, #647, #657, #658, #661,
   #667, #694, #696, #705, #706, #708, #710, #713, #721 ; copies orphelines du
-  22/10 (sans PR) ; af-kky570.
+  22/10 (sans PR) ; af-kky570 ; af-npz9v1.46.
 - Ouvertes : `subprocess.run(..., timeout=)` sans arrêt du groupe dans
   `bin/tdd-step`, `bin/ticket-author`, `bin/fixture-city-oracle`,
   `lib/evaluation_observations.py`, `bin/provider-failover` (étude B § 4.1,
@@ -76,15 +77,25 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 - Invariant : Chaque arrêt, chaque parcage et chaque option proposée à
   Benjamin a un chemin de code qui fait bouger le ticket, ou dit « reste à
   Benjamin, par telle porte ».
-- Contrôle : aucun — le test en tableau de #688 ne couvre que les fins du
-  travail d'auteur ; le test « chaque arrêt × chaque option » est planifié
-  (af-npz9v1.27).
+- Contrôle : `python3 tests/state-exit-contract-test.py` — complet : sa table
+  tient la liste fermée des raisons d'arrêt et de parcage, la cardinalité de
+  chaque liste d'options proposée à Benjamin, et exige pour chaque ligne une
+  transition prouvée ou la porte humaine qui la garde ; une exception sans
+  date échoue. Les preuves de comportement qu'elle nomme comprennent
+  `python3 tests/convoy-state-test.py ConvoyStateTest.test_a_stopped_unfavorable_judgement_from_an_older_contract_is_invalidated_and_rejudged`,
+  `python3 tests/code-review-test.py CodeReviewTest.test_an_unfavorable_judgement_from_the_previous_contract_is_rejudged_once_at_the_same_tip`,
+  `python3 tests/tdd-step-test.py TddStepTest.test_an_ambiguous_short_successor_does_not_name_either_ticket`,
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_factory_technical_request_waits_for_every_linked_repair_s_delivery_proof_then_resumes_once`,
+  `bash tests/factory-work-dispatch-test.sh`.
 - Occurrences : #635, #637, #650, #653, #662, #666, #672, #673, #679, #682,
-  #687, #702, #704, #709, #711, #712, #718.
-- Ouvertes : `evaluation_outage`, `criterion_already_green`,
-  `outcome_evaluation_no_result`, `outcome_evaluation_outage`,
-  `story_unobservable` sans reprise dans `lib/convoy_state.py` (étude B
-  § 4.2, af-npz9v1.27).
+  #687, #702, #704, #709, #711, #712, #718 ; af-npz9v1.44 ; af-npz9v1.47 ; af-npz9v1.48.
+- Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
+  contrôle : `evaluation_outage` reste à la porte du ticket et à la
+  maintenance d'usine ; `criterion_already_green` reste au Planning Run ;
+  `outcome_evaluation_no_result` et `outcome_evaluation_outage` ne repartent
+  qu'à une nouvelle pointe d'intégration ; `story_unobservable` reste au
+  Planning Run. Elles sont retirées de la table dès qu'une transition codée
+  remplace cette porte (étude B § 4.2, af-npz9v1.27).
 
 ## D — Doublure, instrument ou vue partielle qui ne se comporte pas comme le réel
 
@@ -119,11 +130,20 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 
 - Invariant : Une alerte dit vrai et une situation qui demande quelqu'un
   produit une alerte.
-- Contrôle : `bash tests/on-order-failed-test.sh` — partiel : il tient la
-  frontière entre un report explicite (sortie 75, rejoué sans alerte) et une
-  vraie panne répétée (bead et page Mayor) ; le contrôle 9 du gardien (#688)
-  couvre les tickets que personne ne bouge, pas les autres signaux.
-- Occurrences : #651, #679, #688, #717.
+- Contrôle : `bash tests/on-order-failed-test.sh`,
+  `python3 tests/factory-observe-test.py LiveObservationTest`,
+  `bash tests/pr-autopilot-armed-not-merged-test.sh` — partiel : le premier
+  tient la frontière entre un report explicite (sortie 75, rejoué sans
+  alerte) et une vraie panne répétée (bead et page Mayor) ; le deuxième tient
+  la collecte VM Beads/Git/GitHub, le silence sur état inchangé, la route
+  unique au plus petit propriétaire présent, la preuve durable avant l'alerte,
+  sa clé stable de dédoublonnage, la conservation d'une demande humaine et le
+  relevé final à +2 h ; le troisième refuse qu'une sortie locale 0 compte comme
+  armement sans relecture GitHub et tient la fusion directe au head, à CLEAN et
+  au contrôle requis vert. Le contrôle 9 du gardien (#688) couvre les tickets
+  que personne ne bouge, pas les autres signaux.
+- Occurrences : #651, #679, #688, #717 ; af-npz9v1.50 ; #767 (armement local
+  annoncé mais `autoMergeRequest=null`, af-npz9v1.50.1) ; af-ncg9qy.
 - Ouvertes : aucune connue.
 
 ## A — Autre

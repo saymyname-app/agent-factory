@@ -515,6 +515,120 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual([(T1, "unblocked")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
         self.assertEqual(1, self.resumes())
 
+    def test_a_factory_technical_request_waits_for_every_linked_repair_s_delivery_proof_then_resumes_once(self):
+        self.started_convoy()
+        self.taken(T1, "auteur-1")
+        request = {
+            "quoi": "Le contrôle de l'usine est rouge",
+            "pourquoi": "Le défaut est dans un test de l'usine, hors du ticket",
+            "que_faire": [{"option": "Corriger par maintenance sur main", "consequence": "Le ticket reprend après livraison."}],
+            "langue": "fr", "bloquant": True,
+        }
+        self.run_ok(ESCALATION, "benjamin", T1, json.dumps(request))
+        self.run_ok(STATE, "park", CONVOY, T1, "--cause", "operator_request", "--detail", request["quoi"])
+        self.run_ok(STATE, "set-exit", CONVOY, T1, "--exit", "operator_request")
+
+        repair1, repair2, unrelated = "fx-repair1", "fx-repair2", "fx-unrelated"
+        state = self.tracker_state()
+        state["beads"][repair1] = {
+            "title": "réparation ouverte", "status": "open", "issue_type": "bug",
+            "labels": ["maintenance"], "metadata": {"gc.authorized_by": "af-authority"},
+        }
+        state["beads"][repair2] = {
+            "title": "réparation échouée", "status": "closed", "issue_type": "bug",
+            "metadata": {"gc.delivery_contract": "pr-ci-merged-v1", "gc.work_outcome": "abandoned"},
+        }
+        state["beads"][unrelated] = {
+            "title": "bug ordinaire ouvert", "status": "open", "issue_type": "bug", "metadata": {},
+        }
+        self.tracker.write_text(json.dumps(state))
+        refused = self.run_cmd(STATE, "link-technical-repair", CONVOY, T1, "--repair", unrelated)
+        self.assertNotEqual(0, refused.returncode)
+        self.assertIn("maintenance autorisée", refused.stdout + refused.stderr)
+        for repair in (repair1, repair2, repair1):
+            self.run_ok(STATE, "link-technical-repair", CONVOY, T1, "--repair", repair)
+        self.assertEqual(
+            [repair1, repair2],
+            [entry["id"] for entry in self.shown_state(T1)["technical_repairs"]["entries"]],
+        )
+
+        waiting = self.advance(CONVOY)
+        self.assertEqual(([], []), (self.of(waiting, "lifted"), self.of(waiting, "resumed")))
+        self.assertEqual("operator_request", self.park_of(T1)["cause"])
+
+        sha1, sha2, merge1, merge2 = "1" * 40, "2" * 40, "3" * 40, "4" * 40
+
+        def delivered(number, head, merge):
+            return {
+                "gc.delivery_contract": "pr-ci-merged-v1",
+                "gc.delivery_status": "merged", "gc.work_outcome": "shipped",
+                "gc.github_repo": "example/factory", "gc.pr_number": number,
+                "gc.pr_head": head, "gc.merge_commit": merge,
+                "gc.pr_url": f"https://github.com/example/factory/pull/{number}",
+                "pr_number": number, "merge_result": "merged", "merged_sha": merge,
+                "merged_target": "main", "gc.required_ci_workflow": "Factory CI",
+                "gc.ci_run_id": number, "gc.ci_head_sha": head, "gc.ci_conclusion": "success",
+            }
+
+        # One delivered repair cannot release a request whose other linked
+        # repair is merely closed without merge/CI proof.
+        self.edit(repair1, status="closed", metadata={"gc.delivery_contract": "pr-ci-merged-v1"})
+        self.edit(repair2, status="closed", metadata=delivered(42, sha2, merge2))
+        unproven = self.advance(CONVOY)
+        self.assertEqual(([], []), (self.of(unproven, "lifted"), self.of(unproven, "resumed")))
+        self.assertEqual("operator_request", self.park_of(T1)["cause"])
+
+        self.edit(repair1, status="closed", metadata=delivered(41, sha1, merge1))
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "unblocked")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+        self.assertEqual([(T1, [T1, T3])], [(entry["id"], entry["lifted"]) for entry in self.of(answer, "lifted")])
+        self.assertEqual([repair1, repair2], self.shown_state(T1)["park_lifts"][-1]["repairs"])
+        self.assertIsNone(self.shown_state(T1)["technical_repairs"])
+        self.assertEqual((None, None), (self.park_of(T1), self.park_of(T3)))
+        self.assertEqual([], [line for line in self.needs() if T1 in line])
+        self.assertEqual(1, self.resumes())
+        writes = self.log(T1)
+        lift_at = next(index for index, call in enumerate(writes)
+                       if "--unset-metadata" in call and "gc.flow.park" in call)
+        clear_at = next(index for index, call in enumerate(writes)
+                        if any(value == "gc.needs_benjamin=none" for value in call))
+        resume_at = next(index for index, call in enumerate(writes)
+                         if "gc.flow.exit" in call and "gc.flow.technical_repairs" in call)
+        self.assertLess(lift_at, clear_at)
+        self.assertLess(clear_at, resume_at)
+        self.assertNotIn("gc.flow.technical_repairs", writes[lift_at])
+        self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
+        self.assertEqual(1, self.resumes())
+
+        # The delivered repairs released that request, not every later
+        # operator request on the same ticket.
+        self.taken(T1, "auteur-human-after-repair", alive=True)
+        human_request = {
+            "quoi": "Décision produit nouvelle, sans rapport avec la panne réparée",
+            "pourquoi": "Cette décision appartient à Benjamin",
+            "que_faire": [{"option": "Conserver le comportement", "consequence": "Attendre sa réponse explicite."}],
+            "langue": "fr", "bloquant": True,
+        }
+        self.run_ok(ESCALATION, "benjamin", T1, json.dumps(human_request))
+        self.run_ok(STATE, "park", CONVOY, T1, "--cause", "operator_request", "--detail", human_request["quoi"])
+        self.run_ok(STATE, "set-exit", CONVOY, T1, "--exit", "operator_request")
+        # Timestamps have one-second precision. Even an exact collision with
+        # the released exit cannot turn this new human request into its old
+        # technical generation.
+        metadata = self.bead(T1)["metadata"]
+        exit_record = json.loads(metadata["gc.flow.exit"])
+        exit_record["at"] = self.shown_state(T1)["park_lifts"][-1]["exit_at"]
+        metadata["gc.flow.exit"] = json.dumps(exit_record)
+        self.edit(T1, metadata=metadata)
+
+        second = self.advance(CONVOY)
+
+        self.assertEqual(([], []), (self.of(second, "lifted"), self.of(second, "resumed")))
+        self.assertEqual(human_request["quoi"], self.park_of(T1)["detail"])
+        self.assertIn(T1, "\n".join(self.needs()))
+        self.assertEqual(1, self.resumes())
+
     def test_a_finished_ticket_behind_the_integration_tip_goes_back_to_its_author_once_and_is_counted(self):
         self.integrated()
         self.resumable()

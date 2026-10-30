@@ -93,7 +93,8 @@ author, cause `behind` (`docs/CONVOY_ADVANCE.md`).
 | unfavorable review at an older commit than the tip, no correction round taken and no answer given (the author was resumed outside the round, af-s31cvi) | opens a **review** at the tip, replayed (targeted, its old Blocking Findings unsettled): no session would answer the old findings |
 | unfavorable review, a Blocking Finding without an answer | waits (`respond`) |
 | unfavorable review, every Blocking Finding answered | opens a **judgement** at the tip, against the reviewed commit |
-| unfavorable judgement | nothing more opens, nothing merges; `bin/correction-round settle` stops the ticket, still refused after its correction round (`docs/CORRECTION_ROUND.md`) |
+| unfavorable judgement under the current judgement contract | nothing more opens, nothing merges; `bin/correction-round settle` stops the ticket, still refused after its correction round (`docs/CORRECTION_ROUND.md`) |
+| unfavorable judgement at the tip under an older judgement contract | invalidates that judgement and its verdict, clears its `still_refused` stop when present, then opens exactly one new **judgement** at the same commit under the current contract; no author round opens |
 | a round open at a commit the author has since left | replaced by one at the tip |
 
 ## Revue ciblée après le premier passage (ADR-0034)
@@ -127,6 +128,15 @@ sous `demoted`, `finishing_pass: true` ; `show` les liste sous
 `bin/spec-end-review`, relit de toute façon tout le diff de la Spec). Les
 questions fermées d'une revue ciblée ne portent que sur les fichiers de
 `changed`. `.scope` vaut `null` pour la première revue, qui reste complète.
+
+Une ligne de `changed` attribue provisoirement le constat au ticket : une
+modification syntaxique peut envelopper un comportement déjà présent dans la
+base du ticket sans l'introduire. Si l'auteur le conteste, le jugement reçoit
+donc aussi `reviewed_diff`, le diff original `base...commit` qui a produit le
+constat et son `scope`. Le second relecteur juge l'attribution : un comportement
+déjà présent dans `base`, inchangé sémantiquement par le ticket, est soldé ; un
+comportement introduit par le ticket ou une vraie interaction entre son
+changement et le contexte hérité reste défavorable.
 
 **La revue ne juge pas la fidélité visuelle** (ADR-0032, ADR-0034) : la
 formule `mol-code-review` laisse de côté la part d'un critère qui demande
@@ -221,6 +231,21 @@ to a new reviewer session, which gives one state per Blocking Finding —
 `favorable`, or `unfavorable` with a reason — and no new finding. A
 judgement recorded by the session that made the review is refused. The
 verdict is favorable only if every Blocking Finding is judged favorably.
+The judgement brief carries both `.diff` (the correction diff) and
+`.reviewed_diff` (the original reviewed diff, including the targeted scope),
+so a contest that says the behavior was inherited can be checked against the
+ticket base instead of being rejected merely because the behavior still
+exists at the tip.
+
+The judgement request and its recorded round carry the deterministic contract
+version `code-review-attribution/v2`. That version covers the judgement inputs
+and instructions, including `reviewed_diff`; it is bumped when either changes.
+An unfavorable judgement without that version (or with an older one) is kept
+in `rounds` with `invalidated` naming the new version, and `settle` sends one
+replacement judgement at the same commit. The normal fresh-session and two-
+launch no-result controls apply to that replacement. A favorable old judgement
+is not replayed; an unfavorable result already rendered under the current
+version remains terminal, so settlement cannot loop.
 
 The fresh author session that answers is the one of the ticket's single
 correction round, started by `bin/correction-round` once this review and the
@@ -313,8 +338,8 @@ On the ticket, written by `bin/convoy-state` only (`docs/CONVOY_STATE.md`):
 
 | Key | Value |
 |---|---|
-| `gc.flow.code_review` | `rounds`: each recorded round — `kind` (`review`, `judgement`), `commit`, `base`, `verdict`, `models`, `recorded_by`, `conversation` when known, `at`; a review with its `findings`, `answers` and, once given, `responses`; a judgement with its `judgements`. `request`, while a round is open — `kind`, `commit`, `base`, `questions`, `models`, `launches` (`bead`, `at`, and `refused`: `{session, at}` when the session that answered had already served), `at` |
-| `gc.flow.verdict.code_review` | the verdict of the last round and the commit it judged |
+| `gc.flow.code_review` | `rounds`: each recorded round — `kind` (`review`, `judgement`), `commit`, `base`, `verdict`, `models`, `recorded_by`, `conversation` when known, `at`; a review with its `findings`, `answers` and, once given, `responses`; a judgement with its `judgements`, the optional historical `contract`, and `invalidated: {contract, at}` when a newer contract superseded it. `request`, while a round is open — `kind`, `commit`, `base`, `questions`, `models`, `launches` (`bead`, `at`, and `refused`: `{session, at}` when the session that answered had already served), `at`, and `contract` for a judgement |
+| `gc.flow.verdict.code_review` | the verdict of the last effective round and the commit it judged; `invalidated` may name the same tip and the replacement judgement contract |
 | `gc.flow.models` | per delivery role: `agent`, `provider`, `model`, `at` |
 | `gc.flow.stop` | reason `code_review_no_result`, a one-line detail, and `raised` once the escalation door accepted the request |
 

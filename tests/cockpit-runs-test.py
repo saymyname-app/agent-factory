@@ -2,7 +2,9 @@
 a ticket bead as the delivery flow leaves it, its status, its lanes, and
 the pages /runs and /runs/run that draw them."""
 import json
+import os
 import sys
+import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
 from cockpit.runs.derive import runs_from_beads  # noqa: E402
+from cockpit.runs.workflows import read_workflow_beads, workflow_runs  # noqa: E402
 from cockpit.ui.runs.page import duration, render_run_page, render_runs_page  # noqa: E402
 
 
@@ -113,6 +116,61 @@ class RunsTest(unittest.TestCase):
         self.assertEqual(duration(492), "8 min 12 s")
         self.assertEqual(duration(22140), "6 h 09 min")
         self.assertEqual(duration(3 * 86400 + 4 * 3600), "3 j 4 h")
+
+
+# A tracker that answers the reads by metadata key from $TRACKER, and fails
+# the read of the session beads it keeps apart (--include-ephemeral).
+EPHEMERAL_FAILS = """#!/usr/bin/env python3
+import json, os, sys
+args = sys.argv[1:]
+if "--include-ephemeral" in args:
+    sys.exit(1)
+key = args[args.index("--has-metadata-key") + 1]
+beads = json.load(open(os.environ["TRACKER"]))
+print(json.dumps([b for b in beads if key in (b.get("metadata") or {})]))
+"""
+
+
+class EndedSessionsUnreadTest(unittest.TestCase):
+    """R2 (af-cifk1e), code review F1.1: a read of the ended sessions that
+    fails is not an agent seen absent."""
+
+    def test_an_agent_whose_session_could_not_be_read_is_unknown_not_unrecorded(self):
+        tracker = [
+            {"id": "af-c", "issue_type": "convoy", "status": "open", "title": "Notes", "created_at": "2026-10-19T10:00:00Z",
+             "metadata": {"gc.flow.mark": "new-flow/v1", "gc.graph_digest": "sha256:g"}},
+            {"id": "af-t", "issue_type": "task", "status": "open", "title": "N1 — Recherche",
+             "created_at": "2026-10-19T10:00:00Z",
+             "metadata": {"gc.flow.mark": "new-flow/v1", "gc.graph_digest": "sha256:g", "gc.ticket_id": "N1"}},
+            {"id": "af-w-in", "issue_type": "convoy", "status": "open", "created_at": "2026-10-19T10:01:00Z",
+             "metadata": {"gc.synthetic": "true"},
+             "dependencies": [{"issue_id": "af-w-in", "depends_on_id": "af-t", "type": "tracks"}]},
+            {"id": "af-w", "issue_type": "task", "status": "in_progress", "title": "mol-ticket-author",
+             "created_at": "2026-10-19T10:01:00Z",
+             "metadata": {"gc.kind": "workflow", "gc.formula_name": "mol-ticket-author", "gc.input_convoy_id": "af-w-in",
+                          "gc.routed_to": "delivery-author"}},
+            {"id": "af-w-s", "issue_type": "task", "status": "closed", "title": "workspace",
+             "created_at": "2026-10-19T10:01:00Z", "closed_at": "2026-10-19T10:03:00Z",
+             "metadata": {"gc.kind": "ralph", "gc.root_bead_id": "af-w", "gc.step_id": "workspace", "gc.outcome": "pass"}},
+            {"id": "af-w-s-1", "issue_type": "task", "status": "closed", "title": "workspace",
+             "created_at": "2026-10-19T10:01:00Z", "closed_at": "2026-10-19T10:03:00Z",
+             "metadata": {"gc.logical_bead_id": "af-w-s", "gc.root_bead_id": "af-w", "gc.attempt": "1",
+                          "gc.session_id": "af-wisp-x", "gc.session_name": "delivery-author-af-wisp-x",
+                          "gc.claimed_at": "2026-10-19T10:01:00Z", "gc.outcome": "pass"}},
+        ]
+        with tempfile.TemporaryDirectory() as home:
+            bd, beads = Path(home, "bd"), Path(home, "tracker.json")
+            bd.write_text(EPHEMERAL_FAILS)
+            bd.chmod(0o755)
+            beads.write_text(json.dumps(tracker))
+            os.environ["TRACKER"] = str(beads)
+            try:
+                read = read_workflow_beads(bd_bin=str(bd))
+            finally:
+                del os.environ["TRACKER"]
+        run = next(r for r in workflow_runs(read, [], ts("2026-10-19T11:00:00Z")) if r["id"] == "af-c")
+        agents = [lane["title"] for lane in run["lanes"] if lane["kind"] == "agent"]
+        self.assertEqual(["Agent inconnu · sessions terminées illisibles · Auteur"], agents)
 
 
 if __name__ == "__main__":

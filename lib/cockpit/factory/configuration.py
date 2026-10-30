@@ -2,8 +2,8 @@
 Spec af-fgcw0d, user stories 161 and 162).
 
     read_configuration(root, now) -> {"roles", "flow", "bounds", "other_roles",
-                                      "pools", "in_service", "availability",
-                                      "unreadable"}
+                                      "pools", "providers", "in_service", "orders",
+                                      "availability", "unreadable"}
 
 Every name and figure comes from the files of the Factory at ``root``, never
 from an example:
@@ -23,7 +23,10 @@ absent, are not configuration but what is observed, and are returned apart:
 
 - ``city.provider.toml``: which provider is in service for each agent now
   (``in_service``, None when there is no such file);
-- ``.gc/provider-state.json``: what the failover detected of each pool and
+- ``.gc/provider-state.json``: the order of providers an operator set for an
+  agent through ``bin/provider-failover set --action chain`` (``orders``:
+  ``{agent: [provider, ...]}``, empty when none was set; G2, af-f8nlhr),
+  and what the failover detected of each pool and
   provider -- a quota exhausted or low, an error, until when, a provider
   disabled -- read at ``now`` as ``bin/provider-failover status`` reads it
   (``availability``: ``{"at": its last tick, "pools": {pool: status},
@@ -168,6 +171,10 @@ def read_configuration(root=ROOT, now=None):
         in_service = {patch.get("name"): patch.get("provider")
                       for patch in (in_service_doc.get("patches") or {}).get("agent") or [] if patch.get("provider")}
 
+    providers = {name: _provider(name, policy, city) for name in ((policy or {}).get("providers") or {})}
+    orders = {agent: list(chain) for agent, chain in ((state_doc or {}).get("chains") or {}).items()
+              if isinstance(chain, list) and chain and all(name in providers for name in chain)}
+
     pools = []
     for key, pool in ((policy or {}).get("pools") or {}).items():
         drawn = [declared.get("label") or name for name, declared in ((policy or {}).get("providers") or {}).items()
@@ -180,7 +187,9 @@ def read_configuration(root=ROOT, now=None):
         "bounds": (flow or {}).get("bounds"),
         "other_roles": other_roles,
         "pools": pools,
+        "providers": providers,
         "in_service": in_service,
+        "orders": orders,
         "availability": _availability(policy, state_doc, time.time() if now is None else now),
         "unreadable": unreadable,
     }
