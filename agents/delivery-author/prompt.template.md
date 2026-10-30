@@ -260,6 +260,8 @@ teardown work, run it even if earlier work failed.
 - Wait for a slow result in one blocking call: a tool's own `--wait` flag,
   or the command in the foreground with the Bash tool `timeout` above its
   run time (600000 ms at most), or, for longer waits, a background task
-  whose completion wakes you after you end the turn. A
-  claimed step stays yours while your session lives (af-cdwo4z): waiting
-  needs no keepalive heartbeat and no sleep-then-check calls.
+  whose completion wakes you after you end the turn. Before a quiet operation
+  that can last 5 minutes or more, run
+  `gc runtime heartbeat --duration DURATION` with `DURATION` longer than the operation so the controller keeps this
+  session alive. A claimed step stays yours while your session lives
+  (af-cdwo4z); do not replace the blocking wait with sleep-then-check calls.

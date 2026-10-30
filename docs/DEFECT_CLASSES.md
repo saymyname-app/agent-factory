@@ -56,19 +56,23 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 - Invariant : Tout ce qu'un outil lance meurt avec lui, quelle que soit la
   façon dont il finit ; tout délai vient d'une mesure.
 - Contrôle : `python3 tests/bounded-process-test.py`,
-  `python3 tests/project-launch-test.py`, `python3 tests/test-budgets-test.py`
+  `python3 tests/project-launch-test.py`, `python3 tests/test-budgets-test.py`,
+  `bash tests/agent-wait-polling-test.sh`
   — complet pour les commandes Python bornées de `bin/`, `lib/` et
   `tests/cockpit-criteria/` : un seul lanceur (`lib/bounded_process.py`)
   ouvre une session et tue son groupe au délai ; le lint refuse toute
   nouvelle invocation directe et tient chaque existante dans la liste
   datée `config/bounded-process-exceptions.tsv`. Le second test tient les
-  propriétaires de `project-launch` dans ces trois dossiers. Le dernier tient
+  propriétaires de `project-launch` dans ces trois dossiers. Le troisième tient
   les délais mesurés des tests d'un ticket et de l'ordre convoy-advance
   (`config/test-budgets.json`, étude C T3), pas les autres délais écrits à
-  la main.
+  la main. Le quatrième refuse une attente de formule qui peut atteindre les
+  cinq minutes sans `gc runtime heartbeat`, et tient la même règle dans les
+  prompts des rôles.
 - Occurrences : #624, #628, #629, #630, #631, #636, #647, #657, #658, #661,
   #667, #694, #696, #705, #706, #708, #710, #713, #721 ; copies orphelines du
-  22/10 (sans PR) ; af-kky570 ; af-npz9v1.46 ; af-npz9v1.26 ; af-30zwwu.
+  22/10 (sans PR) ; af-kky570 ; af-npz9v1.46 ; af-npz9v1.26 ; af-30zwwu ;
+  af-95zqgx.
 - Ouvertes : les invocations directes antérieures hors des occurrences de
   l'étude B sont nommées une par une, avec leur date et leur motif, dans
   `config/bounded-process-exceptions.tsv` ; une vingtaine de délais écrits à
