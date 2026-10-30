@@ -126,15 +126,15 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 
 - Invariant : Une règle, une fonction : un écrivain et son lecteur, ou deux
   outils, lisent la règle au même endroit.
-- Contrôle : `bash tests/operator-bd-test.sh` — partiel : il tient l'identité
-  `po-agent/<session>` entre l'écrivain opérateur et `factory-orphan-sweep` ;
-  les autres paires connues restent sans lint commun (af-npz9v1.29).
+- Contrôle : `python3 tests/delivery-rules-test.py` tient les trois paires
+  connues sur leurs fonctions communes ; `bash tests/operator-bd-test.sh`
+  tient l'identité `po-agent/<session>` entre l'écrivain opérateur et
+  `factory-orphan-sweep`.
 - Occurrences : #620, #625, #659, #660, #681, #685, #686, #693, #695, #703,
   #716 ; af-npz9v1.42.
-- Ouvertes : `wanted_round` (`bin/code-review`) et `open-code-review`
-  (`lib/convoy_state.py`) ; la preuve du rouge lue par `ticket-end` et
-  `tdd-step` ; les « jeux nommés » de `ticket-evaluation` et `ticket-end`
-  (étude B § 4.4).
+- Ouvertes : aucune ; `review_replay_due`, `tdd_evidence_piece` et
+  `names_in_texts` (`lib/delivery_rules.py`) ont remplacé les trois paires
+  ouvertes de l'étude B § 4.4 (af-npz9v1.29, 2026-10-30).
 
 ## S — Signal faux ou manquant
 

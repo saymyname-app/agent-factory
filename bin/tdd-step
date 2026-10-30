@@ -105,6 +105,7 @@ EXIT_STOPPED = 5
 # answer, never a red (study C, T1).
 sys.path.insert(0, str(BIN.parent / "lib"))
 from bounded_process import run as bounded_run  # noqa: E402
+from delivery_rules import tdd_evidence_piece  # noqa: E402
 import test_budgets  # noqa: E402
 
 BUDGETS = test_budgets.load(BIN.parent)
@@ -840,8 +841,7 @@ def check_freeze(check: Check) -> dict[str, Any]:
     amended = bool(amendment and amendment["commit"] == check.head)
     if "freeze" in check.tdd and not amended:
         raise Refusal("les tests de critère de ce ticket sont déjà gelés : un nouveau gel ne suit qu'un amendement")
-    # After an amendment, the red of the amended tests is its own piece.
-    proof = check.sealed("tdd_amendment" if amended else "tdd_red", check.head, "preuve du rouge")
+    proof = check.sealed(tdd_evidence_piece(check.tdd, "red"), check.head, "preuve du rouge")
     try:
         paths = [proof["table"], *(test_id.partition("::")[0] for test_id in unique_ids(proof["criteria"])),
                  *proof["frozen_harness_paths"]]

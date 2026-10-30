@@ -15,7 +15,7 @@
 2026-10-30	bin/reversibility-check:37	GitHub diff read is outside study B's open set.
 2026-10-30	bin/reversibility-check:43	Local Git diff read is outside study B's open set.
 2026-10-30	bin/role-adoption-trial:303	Disposable trial command wrapper is outside study B's open set.
-2026-10-30	bin/ticket-evaluation:156	Ticket Evaluation wrapper retains its detached-launch mode.
+2026-10-30	bin/ticket-evaluation:157	Ticket Evaluation wrapper retains its detached-launch mode.
 2026-10-30	bin/ticket-graph-publish:1792	Mayor notification is an existing single control-plane command.
 2026-10-30	lib/cockpit/actions/registry.py:89	Cockpit bead read is an existing single control-plane command.
 2026-10-30	lib/cockpit/actions/registry.py:77	Cockpit door call is outside study B's open set.
