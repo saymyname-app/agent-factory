@@ -237,6 +237,13 @@ amended test. The first case: A1's `home-result-states-test.py` holds Essai
 and Avis unusable « until A2 ». A test absent at the start commit is not
 changed by the ticket: its owner has not reached that branch.
 
+One closed exception consumes Benjamin's option `a` recorded for A2
+(`af-ocz64w`): its lifted operator request authorizes that ticket, and only
+that ticket, to amend
+`tests/cockpit-criteria/commands/home-d01-records-test.py`. The ordinary
+`amendment.succession` record still makes the authorization single-use; every
+other ticket and path follows the naming rule above (af-kgu40t).
+
 ## Prefactoring
 
 A `prefactoring` ticket has no red step (`red` refuses it; `prefactoring`

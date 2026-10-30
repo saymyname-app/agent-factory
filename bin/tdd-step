@@ -92,6 +92,15 @@ GRANTED = "amendment_granted"
 # Benjamin, 25/10/2026: « Seul le ticket nommé dans le test (par exemple
 # « jusqu'à A2 ») peut le modifier, une seule fois »).
 SUCCESSOR_WORDS = r"(?:until|jusqu['’]à)\s+"
+# af-kgu40t: Benjamin's option « a » authorized one otherwise unnamed
+# succession, for this ticket and file only. The succession evidence below
+# records its first use and refuses a different digest thereafter.
+AUTHORIZED_SUCCESSION = {
+    "ticket": "af-ocz64w",
+    "path": "tests/cockpit-criteria/commands/home-d01-records-test.py",
+    "lifted_at": "2026-10-30T11:55:11Z",
+    "parked_at": "2026-10-29T05:56:01Z",
+}
 
 EXIT_REFUSED = 1
 EXIT_NOT_NEW_FLOW = 4
@@ -590,6 +599,20 @@ class Check:
                 mention = re.match(r"\s*(?:/|\bor\b|\bou\b)\s*([\w.-]+)(.*)", mention.group(2), re.IGNORECASE)
         return named == {self.args.ticket}
 
+    def has_authorized_succession(self, path: str) -> bool:
+        """The one operator-granted succession that does not name A2 in its
+        start-commit text (af-kgu40t)."""
+        if (self.args.ticket, path) != (AUTHORIZED_SUCCESSION["ticket"], AUTHORIZED_SUCCESSION["path"]):
+            return False
+        entries = self.ticket.get("park_lifts") or []
+        return any(
+            (entry.get("request"), entry.get("option"), entry.get("at"), entry.get("parked_at")) == (
+                AUTHORIZED_SUCCESSION["ticket"], "a", AUTHORIZED_SUCCESSION["lifted_at"],
+                AUTHORIZED_SUCCESSION["parked_at"],
+            )
+            for entry in entries
+        )
+
     def succession(self) -> dict[str, dict[str, str]]:
         """The frozen tests of other tickets this ticket's amendments changed,
         each with the fingerprint it was left at."""
@@ -997,7 +1020,7 @@ def check_amend(check: Check) -> dict[str, Any]:
         if path in succession:
             if succession[path]["digest"] != digest:
                 refused.append(f"test gelé du ticket {owner} déjà changé une fois par {check.args.ticket} : {path}")
-        elif not check.names_this_ticket(base, path):
+        elif not (check.names_this_ticket(base, path) or check.has_authorized_succession(path)):
             refused.append(f"test gelé du ticket {owner} modifié : {path} ; il ne nomme pas {check.args.ticket} "
                            "comme successeur (« until <ticket> ») : seul le ticket qu'il nomme le change")
         else:
