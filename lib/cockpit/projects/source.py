@@ -160,6 +160,14 @@ def from_value(value):
     return projects, sans_projet
 
 
+def outcome_of(value, chantier_id):
+    """The Outcome of the chantier ``chantier_id`` in the stored view
+    ``value``, or None: not a chantier the cockpit knows, or it has none."""
+    projects, _ = from_value(value) if value else ([], None)
+    return next((chantier.outcome for project in projects for chantier in project.chantiers
+                 if chantier.id == chantier_id), None)
+
+
 def project_page_data(value, project_id):
     """``(project, hors_chantier, historique)`` for one project's page, or
     ``None`` when no declared project has this id. ``historique`` is a

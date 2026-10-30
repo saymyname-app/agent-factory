@@ -18,6 +18,7 @@ to show the operator. Nothing here talks HTTP -- :mod:`cockpit.core.server`
 owns the access guard and the wire format; this module only owns what an
 action *does*.
 """
+import json
 import subprocess
 from datetime import datetime
 
@@ -26,9 +27,15 @@ from cockpit.actions.continuer import build_prompt
 from cockpit.actions.defer import compute_defer_until
 from cockpit.core.readmodel import PARIS
 from cockpit.projects.actions import AccepterError, accepter_chantier, pas_bon_vers_agent
+from cockpit.projects.outcome import TRIAL_ISSUES
 
 DEFAULT_ACTOR = "benjamin"
 DOOR_TIMEOUT_SECONDS = 15
+# How long Essai waits for bin/acceptance-session: two attempts to start a
+# product, 30 s each, and the time to give up (docs/ACCEPTANCE_SESSION.md).
+TRIAL_TIMEOUT_SECONDS = 150
+NO_RESULT = "Ce chantier n’a pas de résultat à essayer : rien n’est lancé."
+TRIAL_SILENT = "Le produit ne répond pas encore : rien n’est confirmé, réessaie dans un instant."
 
 
 class ActionError(Exception):
@@ -169,6 +176,9 @@ def build_action_handlers(
     loop_guard_bin="factory-session-loop-guard",
     order_pause_bin="order-pause",
     door_timeout=DOOR_TIMEOUT_SECONDS,
+    acceptance_session_bin="acceptance-session",
+    outcome_of=lambda chantier: None,
+    trial_timeout=TRIAL_TIMEOUT_SECONDS,
 ):
     def run_door(args):
         return _run_door(args, timeout=door_timeout)
@@ -345,6 +355,33 @@ def build_action_handlers(
         result["display"] = "Chantier accepté à %s" % (_hhmm_paris(result["quand"]) or "--:--")
         return result
 
+    def handle_essai(payload):
+        """Essai (A2): the product at the revision of the dossier, launched
+        by the Acceptance Session, its address for another tab. Asked of a
+        result that is not to judge, refused with what the result says of
+        itself; a product that does not start is said as an outage, by the
+        command that records it. ``outcome_of``: the Outcome the cockpit
+        reads of a chantier."""
+        chantier = _require(payload, "chantier")
+        outcome = outcome_of(chantier)
+        if outcome is None:
+            raise ActionError(NO_RESULT)
+        if outcome["issue"] not in TRIAL_ISSUES:
+            raise ActionError(outcome["sentence"])
+        try:
+            completed = subprocess.run([acceptance_session_bin, "open", outcome["convoy"], "--trial"],
+                                       capture_output=True, text=True, timeout=trial_timeout)
+            answer = json.loads(completed.stdout)
+        except subprocess.TimeoutExpired:
+            raise ActionError(TRIAL_SILENT)
+        except OSError as exc:
+            raise ActionError("commande introuvable : %s" % exc)
+        except ValueError:
+            raise ActionError((completed.stderr or "réponse illisible de la session d’acceptation").strip())
+        if completed.returncode != 0 or not answer.get("address"):
+            raise ActionError(answer.get("error") or "la session d’acceptation n’a pas donné d’adresse")
+        return {"ok": True, "address": answer["address"], "commit": answer.get("commit")}
+
     def handle_pas_bon_vers_agent(payload):
         """« Pas bon → agent » (spec .31): a prompt to copy, nothing
         written, the frozen graph untouched."""
@@ -354,6 +391,7 @@ def build_action_handlers(
     return {
         "accepter_chantier": handle_accepter_chantier,
         "pas_bon_vers_agent": handle_pas_bon_vers_agent,
+        "essai": handle_essai,
         "acquitter": handle_acquitter,
         "reporter": handle_reporter,
         "continuer": handle_continuer,

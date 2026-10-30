@@ -89,6 +89,8 @@ DOORS = {
     "provider-failover": (ROOT / "bin" / "provider-failover", "COCKPIT_PROVIDER_FAILOVER_BIN"),
     "factory-maintain": (ROOT / "bin" / "factory-maintain", "COCKPIT_FACTORY_MAINTAIN_BIN"),
     "operator-config": (ROOT / "bin" / "operator-config", "COCKPIT_OPERATOR_CONFIG_BIN"),
+    # Essai (A2): the launcher of the profile on the commit of the result.
+    "acceptance-session": (SYNTHETIC / "acceptance-session", "COCKPIT_ACCEPTANCE_SESSION_BIN"),
     "gc": (SYNTHETIC / "gc", "COCKPIT_GC_BIN"),
 }
 # How a dataset may say a door answers (`doors`): it never does, or it

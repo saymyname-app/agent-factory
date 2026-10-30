@@ -430,23 +430,33 @@ def _dossier_record(title: str, lines) -> dict:
 # page shows. The request of the acceptance is the convoy's while the result
 # waits for a judgement, and is gone once it is answered.
 TO_JUDGE_STATE = "ready"
-JUDGED_NOW_STATES = ("ready", "dossier", "outdated", "outage")
-# The states where the panel opens a decision a project waits for, not a
-# result: their dossier stays the open bead the page says.
+JUDGED_NOW_STATES = ("ready", "dossier", "findings", "outdated", "outage")
+# The states where the page opens a decision a project waits for: their
+# dossier stays the open bead the page says, and the result its first line
+# waits for is to judge, its summary said by the dataset (`result.summary`).
 DECISION_STATES = ("request", "confirmation")
 ACCEPTED_STATES = ("accepted", "merging", "merged")
-RETURNED_STATES = ("findings", "returned", "repairing")
+RETURNED_STATES = ("returned", "repairing")
 RESULT_STATES = (*JUDGED_NOW_STATES, *ACCEPTED_STATES, *RETURNED_STATES, *DECISION_STATES, "abandoned", "conflict")
 NOT_VERIFIED = "Ce qui n'a PAS été vérifié"
 TO_VERIFY = "Ce qui reste à vérifier"
 APPROVER = "benjamin"
+# The repair of a finding the factory took up (result-repairing), as
+# bin/owner-answer drafts it and the next pass names its ticket.
+REPAIR_TICKET = "syn-repair"
+REPAIR_DRAFT = {
+    "title": "Corriger le constat rendu", "what_it_delivers": "Le constat rendu est corrigé.",
+    "demonstration_line": "Le produit lancé ne présente plus le constat.",
+    "restores": {"kind": "user_story", "ref": "user story 31"},
+    "acceptance_criteria": [{"entry_point": "le produit lancé", "observable": "le constat n’est plus présent",
+                             "false_if": "le constat est encore présent"}]}
 # What a result in a dataset may say of itself (`result`): its commits, the
 # times its records were written (HH:MM, Paris, the day of the dataset), the
 # words of the answer, the reason of an abandon, what a failed trial said.
 # Unsaid, the commits and times are those the reference writes.
 RESULT_VALUES = {"commit": "1" * 40, "merged": "2" * 40, "outdated_commit": "3" * 40, "ready_at": "14:30",
                  "answered_at": "14:48", "merged_at": "14:50", "words": "C’est ce que je voulais.",
-                 "reason": None, "outage": "Le produit ne démarre pas au commit du dossier."}
+                 "reason": None, "outage": "Le produit ne démarre pas au commit du dossier.", "summary": None}
 
 
 def _result_values(values) -> dict:
@@ -470,8 +480,10 @@ def _result(tracker, dossier: dict, state: str, folded: dict, values: dict) -> d
     if unread:
         raise DatasetRefused(f"folded parts that no part of the dossier unfolds: {unread}")
     if state in DECISION_STATES:
-        return {}
-    tracker.beads.remove(dossier)
+        record = _awaited_result(tracker, values)
+        project, state, folded = record.pop("project"), TO_JUDGE_STATE, {}
+    else:
+        tracker.beads.remove(dossier)
     convoy_id = f"synthetic-chantier-{project}"
     if not any(bead["id"] == convoy_id for bead in tracker.beads):
         _chantier(tracker, project, AWAITED.match(record["about"])["kind"], [])
@@ -518,8 +530,11 @@ def _result(tracker, dossier: dict, state: str, folded: dict, values: dict) -> d
             records["gc.flow.closed"] = {"how": "accepted", "said": values["words"], "approver": APPROVER,
                                          "at": at["merged_at"]}
     elif state in RETURNED_STATES:
+        finding = {"text": values["words"], "route": "later"}
+        if state == "repairing":
+            finding = {"text": values["words"], "route": "repair", "draft": REPAIR_DRAFT, "ticket": REPAIR_TICKET}
         records["gc.flow.judgement"] = {"verdicts": [], "answers": [{**answer, "response": "findings",
-                                                     "findings": [{"text": values["words"], "route": "later"}]}]}
+                                                                     "findings": [finding]}]}
     elif state == "conflict":
         records["gc.flow.judgement"] = {"verdicts": [], "answers": [{**answer, "response": "accepted",
                                                      "voided": {"cause": "conflict", "at": at["merged_at"]}}]}
@@ -535,6 +550,20 @@ def _result(tracker, dossier: dict, state: str, folded: dict, values: dict) -> d
         convoy["status"] = "closed"
     _hand_over_request(tracker, project, metadata if state in JUDGED_NOW_STATES else None)
     return {path: page}
+
+
+def _awaited_result(tracker, values: dict) -> dict:
+    """The record of the result the first line of a page that opens a
+    decision waits for: the request « résultat prêt » of its project."""
+    if not values["summary"]:
+        raise DatasetRefused("a decision open beside a result that says nothing of itself (result.summary)")
+    request = next((bead for bead in tracker.beads if bead["id"].startswith("synthetic-request-")
+                    and bead["metadata"]["gc.escalation_pourquoi"] == "résultat prêt"), None)
+    if request is None:
+        raise DatasetRefused("a decision open, and no result waits under « Ce qui t’attend »")
+    project = request["metadata"][PROJECT_KEY]
+    return {"about": f"{tracker.projects[project]['display_name']} · {request['metadata']['gc.escalation_pourquoi']}",
+            "title": request["title"], "summary": values["summary"], "resources": [], "reports": [], "project": project}
 
 
 def _hand_over_request(tracker, project: str, metadata) -> None:

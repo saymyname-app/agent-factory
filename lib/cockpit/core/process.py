@@ -34,7 +34,7 @@ from cockpit.stop.driver import StopDriver
 from cockpit.stop.gc_city import GcCityReader
 from cockpit.projects.depots import read_depots, read_rig_repos
 from cockpit.projects.descriptors import load_descriptors
-from cockpit.projects.source import READ_TIMEOUT_SECONDS as PROJECTS_READ_TIMEOUT_SECONDS, read_projects
+from cockpit.projects.source import READ_TIMEOUT_SECONDS as PROJECTS_READ_TIMEOUT_SECONDS, outcome_of, read_projects
 from cockpit.requests.assemble import assemble_from_snapshot
 from cockpit.requests.defects import DefectCounter
 from cockpit.requests.journal import read_journal
@@ -147,6 +147,8 @@ def build(config, clock=None):
         loop_guard_bin=config.loop_guard_bin,
         order_pause_bin=config.order_pause_bin,
         door_timeout=config.action_timeout_seconds,
+        acceptance_session_bin=config.acceptance_session_bin,
+        outcome_of=lambda chantier: outcome_of((read_model.snapshot().get("projets") or {}).get("value"), chantier),
     )
     server = make_server(
         read_model,

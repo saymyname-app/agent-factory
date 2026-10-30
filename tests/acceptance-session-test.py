@@ -257,6 +257,20 @@ class AcceptanceSessionTest(packs.EvidencePackTest):
         self.assertIn("déjà ouverte", answer["error"])
         self.assertTrue(answers(first["address"]))
 
+    def test_a_trial_launches_one_product_and_answers_it_again_while_the_session_is_open(self):
+        commit = self.delivered_outcome()
+
+        status, first = self.open_session("--trial")
+
+        self.assertEqual(0, status, first)
+        self.assertEqual(commit, first["commit"])
+        self.assertEqual(["content"], [product["dataset"] for product in first["products"]])
+        self.assertTrue(answers(first["address"]))
+        status, again = self.open_session("--trial")
+        self.assertEqual(0, status, again)
+        self.assertEqual(first["address"], again["address"])
+        self.assertTrue(answers(again["address"]))
+
     def test_open_on_an_outdated_pack_is_refused_and_launches_nothing(self):
         self.delivered_outcome()
         self.note(INTEGRATION)

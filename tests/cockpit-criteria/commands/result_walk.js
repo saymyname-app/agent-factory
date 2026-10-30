@@ -132,7 +132,7 @@
     var controls = [], folded = [];
     doc.querySelectorAll(CONTROLS).forEach(function (element) {
       if (!visible(element, view)) { return; }
-      var holding = element.closest('[data-anchor]');
+      var holding = element.parentElement.closest('[data-anchor]');
       controls.push({
         name: accessibleName(element, doc),
         disabled: element.disabled === true || element.getAttribute('aria-disabled') === 'true',

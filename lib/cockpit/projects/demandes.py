@@ -15,7 +15,8 @@ stops producing a demande the moment it leaves Livré/Accepté-non-promu
 (accepted, promu, or termine/abandonne) -- there is no cockpit-side flag
 to clear."""
 from cockpit.projects.model import ACCEPTE, LIVRE
-from cockpit.requests.model import DEFAULT_PROJECT, OperatorRequest, QUAND_TU_VEUX
+from cockpit.projects.outcome import VOIDED
+from cockpit.requests.model import A_FAIRE, DEFAULT_PROJECT, OperatorRequest, QUAND_TU_VEUX
 from cockpit.text.validate import is_valid
 
 POURQUOI_LIVRE = "Toi seul peux accepter ce chantier livré, ou demander sa correction."
@@ -30,6 +31,7 @@ def _pourquoi_livre(chantier):
 
 TYPE_LIVRE_NON_ACCEPTE = "chantier_livre_non_accepte"
 TYPE_ACCEPTE_NON_PROMU = "chantier_accepte_non_promu"
+TYPE_ACCEPTATION_ANNULEE = "acceptation_annulee"
 
 
 def _livre_non_accepte(chantier, verifie_a):
@@ -89,6 +91,32 @@ def _accepte_non_promu(chantier, verifie_a):
     )
 
 
+def _acceptation_annulee(chantier, verifie_a):
+    """Benjamin's acceptance no longer holds (US 118): he is told, and
+    judges again the new dossier. Exit at source: the next answer."""
+    return OperatorRequest(
+        id=chantier.id,
+        type=TYPE_ACCEPTATION_ANNULEE,
+        niveau=A_FAIRE,
+        quoi="Acceptation annulée : %s" % chantier.titre,
+        pourquoi=chantier.outcome["sentence"],
+        que_faire=[
+            {
+                "lettre": "a",
+                "option": "Attendre le nouveau dossier",
+                "consequence": "Rien n'est fusionné ; un nouveau jugement sera demandé sur le nouveau dossier.",
+                "recommande": False,
+                "raison": "",
+            }
+        ],
+        projet=chantier.projet or DEFAULT_PROJECT,
+        verifie_a=verifie_a,
+        lien=chantier.id,
+        reportable=False,
+        titre=chantier.titre,
+    )
+
+
 def chantier_demandes(chantiers, verifie_a=None):
     """Every active (not ``termine``/``abandonne``) chantier currently
     Livré-non-Accepté or Accepté-non-Promu, as Quand tu veux
@@ -101,7 +129,10 @@ def chantier_demandes(chantiers, verifie_a=None):
             # An Outcome of the new flow: its request is the Acceptance
             # Request the escalation door writes on the convoy, answered at
             # the Acceptance Session -- never « Accepter » here, which
-            # cockpit.projects.actions refuses for it (A1).
+            # cockpit.projects.actions refuses for it (A1). An acceptance
+            # voided has no such request: this one tells him (A2).
+            if chantier.outcome["issue"] == VOIDED:
+                out.append(_acceptation_annulee(chantier, verifie_a))
             continue
         if chantier.stage == LIVRE:
             out.append(_livre_non_accepte(chantier, verifie_a))

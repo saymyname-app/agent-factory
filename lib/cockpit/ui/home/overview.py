@@ -30,11 +30,17 @@ the rubrics of its dossier page, each a part that unfolds, « Ce qui n'a PAS
 été vérifié » as « Ce qui reste à vérifier » with the recette of the cockpit
 for the Factory's own project, its reports (« Compte rendu … ») -- above its
 bar; a result judged shows its follow-up: what was answered, the proof of
-the merge or that there is none, the reason of an abandon. Essai and Avis
-are not wired to a door here (A2): they are drawn unavailable under every
-result, and the panel says why -- not wired yet on a result to judge, of no
-use on a result already judged; nothing on the page shows a command done
-that no door recorded.
+the merge or that there is none, the reason of an abandon.
+
+Essai and Avis are in the bar of every result, once each (A2, af-ocz64w).
+Essai opens, in another tab, the product the Acceptance Session launches at
+the revision of the dossier (``POST /api/actions/essai``). Avis opens its
+panel in the result, its actions in the same bar: the answer, the verdict on
+each proposition, the reason of an abandon, then a neutral message for the
+session of the operator, which records the answer with ``bin/owner-answer``.
+The page writes nothing: copying the message records nothing, and changing
+the draft withdraws it. Where they cannot be used, they stay drawn and the
+bar says why; nothing on the page shows a command done that no door recorded.
 No record a demonstration dataset writes (``gc.result_dossier``) is read.
 
 Every part carries the anchor of the reference (``data-anchor``), numbered
@@ -80,7 +86,10 @@ CHART_LABEL = ("Volumes quotidiens comparés sur sept jours : PR fusionnées, ti
 CHART_SERIES = (("PR fusionnées", "var(--pn-series-1)", ""), ("Tickets livrés", "var(--pn-series-2)", "8 5"),
                 ("CI réussies", "var(--pn-series-3)", "1 5"))
 ACTIVITY = "Activité sur 7 jours"
-UNWIRED_RESULT = "Essai et Avis ne sont pas encore raccordés à cette vue : rien n’est lancé ni préparé d’ici."
+OUTDATED_RESULT = "Dossier périmé : Essai et Avis de cette version ne servent plus, un nouveau dossier doit être préparé."
+OUTAGE_RESULT = "Essai reviendra quand le produit démarrera. Avis reste disponible : une panne n’est pas un jugement."
+RENEWED_RESULT = "Essai et Avis reviendront avec le nouveau dossier : rien n’est lancé ni préparé d’ici."
+STALE_RESULT = "Lecture périmée : Essai et Avis reviendront avec une lecture à jour."
 JUDGED_RESULT = "Résultat déjà jugé : Essai et Avis ne servent qu’à un résultat à juger, rien n’est lancé ni préparé d’ici."
 UNSURE_RESULT = ("État du résultat incertain : Essai et Avis restent indisponibles tant que ses enregistrements "
                  "ne sont ni lisibles ni cohérents.")
@@ -95,6 +104,15 @@ VERSION = "Version et sources"
 DOSSIER_UNREAD = "Dossier non lu : sa page est introuvable ou illisible."
 FOLLOW_UP = "Suivi du résultat"
 HISTORY = "Historique et preuves"
+SINCE = "Depuis ton dernier jugement"
+# The title of a result whose request of acceptance gives none, or none the
+# operator reads (a request of the flow, written for the door).
+TO_JUDGE_TITLE = "Le cockpit attend ton avis"
+# Avis: the answers of D01 and the verdicts on a proposition, as the page
+# says them and as bin/owner-answer takes them.
+ANSWERS = (("accepted", "Accepté"), ("findings", "Constats rendus"), ("abandoned", "Abandonné"))
+VERDICTS = (("avant", "Avant d’accepter"), ("plus_tard", "Plus tard"), ("sans_suite", "Sans suite"))
+AGENT_COST = "Continuer avec un agent utilise un agent (consomme des tokens)."
 # The project whose results carry the recette of the cockpit (Spec
 # af-fgcw0d, Testing Decisions 6): the Factory itself.
 FACTORY_PROJECT = "Usine"
@@ -271,11 +289,15 @@ def _result_view(project, chantier, lines_of_recette):
     view = {"about": "%s · %s" % (project.display_name, chantier.titre), "issue": issue, "chantier": chantier.id,
             "project_url": project_page_url(project.project_id),
             "label": outcome["label"], "sentence": outcome["sentence"], "history": outcome["history"],
-            "judged_now": issue in outcome_mod.JUDGED_NOW}
+            "judged_now": issue in outcome_mod.JUDGED_NOW,
+            "essai": issue in outcome_mod.TRIAL_ISSUES, "avis": issue in outcome_mod.ANSWER_ISSUES,
+            "judgement": {"convoy": outcome.get("convoy"), "commit": outcome["commit"], "pack": outcome["pack"],
+                          "propositions": outcome.get("propositions") or []}}
     if not view["judged_now"]:
         view.update(title=FOLLOW_UP, summary=outcome["sentence"], resources=[], reports=[])
         return view
-    view["title"] = outcome["title"] or "Le résultat attend ton avis"
+    title = outcome["title"]
+    view["title"] = title if title and speaks_plainly(title) else TO_JUDGE_TITLE
     view["summary"] = outcome["summary"] or ""
     to_verify = outcome["unverified"] if outcome["pack_read"] else [DOSSIER_UNREAD]
     resources = [{"label": label, "detail": detail, "opens": True} for label, detail in OPENING]
@@ -286,6 +308,8 @@ def _result_view(project, chantier, lines_of_recette):
     resources += [{"label": part["label"], "opens": False, "said": part["said"]} for part in rubrics]
     if not any(part["label"] == VERSION for part in rubrics):
         resources.append({"label": VERSION, "opens": False, "said": _version(outcome)})
+    if outcome.get("since"):
+        resources.insert(0, {"label": SINCE, "opens": False, "said": outcome["since"]})
     view["resources"] = resources
     view["reports"] = [{"label": part["label"], "opens": False, "said": part["said"]} for part in outcome["reports"]]
     return view
@@ -558,7 +582,6 @@ def _render_result(view, anchors):
     if not result["judged_now"]:
         # Judged: its follow-up, then the bar, Essai and Avis unavailable.
         parts.append(_render_folded({"label": HISTORY, "said": result["history"]}, anchors))
-        reason = UNSURE_RESULT if result["issue"] in (outcome_mod.UNKNOWN, outcome_mod.INCONSISTENT) else JUDGED_RESULT
     else:
         if result["issue"] != outcome_mod.TO_JUDGE:
             # Outdated, or its trial down: said before anything of the dossier.
@@ -567,19 +590,83 @@ def _render_result(view, anchors):
         parts.append('<div class="pn-resources" %s>%s</div>'
                      % (resource_list, "".join(_render_resource(r, anchors) for r in result["resources"])))
         parts.append("".join(_render_folded(report, anchors) for report in result["reports"]))
-        reason = UNWIRED_RESULT
     request = next((r["request"] for r in view["requests"] if r["id"] == result["chantier"]), None)
     if request is not None:
         # The request of the result: its identifiers and links, folded.
         parts.append(render_details(request, links_of(request, result["project_url"])))
-    dock = anchors("actions-possibles")
-    parts.append(
-        '<div class="pn-dock" role="group" aria-label="Actions possibles" %s>'
-        '<a class="pn-button" role="link" aria-disabled="true" tabindex="-1" %s>Essai ↗</a><button type="button" disabled %s>Avis</button>'
-        '<p class="pn-unwired">%s</p></div>' % (dock, anchors("button"), anchors("button"), reason))
+    usable = {"essai": result["essai"] and not view["stale"], "avis": result["avis"] and not view["stale"]}
+    if usable["avis"]:
+        parts.append(_render_avis(result))
+    parts.append(_render_bar(result, usable, _bar_reason(result, view["stale"]), anchors))
     return '<article class="pn-panel pn-result" id="%s" data-open="%s" data-issue="%s" %s>%s</article>%s' % (
         RESULT_PANEL_ID, _e(result["chantier"]), _e(result["issue"]), panel, "".join(parts),
         _render_requests(view, result["chantier"]))
+
+
+def _bar_reason(result, stale):
+    """Why Essai or Avis cannot be used, or None when both can."""
+    issue = result["issue"]
+    if result["essai"] and result["avis"] and not stale:
+        return None
+    if stale:
+        return STALE_RESULT
+    if issue == outcome_mod.OUTDATED:
+        return OUTDATED_RESULT
+    if issue == outcome_mod.OUTAGE:
+        return OUTAGE_RESULT
+    if issue in outcome_mod.RENEWED:
+        return RENEWED_RESULT
+    return UNSURE_RESULT if issue in (outcome_mod.UNKNOWN, outcome_mod.INCONSISTENT) else JUDGED_RESULT
+
+
+def _render_bar(result, usable, reason, anchors):
+    """The bar of the result: Essai and Avis, once each, usable or drawn
+    unavailable; while Avis is open, its actions, in that same bar."""
+    dock = anchors("actions-possibles")
+    essai_anchor, avis_anchor = anchors("button"), anchors("button")
+    essai = ('<a class="pn-button" role="link" href="#essai" data-essai="%s" %s>Essai ↗</a>'
+             % (_e(result["chantier"]), essai_anchor) if usable["essai"] else
+             '<a class="pn-button" role="link" aria-disabled="true" tabindex="-1" %s>Essai ↗</a>' % essai_anchor)
+    avis = ('<button type="button" data-avis="open" %s>Avis</button>' % avis_anchor if usable["avis"]
+            else '<button type="button" disabled %s>Avis</button>' % avis_anchor)
+    actions = ""
+    if usable["avis"]:
+        actions = ('<button type="button" data-avis="close" hidden>Fermer l’avis</button>'
+                   '<button type="button" data-avis="prepare" hidden disabled>Continuer avec un agent</button>'
+                   '<button type="button" data-avis="copy" hidden disabled>Copier pour ma session</button>'
+                   '<p class="pn-unwired" data-avis="cost" hidden>%s</p>' % _e(AGENT_COST))
+    return ('<div class="pn-dock" role="group" aria-label="Actions possibles" %s>%s%s%s'
+            '<p class="pn-unwired" data-essai-status role="status"%s>%s</p></div>'
+            % (dock, essai, avis, actions, "" if reason else " hidden", _e(reason or "")))
+
+
+def _render_avis(result):
+    """The panel of Avis, closed: the answer, the verdict on each
+    proposition, the words of the operator, the reason of an abandon, and
+    the message prepared for his session. It only prepares: nothing here
+    records an answer."""
+    judgement = result["judgement"]
+    answers = "".join('<label><input type="radio" name="pn-avis-answer" value="%s"> %s</label>' % (value, _e(label))
+                      for value, label in ANSWERS)
+    propositions = "".join(_render_proposition(number, proposition)
+                           for number, proposition in enumerate(judgement["propositions"], start=1))
+    return ('<section class="pn-avis" id="pn-avis" aria-label="Ton jugement" data-judgement="%s" hidden>'
+            '<fieldset><legend>Ta réponse</legend>%s</fieldset>%s'
+            '<label for="pn-avis-words">Ton avis</label><textarea id="pn-avis-words" rows="4"></textarea>'
+            '<div data-avis="reason" hidden><label for="pn-avis-reason">Raison de l’abandon</label>'
+            '<input type="text" id="pn-avis-reason"></div>'
+            '<details data-avis="message" hidden><summary>Message pour ma session</summary><pre></pre></details>'
+            '<p class="pn-unwired" data-avis="status" role="status" hidden></p></section>'
+            % (_e(json.dumps(judgement, ensure_ascii=False)), answers, propositions))
+
+
+def _render_proposition(number, proposition):
+    options = "".join('<option value="%s"%s>%s</option>'
+                      % (value, " selected" if value == proposition["verdict"] else "", _e(label))
+                      for value, label in VERDICTS)
+    return ('<div class="pn-avis-proposition"><label for="pn-avis-verdict-%d">Verdict sur la proposition : %s</label>'
+            '<select id="pn-avis-verdict-%d" data-proposition="%s"><option value="">À choisir</option>%s</select></div>'
+            % (number, _e(proposition["text"]), number, _e(proposition["id"]), options))
 
 
 def _render_resource(resource, anchors):
@@ -782,6 +869,20 @@ CSS = """
   background:var(--surface);border:1px solid var(--pn-control-line);border-radius:8px;text-decoration:none}
 .pn-button[aria-disabled=true]{opacity:.5;cursor:not-allowed}
 .pn-unwired{flex-basis:100%;margin:0;font-size:13px;color:var(--pn-muted-text)}
+.pn-avis{display:grid;gap:10px;align-content:start;padding:14px;border:1px solid var(--line);border-radius:8px}
+.pn-avis fieldset{display:flex;flex-wrap:wrap;gap:8px 16px;margin:0;padding:0;border:0}
+.pn-avis legend{padding:0 0 6px;font-weight:650}
+.pn-avis label{display:inline-flex;gap:6px;align-items:center;min-height:32px}
+.pn-avis-proposition{display:grid;gap:6px}
+.pn-avis :is(textarea,select,input[type=text]){width:100%;min-height:44px;padding:8px 10px;font:inherit;color:var(--ink);
+  background:transparent;border:1px solid var(--pn-control-line);border-radius:6px}
+.pn-avis pre{margin:8px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}
+@media (min-width:1101px){
+  .pn-result:has(.pn-avis:not([hidden])){display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,42%);column-gap:18px;align-items:start}
+  .pn-result:has(.pn-avis:not([hidden]))>*{grid-column:1}
+  .pn-result:has(.pn-avis:not([hidden]))>.pn-avis{grid-column:2;grid-row:1 / span 12}
+  .pn-result:has(.pn-avis:not([hidden]))>.pn-dock{grid-column:1 / -1}
+}
 .pn-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:17px 0;
   border-bottom:1px solid var(--line)}
 .pn-row:last-child{border-bottom:0}
@@ -852,6 +953,123 @@ SCRIPT = """
   document.addEventListener('click', function (event) {
     var request = event.target.closest('.pn-request[data-request]');
     if (request) { openRequest(request.getAttribute('data-request')); }
+  });
+
+  // Essai: the tab is opened in the gesture, or the browser blocks it, then
+  // led to the product once it answers.
+  function post(action, body) {
+    return fetch('/api/actions/' + action, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                            credentials: 'same-origin', body: JSON.stringify(body)});
+  }
+  function essai(link) {
+    var status = document.querySelector('[data-essai-status]');
+    function say(text) { status.hidden = false; status.textContent = text; }
+    if (link.getAttribute('aria-busy') === 'true') { return; }
+    var tab = window.open('', '_blank');
+    link.setAttribute('aria-busy', 'true');
+    say('Préparation du produit de cette version…');
+    post('essai', {chantier: link.getAttribute('data-essai')}).then(function (response) {
+      return response.json().then(function (body) { return {ok: response.ok, body: body}; });
+    }).then(function (answer) {
+      if (!answer.ok) { throw new Error(answer.body.error || 'Le produit ne démarre pas.'); }
+      if (tab) { tab.opener = null; tab.location.href = answer.body.address; }
+      say('Le produit de cette version est ouvert dans un autre onglet.');
+    }).catch(function (error) {
+      if (tab) { tab.close(); }
+      say(String(error.message || error).replace(/^refus : /, ''));
+    }).then(function () { link.removeAttribute('aria-busy'); });
+  }
+  document.addEventListener('click', function (event) {
+    var link = event.target.closest('[data-essai]');
+    if (link) { event.preventDefault(); essai(link); }
+  });
+
+  // Avis prepares a message for the session of the operator, which records
+  // the answer: nothing here writes, and any change withdraws the message.
+  var panel = document.getElementById('pn-avis');
+  if (!panel) { return; }
+  var judgement = JSON.parse(panel.getAttribute('data-judgement'));
+  var result = panel.closest('.pn-result');
+  function part(name) { return result.querySelector('[data-avis="' + name + '"]'); }
+  var words = document.getElementById('pn-avis-words'), reason = document.getElementById('pn-avis-reason');
+  var message = part('message');
+  var NOT_RECORDED = 'Message préparé : aucune réponse enregistrée tant que ta session ne l’a pas fait.';
+  var COPIED = 'Message copié : aucune réponse enregistrée tant que ta session ne l’a pas fait.';
+  var VERDICT_WORDS = {avant: 'à faire avant d\\'accepter', plus_tard: 'plus tard', sans_suite: 'sans suite'};
+  var RESPONSE_WORDS = {accepted: 'accepté', findings: 'constats rendus', abandoned: 'abandonné'};
+  function answer() {
+    var chosen = panel.querySelector('input[name="pn-avis-answer"]:checked');
+    return chosen ? chosen.value : '';
+  }
+  function verdicts() { return Array.prototype.slice.call(panel.querySelectorAll('select[data-proposition]')); }
+  function say(text) { var status = part('status'); status.hidden = !text; status.textContent = text; }
+  function ready() {
+    var kind = answer();
+    if (kind === 'abandoned') { return !!reason.value.trim(); }
+    if (!kind || !words.value.trim()) { return false; }
+    return kind !== 'accepted' || verdicts().every(function (select) {
+      return select.value && select.value !== 'avant';
+    });
+  }
+  function withdraw() {
+    message.hidden = true;
+    message.querySelector('pre').textContent = '';
+    part('copy').disabled = true;
+    say('');
+    part('reason').hidden = answer() !== 'abandoned';
+    part('prepare').disabled = !ready();
+  }
+  function shell(text) { return "'" + String(text).replace(/'/g, "'\\''") + "'"; }
+  function oneLine(text) { return text.trim().replace(/\\s+/g, ' '); }
+  function compose() {
+    var kind = answer(), said = oneLine(words.value), convoy = judgement.convoy, lines = [];
+    var approver = ' --approved-by benjamin';
+    lines.push('Session d’acceptation du convoi ' + convoy + ', dossier au commit ' + judgement.commit +
+               ', empreinte ' + judgement.pack + '. Ouvre le dossier à jour et enregistre ma réponse telle quelle : ' +
+               'mes mots exacts, sans résumer le dossier ni donner ton avis.');
+    verdicts().forEach(function (select) {
+      if (select.value) {
+        lines.push('bin/owner-answer verdict ' + convoy + ' --proposition ' + shell(select.getAttribute('data-proposition')) +
+                   ' --verdict ' + shell(VERDICT_WORDS[select.value]) + ' --words ' + shell(said || 'Vu.') + approver);
+      }
+    });
+    var record = 'bin/owner-answer record ' + convoy + ' --response ' + shell(RESPONSE_WORDS[kind]) + approver;
+    if (said) { record += ' --words ' + shell(said); }
+    record += ' --commit ' + judgement.commit + ' --pack-digest ' + judgement.pack;
+    if (kind === 'abandoned') { record += ' --reason ' + shell(oneLine(reason.value)); }
+    if (kind === 'findings') {
+      var findings = words.value.split('\\n').map(oneLine).filter(Boolean).map(function (text) { return {text: text}; });
+      lines.push('Écris ce fichier constats.json, mot pour mot : ' + JSON.stringify({findings: findings}));
+      record += ' --findings constats.json';
+    }
+    lines.push(record);
+    return lines.join('\\n');
+  }
+  function showAvis(open) {
+    panel.hidden = !open;
+    part('open').hidden = open;
+    ['close', 'prepare', 'copy', 'cost'].forEach(function (name) { part(name).hidden = !open; });
+    if (open) { words.focus(); withdraw(); }
+  }
+  panel.addEventListener('input', withdraw);
+  panel.addEventListener('change', withdraw);
+  result.addEventListener('click', function (event) {
+    var action = event.target.closest('button[data-avis]');
+    if (!action) { return; }
+    var name = action.getAttribute('data-avis');
+    if (name === 'open') { showAvis(true); }
+    if (name === 'close') { showAvis(false); part('open').focus(); }
+    if (name === 'prepare') {
+      message.querySelector('pre').textContent = compose();
+      message.hidden = false;
+      part('copy').disabled = false;
+      say(NOT_RECORDED);
+    }
+    if (name === 'copy') {
+      navigator.clipboard.writeText(message.querySelector('pre').textContent).then(function () { say(COPIED); }, function () {
+        say('Copie impossible : sélectionne le message à la main. Aucune réponse enregistrée.');
+      });
+    }
   });
 })();
 </script>

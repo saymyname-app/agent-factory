@@ -149,7 +149,7 @@ class HomeResultAvisRecords(stops.FixtureCityWalk):
         copied = pages[6]["copied"]
         self.assertEqual(1, len(copied), "copying did not copy one message")
         message = copied[0]
-        self.assertEqual(1, len([text for text in folded(pages[5], "Message pour ma session") if message in text]),
+        self.assertEqual(1, len([text for text in folded(pages[5], "Message pour ma session") if " ".join(message.split()) in text]),
                          "the message copied is not the one prepared")
         for said in (words, delivered["commit"], delivered["pack"]):
             self.assertIn(said, message, f"the message does not carry « {said} »")

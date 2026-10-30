@@ -276,14 +276,14 @@ class HomeD01Records(stops.FixtureCityWalk):
         self.assert_details("À juger")
         self.assertNotRegex(line + " " + project, r"Fusionn", "a closed ticket is shown merged")
         # The result to judge is the one open in « Ce qui t’attend », with
-        # its bar; Essai and Avis cannot be used yet.
+        # its bar; Essai and Avis can be used (A2).
         self.assertIn("actions-possibles-1", [a["name"] for a in home["anchors"] if "panel-3" in a["chain"]],
                       "the result to judge is not open with its bar of actions")
         self.assertNotIn(DEMONSTRATION_TITLE, home["text"], "the home shows the dossier of a demonstration dataset")
         self.assertNotIn(DEMONSTRATION_TITLE, project, "the project shows the dossier of a demonstration dataset")
-        self.assertEqual([], [c["name"] for c in home["controls"]
-                              if (c["name"].startswith("Essai") or c["name"] == "Avis") and not c["disabled"]],
-                         "Essai or Avis looks usable")
+        self.assertEqual([False, False], [c["disabled"] for c in home["controls"]
+                                          if c["name"].startswith("Essai") or c["name"] == "Avis"],
+                         "Essai or Avis cannot be used on a result to judge")
 
     def test_an_accepted_result_not_merged_says_accepted_and_the_merge_pending(self):
         self.accepted()
