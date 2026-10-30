@@ -104,6 +104,7 @@ EXIT_STOPPED = 5
 # green, full elsewhere -- and a minute more. Exit 75 is its NOT RUN: no
 # answer, never a red (study C, T1).
 sys.path.insert(0, str(BIN.parent / "lib"))
+from bounded_process import run as bounded_run  # noqa: E402
 import test_budgets  # noqa: E402
 
 BUDGETS = test_budgets.load(BIN.parent)
@@ -476,8 +477,8 @@ class Check:
         argv = [token.replace("{test}", test_id).replace("{report}", str(report)) for token in self.test_command()]
         env = {**os.environ, "PRODUCT_ADDRESS": address, "PYTHONDONTWRITEBYTECODE": "1"}
         try:
-            proc = subprocess.run(argv, cwd=tree, env=env, stdin=subprocess.DEVNULL, capture_output=True,
-                                  timeout=COMMAND_TIMEOUT)
+            proc = bounded_run(argv, cwd=tree, env=env, stdin=subprocess.DEVNULL, capture_output=True,
+                               timeout=COMMAND_TIMEOUT)
         except subprocess.TimeoutExpired as exc:
             raise Refusal(f"la commande de test n'a pas fini en {COMMAND_TIMEOUT} s : {test_id}") from exc
         except OSError as exc:
@@ -872,8 +873,8 @@ def regression_run(check: Check, commit: str, moment: str, ticket_tests: list[st
         env["TDD_STEP_TICKET_TESTS"] = " ".join(ticket_tests)
     timeout = test_budgets.deadline(BUDGETS, "green" if ticket_tests else "full")
     try:
-        proc = subprocess.run(command, cwd=check.export(commit), stdin=subprocess.DEVNULL, capture_output=True,
-                              timeout=timeout, env=env)
+        proc = bounded_run(command, cwd=check.export(commit), stdin=subprocess.DEVNULL, capture_output=True,
+                           timeout=timeout, env=env)
     except subprocess.TimeoutExpired as exc:
         raise Refusal(f"la commande de régression n'a pas fini en {timeout} s {moment}") from exc
     except OSError as exc:

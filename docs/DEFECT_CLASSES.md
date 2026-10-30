@@ -55,22 +55,25 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 
 - Invariant : Tout ce qu'un outil lance meurt avec lui, quelle que soit la
   façon dont il finit ; tout délai vient d'une mesure.
-- Contrôle : `python3 tests/project-launch-test.py`,
-  `python3 tests/test-budgets-test.py` — partiel : le premier tient le
-  lanceur des produits (`bin/project-launch`, son gardien et son balayage),
-  pas les autres façons de lancer un programme ; le second tient les délais
-  des tests d'un ticket et de l'ordre convoy-advance
-  (`config/test-budgets.json`, étude C T3), dont l'exclusion d'un run rouge
-  des mesures, pas les autres délais écrits à la main. Le lint « un seul
-  lanceur borné » est planifié (af-npz9v1.26).
+- Contrôle : `python3 tests/bounded-process-test.py`,
+  `python3 tests/project-launch-test.py`, `python3 tests/test-budgets-test.py`
+  — complet pour les commandes Python bornées de `bin/`, `lib/` et
+  `tests/cockpit-criteria/` : un seul lanceur (`lib/bounded_process.py`)
+  ouvre une session et tue son groupe au délai ; le lint refuse toute
+  nouvelle invocation directe et tient chaque existante dans la liste
+  datée `config/bounded-process-exceptions.tsv`. Le second test tient les
+  propriétaires de `project-launch` dans ces trois dossiers. Le dernier tient
+  les délais mesurés des tests d'un ticket et de l'ordre convoy-advance
+  (`config/test-budgets.json`, étude C T3), pas les autres délais écrits à
+  la main.
 - Occurrences : #624, #628, #629, #630, #631, #636, #647, #657, #658, #661,
   #667, #694, #696, #705, #706, #708, #710, #713, #721 ; copies orphelines du
-  22/10 (sans PR) ; af-kky570 ; af-npz9v1.46.
-- Ouvertes : `subprocess.run(..., timeout=)` sans arrêt du groupe dans
-  `bin/tdd-step`, `bin/ticket-author`, `bin/fixture-city-oracle`,
-  `lib/evaluation_observations.py`, `bin/provider-failover` (étude B § 4.1,
-  af-npz9v1.26) ; une vingtaine de délais écrits à la main (étude C) ;
-  af-30zwwu.
+  22/10 (sans PR) ; af-kky570 ; af-npz9v1.46 ; af-npz9v1.26 ; af-30zwwu.
+- Ouvertes : les invocations directes antérieures hors des occurrences de
+  l'étude B sont nommées une par une, avec leur date et leur motif, dans
+  `config/bounded-process-exceptions.tsv` ; une vingtaine de délais écrits à
+  la main restent à l'étude C. Aucune autre invocation Python bornée ni
+  aucun lanceur de produit sans propriétaire n'est connu hors du contrôle.
 
 ## I — Impasse d'état : un arrêt ou une attente sans sortie codée
 

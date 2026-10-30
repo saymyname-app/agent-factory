@@ -50,6 +50,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
+from bounded_process import run as bounded_run  # noqa: E402
 import provider_failover as pf  # noqa: E402
 
 FACTORY_ROOT = Path(os.environ.get("FACTORY_ROOT") or ROOT)
@@ -98,14 +99,14 @@ def now() -> float:
 
 
 def gc(*args: str, timeout: int = 30) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    return bounded_run(
         [GC_BIN, *args], cwd=FACTORY_ROOT, text=True, capture_output=True,
         timeout=timeout, env={**os.environ, "NO_COLOR": "1"},
     )
 
 
 def escalation_door(*args: str, timeout: int = 30) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    return bounded_run(
         [str(ROOT / "bin" / "escalation-door"), *args], cwd=FACTORY_ROOT, text=True, capture_output=True,
         timeout=timeout, env={**os.environ, "NO_COLOR": "1"},
     )
@@ -113,7 +114,7 @@ def escalation_door(*args: str, timeout: int = 30) -> subprocess.CompletedProces
 
 def operator_language() -> str:
     try:
-        result = subprocess.run(
+        result = bounded_run(
             [str(ROOT / "bin" / "operator-config"), "language"],
             text=True, capture_output=True, timeout=10,
         )
@@ -209,7 +210,7 @@ def pane_text(session: dict[str, Any]) -> str:
     name = str(session.get("session_name") or "").strip()
     if name:
         try:
-            result = subprocess.run(
+            result = bounded_run(
                 [TMUX_BIN, "-L", TMUX_SOCKET, "capture-pane", "-p", "-J",
                  "-t", f"={name}:", "-S", "-60"],
                 text=True, capture_output=True, timeout=5,
