@@ -158,10 +158,14 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   sa clé stable de dédoublonnage, la conservation d'une demande humaine et le
   relevé final à +2 h ; le troisième refuse qu'une sortie locale 0 compte comme
   armement sans relecture GitHub et tient la fusion directe au head, à CLEAN et
-  au contrôle requis vert. Le contrôle 9 du gardien (#688) couvre les tickets
-  que personne ne bouge, pas les autres signaux.
+  au contrôle requis vert ; il relit aussi GitHub après toute demande de fusion
+  directe et n'annonce la fusion que si le serveur répond `MERGED`. Le contrôle
+  9 du gardien (#688) couvre les tickets que personne ne bouge, pas les autres
+  signaux.
 - Occurrences : #651, #679, #688, #717 ; af-npz9v1.50 ; #767 (armement local
-  annoncé mais `autoMergeRequest=null`, af-npz9v1.50.1) ; af-ncg9qy.
+  annoncé mais `autoMergeRequest=null`, af-npz9v1.50.1) ; af-ncg9qy ; #778
+  (demande directe acceptée localement mais encore `AWAITING_CHECKS`,
+  af-nk5nm6).
 - Ouvertes : aucune connue.
 
 ## A — Autre
