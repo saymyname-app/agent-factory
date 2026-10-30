@@ -169,6 +169,11 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
+LIB = str(Path(__file__).resolve().parent)
+if LIB not in sys.path:
+    sys.path.insert(0, LIB)
+from delivery_rules import review_replay_due
+
 # The two names serve annotations only, which are never evaluated here
 # (`from __future__ import annotations`): importing `typing` on each of the
 # thousands of starts of this command would be paid for nothing (af-xhryl7).
@@ -4195,24 +4200,12 @@ def cmd_open_code_review(args: argparse.Namespace) -> int:
         # The same review, sent to a reviewer of another model: its launches stay counted.
         request["models"] = models
     else:
-        # A review outdated by commits made outside the correction round
-        # (a resume) is replayed in full at the new tip: no session will
-        # answer its findings (af-s31cvi).
-        replayed = (kind == "review" and last is not None and last["kind"] == "review"
-                    and last["commit"] != commit and not last.get("responses") and KEY_CORRECTION not in metadata)
-        # So is the judgement a later correction round took up (af-bv0ikr):
-        # no answer is given to it, the tip of that round is reviewed in full.
-        replayed = replayed or (kind == "review" and last is not None and last["kind"] == "judgement"
-                                and last["commit"] != commit and KEY_CORRECTION in metadata
-                                and correction_record(metadata[KEY_CORRECTION])["commit"] == last["commit"])
-        # And the judgement whose every unsettled Blocking Finding the operator
-        # overrode, which stands for a favorable verdict: a later tip is
-        # reviewed in full (F and G1 of af-strhoy, 22/10/2026).
+        correction_commit = correction_record(metadata[KEY_CORRECTION])["commit"] \
+            if KEY_CORRECTION in metadata else None
         overridden = {entry["finding"] for entry in overrides_record(metadata[KEY_OVERRIDES])} \
             if KEY_OVERRIDES in metadata else set()
-        replayed = replayed or (kind == "review" and last is not None and last["kind"] == "judgement"
-                                and last["commit"] != commit
-                                and set(code_review_state(record)["unsettled"]) <= overridden)
+        replayed = bool(kind == "review" and last is not None and review_replay_due(
+            last, commit, correction_commit, code_review_state(record)["unsettled"], overridden))
         if last and last["verdict"] == "unfavorable" and not replayed and not contract_replay:
             if last["kind"] == "judgement":
                 raise Refusal(

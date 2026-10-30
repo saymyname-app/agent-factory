@@ -62,6 +62,9 @@ CAPTURE_TOOL = BIN / "evidence-capture"
 FIDELITY_TOOL = BIN / "prototype-fidelity"
 PROFILE_TOOL = BIN / "project-planning-profile"
 
+sys.path.insert(0, str(BIN.parent / "lib"))
+from delivery_rules import names_in_texts, tdd_evidence_piece  # noqa: E402
+
 # The closed list (Spec §9), versioned: a change of the list is a new
 # version. bin/convoy-state holds the same names and refuses any other record.
 VERSION = "ticket-end/v1"
@@ -83,8 +86,6 @@ KIND_PREFACTORING = "prefactoring"
 HANDOFF_PIECE = "handoff_records"
 DEMONSTRATION_PIECE = "demonstration"
 MERGED_TESTS_PIECE = "merged_tests"
-TDD_PIECES = {"red": "tdd_red", "freeze": "tdd_freeze", "green": "tdd_green", "amendment": "tdd_amendment",
-              "prefactoring": "tdd_prefactoring"}
 FIDELITY_PASSING = ("vert", "accepté par Benjamin")
 OVERRIDE_RECORDED = "dérogation enregistrée"
 # The only stop a ticket may be merged and closed under: the one its
@@ -274,16 +275,6 @@ class Evidence:
         return report if isinstance(report, dict) else {}
 
 
-def red_piece(tdd: dict[str, Any], step: str) -> str:
-    """The piece that proves the red recorded on the ticket. After an
-    amendment the red is recorded at its commit and proven by
-    `tdd_amendment`; `tdd_red` stays the first red (docs/TDD_STEP.md)."""
-    amendment = tdd.get("amendment") or {}
-    if step == "red" and amendment.get("commit") and amendment.get("commit") == (tdd.get("red") or {}).get("commit"):
-        return TDD_PIECES["amendment"]
-    return TDD_PIECES[step]
-
-
 # --- the nine conditions ---------------------------------------------------------------
 # Each returns (met, detail): one line that says what was read.
 
@@ -326,7 +317,7 @@ def condition_handoff(ticket: dict[str, Any], tip: str, evidence: Evidence, repo
     red = (handoff.get("records") or {}).get("red_proof") or {}
     if not proven or red.get("step") != step or red.get("commit") != proven.get("commit"):
         return False, f"le Handoff ne porte pas la preuve du rouge ({step}) prouvée sur le ticket"
-    problem = evidence.at(red_piece(ticket.get("tdd") or {}, step), proven["commit"], "preuve du rouge")
+    problem = evidence.at(tdd_evidence_piece(ticket.get("tdd") or {}, step), proven["commit"], "preuve du rouge")
     if problem:
         return False, problem
     if ticket.get("kind") == KIND_PREFACTORING:
@@ -436,7 +427,7 @@ def condition_evidence(ticket: dict[str, Any], tip: str, evidence: Evidence, rep
     # What proves the state that is merged is tied to the exact tip.
     at_tip = [HANDOFF_PIECE]
     if ticket.get("kind") != KIND_PREFACTORING:
-        at_tip += [DEMONSTRATION_PIECE, TDD_PIECES["green"]]
+        at_tip += [DEMONSTRATION_PIECE, tdd_evidence_piece({}, "green")]
     rounds = (ticket.get("evaluation") or {}).get("rounds") or []
     if rounds:
         last = rounds[-1]
@@ -461,26 +452,26 @@ def condition_tdd(ticket: dict[str, Any], tip: str, evidence: Evidence, repo: Pa
             return False, "prefactoring : aucune régression avant / après enregistrée"
         if step.get("commit") != tip:
             return False, f"régression du prefactoring prouvée à {sha(step.get('commit'))} et non à la pointe {sha(tip)}"
-        problem = evidence.at(TDD_PIECES["prefactoring"], tip, "régression du prefactoring")
+        problem = evidence.at(tdd_evidence_piece(tdd, "prefactoring"), tip, "régression du prefactoring")
         if problem:
             return False, problem
-        if evidence.report(TDD_PIECES["prefactoring"]).get("verdict") != "unchanged":
+        if evidence.report(tdd_evidence_piece(tdd, "prefactoring")).get("verdict") != "unchanged":
             return False, "le relevé de régression du prefactoring ne dit pas « unchanged »"
         return True, f"prefactoring : comportement inchangé prouvé à {sha(tip)} (pas d'étape rouge)"
     for step, said in (("red", "rouge"), ("freeze", "gel"), ("green", "vert")):
         record = tdd.get(step)
         if not record:
             return False, f"étape « {said} » ({step}) non enregistrée sur le ticket"
-        problem = evidence.at(red_piece(tdd, step), record.get("commit"), f"preuve de l'étape « {said} »")
+        problem = evidence.at(tdd_evidence_piece(tdd, step), record.get("commit"), f"preuve de l'étape « {said} »")
         if problem:
             return False, problem
     if "amendment" in tdd:
-        problem = evidence.at(TDD_PIECES["amendment"], tdd["amendment"].get("commit"), "preuve de l'amendement")
+        problem = evidence.at(tdd_evidence_piece(tdd, "amendment"), tdd["amendment"].get("commit"), "preuve de l'amendement")
         if problem:
             return False, problem
     if tdd["green"].get("commit") != tip:
         return False, f"vert prouvé à {sha(tdd['green'].get('commit'))} et non à la pointe {sha(tip)}"
-    red, green = evidence.report(red_piece(tdd, "red")), evidence.report(TDD_PIECES["green"])
+    red, green = evidence.report(tdd_evidence_piece(tdd, "red")), evidence.report(tdd_evidence_piece(tdd, "green"))
     if red.get("verdict") != "red":
         return False, "le relevé de l'étape rouge ne dit pas « red »"
     if not red.get("seam_mode"):
@@ -682,8 +673,7 @@ def named_states(ticket: dict[str, Any], states: list[str]) -> list[str]:
     as bin/ticket-evaluation reads datasets --, else every state: a ticket
     that cuts a prototype by groups of states is measured on its own (af-lvhakk)."""
     texts = [*(str(text) for text in ticket.get("criteria") or []), str(ticket.get("demonstration_line") or "")]
-    named = [state for state in states
-             if any(re.search(rf"(?<![\w-]){re.escape(state)}(?![\w-])", text) for text in texts)]
+    named = names_in_texts(states, texts)
     return named or list(states)
 
 
