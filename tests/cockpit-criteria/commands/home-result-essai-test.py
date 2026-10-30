@@ -8,8 +8,9 @@ result-repairing.
 Each case launches the real cockpit with the launcher of the profile,
 bin/project-launch, on a dataset of the profile -- as it is, or with what
 its result says of itself (`result`) at a commit of its own -- and walks the
-page it serves at GET / in a headless Chromium (result_trial.walk): what the
-page asks to open in another tab is recorded there, and read afterwards.
+page it serves at GET / in a headless Chromium (result_trial.walk): a tab the
+page opens is a real tab of the browser, whose address the proxy in front of
+the browser sees it ask.
 
 - result-ready: Essai opens a new tab on the product launched at the
   revision of the dossier, by the isolated recipe of the project. The
@@ -17,6 +18,10 @@ page asks to open in another tab is recorded there, and read afterwards.
   where the first dataset the profile declares, home-content, says a
   sentence the tree as served does not say: the product the tab shows says
   it, so it is that revision's, and no other's.
+- a tab the browser blocks: nothing is launched, and the page does not say
+  a product is open; it says the tab was blocked.
+- Essai asked of another revision than the dossier the cockpit holds, as a
+  page left open on an older dossier asks it: refused, nothing is launched.
 - a revision whose product does not start: Essai opens no tab on a product
   that is not there; the cockpit says the launch is down, and it is no
   judgement -- the result is still to judge.
@@ -39,6 +44,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from home_destination import LaunchTree  # noqa: E402
+from pour_moi import Operator  # noqa: E402
 from result_trial import controls, last, product_text, result_of, serve, shown, walk  # noqa: E402
 
 # The sentence of the first dataset of the profile, and what the revision of
@@ -101,6 +107,25 @@ class HomeResultEssai(unittest.TestCase):
         self.assertIn(SAID_AT_REVISION, product, "the tab does not show the product at the revision of the dossier")
         self.assertNotIn(SAID_AT_HEAD, product, "the tab shows the product of another revision")
         self.assert_not_judged(last(walked), address)
+
+    def test_a_tab_the_browser_blocks_is_said_and_no_product_is_said_open(self):
+        revision = self.tree.reword("home-content", {SAID_AT_HEAD: SAID_AT_REVISION})
+        address = serve(self.tree, "result-ready", {"commit": revision})
+        page = last(walk(address, [{"click": "Essai", "wait": 30000}], blocked=True))
+        self.assertEqual([], page["opened"], "a tab is open though the browser blocked it")
+        text = shown(page)
+        self.assertNotRegex(text, r"(?i)ouvert dans un autre onglet", "the product is said open in a tab the browser blocked")
+        self.assertRegex(text, r"(?i)bloqué", "the page does not say the browser blocked the tab")
+        self.assert_not_judged(page, address)
+
+    def test_essai_asked_of_another_revision_than_the_dossier_is_refused(self):
+        revision = self.tree.reword("home-content", {SAID_AT_HEAD: SAID_AT_REVISION})
+        address = serve(self.tree, "result-ready", {"commit": revision})
+        chantier, before = result_of(address)
+        answer = Operator(address).gesture("essai", {"chantier": chantier, "commit": "0" * len(revision)})
+        self.assertIn(answer.status, (400, 409), f"a trial of another revision is not refused: {answer!r}")
+        self.assertRegex(answer.error(), r"(?i)n’est plus", f"the refusal does not say the dossier changed: {answer!r}")
+        self.assertEqual((chantier, before), result_of(address), "the refusal changed the result")
 
     def test_a_revision_whose_product_does_not_start_is_an_outage_said_as_such(self):
         # The first dataset of the profile, at this revision, is one its

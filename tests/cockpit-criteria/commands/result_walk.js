@@ -1,7 +1,10 @@
 // The walking page of the criterion tests of A2 (result_trial.py). It is
 // the walk of B (pour_moi_walk.js) with what a judgement needs besides:
-// a choice among radio buttons, an option of a list, what the page copies
-// for its session, and the tabs it opens. It loads the page in one frame,
+// a choice among radio buttons, an option of a list, and what the page
+// copies for its session. A tab the page opens is a real one of the browser,
+// which the identity proxy sees go to its address (result_trial.walk); with
+// `blocked`, the browser refuses every tab, as a popup blocker does: the
+// headless browser has none. It loads the page in one frame,
 // reads it once settled, then does each step asked, one after the other,
 // and reads it again after each; it writes what it read in the document,
 // which `--dump-dom` prints:
@@ -16,9 +19,6 @@
 //                  box), and `holder`, the nearest data-anchor that holds it
 //           folded  every <details> of the page, open or not: its summary
 //                  and its whole text
-//           opened  every address the page asked to open in another tab
-//                  since the walk began (a link to a new tab activated,
-//                  window.open), resolved against the page
 //           copied  every text the page copied for the clipboard since
 //                  the walk began
 // step      {click: name}  the visible control whose accessible name is
@@ -46,7 +46,7 @@
   var CONTROLS = 'a[href], button, input, select, textarea, summary, [role="button"], [role="link"], [tabindex]';
   var FIELDS = 'textarea, input:not([type]), input[type="text"], input[type="search"]';
   var CHOICES = 'input[type="radio"], input[type="checkbox"]';
-  var opened = [], copied = [];
+  var copied = [];
 
   function visible(element, view) {
     if (!element.getClientRects().length) { return false; }
@@ -83,32 +83,10 @@
     return squash(element.innerText || element.textContent) || (element.getAttribute('title') || '').trim();
   }
 
-  // What the page opens in another tab, and what it copies, is recorded
-  // here and not done: the walk stays on the page it reads.
+  // What the page copies is recorded here and not done.
   function watch(frame) {
     var view = frame.contentWindow, doc = frame.contentDocument;
-    function record(address) {
-      if (address === undefined || address === null || String(address) === '' || String(address) === 'about:blank') {
-        return;
-      }
-      opened.push(new view.URL(String(address), view.location.href).href);
-    }
-    view.open = function (address) {
-      record(address);
-      var location = {replace: record, assign: record};
-      Object.defineProperty(location, 'href', {get: function () { return ''; }, set: record});
-      var tab = {closed: false, opener: null, focus: function () {}, close: function () {},
-                 document: {write: function () {}, close: function () {}}};
-      Object.defineProperty(tab, 'location', {get: function () { return location; }, set: record});
-      return tab;
-    };
-    doc.addEventListener('click', function (event) {
-      var link = event.target.closest && event.target.closest('a[href]');
-      if (link && (link.target === '_blank' || event.ctrlKey || event.metaKey)) {
-        event.preventDefault();
-        if (link.getAttribute('aria-disabled') !== 'true') { record(link.getAttribute('href')); }
-      }
-    }, true);
+    if (query.get('blocked')) { view.open = function () { return null; }; }
     var clipboard = {
       writeText: function (text) { copied.push(String(text)); return view.Promise.resolve(); },
       write: function () { return view.Promise.reject(new view.Error('not recorded')); }
@@ -147,7 +125,7 @@
                    text: squash(details.textContent)});
     });
     return {path: view.location.pathname, text: doc.body ? doc.body.innerText : '', controls: controls,
-            folded: folded, opened: opened.slice(), copied: copied.slice()};
+            folded: folded, copied: copied.slice()};
   }
 
   function find(frame, step) {

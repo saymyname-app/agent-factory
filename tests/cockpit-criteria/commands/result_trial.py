@@ -10,9 +10,9 @@ it.
 - `walk`: the page the launched cockpit serves, walked in a headless
   Chromium behind the identity proxy of B (pour_moi), as the walk of B does
   it, with the choices a judgement needs besides -- a radio button, an
-  option of a list -- and what the page leaves behind it: the addresses it
-  asked to open in another tab, the texts it copied for the session
-  (result_walk.js);
+  option of a list -- and what the page leaves behind it: the addresses
+  the tabs it opened went to, as the proxy saw them, the texts it copied
+  for the session (result_walk.js);
 - `result_of`: the chantier whose result the cockpit serves at
   GET /api/projects, and that result;
 - `product_text`: what the address a tab was opened on answers, once it
@@ -128,10 +128,17 @@ FRAME_HEIGHT = 900
 
 
 class _Walk(pour_moi._Forward):
-    """The identity proxy of B, which serves this walking page besides."""
+    """The identity proxy of B, which serves this walking page besides, and
+    sees each tab of the browser: a page the browser loads as a document of
+    its own, not in the frame of the walk. `opened`: their addresses, for
+    the walk under way."""
+
+    opened: list[str] = []
 
     def _forward(self) -> None:
         url = urllib.parse.urlsplit(self.path)
+        if url.path != WALK_PATH and self.headers.get("Sec-Fetch-Dest") == "document":
+            _Walk.opened.append(self.path)
         if url.hostname and url.path == WALK_PATH:
             body = (WALK_PAGE % WALK_SCRIPT).encode("utf-8")
             self.send_response(200)
@@ -147,20 +154,23 @@ class _Walk(pour_moi._Forward):
 
 
 def walk(address: str, steps: list[dict], *, width: int = 1440, theme: str = "dark", settle_ms: int = 2500,
-         seconds: int = 150) -> dict:
+         seconds: int = 150, blocked: bool = False) -> dict:
     """The page at `address` as a headless Chromium shows it behind the
     identity proxy, then after each of `steps` (result_walk.js): `click`,
     `fill`, `check`, `choose`, `fetch`, each with its `wait`. Returns
     `{"start": page, "steps": [{"found", "page", "body"?}]}`, a page being
     its `path`, its `text` as shown, its visible `controls` (`name`,
     `disabled`, `field`, `checked`, `holder`), its `folded` details
-    (`summary`, `text`), the addresses it `opened` in another tab and the
-    texts it `copied`; the walk stops at the first step whose control is
-    not found. `seconds` bounds the browser."""
+    (`summary`, `text`) and the texts it `copied`; the walk stops at the
+    first step whose control is not found. The page as the walk left it
+    (`last`) has besides `opened`: the address of each real tab the browser
+    opened during the walk, as the proxy saw it asked. `blocked`: the
+    browser refuses every tab. `seconds` bounds the browser."""
     proxy = pour_moi._served("result-walk", _Walk)
+    _Walk.opened = []
     query = urllib.parse.urlencode({
         "target": address + "/", "width": width, "height": FRAME_HEIGHT, "settle": settle_ms,
-        "steps": json.dumps(steps, ensure_ascii=False),
+        "steps": json.dumps(steps, ensure_ascii=False), **({"blocked": "1"} if blocked else {}),
     })
     work = tempfile.mkdtemp(prefix="cockpit-result-browser-")
     argv = [
@@ -189,6 +199,7 @@ def walk(address: str, steps: list[dict], *, width: int = 1440, theme: str = "da
     walked = json.loads(html.unescape(found.group(1))) if found and found.group(1).strip() else None
     if not isinstance(walked, dict) or walked.get("ok") is not True:
         raise RuntimeError(f"the browser walked nothing on {address}: {walked}")
+    last(walked)["opened"] = list(_Walk.opened)
     return walked
 
 

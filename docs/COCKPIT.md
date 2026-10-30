@@ -357,9 +357,11 @@ browser on another device does not reach it.
 Avis (panel `#pn-avis`, inside the result, its actions in the same bar) runs
 in the page and writes nothing. It asks one answer of D01, the verdict on each
 proposition (`propositions_of`, read with the Outcome; « Avant d’accepter »
-holds back an acceptance), the words, the reason of an abandon, then prepares
+holds back an acceptance), the words -- for each answer --, the reason of an
+abandon, then prepares
 a neutral message for the session of the operator: the lines of
-`bin/owner-answer` with the words, the commit and the fingerprint. Any change
+`bin/owner-answer` with the words, quoted for the shell, the commit and the
+fingerprint. Any change
 withdraws the message; copying it records nothing. The answer comes back only
 through the records: « Historique et preuves » gives its words, the version
 and the fingerprint judged, each finding with how the factory takes it up;

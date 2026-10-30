@@ -6441,6 +6441,8 @@ def cmd_record_owner_answer(args: argparse.Namespace) -> int:
         if dossier is not None:
             answer: dict[str, Any] = {"response": response, "approver": approver, "commit": dossier["commit"],
                                       "pack": dossier["pack"], "reason": reason, "at": now()}
+            if args.words is not None:
+                answer["words"] = owner_words(args.words, "« abandonné »")
         else:
             # Abandoned during delivery: no dossier was judged. His words
             # stand for it, with the tip the integration branch keeps, if

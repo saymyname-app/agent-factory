@@ -36,6 +36,7 @@ DOOR_TIMEOUT_SECONDS = 15
 TRIAL_TIMEOUT_SECONDS = 150
 NO_RESULT = "Ce chantier n’a pas de résultat à essayer : rien n’est lancé."
 TRIAL_SILENT = "Le produit ne répond pas encore : rien n’est confirmé, réessaie dans un instant."
+TRIAL_OTHER_DOSSIER = "Ce dossier n’est plus celui du résultat : recharge la page avant d’essayer. Aucun onglet n’est ouvert."
 
 
 class ActionError(Exception):
@@ -359,15 +360,20 @@ def build_action_handlers(
         """Essai (A2): the product at the revision of the dossier, launched
         by the Acceptance Session, its address for another tab. Asked of a
         result that is not to judge, refused with what the result says of
-        itself; a product that does not start is said as an outage, by the
-        command that records it. ``outcome_of``: the Outcome the cockpit
-        reads of a chantier."""
+        itself; of another ``commit`` than the dossier the Outcome holds, or
+        answered at another one by the session, refused: no tab on a product
+        of another revision than the page shows. A product that does not
+        start is said as an outage, by the command that records it.
+        ``outcome_of``: the Outcome the cockpit reads of a chantier."""
         chantier = _require(payload, "chantier")
         outcome = outcome_of(chantier)
         if outcome is None:
             raise ActionError(NO_RESULT)
         if outcome["issue"] not in TRIAL_ISSUES:
             raise ActionError(outcome["sentence"])
+        commit = _require(payload, "commit")
+        if commit != outcome["commit"]:
+            raise ActionError(TRIAL_OTHER_DOSSIER)
         try:
             completed = subprocess.run([acceptance_session_bin, "open", outcome["convoy"], "--trial"],
                                        capture_output=True, text=True, timeout=trial_timeout)
@@ -380,7 +386,9 @@ def build_action_handlers(
             raise ActionError((completed.stderr or "réponse illisible de la session d’acceptation").strip())
         if completed.returncode != 0 or not answer.get("address"):
             raise ActionError(answer.get("error") or "la session d’acceptation n’a pas donné d’adresse")
-        return {"ok": True, "address": answer["address"], "commit": answer.get("commit")}
+        if answer.get("commit") != commit:
+            raise ActionError(TRIAL_OTHER_DOSSIER)
+        return {"ok": True, "address": answer["address"], "commit": commit}
 
     def handle_pas_bon_vers_agent(payload):
         """« Pas bon → agent » (spec .31): a prompt to copy, nothing

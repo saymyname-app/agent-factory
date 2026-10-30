@@ -2,6 +2,8 @@
   "criteria": {
     "1": [
       "tests/cockpit-criteria/commands/home-result-essai-test.py::HomeResultEssai.test_essai_opens_a_new_tab_on_the_product_launched_at_the_revision_of_the_dossier",
+      "tests/cockpit-criteria/commands/home-result-essai-test.py::HomeResultEssai.test_a_tab_the_browser_blocks_is_said_and_no_product_is_said_open",
+      "tests/cockpit-criteria/commands/home-result-essai-test.py::HomeResultEssai.test_essai_asked_of_another_revision_than_the_dossier_is_refused",
       "tests/cockpit-criteria/commands/home-result-essai-test.py::HomeResultEssai.test_a_revision_whose_product_does_not_start_is_an_outage_said_as_such",
       "tests/cockpit-criteria/commands/home-result-essai-test.py::HomeResultEssai.test_result_outage_says_the_launch_down_and_its_repair_and_keeps_avis",
       "tests/cockpit-criteria/commands/home-result-essai-test.py::HomeResultEssai.test_result_repairing_says_the_correction_of_the_findings_and_no_outage"
@@ -11,7 +13,8 @@
       "tests/cockpit-criteria/commands/home-result-avis-test.py::HomeResultAvis.test_result_confirmation_offers_one_essai_and_one_avis_at_the_same_level_and_avis_opens_in_the_bar",
       "tests/cockpit-criteria/commands/home-result-avis-test.py::HomeResultAvis.test_result_findings_offers_one_essai_and_one_avis_at_the_same_level_and_avis_opens_in_the_bar",
       "tests/cockpit-criteria/commands/home-result-avis-test.py::HomeResultAvis.test_abandon_needs_its_reason_a_changed_draft_withdraws_the_message_and_copying_records_nothing",
-      "tests/cockpit-criteria/commands/home-result-avis-records-test.py::HomeResultAvisRecords.test_acceptance_needs_a_verdict_on_each_proposition_then_the_session_records_the_message_copied"
+      "tests/cockpit-criteria/commands/home-result-avis-records-test.py::HomeResultAvisRecords.test_acceptance_needs_a_verdict_on_each_proposition_then_the_session_records_the_message_copied",
+      "tests/cockpit-criteria/commands/home-result-avis-records-test.py::HomeResultAvisRecords.test_abandon_needs_its_words_and_the_session_records_them_with_the_commit_and_the_fingerprint"
     ],
     "3": [
       "tests/cockpit-criteria/commands/home-result-renewal-test.py::HomeResultRenewal.test_result_returned_keeps_the_findings_in_their_exact_words_and_their_take_up",

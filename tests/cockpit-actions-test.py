@@ -564,5 +564,36 @@ class ActionsSeamTest(unittest.TestCase):
                    last_seen=opened)
 
 
+class EssaiRevisionTest(unittest.TestCase):
+    """Essai gives an address only at the commit of the dossier the page
+    shows: the session may have moved on since the Outcome was read."""
+
+    COMMIT = "a" * 40
+
+    def essai(self, launched, asked=COMMIT):
+        from cockpit.actions.registry import build_action_handlers
+        with tempfile.TemporaryDirectory() as folder:
+            session = Path(folder) / "acceptance-session"
+            session.write_text("#!/bin/sh\nprintf '%%s' '%s'\n" % json.dumps({"address": "http://127.0.0.1:1", "commit": launched}))
+            session.chmod(0o755)
+            handlers = build_action_handlers(
+                "bd", time.time, acceptance_session_bin=str(session),
+                outcome_of=lambda chantier: {"issue": "to_judge", "convoy": chantier, "commit": self.COMMIT})
+            return handlers["essai"]({"chantier": "af-1", "commit": asked})
+
+    def test_the_address_of_the_commit_shown_is_given(self):
+        self.assertEqual({"ok": True, "address": "http://127.0.0.1:1", "commit": self.COMMIT}, self.essai(self.COMMIT))
+
+    def test_a_session_at_another_commit_gives_no_address(self):
+        from cockpit.actions.registry import ActionError
+        with self.assertRaisesRegex(ActionError, "n’est plus celui"):
+            self.essai("b" * 40)
+
+    def test_a_page_on_another_commit_launches_nothing(self):
+        from cockpit.actions.registry import ActionError
+        with self.assertRaisesRegex(ActionError, "n’est plus celui"):
+            self.essai(self.COMMIT, asked="b" * 40)
+
+
 if __name__ == "__main__":
     unittest.main()

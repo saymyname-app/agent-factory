@@ -624,8 +624,8 @@ def _render_bar(result, usable, reason, anchors):
     unavailable; while Avis is open, its actions, in that same bar."""
     dock = anchors("actions-possibles")
     essai_anchor, avis_anchor = anchors("button"), anchors("button")
-    essai = ('<a class="pn-button" role="link" href="#essai" data-essai="%s" %s>Essai ↗</a>'
-             % (_e(result["chantier"]), essai_anchor) if usable["essai"] else
+    essai = ('<a class="pn-button" role="link" href="#essai" data-essai="%s" data-commit="%s" %s>Essai ↗</a>'
+             % (_e(result["chantier"]), _e(result["judgement"]["commit"]), essai_anchor) if usable["essai"] else
              '<a class="pn-button" role="link" aria-disabled="true" tabindex="-1" %s>Essai ↗</a>' % essai_anchor)
     avis = ('<button type="button" data-avis="open" %s>Avis</button>' % avis_anchor if usable["avis"]
             else '<button type="button" disabled %s>Avis</button>' % avis_anchor)
@@ -966,16 +966,18 @@ SCRIPT = """
     function say(text) { status.hidden = false; status.textContent = text; }
     if (link.getAttribute('aria-busy') === 'true') { return; }
     var tab = window.open('', '_blank');
+    if (!tab) { say('Le navigateur a bloqué le nouvel onglet : autorise-le, puis relance Essai. Rien n’a été lancé.'); return; }
     link.setAttribute('aria-busy', 'true');
     say('Préparation du produit de cette version…');
-    post('essai', {chantier: link.getAttribute('data-essai')}).then(function (response) {
+    post('essai', {chantier: link.getAttribute('data-essai'), commit: link.getAttribute('data-commit')}).then(function (response) {
       return response.json().then(function (body) { return {ok: response.ok, body: body}; });
     }).then(function (answer) {
       if (!answer.ok) { throw new Error(answer.body.error || 'Le produit ne démarre pas.'); }
-      if (tab) { tab.opener = null; tab.location.href = answer.body.address; }
+      tab.opener = null;
+      tab.location.href = answer.body.address;
       say('Le produit de cette version est ouvert dans un autre onglet.');
     }).catch(function (error) {
-      if (tab) { tab.close(); }
+      tab.close();
       say(String(error.message || error).replace(/^refus : /, ''));
     }).then(function () { link.removeAttribute('aria-busy'); });
   }
@@ -1005,8 +1007,8 @@ SCRIPT = """
   function say(text) { var status = part('status'); status.hidden = !text; status.textContent = text; }
   function ready() {
     var kind = answer();
-    if (kind === 'abandoned') { return !!reason.value.trim(); }
     if (!kind || !words.value.trim()) { return false; }
+    if (kind === 'abandoned') { return !!reason.value.trim(); }
     return kind !== 'accepted' || verdicts().every(function (select) {
       return select.value && select.value !== 'avant';
     });
@@ -1019,12 +1021,12 @@ SCRIPT = """
     part('reason').hidden = answer() !== 'abandoned';
     part('prepare').disabled = !ready();
   }
-  function shell(text) { return "'" + String(text).replace(/'/g, "'\\''") + "'"; }
+  function shell(text) { return "'" + String(text).replace(/'/g, "'\\\\''") + "'"; }
   function oneLine(text) { return text.trim().replace(/\\s+/g, ' '); }
   function compose() {
     var kind = answer(), said = oneLine(words.value), convoy = judgement.convoy, lines = [];
     var approver = ' --approved-by benjamin';
-    lines.push('Session d’acceptation du convoi ' + convoy + ', dossier au commit ' + judgement.commit +
+    lines.push('Session d’acceptation du chantier ' + convoy + ', dossier au commit ' + judgement.commit +
                ', empreinte ' + judgement.pack + '. Ouvre le dossier à jour et enregistre ma réponse telle quelle : ' +
                'mes mots exacts, sans résumer le dossier ni donner ton avis.');
     verdicts().forEach(function (select) {
@@ -1034,8 +1036,7 @@ SCRIPT = """
       }
     });
     var record = 'bin/owner-answer record ' + convoy + ' --response ' + shell(RESPONSE_WORDS[kind]) + approver;
-    if (said) { record += ' --words ' + shell(said); }
-    record += ' --commit ' + judgement.commit + ' --pack-digest ' + judgement.pack;
+    record += ' --words ' + shell(said) + ' --commit ' + judgement.commit + ' --pack-digest ' + judgement.pack;
     if (kind === 'abandoned') { record += ' --reason ' + shell(oneLine(reason.value)); }
     if (kind === 'findings') {
       var findings = words.value.split('\\n').map(oneLine).filter(Boolean).map(function (text) { return {text: text}; });
