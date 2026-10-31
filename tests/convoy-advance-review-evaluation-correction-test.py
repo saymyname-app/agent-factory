@@ -142,6 +142,15 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual([], self.of(answer, "resumed"))
         self.assertEqual("code_review_no_result", self.shown(T1)["stop"]["reason"])
 
+    def test_a_code_review_stop_answered_while_its_request_is_cleared_is_not_resumed(self):
+        self.review_stopped()
+
+        answer = self.advance(CONVOY, env={**self.env, "CONVOY_STATE_FAKE_ANSWER_ON_CLEAR": f"{T1}=a"})
+
+        self.assertEqual([], self.of(answer, "resumed"))
+        self.assertEqual(0, self.shown(T1)["counters"]["resumes"])
+        self.assertEqual("code_review_no_result", self.shown(T1)["stop"]["reason"])
+
     def test_a_code_review_that_cannot_be_sent_fails_the_pass_and_merges_nothing(self):
         base = self.integrated()
         self.code_reviewed("door-refuses")

@@ -22,6 +22,14 @@ printf '%q ' "$@" >>"$PD_CALL_LOG"
 printf '\n' >>"$PD_CALL_LOG"
 
 bead_file() { printf '%s/%s.json' "$PD_BEAD_DIR" "$1"; }
+has_open_blocker() {
+  local blocker status
+  while IFS= read -r blocker; do
+    status=$(jq -r '.status // "open"' "$(bead_file "$blocker")" 2>/dev/null || printf 'open')
+    [[ $status == closed ]] || return 0
+  done < <(jq -r '.dependencies[]? | select(.dependency_type == "blocks") | .id' "$1")
+  return 1
+}
 
 if [[ ${1:-} == bd && ${2:-} == create ]]; then
   id=$(head -n1 "$PD_NEXT_ID_FILE")
@@ -78,6 +86,11 @@ if [[ ${1:-} == bd && ${2:-} == update ]]; then
         shift 2
         ;;
       --status)
+        if [[ $2 == closed ]] && has_open_blocker "$file"; then
+          rm -f "$tmp"
+          printf 'cannot close blocked issue %s\n' "$id" >&2
+          exit 1
+        fi
         jq --arg status "$2" '.status = $status' "$tmp" >"${tmp}.next"
         mv "${tmp}.next" "$tmp"
         shift 2
@@ -107,6 +120,7 @@ if [[ ${1:-} == bd && ${2:-} == close ]]; then
   [[ -f $file ]] || { printf 'not found\n' >&2; exit 42; }
   holder=$(jq -r '.assignee // ""' "$file")
   [[ -z $holder ]] || { printf 'cannot close %s: assignee is "%s"\n' "$id" "$holder" >&2; exit 1; }
+  has_open_blocker "$file" && { printf 'cannot close blocked issue %s\n' "$id" >&2; exit 1; }
   reason=""
   shift 3
   while [[ $# -gt 0 ]]; do
