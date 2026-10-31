@@ -234,7 +234,8 @@ class DepotsTest(unittest.TestCase):
         body = wait_until(lambda: self.get("/") if "Roadmap : Bêta privée" in self.get("/") else None)
 
         demo = self.project_block(body, "demo")
-        self.assertIn("Roadmap : Bêta privée", demo)
+        # No chantier targets the step in progress: shown with its reserve (R3, af-plu8kn).
+        self.assertIn("Roadmap : Bêta privée · Aucun chantier relié", demo)
         self.assertIn("demo-back : dev a 3 commits d'avance", demo)
         # A project whose structured roadmap is not written: unknown, never a blank or a guess.
         brut = self.project_block(body, "brut")
@@ -243,8 +244,11 @@ class DepotsTest(unittest.TestCase):
         wait_until(lambda: "Tout est à jour à" in self.get("/"))
 
         page = self.get("/projet/demo")
-        # The page of the project shows its whole roadmap (E, af-8rbceu).
-        self.assertRegex(page, r"ROADMAP</small></h2><h2[^>]*>Bêta privée</h2>")
+        # The page of the project shows its whole roadmap (E, af-8rbceu); a
+        # step in progress no chantier targets is not headed as current (R3, af-plu8kn).
+        self.assertRegex(page, r"ROADMAP</small></h2><div[^>]*><span[^>]*>Un</span>")
+        self.assertRegex(page, r"Bêta privée</span><span[^>]*>En cours · Aucun chantier relié")
+        self.assertNotRegex(page, r"<h2[^>]*>Bêta privée</h2>")
         self.assertIn("demo-back : dev a 3 commits d'avance", page)
         # Its page names the roadmap file its repository lacks (R4, af-6weijp).
         self.assertIn("Aucune roadmap dans le dépôt org/brut-knowledge : le fichier roadmap.toml n’existe pas.",

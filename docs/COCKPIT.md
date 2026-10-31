@@ -1789,13 +1789,32 @@ by its gain (« Voir la preuve : <gain> »).
   repository and file it comes from and the date of its last change. A step
   « En cours » whose chantier is closed (the Specs that target it, by
   `planning_run_target`, and the convoys published from them, by
-  `gc.spec_id`, all closed), or one of whose results is merged (a convoy
+  `gc.spec_id`, all closed), one of whose results is merged (a convoy
   that records its promotion, or whose tickets all recorded the merge of
   their PR, `gc.merge_commit`; one PR merged among tickets still at work is
-  a chantier under way), is flagged « Incohérent »
+  a chantier under way), or accepted (Benjamin's recorded answer on one of
+  its convoys, read as the historique reads it, `stage._accepted`; R3,
+  af-plu8kn), is flagged « Incohérent »
   (`roadmap.roadmap_rows`; the Specs that target a step are read open or
-  closed, `source.read_targeting_beads`). A Spec closed without successor,
-  its reason recorded, reaches the historique the same way.
+  closed, `source.read_targeting_beads`). A step « En cours » that no Spec
+  targets is flagged « Aucun chantier relié » (R3): nothing in the tracker
+  vouches for it. A step « Terminé » one of whose `done_requires` is not
+  done is flagged « Incohérent » and said « Non acquise » (R5, af-3r1tmr);
+  a step « En cours » that still waits on such a step is not flagged for its
+  own chantier ended, but it is not the current step either. While the
+  chantiers are not read (below), no step is flagged from the tracker. A
+  Spec closed without successor, its reason recorded, reaches the
+  historique the same way.
+- **The current step** (`roadmap.current_step`, R3), the heading of
+  « Roadmap »: the first step « En cours » without a flag whose chantier
+  has not ended (closed, merged or accepted); when no step is in progress,
+  the first « À venir »; none when every step in progress carries a
+  reserve -- a step flagged is never headed as current. The line
+  « Roadmap : … » of a project (the zone Projets of the overview, the foot
+  of its page; `depots.apply_to_projects`) names that step, else the first
+  step in progress with its reserve beside it (« Roadmap : <step> ·
+  <reserve> »), else the first to do, else -- a roadmap all done -- its
+  last step (`roadmap.presented_step`).
 - **Chantiers not read.** While the tracker is being read the page says so
   (« Lecture des chantiers en cours »), and « Lecture des chantiers
   impossible » when it fails; the counts are « — · inconnu », never 0, and
@@ -1807,6 +1826,9 @@ by its gain (« Voir la preuve : <gain> »).
 Tests: `tests/cockpit-home-projects-test.py` (`GET /projets` and the page of
 a project, through the running process), and the criterion tests of E
 (`tests/cockpit-criteria/commands/projects-{release,roadmap,recette}-test.py`).
+The flags and the current step of R3 are proven in process by
+`tests/cockpit-roadmap-rows-test.py`, their transmission to the launched
+cockpit by `tests/cockpit-criteria/commands/projects-roadmap-unlinked-test.py`.
 
 ## « Journal » in Panorama (F, af-njwz8v: the Prototype Fold of the Journal reference)
 

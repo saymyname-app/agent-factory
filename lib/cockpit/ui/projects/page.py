@@ -95,6 +95,8 @@ def _render_roadmap(project):
     if project.roadmap_step is None:
         return ""
     text = "Roadmap : %s" % project.roadmap_step.title
+    if project.roadmap_step.reserve:
+        text += " · %s" % project.roadmap_step.reserve
     return '<span class="cockpit-project-roadmap" data-state="known">%s</span>' % html.escape(text)
 
 
