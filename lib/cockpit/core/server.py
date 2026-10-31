@@ -637,7 +637,8 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         each as its section was last checked, the role ``role`` open (the
         author by default), then the health and the zones that change the
         factory."""
-        snapshot = read_model.snapshot()
+        # The sessions: what a stop would wait for, on the first page too.
+        snapshot = self._first_reading(read_model, agents=True)
         now = read_model.now()
         checks = self.server.factory_checks
         health = self._compute_health(read_model)
