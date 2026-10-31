@@ -37,7 +37,7 @@ that is, or was, merged.
 | --- | --- | --- |
 | 1 | `criteria` | The acceptance criteria on the ticket have the fingerprint `bin/convoy-state mark` froze with the approved graph, under the same graph digest; the demonstration line the Ticket Evaluation judged is the ticket's (ADR-0030 L4: the frozen criterion tests prove the criteria). |
 | 2 | `handoff` | Exit « terminé », a complete Ticket Handoff at the tip, its records sealed there; the Handoff names the red proof recorded on the ticket, sealed at its commit; the demonstration is sealed at the tip. A prefactoring: its regression instead of the red and of the demonstration. |
-| 3 | `evaluation` | The last Ticket Evaluation is favorable at the tip, no evaluation is in progress, the demonstration line is « observed » with a sealed piece captured at the tip (a round recorded before ADR-0030 L4 with a state per criterion is read the same way). A prefactoring: the product started at the tip, with its piece. |
+| 3 | `evaluation` | The last Ticket Evaluation is favorable at the tip and no evaluation is in progress. The demonstration line is « observed » with a sealed piece captured at the tip, or its exact current `proven_by_test` comes from the satisfied human decision that lifted the latest matching Planning Exception. At a later commit, that proof migrates only when the frozen criterion tests are green again at the exact current tip; a favorable historical verdict alone never suffices. An absent, stale or differently worded proof, an unsatisfied request, or a proof without a current green is refused. A prefactoring: the product started at the tip, with its piece. |
 | 4 | `fidelity` | **Informative, never blocking** (ADR-0032, af-hcriwn): always met. Its detail says what was measured at the tip — « vert », or the count of deviations joined for the visual finishing pass, or that no measure was made there. |
 | 5 | `deferral` | The deferral detector has a result at the tip (`deferral_markers` in the records of the Handoff) and every marker it found is declared under « non fait ». |
 | 6 | `merge` | Merged into the integration branch at the tip; the merge commit is on that branch; the tests on the merged result are sealed at the merge commit and green. |
@@ -145,9 +145,9 @@ Every answer is one JSON object on stdout.
   with a copy of the Delivery Fixture City in a throwaway repository. Every
   piece is filed by the real `bin/evidence-capture`, the merge is the real
   `bin/spec-integration`, the fidelity check the real
-  `bin/prototype-fidelity`. One test for the pass, one per missing
-  condition (nine), each refusal re-reading the tracker, the store and the
-  branches.
+  `bin/prototype-fidelity`. One test for the pass, one per missing condition
+  (nine), and the exact/current `proven_by_test` acceptance and refusals;
+  each refusal re-reads the tracker, the store and the branches.
 - `tests/convoy-advance-test.py`: the pass measures the fidelity of an
   interface ticket, merges it and closes it; a merged ticket that misses a
   condition stays open and is named; a ticket closed with a record that

@@ -133,10 +133,27 @@ def as_repository() -> None:
         subprocess.run(["git", "-C", str(ROOT), *args], check=True, capture_output=True)
 
 
+def budgets() -> dict:
+    """config/test-budgets.json of this tree (study C, T3), through
+    lib/test_budgets.py; the defaults of 600 s where the tree has neither."""
+    sys.path.insert(0, str(ROOT / "lib"))
+    try:
+        from test_budgets import load
+    except ImportError:
+        return {"host_wait_seconds": 600, "green_seconds": 600, "full_seconds": 600, "alert_ratio": 0.8}
+    return load(ROOT)
+
+
 def main() -> int:
-    wait, budget = seconds("REGRESSION_HOST_WAIT", 600), seconds("REGRESSION_BUDGET", 600)
+    known = budgets()
+    # At a ticket's green bin/tdd-step names its tests and the series keeps
+    # to their families (study C, T4): the green budget; else the full one.
+    kind = "green" if os.environ.get("TDD_STEP_TICKET_TESTS", "").strip() else "full"
+    wait = seconds("REGRESSION_HOST_WAIT", int(known["host_wait_seconds"]))
+    budget = seconds("REGRESSION_BUDGET", int(known[f"{kind}_seconds"]))
     host = take_host(wait)  # noqa: F841 -- held until the process ends
-    deadline = time.monotonic() + budget
+    started = time.monotonic()
+    deadline = started + budget
     as_repository()
     failed, late = 0, []
     alone = [path for path in files() if path.relative_to(ROOT).as_posix() in ALONE]
@@ -151,9 +168,18 @@ def main() -> int:
             print(f"LATE {name} ({took:.0f}s)", flush=True)
             continue
         print(f"{'PASS' if status == 0 else 'FAIL'} {name} ({took:.0f}s)", flush=True)
+        for timing in (line for line in output.splitlines() if line.startswith("regression: took ")):
+            print(timing, flush=True)
         if status != 0:
             failed += 1
             print(output, flush=True)
+    # The measure bin/test-budgets reads back (study C, T2/T3).
+    took = time.monotonic() - started
+    print(f"regression: took {took:.0f}s with the host held ({kind} budget {budget}s)", flush=True)
+    if took > known["alert_ratio"] * budget:
+        print(f"regression: ALERT -- {took:.0f}s is over {known['alert_ratio']:.0%} of the {kind} budget of "
+              f"{budget}s: refresh config/test-budgets.json (bin/test-budgets refresh) before it runs out",
+              flush=True)
     if failed:
         return 1
     if late:

@@ -51,6 +51,9 @@
 #                        operator's list as a factory incident, like an
 #                        « état sans règle » (docs/CONVOY_ADVANCE.md, T34),
 #                        and is withdrawn once the ticket moves again.
+#  10. LIVE OBSERVATION   the same five-minute VM order feeds authoritative
+#                        Beads/Git/GitHub state to factory-observe. Unchanged
+#                        reads stay silent; a transition is routed once.
 #
 # This is observe-and-page ONLY (ADR-0016 section 7: a local reason may never
 # produce a global stop). It never resolves a gate, merges/holds a PR, reopens
@@ -75,6 +78,7 @@ QUARANTINE_WINDOW_HOURS="${FACTORY_WATCHDOG_QUARANTINE_WINDOW_HOURS:-24}"
 TICKET_MINUTES="${FACTORY_WATCHDOG_TICKET_MINUTES:-30}"
 CONVOY_STATE="${FACTORY_WATCHDOG_CONVOY_STATE_BIN:-$(dirname "${BASH_SOURCE[0]}")/convoy-state}"
 OPERATOR_CONFIG="${OPERATOR_CONFIG_BIN:-$(dirname "${BASH_SOURCE[0]}")/operator-config}"
+OBSERVE_BIN="${FACTORY_WATCHDOG_OBSERVE_BIN:-$(dirname "${BASH_SOURCE[0]}")/factory-observe}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -442,6 +446,16 @@ else
   say "· ticket sans suite — not checked (convoy-state unavailable)"
 fi
 
+# --- 10. live Beads/Git/GitHub observation -----------------------------------
+OBSERVE_RC=0
+if [ "$CHECK_ONLY" != "1" ]; then
+  OBSERVE_OUT=$(FACTORY_ROOT="$ROOT" "$OBSERVE_BIN" live 2>&1) || OBSERVE_RC=$?
+  if [ "$OBSERVE_RC" != "0" ]; then
+    bad "live observation failed — ${OBSERVE_OUT:0:240}"
+    OBSERVE_RC=2
+  fi
+fi
+
 # --- report --------------------------------------------------------------------
 say ""
 if [ "${#ACTIONS[@]}" -gt 0 ]; then say "paged ${#ACTIONS[@]}:"; printf '  - %s\n' "${ACTIONS[@]}"; fi
@@ -457,6 +471,6 @@ fi
 # crashing, and floods order.failed with noise nobody reads (the 7
 # already-historical af-x4p4-class beads this fixes). "Found" is reported
 # above in stdout; only genuine watchdog failure (unreachable root, missing
-# gc/jq/state, a bad CLI argument -- the explicit `exit 2`/early-exit paths
-# above) means the watchdog itself did not run.
-exit 0
+# gc/jq/state, a bad CLI argument, or unreadable live sources) means the
+# watchdog itself did not run.
+exit "$OBSERVE_RC"

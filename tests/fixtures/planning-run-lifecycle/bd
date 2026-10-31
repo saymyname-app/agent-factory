@@ -22,12 +22,13 @@ from pathlib import Path
 
 STATE_PATH = Path(os.environ["PLANNING_RUN_LIFECYCLE_BD_STATE"])
 
-BOOLEAN_FLAGS = {"--no-inherit-labels", "--silent", "--json", "--all"}
+BOOLEAN_FLAGS = {"--no-inherit-labels", "--silent", "--json", "--all", "--force"}
 VALUE_FLAGS = {
     "--parent", "--type", "--title", "--labels", "--metadata", "--body-file",
-    "--reason", "--limit", "--description", "--deps", "--graph", "--priority",
+    "--reason", "--limit", "--description", "--deps", "--graph", "--priority", "--status",
 }
 REPEATABLE_VALUE_FLAGS = {"--set-metadata", "--append-notes"}
+DEPS_NEW_WAITS = {"", "depends-on", "blocked-by"}
 
 
 def load_state():
@@ -70,8 +71,17 @@ def read_body(body_file):
     return Path(body_file).read_text(encoding="utf-8")
 
 
-def public_view(bead):
-    return {
+def dependencies_of(state, bead):
+    return [
+        {"id": dep_id, "status": state["beads"].get(dep_id, {}).get("status", "open"),
+         "dependency_type": dep_type}
+        for dep_type, key in (("blocks", "waits_for"), ("tracks", "tracks"))
+        for dep_id in bead.get(key, [])
+    ]
+
+
+def public_view(bead, state=None):
+    view = {
         "id": bead["id"],
         "title": bead.get("title", ""),
         "description": bead.get("description", ""),
@@ -80,11 +90,29 @@ def public_view(bead):
         "metadata": bead.get("metadata", {}),
         "parent": bead.get("parent"),
     }
+    dependencies = dependencies_of(state, bead) if state else []
+    if dependencies:
+        view["dependencies"] = dependencies
+    return view
 
 
 def fail(message):
     sys.stderr.write(f"fake bd: {message}\n")
     raise SystemExit(1)
+
+
+def add_dependency(state, issue_id, depends_on_id, dep_type):
+    for known in (issue_id, depends_on_id):
+        if known not in state["beads"]:
+            fail(f"issue not found: {known}")
+    held = state["beads"][issue_id].setdefault("waits_for" if dep_type == "blocks" else "tracks", [])
+    if depends_on_id not in held:
+        held.append(depends_on_id)
+
+
+def open_blockers(state, bead):
+    return [dep_id for dep_id in bead.get("waits_for", [])
+            if state["beads"].get(dep_id, {}).get("status", "open") != "closed"]
 
 
 def cmd_create(flags, repeated, positionals):
@@ -102,6 +130,9 @@ def cmd_create(flags, repeated, positionals):
                 "status": "open", "labels": node["labels"], "metadata": node["metadata"],
                 "parent": None,
             }
+        for edge in plan.get("edges", []):
+            if edge.get("type") in ("blocks", "tracks"):
+                add_dependency(state, ids[edge["from_key"]], ids[edge["to_key"]], edge["type"])
         save_state(state)
         print(json.dumps({"schema_version": 1, "ids": ids}))
         return
@@ -126,11 +157,21 @@ def cmd_create(flags, repeated, positionals):
         "parent": parent,
     }
     state["beads"][new_id] = bead
+    for entry in [entry for entry in flags.get("--deps", "").split(",") if entry]:
+        dep_type, _, other_id = entry.rpartition(":")
+        if dep_type == "blocks":
+            add_dependency(state, other_id, new_id, "blocks")
+        elif dep_type in DEPS_NEW_WAITS:
+            add_dependency(state, new_id, other_id, "blocks")
+        elif dep_type == "tracks":
+            add_dependency(state, new_id, other_id, "tracks")
+        else:
+            fail(f"no canned behaviour for the dependency {entry!r} of bd create --deps")
     save_state(state)
     if flags.get("--silent"):
         print(new_id)
     else:
-        print(json.dumps(public_view(bead)))
+        print(json.dumps(public_view(bead, state)))
 
 
 def cmd_show(positionals):
@@ -141,7 +182,7 @@ def cmd_show(positionals):
     bead = state["beads"].get(issue_id)
     if bead is None:
         fail(f"issue not found: {issue_id}")
-    print(json.dumps([public_view(bead)]))
+    print(json.dumps([public_view(bead, state)]))
 
 
 def cmd_children(positionals):
@@ -150,7 +191,7 @@ def cmd_children(positionals):
         fail("children requires a parent id")
     parent_id = positionals[0]
     children = [
-        public_view(bead)
+        public_view(bead, state)
         for bead in state["beads"].values()
         if bead.get("parent") == parent_id
     ]
@@ -159,7 +200,7 @@ def cmd_children(positionals):
 
 def cmd_list(flags):
     state = load_state()
-    print(json.dumps([public_view(b) for b in state["beads"].values()]))
+    print(json.dumps([public_view(b, state) for b in state["beads"].values()]))
 
 
 def cmd_update(flags, repeated, positionals):
@@ -176,11 +217,17 @@ def cmd_update(flags, repeated, positionals):
         bead["description"] = flags["--description"]
     if "--title" in flags:
         bead["title"] = flags["--title"]
+    if flags.get("--status") == "closed" and "--force" not in flags:
+        blockers = open_blockers(state, bead)
+        if blockers:
+            fail(f"cannot close blocked issue {issue_id}: blocked by {', '.join(blockers)}")
+    if "--status" in flags:
+        bead["status"] = flags["--status"]
     for entry in repeated.get("--set-metadata", []):
         key, _, value = entry.partition("=")
         bead.setdefault("metadata", {})[key] = value
     save_state(state)
-    print(json.dumps(public_view(bead)))
+    print(json.dumps(public_view(bead, state)))
 
 
 def cmd_close(flags, positionals):
@@ -191,10 +238,13 @@ def cmd_close(flags, positionals):
     bead = state["beads"].get(issue_id)
     if bead is None:
         fail(f"issue not found: {issue_id}")
+    blockers = open_blockers(state, bead) if "--force" not in flags else []
+    if blockers:
+        fail(f"cannot close blocked issue {issue_id}: blocked by {', '.join(blockers)}")
     bead["status"] = "closed"
     bead["close_reason"] = flags.get("--reason", "")
     save_state(state)
-    print(json.dumps(public_view(bead)))
+    print(json.dumps(public_view(bead, state)))
 
 
 def main(argv):
@@ -217,7 +267,17 @@ def main(argv):
     elif command == "close":
         cmd_close(flags, positionals)
     elif command == "dep":
-        pass
+        state = load_state()
+        if positionals[:1] == ["add"] and len(positionals) == 3:
+            add_dependency(state, positionals[1], positionals[2], flags.get("--type", "blocks"))
+        elif positionals[:1] == ["remove"] and len(positionals) == 3:
+            for key in ("waits_for", "tracks"):
+                held = state["beads"].get(positionals[1], {}).get(key, [])
+                if positionals[2] in held:
+                    held.remove(positionals[2])
+        else:
+            fail(f"no canned response configured for: bd {' '.join(argv)}")
+        save_state(state)
     else:
         fail(f"no canned response configured for: bd {' '.join(argv)}")
     return 0

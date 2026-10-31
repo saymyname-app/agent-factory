@@ -30,8 +30,15 @@ deleted held the VM at a load of 141 for up to 283 minutes.
 `sweep` is the net under the guard (a guard killed, a host restarted, a
 launch made before this rule): it stops every launch whose owner has ended,
 whose lifetime is over, or whose matching sidecar names a source repository
-that has disappeared, and releases copies left behind. Each stop is written
-to TRACE_FILE. orders/project-launch-sweep.toml runs it.
+that has disappeared, and releases copies left behind, whatever state an
+interrupted `git worktree add` left them in. A copy that still cannot be
+released is set aside once and fails the order, instead of being retried
+every pass in silence (af-kky570: 3 then 12 copies, 7600 trace lines in four
+days). It also stops the programs launched without this launcher whose work
+tree is gone (WORK_ROOTS): their launcher ended without them, nothing else
+will stop them (af-kky570: two `bin/cockpit run` of a deleted runtime
+worktree lived 3 days 12 hours). Each stop is written to TRACE_FILE.
+orders/project-launch-sweep.toml runs it.
 
 `--repo-root` is the repository of the product (default: the Factory's own);
 the profile tool is always the one next to this launcher.
@@ -44,6 +51,7 @@ running.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib.machinery
 import importlib.util
 import json
@@ -81,6 +89,15 @@ def process_identity(pid: int) -> str | None:
 DEFAULT_LIFETIME = 6 * 3600
 # What the sweep leaves to the guard, which acts within a second.
 SWEEP_GRACE = 60
+# Where Factory programs run from a work tree of their own: the copies of
+# this launcher and tests' temporary folders, the isolated cities of the
+# evaluations (~/.cache), runtime worktrees of the delivery roles,
+# maintenance and operator worktrees. Never the live root.
+RUNTIME_WORKTREES = account_home() / ".local" / "share" / "agent-factory-runtime-worktrees"
+WORK_ROOTS = (Path(tempfile.gettempdir()), account_home() / ".cache", RUNTIME_WORKTREES,
+              account_home() / "agent-factory-maint", account_home() / "agent-factory-po")
+# A copy the sweep could not release: set aside, never retried in silence.
+UNRELEASABLE = ".unreleasable"
 # Where the guard and the sweep write each launch they stop: ~/.local/state
 # is writable inside bin/delivery-role-sandbox too.
 TRACE_FILE = Path(os.environ.get("FACTORY_LAUNCH_TRACE")
@@ -353,6 +370,39 @@ def resolve_commit(repo_root: Path, commit: str) -> str:
     return result.stdout.strip()
 
 
+def branch_datasets(repo_root: Path, commit: str | None, descriptor_path: Path,
+                    descriptor: dict) -> dict[str, str]:
+    """The datasets the launched commit's own copy of this profile adds
+    (af-npz9v1.18): a ticket that needs a new state brings its dataset in its
+    branch, and the profile read here is the one of main (R1, af-d6anqb).
+    Only names main does not declare; the recipe and every other field stay
+    main's. Nothing when the profile is not in the launched repository, or
+    when its copy there names another project or other rigs."""
+    if not commit:
+        return {}
+    top = subprocess.run(["git", "-C", str(descriptor_path.parent), "rev-parse", "--show-toplevel"],
+                         text=True, capture_output=True)
+    if top.returncode:
+        return {}
+    try:
+        relative = descriptor_path.relative_to(Path(top.stdout.strip()).resolve()).as_posix()
+    except ValueError:
+        return {}
+    shown = subprocess.run(["git", "-C", str(repo_root), "show", f"{commit}:{relative}"],
+                           text=True, capture_output=True)
+    try:
+        copy = json.loads(shown.stdout) if shown.returncode == 0 else None
+    except ValueError:
+        return {}
+    if not isinstance(copy, dict) or any(copy.get(key) != descriptor.get(key) for key in ("project_id", "rigs")):
+        return {}
+    datasets = (copy.get("launch") or {}).get("datasets") if isinstance(copy.get("launch"), dict) else None
+    if not isinstance(datasets, dict):
+        return {}
+    return {name: path for name, path in datasets.items()
+            if name not in descriptor["launch"]["datasets"] and isinstance(path, str)}
+
+
 def add_worktree(repo_root: Path, commit: str, worktree: str) -> None:
     result = subprocess.run(
         ["git", "-C", str(repo_root), "worktree", "add", "--detach", worktree, commit],
@@ -400,15 +450,22 @@ def remove_worktree(repo_root: str, worktree: str, launch_id: str | None = None,
 
     registered, owner = verify_worktree(repo_root, worktree, launch_id, commit)
     if registered and Path(worktree).exists():
-        result = subprocess.run(["git", "-C", repo_root, "worktree", "remove", "--force", worktree],
+        # A `git worktree add` killed half-way leaves its copy locked
+        # « initializing », or without its .git file: git refuses to remove
+        # either, and the sweep retried 12 such copies every 5 minutes for
+        # days (af-kky570). verify_worktree has proved the copy is ours.
+        result = subprocess.run(["git", "-C", repo_root, "worktree", "remove", "--force", "--force", worktree],
                                 capture_output=True, text=True)
         if result.returncode:
-            raise RuntimeError(f"worktree was not released: {worktree}: {result.stderr.strip()}")
+            shutil.rmtree(worktree)
     elif Path(worktree).exists():
         # An interrupted git worktree add can leave an unregistered partial
         # checkout. Its owner sidecar was written before that operation.
         shutil.rmtree(worktree)
     if Path(repo_root).exists():
+        if registered:
+            # `prune` keeps a locked entry whose folder is gone.
+            subprocess.run(["git", "-C", repo_root, "worktree", "unlock", worktree], capture_output=True)
         result = subprocess.run(["git", "-C", repo_root, "worktree", "prune"],
                                 capture_output=True, text=True)
         if result.returncode:
@@ -537,6 +594,9 @@ def cmd_start(args: argparse.Namespace) -> int:
             )
         )
         return 1
+    if args.dataset not in launch["datasets"]:
+        launch = {**launch, "datasets": {**launch["datasets"],
+                                         **branch_datasets(repo_root, args.commit, descriptor_path, descriptor)}}
     if args.dataset not in launch["datasets"]:
         print(
             json.dumps(
@@ -785,11 +845,48 @@ def launch_copy(members: list[int]) -> str | None:
 
 
 def copy_owner(worktree: str) -> dict:
+    return copy_owner_file(Path(f"{worktree}.owner"))
+
+
+def copy_owner_file(sidecar: Path) -> dict:
     try:
-        owner = json.loads(Path(f"{worktree}.owner").read_text())
+        owner = json.loads(sidecar.read_text())
     except (OSError, ValueError):
         return {}
     return owner if isinstance(owner, dict) else {}
+
+
+def reparented(pid: int) -> bool:
+    """Whether `pid`'s launcher has ended: it was handed to init or to the
+    session manager (`systemd --user`), the only subreapers of this host."""
+    try:
+        ppid = int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[1])
+        return ppid == 1 or Path(f"/proc/{ppid}/comm").read_text().strip() == "systemd"
+    except (OSError, IndexError, ValueError):
+        return False
+
+
+def work_tree_orphan(pid: int, roots: list[Path]) -> tuple[str, str] | None:
+    """Why a program launched without this launcher must end, and its work
+    tree: its launcher ended and its work tree is gone, or it has outlived a
+    lifetime in a runtime worktree."""
+    if not reparented(pid):
+        return None
+    try:
+        cwd = os.readlink(f"/proc/{pid}/cwd")
+    except OSError:
+        return None
+    gone = cwd.endswith(" (deleted)")
+    folder = Path(cwd.removesuffix(" (deleted)"))
+    root = next((r for r in roots if r in folder.parents), None)
+    if root is None:
+        return None
+    if gone or not folder.exists():
+        return "work_tree_gone", str(folder)
+    age = process_age(pid)
+    if root == RUNTIME_WORKTREES and age is not None and age > DEFAULT_LIFETIME:
+        return "orphan_lifetime_over", str(folder)
+    return None
 
 
 def cmd_sweep(args: argparse.Namespace) -> int:
@@ -798,6 +895,7 @@ def cmd_sweep(args: argparse.Namespace) -> int:
     once they are older than a lifetime. Each stop is traced."""
     now = time.time()
     launches: dict[str, list[int]] = {}
+    orphans: list[tuple[int, str, str]] = []
     for environ in Path("/proc").glob("[0-9]*/environ"):
         try:
             pid = int(environ.parent.name)
@@ -806,6 +904,10 @@ def cmd_sweep(args: argparse.Namespace) -> int:
             continue
         if launch_id and process_alive(pid) and (not args.launch_id or launch_id in args.launch_id):
             launches.setdefault(launch_id, []).append(pid)
+        elif not launch_id and pid != os.getpid() and process_alive(pid) and (args.work_root or not args.launch_id):
+            orphan = work_tree_orphan(pid, [Path(r).resolve() for r in args.work_root] or list(WORK_ROOTS))
+            if orphan:
+                orphans.append((pid, *orphan))
     stopped, kept = [], 0
     for launch_id, members in sorted(launches.items()):
         first = min(members)
@@ -827,6 +929,18 @@ def cmd_sweep(args: argparse.Namespace) -> int:
                                      "commit": owner.get("commit")}, legacy=False)
             elif not terminate_owned(launch_id):
                 error = "product remains active"
+            event.update(stopped=error is None, error=error)
+            trace(event)
+        stopped.append(event)
+    for pid, reason, folder in orphans:
+        members = sorted(process_tree(pid))
+        event = {"by": "sweep", "reason": reason, "pids": members, "work_tree": folder, "dry_run": args.dry_run}
+        try:
+            event["command"] = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")[:200]
+        except OSError:
+            pass
+        if not args.dry_run:
+            error = None if all(terminate(member) for member in members) else "program remains active"
             event.update(stopped=error is None, error=error)
             trace(event)
         stopped.append(event)
@@ -855,13 +969,20 @@ def cmd_sweep(args: argparse.Namespace) -> int:
                 sidecar.unlink(missing_ok=True)
             except (OSError, RuntimeError) as exc:
                 error = str(exc)
+                # Set aside: traced once, never retried in silence.
+                with contextlib.suppress(OSError):
+                    sidecar.rename(f"{sidecar}{UNRELEASABLE}")
             event.update(released=error is None, error=error)
             trace(event)
         released.append(event)
-    print(json.dumps({"stopped": stopped, "released": released, "running_kept": kept}, sort_keys=True))
-    # A copy that cannot be released only takes disk, and is traced; a
-    # launch that cannot be stopped fails the order.
-    return 0 if all(event.get("error") is None for event in stopped) else 1
+    unreleasable = sorted(str(path)[:-len(".owner" + UNRELEASABLE)]
+                          for path in temporary.glob(f"project-launch-*.owner{UNRELEASABLE}")
+                          if not args.launch_id or copy_owner_file(path).get("launch_id") in args.launch_id)
+    print(json.dumps({"stopped": stopped, "released": released, "running_kept": kept,
+                      "unreleasable": unreleasable}, sort_keys=True))
+    # A launch or a program that cannot be stopped fails the order, and so
+    # does a copy set aside: on-order-failed files one bead for it.
+    return 0 if all(event.get("error") is None for event in stopped) and not unreleasable else 1
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -897,6 +1018,9 @@ def build_parser() -> argparse.ArgumentParser:
     sweep.add_argument("--dry-run", action="store_true", help="name them without stopping anything")
     sweep.add_argument("--launch-id", action="append", default=[],
                        help="only this launch (repeatable): a test sweeps its own launches, not the host's")
+    sweep.add_argument("--work-root", action="append", default=[],
+                       help="where orphaned programs are looked for (repeatable; default: WORK_ROOTS); "
+                            "with --launch-id, only there")
     sweep.set_defaults(func=cmd_sweep)
 
     stop = subparsers.add_parser("stop", help="stop a launched product and release its port")

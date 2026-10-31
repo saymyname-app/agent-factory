@@ -13,16 +13,27 @@ set -Eeuo pipefail
 PROGRAM_NAME="factory-work-dispatch"
 ROOT="${FACTORY_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)}"
 GC_BIN="${GC_BIN:-gc}"
+CONVOY_STATE_BIN="${FACTORY_WORK_DISPATCH_CONVOY_STATE_BIN:-$ROOT/bin/convoy-state}"
 FORMULA="mol-do-work"
 DRY_RUN=0
+TECHNICAL_CONVOY=""
+TECHNICAL_TICKET=""
+LINK_ONLY=0
 
 usage() {
   cat >&2 <<'USAGE'
-usage: factory-work-dispatch <af-bead-id> [--on mol-do-work] [--dry-run]
+usage: factory-work-dispatch <af-bead-id> [--on mol-do-work]
+       [--technical-request <convoy> <ticket> [--link-only]] [--dry-run]
 
 Routes one ordinary HQ Factory work bead to the named factory-worker role.
 The target and --reassign behavior are fixed so a provider class, raw provider,
 or infrastructure role cannot be selected accidentally.
+
+--technical-request explicitly binds this maintenance bead to one marked
+ticket's current Factory operator request before dispatch. --link-only records
+that same relation for an already-routed or already-delivered repair without
+dispatching it again. The convoy transition remains owned by convoy-state and
+convoy-advance; this door never edits a marked ticket directly.
 USAGE
 }
 
@@ -49,6 +60,16 @@ while [ $# -gt 0 ]; do
       DRY_RUN=1
       shift
       ;;
+    --technical-request)
+      [ $# -ge 3 ] || fail "--technical-request requires a convoy and ticket"
+      TECHNICAL_CONVOY=$2
+      TECHNICAL_TICKET=$3
+      shift 3
+      ;;
+    --link-only)
+      LINK_ONLY=1
+      shift
+      ;;
     *) fail "unsupported argument '$1'; the HQ target is fixed to factory-worker" ;;
   esac
 done
@@ -59,6 +80,26 @@ case "$BEAD_ID" in
 esac
 [ "$FORMULA" = "mol-do-work" ] || \
   fail "formula '$FORMULA' is not an ordinary HQ implementation formula; use the tier-specific workflow instead"
+[ "$LINK_ONLY" = "0" ] || [ -n "$TECHNICAL_CONVOY" ] \
+  || fail "--link-only requires --technical-request <convoy> <ticket>"
+
+if [ -n "$TECHNICAL_CONVOY" ]; then
+  case "$TECHNICAL_CONVOY:$TECHNICAL_TICKET" in
+    af-*:af-*) ;;
+    *) fail "technical request ids must be HQ Bead ids (expected af-* convoy and ticket)" ;;
+  esac
+  LINK_CMD=("$CONVOY_STATE_BIN" link-technical-repair "$TECHNICAL_CONVOY" "$TECHNICAL_TICKET" --repair "$BEAD_ID")
+  if [ "$DRY_RUN" = "1" ]; then
+    printf '%q ' "${LINK_CMD[@]}"
+    printf '\n'
+  else
+    (cd "$ROOT" && GC_BIN="$GC_BIN" "${LINK_CMD[@]}")
+  fi
+fi
+
+if [ "$LINK_ONLY" = "1" ]; then
+  exit 0
+fi
 
 CMD=("$ROOT/bin/dispatch-door" "$BEAD_ID" --rig agent-factory --formula "$FORMULA")
 [ "$DRY_RUN" = "1" ] && CMD+=(--dry-run)

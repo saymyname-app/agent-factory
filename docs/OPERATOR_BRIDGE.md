@@ -16,17 +16,25 @@ coordinate executable work and dependencies, and GitHub proves code delivery.
 
 ## Simplest operating protocol
 
-### Desktop or CLI on BenForge
+### Desktop or CLI through factory-vm
 
-Open the Agent Factory project in Codex with working folder
-`/home/benja/agent-factory`. From PowerShell, the deterministic entry is:
+From PowerShell, enter the Windows Factory workspace, connect to the Factory
+VM, then start Codex in the canonical repository:
 
 ```powershell
-wsl -d Ubuntu-24.04 -u benja --cd /home/benja/agent-factory
+Set-Location C:/Dev/Factory
+ssh factory-vm
+cd /home/benja/agent-factory
 codex
 ```
 
-The option is two ASCII hyphens: `--cd`, not an em dash.
+Historical only (disabled): the former direct WSL entry used:
+
+```powershell
+wsl -d Ubuntu-24.04 -u benja --cd /home/benja/agent-factory
+```
+
+WSL is stopped and is not the active operator route.
 
 ### Phone
 
@@ -37,10 +45,9 @@ files and tools; it does not copy the Factory onto the phone.
 
 ### Factory workspace
 
-For Factory engineering, use the local Codex project rooted at
-`C:\Dev\Projects\AgentFactory`. It is a small Windows bridge to the canonical WSL
-repository, not a clone. Its commands enter
-`/home/benja/agent-factory` explicitly.
+For Factory engineering, use the Windows entry workspace rooted at
+`C:/Dev/Factory`, then connect with `ssh factory-vm`. The canonical repository
+on the VM is `/home/benja/agent-factory`.
 
 Use the upstream Gas City dashboard at port `8372` when detailed sessions,
 runs, events, or full transcripts are needed; it makes no model call. The
@@ -92,6 +99,16 @@ self-identifies in the body. Per the Mayor's own prompt, every mail — whatever
 its sender — is treated as an agent's request, not a standing order:
 Benjamin's decisions reach the Factory only through an approved Spec and its
 published ticket graph.
+
+## Writing Beads from the operator path
+
+Use `bin/operator-bd <bd arguments>`, never raw `bd` or `gc bd`, for a tracker
+write from Codex. The door runs from the Factory root and forces the unique
+actor `po-agent/<Codex-thread-id>` even when the parent shell exports another
+`BEADS_ACTOR`; it refuses a caller-supplied `--actor` and refuses to write when
+Codex exposes no session identity. This is the same identity family
+`factory-orphan-sweep` preserves while the operator session owns a ticket.
+Read-only tracker commands may remain raw.
 
 ## Project status contract
 

@@ -69,6 +69,7 @@ class CitedSourceTest(Harness):
     def fold_delivered(self):
         """The Prototype Fold is merged: a repair of the interface, written
         at the end of the Spec, has nothing left to wait for."""
+        self.state_tool("close-ticket", self.convoy, self.ids["T1"], "--commit", "a" * 40, "--file", str(GATE_REPORT))
         self.state_tool("close-ticket", self.convoy, self.ids["T2"], "--commit", "a" * 40, "--file", str(GATE_REPORT))
 
     def fetch_prototype(self):

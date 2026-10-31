@@ -807,20 +807,26 @@ class ProjectLaunchTest(unittest.TestCase):
     def test_every_factory_launcher_owns_what_it_starts(self):
         # The class, not tdd-step alone: each tool that starts a product
         # names itself its owner, so the product ends with it.
-        callers = [path for path in sorted((ROOT / "bin").iterdir())
-                   if path.name != "project-launch" and path.is_file()
-                   and "LAUNCH_TOOL" in path.read_text(errors="replace")
-                   and '"start"' in path.read_text(errors="replace")]
+        candidates = [*(ROOT / "bin").iterdir(), *(ROOT / "lib").rglob("*.py"),
+                      *(ROOT / "tests" / "cockpit-criteria").rglob("*.py")]
+        callers = []
+        for path in sorted(candidates):
+            source = path.read_text(errors="replace") if path.is_file() else ""
+            if (path.name != "project-launch" and ("LAUNCH_TOOL" in source or "LAUNCHER" in source)
+                    and ('"start"' in source or "'start'" in source)):
+                callers.append(path)
         # Their products outlive the command on purpose: an open Acceptance
         # Session, or products prepared for reuse, ended by their own records.
         detached = {"acceptance-session", "ticket-evaluation", "outcome-evaluation"}
         self.assertTrue(detached <= {path.name for path in callers})
         owners = [path for path in callers if path.name not in detached]
-        self.assertGreaterEqual(len(owners), 4)
+        self.assertGreaterEqual(len(owners), 7)
         for path in owners:
-            with self.subTest(caller=path.name):
-                self.assertTrue('"--owner-pid", str(os.getpid())' in path.read_text(),
-                                f"{path.name} starts a product it does not own")
+            with self.subTest(caller=path.relative_to(ROOT)):
+                source = path.read_text()
+                self.assertTrue(('"--owner-pid", str(os.getpid())' in source
+                                 or "'--owner-pid', str(os.getpid())" in source),
+                                f"{path.relative_to(ROOT)} starts a product it does not own")
         # They say so: no launch is left without an owner by omission.
         for path in callers:
             if path.name in detached:
@@ -886,6 +892,10 @@ class ProjectLaunchTest(unittest.TestCase):
         result, state_file = self.start("--dataset", "content", "--detached", "--max-lifetime", "8")
         record = json.loads(result.stdout)
         self._until_gone(record)
+        # The guard removes the record after the copy, a moment after the product.
+        deadline = time.monotonic() + 5
+        while state_file.exists() and time.monotonic() < deadline:
+            time.sleep(0.1)
         self.assertFalse(state_file.exists())
         [event] = self._traced()
         self.assertEqual(("guard", "lifetime_over", record["launch_id"], True),
@@ -1043,6 +1053,101 @@ class ProjectLaunchTest(unittest.TestCase):
         self.assertEqual(["copy_left"], [event["reason"] for event in swept["released"]])
         self.assertFalse(Path(record["worktree"]).exists())
         self.assertFalse(Path(f"{record['worktree']}.owner").exists())
+
+    def _copy_left(self) -> tuple[dict, dict]:
+        """A detached launch whose product and guard died, its copy older than
+        a lifetime: what the sweep releases. Its record is the sweep's to
+        end, not this test's tearDown."""
+        env = self._private_tmp()
+        result, state_file = self.start("--dataset", "content", "--detached", env=env)
+        self._state_files.remove(state_file)
+        state_file.unlink()
+        record = json.loads(result.stdout)
+        os.kill(self._guard_of(record["launch_id"]), signal.SIGKILL)
+        os.killpg(record["process_group"], signal.SIGKILL)
+        time.sleep(0.5)
+        old = time.time() - 7 * 3600
+        os.utime(f"{record['worktree']}.owner", (old, old))
+        return record, env
+
+    def _sweep(self, launch_id: str, env: dict, *extra: str) -> tuple[int, dict]:
+        swept = subprocess.run([str(TOOL), "sweep", "--launch-id", launch_id, *extra], env=env, text=True,
+                               capture_output=True)
+        return swept.returncode, json.loads(swept.stdout)
+
+    def test_the_sweep_releases_a_copy_whose_checkout_was_interrupted(self):
+        # af-kky570: a `git worktree add` killed half-way leaves its copy
+        # locked « initializing », or without its .git file; git refused to
+        # remove either and the sweep retried 12 copies every 5 minutes for
+        # four days, 7600 trace lines.
+        for damage in ("locked", "no .git"):
+            with self.subTest(damage=damage):
+                record, env = self._copy_left()
+                if damage == "locked":
+                    subprocess.run(["git", "-C", str(self.product), "worktree", "lock", "--reason", "initializing",
+                                    record["worktree"]], env=GIT_ENV, check=True, capture_output=True)
+                else:
+                    Path(record["worktree"], ".git").unlink()
+
+                code, swept = self._sweep(record["launch_id"], env)
+
+                self.assertEqual((0, [True]), (code, [event["released"] for event in swept["released"]]), swept)
+                self.assertFalse(Path(record["worktree"]).exists())
+                self.assertFalse(Path(f"{record['worktree']}.owner").exists())
+                listed = subprocess.run(["git", "-C", str(self.product), "worktree", "list"], env=GIT_ENV,
+                                        text=True, capture_output=True, check=True).stdout
+                self.assertNotIn(record["worktree"], listed)
+
+    def test_a_copy_that_cannot_be_released_is_set_aside_once_and_fails_the_order(self):
+        record, env = self._copy_left()
+        stuck = Path(record["worktree"], "stuck")
+        stuck.mkdir()
+        (stuck / "file").write_text("x")
+        stuck.chmod(0o500)  # nothing under it can be removed
+        self.addCleanup(lambda: stuck.exists() and stuck.chmod(0o700))
+
+        code, swept = self._sweep(record["launch_id"], env)
+
+        self.assertEqual((1, [False]), (code, [event["released"] for event in swept["released"]]), swept)
+        self.assertEqual([record["worktree"]], swept["unreleasable"])
+        code, again = self._sweep(record["launch_id"], env)
+        self.assertEqual((1, [], [record["worktree"]]), (code, again["released"], again["unreleasable"]))
+        self.assertEqual(1, len(self._traced()), "a copy set aside was retried")
+
+    def test_the_sweep_stops_a_program_whose_launcher_and_work_tree_are_gone(self):
+        # af-kky570: two `bin/cockpit run` started without bin/project-launch
+        # from a runtime worktree lived 3 days 12 hours after the worktree was
+        # deleted, handed to systemd --user, invisible to the sweep.
+        root = Path(tempfile.mkdtemp(prefix="launch-work-root-")).resolve()
+        self.addCleanup(shutil.rmtree, root, True)
+        work_tree = root / "af-lzti7w"
+        work_tree.mkdir()
+        pid_file = root / "pid"
+        # The launcher ends at once: its program is handed to init.
+        subprocess.run(["bash", "-c", f"cd {work_tree} && (sleep 300 </dev/null >/dev/null 2>&1 & echo $! > {pid_file})"], check=True)
+        pid = int(pid_file.read_text())
+        self.addCleanup(lambda: contextlib.suppress(ProcessLookupError)(os.kill)(pid, signal.SIGKILL)
+                        if Path(f"/proc/{pid}").exists() else None)
+        env = self._private_tmp()
+
+        code, swept = self._sweep("none", env, "--work-root", str(root))
+        self.assertEqual((0, []), (code, swept["stopped"]), "a program whose work tree exists was stopped")
+
+        shutil.rmtree(work_tree)
+        code, dry = self._sweep("none", env, "--work-root", str(root), "--dry-run")
+        self.assertEqual([("work_tree_gone", [pid])], [(e["reason"], e["pids"]) for e in dry["stopped"]])
+        self.assertTrue(Path(f"/proc/{pid}").exists(), "a dry run stopped the program")
+        code, swept = self._sweep("none", env, "--work-root", str(root))
+
+        self.assertEqual((0, [True]), (code, [event["stopped"] for event in swept["stopped"]]), swept)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and Path(f"/proc/{pid}/stat").exists() and \
+                Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] not in {"Z", "X"}:
+            time.sleep(0.1)
+        self.assertFalse(Path(f"/proc/{pid}/stat").exists()
+                         and Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] not in {"Z", "X"})
+        [event] = self._traced()
+        self.assertEqual(("sweep", "work_tree_gone", str(work_tree)), (event["by"], event["reason"], event["work_tree"]))
 
 
 if __name__ == "__main__":

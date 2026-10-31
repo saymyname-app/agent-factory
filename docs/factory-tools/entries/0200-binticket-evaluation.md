@@ -34,7 +34,9 @@ convoi qui porte la **marque du nouveau flux**.
     `./bin/escalation-door list`, le ticket et ceux qui l'attendent sont
     parqués. Un critère ne se dispense jamais, sauf par l'option `a` de
     cette demande : l'élément est jugé prouvé par son test de critère et
-    l'évaluation suivante le compte (af-ten1sp).
+    l'évaluation suivante le compte (af-ten1sp). L'option `c` la lève sans
+    rien juger prouvé : l'évaluation est refaite sur les produits relancés,
+    pour un inobservable que l'usine a causé (af-npz9v1.38).
   - « inobservable » par l'environnement : panne, non comptée comme refus ;
     l'évaluation est refaite une fois, puis le ticket est arrêté.
 - **Ce que reçoit l'Evaluator** (`brief`) : la ligne de démonstration, les

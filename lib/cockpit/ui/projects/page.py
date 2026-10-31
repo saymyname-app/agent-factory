@@ -271,7 +271,7 @@ def _render_chantier(chantier):
 
 
 # Chips and the acceptance panel. A "goto" chip opens the request it names
-# in the inbox (the list row's own click does the selecting); one naming a
+# in « Pour moi » (the line's own click does the opening); one naming a
 # request the inbox no longer holds says so instead of doing nothing.
 PROJECTS_SCRIPT = """
 <script>
@@ -288,10 +288,11 @@ PROJECTS_SCRIPT = """
     var go = event.target.closest('[data-goto]');
     if (go) {
       event.preventDefault();
-      var row = document.querySelector('.li[data-id="' + go.getAttribute('data-goto') + '"]');
+      // The line of the request in « Pour moi » (B, af-4uzgzm) opens it.
+      var row = document.querySelector('.pn-request[data-request="' + go.getAttribute('data-goto') + '"]');
       if (!row) { toast("Cette demande n'est pas dans la liste."); return; }
       row.click();
-      document.getElementById('inbox').scrollIntoView({block: 'start'});
+      document.getElementById('pn-inbox').scrollIntoView({block: 'start'});
       return;
     }
     var open = event.target.closest('[data-acc-open]');

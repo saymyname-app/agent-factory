@@ -177,7 +177,13 @@ Rigs and agents already exist; you almost never add one. The real flow is:
    the named `factory-worker` implementation role, selects `mol-do-work`, and
    passes `--reassign`. `workspace` is its provider-failover policy class, not
    a configured sling target. `bd.dog` is Dolt maintenance only and must never
-   receive product or Factory implementation workflows. For every other rig
+   receive product or Factory implementation workflows. When that maintenance
+   bead repairs a marked delivery ticket's current Factory `operator_request`,
+   route it with `./bin/factory-work-dispatch <repair> --technical-request
+   <convoy> <ticket>`; if the repair was already routed or delivered, use the
+   same command with `--link-only` so it is not dispatched twice. Never call
+   `convoy-state link-technical-repair` by hand: the HQ door is the authorized
+   producer of that relation. For every other rig
    and role-specific formula (including `build-basic`), run
    `./bin/dispatch-door <bead-id> --rig <project-name> --formula <formula>`
    with the formula from the routing table below — `<project-name>` matches
@@ -390,8 +396,12 @@ creation; in doubt, `decision`:
   itself. It mails you only when that dispatch did not go through: you then
   dispatch it with `./bin/factory-work-dispatch <bead>` as you would
   a guard-filed repair. It authorizes the correction of **that observed
-  defect only** — ADR-0017's four conditions still hold: no refactor, no
-  audit, no "while I'm here", nothing without a traced observation. A
+  defect and every occurrence of its class** (`docs/DEFECT_CLASSES.md`,
+  study B): never a fix limited to the case observed; « hors périmètre »
+  holds only for another class, or for an occurrence searched, named and
+  handed to a Bead in the pull request's `Où ailleurs :` line.
+  ADR-0017's four conditions still hold: no refactor, no audit without a
+  defect, nothing without a traced observation. A
   maintenance bead with no observed defect behind it is a violation of
   ADR-0017, not work.
 - `decision` — changes what Benjamin sees or must do, a method rule (the
@@ -488,6 +498,28 @@ Cockpit or the CLI — this writes the chosen option (comment + metadata:
 option, quand, acteur) on `<bead>`, clears its NEEDS BENJAMIN, and wakes you
 with mail whose subject and STATE name the fixed phrase "Benjamin a répondu
 `<lettre>` sur `<bead>`". Resume the work the chosen option describes.
+
+## The bound of the correction rounds (ADR-0035)
+
+A mail « Plafond des tours de correction : <ticket> » means a ticket of a
+new-flow convoy is stopped `still_refused` after its last correction round.
+Benjamin was asked nothing: the number of rounds alone is not his decision
+(Benjamin, 2026-10-28: « J'aimerais qu'il ne faille plus mon accord pour
+dépasser la limite de corrections. »). You arbitrate, from
+`bin/correction-round show <convoy> <ticket>` and the refusals at the tip:
+
+- the refusals are precise and within one author round → grant one round,
+  with your motive and the refusals it targets:
+  `bin/correction-round grant <convoy> <ticket> --arbitrated --approved-by <your actor> --words "<motive>" --target <refusal>...`.
+  A falling number of refusals is a signal, not a proof: say why the
+  targeted ones are correctable. Two such rounds per ticket at most; the
+  command refuses the rest, and refuses when no round would open.
+- the same refusals come back, no round would open, or the bound is reached
+  → diagnose: a factory cause (fix it through its maintenance), a ticket to
+  leave stopped, or one to replan.
+- the diagnosis shows a decision that is Benjamin's (product, criteria,
+  data, access, spend, authority) → `bin/correction-round escalate <convoy> <ticket> --why "<that decision>"`.
+  Never for the count or the delay alone; never answer for him.
 
 ## Handoff
 

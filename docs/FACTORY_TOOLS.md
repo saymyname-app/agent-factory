@@ -392,6 +392,9 @@ Pour une modification ordinaire du dépôt `agent-factory`, le Mayor lance :
 
 ```bash
 ./bin/factory-work-dispatch af-xxxxx
+./bin/factory-work-dispatch af-repair --technical-request af-convoi af-ticket
+# réparation déjà routée ou livrée : enregistrer le lien sans la redispatcher
+./bin/factory-work-dispatch af-repair --technical-request af-convoi af-ticket --link-only
 ```
 
 Cette porte choisit elle-même `factory-worker`, `mol-do-work` et
@@ -400,9 +403,12 @@ Cette porte choisit elle-même `factory-worker`, `mol-do-work` et
 pas un agent Gas City, et `bd.dog` ne fait que la maintenance Dolt. L'ouvrier
 Factory ne fixe aucun fournisseur dans son `agent.toml`; il prend donc celui
 que `provider-failover` a résolu pour `workspace` (Codex aujourd'hui, puis le
-repli configuré si nécessaire).
+repli configuré si nécessaire). `--technical-request` est l'entrée autorisée
+qui lie un défaut de l'usine au parcage exact qu'il répare ; la levée et la
+reprise restent ensuite la propriété de `convoy-advance`.
 
-Une seule session `factory-worker` peut être active. Son protocole réclame
+Au plus deux sessions `factory-worker`, chacune dans son worktree isolé,
+peuvent être actives sur ce rig. Leur protocole réclame
 chaque étape avec `gc hook --claim --json`, puis réclame immédiatement la
 suite du même groupe avant de se drainer. Ainsi le worktree, l'implémentation
 et l'ouverture de PR restent dans la même session logique; une cible de
@@ -413,7 +419,6 @@ choix, revenir sur le rôle, la porte et leur documentation : la politique de
 fournisseurs reste indépendante.
 
 ---
-
 ## `./bin/pr-autopilot` — fusion et réveil de livraison
 
 Toutes les trois minutes, ce robot sans modèle arme les PR éligibles, puis
@@ -1132,7 +1137,9 @@ convoi qui porte la **marque du nouveau flux**.
     `./bin/escalation-door list`, le ticket et ceux qui l'attendent sont
     parqués. Un critère ne se dispense jamais, sauf par l'option `a` de
     cette demande : l'élément est jugé prouvé par son test de critère et
-    l'évaluation suivante le compte (af-ten1sp).
+    l'évaluation suivante le compte (af-ten1sp). L'option `c` la lève sans
+    rien juger prouvé : l'évaluation est refaite sur les produits relancés,
+    pour un inobservable que l'usine a causé (af-npz9v1.38).
   - « inobservable » par l'environnement : panne, non comptée comme refus ;
     l'évaluation est refaite une fois, puis le ticket est arrêté.
 - **Ce que reçoit l'Evaluator** (`brief`) : la ligne de démonstration, les
@@ -1245,7 +1252,10 @@ nouveau flux**.
 - **Encore refusé après ce tour, le ticket s'arrête** (`still_refused`) :
   aucun second tour, rien ne fusionne, et le ticket apparaît **une seule
   fois** dans `./bin/escalation-door list`, que la revue, l'évaluation ou
-  les deux l'aient refusé.
+  les deux l'aient refusé. **Au plafond**, c'est le Mayor qui est réveillé,
+  pas Benjamin (ADR-0035) : il accorde un tour arbitré, motivé et ciblé
+  (`grant --arbitrated --target …`, deux au plus par ticket), diagnostique,
+  ou pose la demande (`escalate --why …`) pour une décision de Benjamin.
 - **Dérogation** (`override`) : sur un ticket arrêté, l'approbateur humain
   déclaré du projet (`human_approver` de `config/projects/<projet>.toml`)
   peut passer outre **un Blocking Finding de la revue**, avec ses mots, non
@@ -2139,7 +2149,7 @@ lancements en attente expiraient sans résultat (17/10, T59).
   démarre une neuve pour le travail en attente.
 
 Preuve : `tests/delivery-seat-release-test.sh` ; l'ordre : `tests/delivery-seat-release-order-test.sh` (local-only).
-## `./bin/factory-fix-preflight` — qui d'autre change ces fichiers ?
+## `./bin/factory-fix-preflight` — qui d'autre change ces fichiers, et où ailleurs est ce défaut ?
 
 **À lancer avant de coder un correctif d'usine, puis avant d'ouvrir sa PR**
 (af-frflvz, `docs/DELIVERY.md`). Le 19/10, la #681 a rendu la fidélité
@@ -2147,7 +2157,7 @@ bloquante alors que Benjamin venait de décider le contraire dans une autre
 session (af-hcriwn). La #682 a défait la #681 une heure après sa fusion.
 
 ```bash
-./bin/factory-fix-preflight bin/ticket-exit bin/ticket-end formulas/   # un fichier, ou un dossier finissant par /
+./bin/factory-fix-preflight --class P bin/ticket-exit bin/ticket-end formulas/   # un fichier, ou un dossier finissant par /
 ```
 
 - **Arrêt (sortie 1)** : une PR ouverte qui change ces chemins, une branche
@@ -2158,8 +2168,15 @@ session (af-hcriwn). La #682 a défait la #681 une heure après sa fusion.
 - **À lire** (`decisions_to_read`) : chaque décision ouverte ou mise à jour
   pendant ces jours, même si elle ne cite aucun fichier, ce qui est le cas
   le plus courant. S'arrêter si l'une d'elles touche le correctif.
-- **Refus (sortie 2)** : git, `gh pr list` ou `gc bd list` illisible. Un
-  refus n'est jamais lu comme « rien trouvé ». L'outil n'écrit rien.
+- **Où ailleurs ? (`--class`, obligatoire, af-npz9v1.25)** : le code de la
+  catégorie du défaut dans `docs/DEFECT_CLASSES.md`. La réponse donne
+  l'invariant et les occurrences encore ouvertes de la catégorie, à corriger
+  avec le cas observé, et lance son contrôle (`control`) : un contrôle rouge
+  est un arrêt (sortie 1). Une catégorie absente du registre est refusée :
+  le correctif ajoute d'abord son entrée dans sa branche.
+- **Refus (sortie 2)** : git, `gh pr list`, `gc bd list` ou le registre
+  illisible. Un refus n'est jamais lu comme « rien trouvé ». L'outil
+  n'écrit rien.
 
 ---
 ## `./bin/order-pause` — mettre en pause et reprendre un ordre, sans PR

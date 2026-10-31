@@ -33,6 +33,10 @@
 set -Eeuo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+# A do-work branch lives in a worktree without the generated provider overlay.
+# Its functional sweep below must come from $ROOT, while order discovery reads
+# the running City's config from this explicit live root.
+LIVE_FACTORY_ROOT="${FACTORY_LIVE_ROOT:-$ROOT}"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -89,9 +93,9 @@ run_clean() {
 # 1a. bin/factory-orphan-sweep's own order is discoverable and deterministic
 #     in the live Factory config, and the core orphan-sweep order it
 #     replaces is skipped there.
-live_order=$(run_clean gc order show factory-orphan-sweep --city "$ROOT" --json)
-jq -e --arg source "$ROOT/orders/factory-orphan-sweep.toml" \
-      --arg exec "$ROOT/bin/order-pause gate factory-orphan-sweep -- $ROOT/bin/factory-orphan-sweep" '
+live_order=$(run_clean gc order show factory-orphan-sweep --city "$LIVE_FACTORY_ROOT" --json)
+jq -e --arg source "$LIVE_FACTORY_ROOT/orders/factory-orphan-sweep.toml" \
+      --arg exec "$LIVE_FACTORY_ROOT/bin/order-pause gate factory-orphan-sweep -- $LIVE_FACTORY_ROOT/bin/factory-orphan-sweep" '
   .ok == true and
   .order.type == "exec" and
   .order.trigger == "condition" and
@@ -101,7 +105,7 @@ jq -e --arg source "$ROOT/orders/factory-orphan-sweep.toml" \
   .order.source == $source
 ' >/dev/null <<<"$live_order" || fail "factory-orphan-sweep Order is not discoverable and deterministic"
 
-run_clean gc order show orphan-sweep --city "$ROOT" --json >/dev/null 2>&1 \
+run_clean gc order show orphan-sweep --city "$LIVE_FACTORY_ROOT" --json >/dev/null 2>&1 \
   && fail "core orphan-sweep order should be skipped in city.toml, but gc order show still finds it"
 
 [ -x "$ROOT/bin/factory-orphan-sweep" ] || fail "$ROOT/bin/factory-orphan-sweep must be executable"
@@ -140,7 +144,12 @@ run_clean bd create "planning bead claim" --directory "$TEST_CITY" --id awfos-pl
   --metadata '{"gc.plane":"planning"}' >/dev/null
 run_clean bd create "orphaned delivery claim" --directory "$TEST_CITY" --id awfos-orphan1 \
   --metadata '{"gc.plane":"delivery"}' >/dev/null
-run_clean bd update awfos-po1 --directory "$TEST_CITY" --status in_progress --assignee "po-agent/abc123" >/dev/null
+# Reproduce af-npz9v1.42's entry mismatch: the parent shell names an unknown
+# actor, but the operator door must claim with the canonical per-thread actor
+# that this sweep preserves.
+run_clean env CODEX_THREAD_ID=abc123 BEADS_ACTOR=operateur-windows \
+  BD_BIN="$(command -v bd)" "$ROOT/bin/operator-bd" \
+  update awfos-po1 --directory "$TEST_CITY" --claim >/dev/null
 run_clean bd update awfos-plan1 --directory "$TEST_CITY" --status in_progress --assignee "unknown-actor" >/dev/null
 run_clean bd update awfos-orphan1 --directory "$TEST_CITY" --status in_progress --assignee "unknown-delivery-actor" >/dev/null
 run_clean bd create "session-name-shaped claim" --directory "$TEST_CITY" --id awfos-seat1 \
@@ -179,11 +188,13 @@ sweep() {
 sweep || fail "bin/factory-orphan-sweep exited non-zero"
 
 po_status=$(run_clean bd show awfos-po1 --directory "$TEST_CITY" --json | jq -r 'if type=="array" then .[0] else . end | .status')
+po_assignee=$(run_clean bd show awfos-po1 --directory "$TEST_CITY" --json | jq -r 'if type=="array" then .[0] else . end | .assignee // ""')
 plan_status=$(run_clean bd show awfos-plan1 --directory "$TEST_CITY" --json | jq -r 'if type=="array" then .[0] else . end | .status')
 orphan_status=$(run_clean bd show awfos-orphan1 --directory "$TEST_CITY" --json | jq -r 'if type=="array" then .[0] else . end | .status')
 orphan_assignee=$(run_clean bd show awfos-orphan1 --directory "$TEST_CITY" --json | jq -r 'if type=="array" then .[0] else . end | .assignee // ""')
 
 [ "$po_status" = "in_progress" ] || fail "a po-agent/* claim must survive the sweep, got status=$po_status"
+[ "$po_assignee" = "po-agent/abc123" ] || fail "the operator entry claim must keep its canonical actor, got assignee=$po_assignee"
 [ "$plan_status" = "in_progress" ] || fail "a planning-plane bead's claim must survive the sweep, got status=$plan_status"
 [ "$orphan_status" != "in_progress" ] || fail "a claim by an unknown delivery actor must be released, still in_progress"
 [ -z "$orphan_assignee" ] || fail "a released claim must have no assignee, got assignee=$orphan_assignee"

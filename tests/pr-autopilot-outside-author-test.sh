@@ -45,7 +45,11 @@ if [[ \$1 == pr && \$2 == list ]]; then
   else echo '[]'; fi
   exit 0
 fi
-if [[ \$1 == pr && \$2 == view ]]; then echo '["OPEN","false"]' | jq -r '@tsv'; exit 0; fi
+if [[ \$1 == pr && \$2 == view ]] && [[ "\$*" == *"--json state,autoMergeRequest,mergeStateStatus,statusCheckRollup,headRefOid"* ]]; then
+  case \$3 in 1) sha=aaa1 ;; 3) sha=ccc1 ;; 6) sha=fff1 ;; *) exit 1 ;; esac
+  printf '{"state":"OPEN","autoMergeRequest":{"mergeMethod":"SQUASH"},"mergeStateStatus":"CLEAN","statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}],"headRefOid":"%s"}\n' "\$sha"
+  exit 0
+fi
 exit 0
 STUB
 cat > "$TMP/bin/gc" <<STUB

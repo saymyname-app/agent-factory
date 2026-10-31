@@ -1573,11 +1573,13 @@ class ConvoyStateTest(unittest.TestCase):
         self.ok("set-handoff", CONVOY, T1, "--file", self.handoff_file(commit=commit))
         self.ok("set-exit", CONVOY, T1, "--exit", "finished")
 
-    def open_code_review(self, kind="review", commit=None, base=None, questions=None):
+    def open_code_review(self, kind="review", commit=None, base=None, questions=None, contract=None):
         args = ["open-code-review", CONVOY, T1, "--kind", kind, "--commit", commit or self.REVIEWED,
                 "--base", base or self.REVIEW_BASE]
         if questions is not None:
             args += ["--file", self.json_file("questions.json", {"questions": questions})]
+        if contract is not None:
+            args += ["--contract", contract]
         return self.ok(*args)
 
     def review_file(self, findings=(), answers=None, commit=None, **extra):
@@ -1594,7 +1596,8 @@ class ConvoyStateTest(unittest.TestCase):
     def judgement_file(self, judgements, commit=None):
         self.reviews = getattr(self, "reviews", 0) + 1
         return self.json_file(f"judgement-{self.reviews}.json", {
-            "commit": commit or self.CORRECTED, "recorded_by": "delivery-reviewer-fx2", "judgements": judgements})
+            "commit": commit or self.CORRECTED, "recorded_by": f"delivery-reviewer-fx{self.reviews}",
+            "judgements": judgements})
 
     def respond(self, responses):
         return self.ok("respond-code-review", CONVOY, T1, "--file",
@@ -1934,6 +1937,36 @@ class ConvoyStateTest(unittest.TestCase):
             self.assert_refused_and_nothing_written(
                 "open-code-review", CONVOY, T1, "--kind", kind, "--commit", self.CORRECTED, "--base", base,
                 mention="tour de correction")
+
+    def test_a_stopped_unfavorable_judgement_from_an_older_contract_is_invalidated_and_rejudged(self):
+        self.corrected_review()
+        self.open_code_review("judgement", self.CORRECTED, self.REVIEWED)
+        self.ok("record-code-review", CONVOY, T1, "--file", self.judgement_file(
+            {"F1.1": {"state": "unfavorable", "reason": "le nombre manque toujours"}}))
+        self.ok("stop-ticket", CONVOY, T1, "--reason", "still_refused", "--detail",
+                "encore refusé après son tour de correction : revue de code (F1.1)")
+
+        self.open_code_review("judgement", self.CORRECTED, self.REVIEWED,
+                              contract="code-review-attribution/v2")
+
+        ticket = self.ticket(self.show(), T1)
+        self.assertIsNone(ticket["stop"])
+        self.assertEqual("code-review-attribution/v2",
+                         ticket["code_review"]["rounds"][-1]["invalidated"]["contract"])
+        self.assertEqual("code-review-attribution/v2", ticket["code_review"]["request"]["contract"])
+        self.assertEqual((False, "code-review-attribution/v2"),
+                         (ticket["verdicts"]["code_review"]["valid"],
+                          ticket["verdicts"]["code_review"]["invalidated"]["contract"]))
+
+        self.ok("record-code-review", CONVOY, T1, "--file", self.judgement_file({"F1.1": {"state": "favorable"}}))
+
+        ticket = self.ticket(self.show(), T1)
+        rounds = ticket["code_review"]["rounds"]
+        self.assertEqual(["review", "judgement", "judgement"], [round_["kind"] for round_ in rounds])
+        self.assertEqual("code-review-attribution/v2", rounds[-1]["contract"])
+        self.assertEqual({"verdict": "favorable", "commit": self.CORRECTED, "unsettled": []},
+                         ticket["code_review"]["state"])
+        self.assertNotIn("invalidated", ticket["verdicts"]["code_review"])
 
     def test_a_judgement_given_by_the_session_that_reviewed_is_refused(self):
         self.corrected_review()
@@ -3134,11 +3167,63 @@ class ConvoyStateTest(unittest.TestCase):
 
         self.assertEqual(3, ticket["counters"]["resumes"])
         self.assertEqual(2, ticket["resumes_left"])
-        self.assertEqual({"interrupted": 2, "returned": 2, "unblocked": 2, "answered": 3, "behind": 3,
-                          "evaluation_no_result": 3, "stage_removed": 3, "code_review_no_result": 3, "amendment_granted": 3,
+        self.assertEqual({"interrupted": 2, "returned": 2, "unblocked": 2, "behind": 3,
+                          "evaluation_no_result": 3, "stage_removed": 3, "code_review_no_result": 3,
+                          "inherited_change": 3,
                           "commit_after_verdict": 3},
                          ticket["resumes_left_by_cause"])
         self.assertEqual(["interrupted", "returned", "unblocked"], [e["cause"] for e in ticket["resume"]["entries"]])
+
+    def test_a_behind_resume_on_each_new_integration_tip_is_recorded_but_not_counted(self):
+        # af-npz9v1.36: ticket D (af-ten1sp) was parked after 8 resumes, each
+        # merge of another ticket moving the integration branch it had to take.
+        self.interrupted_ticket()
+        for n in range(8):
+            self.ok("open-resume", CONVOY, T1, "--cause", "behind", "--ref", f"integration:{n:040x}/exit:{n}")
+
+        ticket = self.ticket(self.show(), T1)
+
+        self.assertEqual(8, ticket["counters"]["resumes"])
+        self.assertEqual(["behind"] * 8, [e["cause"] for e in ticket["resume"]["entries"]])
+        self.assertEqual((3, 3), (ticket["resumes_left"], ticket["resumes_left_by_cause"]["behind"]))
+        self.assert_refused_and_nothing_written(
+            "park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "x", mention="reprises")
+
+    def test_a_resume_an_answer_opened_takes_no_bound_and_is_counted(self):
+        # af-npz9v1.41: R2 (af-cifk1e) was parked at its third answer.
+        self.interrupted_ticket()
+        for n in range(5):
+            self.ok("open-resume", CONVOY, T1, "--cause", "answered", "--ref", f"exit:{n}")
+
+        ticket = self.ticket(self.show(), T1)
+
+        self.assertEqual((5, 3), (ticket["counters"]["resumes"], ticket["resumes_left"]))
+        self.assertNotIn("answered", ticket["resumes_left_by_cause"])
+        self.assertNotIn("amendment_granted", ticket["resumes_left_by_cause"])
+        self.assert_refused_and_nothing_written(
+            "park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "x", mention="reprises")
+
+    def test_a_second_behind_resume_on_a_tip_already_resumed_for_is_counted_up_to_the_bound(self):
+        # The guard: the author finished without taking the tip it was sent
+        # back for; a ticket that never takes it is still parked.
+        self.interrupted_ticket()
+        tip = "a" * 40
+        self.ok("open-resume", CONVOY, T1, "--cause", "behind", "--ref", f"integration:{tip}/exit:1")
+        self.assertEqual(3, self.ticket(self.show(), T1)["resumes_left_by_cause"]["behind"])
+        self.ok("open-resume", CONVOY, T1, "--cause", "behind", "--ref", f"integration:{tip}/exit:2")
+        # A fact that names no tip is counted.
+        self.ok("open-resume", CONVOY, T1, "--cause", "behind", "--ref", "exit:3")
+        self.assertEqual(1, self.ticket(self.show(), T1)["resumes_left_by_cause"]["behind"])
+        self.ok("open-resume", CONVOY, T1, "--cause", "behind", "--ref", f"integration:{tip}/exit:4")
+
+        ticket = self.ticket(self.show(), T1)
+
+        self.assertEqual((4, 0, 0), (ticket["counters"]["resumes"], ticket["resumes_left"],
+                                     ticket["resumes_left_by_cause"]["behind"]))
+        self.assert_refused_and_nothing_written(
+            "open-resume", CONVOY, T1, "--cause", "behind", "--ref", f"integration:{'b' * 40}/exit:5",
+            mention="reprises épuisées")
+        self.ok("park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "behind")
 
     def test_an_interruption_a_correction_round_and_a_red_merge_do_not_park_the_ticket(self):
         # The af-ltchro case: interrupted, corrected, returned by a red merge.
@@ -3640,9 +3725,9 @@ class ConvoyStateTest(unittest.TestCase):
 
     def test_the_bound_of_the_resumes_may_be_set_per_cause(self):
         self.interrupted_ticket()
-        per_cause = {"interrupted": 1, "returned": 2, "unblocked": 3, "answered": 3, "behind": 3,
-                     "evaluation_no_result": 3, "stage_removed": 3, "code_review_no_result": 3, "amendment_granted": 3,
-                     "commit_after_verdict": 3}
+        per_cause = {"interrupted": 1, "returned": 2, "unblocked": 3, "behind": 3,
+                     "evaluation_no_result": 3, "stage_removed": 3, "code_review_no_result": 3,
+                     "inherited_change": 3, "commit_after_verdict": 3}
         self.bounds(resumes=per_cause, open_planning_exceptions=2)
 
         self.ok("open-resume", CONVOY, T1, "--cause", "returned", "--ref", "merge:1")
@@ -3656,8 +3741,8 @@ class ConvoyStateTest(unittest.TestCase):
 
     def test_a_malformed_bound_of_the_resumes_is_refused_and_nothing_is_written(self):
         self.interrupted_ticket()
-        all_causes = ("interrupted", "returned", "unblocked", "answered", "behind", "evaluation_no_result",
-                      "stage_removed", "code_review_no_result", "commit_after_verdict")
+        all_causes = ("interrupted", "returned", "unblocked", "behind", "evaluation_no_result",
+                      "stage_removed", "code_review_no_result", "inherited_change", "commit_after_verdict")
         missing = {cause: 3 for cause in all_causes[1:]}
         unknown = {**missing, "interrupted": 3, "fatigue": 3}
         zero = {**missing, "interrupted": 0}

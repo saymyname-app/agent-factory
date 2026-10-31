@@ -461,9 +461,17 @@ launch_pass() { # <commit>: the pass that launched the end review of that commit
 
 # --- 1: launched by the pass that renders the verdicts, with the Outcome Evaluation, on their commit, on the whole diff ---
 outcome() { field "$CONVOY" gc.flow.outcome_evaluation; }
-first_round() { [ "$(end_review | jq -r '.rounds | length' 2>/dev/null)" = 1 ]; }
-wait_for 600 first_round || { dump; fail "no end review was recorded within 600s"; }
+launch_recorded() {
+  local commit
+  [ -f "$TRIAL/passes.jsonl" ] || return 1
+  commit=$(gate_record | jq -r '.commit // empty' 2>/dev/null)
+  [ -n "$commit" ] && [ -n "$(launch_pass "$commit")" ]
+}
+wait_for 600 launch_recorded || { dump; fail "no pass launched the end review within 600s"; }
 GATE1=$(gate_record | jq -r '.commit')
+ORDER_PAUSE_ROOT="$CITY" "$ROOT/bin/order-pause" pause convoy-advance --by essai \
+  --words "figer l'état entre la revue et son repair" --reason "spec-end-review-isolated-city-test" >/dev/null \
+  || fail "the trial could not pause convoy-advance before checking the review refusal"
 [ "$(gate_record | jq -r '.version + " " + ([.conditions[].verdict] | join(","))')" = "spec-end/v4 pass,pass,pass" ] \
   || fail "the three mechanical verdicts were not rendered by the gate: $(gate_record)"
 git -C "$PRODUCT" merge-base --is-ancestor "$TIP1" "$GATE1" && git -C "$PRODUCT" merge-base --is-ancestor "$BASE" "$GATE1" \
@@ -476,6 +484,8 @@ jq -e --arg commit "$GATE1" '.spec_end.commit == $commit and .spec_end.replayed 
   || fail "the end review was not launched by the pass that rendered the three verdicts, on their commit: $pass1"
 jq -e --arg commit "$GATE1" '.outcome_evaluation.action == "launched" and .outcome_evaluation.commit == $commit' <<<"$pass1" >/dev/null \
   || fail "the Outcome Evaluation was not launched by the pass that launched the end review, on the same commit: $pass1"
+first_round() { [ "$(end_review | jq -r '.rounds | length' 2>/dev/null)" = 1 ]; }
+wait_for 600 first_round || { dump; fail "no end review was recorded within 600s"; }
 outcome_round1() { [ "$(outcome | jq -r --arg commit "$GATE1" '[.rounds[] | select(.commit == $commit)] | length' 2>/dev/null)" = 1 ]; }
 wait_for 600 outcome_round1 || { dump; fail "the Outcome Evaluation did not record a round on $GATE1 within 600s"; }
 evaluated1=$(outcome | jq -c --arg commit "$GATE1" '[.rounds[] | select(.commit == $commit)][0]')
@@ -515,6 +525,9 @@ set -e
 # Condition 7 (the Evidence Pack, spec-end/v4) is not launched while one before it is missing.
 jq -e '.missing == [6, 7] and .conditions[6].verdict == "not_run" and (.error | test("F1.1")) and (.error | test("sans verdict favorable"))' <<<"$refusal" >/dev/null \
   || fail "the refusal of the gate does not name the Blocking Finding, on condition 6 alone: missing $(jq -c '.missing' <<<"$refusal"), $(jq -r '.error' <<<"$refusal")"
+ORDER_PAUSE_ROOT="$CITY" "$ROOT/bin/order-pause" resume convoy-advance --by essai \
+  --words "la vérification de la condition 6 est terminée" >/dev/null \
+  || fail "the trial could not resume convoy-advance after checking the review refusal"
 repair_named() { [ -n "$(end_review | jq -r '.rounds[0].findings[0].repair // empty' 2>/dev/null)" ]; }
 wait_for 300 repair_named || { dump; fail "the drafted repair was not published within 300s: $(end_review | jq -c '.rounds[0].findings[0]')"; }
 REPAIR=$(end_review | jq -r '.rounds[0].findings[0].repair')

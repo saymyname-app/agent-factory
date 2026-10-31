@@ -28,12 +28,17 @@ open or was closed outside its commands. A convoy closed by command, on
 Benjamin's words (T30), is neither walked by `--all` nor a reason for the
 order to run.
 
-A pass that exits 1 or 3 prints its answer on stdout, then one last line on
+A pass that exits 1, 3 or 75 prints its answer on stdout, then one last line on
 stderr: `convoy-advance: échec de la passe -- <convoy> <step>.<key>: <detail>
 ; …`, each step that failed it (the « état sans règle » message first). The
 controller keeps only the tail of a failed order's output (af-ypj2g0), so
 this line is what the `order.failed` event and its `on-order-failed` bead
-show.
+show. Exit 75 means every failure on that line is the explicit capacity
+deferral `NOT RUN, exit 75`: nothing was accepted and the next order pass
+retries it. Gas City still records that non-zero result as `order.failed`, but
+`bin/on-order-failed` excludes top-level exit 75 from its chronic-failure
+threshold. If the same pass also carries a genuine error it exits 1, so the
+error remains alertable.
 
 ## What one pass does
 
@@ -98,6 +103,12 @@ order ran during the wait, and five passes were killed (af-wz4dd8). On
 21/10, releasing the lock before settlement let several passes repeat the
 same reads and writes until they exceeded the same deadline (af-ebqm1y); the
 lock now stays held through the whole pass.
+
+The manual `convoy-state close-convoy` command uses that same lock before
+reading and closing a convoy.  An external close therefore waits for the
+current pass to finish; a close launched by `outcome-promote` from inside the
+pass inherits its ownership and does not take the lock twice.  A pass never
+reports work for a convoy after that convoy was closed by the command.
 
 ## Finished tickets are merged by the pass (T18)
 
@@ -291,13 +302,14 @@ the parking only):
 
 | Parked for | Lifted by |
 |---|---|
+| `operator_request` explicitly linked to Factory-maintenance bead(s) (`gc.flow.technical_repairs`) | code only, once every linked bead has the existing structural PR merge and exact-head CI proof; an open, failed or merely closed repair waits, any human answer is ignored for this linked technical class |
 | `operator_request` (its own Ticket Exit) | any answer given to the request of that ticket (`bin/escalation-door repondre`) after the parking |
 | `planning_exception` (its own Ticket Exit) | only the option that accepts the deviation: the last Planning Exception of the ticket is `accepted` (it was answered by its `accept_option`, `docs/CONVOY_STATE.md`; every exception raised since ADR-0030 L5 has one, with or without anchors). Any other answer leaves the ticket parked |
-| `planning_exception` (its Ticket Evaluation: the ticket is `finished`, its last evaluation's outcome is `planning_exception`, no entry under `planning_exceptions`) | only option `a`, « Juger ce qui est inobservable prouvé par son test de critère vert » (`bin/ticket-evaluation`); `lift-park` records what that evaluation found unobservable by the criterion under `proven_by_test`, and the evaluation the lift sends again counts it proven (`docs/TICKET_EVALUATION.md`). Option `b` (remove the ticket from the graph) or no answer: parked |
-| `resumes_exhausted` | option `a` of the convoy's grouped request (below), for the tickets that request names as lifted |
+| `planning_exception` (its Ticket Evaluation: the ticket is `finished`, its last evaluation's outcome is `planning_exception`, no entry under `planning_exceptions`) | only option `a`, « Juger ce qui est inobservable prouvé par son test de critère vert » (`bin/ticket-evaluation`); `lift-park` records what that evaluation found unobservable by the criterion under `proven_by_test`, and the evaluation the lift sends again counts it proven (`docs/TICKET_EVALUATION.md`); or option `c`, « Réévaluer sur le produit relancé » (af-npz9v1.38): the lift records nothing proven, and the evaluation it sends again judges every item on the products launched again. Option `b` (remove the ticket from the graph) or no answer: parked |
+| `resumes_exhausted` | option `a` of the convoy's grouped request (below), for the tickets that request names as lifted; or, without an answer, the ticket has resumes left under the bounds of now (`resumes_left` above 0): a parking left by a bound that no longer holds, such as the one an answered resume took before af-npz9v1.41. That lift gives no resume back |
 
 The lift is `bin/convoy-state lift-park <convoy> <ticket> --request <bead>
---option <letter>`: the parking is removed from the ticket and from those
+[--option <letter> | --repair <bead> ...]`: the parking is removed from the ticket and from those
 parked behind it — a ticket that still waits for another parked ticket is
 parked behind that one instead — and kept on the ticket under `park_lifts`.
 An exhausted ticket takes its resumes again, three per cause, counted from
@@ -311,7 +323,14 @@ or not: `bin/convoy-state park --cause resumes_exhausted`. The bound is K
 `bin/convoy-state` (T21, « The bounds are set in one place » below), **per
 cause** (ADR-0030 L2): each cause of a resume of this section, and a commit
 added after a verdict (T18), counts against its own bound; the correction
-round (T17) is not one of them, it keeps its own bound of one round. A red
+round (T17) is not one of them, it keeps its own bound of one round. A
+resume an answer of the operator opened (`answered`, `amendment_granted`)
+takes no bound either: each one needs a new request and a new answer, so no
+loop runs blind, and a bound on it could only ask the operator again for
+what they just answered (af-npz9v1.41: R2, af-cifk1e, parked on 28/10/2026
+at its third answer, the resume that answer opened counted and never sent).
+Intent (Benjamin, his words, 28/10/2026, relayed by Codex): « je ne veux pas
+devoir autoriser un dépassement purement technique ». A red
 merge returned to its author takes nothing of the interruptions' bound, and
 `resumes_left` is the fewest any one cause has left (`resumes_left_by_cause`
 of `bin/convoy-state show` names each). Its value is a starting one with
@@ -330,7 +349,7 @@ ticket:
 |---|---|
 | `interrupted` | the Ticket Exit is `interrupted`; or the ticket is `in_progress` with no Ticket Exit and its recorded session is not among the live ones (`gc session list`); or the bead of its last resume is closed and no session took the ticket since |
 | `returned` | the Ticket Exit is `finished` and the merge returned the ticket (`merge.outcome` `conflict` or `red`) at the tip of its branch. Also on a ticket stopped `still_refused` whose every Blocking Finding the operator overrode, which `bin/spec-integration` merges as if at work: the resume lifts that stop, keeps it on its entry and withdraws its request; with no resume left the stop stays with the operator (af-n4bn62: F and G1 of af-strhoy, returned red on 21/10/2026, were neither merged again nor resumed) |
-| `unblocked` | the Ticket Exit is `technically_blocked` and no bead it waits for with a `blocks` edge is open any more (its repair is closed) |
+| `unblocked` | the Ticket Exit is `technically_blocked` and no bead it waits for with a `blocks` edge is open any more; or it is an `operator_request` carrying explicit Factory-maintenance links whose every bead has structural delivery proof, after code lifted its parking |
 | `answered` | the Ticket Exit is `planning_exception` or `operator_request` and the ticket is no longer parked: its parking was lifted |
 | `behind` | the Ticket Exit is `finished`, the ticket is not merged, and `bin/code-review show <convoy> <ticket> --repo` reports `behind`: its branch does not contain the tip of the integration branch, so no reviewer is sent on it (T44, `docs/CODE_REVIEW.md`). The fact is `integration:<tip>/exit:<exit time>`: once per Ticket Exit |
 | `evaluation_no_result` | the ticket is stopped `evaluation_no_result` (its Ticket Evaluation gave no result, relaunch included, `docs/TICKET_EVALUATION.md`), it is neither parked nor closed, it has a resume left, the operator has not answered the request of that stop, and no resume of this cause was opened yet on the current tip of the integration branch (on `origin` when it is there, else local). The fact is `integration:<tip>/stop:<stop time>`: once per tip of the integration branch (af-xhc0sj) |
@@ -353,7 +372,11 @@ Exit (`formulas/mol-ticket-resume.formula.toml`).
 An `evaluation_no_result`, `stage_removed` or `code_review_no_result` resume lifts the stop in that same write: the stop
 leaves the ticket and is kept on its resume (`resume.entries[].stop`), never
 erased; the request the stop raised is withdrawn first (`bin/escalation-door
-clear <ticket>`). A Ticket Evaluation without result is most often a defect
+clear <ticket>`). The answer and the withdrawal share the escalation door's
+lock: after the withdrawal, the pass reads the request again before opening
+the resume. An answer that won the lock after the first read therefore leaves
+the ticket stopped with the operator instead of being consumed by the resume
+(af-npz9v1.35). A Ticket Evaluation without result is most often a defect
 of the factory (an Evaluator role, a brief, a launch) whose repair is merged
 elsewhere; the fresh author session brings the integration branch into the
 ticket branch and finishes again, and the next passes withdraw the
@@ -373,8 +396,24 @@ A review without result is most often a defect of the factory (T59 and T62R,
 af-epkrcv). Every other stop — `evaluation_outage`, `amendment_exhausted`, a
 ticket still refused — is never resumed.
 
-A `behind` resume is counted like the others (K; the third parks the
-ticket), and, unlike them, it is counted even when the ceiling N is reached
+A `behind` resume is recorded like the others (an entry, one more
+`resumes`, a fresh author session) but **K does not count it**: the
+integration branch moved because another ticket merged, an event of the
+factory, not of the ticket. Intent (Benjamin, his words, 27/10/2026 16:27
+Paris): « Oui : une mise à jour behind causée par l'usine ne compte plus dans les reprises d'un ticket. » Before, 15:45 Paris: « oui les 6 », whose point 3 read « Un ticket a droit à 3 reprises
+par cause […] une simple remise à jour, quand d'autres tickets ont fusionné
+avant lui, compte comme une reprise […] a (recommandé) : ne plus compter ces
+remises à jour. » Mechanism (agent interpretation, af-npz9v1.36): the first
+`behind` resume on each tip of the integration branch (the `<tip>` of its
+fact) is free; a second one on a tip already resumed for means the author
+finished without taking it, and is counted against `bounds.resumes.behind`
+(3): a ticket that never takes the tip is still parked, its detail saying
+« behind : une même pointe d'intégration reprise sans être prise ». A tip
+moves only when a ticket or a repair merges, so the free resumes are
+finite. Ticket D (`af-ten1sp`) was parked on 23/10 at 17:36 Paris after 8
+resumes, each merge of another ticket costing it one.
+
+Unlike the other resumes, a `behind` one is recorded even when the ceiling N is reached
 and its session has to wait for a later pass (`waiting`, « reprise (behind)
 : plafond N=… atteint »): with the Ticket Exit taken back, neither the code
 review nor the Ticket Evaluation is sent on the old tip meanwhile. Its
@@ -384,7 +423,15 @@ commits and finishes again; the review then runs on the new tip.
 An `unblocked` resume brings the integration branch into the ticket branch
 too: the repair the ticket waited for landed there, not on the ticket's
 branch, and without it the ticket meets the same defect again (af-m4np8z;
-T59 met the regression its repair had fixed).
+T59 met the regression its repair had fixed). For a linked Factory request,
+the same pass first lifts the parking, then clears its escalation through
+`bin/escalation-door`, and only then opens this resume. The active link
+remains the release marker until `open-resume` consumes it atomically with
+the Ticket Exit. A refusal or interruption before that write therefore
+preserves the request and the next pass retries it. The repair ids and exact
+Ticket Exit time remain on the parking lift as history; neither request text,
+a second-resolution timestamp alone, nor R-codes can let a later human
+request reuse the old release.
 
 A ticket to resume that names no single known project, or when the
 settings have no `resume` entry, is listed under `refused` (exit 1) before
@@ -421,6 +468,10 @@ If option `a` is recorded while the same pass is resuming another ticket,
 the pass applies it before withdrawing the grouped request: the request-door
 lock orders the answer and the withdrawal, so the named exhausted tickets
 are lifted and their counted resumes are launched exactly once (af-g2ukoq).
+The same ordering holds when the parkings changed and the request would be
+raised again: the answer is applied from the old record, while that record
+still names the exhausted tickets, before a new timestamp can replace it
+(af-npz9v1.35).
 
 Two decisions taken here:
 
@@ -719,7 +770,11 @@ other causes; the resume keeps the stop it lifted) and sends a fresh author
 session on the same branch. That resume allows the author one amendment more
 (`docs/TDD_STEP.md`); a further amendment stops the ticket again, and the
 next pass raises that new stop. Answered **b**, or not answered, the ticket
-stays stopped. Before af-25o7vr (2026-10-21) no code carried out answer a.
+stays stopped, unless every change at its tip since the freeze is the
+base's it merged (`bin/tdd-step changes`: `own` empty, `inherited` not):
+then no amendment was the ticket's to take, and the pass lifts the stop by
+a resume of cause `inherited_change` (af-npz9v1.39), its request withdrawn,
+once per stop. Before af-25o7vr (2026-10-21) no code carried out answer a.
 
 ## The end code review of the assembled diff (T25)
 
@@ -1276,7 +1331,8 @@ closing of its Spec and its draft replayed.
 
 **What it leaves open.**
 
-- The merge is made inside the pass, under the 30 min timeout of the order;
+- The merge is made inside the pass, under the timeout of the order (40 min, derived from
+  `config/test-budgets.json`);
   a replay of the mechanical controls killed there is taken up by the next
   pass (`docs/OUTCOME_PROMOTE.md`, Limits).
 - Once an answer that ends the judgement stands, `settle_acceptance` no

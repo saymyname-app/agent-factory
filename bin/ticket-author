@@ -19,7 +19,10 @@ one step to the next is a check run by code, never the word of the agent:
 `start` gives the session its ticket: the work tree and the branch
 `ticket/<ticket>` created at the tip of the integration branch, the branch
 and the session recorded through bin/convoy-state. A session that already
-took another ticket is refused: one fresh session per ticket.
+took another ticket is refused: one fresh session per ticket. The branch
+of a replacement (bin/replacement-draft) is created at its useful commit
+instead, then caught up on the tip of the integration branch by a merge
+(docs/PLANNING_EXCEPTION.md).
 
 `demonstrate` launches the product at the head commit of the ticket branch
 through bin/project-launch and has bin/evidence-capture capture the
@@ -48,6 +51,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -71,9 +75,11 @@ DEMONSTRATION_PIECE = "demonstration"
 # The steps of the formula mol-ticket-author that a gate closes, in order.
 STEPS = ("workspace", "red", "code", "demonstration", "exit")
 BRANCH_PREFIX = "ticket/"
+SHA = re.compile(r"[0-9a-f]{40}")
 AUTHOR_ROLE = "author"
 
 sys.path.insert(0, str(BIN.parent / "lib"))
+from bounded_process import run as bounded_run  # noqa: E402
 import delivery_reads  # noqa: E402
 from account_home import account_home  # noqa: E402
 from delivery_role_identity import role_identity  # noqa: E402
@@ -113,7 +119,7 @@ def short(text: str, limit: int = MAX_DETAIL) -> str:
 
 def run(argv: list[str], env: dict[str, str] | None = None, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
     try:
-        return subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL, env=env, timeout=timeout)
+        return bounded_run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL, env=env, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         raise Refusal(f"{Path(argv[0]).name} n'a pas répondu en {timeout:.0f} s") from exc
     except OSError as exc:
@@ -380,6 +386,62 @@ def integration_tip(ticket: Ticket, fetch: bool) -> tuple[str, str]:
     return branch, tip
 
 
+def replacement_useful_commit(ticket: Ticket) -> str | None:
+    """The useful commit of a replacement ticket: recorded by
+    bin/replacement-draft on the draft that published the ticket
+    (`replacement_commit`, the draft is the ticket's `gc.artifact_id`) and
+    cited in the ticket's own text (« useful commit <sha> »). Both, or None:
+    the tickets that wait for the replaced one are republished by the same
+    draft and cite no useful commit (af-npz9v1.24: BR, af-eyc5ah, started on
+    25/10/2026 without the work of B at 5169bb09)."""
+    draft_id = (ticket.bead.get("metadata") or {}).get("gc.artifact_id")
+    if not isinstance(draft_id, str) or not draft_id:
+        return None
+    commit = (read_bead(draft_id).get("metadata") or {}).get("replacement_commit")
+    if not isinstance(commit, str) or not SHA.fullmatch(commit):
+        return None
+    return commit if f"useful commit {commit}" in str(ticket.bead.get("description") or "") else None
+
+
+def reachable(repo: Path, commit: str) -> str:
+    """The useful commit, fetched from `origin` when the repository does
+    not hold it yet (it lives on the branch of the replaced ticket)."""
+    if commit_of(repo, commit) is None and git(repo, "remote", "get-url", "origin").returncode == 0:
+        git(repo, "fetch", "--quiet", "origin", commit)
+    if commit_of(repo, commit) is None:
+        raise Refusal(f"le commit utile {commit} du remplaçant est introuvable dans {repo}, même sur origin : "
+                      "la branche du ticket ne part pas sans lui")
+    return commit
+
+
+def catch_up(path: Path, integration: str, tip: str) -> list[str]:
+    """Merge the tip of the integration branch into a replacement branch
+    just created at its useful commit. A conflict is aborted, the branch
+    stays at the useful commit and the conflicting paths are returned: the
+    author merges the integration branch first, before the red."""
+    merged = git(path, "merge", "--no-edit", "-m",
+                 f"Rattrapage de {integration} ({tip[:12]}) sur le commit utile du remplaçant", tip)
+    if merged.returncode == 0:
+        return []
+    conflicts = git(path, "diff", "--name-only", "--diff-filter=U").stdout.split()
+    git(path, "merge", "--abort")
+    return conflicts or [short(merged.stderr.strip() or merged.stdout.strip() or "fusion refusée", 160)]
+
+
+def replacement_start(repo: Path, useful: str, tip: str) -> str:
+    """The commit a replacement starts from: the merge that caught its
+    useful commit up on the integration branch -- the first commit after
+    it on the branch, when it is a merge whose first parent is the useful
+    commit -- else the useful commit itself. Read from Git alone, so `start`
+    run again later names the same commit."""
+    after = git(repo, "rev-list", "--first-parent", "--reverse", f"{useful}..{tip}").stdout.split()
+    if after:
+        parents = git(repo, "rev-list", "--parents", "-n", "1", after[0]).stdout.split()[1:]
+        if len(parents) > 1 and parents[0] == useful:
+            return after[0]
+    return useful
+
+
 def worktree_branch(path: Path) -> str | None:
     if not (path / ".git").exists():
         return None
@@ -417,8 +479,10 @@ def cmd_start(args: argparse.Namespace) -> int:
     branch = ticket.state.get("branch") or BRANCH_PREFIX + ticket.id
     path = worktree_of(ticket.id)
     profile = rig_profile(ticket.rig) if ticket.given_repo is None else None
+    useful = replacement_useful_commit(ticket)
 
     written: list[str] = []
+    conflicts: list[str] = []
     try:
         on_path = worktree_branch(path)
         if on_path is None:
@@ -427,13 +491,20 @@ def cmd_start(args: argparse.Namespace) -> int:
             existing = commit_of(repo, f"refs/heads/{branch}")
             remote = None if existing else commit_of(repo, f"refs/remotes/origin/{branch}")
             path.parent.mkdir(parents=True, exist_ok=True)
+            fresh = not existing and not remote
             if existing:
                 added = git(repo, "worktree", "add", "--quiet", str(path), branch)
             else:
-                added = git(repo, "worktree", "add", "--quiet", "-b", branch, str(path), remote or base)
+                start_at = reachable(repo, useful) if useful and fresh else remote or base
+                added = git(repo, "worktree", "add", "--quiet", "-b", branch, str(path), start_at)
             if added.returncode != 0:
                 raise Refusal(f"le worktree du ticket n'a pas pu être créé : {short(added.stderr)}")
             written.append(f"worktree {path}" + ("" if existing else f", branche {branch}"))
+            if useful and fresh:
+                written.append(f"branche partie du commit utile {useful[:12]}")
+                conflicts = catch_up(path, integration, base)
+                if not conflicts:
+                    written.append(f"rattrapée sur {integration}")
         elif on_path != branch:
             raise Refusal(f"le worktree {path} est sur la branche {on_path} et non sur {branch}")
         tip = commit_of(repo, f"refs/heads/{branch}") or ""
@@ -446,10 +517,15 @@ def cmd_start(args: argparse.Namespace) -> int:
             written.append("modèle de l'auteur")
     except Refusal as exc:
         raise Refusal(str(exc), written) from exc
+    replacement = None
+    if useful and tip and is_ancestor(repo, useful, tip):
+        replacement = {"useful_commit": useful, "caught_up": is_ancestor(repo, base, tip), "conflicts": conflicts}
     print(json.dumps({
         "ok": True, "convoy": args.convoy, "ticket": args.ticket, "kind": ticket.kind, "session": session,
         "repo": str(repo), "worktree": str(path), "branch": branch, "tip": tip,
-        "integration_branch": integration, "base": merge_base(repo, tip, base) or base,
+        "integration_branch": integration,
+        "base": replacement_start(repo, useful, tip) if replacement else merge_base(repo, tip, base) or base,
+        "replacement": replacement,
         "profile": str(profile) if profile else None,
         "demonstration_line": ticket.state.get("demonstration_line"),
         "interface": bool(ticket.state.get("interface")),

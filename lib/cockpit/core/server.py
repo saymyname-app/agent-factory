@@ -5,6 +5,8 @@ config: a local process already has every power on this host (spec .9
 threat model), but the cockpit is still not allowed to become reachable
 from the tailnet or LAN by an operator mistake in a config file.
 """
+import logging
+import subprocess
 import time
 import threading
 import json
@@ -13,13 +15,16 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from cockpit.access.guard import session_cookie_header
-from cockpit.actions.registry import ActionError
+from cockpit.actions.registry import DOOR_TIMEOUT_SECONDS, ActionError, ActionUncertain, expired
+from cockpit.actions.uncertain import UncertainOutcomes
 from cockpit.core.freshness import FRESH, STALE, UNKNOWN
 from cockpit.core.readmodel import PARIS
 from cockpit.factory.checks import VALIDITY_SECONDS as CHECK_VALIDITY_SECONDS
 from cockpit.factory.checks import SectionChecks
 from cockpit.factory.configuration import ROOT as FACTORY_ROOT
 from cockpit.factory.configuration import read_configuration
+from cockpit.factory import cleanup, settings
+from cockpit.text.validate import operator_language
 from cockpit.health import collectors
 from cockpit.health.engine import (
     FACTORY_STALLED_AFTER_SECONDS,
@@ -27,6 +32,7 @@ from cockpit.health.engine import (
     compute_health,
 )
 from cockpit.projects import anomalies as project_anomalies
+from cockpit.projects.decisions import chantier_decisions
 from cockpit.projects.depots import apply_to_projects
 from cockpit.projects.descriptors import load_descriptors
 from cockpit.projects.source import from_value as projects_from_value
@@ -37,15 +43,15 @@ from cockpit.requests.journal import entries_from_value as journal_entries_from_
 from cockpit.requests.journal import sources_from_value as journal_sources_from_value
 from cockpit.requests.sources.readability import ILLISIBLE_THRESHOLD_SECONDS
 from cockpit.runs.derive import runs_from_beads
-from cockpit.runs.workflows import workflow_runs
+from cockpit.runs.workflows import waiting_on, workflow_runs
 from cockpit.ui.analyses.page import CSS as ANALYSES_CSS, render_analyses
 from cockpit.ui.base.page import render_document, render_fresh, render_home_zones
 from cockpit.ui.health.page import render_health_zone, render_status_line
-from cockpit.ui.access.page import render_access_zone
+from cockpit.ui.access.page import PROCEDURE_PATH, render_access_zone
+from cockpit.ui.access.procedure import CSS as PROCEDURE_CSS, render_procedure
 from cockpit.ui.factory.page import CSS as FACTORY_PAGE_CSS, read_machine, render_factory_page
 from cockpit.ui.home.overview import CSS as OVERVIEW_CSS
 from cockpit.ui.home.overview import overview_view, render_overview
-from cockpit.ui.home.page import render_requests_section
 from cockpit.ui.panorama.shell import CSS as PANORAMA_CSS
 from cockpit.ui.panorama.shell import HOME, NAVIGATION, render_not_folded, render_shell
 from cockpit.ui.stop.render import render_stop_section
@@ -75,6 +81,17 @@ NOT_FOLDED = {
 
 # Actions that write nothing on a bead (a prompt to copy, a test push): no
 # re-read after them.
+# What a gesture that failed in an unforeseen way answers: nothing is said
+# done, and the request is to be read again before anything else.
+UNEXPECTED_ACTION_ERROR = ("Le cockpit n’a pas pu faire ce geste à cause d’une erreur interne. Rien n’est confirmé : "
+                           "relis la demande avant de réessayer.")
+# What a member of the tailnet who is not the operator reads (I, af-cp4fzd):
+# nothing of the cockpit.
+READER_REFUSED_TEXT = ("Accès refusé : ce cockpit est réservé à l’opérateur de l’usine. "
+                       "Ton identité Tailscale n’y est pas autorisée.\n")
+# The gestures of the page Usine (G2, af-f8nlhr), served by
+# CockpitRequestHandler._usine_action, each through its door.
+USINE_ACTIONS = frozenset({"regler", "preparer_reglage", "nettoyer"})
 ACTIONS_WITHOUT_WRITE = frozenset({"continuer", "pas_bon_vers_agent", "notifier_test"})
 # What "Ce qui t'attend", the projects and the journal are built from.
 SOURCES_REREAD_AFTER_ACTION = frozenset({"beads", "projets", "journal"})
@@ -91,7 +108,23 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):  # quiet by default; tests read the body
         pass
 
+    def _refuse_reader(self):
+        """A member of the tailnet who is not the operator: nothing of the
+        cockpit is read or served to them (I, af-cp4fzd). True when the
+        request was refused."""
+        if self.server.action_guard.check_reader(self.headers):
+            return False
+        body = READER_REFUSED_TEXT.encode("utf-8")
+        self.send_response(403)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
     def do_GET(self):
+        if self._refuse_reader():
+            return
         read_model = self.server.read_model
         # A page is the path of its address: a query (« /runs? », which a
         # button of the navigation sends) names the same page.
@@ -143,6 +176,10 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         if path == "/usine":
             self._send_factory_page(read_model)
             return
+        if path == PROCEDURE_PATH:
+            self._send_page(read_model, "usine", render_procedure(self.server.procedure_settings()),
+                            extra_css=PROCEDURE_CSS)
+            return
         if path == "/rituels":
             rituals = read_rituals(self.server.rituals_file)
             self._send_page(read_model, "rituels", lambda anchors: render_rituals(rituals, anchors),
@@ -168,6 +205,11 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         """Operator Actions (T13, af-cx20q9; spec af-oohx2x §"Actions
         opérateur"). Every write goes through the access guard first —
         refused, nothing downstream (Beads included) is ever touched."""
+        if self.path in ("/api/usine/reverifier", "/api/health/recheck"):
+            guard_result = self.server.action_guard.check_page_post("POST", self.headers)
+            if not guard_result.allowed:
+                self._send_json({"error": guard_result.reason}, status=403)
+                return
         if self.path == "/api/usine/reverifier":
             self._recheck_factory_section()
             return
@@ -196,6 +238,18 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         if not guard_result.allowed:
             self._send_json({"error": guard_result.reason}, status=403)
             return
+        if action in USINE_ACTIONS:
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            try:
+                payload = json.loads((self.rfile.read(length) if length else b"{}").decode("utf-8") or "{}")
+            except ValueError:
+                payload = None
+            if not isinstance(payload, dict):
+                self._send_json({"error": "bad_json"}, status=400)
+                return
+            status, body = self._usine_action(action, payload)
+            self._send_json(body, status=status)
+            return
         handler = self.server.action_handlers.get(action)
         if handler is None:
             self._send_json({"error": "unknown_action"}, status=404)
@@ -207,14 +261,43 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         except ValueError:
             self._send_json({"error": "bad_json"}, status=400)
             return
+        writes = action not in ACTIONS_WITHOUT_WRITE
+        target = (payload.get("bead_id") or payload.get("source_key")) if isinstance(payload, dict) else None
+        if writes and target:
+            # After an uncertain outcome, not again before the source was
+            # read again, nor once it shows the gesture done (af-fksj2c).
+            refusal = self._uncertain_refusal(target)
+            if refusal:
+                self._send_json({"error": refusal, "incertain": True}, status=409)
+                return
         try:
             result = handler(payload)
+        except (ActionUncertain, subprocess.TimeoutExpired) as exc:
+            # The command expired, or did its work and what follows it
+            # failed: said as it is, and the source read again at once.
+            if isinstance(exc, subprocess.TimeoutExpired):
+                exc = expired(exc.timeout)
+            self.server.uncertain.record(target, self.server.read_model.now())
+            self._send_json({"error": str(exc), "incertain": True, "rafraichi": self._reread_after_action()},
+                            status=exc.status)
+            return
         except ActionError as exc:
             self._send_json({"error": str(exc)}, status=400)
             return
-        if action not in ACTIONS_WITHOUT_WRITE and isinstance(result, dict):
+        except Exception:
+            logging.getLogger(__name__).exception("action %s failed", action)
+            self._send_json({"error": UNEXPECTED_ACTION_ERROR}, status=500)
+            return
+        if writes and isinstance(result, dict):
             result["rafraichi"] = self._reread_after_action()
         self._send_json(result)
+
+    def _uncertain_refusal(self, target):
+        read_model = self.server.read_model
+        snapshot = read_model.snapshot()
+        requests, beads_row, _ = self._assemble_requests(snapshot, read_model.now())
+        read_at = beads_row["read_at"] if beads_row else None
+        return self.server.uncertain.refusal(target, read_at, {request.id for request in requests})
 
     def _first_reading(self, read_model, knowledge=False, agents=False):
         """The snapshot, once the projects had their first reading if the
@@ -250,22 +333,28 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         Panorama holds yet folded under it."""
         snapshot = self._first_reading(read_model)
         now = read_model.now()
-        requests, _, beads_known = self._assemble_requests(snapshot, now)
+        requests, beads_row, _ = self._assemble_requests(snapshot, now)
+        # A gesture whose outcome is uncertain is drawn unavailable for as
+        # long as a POST on it would be refused (af-fksj2c).
+        uncertain = self.server.uncertain.pending(beads_row["read_at"] if beads_row else None,
+                                                  {request.id for request in requests})
         health = self._compute_health(read_model)
+        # « Ce qui t’attend » is « Pour moi » of the overview itself (B,
+        # af-4uzgzm): the zones folded under it no longer hold it.
         zones_html = render_home_zones(
             read_model.headline(),
             read_model.stale_or_unknown(),
-            requests_section_html=self._render_requests_section(snapshot, now),
             extra_sections_html=(
                 self._render_projects_zone(snapshot)
                 + self._render_stop_zone(snapshot)
-                + render_access_zone(self.server.benjamin_login, snapshot.get("tailscale"), now)
+                + render_access_zone(self.server.benjamin_login, snapshot.get("tailscale"), now,
+                                   public_url=self.server.public_url)
                 + render_health_zone(health, checked_at=_latest_read_at(snapshot, ("beads", "git")))
             ),
             status_html=render_status_line(snapshot.get("gc"), health),
         )
         driver = getattr(self.server, "stop_driver", None)
-        view = overview_view(snapshot, requests if beads_known else [],
+        view = overview_view(snapshot, requests, now=now, undelivered=self._undelivered(), uncertain=uncertain,
                              stop_trial_passed=bool(driver is not None and driver.essai_reussi()))
         # T13, af-cx20q9: the SameSite=Strict cookie an action POST must
         # echo back -- a cross-site POST never carries it, so its presence
@@ -335,25 +424,25 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             extra_requests=self.server.extra_requests(snapshot, now),
         )
 
+    def _chantier_decisions(self, snapshot, now):
+        """The open decisions of each chantier
+        (cockpit.projects.decisions), counted on the requests the home
+        counts: ``{chantier id: count}``, or None while the tracker or the
+        chantiers are not known -- an unknown count is never 0."""
+        requests, _, beads_known = self._assemble_requests(snapshot, now)
+        row = snapshot.get("projets")
+        if not beads_known or row is None or row["value"] is None or row["freshness"] == UNKNOWN:
+            return None
+        projects, sans_projet = projects_from_value(row["value"])
+        return chantier_decisions([c for p in projects for c in p.chantiers] + sans_projet, requests)
+
     def _undelivered(self):
         """Ids whose push could not be delivered yet (spec .59)."""
         notify = self.server.notify
         return notify.undelivered() if notify is not None else set()
 
-    def _render_requests_section(self, snapshot, now):
-        requests, beads_row, beads_known = self._assemble_requests(snapshot, now)
-        if not beads_known:
-            last_known_at = beads_row["read_at"] if beads_row else None
-            return render_requests_section(
-                requests, verified_at=now, source_unknown=True, last_known_at=last_known_at,
-                undelivered=self._undelivered(),
-            )
-        return render_requests_section(
-            requests, verified_at=beads_row["read_at"], undelivered=self._undelivered()
-        )
-
     def _requests_payload(self, snapshot, now):
-        """JSON twin of :meth:`_render_requests_section` (T12, af-is5e97):
+        """JSON twin of « Ce qui t’attend » (T12, af-is5e97):
         lets a test assert on structured fields and the producer-defect
         count without scraping the rendered HTML. ``state`` is "unknown"
         whenever Beads is: the list is then not the whole list."""
@@ -465,7 +554,8 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         else:
             projects, _ = projects_from_value(row["value"])
             runs, _, checked = self._runs(read_model)
-            inner = render_projects_list(projects, runs, read_model.now(), checked=checked)
+            inner = render_projects_list(projects, runs, read_model.now(),
+                                         self._chantier_decisions(snapshot, read_model.now()), checked=checked)
         self._send_page(read_model, "projets", inner, extra_css=PROJECT_PAGE_CSS + PROJECTS_PANORAMA_CSS,
                         snapshot=snapshot)
 
@@ -510,7 +600,8 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                 targets = (row["value"].get("roadmap_chantiers") or {}).get(project_id) or {}
                 inner = render_project_fold(project_view(
                     descriptor or {"project_id": project.project_id, "display_name": project.display_name},
-                    project, "read", snapshot.get("depots"), targets, runs, now, historique.chantiers, below))
+                    project, "read", snapshot.get("depots"), targets, runs, now, historique.chantiers, below,
+                    self._chantier_decisions(snapshot, now)))
         self._send_page(read_model, "projets", inner,
                         extra_css=PROJECT_PAGE_CSS + PROJECTS_PANORAMA_CSS + RUNS_PAGE_CSS + PROJECT_FOLD_CSS,
                         status=status, snapshot=snapshot)
@@ -546,11 +637,14 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         health = self._compute_health(read_model)
         notify = self.server.notify
         actions_html = self._render_stop_zone(snapshot) + render_access_zone(
-            self.server.benjamin_login, snapshot.get("tailscale"), now)
+            self.server.benjamin_login, snapshot.get("tailscale"), now, public_url=self.server.public_url)
         agents = checks.get("agents")
         wanted = (urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("role") or [""])[0]
         keys = [role["key"] for role in agents["value"]["configuration"]["roles"]]
+        setting, cleaning = self._usine_views(urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query), agents,
+                                              wanted if wanted in keys else (keys[0] if keys else ""))
         main = render_factory_page({
+            "setting": setting, "cleanup": cleaning,
             "machine": checks.get("machine"), "connections": checks.get("connexions"),
             "providers": checks.get("fournisseurs"), "agents": agents,
             "live": snapshot, "now": now, "notify_configured": bool(notify and notify.configured()),
@@ -560,6 +654,229 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         })
         self._send_page(read_model, "usine", main, extra_css=FACTORY_PAGE_CSS,
                         headers={"Set-Cookie": session_cookie_header(self.server.session_token)}, snapshot=snapshot)
+
+    def _setting_blocked(self, agents, role_key):
+        """Why the setting of ``role_key`` may not be made now, or None: the
+        configuration read is unreadable or stale, or the last setting of
+        the role had an uncertain outcome the configuration was not read
+        again since (that reading lifts it)."""
+        configuration = agents["value"]["configuration"]
+        if configuration["unreadable"]:
+            return ("Réglage indisponible : la configuration est illisible (%s) ; revérifie-la une fois les "
+                    "fichiers rétablis." % ", ".join(configuration["unreadable"]))
+        if agents.get("stale"):
+            return "Réglage indisponible : la configuration lue est périmée ; revérifie-la avant de régler."
+        mark = self.server.setting_uncertain.get(role_key)
+        if mark is not None:
+            if agents["at"] > mark:
+                self.server.setting_uncertain.pop(role_key, None)
+            else:
+                return ("Réglage indisponible : la dernière commande de réglage a une issue incertaine ; "
+                        "revérifie la configuration avant de réessayer.")
+        return None
+
+    def _proposal_blocked(self, role_key):
+        """Why a proposal for ``role_key`` may not be prepared now, or None.
+        Its source is what waits for the operator, the tracker -- not the
+        configuration. After an uncertain outcome, nothing goes before a
+        read of the tracker the cockpit started after it ended
+        (:meth:`_reread_proposals`): a read that ends later but began
+        before may not hold what the door wrote. A proposal with the same
+        words seen waiting was recorded, and is never prepared twice; one a
+        read started after the outcome does not show lifts the mark."""
+        server = self.server
+        with server.proposal_lock:
+            mark = server.proposal_uncertain.get(role_key)
+        if mark is None:
+            return None
+        read_model = server.read_model
+        requests, _, _ = self._assemble_requests(read_model.snapshot(), read_model.now())
+        with server.proposal_lock:
+            if any(request.quoi == mark["quoi"] for request in requests):
+                mark["verdict"] = "recorded"
+            verdict = mark["verdict"]
+            if verdict == "absent":
+                server.proposal_uncertain.pop(role_key, None)
+                return None
+        if verdict == "recorded":
+            return ("Proposition déjà enregistrée : « %s » attend ta décision dans Pour moi. Rien n’a été envoyé "
+                    "de nouveau." % mark["quoi"])
+        self._reread_proposals(role_key)
+        return ("Proposition indisponible : la dernière préparation a une issue incertaine ; le cockpit relit "
+                "ce qui t’attend avant tout nouvel essai.")
+
+    def _reread_proposals(self, role_key):
+        """Reads the tracker again in the background, once at a time per
+        role, and says from that read whether the proposal of the uncertain
+        outcome of ``role_key`` waits (``recorded``) or not (``absent``).
+        A read that failed, or that another read ended after, says nothing:
+        the next gesture starts another."""
+        server = self.server
+        with server.proposal_lock:
+            mark = server.proposal_uncertain.get(role_key)
+            if mark is None or mark["rereading"]:
+                return
+            mark["rereading"] = True
+        poller = next((p for p in getattr(server, "pollers", ()) if getattr(p, "source", None) == "beads"), None)
+
+        def reread():
+            started = server.read_model.now()
+            verdict = None
+            try:
+                if poller is not None and poller.poll_now():
+                    read_model = server.read_model
+                    requests, beads_row, _ = self._assemble_requests(read_model.snapshot(), read_model.now())
+                    if beads_row and beads_row["read_at"] is not None and beads_row["read_at"] >= started:
+                        verdict = ("recorded" if any(r.quoi == mark["quoi"] for r in requests) else "absent")
+            finally:
+                with server.proposal_lock:
+                    if verdict is not None and mark["verdict"] != "recorded":
+                        mark["verdict"] = verdict
+                    mark["rereading"] = False
+
+        threading.Thread(target=reread, daemon=True).start()
+
+    def _cleanup_blocked(self):
+        """Why the cleaning may not be confirmed now, or None: no preview of
+        its scope was read, the one read is stale, or the last cleaning had
+        an uncertain outcome no preview was read since."""
+        server = self.server
+        previewed = server.cleanup_previewed_at
+        if previewed is None:
+            return ("Nettoyage indisponible : aucun aperçu du périmètre n’a été lu ; examine le périmètre avant de "
+                    "le confirmer.")
+        mark = server.cleanup_uncertain
+        if mark is not None:
+            if previewed <= mark:
+                return ("Nettoyage indisponible : le dernier nettoyage a une issue incertaine ; examine de nouveau "
+                        "le périmètre avant de confirmer.")
+            server.cleanup_uncertain = None
+        if server.read_model.now() - previewed > server.cleanup_validity_seconds:
+            return ("Nettoyage indisponible : l’aperçu du périmètre est périmé ; examine-le de nouveau avant de "
+                    "confirmer.")
+        return None
+
+    def _usine_action(self, action, payload):
+        """POST /api/actions/regler, preparer_reglage, nettoyer (G2,
+        af-f8nlhr): (status, body). Each goes through its door; a door
+        that does not answer leaves an uncertain outcome, and the same
+        gesture waits for a new reading of its source: the configuration
+        for a setting, what waits for the operator for a proposal, the
+        scope for a cleaning."""
+        server = self.server
+        if payload.get("confirm") is not True:
+            return 400, {"error": "Confirmation requise : rien n’a été envoyé."}
+        if action == "nettoyer":
+            blocked = self._cleanup_blocked()
+            if blocked:
+                return 409, {"error": blocked, "incertain": server.cleanup_uncertain is not None}
+            try:
+                elements = cleanup.clean(server.factory_maintain_bin, payload.get("perimetre"), server.door_timeout)
+            except cleanup.ScopeChanged as exc:
+                server.cleanup_previewed_at = server.read_model.now()
+                return 409, {"error": str(exc), "perimetre": exc.scope["candidates"]}
+            except ActionUncertain as exc:
+                server.cleanup_uncertain = server.read_model.now()
+                return exc.status, {"error": str(exc), "incertain": True}
+            except ActionError as exc:
+                return 400, {"error": str(exc)}
+            server.cleanup_result = {"at": datetime.fromtimestamp(server.read_model.now(), tz=PARIS)
+                                     .strftime("%d/%m à %H:%M:%S"), "elements": elements}
+            return 200, {"ok": True, "elements": elements}
+        role_key = payload.get("role") or ""
+        agents = server.factory_checks.get("agents")
+        blocked = self._setting_blocked(agents, role_key) if action == "regler" else (
+            self._configuration_blocked(agents) or self._proposal_blocked(role_key))
+        if blocked:
+            uncertain = server.setting_uncertain if action == "regler" else server.proposal_uncertain
+            return 409, {"error": blocked, "incertain": role_key in uncertain}
+        configuration = agents["value"]["configuration"]
+        try:
+            planned = settings.plan(configuration, role_key, payload.get("principal") or "",
+                                    payload.get("effort") or "", payload.get("secours") or "")
+            if action == "regler":
+                read_back = settings.apply(server.provider_failover_bin, planned, server.door_timeout)
+            else:
+                if planned["supported"]:
+                    raise ActionError("Ce changement se règle par sa porte : applique-le au lieu d’en faire une "
+                                      "proposition.")
+                quoi = settings.propose(server.proposal_door_bin, planned, operator_language(), server.door_timeout)
+        except ActionUncertain as exc:
+            if action == "regler":
+                server.setting_uncertain[role_key] = server.read_model.now()
+            else:
+                with server.proposal_lock:
+                    server.proposal_uncertain[role_key] = {"at": server.read_model.now(), "quoi": planned["quoi"],
+                                                           "verdict": None, "rereading": False}
+                self._reread_proposals(role_key)
+            return exc.status, {"error": str(exc), "incertain": True}
+        except ActionError as exc:
+            return 400, {"error": str(exc)}
+        if action == "regler":
+            server.factory_checks.recheck("agents")
+            provider = configuration["providers"].get(read_back["provider"]) or {}
+            server.setting_outcomes[role_key] = (
+                "Réglage appliqué et relu par la porte à %s : les prochaines sessions du rôle %s démarrent sur %s ; "
+                "les sessions ouvertes gardent le leur." % (
+                    datetime.fromtimestamp(server.read_model.now(), tz=PARIS).strftime("%H:%M:%S"),
+                    planned["label"].lower(), provider.get("label") or read_back["provider"]))
+            return 200, {"ok": True, "lu": read_back}
+        server.setting_outcomes[("proposition", role_key)] = (
+            "Proposition préparée : « %s ». Elle attend ta décision dans Pour moi ; rien n’a changé pour ce rôle."
+            % quoi)
+        self._poll_soon()
+        return 200, {"ok": True, "quoi": quoi}
+
+    def _configuration_blocked(self, agents):
+        """Why nothing may be planned on the configuration read, or None:
+        unreadable or stale."""
+        configuration = agents["value"]["configuration"]
+        if configuration["unreadable"] or agents.get("stale"):
+            return self._setting_blocked(agents, None)
+        return None
+
+    def _poll_soon(self):
+        """Reads the sources of the cockpit again, in the background: what
+        waits for the operator shows a proposal just written."""
+        for poller in getattr(self.server, "pollers", ()):
+            poll_now = getattr(poller, "poll_now", None)
+            if poll_now is not None:
+                threading.Thread(target=poll_now, daemon=True).start()
+
+    def _usine_views(self, query, agents, selected):
+        """What the role panel and the cleaning panel of the page show,
+        from the address: ``reglage=modifier|portee|fait|propose``
+        (``principal=``, ``effort=``, ``secours=`` for the scope),
+        ``nettoyage=apercu|fait``."""
+        server = self.server
+        mode = (query.get("reglage") or [""])[0]
+        configuration = agents["value"]["configuration"]
+        setting = {"mode": "role", "blocked": self._setting_blocked(agents, selected) if selected else None,
+                   "outcome": server.setting_outcomes.get(selected)}
+        try:
+            if mode == "modifier":
+                setting.update(mode="modifier", offered=settings.offered(configuration, selected))
+            elif mode == "portee":
+                planned = settings.plan(configuration, selected, *((query.get(name) or [""])[0]
+                                                                   for name in ("principal", "effort", "secours")))
+                blocked = self._setting_blocked(agents, selected) if planned["supported"] else (
+                    self._configuration_blocked(agents) or self._proposal_blocked(selected))
+                setting.update(mode="portee", plan=planned, blocked=blocked)
+            elif mode == "propose":
+                setting.update(mode="propose", outcome=server.setting_outcomes.get(("proposition", selected)))
+        except ActionError as exc:
+            setting.update(mode="role", outcome=str(exc))
+        cleaning = {"result": server.cleanup_result, "blocked": None,
+                    "validity_seconds": server.cleanup_validity_seconds}
+        if (query.get("nettoyage") or [""])[0] == "apercu":
+            cleaning["mode"] = "apercu"
+            try:
+                cleaning["preview"] = cleanup.preview(server.factory_maintain_bin, server.door_timeout)
+                server.cleanup_previewed_at = server.read_model.now()
+                cleaning["blocked"] = self._cleanup_blocked()
+            except ActionError as exc:
+                cleaning.update(preview=None, error=str(exc))
+        return setting, cleaning
 
     def _recheck_factory_section(self):
         """POST /api/usine/reverifier (section=machine|connexions|fournisseurs|agents,
@@ -596,7 +913,9 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             return None, bool(row and row.get("failed_at") is not None), None
         checked = datetime.fromtimestamp(row["read_at"], tz=PARIS).strftime("%H:%M") if row["read_at"] else None
         sessions = (snapshot.get("sessions") or {}).get("value") or {}
-        return workflow_runs(row["value"], sessions.get("agents"), read_model.now()), False, checked
+        trace = self.server.session_trace.read() if self.server.session_trace is not None else None
+        runs = workflow_runs(row["value"], sessions.get("agents"), read_model.now(), trace)
+        return waiting_on(runs, self._chantier_decisions(snapshot, read_model.now())), False, checked
 
     def _query(self):
         return urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
@@ -625,9 +944,16 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         run = next((r for r in runs or [] if r["id"] == wanted), None)
         job_id = (query.get("job") or [view.get("job") or ""])[0] if job else None
         event = (query.get("event") or [str(view.get("event") or "")])[0] if job else ""
+        # What the detail opens: what the address says, else -- an address
+        # that names no job -- what the frozen state shows.
+        named = "job" in query
+        shown = {} if named else VIEW_DETAILS.get(view.get("detail") or "", {})
+        opened = _listed(query, "ouvert", shown.get("open", ()))
+        raw = _listed(query, "brut", shown.get("raw", ()))
+        session = (query.get("session") or [""])[0] or None
         stale_at = _stale_at(snapshot, RUN_SOURCES)
         main = render_run_page(run, now=read_model.now(), stale_at=stale_at, job_id=job_id,
-                               event=int(event) if event.isdigit() else None)
+                               event=int(event) if event.isdigit() else None, session=session, opened=opened, raw=raw)
         self._send_page(read_model, "runs", main, extra_css=RUNS_PAGE_CSS, status=200 if run else 404,
                         snapshot=snapshot)
 
@@ -727,6 +1053,23 @@ def _live_line(gc_row):
     return "● En marche · %d agent%s" % (agents, "s" if agents > 1 else "")
 
 
+# What the detail of a job opens in each frozen state of a job (the prototype
+# Runs): its sections and the prompts it shows raw.
+VIEW_DETAILS = {
+    "job-configuration": {"open": ("configuration",)},
+    "job-system-prompt": {"open": ("prompts", "system")},
+    "job-user-prompt-rendered": {"open": ("prompts", "user")},
+    "job-user-prompt-raw": {"open": ("prompts", "user"), "raw": ("user",)},
+}
+
+
+def _listed(query, name, default):
+    """The comma-separated values of `name` in the address, else `default`."""
+    if name not in query:
+        return tuple(default)
+    return tuple(value for value in query[name][0].split(",") if value)
+
+
 # The sources a run is drawn from: its workflow beads, and the sessions the
 # supervisor lists for its agents.
 RUN_SOURCES = ("runs", "sessions")
@@ -774,6 +1117,7 @@ def make_server(
         server.server_close()
         raise ValueError("cockpit bound to %r, not 127.0.0.1 — refusing" % (sockname[0],))
     server.read_model = read_model
+    server.uncertain = UncertainOutcomes()
     server.defect_counter = DefectCounter()
     # T13, af-cx20q9: no guard supplied (a caller that only wants GET /,
     # e.g. an older test) means every action is refused rather than left
@@ -799,8 +1143,29 @@ def make_server(
     # What a Runs state selects when the address names nothing (the
     # isolated cockpit of a frozen state; empty in service).
     server.runs_view = {}
+    # The settings and the upkeep of the page Usine (G2, af-f8nlhr): their
+    # doors (unset: refused as unknown commands), and what the page keeps
+    # between two readings -- the last outcome of a role's setting, the
+    # moment a setting, a proposal (with its words) or a cleaning had an
+    # uncertain outcome, the last cleaning and the last preview of its scope.
+    server.provider_failover_bin = None
+    server.factory_maintain_bin = None
+    server.proposal_door_bin = None
+    server.door_timeout = DOOR_TIMEOUT_SECONDS
+    server.setting_outcomes = {}
+    server.setting_uncertain = {}
+    server.proposal_uncertain = {}
+    server.proposal_lock = threading.Lock()
+    server.cleanup_result = None
+    server.cleanup_uncertain = None
+    server.cleanup_previewed_at = None
+    server.session_trace = None
     server.stop_driver = None
     server.benjamin_login = ""
+    # The address the operator opens the cockpit at: the HTTPS address of
+    # the node behind Tailscale Serve once it is set (I, af-cp4fzd).
+    server.public_url = ""
+    server.procedure_settings = dict
     # The rituals file of the Factory (« Rituels »): unset, nothing read.
     server.rituals_file = None
     # Where the projects are declared (cockpit.projects.descriptors): the
@@ -821,6 +1186,10 @@ def make_server(
                            "sessions": read_model.snapshot().get("sessions")},
     }, read_model.now, CHECK_VALIDITY_SECONDS if factory_check_validity_seconds is None
         else factory_check_validity_seconds)
+    # A preview of the scope of the cleaning stays current as long as a
+    # check of a section of the page does.
+    server.cleanup_validity_seconds = (CHECK_VALIDITY_SECONDS if factory_check_validity_seconds is None
+                                       else factory_check_validity_seconds)
     server.illisible_after_seconds = (
         ILLISIBLE_THRESHOLD_SECONDS if illisible_after_seconds is None else illisible_after_seconds
     )
@@ -832,3 +1201,12 @@ class _AlwaysRefuseGuard:
         from cockpit.access.guard import GuardResult, REFUSED_SESSION
 
         return GuardResult(False, REFUSED_SESSION)
+
+    def check_page_post(self, method, headers):
+        return self.check(method, headers)
+
+    def check_reader(self, headers):
+        """No identity configured: nothing to tell a reader from another."""
+        from cockpit.access.guard import GuardResult
+
+        return GuardResult(True, "")

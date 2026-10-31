@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """bin/factory-fix-preflight on a throwaway repository and fake gh/gc
-(af-frflvz). Before a Factory fix is coded, and again before its pull
-request opens, the tool names what else is changing the same files -- an
-open pull request, a recent branch -- and the decisions that name them, and
-lists every decision of the last days to read. #681 made fidelity blocking
-while Benjamin, in another session, had just decided it would not be
-(af-hcriwn); #682 undid it an hour later."""
+(af-frflvz, af-npz9v1.25). Before a Factory fix is coded, and again before
+its pull request opens, the tool names what else is changing the same files
+-- an open pull request, a recent branch -- and the decisions that name
+them, and lists every decision of the last days to read. #681 made fidelity
+blocking while Benjamin, in another session, had just decided it would not
+be (af-hcriwn); #682 undid it an hour later. It also asks where else the
+defect is: the fix names its class in docs/DEFECT_CLASSES.md, the tool gives
+the class's open occurrences and runs its control (study B, PR #720)."""
 
 import json
 import os
@@ -19,6 +21,22 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT / "bin" / "factory-fix-preflight"
 EXIT_FOUND, EXIT_REFUSED = 1, 2
+REGISTRY = """# Registre
+
+## P — Processus sans propriétaire
+
+- Invariant : Tout ce qu'un outil lance meurt avec lui.
+- Contrôle : `python3 control.py` — partiel.
+- Occurrences : #624.
+- Ouvertes : bin/tdd-step.
+
+## R — Une règle à deux endroits
+
+- Invariant : Une règle, une fonction.
+- Contrôle : aucun — pas encore.
+- Occurrences : #686.
+- Ouvertes : aucune connue.
+"""
 
 
 def iso(delta_hours):
@@ -37,6 +55,8 @@ class FactoryFixPreflightTest(unittest.TestCase):
             path = self.repo / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("base\n")
+        (self.repo / "docs" / "DEFECT_CLASSES.md").write_text(REGISTRY)
+        (self.repo / "control.py").write_text("print('contrôle vert')\n")
         self.commit("base")
         self.git(self.repo, "push", "-q", "origin", "HEAD:main")
         self.git(self.repo, "checkout", "-q", "-b", "fix/mine")
@@ -76,8 +96,9 @@ class FactoryFixPreflightTest(unittest.TestCase):
         self.git(self.repo, "push", "-q", "origin", name)
         self.git(self.repo, "checkout", "-q", "fix/mine")
 
-    def preflight(self, *paths, expect=0):
-        proc = subprocess.run((str(TOOL), "--repo", str(self.repo), *paths), env=self.env, text=True,
+    def preflight(self, *paths, expect=0, defect_class="P"):
+        proc = subprocess.run((str(TOOL), "--repo", str(self.repo), "--class", defect_class, *paths), env=self.env,
+                              text=True,
                               capture_output=True)
         self.assertEqual(expect, proc.returncode, proc.stdout + proc.stderr)
         return json.loads(proc.stdout)
@@ -168,8 +189,49 @@ class FactoryFixPreflightTest(unittest.TestCase):
         self.assertIn("gh pr list", answer["error"])
 
     def test_no_path_is_refused(self):
-        proc = subprocess.run((str(TOOL), "--repo", str(self.repo)), env=self.env, text=True, capture_output=True)
+        proc = subprocess.run((str(TOOL), "--repo", str(self.repo), "--class", "P"), env=self.env, text=True,
+                              capture_output=True)
         self.assertNotEqual(0, proc.returncode)
+
+    def test_no_class_is_refused(self):
+        # « Où ailleurs ? » is not optional: a fix that names no class is
+        # the fix of the observed case alone.
+        proc = subprocess.run((str(TOOL), "--repo", str(self.repo), "bin/ticket-exit"), env=self.env, text=True,
+                              capture_output=True)
+        self.assertEqual(2, proc.returncode)
+        self.assertIn("--class", proc.stderr)
+
+    def test_the_class_gives_its_open_occurrences_and_runs_its_control(self):
+        answer = self.preflight("bin/ticket-exit")
+
+        self.assertEqual(("P", "Tout ce qu'un outil lance meurt avec lui.", "bin/tdd-step."),
+                         (answer["class"]["code"], answer["class"]["invariant"], answer["class"]["open"]))
+        self.assertEqual([("python3 control.py", True, ["contrôle vert"])],
+                         [(c["command"], c["ok"], c["tail"]) for c in answer["control"]])
+
+    def test_a_red_control_stops_the_fix(self):
+        (self.repo / "control.py").write_text("raise SystemExit('bin/ticket-author lance sans propriétaire')\n")
+
+        answer = self.preflight("bin/ticket-exit", expect=EXIT_FOUND)
+
+        self.assertFalse(answer["ok"])
+        self.assertEqual([1], [c["exit"] for c in answer["control"]])
+
+    def test_a_class_without_control_runs_nothing_and_is_clear(self):
+        answer = self.preflight("bin/ticket-exit", defect_class="R")
+
+        self.assertEqual((True, []), (answer["ok"], answer["control"]))
+        self.assertIn("aucun", answer["class"]["control"])
+
+    def test_a_change_that_fixes_no_defect_says_so(self):
+        answer = self.preflight("bin/ticket-exit", defect_class="aucune")
+
+        self.assertEqual((True, "aucune", []), (answer["ok"], answer["class"]["code"], answer["control"]))
+
+    def test_a_class_missing_from_the_register_is_refused(self):
+        answer = self.preflight("bin/ticket-exit", expect=EXIT_REFUSED, defect_class="Z")
+
+        self.assertIn("absente de docs/DEFECT_CLASSES.md", answer["error"])
 
 
 if __name__ == "__main__":

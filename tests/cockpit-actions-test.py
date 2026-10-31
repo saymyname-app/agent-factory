@@ -216,8 +216,9 @@ class ActionsSeamTest(unittest.TestCase):
         polling interval under a loaded CI runner's subprocess-spawn
         latency is what made this flaky (observed: PR #372 CI runs
         36788068757, 36795195349)."""
+        # The page's own Origin: a POST without it is refused (I, af-cp4fzd).
         req = urllib.request.Request(
-            "http://127.0.0.1:%d/api/health/recheck" % self.port, method="POST"
+            "http://127.0.0.1:%d/api/health/recheck" % self.port, method="POST", headers={"Origin": self.origin}
         )
         with urllib.request.urlopen(req, timeout=DEADLINE_SECONDS) as resp:
             resp.read()
@@ -518,6 +519,49 @@ class ActionsSeamTest(unittest.TestCase):
         calls = self.read_calls()
         update_calls = [c for c in calls if c and c[0] == "update"]
         self.assertGreaterEqual(len(update_calls), 2)
+
+    # ------------------------------------------------------------------
+    # B (af-4uzgzm), af-fksj2c: after an uncertain outcome the page draws
+    # the gesture unavailable for as long as the server refuses it -- not
+    # usable again because the forced re-read failed.
+    # ------------------------------------------------------------------
+    def test_an_uncertain_gesture_is_drawn_unavailable_until_the_source_is_read_again(self):
+        door = os.path.join(self.tmp.name, "escalation-door")
+        with open(door, "w") as fh:
+            fh.write("#!/bin/sh\nexec sleep 600\n")
+        os.chmod(door, 0o755)
+        self.write_beads([escalation_bead("af-unsr", "choisir le nom de la page", "le projet attend ton choix",
+                                          SOME_OPTIONS, "2026-09-30T08:00:00Z")])
+        self.start_cockpit({"COCKPIT_ESCALATION_DOOR_BIN": door, "COCKPIT_ACTION_TIMEOUT_SECONDS": "1"})
+        self.wait_for_requests(lambda p: len(p["requests"]) == 1)
+
+        def opened():
+            body = self.home_body()
+            start = body.index('id="d-af-unsr"')
+            return body[start:body.index("</article>", start)]
+
+        self.assertNotIn("<fieldset", opened(), "the gestures are unavailable before any gesture")
+        # From now on the tracker cannot be read: the re-read the expiry
+        # forces fails.
+        open(self.fail_flag_file, "w").close()
+        status, payload = self.post_action("repondre", {"bead_id": "af-unsr", "lettre": "a", "confirm": True})
+        self.assertEqual(504, status, payload)
+        self.assertTrue(payload.get("incertain"), payload)
+
+        article = opened()
+        self.assertIn('<fieldset class="pn-gestures" disabled>', article,
+                      "the gesture the server refuses is drawn usable")
+        self.assertNotIn("data-action=", article.split('<fieldset class="pn-gestures" disabled>', 1)[0],
+                         "a gesture of the request is drawn outside what is unavailable")
+        self.assertIn("le cockpit relit la source", article)
+        status, payload = self.post_action("repondre", {"bead_id": "af-unsr", "lettre": "a", "confirm": True})
+        self.assertEqual(409, status, payload)
+
+        # The tracker answers again: once read, the gesture comes back.
+        os.remove(self.fail_flag_file)
+        self.wait_for_requests(lambda p: len(p["requests"]) == 1)
+        wait_until(lambda: "<fieldset" not in opened(), expected="the gesture usable once the source was read again",
+                   last_seen=opened)
 
 
 if __name__ == "__main__":

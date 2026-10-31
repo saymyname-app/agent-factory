@@ -56,8 +56,10 @@ def http_get(port, path, timeout=3):
 
 
 def http_post(port, path, timeout=3):
+    # The page's own Origin: a POST without it is refused (I, af-cp4fzd).
     req = urllib.request.Request(
-        "http://127.0.0.1:%d%s" % (port, path), data=b"", method="POST"
+        "http://127.0.0.1:%d%s" % (port, path), data=b"", method="POST",
+        headers={"Origin": "http://127.0.0.1:%d" % port},
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.status
@@ -400,6 +402,9 @@ class CockpitHealthZoneTest(unittest.TestCase):
         self.start_cockpit(extra_env={
             "COCKPIT_BEADS_POLL_SECONDS": "300",
             "COCKPIT_GIT_POLL_SECONDS": "300",
+            # Longer than http_post's ordinary 3 s request budget: recheck
+            # is synchronous, so its caller must use the whole retry budget.
+            "COCKPIT_TEST_BD_LIST_DELAY_SECONDS": "3.5",
         })
         wait_until(lambda: self.health() if self.health()["lines"] == [] else None)
 
@@ -415,7 +420,7 @@ class CockpitHealthZoneTest(unittest.TestCase):
         # cockpit down) -- so re-issue the recheck instead of trusting the
         # very first one to land.
         def _recheck_shows_boucle():
-            status = http_post(self.port, "/api/health/recheck")
+            status = http_post(self.port, "/api/health/recheck", timeout=DEFAULT_WAIT_SECONDS)
             self.assertIn(status, (200, 303))  # urllib follows the 303 -> final GET's 200
             health = self.health()
             return health if any("boucle" in l["text"] for l in health["lines"]) else None

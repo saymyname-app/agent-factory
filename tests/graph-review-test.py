@@ -422,6 +422,121 @@ class GraphReviewTest(unittest.TestCase):
         self.assertIn("bd-patch", check["reason"])
         self.assertEqual("favorable", result["graph"]["verdict"])
 
+    # --- af-npz9v1.23: a revision judges only what it changes ----------------
+
+    RULED_WORDS = "Benjamin, ses mots : « Publier les 9 »"
+
+    def as_published_revision(self, revise, replacement_of=None):
+        """23/10/2026, af-r1f9ac6bc: the draft revises a convoy published
+        from draft-0, whose second pass refused T2 on its size and whose
+        refusal Benjamin ruled « publier ». T1 is delivered; the revision
+        carries T2 and T3 as `revise` changes them."""
+        original = self.draft()
+        text0 = self.text(original)
+        d0 = self.digest(text0)
+
+        def answers(refused=()):
+            return {"checks": {name: ({"state": "unfavorable", "reason": "deux fonctions sous un titre"}
+                                      if name in refused else {"state": "favorable", "reason": ""})
+                               for name in ("demonstrable_alone", "criteria_observable_falsifiable", "size_tenable",
+                                            "same_surface_ordered", "declared_scope_includes_wiring")}}
+        record = {"pass": 2, "digest": d0, "tickets": {"T1": answers(), "T2": answers(("size_tenable",)),
+                                                       "T3": answers()}, "graph": {"checks": {}}}
+        decisions = {"T2": {"decision": "publish", "words": self.RULED_WORDS, "by": "benjamin", "at": "x",
+                            "digest": d0}}
+
+        def change(draft):
+            draft["tickets"] = [t for t in draft["tickets"] if t["id"] != "T1"]
+            for ticket in draft["tickets"]:
+                ticket["blocked_by"] = [b for b in ticket["blocked_by"] if b != "T1"]  # delivered: dropped
+            revise({t["id"]: t for t in draft["tickets"]})
+        self.rewrite_draft(change)
+        state = json.loads(self.state_path.read_text())
+        state["beads"]["draft-1"]["metadata"]["revises_digest"] = "sha256:published"
+        if replacement_of:
+            state["beads"]["draft-1"]["metadata"]["replacement_of"] = replacement_of
+
+        def ticket(key, status):
+            return {"title": f"{key} — titre", "description": "", "status": status, "labels": [],
+                    "metadata": {"gc.ticket_id": key, "gc.ticket_kind": "vertical_slice", "gc.graph_digest": d0}}
+        state["beads"].update({
+            "draft-0": {"title": "Graphe publié", "description": text0, "status": "open", "labels": [],
+                        "metadata": {"approved_digest": d0, "gc.graph_review.pass.2": json.dumps(record),
+                                     "gc.graph_review.decisions": json.dumps(decisions)}},
+            "convoy-1": {"title": "Convoi", "description": "", "status": "open", "labels": [],
+                         "metadata": {"gc.graph_digest": "sha256:published"},
+                         "tracks": ["bead-t1", "bead-t2", "bead-t3"]},
+            "bead-t1": ticket("T1", "closed"), "bead-t2": ticket("T2", "open"), "bead-t3": ticket("T3", "open"),
+        })
+        self.state_path.write_text(json.dumps(state))
+
+    def change_t3_criterion(self, tickets):
+        tickets["T3"]["acceptance_criteria"][0]["observable"] = "la région « total » affiche « Total : 0 » en gras"
+
+    def test_a_revision_asks_only_what_it_changes_and_carries_what_benjamin_ruled(self):
+        self.as_published_revision(self.change_t3_criterion)
+        self.requested()
+
+        brief = {t["id"]: t for t in self.tool("brief", "draft-1").json["tickets"]}
+
+        self.assertEqual({}, brief["T2"]["checks"])
+        self.assertEqual([], brief["T2"]["revision"]["changed"])
+        self.assertIn("publier tel quel", brief["T2"]["revision"]["carried"]["size_tenable"])
+        self.assertEqual(["acceptance_criteria"], brief["T3"]["revision"]["changed"])
+        self.assertEqual({"demonstrable_alone", "criteria_observable_falsifiable"}, set(brief["T3"]["checks"]))
+        refused = self.record(self.verdict_file(lambda verdict: verdict["tickets"]["T3"]["checks"].update(
+            {"size_tenable": {"state": "unfavorable", "reason": "trop gros"}})))
+        self.assertEqual(1, refused.returncode, refused.stdout)
+        self.assertIn("question hors liste (size_tenable)", refused.stderr)
+
+    def test_an_unchanged_ticket_takes_its_ruling_instead_of_being_refused_again(self):
+        self.as_published_revision(self.change_t3_criterion)
+
+        result = self.reviewed()
+
+        size = result["tickets"]["T2"]["checks"]["size_tenable"]
+        self.assertEqual("favorable", size["state"])
+        self.assertIn(self.RULED_WORDS, size["reason"])
+        self.assertEqual(("draft-0", "unfavorable"), (size["carried_from"]["draft"], size["carried_from"]["state"]))
+        self.assertEqual([], result["refusals"])
+        self.assertEqual(0, self.tool("check", "draft-1").returncode)
+
+    def test_a_changed_criterion_is_judged_again(self):
+        self.as_published_revision(self.change_t3_criterion)
+        self.reviewer_refuses({"1": {"T3": {"criteria_observable_falsifiable": "« en gras » n'est pas observable"}}})
+
+        result = self.reviewed()
+
+        self.assertEqual(["T3"], [refusal["target"] for refusal in result["refusals"]])
+        self.assertNotIn("carried_from", result["tickets"]["T3"]["checks"]["criteria_observable_falsifiable"])
+
+    def test_a_ruling_sent_back_is_asked_again(self):
+        self.as_published_revision(self.change_t3_criterion)
+        state = json.loads(self.state_path.read_text())
+        meta = state["beads"]["draft-0"]["metadata"]
+        meta["gc.graph_review.decisions"] = meta["gc.graph_review.decisions"].replace('"publish"', '"rework"')
+        self.state_path.write_text(json.dumps(state))
+        self.requested()
+
+        brief = {t["id"]: t for t in self.tool("brief", "draft-1").json["tickets"]}
+
+        self.assertEqual({"size_tenable"}, set(brief["T2"]["checks"]))
+
+    def test_a_replacement_is_compared_to_the_ticket_it_replaces(self):
+        def replace_t2(tickets):
+            t2 = tickets["T2"]
+            t2["id"], t2["title"] = "T2R", f"{t2['title']} — replacement of T2"
+            t2["what_it_delivers"] += " Authorized replacement: decision d-1; stopped ticket bead-t2 (T2)."
+            tickets["T3"]["blocked_by"] = ["T2R"]
+        self.as_published_revision(replace_t2, replacement_of="bead-t2")
+        self.requested()
+
+        brief = {t["id"]: t for t in self.tool("brief", "draft-1").json["tickets"]}
+
+        self.assertEqual("T2", brief["T2R"]["revision"]["compared_to"]["ticket"])
+        self.assertEqual(([], {}), (brief["T2R"]["revision"]["changed"], brief["T2R"]["checks"]))
+        self.assertEqual([], brief["T3"]["revision"]["changed"])
+
     # --- af-rmz8x2: a ticket's size counts the cost of its evaluation -------
 
     def with_datasets(self, declared, cited):

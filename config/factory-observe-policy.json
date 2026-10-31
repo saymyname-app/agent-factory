@@ -11,7 +11,7 @@
     },
     {
       "name": "mayor",
-      "areas": ["planning_runs", "adaptations", "delivery"],
+      "areas": ["planning_runs", "adaptations", "delivery", "human_requests"],
       "rank": 2,
       "model": null,
       "effort": "medium",

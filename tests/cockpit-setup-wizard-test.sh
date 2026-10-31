@@ -92,6 +92,22 @@ grep -qi "dépôt" "$ERR" || fail "expected a French refusal mentioning the repo
 pass
 
 # ---------------------------------------------------------------------------
+# 2b. A secret file that already exists, readable by others, is left
+#     readable by its owner alone once written again (I, af-cp4fzd, F1.7).
+# ---------------------------------------------------------------------------
+OPEN_PATH="$TEST_TMP/outside-repo/open-secrets.json"
+printf 'ancien\n' >"$OPEN_PATH"
+chmod 0644 "$OPEN_PATH"
+printf '{"token":"t","user_key":"u","e2e_key":"e"}' \
+  | "$WIZARD" pushover-secrets --path "$OPEN_PATH" >"$OUT" 2>"$ERR"
+[ "$(stat -c %a "$OPEN_PATH")" = "600" ] || fail "an existing secrets file stays readable by others: $(stat -c %a "$OPEN_PATH")"
+pass
+chmod 0644 "$OPEN_PATH"
+printf '%s\n' "$SECRET_HC_URL" | "$WIZARD" heartbeat-secret --path "$OPEN_PATH" >"$OUT" 2>"$ERR"
+[ "$(stat -c %a "$OPEN_PATH")" = "600" ] || fail "an existing heartbeat file stays readable by others: $(stat -c %a "$OPEN_PATH")"
+pass
+
+# ---------------------------------------------------------------------------
 # 3. heartbeat-secret: same contract, for the Healthchecks.io ping URL.
 # ---------------------------------------------------------------------------
 HC_PATH="$TEST_TMP/outside-repo/heartbeat-url.txt"
