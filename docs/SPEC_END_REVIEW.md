@@ -45,7 +45,9 @@ the reason, and launches nothing.
 `bin/convoy-advance` calls `settle` in the pass that ran the gate, right
 after `bin/outcome-evaluation settle`: the Outcome Evaluation and the review
 are launched by the pass that recorded the three verdicts, both on their
-commit, and neither waits for the other (`docs/CONVOY_ADVANCE.md`).
+commit, and neither waits for the other (`docs/CONVOY_ADVANCE.md`). If host
+product capacity defers the Outcome Evaluation, that pass does not settle the
+review: the next pass retries both launches on the same commit.
 
 | `action` | Meaning |
 | --- | --- |
@@ -216,8 +218,9 @@ it.
 - **« En même temps que l'Outcome Evaluation » means the same pass and the
   same commit.** The pass that records the three verdicts settles the
   Outcome Evaluation, then the review, one after the other; the two sessions
-  then run side by side. A dispatch the door defers puts one of them a pass
-  later.
+  then run side by side. A product-capacity deferral holds the review so the
+  next pass can retry both. A deferral by the review's own dispatch door can
+  still put that review one pass later.
 - **No early stop on review findings.** The rounds stop on the bound
   (`bounds.end_rounds`). The early stops of the Spec §8 — a round that did
   not reduce, the same refusal twice — are defined on the user stories the

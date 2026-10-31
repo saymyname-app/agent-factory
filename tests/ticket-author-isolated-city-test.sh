@@ -376,9 +376,9 @@ workflow_done() { [ "$(gc bd show "$1" --json | jq -r '.[0].status')" = closed ]
 
 # --- every ticket is started by the order, each in a session of its own ---------
 all_taken() { for t in "${ALL[@]}"; do step_seen "$t" workspace || return 1; done; }
-# A controller tick and three formula claims can take just over seven minutes
-# under gc 1.5 even while all sessions keep advancing (af-x3re4a).
-wait_for 600 all_taken || fail "the three tickets were not all taken by an author session within 600s"
+# A controller tick and formula claims exceeded ten minutes on a loaded gc 1.5
+# host while the sessions stayed healthy (af-nedjis).
+wait_for 900 all_taken || fail "the three tickets were not all taken by an author session within 900s"
 for t in "${ALL[@]}"; do
   [ "$(field "$t" gc.dispatched_via)" = dispatch-door ] || fail "${NAME[$t]} was not started through the dispatch door"
 done

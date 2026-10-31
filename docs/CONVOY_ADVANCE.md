@@ -785,7 +785,9 @@ The review is so launched by the pass that recorded the three mechanical
 verdicts, on their commit — the pass, and the commit, the Outcome Evaluation
 is launched in and on (T24): the two are made in parallel. Until the review
 is favorable there, `spec_end` carries the refusal of condition 6 in its
-`reason`.
+`reason`. When host product capacity defers the Outcome Evaluation, the pass
+does not settle the review; the next pass retries both on that commit. A
+deferral by the review's own dispatch door is retried independently.
 
 One reviewer session reviews the whole assembled diff of the Spec. A review
 left without result is launched once more, then stopped and raised. A
