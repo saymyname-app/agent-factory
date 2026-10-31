@@ -1,6 +1,7 @@
 {
   "generated_at": "2026-10-12T12:00:00+02:00",
   "synthetic": true,
+  "https_identity_proxy": true,
   "ui": {
     "id": "result-repairing",
     "page": "home",
