@@ -57,7 +57,7 @@ class FactoryStop(unittest.TestCase):
 
     def test_a_clean_stop_shows_its_work_is_followed_on_facts_then_is_confirmed_and_verified_at_the_resume(self):
         address, writes = serve_stop(self.tree, "health-content", {
-            "work": [AUTHOR, REVIEWER], "drains_in_seconds": {"relecteur-notes": 1, "auteur-recus": 9}})
+            "work": [AUTHOR, REVIEWER], "drains_in_seconds": {"relecteur-notes": 1, "auteur-recus": 15}})
 
         # Before the confirmation: what the stop will wait for, and nothing asked.
         [before] = self.walked(address, [ASK])
