@@ -1213,10 +1213,12 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
 
     def test_the_answer_a_proof_reaches_ticket_end_and_the_next_pass_is_idempotent(self):
         tip = self.finished_interface_ticket()
+        decision_commit = self.git("rev-parse", "main")
+        self.assertNotEqual(decision_commit, tip)
         line = {"text": self.shown_state(T1)["demonstration_line"], "state": "unobservable",
                 "evidence": "evaluation.demo", "reason": "la demi-phrase ne se voit pas sur le produit lancé",
                 "cause": "criterion"}
-        round_ = {"kind": "evaluation", "commit": tip, "criteria": [], "demonstration_line": line,
+        round_ = {"kind": "evaluation", "commit": decision_commit, "criteria": [], "demonstration_line": line,
                   "roles": {"author": None, "evaluator": None, "same_provider": None, "other_declared": []},
                   "environment": [{"dataset": "content", "address": "http://127.0.0.1:40000"}],
                   "recorded_by": "delivery-evaluator-fx", "outcome": "planning_exception", "verdict": "unfavorable",
@@ -1225,7 +1227,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.edit(T1, metadata={**metadata,
                                 "gc.flow.evaluation": json.dumps({"rounds": [round_]}),
                                 "gc.flow.verdict.evaluation": json.dumps({
-                                    "state": "unfavorable", "commit": tip, "at": round_["at"]})})
+                                    "state": "unfavorable", "commit": decision_commit, "at": round_["at"]})})
         request = {"quoi": f"Planning Exception sur {T1} : ligne de démonstration inobservable",
                    "pourquoi": "Le produit lancé ne peut pas montrer cette demi-phrase.",
                    "que_faire": [{"option": "Juger ce qui est inobservable prouvé par son test de critère vert",

@@ -4894,10 +4894,11 @@ def cmd_record_evaluation(args: argparse.Namespace) -> int:
         round_["coverage"] = coverage
     if given.get("screen_findings"):
         round_["screen_findings"] = given["screen_findings"]
-    # What the operator judged proven by its criterion test, on lifting the
-    # immediately preceding refusal at this commit, is counted proven.
+    # What the operator judged proven by its criterion test is counted at a
+    # later commit only when the frozen criterion tests are green there.
     lifts = park_lifts_record(metadata[KEY_PARK_LIFTS]) if KEY_PARK_LIFTS in metadata else []
-    proven = evaluation_proven_by_test(round_, record["rounds"], lifts)
+    green = tdd_record("green", metadata[TDD_PREFIX + "green"]) if TDD_PREFIX + "green" in metadata else {}
+    proven = evaluation_proven_by_test(round_, record["rounds"], lifts, green.get("commit"))
     if proven:
         round_["proven_by_test"] = proven
     round_["outcome"] = evaluation_outcome(evaluation_judged(round_), round_.get("screen_findings"))

@@ -44,35 +44,44 @@ def names_in_texts(candidates, texts) -> list[str]:
             if any(re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", text) for text in texts)]
 
 
-def evaluation_proven_by_test(round_: dict, previous_rounds: list[dict], lifts: list[dict]) -> list[str]:
+def evaluation_proven_by_test(round_: dict, previous_rounds: list[dict], lifts: list[dict],
+                              green_commit: str | None = None) -> list[str]:
     """Items the current evaluation may count proven by their criterion test.
 
-    The immediately preceding evaluation must have raised the Planning
-    Exception at the same commit, and the answered lift must carry the exact
-    item and text between that refusal and this round.
+    The answered lift must carry the exact item and text of the latest
+    Planning Exception. At a later commit, the frozen criterion tests must
+    be green again at that exact commit; a historical verdict alone is not
+    proof of the new tip.
     """
-    previous = next((entry for entry in reversed(previous_rounds)
-                     if entry.get("kind", "evaluation") == "evaluation"), None)
-    if not previous or previous.get("outcome") != "planning_exception" \
-            or previous.get("commit") != round_.get("commit"):
+    evaluations = [entry for entry in previous_rounds if entry.get("kind", "evaluation") == "evaluation"]
+    previous = evaluations[-1] if evaluations else None
+    if previous and previous.get("outcome") == "planning_exception" \
+            and previous.get("commit") == round_.get("commit"):
+        source_round = previous
+    elif green_commit == round_.get("commit"):
+        source_round = next((entry for entry in reversed(evaluations)
+                             if entry.get("outcome") == "planning_exception"), None)
+    else:
+        source_round = None
+    if source_round is None:
         return []
 
     def items(entry):
         named = [(f"critère {item.get('number')}", item) for item in entry.get("criteria", [])]
         return named + [("ligne de démonstration", entry.get("demonstration_line") or {})]
 
-    before = dict(items(previous))
+    before = dict(items(source_round))
     valid = []
     for name, item in items(round_):
-        source = before.get(name) or {}
+        source_item = before.get(name) or {}
         exact = {"what": name, "text": item.get("text")}
         if (item.get("state"), item.get("cause")) != ("unobservable", "criterion") \
-                or (source.get("state"), source.get("cause"), source.get("text")) != (
+                or (source_item.get("state"), source_item.get("cause"), source_item.get("text")) != (
                     "unobservable", "criterion", item.get("text")):
             continue
         if any(lift.get("cause") == "planning_exception"
                and lift.get("option") == PROVEN_BY_TEST_OPTION
-               and previous.get("at", "") <= lift.get("parked_at", "") <= lift.get("at", "") <= round_.get("at", "")
+               and source_round.get("at", "") <= lift.get("parked_at", "") <= lift.get("at", "") <= round_.get("at", "")
                and exact in lift.get("proven_by_test", []) for lift in lifts):
             valid.append(name)
     return valid
