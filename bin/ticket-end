@@ -360,7 +360,8 @@ def condition_evaluation(ticket: dict[str, Any], tip: str, evidence: Evidence, r
         return False, "le démarrage du produit ne vaut évaluation que pour un prefactoring ou un ticket sans interface"
     # ADR-0030 L4: the demonstration line; the criteria are proven by the frozen tests.
     line = last.get("demonstration_line") or {}
-    proven = evaluation_proven_by_test(last, rounds[:-1], ticket.get("park_lifts") or [])
+    green_commit = ((ticket.get("tdd") or {}).get("green") or {}).get("commit")
+    proven = evaluation_proven_by_test(last, rounds[:-1], ticket.get("park_lifts") or [], green_commit)
     declared = last.get("proven_by_test") or []
     if line.get("state") != "observed" and not (
             declared == proven and "ligne de démonstration" in proven):

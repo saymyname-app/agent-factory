@@ -92,6 +92,45 @@ class SharedRules(unittest.TestCase):
         self.assertEqual([], evaluation_proven_by_test(
             {**replay, "commit": "b" * 40}, [refused], [lift]))
 
+    def test_proven_by_test_migrates_the_r3_and_d_decisions_only_to_a_green_tip(self):
+        item = {"text": "la ligne", "state": "unobservable", "cause": "criterion"}
+        lift = {"cause": "planning_exception", "option": "a", "parked_at": "2026-10-21T10:01:00Z",
+                "at": "2026-10-21T10:02:00Z",
+                "proven_by_test": [{"what": "ligne de démonstration", "text": "la ligne"}]}
+        histories = {
+            # af-plu8kn: refusal and answered replay at cbf516…, then a new-tip replay at aeb0c5….
+            "R3": ["cbf516a2760aeb6da72944f5fb93f7d22ac27778",
+                   "cbf516a2760aeb6da72944f5fb93f7d22ac27778",
+                   "aeb0c5e74f36c2f9d8caf230fb04794e26c9960e"],
+            # af-ten1sp: the same decision survived several evaluations and commit changes up to 62660d….
+            "D": ["95462ee4d7bb5092e49979586172a55c0ed1c027",
+                  "95462ee4d7bb5092e49979586172a55c0ed1c027",
+                  "7f9313b62664632082d3736c1f6257a2cb6655e8",
+                  "548d0b54d3345b97c52af800787f22702e17cbf2",
+                  "62660d5d45b8248cf9463343d98d74f70a87239b"],
+        }
+        for name, commits in histories.items():
+            with self.subTest(history=name):
+                rounds = [
+                    {"kind": "evaluation", "commit": commit, "criteria": [], "demonstration_line": item,
+                     "outcome": "planning_exception" if index == 0 else "favorable",
+                     "proven_by_test": ["ligne de démonstration"] if index else None,
+                     "at": f"2026-10-2{index + 1}T10:0{index}:00Z"}
+                    for index, commit in enumerate(commits)
+                ]
+                rounds[0].pop("proven_by_test")
+                current, previous = rounds[-1], rounds[:-1]
+                tip = current["commit"]
+
+                self.assertGreaterEqual(len(rounds), 2)
+                self.assertGreater(len(set(commits)), 1)
+                self.assertEqual(["ligne de démonstration"],
+                                 evaluation_proven_by_test(current, previous, [lift], tip))
+                self.assertEqual([], evaluation_proven_by_test(current, previous, [], tip),
+                                 "un verdict favorable historique seul ne migre aucune preuve")
+                self.assertEqual([], evaluation_proven_by_test(current, previous, [lift], commits[0]),
+                                 "le vert doit être prouvé à la pointe actuelle")
+
 
 class OneRuleOneFunctionLint(unittest.TestCase):
     def test_every_known_reader_calls_its_shared_rule(self):
