@@ -12,7 +12,13 @@ synthetic sources only:
 
 - a synthetic supervisor that answers as the installed one does
   (`tests/fixtures/cockpit/core/fake_gc.py`, held to the real contract by
-  `tests/cockpit-fake-gc-contract-test.py`);
+  `tests/cockpit-fake-gc-contract-test.py`), and that keeps what the
+  installed one keeps of each session the dataset says -- the session, what
+  its provider recorded, when it woke and stopped
+  (`GET /v0/city/<city>/session/<id>`, `…/transcript?format=raw`,
+  `GET /v0/city/<city>/events?type=session.woke`, as gc 1.5.0 answers
+  them) -- and sends the sessions the dataset dispatches once the cockpit
+  is up;
 - a synthetic tracker (`tests/fixtures/cockpit/requests/fake-bd`) and the
   projects declared for this launch alone;
 - the knowledge repositories of those projects (their roadmap and release
@@ -23,11 +29,15 @@ synthetic sources only:
   otherwise no repository is declared, and GitHub is not read;
 - a clock that starts at the fixed time of the dataset (`generated_at`);
 - an empty environment: a temporary HOME, no local settings file, so no
-  secret, no notification, no heartbeat and no project clone. Only the mark
-  of the launch (`FACTORY_LAUNCH_ID`) is kept from the launcher's;
+  secret, no notification, no heartbeat and no project clone -- but the
+  heartbeat a dataset declares (`heartbeat`: where it goes, at what pace;
+  I, af-cp4fzd), its address written as the secret it is in service, in a
+  private file of the temporary HOME. Only the mark of the launch
+  (`FACTORY_LAUNCH_ID`) is kept from the launcher's;
 - the doors that change the Factory (`bin/proposal-door`,
-  `bin/escalation-door`, `bin/factory-session-loop-guard`, `gc order run`)
-  are the real ones, run on the tracker of the launch through a synthetic
+  `bin/escalation-door`, `bin/factory-session-loop-guard`, `gc order run`,
+  `bin/order-pause`, and for the settings and the upkeep `bin/provider-failover`,
+  `bin/factory-maintain`, `bin/operator-config`) are the real ones, run on the tracker of the launch through a synthetic
   `gc` (`tests/fixtures/cockpit/synthetic-city/`): a gesture is recorded
   there as in service, and read back from there (B, af-4uzgzm). A dataset
   may say a door expires, or expires once its record is written
@@ -58,6 +68,7 @@ import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -77,6 +88,11 @@ DOORS = {
     "loop-guard": (ROOT / "bin" / "factory-session-loop-guard", "COCKPIT_LOOP_GUARD_BIN"),
     # Pause and resume of an order (af-npz9v1.15), for B's « relancer un order ».
     "order-pause": (ROOT / "bin" / "order-pause", "COCKPIT_ORDER_PAUSE_BIN"),
+    # The settings and the upkeep of the Factory (G2, af-f8nlhr; af-npz9v1.20),
+    # each on what the launch holds (`door_environment`).
+    "provider-failover": (ROOT / "bin" / "provider-failover", "COCKPIT_PROVIDER_FAILOVER_BIN"),
+    "factory-maintain": (ROOT / "bin" / "factory-maintain", "COCKPIT_FACTORY_MAINTAIN_BIN"),
+    "operator-config": (ROOT / "bin" / "operator-config", "COCKPIT_OPERATOR_CONFIG_BIN"),
     "gc": (SYNTHETIC / "gc", "COCKPIT_GC_BIN"),
 }
 # How a dataset may say a door answers (`doors`): it never does, or it
@@ -148,6 +164,107 @@ def fall_silent_once_read(supervisor, cockpit_url: str) -> None:
     supervisor.go_down()
 
 
+def serve_sessions(supervisor, city: synthetic_city.SyntheticCity) -> None:
+    """Make `supervisor` answer what the installed one keeps of each session
+    of `city` (gc 1.5.0): ``GET /v0/city/<city>/session/<id>``, the session
+    as it lists it; ``…/session/<id>/transcript?format=raw``, what its
+    provider recorded (``{"id", "format": "raw", "messages"}``); ``GET
+    /v0/city/<city>/events?type=session.woke|session.stopped``, when it
+    woke and stopped, and ``…?type=execution.step_started``, the bead it
+    took (the subject), the latest first -- a 404 for a session it knows
+    nothing of. Then send the sessions `city` dispatches once the cockpit is
+    up: each wakes, is listed at work for a while with only its first
+    records and the bead it works (``active_bead``), then stops and is
+    listed no more, as the installed supervisor lists only the sessions it
+    runs; a session it keeps once stopped says no bead (gc 1.5.0 on the
+    live host, 2026-10-28: no ``active_bead``)."""
+    handler = supervisor._server.RequestHandlerClass
+    answer_other = handler.do_GET
+    prefix = "/v0/city/%s/" % city.name
+    sessions = {session["id"]: dict(session) for session in city.sessions}
+    lock = threading.Lock()
+    # What the supervisor knows now: the sessions it sent, how many records
+    # of each it serves (None: all), its events.
+    known = {name: None for name in sessions if name not in city.dispatched}
+    events = []
+
+    def record(kind: str, name: str, at: str) -> None:
+        events.append({"seq": len(events) + 1, "type": kind, "ts": at, "actor": "gc",
+                       "subject": sessions[name].get("template") or "", "session_id": name,
+                       "payload": {"session_id": name, "template": sessions[name].get("template") or ""}})
+
+    def took(name: str, started: dict | None) -> None:
+        # As the installed supervisor logs a session taking a step: the
+        # bead it took is the subject, the session acts.
+        if started:
+            events.append({"seq": len(events) + 1, "type": "execution.step_started", "ts": started["at"],
+                           "actor": name, "subject": started["bead"], "payload": {}, "run_id": started["run"],
+                           "session_id": name, "step_id": started["step"], "depends_on_step_ids": []})
+
+    for name, logged in sorted(city.session_log.items(), key=lambda pair: pair[1]["woke"] or ""):
+        if name in known and name in sessions:
+            if logged["woke"]:
+                record("session.woke", name, logged["woke"])
+            took(name, logged.get("started"))
+            if logged["stopped"]:
+                record("session.stopped", name, logged["stopped"])
+
+    def listed() -> list:
+        return [dict(sessions[name]) for name in known if name not in city.dispatched or sessions[name]["running"]]
+
+    def do_GET(self):  # noqa: N802
+        path, _, query = self.path.partition("?")
+        rest = path[len(prefix):] if path.startswith(prefix) else None
+        if supervisor._down or rest is None or not (rest == "events" or rest.startswith("session/")):
+            answer_other(self)
+            return
+        with lock:
+            if rest == "events":
+                wanted = urllib.parse.parse_qs(query).get("type", [""])[0]
+                items = [dict(event) for event in reversed(events) if not wanted or event["type"] == wanted]
+                self._send_json({"items": items, "total": len(items)})
+                return
+            name, _, part = urllib.parse.unquote(rest[len("session/"):]).partition("/")
+            if name not in known or part not in ("", "transcript") or (part and name not in city.transcripts):
+                self._send(404, "text/plain; charset=utf-8", b"404 page not found\n")
+                return
+            if not part:
+                self._send_json(dict(sessions[name]))
+                return
+            served = city.transcripts[name][:known[name]] if known[name] is not None else city.transcripts[name]
+            self._send_json({"id": name, "format": "raw", "messages": served})
+
+    handler.do_GET = do_GET
+
+    def dispatch(name: str, said: dict) -> None:
+        time.sleep(float(said.get("after_seconds") or 0))
+        running = float(said.get("running_seconds") or 0)
+        logged = city.session_log.get(name) or {}
+        with lock:
+            if logged.get("woke") or sessions[name].get("created_at"):
+                record("session.woke", name, logged.get("woke") or sessions[name]["created_at"])
+            took(name, logged.get("started"))
+            sessions[name]["running"] = running > 0
+            if running > 0 and logged.get("started"):
+                sessions[name]["active_bead"] = logged["started"]["bead"]
+            known[name] = said.get("recorded_while_running") if running > 0 else None
+            supervisor.set_sessions(listed())
+        if running > 0:
+            time.sleep(running)
+        with lock:
+            sessions[name]["running"] = False
+            sessions[name].pop("active_bead", None)
+            known[name] = None
+            if logged.get("stopped"):
+                record("session.stopped", name, logged["stopped"])
+            supervisor.set_sessions(listed())
+
+    supervisor.set_sessions(listed())
+    for name, said in city.dispatched.items():
+        if name in sessions:
+            threading.Thread(target=dispatch, args=(name, said), daemon=True).start()
+
+
 def serve_synthetic_supervisor(
     city: synthetic_city.SyntheticCity, cockpit_url: str, home: str, announce: int, cockpit_alive: int
 ) -> None:
@@ -163,8 +280,8 @@ def serve_synthetic_supervisor(
     supervisor.set_status(
         suspended=city.suspended, agents_running=sum(1 for session in city.sessions if session["running"])
     )
-    supervisor.set_sessions(city.sessions)
     supervisor.start()
+    serve_sessions(supervisor, city)
     if city.reading in (synthetic_city.UNANSWERED, synthetic_city.FAILING):
         supervisor.go_down()
     os.write(announce, supervisor.base_url.encode("ascii"))
@@ -177,6 +294,135 @@ def serve_synthetic_supervisor(
     shutil.rmtree(home, ignore_errors=True)
 
 
+# A host restarted during a stop (af-npz9v1.21, for H af-69qhlk): the
+# stop was asked this long before the launch, which is the restart.
+STOP_ASKED_BEFORE_RESTART_SECONDS = 10 * 60
+
+
+def read_https(path: Path) -> bool:
+    """Whether the dataset at `path` puts the cockpit behind the synthetic
+    identity proxy (`https_identity_proxy`); exits when it is not true or
+    false."""
+    https = json.loads(path.read_text(encoding="utf-8")).get("https_identity_proxy", False)
+    if not isinstance(https, bool):
+        sys.exit(f"cockpit-isolated: {path}: https_identity_proxy is true or false")
+    return https
+
+
+def start_identity_proxy(cockpit_port: int, home: str, held: list[int]) -> dict[str, str]:
+    """The synthetic identity proxy in front of the cockpit (af-npz9v1.22,
+    for I af-cp4fzd; `tests/fixtures/cockpit/synthetic-city/identity_proxy.py`):
+    HTTPS on 127.0.0.1 with a certificate of the launch, as Tailscale Serve
+    is in service. It lives until the cockpit ends; `held` are the ends of
+    the other pipes it must not keep open. The environment says its address
+    and the authority to trust (COCKPIT_TRIAL_HTTPS_URL, _CA), and makes its
+    origin the cockpit's own and the address it gives (COCKPIT_PUBLIC_URL),
+    as behind Serve."""
+    announce_read, announce_write = os.pipe()
+    alive_read, alive_write = os.pipe()
+    if os.fork() == 0:
+        os.close(announce_read)
+        os.close(alive_write)
+        for fd in held:
+            os.close(fd)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        try:
+            sys.path.insert(0, str(SYNTHETIC))
+            import identity_proxy
+
+            identity_proxy.serve(cockpit_port, home, announce_write, alive_read)
+        finally:
+            os._exit(0)
+    os.close(announce_write)
+    os.close(alive_read)
+    with os.fdopen(announce_read, "rb") as announced:
+        url = announced.read().decode("ascii")
+    if not url:
+        sys.exit("cockpit-isolated: the synthetic identity proxy did not start")
+    # Kept open by the cockpit for as long as it lives, and by nothing else.
+    os.set_inheritable(alive_write, True)
+    return {"COCKPIT_ALLOWED_ORIGIN": url, "COCKPIT_PUBLIC_URL": url, "COCKPIT_TRIAL_HTTPS_URL": url,
+            "COCKPIT_TRIAL_HTTPS_CA": os.path.join(home, "https", "cert.pem")}
+
+
+def read_heartbeat(path: Path) -> dict | None:
+    """The heartbeat the dataset at `path` declares (`heartbeat`: its
+    `ping_url`, an http(s) address, and its `interval_seconds`, the pace
+    that stands for the five minutes of service), or None; exits when it is
+    not one."""
+    heartbeat = json.loads(path.read_text(encoding="utf-8")).get("heartbeat")
+    if heartbeat is None:
+        return None
+    url = heartbeat.get("ping_url") if isinstance(heartbeat, dict) else None
+    interval = heartbeat.get("interval_seconds") if isinstance(heartbeat, dict) else None
+    if (not isinstance(url, str) or not url.startswith(("http://", "https://"))
+            or isinstance(interval, bool) or not isinstance(interval, (int, float)) or interval <= 0):
+        sys.exit(f"cockpit-isolated: {path}: heartbeat is a ping_url (http or https) and an interval_seconds above 0")
+    return {"ping_url": url, "interval_seconds": float(interval)}
+
+
+def read_usine_validity(path: Path) -> dict[str, str]:
+    """How long a check of a section of the page Usine stays current, as the
+    dataset at `path` declares it (`usine_check_validity_seconds`, above 0:
+    a configuration read goes stale in seconds, not the five minutes of
+    service; G2, af-f8nlhr); nothing when it declares none. Exits when it is
+    not a number above 0."""
+    seconds = json.loads(path.read_text(encoding="utf-8")).get("usine_check_validity_seconds")
+    if seconds is None:
+        return {}
+    if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or seconds <= 0:
+        sys.exit(f"cockpit-isolated: {path}: usine_check_validity_seconds is a number of seconds above 0")
+    return {"COCKPIT_VALIDITY_USINE_SECONDS": str(float(seconds))}
+
+
+def write_heartbeat(heartbeat: dict | None, home: str) -> dict[str, str]:
+    """The environment of the heartbeat the dataset declares: its address in
+    a file of the temporary HOME that only this account reads, as the secret
+    file of the VM (the cockpit reads it and shows it nowhere), its pace,
+    and a tick four times as frequent. Nothing when it declares none."""
+    if heartbeat is None:
+        return {}
+    folder = Path(home, "secrets")
+    folder.mkdir(mode=0o700)
+    secret = folder / "heartbeat-url"
+    descriptor = os.open(secret, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as written:
+        written.write(heartbeat["ping_url"] + "\n")
+    interval = heartbeat["interval_seconds"]
+    return {"COCKPIT_HEARTBEAT_URL_FILE": str(secret), "COCKPIT_HEARTBEAT_INTERVAL_SECONDS": str(interval),
+            "COCKPIT_HEARTBEAT_TICK_SECONDS": str(interval / 4)}
+
+
+def read_restart(path: Path) -> bool:
+    """Whether the dataset at `path` says the host restarted during a stop
+    (`host_restarted_during_stop`); exits when it is not true or false."""
+    restarted = json.loads(path.read_text(encoding="utf-8")).get("host_restarted_during_stop", False)
+    if not isinstance(restarted, bool):
+        sys.exit(f"cockpit-isolated: {path}: host_restarted_during_stop is true or false")
+    return restarted
+
+
+def write_stop(restarted: bool, city: synthetic_city.SyntheticCity, home: str) -> dict[str, str]:
+    """The state of the clean stop the cockpit starts from, in `home`, and
+    the environment that makes it read it every second. A host restarted
+    during a stop (`read_restart`) leaves it as it was: a stop asked ten
+    minutes before, the tickets in flight then (the photo: the tracker of
+    the launch), the cockpit restarted since. The stop driver then reads the
+    supervisor: unsuspended, as after a reboot, it is « Arrêt interrompu »
+    with the tickets whose assignment changed; still suspended, the stop
+    goes on."""
+    state = Path(home, "cockpit-stop-state.json")
+    if restarted:
+        asked = time.time() - STOP_ASKED_BEFORE_RESTART_SECONDS
+        photo = {bead["id"]: {"status": bead.get("status"),
+                              "assignee": (bead.get("metadata") or {}).get("gc.session_name") or bead.get("assignee")}
+                 for bead in city.beads if isinstance(bead, dict) and bead.get("id")}
+        state.write_text(json.dumps({"state": "arret_en_cours", "started_at": asked, "last_progress_at": asked,
+                                     "snapshot": {"beads": photo}}), encoding="utf-8")
+    return {"COCKPIT_STOP_STATE_FILE": str(state), "COCKPIT_STOP_TICK_SECONDS": POLL_SECONDS}
+
+
 def write_doors(answers: dict[str, str], home: str) -> dict[str, str]:
     """The doors of the launch, in `home`: each the real door, or the way
     the dataset says it answers; the environment that makes the cockpit
@@ -187,16 +433,130 @@ def write_doors(answers: dict[str, str], home: str) -> dict[str, str]:
         "GC_BIN": str(SYNTHETIC / "gc"),
         "FACTORY_SESSION_LOOP_GUARD_LOG": os.path.join(home, "factory-session-loop-guard.log"),
         "COCKPIT_ACTION_TIMEOUT_SECONDS": ACTION_TIMEOUT_SECONDS,
+        "COCKPIT_FACTORY_ROOT": factory_tree(home),
     }
+    own = door_environment(home, doors)
     for name, (real, variable) in DOORS.items():
         how = answers.get(name, "acts")
         door = doors / name
-        door.write_text("#!/bin/sh\nexec %s %s %s %s \"$@\"\n" % (
+        door.write_text("#!/bin/sh\nexec env %s%s %s %s %s \"$@\"\n" % (
+            "".join(f"{key}={shlex.quote(value)} " for key, value in own.get(name, {}).items()),
             shlex.quote(sys.executable), shlex.quote(str(SYNTHETIC / "door")), how, shlex.quote(str(real))),
             encoding="utf-8")
         door.chmod(0o755)
         env[variable] = str(door)
     return env
+
+
+def door_environment(home: str, doors: Path) -> dict[str, dict[str, str]]:
+    """What each settings or upkeep door of the launch reads and writes, in
+    `home` and never in the Factory in service (af-npz9v1.20):
+
+    - provider-failover: the Factory tree of the launch (`factory_tree`):
+      its state and overlay there, the policy, the catalogue and city.toml
+      of the commit, no tmux session read, `gc` the synthetic one;
+    - factory-maintain: the throwaway repositories `throwaway_repositories`
+      makes (the copy of the commit shares the refs of the repository it
+      comes from: pruning its branches would prune those), `gc` the
+      synthetic one, no GitHub proof (a branch GitHub would prove merged is
+      kept, as when GitHub does not answer), its escalations through the
+      escalation door of the launch;
+    - operator-config reads config/operator.toml of the commit and writes
+      nothing."""
+    tools = Path(home, "maintain-bin")
+    tools.mkdir()
+    # A script, not a link: the synthetic gc finds its tracker beside its own path.
+    (tools / "gc").write_text(f"#!/bin/sh\nexec {shlex.quote(str(SYNTHETIC / 'gc'))} \"$@\"\n",
+                              encoding="utf-8")
+    (tools / "gc").chmod(0o755)
+    (tools / "gh").write_text("#!/bin/sh\necho 'trial cockpit: no GitHub' >&2\nexit 1\n", encoding="utf-8")
+    (tools / "gh").chmod(0o755)
+    path = f"{tools}{os.pathsep}{os.environ.get('PATH', os.defpath)}"
+    return {
+        "provider-failover": {
+            "FACTORY_ROOT": os.path.join(home, "factory"),
+            "PROVIDER_TMUX_BIN": shutil.which("false") or "false",
+            "PATH": path,
+        },
+        "factory-maintain": {
+            "FACTORY_ROOT": throwaway_repositories(home),
+            "FACTORY_MAINTAIN_LOG": os.path.join(home, "factory-maintain.log"),
+            "ESCALATION_DOOR_BIN": str(doors / "escalation-door"),
+            "PATH": path,
+        },
+    }
+
+
+# What bin/provider-failover writes in the Factory tree.
+WRITTEN = ("city.provider.toml", ".gc/provider-state.json")
+
+
+def factory_tree(home: str) -> str:
+    """The Factory tree of the launch, in `home`: every file of the commit,
+    by a link, but what the provider failover writes (WRITTEN), copied when
+    the commit holds it: a test may commit the state it observed. The page
+    Usine reads it (COCKPIT_FACTORY_ROOT) and provider-failover writes in it:
+    a setting is read back where it was written, never in the Factory in
+    service nor in the copy of the commit (af-npz9v1.20)."""
+    tree = Path(home, "factory")
+    tree.mkdir()
+    for entry in ROOT.iterdir():
+        if entry.name not in (".gc", ".git", *WRITTEN):
+            (tree / entry.name).symlink_to(entry)
+    for name in WRITTEN:
+        if (ROOT / name).is_file():
+            (tree / name).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / name, tree / name)
+    return str(tree)
+
+
+def throwaway_repositories(home: str) -> str:
+    """Throwaway Git repositories of the launch, as factory-maintain finds the
+    Factory's: a clone of a bare origin (FACTORY_ROOT) whose branch `merged`
+    is merged and pushed, and `unpushed` holds a commit origin lacks; and,
+    where clean-worktrees looks ($HOME/.local/share/agent-factory-runtime-
+    worktrees), a worktree merged and pushed (`af-merged`, a candidate) and
+    three it must keep: a local change (`af-modified`), a commit not pushed
+    (`af-unpushed`), work under way (`af-active`). Returns the clone."""
+    env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull,
+           "GIT_AUTHOR_NAME": "essai", "GIT_AUTHOR_EMAIL": "essai@example.invalid",
+           "GIT_COMMITTER_NAME": "essai", "GIT_COMMITTER_EMAIL": "essai@example.invalid"}
+    base = Path(home, "maintain")
+    origin, clone = base / "origin.git", base / "factory"
+    worktrees = Path(home, ".local", "share", "agent-factory-runtime-worktrees")
+    worktrees.mkdir(parents=True)
+    base.mkdir()
+
+    def git(where: Path, *args: str) -> None:
+        subprocess.run(["git", "-C", str(where), *args], env=env, check=True, capture_output=True)
+
+    def commit(where: Path, name: str) -> None:
+        Path(where, name).write_text(name + "\n", encoding="utf-8")
+        git(where, "add", name)
+        git(where, "commit", "-q", "-m", name)
+
+    git(base, "init", "-q", "--bare", "-b", "main", str(origin))
+    git(base, "clone", "-q", str(origin), str(clone))
+    git(clone, "checkout", "-q", "-B", "main")
+    commit(clone, "README")
+    git(clone, "push", "-q", "-u", "origin", "main")
+    git(clone, "remote", "set-head", "origin", "main")
+    for branch in ("merged", "wt-merged", "wt-modified"):
+        git(clone, "branch", branch)
+        git(clone, "push", "-q", "-u", "origin", branch)
+    git(clone, "checkout", "-q", "-b", "unpushed")
+    commit(clone, "unpushed")
+    git(clone, "checkout", "-q", "-b", "wt-active", "main")
+    commit(clone, "active")
+    git(clone, "push", "-q", "-u", "origin", "wt-active")
+    git(clone, "checkout", "-q", "-b", "wt-unpushed", "main")
+    commit(clone, "wt-unpushed")
+    git(clone, "checkout", "-q", "main")
+    for name, branch in (("af-merged", "wt-merged"), ("af-modified", "wt-modified"),
+                         ("af-unpushed", "wt-unpushed"), ("af-active", "wt-active")):
+        git(clone, "worktree", "add", "-q", str(worktrees / name), branch)
+    Path(worktrees, "af-modified", "README").write_text("local change\n", encoding="utf-8")
+    return str(clone)
 
 
 def write_tracker_and_projects(city: synthetic_city.SyntheticCity, home: str) -> dict[str, str]:
@@ -278,6 +638,10 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     city = read_city(Path(args.dataset))
     doors = read_doors(Path(args.dataset))
+    restarted = read_restart(Path(args.dataset))
+    https = read_https(Path(args.dataset))
+    heartbeat = read_heartbeat(Path(args.dataset))
+    usine_validity = read_usine_validity(Path(args.dataset))
     cockpit_url = f"http://127.0.0.1:{args.port}"
 
     home = tempfile.mkdtemp(prefix="cockpit-isolated-")
@@ -324,6 +688,11 @@ def main(argv: list[str]) -> int:
     }
     if LAUNCH_MARK in os.environ:
         env[LAUNCH_MARK] = os.environ[LAUNCH_MARK]
+    env.update(write_stop(restarted, city, home))
+    env.update(write_heartbeat(heartbeat, home))
+    env.update(usine_validity)
+    if https:
+        env.update(start_identity_proxy(args.port, home, [alive_write]))
     if city.reading == synthetic_city.READ_ONCE:
         # Its state and its sessions alike: both are read from it.
         env["COCKPIT_VALIDITY_GC_SECONDS"] = SILENT_VALIDITY_SECONDS
@@ -335,6 +704,8 @@ def main(argv: list[str]) -> int:
         env["COCKPIT_CLOCK_START"] = city.clock_start
     if city.view:
         env["COCKPIT_RUNS_VIEW"] = json.dumps(city.view)
+    if city.session_trace:
+        env["COCKPIT_TRACE_FILE"] = city.session_trace
     os.execve(sys.executable, [sys.executable, str(ROOT / "bin" / "cockpit"), "run"], env)
     return 1
 

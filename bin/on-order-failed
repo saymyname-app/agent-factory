@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # on-order-failed — event-triggered order: page when the SAME order fails
-# repeatedly, instead of leaving order.failed events unread forever.
+# repeatedly, instead of leaving actionable order.failed events unread forever.
 #
 # Gas City ships no retry, no backoff, and no failure notification on its own
 # (upstream contract): failed orders are "not retried, not backed off, never
@@ -68,7 +68,13 @@ print(count)'
 }
 
 EVENTS=$(gc events --type order.failed --since "$LOOKBACK" 2>/dev/null) || exit 0
-[ -n "$EVENTS" ] || { say "on-order-failed: no order.failed events in $LOOKBACK"; exit 0; }
+# Exit 75 is the Factory-wide explicit deferral: the command ran, could not
+# take host capacity, and must stay non-zero so the order tries again. Gas City
+# records every non-zero order result as order.failed; those retries are not an
+# incident and must not contribute to the chronic-failure threshold.
+EVENTS=$(printf '%s\n' "$EVENTS" | jq -c \
+  'select(((.message // "") | startswith("exit status 75:")) | not)') || exit 0
+[ -n "$EVENTS" ] || { say "on-order-failed: no actionable order.failed events in $LOOKBACK"; exit 0; }
 
 SUBJECTS=$(printf '%s\n' "$EVENTS" | jq -r 'select(.subject) | .subject' | sort -u)
 [ -n "$SUBJECTS" ] || exit 0

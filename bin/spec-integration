@@ -73,7 +73,6 @@ import os
 import re
 import shlex
 import shutil
-import signal
 import subprocess
 import sys
 from contextlib import ExitStack, contextmanager
@@ -108,10 +107,15 @@ EXIT_UNRULED = 3
 EXIT_NOT_NEW_FLOW = 4
 
 UNRULED = "état sans règle"
-# The regression command waits its turn on the host, then runs within its
-# budget (tests/cockpit-criteria/regression.py: 600 s each), plus a minute.
-# Exit 75 is its NOT RUN: no answer, never a red (study C, T1).
-DEFAULT_TIMEOUT = 600 + 600 + 60
+# The regression command waits its turn on the host, then runs the whole
+# series within its full budget, plus a minute: config/test-budgets.json,
+# measured (study C, T3). Exit 75 is its NOT RUN: no answer, never a red
+# (study C, T1).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+from bounded_process import run as bounded_run  # noqa: E402
+import test_budgets  # noqa: E402
+
+DEFAULT_TIMEOUT = test_budgets.deadline(test_budgets.load(Path(__file__).resolve().parents[1]), "full")
 NOT_RUN = 75
 MAX_DETAIL = 300
 BRANCH_RE = re.compile(r"^[^\s~^:?*\[\\]+$")
@@ -171,17 +175,10 @@ def run(argv: list[str], cwd: Path | None = None, timeout: float | None = None) 
     """In a session of its own: past its timeout, everything it started is
     killed with it (a regression run leaves no cockpit or browser behind)."""
     try:
-        proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace",
-                                stdin=subprocess.DEVNULL, cwd=cwd, start_new_session=True)
+        return bounded_run(argv, capture_output=True, text=True, errors="replace",
+                           stdin=subprocess.DEVNULL, cwd=cwd, timeout=timeout)
     except OSError as exc:
         raise Refusal(f"impossible de lancer {Path(argv[0]).name} : {exc}") from exc
-    try:
-        stdout, stderr = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGKILL)
-        proc.communicate()
-        raise
-    return subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)
 
 
 def detail_of(proc: subprocess.CompletedProcess[str]) -> str:

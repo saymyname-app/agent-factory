@@ -2,12 +2,11 @@
 """factory-observe -- B09: deterministic, zero-idle-call observation of
 Planning Runs, delivery progress and adaptation measures.
 
-L0, deterministic, zero model tokens by construction: `observe` only ever
-prints a JSON result and updates a host-local state file. It never invokes a
-model itself -- when `wakes` is empty the caller (a sentinel loop, Cockpit V2
-once it exists, a human) makes no call at all; when it is non-empty the caller wakes exactly
-the named `role`, once per fact, with the fact preserved verbatim as
-evidence. Policy: config/factory-observe-policy.json (versioned -- roles per
+`observe` is L0 and deterministic: it only prints a JSON result and updates
+a host-local state file. `live` adds the VM sources and routes its non-empty
+wake set through Gas City's notification path; an empty diff makes no mail or model
+call. Each transition is queued once, with its evidence persisted before the
+route. Policy: config/factory-observe-policy.json (versioned -- roles per
 observed area, exemption/handoff evidence conditions). State:
 .gc/runtime/factory-observe-state.json (host-local, mutable -- last-observed
 snapshot, current exemption activation, bounded history). Measures policy:
@@ -16,6 +15,7 @@ F20). Design: docs/FACTORY_OBSERVE.md.
 
   policy-validate                             validate the observe policy file
   observe --snapshot <file> [--evidence <file>]   diff, wake, re-evaluate exemptions
+  live                                        collect Beads/Git/GitHub, diff, route once
   status [--json]                             current snapshot/exemption state
   measures-validate --measures <file>         validate a measures document
   measures-show --measures <file>             per-work-class metrics, separated
@@ -24,11 +24,14 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import json
 import os
+import re
+import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +49,37 @@ STATE_FILE = Path(
     os.environ.get("FACTORY_OBSERVE_STATE_FILE")
     or FACTORY_ROOT / ".gc" / "runtime" / "factory-observe-state.json"
 )
+GC_BIN = os.environ.get("FACTORY_OBSERVE_GC_BIN") or os.environ.get("GC_BIN") or "gc"
+GH_BIN = os.environ.get("FACTORY_OBSERVE_GH_BIN") or os.environ.get("GH_BIN") or "gh"
+GIT_BIN = os.environ.get("FACTORY_OBSERVE_GIT_BIN") or "git"
+LIVE_WINDOW = timedelta(hours=2)
+LIVE_EVENT_LIMIT = 80
+LIVE_SIGNAL_KEYS = {
+    "gc.ci_conclusion",
+    "gc.delivery_status",
+    "gc.escalation_cleared_at",
+    "gc.escalation_response_actor",
+    "gc.escalation_response_at",
+    "gc.escalation_response_option",
+    "gc.merge_commit",
+    "gc.pr_number",
+    "gc.session_name",
+    "gc.work_outcome",
+}
+LIVE_FLOW_KEYS = {
+    "gc.flow.branch",
+    "gc.flow.closed",
+    "gc.flow.delivered",
+    "gc.flow.exit",
+    "gc.flow.integration",
+    "gc.flow.mark",
+    "gc.flow.merge",
+    "gc.flow.park",
+    "gc.flow.park_lifts",
+    "gc.flow.resume",
+    "gc.flow.technical_repairs",
+}
+FREEFORM_SIGNAL_FIELDS = {"detail", "reason", "ref", "text"}
 
 
 def now() -> float:
@@ -106,6 +140,257 @@ def read_json_arg(path: str | None) -> dict[str, Any]:
     return payload
 
 
+def command_text(command: list[str]) -> str:
+    result = subprocess.run(command, text=True, capture_output=True)
+    if result.returncode != 0:
+        raise fo.ObservePolicyError(f"{Path(command[0]).name} source failed (exit {result.returncode})")
+    return result.stdout.strip()
+
+
+def command_json(command: list[str]) -> Any:
+    raw = command_text(command)
+    try:
+        return json.loads(raw or "[]")
+    except json.JSONDecodeError as exc:
+        raise fo.ObservePolicyError(f"{Path(command[0]).name} source returned invalid JSON") from exc
+
+
+def structured(value: Any) -> Any:
+    if isinstance(value, str) and value[:1] in ("[", "{"):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            pass
+    return value
+
+
+def fingerprint(value: Any) -> str:
+    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()[:20]
+
+
+def safe_signal(value: Any) -> Any:
+    if isinstance(value, list):
+        return [safe_signal(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: ({"fingerprint": fingerprint(item)} if key in FREEFORM_SIGNAL_FIELDS else safe_signal(item))
+            for key, item in value.items()
+        }
+    return value
+
+
+def issue_fact(issue: dict[str, Any], live_sessions: set[str]) -> dict[str, Any]:
+    metadata = issue.get("metadata") if isinstance(issue.get("metadata"), dict) else {}
+    signals = {
+        key: safe_signal(structured(value))
+        for key, value in sorted(metadata.items())
+        if key in LIVE_FLOW_KEYS or key.startswith("gc.flow.counter.") or key in LIVE_SIGNAL_KEYS
+    }
+    owner = metadata.get("gc.session_name") or issue.get("assignee")
+    owner = owner if owner in live_sessions else None
+    return {
+        "source": "beads",
+        "status": issue.get("status"),
+        "type": issue.get("issue_type"),
+        "owner": owner or None,
+        "signals": signals,
+    }
+
+
+def human_request_fact(issue: dict[str, Any]) -> dict[str, Any]:
+    metadata = issue.get("metadata") if isinstance(issue.get("metadata"), dict) else {}
+    request = metadata.get("gc.needs_benjamin")
+    active = request not in (None, "", "none")
+    durable_request = request if active else metadata.get("gc.escalation_quoi")
+    response = {
+        key.removeprefix("gc.escalation_response_"): structured(metadata[key])
+        for key in (
+            "gc.escalation_response_option",
+            "gc.escalation_response_at",
+            "gc.escalation_response_actor",
+        )
+        if metadata.get(key) not in (None, "", "none")
+    }
+    return {
+        "source": "beads",
+        "status": issue.get("status"),
+        "active": active,
+        "request_fingerprint": fingerprint(durable_request) if durable_request not in (None, "", "none") else None,
+        "response": response,
+        "cleared_at": metadata.get("gc.escalation_cleared_at") or None,
+    }
+
+
+def github_repo() -> str:
+    override = os.environ.get("FACTORY_OBSERVE_REPO")
+    if override:
+        return override
+    remote = command_text([GIT_BIN, "-C", str(FACTORY_ROOT), "config", "--get", "remote.origin.url"])
+    match = re.search(r"github\.com[/:]([^/]+/[^/]+?)(?:\.git)?$", remote)
+    if not match:
+        raise fo.ObservePolicyError("git source has no parseable GitHub origin")
+    return match.group(1)
+
+
+def collect_live_snapshot() -> tuple[dict[str, dict[str, Any]], set[str]]:
+    marked = command_json([
+        GC_BIN, "bd", "list", "--status", "open,in_progress,blocked",
+        "--has-metadata-key", "gc.flow.mark",
+        "--brief", "--limit", "0", "--json",
+    ])
+    held = command_json([
+        GC_BIN, "bd", "list", "--status", "in_progress,blocked",
+        "--brief", "--limit", "0", "--json",
+    ])
+    requests = command_json([
+        GC_BIN, "bd", "list", "--status", "open,in_progress,blocked,deferred",
+        "--has-metadata-key", "gc.needs_benjamin",
+        "--brief", "--limit", "0", "--json",
+    ])
+    sessions_doc = command_json([GC_BIN, "session", "list", "--json", "--template", "factory-worker"])
+    sessions = sessions_doc.get("sessions") if isinstance(sessions_doc, dict) else None
+    if (
+        not isinstance(marked, list)
+        or not isinstance(held, list)
+        or not isinstance(requests, list)
+        or not isinstance(sessions, list)
+    ):
+        raise fo.ObservePolicyError("live Beads/session sources returned unexpected JSON")
+    live_sessions = {
+        str(value)
+        for session in sessions
+        if isinstance(session, dict) and session.get("state") != "closed" and not session.get("closed")
+        for value in (session.get("name"), session.get("session_name"), session.get("alias"), session.get("id"))
+        if value
+    }
+    active = list({
+        str(issue.get("id")): issue
+        for issue in [*marked, *held]
+        if isinstance(issue, dict) and issue.get("id")
+    }.values())
+
+    areas: dict[str, dict[str, Any]] = {
+        "delivery": {},
+        "planning_runs": {},
+        "human_requests": {},
+    }
+    for issue in active:
+        if not isinstance(issue, dict) or not issue.get("id"):
+            continue
+        metadata = issue.get("metadata") if isinstance(issue.get("metadata"), dict) else {}
+        area = "planning_runs" if issue.get("issue_type") == "convoy" or metadata.get("gc.plane") == "planning" else "delivery"
+        areas[area][str(issue["id"])] = issue_fact(issue, live_sessions)
+    for issue in requests:
+        if isinstance(issue, dict) and issue.get("id"):
+            areas["human_requests"][str(issue["id"])] = human_request_fact(issue)
+
+    repo = github_repo()
+    prs = command_json([
+        GH_BIN, "pr", "list", "--repo", repo, "--state", "all", "--limit", "50",
+        "--json", "number,state,isDraft,headRefName,headRefOid,baseRefName,statusCheckRollup,closedAt,mergedAt",
+    ])
+    if not isinstance(prs, list):
+        raise fo.ObservePolicyError("GitHub source must return a JSON array")
+    for pr in prs:
+        if not isinstance(pr, dict) or pr.get("number") is None:
+            continue
+        checks = pr.get("statusCheckRollup")
+        if isinstance(checks, list):
+            checks = sorted(checks, key=lambda item: json.dumps(item, sort_keys=True))
+        areas["delivery"][f"pr:{pr['number']}"] = {
+            "source": "github",
+            "repo": repo,
+            "state": pr.get("state"),
+            "draft": bool(pr.get("isDraft")),
+            "head": pr.get("headRefOid"),
+            "head_branch": pr.get("headRefName"),
+            "base_branch": pr.get("baseRefName"),
+            "checks": checks or [],
+            "closed_at": pr.get("closedAt"),
+            "merged_at": pr.get("mergedAt"),
+            "owner": None,
+        }
+
+    areas["delivery"]["git:agent-factory"] = {
+        "source": "git",
+        "repo": repo,
+        "head": command_text([GIT_BIN, "-C", str(FACTORY_ROOT), "rev-parse", "HEAD"]),
+        "origin_main": command_text([GIT_BIN, "-C", str(FACTORY_ROOT), "rev-parse", "refs/remotes/origin/main"]),
+        "branch": command_text([GIT_BIN, "-C", str(FACTORY_ROOT), "rev-parse", "--abbrev-ref", "HEAD"]),
+        "owner": None,
+    }
+    return areas, live_sessions
+
+
+def wake_recipient(wake: dict[str, Any]) -> str:
+    if wake.get("role") == "delivery-worker":
+        evidence = wake.get("evidence") if isinstance(wake.get("evidence"), dict) else {}
+        for side in ("after", "before"):
+            fact = evidence.get(side)
+            if isinstance(fact, dict) and isinstance(fact.get("owner"), str) and fact["owner"]:
+                return fact["owner"]
+    return "mayor"
+
+
+def event_from_wake(wake: dict[str, Any], moment: str) -> dict[str, Any]:
+    event = {"at": moment, **wake}
+    event["event_id"] = "live-" + fingerprint(event)
+    event["recipient"] = wake_recipient(wake)
+    return event
+
+
+def queue_routes(live: dict[str, Any], events: list[dict[str, Any]]) -> None:
+    pending = live.setdefault("pending", [])
+    for event in events:
+        recipient = event["recipient"]
+        existing = next((item for item in pending if item.get("recipient") == recipient), None)
+        if existing is None:
+            existing = {
+                "route_id": "route-" + fingerprint({"recipient": recipient, "event": event["event_id"]}),
+                "recipient": recipient,
+                "event_ids": [],
+            }
+            pending.append(existing)
+        if event["event_id"] not in existing["event_ids"]:
+            existing["event_ids"].append(event["event_id"])
+
+
+def route_pending(live: dict[str, Any], moment: str, live_sessions: set[str]) -> list[str]:
+    failures: list[str] = []
+    remaining: list[dict[str, Any]] = []
+    routes = live.setdefault("routes", [])
+    for route in live.get("pending", []):
+        event_ids = route.get("event_ids") if isinstance(route.get("event_ids"), list) else []
+        recipient = route.get("recipient") or "mayor"
+        if recipient != "mayor" and recipient not in live_sessions:
+            recipient = "mayor"
+            route["recipient"] = recipient
+        facts = ", ".join(event_ids)
+        message = (
+            f"ACTION: factory-observe recorded {len(event_ids)} new live transition(s)\n"
+            f"STATE: ROUTED once to {recipient}\n"
+            f"EVIDENCE: {STATE_FILE}; events {facts}\n"
+            "NEXT: inspect ./bin/factory-observe status --json and act only on the cited transition(s)"
+        )
+        result = subprocess.run(
+            [
+                GC_BIN, "mail", "send", str(recipient), "--notify",
+                "--dedup", str(route["route_id"]),
+                "-s", "factory-observe: live transition", "-m", message,
+            ],
+            text=True, capture_output=True,
+        )
+        if result.returncode != 0:
+            failures.append(str(recipient))
+            remaining.append(route)
+            continue
+        routes.append({"route_id": route.get("route_id"), "recipient": recipient, "event_ids": event_ids, "at": moment})
+    live["pending"] = remaining
+    live["routes"] = routes[-LIVE_EVENT_LIMIT:]
+    return failures
+
+
 def cmd_policy_validate(args: argparse.Namespace) -> int:
     try:
         load_policy()
@@ -133,18 +418,115 @@ def cmd_observe(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_live(args: argparse.Namespace) -> int:
+    policy = load_policy()
+    current_areas, live_sessions = collect_live_snapshot()
+    epoch = now()
+    moment = iso(epoch)
+    new_events: list[dict[str, Any]] = []
+    with Locked():
+        state = load_state()
+        live = state.setdefault("live", {})
+        window = live.setdefault("window", {})
+
+        if not window.get("baseline_at") or not window.get("due_at"):
+            due_at = iso(epoch + LIVE_WINDOW.total_seconds())
+            live["snapshot"] = current_areas
+            live["exemptions"] = {}
+            live["history"] = [{"event": "live_baseline", "at": moment}]
+            window.update({
+                "baseline_at": moment,
+                "due_at": due_at,
+                "baseline": {"areas": current_areas},
+                "transition_event_ids": [],
+            })
+            result = {
+                "action": "none",
+                "wakes": [],
+                "exemption_transitions": [],
+                "exemptions": {},
+            }
+        else:
+            result = fo.observe(live, policy, current_areas, {}, moment)
+            new_events.extend(event_from_wake(wake, moment) for wake in result["wakes"])
+
+            due = datetime.fromisoformat(str(window["due_at"]).replace("Z", "+00:00")).timestamp()
+            if not window.get("final_at") and epoch >= due:
+                baseline_areas = (window.get("baseline") or {}).get("areas") or {}
+                delta = fo.diff_snapshot(baseline_areas, current_areas)
+                window["final_at"] = moment
+                window["final"] = {"areas": current_areas, "delta": delta}
+                final_wake = {
+                    "area": "planning_runs",
+                    "id": f"live-window:{window['baseline_at']}",
+                    "kind": "changed",
+                    "role": "mayor",
+                    "evidence": {
+                        "area": "planning_runs",
+                        "id": f"live-window:{window['baseline_at']}",
+                        "kind": "changed",
+                        "before": {"baseline_at": window["baseline_at"]},
+                        "after": {
+                            "final_at": moment,
+                            "transition_count": len(delta),
+                            "state_file": str(STATE_FILE),
+                        },
+                    },
+                }
+                result["wakes"].append(final_wake)
+                result["action"] = "wake"
+                new_events.append(event_from_wake(final_wake, moment))
+
+        if new_events:
+            events = live.setdefault("events", [])
+            events.extend(new_events)
+            live["events"] = events[-LIVE_EVENT_LIMIT:]
+            window.setdefault("transition_event_ids", []).extend(event["event_id"] for event in new_events)
+            queue_routes(live, new_events)
+
+        state["live"] = live
+        save_state(state)
+        failures = route_pending(live, moment, live_sessions)
+        save_state(state)
+
+    payload = {
+        "ok": not failures,
+        "at": moment,
+        **result,
+        "events": new_events,
+        "route_failures": failures,
+        "window": {
+            "baseline_at": window.get("baseline_at"),
+            "due_at": window.get("due_at"),
+            "final_at": window.get("final_at"),
+        },
+    }
+    print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    return 0 if not failures else 2
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     state = load_state()
+    live = state.get("live") or {}
     payload = {
         "contract": "agent-factory-observe-status/v1",
         "areas_observed": sorted(state.get("snapshot", {}).keys()),
         "exemptions": state.get("exemptions", {}),
         "history": list(reversed(state.get("history") or []))[:15],
+        "live": {
+            "areas_observed": sorted((live.get("snapshot") or {}).keys()),
+            "window": live.get("window") or {},
+            "events": list(reversed(live.get("events") or [])),
+            "pending": live.get("pending") or [],
+            "routes": list(reversed(live.get("routes") or [])),
+        },
     }
     if args.json:
         print(json.dumps(payload, ensure_ascii=False))
         return 0
     print(f"factory-observe -- areas observed: {', '.join(payload['areas_observed']) or '(none)'}")
+    if payload["live"]["areas_observed"]:
+        print(f"  live areas: {', '.join(payload['live']['areas_observed'])}")
     for name, active in payload["exemptions"].items():
         print(f"  exemption {name}: {'active' if active else 'inactive'}")
     return 0
@@ -183,6 +565,8 @@ def main() -> int:
     o.add_argument("--snapshot", required=True, help="path to a JSON file with an 'areas' object")
     o.add_argument("--evidence", help="path to a JSON file mapping exemption name -> signal:bool")
     o.set_defaults(func=cmd_observe)
+
+    sub.add_parser("live").set_defaults(func=cmd_live)
 
     s = sub.add_parser("status")
     s.add_argument("--json", action="store_true")

@@ -9,6 +9,14 @@ frames plus ``event: heartbeat`` frames, an unknown city is a 404
 ``application/problem+json``. Controllable so a test can make it go down
 (simulating a dead supervisor) or silence its stream without killing the
 cockpit process under test.
+
+It takes the two writes a clean stop uses, as the installed supervisor
+publishes them (``/openapi.json``, read on 2026-10-27; af-npz9v1.21):
+``PATCH /v0/city/<city>`` with ``{"suspended": true|false}`` suspends or
+resumes the city, ``POST /v0/city/<city>/session/<id>/stop`` stops one
+session; each answers ``{"status": "ok"}``. Every write it receives is kept
+in ``writes``, any other one too (``kill``, a session ``suspend``...) and
+answered 404: a test sees what a cockpit asked, a complete stop included.
 """
 import json
 import queue
@@ -47,6 +55,7 @@ class FakeGc:
         self._down = False
         self._stream_muted = False
         self._seq = 0
+        self.writes = []
         gc = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -99,6 +108,64 @@ class FakeGc:
                         self._stream_events()
                         return
                 self._send(404, "text/plain; charset=utf-8", b"404 page not found\n")
+
+            def _city_write(self, method):
+                """A write under /v0/city/<city>: (city, rest, body), or
+                None once it is answered."""
+                length = int(self.headers.get("Content-Length") or 0)
+                raw = self.rfile.read(length) if length else b""
+                path = self.path.split("?", 1)[0]
+                try:
+                    body = json.loads(raw.decode("utf-8")) if raw else {}
+                except ValueError:
+                    body = None
+                with gc._lock:
+                    gc.writes.append({"method": method, "path": path, "body": body})
+                if gc._down:
+                    self.connection.close()
+                    return None
+                if not path.startswith("/v0/city/"):
+                    self._send(404, "text/plain; charset=utf-8", b"404 page not found\n")
+                    return None
+                city, _, rest = path[len("/v0/city/"):].partition("/")
+                if city != gc.city:
+                    self._problem(404, "city-not-found", "not_found: city not found or not running: " + city)
+                    return None
+                return rest, body
+
+            def _problem(self, status, code, detail):
+                self._send_json({"type": "urn:gascity:error:" + code, "title": code, "status": status,
+                                 "detail": detail, "code": code}, status=status,
+                                content_type="application/problem+json")
+
+            def do_PATCH(self):
+                answer = self._city_write("PATCH")
+                if answer is None:
+                    return
+                rest, body = answer
+                if rest or not isinstance(body, dict) or not isinstance(body.get("suspended"), bool):
+                    self._problem(422, "invalid", "a city is patched with {\"suspended\": true|false}")
+                    return
+                gc.set_status(suspended=body["suspended"])
+                self._send_json({"status": "ok"})
+
+            def do_POST(self):
+                answer = self._city_write("POST")
+                if answer is None:
+                    return
+                rest, _ = answer
+                parts = rest.split("/")
+                if len(parts) != 3 or parts[0] != "session" or parts[2] != "stop":
+                    self._send(404, "text/plain; charset=utf-8", b"404 page not found\n")
+                    return
+                with gc._lock:
+                    found = [s for s in gc._sessions if s.get("id") == parts[1]]
+                    for session in found:
+                        session["running"] = False
+                if not found:
+                    self._problem(404, "session-not-found", "not_found: session " + parts[1])
+                    return
+                self._send_json({"id": parts[1], "status": "ok"})
 
             def _send(self, status, content_type, body):
                 self.send_response(status)
@@ -203,7 +270,7 @@ class FakeGc:
         template, session_name, running, last_active, and active_bead for
         the ones on a ticket)."""
         with self._lock:
-            self._sessions = list(items)
+            self._sessions = [dict(item) for item in items]
 
     def emit(self, event_type, subject="", payload=None):
         """Send one city event to every open stream, e.g. ``bead.closed``."""

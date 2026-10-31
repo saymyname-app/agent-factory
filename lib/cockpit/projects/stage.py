@@ -269,6 +269,7 @@ def _outcome_chantier(bead, tickets, outcome, rigs):
         rig=rigs.pop() if len(rigs) == 1 else None,
         outcome=outcome,
         issue=outcome["label"],
+        tickets=tuple(t.get("id") for t in tickets if t.get("id")),
     )
 
 
@@ -398,6 +399,7 @@ def _convoy_chantiers_all(beads, promotion_results=None, pack_reads=None):
                 a_regarder=a_regarder,
                 planning_run_target=(bead.get("metadata") or {}).get("planning_run_target"),
                 rig=rigs.pop() if len(rigs) == 1 else None,
+                tickets=tuple(t.get("id") for t in tickets if t.get("id")),
             )
         )
     return out

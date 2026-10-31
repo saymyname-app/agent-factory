@@ -109,6 +109,21 @@ session per ticket. It also writes the model the author role runs on
 the model of its reviewer with. When that model cannot be read nothing is
 written, and the review says so.
 
+A **replacement** ticket (`bin/replacement-draft`, `docs/PLANNING_EXCEPTION.md`)
+starts with the work of the ticket it replaces. `start` reads its useful
+commit where `replacement-draft` wrote it: `replacement_commit` on the draft
+that published the ticket (`gc.artifact_id`), also cited in the ticket's text
+(« useful commit <sha> »); both must agree, so the tickets the same draft
+republishes because they waited for the replaced one start as usual. The new
+branch is created at that commit (fetched from `origin` when the repository
+does not hold it; not found, `start` refuses and writes nothing), then the tip
+of the integration branch is merged into it. A conflict aborts that merge:
+the branch stays at the useful commit, the answer names the files
+(`replacement.conflicts`) and the author merges first. `base` is the start
+commit — the catch-up merge, or the useful commit — so the red is measured
+against the work received, and `start` run again names the same one. A branch
+that already exists, locally or on `origin`, is never moved.
+
 **`demonstrate`** launches the product at the head commit of the ticket
 branch through `bin/project-launch`, captures the demonstration line on it
 through `bin/evidence-capture` (piece `demonstration`), and stops the
@@ -161,8 +176,15 @@ stopped the ticket is what raises it to the operator.
   `operator_request`, not `technically_blocked`, and in doubt as well. Its
   `que_faire` holds one option « Corriger par maintenance sur main ». The
   fix goes through Factory maintenance (`docs/DELIVERY.md`, marked convoys,
-  « Stops and bounds »); the operator answers the request once it is
-  merged, and that answer lifts the parking (a merge alone lifts nothing).
+  « Stops and bounds »). Once the maintenance bead exists, the Mayor routes
+  it with `bin/factory-work-dispatch <repair> --technical-request <convoy>
+  <ticket>` (`--link-only` if it was already delivered); that door asks
+  `bin/convoy-state` to bind the current request. `bin/convoy-advance` then waits
+  for its structural merge and exact-head CI proof, withdraws the technical
+  request and resumes the ticket as `unblocked`, exactly once. A repair
+  merely open, failed, closed without proof, or not explicitly linked lifts
+  nothing. An ordinary operator request without that link still needs the
+  operator's answer.
   No gate reads it: the rule is the text of the author formulas, verified
   by reading.
   Intent (Benjamin, his words, 2026-10-17 00:13 Paris): « Décision 2: ok

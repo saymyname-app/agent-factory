@@ -22,6 +22,7 @@ poll (see tests/fixtures/cockpit/requests/fake-bd for the same contract).
 import json
 import os
 import sys
+import time
 
 
 def _beads():
@@ -34,6 +35,7 @@ def _beads():
 
 args = sys.argv[1:]
 if args == ["list", "--json"]:
+    time.sleep(float(os.environ.get("COCKPIT_TEST_BD_LIST_DELAY_SECONDS", "0")))
     print(json.dumps([b for b in _beads() if b.get("status") != "closed"]))
     sys.exit(0)
 

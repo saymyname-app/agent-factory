@@ -11,6 +11,7 @@ import signal
 import sys
 import threading
 import time
+import urllib.parse
 from datetime import datetime
 
 from cockpit.access.guard import ActionGuard, new_session_token
@@ -25,7 +26,10 @@ from cockpit.core.readmodel import ReadModel
 from cockpit.core.server import make_server
 from cockpit.health.git_source import count_commits_behind
 from cockpit.access.tailscale import build_key_expiry_request, key_expiry_epoch, read_status
+from cockpit.heartbeat.emitter import read_url_from_file
+from cockpit.notify.secrets import read_secrets_from_file
 from cockpit.notify.service import HeartbeatService, NotifyService, Ticker
+from cockpit.requests.sources.silence import build_silence_request
 from cockpit.notify.state_store import JsonFileStateStore
 from cockpit.stop.driver import StopDriver
 from cockpit.stop.gc_city import GcCityReader
@@ -35,6 +39,7 @@ from cockpit.projects.source import READ_TIMEOUT_SECONDS as PROJECTS_READ_TIMEOU
 from cockpit.requests.assemble import assemble_from_snapshot
 from cockpit.requests.defects import DefectCounter
 from cockpit.requests.journal import read_journal
+from cockpit.runs.trace import SessionTrace
 from cockpit.runs.workflows import read_workflow_beads
 
 # github/rituals sources are in the Validity window table (spec .3) for the
@@ -141,7 +146,7 @@ def build(config, clock=None):
     # Out-of-scope touch (T14, af-peh3yy -- declared scope
     # lib/cockpit/actions/**, lib/cockpit/ui/actions/**): répondre,
     # accepter/rejeter/reporter une proposition, and relancer need the
-    # escalation-door/proposal-door/loop-guard/gc binaries wired through
+    # escalation-door/proposal-door/loop-guard/order-pause binaries wired through
     # from config, the same as bd_bin already is.
     action_handlers = build_action_handlers(
         config.bd_bin,
@@ -149,7 +154,8 @@ def build(config, clock=None):
         escalation_door_bin=config.escalation_door_bin,
         proposal_door_bin=config.proposal_door_bin,
         loop_guard_bin=config.loop_guard_bin,
-        gc_bin=config.gc_bin,
+        order_pause_bin=config.order_pause_bin,
+        door_timeout=config.action_timeout_seconds,
     )
     server = make_server(
         read_model,
@@ -166,6 +172,10 @@ def build(config, clock=None):
         factory_check_validity_seconds=config.factory_check_validity_seconds,
     )
     server.runs_view = config.runs_view
+    server.provider_failover_bin = config.provider_failover_bin
+    server.factory_maintain_bin = config.factory_maintain_bin
+    server.proposal_door_bin = config.proposal_door_bin
+    server.door_timeout = config.action_timeout_seconds
     server.descriptors_dir = config.descriptors_dir
 
     # Clean stop (T23, T24) -- read side only (af-mjfvwx 7a): the driver keeps
@@ -186,7 +196,12 @@ def build(config, clock=None):
                 held[session_id] = bead["id"]
         return held
 
-    city_reader = GcCityReader(config.gc_base_url, city=config.gc_city, held_work=held_work)
+    # The trace of the sessions: collected at each reading of them, read by
+    # the pages of Runs.
+    session_trace = SessionTrace(config.trace_file)
+    server.session_trace = session_trace
+    city_reader = GcCityReader(config.gc_base_url, city=config.gc_city, held_work=held_work,
+                               observer=session_trace.collect)
     read_model.register("sessions", display_name="agents au travail")
     pollers.append(PollingSource(read_model, "sessions", city_reader.status, config.sessions_poll_seconds))
 
@@ -242,8 +257,12 @@ def build(config, clock=None):
 
     def extra_requests(snapshot, now):
         """Requests the cockpit's own parts raise (spec: « l'arrêt n'avance
-        plus », « reprise avec écarts », clé Tailscale à J-14)."""
+        plus », « reprise avec écarts », clé Tailscale à J-14, « Usine
+        muette »)."""
         requests = list(stop_driver.pending_requests())
+        silence = build_silence_request(snapshot, now, config.silence_alert_seconds)
+        if silence is not None:
+            requests.append(silence)
         tailscale = snapshot.get("tailscale")
         if tailscale is not None and tailscale["value"] is not None and tailscale["freshness"] != UNKNOWN:
             request = build_key_expiry_request(tailscale["value"]["key_expiry"], now)
@@ -253,6 +272,23 @@ def build(config, clock=None):
 
     server.stop_driver = stop_driver
     server.benjamin_login = config.benjamin_login
+    server.public_url = config.public_url
+    # What the procedure of the VM settings says of this host, read each
+    # time it opens: paths, and whether the cockpit reads each secret file
+    # -- never what one holds (I, af-cp4fzd).
+    supervisor_port = urllib.parse.urlsplit(config.gc_base_url).port
+
+    def procedure_settings():
+        return {
+            "local_config": config.local_config_file,
+            "pushover_file": config.pushover_secrets_file,
+            "pushover_ready": read_secrets_from_file(config.pushover_secrets_file) is not None,
+            "heartbeat_file": config.heartbeat_url_file,
+            "heartbeat_ready": read_url_from_file(config.heartbeat_url_file) is not None,
+            "public_url": config.public_url, "port": config.port, "supervisor_port": supervisor_port,
+        }
+
+    server.procedure_settings = procedure_settings
     server.rituals_file = config.rituals_file
     server.extra_requests = extra_requests
 

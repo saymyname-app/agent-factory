@@ -369,6 +369,143 @@ dossier is read by `projects/source.py` in the folder its record names
 (`path`, the folder of the Evidence Pack; `read_pack_sections` opens its
 `index.html`: one rubric per `<section id="rubrique-N">`).
 
+## « Pour moi » au premier plan, gestes confirmés, commandes qui n'échouent plus en silence (B, af-4uzgzm ; BR, af-eyc5ah)
+
+Spec af-fgcw0d, user stories 6, 27, 29, 34, 73, 75, 76, 79, 122 et 175 ;
+Validated Prototype `prototype/cockpit-b-zones-20261012` à 632deea, états
+result-request et result-confirmation. Cette section est écrite pour
+Benjamin, qui se sert de ces gestes lui-même (ADR-0017, condition 4).
+
+**Ce que tu y gagnes** (ADR-0017, condition 3 : temps humain et jetons).
+Avant B, « Ce qui t’attend » était replié sous « Détails techniques et
+actions », aucune demande ni bouton « Relancer » n’existait pour une session
+mise en pause par l’usine, une proposition ne se reportait qu’à une heure
+écrite en mots (qui ne la cachait pas), et une commande qui ne répondait pas
+laissait le geste sans réponse. Relancer une session en pause passait donc
+par une session d’agent : une demande écrite, le contexte relu par l’agent,
+puis la vérification de ce qu’il a fait.
+
+| Geste | Avant B | Avec B |
+|---|---|---|
+| Ouvrir une demande et voir ses gestes | 1 clic de plus (déplier la zone technique) | 1 clic sur la ligne |
+| Relancer un ordre en pause | une PR qui retirait son nom de `[orders] skip` de `city.toml`, sa CI et un rechargement de la cité (#701), ou depuis le 23/10 une commande `bin/order-pause resume` tapée par un agent | 2 clics (armer, « Confirmer ») et aucun jeton ; la pause levée est relue à la source en moins de 20 s (`TRACED_SECONDS`) |
+| Relancer une session en pause | une session d’agent : quelques minutes de ton temps et les jetons d’une session (estimation, non mesurée : de l’ordre de 20 000 à 50 000 jetons pour relire le contexte) | 2 clics (armer, « Confirmer ») et aucun jeton ; l’écriture à la source est relue en moins de 20 s (mesuré par les tests de critère, `TRACED_SECONDS`) |
+| Reporter une proposition jusqu’à une heure | impossible sans agent : l’heure écrite en mots ne la cachait pas | 2 clics, la proposition est cachée jusqu’à l’heure choisie |
+| Une commande qui ne répond pas | le geste restait sans réponse, et le répéter risquait un doublon | une erreur lisible en 15 s au plus (`COCKPIT_ACTION_TIMEOUT_SECONDS`), puis une relecture de la source avant tout nouvel essai |
+| L’usine se tait | rien ne le disait sur l’accueil | une demande Urgent « Usine muette » après 15 min de silence |
+
+**Pour moi est la boîte de décision de la Vue d’ensemble.** « Ce qui
+t’attend » n’est plus replié sous « Détails techniques et actions » : chaque
+ligne ouvre sa demande à côté de la liste, là où s’ouvre le résultat d’un
+chantier (`lib/cockpit/ui/home/pour_moi.py`). La demande propre au résultat
+(sa demande d’acceptation) ouvre le résultat. Une demande ouverte dit de quoi
+il s’agit, son titre, pourquoi elle t’attend, les options préparées, puis sa
+barre de gestes :
+
+| Demande | Gestes |
+|---|---|
+| une question (NEEDS BENJAMIN) | ses options, chacune la réponse (armée, puis « Confirmer ? ») ; Continuer avec un agent ; Acquitter (Urgent) ; Reporter |
+| une proposition de classe décision | Accepter ; Refuser, avec la raison écrite dans son champ ; Reporter → « Dans 1 h », « Dans 4 h », « Demain 09:00 », chacun armé puis confirmé ; Continuer avec un agent |
+| une session mise en pause par l’usine (`[session-loop] <session>`, `gc.source=factory-session-loop-guard`, `lib/cockpit/requests/sources/paused_sessions.py`) | Relancer (armé, puis confirmé : `factory-session-loop-guard resume`, tracé sur sa fiche, « Relance demandée » au journal) ; Reporter |
+| un ordre en pause (« Un ordre de l’usine est en pause » : la fiche ouverte de `bin/order-pause pause`, `gc.order_pause=<ordre>`, `lib/cockpit/requests/sources/paused_orders.py`) ; le nom de l’ordre, qui l’a mis en pause et ses mots sont dans les détails | Relancer (armé, puis confirmé : `bin/order-pause resume <ordre> --by benjamin --words "relance depuis le cockpit"`, qui ferme la fiche de la pause ; « Relance demandée » au journal) ; Reporter |
+| « Usine muette » | Vérifier l’usine (la page Usine) ; Revérifier maintenant |
+
+Chaque geste qui modifie l’usine se fait en deux temps
+(`cockpit.ui.actions.render`) : un premier clic l’arme, « Confirmer ? », un
+second l’envoie. Une proposition reportée passe par `bin/proposal-door
+reporter` avec l’heure que le cockpit a calculée (ISO, heure de Paris) :
+`gc.proposal_report_until` la cache jusqu’à cette heure, comme
+`gc.cockpit_defer_until` cache toute autre demande ; une heure écrite en
+mots libres ne cache rien.
+
+**Un ordre se relance par sa porte.** Depuis le 23/10, une pause d’ordre
+est une fiche du suivi posée par `bin/order-pause` (af-npz9v1.15, #724) ;
+BR la lit et la lève par cette porte, jamais par `gc order run`, qui
+lancerait l’ordre hors de son échéance sans lever la pause. Un ordre retiré
+par `[orders] skip` de `city.toml` reste ta décision de config : le cockpit
+n’en lit aucune demande, et la porte ne le touche pas. Le cockpit trouve la
+porte par `COCKPIT_ORDER_PAUSE_BIN` (par défaut `bin/order-pause` du dépôt).
+
+Sur une lecture qui n’est plus à jour, les gestes sont dessinés et
+indisponibles (« Lecture périmée : les gestes reviennent à la prochaine
+lecture. »). Tant que le suivi des tickets est illisible, la boîte dit
+« Inconnu : illisible depuis HH:MM » et liste ce qui ne vient pas de lui.
+
+**Texte principal en français, détails repliés.** Une ligne et une demande
+ouverte disent le français du cockpit. Le texte d’un producteur passe le
+contrôle de `cockpit.text.validate` : pas d’identifiant, pas de terme
+interne, une ligne de 140 caractères au plus, et dans la langue de
+l’opérateur. Les termes internes sont ceux que `GLOSSARY.md` met hors du
+cockpit (ligne « _Never shown in the cockpit_ » du Cockpit Lexicon) : le
+glossaire est le seul vocabulaire, aucune liste n’est recopiée dans le
+code. La langue est celle que donne `bin/operator-config language` (« fr »
+aujourd’hui) ; une phrase est refusée quand elle tient autant ou plus de
+mots grammaticaux d’une autre langue (anglais, espagnol, allemand, italien,
+portugais) que de la sienne, ou, à partir de cinq mots, aucun des siens
+(`speaks`). Le cockpit trouve le glossaire par `COCKPIT_GLOSSARY_FILE` et
+la porte des réglages par `COCKPIT_OPERATOR_CONFIG_BIN` (par défaut ceux du
+dépôt) ; s’il ne peut lire l’un ou l’autre, chaque champ est remplacé et le
+motif le dit, rien n’est montré sans contrôle. Un champ refusé est remplacé par sa phrase de repli et le
+défaut du producteur est compté ; les portes (`bin/proposal-door`, par
+`bin/operator-text-check`) appliquent le même contrôle avant d’écrire. Un
+titre écrit hors de ce contrat est redit en entier après le libellé du
+cockpit (« Texte écrit : « … » ») seulement s’il est dans la langue de l’opérateur et ne porte ni
+identifiant ni terme interne (`speaks_plainly`) ; sinon les mots du
+producteur ne sont que dans les détails repliés. Les « Détails » repliés de
+chaque demande donnent son identifiant, sa nature, pourquoi un champ a été
+remplacé, les mots du producteur tels qu’écrits, la source précise et les
+liens où elle vit (la page de son projet, la page Usine, le journal).
+
+**Signal non reconnu** (user story 76) : une fiche ouverte du suivi des
+tickets qu’un producteur de l’usine a déposée (`gc.source`) et que le
+cockpit ne sait pas lire, qui n’est d’aucune forme qu’il lit (question,
+proposition, session en pause) et qui n’a alerté personne (ni
+`gc.needs_benjamin`, ni `gc.escalation_mayor_paged_at` : une alerte d’abord
+adressée au Maire reste au Maire), n’est pas une demande opérateur : elle
+informe, elle n’attend ni décision ni geste de l’opérateur (GLOSSARY.md,
+« Operator Request »). Pour moi la montre à part de ses demandes, sous
+« À savoir · signaux non reconnus » : « Signal non reconnu venant de
+<producteur> », sans niveau, sans geste, hors du compte des décisions
+(`lib/cockpit/requests/sources/unknown_signal.py`,
+`cockpit.ui.home.pour_moi.render_signals`). Le nom du producteur n’y est dit
+que s’il passe le même contrôle (`speaks_plainly`) ; sinon (« disk-watch » a
+la forme d’un identifiant) elle dit « Signal non reconnu venant d’une source
+nommée dans les détails ». Son identifiant, son producteur, son titre et sa
+description, tels qu’écrits, sont dans son repli sous « Texte brut », jamais
+en texte principal : le cockpit n’invente aucun sens.
+
+**Usine muette** (`lib/cockpit/requests/sources/silence.py`) : le heartbeat
+ne part que tant que le superviseur et le suivi des tickets sont lus à jour ;
+dès que l’un d’eux se tait plus longtemps que `COCKPIT_SILENCE_ALERT_SECONDS`
+(900 s, le délai d’alerte du heartbeat), le cockpit lève une demande Urgent
+« Usine muette » qui nomme les sources et depuis quand. Elle part quand les
+deux sont de nouveau lus à jour ; elle est envoyée comme toute demande
+Urgent. Elle s’affiche même quand le suivi des tickets n’a jamais été lu
+(home-loading, home-error), hors des parties que la référence numérote.
+
+**Une commande qui expire** (af-fksj2c, `cockpit.actions.registry`,
+`cockpit.actions.uncertain`) : une porte qui ne répond pas dans
+`COCKPIT_ACTION_TIMEOUT_SECONDS` (15 s) est arrêtée. Le POST répond 504 avec
+une erreur lisible (« La commande n’a pas répondu en N s : elle a expiré.
+Son issue est incertaine ; le cockpit relit la source avant tout nouvel
+essai. ») et `incertain: true`, et le suivi des tickets est relu aussitôt.
+Sa cible est marquée incertaine : un nouveau geste sur elle répond 409 tant
+que le suivi n’a pas été relu après la marque ; ensuite, si la demande
+n’attend plus — la commande avait fait son travail —, 409 pour de bon (« Le
+geste précédent a été enregistré à la source … ») et la page montre le
+succès lu ; si elle attend encore, le geste part. Tant qu’un geste serait
+refusé, la page le dessine indisponible avec la même raison, même quand la
+relecture a échoué (`UncertainOutcomes.pending`). Il en va de même quand la
+porte a fait son travail et que ce que le cockpit fait après elle échoue —
+écrire la trace d’une relance, relire la réponse qu’`escalation-door` a
+écrite (`FollowUpFailed`) : le geste est fait, il n’est donc pas refusé
+comme si rien n’était parti ; le POST répond 502 avec `incertain: true`
+(« La commande a été exécutée, mais la suite n’a pas pu être enregistrée :
+… ») et un second clic n’envoie rien avant relecture. La cible d’une
+relance est résolue avant que sa porte parte. Une erreur imprévue d’un
+geste répond 500 avec une phrase lisible au lieu de casser la requête. La
+page montre l’erreur sur la demande et se relit.
+
 ## Home screen, as the validated prototype shows it (af-mjfvwx)
 
 Since T02 (above), this variant D is folded under « Détails techniques et
@@ -561,9 +698,11 @@ served:
   illisible » notice, and `/api/requests` says `state: "unknown"`.
 
 Not wired yet: « rituel dû » (each project's status command lives in its
-own repository — the slice that gives the cockpit its clones),
-and `requests/sources/unknown_signal.py` (no source hands the cockpit an
-unrecognised signal today).
+own repository — the slice that gives the cockpit its clones).
+
+A signal the cockpit cannot read (`requests/sources/unknown_signal.py`) is
+information, not an Operator Request: Pour moi shows it apart, uncounted,
+and `/api/requests` does not list it.
 
 `tests/cockpit-other-requests-test.py` covers all of the above through the
 process's HTTP surface.
@@ -832,18 +971,28 @@ adapter and emitter against it.
 ## Local settings file (af-mjfvwx)
 
 Intent (Benjamin, his words, 2026-10-06): « ok pour l'emplacement ».
-Mechanism (agent interpretation): the two secret files live under his
-Windows profile, in `C:\Users\<lui>\.agent-factory-cockpit\`, and one
-local, unversioned JSON file tells the cockpit where — it does NOT hold a
-secret itself, and nothing in the repository names his profile.
+Mechanism (agent interpretation): one local, unversioned JSON file tells
+the cockpit where the two secret files are — it does NOT hold a secret
+itself, and nothing in the repository names his account.
+
+On the VM (I, af-cp4fzd; Spec af-fgcw0d, user story 98), the secret files
+are private files of the account that runs the cockpit, outside every
+repository, readable by that account alone (`bin/cockpit-setup-wizard`
+writes them `0600`, and makes a file that was already there `0600` before
+writing in it); the procedure linked from « Accès » (below) proposes
+`~/.config/agent-factory/`. A path of the file that starts with `~/` is
+read in the home of that account (`HOME`). The Windows profile of
+af-mjfvwx (`C:\Users\<lui>\.agent-factory-cockpit\`, read through
+`/mnt/c`) is no longer where they live: the cockpit runs on the VM, which
+has no such path.
 
 `cockpit-local.json`, beside the pid file (`.gc/runtime/` on the live
 root; `COCKPIT_LOCAL_CONFIG` to put it elsewhere):
 
 ```json
 {
-  "pushover_secrets_file": "/mnt/c/Users/<lui>/.agent-factory-cockpit/pushover.json",
-  "heartbeat_url_file": "/mnt/c/Users/<lui>/.agent-factory-cockpit/heartbeat-url.txt",
+  "pushover_secrets_file": "/home/<compte>/.config/agent-factory/pushover.json",
+  "heartbeat_url_file": "/home/<compte>/.config/agent-factory/heartbeat-url",
   "public_url": "https://<machine>.<tailnet>.ts.net",
   "benjamin_login": "<login Tailscale>",
   "allowed_origin": "https://<machine>.<tailnet>.ts.net"
@@ -899,6 +1048,44 @@ Python object, and the shape it expects is not the one gc serves.
 
 `tests/cockpit-stop-access-test.py` covers this through HTTP, including
 that every plausible stop action answers 404.
+
+## Access on the VM: HTTPS, identity, procedure (I, af-cp4fzd)
+
+Intent (Spec af-fgcw0d, user stories 61, 93 and 98, decision « Accès hôte
+» : « Loopback, Tailscale Serve tailnet seul, HTTPS, identité autorisée,
+POST/Origin/SameSite conservés. L'API superviseur reste non exposée. »).
+Mechanism (agent interpretation):
+
+- **A reader is the operator, or the host itself.** Behind Tailscale Serve
+  every request carries `Tailscale-User-Login`. One that is not
+  `benjamin_login` is refused, 403, before anything is read or served:
+  pages, readings and POSTs alike (`ActionGuard.check_reader`). A request
+  without that header did not come through Serve: it came from the host
+  itself, the cockpit listening on loopback only.
+- **Every POST a page sends carries the cockpit's Origin.** The Operator
+  Actions keep their four checks; the other POSTs of a page,
+  `/api/usine/reverifier` and `/api/health/recheck`, which write nothing,
+  are refused without the cockpit's own Origin, or from another identity
+  behind Serve (`ActionGuard.check_page_post`).
+- **« Accès » gives the address** the cockpit is opened at from the PC and
+  the iPhone (`public_url`, when it is an HTTPS one; « Adresse HTTPS non
+  configurée » otherwise), and links to **the procedure of the VM
+  settings**, `GET /usine/procedure` (`ui/access/procedure.py`): Pushover,
+  the heartbeat (the check « Usine muette », period 5 min and grace 10 min,
+  an alert within fifteen minutes) and the access through Tailscale Serve,
+  each with the command of `bin/cockpit-setup-wizard` that writes it and
+  whether it is in place on this host: a secret is « en place » only when
+  the cockpit reads its file, read again each time the page opens; a path
+  set whose file is absent or invalid is said so. The command of Serve
+  names the ports of this host, the cockpit's and the supervisor's (the
+  port of `COCKPIT_GC_BASE_URL`). It names paths, never what a secret file
+  holds, and no Windows path.
+- The health zone already says a missing secret file (« Notifications
+  iPhone inactives : le fichier de secrets est absent ou invalide »),
+  without its value.
+
+The real proof -- the iPhone, a VM that falls silent live -- is a human
+trial after Delivered (Spec af-fgcw0d, Testing Decisions 4).
 
 ## Project repositories: roadmap step, commits ahead (af-mjfvwx)
 
@@ -1016,14 +1203,40 @@ copy. What it gives the cockpit to read:
 
 | Source | In the isolated launch |
 |---|---|
-| supervisor | a synthetic one, `tests/fixtures/cockpit/core/fake_gc.py`, the fake `tests/cockpit-fake-gc-contract-test.py` holds to the installed supervisor; what it answers is what the dataset says (below) |
+| supervisor | a synthetic one, `tests/fixtures/cockpit/core/fake_gc.py`, the fake `tests/cockpit-fake-gc-contract-test.py` holds to the installed supervisor; what it answers is what the dataset says (below). It takes the two writes of a clean stop the installed supervisor publishes (`/openapi.json`): `PATCH /v0/city/<city>` `{"suspended": true|false}` and `POST /v0/city/<city>/session/<id>/stop`, each answered `{"status": "ok"}`, and keeps every write it receives (`writes`), any other one answered 404 (af-npz9v1.21). `bin/cockpit-isolated` makes it answer too what the installed one keeps of each session the dataset says (`GET /v0/city/<city>/session/<id>`, the session as listed; `…/transcript?format=raw`, `{"id", "format": "raw", "messages"}`; a 404 for a session it keeps nothing of; `GET /v0/city/<city>/events?type=session.woke` and `session.stopped`, when it woke and stopped each one, the latest first), and send the sessions the dataset dispatches once the cockpit is up |
+| clean stop | its state starts empty, in the home of the launch (`COCKPIT_STOP_STATE_FILE`), read every second. A dataset that says `"host_restarted_during_stop": true` starts it as a host restarted during a stop leaves it: a stop asked ten minutes before the launch, the tickets of the tracker of the launch as its photo. The driver then reads the supervisor: unsuspended, as after a reboot, « Arrêt interrompu » with the tickets whose assignment changed; still suspended, the stop goes on. Thirty minutes without progress are not simulated here: the driver measures them on the cockpit's clock (af-npz9v1.21) |
 | tracker | `tests/fixtures/cockpit/synthetic-city/bd`, which answers the beads written for this launch from the dataset as `tests/fixtures/cockpit/requests/fake-bd` does -- hiding the closed ones from a plain `list` as `bd` does --, and writes what the doors and the gestures write there (`update`, `create`, `show`), in the home of the launch only |
 | declared projects | one descriptor per project the dataset names, written for this launch; no file of the repository |
-| doors that change the Factory (`gc order run`, escalation door, proposal door, loop guard) | the real doors of the commit, run on the tracker of the launch through a synthetic `gc` (`tests/fixtures/cockpit/synthetic-city/gc`: `gc bd` is that tracker; a mail, the waking of a session, the run of an order are taken and change nothing else); the cockpit gives up on a door after 5 s (`COCKPIT_ACTION_TIMEOUT_SECONDS`). A dataset may say how a door answers (`doors`: `proposal-door`, `escalation-door`, `loop-guard` or `gc`, each `expires` -- it never answers, and writes nothing -- or `records-then-expires` -- it writes its record, then never answers); `bin/cockpit-isolated` refuses any other |
+| doors that change the Factory (`gc order run`, escalation door, proposal door, loop guard, `bin/order-pause`) | the real doors of the commit, run on the tracker of the launch through a synthetic `gc` (`tests/fixtures/cockpit/synthetic-city/gc`: `gc bd` is that tracker; a mail, the waking of a session, the run of an order are taken and change nothing else); the cockpit gives up on a door after 5 s (`COCKPIT_ACTION_TIMEOUT_SECONDS`). A dataset may say how a door answers (`doors`: `proposal-door`, `escalation-door`, `loop-guard`, `order-pause`, `provider-failover`, `factory-maintain`, `operator-config` or `gc`, each `expires` -- it never answers, and writes nothing -- or `records-then-expires` -- it writes its record, then never answers); `bin/cockpit-isolated` refuses any other |
+| settings and upkeep of the Factory (G2, af-npz9v1.20) | the real doors of the commit, each on what the launch holds: `provider-failover` (`COCKPIT_PROVIDER_FAILOVER_BIN`) works in the Factory tree of the launch (`$HOME/factory`, the page Usine's `COCKPIT_FACTORY_ROOT`: every file of the commit by a link, but `city.provider.toml` and `.gc/provider-state.json`, copied when the commit holds them), so a setting is read back where it was written; it reads no tmux session, and its reload is taken by the synthetic `gc`; `factory-maintain` (`COCKPIT_FACTORY_MAINTAIN_BIN`) works on throwaway Git repositories of the launch -- a clone of a bare origin (its `FACTORY_ROOT`) with a branch merged and pushed (`merged`) and one not pushed (`unpushed`), and under `$HOME/.local/share/agent-factory-runtime-worktrees` a worktree merged and pushed (`af-merged`, the candidate) and three it keeps: a local change (`af-modified`), a commit not pushed (`af-unpushed`, escalated on the tracker of the launch), work under way (`af-active`) --, never on the copy of the commit, whose refs are those of the repository it comes from; `gc` is the synthetic one and `gh` answers nothing, so no branch is proved merged by GitHub; `operator-config` (`COCKPIT_OPERATOR_CONFIG_BIN`) reads config/operator.toml of the commit |
 | GitHub (CI and pull requests of the Analyses) | when the dataset gives what GitHub answers (`github`), `tests/fixtures/cockpit/github/fake-gh`, which answers the two calls of the Analyses as the REST API does, from that block; otherwise no repository is declared and GitHub is not read |
 | clock | it starts at the fixed time of the dataset (`generated_at`, `COCKPIT_CLOCK_START`) and runs from there: « today » is the dataset's day |
 | silence of the main sources | said « Usine muette » after 20 s (`COCKPIT_SILENCE_ALERT_SECONDS`): a state that falls silent (home-stale, home-offline) is first seen as it is drawn |
 | local settings, secrets, notifications, heartbeat, project clones, Tailscale | none: a temporary HOME and no local settings file |
+| how long a check of a section of the page Usine stays current (G2, af-f8nlhr) | the five minutes of service, unless a dataset says `"usine_check_validity_seconds": <n>` (above 0): the configuration read then goes stale in seconds (`COCKPIT_VALIDITY_USINE_SECONDS`); anything else is refused |
+| a heartbeat (I, af-cp4fzd) | a dataset that says `"heartbeat": {"ping_url": "<http(s) address>", "interval_seconds": <n>}` gives the cockpit that address as its heartbeat secret, written in a private file of the temporary HOME (`COCKPIT_HEARTBEAT_URL_FILE`), at that pace (`COCKPIT_HEARTBEAT_INTERVAL_SECONDS`, the five minutes of service), ticked four times as often; anything else is refused |
+| Tailscale Serve in front of the cockpit | a dataset that says `"https_identity_proxy": true` puts a synthetic identity proxy in front of it (`tests/fixtures/cockpit/synthetic-city/identity_proxy.py`, af-npz9v1.22): HTTPS on 127.0.0.1 with a certificate made for the launch, its address and the authority to trust in the cockpit's environment (`COCKPIT_TRIAL_HTTPS_URL`, `COCKPIT_TRIAL_HTTPS_CA`), its origin and the address « Accès » gives the cockpit's own (`COCKPIT_ALLOWED_ORIGIN`, `COCKPIT_PUBLIC_URL`). Who connects is said in `X-Synthetic-Tailnet-Login`: without it, 403 (not on the tailnet), the refusal naming that header (I, af-cp4fzd); with it, the request goes to the cockpit alone with `Tailscale-User-Login` and `Tailscale-User-Name` set from it, every `Tailscale-User-*` the client sent removed. Benjamin's login is `synthetic@example.ts.net` (`COCKPIT_BENJAMIN_LOGIN`). Nothing of the tailnet is used |
+
+`home-gestes` carries such a tracker: a proposal, a session the loop guard
+paused, a question and the pause of the order `convoy-advance` as
+`bin/order-pause` records it, with the escalation door that expires. On it the
+gestures of « Ce qui t’attend » are confirmed and read back at their source,
+and an answer to the question expires (B, af-4uzgzm, then BR, af-eyc5ah: its demonstration line;
+for Benjamin, « Le jeu home-gestes » below says it in French).
+
+Le jeu `home-gestes` (pour Benjamin) : un suivi des tickets tel que les
+portes l’écrivent — une proposition, une session mise en pause par l’usine,
+une question et l’ordre `convoy-advance` mis en pause —, la porte des
+questions ne répondant jamais. On y refuse une proposition avec sa raison,
+on relance la session et l’ordre, et une réponse à la question expire, puis
+la source est relue.
+
+The result trials that exercise Essai and Avis (`result-ready`,
+`result-outage`, `result-repairing`) carry that proxy. Their tracker remains
+the launch's disposable `tracker.json`; no request, response or wording with
+apostrophes reaches the tracker or cockpit in service. The category-D control
+`python3 tests/cockpit-isolated-https-test.py` launches all three and reads
+them through the synthetic identity boundary.
 
 No controller and no tracker is started. A dataset that is not marked
 `"synthetic": true`, carries no `generated_at`, names no state, or whose
@@ -1095,7 +1308,11 @@ ways:
 | the runs of a Runs state, each « Livraison D01 » or « Maintenance » | a workflow as the tracker holds one (C1, af-lzti7w): a « Livraison D01 » is a convoy carrying the new-flow mark, under the title of the run, written by `benjamin` for the project `agent-factory` (the datasets name none), its ticket (same `gc.graph_digest`; `gc.flow.merge` when the run says « Fusionné », `gc.flow.gate.withdrawn` when « Abandonné »), the workflow root `mol-ticket-author` run on an input convoy that tracks the ticket, and, when an agent of the run is a « Relect… » or an « Évaluat… », the workflow root `mol-code-review` or `mol-ticket-evaluation` run on an input convoy that tracks the bead the dispatch door writes to launch it (`gc.dispatched_via`, its description naming the convoy and the ticket); a « Maintenance » is a workflow root `mol-do-work` run on the work Benjamin asked for, under the title of the run; closed at the end of the run, open while it has none; the day of `generated_at` at the run's `started` (Paris) is its start | `runs.value`; `GET /runs` |
 | the jobs of a run | one step per job, of the workflow root of its agent's role (the author's for Benjamin's and the code's), under its name, from its start to its end (open without one): a job of the lane `human` a plain step routed to `benjamin`, of the lane `code` a `check` (`gc.outcome` pass once closed), of an agent lane a `ralph` whose closing runs a check (`gc.check_mode`), claimed by an attempt of the session of that agent (`gc.logical_bead_id`, `gc.claimed_at`, `gc.outcome` pass once closed); its prompt as description, its result as close reason | `runs.value`; `GET /runs/run`, `GET /runs/job` |
 | the agent lanes | one session per job of an agent (`synthetic-session-<lane>-<run>-<job>`): its `agent_name` the name of the lane, its `template` and `provider` the two halves of its role (« Relectrice · Claude »), running on the open job it holds | `sessions.value.agents`, `sessions.value.sessions`, `gc.value.agents_running` |
-| what a Runs state selects: `ui.filter`, `ui.run`, `ui.selected_job`, `ui.selected_event` | the filter, the run, the job and the event a page opens when its address names none (`COCKPIT_RUNS_VIEW`) | `GET /runs`, `GET /runs/run`, `GET /runs/job` |
+| the sessions a job says (`sessions`: each its `name`, its `start` and `end` from the trigger, and as the supervisor lists it its `provider`, `model`, `effort`, `permission_mode`, `context_pct`, `context_window`, `work_dir`; its `transcript`, records in the provider's own format) (C2a, af-k2rbw1) | in place of the one session of the job: each listed by the supervisor as it ran it, created at its start, its effort and permission mode under `options`, working the attempt of the job (`active_bead`) while it runs only, as the installed supervisor lists it; its waking (at its start), the attempt it took (`execution.step_started`, at the start of the job) and its stop (at its `end`; none without one) in the supervisor's log; the attempt claimed at the start of the job under the name of the last (gc keeps the session that took over); what its provider recorded served as its transcript; an empty list, a job no session is recorded for (no attempt) | the trace of the sessions; `GET /runs/job` |
+| a session a job says sent once the cockpit is up (`dispatched`: `after_seconds` from the launch, `running_seconds`, `recorded_while_running`) | nothing of it until then, as for a ticket not yet dispatched; then its waking in the log, listed at work for `running_seconds` with only its first `recorded_while_running` records served, then its stop in the log, all its records served, listed no more (the installed supervisor lists only the sessions it runs) -- with `running_seconds` 0, a session that woke and stopped between two readings | the collection at the waking and stop of the sessions |
+| where the cockpit keeps its trace of the sessions (`session_trace`, an absolute path) | `COCKPIT_TRACE_FILE`; else in the home of the launch, removed with it | the projection a case reads, and keeps from one launch to the next |
+| what the flow declared for each role of a run (`declared`: `{role: {agent, provider, model, at}}`) | written on its ticket as the flow writes it (`gc.flow.models`) | the configuration declared in `GET /runs/job` |
+| what a Runs state selects: `ui.filter`, `ui.run`, `ui.selected_job`, `ui.selected_event`, `ui.detail` | the filter, the run, the job, the event and the state of the detail (the sections it opens, the prompts it shows raw) a page opens when its address names none (`COCKPIT_RUNS_VIEW`) | `GET /runs`, `GET /runs/run`, `GET /runs/job` |
 | the moment a Runs state shows (the latest `started` + `elapsed` of an open run) | the clock of the cockpit starts there and runs on (`COCKPIT_CLOCK_START`) | the horizon of the open runs, `read_at` |
 
 The key of a project the dataset only names is its name without accents, in
@@ -1120,8 +1337,10 @@ What is left out, and why:
   not among the events the job holds: the fixtures hold of a job only its
   start, its end, the session that claimed it and the check its closing
   ran, the tool calls the prototype draws are not collected yet (C2b); the
-  19 Runs datasets carry the same fixtures, byte for byte, and
-  are served the same workflows;
+  Runs datasets carry the same fixtures, byte for byte -- but for the
+  sessions and the declarations of the run « Recherche dans les notes »
+  in the five states of the trace (below) -- and are served the same
+  workflows;
 - the lines of a page above its first section (title, subtitle, tabs, the
   banner of a reading that is no longer current, « Rien à afficher ici »)
   and the sections that hold links only (« Ressources du projet »);
@@ -1143,7 +1362,11 @@ changes the lines of the table above.
 the 76 Panorama states and the 19 Runs states, under
 `config/cockpit-datasets/<state>.json`. Each file is the dataset of
 the frozen prototype, byte for byte (Panorama at `632deea`, Runs at
-`d8cb462`, in the private prototype repository), but for the `folded` of
+`d8cb462`, in the private prototype repository), but for the sessions
+and declarations of « Recherche dans les notes » in `job-sessions`,
+`job-configuration`, `job-system-prompt`, `job-user-prompt-rendered` and
+`job-user-prompt-raw` (C2a, af-k2rbw1: what the prototype drew as example
+values, written as the sources the cockpit reads), for the `folded` of
 the `home-*` states that open a result: the parts of « Ce qui t’attend »
 that unfold, copied from the frozen state drawn (`states/<state>.html`),
 since the prototype's dataset keeps only the text of the page (T02R,
@@ -1175,6 +1398,13 @@ Beside the states of the screens, the profile declares `journal-demonstration`:
 the useful events of `journal-content` and the technical logs of
 `journal-logs` on one launch, so that the demonstration line of the Journal
 Fold (F, af-njwz8v) is observed on one cockpit; it is no state of a reference.
+It declares `run-demonstration` as well: a tracker as the commands of the flow
+write it, whose sessions have all ended -- `delivery-author-1` in two
+successive sessions, `delivery-author-2` at work at the same time, a ticket
+stopped, an unfavourable fidelity verdict, a refused check and a question to
+Benjamin without an answer -- so that the demonstration line of R2 (af-cifk1e)
+is observed on one cockpit, at `/runs/run?id=af-r2conv`; it is no state of a
+reference either.
 
 `/`, `/journal` and `/projet/notes` (the page of the project the six states
 of that screen are about) are served today; the other addresses are declared
@@ -1261,15 +1491,38 @@ or one of kind ralph, retry, task or check; the specs, scopes, finalizers
 and cleanups are the engine's plumbing): routed to `benjamin`, the lane
 Humain; a check, the lane Code; else the lane of the agent whose session
 claimed it -- the step's own `gc.session_name`, or that of its attempts
-(`gc.logical_bead_id`) --, its `agent_name` as the supervisor lists it, so a
-new session of the same agent keeps its lane and two agents of the same
-role keep one each. Its start is its first claim, its end its closing; an
+(`gc.logical_bead_id`) --, its `agent_name` as the supervisor lists it, or,
+once the supervisor no longer lists that session, as its session bead says
+it (`gc.session_id`, else `gc.session_name`; the tracker keeps those beads
+apart, read with `--include-ephemeral`; when that read fails, such a job is
+on a lane « Agent inconnu · sessions terminées illisibles », never on the
+lane « Agent non enregistré » of a session whose bead is gone). So a new session of
+the same agent keeps its lane -- the slot of a pool, `delivery-author-2`,
+whatever session works for it -- and two agents of the same role keep one
+each; the lane says its role and the model its session was started with
+(the `--model` of the session's command, else its provider), and when the
+last session it saw claimed its work (« Contexte · dernière session
+(HH:MM) »). R2 (af-cifk1e) found 84 lanes on
+the run of a convoy, one per ended session, before this. Its start is its first claim, its end its closing; an
 open job lasts up to now, and the clock moves only that horizon. Status:
 « Fusionné » (a ticket merged), « Abandonné » (every ticket withdrawn),
 « Terminé » (the root closed), « Ta décision » (a job of Benjamin open),
 « En cours »; a run ended in a success is ticked « ✓ », one ended without
 (« Abandonné », « Fermé » sans fusion) crossed « ✕ » and drawn muted. The
-lanes Humain and Code are drawn even without a job. When a source the run
+lanes Humain and Code are drawn even without a job.
+
+Each job says the state it recorded, and only a success is ticked: a step
+or a check whose `gc.outcome` is pass, or a fact of a ticket that is one
+(its tests proven, a favourable fidelity, its merge) « ✓ »; a refusal (an
+outcome fail, an unfavourable fidelity) « ✕ … refusé »; the stop of a
+ticket (`gc.flow.stop`) « ■ … arrêté »; a question to Benjamin he has not
+answered « ○ … en attente »; a job open « ● … en cours »; any other closed
+job, that recorded no outcome, « – … terminé ». Under its name a job names
+the ticket it serves -- the label of the ticket in its graph
+(`gc.ticket_id`), else its title: the ticket its workflow was run on, or
+the one whose facts it shows; on the run of a ticket of the old flow, that
+ticket --, then its state, then its duration. When a
+source the run
 is drawn from -- its workflow beads (`runs`) or the supervisor's sessions
 (`sessions`) -- is no longer current, the run says « Lecture périmée » with
 the moment it was last observed.
@@ -1280,8 +1533,74 @@ end (« autre », grey), each session that claimed it, at its claim
 the check each attempt's closing ran (`gc.check_mode`, `gc.outcome` passed
 or refused: « contrôle », green). Tool calls are not collected yet (C2b):
 no event is drawn turquoise. The detail of a job says, of each section that
-has no source yet (configuration, sessions, prompts, controls, usage,
-outputs), that it is not collected; an event opened says its text whole.
+has no source yet (controls, usage, outputs), that it is not collected; an
+event opened says its text whole. Its configuration, sessions and prompts
+are those of the trace of the sessions (below).
+
+### The trace of the sessions (C2a, af-k2rbw1)
+
+Intent (Benjamin, his words, 2026-10-12): « l’historique des sessions dans
+les jobs ». Mechanism (agent interpretation): the sessions, the
+configuration in effect and the prompts sent are collected from the
+supervisor, which sends the sessions their work and records when it woke
+and stopped each one, into a projection of the cockpit's own, since the
+supervisor does not keep them for ever. The Factory has no point of its
+own where a session is sent its prompts: gc wakes the session and sends
+them.
+
+At each reading of the sessions (`sessions`, every 15 s: no reading of its
+own), the cockpit reads the supervisor's log of the sessions it woke and
+stopped, and of the beads each took, since the last event it read (`GET
+/v0/city/<city>/events?type=session.woke`, `session.stopped`,
+`execution.step_started`: the bead its `subject`, the session its
+`session_id`; on a first
+reading, the latest 50 of each), and records in a private file
+(`COCKPIT_TRACE_FILE`, by default `cockpit-session-trace.jsonl` beside its
+pid file, 0600, appended only) each of those moments, then, of each session
+listed or named by that log (`GET /v0/city/<city>/session/<id>`: the
+supervisor keeps a session it stopped and no longer lists), its identity,
+provider, model, effort and permission mode, context observed and its
+window, work directory, creation, the bead it works while it runs (a
+session kept once stopped says none: only the log says the bead of a
+session past, 2026-10-28) -- and, the first time,
+at most every minute while it runs, and once more when it stopped, what its
+provider recorded (`GET
+/v0/city/<city>/session/<id>/transcript?format=raw`): the system prompt
+where the provider records it (Codex, `session_meta`; Claude Code does not:
+it is said not collected), each user prompt as typed (Codex, `event_msg`
+UserMessage; Claude Code, a `user` record of text), with its version
+(`sha256:` and twelve digits of its exact text), and the names of the tools
+it called. A session that woke and stopped between two readings is so
+collected, and what a session was sent after it was last read. Nothing else
+is read: what tools were given and printed, reasoning, environment, tokens.
+A record already written is not written again -- another cockpit reading
+the same log adds nothing --, a session that could not be read keeps its
+moments out until it is, and a record of the provider older than the
+session belongs to an earlier one its trace replays
+(`lib/cockpit/runs/trace.py`). On the live host (2026-10-22, under load) a
+first collection took 18 s for 40 sessions, the next ones 1.5 s.
+
+The sessions of a job are those the tracker records (its claims) and those
+the trace saw working it or one of its attempts, or the log says took one
+(the tracker keeps the name of one session per bead), each from its claim -- or
+its creation, for a session that took over -- to when the supervisor
+stopped it; an end it did not record is said « non collecté » (« en
+cours » for the last session of a job that runs). The detail
+of an agent's job says, for the session chosen (by default the last;
+`&session=<name>`): « Configuration effective » as observed, then
+« Configuration déclarée » for the role of its workflow (`gc.flow.models`
+on the ticket); « Sessions du job », each a link that shows its own
+configuration and prompts, the one shown marked « Affichée »; « Prompts
+envoyés », each rendered or raw
+(`Rendu`, `Brut`), the raw text being the text sent. What nothing observed
+is said « non collecté », never taken from the declaration or the job --
+the mission of a session among them, which no source reports. The
+lane of an agent says the context and model of its last session in the
+run; a job of an agent no session is recorded for is drawn on the lane of
+the one agent of its workflow, its detail saying that no session is
+recorded. Sections open and prompts shown raw are kept in the address
+(`&ouvert=…`, `&brut=…`). Tests:
+`tests/cockpit-criteria/commands/runs-trace-*-test.py`.
 
 The frise is drawn on a track of 720 px, scrolled in its box on a narrower
 screen. A job is a box at its start, as wide as its time and at least as
@@ -1363,12 +1682,85 @@ writes nothing. Viewing the page never checks a section again: a check older
 than five minutes (`COCKPIT_VALIDITY_USINE_SECONDS`) is kept, greyed
 « périmé, vu il y a … », until its « Revérifier maintenant ». Then come the health zone, and the panels « Suspension, reprise et
 arrêt » (with the stop and access zones the home already had) and
-« Nettoyer les espaces inutilisés », whose commands stay disabled until
-their tickets wire them (G2, H); the role detail's « Configurer » too.
+« Nettoyer les espaces inutilisés », wired by G2 (below); the stop
+commands stay disabled until H wires them.
 Nothing on the page is a value of the dataset: in an isolated launch the
 machine and the configuration are those of the tree launched. Tests:
 `tests/cockpit-factory-page-test.py`, and the criterion tests
 `tests/cockpit-criteria/commands/factory-*-test.py`.
+
+## « Usine »: settings and cleaning by their doors (G2, af-f8nlhr)
+
+Spec af-fgcw0d, user stories 163, 164, 166 and 174, and the choices
+« Usine » and « Maintenance » of af-2zseit. Each gesture goes through an
+existing door, never a write of a file by the cockpit.
+
+**The setting of a role** (`lib/cockpit/factory/settings.py`). The one
+setting a door supports is which provider of the role's own chain its next
+sessions start on, the others its fallbacks: every provider of that chain
+(`config/provider-policy.json`) passed the trial of adoption of the role,
+and `bin/provider-failover set --action chain` orders it
+(`.gc/provider-state.json`, read back by the configuration as `orders`).
+In the role detail, « Configurer » opens the editor
+(`/usine?role=<key>&reglage=modifier`): the provider in front -- the
+providers of the role's order, then the other providers of the same access
+(read only or not), each said not tried for the role --, the effort
+(« Effort : … », the current one that of the provider in front) and the
+fallbacks (« Ajouter en secours : … », the providers of the same access its
+order does not hold). « Voir la portée »
+(`reglage=portee&principal=&effort=&secours=`) shows « Valeur actuelle », « Nouvelle valeur », « Portée » (the role, new
+sessions only: the sessions open keep their provider) and « Conséquences »,
+then:
+
+- « Appliquer ce changement » for a provider of the chain:
+  `POST /api/actions/regler` `{"role", "principal", "confirm": true}` runs
+  the door, takes the door's own reading of the role from its answer, and
+  refuses as uncertain a reading that does not show the setting; the
+  configuration is checked again and the role says « Réglage appliqué et
+  relu par la porte à … » with the provider read back;
+- « Préparer ce changement » for any other change -- a provider not tried
+  for the role in front or as a fallback, another effort (no door sets the
+  effort of a provider): `POST /api/actions/preparer_reglage`
+  `{"role", "principal", "effort", "secours", "confirm": true}` creates a
+  proposal of class decision through `bin/proposal-door create` (« Passer
+  le rôle … sur …, à l'effort …, avec … en secours »), which waits in « Pour
+  moi »; nothing of the role changes, and the page says so.
+
+« Configurer » is disabled, with its reason, while the configuration read
+is unreadable, stale (older than `COCKPIT_VALIDITY_USINE_SECONDS`), or after
+a setting of that role had an uncertain outcome (its door did not answer
+in `COCKPIT_ACTION_TIMEOUT_SECONDS`, 504) until « Revérifier maintenant » of
+« Agents dans le workflow » read it again; the same gesture sent anyway is
+refused (409) with that reason, before any door. A proposal reads another
+source: after its door did not answer, none for that role goes before the
+tracker -- what waits in « Pour moi » -- was read again (the cockpit reads
+it at once in the background); reading the configuration lifts nothing.
+Then, if a proposal with the same words waits, it was recorded: it is said
+« Proposition déjà enregistrée » and never prepared twice.
+
+**The cleaning** (`lib/cockpit/factory/cleanup.py`). « Examiner le
+périmètre » (`/usine?nettoyage=apercu`) runs
+`bin/factory-maintain clean-worktrees --dry-run`: the candidates -- pushed,
+no local change, and either merged or, not merged, untouched past the
+door's idle days (seven): the page says which --, then what is kept and why,
+as the door says it (`local-changes`, `not-merged` -- work under way --,
+`unpushed` -- commits that exist only here, escalated, never removed; when
+the escalation door failed, the door says « not escalated » and the page
+that nobody was told --, `detached`), each worktree named in the folded
+details with its commit. « Confirmer N candidat(s) » sends
+`POST /api/actions/nettoyer` `{"perimetre": [{"name", "sha"}], "confirm":
+true}`: the scope is read again first; if its candidates are no longer
+exactly those confirmed -- one gone or come, or another worktree at the same
+name --, nothing runs (409) and a new preview is asked; otherwise the door
+runs on those worktrees only, each at its commit (`--only <name>@<sha>`), so
+one that became a candidate or was replaced in between is not touched. The
+result, one line per element (removed, not removed, kept with its reason),
+stays on the page until the next cleaning. The confirmation is refused
+(409), and goes off on the page with its reason, when no preview was read
+or the one read is stale (older than `COCKPIT_VALIDITY_USINE_SECONDS`, as a
+check of a section); a cleaning whose door did not answer blocks the next
+one until a new preview. Tests: the criterion tests
+`tests/cockpit-criteria/commands/factory-{configure,configure-proposal,configure-stale,clean}-test.py`.
 
 ## « Projets » in Panorama (direct build, 2026-10-19; Prototype Fold E, af-8rbceu)
 

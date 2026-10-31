@@ -44,7 +44,14 @@ case "\$1 \$2" in
   "pr list")
     if [[ "\$*" == *"--state open"* && "\$*" == *"example-backend"* ]]; then cat "\$OPEN_JSON"; else echo '[]'; fi ;;
   "pr merge"|"pr edit"|"pr comment"|"label create") exit 0 ;;
-  "pr view") exit 1 ;;
+  "pr view")
+    if [[ \$3 == 7 && "\$*" == *"--json state,autoMergeRequest,mergeStateStatus,statusCheckRollup,headRefOid"* ]]; then
+      cat <<'JSON'
+{"state":"OPEN","autoMergeRequest":{"mergeMethod":"SQUASH"},"mergeStateStatus":"CLEAN","statusCheckRollup":[{"name":"Maven verify","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefOid":"abc7"}
+JSON
+    else
+      exit 1
+    fi ;;
   "api repos/"*) exit 1 ;;   # ruleset unreadable (fine-grained PAT) -> "unknown", proceed on config
   *) echo "gh stub: unsupported: gh \$*" >&2; exit 1 ;;
 esac
@@ -118,6 +125,8 @@ pilot
 [ "$rc" = 0 ] || fail "(d) a healthy run exited $rc"
 grep -q "armed=1 " <<<"$out" || fail "(d) the green PR was not armed"
 grep -q "^pr merge 7 --repo example-corp/example-backend --auto --squash" "$TMP/gh.log" || fail "(d) arm call missing"
+grep -q "^pr view 7 --repo example-corp/example-backend --json state,autoMergeRequest,mergeStateStatus,statusCheckRollup,headRefOid" "$TMP/gh.log" \
+  || fail "(d) successful arm was not verified server-side"
 grep -q "^timing: " <<<"$out" && fail "(d) a fast run printed timing noise"
 grep -q "not checked (time budget" <<<"$out" && fail "(d) a fast run skipped work"
 

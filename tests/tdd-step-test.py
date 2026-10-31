@@ -28,7 +28,14 @@ FAKE_GC = ROOT / "tests" / "fixtures" / "convoy-state" / "gc"
 
 CONVOY, SPEC = "fx-convoy", "fx-spec"
 SLICE, RECIPE_SLICE, PREFACTORING = "fx-t1", "fx-t2", "fx-p1"
+# The real successor and another published ticket, identified by their graph
+# codes in their titles.
+SUCCESSOR, OTHER_SUCCESSOR = "af-ocz64w", "af-other"
 PLAIN_CONVOY, PLAIN_TICKET = "fx-plain", "fx-q1"
+
+AUTHORIZED_SUCCESSION_RESPONSE_AT = "2026-10-30T11:53:34Z"
+AUTHORIZED_SUCCESSION_LIFT_AT = "2026-10-30T11:55:11Z"
+AUTHORIZED_SUCCESSION_FILE = "tests/cockpit-criteria/commands/home-d01-records-test.py"
 
 EXIT_REFUSED = 1
 EXIT_NOT_NEW_FLOW = 4
@@ -42,6 +49,10 @@ COUNT_FILE, HEALTH_FILE = f"{TESTS}/test_count.py", f"{TESTS}/test_health.py"
 HELPER_FILE = f"{TESTS}/health_field.py"
 COUNT_ID = f"{COUNT_FILE}::CountTest.test_count_is_shown"
 HEALTH_ID = f"{HEALTH_FILE}::HealthTest.test_dataset_is_named"
+AUTHORIZED_SUCCESSION_ID = f"{AUTHORIZED_SUCCESSION_FILE}::HealthTest.test_dataset_is_named"
+SUCCESSOR_TABLE = f"{TESTS}/criteria-a2.json"
+TICKET_FILE = f"{TESTS}/test_ticket.py"
+TICKET_ID = f"{TICKET_FILE}::TicketTest.test_ticket_is_named"
 
 CRITERIA = """## What to build
 
@@ -80,6 +91,43 @@ class HealthTest(unittest.TestCase):
         body = json.loads(urllib.request.urlopen(os.environ["PRODUCT_ADDRESS"] + "/health").read())
         self.assertEqual("content", body.get("dataset"))
 """
+
+SUCCESSOR_CRITERIA = """## What to build
+
+La sonde de santé nomme le ticket.
+
+## Acceptance criteria
+
+- [ ] Point d'entrée : GET /health — Observable : champ ticket — Faux si : le champ est absent
+
+## Target rigs
+
+delivery-fixture-city"""
+
+# The criterion of the successor A2: the health probe names the ticket.
+TICKET_TEST = """import json
+import os
+import unittest
+import urllib.request
+
+
+class TicketTest(unittest.TestCase):
+    def test_ticket_is_named(self):
+        body = json.loads(urllib.request.urlopen(os.environ["PRODUCT_ADDRESS"] + "/health").read())
+        self.assertEqual("A2", body.get("ticket"))
+"""
+
+# The words in A1's real frozen home-result-states-test.py: A2 is named both
+# in the explanation and in the short comment immediately above the constant.
+HEALTH_TEST_UNTIL_A2 = HEALTH_TEST + """
+# In every state Essai and Avis are there, under every other part of the
+# result, and cannot be used, each state saying why: on a result to judge,
+# they are not wired to this destination yet (A2); on a result already judged
+# (accepted, merging, merged, abandoned), they apply only to a result to judge.
+# Why Essai and Avis cannot be used from this destination until A2, on a
+# result to judge; and why they cannot be used on a result already judged.
+"""
+HEALTH_TEST_UNTIL_A2_OR_A3 = HEALTH_TEST + "\n# The probe holds no ticket until A2 or A3 adds it.\n"
 
 # Already true of the product at the start commit.
 HEALTH_TEST_ALREADY_GREEN = HEALTH_TEST.replace(
@@ -162,8 +210,13 @@ class TddStepTest(unittest.TestCase):
 
         beads = {
             CONVOY: {"title": "convoi d'essai", "status": "open", "issue_type": "convoy",
-                     "metadata": {"gc.spec_id": SPEC}, "tracks": [SLICE, RECIPE_SLICE, PREFACTORING]},
+                     "metadata": {"gc.spec_id": SPEC},
+                     "tracks": [SLICE, RECIPE_SLICE, PREFACTORING, SUCCESSOR, OTHER_SUCCESSOR]},
             SLICE: ticket("vertical_slice"), RECIPE_SLICE: ticket("vertical_slice"),
+            SUCCESSOR: {**ticket("vertical_slice", SUCCESSOR_CRITERIA),
+                        "title": "A2 — la sonde nomme le ticket"},
+            OTHER_SUCCESSOR: {**ticket("vertical_slice", SUCCESSOR_CRITERIA),
+                              "title": "A3 — un autre ticket"},
             PREFACTORING: ticket("prefactoring", "## What to build\n\nRanger le rendu."),
             PLAIN_CONVOY: {"title": "convoi d'avant", "status": "open", "issue_type": "convoy",
                            "metadata": {"gc.spec_id": "fx-spec2"}, "tracks": [PLAIN_TICKET]},
@@ -174,7 +227,11 @@ class TddStepTest(unittest.TestCase):
             (str(STATE_TOOL), "mark", CONVOY,
              "--demonstration-line", f"{SLICE}=La page d'accueil affiche 3",
              "--demonstration-line", f"{RECIPE_SLICE}=Le produit se lance",
+             "--demonstration-line", f"{SUCCESSOR}=La sonde nomme le ticket",
+             "--demonstration-line", f"{OTHER_SUCCESSOR}=Un autre ticket",
              "--user-stories", f"{SLICE}=1", "--user-stories", f"{RECIPE_SLICE}=3",
+             "--user-stories", f"{SUCCESSOR}=4",
+             "--user-stories", f"{OTHER_SUCCESSOR}=5",
              "--establishes-launch-recipe", RECIPE_SLICE),
             env=self.env, text=True, capture_output=True)
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
@@ -681,6 +738,31 @@ class TddStepTest(unittest.TestCase):
         self.assertIn("pas un échec du ticket", error)
         self.assertNotIn("en échec", error)
 
+    def ticket_tests_seen(self, out):
+        lines = [line for line in out.read_text().splitlines() if line.startswith("TDD_STEP_TICKET_TESTS=")]
+        return lines[0].partition("=")[2].split() if lines else None
+
+    def test_green_names_the_files_of_the_ticket_s_frozen_tests_to_the_regression(self):
+        """Study C, T4: the regression at green may keep to what the ticket
+        can break; it is told which tests are the ticket's."""
+        self.frozen()
+        self.commit("code du ticket", {APP: self.green_app()})
+        out = self.tmp / "regression-env"
+
+        self.ok("green", profile=self.descriptor(regression_command=f"sh -c 'env > {out}'"))
+
+        self.assertEqual(sorted({COUNT_FILE, HEALTH_FILE}), self.ticket_tests_seen(out))
+
+    def test_prefactoring_names_no_ticket_tests_to_the_regression(self):
+        self.commit("rendu rangé", {APP: self.refactored_app(), f"{TESTS}/test_caracterisation.py": "import unittest\n"})
+        out = self.tmp / "regression-env"
+        env = {**self.env, "TDD_STEP_TICKET_TESTS": "inherited/from-the-caller-test.py"}
+
+        self.ok("prefactoring", PREFACTORING, "--base", self.base, env=env,
+                profile=self.descriptor(regression_command=f"sh -c 'env > {out}'"))
+
+        self.assertIsNone(self.ticket_tests_seen(out))
+
     def test_green_runs_the_tests_3_times_when_the_profile_declares_no_k(self):
         self.frozen()
         self.commit("code du ticket", {APP: self.green_app()})
@@ -746,6 +828,51 @@ class TddStepTest(unittest.TestCase):
                                         harness: (self.repo / harness).read_text() + "\n# tout passe\n"})
 
         self.assertIn(f"fichier gelé modifié : {harness}", self.refused("green"))
+
+    # --- a change the merged base brought is not the ticket's (af-npz9v1.39) ---
+
+    HARNESS = f"{TESTS}/harness.py"
+
+    def ticket_merges(self, side):
+        """Frozen on main, the ticket goes on on its own branch; `side` (main,
+        or a branch of the ticket's own) changes the frozen harness, and the
+        ticket branch, with its code, merges it."""
+        self.frozen()
+        self.git("checkout", "-q", "-b", "ticket")
+        if side != "main":
+            self.git("checkout", "-q", "-b", side)
+        else:
+            self.git("checkout", "-q", "main")
+        self.commit("maintenance du harnais", {self.HARNESS: (self.repo / self.HARNESS).read_text() + "\n# maintenance\n"})
+        self.git("checkout", "-q", "ticket")
+        self.commit("code", {APP: self.green_app()})
+        self.git("merge", "-q", "--no-edit", side)
+
+    def test_green_takes_a_frozen_harness_file_main_changed_and_the_branch_merged(self):
+        self.ticket_merges("main")
+
+        self.ok("green")
+
+    def test_green_refuses_a_frozen_harness_file_a_branch_of_the_ticket_changed(self):
+        self.ticket_merges("auxiliaire")
+
+        self.assertIn(f"fichier gelé modifié : {self.HARNESS}", self.refused("green"))
+
+    def test_amendment_of_what_only_the_merged_base_changed_is_refused_without_a_stop(self):
+        self.ticket_merges("main")
+
+        error = self.refused("amend", SLICE, "--reason", "le harnais a changé")
+
+        self.assertIn("seulement par la base fusionnée", error)
+
+    def test_changes_reads_a_stopped_ticket_and_tells_its_own_from_the_base_s(self):
+        self.ticket_merges("main")
+        self.state("stop-ticket", CONVOY, SLICE, "--reason", "amendment_exhausted", "--detail", "second amendement")
+
+        answer = self.ok("changes")
+
+        self.assertEqual(([], [self.HARNESS]), (answer["own"], answer["inherited"]))
+        self.assertIn("ticket arrêté", self.refused("green"))
 
     def test_green_refuses_a_registry_that_was_altered(self):
         """The fingerprints are compared with the registry the freeze sealed:
@@ -861,11 +988,11 @@ class TddStepTest(unittest.TestCase):
         self.assertEqual(EXIT_STOPPED, proc.returncode, proc.stdout + proc.stderr)
         self.assertEqual("amendment_exhausted", self.ticket_state()["stop"]["reason"])
 
-    def open_correction_after_the_amendment(self):
+    def open_correction_after_the_amendment(self, ticket=SLICE):
         """The correction round (gc.flow.correction) opened after the
         recorded amendment, as bin/convoy-state open-correction leaves it."""
         state = json.loads(self.tracker.read_text())
-        metadata = state["beads"][SLICE]["metadata"]
+        metadata = state["beads"][ticket]["metadata"]
         amendment = json.loads(metadata["gc.flow.tdd.amendment"])
         amendment["at"] = "2000-01-01T00:00:00Z"
         metadata["gc.flow.tdd.amendment"] = json.dumps(amendment)
@@ -952,6 +1079,184 @@ class TddStepTest(unittest.TestCase):
         _, proof = self.piece("tdd_amendment")
         self.assertEqual(["2"], proof["satisfied"])
         self.ok("green")
+
+    # --- succession: another ticket's frozen test (af-npz9v1.19) -------------
+
+    def successor_frozen(self, owner_health=HEALTH_TEST_UNTIL_A2, successor=SUCCESSOR):
+        """fx-t1 froze its tests, criterion 2 as given; then A2, on top of
+        them, proves its own criterion red and freezes it. Returns the start
+        commit of the successor."""
+        self.commit_tests({HEALTH_FILE: owner_health})
+        self.red()
+        self.ok("freeze")
+        start = self.git("rev-parse", "HEAD")
+        self.commit("tests du successeur", {TICKET_FILE: TICKET_TEST,
+                                    SUCCESSOR_TABLE: json.dumps({"criteria": {"1": [TICKET_ID]}})})
+        self.ok("red", successor, "--base", start, "--table", SUCCESSOR_TABLE)
+        self.ok("freeze", successor)
+        return start
+
+    def successor_app(self):
+        return self.base_app.replace('{"status": "ok"}', '{"status": "ok", "ticket": "A2"}')
+
+    def operator_authorized_successor_frozen(self, successor=SUCCESSOR):
+        """A1 froze the exact D01 test and another test that names no
+        successor; then `successor` froze its own criterion tests."""
+        profile = self.descriptor(test_perimeter=[f"{TESTS}/", "tests/cockpit-criteria/commands/"])
+        table = self.table({"1": [COUNT_ID], "2": [HEALTH_ID, AUTHORIZED_SUCCESSION_ID]})
+        self.commit("tests de critère", {
+            COUNT_FILE: COUNT_TEST,
+            HEALTH_FILE: HEALTH_TEST,
+            AUTHORIZED_SUCCESSION_FILE: HEALTH_TEST,
+            TABLE: table,
+        })
+        self.red(profile=profile)
+        self.ok("freeze")
+        start = self.git("rev-parse", "HEAD")
+        self.commit("tests du successeur", {
+            TICKET_FILE: TICKET_TEST,
+            SUCCESSOR_TABLE: json.dumps({"criteria": {"1": [TICKET_ID]}}),
+        })
+        self.ok("red", successor, "--base", start, "--table", SUCCESSOR_TABLE, profile=profile)
+        self.ok("freeze", successor)
+        return profile
+
+    def record_a2_operator_response(self):
+        state = json.loads(self.tracker.read_text())
+        metadata = state["beads"][SUCCESSOR]["metadata"]
+        metadata.update({
+            "gc.escalation_response_actor": "benjamin",
+            "gc.escalation_response_at": AUTHORIZED_SUCCESSION_RESPONSE_AT,
+            "gc.escalation_response_option": "a",
+            "gc.flow.park_lifts": json.dumps({"entries": [{
+                "at": AUTHORIZED_SUCCESSION_LIFT_AT,
+                "cause": "operator_request",
+                "detail": "A2 : un test gelé d'A1 ne nomme pas A2 comme successeur",
+                "option": "a",
+                "parked_at": "2026-10-29T05:56:01Z",
+                "request": SUCCESSOR,
+                "resumes": 0,
+                "taken": {
+                    "behind": 0, "code_review_no_result": 0, "commit_after_verdict": 0,
+                    "evaluation_no_result": 0, "inherited_change": 0, "interrupted": 0,
+                    "returned": 0, "stage_removed": 0, "unblocked": 0,
+                },
+            }]}),
+        })
+        self.tracker.write_text(json.dumps(state))
+
+    def test_operator_response_a_allows_only_a2_to_amend_the_exact_frozen_test_once(self):
+        profile = self.operator_authorized_successor_frozen()
+        changed = HEALTH_TEST + "# A2 makes Essai and Avis available.\n"
+        self.commit("code de A2 et test D01 repris", {
+            APP: self.successor_app(), AUTHORIZED_SUCCESSION_FILE: changed})
+
+        error = self.refused(
+            "amend", SUCCESSOR, "--reason", "A2 reprend le test D01", profile=profile)
+        self.assertIn(f"il ne nomme pas {SUCCESSOR}", error)
+        self.record_a2_operator_response()
+
+        self.ok("amend", SUCCESSOR, "--reason", "réponse a : A2 reprend le test D01", profile=profile)
+
+        _, proof = self.piece("tdd_amendment", SUCCESSOR)
+        self.assertEqual(
+            {AUTHORIZED_SUCCESSION_FILE: {
+                "owner": SLICE, "digest": sha256_of(self.repo / AUTHORIZED_SUCCESSION_FILE)}},
+            proof["amendment"]["succession"],
+        )
+        self.open_correction_after_the_amendment(SUCCESSOR)
+        self.commit("test D01 changé une seconde fois", {
+            AUTHORIZED_SUCCESSION_FILE: changed + "# encore\n"})
+        error = self.refused(
+            "amend", SUCCESSOR, "--reason", "seconde consommation de la réponse a", profile=profile)
+        self.assertIn(
+            f"test gelé du ticket {SLICE} déjà changé une fois par {SUCCESSOR} : {AUTHORIZED_SUCCESSION_FILE}",
+            error,
+        )
+
+    def test_operator_response_a_does_not_authorize_another_frozen_file(self):
+        profile = self.operator_authorized_successor_frozen()
+        self.record_a2_operator_response()
+        self.commit("code de A2 et autre test repris", {
+            APP: self.successor_app(), HEALTH_FILE: HEALTH_TEST + "# A2 was here.\n"})
+
+        error = self.refused(
+            "amend", SUCCESSOR, "--reason", "la réponse a ne vise pas ce fichier", profile=profile)
+
+        self.assertIn(f"test gelé du ticket {SLICE} modifié : {HEALTH_FILE} ; il ne nomme pas {SUCCESSOR}", error)
+
+    def test_operator_response_a_does_not_authorize_another_ticket(self):
+        profile = self.operator_authorized_successor_frozen(successor=OTHER_SUCCESSOR)
+        self.record_a2_operator_response()
+        self.commit("code de A3 et test D01 repris", {
+            APP: self.successor_app(),
+            AUTHORIZED_SUCCESSION_FILE: HEALTH_TEST + "# A3 was here.\n",
+        })
+
+        error = self.refused(
+            "amend", OTHER_SUCCESSOR, "--reason", "la réponse a vise A2", profile=profile)
+
+        self.assertIn(
+            f"test gelé du ticket {SLICE} modifié : {AUTHORIZED_SUCCESSION_FILE} ; "
+            f"il ne nomme pas {OTHER_SUCCESSOR}",
+            error,
+        )
+
+    def test_the_successor_a_frozen_test_names_changes_it_once_by_its_amendment(self):
+        self.successor_frozen()
+        changed = HEALTH_TEST_UNTIL_A2 + "# A2 adds the ticket to the probe.\n"
+        self.commit("code de A2 et test de fx-t1 repris", {APP: self.successor_app(), HEALTH_FILE: changed})
+        self.assertIn(f"test gelé du ticket {SLICE} modifié : {HEALTH_FILE}", self.refused("green", SUCCESSOR))
+
+        self.ok("amend", SUCCESSOR, "--reason", "la sonde nomme le ticket, comme le test de fx-t1 l'annonçait")
+
+        _, proof = self.piece("tdd_amendment", SUCCESSOR)
+        self.assertEqual({HEALTH_FILE: {"owner": SLICE, "digest": sha256_of(self.repo / HEALTH_FILE)}},
+                         proof["amendment"]["succession"])
+        self.assertIn("+# A2 adds the ticket to the probe.", proof["amendment"]["diff"])
+        self.ok("green", SUCCESSOR)
+        self.commit("test de fx-t1 changé une seconde fois", {HEALTH_FILE: changed + "# encore\n"})
+        self.assertIn(f"test gelé du ticket {SLICE} modifié : {HEALTH_FILE}", self.refused("green", SUCCESSOR))
+
+    def test_a_frozen_test_that_does_not_name_the_ticket_is_not_its_to_change(self):
+        self.successor_frozen(owner_health=HEALTH_TEST)
+        self.commit("code de A2 et test de fx-t1 repris",
+                    {APP: self.successor_app(), HEALTH_FILE: HEALTH_TEST + "# A2 was here.\n"})
+
+        error = self.refused("amend", SUCCESSOR, "--reason", "le test de fx-t1 gêne")
+
+        self.assertIn(f"test gelé du ticket {SLICE} modifié : {HEALTH_FILE} ; il ne nomme pas {SUCCESSOR}", error)
+
+    def test_a_short_code_names_exactly_its_published_ticket_not_another_one(self):
+        self.successor_frozen(successor=OTHER_SUCCESSOR)
+        changed = HEALTH_TEST_UNTIL_A2 + "# A3 tries to take A2's test.\n"
+        self.commit("code de A3 et test de fx-t1 repris", {APP: self.successor_app(), HEALTH_FILE: changed})
+
+        error = self.refused("amend", OTHER_SUCCESSOR, "--reason", "le test annonce A2, pas A3")
+
+        self.assertIn(f"il ne nomme pas {OTHER_SUCCESSOR}", error)
+
+    def test_an_ambiguous_short_successor_does_not_name_either_ticket(self):
+        self.successor_frozen(owner_health=HEALTH_TEST_UNTIL_A2_OR_A3)
+        changed = HEALTH_TEST_UNTIL_A2_OR_A3 + "# changed by A2.\n"
+        self.commit("code de A2 et test ambigu repris", {APP: self.successor_app(), HEALTH_FILE: changed})
+
+        error = self.refused("amend", SUCCESSOR, "--reason", "la phrase nomme deux successeurs")
+
+        self.assertIn(f"il ne nomme pas {SUCCESSOR}", error)
+
+    def test_red_refuses_another_ticket_s_frozen_test_changed_before_the_freeze(self):
+        self.commit_tests({HEALTH_FILE: HEALTH_TEST_UNTIL_A2})
+        self.red()
+        self.ok("freeze")
+        start = self.git("rev-parse", "HEAD")
+        self.commit("tests de S2 et test de fx-t1 repris", {
+            TICKET_FILE: TICKET_TEST, SUCCESSOR_TABLE: json.dumps({"criteria": {"1": [TICKET_ID]}}),
+            HEALTH_FILE: HEALTH_TEST_UNTIL_A2 + "# trop tôt\n"})
+
+        error = self.refused("red", SUCCESSOR, "--base", start, "--table", SUCCESSOR_TABLE)
+
+        self.assertIn(f"test gelé du ticket {SLICE} modifié : {HEALTH_FILE}", error)
 
     def test_amendment_refused_without_a_reason(self):
         self.frozen()

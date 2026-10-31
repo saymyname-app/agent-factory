@@ -92,14 +92,19 @@ whose request was answered is sent to one fresh author session on the same
 branch, through bin/dispatch-door, and the resume is counted
 (bin/convoy-state open-resume). So is a finished, unmerged ticket whose
 branch does not contain the tip of the integration branch (cause `behind`,
-T44: `behind` of bin/code-review show), once per Ticket Exit, and counted
+T44: `behind` of bin/code-review show), once per Ticket Exit, and recorded
 even when the ceiling makes its session wait: its exit is taken back, so
-neither the review nor the evaluation is sent on the old tip. So is a ticket
+neither the review nor the evaluation is sent on the old tip. That resume
+comes from the factory (another ticket merged), so K does not count it,
+once per tip of the integration branch; a second one on a tip already
+resumed for is counted (af-npz9v1.36, docs/CONVOY_ADVANCE.md). So is a ticket
 stopped because its Ticket Evaluation gave no result (af-xhc0sj), once per
 tip of the integration branch: the resume lifts the stop, keeps it on the
 resume, and withdraws its request; so is a ticket stopped at its second
 amendment once the operator answered « a » to its request (af-25o7vr,
-cause `amendment_granted`, one amendment more); every other stop stays
+cause `amendment_granted`, one amendment more), or whose every change
+since the freeze is the base's it merged (af-npz9v1.39, cause
+`inherited_change`, no answer asked); every other stop stays
 with the operator. At the
 last resume of a same cause (bounds.resumes, one bound per cause, ADR-0030
 L2: these causes and a commit after a verdict; the correction rounds keep
@@ -209,7 +214,10 @@ or the closing that follows the operator's answer could not be made; 3 a
 convoy is in an "état sans règle": nothing of it is started (0 with
 --stopped-ok once its incident is raised: what the order runs, so that a
 stopped convoy is not also an order failure);
-4 the convoy does not carry the mark: nothing is started, nothing is written.
+4 the convoy does not carry the mark: nothing is started, nothing is written;
+75 every failure of the pass is an explicit capacity deferral (`NOT RUN,
+exit 75`): nothing is accepted, and the next order pass retries without a
+chronic-failure alert.
 Settings, reads and the order that runs it: docs/CONVOY_ADVANCE.md.
 """
 
@@ -231,7 +239,8 @@ from typing import Any, Iterator
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
-from convoy_state import PROVEN_BY_TEST_OPTION, overridden_ticket  # noqa: E402
+from convoy_state import PROVEN_BY_TEST_OPTION, REEVALUATE_OPTION, STOP_COUNT_WHY, overridden_ticket  # noqa: E402
+from factory_delivery_proof import delivery_readiness  # noqa: E402
 
 
 PROGRAM = "convoy-advance"
@@ -243,6 +252,7 @@ DOOR_BIN = BIN / "dispatch-door"
 ESCALATION_BIN = BIN / "escalation-door"
 INTEGRATION_BIN = BIN / "spec-integration"
 CODE_REVIEW_BIN = BIN / "code-review"
+TDD_STEP_BIN = Path(os.environ.get("CONVOY_ADVANCE_TDD_STEP_BIN") or BIN / "tdd-step")
 PROJECT_STANDARDS_BIN = BIN / "project-standards"
 EVALUATION_BIN = BIN / "ticket-evaluation"
 CORRECTION_BIN = BIN / "correction-round"
@@ -269,7 +279,8 @@ DESCRIPTORS = ROOT / "config" / "project-descriptors"
 EXIT_REFUSED = 1
 EXIT_UNRULED = 3
 EXIT_NOT_NEW_FLOW = 4
-DOOR_DEFERRED = 75
+EXIT_DEFERRED = 75
+DOOR_DEFERRED = EXIT_DEFERRED
 # One ticket is merged per pass and per convoy: the merges stay serial, and a
 # pass stays short however many tickets finished at once.
 MERGES_PER_PASS = 1
@@ -325,6 +336,10 @@ NO_RESULT = "evaluation_no_result"
 AMENDMENT_STOP = "amendment_exhausted"
 AMENDMENT_GRANTED = "amendment_granted"
 AMENDMENT_RESUME_OPTION = "a"
+# The resume that lifts that stop when every change since the freeze is the
+# base's the branch merged, not the ticket's (af-npz9v1.39): no amendment
+# was the ticket's to take, so no answer of the operator is asked.
+INHERITED_CHANGE = "inherited_change"
 # ADR-0030 L3 removed the test review: a ticket it stopped before is resumed
 # on itself, once per stop, its request withdrawn (af-pjvsgo). A code review
 # without result is resumed the same way (af-wu6xj7): most often a defect of
@@ -569,13 +584,14 @@ class Convoy:
         """Tickets whose author has finished and that are not merged yet --
         their review or their evaluation may have refused them -- or that
         were stopped still refused without the stop having reached the
-        operator: what makes a settlement of the correction rounds worth
-        running."""
+        operator, or that were stopped at the bound under the old rule and
+        still hold the request it raised for the count alone (ADR-0035): what
+        makes a settlement of the correction rounds worth running."""
         due = []
         for t in self.tickets:
             stop = t.get("stop") or {}
             if stop:
-                if stop.get("reason") == CORRECTION_STOP and "raised" not in stop:
+                if stop.get("reason") == CORRECTION_STOP and ("raised" not in stop or count_request_open(t)):
                     due.append(t["id"])
             elif not t.get("park") and t["id"] in self.finished_unmerged():
                 due.append(t["id"])
@@ -939,6 +955,45 @@ def resume_on_its_way(ticket: dict[str, Any]) -> bool:
     return read_bead(last["launches"][-1]["bead"]).get("status") != "closed"
 
 
+def technical_repairs(ticket: dict[str, Any]) -> list[str]:
+    """The Factory-maintenance links bound to the current request."""
+    record = ticket.get("technical_repairs")
+    park, exit_record = ticket.get("park") or {}, ticket.get("exit") or {}
+    if not isinstance(record, dict) or park.get("cause") != "operator_request" \
+            or exit_record.get("exit") != "operator_request" \
+            or record.get("parked_at") != park.get("at") or record.get("exit_at") != exit_record.get("at"):
+        return []
+    entries = record.get("entries")
+    return [entry["id"] for entry in entries] if isinstance(entries, list) else []
+
+
+def released_technical_repairs(ticket: dict[str, Any]) -> list[str]:
+    """The latest lift released the ticket's current operator-request exit."""
+    record = ticket.get("technical_repairs")
+    exit_record = ticket.get("exit") or {}
+    lifts = ticket.get("park_lifts") or []
+    entries = record.get("entries") if isinstance(record, dict) else None
+    if exit_record.get("exit") != "operator_request" or not isinstance(entries, list) \
+            or not isinstance(lifts, list) or not lifts:
+        return []
+    lift = lifts[-1]
+    repairs = lift.get("repairs") if isinstance(lift, dict) else None
+    linked = [entry["id"] for entry in entries]
+    return repairs if repairs == linked \
+        and lift.get("exit_at") == record.get("exit_at") == exit_record.get("at") else []
+
+
+def delivered_technical_repairs(ticket: dict[str, Any]) -> list[str]:
+    """Every linked repair, only after structural PR merge and exact-head
+    CI proof. Open, failed and merely closed work keeps waiting."""
+    repairs = technical_repairs(ticket)
+    for repair_id in repairs:
+        readiness = delivery_readiness(read_bead(repair_id))
+        if not readiness["ready"] or not readiness["pr_backed"]:
+            return []
+    return repairs
+
+
 def resume_due(ticket: dict[str, Any], alive: set[str]) -> tuple[str, str, str] | None:
     """What the pass owes a ticket at work, read on the tracker alone:
     ("new", cause, ref) a fact that asks for a resume not counted yet;
@@ -961,6 +1016,11 @@ def resume_due(ticket: dict[str, Any], alive: set[str]) -> tuple[str, str, str] 
         return "new", "interrupted", f"session:{session}" if session else f"exit:{exit_at}"
     if exit_name == "technically_blocked":
         return None if open_blockers(ticket["id"]) else ("new", "unblocked", f"exit:{exit_at}")
+    released_repairs = released_technical_repairs(ticket)
+    if exit_name == "operator_request" and released_repairs:
+        repairs = ",".join(released_repairs)
+        ref = hashlib.sha256(repairs.encode("utf-8")).hexdigest()[:16]
+        return "new", "unblocked", f"repairs:{ref}/exit:{exit_at}"
     if exit_name in PARKING_EXITS:
         # Its parking was lifted: the answer goes to a fresh session.
         return "new", "answered", f"exit:{exit_at}"
@@ -1025,6 +1085,10 @@ def park_exhausted(convoy: Convoy, ticket: dict[str, Any]) -> dict[str, Any]:
     exhausted = ", ".join(cause for cause, count in left.items() if count == 0)
     named = f" pour la cause {exhausted}" if exhausted else ""
     detail = f"reprises épuisées{named} ({resumes} reprises en tout) : le ticket ne redémarre plus"
+    if left.get(BEHIND) == 0:
+        # Only a branch that did not take a tip it was already resumed for
+        # counts for `behind` (af-npz9v1.36).
+        detail += " ; behind : une même pointe d'intégration reprise sans être prise"
     # A commit after a verdict (T18) counts a resume without an entry: the
     # detail names the last one recorded.
     entries = (ticket.get("resume") or {}).get("entries") or []
@@ -1079,6 +1143,29 @@ def amendment_granted_due(ticket: dict[str, Any]) -> tuple[str, str, str] | None
     if request_answer(read_bead(ticket["id"]), stop["at"]) != AMENDMENT_RESUME_OPTION:
         return None
     return "new", AMENDMENT_GRANTED, f"stop:{stop['reason']}/{stop['at']}"
+
+
+def inherited_change_due(convoy: Convoy, ticket: dict[str, Any]) -> tuple[str, str, str] | None:
+    """The resume a stop at the second amendment asks for when, at the
+    tip, no frozen file and no file of the test perimeter changed since the
+    freeze but as the base the branch merged holds it (af-npz9v1.39): once
+    per stop, none once the operator answered it, none when the ticket has
+    no resume left, none when bin/tdd-step cannot say. The fact is
+    `stop:<reason>/<time>`."""
+    stop = ticket["stop"]
+    if ticket.get("resumes_left") == 0 or not ticket.get("tip"):
+        return None
+    if request_answer(read_bead(ticket["id"]), stop["at"]) is not None:
+        return None
+    try:
+        proc = run([str(TDD_STEP_BIN), "changes", convoy.id, ticket["id"], "--repo", str(convoy.repo),
+                    "--profile", str(rig_profile(convoy.rig)), "--at", ticket["tip"]])
+        answer = json.loads(proc.stdout)
+    except (Refusal, json.JSONDecodeError):
+        return None
+    if proc.returncode != 0 or not isinstance(answer, dict) or answer.get("own") != [] or not answer.get("inherited"):
+        return None
+    return "new", INHERITED_CHANGE, f"stop:{stop['reason']}/{stop['at']}"
 
 
 def once_per_stop_due(ticket: dict[str, Any], cause: str) -> tuple[str, str, str] | None:
@@ -1140,7 +1227,7 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
             elif ticket["stop"]["reason"] == CODE_REVIEW_STOP:
                 due = once_per_stop_due(ticket, CODE_REVIEW_STOP)
             elif ticket["stop"]["reason"] == AMENDMENT_STOP:
-                due = amendment_granted_due(ticket)
+                due = amendment_granted_due(ticket) or inherited_change_due(convoy, ticket)
             elif overridden_at_work(ticket):
                 # Only the merge that returned it lifts its stop; no resume left, it stays with the operator.
                 due = resume_due(ticket, alive) if ticket.get("resumes_left") != 0 else None
@@ -1157,7 +1244,7 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
             if not rig:
                 raise Refusal("le ticket ne nomme pas un seul projet connu de config/projects sous « Target rigs »")
             full = len(out["started"]) + len(out["resumed"]) >= free
-            # A branch behind is counted at once, session or not: its exit
+            # A branch behind is recorded at once, session or not: its exit
             # is taken back, so neither the review nor the Ticket Evaluation
             # is sent on the old tip while the ticket waits for a session.
             if full and (what, cause) != ("new", BEHIND):
@@ -1166,6 +1253,16 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
             if what == "new":
                 if stopped and "raised" in ticket["stop"]:
                     # The resume lifts the stop: its request leaves the operator's list.
+                    passed(run([str(ESCALATION_BIN), "clear", ticket_id]), "escalation-door clear")
+                    # The answer and clear share the door lock. An answer may
+                    # have landed after the due check but before clear won it.
+                    if cause in (NO_RESULT, STAGE_REMOVED, CODE_REVIEW_STOP) \
+                            and request_answer(read_bead(ticket_id), ticket["stop"]["at"]) is not None:
+                        continue
+                elif cause == "unblocked" and released_technical_repairs(ticket):
+                    # The parking was removed first. If clearing refuses or
+                    # this pass is interrupted, the request remains and the
+                    # next pass retries before opening the resume.
                     passed(run([str(ESCALATION_BIN), "clear", ticket_id]), "escalation-door clear")
                 state_write("open-resume", convoy.id, ticket_id, "--cause", cause, "--ref", ref)
                 convoy.load()
@@ -1187,6 +1284,17 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
             out["refused"].append({"id": ticket_id, "reason": str(exc)})
 
 
+def count_request_open(ticket: dict[str, Any]) -> bool:
+    """A ticket stopped at the bound whose request, raised before ADR-0035
+    for the count alone, is still open and unanswered: bin/correction-round
+    settle wakes the Mayor and withdraws it, once (af-npz9v1.40)."""
+    if not ticket.get("correction") or ticket.get("correction_rounds_left"):
+        return False
+    metadata = read_bead(ticket["id"]).get("metadata") or {}
+    return metadata.get("gc.needs_benjamin") not in (None, "none") \
+        and metadata.get("gc.escalation_pourquoi") == STOP_COUNT_WHY
+
+
 def request_answer(bead: dict[str, Any], since: str) -> str | None:
     """The letter the operator answered a request with
     (bin/escalation-door repondre), once it is no longer open."""
@@ -1202,12 +1310,27 @@ def settle_lifts(convoy: Convoy, out: dict[str, Any]) -> None:
     pass: any answer to the request an operator request left on its ticket;
     the option that accepts the deviation a Planning Exception asked about;
     the option that judges proven by its test what an evaluation's Planning
-    Exception could not observe; the lifting option of the convoy's grouped
+    Exception could not observe, or the one that has it evaluated again on
+    the products launched again (af-npz9v1.38); the lifting option of the convoy's grouped
     request, for the tickets it names. Any other answer leaves the ticket
-    parked."""
-    lifts: list[tuple[str, str, str]] = []
+    parked. A ticket parked for exhausted resumes that has resumes left
+    under the bounds of now is lifted without an answer: an answered resume
+    takes no bound since af-npz9v1.41, and nothing is left to ask."""
+    lifts: list[tuple[str, str, str | None, list[str]]] = []
     for ticket in convoy.tickets:
         park = ticket.get("park") or {}
+        if ticket.get("status") != "closed" and park.get("origin") == ticket["id"] \
+                and park.get("cause") == PARK_EXHAUSTED and ticket.get("resumes_left"):
+            lifts.append((ticket["id"], ticket["id"], None, []))
+            continue
+        if ticket.get("status") != "closed" and park.get("origin") == ticket["id"] \
+                and park.get("cause") == "operator_request" and technical_repairs(ticket):
+            repairs = delivered_technical_repairs(ticket)
+            if repairs:
+                lifts.append((ticket["id"], ticket["id"], None, repairs))
+            # Once explicitly linked, this is a code-owned technical wait:
+            # an old or new human answer never releases it before delivery.
+            continue
         answer = park.get("answer")
         if ticket.get("status") == "closed" or park.get("origin") != ticket["id"] or not answer:
             continue
@@ -1217,9 +1340,9 @@ def settle_lifts(convoy: Convoy, out: dict[str, Any]) -> None:
         # `planning_exceptions` (Benjamin, 21/10/2026, af-ten1sp).
         evaluated = ((ticket.get("exit") or {}).get("exit") == "finished"
                      and ((ticket.get("evaluation") or {}).get("state") or {}).get("outcome") == "planning_exception")
-        proven = evaluated and answer["option"] == PROVEN_BY_TEST_OPTION
+        proven = evaluated and answer["option"] in (PROVEN_BY_TEST_OPTION, REEVALUATE_OPTION)
         if park.get("cause") == "operator_request" or (park.get("cause") == "planning_exception" and (accepted or proven)):
-            lifts.append((ticket["id"], ticket["id"], answer["option"]))
+            lifts.append((ticket["id"], ticket["id"], answer["option"], []))
     try:
         grouped = convoy.grouped or {}
         if grouped.get("lifts"):
@@ -1228,13 +1351,18 @@ def settle_lifts(convoy: Convoy, out: dict[str, Any]) -> None:
                 for ticket_id in grouped["lifts"]:
                     park = convoy.ticket(ticket_id).get("park") or {}
                     if park.get("origin") == ticket_id and park.get("cause") == PARK_EXHAUSTED:
-                        lifts.append((ticket_id, grouped["bead"], letter))
+                        lifts.append((ticket_id, grouped["bead"], letter, []))
     except Refusal as exc:
         out["refused"].append({"id": convoy.id, "reason": str(exc)})
-    for ticket_id, request, letter in lifts:
+    for ticket_id, request, letter, repairs in lifts:
         try:
-            answer = state_write("lift-park", convoy.id, ticket_id, "--request", request, "--option", letter)
-            out["lifted"].append({"id": ticket_id, "option": letter, "request": request, "lifted": answer["lifted"]})
+            option = ["--option", letter] if letter else []
+            repair_args = [part for repair in repairs for part in ("--repair", repair)]
+            answer = state_write("lift-park", convoy.id, ticket_id, "--request", request, *option, *repair_args)
+            lifted = {"id": ticket_id, "option": letter, "request": request, "lifted": answer["lifted"]}
+            if repairs:
+                lifted["repairs"] = repairs
+            out["lifted"].append(lifted)
         except Refusal as exc:
             out["refused"].append({"id": ticket_id, "reason": str(exc)})
     if lifts:
@@ -1247,12 +1375,16 @@ def parked_origins(convoy: Convoy) -> dict[str, list[str]] | None:
     left = [t for t in convoy.tickets if t.get("status") != "closed"]
     if not left or not all(isinstance(t.get("park"), dict) and "origin" in t["park"] for t in left):
         return None
+    technical = {t["id"] for t in left if technical_repairs(t)}
     origins: dict[str, list[str]] = {}
     for ticket in left:
-        origins.setdefault(ticket["park"]["origin"], [])
+        origin = ticket["park"]["origin"]
+        if origin in technical:
+            continue
+        origins.setdefault(origin, [])
         if ticket["park"]["origin"] != ticket["id"]:
-            origins[ticket["park"]["origin"]].append(ticket["id"])
-    return origins
+            origins[origin].append(ticket["id"])
+    return origins or None
 
 
 def grouped_request(convoy: Convoy, origins: dict[str, list[str]]) -> tuple[dict[str, Any], str, list[str]]:
@@ -1290,9 +1422,10 @@ def grouped_request(convoy: Convoy, origins: dict[str, list[str]]) -> tuple[dict
     return request, text, exhausted
 
 
-def parkings_signature(convoy: Convoy) -> str:
+def parkings_signature(convoy: Convoy, origins: dict[str, list[str]]) -> str:
+    named = set(origins) | {ticket_id for behind in origins.values() for ticket_id in behind}
     rows = sorted([t["id"], str(t["park"].get("cause")), str(t["park"].get("origin")), str(t["park"].get("at"))]
-                  for t in convoy.tickets if t.get("status") != "closed" and isinstance(t.get("park"), dict))
+                  for t in convoy.tickets if t["id"] in named and isinstance(t.get("park"), dict))
     return "sha256:" + hashlib.sha256(json.dumps(rows, ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
@@ -1304,6 +1437,20 @@ def record_grouped(convoy: Convoy, bead_id: str, signature: str | None = None, l
         # The door letters the options in order: the first one lifts.
         argv += ["--lift-option", "a", *(part for ticket_id in lifts for part in ("--lifts", ticket_id))]
     state_write(*argv)
+
+
+def settle_grouped_lift(convoy: Convoy, out: dict[str, Any]) -> bool:
+    """Apply the grouped answer while its record still names the tickets."""
+    grouped = convoy.grouped or {}
+    if not grouped.get("lifts") \
+            or request_answer(read_bead(grouped["bead"]), grouped["at"]) != grouped["lift_option"]:
+        return False
+    settle_lifts(convoy, out)
+    remaining = [ticket_id for ticket_id in grouped["lifts"]
+                 if (convoy.ticket(ticket_id).get("park") or {}).get("cause") == PARK_EXHAUSTED]
+    if remaining:
+        raise Refusal("la réponse de la demande groupée n'a pas levé " + ", ".join(remaining))
+    return True
 
 
 def settle_grouped_request(convoy: Convoy, out: dict[str, Any]) -> dict[str, Any] | None:
@@ -1321,26 +1468,23 @@ def settle_grouped_request(convoy: Convoy, out: dict[str, Any]) -> dict[str, Any
             # while this pass resumed another ticket. Clear holds the same
             # door lock as the answer: read and apply it now, before dropping
             # the only record that names the exhausted tickets (af-g2ukoq).
-            grouped = convoy.grouped
-            if grouped.get("lifts") \
-                    and request_answer(read_bead(bead_id), grouped["at"]) == grouped["lift_option"]:
-                settle_lifts(convoy, out)
-                remaining = [ticket_id for ticket_id in grouped["lifts"]
-                             if (convoy.ticket(ticket_id).get("park") or {}).get("cause") == PARK_EXHAUSTED]
-                if remaining:
-                    raise Refusal("la réponse de la demande groupée n'a pas levé " + ", ".join(remaining))
+            settle_grouped_lift(convoy, out)
             if read_bead(bead_id).get("status") != "closed":
                 passed(run([GC_BIN, "--city", str(ROOT), "bd", "close", bead_id, "--reason",
                             f"Le convoi {convoy.id} n'est plus fait que de tickets parqués."]), "gc bd close")
             state_write("clear-grouped-request", convoy.id)
             return {"bead": bead_id, "withdrawn": True}
-        signature = parkings_signature(convoy)
+        signature = parkings_signature(convoy, origins)
         if convoy.grouped and convoy.grouped.get("signature") == signature:
             return {"bead": convoy.grouped["bead"], "raised": False}
         request, text, lifts = grouped_request(convoy, origins)
         if convoy.grouped:
             bead_id = convoy.grouped["bead"]
             passed(run([GC_BIN, "--city", str(ROOT), "bd", "update", bead_id, "--append-notes", text]), "gc bd update")
+            # The old record is still the only one that names the tickets.
+            # Apply an answer that landed during this pass before replacing it.
+            if settle_grouped_lift(convoy, out):
+                return settle_grouped_request(convoy, out)
         else:
             created = gc_json("bd", "create", f"Demande groupée : convoi {convoy.id}, il ne reste que des tickets parqués",
                               "-p", "1", "-t", "task", "-d", text, "--json")
@@ -2427,7 +2571,9 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
     settings = load_settings()
     for convoy_id in marked_convoys():
         if convoy_id not in convoys:
-            convoys[convoy_id] = Convoy(convoy_id)
+            convoy = Convoy(convoy_id)
+            if not convoy.closed:
+                convoys[convoy_id] = convoy
     sessions = role_sessions(live)
     awaiting = sorted(ticket for convoy in convoys.values() for ticket in convoy.awaiting_a_session())
     # N counts authors only: a reviewer or Evaluator session, even idle
@@ -2525,6 +2671,7 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
     # merge pass that could not run is a failure of it.
     failed = [failure for result in results for failure in pass_failures(result)]
     refused = bool(failed)
+    capacity_deferred = refused and all("NOT RUN, exit 75" in failure for failure in failed)
     answer: dict[str, Any] = {
         "ok": not (unruled or refused), "ceiling": settings["ceiling"], "sessions": sessions,
         "awaiting_a_session": awaiting, "occupied": occupied, "convoys": results,
@@ -2537,7 +2684,8 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
         # what made it fail is named last, where that tail still reads it.
         sys.stdout.flush()
         print(failure_line(answer.get("message"), failed), file=sys.stderr)
-    return EXIT_UNRULED if unruled and not stopped_ok else EXIT_REFUSED if refused else 0
+    return (EXIT_UNRULED if unruled and not stopped_ok else
+            EXIT_DEFERRED if capacity_deferred else EXIT_REFUSED if refused else 0)
 
 
 def main(argv: list[str]) -> int:
@@ -2558,7 +2706,15 @@ def main(argv: list[str]) -> int:
                 print(json.dumps({"ok": True, "skipped": PASS_RUNNING}, indent=2,
                                  sort_keys=True, ensure_ascii=False))
                 return 0
-            return one_pass(None if args.all else [args.convoy], args.stopped_ok)
+            prior_lock_marker = os.environ.get("CONVOY_ADVANCE_LOCK_HELD_BY_PASS")
+            os.environ["CONVOY_ADVANCE_LOCK_HELD_BY_PASS"] = "1"
+            try:
+                return one_pass(None if args.all else [args.convoy], args.stopped_ok)
+            finally:
+                if prior_lock_marker is None:
+                    os.environ.pop("CONVOY_ADVANCE_LOCK_HELD_BY_PASS", None)
+                else:
+                    os.environ["CONVOY_ADVANCE_LOCK_HELD_BY_PASS"] = prior_lock_marker
     except NotNewFlow as exc:
         print(json.dumps(json.loads(str(exc)), indent=2, sort_keys=True, ensure_ascii=False))
         return EXIT_NOT_NEW_FLOW

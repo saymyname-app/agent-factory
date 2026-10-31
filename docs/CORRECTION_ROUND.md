@@ -44,6 +44,8 @@ touched (exit 4).
 ./bin/correction-round brief    af-convoy af-t1                           # the author session of the round (formula mol-ticket-correction)
 ./bin/correction-round override af-convoy af-t1 --finding F1.1 --approved-by <human approver> --words "…"   # the operator, on a stopped ticket
 ./bin/correction-round grant    af-convoy af-t1 --approved-by <human approver> --words "…"   # the operator, on a ticket stopped with a round left
+./bin/correction-round grant    af-convoy af-t1 --approved-by mayor --words "<motif>" --target F2.1 --arbitrated   # the Mayor, at the bound (ADR-0035)
+./bin/correction-round escalate af-convoy af-t1 --why "<décision de l'opérateur>"   # the Mayor, for a decision that is the operator's
 ./bin/correction-round grant    af-convoy af-t1 --approved-by <human approver> --words "…" --exceptional   # the operator, once per ticket, on a ticket stopped at the bound (ADR-0034)
 ./bin/correction-round show     af-convoy af-t1                           # the round, the overrides, the stop, the counters
 ```
@@ -170,8 +172,10 @@ review, no evaluation, no round, no merge (`docs/SPEC_INTEGRATION.md`),
 but the evaluation of a ticket whose findings are all overridden (below). It is
 raised **once** through `bin/escalation-door benjamin`: one line for the
 ticket in `bin/escalation-door list`, whether one control or both refused
-it. `bin/convoy-state stop-raised` records it; a stop whose request could
-not be sent is raised by the next pass.
+it. **At the bound** (a round taken, none left), the stop is raised to the
+Mayor instead, by mail, and the operator is asked nothing (ADR-0035, below).
+`bin/convoy-state stop-raised` records it; a stop whose request or mail
+could not be sent is raised by the next pass.
 
 The commit of the correction outdates the verdicts given before it. The
 merge command writes that (`bin/convoy-state invalidate-verdicts`) **without
@@ -237,7 +241,10 @@ round); `bin/escalation-door clear` withdraws its request. The next passes
 review and evaluate the tip again if needed, and `settle` opens the next
 round once both answered there. Refused: from anyone else, without words,
 on a ticket that is not stopped `still_refused` after a round, or that has
-no round left.
+no round left; and, with the same words as the exceptional round, when no
+round would open (« aucun tour ne s'ouvrirait » : the correction session
+ended without the ticket being finished and refused at a new tip; lifting
+the stop would only let the next pass stop it again, af-npz9v1.23).
 
 ## Le tour exceptionnel (ADR-0034)
 
@@ -270,15 +277,43 @@ exceptionnel par ticket »). Sans `--exceptional`, un `grant` au plafond le
 signale. La demande d'arrêt propose l'option « Accorder le tour
 exceptionnel » tant qu'elle est possible.
 
+## Au plafond, le Mayor arbitre (ADR-0035)
+
+Intent (Benjamin, ses mots, 2026-10-28) : « J'aimerais qu'il ne faille plus
+mon accord pour dépasser la limite de corrections. »
+Mechanism (interprétation agent, af-npz9v1.40) : le compteur seul ne
+demande rien à Benjamin ; le Mayor arbitre par les portes existantes.
+
+Un ticket arrêté `still_refused` au plafond réveille le Mayor (`gc mail
+send mayor`, une fois, rejoué si le mail échoue), jamais par
+`escalation-door mayor` dont le sweep remonterait à Benjamin après un délai
+seul. Le mail donne l'arrêt, les refus à la pointe, les tours arbitrés
+restants, si un tour s'ouvrirait, et les commandes. Le Mayor :
+
+- accorde un **tour arbitré** : `grant --arbitrated --approved-by <son
+  acteur> --words "<motif>" --target <refus>...`, gardé sous `grants` avec
+  `arbitrated: true`, le motif et les cibles, que la consigne de l'auteur
+  (`brief.round`) redit. Refusé sans rien écrire : par l'approbateur humain
+  déclaré, sans motif, sans cible ou avec une cible qui n'est pas un refus à
+  la pointe, tant qu'une décision posée à l'opérateur (`escalate`) est
+  ouverte et sans réponse, sur un ticket qui n'est pas arrêté au plafond, quand aucun
+  tour ne s'ouvrirait, et au-delà de `ARBITRATED_ROUNDS_MAX` (2) par ticket ;
+- à cette borne, ou sans tour possible, **diagnostique** : laisse arrêté,
+  fait réparer une cause d'usine, replanifie ;
+- pose la demande à l'opérateur (`escalate --why "<décision>"`) seulement
+  pour une décision qui est la sienne : produit, critères, données, accès,
+  dépense, autorité. La demande est celle d'avant, avec ces mots comme
+  raison.
+
 ## Stored state
 
 On the ticket, written by `bin/convoy-state` only (`docs/CONVOY_STATE.md`):
 
 | Key | Value |
 |---|---|
-| `gc.flow.correction` | `commit`, `blocking_findings` (finding ids), `not_observed` (names), `launches` (at most one `{bead, at}`), `at`; `grants` (`approver`, `words`, `stop`, `at`, and `exceptional: true` for the one exceptional round, ADR-0034) |
+| `gc.flow.correction` | `commit`, `blocking_findings` (finding ids), `not_observed` (names), `launches` (at most one `{bead, at}`), `at`; `grants` (`approver`, `words`, `stop`, `at`, and `exceptional: true` for the one exceptional round, ADR-0034, or `arbitrated: true` with `targets` for a round the Mayor granted, ADR-0035) |
 | `gc.flow.counter.resumes`, `gc.flow.counter.correction_rounds` | each one more when the round is opened |
-| `gc.flow.stop` | reason `still_refused`, a one-line detail, and `raised` once the escalation door accepted the request |
+| `gc.flow.stop` | reason `still_refused`, a one-line detail, and `raised` once the escalation door accepted the request, or, at the bound, once the Mayor was mailed |
 | `gc.flow.overrides` | `entries`: one `{finding, approver, words, commit, at}` per overridden Blocking Finding |
 
 ## Avoiding reads for tickets with no work

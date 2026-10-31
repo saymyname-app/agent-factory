@@ -71,6 +71,7 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state release-evaluation CONVOY TICKET --state-file PATH [--state-file PATH] [--withdraw]
     convoy-state set-handoff  CONVOY TICKET --file PATH
     convoy-state park         CONVOY TICKET --cause CAUSE --detail LINE
+    convoy-state link-technical-repair CONVOY TICKET --repair BEAD
     convoy-state set-fidelity CONVOY TICKET --commit SHA --piece NAME --file PATH
     convoy-state raise-planning-exception CONVOY TICKET --kind KIND --summary LINE [--anchor NAME ...] [--item ID ...]
                                           [--accept-option LETTER]
@@ -82,7 +83,7 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state invalidate-verdicts CONVOY TICKET --tip SHA --kind KIND [--kind KIND]
     convoy-state open-correction   CONVOY TICKET --commit SHA
     convoy-state launch-correction CONVOY TICKET --bead BEAD
-    convoy-state grant-correction  CONVOY TICKET --approver NAME --words TEXT [--exceptional]
+    convoy-state grant-correction  CONVOY TICKET --approver NAME --words TEXT [--exceptional | --arbitrated --target NAME...]
     convoy-state override-finding  CONVOY TICKET --finding ID --approver NAME --words TEXT
     convoy-state record-incident CONVOY --bead BEAD [--signature sha256:HEX]
     convoy-state clear-incident  CONVOY
@@ -133,11 +134,14 @@ reads the bead from stdin, as `gc bd show --json` printed it, instead of
 reading the tracker again (what bin/dispatch-door does before a dispatch).
 
 A verdict is valid only while its commit is the tip of the ticket's branch
-in `--repo` (default: the current directory): a commit added after it makes
-it invalid, a commit that is not on the branch at all is an "état sans
-règle". `invalidate-verdicts` writes that on the verdicts the merge command
-found outdated, and counts one resume for it -- none when the commit is the
-one of the correction round, which `open-correction` already counted.
+in `--repo` (default: the current directory) and no coded door invalidated
+it: a commit added after it makes it invalid, as does a newer code-review
+judgement contract at the same tip; a commit that is not on the branch at
+all is an "état sans règle". `invalidate-verdicts` writes the first case on
+the verdicts the merge command found outdated, and counts one resume for it
+-- none when the commit is the one of the correction round, which
+`open-correction` already counted. `open-code-review` writes the second and
+opens the replacement judgement without an author resume.
 
 The bound of the resumes of a ticket (K), one per cause (ADR-0030 L2), is
 read in the one place the bounds of the flow are set: `bounds.resumes` of
@@ -164,6 +168,11 @@ import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
+
+LIB = str(Path(__file__).resolve().parent)
+if LIB not in sys.path:
+    sys.path.insert(0, LIB)
+from delivery_rules import PROVEN_BY_TEST_OPTION, evaluation_proven_by_test, review_replay_due
 
 # The two names serve annotations only, which are never evaluated here
 # (`from __future__ import annotations`): importing `typing` on each of the
@@ -237,6 +246,7 @@ KEY_OVERRIDES = PREFIX + "overrides"
 KEY_CRITERIA = PREFIX + "criteria"
 KEY_RESUME = PREFIX + "resume"
 KEY_PARK_LIFTS = PREFIX + "park_lifts"
+KEY_TECHNICAL_REPAIRS = PREFIX + "technical_repairs"
 KEY_GROUPED_REQUEST = PREFIX + "grouped_request"
 KEY_SPEC_END = PREFIX + "spec_end"
 KEY_END_REVIEW = PREFIX + "end_review"
@@ -388,6 +398,14 @@ STOP_REASONS = ("criterion_already_green", "amendment_exhausted", "test_review_r
 # never a criterion that was not observed, or grant a round the bound allows.
 STOP_STILL_REFUSED = "still_refused"
 BOUND_CORRECTION_ROUNDS = "correction_rounds"
+# ADR-0035 (af-npz9v1.40): at the bound, the Mayor arbitrates; it may grant a
+# round more, with its motive and the refusals it targets, at most that many
+# times per ticket: the bound of the blind relaunches.
+ARBITRATED_ROUNDS_MAX = 2
+# The reason the request of a stop at the bound gave the operator before
+# ADR-0035: the number of rounds alone. Such a request, still open, is
+# withdrawn once the Mayor is woken (bin/correction-round, bin/convoy-advance).
+STOP_COUNT_WHY = "Le ticket a pris tous ses tours de correction : aucun autre ne démarre, rien de ce ticket ne fusionne."
 CORRECTION_MAX_LAUNCHES = 1
 OVERRIDE_RECORDED = "dérogation enregistrée"
 # The review of the criterion tests between red and freeze, removed by
@@ -423,10 +441,10 @@ EVALUATION_KINDS = ("evaluation", "startup")
 EVALUATION_STATES = ("observed", "not_observed", "unobservable")
 UNOBSERVABLE_CAUSES = ("criterion", "environment")
 EVALUATION_OUTCOMES = ("favorable", "return_to_author", "planning_exception", "environment_outage")
-# The option of the request an evaluation's Planning Exception raises
-# (bin/ticket-evaluation) that judges what it could not observe proven by
-# its criterion test (Benjamin, 21/10/2026, af-ten1sp).
-PROVEN_BY_TEST_OPTION = "a"
+# The option of that request that has it evaluated again on the products
+# launched again, judging nothing proven (af-npz9v1.38). Benjamin, 28/10/2026
+# 01:20 Paris, relayed from the central chat: « Oui aux deux recommandations : fais ajouter puis utiliser l’option de réévaluation réelle pour les trois tickets, et accorde le tour de correction exceptionnel. Coordonne tout et vérifie que ça repart. »
+REEVALUATE_OPTION = "c"
 EVALUATION_MAX_LAUNCHES = 2
 KIND_WITHOUT_EVALUATOR = "prefactoring"
 ADDRESS_RE = re.compile(r"^http://127\.0\.0\.1:[0-9]{1,5}$")
@@ -458,7 +476,7 @@ BOUND_END_ROUNDS = "end_rounds"
 # (af-25o7vr): those resumes lift the stop. The correction round and a commit after a
 # verdict are counted where they are written.
 RESUME_CAUSES = ("interrupted", "returned", "unblocked", "answered", "behind", "evaluation_no_result",
-                 "stage_removed", "code_review_no_result", "amendment_granted")
+                 "stage_removed", "code_review_no_result", "amendment_granted", "inherited_change")
 # The stops a resume lifts, by the cause that lifts them: a Ticket Evaluation
 # without result (af-xhc0sj), the stops of the test review, a stage
 # ADR-0030 L3 removed (af-pjvsgo), a code review without result
@@ -466,7 +484,9 @@ RESUME_CAUSES = ("interrupted", "returned", "unblocked", "answered", "behind", "
 RESUMABLE_STOPS = {"evaluation_no_result": ("evaluation_no_result",),
                    "stage_removed": ("test_review_refused", "test_review_no_result"),
                    "code_review_no_result": ("code_review_no_result",),
-                   "amendment_granted": ("amendment_exhausted",)}
+                   "amendment_granted": ("amendment_exhausted",),
+                   # af-npz9v1.39: every change since the freeze is the merged base's.
+                   "inherited_change": ("amendment_exhausted",)}
 # A ticket stopped still refused whose every Blocking Finding the operator
 # overrode is merged as if at work; the merge that returns it lifts its stop
 # like a resumable one (af-n4bn62). The cause stays one of a ticket not
@@ -484,7 +504,25 @@ def resume_lifts(cause: str, reason: str) -> bool:
 # cause of its own. The correction round is not one: it has its own bound
 # (`bounds.correction_rounds`, correction_rounds_bound), outside K.
 COMMIT_AFTER_VERDICT = "commit_after_verdict"
-BOUNDED_RESUME_CAUSES = RESUME_CAUSES + (COMMIT_AFTER_VERDICT,)
+# A resume an answer of the operator opened is bounded by that answer: each
+# one needs a new request and a new answer, so no loop runs blind. It is
+# recorded and counted in `resumes`, takes no bound and never parks its
+# ticket for exhausted resumes (af-npz9v1.41: R2, af-cifk1e, parked on
+# 28/10/2026 at its third answer, the resume that answer opened never sent).
+ANSWERED_CAUSES = ("answered", "amendment_granted")
+BOUNDED_RESUME_CAUSES = tuple(cause for cause in RESUME_CAUSES if cause not in ANSWERED_CAUSES) \
+    + (COMMIT_AFTER_VERDICT,)
+# A resume `behind` comes from the factory, not from the ticket: another
+# ticket merged and moved the integration branch (T44). It is recorded like
+# any resume (entry, counter `resumes`, fresh author session) but does not
+# count in K, once per tip of the integration branch. Intent (Benjamin, his
+# words, 27/10/2026 16:27 Paris): « Oui : une mise à jour behind causée par
+# l'usine ne compte plus dans les reprises d'un ticket. » (af-npz9v1.36). The guard: a second resume
+# `behind` on a tip already resumed for -- the ticket did not take it -- is
+# counted against `bounds.resumes.behind`, so a ticket that never takes the
+# tip is still parked; a tip moves only when another ticket merges.
+BEHIND = "behind"
+BEHIND_REF = re.compile(r"^integration:([^/\s]+)/")
 RESUME_MAX_LAUNCHES = 1
 # What bin/spec-integration did of a ticket (Spec §4): merged into the
 # integration branch, or returned to its author by a conflict or by red tests
@@ -578,6 +616,20 @@ def load_convoy(convoy_id: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     return data, tickets
 
 
+def load_bead(bead_id: str) -> dict[str, Any]:
+    """One bead by id, for an explicit cross-work link held by convoy state."""
+    out = run_gc(["bd", "show", bead_id, "--json"])
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError as exc:
+        raise Refusal(f"gc bd show {bead_id} a rendu un JSON illisible : {exc}") from exc
+    if isinstance(data, list):
+        data = data[0] if data else None
+    if not isinstance(data, dict) or data.get("id") not in (None, bead_id):
+        raise Refusal(f"bead introuvable : {bead_id}")
+    return data
+
+
 def metadata_of(bead: dict[str, Any]) -> dict[str, Any]:
     metadata = bead.get("metadata")
     return metadata if isinstance(metadata, dict) else {}
@@ -626,6 +678,27 @@ def convoy_lock(convoy_id: str) -> Iterator[None]:
     lock_dir.mkdir(parents=True, exist_ok=True)
     safe_id = re.sub(r"[^A-Za-z0-9._-]", "_", convoy_id)
     with (lock_dir / f"agent-factory-convoy-state-{safe_id}.lock").open("w") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+@contextmanager
+def convoy_advance_close_lock() -> Iterator[None]:
+    """Keep an external close out of a convoy-advance pass.
+
+    A close launched by that pass inherits the marker and already owns the
+    lock.  Taking this lock before the per-convoy lock avoids reversing the
+    order used by the pass and deadlocking with another writer.
+    """
+    if os.environ.get("CONVOY_ADVANCE_LOCK_HELD_BY_PASS") == "1":
+        yield
+        return
+    lock_dir = Path(os.environ.get("CONVOY_ADVANCE_LOCK_DIR") or os.environ.get("XDG_RUNTIME_DIR") or "/tmp")
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    with (lock_dir / "agent-factory-convoy-advance.lock").open("w") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         try:
             yield
@@ -1206,9 +1279,13 @@ def blocking_ids(round_: dict[str, Any]) -> list[str]:
 
 def code_review_request(value: Any) -> dict[str, Any]:
     required = {"kind", "commit", "base", "questions", "launches", "models", "at"}
-    if not isinstance(value, dict) or not required <= set(value) or set(value) - required - {"scope"}:
+    if not isinstance(value, dict) or not required <= set(value) or set(value) - required - {"scope", "contract"}:
         raise Refusal(f"demande de revue de code mal formée : {value!r}")
     one_of(value["kind"], CODE_REVIEW_KINDS, "genre de revue")
+    if "contract" in value:
+        if value["kind"] != "judgement":
+            raise Refusal("une revue ne porte pas de version du contrat de jugement")
+        single_line(value["contract"], "contrat de jugement")
     if "scope" in value:
         if value["kind"] != "review":
             raise Refusal("un jugement n'a pas de périmètre de revue ciblée : il juge la liste des Blocking Findings")
@@ -1231,8 +1308,8 @@ def code_review_round(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict) or not common <= set(value):
         raise Refusal(f"passe de revue de code mal formée : {value!r}")
     kind = one_of(value["kind"], CODE_REVIEW_KINDS, "genre de revue")
-    own = {"findings", "answers", "responses", "scope"} if kind == "review" else {"judgements"}
-    required = own - {"responses", "scope"}
+    own = {"findings", "answers", "responses", "scope"} if kind == "review" else {"judgements", "contract", "invalidated"}
+    required = {"findings", "answers"} if kind == "review" else {"judgements"}
     if set(value) - common - own - {"conversation"} or not required <= set(value):
         raise Refusal(f"passe de revue de code mal formée : {value!r}")
     stored_conversation(value)
@@ -1242,6 +1319,13 @@ def code_review_round(value: Any) -> dict[str, Any]:
     review_models(value["models"])
     single_line(value["recorded_by"], "session du relecteur")
     if kind == "judgement":
+        if "contract" in value:
+            single_line(value["contract"], "contrat de jugement")
+        if "invalidated" in value:
+            invalidated = value["invalidated"]
+            if not isinstance(invalidated, dict) or set(invalidated) != {"contract", "at"}:
+                raise Refusal(f"invalidation de jugement mal formée : {invalidated!r}")
+            single_line(invalidated["contract"], "nouveau contrat de jugement")
         judgements = value["judgements"]
         if not isinstance(judgements, dict) or not judgements:
             raise Refusal(f"jugement sans réponse par constat : {judgements!r}")
@@ -1281,12 +1365,14 @@ def code_review_record(raw: Any) -> dict[str, Any]:
     record = stored_record(raw, ("rounds",), ("request",))
     if not isinstance(record["rounds"], list):
         raise Refusal(f"passes de revue de code mal formées : {record['rounds']!r}")
-    previous = None
+    previous = reviewed = None
     for value in record["rounds"]:
         code_review_round(value)
-        if value["kind"] == "judgement" and (
-                previous is None or previous["kind"] != "review" or previous["verdict"] != "unfavorable"
-                or set(value["judgements"]) != set(blocking_ids(previous))):
+        if value["kind"] == "review":
+            reviewed = value
+        elif (reviewed is None or reviewed["verdict"] != "unfavorable"
+              or set(value["judgements"]) != set(blocking_ids(reviewed))
+              or (previous is not None and previous["kind"] == "judgement" and "invalidated" not in previous)):
             raise Refusal("jugement qui ne suit pas la revue défavorable qu'il juge")
         previous = value
     if "request" in record:
@@ -1298,7 +1384,7 @@ def code_review_state(record: dict[str, Any]) -> dict[str, Any]:
     """What the code review says of the ticket now: the verdict of its last
     round, the commit it judged, and the Blocking Findings that have no
     favorable verdict (Spec §6: code refuses the merge while there is one)."""
-    last = record["rounds"][-1] if record["rounds"] else None
+    last = next((round_ for round_ in reversed(record["rounds"]) if "invalidated" not in round_), None)
     if last is None:
         return {"verdict": None, "commit": None, "unsettled": []}
     if last["kind"] == "review":
@@ -1853,9 +1939,15 @@ def correction_record(raw: Any) -> dict[str, Any]:
     record = stored_record(raw, ("commit", "blocking_findings", "not_observed", "launches", "at"), ("grants",))
     grants = record.get("grants", [])
     for grant in grants if isinstance(grants, list) and grants else [None] if "grants" in record else []:
-        # `exceptional`: a round beyond the bound, at most once (ADR-0034).
-        if not isinstance(grant, dict) or set(grant) - {"exceptional"} != {"approver", "words", "stop", "at"} \
-                or grant.get("exceptional", True) is not True \
+        # `exceptional`: a round beyond the bound, at most once (ADR-0034);
+        # `arbitrated`: one the Mayor granted, with the refusals it targets (ADR-0035).
+        targets = grant.get("targets") if isinstance(grant, dict) else None
+        if not isinstance(grant, dict) \
+                or set(grant) - {"exceptional", "arbitrated", "targets"} != {"approver", "words", "stop", "at"} \
+                or grant.get("exceptional", True) is not True or grant.get("arbitrated", True) is not True \
+                or ("arbitrated" in grant) != ("targets" in grant) or {"arbitrated", "exceptional"} <= set(grant) \
+                or ("targets" in grant and (not isinstance(targets, list) or not targets
+                                            or any(not isinstance(t, str) or not t.strip() for t in targets))) \
                 or not isinstance(grant["words"], str) or not grant["words"].strip():
             raise Refusal(f"levée d'arrêt du tour de correction mal formée : {grant!r}")
         single_line(grant["approver"], "approbateur de la levée d'arrêt")
@@ -1887,10 +1979,18 @@ def exceptional_grant(metadata: dict[str, Any]) -> dict[str, Any] | None:
                  if grant.get("exceptional")), None)
 
 
+def arbitrated_grants(metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    """The rounds the Mayor granted the ticket at the bound (ADR-0035)."""
+    if KEY_CORRECTION not in metadata:
+        return []
+    return [grant for grant in correction_record(metadata[KEY_CORRECTION]).get("grants", []) if grant.get("arbitrated")]
+
+
 def correction_rounds_allowed(metadata: dict[str, Any]) -> int:
-    """The rounds this ticket may take: `bounds.correction_rounds`, and one
-    more once its human approver granted the exceptional round (ADR-0034)."""
-    return correction_rounds_bound() + (1 if exceptional_grant(metadata) else 0)
+    """The rounds this ticket may take: `bounds.correction_rounds`, one
+    more once its human approver granted the exceptional round (ADR-0034),
+    and one more for each round the Mayor granted at the bound (ADR-0035)."""
+    return correction_rounds_bound() + (1 if exceptional_grant(metadata) else 0) + len(arbitrated_grants(metadata))
 
 
 def overrides_record(raw: Any) -> list[dict[str, Any]]:
@@ -2003,6 +2103,27 @@ def resume_record(raw: Any) -> dict[str, Any]:
     return record
 
 
+def technical_repairs_record(raw: Any) -> dict[str, Any]:
+    """Factory-maintenance beads explicitly linked to one technical
+    operator request, bound to that request's exit and parking."""
+    record = stored_record(raw, ("exit_at", "parked_at", "entries"))
+    if any(not isinstance(record[name], str) or not record[name] or "\n" in record[name]
+           for name in ("exit_at", "parked_at")):
+        raise Refusal(f"génération de demande technique mal formée : {record!r}")
+    entries = record["entries"]
+    if not isinstance(entries, list) or not entries:
+        raise Refusal(f"réparations techniques liées mal formées : {entries!r}")
+    seen = set()
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != {"id", "at"} \
+                or not isinstance(entry["id"], str) or not BEAD_ID_RE.match(entry["id"]) \
+                or not isinstance(entry["at"], str) or not entry["at"] or "\n" in entry["at"] \
+                or entry["id"] in seen:
+            raise Refusal(f"réparation technique liée mal formée : {entry!r}")
+        seen.add(entry["id"])
+    return record
+
+
 def park_lifts_record(raw: Any) -> list[dict[str, Any]]:
     """The parkings lifted on a ticket (T20), oldest first: what parked it,
     the request that was answered, the option taken, the count of its
@@ -2014,7 +2135,7 @@ def park_lifts_record(raw: Any) -> list[dict[str, Any]]:
         raise Refusal(f"parcages levés mal formés : {entries!r}")
     for entry in entries:
         if not isinstance(entry, dict) \
-                or set(entry) - {"taken", "proven_by_test"} != {"cause", "detail", "parked_at", "request", "option", "resumes", "at"}:
+                or set(entry) - {"taken", "proven_by_test", "repairs", "exit_at"} != {"cause", "detail", "parked_at", "request", "option", "resumes", "at"}:
             raise Refusal(f"parcage levé mal formé : {entry!r}")
         if "proven_by_test" in entry:
             proven = entry["proven_by_test"]
@@ -2023,7 +2144,9 @@ def park_lifts_record(raw: Any) -> list[dict[str, Any]]:
                     or not all(isinstance(v, str) for v in item.values()) for item in proven):
                 raise Refusal(f"éléments jugés prouvés par leur test mal formés : {proven!r}")
         if "taken" in entry:
-            if not isinstance(entry["taken"], dict) or set(entry["taken"]) - set(BOUNDED_RESUME_CAUSES):
+            # A lift written before af-npz9v1.41 also kept the answered causes.
+            if not isinstance(entry["taken"], dict) \
+                    or set(entry["taken"]) - set(BOUNDED_RESUME_CAUSES) - set(ANSWERED_CAUSES):
                 raise Refusal(f"reprises prises au parcage levé mal formées : {entry['taken']!r}")
             for cause, value in entry["taken"].items():
                 counter_value(value, cause)
@@ -2032,6 +2155,15 @@ def park_lifts_record(raw: Any) -> list[dict[str, Any]]:
             raise Refusal(f"bead de la demande absent ou mal formé : {entry['request']!r}")
         if entry["option"] is not None:
             option_letter(entry["option"])
+        if "repairs" in entry:
+            repairs = entry["repairs"]
+            if entry["cause"] != "operator_request" or entry["option"] is not None \
+                    or not isinstance(repairs, list) or not repairs or len(set(repairs)) != len(repairs) \
+                    or any(not isinstance(repair, str) or not BEAD_ID_RE.match(repair) for repair in repairs) \
+                    or not isinstance(entry.get("exit_at"), str) or not entry["exit_at"] or "\n" in entry["exit_at"]:
+                raise Refusal(f"réparations du parcage levé mal formées : {repairs!r}")
+        elif "exit_at" in entry:
+            raise Refusal(f"sortie de demande sans réparations liées : {entry['exit_at']!r}")
         counter_value(entry["resumes"], "resumes")
     return entries
 
@@ -2051,10 +2183,28 @@ def resumes_taken(metadata: dict[str, Any]) -> dict[str, int]:
     corrections = counter_value(metadata.get(COUNTER_PREFIX + "correction_rounds"), "correction_rounds")
     entries = resume_record(metadata[KEY_RESUME])["entries"] if KEY_RESUME in metadata else []
     taken = dict.fromkeys(BOUNDED_RESUME_CAUSES, 0)
-    for entry in entries:
-        taken[entry["cause"]] += 1
+    for entry in counted_entries(entries):
+        if entry["cause"] in taken:
+            taken[entry["cause"]] += 1
+    # The counter holds every resume recorded, those K does not count too.
     taken[COMMIT_AFTER_VERDICT] = max(0, resumes - corrections - len(entries))
     return taken
+
+
+def counted_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The resume entries K counts, oldest first: all of them but the first
+    resume `behind` on each tip of the integration branch (BEHIND). A ref
+    that names no tip is counted."""
+    tips: set[str] = set()
+    counted = []
+    for entry in entries:
+        if entry["cause"] == BEHIND:
+            match = BEHIND_REF.match(entry["ref"])
+            if match and match.group(1) not in tips:
+                tips.add(match.group(1))
+                continue
+        counted.append(entry)
+    return counted
 
 
 def taken_at_lift(lift: dict[str, Any], metadata: dict[str, Any]) -> dict[str, int]:
@@ -2067,8 +2217,9 @@ def taken_at_lift(lift: dict[str, Any], metadata: dict[str, Any]) -> dict[str, i
     entries = resume_record(metadata[KEY_RESUME])["entries"] if KEY_RESUME in metadata else []
     before = [entry for entry in entries if entry["at"] < lift["at"]]
     taken = dict.fromkeys(BOUNDED_RESUME_CAUSES, 0)
-    for entry in before:
-        taken[entry["cause"]] += 1
+    for entry in counted_entries(before):
+        if entry["cause"] in taken:
+            taken[entry["cause"]] += 1
     corrections = counter_value(metadata.get(COUNTER_PREFIX + "correction_rounds"), "correction_rounds")
     if KEY_CORRECTION in metadata and correction_record(metadata[KEY_CORRECTION])["at"] >= lift["at"]:
         corrections = 0
@@ -2821,9 +2972,11 @@ def verdict_record(raw: Any) -> dict[str, Any]:
     valid_commit(record["commit"])
     if "invalidated" in record:
         invalidated = record["invalidated"]
-        if not isinstance(invalidated, dict) or set(invalidated) != {"tip", "at"}:
+        if not isinstance(invalidated, dict) or set(invalidated) not in ({"tip", "at"}, {"tip", "contract", "at"}):
             raise Refusal(f"invalidation mal formée : {invalidated!r}")
         valid_commit(invalidated["tip"], "pointe qui invalide le verdict")
+        if "contract" in invalidated:
+            single_line(invalidated["contract"], "nouveau contrat de jugement")
     return record
 
 
@@ -3091,7 +3244,7 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
             KEY_MARK, KEY_DEMONSTRATION, KEY_USER_STORIES, KEY_LAUNCH_RECIPE, KEY_PROTOTYPE_FOLD, KEY_BRANCH, KEY_EXIT,
             KEY_STOP, KEY_HANDOFF, KEY_PARK, KEY_MERGE, KEY_SESSION, KEY_TEST_REVIEW, KEY_CODE_REVIEW, KEY_MODELS,
             KEY_EVALUATION, KEY_FIDELITY, KEY_PLANNING_EXCEPTIONS, KEY_CORRECTION, KEY_OVERRIDES, KEY_CRITERIA,
-            KEY_RESUME, KEY_PARK_LIFTS, KEY_FINDINGS, KEY_BLOCKING_RED,
+            KEY_RESUME, KEY_PARK_LIFTS, KEY_TECHNICAL_REPAIRS, KEY_FINDINGS, KEY_BLOCKING_RED,
         ):
             continue
         raw = metadata[key]
@@ -3164,6 +3317,7 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
         ("merge", KEY_MERGE, merge_record),
         ("session", KEY_SESSION, session_record),
         ("resume", KEY_RESUME, resume_record),
+        ("technical_repairs", KEY_TECHNICAL_REPAIRS, technical_repairs_record),
         ("finding_classifications", KEY_FINDINGS, findings_record),
         ("blocking_red", KEY_BLOCKING_RED, blocking_red_record),
     ):
@@ -3956,11 +4110,11 @@ def cmd_set_model(args: argparse.Namespace) -> int:
     return done(args.convoy, args.ticket, values)
 
 
-def code_review_target(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any]]:
+def code_review_target(args: argparse.Namespace, allow_stop: bool = False) -> tuple[dict[str, Any], dict[str, Any]]:
     """The metadata of the ticket a code-review write lands on, and its
     code review so far."""
     metadata = metadata_of(marked_ticket(args.convoy, args.ticket))
-    if KEY_STOP in metadata:
+    if KEY_STOP in metadata and not allow_stop:
         raise Refusal(f"ticket arrêté : aucune revue ne s'enregistre sur {args.ticket} tant que l'arrêt n'est pas levé")
     record = code_review_record(metadata[KEY_CODE_REVIEW]) if KEY_CODE_REVIEW in metadata else {"rounds": []}
     return metadata, record
@@ -3999,10 +4153,13 @@ def cmd_open_code_review(args: argparse.Namespace) -> int:
     commit its author finished at: the review itself, or the judgement of
     the answers given to its Blocking Findings. The same request again
     writes nothing."""
-    metadata, record = code_review_target(args)
+    metadata, record = code_review_target(args, allow_stop=True)
     kind = one_of(args.kind, CODE_REVIEW_KINDS, "genre de revue")
     commit = valid_commit(args.commit, "commit de la revue")
     base = valid_commit(args.base, "commit de départ de la revue")
+    contract = single_line(args.contract, "contrat de jugement") if args.contract is not None else None
+    if contract is not None and kind != "judgement":
+        raise Refusal("une revue ne porte pas de version du contrat de jugement")
     finished = KEY_EXIT in metadata and stored_record(metadata[KEY_EXIT], ("exit", "at"))["exit"] == "finished"
     if not finished:
         raise Refusal(f"le ticket {args.ticket} n'est pas terminé : la revue de code suit la sortie « terminé »")
@@ -4023,33 +4180,29 @@ def cmd_open_code_review(args: argparse.Namespace) -> int:
             scope = targeted_scope(review_scope(given["scope"]), kind, record, args.ticket)
     models = models_of_review(metadata)
     request = record.get("request")
-    wanted = (kind, commit, base, questions, scope)
-    if request and (*(request[name] for name in ("kind", "commit", "base", "questions")), request.get("scope")) == wanted:
+    last = record["rounds"][-1] if record["rounds"] else None
+    contract_replay = bool(
+        kind == "judgement" and contract is not None and last is not None and last["kind"] == "judgement"
+        and last["verdict"] == "unfavorable" and last["commit"] == commit and last["base"] == base
+        and last.get("contract") != contract)
+    stop = stop_record(metadata[KEY_STOP]) if KEY_STOP in metadata else None
+    if stop is not None and not (contract_replay and stop["reason"] == STOP_STILL_REFUSED):
+        raise Refusal(f"ticket arrêté : aucune revue ne s'enregistre sur {args.ticket} tant que l'arrêt n'est pas levé")
+    wanted = (kind, commit, base, questions, scope, contract)
+    if request and (*(request[name] for name in ("kind", "commit", "base", "questions")), request.get("scope"),
+                    request.get("contract")) == wanted:
         if request["models"] == models:
             return done(args.convoy, args.ticket, {})
         # The same review, sent to a reviewer of another model: its launches stay counted.
         request["models"] = models
     else:
-        last = record["rounds"][-1] if record["rounds"] else None
-        # A review outdated by commits made outside the correction round
-        # (a resume) is replayed in full at the new tip: no session will
-        # answer its findings (af-s31cvi).
-        replayed = (kind == "review" and last is not None and last["kind"] == "review"
-                    and last["commit"] != commit and not last.get("responses") and KEY_CORRECTION not in metadata)
-        # So is the judgement a later correction round took up (af-bv0ikr):
-        # no answer is given to it, the tip of that round is reviewed in full.
-        replayed = replayed or (kind == "review" and last is not None and last["kind"] == "judgement"
-                                and last["commit"] != commit and KEY_CORRECTION in metadata
-                                and correction_record(metadata[KEY_CORRECTION])["commit"] == last["commit"])
-        # And the judgement whose every unsettled Blocking Finding the operator
-        # overrode, which stands for a favorable verdict: a later tip is
-        # reviewed in full (F and G1 of af-strhoy, 22/10/2026).
+        correction_commit = correction_record(metadata[KEY_CORRECTION])["commit"] \
+            if KEY_CORRECTION in metadata else None
         overridden = {entry["finding"] for entry in overrides_record(metadata[KEY_OVERRIDES])} \
             if KEY_OVERRIDES in metadata else set()
-        replayed = replayed or (kind == "review" and last is not None and last["kind"] == "judgement"
-                                and last["commit"] != commit
-                                and set(code_review_state(record)["unsettled"]) <= overridden)
-        if last and last["verdict"] == "unfavorable" and not replayed:
+        replayed = bool(kind == "review" and last is not None and review_replay_due(
+            last, commit, correction_commit, code_review_state(record)["unsettled"], overridden))
+        if last and last["verdict"] == "unfavorable" and not replayed and not contract_replay:
             if last["kind"] == "judgement":
                 raise Refusal(
                     f"le ticket {args.ticket} est encore refusé après son tour de correction : aucune revue ne s'ouvre")
@@ -4068,13 +4221,23 @@ def cmd_open_code_review(args: argparse.Namespace) -> int:
                     f"le jugement porte sur la correction faite depuis le commit revu ({last['commit']}), non depuis {base}")
             if questions:
                 raise Refusal("un jugement ne pose pas de questions fermées : il juge la liste des Blocking Findings")
-        elif kind == "judgement":
+        elif kind == "judgement" and not contract_replay:
             raise Refusal(f"aucun Blocking Finding à juger sur {args.ticket} : le jugement suit une revue défavorable")
-        elif last and last["commit"] == commit:
+        elif last and last["commit"] == commit and not contract_replay:
             raise Refusal(f"le ticket {args.ticket} est déjà revu favorablement au commit {commit}")
+        at = now()
+        if contract_replay:
+            last["invalidated"] = {"contract": contract, "at": at}
         record["request"] = {"kind": kind, "commit": commit, "base": base, "questions": questions, "launches": [],
-                             "models": models, "at": now(), **({"scope": scope} if scope is not None else {})}
+                             "models": models, "at": at, **({"scope": scope} if scope is not None else {}),
+                             **({"contract": contract} if contract is not None else {})}
     values = {KEY_CODE_REVIEW: encode(record)}
+    if contract_replay:
+        verdict = verdict_record(metadata[VERDICT_PREFIX + "code_review"])
+        values[VERDICT_PREFIX + "code_review"] = encode({
+            **verdict, "invalidated": {"tip": commit, "contract": contract, "at": now()}})
+        if KEY_STOP in metadata:
+            values[KEY_STOP] = None
     write_metadata(args.ticket, values)
     return done(args.convoy, args.ticket, values)
 
@@ -4210,7 +4373,7 @@ def cmd_record_code_review(args: argparse.Namespace) -> int:
         round_.update(findings=findings, answers=kept)
         refused = [finding["id"] for finding in findings if finding["blocking"]]
     else:
-        reviewed = record["rounds"][-1]
+        reviewed = next(round_ for round_ in reversed(record["rounds"]) if round_["kind"] == "review")
         expected = blocking_ids(reviewed)
         judgements = given.get("judgements") if isinstance(given.get("judgements"), dict) else {}
         problems += [f"{name} n'est pas un Blocking Finding de la revue jugée" for name in sorted(set(judgements) - set(expected))]
@@ -4233,7 +4396,8 @@ def cmd_record_code_review(args: argparse.Namespace) -> int:
         raise Refusal("revue de code hors contrat : " + " ; ".join(problems))
     verdict = "unfavorable" if refused else "favorable"
     at = now()
-    round_.update(verdict=verdict, models=request["models"], recorded_by=recorded_by.strip(), **conversation_of(given), at=at)
+    round_.update(verdict=verdict, models=request["models"], recorded_by=recorded_by.strip(), **conversation_of(given), at=at,
+                  **({"contract": request["contract"]} if "contract" in request else {}))
     record["rounds"].append(code_review_round(round_))
     del record["request"]
     values = {KEY_CODE_REVIEW: encode(record),
@@ -4730,13 +4894,11 @@ def cmd_record_evaluation(args: argparse.Namespace) -> int:
         round_["coverage"] = coverage
     if given.get("screen_findings"):
         round_["screen_findings"] = given["screen_findings"]
-    # What the operator judged proven by its criterion test, on lifting the
-    # parking an earlier evaluation caused, is not observed: it is counted
-    # proven, as long as its frozen text is the same.
+    # What the operator judged proven by its criterion test is counted at a
+    # later commit only when the frozen criterion tests are green there.
     lifts = park_lifts_record(metadata[KEY_PARK_LIFTS]) if KEY_PARK_LIFTS in metadata else []
-    judged = {(item["what"], item["text"]) for lift in lifts for item in lift.get("proven_by_test", [])}
-    proven = [name for name, item in evaluation_items(round_)
-              if item["state"] == "unobservable" and item["cause"] == "criterion" and (name, item["text"]) in judged]
+    green = tdd_record("green", metadata[TDD_PREFIX + "green"]) if TDD_PREFIX + "green" in metadata else {}
+    proven = evaluation_proven_by_test(round_, record["rounds"], lifts, green.get("commit"))
     if proven:
         round_["proven_by_test"] = proven
     round_["outcome"] = evaluation_outcome(evaluation_judged(round_), round_.get("screen_findings"))
@@ -5115,6 +5277,48 @@ def cmd_park(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_link_technical_repair(args: argparse.Namespace) -> int:
+    """Turn only an explicitly linked Factory defect request into a
+    code-owned wait. The pass lifts it after every repair has structural
+    merge and exact-head CI proof; an ordinary operator request has no such
+    record and keeps its human answer contract."""
+    ticket = marked_ticket(args.convoy, args.ticket)
+    metadata = metadata_of(ticket)
+    exit_record = stored_record(metadata.get(KEY_EXIT), ("exit", "at")) if KEY_EXIT in metadata else None
+    park = park_record(metadata[KEY_PARK]) if KEY_PARK in metadata else None
+    if exit_record is None or exit_record["exit"] != "operator_request" \
+            or park is None or park["cause"] != "operator_request" or park["origin"] != args.ticket:
+        raise Refusal(
+            f"{args.ticket} n'est pas parqué par sa propre demande opérateur : "
+            "seule cette classe peut être reliée à une réparation technique")
+    if not isinstance(args.repair, str) or not BEAD_ID_RE.match(args.repair) or args.repair == args.ticket:
+        raise Refusal(f"bead de réparation absent ou mal formé : {args.repair!r}")
+    repair = load_bead(args.repair)
+    # Imported only on this rare write, not on every convoy-state read.
+    from factory_delivery_proof import requires_pr_delivery_proof
+    repair_metadata = metadata_of(repair)
+    authorized_maintenance = repair.get("issue_type") == "bug" \
+        and "maintenance" in (repair.get("labels") or []) \
+        and isinstance(repair_metadata.get("gc.authorized_by"), str) \
+        and bool(repair_metadata["gc.authorized_by"].strip())
+    if metadata_of(repair).get("gc.delivery_contract") != "pr-ci-merged-v1" \
+            and not requires_pr_delivery_proof(repair) and not authorized_maintenance:
+        raise Refusal(
+            f"{args.repair} n'est ni une maintenance autorisée ni gouverné par un contrat de livraison PR+CI : "
+            "une demande technique ne se lie qu'à une réparation dont la livraison pourra être prouvée")
+    record = technical_repairs_record(metadata[KEY_TECHNICAL_REPAIRS]) if KEY_TECHNICAL_REPAIRS in metadata else None
+    generation = {"exit_at": exit_record["at"], "parked_at": park["at"]}
+    if record is None or any(record[name] != generation[name] for name in generation):
+        record = {**generation, "entries": []}
+    entries = record["entries"]
+    if any(entry["id"] == args.repair for entry in entries):
+        return done(args.convoy, args.ticket, {})
+    entries.append({"id": args.repair, "at": now()})
+    value = encode(record)
+    write_metadata(args.ticket, {KEY_TECHNICAL_REPAIRS: value})
+    return done(args.convoy, args.ticket, {KEY_TECHNICAL_REPAIRS: value})
+
+
 def cmd_lift_park(args: argparse.Namespace) -> int:
     """Lift the parking a ticket caused (T20): on itself and on every ticket
     parked behind it, once the request `--request` was answered. A ticket
@@ -5135,10 +5339,47 @@ def cmd_lift_park(args: argparse.Namespace) -> int:
     if not isinstance(args.request, str) or not BEAD_ID_RE.match(args.request):
         raise Refusal(f"bead de la demande absent ou mal formé : {args.request!r} (--request)")
     option = option_letter(args.option) if args.option is not None else None
+    repairs = list(args.repair or [])
+    linked_record = None
+    if repairs:
+        linked_record = technical_repairs_record(metadata[KEY_TECHNICAL_REPAIRS]) \
+            if KEY_TECHNICAL_REPAIRS in metadata else None
+        linked = [entry["id"] for entry in linked_record["entries"]] if linked_record else []
+        exit_record = stored_record(metadata[KEY_EXIT], ("exit", "at")) if KEY_EXIT in metadata else None
+        if park["cause"] != "operator_request" or option is not None or repairs != linked \
+                or exit_record is None or exit_record["exit"] != "operator_request" \
+                or linked_record["parked_at"] != park["at"] or linked_record["exit_at"] != exit_record["at"]:
+            raise Refusal(
+                f"réparations techniques de la levée incohérentes : {repairs!r} "
+                f"(liées au ticket : {linked!r})")
+        # Imported only on this rare transition, not on every state read.
+        from factory_delivery_proof import delivery_readiness
+        waiting = []
+        for repair_id in repairs:
+            readiness = delivery_readiness(load_bead(repair_id))
+            if not readiness["ready"] or not readiness["pr_backed"]:
+                waiting.append(f"{repair_id} ({readiness['reason']})")
+        if waiting:
+            raise Refusal("réparations techniques sans preuve de livraison : " + ", ".join(waiting))
     lifts = park_lifts_record(metadata[KEY_PARK_LIFTS]) if KEY_PARK_LIFTS in metadata else []
     resumes = counter_value(metadata.get(COUNTER_PREFIX + "resumes"), "resumes")
-    lifts.append({"cause": park["cause"], "detail": park["detail"], "parked_at": park["at"], "request": args.request,
-                  "option": option, "resumes": resumes, "taken": resumes_taken(metadata), "at": now()})
+    taken = resumes_taken(metadata)
+    if park["cause"] == PARK_EXHAUSTED and option is None:
+        # No answer: the exhaustion no longer holds under the bounds of now
+        # (af-npz9v1.41). The bounds keep counting from where they did: the
+        # lift gives no resume back.
+        if resumes_left(metadata) == 0:
+            raise Refusal(
+                f"reprises épuisées : le ticket {args.ticket} a pris {exhausted_causes(metadata)} ; "
+                "seule la réponse de la demande groupée (--option) le lève")
+        exhausted = [lift for lift in lifts if lift["cause"] == PARK_EXHAUSTED]
+        taken = taken_at_lift(exhausted[-1], metadata) if exhausted else dict.fromkeys(BOUNDED_RESUME_CAUSES, 0)
+    lift = {"cause": park["cause"], "detail": park["detail"], "parked_at": park["at"], "request": args.request,
+            "option": option, "resumes": resumes, "taken": taken, "at": now()}
+    if repairs:
+        lift["repairs"] = repairs
+        lift["exit_at"] = linked_record["exit_at"]
+    lifts.append(lift)
     proven = proven_by_test_at_lift(park, option, metadata)
     if proven:
         lifts[-1]["proven_by_test"] = proven
@@ -5226,7 +5467,9 @@ def cmd_open_resume(args: argparse.Namespace) -> int:
         if review.pop("request", None) is not None:
             values[KEY_CODE_REVIEW] = encode(review)
             update += ["--set-metadata", f"{KEY_CODE_REVIEW}={values[KEY_CODE_REVIEW]}"]
-    unset = {KEY_EXIT: replaced, KEY_STOP: lifted}
+    technical_release = technical_repairs_record(metadata[KEY_TECHNICAL_REPAIRS]) \
+        if cause == "unblocked" and KEY_TECHNICAL_REPAIRS in metadata else None
+    unset = {KEY_EXIT: replaced, KEY_STOP: lifted, KEY_TECHNICAL_REPAIRS: technical_release}
     for key, was in unset.items():
         if was is not None:
             # A resumed ticket is at work again: it exits again.
@@ -5430,7 +5673,10 @@ def cmd_grant_correction(args: argparse.Namespace) -> int:
     round, when one was all), with the words of the approver: the stop is
     kept on the round, and bin/correction-round opens the next one once both
     controls answered at the tip. `--exceptional` (ADR-0034): the same on a
-    ticket at the bound, which then allows it one round more, once."""
+    ticket at the bound, which then allows it one round more, once.
+    `--arbitrated` (ADR-0035): the same, granted by the Mayor at the bound
+    with its motive and the refusals it targets, at most
+    ARBITRATED_ROUNDS_MAX times per ticket."""
     metadata = metadata_of(marked_ticket(args.convoy, args.ticket))
     stop = stop_record(metadata[KEY_STOP]) if KEY_STOP in metadata else None
     if stop is None or stop["reason"] != STOP_STILL_REFUSED or KEY_CORRECTION not in metadata:
@@ -5439,7 +5685,20 @@ def cmd_grant_correction(args: argparse.Namespace) -> int:
     bound = correction_rounds_allowed(metadata)
     taken = counter_value(metadata.get(COUNTER_PREFIX + "correction_rounds"), "correction_rounds")
     exceptional = bool(getattr(args, "exceptional", False))
+    arbitrated = bool(getattr(args, "arbitrated", False))
+    targets = [target.strip() for target in getattr(args, "target", None) or []]
     already = exceptional_grant(metadata)
+    if arbitrated and exceptional:
+        raise Refusal("un tour est arbitré par le Mayor ou exceptionnel par l'approbateur humain, pas les deux")
+    if arbitrated:
+        if taken < bound:
+            raise Refusal(f"le ticket {args.ticket} n'est pas au plafond : il lui reste {bound - taken} tour(s) de "
+                          "correction ; aucun arbitrage n'est dû")
+        if len(arbitrated_grants(metadata)) >= ARBITRATED_ROUNDS_MAX:
+            raise Refusal(f"le ticket {args.ticket} a déjà pris ses {ARBITRATED_ROUNDS_MAX} tours arbitrés : borne des "
+                          "relances ; reste le diagnostic, l'arrêt ou la replanification (ADR-0035)")
+        if not targets or any(not target or "\n" in target for target in targets):
+            raise Refusal("tour arbitré sans cible : il nomme les refus à la pointe qu'il vise (--target)")
     if exceptional and already:
         raise Refusal(
             f"le ticket {args.ticket} a déjà reçu son tour exceptionnel ({already['approver']}, {already['at']}) : "
@@ -5448,7 +5707,7 @@ def cmd_grant_correction(args: argparse.Namespace) -> int:
         raise Refusal(
             f"le ticket {args.ticket} n'est pas au plafond : il lui reste {bound - taken} tour(s) de correction "
             "(bounds.correction_rounds) ; accorde-le sans --exceptional")
-    if not exceptional and taken >= bound:
+    if not exceptional and not arbitrated and taken >= bound:
         raise Refusal(f"le ticket {args.ticket} a déjà pris ses {bound} tour(s) de correction "
                       "(bounds.correction_rounds) : aucun tour de plus ne s'accorde"
                       + ("" if already else " ; au plafond, seul un tour exceptionnel s'accorde (--exceptional), "
@@ -5458,7 +5717,8 @@ def cmd_grant_correction(args: argparse.Namespace) -> int:
         raise Refusal("levée sans mots : elle s'enregistre avec les mots de l'approbateur (--words), non vides")
     record = correction_record(metadata[KEY_CORRECTION])
     grant = {"approver": single_line(args.approver, "approbateur de la levée d'arrêt"), "words": words,
-             "stop": stop, "at": now(), **({"exceptional": True} if exceptional else {})}
+             "stop": stop, "at": now(), **({"exceptional": True} if exceptional else {}),
+             **({"arbitrated": True, "targets": targets} if arbitrated else {})}
     record["grants"] = [*record.get("grants", []), grant]
     values = {KEY_CORRECTION: encode(record), KEY_STOP: None}
     write_metadata(args.ticket, values)
@@ -7481,6 +7741,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--commit")
     p.add_argument("--base")
     p.add_argument("--file")
+    p.add_argument("--contract")
     command("launch-code-review", cmd_launch_code_review).add_argument("--bead")
     command("record-code-review", cmd_record_code_review).add_argument("--file")
     command("respond-code-review", cmd_respond_code_review).add_argument("--file")
@@ -7510,9 +7771,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = command("park", cmd_park)
     p.add_argument("--cause")
     p.add_argument("--detail")
+    command("link-technical-repair", cmd_link_technical_repair).add_argument("--repair")
     p = command("lift-park", cmd_lift_park)
     p.add_argument("--request")
     p.add_argument("--option")
+    p.add_argument("--repair", action="append", default=[])
     p = command("open-resume", cmd_open_resume)
     p.add_argument("--cause")
     p.add_argument("--ref")
@@ -7548,6 +7811,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--approver")
     p.add_argument("--words")
     p.add_argument("--exceptional", action="store_true")
+    p.add_argument("--arbitrated", action="store_true")
+    p.add_argument("--target", action="append", default=[])
     p = command("override-finding", cmd_override_finding)
     p.add_argument("--finding")
     p.add_argument("--approver")
@@ -7682,6 +7947,10 @@ def main(argv: list[str]) -> int:
     try:
         if args.handler in (cmd_list, cmd_show, cmd_ticket):
             return args.handler(args)
+        if args.handler == cmd_close_convoy:
+            with convoy_advance_close_lock():
+                with convoy_lock(args.convoy):
+                    return args.handler(args)
         with convoy_lock(args.convoy):
             return args.handler(args)
     except NotNewFlow as exc:

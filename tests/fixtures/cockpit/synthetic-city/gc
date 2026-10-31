@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """The `gc` the doors of an isolated cockpit call (bin/cockpit-isolated; B,
 af-4uzgzm): `gc bd …` is the tracker of the launch (`bd` beside this file);
-the mail, the waking of a session and the run of an order are taken, as the
-supervisor of a city takes them, and change nothing else. Any other call is
+the mail, the waking of a session, the run of an order and a reload of the
+configuration (provider-failover, factory-maintain; af-npz9v1.20) are taken,
+as the supervisor of a city takes them, and change nothing else. Any other call is
 refused, loudly.
 """
 import os
@@ -18,6 +19,9 @@ if args[:2] == ["mail", "send"]:
     sys.exit(0)
 if args[:2] == ["session", "wake"] and len(args) >= 3:
     print("Session %s woken." % args[2])
+    sys.exit(0)
+if args[:1] == ["reload"]:
+    print("City configuration reloaded.")
     sys.exit(0)
 if args[:2] == ["order", "run"] and len(args) >= 3:
     print("Order %s dispatched." % args[2])

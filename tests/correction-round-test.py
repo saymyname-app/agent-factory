@@ -520,6 +520,7 @@ class CorrectionRoundTest(unittest.TestCase):
         self.settle()
         self.assertEqual(1, len(self.launches()))
         self.assertEqual(before, self.integration_tip())
+        self.mayor_escalates()
         (line,) = self.escalation_list()
         self.assertIn(SLICE, line)
 
@@ -802,6 +803,7 @@ class CorrectionRoundTest(unittest.TestCase):
         self.assertEqual([SLICE], self.tickets(stopped["stopped"]))
         self.assertEqual(2, len(self.launches()))
         self.assertEqual(0, self.shown()["correction_rounds_left"])
+        self.mayor_escalates()
         (line,) = self.escalation_list()
         self.assertIn(SLICE, line)
 
@@ -854,6 +856,7 @@ class CorrectionRoundTest(unittest.TestCase):
     def test_a_ticket_stopped_at_the_bound_takes_one_exceptional_round_from_its_approver_and_no_second(self):
         new_tip = self.refused_after_the_first_round()
         self.assertEqual([SLICE], self.tickets(self.settle()["stopped"]))
+        self.mayor_escalates()
         self.assertTrue(any("tour exceptionnel" in option for option in self.options()), self.options())
         grant = ("grant", CONVOY, SLICE, "--repo", self.repo)
         self.refused(*grant, "--approved-by", APPROVER, "--words", WORDS, mention="--exceptional")
@@ -876,10 +879,127 @@ class CorrectionRoundTest(unittest.TestCase):
         self.reviewed(last_tip, CONTRADICTS)
         self.evaluated(last_tip)
         self.assertEqual([SLICE], self.tickets(self.settle()["stopped"]))
+        self.mayor_escalates()
         self.assertFalse(any("tour exceptionnel" in option for option in self.options()), self.options())
         self.refused(*grant, "--exceptional", "--approved-by", APPROVER, "--words", WORDS,
                      mention="un seul tour exceptionnel")
         self.assertEqual(2, len(self.launches()))
+
+    # --- at the bound, the Mayor arbitrates (ADR-0035; Benjamin, 2026-10-28) -------------
+
+    MAYOR = "mayor"
+    MOTIVE = "le constat restant est précis et à la portée d'un tour"
+
+    def mayor_mails(self):
+        """The mails that woke the Mayor."""
+        return [entry for entry in self.write_log.read_text().splitlines()
+                if entry.startswith('["mail"') and '"mayor"' in entry]
+
+    def mayor_escalates(self, why="le critère 1 contredit la Spec : la décision de produit revient à l'opérateur"):
+        """The Mayor raises the request of the stopped ticket to the operator."""
+        proc = self.run_cmd(TOOL, "escalate", CONVOY, SLICE, "--repo", self.repo, "--why", why)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+
+    def test_a_ticket_stopped_at_the_bound_wakes_the_mayor_once_and_asks_the_operator_nothing(self):
+        self.refused_after_the_first_round()
+
+        self.assertEqual([SLICE], self.tickets(self.settle()["stopped"]))
+        self.settle()
+
+        self.assertEqual([], self.escalation_list())
+        (mail,) = self.mayor_mails()
+        self.assertIn(f"Plafond des tours de correction : {SLICE}", mail)
+
+    def test_the_mayor_grants_rounds_with_their_motive_and_targets_up_to_the_bound_of_the_relaunches(self):
+        tip = self.refused_after_the_first_round()
+        self.settle()
+        grant = ("grant", CONVOY, SLICE, "--repo", self.repo, "--arbitrated")
+        self.refused(*grant, "--approved-by", APPROVER, "--words", self.MOTIVE, "--target", "F1.1",
+                     mention="approbateur humain")
+        self.refused(*grant, "--approved-by", self.MAYOR, "--words", self.MOTIVE, "--target", "F9.9",
+                     mention="refus à la pointe")
+        self.refused(*grant, "--approved-by", self.MAYOR, "--words", self.MOTIVE, mention="aucune cible")
+        self.refused(*grant, "--approved-by", self.MAYOR, "--words", " ", "--target", "F1.1", mention="motif")
+
+        for number in (2, 3):
+            target = self.tool_show()["code_review"]["unsettled"][0]
+            granted = self.run_cmd(TOOL, *grant, "--approved-by", self.MAYOR, "--words", self.MOTIVE, "--target", target)
+            self.assertEqual(0, granted.returncode, granted.stdout + granted.stderr)
+            self.assertIsNone(self.shown()["stop"])
+            self.assertEqual([SLICE], self.tickets(self.settle()["launched"]))
+            self.assertIn(self.MOTIVE, self.brief_given(number)["round"])
+            self.assertIn(target, self.brief_given(number)["round"])
+            # First a review replayed in full that blocks again, then answers judged unfavorably.
+            new_tip = self.corrected(tip, response=False)
+            if number == 2:
+                self.reviewed(new_tip, CONTRADICTS)
+                self.evaluated(new_tip)
+            else:
+                self.state("respond-code-review", CONVOY, SLICE, "--file", self.json_file(
+                    {"responses": {target: {"response": "fixed", "commit": new_tip}}}))
+                self.judged(new_tip, tip, refused=(target,))
+                self.evaluated(new_tip, observed=False)
+            tip = new_tip
+            self.assertEqual([SLICE], self.tickets(self.settle()["stopped"]))
+
+        grants = self.shown()["correction"]["grants"]
+        self.assertEqual([(self.MAYOR, True)] * 2, [(g["approver"], g["arbitrated"]) for g in grants])
+        target = self.tool_show()["code_review"]["unsettled"][0]
+        self.refused(*grant, "--approved-by", self.MAYOR, "--words", self.MOTIVE, "--target", target,
+                     mention="tours arbitrés")
+        self.assertEqual([], self.escalation_list())
+        self.assertEqual(3, len(self.mayor_mails()))
+
+    def test_a_request_raised_for_the_count_alone_before_the_mayor_arbitrates_is_withdrawn_once(self):
+        # A ticket stopped at the bound before ADR-0035: its request, raised
+        # for the number of rounds alone, still on the operator's list.
+        self.refused_after_the_first_round()
+        self.settle()
+        self.mayor_escalates()
+        beads = json.loads(self.tracker.read_text())
+        beads["beads"][SLICE]["metadata"]["gc.escalation_pourquoi"] = (
+            "Le ticket a pris tous ses tours de correction : aucun autre ne démarre, rien de ce ticket ne fusionne.")
+        self.tracker.write_text(json.dumps(beads))
+        self.write_log.write_text("")
+
+        self.settle()
+        self.settle()
+        swept = self.run_cmd(ESCALATION_TOOL, "sweep")
+
+        self.assertEqual(0, swept.returncode, swept.stdout + swept.stderr)
+        self.assertEqual([], self.escalation_list())
+        self.assertEqual(1, len(self.mayor_mails()))
+        self.assertEqual("still_refused", self.shown()["stop"]["reason"])
+
+    def test_a_request_the_mayor_raised_for_a_decision_stays_on_the_list(self):
+        self.refused_after_the_first_round()
+        self.settle()
+        self.mayor_escalates()
+        self.write_log.write_text("")
+
+        self.settle()
+
+        (line,) = self.escalation_list()
+        self.assertIn(SLICE, line)
+        self.assertEqual([], self.mayor_mails())
+        # Open and unanswered, that decision is the operator's: no arbitrated round.
+        target = self.tool_show()["code_review"]["unsettled"][0]
+        self.refused("grant", CONVOY, SLICE, "--repo", self.repo, "--arbitrated", "--approved-by", self.MAYOR,
+                     "--words", self.MOTIVE, "--target", target, mention="décision de l'opérateur est ouverte")
+        self.assertEqual(1, len(self.escalation_list()))
+
+    def test_the_mayor_raises_to_the_operator_only_a_decision_that_is_theirs(self):
+        self.refused_after_the_first_round()
+        self.settle()
+        self.refused("escalate", CONVOY, SLICE, "--repo", self.repo, mention="--why")
+
+        self.mayor_escalates()
+
+        (line,) = self.escalation_list()
+        self.assertIn(SLICE, line)
+        metadata = json.loads(self.tracker.read_text())["beads"][SLICE]["metadata"]
+        self.assertIn("Le Mayor demande ta décision", metadata["gc.escalation_pourquoi"])
+        self.assertTrue(any("tour exceptionnel" in option for option in self.options()), self.options())
 
     def test_an_exceptional_round_is_refused_to_a_ticket_that_still_has_a_round(self):
         self.refused_after_the_first_round()
@@ -894,7 +1014,18 @@ class CorrectionRoundTest(unittest.TestCase):
 
         self.refused("grant", CONVOY, SLICE, "--repo", self.repo, "--exceptional", "--approved-by", APPROVER,
                      "--words", WORDS, mention="même commit")
+        self.mayor_escalates()
         self.assertFalse(any("tour exceptionnel" in option for option in self.options()), self.options())
+
+    def test_an_ordinary_round_is_refused_when_the_correction_session_ended_without_correcting(self):
+        # The same guard as the exceptional round (af-npz9v1.23): lifting the
+        # stop would only let the next pass stop the ticket again.
+        self.stopped_ticket()
+        self.rounds_bound(2)
+
+        self.refused("grant", CONVOY, SLICE, "--repo", self.repo, "--approved-by", APPROVER, "--words", WORDS,
+                     mention="aucun tour ne s'ouvrirait")
+        self.assertEqual("still_refused", self.shown()["stop"]["reason"])
 
     def red_fidelity(self, tip, ticket=SLICE):
         """The mechanical fidelity, red at `tip`, as bin/prototype-fidelity
@@ -958,6 +1089,7 @@ class CorrectionRoundTest(unittest.TestCase):
             self.assertIn(named, detail)
         # The fidelity is no part of a stop any more (ADR-0032).
         self.assertNotIn("fidélité", detail)
+        self.mayor_escalates()
         consequence = self.override_consequence()
         self.assertIn("ne suffit pas", consequence)
         self.assertNotIn("fidélité rouge", consequence)
@@ -972,6 +1104,7 @@ class CorrectionRoundTest(unittest.TestCase):
 
         self.assertEqual([SLICE], self.tickets(self.settle()["stopped"]))
 
+        self.mayor_escalates()
         self.assertNotIn("ne suffit pas", self.override_consequence())
 
     def test_a_ticket_whose_answers_are_judged_unfavorably_stops_without_second_round_or_merge(self):
@@ -1103,7 +1236,7 @@ class CorrectionRoundTest(unittest.TestCase):
         self.assertIn("F2.1", self.shown()["stop"]["detail"])
         self.assertEqual(1, len(self.launches()))
 
-    def test_a_stopped_ticket_is_one_item_on_the_list_of_the_escalation_door_whatever_the_number_of_settlements(self):
+    def test_a_ticket_stopped_at_the_bound_wakes_the_mayor_once_whatever_the_number_of_settlements(self):
         tip = self.refused_by_both()
         self.settle()
         new_tip = self.corrected(tip)
@@ -1115,9 +1248,8 @@ class CorrectionRoundTest(unittest.TestCase):
         again = self.settle()
         self.settle()
 
-        (line,) = self.escalation_list()
-        self.assertIn(SLICE, line)
-        self.assertIn("encore refusé après son tour de correction", line)
+        self.assertEqual([], self.escalation_list())
+        self.assertIn("encore refusé après son tour de correction", self.shown()["stop"]["detail"])
         self.assertEqual(([], []), (again["stopped"], again["escalated"]))
         self.assertEqual(before, (self.tracker.read_bytes(), self.write_log.read_text()))
         mails = [json.loads(entry) for entry in self.write_log.read_text().splitlines() if entry.startswith('["mail"')]
@@ -1136,7 +1268,7 @@ class CorrectionRoundTest(unittest.TestCase):
         self.assertIn("critère 1", detail)
         self.assertEqual(1, len(self.launches()))
 
-    def test_a_stop_the_escalation_door_could_not_take_is_raised_once_by_the_next_settlement(self):
+    def test_a_stop_the_mayor_could_not_be_woken_for_is_raised_once_by_the_next_settlement(self):
         self.refused_by_both()
         self.author("leaves")
         self.settle()
@@ -1147,7 +1279,7 @@ class CorrectionRoundTest(unittest.TestCase):
         self.assertNotIn("raised", self.shown()["stop"])
         self.assertEqual([SLICE], self.tickets(self.settle()["escalated"]))
         self.assertIn("raised", self.shown()["stop"])
-        self.assertEqual(1, len(self.escalation_list()))
+        self.assertEqual([], self.escalation_list())
         self.assertEqual([], self.settle()["escalated"])
 
     def test_a_ticket_parked_or_stopped_by_another_control_gets_no_round(self):

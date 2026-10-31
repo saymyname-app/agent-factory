@@ -1,0 +1,93 @@
+{
+ "generated_at": "2026-10-12T12:00:00+02:00",
+ "synthetic": true,
+ "ui": {
+  "id": "home-gestes",
+  "page": "home"
+ },
+ "tracker": {
+  "beads": {
+   "af-p7k2m": {
+    "title": "PROPOSITION: Ajouter un export des notes en CSV",
+    "status": "open",
+    "issue_type": "task",
+    "priority": 2,
+    "labels": [
+     "proposal"
+    ],
+    "description": "Plusieurs lecteurs demandent à garder leurs notes hors du projet.",
+    "notes": "PROPOSITION: Ajouter un export des notes en CSV",
+    "created_at": "2026-10-12T08:00:00Z",
+    "updated_at": "2026-10-12T08:00:00Z",
+    "metadata": {
+     "gc.proposal_quoi": "Ajouter un export des notes en CSV",
+     "gc.proposal_pourquoi": "Plusieurs lecteurs demandent à garder leurs notes hors du projet.",
+     "gc.proposal_que_faire": "[{\"lettre\": \"a\", \"option\": \"Ajouter l’export\", \"consequence\": \"un ticket de carte est préparé\", \"recommande\": true, \"raison\": \"la demande revient souvent\"}, {\"lettre\": \"b\", \"option\": \"Ne rien faire\", \"consequence\": \"les notes restent dans le projet\"}]",
+     "gc.proposal_langue": "fr",
+     "gc.proposal_classe": "decision",
+     "gc.proposal_state": "ouverte",
+     "gc.proposal_horodatage": "2026-10-12T08:00:00Z"
+    }
+   },
+   "af-s4l9q": {
+    "title": "[session-loop] delivery-author-af-wisp-x1y2z3",
+    "status": "open",
+    "issue_type": "bug",
+    "priority": 1,
+    "labels": [],
+    "created_at": "2026-10-12T08:00:00Z",
+    "updated_at": "2026-10-12T08:00:00Z",
+    "description": "session delivery-author-af-wisp-x1y2z3 woke and stopped 14 times in the last hour\n\nDetected by factory-session-loop-guard. Session suspended pending investigation (reversible: `factory-session-loop-guard resume delivery-author-af-wisp-x1y2z3`). af-6675l safety net -- this pages independent of cause.",
+    "notes": "MAYOR FIRST: factory-session-loop-guard: session delivery-author-af-wisp-x1y2z3 looping -- session delivery-author-af-wisp-x1y2z3 woke and stopped 14 times in the last hour",
+    "metadata": {
+     "gc.session_id": "delivery-author-af-wisp-x1y2z3",
+     "gc.source": "factory-session-loop-guard",
+     "gc.escalation_mayor_paged_at": "2026-10-12T08:00:00Z",
+     "gc.escalation_mayor_reason": "factory-session-loop-guard: session delivery-author-af-wisp-x1y2z3 looping -- session delivery-author-af-wisp-x1y2z3 woke and stopped 14 times in the last hour"
+    }
+   },
+   "af-q8n3v": {
+    "title": "Choisir le nom de la page d’accueil",
+    "status": "open",
+    "issue_type": "task",
+    "priority": 2,
+    "labels": [],
+    "description": "Le projet attend ton choix.",
+    "notes": "",
+    "created_at": "2026-10-12T08:00:00Z",
+    "updated_at": "2026-10-12T08:00:00Z",
+    "metadata": {
+     "gc.needs_benjamin": "Choisir le nom de la page d’accueil",
+     "gc.escalation_pourquoi": "Le projet attend ton choix.",
+     "gc.escalation_que_faire": "[{\"lettre\": \"a\", \"option\": \"Accueil\", \"consequence\": \"le menu dit Accueil\", \"recommande\": true, \"raison\": \"c’est le mot le plus court\"}, {\"lettre\": \"b\", \"option\": \"Tableau de bord\", \"consequence\": \"le menu dit Tableau de bord\"}]",
+     "gc.escalation_bloquant": "false",
+     "gc.escalation_horodatage": "2026-10-12T08:00:00Z",
+     "gc.project_id": "notes"
+    }
+   },
+   "af-o2d7k": {
+    "title": "Ordre en pause : convoy-advance",
+    "status": "open",
+    "issue_type": "task",
+    "priority": 2,
+    "labels": [
+     "order-pause"
+    ],
+    "description": "L'ordre convoy-advance est en pause : `gate` ne lance plus sa commande tant que cet enregistrement est ouvert.\n\nPar : mayor\nLe : 12/10/2026 10:00 (Paris)\nSes mots : « pause : intégration rouge »\nRaison : (non donnée)\n\nReprendre : bin/order-pause resume convoy-advance --by NOM --words TEXTE",
+    "notes": "",
+    "created_at": "2026-10-12T08:00:00Z",
+    "updated_at": "2026-10-12T08:00:00Z",
+    "metadata": {
+     "gc.order_pause": "convoy-advance",
+     "gc.order_pause_by": "mayor",
+     "gc.order_pause_words": "pause : intégration rouge",
+     "gc.order_pause_at": "2026-10-12T08:00:00Z",
+     "gc.order_pause_reason": ""
+    }
+   }
+  }
+ },
+ "doors": {
+  "escalation-door": "expires"
+ }
+}

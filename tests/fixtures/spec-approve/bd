@@ -16,7 +16,7 @@ from pathlib import Path
 
 STATE_PATH = Path(os.environ["SPEC_APPROVE_BD_STATE"])
 
-BOOLEAN_FLAGS = {"--no-inherit-labels", "--silent", "--json"}
+BOOLEAN_FLAGS = {"--no-inherit-labels", "--silent", "--json", "--force"}
 VALUE_FLAGS = {
     "--parent", "--type", "--title", "--labels", "--metadata", "--body-file", "--id",
     "--description", "--reason", "--if-assignee", "--assignee", "--append-notes",
@@ -81,6 +81,16 @@ def public_view(bead):
 def fail(message):
     sys.stderr.write(f"fake bd: {message}\n")
     raise SystemExit(1)
+
+
+def open_blockers(state, bead):
+    dependency_ids = list(bead.get("waits_for") or [])
+    dependency_ids.extend(
+        dep.get("id") for dep in bead.get("dependencies") or []
+        if dep.get("dependency_type") == "blocks" and dep.get("id")
+    )
+    return [bead_id for bead_id in dependency_ids
+            if state["beads"].get(bead_id, {}).get("status", "open") != "closed"]
 
 
 def cmd_create(flags, repeated):
@@ -174,6 +184,9 @@ def cmd_close(flags, positionals):
     # tools under test name no actor (af-bm9y90).
     if bead.get("assignee"):
         fail(f"cannot close {issue_id}: assignee is \"{bead['assignee']}\", actor is \"fake\"")
+    blockers = open_blockers(state, bead) if "--force" not in flags else []
+    if blockers:
+        fail(f"cannot close blocked issue {issue_id}: blocked by {', '.join(blockers)}")
     bead["status"] = "closed"
     bead["close_reason"] = flags.get("--reason", "")
     save_state(state)
