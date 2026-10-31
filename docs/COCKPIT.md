@@ -959,6 +959,13 @@ copy. What it gives the cockpit to read:
 | local settings, secrets, notifications, heartbeat, project clones, Tailscale | none: a temporary HOME and no local settings file |
 | Tailscale Serve in front of the cockpit | a dataset that says `"https_identity_proxy": true` puts a synthetic identity proxy in front of it (`tests/fixtures/cockpit/synthetic-city/identity_proxy.py`, af-npz9v1.22): HTTPS on 127.0.0.1 with a certificate made for the launch, its address and the authority to trust in the cockpit's environment (`COCKPIT_TRIAL_HTTPS_URL`, `COCKPIT_TRIAL_HTTPS_CA`), its origin the cockpit's own. Who connects is said in `X-Synthetic-Tailnet-Login`: without it, 403 (not on the tailnet); with it, the request goes to the cockpit alone with `Tailscale-User-Login` and `Tailscale-User-Name` set from it, every `Tailscale-User-*` the client sent removed. Benjamin's login is `synthetic@example.ts.net` (`COCKPIT_BENJAMIN_LOGIN`). Nothing of the tailnet is used |
 
+The result trials that exercise Essai and Avis (`result-ready`,
+`result-outage`, `result-repairing`) carry that proxy. Their tracker remains
+the launch's disposable `tracker.json`; no request, response or wording with
+apostrophes reaches the tracker or cockpit in service. The category-D control
+`python3 tests/cockpit-isolated-https-test.py` launches all three and reads
+them through the synthetic identity boundary.
+
 No controller and no tracker is started. A dataset that is not marked
 `"synthetic": true`, carries no `generated_at`, names no state, or whose
 content the rules below cannot read, is refused before anything starts: the

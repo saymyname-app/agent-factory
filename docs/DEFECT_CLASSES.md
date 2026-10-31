@@ -112,16 +112,19 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   juge est étalonné sur un cas connu avant de servir ; on juge l'état
   résultant, jamais un morceau.
 - Contrôle : `python3 tests/account-home-lint-test.py`,
-  `python3 tests/fake-tool-contract-test.py` — complet pour le dossier
+  `python3 tests/fake-tool-contract-test.py`,
+  `python3 tests/cockpit-isolated-https-test.py` — complet pour le dossier
   personnel et les faux exécutables `bd`/`gc` : le second tient en CI la
   liste fermée des 27 faux, rejoue la limite d'un argument sur chacun, la
   fermeture d'un bloqué sur les 11 qui écrivent l'état et les huit formes
   de dépendance sur les deux qui les acceptent. Sur l'hôte de l'usine il
   étalonne d'abord le même oracle sur les vrais `bd`/`gc` dans une cité
   jetable ; les 16 faux de lecture ou de transport sans état mutable ont
-  chacun leur exception datée dans le contrôle (af-npz9v1.28).
+  chacun leur exception datée dans le contrôle (af-npz9v1.28). Le troisième
+  lance les trois décors résultat d'Essai derrière le proxy d'identité et
+  tient leur suivi jetable.
 - Occurrences : #566, #618, #641, #648, #656, #664, #665, #669, #671, #674,
-  #675, #676, #680, #689, #690, #692, #699, #700, #714, #715.
+  #675, #676, #680, #689, #690, #692, #699, #700, #714, #715 ; af-vf51g6.
 - Ouvertes : exception datée du 29/10/2026 : la relecture de code par modèle
   n'est pas rejouée sur un cas connu (étude B § 4.3). Elle reste bornée par
   ses citations vérifiées et ses passes ciblées, mais n'est pas déclarée
