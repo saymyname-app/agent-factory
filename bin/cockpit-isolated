@@ -19,6 +19,10 @@ synthetic sources only:
   `GET /v0/city/<city>/events?type=session.woke`, as gc 1.5.0 answers
   them) -- and sends the sessions the dataset dispatches once the cockpit
   is up;
+- what a dataset says of a clean stop (`stop_supervisor`, H, af-69qhlk;
+  `read_stop_supervisor`): the sessions at work on tickets, how each leaves a
+  suspended city, who comes back at the resume, and a file of each write the
+  supervisor receives;
 - a synthetic tracker (`tests/fixtures/cockpit/requests/fake-bd`) and the
   projects declared for this launch alone;
 - the knowledge repositories of those projects (their roadmap and release
@@ -53,6 +57,7 @@ temporary directory.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import os
 import shlex
@@ -110,6 +115,7 @@ POLL_SECONDS = "1"
 # A supervisor that answers no more is shown as such after this long, not
 # after the two minutes a reading stays current in service.
 SILENT_VALIDITY_SECONDS = "2"
+STOP_SILENT_VALIDITY_SECONDS = "0.2"
 # A read of a tracker that never answers is not given up while the cockpit
 # lives (a day is longer than any launch): the page says it is being read.
 UNANSWERED_READ_TIMEOUT_SECONDS = "86400"
@@ -261,8 +267,104 @@ def serve_sessions(supervisor, city: synthetic_city.SyntheticCity) -> None:
             threading.Thread(target=dispatch, args=(name, said), daemon=True).start()
 
 
+def read_stop_supervisor(path: Path, city: synthetic_city.SyntheticCity) -> tuple[dict, synthetic_city.SyntheticCity]:
+    """What the dataset at `path` says of a clean stop (`stop_supervisor`,
+    {} when nothing), and `city` with its work: for each `work`
+    ({"session", "role", "ticket", "title"}) a session at work and its
+    ticket in progress, as the Factory records it (`gc.session_id`). The
+    other keys are read by `follow_stop` and `write_stop`."""
+    stop = json.loads(path.read_text(encoding="utf-8")).get("stop_supervisor") or {}
+    if not isinstance(stop, dict):
+        sys.exit(f"cockpit-isolated: {path}: stop_supervisor is an object")
+    at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    for item in stop.get("work") or []:
+        name = item["session"]
+        city.sessions.append({"id": name, "template": STOP_TEMPLATES[item["role"]], "session_name": name,
+                              "running": not stop.get("resuming"), "last_active": at})
+        city.beads.append({"id": item["ticket"], "title": item["title"], "status": "in_progress",
+                           "issue_type": "task", "assignee": name, "created_at": at, "updated_at": at,
+                           "metadata": {"gc.session_id": name, "gc.session_name": name}})
+    if stop.get("asked_minutes_ago") is not None:
+        city = dataclasses.replace(city, suspended=True)
+    elif stop.get("resuming"):
+        city = dataclasses.replace(city, suspended=False)
+    return stop, city
+
+
+class RecordedWrites(list):
+    """The writes the synthetic supervisor received, each also a line of a
+    file: what a test reads of it, from outside the launch."""
+
+    def __init__(self, path: str):
+        super().__init__()
+        self.path = path
+
+    def append(self, write: dict) -> None:
+        super().append(write)
+        with open(self.path, "a", encoding="utf-8") as recorded:
+            recorded.write(json.dumps(write, ensure_ascii=False) + "\n")
+
+
+def follow_stop(supervisor, stop: dict, home: str) -> None:
+    """The sessions of `stop` as the installed supervisor treats them: a
+    suspended city leaves a session the work it holds, then it stops by
+    itself (`drains_in_seconds`, by session; one not named never does, its
+    ticket lost once it stops when `vanishes_when_drained` says so); a resumed
+    one sends them back, on what they held or as `reassigned_on_resume` says."""
+    tracker = Path(home, "tracker.json")
+
+    def rewrite(change) -> None:
+        beads = json.loads(tracker.read_text(encoding="utf-8"))
+        written = Path(home, "tracker.next.json")
+        written.write_text(json.dumps(change(beads), ensure_ascii=False), encoding="utf-8")
+        written.replace(tracker)
+
+    def running(name: str, value: bool) -> None:
+        with supervisor._lock:
+            for session in supervisor._sessions:
+                if session["id"] == name:
+                    session["running"] = value
+
+    def held_by(bead: dict, name: str) -> dict:
+        return dict(bead, assignee=name, metadata=dict(bead["metadata"], **{"gc.session_id": name,
+                                                                            "gc.session_name": name}))
+
+    def resumed() -> None:
+        moved = stop.get("reassigned_on_resume") or {}
+        for item in stop.get("work") or []:
+            successor = moved.get(item["ticket"])
+            if successor is None:
+                running(item["session"], True)
+                continue
+            rewrite(lambda beads: [held_by(bead, successor) if bead.get("id") == item["ticket"] else bead
+                                   for bead in beads])
+            with supervisor._lock:
+                supervisor._sessions.append({"id": successor, "template": STOP_TEMPLATES[item["role"]],
+                                             "session_name": successor, "running": True,
+                                             "last_active": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+
+    vanishing = {item["session"]: item["ticket"] for item in stop.get("work") or []
+                 if item["ticket"] in (stop.get("vanishes_when_drained") or [])}
+    was, due = False, {}
+    while True:
+        suspended = bool(supervisor._status["suspended"])
+        if suspended != was:
+            was = suspended
+            if suspended:
+                due = {name: time.monotonic() + seconds for name, seconds in (stop.get("drains_in_seconds") or {}).items()}
+            else:
+                resumed()
+        for name, at in list(due.items()):
+            if time.monotonic() >= at:
+                del due[name]
+                if name in vanishing:
+                    rewrite(lambda beads: [bead for bead in beads if bead.get("id") != vanishing[name]])
+                running(name, False)
+        time.sleep(0.1)
+
+
 def serve_synthetic_supervisor(
-    city: synthetic_city.SyntheticCity, cockpit_url: str, home: str, announce: int, cockpit_alive: int
+    city: synthetic_city.SyntheticCity, stop: dict, cockpit_url: str, home: str, announce: int, cockpit_alive: int
 ) -> None:
     """The process beside the cockpit: the supervisor of `city`. It writes
     its address on `announce`, then lives until `cockpit_alive` closes --
@@ -278,6 +380,14 @@ def serve_synthetic_supervisor(
     )
     supervisor.start()
     serve_sessions(supervisor, city)
+    if stop.get("writes"):
+        supervisor.writes = RecordedWrites(stop["writes"])
+    if stop.get("work"):
+        with supervisor._lock:
+            for session in supervisor._sessions:
+                if session["id"] in (stop.get("missing_after_restart") or []):
+                    session["running"] = False
+        threading.Thread(target=follow_stop, args=(supervisor, stop, home), daemon=True).start()
     if city.reading in (synthetic_city.UNANSWERED, synthetic_city.FAILING):
         supervisor.go_down()
     os.write(announce, supervisor.base_url.encode("ascii"))
@@ -293,6 +403,10 @@ def serve_synthetic_supervisor(
 # A host restarted during a stop (af-npz9v1.21, for H af-69qhlk): the
 # stop was asked this long before the launch, which is the restart.
 STOP_ASKED_BEFORE_RESTART_SECONDS = 10 * 60
+# The sessions of a stop, by the role a dataset gives them.
+STOP_TEMPLATES = {"Auteur": "delivery-author", "Relecteur": "delivery-reviewer", "Évaluateur": "delivery-evaluator"}
+# How long a resume waits for its sessions in a launch: a few readings.
+STOP_RESUME_GRACE_SECONDS = 3
 
 
 def read_https(path: Path) -> bool:
@@ -399,9 +513,12 @@ def read_restart(path: Path) -> bool:
     return restarted
 
 
-def write_stop(restarted: bool, city: synthetic_city.SyntheticCity, home: str) -> dict[str, str]:
+def write_stop(restarted: bool, stop: dict, city: synthetic_city.SyntheticCity, home: str) -> dict[str, str]:
     """The state of the clean stop the cockpit starts from, in `home`, and
-    the environment that makes it read it every second. A host restarted
+    the environment that makes it read it every second. A dataset may start
+    from a stop under way (`stop_supervisor`: `asked_minutes_ago`, the
+    sessions silent since) or from a resume (`resuming`, the sessions not
+    back, for `resume_grace_seconds`). A host restarted
     during a stop (`read_restart`) leaves it as it was: a stop asked ten
     minutes before, the tickets in flight then (the photo: the tracker of
     the launch), the cockpit restarted since. The stop driver then reads the
@@ -409,14 +526,22 @@ def write_stop(restarted: bool, city: synthetic_city.SyntheticCity, home: str) -
     with the tickets whose assignment changed; still suspended, the stop
     goes on."""
     state = Path(home, "cockpit-stop-state.json")
-    if restarted:
-        asked = time.time() - STOP_ASKED_BEFORE_RESTART_SECONDS
-        photo = {bead["id"]: {"status": bead.get("status"),
+    minutes = stop.get("asked_minutes_ago")
+    if restarted or minutes is not None or stop.get("resuming"):
+        asked = time.time() - (STOP_ASKED_BEFORE_RESTART_SECONDS if minutes is None else minutes * 60)
+        photo = {bead["id"]: {"status": bead.get("status"), "title": bead.get("title"),
                               "assignee": (bead.get("metadata") or {}).get("gc.session_name") or bead.get("assignee")}
                  for bead in city.beads if isinstance(bead, dict) and bead.get("id")}
-        state.write_text(json.dumps({"state": "arret_en_cours", "started_at": asked, "last_progress_at": asked,
-                                     "snapshot": {"beads": photo}}), encoding="utf-8")
-    return {"COCKPIT_STOP_STATE_FILE": str(state), "COCKPIT_STOP_TICK_SECONDS": POLL_SECONDS}
+        held = [{"session_id": item["session"], "bead_id": item["ticket"], "assignee": item["session"],
+                 "template": STOP_TEMPLATES[item["role"]]} for item in stop.get("work") or []]
+        said = {"state": "arret_en_cours", "started_at": asked, "last_progress_at": asked,
+                "snapshot": {"beads": photo}, "held": held, "suspended_seen": minutes is not None}
+        if stop.get("resuming"):
+            said.update(state="redemarrage", stopped_at=asked, redemarrage_started_at=time.time(), suspended_seen=True,
+                        saved_sessions=[item["session"] for item in stop["work"]])
+        state.write_text(json.dumps(said), encoding="utf-8")
+    return {"COCKPIT_STOP_STATE_FILE": str(state), "COCKPIT_STOP_TICK_SECONDS": POLL_SECONDS,
+            "COCKPIT_STOP_RESUME_GRACE_SECONDS": str(stop.get("resume_grace_seconds", STOP_RESUME_GRACE_SECONDS))}
 
 
 def write_doors(answers: dict[str, str], home: str) -> dict[str, str]:
@@ -630,6 +755,7 @@ def main(argv: list[str]) -> int:
     city = read_city(Path(args.dataset))
     doors = read_doors(Path(args.dataset))
     restarted = read_restart(Path(args.dataset))
+    stop, city = read_stop_supervisor(Path(args.dataset), city)
     https = read_https(Path(args.dataset))
     heartbeat = read_heartbeat(Path(args.dataset))
     usine_validity = read_usine_validity(Path(args.dataset))
@@ -642,7 +768,7 @@ def main(argv: list[str]) -> int:
         os.close(announce_read)
         os.close(alive_write)
         try:
-            serve_synthetic_supervisor(city, cockpit_url, home, announce_write, alive_read)
+            serve_synthetic_supervisor(city, stop, cockpit_url, home, announce_write, alive_read)
         finally:
             os._exit(0)
     os.close(announce_write)
@@ -678,15 +804,17 @@ def main(argv: list[str]) -> int:
     }
     if LAUNCH_MARK in os.environ:
         env[LAUNCH_MARK] = os.environ[LAUNCH_MARK]
-    env.update(write_stop(restarted, city, home))
+    env.update(write_stop(restarted, stop, city, home))
     env.update(write_heartbeat(heartbeat, home))
     env.update(usine_validity)
     if https:
         env.update(start_identity_proxy(args.port, home, [alive_write]))
     if city.reading == synthetic_city.READ_ONCE:
         # Its state and its sessions alike: both are read from it.
-        env["COCKPIT_VALIDITY_GC_SECONDS"] = SILENT_VALIDITY_SECONDS
-        env["COCKPIT_VALIDITY_SESSIONS_SECONDS"] = SILENT_VALIDITY_SECONDS
+        # A stop asks fresh readings: its supervisor is stale as soon as silent.
+        validity = STOP_SILENT_VALIDITY_SECONDS if stop else SILENT_VALIDITY_SECONDS
+        env["COCKPIT_VALIDITY_GC_SECONDS"] = validity
+        env["COCKPIT_VALIDITY_SESSIONS_SECONDS"] = validity
     # A Runs state: the clock starts at the moment the state shows, and its
     # selection is what a page opens when its address names none.
     if city.clock_start:

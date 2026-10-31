@@ -169,9 +169,7 @@ def build(config, clock=None):
     server.door_timeout = config.action_timeout_seconds
     server.descriptors_dir = config.descriptors_dir
 
-    # Clean stop (T23, T24) -- read side only (af-mjfvwx 7a): the driver keeps
-    # its state and its tick; the reader it is handed cannot suspend, resume
-    # or stop anything, and no stop action is registered.
+    # Clean stop (T23, T24; its gestures, H af-69qhlk).
     def held_work():
         """``{session_id: ticket id}`` as the tickets record it; ``None``
         while the tickets are not read."""
@@ -197,14 +195,20 @@ def build(config, clock=None):
     pollers.append(PollingSource(read_model, "sessions", city_reader.status, config.sessions_poll_seconds))
 
     def photo():
-        """The driver's « photo »: every non-closed ticket and who holds it."""
-        beads = (read_model.snapshot().get("beads") or {}).get("value") or []
+        """The driver's « photo »: every ticket and who holds it, and when
+        they were read; ``beads`` None while they are not."""
+        row = read_model.snapshot().get("beads") or {}
+        if row.get("value") is None or row.get("freshness") == UNKNOWN:
+            return {"beads": None}
+        beads = row["value"]
         return {
+            "read_at": row.get("read_at"),
             "beads": {
                 # Who holds a ticket is the session the factory recorded on it;
                 # a delivery ticket has no assignee field of its own.
                 b["id"]: {
                     "status": b.get("status"),
+                    "title": b.get("title"),
                     "assignee": (b.get("metadata") or {}).get("gc.session_name") or b.get("assignee"),
                 }
                 for b in beads
@@ -212,7 +216,8 @@ def build(config, clock=None):
             }
         }
 
-    stop_driver = StopDriver(city_reader, photo, clock, JsonFileStateStore(config.stop_state_file))
+    stop_driver = StopDriver(city_reader, photo, clock, JsonFileStateStore(config.stop_state_file),
+                             resume_grace_seconds=config.stop_resume_grace_seconds)
     pollers.append(Ticker(stop_driver.tick, config.stop_tick_seconds))
 
     # Project repositories (T19, T20): roadmap step and commits ahead, read in

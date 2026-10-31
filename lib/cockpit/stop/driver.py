@@ -39,7 +39,16 @@ du PC pendant l'arrêt donne « Arrêt interrompu » avec les écarts").
 ``tick()``/``request_stop()``/``force_stop()``/``resume()`` are the whole
 public interface; process wiring (poller thread, the (hidden) button, the
 "Ce qui t'attend" feed) is a later ticket's job, same precedent as T18/T17.
+``view()`` (H, af-69qhlk) is what the page Usine draws: each work a stop waits
+for, the point of resuming observed for it, what the comparison found -- all
+read from the supervisor and the tickets, nothing from a timer.
+
+A confirmation rests on a reading of the tickets begun after the last session
+left (``read_at`` of the photo): the one before would say a lost ticket is
+there. A resume waits ``resume_grace_seconds`` for the sessions to come back
+before it calls one that did not a gap.
 """
+import threading
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -58,6 +67,9 @@ ARRET_FORCE = "arret_force"
 ARRET_INTERROMPU = "arret_interrompu"
 
 NO_PROGRESS_THRESHOLD_SECONDS = 30 * 60
+# A stop may be asked again once the last one has resumed.
+STOPPABLE_STATES = (EN_MARCHE, REPRISE_VERIFIEE, REPRISE_AVEC_ECARTS)
+RESUMABLE_STATES = (ARRETEE_PROPREMENT, ARRET_FORCE, ARRET_INTERROMPU)
 
 
 def _hhmm(epoch):
@@ -79,16 +91,21 @@ def _work_map(snapshot):
     return {bead_id: info.get("assignee") for bead_id, info in _open_in_progress_beads(snapshot).items()}
 
 
+def _titled(bead_id, snapshot):
+    """What a person reads of a ticket of the photo: its title."""
+    info = ((snapshot or {}).get("beads") or {}).get(bead_id) or {}
+    return info.get("title") or bead_id
+
+
 def _progress_token(status):
     """A stable fingerprint of "has anything moved" (spec: "commit, étape
     fermée, événement de session"): each session's last event time, plus
     how many steps have been closed since the stop was requested. Any
     change here resets the 30-min no-progress clock."""
     sessions = status.get("sessions") or []
-    fingerprint = tuple(
-        sorted((s.get("session_id"), s.get("last_event_at")) for s in sessions)
-    )
-    return (fingerprint, status.get("closed_steps_count", 0))
+    fingerprint = sorted([s.get("session_id"), s.get("last_event_at")] for s in sessions)
+    # Lists: what the state file gives back compares equal.
+    return [fingerprint, status.get("closed_steps_count", 0)]
 
 
 def _lost_beads(before_snapshot, after_snapshot):
@@ -120,7 +137,9 @@ def _diff_sessions(before_snapshot, after_status):
 
 
 class StopDriver:
-    def __init__(self, gc_client, snapshot_fn, clock, state_store):
+    def __init__(self, gc_client, snapshot_fn, clock, state_store, resume_grace_seconds=0):
+        self._lock = threading.RLock()
+        self._resume_grace_seconds = resume_grace_seconds
         self._gc = gc_client
         self._snapshot_fn = snapshot_fn
         self._clock = clock
@@ -139,6 +158,10 @@ class StopDriver:
         self._perdu = saved.get("perdu", [])
         self._ecarts = saved.get("ecarts", [])
         self._essai_reussi = saved.get("essai_reussi", False)
+        self._held = saved.get("held", [])
+        self._saved_sessions = saved.get("saved_sessions", [])
+        self._suspended_seen = saved.get("suspended_seen", False)
+        self._drained_at = saved.get("drained_at")
         # Only the very first tick after a process restart can discover an
         # "Arrêt interrompu" -- every later tick behaves exactly like an
         # uninterrupted arret_en_cours.
@@ -160,6 +183,10 @@ class StopDriver:
                 "perdu": self._perdu,
                 "ecarts": self._ecarts,
                 "essai_reussi": self._essai_reussi,
+                "held": self._held,
+                "saved_sessions": self._saved_sessions,
+                "suspended_seen": self._suspended_seen,
+                "drained_at": self._drained_at,
             }
         )
 
@@ -193,7 +220,7 @@ class StopDriver:
         if self._state == REPRISE_AVEC_ECARTS:
             return "Reprise avec écarts"
         if self._state == ARRET_FORCE:
-            perdu = ", ".join(self._perdu) or "rien"
+            perdu = ", ".join(_titled(bead_id, self._snapshot) for bead_id in self._perdu) or "rien"
             return "Arrêt forcé à %s (perdu : %s)" % (_hhmm(self._stopped_at), perdu)
         if self._state == ARRET_INTERROMPU:
             return "Arrêt interrompu"
@@ -214,20 +241,64 @@ class StopDriver:
         if self._state == ARRET_EN_COURS and self._no_progress_flagged:
             requests.append(build_no_progress_request(self._started_at, self._perdu_preview()))
         if self._state == REPRISE_AVEC_ECARTS:
-            requests.append(build_ecarts_request(self._ecarts, self._resumed_at))
+            requests.append(build_ecarts_request(self._titles(self._ecarts), self._resumed_at))
         return requests
 
+    def _titles(self, bead_ids):
+        return [_titled(bead_id, self._snapshot) for bead_id in bead_ids]
+
     def _perdu_preview(self):
-        sessions = self._gc.status().get("sessions") or []
-        return sorted({s.get("bead_id") for s in sessions if s.get("bead_id")})
+        """The title of each work still being saved: what a forced stop
+        puts at risk."""
+        return sorted(_titled(held.get("bead_id"), self._snapshot) for held in self._held
+                      if held.get("session_id") not in self._saved_sessions)
+
+    def force_offered(self):
+        return self._state == ARRET_EN_COURS and self._no_progress_flagged
+
+    def view(self):
+        """What the page draws of the stop (H, af-69qhlk): only what was
+        observed."""
+        return {
+            "state": self._state,
+            "label": self.label(),
+            "blocked": self.force_offered(),
+            "started_at": self._started_at,
+            "stopped_at": self._stopped_at,
+            "resumed_at": self._resumed_at,
+            "suspended_seen": self._suspended_seen,
+            "work": [
+                {"title": _titled(held.get("bead_id"), self._snapshot), "template": held.get("template"),
+                 "saved": held.get("session_id") in self._saved_sessions}
+                for held in self._held
+            ],
+            "lost": self._titles(self._perdu),
+            "ecarts": self._titles(self._ecarts),
+        }
 
     # -- actions ---------------------------------------------------------------
     def request_stop(self, now=None):
-        if self._state != EN_MARCHE:
+        with self._lock:
+            self._request_stop(now)
+
+    def _request_stop(self, now):
+        if self._state not in STOPPABLE_STATES:
             raise ValueError("clean stop already requested (state=%s)" % self._state)
         now = self._clock.now() if now is None else now
-        self._snapshot = self._snapshot_fn()
+        snapshot = self._snapshot_fn()
         initial_status = self._gc.status()
+        # First: refused or unanswered, no stop was asked here.
+        self._gc.suspend()
+        self._snapshot = snapshot
+        self._held = [
+            {key: session.get(key) for key in ("session_id", "bead_id", "assignee", "template")}
+            for session in initial_status.get("sessions") or []
+        ]
+        self._saved_sessions = []
+        self._suspended_seen = False
+        self._drained_at = None
+        self._stopped_at = None
+        self._resumed_at = None
         self._started_at = now
         self._last_progress_at = now
         self._last_progress_token = _progress_token(initial_status)
@@ -235,16 +306,16 @@ class StopDriver:
         self._perdu = []
         self._ecarts = []
         self._state = ARRET_EN_COURS
-        self._gc.suspend()
         self._save()
 
     def tick(self, now=None):
-        now = self._clock.now() if now is None else now
-        if self._state == ARRET_EN_COURS:
-            self._tick_arret_en_cours(now)
-        elif self._state == REDEMARRAGE:
-            self._tick_redemarrage(now)
-        return self._state
+        with self._lock:
+            now = self._clock.now() if now is None else now
+            if self._state == ARRET_EN_COURS:
+                self._tick_arret_en_cours(now)
+            elif self._state == REDEMARRAGE:
+                self._tick_redemarrage(now)
+            return self._state
 
     def _tick_arret_en_cours(self, now):
         status = self._gc.status()
@@ -257,9 +328,18 @@ class StopDriver:
                 self._save()
                 return
 
+        live = {s.get("session_id") for s in status.get("sessions") or []}
+        self._saved_sessions = [held.get("session_id") for held in self._held if held.get("session_id") not in live]
         if status.get("suspended"):
+            self._suspended_seen = True
             if not status.get("sessions"):
+                if self._drained_at is None:
+                    self._drained_at = now
                 current = self._snapshot_fn()
+                if current.get("beads") is None or current.get("read_at", now) < self._drained_at:
+                    # No conclusion on tickets read before the last session left.
+                    self._save()
+                    return
                 self._perdu = _lost_beads(self._snapshot, current)
                 self._stopped_at = now
                 self._state = ARRETEE_PROPREMENT
@@ -269,6 +349,8 @@ class StopDriver:
             # ticket (spec "point d'arrêt") -- progress is still tracked.
 
         token = _progress_token(status)
+        if self._last_progress_token is None:
+            self._last_progress_token = token
         if token != self._last_progress_token:
             self._last_progress_token = token
             self._last_progress_at = now
@@ -280,6 +362,10 @@ class StopDriver:
         self._save()
 
     def force_stop(self, now=None):
+        with self._lock:
+            self._force_stop(now)
+
+    def _force_stop(self, now):
         if self._state != ARRET_EN_COURS:
             raise ValueError("force stop only applies while a stop is in progress")
         if not self._no_progress_flagged:
@@ -297,12 +383,17 @@ class StopDriver:
         self._save()
 
     def resume(self, now=None):
+        with self._lock:
+            self._resume(now)
+
+    def _resume(self, now):
         if self._state not in (ARRETEE_PROPREMENT, ARRET_FORCE, ARRET_INTERROMPU):
             raise ValueError("resume only applies after a stop (state=%s)" % self._state)
         now = self._clock.now() if now is None else now
-        self._redemarrage_started_at = now
-        self._state = REDEMARRAGE
         self._gc.resume()
+        self._redemarrage_started_at = now
+        self._ecarts = []
+        self._state = REDEMARRAGE
         self._save()
 
     def _tick_redemarrage(self, now):
@@ -316,6 +407,8 @@ class StopDriver:
         gaps = sorted(
             bead_id for bead_id, assignee in expected.items() if current.get(bead_id) != assignee
         )
+        if gaps and now - (self._redemarrage_started_at or now) < self._resume_grace_seconds:
+            return
         self._resumed_at = now
         if gaps:
             self._ecarts = gaps

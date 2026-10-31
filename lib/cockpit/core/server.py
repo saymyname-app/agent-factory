@@ -11,6 +11,7 @@ import time
 import threading
 import json
 import urllib.parse
+from pathlib import Path
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -49,7 +50,9 @@ from cockpit.ui.base.page import render_document, render_fresh, render_home_zone
 from cockpit.ui.health.page import render_health_zone, render_status_line
 from cockpit.ui.access.page import PROCEDURE_PATH, render_access_zone
 from cockpit.ui.access.procedure import CSS as PROCEDURE_CSS, render_procedure
-from cockpit.ui.factory.page import CSS as FACTORY_PAGE_CSS, read_machine, render_factory_page
+from cockpit.stop.driver import RESUMABLE_STATES, STOPPABLE_STATES
+from cockpit.stop.gc_city import StopUncertain
+from cockpit.ui.factory.page import CSS as FACTORY_PAGE_CSS, read_machine, read_stop_procedure, render_factory_page
 from cockpit.ui.home.overview import CSS as OVERVIEW_CSS
 from cockpit.ui.home.overview import overview_view, render_overview
 from cockpit.ui.panorama.shell import CSS as PANORAMA_CSS
@@ -92,6 +95,8 @@ READER_REFUSED_TEXT = ("Accès refusé : ce cockpit est réservé à l’opérat
 # The gestures of the page Usine (G2, af-f8nlhr), served by
 # CockpitRequestHandler._usine_action, each through its door.
 USINE_ACTIONS = frozenset({"regler", "preparer_reglage", "nettoyer"})
+# The gestures of the clean stop (H, af-69qhlk), served by _stop_action.
+STOP_ACTIONS = frozenset({"arreter", "forcer_arret", "redemarrer"})
 ACTIONS_WITHOUT_WRITE = frozenset({"continuer", "pas_bon_vers_agent", "notifier_test"})
 # What "Ce qui t'attend", the projects and the journal are built from.
 SOURCES_REREAD_AFTER_ACTION = frozenset({"beads", "projets", "journal"})
@@ -238,7 +243,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         if not guard_result.allowed:
             self._send_json({"error": guard_result.reason}, status=403)
             return
-        if action in USINE_ACTIONS:
+        if action in USINE_ACTIONS or action in STOP_ACTIONS:
             length = int(self.headers.get("Content-Length", "0") or "0")
             try:
                 payload = json.loads((self.rfile.read(length) if length else b"{}").decode("utf-8") or "{}")
@@ -247,7 +252,8 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             if not isinstance(payload, dict):
                 self._send_json({"error": "bad_json"}, status=400)
                 return
-            status, body = self._usine_action(action, payload)
+            answer = self._stop_action if action in STOP_ACTIONS else self._usine_action
+            status, body = answer(action, payload)
             self._send_json(body, status=status)
             return
         handler = self.server.action_handlers.get(action)
@@ -636,7 +642,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         checks = self.server.factory_checks
         health = self._compute_health(read_model)
         notify = self.server.notify
-        actions_html = self._render_stop_zone(snapshot) + render_access_zone(
+        actions_html = render_access_zone(
             self.server.benjamin_login, snapshot.get("tailscale"), now, public_url=self.server.public_url)
         agents = checks.get("agents")
         wanted = (urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("role") or [""])[0]
@@ -644,7 +650,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         setting, cleaning = self._usine_views(urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query), agents,
                                               wanted if wanted in keys else (keys[0] if keys else ""))
         main = render_factory_page({
-            "setting": setting, "cleanup": cleaning,
+            "setting": setting, "cleanup": cleaning, "stop": self._stop_view(snapshot),
             "machine": checks.get("machine"), "connections": checks.get("connexions"),
             "providers": checks.get("fournisseurs"), "agents": agents,
             "live": snapshot, "now": now, "notify_configured": bool(notify and notify.configured()),
@@ -654,6 +660,34 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         })
         self._send_page(read_model, "usine", main, extra_css=FACTORY_PAGE_CSS,
                         headers={"Set-Cookie": session_cookie_header(self.server.session_token)}, snapshot=snapshot)
+
+    def _stop_view(self, snapshot):
+        """What the panel of the stop draws: the driver's view, the work a
+        stop would wait for now, and what the address opens
+        (``arret=confirmer|machine``). No driver: nothing to draw from."""
+        driver = self.server.stop_driver
+        if driver is None:
+            return None
+        row = snapshot.get("sessions")
+        known = row is not None and row["value"] is not None and row["freshness"] != UNKNOWN
+        titles = {bead.get("id"): bead.get("title") for bead in ((snapshot.get("beads") or {}).get("value") or [])
+                  if isinstance(bead, dict)}
+        gc_row = snapshot.get("gc") or {}
+        gc_value = gc_row.get("value")
+        factory = ("Départs autorisés", "En marche")
+        if not gc_value or gc_row.get("freshness") == UNKNOWN:
+            factory = ("État de l’usine inconnu", "inconnu — le superviseur ne répond pas")
+        elif gc_value.get("suspended"):
+            factory = ("Suspendue, sans arrêt demandé depuis le cockpit", "Suspendue")
+        return {
+            "view": driver.view(), "mode": (urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("arret")
+                                            or [""])[0],
+            "blocked": self._stop_blocked(snapshot), "stoppable": driver.state() in STOPPABLE_STATES,
+            "resumable": driver.state() in RESUMABLE_STATES, "essai": not driver.essai_reussi(), "factory": factory,
+            "work": [{"title": titles.get(s.get("bead_id")) or "ticket dont le titre n’a pas été lu",
+                      "template": s.get("template")} for s in (row["value"]["sessions"] if known else [])],
+            "procedure": read_stop_procedure(self.server.stop_procedure_file),
+        }
 
     def _setting_blocked(self, agents, role_key):
         """Why the setting of ``role_key`` may not be made now, or None: the
@@ -755,6 +789,47 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             return ("Nettoyage indisponible : l’aperçu du périmètre est périmé ; examine-le de nouveau avant de "
                     "confirmer.")
         return None
+
+    def _stop_blocked(self, snapshot):
+        """Why a stop may not be asked now, or None."""
+        driver = self.server.stop_driver
+        if driver is None or driver.state() not in STOPPABLE_STATES:
+            return "Une suspension est déjà en cours : suis-la ici."
+        sessions, beads = snapshot.get("sessions"), snapshot.get("beads")
+        if any(row is None or row["value"] is None or row["freshness"] != FRESH for row in (sessions, beads)):
+            return "Suspension indisponible : travail en vol inconnu, la source ne répond pas. Revérifie les connexions."
+        return None
+
+    def _stop_action(self, action, payload):
+        """POST /api/actions/arreter, forcer_arret, redemarrer (H,
+        af-69qhlk): (status, body). What the moment does not allow is
+        refused first, then a gesture without its confirmation; only then
+        does the supervisor hear of it. No answer from it leaves the
+        outcome to the next reading of the page."""
+        driver = self.server.stop_driver
+        blocked = None
+        if action == "arreter":
+            blocked = self._stop_blocked(self.server.read_model.snapshot())
+        elif action == "forcer_arret" and (driver is None or not driver.force_offered()):
+            blocked = "L’arrêt forcé n’est proposé qu’après 30 min sans progrès : rien n’a été envoyé."
+        elif action == "redemarrer" and (driver is None or driver.state() not in RESUMABLE_STATES):
+            blocked = "Rien à redémarrer : aucun arrêt n’est terminé."
+        if blocked:
+            return 409, {"error": blocked}
+        if payload.get("confirm") is not True:
+            return 400, {"error": "Confirmation requise : rien n’a été envoyé."}
+        gesture = {"arreter": driver.request_stop, "forcer_arret": driver.force_stop,
+                   "redemarrer": driver.resume}[action]
+        try:
+            gesture()
+        except StopUncertain:
+            self._poll_soon()
+            return 504, {"error": "Le superviseur n’a pas répondu : l’issue est incertaine. Relis cette page avant "
+                                  "de réessayer.", "incertain": True}
+        except ValueError as exc:
+            return 409, {"error": "Commande refusée : %s." % exc}
+        self._poll_soon()
+        return 200, {"ok": True}
 
     def _usine_action(self, action, payload):
         """POST /api/actions/regler, preparer_reglage, nettoyer (G2,
@@ -1178,6 +1253,7 @@ def make_server(
     # them, the configuration of the roles with the sessions observed at
     # work -- read in the Factory's files at ``factory_root``.
     root = FACTORY_ROOT if factory_root is None else factory_root
+    server.stop_procedure_file = Path(root) / "docs" / "RUNBOOK_STOP_AND_RESTART.md"
     server.factory_checks = SectionChecks({
         "machine": read_machine,
         "connexions": lambda: read_model.snapshot(),

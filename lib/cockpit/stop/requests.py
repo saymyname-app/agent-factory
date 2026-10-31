@@ -15,13 +15,10 @@ TYPE_REPRISE_ECARTS = "reprise_ecarts"
 
 def build_no_progress_request(started_at, perdu_preview=None):
     perdu_preview = perdu_preview or []
+    consequence = "Arrête les sessions en gardant leur ticket et leur travail assigné."
     if perdu_preview:
-        consequence = (
-            "Arrête les sessions en gardant leur ticket et leur travail assigné : %s."
-            % ", ".join(perdu_preview)
-        )
-    else:
-        consequence = "Arrête les sessions en gardant leur ticket et leur travail assigné."
+        consequence += " Ce qu'elles n'ont pas sauvegardé depuis leur dernier point est perdu : %s." % ", ".join(
+            perdu_preview)
     return OperatorRequest(
         id="stop:no-progress",
         type=TYPE_ARRET_BLOQUE,

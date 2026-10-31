@@ -163,6 +163,7 @@ class Config:
             os.path.dirname(self.pid_file), "cockpit-stop-state.json"
         )
         self.stop_tick_seconds = float(env.get("COCKPIT_STOP_TICK_SECONDS", "15"))
+        self.stop_resume_grace_seconds = float(env.get("COCKPIT_STOP_RESUME_GRACE_SECONDS", "300"))
         self.sessions_poll_seconds = float(env.get("COCKPIT_SESSIONS_POLL_SECONDS", "15"))
         # The trace of the sessions (cockpit.runs.trace): what each session
         # ran with and was sent, kept once the supervisor no longer lists it.

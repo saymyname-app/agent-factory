@@ -34,13 +34,14 @@ read is said unread.
 Intent (Benjamin, his words, 2026-10-19 19:20 Paris): « enchaîne
 directement sur Runs puis Usine. »
 Mechanism (agent interpretation): the page served since PR #683 completed
-on its real sources; settings, clean-up and stop stay visibly unavailable
+on its real sources; settings, clean-up and the clean stop are its gestures;
 until their tickets (G2, H).
 """
 import html
 import json
 import os
 import platform
+import re
 import shutil
 import socket
 from datetime import datetime
@@ -725,15 +726,176 @@ USINE_SCRIPT = """<script>
 </script>"""
 
 
-def render_unavailable(a, actions_html):
-    return (
-        '<section class="pn-panel" %s><h2>Suspension, reprise et arrêt</h2><p>La VM héberge l’usine. Fermer ou '
-        'éteindre ce PC client n’arrête pas la VM.</p><div class="fa-actions">'
-        '<button type="button" disabled>Demander la suspension</button>'
-        '<button type="button" disabled>Préparer l’arrêt de la machine</button></div>'
-        '<p class="fa-muted">Indisponible : l’arrêt propre et la reprise vérifiée ne sont pas encore raccordés.</p>'
-        '<div class="fa-legacy">%s</div></section>'
-    ) % (a("panel"), actions_html)
+# What the panel of the stop says of a session, by its template.
+STOP_ROLES = (("author", "Auteur"), ("reviewer", "Relecteur"), ("evaluator", "Évaluateur"))
+STEP_DONE, STEP_WAITING = "✓", "◷"
+PROOFS_AWAITED = "Preuves encore attendues."
+STOP_STEP_ONE = "Les travaux déjà lancés gardent leur affectation."
+SUSPENSION_IS_NOT_POWER_OFF = ("La suspension des agents n’est pas l’arrêt de la VM : stockage et superviseur "
+                               "peuvent encore tourner.")
+# The steps of the runbook, as its headings number them.
+PROCEDURE_STEP = re.compile(r"^## (\d+\.\s+.+)$", re.M)
+
+
+def read_stop_procedure(path):
+    """The steps of the procedure of a complete stop, as the runbook heads
+    them; empty when it cannot be read."""
+    try:
+        with open(path, encoding="utf-8") as runbook:
+            return PROCEDURE_STEP.findall(runbook.read())
+    except OSError:
+        return []
+
+
+def _stop_role(template):
+    return next((role for key, role in STOP_ROLES if key in (template or "")), "Agent")
+
+
+def _stop_time(epoch):
+    return datetime.fromtimestamp(epoch, tz=PARIS).strftime("%H:%M") if epoch else "??:??"
+
+
+def _stop_phase(view):
+    """The phase of a stop asked: what the panel is headed with."""
+    state = view["state"]
+    if state == "arret_en_cours":
+        return "Suspension bloquée" if view["blocked"] else "Travaux en cours de mise au repos"
+    if state == "arretee_proprement":
+        return "Suspension à vérifier" if view["lost"] else "Suspension confirmée à %s" % _stop_time(view["stopped_at"])
+    return {"redemarrage": "Reprise en cours", "reprise_verifiee": "Reprise vérifiée à %s" % _stop_time(view["resumed_at"]),
+            "reprise_avec_ecarts": "Reprise avec écarts", "arret_force": "Arrêt forcé à %s" % _stop_time(view["stopped_at"]),
+            "arret_interrompu": "Arrêt interrompu"}.get(state, state)
+
+
+def _stop_points(view):
+    """Step 2: (done, the words), each work as last observed."""
+    work = view["work"]
+    if view["state"] == "arret_en_cours" and view["blocked"]:
+        waiting = sorted({_stop_role(item["template"]) for item in work if not item["saved"]})
+        return False, ("%s ne répond plus : son point durable n’est pas prouvé. Aucune autorisation d’éteindre."
+                       % (" et ".join(waiting) or "Une session"))
+    if not work:
+        return view["state"] != "arret_en_cours", "Aucun travail en vol à conserver."
+    said = " · ".join("%s : %s" % (_stop_role(item["template"]), "point conservé" if item["saved"]
+                                   else "sauvegarde en cours") for item in work)
+    return all(item["saved"] for item in work), said + "."
+
+
+def _stop_comparison(view):
+    """Step 3: (done, the words). Nothing but a comparison made says done."""
+    if view["state"] in ("arretee_proprement", "redemarrage", "reprise_verifiee", "reprise_avec_ecarts"):
+        count = len(view["work"]) - len(view["lost"])
+        if view["lost"]:
+            return False, "Travail absent après l’arrêt : %s." % ", ".join(view["lost"])
+        if view["state"] != "redemarrage":
+            return True, ("1 travail retrouvé, aucun écart." if count == 1
+                          else "%d travaux retrouvés, aucun écart." % count)
+    return False, PROOFS_AWAITED
+
+
+def _stop_step(a, done, title, said):
+    return ('<div class="shutdown-step" %s><b %s aria-hidden="true">%s</b><div><strong>%s</strong><p>%s</p></div></div>'
+            ) % (a("shutdown-step"), a("b"), STEP_DONE if done else STEP_WAITING, _e(title), _e(said))
+
+
+def _stop_steps(a, view):
+    saved, points = _stop_points(view)
+    compared, comparison = _stop_comparison(view)
+    return (_stop_step(a, view["suspended_seen"], "Arrêter les nouveaux départs", STOP_STEP_ONE)
+            + _stop_step(a, saved, "Atteindre les points de reprise", points)
+            + _stop_step(a, compared, "Comparer le travail avant / après", comparison))
+
+
+def _stop_work_lines(view):
+    """Each work, by its title, as last observed; kept for the resume after
+    a forced stop."""
+    forced = view["state"] == "arret_force"
+    lines = "".join('<li>%s : %s.</li>' % (_e(item["title"]), "affectation gardée pour la reprise" if forced
+                                           else "point conservé" if item["saved"] else "sauvegarde en cours")
+                    for item in view["work"])
+    return '<ul class="fa-stop-work">%s</ul>' % lines if lines else ""
+
+
+def _gesture(action, label):
+    return ('<button type="button" data-usine-action="%s" data-body="%s" data-next="/usine">%s</button>'
+            % (action, _e(json.dumps({"confirm": True})), _e(label)))
+
+
+def _opens(mode, label, blocked=None):
+    return ('<form method="get" action="/usine"><input type="hidden" name="arret" value="%s">'
+            '<button type="submit"%s>%s</button></form>' % (mode, " disabled" if blocked else "", _e(label)))
+
+
+def _stop_confirmation(a, stop):
+    """Before anything is asked: what the suspension will wait for."""
+    work = "".join('<li>%s <small>%s</small></li>' % (_e(item["title"]), _e(_stop_role(item["template"])))
+                   for item in stop["work"]) or "<li>Aucun travail en vol : aucun agent ne tient de ticket.</li>"
+    essai = ('<p class="fa-muted">Mode essai : ceci est l’essai réel de l’arrêt propre. Un arrêt suivi d’une reprise '
+             'vérifiée rend ensuite ce bouton normal.</p>' if stop["essai"] else "")
+    return ('<div class="shutdown-phase" %s>Suspendre l’usine ?</div><p>La suspension arrête les nouveaux départs et '
+            'attend que chaque session atteigne son point de reprise, sans fusion anticipée. Elle n’éteint pas la VM.'
+            '</p><h3>Ce que la suspension va attendre</h3><ul class="fa-stop-work">%s</ul>%s<div class="fa-actions">%s'
+            '<a class="fa-link" href="/usine">Annuler</a></div>') % (
+        a("shutdown-phase"), work, essai, _gesture("arreter", "Confirmer la suspension"))
+
+
+def _stop_machine(a, stop):
+    """The procedure of a complete stop: read here, carried out by hand."""
+    steps = "".join("<li>%s</li>" % _e(step) for step in stop["procedure"])
+    return ('<div class="shutdown-phase" %s>Arrêt complet de la VM à préparer</div>%s<p><strong>Machine non déclarée '
+            'éteignable.</strong></p><p>Le cockpit sait suspendre et reprendre, rien d’autre. L’arrêt du superviseur, '
+            'du stockage et de la VM exige la procédure d’arrêt complète et ses preuves, par une opération ADMIN hors '
+            'du cockpit.</p>%s<div class="fa-actions"><a class="fa-link" href="/usine">Fermer la procédure</a></div>'
+            ) % (a("shutdown-phase"), _stop_steps(a, stop["view"]),
+                 '<h3>Procédure d’arrêt complète</h3><ul class="fa-stop-work">%s</ul>' % steps if steps
+                 else '<p class="fa-warn">Procédure illisible : le runbook n’a pas pu être lu.</p>')
+
+
+def _stop_state(a, stop):
+    """The stop as last observed, and the gestures the moment allows."""
+    view = stop["view"]
+    if view["state"] == "en_marche":
+        body = '<div class="shutdown-phase" %s>%s</div>' % (a("shutdown-phase"), _e(stop["factory"][0]))
+        label = stop["factory"][1]
+    else:
+        body = '<div class="shutdown-phase" %s>%s</div>%s%s' % (
+            a("shutdown-phase"), _e(_stop_phase(view)), _stop_steps(a, view), _stop_work_lines(view))
+        label = view["label"]
+    if view["ecarts"]:
+        body += "<p>Écarts : %s.</p>" % _e(", ".join(view["ecarts"]))
+    if view["state"] == "arret_interrompu":
+        body += "<p>La reprise reste à vérifier.</p>"
+    if view["state"] == "arretee_proprement" and not view["lost"]:
+        body += "<p>%s</p>" % _e(SUSPENSION_IS_NOT_POWER_OFF)
+    if not view["lost"]:
+        body += '<p class="fa-muted">État relevé : %s.</p>' % _e(label)
+    controls = ""
+    if stop["stoppable"]:
+        controls += _opens("confirmer", "Demander la suspension", stop["blocked"])
+    if stop["resumable"]:
+        controls += _gesture("redemarrer", "Redémarrer")
+    if not stop["stoppable"] and not stop["resumable"]:
+        controls += '<a class="fa-link" href="/usine">Relire l’état</a>'
+    if stop["blocked"] and stop["stoppable"]:
+        body += '<p class="fa-muted">%s</p>' % _e(stop["blocked"])
+    return body + '<div class="fa-actions">%s%s</div>' % (
+        controls, _opens("machine", "Préparer l’arrêt de la machine"))
+
+
+def render_stop(a, stop, actions_html):
+    """« Suspension, reprise et arrêt » (H, af-69qhlk): the clean stop as
+    the driver observed it, what confirms it, and the procedure of the
+    machine, read here. ``arret=confirmer`` opens the work a stop will wait
+    for, ``arret=machine`` the procedure."""
+    head = ('<section class="pn-panel" %s><h2>Suspension, reprise et arrêt</h2><p>La VM héberge l’usine. Fermer ou '
+            'éteindre ce PC client n’arrête pas la VM.</p>') % a("panel")
+    alert = '<p class="fa-alert" role="alert" data-usine-alert hidden></p>'
+    body = ""
+    if stop is not None:
+        confirming = stop["mode"] == "confirmer" and stop["stoppable"] and not stop["blocked"]
+        body = (_stop_confirmation(a, stop) if confirming
+                else _stop_machine(a, stop) if stop["mode"] == "machine" else _stop_state(a, stop))
+    return head + body + alert + '<div class="fa-legacy">%s</div></section>' % actions_html
 
 
 def render_factory_page(view):
@@ -747,13 +909,22 @@ def render_factory_page(view):
              render_connections(a, view["connections"], view["live"], view["notify_configured"], view["now"],
                                 view["selected"]) + render_providers(a, view["providers"], view["selected"], view["now"]),
              render_agents(a, view["agents"], view["live"], view["selected"], view["now"], view.get("setting")),
-             view["health_html"], render_unavailable(a, view["actions_html"]) + render_cleanup(a, view.get("cleanup"))
+             view["health_html"], render_stop(a, view.get("stop"), view["actions_html"]) + render_cleanup(a, view.get("cleanup"))
              + USINE_SCRIPT)
     return draw
 
 
 CSS = """
 .fa-setting{margin-top:14px}
+.shutdown-phase{font-size:17px;font-weight:600;margin:14px 0 10px;overflow-wrap:anywhere}
+.shutdown-step{display:grid;grid-template-columns:22px minmax(0,1fr);gap:10px;padding:10px 0;
+  border-bottom:1px solid var(--line)}
+.shutdown-step b{font-weight:600;line-height:1.5}
+.shutdown-step strong{display:block;font-size:14px}
+.shutdown-step p{margin:3px 0 0;font-size:13px;color:var(--pn-muted-text);overflow-wrap:anywhere}
+.fa-stop-work{margin:10px 0;padding-left:18px}.fa-stop-work li{margin:4px 0;overflow-wrap:anywhere}
+.fa-stop-work small{color:var(--pn-muted-text)}
+.pn-panel h3{font-size:14px;margin:14px 0 6px}
 .fa-setting fieldset{border:1px solid var(--line);border-radius:8px;margin:0 0 10px;padding:10px 12px;min-width:0}
 .fa-setting legend{padding:0 4px;font-size:13px;color:var(--pn-muted-text)}
 .fa-choice{display:block;padding:8px 0;overflow-wrap:anywhere}

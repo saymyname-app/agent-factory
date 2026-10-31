@@ -197,7 +197,7 @@ class StopAndAccessTest(unittest.TestCase):
         return body[start:body.index("</section>", start)]
 
     # ------------------------------------------------------------------
-    def test_stop_zone_shows_state_and_work_in_flight_and_cannot_stop_anything(self):
+    def test_stop_zone_of_the_home_page_shows_state_and_work_in_flight_and_holds_no_control(self):
         self.start_cockpit()
         # The sessions and the supervisor's state are read apart: wait for both.
         read = lambda page: "Export des listes · dernier" in page and "cockpit-stop-label\">En marche<" in page  # noqa: E731
@@ -209,11 +209,11 @@ class StopAndAccessTest(unittest.TestCase):
         self.assertIn("Travail en vol : 1 agent sur un ticket.", stop)
         self.assertIn("Export des listes · dernier signe de vie <time>15:07</time>", stop)
         self.assertNotIn("mayor", stop)
-        # Spec .91: no stop control until Benjamin's real trial -- and none anywhere on the page.
-        self.assertIn("il attend ton essai réel", stop)
+        # The stop is asked on the page Usine (H, af-69qhlk): no control here.
+        self.assertIn("se demande depuis la page Usine", stop)
         self.assertNotIn("request-stop", body)
         self.assertNotIn("request-resume", body)
-        for action in ("request-stop", "request_stop", "arreter", "request-resume", "force_stop"):
+        for action in ("request-stop", "request_stop", "request-resume", "force_stop"):
             status, payload = self.post_action(action, {"confirm": True})
             self.assertEqual(404, status, action)
             self.assertEqual("unknown_action", payload["error"])

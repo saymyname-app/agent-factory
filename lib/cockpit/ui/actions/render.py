@@ -98,7 +98,7 @@ def _render_report_menu(bead_id):
 # server-side, so this is a defence in depth, not the only guard).
 TWO_STEP_ACTIONS = (
     "repondre", "accepter_proposition", "rejeter_proposition", "reporter_proposition", "relancer",
-    "accepter_chantier",
+    "accepter_chantier", "forcer_arret",
 )
 
 SCRIPT = """
@@ -256,14 +256,15 @@ SCRIPT = """
   // second click on the SAME armed control within CONFIRM_WINDOW_MS
   // sends confirm:true; any other click disarms it first.
   var TWO_STEP_ACTIONS = ['repondre', 'accepter_proposition', 'rejeter_proposition', 'reporter_proposition', 'relancer',
-                          'accepter_chantier'];
+                          'accepter_chantier', 'forcer_arret'];
   var TWO_STEP_DONE = {
     accepter_proposition: 'Proposition acceptée, à planifier',
     rejeter_proposition: 'Proposition refusée',
     reporter_proposition: 'Proposition reportée',
     repondre: 'Réponse envoyée',
     relancer: 'Relance demandée',
-    accepter_chantier: 'Chantier accepté'
+    accepter_chantier: 'Chantier accepté',
+    forcer_arret: 'Arrêt forcé demandé'
   };
   var CONFIRM_WINDOW_MS = 10000;
   var armed = null; // {el, timer}
