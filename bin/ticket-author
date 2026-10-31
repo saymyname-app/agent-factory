@@ -79,6 +79,7 @@ SHA = re.compile(r"[0-9a-f]{40}")
 AUTHOR_ROLE = "author"
 
 sys.path.insert(0, str(BIN.parent / "lib"))
+from bounded_process import run as bounded_run  # noqa: E402
 import delivery_reads  # noqa: E402
 from account_home import account_home  # noqa: E402
 from delivery_role_identity import role_identity  # noqa: E402
@@ -118,7 +119,7 @@ def short(text: str, limit: int = MAX_DETAIL) -> str:
 
 def run(argv: list[str], env: dict[str, str] | None = None, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
     try:
-        return subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL, env=env, timeout=timeout)
+        return bounded_run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL, env=env, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         raise Refusal(f"{Path(argv[0]).name} n'a pas répondu en {timeout:.0f} s") from exc
     except OSError as exc:

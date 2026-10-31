@@ -34,6 +34,9 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "lib"))
+from bounded_process import run as bounded_run  # noqa: E402
+
 FAKE_BD = ROOT / "tests" / "fixtures" / "ticket-graph-publish" / "bd-bead-mode"
 PROJECTS = ROOT / "tests" / "fixtures" / "spec-approve" / "projects"
 ESCALATION_DOOR = "bin/escalation-door"
@@ -124,8 +127,8 @@ class RequestDoors(unittest.TestCase):
         self.store.write_text(json.dumps({"beads": beads, "next_id": 1}), encoding="utf-8")
 
     def run_door(self, *argv: str) -> subprocess.CompletedProcess:
-        return subprocess.run([str(ROOT / argv[0]), *argv[1:]], cwd=ROOT, env=self.env,
-                              text=True, capture_output=True, timeout=120)
+        return bounded_run([str(ROOT / argv[0]), *argv[1:]], cwd=ROOT, env=self.env,
+                           text=True, capture_output=True, timeout=120)
 
     def source(self) -> dict:
         return json.loads(self.store.read_text(encoding="utf-8"))["beads"]

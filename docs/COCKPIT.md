@@ -1238,6 +1238,13 @@ questions ne répondant jamais. On y refuse une proposition avec sa raison,
 on relance la session et l’ordre, et une réponse à la question expire, puis
 la source est relue.
 
+The result trials that exercise Essai and Avis (`result-ready`,
+`result-outage`, `result-repairing`) carry that proxy. Their tracker remains
+the launch's disposable `tracker.json`; no request, response or wording with
+apostrophes reaches the tracker or cockpit in service. The category-D control
+`python3 tests/cockpit-isolated-https-test.py` launches all three and reads
+them through the synthetic identity boundary.
+
 No controller and no tracker is started. A dataset that is not marked
 `"synthetic": true`, carries no `generated_at`, names no state, or whose
 content the rules below cannot read, is refused before anything starts: the

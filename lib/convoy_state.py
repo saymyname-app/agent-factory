@@ -169,6 +169,11 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
+LIB = str(Path(__file__).resolve().parent)
+if LIB not in sys.path:
+    sys.path.insert(0, LIB)
+from delivery_rules import PROVEN_BY_TEST_OPTION, evaluation_proven_by_test, review_replay_due
+
 # The two names serve annotations only, which are never evaluated here
 # (`from __future__ import annotations`): importing `typing` on each of the
 # thousands of starts of this command would be paid for nothing (af-xhryl7).
@@ -436,10 +441,6 @@ EVALUATION_KINDS = ("evaluation", "startup")
 EVALUATION_STATES = ("observed", "not_observed", "unobservable")
 UNOBSERVABLE_CAUSES = ("criterion", "environment")
 EVALUATION_OUTCOMES = ("favorable", "return_to_author", "planning_exception", "environment_outage")
-# The option of the request an evaluation's Planning Exception raises
-# (bin/ticket-evaluation) that judges what it could not observe proven by
-# its criterion test (Benjamin, 21/10/2026, af-ten1sp).
-PROVEN_BY_TEST_OPTION = "a"
 # The option of that request that has it evaluated again on the products
 # launched again, judging nothing proven (af-npz9v1.38). Benjamin, 28/10/2026
 # 01:20 Paris, relayed from the central chat: « Oui aux deux recommandations : fais ajouter puis utiliser l’option de réévaluation réelle pour les trois tickets, et accorde le tour de correction exceptionnel. Coordonne tout et vérifie que ça repart. »
@@ -4195,24 +4196,12 @@ def cmd_open_code_review(args: argparse.Namespace) -> int:
         # The same review, sent to a reviewer of another model: its launches stay counted.
         request["models"] = models
     else:
-        # A review outdated by commits made outside the correction round
-        # (a resume) is replayed in full at the new tip: no session will
-        # answer its findings (af-s31cvi).
-        replayed = (kind == "review" and last is not None and last["kind"] == "review"
-                    and last["commit"] != commit and not last.get("responses") and KEY_CORRECTION not in metadata)
-        # So is the judgement a later correction round took up (af-bv0ikr):
-        # no answer is given to it, the tip of that round is reviewed in full.
-        replayed = replayed or (kind == "review" and last is not None and last["kind"] == "judgement"
-                                and last["commit"] != commit and KEY_CORRECTION in metadata
-                                and correction_record(metadata[KEY_CORRECTION])["commit"] == last["commit"])
-        # And the judgement whose every unsettled Blocking Finding the operator
-        # overrode, which stands for a favorable verdict: a later tip is
-        # reviewed in full (F and G1 of af-strhoy, 22/10/2026).
+        correction_commit = correction_record(metadata[KEY_CORRECTION])["commit"] \
+            if KEY_CORRECTION in metadata else None
         overridden = {entry["finding"] for entry in overrides_record(metadata[KEY_OVERRIDES])} \
             if KEY_OVERRIDES in metadata else set()
-        replayed = replayed or (kind == "review" and last is not None and last["kind"] == "judgement"
-                                and last["commit"] != commit
-                                and set(code_review_state(record)["unsettled"]) <= overridden)
+        replayed = bool(kind == "review" and last is not None and review_replay_due(
+            last, commit, correction_commit, code_review_state(record)["unsettled"], overridden))
         if last and last["verdict"] == "unfavorable" and not replayed and not contract_replay:
             if last["kind"] == "judgement":
                 raise Refusal(
@@ -4905,13 +4894,11 @@ def cmd_record_evaluation(args: argparse.Namespace) -> int:
         round_["coverage"] = coverage
     if given.get("screen_findings"):
         round_["screen_findings"] = given["screen_findings"]
-    # What the operator judged proven by its criterion test, on lifting the
-    # parking an earlier evaluation caused, is not observed: it is counted
-    # proven, as long as its frozen text is the same.
+    # What the operator judged proven by its criterion test is counted at a
+    # later commit only when the frozen criterion tests are green there.
     lifts = park_lifts_record(metadata[KEY_PARK_LIFTS]) if KEY_PARK_LIFTS in metadata else []
-    judged = {(item["what"], item["text"]) for lift in lifts for item in lift.get("proven_by_test", [])}
-    proven = [name for name, item in evaluation_items(round_)
-              if item["state"] == "unobservable" and item["cause"] == "criterion" and (name, item["text"]) in judged]
+    green = tdd_record("green", metadata[TDD_PREFIX + "green"]) if TDD_PREFIX + "green" in metadata else {}
+    proven = evaluation_proven_by_test(round_, record["rounds"], lifts, green.get("commit"))
     if proven:
         round_["proven_by_test"] = proven
     round_["outcome"] = evaluation_outcome(evaluation_judged(round_), round_.get("screen_findings"))

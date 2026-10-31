@@ -55,22 +55,28 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 
 - Invariant : Tout ce qu'un outil lance meurt avec lui, quelle que soit la
   façon dont il finit ; tout délai vient d'une mesure.
-- Contrôle : `python3 tests/project-launch-test.py`,
-  `python3 tests/test-budgets-test.py` — partiel : le premier tient le
-  lanceur des produits (`bin/project-launch`, son gardien et son balayage),
-  pas les autres façons de lancer un programme ; le second tient les délais
-  des tests d'un ticket et de l'ordre convoy-advance
-  (`config/test-budgets.json`, étude C T3), dont l'exclusion d'un run rouge
-  des mesures, pas les autres délais écrits à la main. Le lint « un seul
-  lanceur borné » est planifié (af-npz9v1.26).
+- Contrôle : `python3 tests/bounded-process-test.py`,
+  `python3 tests/project-launch-test.py`, `python3 tests/test-budgets-test.py`,
+  `bash tests/agent-wait-polling-test.sh`
+  — complet pour les commandes Python bornées de `bin/`, `lib/` et
+  `tests/cockpit-criteria/` : un seul lanceur (`lib/bounded_process.py`)
+  ouvre une session et tue son groupe au délai ; le lint refuse toute
+  nouvelle invocation directe et tient chaque existante dans la liste
+  datée `config/bounded-process-exceptions.tsv`. Le second test tient les
+  propriétaires de `project-launch` dans ces trois dossiers. Le troisième tient
+  les délais mesurés des tests d'un ticket et de l'ordre convoy-advance
+  (`config/test-budgets.json`, étude C T3), pas les autres délais écrits à
+  la main. Le quatrième refuse une attente de formule qui peut atteindre les
+  cinq minutes sans `gc runtime heartbeat`.
 - Occurrences : #624, #628, #629, #630, #631, #636, #647, #657, #658, #661,
   #667, #694, #696, #705, #706, #708, #710, #713, #721 ; copies orphelines du
-  22/10 (sans PR) ; af-kky570 ; af-npz9v1.46.
-- Ouvertes : `subprocess.run(..., timeout=)` sans arrêt du groupe dans
-  `bin/tdd-step`, `bin/ticket-author`, `bin/fixture-city-oracle`,
-  `lib/evaluation_observations.py`, `bin/provider-failover` (étude B § 4.1,
-  af-npz9v1.26) ; une vingtaine de délais écrits à la main (étude C) ;
-  af-30zwwu.
+  22/10 (sans PR) ; af-kky570 ; af-npz9v1.46 ; af-npz9v1.26 ; af-30zwwu ;
+  af-95zqgx.
+- Ouvertes : les invocations directes antérieures hors des occurrences de
+  l'étude B sont nommées une par une, avec leur date et leur motif, dans
+  `config/bounded-process-exceptions.tsv` ; une vingtaine de délais écrits à
+  la main restent à l'étude C. Aucune autre invocation Python bornée ni
+  aucun lanceur de produit sans propriétaire n'est connu hors du contrôle.
 
 ## I — Impasse d'état : un arrêt ou une attente sans sortie codée
 
@@ -86,9 +92,12 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/code-review-test.py CodeReviewTest.test_an_unfavorable_judgement_from_the_previous_contract_is_rejudged_once_at_the_same_tip`,
   `python3 tests/tdd-step-test.py TddStepTest.test_an_ambiguous_short_successor_does_not_name_either_ticket`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_factory_technical_request_waits_for_every_linked_repair_s_delivery_proof_then_resumes_once`,
-  `bash tests/factory-work-dispatch-test.sh`.
+  `bash tests/factory-work-dispatch-test.sh`. Les courses réponse/retrait qui
+  pourraient consommer une réponse sont tenues par
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_an_evaluation_stop_answered_while_its_request_is_cleared_is_not_resumed ConvoyAdvanceTest.test_a_removed_stage_stop_answered_while_its_request_is_cleared_is_not_resumed ConvoyAdvanceTest.test_a_grouped_answer_recorded_while_changed_parkings_are_re_raised_is_applied_first`
+  et `python3 tests/convoy-advance-review-evaluation-correction-test.py ConvoyAdvanceTest.test_a_code_review_stop_answered_while_its_request_is_cleared_is_not_resumed`.
 - Occurrences : #635, #637, #650, #653, #662, #666, #672, #673, #679, #682,
-  #687, #702, #704, #709, #711, #712, #718 ; af-npz9v1.44 ; af-npz9v1.47 ; af-npz9v1.48.
+  #687, #702, #704, #709, #711, #712, #718 ; af-npz9v1.44 ; af-npz9v1.47 ; af-npz9v1.48 ; af-npz9v1.35.
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
   contrôle : `evaluation_outage` reste à la porte du ticket et à la
   maintenance d'usine ; `criterion_already_green` reste au Planning Run ;
@@ -102,29 +111,41 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 - Invariant : Un faux outil refuse ce que le vrai refuse ; un instrument qui
   juge est étalonné sur un cas connu avant de servir ; on juge l'état
   résultant, jamais un morceau.
-- Contrôle : `python3 tests/account-home-lint-test.py` — partiel : il tient
-  le dossier personnel (#690). `tests/fake-tool-contract-test.py` compare la
-  forme des commandes des faux déclarés, local seulement ; le contrôle de
-  comportement des faux est planifié (af-npz9v1.28).
+- Contrôle : `python3 tests/account-home-lint-test.py`,
+  `python3 tests/fake-tool-contract-test.py`,
+  `python3 tests/cockpit-isolated-https-test.py` — complet pour le dossier
+  personnel et les faux exécutables `bd`/`gc` : le second tient en CI la
+  liste fermée des 27 faux, rejoue la limite d'un argument sur chacun, la
+  fermeture d'un bloqué sur les 11 qui écrivent l'état et les huit formes
+  de dépendance sur les deux qui les acceptent. Sur l'hôte de l'usine il
+  étalonne d'abord le même oracle sur les vrais `bd`/`gc` dans une cité
+  jetable ; les 16 faux de lecture ou de transport sans état mutable ont
+  chacun leur exception datée dans le contrôle (af-npz9v1.28). Le troisième
+  lance les trois décors résultat d'Essai derrière le proxy d'identité et
+  tient leur suivi jetable.
 - Occurrences : #566, #618, #641, #648, #656, #664, #665, #669, #671, #674,
-  #675, #676, #680, #689, #690, #692, #699, #700, #714, #715.
-- Ouvertes : 38 faux exécutables sous `tests/fixtures/`, un seul comparé au
-  vrai sur son comportement ; relecture de code non reproductible (étude B
-  § 4.3, af-npz9v1.28).
+  #675, #676, #680, #689, #690, #692, #699, #700, #714, #715 ; af-vf51g6.
+- Ouvertes : exception datée du 29/10/2026 : la relecture de code par modèle
+  n'est pas rejouée sur un cas connu (étude B § 4.3). Elle reste bornée par
+  ses citations vérifiées et ses passes ciblées, mais n'est pas déclarée
+  étalonnée par ce contrôle déterministe. Aucun faux `bd`/`gc` connu n'est
+  hors du contrôle.
 
 ## R — Une même règle tenue à deux endroits qui divergent
 
 - Invariant : Une règle, une fonction : un écrivain et son lecteur, ou deux
   outils, lisent la règle au même endroit.
-- Contrôle : `bash tests/operator-bd-test.sh` — partiel : il tient l'identité
-  `po-agent/<session>` entre l'écrivain opérateur et `factory-orphan-sweep` ;
-  les autres paires connues restent sans lint commun (af-npz9v1.29).
+- Contrôle : `python3 tests/delivery-rules-test.py` tient les quatre paires
+  connues sur leurs fonctions communes ; `bash tests/operator-bd-test.sh`
+  tient l'identité `po-agent/<session>` entre l'écrivain opérateur et
+  `factory-orphan-sweep`.
 - Occurrences : #620, #625, #659, #660, #681, #685, #686, #693, #695, #703,
-  #716 ; af-npz9v1.42.
-- Ouvertes : `wanted_round` (`bin/code-review`) et `open-code-review`
-  (`lib/convoy_state.py`) ; la preuve du rouge lue par `ticket-end` et
-  `tdd-step` ; les « jeux nommés » de `ticket-evaluation` et `ticket-end`
-  (étude B § 4.4).
+  #716 ; af-npz9v1.42 ; af-npz9v1.52.
+- Ouvertes : aucune ; `review_replay_due`, `tdd_evidence_piece` et
+  `names_in_texts` ont remplacé les trois paires ouvertes de l'étude B § 4.4
+  (af-npz9v1.29), et `evaluation_proven_by_test` tient l'écrivain de la
+  Ticket Evaluation avec son lecteur de fin de ticket (`lib/delivery_rules.py`,
+  af-npz9v1.52, 2026-10-30).
 
 ## S — Signal faux ou manquant
 
@@ -140,10 +161,14 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   sa clé stable de dédoublonnage, la conservation d'une demande humaine et le
   relevé final à +2 h ; le troisième refuse qu'une sortie locale 0 compte comme
   armement sans relecture GitHub et tient la fusion directe au head, à CLEAN et
-  au contrôle requis vert. Le contrôle 9 du gardien (#688) couvre les tickets
-  que personne ne bouge, pas les autres signaux.
+  au contrôle requis vert ; il relit aussi GitHub après toute demande de fusion
+  directe et n'annonce la fusion que si le serveur répond `MERGED`. Le contrôle
+  9 du gardien (#688) couvre les tickets que personne ne bouge, pas les autres
+  signaux.
 - Occurrences : #651, #679, #688, #717 ; af-npz9v1.50 ; #767 (armement local
-  annoncé mais `autoMergeRequest=null`, af-npz9v1.50.1) ; af-ncg9qy.
+  annoncé mais `autoMergeRequest=null`, af-npz9v1.50.1) ; af-ncg9qy ; #778
+  (demande directe acceptée localement mais encore `AWAITING_CHECKS`,
+  af-nk5nm6).
 - Ouvertes : aucune connue.
 
 ## A — Autre

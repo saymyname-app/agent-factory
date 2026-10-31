@@ -1254,6 +1254,11 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
                 if stopped and "raised" in ticket["stop"]:
                     # The resume lifts the stop: its request leaves the operator's list.
                     passed(run([str(ESCALATION_BIN), "clear", ticket_id]), "escalation-door clear")
+                    # The answer and clear share the door lock. An answer may
+                    # have landed after the due check but before clear won it.
+                    if cause in (NO_RESULT, STAGE_REMOVED, CODE_REVIEW_STOP) \
+                            and request_answer(read_bead(ticket_id), ticket["stop"]["at"]) is not None:
+                        continue
                 elif cause == "unblocked" and released_technical_repairs(ticket):
                     # The parking was removed first. If clearing refuses or
                     # this pass is interrupted, the request remains and the
@@ -1434,6 +1439,20 @@ def record_grouped(convoy: Convoy, bead_id: str, signature: str | None = None, l
     state_write(*argv)
 
 
+def settle_grouped_lift(convoy: Convoy, out: dict[str, Any]) -> bool:
+    """Apply the grouped answer while its record still names the tickets."""
+    grouped = convoy.grouped or {}
+    if not grouped.get("lifts") \
+            or request_answer(read_bead(grouped["bead"]), grouped["at"]) != grouped["lift_option"]:
+        return False
+    settle_lifts(convoy, out)
+    remaining = [ticket_id for ticket_id in grouped["lifts"]
+                 if (convoy.ticket(ticket_id).get("park") or {}).get("cause") == PARK_EXHAUSTED]
+    if remaining:
+        raise Refusal("la réponse de la demande groupée n'a pas levé " + ", ".join(remaining))
+    return True
+
+
 def settle_grouped_request(convoy: Convoy, out: dict[str, Any]) -> dict[str, Any] | None:
     """Spec §8, user story 54: one request per convoy, on a bead of its own,
     when nothing but parked tickets is left -- never one per ticket; raised
@@ -1449,14 +1468,7 @@ def settle_grouped_request(convoy: Convoy, out: dict[str, Any]) -> dict[str, Any
             # while this pass resumed another ticket. Clear holds the same
             # door lock as the answer: read and apply it now, before dropping
             # the only record that names the exhausted tickets (af-g2ukoq).
-            grouped = convoy.grouped
-            if grouped.get("lifts") \
-                    and request_answer(read_bead(bead_id), grouped["at"]) == grouped["lift_option"]:
-                settle_lifts(convoy, out)
-                remaining = [ticket_id for ticket_id in grouped["lifts"]
-                             if (convoy.ticket(ticket_id).get("park") or {}).get("cause") == PARK_EXHAUSTED]
-                if remaining:
-                    raise Refusal("la réponse de la demande groupée n'a pas levé " + ", ".join(remaining))
+            settle_grouped_lift(convoy, out)
             if read_bead(bead_id).get("status") != "closed":
                 passed(run([GC_BIN, "--city", str(ROOT), "bd", "close", bead_id, "--reason",
                             f"Le convoi {convoy.id} n'est plus fait que de tickets parqués."]), "gc bd close")
@@ -1469,6 +1481,10 @@ def settle_grouped_request(convoy: Convoy, out: dict[str, Any]) -> dict[str, Any
         if convoy.grouped:
             bead_id = convoy.grouped["bead"]
             passed(run([GC_BIN, "--city", str(ROOT), "bd", "update", bead_id, "--append-notes", text]), "gc bd update")
+            # The old record is still the only one that names the tickets.
+            # Apply an answer that landed during this pass before replacing it.
+            if settle_grouped_lift(convoy, out):
+                return settle_grouped_request(convoy, out)
         else:
             created = gc_json("bd", "create", f"Demande groupée : convoi {convoy.id}, il ne reste que des tickets parqués",
                               "-p", "1", "-t", "task", "-d", text, "--json")
