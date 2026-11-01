@@ -349,7 +349,7 @@ ticket:
 |---|---|
 | `interrupted` | the Ticket Exit is `interrupted`; or the ticket is `in_progress` with no Ticket Exit and its recorded session is not among the live ones (`gc session list`); or the bead of its last resume is closed and no session took the ticket since |
 | `returned` | the Ticket Exit is `finished` and the merge returned the ticket (`merge.outcome` `conflict` or `red`) at the tip of its branch. Also on a ticket stopped `still_refused` whose every Blocking Finding the operator overrode, which `bin/spec-integration` merges as if at work: the resume lifts that stop, keeps it on its entry and withdraws its request; with no resume left the stop stays with the operator (af-n4bn62: F and G1 of af-strhoy, returned red on 21/10/2026, were neither merged again nor resumed) |
-| `unblocked` | the Ticket Exit is `technically_blocked` and no bead it waits for with a `blocks` edge is open any more; or it is an `operator_request` carrying explicit Factory-maintenance links whose every bead has structural delivery proof, after code lifted its parking |
+| `unblocked` | the Ticket Exit is `technically_blocked` and no bead it waits for with a `blocks` edge is open any more; or it is an `operator_request` carrying explicit Factory-maintenance links whose every bead has structural delivery proof, after code lifted its parking; or the ticket is stopped `evaluation_outage` and every Factory-maintenance bead explicitly linked to that exact stop has the same proof |
 | `answered` | the Ticket Exit is `planning_exception` or `operator_request` and the ticket is no longer parked: its parking was lifted |
 | `behind` | the Ticket Exit is `finished`, the ticket is not merged, and `bin/code-review show <convoy> <ticket> --repo` reports `behind`: its branch does not contain the tip of the integration branch, so no reviewer is sent on it (T44, `docs/CODE_REVIEW.md`). The fact is `integration:<tip>/exit:<exit time>`: once per Ticket Exit |
 | `evaluation_no_result` | the ticket is stopped `evaluation_no_result` (its Ticket Evaluation gave no result, relaunch included, `docs/TICKET_EVALUATION.md`), it is neither parked nor closed, it has a resume left, the operator has not answered the request of that stop, and no resume of this cause was opened yet on the current tip of the integration branch (on `origin` when it is there, else local). The fact is `integration:<tip>/stop:<stop time>`: once per tip of the integration branch (af-xhc0sj) |
@@ -369,14 +369,17 @@ launch-resume`): one session per resume. The session takes the ticket with
 `bin/ticket-author start`, does only what is missing, and leaves by a Ticket
 Exit (`formulas/mol-ticket-resume.formula.toml`).
 
-An `evaluation_no_result`, `stage_removed` or `code_review_no_result` resume lifts the stop in that same write: the stop
+An `evaluation_no_result`, `stage_removed`, `code_review_no_result`, or linked-and-delivered
+`evaluation_outage` resume lifts the stop in that same write: the stop
 leaves the ticket and is kept on its resume (`resume.entries[].stop`), never
 erased; the request the stop raised is withdrawn first (`bin/escalation-door
-clear <ticket>`). The answer and the withdrawal share the escalation door's
-lock: after the withdrawal, the pass reads the request again before opening
-the resume. An answer that won the lock after the first read therefore leaves
-the ticket stopped with the operator instead of being consumed by the resume
-(af-npz9v1.35). A Ticket Evaluation without result is most often a defect
+clear <ticket>`). For the first three causes, the answer and the withdrawal
+share the escalation door's lock: after the withdrawal, the pass reads the
+request again before opening the resume. An answer that won the lock after
+the first read therefore leaves the ticket stopped with the operator instead
+of being consumed by the resume (af-npz9v1.35). A linked `evaluation_outage`
+is instead code-owned by its explicit repair link: its answer does not release
+it early or prevent the one resume after delivery. A Ticket Evaluation without result is most often a defect
 of the factory (an Evaluator role, a brief, a launch) whose repair is merged
 elsewhere; the fresh author session brings the integration branch into the
 ticket branch and finishes again, and the next passes withdraw the
@@ -393,8 +396,9 @@ resume also drops the spent round of the review in that write
 the next pass sends a fresh reviewer on that exit, even at the same commit.
 A review without result is most often a defect of the factory (T59 and T62R,
 2026-10-17: the reviewer seat was held by a session that answered `no_work`,
-af-epkrcv). Every other stop — `evaluation_outage`, `amendment_exhausted`, a
-ticket still refused — is never resumed.
+af-epkrcv). An `evaluation_outage` without an explicit repair link, or whose
+repair lacks structural delivery proof, stays stopped. Every other stop —
+`amendment_exhausted`, a ticket still refused — is never resumed.
 
 A `behind` resume is recorded like the others (an entry, one more
 `resumes`, a fresh author session) but **K does not count it**: the
@@ -424,14 +428,15 @@ An `unblocked` resume brings the integration branch into the ticket branch
 too: the repair the ticket waited for landed there, not on the ticket's
 branch, and without it the ticket meets the same defect again (af-m4np8z;
 T59 met the regression its repair had fixed). For a linked Factory request,
-the same pass first lifts the parking, then clears its escalation through
-`bin/escalation-door`, and only then opens this resume. The active link
+the same pass first lifts the parking; for a linked `evaluation_outage`,
+there is no parking to lift. It then clears its escalation through
+`bin/escalation-door` and only then opens this resume. The active link
 remains the release marker until `open-resume` consumes it atomically with
-the Ticket Exit. A refusal or interruption before that write therefore
+the Ticket Exit or stop. A refusal or interruption before that write therefore
 preserves the request and the next pass retries it. The repair ids and exact
-Ticket Exit time remain on the parking lift as history; neither request text,
-a second-resolution timestamp alone, nor R-codes can let a later human
-request reuse the old release.
+Ticket Exit time remain on the parking lift as history; an outage link instead
+names the exact stop time. Neither request text, a second-resolution timestamp
+alone, nor R-codes can let a later human request reuse the old release.
 
 A ticket to resume that names no single known project, or when the
 settings have no `resume` entry, is listed under `refused` (exit 1) before
@@ -486,9 +491,10 @@ Two decisions taken here:
 
 ### What is not resumed
 
-- **A stopped ticket**, but for its stop `evaluation_no_result`, its stop
-  `code_review_no_result` and the stops of the removed test review
-  (`stage_removed`, above). Nor is a ticket stopped by the removed test
+- **A stopped ticket**, except for `evaluation_no_result`,
+  `code_review_no_result`, the stops of the removed test review
+  (`stage_removed`, above), and an `evaluation_outage` with explicitly linked
+  and delivered Factory repairs. Nor is a ticket stopped by the removed test
   review or by a code review without result whose request the operator
   answered or that is out of resumes.
   Its sequence failed and it is with the operator; it is never read as

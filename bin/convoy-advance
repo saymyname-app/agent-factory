@@ -301,6 +301,7 @@ PASS_RUNNING = "passe déjà en cours : elle avance les convois, celle-ci ne fai
 CODE_REVIEW_STOP = "code_review_no_result"
 # The stops the Ticket Evaluation of a ticket writes (bin/convoy-state).
 EVALUATION_STOPS = ("evaluation_no_result", "evaluation_outage")
+EVALUATION_OUTAGE = "evaluation_outage"
 # The stop of a ticket still refused after its correction round (bin/correction-round).
 CORRECTION_STOP = "still_refused"
 # The stops bin/tdd-step writes on a ticket and that no settlement of a review
@@ -959,9 +960,13 @@ def technical_repairs(ticket: dict[str, Any]) -> list[str]:
     """The Factory-maintenance links bound to the current request."""
     record = ticket.get("technical_repairs")
     park, exit_record = ticket.get("park") or {}, ticket.get("exit") or {}
-    if not isinstance(record, dict) or park.get("cause") != "operator_request" \
-            or exit_record.get("exit") != "operator_request" \
-            or record.get("parked_at") != park.get("at") or record.get("exit_at") != exit_record.get("at"):
+    stop = ticket.get("stop") or {}
+    if not isinstance(record, dict):
+        return []
+    current_parking = park.get("cause") == "operator_request" and exit_record.get("exit") == "operator_request" \
+        and record.get("parked_at") == park.get("at") and record.get("exit_at") == exit_record.get("at")
+    current_stop = stop.get("reason") == EVALUATION_OUTAGE and record.get("stop_at") == stop.get("at")
+    if not current_parking and not current_stop:
         return []
     entries = record.get("entries")
     return [entry["id"] for entry in entries] if isinstance(entries, list) else []
@@ -992,6 +997,16 @@ def delivered_technical_repairs(ticket: dict[str, Any]) -> list[str]:
         if not readiness["ready"] or not readiness["pr_backed"]:
             return []
     return repairs
+
+
+def evaluation_repair_due(ticket: dict[str, Any]) -> tuple[str, str, str] | None:
+    """One resume for an evaluation-outage stop once every explicitly
+    linked Factory repair has structural delivery proof."""
+    repairs = delivered_technical_repairs(ticket)
+    if not repairs or ticket.get("resumes_left") == 0:
+        return None
+    ref = hashlib.sha256(",".join(repairs).encode("utf-8")).hexdigest()[:16]
+    return "new", "unblocked", f"repairs:{ref}/stop:{ticket['stop']['at']}"
 
 
 def resume_due(ticket: dict[str, Any], alive: set[str]) -> tuple[str, str, str] | None:
@@ -1125,10 +1140,12 @@ def behind_due(convoy: Convoy, ticket: dict[str, Any]) -> tuple[str, str, str] |
 def stopped_without_result(ticket: dict[str, Any]) -> bool:
     """Started, not closed nor parked, and stopped because its Ticket
     Evaluation or its code review gave no result, by a stage the flow
-    removed, or at its second amendment: the stops a resume may lift."""
+    removed, at its second amendment, or for an evaluation outage carrying
+    an explicit technical-repair link: the stops a resume may lift."""
     return started(ticket) and ticket.get("status") != "closed" and not ticket.get("park") \
-        and (ticket.get("stop") or {}).get("reason") in (NO_RESULT, CODE_REVIEW_STOP, AMENDMENT_STOP,
-                                                         *REMOVED_STAGE_STOPS)
+        and ((ticket.get("stop") or {}).get("reason") in (NO_RESULT, CODE_REVIEW_STOP, AMENDMENT_STOP,
+                                                          *REMOVED_STAGE_STOPS)
+             or ((ticket.get("stop") or {}).get("reason") == EVALUATION_OUTAGE and technical_repairs(ticket)))
 
 
 def amendment_granted_due(ticket: dict[str, Any]) -> tuple[str, str, str] | None:
@@ -1228,6 +1245,8 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
                 due = once_per_stop_due(ticket, CODE_REVIEW_STOP)
             elif ticket["stop"]["reason"] == AMENDMENT_STOP:
                 due = amendment_granted_due(ticket) or inherited_change_due(convoy, ticket)
+            elif ticket["stop"]["reason"] == EVALUATION_OUTAGE:
+                due = evaluation_repair_due(ticket)
             elif overridden_at_work(ticket):
                 # Only the merge that returned it lifts its stop; no resume left, it stays with the operator.
                 due = resume_due(ticket, alive) if ticket.get("resumes_left") != 0 else None

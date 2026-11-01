@@ -397,6 +397,7 @@ STOP_REASONS = ("criterion_already_green", "amendment_exhausted", "test_review_r
 # stopped ticket the operator may override a Blocking Finding of the review,
 # never a criterion that was not observed, or grant a round the bound allows.
 STOP_STILL_REFUSED = "still_refused"
+STOP_EVALUATION_OUTAGE = "evaluation_outage"
 BOUND_CORRECTION_ROUNDS = "correction_rounds"
 # ADR-0035 (af-npz9v1.40): at the bound, the Mayor arbitrates; it may grant a
 # round more, with its motive and the refusals it targets, at most that many
@@ -497,7 +498,9 @@ OVERRIDDEN_STOP_CAUSE = "returned"
 def resume_lifts(cause: str, reason: str) -> bool:
     """A resume of `cause` may lift a stop of `reason`; for the overridden
     stop, only once open-resume has checked the overrides."""
-    return reason in RESUMABLE_STOPS.get(cause, ()) or (cause, reason) == (OVERRIDDEN_STOP_CAUSE, STOP_STILL_REFUSED)
+    return reason in RESUMABLE_STOPS.get(cause, ()) \
+        or (cause, reason) in ((OVERRIDDEN_STOP_CAUSE, STOP_STILL_REFUSED),
+                               ("unblocked", STOP_EVALUATION_OUTAGE))
 
 
 # A commit after a verdict counts a resume without an entry (T18): it is a
@@ -2105,10 +2108,13 @@ def resume_record(raw: Any) -> dict[str, Any]:
 
 def technical_repairs_record(raw: Any) -> dict[str, Any]:
     """Factory-maintenance beads explicitly linked to one technical
-    operator request, bound to that request's exit and parking."""
-    record = stored_record(raw, ("exit_at", "parked_at", "entries"))
-    if any(not isinstance(record[name], str) or not record[name] or "\n" in record[name]
-           for name in ("exit_at", "parked_at")):
+    operator request, bound either to its exit and parking or to an
+    evaluation-outage stop."""
+    record = stored_record(raw, ("entries",), ("exit_at", "parked_at", "stop_at"))
+    generation = set(record) - {"entries"}
+    if generation not in ({"exit_at", "parked_at"}, {"stop_at"}) \
+            or any(not isinstance(record[name], str) or not record[name] or "\n" in record[name]
+                   for name in generation):
         raise Refusal(f"génération de demande technique mal formée : {record!r}")
     entries = record["entries"]
     if not isinstance(entries, list) or not entries:
@@ -5286,11 +5292,16 @@ def cmd_link_technical_repair(args: argparse.Namespace) -> int:
     metadata = metadata_of(ticket)
     exit_record = stored_record(metadata.get(KEY_EXIT), ("exit", "at")) if KEY_EXIT in metadata else None
     park = park_record(metadata[KEY_PARK]) if KEY_PARK in metadata else None
-    if exit_record is None or exit_record["exit"] != "operator_request" \
-            or park is None or park["cause"] != "operator_request" or park["origin"] != args.ticket:
+    stop = stop_record(metadata[KEY_STOP]) if KEY_STOP in metadata else None
+    if stop is not None and stop["reason"] == STOP_EVALUATION_OUTAGE:
+        generation = {"stop_at": stop["at"]}
+    elif exit_record is not None and exit_record["exit"] == "operator_request" \
+            and park is not None and park["cause"] == "operator_request" and park["origin"] == args.ticket:
+        generation = {"exit_at": exit_record["at"], "parked_at": park["at"]}
+    else:
         raise Refusal(
-            f"{args.ticket} n'est pas parqué par sa propre demande opérateur : "
-            "seule cette classe peut être reliée à une réparation technique")
+            f"{args.ticket} n'est ni parqué par sa propre demande opérateur ni arrêté pour evaluation_outage : "
+            "seules ces classes peuvent être reliées à une réparation technique")
     if not isinstance(args.repair, str) or not BEAD_ID_RE.match(args.repair) or args.repair == args.ticket:
         raise Refusal(f"bead de réparation absent ou mal formé : {args.repair!r}")
     repair = load_bead(args.repair)
@@ -5307,8 +5318,7 @@ def cmd_link_technical_repair(args: argparse.Namespace) -> int:
             f"{args.repair} n'est ni une maintenance autorisée ni gouverné par un contrat de livraison PR+CI : "
             "une demande technique ne se lie qu'à une réparation dont la livraison pourra être prouvée")
     record = technical_repairs_record(metadata[KEY_TECHNICAL_REPAIRS]) if KEY_TECHNICAL_REPAIRS in metadata else None
-    generation = {"exit_at": exit_record["at"], "parked_at": park["at"]}
-    if record is None or any(record[name] != generation[name] for name in generation):
+    if record is None or {name: value for name, value in record.items() if name != "entries"} != generation:
         record = {**generation, "entries": []}
     entries = record["entries"]
     if any(entry["id"] == args.repair for entry in entries):
@@ -5434,8 +5444,10 @@ def cmd_open_resume(args: argparse.Namespace) -> int:
     if GATE_PREFIX + "dispatch" not in metadata:
         raise Refusal(f"le ticket {args.ticket} n'a pas été démarré par la porte de dispatch : rien à reprendre")
     lifted = stop_record(metadata[KEY_STOP]) if KEY_STOP in metadata else None
-    if lifted is not None and (cause not in RESUMABLE_STOPS or lifted["reason"] not in RESUMABLE_STOPS[cause]) \
-            and not (cause == OVERRIDDEN_STOP_CAUSE and overridden_metadata(metadata)):
+    if lifted is not None and (not resume_lifts(cause, lifted["reason"])
+                               or (cause == OVERRIDDEN_STOP_CAUSE
+                                   and lifted["reason"] == STOP_STILL_REFUSED
+                                   and not overridden_metadata(metadata))):
         raise Refusal(f"ticket arrêté ({lifted['reason']}) : {args.ticket} ne se reprend pas pour la cause {cause}")
     entries = resume_record(metadata[KEY_RESUME])["entries"] if KEY_RESUME in metadata else []
     if entries and (entries[-1]["cause"], entries[-1]["ref"]) == (cause, ref):

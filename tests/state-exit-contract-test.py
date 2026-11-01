@@ -33,6 +33,10 @@ AMENDMENT_PROOF = (
 STAGE_REMOVED_PROOF = "lib/convoy_state.py::\"stage_removed\": (\"test_review_refused\", \"test_review_no_result\")"
 CODE_REVIEW_PROOF = "lib/convoy_state.py::\"code_review_no_result\": (\"code_review_no_result\",)"
 EVALUATION_PROOF = "tests/convoy-state-test.py::test_open_resume_lifts_a_stop_without_evaluation_result_only_and_keeps_it"
+EVALUATION_OUTAGE_PROOF = (
+    "tests/convoy-advance-resumes-stops-end-test.py::"
+    "test_an_evaluation_outage_resumes_once_after_its_linked_factory_repair_is_delivered"
+)
 OVERRIDE_PROOF = (
     "tests/convoy-advance-resumes-stops-end-test.py::"
     "test_a_ticket_stopped_still_refused_without_its_override_is_not_resumed_by_a_returned_merge"
@@ -98,10 +102,12 @@ CONTRACT = {
         },
     },
     ("ticket_stop", "evaluation_outage"): {
-        "exit": operator("escalation-door on the stopped ticket, then Factory maintenance"),
+        "exit": transition("open-resume --cause unblocked after linked Factory repair delivery",
+                           EVALUATION_OUTAGE_PROOF),
         "options": {
             "Faire réparer l'environnement d'évaluation par la maintenance de l'usine":
-                operator("escalation-door on the stopped ticket, then Factory maintenance"),
+                transition("link-technical-repair, then open-resume --cause unblocked after delivery",
+                           EVALUATION_OUTAGE_PROOF),
             "Laisser le ticket arrêté": operator("escalation-door on the stopped ticket"),
         },
     },
@@ -166,12 +172,11 @@ CONTRACT = {
 }
 
 
-# These are the five open occurrences named by the class-I registry.  The
+# These are the four open occurrences named by the class-I registry.  The
 # date is when the complete control first made each gap explicit.  Removing a
 # gap means removing it here and replacing its operator route above with a
 # proved transition; adding an exception without a date makes this test fail.
 DATED_EXCEPTIONS = {
-    ("ticket_stop", "evaluation_outage"): ("2026-10-29", "ticket escalation-door + Factory maintenance"),
     ("ticket_stop", "criterion_already_green"): ("2026-10-29", "Planning Run"),
     ("outcome_stop", "outcome_evaluation_no_result"): ("2026-10-29", "next integration tip only"),
     ("outcome_stop", "outcome_evaluation_outage"): ("2026-10-29", "next integration tip only"),
@@ -296,7 +301,6 @@ class StateExitContractTest(unittest.TestCase):
 
     def test_each_known_open_occurrence_is_a_dated_exception_with_its_gate(self) -> None:
         self.assertEqual({
-            ("ticket_stop", "evaluation_outage"),
             ("ticket_stop", "criterion_already_green"),
             ("outcome_stop", "outcome_evaluation_no_result"),
             ("outcome_stop", "outcome_evaluation_outage"),
