@@ -184,7 +184,9 @@ stopped the ticket is what raises it to the operator.
   request and resumes the ticket as `unblocked`, exactly once. A repair
   merely open, failed, closed without proof, or not explicitly linked lifts
   nothing. An ordinary operator request without that link still needs the
-  operator's answer.
+  operator's answer. The same explicit link applies to a Ticket Evaluation
+  stopped `evaluation_outage`: its exact stop resumes once as `unblocked`
+  only after the maintenance delivery is proven.
   No gate reads it: the rule is the text of the author formulas, verified
   by reading.
   Intent (Benjamin, his words, 2026-10-17 00:13 Paris): « Décision 2: ok

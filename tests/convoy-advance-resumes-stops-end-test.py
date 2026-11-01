@@ -52,6 +52,19 @@ ticket = first.ticket
 session = first.session
 
 
+def delivered(number, head, merge):
+    return {
+        "gc.delivery_contract": "pr-ci-merged-v1",
+        "gc.delivery_status": "merged", "gc.work_outcome": "shipped",
+        "gc.github_repo": "example/factory", "gc.pr_number": number,
+        "gc.pr_head": head, "gc.merge_commit": merge,
+        "gc.pr_url": f"https://github.com/example/factory/pull/{number}",
+        "pr_number": number, "merge_result": "merged", "merged_sha": merge,
+        "merged_target": "main", "gc.required_ci_workflow": "Factory CI",
+        "gc.ci_run_id": number, "gc.ci_head_sha": head, "gc.ci_conclusion": "success",
+    }
+
+
 class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
     # --- resumes counted and bounded, parked tickets, one grouped request (T20) ---
 
@@ -531,6 +544,48 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual([(T1, "unblocked")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
         self.assertEqual(1, self.resumes())
 
+    def test_an_evaluation_outage_resumes_once_after_its_linked_factory_repair_is_delivered(self):
+        self.started_convoy()
+        self.taken(T1, "auteur-1")
+        self.run_ok(STATE, "stop-ticket", CONVOY, T1, "--reason", "evaluation_outage",
+                    "--detail", "l'environnement d'évaluation a manqué 2 fois de suite")
+        request = {
+            "quoi": f"Ticket {T1} arrêté : l'environnement d'évaluation est en panne",
+            "pourquoi": "Une panne de l'environnement n'est pas un refus.",
+            "que_faire": [{"option": "Faire réparer l'environnement d'évaluation par la maintenance de l'usine",
+                            "consequence": "Le ticket reprend après livraison."}],
+            "langue": "fr", "bloquant": True,
+        }
+        self.run_ok(ESCALATION, "benjamin", T1, json.dumps(request))
+        self.run_ok(STATE, "stop-raised", CONVOY, T1)
+        self.env["ESCALATION_DOOR_NOW"] = "4102444800"
+        self.run_ok(ESCALATION, "repondre", T1, "a", "--actor", "operateur-test")
+
+        repair = "fx-er1"
+        state = self.tracker_state()
+        state["beads"][repair] = {
+            "title": "réparer l'environnement d'évaluation", "status": "open", "issue_type": "bug",
+            "labels": ["maintenance"], "metadata": {"gc.authorized_by": "af-authority"},
+        }
+        self.tracker.write_text(json.dumps(state))
+        self.run_ok(STATE, "link-technical-repair", CONVOY, T1, "--repair", repair)
+
+        waiting = self.advance(CONVOY)
+        self.assertEqual([], self.of(waiting, "resumed"))
+        self.assertEqual("evaluation_outage", self.shown_state(T1)["stop"]["reason"])
+
+        self.edit(repair, status="closed", metadata=delivered(43, "1" * 40, "2" * 40))
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "unblocked")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+        shown = self.shown_state(T1)
+        self.assertEqual((None, None, 1),
+                         (shown["stop"], shown["technical_repairs"], shown["counters"]["resumes"]))
+        self.assertEqual("evaluation_outage", shown["resume"]["entries"][-1]["stop"]["reason"])
+        self.assertEqual([], [line for line in self.needs() if T1 in line])
+        self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
+        self.assertEqual(1, self.resumes())
+
     def test_a_factory_technical_request_waits_for_every_linked_repair_s_delivery_proof_then_resumes_once(self):
         self.started_convoy()
         self.taken(T1, "auteur-1")
@@ -573,18 +628,6 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual("operator_request", self.park_of(T1)["cause"])
 
         sha1, sha2, merge1, merge2 = "1" * 40, "2" * 40, "3" * 40, "4" * 40
-
-        def delivered(number, head, merge):
-            return {
-                "gc.delivery_contract": "pr-ci-merged-v1",
-                "gc.delivery_status": "merged", "gc.work_outcome": "shipped",
-                "gc.github_repo": "example/factory", "gc.pr_number": number,
-                "gc.pr_head": head, "gc.merge_commit": merge,
-                "gc.pr_url": f"https://github.com/example/factory/pull/{number}",
-                "pr_number": number, "merge_result": "merged", "merged_sha": merge,
-                "merged_target": "main", "gc.required_ci_workflow": "Factory CI",
-                "gc.ci_run_id": number, "gc.ci_head_sha": head, "gc.ci_conclusion": "success",
-            }
 
         # One delivered repair cannot release a request whose other linked
         # repair is merely closed without merge/CI proof.
