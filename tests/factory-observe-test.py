@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -160,6 +161,8 @@ class LiveToolCase(ToolCase):
         self.mail_state = self.tmp / "mail-state.json"
         self.mail_rc = self.tmp / "mail-rc"
         self.mail_rc.write_text("0")
+        self.mail_sleep = self.tmp / "mail-sleep"
+        self.mail_sleep.write_text("0")
         self.active = self.tmp / "active.json"
         self.requests = self.tmp / "requests.json"
         self.prs = self.tmp / "prs.json"
@@ -231,7 +234,7 @@ class LiveToolCase(ToolCase):
     def _write_fakes(self):
         gc = self.bin_dir / "gc"
         gc.write_text(f"""#!/usr/bin/env python3
-import json, pathlib, sys
+import json, pathlib, sys, time
 args = sys.argv[1:]
 with pathlib.Path({str(self.calls)!r}).open('a') as handle:
     handle.write(json.dumps(args) + '\\n')
@@ -242,6 +245,7 @@ elif args[:2] == ['session', 'list']:
     print(pathlib.Path({str(self.sessions)!r}).read_text())
 elif args[:2] == ['mail', 'send']:
     pathlib.Path({str(self.mail_state)!r}).write_text(pathlib.Path({str(self.state_file)!r}).read_text())
+    time.sleep(float(pathlib.Path({str(self.mail_sleep)!r}).read_text()))
     active = {{
         session['name']
         for session in json.loads(pathlib.Path({str(self.sessions)!r}).read_text())['sessions']
@@ -385,6 +389,41 @@ class LiveObservationTest(unittest.TestCase):
             quiet = json.loads(case.run_live(1900).stdout)
             self.assertEqual((retried["action"], quiet["action"]), ("none", "none"))
             self.assertEqual(2, len(case.calls_matching(["mail", "send"])))
+
+    def test_a_hung_mail_is_bounded_and_remains_pending(self):
+        with LiveToolCase() as case:
+            case.run_live(1000)
+            case.write_incident(resumed=True, request_active=True)
+            case.mail_sleep.write_text("30")
+            env = {
+                **case.live_env(1300),
+                "FACTORY_OBSERVE_MAIL_TIMEOUT_SECONDS": "0.1",
+            }
+
+            started = time.monotonic()
+            timed_out = case.run_tool("live", env=env, check=False)
+            elapsed = time.monotonic() - started
+
+            self.assertEqual(2, timed_out.returncode)
+            self.assertLess(elapsed, 20)
+            result = json.loads(timed_out.stdout)
+            self.assertEqual(["factory-worker-af-fixture"], result["route_failures"])
+            status = json.loads(case.run_tool(
+                "status", "--json", env=case.live_env(1300), check=True,
+            ).stdout)
+            self.assertEqual(1, len(status["live"]["pending"]))
+            self.assertEqual([], status["live"]["routes"])
+            route_id = status["live"]["pending"][0]["route_id"]
+
+            case.mail_sleep.write_text("0")
+            retried = json.loads(case.run_live(1600).stdout)
+            self.assertEqual("none", retried["action"])
+            self.assertEqual([], retried["route_failures"])
+            final = json.loads(case.run_tool(
+                "status", "--json", env=case.live_env(1600), check=True,
+            ).stdout)
+            self.assertEqual([], final["live"]["pending"])
+            self.assertEqual(route_id, final["live"]["routes"][0]["route_id"])
 
     def test_a_failed_route_falls_back_to_mayor_when_its_worker_disappears(self):
         with LiveToolCase() as case:
