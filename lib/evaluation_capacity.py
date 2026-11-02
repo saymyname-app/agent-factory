@@ -46,14 +46,47 @@ def capacity_dir() -> Path:
                 Path.home() / ".local" / "state" / "agent-factory-product-capacity")
 
 
+def launch_fully_gone(path: Path) -> bool:
+    """A valid launch record whose process group, descendants and copy are all gone."""
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+        launch_id = record["launch_id"]
+        pid = int(record["pid"])
+        process_group = int(record["process_group"])
+        worktree = Path(record["worktree"])
+        if not isinstance(launch_id, str) or not launch_id or pid <= 0 or process_group <= 0:
+            return False
+    except (KeyError, TypeError, ValueError, OSError):
+        return False
+    if Path(f"/proc/{pid}").exists() or worktree.exists():
+        return False
+    try:
+        os.killpg(process_group, 0)
+        return False
+    except PermissionError:
+        return False
+    except ProcessLookupError:
+        pass
+    except OSError:
+        return False
+    marker = f"FACTORY_LAUNCH_ID={launch_id}".encode()
+    for environ in Path("/proc").glob("[0-9]*/environ"):
+        try:
+            if marker in environ.read_bytes().split(b"\0"):
+                return False
+        except OSError:
+            continue
+    return True
+
+
 def occupied() -> list[Path]:
-    """A failed stop deliberately keeps its record and therefore its slot."""
+    """A failed stop keeps its slot unless every owned process and copy is proven gone."""
     found: set[Path] = set()
     for root in state_roots():
         if root.is_dir():
             found.update(root.rglob("*.json"))
             found.update(root.rglob("*.trial"))
-    return sorted(found)
+    return sorted(path for path in found if not launch_fully_gone(path))
 
 
 @contextmanager

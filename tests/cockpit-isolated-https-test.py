@@ -26,6 +26,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RECIPE = ROOT / "bin" / "cockpit-isolated"
 HOME_CONTENT = ROOT / "config" / "cockpit-datasets" / "home-content.json"
+RESULT_DATASETS = ("result-ready", "result-outage", "result-repairing")
 sys.path.insert(0, str(ROOT / "tests" / "fixtures" / "cockpit" / "synthetic-city"))
 import identity_proxy  # noqa: E402
 
@@ -152,6 +153,22 @@ class BehindTheProxy(unittest.TestCase):
         # The supervisor's API is not behind the proxy: its address answers the cockpit's 404.
         status, _, body = fetch(url + "/v0/cities", ca, {"X-Synthetic-Tailnet-Login": BENJAMIN})
         self.assertNotEqual(200, status)
+
+    def test_the_result_trials_use_the_identity_proxy_and_their_disposable_tracker(self):
+        for name in RESULT_DATASETS:
+            with self.subTest(dataset=name):
+                path = ROOT / "config" / "cockpit-datasets" / f"{name}.json"
+                env = self.launched(path)
+                self.assertEqual(Path(env["HOME"], "tracker.json"), Path(env["FAKE_BD_STATE_FILE"]))
+                url, ca = env["COCKPIT_TRIAL_HTTPS_URL"], env["COCKPIT_TRIAL_HTTPS_CA"]
+                status, _, body = fetch(url + "/api/status", ca, {"X-Synthetic-Tailnet-Login": BENJAMIN})
+                self.assertEqual(200, status)
+                self.assertIn("gc", json.loads(body))
+                if name == "result-ready":
+                    visible = json.loads(path.read_text(encoding="utf-8"))["visible_text"]
+                    self.assertIn("Essai ↗", visible)
+                    self.assertIn("Avis", visible)
+                    self.assertRegex(visible, "['’]")
 
     def test_without_it_the_cockpit_has_no_https(self):
         env = self.launched(self.dataset())

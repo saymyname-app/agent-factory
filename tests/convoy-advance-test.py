@@ -193,7 +193,8 @@ class ConvoyAdvanceHarness(unittest.TestCase):
         # The tests run the advance command as the controller's order does:
         # outside any agent session, even when an agent runs the suite.
         for name in ("CONVOY_STATE_FAKE_SLING_FAIL", "CONVOY_STATE_FAKE_MAIL_FAIL",
-                     "CONVOY_STATE_FAKE_ANSWER_ON_SLING", *SESSION_IDENTITY):
+                     "CONVOY_STATE_FAKE_ANSWER_ON_SLING", "CONVOY_STATE_FAKE_ANSWER_ON_CLEAR",
+                     "CONVOY_STATE_FAKE_ANSWER_ON_GROUPED_NOTE", *SESSION_IDENTITY):
             self.env.pop(name, None)
         # No product a test launched outlives it: stopped before the next
         # test empties the directory.
@@ -1240,6 +1241,39 @@ class ConvoyAdvanceTest(ConvoyAdvanceHarness):
         self.assertNotIn(PLAIN, [convoy["id"] for convoy in answer["convoys"]])
         self.assertEqual([], self.escalation_list())
         self.assertEqual(before, self.bead(PLAIN))
+
+    def test_all_omits_a_convoy_closed_by_command_between_list_and_show(self):
+        metadata = dict(self.bead(CONVOY)["metadata"])
+        metadata["gc.flow.judgement"] = json.dumps({
+            "verdicts": [],
+            "answers": [{"response": "abandoned", "approver": "benjamin", "commit": COMMIT,
+                         "pack": "sha256:" + "0" * 64, "at": "2026-10-29T00:00:00Z",
+                         "reason": "Le besoin a disparu."}],
+        })
+        self.edit(CONVOY, metadata=metadata)
+        wrapper = self.tmp / "gc-close-convoy-after-list"
+        marker = self.tmp / "closed-after-list"
+        wrapper.write_text(f"""#!/bin/sh
+case " $* " in
+  *" bd list "*)
+    "{FAKE_GC}" "$@" || exit $?
+    if [ ! -e "{marker}" ]; then
+      : > "{marker}"
+      GC_BIN="{wrapper}" "{STATE}" close-convoy "{CONVOY}" >/dev/null || exit $?
+    fi
+    ;;
+  *) exec "{FAKE_GC}" "$@" ;;
+esac
+""")
+        wrapper.chmod(0o755)
+
+        answer = self.advance("--all", env={**self.env, "GC_BIN": str(wrapper)})
+        listed = json.loads(self.run_ok(STATE, "list").stdout)
+
+        self.assertIn(CONVOY, listed["closed"])
+        self.assertNotIn(CONVOY, listed["convoys"] + listed["closed_outside"])
+        self.assertNotIn(CONVOY, [convoy["id"] for convoy in answer["convoys"]])
+        self.assertEqual("closed", self.bead(CONVOY)["status"])
 
     def test_an_incoherent_counter_stops_the_convoy_and_raises_a_factory_incident(self):
         state = self.tracker_state()

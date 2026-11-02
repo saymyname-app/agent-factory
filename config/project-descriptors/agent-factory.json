@@ -241,6 +241,7 @@
       "run-completed": "config/cockpit-datasets/run-completed.json",
       "run-stale": "config/cockpit-datasets/run-stale.json",
       "run-waiting": "config/cockpit-datasets/run-waiting.json",
+      "run-demonstration": "config/cockpit-datasets/run-demonstration.json",
       "job-code": "config/cockpit-datasets/job-code.json",
       "job-configuration": "config/cockpit-datasets/job-configuration.json",
       "job-event": "config/cockpit-datasets/job-event.json",
@@ -251,7 +252,8 @@
       "job-usage": "config/cockpit-datasets/job-usage.json",
       "job-usage-unavailable": "config/cockpit-datasets/job-usage-unavailable.json",
       "job-user-prompt-raw": "config/cockpit-datasets/job-user-prompt-raw.json",
-      "job-user-prompt-rendered": "config/cockpit-datasets/job-user-prompt-rendered.json"
+      "job-user-prompt-rendered": "config/cockpit-datasets/job-user-prompt-rendered.json",
+      "chantier-decisions": "config/cockpit-datasets/chantier-decisions.json"
     },
     "test_perimeter": [
       "tests/cockpit-criteria/"

@@ -117,6 +117,15 @@ def empty_state() -> dict[str, Any]:
         "snapshot": {},
         "exemptions": {},
         "history": [],
+        "live": {
+            "snapshot": {},
+            "exemptions": {},
+            "history": [],
+            "window": {},
+            "events": [],
+            "pending": [],
+            "routes": [],
+        },
     }
 
 
@@ -126,12 +135,23 @@ def normalize_state(raw: Any) -> dict[str, Any]:
     snapshot = raw.get("snapshot")
     exemptions = raw.get("exemptions")
     history = raw.get("history")
-    return {
+    normalized = {
         "contract": STATE_CONTRACT,
         "snapshot": copy.deepcopy(snapshot) if isinstance(snapshot, dict) else {},
         "exemptions": dict(exemptions) if isinstance(exemptions, dict) else {},
         "history": list(history) if isinstance(history, list) else [],
     }
+    live = raw.get("live") if isinstance(raw.get("live"), dict) else {}
+    normalized["live"] = {
+        "snapshot": copy.deepcopy(live.get("snapshot")) if isinstance(live.get("snapshot"), dict) else {},
+        "exemptions": dict(live.get("exemptions")) if isinstance(live.get("exemptions"), dict) else {},
+        "history": list(live.get("history")) if isinstance(live.get("history"), list) else [],
+        "window": copy.deepcopy(live.get("window")) if isinstance(live.get("window"), dict) else {},
+        "events": copy.deepcopy(live.get("events")) if isinstance(live.get("events"), list) else [],
+        "pending": copy.deepcopy(live.get("pending")) if isinstance(live.get("pending"), list) else [],
+        "routes": copy.deepcopy(live.get("routes")) if isinstance(live.get("routes"), list) else [],
+    }
+    return normalized
 
 
 # --- diff ------------------------------------------------------------------

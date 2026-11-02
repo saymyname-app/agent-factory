@@ -677,8 +677,9 @@ regression, `bin/tdd-step` and `bin/spec-integration` read it through
 | A run says « ALERT », or a refusal says NOT RUN for its budget | `bin/test-budgets show` (budgets, deadlines, last runs, classes left before the alert), then `bin/test-budgets refresh` and a maintenance PR with the new file |
 | `refresh` raised `full_seconds` | `bin/test-budgets check-order`; if it fails, raise `timeout` of `orders/convoy-advance.toml` to the `pass_seconds` it names, in the same PR |
 
-`refresh` sets each budget to 1.5 times the slowest of the last ten runs
-of its kind in the evidence store, rounded up to the minute; a kind with
+`refresh` sets each budget to 1.5 times the slowest of the last ten successful
+runs of its kind in the evidence store, rounded up to the minute; a red run is
+not a duration measure, and a kind with
 fewer than three runs keeps its figure (on 27/10/2026: full 780 s from
 495 s measured; green 600 s, not yet measured since T4). Proof:
 `tests/test-budgets-test.py`.

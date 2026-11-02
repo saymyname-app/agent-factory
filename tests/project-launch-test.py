@@ -807,20 +807,26 @@ class ProjectLaunchTest(unittest.TestCase):
     def test_every_factory_launcher_owns_what_it_starts(self):
         # The class, not tdd-step alone: each tool that starts a product
         # names itself its owner, so the product ends with it.
-        callers = [path for path in sorted((ROOT / "bin").iterdir())
-                   if path.name != "project-launch" and path.is_file()
-                   and "LAUNCH_TOOL" in path.read_text(errors="replace")
-                   and '"start"' in path.read_text(errors="replace")]
+        candidates = [*(ROOT / "bin").iterdir(), *(ROOT / "lib").rglob("*.py"),
+                      *(ROOT / "tests" / "cockpit-criteria").rglob("*.py")]
+        callers = []
+        for path in sorted(candidates):
+            source = path.read_text(errors="replace") if path.is_file() else ""
+            if (path.name != "project-launch" and ("LAUNCH_TOOL" in source or "LAUNCHER" in source)
+                    and ('"start"' in source or "'start'" in source)):
+                callers.append(path)
         # Their products outlive the command on purpose: an open Acceptance
         # Session, or products prepared for reuse, ended by their own records.
         detached = {"acceptance-session", "ticket-evaluation", "outcome-evaluation"}
         self.assertTrue(detached <= {path.name for path in callers})
         owners = [path for path in callers if path.name not in detached]
-        self.assertGreaterEqual(len(owners), 4)
+        self.assertGreaterEqual(len(owners), 7)
         for path in owners:
-            with self.subTest(caller=path.name):
-                self.assertTrue('"--owner-pid", str(os.getpid())' in path.read_text(),
-                                f"{path.name} starts a product it does not own")
+            with self.subTest(caller=path.relative_to(ROOT)):
+                source = path.read_text()
+                self.assertTrue(('"--owner-pid", str(os.getpid())' in source
+                                 or "'--owner-pid', str(os.getpid())" in source),
+                                f"{path.relative_to(ROOT)} starts a product it does not own")
         # They say so: no launch is left without an owner by omission.
         for path in callers:
             if path.name in detached:

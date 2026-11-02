@@ -25,14 +25,16 @@ def project_runs(runs, project_id):
     return [run for run in runs or [] if run.get("rig") == project_id]
 
 
-def project_counts(project, runs, now):
-    """(waiting chantiers, active chantiers, runs merged in 7 days, runs in
-    progress) of a project."""
+def project_counts(project, runs, now, decisions):
+    """(open decisions, active chantiers, runs merged in 7 days, runs in
+    progress) of a project. ``decisions``: the open decisions of each
+    chantier (:func:`cockpit.projects.decisions.chantier_decisions`), or
+    None while they are not known -- then the first count is None."""
     chantiers = [c for c in project.chantiers if not c.termine and not c.abandonne]
-    waiting = [c for c in chantiers if c.etat == "a_toi_de_jouer"]
+    waiting = None if decisions is None else sum(decisions.get(c.id, 0) for c in chantiers)
     merged = [r for r in runs if r["status"] == "Fusionné" and r["end"] >= now - WEEK_SECONDS]
     live = [r for r in runs if r["state"] != DONE]
-    return len(waiting), len(chantiers), len(merged), len(live)
+    return waiting, len(chantiers), len(merged), len(live)
 
 
 def _badge(waiting, live):
@@ -43,14 +45,15 @@ def _badge(waiting, live):
     return "", "Calme"
 
 
-def render_projects_list(projects, runs, now, checked=None):
+def render_projects_list(projects, runs, now, decisions, checked=None):
     """Main part of /projets: a card per declared project, the whole card a
     link to its page -- by a click or the keyboard. Its accessible name
-    says where it leads and what the card says."""
+    says where it leads and what the card says. ``decisions``: see
+    :func:`project_counts`."""
     cards = []
     for project in projects:
         own = project_runs(runs, project.project_id)
-        waiting, active, merged, live = project_counts(project, own, now)
+        waiting, active, merged, live = project_counts(project, own, now, decisions)
         tone, label = _badge(waiting, live)
         current = next((c for c in project.chantiers if not c.termine and not c.abandonne and c.etat != "a_toi_de_jouer"),
                        None)

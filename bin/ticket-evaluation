@@ -71,6 +71,7 @@ DESCRIPTORS = ROOT / "config" / "project-descriptors"
 sys.path.insert(0, str(BIN.parent / "lib"))
 import delivery_reads  # noqa: E402
 from convoy_state import overridden_ticket, retry_after_lift, session_conversation
+from delivery_rules import names_in_texts  # noqa: E402
 from evaluation_capacity import admission, Busy, launch_timeout, ready_product, remove_attestation
 from validated_expectations import planned, enforce, sealed_record
 from delivery_role_identity import role_identity, role_supplier, supplier_of  # noqa: E402
@@ -375,8 +376,7 @@ class Convoy:
         declared = sorted({*declared, *brought})
         criteria = [str(text) for text in ticket.get("criteria") or []]
         texts = [*criteria, str(ticket.get("demonstration_line") or "")]
-        named = {name for name in declared
-                 if any(re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", text) for text in texts)}
+        named = set(names_in_texts(declared, texts))
         # A dataset the branch brings is the ticket's own, named or not: it
         # holds a state no dataset of main holds (af-npz9v1.18; R1 and R2 were
         # evaluated again on 28/10/2026 on the first dataset of main only).

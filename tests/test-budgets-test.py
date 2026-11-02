@@ -83,7 +83,9 @@ class TestBudgets(unittest.TestCase):
         self.assertEqual(480, new["green_seconds"])
 
     def test_a_red_merged_run_is_no_measure(self):
-        piece(self.store, "m", "merged_tests.json", "FAIL tests/cockpit-criteria-test.py (900s)\n", exit_code=1)
+        piece(self.store, "m", "merged_tests.json",
+              "FAIL tests/cockpit-criteria-test.py (900s)\n"
+              "regression: took 900s with the host held (full budget 900s)\n", exit_code=1)
         self.assertEqual([], test_budgets.runs(self.store))
 
 

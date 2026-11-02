@@ -21,6 +21,14 @@ STUB
 chmod +x "$TMP/gc"
 export CALLS
 
+cat > "$TMP/convoy-state" <<'STUB'
+#!/usr/bin/env bash
+printf 'state %s\n' "$*" >> "$CALLS"
+[ "$*" != "link-technical-repair af-convoy af-ticket --repair af-refused" ] || exit 1
+printf '{"ok":true}\n'
+STUB
+chmod +x "$TMP/convoy-state"
+
 # O08: dispatch-door checks provider-failover before dispatching; stub it
 # available so this test does not depend on this host's live provider state.
 cat > "$TMP/provider-failover" <<'STUB'
@@ -39,6 +47,37 @@ mapfile -t calls < "$CALLS"
   || fail "unexpected sling call: ${calls[1]}"
 [[ ${calls[2]} == "--city $REPO_ROOT bd update af-fixture --set-metadata gc.dispatched_via=dispatch-door --set-metadata gc.dispatch_formula=mol-do-work --set-metadata gc.dispatch_target=factory-worker --set-metadata gc.dispatch_rig=agent-factory" ]] \
   || fail "unexpected dispatch-door stamp call: ${calls[2]}"
+
+: > "$CALLS"
+GC_BIN="$TMP/gc" FACTORY_ROOT="$REPO_ROOT" \
+  FACTORY_WORK_DISPATCH_CONVOY_STATE_BIN="$TMP/convoy-state" \
+  "$DISPATCH" af-repair --technical-request af-convoy af-ticket >/dev/null
+mapfile -t calls < "$CALLS"
+[ "${#calls[@]}" -eq 4 ] || fail "expected a technical link followed by the ordinary dispatch, got: ${calls[*]-}"
+[[ ${calls[0]} == "state link-technical-repair af-convoy af-ticket --repair af-repair" ]] \
+  || fail "technical repair was not linked through convoy-state first: ${calls[0]}"
+[[ ${calls[2]} == "--city $REPO_ROOT sling factory-worker af-repair --on mol-do-work --reassign" ]] \
+  || fail "technical repair did not use the ordinary HQ dispatch: ${calls[2]}"
+
+: > "$CALLS"
+GC_BIN="$TMP/gc" FACTORY_ROOT="$REPO_ROOT" \
+  FACTORY_WORK_DISPATCH_CONVOY_STATE_BIN="$TMP/convoy-state" \
+  "$DISPATCH" af-delivered --technical-request af-convoy af-ticket --link-only >/dev/null
+mapfile -t calls < "$CALLS"
+[ "${#calls[@]}" -eq 1 ] \
+  || fail "link-only must migrate the relation without redispatching delivered work: ${calls[*]-}"
+[[ ${calls[0]} == "state link-technical-repair af-convoy af-ticket --repair af-delivered" ]] \
+  || fail "link-only did not use the state-owned transition: ${calls[0]}"
+
+: > "$CALLS"
+if GC_BIN="$TMP/gc" FACTORY_ROOT="$REPO_ROOT" \
+  FACTORY_WORK_DISPATCH_CONVOY_STATE_BIN="$TMP/convoy-state" \
+  "$DISPATCH" af-refused --technical-request af-convoy af-ticket >/dev/null 2>&1; then
+  fail "dispatched a repair whose technical link was refused"
+fi
+mapfile -t calls < "$CALLS"
+[ "${#calls[@]}" -eq 1 ] \
+  || fail "a refused technical link must stop before dispatch: ${calls[*]-}"
 
 : > "$CALLS"
 if GC_BIN="$TMP/gc" FACTORY_ROOT="$REPO_ROOT" "$DISPATCH" bd.dog af-fixture >/dev/null 2>&1; then

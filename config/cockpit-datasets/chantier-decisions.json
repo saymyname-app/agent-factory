@@ -1,0 +1,629 @@
+{
+ "generated_at": "2026-10-22T12:00:00+02:00",
+ "synthetic": true,
+ "ui": {
+  "id": "chantier-decisions",
+  "page": "projects"
+ },
+ "projects": [
+  {
+   "contract": "agent-factory-project-descriptor/v1",
+   "project_id": "agent-factory",
+   "display_name": "Usine",
+   "rigs": [
+    "agent-factory"
+   ],
+   "stacks": {
+    "agent-factory": [
+     "python",
+     "shell"
+    ]
+   },
+   "knowledge_repo": "saymyname-app/agent-factory",
+   "roadmap_path": "docs/roadmap.toml",
+   "rituals_status_command": "bin/rituals-status",
+   "promotion_branch": {},
+   "launch": {
+    "recipe": [
+     "{python}",
+     "bin/cockpit-isolated",
+     "--port",
+     "{port}",
+     "--dataset",
+     "{dataset}"
+    ],
+    "entry_points": [
+     {
+      "kind": "http",
+      "method": "GET",
+      "path": "/"
+     },
+     {
+      "kind": "http",
+      "method": "GET",
+      "path": "/api/status"
+     },
+     {
+      "kind": "http",
+      "method": "GET",
+      "path": "/api/requests"
+     },
+     {
+      "kind": "http",
+      "method": "GET",
+      "path": "/api/projects"
+     },
+     {
+      "kind": "http",
+      "method": "GET",
+      "path": "/api/journal"
+     },
+     {
+      "kind": "http",
+      "method": "GET",
+      "path": "/api/health"
+     },
+     {
+      "kind": "http",
+      "method": "GET",
+      "path": "/api/notifications"
+     },
+     {
+      "kind": "http",
+      "method": "GET",
+      "path": "/projet/notes"
+     },
+     {
+      "kind": "http",
+      "method": "GET",
+      "path": "/journal"
+     },
+     {
+      "kind": "http",
+      "method": "GET",
+      "path": "/usine"
+     },
+     {
+      "kind": "http",
+      "method": "GET",
+      "path": "/rituels"
+     },
+     {
+      "kind": "http",
+      "method": "GET",
+      "path": "/analyses"
+     },
+     {
+      "kind": "http",
+      "method": "GET",
+      "path": "/runs"
+     },
+     {
+      "kind": "http",
+      "method": "GET",
+      "path": "/runs/run"
+     },
+     {
+      "kind": "http",
+      "method": "GET",
+      "path": "/runs/job"
+     },
+     {
+      "kind": "command",
+      "method": "open",
+      "path": "bin/acceptance-session"
+     },
+     {
+      "kind": "command",
+      "method": "close",
+      "path": "bin/acceptance-session"
+     },
+     {
+      "kind": "command",
+      "method": "verdict",
+      "path": "bin/owner-answer"
+     },
+     {
+      "kind": "command",
+      "method": "record",
+      "path": "bin/owner-answer"
+     },
+     {
+      "kind": "command",
+      "method": "run",
+      "path": "bin/outcome-promote"
+     },
+     {
+      "kind": "command",
+      "method": "benjamin",
+      "path": "bin/escalation-door"
+     },
+     {
+      "kind": "command",
+      "method": "create",
+      "path": "bin/proposal-door"
+     },
+     {
+      "kind": "command",
+      "method": "bd-publish",
+      "path": "bin/ticket-graph-publish"
+     }
+    ],
+    "health_probe": {
+     "path": "/api/status",
+     "expect_status": 200
+    },
+    "datasets": {
+     "home-content": "config/cockpit-datasets/home-content.json",
+     "home-empty": "config/cockpit-datasets/home-empty.json",
+     "home-loading": "config/cockpit-datasets/home-loading.json",
+     "home-error": "config/cockpit-datasets/home-error.json",
+     "home-long": "config/cockpit-datasets/home-long.json",
+     "home-stale": "config/cockpit-datasets/home-stale.json",
+     "home-offline": "config/cockpit-datasets/home-offline.json",
+     "home-content-full": "config/cockpit-datasets/home-content-full.json",
+     "home-narrow": "config/cockpit-datasets/home-narrow.json",
+     "home-light": "config/cockpit-datasets/home-light.json",
+     "result-ready": "config/cockpit-datasets/result-ready.json",
+     "result-dossier": "config/cockpit-datasets/result-dossier.json",
+     "result-findings": "config/cockpit-datasets/result-findings.json",
+     "result-returned": "config/cockpit-datasets/result-returned.json",
+     "result-repairing": "config/cockpit-datasets/result-repairing.json",
+     "result-accepted": "config/cockpit-datasets/result-accepted.json",
+     "result-merging": "config/cockpit-datasets/result-merging.json",
+     "result-merged": "config/cockpit-datasets/result-merged.json",
+     "result-outdated": "config/cockpit-datasets/result-outdated.json",
+     "result-outage": "config/cockpit-datasets/result-outage.json",
+     "result-conflict": "config/cockpit-datasets/result-conflict.json",
+     "result-abandoned": "config/cockpit-datasets/result-abandoned.json",
+     "result-request": "config/cockpit-datasets/result-request.json",
+     "result-confirmation": "config/cockpit-datasets/result-confirmation.json",
+     "projects-content": "config/cockpit-datasets/projects-content.json",
+     "projects-narrow": "config/cockpit-datasets/projects-narrow.json",
+     "projects-light": "config/cockpit-datasets/projects-light.json",
+     "release-expanded": "config/cockpit-datasets/release-expanded.json",
+     "release-estimate": "config/cockpit-datasets/release-estimate.json",
+     "project-missing": "config/cockpit-datasets/project-missing.json",
+     "journal-content": "config/cockpit-datasets/journal-content.json",
+     "journal-empty": "config/cockpit-datasets/journal-empty.json",
+     "journal-loading": "config/cockpit-datasets/journal-loading.json",
+     "journal-error": "config/cockpit-datasets/journal-error.json",
+     "journal-long": "config/cockpit-datasets/journal-long.json",
+     "journal-stale": "config/cockpit-datasets/journal-stale.json",
+     "journal-offline": "config/cockpit-datasets/journal-offline.json",
+     "journal-narrow": "config/cockpit-datasets/journal-narrow.json",
+     "journal-light": "config/cockpit-datasets/journal-light.json",
+     "journal-logs": "config/cockpit-datasets/journal-logs.json",
+     "health-content": "config/cockpit-datasets/health-content.json",
+     "health-empty": "config/cockpit-datasets/health-empty.json",
+     "health-loading": "config/cockpit-datasets/health-loading.json",
+     "health-error": "config/cockpit-datasets/health-error.json",
+     "health-long": "config/cockpit-datasets/health-long.json",
+     "health-stale": "config/cockpit-datasets/health-stale.json",
+     "health-offline": "config/cockpit-datasets/health-offline.json",
+     "health-narrow": "config/cockpit-datasets/health-narrow.json",
+     "health-light": "config/cockpit-datasets/health-light.json",
+     "factory-draining": "config/cockpit-datasets/factory-draining.json",
+     "factory-suspended": "config/cockpit-datasets/factory-suspended.json",
+     "factory-resuming": "config/cockpit-datasets/factory-resuming.json",
+     "factory-blocked": "config/cockpit-datasets/factory-blocked.json",
+     "factory-machine": "config/cockpit-datasets/factory-machine.json",
+     "factory-configure": "config/cockpit-datasets/factory-configure.json",
+     "factory-configure-scope": "config/cockpit-datasets/factory-configure-scope.json",
+     "factory-clean-preview": "config/cockpit-datasets/factory-clean-preview.json",
+     "factory-clean-done": "config/cockpit-datasets/factory-clean-done.json",
+     "rituals-content": "config/cockpit-datasets/rituals-content.json",
+     "rituals-narrow": "config/cockpit-datasets/rituals-narrow.json",
+     "rituals-light": "config/cockpit-datasets/rituals-light.json",
+     "ritual-confirm": "config/cockpit-datasets/ritual-confirm.json",
+     "ritual-review": "config/cockpit-datasets/ritual-review.json",
+     "ritual-report": "config/cockpit-datasets/ritual-report.json",
+     "ritual-preparing": "config/cockpit-datasets/ritual-preparing.json",
+     "ritual-ready": "config/cockpit-datasets/ritual-ready.json",
+     "ritual-execution": "config/cockpit-datasets/ritual-execution.json",
+     "ritual-delivered": "config/cockpit-datasets/ritual-delivered.json",
+     "release-confirm": "config/cockpit-datasets/release-confirm.json",
+     "release-review": "config/cockpit-datasets/release-review.json",
+     "release-report": "config/cockpit-datasets/release-report.json",
+     "release-saved": "config/cockpit-datasets/release-saved.json",
+     "analysis-content": "config/cockpit-datasets/analysis-content.json",
+     "analysis-narrow": "config/cockpit-datasets/analysis-narrow.json",
+     "analysis-light": "config/cockpit-datasets/analysis-light.json",
+     "analysis-time": "config/cockpit-datasets/analysis-time.json",
+     "runs-active": "config/cockpit-datasets/runs-active.json",
+     "runs-all": "config/cockpit-datasets/runs-all.json",
+     "runs-completed": "config/cockpit-datasets/runs-completed.json",
+     "run-abandoned": "config/cockpit-datasets/run-abandoned.json",
+     "run-active": "config/cockpit-datasets/run-active.json",
+     "run-completed": "config/cockpit-datasets/run-completed.json",
+     "run-stale": "config/cockpit-datasets/run-stale.json",
+     "run-waiting": "config/cockpit-datasets/run-waiting.json",
+     "job-code": "config/cockpit-datasets/job-code.json",
+     "job-configuration": "config/cockpit-datasets/job-configuration.json",
+     "job-event": "config/cockpit-datasets/job-event.json",
+     "job-gates": "config/cockpit-datasets/job-gates.json",
+     "job-output": "config/cockpit-datasets/job-output.json",
+     "job-sessions": "config/cockpit-datasets/job-sessions.json",
+     "job-system-prompt": "config/cockpit-datasets/job-system-prompt.json",
+     "job-usage": "config/cockpit-datasets/job-usage.json",
+     "job-usage-unavailable": "config/cockpit-datasets/job-usage-unavailable.json",
+     "job-user-prompt-raw": "config/cockpit-datasets/job-user-prompt-raw.json",
+     "job-user-prompt-rendered": "config/cockpit-datasets/job-user-prompt-rendered.json"
+    },
+    "test_perimeter": [
+     "tests/cockpit-criteria/"
+    ],
+    "frozen_harness_paths": [
+     "tests/fixtures/delivery-fixture-city/tests/harness.py",
+     "tests/fixtures/cockpit/core/fake_gc.py",
+     "tests/fixtures/cockpit/requests/fake-bd"
+    ],
+    "test_command": "python3 tests/fixtures/delivery-fixture-city/tests/harness.py {test} {report}",
+    "seams": [
+     {
+      "name": "cockpit-http",
+      "mode": "black_box",
+      "test_paths": [
+       "tests/cockpit-criteria/http/"
+      ]
+     },
+     {
+      "name": "factory-commands",
+      "mode": "import_rule",
+      "test_paths": [
+       "tests/cockpit-criteria/commands/"
+      ]
+     }
+    ],
+    "import_rule": {
+     "product_import": "(?<![\\w/.-])bin/[a-z]|^\\s*(?:from|import)\\s+(?:cockpit|convoy_state|factory_[a-z_]+|delivery_role_identity|overlap_conflict_log|provider_failover|reversibility)\\b",
+     "entry_point_import": "(?<![\\w/.-])bin/(?:project-launch|project-planning-profile|prototype-conformance|acceptance-session|owner-answer|outcome-promote|escalation-door|proposal-door|ticket-graph-publish)(?![\\w-])"
+    },
+    "regression_command": "python3 tests/cockpit-criteria/regression.py",
+    "k": 3,
+    "screens": [
+     {
+      "name": "vue-ensemble",
+      "path": "/",
+      "states": [
+       "home-content",
+       "home-empty",
+       "home-loading",
+       "home-error",
+       "home-long",
+       "home-stale",
+       "home-offline",
+       "home-content-full",
+       "home-narrow",
+       "home-light",
+       "result-ready",
+       "result-dossier",
+       "result-findings",
+       "result-returned",
+       "result-repairing",
+       "result-accepted",
+       "result-merging",
+       "result-merged",
+       "result-outdated",
+       "result-outage",
+       "result-conflict",
+       "result-abandoned",
+       "result-request",
+       "result-confirmation"
+      ]
+     },
+     {
+      "name": "projets",
+      "path": "/projet/notes",
+      "states": [
+       "projects-content",
+       "projects-narrow",
+       "projects-light",
+       "release-expanded",
+       "release-estimate",
+       "project-missing"
+      ]
+     },
+     {
+      "name": "journal",
+      "path": "/journal",
+      "states": [
+       "journal-content",
+       "journal-empty",
+       "journal-loading",
+       "journal-error",
+       "journal-long",
+       "journal-stale",
+       "journal-offline",
+       "journal-narrow",
+       "journal-light",
+       "journal-logs"
+      ]
+     },
+     {
+      "name": "usine",
+      "path": "/usine",
+      "states": [
+       "health-content",
+       "health-empty",
+       "health-loading",
+       "health-error",
+       "health-long",
+       "health-stale",
+       "health-offline",
+       "health-narrow",
+       "health-light",
+       "factory-draining",
+       "factory-suspended",
+       "factory-resuming",
+       "factory-blocked",
+       "factory-machine",
+       "factory-configure",
+       "factory-configure-scope",
+       "factory-clean-preview",
+       "factory-clean-done"
+      ]
+     },
+     {
+      "name": "rituels",
+      "path": "/rituels",
+      "states": [
+       "rituals-content",
+       "rituals-narrow",
+       "rituals-light",
+       "ritual-confirm",
+       "ritual-review",
+       "ritual-report",
+       "ritual-preparing",
+       "ritual-ready",
+       "ritual-execution",
+       "ritual-delivered",
+       "release-confirm",
+       "release-review",
+       "release-report",
+       "release-saved"
+      ]
+     },
+     {
+      "name": "analyses",
+      "path": "/analyses",
+      "states": [
+       "analysis-content",
+       "analysis-narrow",
+       "analysis-light",
+       "analysis-time"
+      ]
+     },
+     {
+      "name": "runs-liste",
+      "path": "/runs",
+      "states": [
+       "runs-active",
+       "runs-all",
+       "runs-completed"
+      ]
+     },
+     {
+      "name": "run-frise",
+      "path": "/runs/run",
+      "states": [
+       "run-abandoned",
+       "run-active",
+       "run-completed",
+       "run-stale",
+       "run-waiting"
+      ]
+     },
+     {
+      "name": "job-detail",
+      "path": "/runs/job",
+      "states": [
+       "job-code",
+       "job-configuration",
+       "job-event",
+       "job-gates",
+       "job-output",
+       "job-sessions",
+       "job-system-prompt",
+       "job-usage",
+       "job-usage-unavailable",
+       "job-user-prompt-raw",
+       "job-user-prompt-rendered"
+      ]
+     }
+    ]
+   },
+   "validated_expectations": [
+    {
+     "scope": "ticket",
+     "owner": "af-6a98ip",
+     "number": 1,
+     "text": "Point d'entrée : bin/project-launch start puis URL annoncée — Observable : Le vrai cockpit répond à GET / et GET /api/status au commit demandé sur port isolé ; son état provient du dataset nommé. — Faux si : Révision erronée, page de remplacement, source live ou réponse absente.",
+     "dataset": "journal-content",
+     "source": {
+      "reference": "Spec af-2zseit, prototype Panorama Journal 632deea09daa22d8213807ef48a79891edf1c7bf, data/journal-content.json : premier événement",
+      "digest": "sha256:c4af60be499efb2b2beeb427b16831699f808bd584257d4d01988aefc3d72b86"
+     },
+     "expected": "Deux améliorations proposées après une revue",
+     "observation": {
+      "path": "/api/journal",
+      "pointer": "/entries/0/quoi"
+     }
+    },
+    {
+     "scope": "ticket",
+     "owner": "af-6a98ip",
+     "number": 1,
+     "text": "Point d'entrée : bin/project-launch start puis URL annoncée — Observable : Le vrai cockpit répond à GET / et GET /api/status au commit demandé sur port isolé ; son état provient du dataset nommé. — Faux si : Révision erronée, page de remplacement, source live ou réponse absente.",
+     "dataset": "factory-suspended",
+     "source": {
+      "reference": "Spec af-2zseit, prototype Panorama Usine 632deea09daa22d8213807ef48a79891edf1c7bf, data/factory-suspended.json : suspension confirmée",
+      "digest": "sha256:48cd6692c431f85e1b92a23b4bcb6b9408141ab479cb54c493a38c299e4ce989"
+     },
+     "expected": true,
+     "observation": {
+      "path": "/api/status",
+      "pointer": "/gc/value/suspended"
+     }
+    },
+    {
+     "scope": "ticket",
+     "owner": "af-6a98ip",
+     "number": 1,
+     "text": "Point d'entrée : bin/project-launch start puis URL annoncée — Observable : Le vrai cockpit répond à GET / et GET /api/status au commit demandé sur port isolé ; son état provient du dataset nommé. — Faux si : Révision erronée, page de remplacement, source live ou réponse absente.",
+     "dataset": "runs-active",
+     "source": {
+      "reference": "Spec af-2zseit, prototype Runs d8cb462d3287234ce5349d358899441a5796353c, data/runs-active.json : premier run",
+      "digest": "sha256:2e470160d6aa989f9fd22601441a596dcf1ace313148f7637a9a38656cbbc23d"
+     },
+     "expected": "Reprise du cockpit",
+     "observation": {
+      "path": "/api/status",
+      "pointer": "/beads/value/0/title"
+     }
+    }
+   ]
+  }
+ ],
+ "repos": {},
+ "tracker": {
+  "beads": {
+   "spec-panorama": {
+    "id": "spec-panorama",
+    "title": "Spec — Cockpit Panorama",
+    "status": "in_progress",
+    "issue_type": "task",
+    "labels": [],
+    "created_at": "2026-10-20T10:00:00+02:00",
+    "dependencies": [],
+    "description": "",
+    "metadata": {
+     "gc.project_id": "agent-factory",
+     "spec_state": "APPROVED_SPEC"
+    }
+   },
+   "convoy-panorama": {
+    "id": "convoy-panorama",
+    "title": "Cockpit Panorama",
+    "status": "open",
+    "issue_type": "convoy",
+    "labels": [
+     "approved-ticket-graph"
+    ],
+    "created_at": "2026-10-21T10:00:00+02:00",
+    "dependencies": [],
+    "description": "",
+    "metadata": {
+     "gc.project_id": "agent-factory",
+     "gc.graph_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+     "gc.spec_id": "spec-panorama",
+     "gc.flow.mark": "new-flow/v1"
+    }
+   },
+   "ticket-usine": {
+    "id": "ticket-usine",
+    "title": "Usine — réglages",
+    "status": "in_progress",
+    "issue_type": "task",
+    "labels": [
+     "approved-ticket-graph",
+     "delivery-plane"
+    ],
+    "created_at": "2026-10-22T08:00:00+02:00",
+    "updated_at": "2026-10-22T11:00:00+02:00",
+    "dependencies": [],
+    "description": "",
+    "metadata": {
+     "gc.graph_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+     "gc.dispatch_rig": "agent-factory",
+     "gc.flow.mark": "new-flow/v1",
+     "gc.flow.gate.dispatch": "{\"at\": \"2026-10-22T08:05:00+02:00\"}",
+     "gc.flow.models": "{\"author\": {\"at\": \"2026-10-22T08:06:00+02:00\", \"model\": \"claude-opus\"}}",
+     "gc.needs_benjamin": "Le critère de la page Usine demande un réglage que la Spec ne fixe pas",
+     "gc.escalation_bloquant": "true",
+     "gc.escalation_horodatage": "2026-10-22T10:30:00+02:00",
+     "gc.escalation_pourquoi": "L’auteur ne peut pas livrer le critère sans ta réponse.",
+     "gc.escalation_que_faire": "[{\"lettre\": \"a\", \"option\": \"Corriger par maintenance sur main\", \"consequence\": \"Le ticket reprend sur la réponse, après la fusion\", \"recommande\": true}, {\"lettre\": \"b\", \"option\": \"Retirer le critère du ticket\", \"consequence\": \"Le ticket est livré sans ce critère\", \"recommande\": false}]",
+     "gc.escalation_mayor_paged_at": "none"
+    }
+   },
+   "ticket-runs": {
+    "id": "ticket-runs",
+    "title": "Runs — sessions",
+    "status": "in_progress",
+    "issue_type": "task",
+    "labels": [
+     "approved-ticket-graph",
+     "delivery-plane"
+    ],
+    "created_at": "2026-10-22T08:00:00+02:00",
+    "updated_at": "2026-10-22T11:00:00+02:00",
+    "dependencies": [],
+    "description": "",
+    "metadata": {
+     "gc.graph_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+     "gc.dispatch_rig": "agent-factory",
+     "gc.flow.mark": "new-flow/v1",
+     "gc.flow.gate.dispatch": "{\"at\": \"2026-10-22T08:05:00+02:00\"}",
+     "gc.flow.models": "{\"author\": {\"at\": \"2026-10-22T08:06:00+02:00\", \"model\": \"claude-opus\"}}",
+     "gc.needs_benjamin": "La régression du profil dépasse le plafond de durée de la vérification",
+     "gc.escalation_bloquant": "true",
+     "gc.escalation_horodatage": "2026-10-22T10:45:00+02:00",
+     "gc.escalation_pourquoi": "L’auteur ne peut pas livrer le critère sans ta réponse.",
+     "gc.escalation_que_faire": "[{\"lettre\": \"a\", \"option\": \"Corriger par maintenance sur main\", \"consequence\": \"Le ticket reprend sur la réponse, après la fusion\", \"recommande\": true}, {\"lettre\": \"b\", \"option\": \"Retirer le critère du ticket\", \"consequence\": \"Le ticket est livré sans ce critère\", \"recommande\": false}]",
+     "gc.escalation_mayor_paged_at": "none"
+    }
+   },
+   "ticket-journal": {
+    "id": "ticket-journal",
+    "title": "Journal — logs",
+    "status": "in_progress",
+    "issue_type": "task",
+    "labels": [
+     "approved-ticket-graph",
+     "delivery-plane"
+    ],
+    "created_at": "2026-10-22T08:00:00+02:00",
+    "updated_at": "2026-10-22T11:00:00+02:00",
+    "dependencies": [],
+    "description": "",
+    "metadata": {
+     "gc.graph_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+     "gc.dispatch_rig": "agent-factory",
+     "gc.flow.mark": "new-flow/v1",
+     "gc.flow.gate.dispatch": "{\"at\": \"2026-10-22T08:05:00+02:00\"}",
+     "gc.flow.models": "{\"author\": {\"at\": \"2026-10-22T08:06:00+02:00\", \"model\": \"claude-opus\"}}",
+     "gc.needs_benjamin": "none",
+     "gc.escalation_bloquant": "true",
+     "gc.escalation_horodatage": "2026-10-22T09:00:00+02:00",
+     "gc.escalation_pourquoi": "L’auteur ne peut pas livrer le critère sans ta réponse.",
+     "gc.escalation_que_faire": "[{\"lettre\": \"a\", \"option\": \"Corriger par maintenance sur main\", \"consequence\": \"Le ticket reprend sur la réponse, après la fusion\", \"recommande\": true}, {\"lettre\": \"b\", \"option\": \"Retirer le critère du ticket\", \"consequence\": \"Le ticket est livré sans ce critère\", \"recommande\": false}]",
+     "gc.escalation_mayor_paged_at": "none",
+     "gc.escalation_response_at": "2026-10-22T09:20:00+02:00",
+     "gc.escalation_response_option": "a"
+    }
+   },
+   "ticket-analyses": {
+    "id": "ticket-analyses",
+    "title": "Analyses — courbes",
+    "status": "in_progress",
+    "issue_type": "task",
+    "labels": [
+     "approved-ticket-graph",
+     "delivery-plane"
+    ],
+    "created_at": "2026-10-22T08:00:00+02:00",
+    "updated_at": "2026-10-22T11:00:00+02:00",
+    "dependencies": [],
+    "description": "",
+    "metadata": {
+     "gc.graph_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+     "gc.dispatch_rig": "agent-factory",
+     "gc.flow.mark": "new-flow/v1",
+     "gc.flow.gate.dispatch": "{\"at\": \"2026-10-22T08:05:00+02:00\"}",
+     "gc.flow.models": "{\"author\": {\"at\": \"2026-10-22T08:06:00+02:00\", \"model\": \"claude-opus\"}}"
+    }
+   }
+  }
+ }
+}

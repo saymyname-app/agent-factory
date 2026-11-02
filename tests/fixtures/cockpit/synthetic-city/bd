@@ -93,6 +93,15 @@ def find(beads, bead_id):
     return bead
 
 
+def open_blockers(beads, bead):
+    dependency_ids = list(bead.get("waits_for") or [])
+    dependency_ids.extend(
+        dep.get("id") for dep in bead.get("dependencies") or []
+        if dep.get("dependency_type") == "blocks" and dep.get("id")
+    )
+    return [bead_id for bead_id in dependency_ids if find(beads, bead_id).get("status") != "closed"]
+
+
 def cmd_list(args):
     _, found = options(args, ("--status", "--title-contains", "--limit", "--has-metadata-key"))
     with tracker() as beads:
@@ -140,6 +149,9 @@ def cmd_update(args):
             notes = bead.get("notes") or ""
             bead["notes"] = (notes + "\n" if notes else "") + found["--append-notes"]
         if "--status" in found:
+            blockers = open_blockers(beads, bead) if found["--status"] == "closed" and "--force" not in found else []
+            if blockers:
+                fail("cannot close blocked issue %s: blocked by %s" % (bead["id"], ", ".join(blockers)))
             bead["status"] = found["--status"]
             if found["--status"] == "closed":
                 bead["closed_at"] = now_iso()

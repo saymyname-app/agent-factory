@@ -392,6 +392,9 @@ Pour une modification ordinaire du dépôt `agent-factory`, le Mayor lance :
 
 ```bash
 ./bin/factory-work-dispatch af-xxxxx
+./bin/factory-work-dispatch af-repair --technical-request af-convoi af-ticket
+# réparation déjà routée ou livrée : enregistrer le lien sans la redispatcher
+./bin/factory-work-dispatch af-repair --technical-request af-convoi af-ticket --link-only
 ```
 
 Cette porte choisit elle-même `factory-worker`, `mol-do-work` et
@@ -400,9 +403,12 @@ Cette porte choisit elle-même `factory-worker`, `mol-do-work` et
 pas un agent Gas City, et `bd.dog` ne fait que la maintenance Dolt. L'ouvrier
 Factory ne fixe aucun fournisseur dans son `agent.toml`; il prend donc celui
 que `provider-failover` a résolu pour `workspace` (Codex aujourd'hui, puis le
-repli configuré si nécessaire).
+repli configuré si nécessaire). `--technical-request` est l'entrée autorisée
+qui lie un défaut de l'usine au parcage exact qu'il répare ; la levée et la
+reprise restent ensuite la propriété de `convoy-advance`.
 
-Une seule session `factory-worker` peut être active. Son protocole réclame
+Au plus deux sessions `factory-worker`, chacune dans son worktree isolé,
+peuvent être actives sur ce rig. Leur protocole réclame
 chaque étape avec `gc hook --claim --json`, puis réclame immédiatement la
 suite du même groupe avant de se drainer. Ainsi le worktree, l'implémentation
 et l'ouverture de PR restent dans la même session logique; une cible de
@@ -413,7 +419,6 @@ choix, revenir sur le rôle, la porte et leur documentation : la politique de
 fournisseurs reste indépendante.
 
 ---
-
 ## `./bin/pr-autopilot` — fusion et réveil de livraison
 
 Toutes les trois minutes, ce robot sans modèle arme les PR éligibles, puis

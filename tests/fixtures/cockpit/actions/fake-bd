@@ -91,6 +91,9 @@ def cmd_update(args):
         elif token == "--append-notes":
             i += 1
             notes = (notes + "\n" + rest[i]) if notes else rest[i]
+        else:
+            sys.stderr.write("fake bd (cockpit-actions): unsupported update argument %s\n" % token)
+            sys.exit(1)
         i += 1
     bead["notes"] = notes
     _save(beads)

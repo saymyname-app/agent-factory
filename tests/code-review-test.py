@@ -51,6 +51,7 @@ TABLE = f"{TESTS}/criteria.json"
 COUNT_FILE = f"{TESTS}/test_count.py"
 COUNT_ID = f"{COUNT_FILE}::CountTest.test_count_is_shown"
 INTERNAL_FILE = f"{TESTS}/test_render_internal.py"
+APP = f"{FIXTURE}/app.py"
 RULES = "AGENTS.md"
 NOTE = "docs/tranche.md"
 
@@ -346,6 +347,15 @@ class CodeReviewTest(unittest.TestCase):
     def edit(self, bead_id, status):
         state = json.loads(self.tracker.read_text())
         state["beads"][bead_id]["status"] = status
+        self.tracker.write_text(json.dumps(state))
+
+    def forget_latest_judgement_contract(self):
+        """Make the last judgement look like one recorded before its contract was versioned."""
+        state = json.loads(self.tracker.read_text())
+        metadata = state["beads"][SLICE]["metadata"]
+        review = json.loads(metadata["gc.flow.code_review"])
+        review["rounds"][-1].pop("contract", None)
+        metadata["gc.flow.code_review"] = json.dumps(review)
         self.tracker.write_text(json.dumps(state))
 
     def commit_on(self, ticket, files, message=COMMIT_PROSE):
@@ -837,6 +847,7 @@ class CodeReviewTest(unittest.TestCase):
         self.responded({"F1.1": {"response": "fixed", "commit": tip}})
         self.settle()
         self.assertEqual({"verdict": "unfavorable", "commit": tip, "unsettled": ["F1.1"]}, self.review()["state"])
+        self.assertEqual("code-review-attribution/v2", self.review()["rounds"][-1]["contract"])
 
         again = self.settle()
 
@@ -844,6 +855,31 @@ class CodeReviewTest(unittest.TestCase):
         self.assertIn("tour de correction", again["waiting"][0]["reason"])
         self.assertEqual(2, len(self.launches()))
         self.assertEqual([], self.merge()["merged"])
+
+    def test_an_unfavorable_judgement_from_the_previous_contract_is_rejudged_once_at_the_same_tip(self):
+        self.finished_slice()
+        still = "le correctif n'affiche toujours pas le nombre"
+        self.reviewer({"findings": [CONTRADICTS]}, {"judgements": {"F1.1": still}}, "favorable")
+        self.settle()
+        tip = self.corrected({NOTE: "toujours pas de nombre\n"})
+        self.responded({"F1.1": {"response": "fixed", "commit": tip}})
+        self.settle()
+        self.assertEqual({"verdict": "unfavorable", "commit": tip, "unsettled": ["F1.1"]}, self.review()["state"])
+        self.state("stop-ticket", CONVOY, SLICE, "--reason", "still_refused", "--detail",
+                   "encore refusé après son tour de correction : revue de code (F1.1)")
+        self.forget_latest_judgement_contract()
+
+        settled = self.settle()
+
+        self.assertEqual([("judgement", tip)], [(entry["kind"], entry["commit"]) for entry in settled["launched"]])
+        rounds = self.review()["rounds"]
+        self.assertEqual(["review", "judgement", "judgement"], [round_["kind"] for round_ in rounds])
+        self.assertEqual("code-review-attribution/v2", rounds[1]["invalidated"]["contract"])
+        self.assertEqual("code-review-attribution/v2", rounds[2]["contract"])
+        self.assertEqual(3, len({round_["recorded_by"] for round_ in rounds}))
+        self.assertEqual({"verdict": "favorable", "commit": tip, "unsettled": []}, self.review()["state"])
+        self.assertIsNone(self.shown()["stop"])
+        self.assertEqual([], self.settle()["launched"])
 
     def test_a_judgement_left_unfavorable_and_overridden_is_reviewed_in_full_at_a_later_tip(self):
         # 22/10/2026, F and G1 of af-strhoy: every unsettled Blocking Finding
@@ -954,6 +990,57 @@ class CodeReviewTest(unittest.TestCase):
 
         scope = json.loads(self.brief_given(2))["scope"]
         self.assertEqual((first, [], {NOTE: [[1, 1]]}), (scope["from"], scope["unsettled"], scope["changed"]))
+
+    def test_a_contested_targeted_finding_is_rechecked_against_the_ticket_base(self):
+        # R1 (af-d6anqb, 29/10): an integration commit introduced a direct
+        # source read. The ticket only wrapped its result, so the changed
+        # line let a targeted review misattribute the inherited read to R1.
+        self.finished_slice()
+        inherited = {
+            "axis": "standards", "blocking": True,
+            "summary": f"{APP} lit encore la source directement.",
+            "citation": {"source": "repo_rule", "quote": RULE_LINE, "path": RULES},
+        }
+        self.reviewer("favorable", {"findings": [inherited]}, "favorable")
+        self.settle()
+
+        self.git("fetch", "-q", "origin")
+        self.git("checkout", "-q", "-B", "essai-integration", f"origin/{INTEGRATION}")
+        source = (self.repo / APP).read_text()
+        inherited_line = "        trace = source.read()  # lecture héritée\n"
+        (self.repo / APP).write_text(source.replace("        state = html.escape", inherited_line + "        state = html.escape"))
+        self.git("add", APP)
+        self.git("commit", "-q", "-m", "lecture héritée d'un autre ticket")
+        self.git("push", "-q", "origin", f"HEAD:{INTEGRATION}")
+        integration = self.git("rev-parse", "HEAD")
+
+        self.git("checkout", "-q", branch_of(SLICE))
+        self.git("merge", "-q", "--no-edit", f"origin/{INTEGRATION}")
+        wrapped_line = "        trace = waiting_on(source.read())  # enveloppe du ticket\n"
+        source = (self.repo / APP).read_text().replace(inherited_line, wrapped_line)
+        (self.repo / APP).write_text(source)
+        self.git("commit", "-q", "-am", "enveloppe la valeur héritée")
+        self.git("push", "-q", "origin", branch_of(SLICE))
+        tip = self.git("rev-parse", "HEAD")
+        line = source.splitlines().index(wrapped_line.rstrip("\n")) + 1
+        self.git("checkout", "-q", "--detach", self.base)
+        self.green(SLICE, tip)
+        self.finish(SLICE, tip)
+
+        inherited["location"] = {"path": APP, "line": line}
+        self.reviewer("favorable", {"findings": [inherited]}, "favorable")
+        self.settle()
+        self.assertEqual(["F2.1"], self.review()["state"]["unsettled"])
+        self.responded({"F2.1": {"response": "contested", "reason": "La lecture directe est déjà dans la base du ticket."}})
+
+        self.settle()
+
+        judgement = json.loads(self.brief_given(3))
+        reviewed_diff = judgement["reviewed_diff"]
+        self.assertEqual((integration, tip, {APP: [[line, line]]}),
+                         (reviewed_diff["base"], reviewed_diff["commit"], reviewed_diff["scope"]["changed"]))
+        self.assertIn(f"diff {integration}...{tip}", reviewed_diff["command"])
+        self.assertEqual({"verdict": "favorable", "commit": tip, "unsettled": []}, self.review()["state"])
 
     def test_the_first_review_of_a_ticket_is_complete_and_takes_no_targeted_scope(self):
         _, tip = self.finished_slice()

@@ -51,8 +51,10 @@ switching. The sealed result includes one `coverage` entry (`dataset`,
 Historical addresses remain in the request and round for proof checks
 after their products stop. Ticket and Outcome Evaluation share two host
 slots, with one active product per evaluation. Startup and shutdown count;
-failed cleanup retains the slot. Product readiness uses the same
-controller attestation and live socket check as Ticket Evaluation
+failed cleanup retains the slot. A valid launch record whose PID, process
+group, marked descendants and worktree are all gone no longer occupies a
+slot; an incomplete or unreadable record still does, fail-closed. Product
+readiness uses the same controller attestation and live socket check as Ticket Evaluation
 (`docs/TICKET_EVALUATION.md`, af-bjvd8z).
 
 ## Which datasets
@@ -184,9 +186,11 @@ contradiction.
 
 A stop is raised once to the operator through `bin/escalation-door benjamin`
 on the convoy, in French, and holds for its commit: nothing is launched
-again on it. An evaluation is **deferred**, not stopped, when the Evaluator
-would run on the supplier of an author while another declared supplier is
-available (`./bin/provider-failover` sets the role). When no other supplier
+again on it. An evaluation is **deferred**, not stopped, when the two host
+product slots are occupied, or when the Evaluator would run on the supplier
+of an author while another declared supplier is available
+(`./bin/provider-failover` sets the role). The next pass retries a deferral;
+it is never recorded as `outcome_evaluation_outage`. When no other supplier
 is available, or a supplier was not recorded, the evaluation runs and the
 record says so (`independence`).
 

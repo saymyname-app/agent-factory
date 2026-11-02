@@ -751,6 +751,8 @@ def settle(convoy: Convoy, settings: dict[str, Any]) -> dict[str, Any]:
         datasets = evaluated_datasets(convoy)
         try:
             environment = launch_products(convoy, commit, settings, dataset=datasets[0])
+        except Deferred:
+            raise
         except Refusal as exc:
             # The clean copy does not start: an outage, nothing can be observed.
             return stop_evaluation(convoy, commit, STOP_OUTAGE, str(exc))

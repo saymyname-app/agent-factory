@@ -1205,6 +1205,7 @@ copy. What it gives the cockpit to read:
 | settings and upkeep of the Factory (G2, af-npz9v1.20) | the real doors of the commit, each on what the launch holds: `provider-failover` (`COCKPIT_PROVIDER_FAILOVER_BIN`) works in the Factory tree of the launch (`$HOME/factory`, the page Usine's `COCKPIT_FACTORY_ROOT`: every file of the commit by a link, but `city.provider.toml` and `.gc/provider-state.json`, copied when the commit holds them), so a setting is read back where it was written; it reads no tmux session, and its reload is taken by the synthetic `gc`; `factory-maintain` (`COCKPIT_FACTORY_MAINTAIN_BIN`) works on throwaway Git repositories of the launch -- a clone of a bare origin (its `FACTORY_ROOT`) with a branch merged and pushed (`merged`) and one not pushed (`unpushed`), and under `$HOME/.local/share/agent-factory-runtime-worktrees` a worktree merged and pushed (`af-merged`, the candidate) and three it keeps: a local change (`af-modified`), a commit not pushed (`af-unpushed`, escalated on the tracker of the launch), work under way (`af-active`) --, never on the copy of the commit, whose refs are those of the repository it comes from; `gc` is the synthetic one and `gh` answers nothing, so no branch is proved merged by GitHub; `operator-config` (`COCKPIT_OPERATOR_CONFIG_BIN`) reads config/operator.toml of the commit |
 | silence of the main sources | said « Usine muette » after 20 s (`COCKPIT_SILENCE_ALERT_SECONDS`): a state that falls silent (home-stale, home-offline) is first seen as it is drawn |
 | local settings, secrets, notifications, heartbeat, project clones, Tailscale | none: a temporary HOME and no local settings file |
+| how long a check of a section of the page Usine stays current (G2, af-f8nlhr) | the five minutes of service, unless a dataset says `"usine_check_validity_seconds": <n>` (above 0): the configuration read then goes stale in seconds (`COCKPIT_VALIDITY_USINE_SECONDS`); anything else is refused |
 | a heartbeat (I, af-cp4fzd) | a dataset that says `"heartbeat": {"ping_url": "<http(s) address>", "interval_seconds": <n>}` gives the cockpit that address as its heartbeat secret, written in a private file of the temporary HOME (`COCKPIT_HEARTBEAT_URL_FILE`), at that pace (`COCKPIT_HEARTBEAT_INTERVAL_SECONDS`, the five minutes of service), ticked four times as often; anything else is refused |
 | Tailscale Serve in front of the cockpit | a dataset that says `"https_identity_proxy": true` puts a synthetic identity proxy in front of it (`tests/fixtures/cockpit/synthetic-city/identity_proxy.py`, af-npz9v1.22): HTTPS on 127.0.0.1 with a certificate made for the launch, its address and the authority to trust in the cockpit's environment (`COCKPIT_TRIAL_HTTPS_URL`, `COCKPIT_TRIAL_HTTPS_CA`), its origin and the address « Accès » gives the cockpit's own (`COCKPIT_ALLOWED_ORIGIN`, `COCKPIT_PUBLIC_URL`). Who connects is said in `X-Synthetic-Tailnet-Login`: without it, 403 (not on the tailnet), the refusal naming that header (I, af-cp4fzd); with it, the request goes to the cockpit alone with `Tailscale-User-Login` and `Tailscale-User-Name` set from it, every `Tailscale-User-*` the client sent removed. Benjamin's login is `synthetic@example.ts.net` (`COCKPIT_BENJAMIN_LOGIN`). Nothing of the tailnet is used |
 
@@ -1221,6 +1222,13 @@ une question et l’ordre `convoy-advance` mis en pause —, la porte des
 questions ne répondant jamais. On y refuse une proposition avec sa raison,
 on relance la session et l’ordre, et une réponse à la question expire, puis
 la source est relue.
+
+The result trials that exercise Essai and Avis (`result-ready`,
+`result-outage`, `result-repairing`) carry that proxy. Their tracker remains
+the launch's disposable `tracker.json`; no request, response or wording with
+apostrophes reaches the tracker or cockpit in service. The category-D control
+`python3 tests/cockpit-isolated-https-test.py` launches all three and reads
+them through the synthetic identity boundary.
 
 No controller and no tracker is started. A dataset that is not marked
 `"synthetic": true`, carries no `generated_at`, names no state, or whose
@@ -1383,6 +1391,13 @@ Beside the states of the screens, the profile declares `journal-demonstration`:
 the useful events of `journal-content` and the technical logs of
 `journal-logs` on one launch, so that the demonstration line of the Journal
 Fold (F, af-njwz8v) is observed on one cockpit; it is no state of a reference.
+It declares `run-demonstration` as well: a tracker as the commands of the flow
+write it, whose sessions have all ended -- `delivery-author-1` in two
+successive sessions, `delivery-author-2` at work at the same time, a ticket
+stopped, an unfavourable fidelity verdict, a refused check and a question to
+Benjamin without an answer -- so that the demonstration line of R2 (af-cifk1e)
+is observed on one cockpit, at `/runs/run?id=af-r2conv`; it is no state of a
+reference either.
 
 `/`, `/journal` and `/projet/notes` (the page of the project the six states
 of that screen are about) are served today; the other addresses are declared
@@ -1469,15 +1484,38 @@ or one of kind ralph, retry, task or check; the specs, scopes, finalizers
 and cleanups are the engine's plumbing): routed to `benjamin`, the lane
 Humain; a check, the lane Code; else the lane of the agent whose session
 claimed it -- the step's own `gc.session_name`, or that of its attempts
-(`gc.logical_bead_id`) --, its `agent_name` as the supervisor lists it, so a
-new session of the same agent keeps its lane and two agents of the same
-role keep one each. Its start is its first claim, its end its closing; an
+(`gc.logical_bead_id`) --, its `agent_name` as the supervisor lists it, or,
+once the supervisor no longer lists that session, as its session bead says
+it (`gc.session_id`, else `gc.session_name`; the tracker keeps those beads
+apart, read with `--include-ephemeral`; when that read fails, such a job is
+on a lane « Agent inconnu · sessions terminées illisibles », never on the
+lane « Agent non enregistré » of a session whose bead is gone). So a new session of
+the same agent keeps its lane -- the slot of a pool, `delivery-author-2`,
+whatever session works for it -- and two agents of the same role keep one
+each; the lane says its role and the model its session was started with
+(the `--model` of the session's command, else its provider), and when the
+last session it saw claimed its work (« Contexte · dernière session
+(HH:MM) »). R2 (af-cifk1e) found 84 lanes on
+the run of a convoy, one per ended session, before this. Its start is its first claim, its end its closing; an
 open job lasts up to now, and the clock moves only that horizon. Status:
 « Fusionné » (a ticket merged), « Abandonné » (every ticket withdrawn),
 « Terminé » (the root closed), « Ta décision » (a job of Benjamin open),
 « En cours »; a run ended in a success is ticked « ✓ », one ended without
 (« Abandonné », « Fermé » sans fusion) crossed « ✕ » and drawn muted. The
-lanes Humain and Code are drawn even without a job. When a source the run
+lanes Humain and Code are drawn even without a job.
+
+Each job says the state it recorded, and only a success is ticked: a step
+or a check whose `gc.outcome` is pass, or a fact of a ticket that is one
+(its tests proven, a favourable fidelity, its merge) « ✓ »; a refusal (an
+outcome fail, an unfavourable fidelity) « ✕ … refusé »; the stop of a
+ticket (`gc.flow.stop`) « ■ … arrêté »; a question to Benjamin he has not
+answered « ○ … en attente »; a job open « ● … en cours »; any other closed
+job, that recorded no outcome, « – … terminé ». Under its name a job names
+the ticket it serves -- the label of the ticket in its graph
+(`gc.ticket_id`), else its title: the ticket its workflow was run on, or
+the one whose facts it shows; on the run of a ticket of the old flow, that
+ticket --, then its state, then its duration. When a
+source the run
 is drawn from -- its workflow beads (`runs`) or the supervisor's sessions
 (`sessions`) -- is no longer current, the run says « Lecture périmée » with
 the moment it was last observed.
@@ -1713,12 +1751,85 @@ writes nothing. Viewing the page never checks a section again: a check older
 than five minutes (`COCKPIT_VALIDITY_USINE_SECONDS`) is kept, greyed
 « périmé, vu il y a … », until its « Revérifier maintenant ». Then come the health zone, and the panels « Suspension, reprise et
 arrêt » (with the stop and access zones the home already had) and
-« Nettoyer les espaces inutilisés », whose commands stay disabled until
-their tickets wire them (G2, H); the role detail's « Configurer » too.
+« Nettoyer les espaces inutilisés », wired by G2 (below); the stop
+commands stay disabled until H wires them.
 Nothing on the page is a value of the dataset: in an isolated launch the
 machine and the configuration are those of the tree launched. Tests:
 `tests/cockpit-factory-page-test.py`, and the criterion tests
 `tests/cockpit-criteria/commands/factory-*-test.py`.
+
+## « Usine »: settings and cleaning by their doors (G2, af-f8nlhr)
+
+Spec af-fgcw0d, user stories 163, 164, 166 and 174, and the choices
+« Usine » and « Maintenance » of af-2zseit. Each gesture goes through an
+existing door, never a write of a file by the cockpit.
+
+**The setting of a role** (`lib/cockpit/factory/settings.py`). The one
+setting a door supports is which provider of the role's own chain its next
+sessions start on, the others its fallbacks: every provider of that chain
+(`config/provider-policy.json`) passed the trial of adoption of the role,
+and `bin/provider-failover set --action chain` orders it
+(`.gc/provider-state.json`, read back by the configuration as `orders`).
+In the role detail, « Configurer » opens the editor
+(`/usine?role=<key>&reglage=modifier`): the provider in front -- the
+providers of the role's order, then the other providers of the same access
+(read only or not), each said not tried for the role --, the effort
+(« Effort : … », the current one that of the provider in front) and the
+fallbacks (« Ajouter en secours : … », the providers of the same access its
+order does not hold). « Voir la portée »
+(`reglage=portee&principal=&effort=&secours=`) shows « Valeur actuelle », « Nouvelle valeur », « Portée » (the role, new
+sessions only: the sessions open keep their provider) and « Conséquences »,
+then:
+
+- « Appliquer ce changement » for a provider of the chain:
+  `POST /api/actions/regler` `{"role", "principal", "confirm": true}` runs
+  the door, takes the door's own reading of the role from its answer, and
+  refuses as uncertain a reading that does not show the setting; the
+  configuration is checked again and the role says « Réglage appliqué et
+  relu par la porte à … » with the provider read back;
+- « Préparer ce changement » for any other change -- a provider not tried
+  for the role in front or as a fallback, another effort (no door sets the
+  effort of a provider): `POST /api/actions/preparer_reglage`
+  `{"role", "principal", "effort", "secours", "confirm": true}` creates a
+  proposal of class decision through `bin/proposal-door create` (« Passer
+  le rôle … sur …, à l'effort …, avec … en secours »), which waits in « Pour
+  moi »; nothing of the role changes, and the page says so.
+
+« Configurer » is disabled, with its reason, while the configuration read
+is unreadable, stale (older than `COCKPIT_VALIDITY_USINE_SECONDS`), or after
+a setting of that role had an uncertain outcome (its door did not answer
+in `COCKPIT_ACTION_TIMEOUT_SECONDS`, 504) until « Revérifier maintenant » of
+« Agents dans le workflow » read it again; the same gesture sent anyway is
+refused (409) with that reason, before any door. A proposal reads another
+source: after its door did not answer, none for that role goes before the
+tracker -- what waits in « Pour moi » -- was read again (the cockpit reads
+it at once in the background); reading the configuration lifts nothing.
+Then, if a proposal with the same words waits, it was recorded: it is said
+« Proposition déjà enregistrée » and never prepared twice.
+
+**The cleaning** (`lib/cockpit/factory/cleanup.py`). « Examiner le
+périmètre » (`/usine?nettoyage=apercu`) runs
+`bin/factory-maintain clean-worktrees --dry-run`: the candidates -- pushed,
+no local change, and either merged or, not merged, untouched past the
+door's idle days (seven): the page says which --, then what is kept and why,
+as the door says it (`local-changes`, `not-merged` -- work under way --,
+`unpushed` -- commits that exist only here, escalated, never removed; when
+the escalation door failed, the door says « not escalated » and the page
+that nobody was told --, `detached`), each worktree named in the folded
+details with its commit. « Confirmer N candidat(s) » sends
+`POST /api/actions/nettoyer` `{"perimetre": [{"name", "sha"}], "confirm":
+true}`: the scope is read again first; if its candidates are no longer
+exactly those confirmed -- one gone or come, or another worktree at the same
+name --, nothing runs (409) and a new preview is asked; otherwise the door
+runs on those worktrees only, each at its commit (`--only <name>@<sha>`), so
+one that became a candidate or was replaced in between is not touched. The
+result, one line per element (removed, not removed, kept with its reason),
+stays on the page until the next cleaning. The confirmation is refused
+(409), and goes off on the page with its reason, when no preview was read
+or the one read is stale (older than `COCKPIT_VALIDITY_USINE_SECONDS`, as a
+check of a section); a cleaning whose door did not answer blocks the next
+one until a new preview. Tests: the criterion tests
+`tests/cockpit-criteria/commands/factory-{configure,configure-proposal,configure-stale,clean}-test.py`.
 
 ## « Projets » in Panorama (direct build, 2026-10-19; Prototype Fold E, af-8rbceu)
 
@@ -1760,13 +1871,32 @@ by its gain (« Voir la preuve : <gain> »).
   repository and file it comes from and the date of its last change. A step
   « En cours » whose chantier is closed (the Specs that target it, by
   `planning_run_target`, and the convoys published from them, by
-  `gc.spec_id`, all closed), or one of whose results is merged (a convoy
+  `gc.spec_id`, all closed), one of whose results is merged (a convoy
   that records its promotion, or whose tickets all recorded the merge of
   their PR, `gc.merge_commit`; one PR merged among tickets still at work is
-  a chantier under way), is flagged « Incohérent »
+  a chantier under way), or accepted (Benjamin's recorded answer on one of
+  its convoys, read as the historique reads it, `stage._accepted`; R3,
+  af-plu8kn), is flagged « Incohérent »
   (`roadmap.roadmap_rows`; the Specs that target a step are read open or
-  closed, `source.read_targeting_beads`). A Spec closed without successor,
-  its reason recorded, reaches the historique the same way.
+  closed, `source.read_targeting_beads`). A step « En cours » that no Spec
+  targets is flagged « Aucun chantier relié » (R3): nothing in the tracker
+  vouches for it. A step « Terminé » one of whose `done_requires` is not
+  done is flagged « Incohérent » and said « Non acquise » (R5, af-3r1tmr);
+  a step « En cours » that still waits on such a step is not flagged for its
+  own chantier ended, but it is not the current step either. While the
+  chantiers are not read (below), no step is flagged from the tracker. A
+  Spec closed without successor, its reason recorded, reaches the
+  historique the same way.
+- **The current step** (`roadmap.current_step`, R3), the heading of
+  « Roadmap »: the first step « En cours » without a flag whose chantier
+  has not ended (closed, merged or accepted); when no step is in progress,
+  the first « À venir »; none when every step in progress carries a
+  reserve -- a step flagged is never headed as current. The line
+  « Roadmap : … » of a project (the zone Projets of the overview, the foot
+  of its page; `depots.apply_to_projects`) names that step, else the first
+  step in progress with its reserve beside it (« Roadmap : <step> ·
+  <reserve> »), else the first to do, else -- a roadmap all done -- its
+  last step (`roadmap.presented_step`).
 - **Chantiers not read.** While the tracker is being read the page says so
   (« Lecture des chantiers en cours »), and « Lecture des chantiers
   impossible » when it fails; the counts are « — · inconnu », never 0, and
@@ -1778,6 +1908,9 @@ by its gain (« Voir la preuve : <gain> »).
 Tests: `tests/cockpit-home-projects-test.py` (`GET /projets` and the page of
 a project, through the running process), and the criterion tests of E
 (`tests/cockpit-criteria/commands/projects-{release,roadmap,recette}-test.py`).
+The flags and the current step of R3 are proven in process by
+`tests/cockpit-roadmap-rows-test.py`, their transmission to the launched
+cockpit by `tests/cockpit-criteria/commands/projects-roadmap-unlinked-test.py`.
 
 ## « Journal » in Panorama (F, af-njwz8v: the Prototype Fold of the Journal reference)
 

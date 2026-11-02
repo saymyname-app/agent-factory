@@ -896,6 +896,21 @@ class OutcomeEvaluationTest(Harness):
         self.assertTrue(shown["roles"]["same_provider"])
         self.assertIn("même fournisseur qu'un auteur (anthropic)", shown["independence"])
 
+    def test_full_host_product_capacity_defers_without_stopping_the_evaluation(self):
+        self.verified()
+        occupied = Path(self.env["TICKET_EVALUATION_STATE_DIR"])
+        occupied.mkdir()
+        for number in (1, 2):
+            (occupied / f"product-{number}.json").write_text("{}")
+
+        answer = self.settle()
+
+        self.assertEqual("deferred", answer["action"])
+        self.assertIn("capacité des produits d'évaluation atteinte", answer["reason"])
+        shown = self.outcome()
+        self.assertEqual((None, None, []), (shown["stop"], shown["request"], shown["rounds"]))
+        self.assertEqual(([], []), (self.calls(), self.alive()))
+
     def test_evaluation_without_result_is_sent_once_more_then_stopped_and_raised_once(self):
         commit = self.verified()
         self.settings(timeout_seconds=0)

@@ -468,6 +468,7 @@ class PrototypeFoldPatchTest(FoldHarness):
     def test_added_repair_needs_no_edge_to_a_prototype_fold_already_delivered(self):
         # A repair written at the end of the Spec restores an interface story
         # once the Fold is merged: there is nothing left to wait for.
+        self.state_tool("close-ticket", self.convoy, self.ids["T1"], "--commit", "a" * 40, "--file", str(GATE_REPORT))
         self.state_tool("close-ticket", self.convoy, self.ids["T2"], "--commit", "a" * 40, "--file", str(GATE_REPORT))
         draft = self.conformant()
         draft["tickets"] = [copy.deepcopy(REPAIR)]

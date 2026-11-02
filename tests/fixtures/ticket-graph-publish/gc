@@ -58,6 +58,11 @@ def coerce(value):
     return value
 
 
+def open_blockers(beads, bead):
+    return [dep_id for dep_id in bead.get("waits_for", [])
+            if beads.get(dep_id, {}).get("status", "open") != "closed"]
+
+
 if command[:1] == ["bd"] and os.environ.get("TICKET_GRAPH_BD_STATE"):
     state_path = Path(os.environ["TICKET_GRAPH_BD_STATE"])
     state = json.loads(state_path.read_text(encoding="utf-8"))
@@ -83,6 +88,10 @@ if command[:1] == ["bd"] and os.environ.get("TICKET_GRAPH_BD_STATE"):
         print(json.dumps({"id": bead_id, "title": command[2], "status": "open"}))
         raise SystemExit(0)
     if command[1:2] == ["close"] and len(command) == 5 and command[2] in beads and command[3] == "--reason":
+        blockers = open_blockers(beads, beads[command[2]])
+        if blockers:
+            print(f"fake gc: cannot close blocked issue {command[2]}: blocked by {', '.join(blockers)}", file=sys.stderr)
+            raise SystemExit(1)
         beads[command[2]]["status"] = "closed"
         state_path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
         print(json.dumps([{"id": command[2], "status": "closed"}]))
@@ -98,6 +107,10 @@ if command[:1] == ["bd"] and os.environ.get("TICKET_GRAPH_BD_STATE"):
             raise SystemExit(2)
         status = [value for flag, value in zip(rest[::2], rest[1::2]) if flag == "--status"]
         if status:
+            blockers = open_blockers(beads, beads[command[2]]) if status[-1] == "closed" else []
+            if blockers:
+                print(f"fake gc: cannot close blocked issue {command[2]}: blocked by {', '.join(blockers)}", file=sys.stderr)
+                raise SystemExit(1)
             beads[command[2]]["status"] = status[-1]
         for entry in (value for flag, value in zip(rest[::2], rest[1::2]) if flag == "--set-metadata"):
             key, sep, value = entry.partition("=")

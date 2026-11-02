@@ -140,6 +140,13 @@ exit 0
 STUB
 chmod +x "$TMP/bin/gh"
 
+cat > "$TMP/bin/factory-observe" <<STUB
+#!/usr/bin/env bash
+printf 'factory-observe %s\n' "\$*" >> "$CALLS"
+printf '{"ok":true,"action":"none"}\n'
+STUB
+chmod +x "$TMP/bin/factory-observe"
+
 export PATH="$TMP/bin:$PATH"
 # sandbox_init pointed GC_BIN/GH_BIN at its own generic fakes in
 # $SANDBOX_STUB_BIN; bin/escalation-door and bin/factory-watchdog resolve
@@ -149,6 +156,7 @@ export GC_BIN="$TMP/bin/gc"
 export GH_BIN="$TMP/bin/gh"
 export FACTORY_GUARD_NOW=$NOW
 export FACTORY_WATCHDOG_REPO="acme/factory-hq"
+export FACTORY_WATCHDOG_OBSERVE_BIN="$TMP/bin/factory-observe"
 
 watchdog() { FACTORY_ROOT="$TMP/city" "$WATCHDOG" "$@" 2>&1 || true; }
 mails()   { grep -c '^mail send' "$MAIL" || true; }
@@ -159,6 +167,7 @@ reset_logs() { : > "$CALLS"; : > "$MAIL"; }
 out=$(watchdog)
 grep -q "quiet — nothing aged past its threshold" <<<"$out" || { echo "$out" >&2; fail "a quiet run was not reported quiet"; }
 [ "$(mails)" = "0" ] || fail "a quiet run must not send mail"
+grep -q '^factory-observe live$' "$CALLS" || fail "the existing watchdog order did not run live observation"
 
 # 2. an aged human gate is paged, and throttled on immediate re-run ----------
 jq -n --arg c "$(iso $((NOW - 3000)))" '[{"id":"af-oihx","status":"open","await_type":"human","created_at":$c,"description":"Ad-hoc gate blocking af-u8id.4"}]' > "$GATES"

@@ -8,11 +8,13 @@ was written."""
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -51,6 +53,7 @@ class ConvoyCloseTest(unittest.TestCase):
             "CONVOY_STATE_FAKE_TRACKER": str(self.tracker),
             "CONVOY_STATE_FAKE_WRITE_LOG": str(self.write_log),
             "CONVOY_STATE_LOCK_DIR": str(self.tmp / "locks"),
+            "CONVOY_ADVANCE_LOCK_DIR": str(self.tmp / "locks"),
         }
         self.tracker.write_text(json.dumps({"beads": {
             CONVOY: {"title": "convoi d'essai", "status": "open", "issue_type": "convoy",
@@ -244,6 +247,22 @@ class ConvoyCloseTest(unittest.TestCase):
         self.assertEqual(("abandoned", REASON), (shown["closed"]["how"], shown["closed"]["said"]))
         self.assertIsNone(shown["promotion"])
         self.assertEqual("open", self.bead(T1)["status"])
+
+    def test_close_convoy_waits_for_a_running_advance_pass(self):
+        self.judged(ABANDONED)
+        lock_dir = Path(self.env["CONVOY_ADVANCE_LOCK_DIR"])
+        lock_dir.mkdir(exist_ok=True)
+        with (lock_dir / "agent-factory-convoy-advance.lock").open("w") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            proc = subprocess.Popen((str(TOOL), "close-convoy", CONVOY), env=self.env,
+                                    text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            time.sleep(2)
+            self.assertIsNone(proc.poll(), "close-convoy raced a running advance pass")
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+            stdout, stderr = proc.communicate(timeout=5)
+
+        self.assertEqual(0, proc.returncode, stdout + stderr)
+        self.assertEqual("closed", self.bead()["status"])
 
     def test_a_convoy_without_a_final_answer_does_not_close(self):
         for answers in ((), (FINDINGS,)):
