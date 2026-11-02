@@ -17,14 +17,24 @@ and 8). Not a test file: the criterion test files of H load it.
       reassigned_on_resume: {ticket: session}, who holds it once resumed,
           when it is not the session that held it;
       vanishes_when_drained: [ticket], gone from the tracker by then;
+      released_when_drained: [ticket], back to open and held by no one by
+          then: its session left without a durable point;
+      released_on_force_stop: [ticket], held by no one once its session is
+          stopped by force;
+      idle: [{"ticket", "title", "status", "holder"}], tickets of the
+          tracker no session at work holds: no work in flight;
       asked_minutes_ago: a stop asked that long before the launch, still
           under way, the sessions silent since;
       missing_after_restart: [session], not back once the host restarted;
-      writes: where it records, one JSON per line, each write it receives.
+      writes: where it records, one JSON per line, each write it receives;
+      tracker: where it keeps a copy of the tracker of the launch, as it
+          changes.
 
   `host_restarted_during_stop` is the one the launch recipe already reads.
 - `written`: those writes, the only way to know what the cockpit asked of
   the supervisor: a complete stop is a write too.
+- `holder`: who the tracker of the launch says holds a ticket, as last
+  copied.
 - `said`: the page as served, on one line, what a closed details holds
   included; the walks in a headless Chromium are `pour_moi.walk`.
 
@@ -51,7 +61,8 @@ WATCHED_SECONDS = 6
 
 
 def serve_stop(tree, base: str, stop: dict, *, restarted: bool = False) -> tuple[str, Path]:
-    """(the address of the cockpit, the file of the supervisor's writes):
+    """(the address of the cockpit, the file of the supervisor's writes; the
+    copy of its tracker is beside it, `tracker_of`):
     the cockpit the launcher of the profile starts from a dataset of the case
     declared in the profile at a commit of its own, on top of the others:
     the dataset `base` of the profile, with the supervisor `stop`."""
@@ -63,7 +74,7 @@ def serve_stop(tree, base: str, stop: dict, *, restarted: bool = False) -> tuple
         name = f"usine-arret-{tree.stops}"
     writes = Path(tree.work) / f"{name}-writes.jsonl"
     dataset["ui"] = dict(dataset["ui"], id=name)
-    dataset["stop_supervisor"] = dict(stop, writes=str(writes))
+    dataset["stop_supervisor"] = dict(stop, writes=str(writes), tracker=str(tracker_of(writes)))
     if restarted:
         dataset["host_restarted_during_stop"] = True
     path = Path("config") / "cockpit-datasets" / f"{name}.json"
@@ -86,6 +97,23 @@ def written(writes: Path) -> list[tuple]:
         path = re.sub(r"^/v0/city/[^/]+", "", write["path"])
         found.append((write["method"], path, write.get("body")))
     return found
+
+
+def tracker_of(writes: Path) -> Path:
+    """Where the supervisor of `serve_stop` copies its tracker."""
+    return writes.with_name(writes.name.replace("-writes.jsonl", "-tracker.json"))
+
+
+def holder(writes: Path, ticket: str) -> str | None:
+    """Who the tracker of the launch served with `writes` says holds
+    `ticket`, as the Factory records it (`gc.session_name`): None when no one
+    does or the ticket is gone."""
+    copy = tracker_of(writes)
+    assert copy.exists(), f"the supervisor kept no copy of its tracker at {copy}"
+    for bead in json.loads(copy.read_text(encoding="utf-8")):
+        if bead.get("id") == ticket:
+            return (bead.get("metadata") or {}).get("gc.session_name") or None
+    return None
 
 
 def said(address: str) -> str:

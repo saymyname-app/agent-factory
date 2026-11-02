@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from home_destination import LaunchTree  # noqa: E402
 from usine_arret import (  # noqa: E402
-    Operator, PAGE, requests_of, said_until, serve_stop, stays, visible_text, wait_for, walk, written,
+    Operator, PAGE, holder, requests_of, said_until, serve_stop, stays, visible_text, wait_for, walk, written,
 )
 
 AUTHOR = {"session": "auteur-recus", "role": "Auteur", "ticket": "tk-recus", "title": "Trier les reçus du mois"}
@@ -65,8 +65,9 @@ class FactoryStopBlocked(unittest.TestCase):
             self.assertIn("Aucune autorisation d’éteindre", text, f"the panel leaves it open: « {text} »")
         self.assertEqual([], written(writes), "the supervisor was asked something without a decision")
 
-    def test_the_forced_stop_benjamin_decides_keeps_the_assignments_for_the_resume(self):
-        address, writes = serve_stop(self.tree, "factory-blocked", {"work": [AUTHOR], "asked_minutes_ago": 31})
+    def forced(self, address: str, writes) -> str:
+        """Benjamin's decision taken on the home page: the page Usine once the
+        stop is said forced."""
         wait_for(lambda: requests_of(address), lambda got: bool(blocked(got)), 25)
         steps = [{"click": NOT_MOVING}, {"click": FORCE}, {"click": "Confirmer", "wait": 4000}]
         found = walk(address, steps)["steps"]
@@ -74,15 +75,33 @@ class FactoryStopBlocked(unittest.TestCase):
             self.assertLess(index, len(found), f"the walk stopped before {step}: {found}")
             self.assertTrue(found[index]["found"], f"no control {step}: {visible_text(found[index]['page'])}")
         self.assertEqual([STOPPED_SESSION], written(writes), "not the session held, or not it alone")
-
         text = said_until(address, "Arrêt forcé")
         self.assertIn("Arrêt forcé", text, f"the forced stop is not said: « {text} »")
-        self.assertRegex(text, rf"{AUTHOR['title']}[^.]*(gardé|affecté)", f"the assignment is not kept: « {text} »")
+        return text
+
+    def test_the_forced_stop_benjamin_decides_keeps_the_assignments_for_the_resume(self):
+        address, writes = serve_stop(self.tree, "factory-blocked", {"work": [AUTHOR], "asked_minutes_ago": 31})
+        self.forced(address, writes)
+        text = said_until(address, "affectation gardée")
+        self.assertRegex(text, rf"{AUTHOR['title']}[^.]*affectation gardée", f"the assignment is not kept: « {text} »")
+        self.assertEqual(AUTHOR["session"], holder(writes, AUTHOR["ticket"]),
+                         "the page says the assignment kept, the tracker does not")
 
         walked = walk(address, [{"click": "Redémarrer"}], path=PAGE)["steps"]
         self.assertTrue(walked and walked[0]["found"], f"no control « Redémarrer »: {walked}")
         resumed = said_until(address, "Reprise vérifiée à")
         self.assertRegex(resumed, r"Reprise vérifiée à \d{2}:\d{2}", f"the work is not back as it was: « {resumed} »")
+
+    def test_an_assignment_the_tracker_lost_at_the_forced_stop_is_said_lost(self):
+        address, writes = serve_stop(self.tree, "factory-blocked", {"work": [AUTHOR], "asked_minutes_ago": 31,
+                                                                    "released_on_force_stop": [AUTHOR["ticket"]]})
+        self.forced(address, writes)
+        text = said_until(address, "affectation perdue")
+        self.assertRegex(text, rf"{AUTHOR['title']}[^.]*affectation perdue", f"the loss is not said: « {text} »")
+        self.assertIsNone(holder(writes, AUTHOR["ticket"]), "the tracker kept the assignment")
+        for text in stays(address):
+            self.assertNotRegex(text, rf"{AUTHOR['title']}[^.]*affectation gardée",
+                                f"an assignment said kept that the tracker lost: « {text} »")
 
     def test_no_forced_stop_before_the_thirty_minutes(self):
         address, writes = serve_stop(self.tree, "factory-blocked", {"work": [AUTHOR], "asked_minutes_ago": 10})

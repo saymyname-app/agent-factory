@@ -16,6 +16,7 @@ asked, or if a resume is said verified without a comparison.
 
 from __future__ import annotations
 
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -33,6 +34,9 @@ REVIEWER = {"session": "relecteur-notes", "role": "Relecteur", "ticket": "tk-not
 ASK = {"click": "Demander la suspension"}
 CONFIRM = {"click": "Confirmer"}
 RESTART = {"click": "Redémarrer"}
+# A ticket of the tracker no session at work holds: its holder sleeps.
+IDLE = {"ticket": "tk-archives", "title": "Ranger les archives du trimestre", "status": "in_progress",
+        "holder": "auteur-endormi"}
 SUSPENDED_WRITE = ("PATCH", "", {"suspended": True})
 RESUMED_WRITE = ("PATCH", "", {"suspended": False})
 
@@ -113,6 +117,37 @@ class FactoryStop(unittest.TestCase):
         self.assertIn(AUTHOR["title"], text, f"the work lost is not named: « {text} »")
         self.assertNotIn("Suspension confirmée", text, "confirmed though a ticket of the photo is gone")
 
+    def test_a_session_gone_without_its_ticket_held_has_no_point_of_resuming(self):
+        # The author leaves, but its ticket is back to open, held by no one:
+        # a session gone is no durable point, the tracker has to say it.
+        address, _ = serve_stop(self.tree, "health-content", {
+            "work": [AUTHOR, REVIEWER], "drains_in_seconds": {"relecteur-notes": 1, "auteur-recus": 1},
+            "released_when_drained": ["tk-recus"]})
+        self.walked(address, [ASK, CONFIRM])
+        text = said_until(address, "Suspension à vérifier")
+        self.assertIn("Suspension à vérifier", text, f"the work without a point is not said: « {text} »")
+        self.assertIn("Relecteur : point conservé", text, f"the review kept its point: « {text} »")
+        self.assertNotIn("Auteur : point conservé", text, f"a point said kept that the tracker lost: « {text} »")
+        self.assertIn(AUTHOR["title"], text, f"the work without a point is not named: « {text} »")
+        for text in stays(address):
+            self.assertNotIn("Suspension confirmée", text, "confirmed though a session left no durable point")
+
+    def test_a_ticket_no_session_works_on_is_no_gap_at_the_resume(self):
+        address, writes = serve_stop(self.tree, "health-content", {
+            "work": [AUTHOR, REVIEWER], "drains_in_seconds": {"relecteur-notes": 1, "auteur-recus": 1},
+            "idle": [IDLE]})
+        [before] = self.walked(address, [ASK])
+        self.assertNotIn(IDLE["title"], visible_text(before), "a ticket no session works on is said in flight")
+        self.walked(address, [ASK, CONFIRM])
+        suspended = said_until(address, "Suspension confirmée")
+        self.assertIn("2 travaux retrouvés, aucun écart", suspended, f"not the work in flight: « {suspended} »")
+        self.walked(address, [RESTART])
+        resumed = said_until(address, "Reprise vérifiée à")
+        self.assertRegex(resumed, r"Reprise vérifiée à \d{2}:\d{2}",
+                         f"a ticket no session held before is taken for a gap: « {resumed} »")
+        self.assertNotIn("Reprise avec écarts", resumed)
+        self.assertEqual([SUSPENDED_WRITE, RESUMED_WRITE], written(writes))
+
     def test_a_resume_that_changed_a_holder_lists_its_gap_and_is_not_verified(self):
         address, writes = serve_stop(self.tree, "health-content", {
             "work": [AUTHOR, REVIEWER], "drains_in_seconds": {"relecteur-notes": 1, "auteur-recus": 1},
@@ -122,8 +157,8 @@ class FactoryStop(unittest.TestCase):
         self.walked(address, [RESTART])
         text = said_until(address, "Reprise avec écarts")
         self.assertIn("Reprise avec écarts", text, f"the gap is not said: « {text} »")
-        self.assertIn(AUTHOR["title"], text, f"the gap does not name the work: « {text} »")
-        self.assertNotIn(REVIEWER["title"] + " : écart", text, "a work resumed as it was is said to be a gap")
+        gaps = re.findall(r"Écarts : ([^.]*)\.", text)
+        self.assertEqual([AUTHOR["title"]], gaps, f"the gaps are not the work whose holder changed: « {text} »")
         self.assertNotRegex(text, r"Reprise vérifiée à \d", "verified with a holder changed")
         self.assertEqual([SUSPENDED_WRITE, RESUMED_WRITE], written(writes))
 
