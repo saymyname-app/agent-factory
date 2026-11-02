@@ -57,7 +57,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   façon dont il finit ; tout délai vient d'une mesure.
 - Contrôle : `python3 tests/bounded-process-test.py`,
   `python3 tests/project-launch-test.py`, `python3 tests/test-budgets-test.py`,
-  `bash tests/agent-wait-polling-test.sh`
+  `bash tests/agent-wait-polling-test.sh`,
+  `python3 tests/factory-observe-test.py LiveObservationTest.test_a_hung_mail_is_bounded_and_remains_pending`
   — complet pour les commandes Python bornées de `bin/`, `lib/` et
   `tests/cockpit-criteria/` : un seul lanceur (`lib/bounded_process.py`)
   ouvre une session et tue son groupe au délai ; le lint refuse toute
@@ -71,12 +72,14 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 - Occurrences : #624, #628, #629, #630, #631, #636, #647, #657, #658, #661,
   #667, #694, #696, #705, #706, #708, #710, #713, #721 ; copies orphelines du
   22/10 (sans PR) ; af-kky570 ; af-npz9v1.46 ; af-npz9v1.26 ; af-30zwwu ;
-  af-95zqgx.
+  af-95zqgx ; af-d3dj4j.
 - Ouvertes : les invocations directes antérieures hors des occurrences de
   l'étude B sont nommées une par une, avec leur date et leur motif, dans
   `config/bounded-process-exceptions.tsv` ; une vingtaine de délais écrits à
-  la main restent à l'étude C. Aucune autre invocation Python bornée ni
-  aucun lanceur de produit sans propriétaire n'est connu hors du contrôle.
+  la main restent à l'étude C ; les notifications sans budget de
+  `mayor-context-guard` et `idle-ready-work-wake` sont tracées par af-bl2jyj
+  et af-p4rdr7. Aucune autre invocation Python bornée ni aucun lanceur de
+  produit sans propriétaire n'est connu hors du contrôle.
 
 ## I — Impasse d'état : un arrêt ou une attente sans sortie codée
 
