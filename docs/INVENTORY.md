@@ -398,7 +398,7 @@ skip` comment there for why) and so do not appear in the live list or here.
 | `gate-sweep` | ops | pack order; retriggered on `condition` (open gates > 0) instead of a 30s poll (O13) |
 | `jsonl-export` | ops | pack order; off-box backup export, kept |
 | `nudge-on-route` | ops | pack order; event-driven, kept |
-| `order-tracking-sweep` | ops | pack order; interval tuned to 10m (O13); closed tracking history kept 6h instead of the 7d default (af-hpux0u, af-260e1x), and exec timeout raised to a measured 20m after contended scans of the 24h set repeatedly exhausted 10m (af-8x3vwg, af-260e1x; `city.toml`) |
+| `order-tracking-sweep` | ops | pack order; 30m interval exceeds its measured 20m execution bound so Gas City's 2m tracking watchdog cannot expose overlapping scans (af-w7oqex), reducing the maximum scan rate from six per hour to two; closed tracking history stays 6h instead of the 7d default (af-hpux0u, af-260e1x; `city.toml`) |
 | `orphan-sweep` | ops | pack order; kept |
 | `reaper` | ops | pack order; kept |
 | `spawn-storm-detect` | ops | pack order; kept |
