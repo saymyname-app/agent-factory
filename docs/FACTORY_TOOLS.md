@@ -134,6 +134,15 @@ séparément : sur un convoi de 20 tickets, cette amplification épuisait les
 180 secondes de l'order avant que le watchdog puisse rendre son verdict
 (`af-1tv5yy`).
 
+Le watchdog possède aussi son groupe de processus et un budget interne de
+150 secondes (`FACTORY_WATCHDOG_BUDGET_SECONDS`, pour le test déterministe),
+mesuré contre un passage live de 47 secondes le 02/11/2026. Il garde ainsi
+plus de trois fois cette durée tout en laissant 30 secondes au contrôleur de
+l'order pour recueillir une erreur précise et tuer le groupe avant sa propre
+limite de 180 secondes. Un enfant bloqué rend donc `factory-watchdog: internal
+budget exceeded` et le code 2 ; il ne survit pas au passage et ne devient pas
+un vague `context deadline exceeded` du contrôleur (`af-ll4hju`).
+
 **Observe et page seulement** (ADR-0016 §7) : il ne résout jamais une porte,
 ne fusionne ni ne ferme jamais une PR, et ne rouvre jamais un workflow. Chaque
 signalement devient au plus un mail au Mayor (`gc mail send mayor --notify`,

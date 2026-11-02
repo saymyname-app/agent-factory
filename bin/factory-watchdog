@@ -79,6 +79,21 @@ TICKET_MINUTES="${FACTORY_WATCHDOG_TICKET_MINUTES:-30}"
 CONVOY_STATE="${FACTORY_WATCHDOG_CONVOY_STATE_BIN:-$(dirname "${BASH_SOURCE[0]}")/convoy-state}"
 OPERATOR_CONFIG="${OPERATOR_CONFIG_BIN:-$(dirname "${BASH_SOURCE[0]}")/operator-config}"
 OBSERVE_BIN="${FACTORY_WATCHDOG_OBSERVE_BIN:-$(dirname "${BASH_SOURCE[0]}")/factory-observe}"
+BUDGET_SECONDS="${FACTORY_WATCHDOG_BUDGET_SECONDS:-150}"
+
+# Own the whole process group below Gas City's 180-second order deadline. If
+# any live source wedges, timeout kills the watchdog and every child it owns;
+# the parent then returns a precise failure while the controller still has 30
+# seconds to collect it instead of reporting only "context deadline exceeded".
+if [ "${FACTORY_WATCHDOG_BUDGET_ACTIVE:-0}" != "1" ]; then
+  FACTORY_WATCHDOG_BUDGET_ACTIVE=1 timeout --kill-after=5s "$BUDGET_SECONDS" "$0" "$@"
+  budget_rc=$?
+  if [ "$budget_rc" = "124" ] || [ "$budget_rc" = "137" ]; then
+    printf 'factory-watchdog: internal budget exceeded after %ss\n' "$BUDGET_SECONDS" >&2
+    exit 2
+  fi
+  exit "$budget_rc"
+fi
 
 while [ $# -gt 0 ]; do
   case "$1" in

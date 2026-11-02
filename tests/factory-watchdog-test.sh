@@ -46,10 +46,15 @@ BEADS_DIR="$TMP/beads"; mkdir -p "$BEADS_DIR"
 DEPS_DIR="$TMP/deps"; mkdir -p "$DEPS_DIR"
 CALLS="$TMP/calls.log"; : > "$CALLS"
 MAIL="$TMP/mail.log"; : > "$MAIL"
+GC_SLEEP_DONE="$TMP/gc-sleep-done"; : > "$GC_SLEEP_DONE"
 
 cat > "$TMP/bin/gc" <<STUB
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$CALLS"
+if [[ -n "\${FACTORY_WATCHDOG_TEST_GC_SLEEP_MATCH:-}" && "\$*" == "\$FACTORY_WATCHDOG_TEST_GC_SLEEP_MATCH"* ]]; then
+  sleep "\$FACTORY_WATCHDOG_TEST_GC_SLEEP_SECONDS"
+  printf 'done\n' > "\$FACTORY_WATCHDOG_TEST_GC_SLEEP_DONE"
+fi
 case "\$1 \$2" in
   "events --since") cat "$EVENTS"; exit 0 ;;
   "bd gate")
@@ -162,6 +167,25 @@ watchdog() { FACTORY_ROOT="$TMP/city" "$WATCHDOG" "$@" 2>&1 || true; }
 mails()   { grep -c '^mail send' "$MAIL" || true; }
 creates() { grep -c '^bd create' "$CALLS" || true; }
 reset_logs() { : > "$CALLS"; : > "$MAIL"; }
+
+# 0. the watchdog owns a budget below the order's 180-second deadline -------
+started_ns=$(date +%s%N)
+set +e
+out=$(FACTORY_WATCHDOG_BUDGET_SECONDS=0.1 \
+  FACTORY_WATCHDOG_TEST_GC_SLEEP_MATCH='bd gate list' \
+  FACTORY_WATCHDOG_TEST_GC_SLEEP_SECONDS=3 \
+  FACTORY_WATCHDOG_TEST_GC_SLEEP_DONE="$GC_SLEEP_DONE" \
+  FACTORY_ROOT="$TMP/city" "$WATCHDOG" --check-only 2>&1)
+rc=$?
+set -e
+elapsed_ns=$(( $(date +%s%N) - started_ns ))
+[ "$rc" = "2" ] || { echo "$out" >&2; fail "a watchdog budget expiry must exit 2 (was $rc)"; }
+grep -q 'internal budget exceeded after 0.1s' <<<"$out" \
+  || { echo "$out" >&2; fail "a watchdog budget expiry must name its own deadline"; }
+[ "$elapsed_ns" -lt 2000000000 ] \
+  || fail "a hung child must return before the watchdog's outer deadline"
+sleep 3
+[ ! -s "$GC_SLEEP_DONE" ] || fail "the hung child survived the watchdog budget"
 
 # 1. a quiet factory pages nothing -------------------------------------------
 out=$(watchdog)

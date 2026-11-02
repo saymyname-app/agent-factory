@@ -59,7 +59,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/project-launch-test.py`, `python3 tests/test-budgets-test.py`,
   `bash tests/agent-wait-polling-test.sh`,
   `bash tests/mayor-context-guard-test.sh`,
-  `python3 tests/factory-observe-test.py LiveObservationTest.test_a_hung_mail_is_bounded_and_remains_pending`
+  `python3 tests/factory-observe-test.py LiveObservationTest.test_a_hung_mail_is_bounded_and_remains_pending`,
+  `bash tests/factory-watchdog-test.sh`
   — complet pour les commandes Python bornées de `bin/`, `lib/` et
   `tests/cockpit-criteria/` : un seul lanceur (`lib/bounded_process.py`)
   ouvre une session et tue son groupe au délai ; le lint refuse toute
@@ -70,11 +71,14 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   (`config/test-budgets.json`, étude C T3), pas les autres délais écrits à
   la main. Le quatrième refuse une attente de formule qui peut atteindre les
   cinq minutes sans `gc runtime heartbeat`. Le cinquième tue le groupe d'un
-  reset ou d'un mail Mayor bloqué et tient leur sémantique de reprise.
+  reset ou d'un mail Mayor bloqué et tient leur sémantique de reprise. Le
+  dernier injecte un `gc` bloqué
+  dans le vrai `factory-watchdog` et prouve que son budget interne rend avant
+  celui de l'order et tue tout son groupe de processus.
 - Occurrences : #624, #628, #629, #630, #631, #636, #647, #657, #658, #661,
   #667, #694, #696, #705, #706, #708, #710, #713, #721 ; copies orphelines du
   22/10 (sans PR) ; af-kky570 ; af-npz9v1.46 ; af-npz9v1.26 ; af-30zwwu ;
-  af-95zqgx ; af-d3dj4j ; af-bl2jyj.
+  af-95zqgx ; af-d3dj4j ; af-ll4hju ; af-bl2jyj.
 - Ouvertes : les invocations directes antérieures hors des occurrences de
   l'étude B sont nommées une par une, avec leur date et leur motif, dans
   `config/bounded-process-exceptions.tsv` ; une vingtaine de délais écrits à
