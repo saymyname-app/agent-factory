@@ -962,7 +962,14 @@ cause was the sweep itself (af-io8tb7): it read again, one `gc bd show`
 each, every bead that ever carried a Mayor-first escalation, settled ones
 included (25 on 2026-10-09: 32 s for nothing due on an idle host, half its
 60 s before any load). It now reads one list, then only the escalations
-still pending.
+still pending. A second occurrence under tracker contention (af-kj34b5,
+2026-11-02) showed that re-reading every pending-but-not-due page, then a due
+page twice, could still complete a promotion and overrun the order deadline.
+The list row now rejects settled and not-yet-due pages itself; only a page
+that is due or can be cleared is re-read once immediately before its write.
+If another escalation owns the door, the periodic sweep exits 75 and retries
+on its next pass instead of turning ordinary lock serialization into an
+`order.failed` incident.
 
 What the PC feels during a run: for about 20 minutes, 8 of the 20
 processors WSL sees (12 when this was measured; the PC has 24) can be busy
