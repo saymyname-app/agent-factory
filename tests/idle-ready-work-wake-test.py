@@ -126,7 +126,7 @@ class IdleReadyWorkWakeTest(unittest.TestCase):
 
         started = time.monotonic()
         fired = self.run_tick(
-            "2026-09-28T10:15:01+00:00", mail_sleep="2", notify_timeout="0.1",
+            "2026-09-28T10:15:01+00:00", mail_sleep="2", notify_timeout="0.5",
         )
         elapsed = time.monotonic() - started
 
