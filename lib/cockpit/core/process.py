@@ -30,7 +30,7 @@ from cockpit.notify.secrets import read_secrets_from_file
 from cockpit.notify.service import HeartbeatService, NotifyService, Ticker
 from cockpit.requests.sources.silence import build_silence_request
 from cockpit.notify.state_store import JsonFileStateStore
-from cockpit.stop.driver import StopDriver
+from cockpit.stop.driver import StopDriver, tickets_photo
 from cockpit.stop.gc_city import GcCityReader
 from cockpit.projects.depots import read_depots, read_rig_repos
 from cockpit.projects.descriptors import load_descriptors
@@ -195,26 +195,7 @@ def build(config, clock=None):
     pollers.append(PollingSource(read_model, "sessions", city_reader.status, config.sessions_poll_seconds))
 
     def photo():
-        """The driver's « photo »: every ticket and who holds it, and when
-        they were read; ``beads`` None while they are not."""
-        row = read_model.snapshot().get("beads") or {}
-        if row.get("value") is None or row.get("freshness") == UNKNOWN:
-            return {"beads": None}
-        beads = row["value"]
-        return {
-            "read_at": row.get("read_at"),
-            "beads": {
-                # Who holds a ticket is the session the factory recorded on it;
-                # a delivery ticket has no assignee field of its own.
-                b["id"]: {
-                    "status": b.get("status"),
-                    "title": b.get("title"),
-                    "assignee": (b.get("metadata") or {}).get("gc.session_name") or b.get("assignee"),
-                }
-                for b in beads
-                if isinstance(b, dict) and b.get("id")
-            }
-        }
+        return tickets_photo(read_model.snapshot().get("beads") or {})
 
     stop_driver = StopDriver(city_reader, photo, clock, JsonFileStateStore(config.stop_state_file),
                              resume_grace_seconds=config.stop_resume_grace_seconds)

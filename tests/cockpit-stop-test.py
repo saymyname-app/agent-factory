@@ -30,6 +30,7 @@ from cockpit.stop.driver import (  # noqa: E402
     REPRISE_AVEC_ECARTS,
     REPRISE_VERIFIEE,
     StopDriver,
+    tickets_photo,
 )
 
 from fake_gc_city import FakeGcCity  # noqa: E402
@@ -118,6 +119,60 @@ class StopDriverTest(unittest.TestCase):
         fake.end_session("s1")  # ticket finished normally -- bead closes
         self.assertEqual(ARRETEE_PROPREMENT, driver.tick())
         self.assertEqual([], driver.bilan())
+
+    def test_a_read_begun_before_the_last_session_left_confirms_nothing(self):
+        # A read of the tickets is dated when it ends: under load, one that
+        # began with the lost ticket still there ended after the drain.
+        clock = FakeClock()
+        fake = FakeGcCity(sessions=[{"session_id": "s1", "bead_id": "af-1", "assignee": "w1", "last_event_at": clock.now()}])
+        read_model = ReadModel(clock)
+        held = [{"id": "af-1", "status": "in_progress", "assignee": "w1"}]
+        read_model.ingest("beads", held, latency=0.1)
+        driver = StopDriver(fake, lambda: tickets_photo(read_model.snapshot().get("beads") or {}),
+                            clock, InMemoryStateStore())
+
+        driver.request_stop()
+        clock.advance(5)
+        fake.end_session("s1")
+        self.assertEqual(ARRET_EN_COURS, driver.tick())  # the last session left here
+
+        clock.advance(2)
+        read_model.ingest("beads", held, latency=5)  # began 3 s before it left
+        self.assertEqual(ARRET_EN_COURS, driver.tick())
+
+        clock.advance(2)
+        read_model.ingest("beads", [], latency=1)
+        self.assertEqual(ARRETEE_PROPREMENT, driver.tick())
+        self.assertEqual(["af-1"], driver.bilan())
+
+    def test_a_session_is_gone_when_the_supervisor_says_so_not_when_it_was_asked(self):
+        # The supervisor answers late: a read begun while it was being asked
+        # may still have seen the last session and its ticket.
+        clock = FakeClock()
+        answers_in = {"seconds": 0}
+
+        class LateSupervisor(FakeGcCity):
+            def status(self):
+                clock.advance(answers_in["seconds"])
+                return super().status()
+
+        fake = LateSupervisor(sessions=[{"session_id": "s1", "bead_id": "af-1", "assignee": "w1", "last_event_at": clock.now()}])
+        photo = {"read_began_at": clock.now(), "beads": {"af-1": {"status": "in_progress", "assignee": "w1"}}}
+        driver = StopDriver(fake, lambda: dict(photo), clock, InMemoryStateStore())
+
+        driver.request_stop()
+        clock.advance(5)
+        fake.end_session("s1")
+        asked_at = clock.now()
+        answers_in["seconds"] = 4
+        photo["read_began_at"] = asked_at + 2  # between the question and the answer
+        self.assertEqual(ARRET_EN_COURS, driver.tick())
+
+        answers_in["seconds"] = 0
+        clock.advance(1)
+        photo.update(read_began_at=clock.now(), beads={})
+        self.assertEqual(ARRETEE_PROPREMENT, driver.tick())
+        self.assertEqual(["af-1"], driver.bilan())
 
     # ------------------------------------------------------------------
     # AC2 -- "L'arrêt n'avance plus" after 30 min without progress, never

@@ -44,14 +44,17 @@ for, the point of resuming observed for it, what the comparison found -- all
 read from the supervisor and the tickets, nothing from a timer.
 
 A confirmation rests on a reading of the tickets begun after the last session
-left (``read_at`` of the photo): the one before would say a lost ticket is
-there. A resume waits ``resume_grace_seconds`` for the sessions to come back
+left (``read_began_at`` of the photo; the read model dates a read when it
+ends, and a slow one can end after the session left with what it saw before):
+the one before would say a lost ticket is there. The session left by the time
+the supervisor said so, not when it was asked. A resume waits ``resume_grace_seconds`` for the sessions to come back
 before it calls one that did not a gap.
 """
 import threading
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from cockpit.core.freshness import UNKNOWN
 from cockpit.heartbeat.emitter import CLEANLY_STOPPED
 from cockpit.stop.requests import build_ecarts_request, build_no_progress_request
 
@@ -70,6 +73,28 @@ NO_PROGRESS_THRESHOLD_SECONDS = 30 * 60
 # A stop may be asked again once the last one has resumed.
 STOPPABLE_STATES = (EN_MARCHE, REPRISE_VERIFIEE, REPRISE_AVEC_ECARTS)
 RESUMABLE_STATES = (ARRETEE_PROPREMENT, ARRET_FORCE, ARRET_INTERROMPU)
+
+
+def tickets_photo(row):
+    """The driver's « photo » of the row ``beads`` of the read model: every
+    ticket and who holds it, and when their read began; ``beads`` None while
+    they are not."""
+    if row.get("value") is None or row.get("freshness") == UNKNOWN:
+        return {"beads": None}
+    return {
+        "read_began_at": row.get("read_at") - (row.get("latency") or 0),
+        "beads": {
+            # Who holds a ticket is the session the factory recorded on it;
+            # a delivery ticket has no assignee field of its own.
+            b["id"]: {
+                "status": b.get("status"),
+                "title": b.get("title"),
+                "assignee": (b.get("metadata") or {}).get("gc.session_name") or b.get("assignee"),
+            }
+            for b in row["value"]
+            if isinstance(b, dict) and b.get("id")
+        }
+    }
 
 
 def _hhmm(epoch):
@@ -310,16 +335,14 @@ class StopDriver:
 
     def tick(self, now=None):
         with self._lock:
-            now = self._clock.now() if now is None else now
             if self._state == ARRET_EN_COURS:
-                self._tick_arret_en_cours(now)
+                status = self._gc.status()
+                self._tick_arret_en_cours(self._clock.now() if now is None else now, status)
             elif self._state == REDEMARRAGE:
-                self._tick_redemarrage(now)
+                self._tick_redemarrage(self._clock.now() if now is None else now)
             return self._state
 
-    def _tick_arret_en_cours(self, now):
-        status = self._gc.status()
-
+    def _tick_arret_en_cours(self, now, status):
         if self._pending_restart_check:
             self._pending_restart_check = False
             if not status.get("suspended"):
@@ -336,7 +359,7 @@ class StopDriver:
                 if self._drained_at is None:
                     self._drained_at = now
                 current = self._snapshot_fn()
-                if current.get("beads") is None or current.get("read_at", now) < self._drained_at:
+                if current.get("beads") is None or current.get("read_began_at", now) < self._drained_at:
                     # No conclusion on tickets read before the last session left.
                     self._save()
                     return
