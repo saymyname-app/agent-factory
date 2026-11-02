@@ -26,6 +26,7 @@ import unittest
 import urllib.error
 import urllib.request
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -102,6 +103,13 @@ def _children() -> list[int]:
     return sorted(found)
 
 
+def _alive(pid: int) -> bool:
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] not in {"Z", "X"}
+    except (FileNotFoundError, ProcessLookupError):
+        return False
+
+
 def _end(pids: list[int]) -> None:
     for pid in pids:
         os.kill(pid, signal.SIGKILL)
@@ -120,6 +128,10 @@ class ProjectLaunchTest(unittest.TestCase):
         os.environ["FACTORY_LAUNCH_TRACE"] = str(self.trace)
         self.addCleanup(lambda: os.environ.pop("FACTORY_LAUNCH_TRACE") if previous is None
                         else os.environ.__setitem__("FACTORY_LAUNCH_TRACE", previous))
+
+    def test_a_process_disappearing_during_liveness_read_is_not_alive(self):
+        with mock.patch.object(Path, "read_text", side_effect=ProcessLookupError):
+            self.assertFalse(_alive(123))
 
     @functools.cached_property
     def product(self) -> Path:
@@ -309,8 +321,7 @@ class ProjectLaunchTest(unittest.TestCase):
                 self.assertTrue(json.loads(result.stdout)["stopped"])
                 self.assertFalse(state_file.exists())
                 self.assertIsNotNone(proc.wait(timeout=1))
-                stat = Path(f"/proc/{child}/stat")
-                self.assertTrue(not stat.exists() or stat.read_text().rsplit(")", 1)[1].split()[0] in {"Z", "X"})
+                self.assertFalse(_alive(child))
             finally:
                 for pid in (proc.pid, child):
                     try:
@@ -351,8 +362,7 @@ class ProjectLaunchTest(unittest.TestCase):
                 self.assertIsNotNone(proc.wait(timeout=1))
                 self.assertFalse(state_file.exists())
                 self.assertFalse(worktree.exists())
-                self.assertFalse(Path(f"/proc/{child}/stat").exists() and
-                                 Path(f"/proc/{child}/stat").read_text().rsplit(")", 1)[1].split()[0] not in {"Z", "X"})
+                self.assertFalse(_alive(child))
             finally:
                 for pid in (proc.pid, child):
                     try:
@@ -1141,11 +1151,9 @@ class ProjectLaunchTest(unittest.TestCase):
 
         self.assertEqual((0, [True]), (code, [event["stopped"] for event in swept["stopped"]]), swept)
         deadline = time.monotonic() + 5
-        while time.monotonic() < deadline and Path(f"/proc/{pid}/stat").exists() and \
-                Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] not in {"Z", "X"}:
+        while time.monotonic() < deadline and _alive(pid):
             time.sleep(0.1)
-        self.assertFalse(Path(f"/proc/{pid}/stat").exists()
-                         and Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] not in {"Z", "X"})
+        self.assertFalse(_alive(pid))
         [event] = self._traced()
         self.assertEqual(("sweep", "work_tree_gone", str(work_tree)), (event["by"], event["reason"], event["work_tree"]))
 
