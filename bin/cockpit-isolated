@@ -60,6 +60,7 @@ import argparse
 import dataclasses
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -283,6 +284,12 @@ def read_stop_supervisor(path: Path, city: synthetic_city.SyntheticCity) -> tupl
         city.beads.append({"id": item["ticket"], "title": item["title"], "status": "in_progress",
                            "issue_type": "task", "assignee": name, "created_at": at, "updated_at": at,
                            "metadata": {"gc.session_id": name, "gc.session_name": name}})
+    # Tickets no session at work holds (`idle`): their holder sleeps.
+    for item in stop.get("idle") or []:
+        holder = item.get("holder")
+        city.beads.append({"id": item["ticket"], "title": item["title"], "status": item.get("status", "open"),
+                           "issue_type": "task", "assignee": holder, "created_at": at, "updated_at": at,
+                           "metadata": {"gc.session_id": holder, "gc.session_name": holder} if holder else {}})
     if stop.get("asked_minutes_ago") is not None:
         city = dataclasses.replace(city, suspended=True)
     elif stop.get("resuming"):
@@ -308,9 +315,23 @@ def follow_stop(supervisor, stop: dict, home: str) -> None:
     """The sessions of `stop` as the installed supervisor treats them: a
     suspended city leaves a session the work it holds, then it stops by
     itself (`drains_in_seconds`, by session; one not named never does, its
-    ticket lost once it stops when `vanishes_when_drained` says so); a resumed
-    one sends them back, on what they held or as `reassigned_on_resume` says."""
+    ticket lost once it stops when `vanishes_when_drained` says so, held by no
+    one when `released_when_drained` does); a session stopped by force leaves
+    its ticket held by no one when `released_on_force_stop` says so; a resumed
+    one sends them back, on what they held or as `reassigned_on_resume` says.
+    The tracker is copied, as it changes, where `tracker` says."""
     tracker = Path(home, "tracker.json")
+    copied = {"at": None}
+
+    def copy() -> None:
+        # The tracker is written once this process is up.
+        if not stop.get("tracker") or not tracker.exists():
+            return
+        at = tracker.stat().st_mtime_ns
+        if at != copied["at"]:
+            Path(stop["tracker"] + ".next").write_bytes(tracker.read_bytes())
+            Path(stop["tracker"] + ".next").replace(stop["tracker"])
+            copied["at"] = at
 
     def rewrite(change) -> None:
         beads = json.loads(tracker.read_text(encoding="utf-8"))
@@ -328,6 +349,12 @@ def follow_stop(supervisor, stop: dict, home: str) -> None:
         return dict(bead, assignee=name, metadata=dict(bead["metadata"], **{"gc.session_id": name,
                                                                             "gc.session_name": name}))
 
+    def release(ticket: str) -> None:
+        rewrite(lambda beads: [dict(bead, status="open", assignee=None, metadata={
+            key: value for key, value in (bead.get("metadata") or {}).items()
+            if key not in ("gc.session_id", "gc.session_name")}) if bead.get("id") == ticket else bead
+            for bead in beads])
+
     def resumed() -> None:
         moved = stop.get("reassigned_on_resume") or {}
         for item in stop.get("work") or []:
@@ -342,10 +369,21 @@ def follow_stop(supervisor, stop: dict, home: str) -> None:
                                              "session_name": successor, "running": True,
                                              "last_active": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
 
-    vanishing = {item["session"]: item["ticket"] for item in stop.get("work") or []
-                 if item["ticket"] in (stop.get("vanishes_when_drained") or [])}
-    was, due = False, {}
+    def of(key: str) -> dict:
+        return {item["session"]: item["ticket"] for item in stop.get("work") or []
+                if item["ticket"] in (stop.get(key) or [])}
+
+    vanishing, released, forced = of("vanishes_when_drained"), of("released_when_drained"), of("released_on_force_stop")
+    was, due, seen = False, {}, 0
     while True:
+        copy()
+        with supervisor._lock:
+            writes = list(supervisor.writes[seen:])
+        seen += len(writes)
+        for write in writes:
+            name = re.fullmatch(r"/v0/city/[^/]+/session/([^/]+)/stop", write.get("path") or "")
+            if write.get("method") == "POST" and name and name.group(1) in forced:
+                release(forced[name.group(1)])
         suspended = bool(supervisor._status["suspended"])
         if suspended != was:
             was = suspended
@@ -358,6 +396,8 @@ def follow_stop(supervisor, stop: dict, home: str) -> None:
                 del due[name]
                 if name in vanishing:
                     rewrite(lambda beads: [bead for bead in beads if bead.get("id") != vanishing[name]])
+                if name in released:
+                    release(released[name])
                 running(name, False)
         time.sleep(0.1)
 
@@ -540,7 +580,7 @@ def write_stop(restarted: bool, stop: dict, city: synthetic_city.SyntheticCity, 
                 "snapshot": {"beads": photo}, "held": held, "suspended_seen": minutes is not None}
         if stop.get("resuming"):
             said.update(state="redemarrage", stopped_at=asked, redemarrage_started_at=time.time(), suspended_seen=True,
-                        saved_sessions=[item["session"] for item in stop["work"]])
+                        points={item["session"]: "conserve" for item in stop["work"]})
         state.write_text(json.dumps(said), encoding="utf-8")
     return {"COCKPIT_STOP_STATE_FILE": str(state), "COCKPIT_STOP_TICK_SECONDS": POLL_SECONDS,
             "COCKPIT_STOP_RESUME_GRACE_SECONDS": str(stop.get("resume_grace_seconds", STOP_RESUME_GRACE_SECONDS))}

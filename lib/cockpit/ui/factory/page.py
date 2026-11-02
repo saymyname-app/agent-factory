@@ -729,6 +729,12 @@ USINE_SCRIPT = """<script>
 # What the panel of the stop says of a session, by its template.
 STOP_ROLES = (("author", "Auteur"), ("reviewer", "Relecteur"), ("evaluator", "Évaluateur"))
 STEP_DONE, STEP_WAITING = "✓", "◷"
+# What a screen reader says of each mark.
+STEP_STATES = {STEP_DONE: "Fait", STEP_WAITING: "En attente"}
+# A point of resuming, as the driver judged it from the tickets.
+POINT_WORDS = {"conserve": "point conservé", "perdu": "point perdu"}
+# The assignment a forced stop kept, as the tickets read after it show it.
+FORCED_WORDS = {"conserve": "affectation gardée pour la reprise", "perdu": "affectation perdue"}
 PROOFS_AWAITED = "Preuves encore attendues."
 STOP_STEP_ONE = "Les travaux déjà lancés gardent leur affectation."
 SUSPENSION_IS_NOT_POWER_OFF = ("La suspension des agents n’est pas l’arrêt de la VM : stockage et superviseur "
@@ -771,14 +777,14 @@ def _stop_points(view):
     """Step 2: (done, the words), each work as last observed."""
     work = view["work"]
     if view["state"] == "arret_en_cours" and view["blocked"]:
-        waiting = sorted({_stop_role(item["template"]) for item in work if not item["saved"]})
+        waiting = sorted({_stop_role(item["template"]) for item in work if item["point"] != "conserve"})
         return False, ("%s ne répond plus : son point durable n’est pas prouvé. Aucune autorisation d’éteindre."
                        % (" et ".join(waiting) or "Une session"))
     if not work:
         return view["state"] != "arret_en_cours", "Aucun travail en vol à conserver."
-    said = " · ".join("%s : %s" % (_stop_role(item["template"]), "point conservé" if item["saved"]
-                                   else "sauvegarde en cours") for item in work)
-    return all(item["saved"] for item in work), said + "."
+    said = " · ".join("%s : %s" % (_stop_role(item["template"]), POINT_WORDS.get(item["point"], "sauvegarde en cours"))
+                      for item in work)
+    return all(item["point"] == "conserve" for item in work), said + "."
 
 
 def _stop_comparison(view):
@@ -786,7 +792,7 @@ def _stop_comparison(view):
     if view["state"] in ("arretee_proprement", "redemarrage", "reprise_verifiee", "reprise_avec_ecarts"):
         count = len(view["work"]) - len(view["lost"])
         if view["lost"]:
-            return False, "Travail absent après l’arrêt : %s." % ", ".join(view["lost"])
+            return False, "Travail sans point de reprise durable : %s." % ", ".join(view["lost"])
         if view["state"] != "redemarrage":
             return True, ("1 travail retrouvé, aucun écart." if count == 1
                           else "%d travaux retrouvés, aucun écart." % count)
@@ -794,8 +800,9 @@ def _stop_comparison(view):
 
 
 def _stop_step(a, done, title, said):
-    return ('<div class="shutdown-step" %s><b %s aria-hidden="true">%s</b><div><strong>%s</strong><p>%s</p></div></div>'
-            ) % (a("shutdown-step"), a("b"), STEP_DONE if done else STEP_WAITING, _e(title), _e(said))
+    mark = STEP_DONE if done else STEP_WAITING
+    return ('<div class="shutdown-step" %s><b %s role="img" aria-label="%s">%s</b><div><strong>%s</strong><p>%s</p>'
+            '</div></div>') % (a("shutdown-step"), a("b"), STEP_STATES[mark], mark, _e(title), _e(said))
 
 
 def _stop_steps(a, view):
@@ -807,12 +814,11 @@ def _stop_steps(a, view):
 
 
 def _stop_work_lines(view):
-    """Each work, by its title, as last observed; kept for the resume after
-    a forced stop."""
-    forced = view["state"] == "arret_force"
-    lines = "".join('<li>%s : %s.</li>' % (_e(item["title"]), "affectation gardée pour la reprise" if forced
-                                           else "point conservé" if item["saved"] else "sauvegarde en cours")
-                    for item in view["work"])
+    """Each work, by its title, as last observed; after a forced stop, the
+    assignment the tickets read since show it kept, or lost."""
+    words = (lambda item: FORCED_WORDS.get(item["point"], "affectation à relire")) if view["state"] == "arret_force" \
+        else (lambda item: POINT_WORDS.get(item["point"], "sauvegarde en cours"))
+    lines = "".join('<li>%s : %s.</li>' % (_e(item["title"]), words(item)) for item in view["work"])
     return '<ul class="fa-stop-work">%s</ul>' % lines if lines else ""
 
 

@@ -43,12 +43,20 @@ public interface; process wiring (poller thread, the (hidden) button, the
 for, the point of resuming observed for it, what the comparison found -- all
 read from the supervisor and the tickets, nothing from a timer.
 
-A confirmation rests on a reading of the tickets begun after the last session
-left (``read_began_at`` of the photo; the read model dates a read when it
-ends, and a slow one can end after the session left with what it saw before):
-the one before would say a lost ticket is there. The session left by the time
-the supervisor said so, not when it was asked. A resume waits ``resume_grace_seconds`` for the sessions to come back
-before it calls one that did not a gap.
+A session gone is no point of resuming: its work reached one when a reading
+of the tickets begun after it left (``read_began_at`` of the photo; the read
+model dates a read when it ends, and a slow one can end after the session
+left with what it saw before) shows its ticket closed, or still held by that
+session -- the tracker keeps the work for the resume. Its ticket gone or held
+by no one, the work has no durable point: the suspension is to verify. The
+session left by the time the supervisor said so, not when it was asked. A
+forced stop is judged the same way, once its sessions are stopped: the
+assignment it keeps is the one the tracker read after it shows.
+
+What is compared at the resume is the work held when the stop was asked
+(``held``), never the other tickets of the photo. A resume waits
+``resume_grace_seconds`` for the sessions to come back before it calls one
+that did not a gap.
 """
 import threading
 from datetime import datetime
@@ -70,6 +78,10 @@ ARRET_FORCE = "arret_force"
 ARRET_INTERROMPU = "arret_interrompu"
 
 NO_PROGRESS_THRESHOLD_SECONDS = 30 * 60
+# The point of resuming of a work, as the tickets show it once its session
+# left: kept for the resume, or not.
+POINT_KEPT = "conserve"
+POINT_LOST = "perdu"
 # A stop may be asked again once the last one has resumed.
 STOPPABLE_STATES = (EN_MARCHE, REPRISE_VERIFIEE, REPRISE_AVEC_ECARTS)
 RESUMABLE_STATES = (ARRETEE_PROPREMENT, ARRET_FORCE, ARRET_INTERROMPU)
@@ -103,19 +115,6 @@ def _hhmm(epoch):
     return datetime.fromtimestamp(epoch, tz=PARIS).strftime("%H:%M")
 
 
-def _open_in_progress_beads(snapshot):
-    return {
-        bead_id: info
-        for bead_id, info in (snapshot.get("beads") or {}).items()
-        if info.get("status") in ("open", "in_progress")
-    }
-
-
-def _work_map(snapshot):
-    """{bead_id: assignee} for every open/in_progress bead in a photo."""
-    return {bead_id: info.get("assignee") for bead_id, info in _open_in_progress_beads(snapshot).items()}
-
-
 def _titled(bead_id, snapshot):
     """What a person reads of a ticket of the photo: its title."""
     info = ((snapshot or {}).get("beads") or {}).get(bead_id) or {}
@@ -133,32 +132,22 @@ def _progress_token(status):
     return [fingerprint, status.get("closed_steps_count", 0)]
 
 
-def _lost_beads(before_snapshot, after_snapshot):
-    """Bead ids the photo held as open/in_progress that have vanished
-    entirely by the time the city reached "Arrêtée proprement" -- the "0
-    perte" check. A bead that simply closed in the meantime (a session
-    finishing its ticket normally, spec "point d'arrêt") is not "perdu":
-    ``after_snapshot`` carries every bead regardless of status, so a
-    present-but-closed id does not count as lost, only a fully absent one
-    does."""
-    before_ids = set(_open_in_progress_beads(before_snapshot or {}))
-    after_ids = set((after_snapshot or {}).get("beads") or {})
-    return sorted(before_ids - after_ids)
+def _gaps(held, status):
+    """The tickets of the work ``held`` when the stop was asked that no
+    session of ``status`` holds as it did: the gaps of a resume, or of a stop
+    a restart of the host cut short."""
+    current = {s.get("bead_id"): s.get("assignee") for s in (status or {}).get("sessions") or [] if s.get("bead_id")}
+    return sorted(item["bead_id"] for item in held if item.get("bead_id")
+                  and current.get(item["bead_id"]) != item.get("assignee"))
 
 
-def _diff_sessions(before_snapshot, after_status):
-    """Bead ids whose assignment does not match the photo -- used both for
-    "Arrêt interrompu" écarts (photo vs. the status seen right after an
-    unplanned restart) and reused by nothing else."""
-    before_map = _work_map(before_snapshot or {})
-    after_map = {
-        s.get("bead_id"): s.get("assignee")
-        for s in (after_status or {}).get("sessions", [])
-        if s.get("bead_id")
-    }
-    return sorted(
-        bead_id for bead_id, assignee in before_map.items() if after_map.get(bead_id) != assignee
-    )
+def _point_of(held, photo):
+    """The point of resuming of the work ``held`` as the tickets of
+    ``photo`` show it: its ticket closed, or still held by its session."""
+    bead = (photo.get("beads") or {}).get(held.get("bead_id"))
+    if bead is not None and (bead.get("status") == "closed" or bead.get("assignee") == held.get("assignee")):
+        return POINT_KEPT
+    return POINT_LOST
 
 
 class StopDriver:
@@ -184,7 +173,8 @@ class StopDriver:
         self._ecarts = saved.get("ecarts", [])
         self._essai_reussi = saved.get("essai_reussi", False)
         self._held = saved.get("held", [])
-        self._saved_sessions = saved.get("saved_sessions", [])
+        self._left_at = saved.get("left_at", {})
+        self._points = saved.get("points", {})
         self._suspended_seen = saved.get("suspended_seen", False)
         self._drained_at = saved.get("drained_at")
         # Only the very first tick after a process restart can discover an
@@ -209,7 +199,8 @@ class StopDriver:
                 "ecarts": self._ecarts,
                 "essai_reussi": self._essai_reussi,
                 "held": self._held,
-                "saved_sessions": self._saved_sessions,
+                "left_at": self._left_at,
+                "points": self._points,
                 "suspended_seen": self._suspended_seen,
                 "drained_at": self._drained_at,
             }
@@ -276,7 +267,7 @@ class StopDriver:
         """The title of each work still being saved: what a forced stop
         puts at risk."""
         return sorted(_titled(held.get("bead_id"), self._snapshot) for held in self._held
-                      if held.get("session_id") not in self._saved_sessions)
+                      if self._points.get(held.get("session_id")) != POINT_KEPT)
 
     def force_offered(self):
         return self._state == ARRET_EN_COURS and self._no_progress_flagged
@@ -294,7 +285,7 @@ class StopDriver:
             "suspended_seen": self._suspended_seen,
             "work": [
                 {"title": _titled(held.get("bead_id"), self._snapshot), "template": held.get("template"),
-                 "saved": held.get("session_id") in self._saved_sessions}
+                 "point": self._points.get(held.get("session_id"))}
                 for held in self._held
             ],
             "lost": self._titles(self._perdu),
@@ -319,7 +310,8 @@ class StopDriver:
             {key: session.get(key) for key in ("session_id", "bead_id", "assignee", "template")}
             for session in initial_status.get("sessions") or []
         ]
-        self._saved_sessions = []
+        self._left_at = {}
+        self._points = {}
         self._suspended_seen = False
         self._drained_at = None
         self._stopped_at = None
@@ -338,6 +330,9 @@ class StopDriver:
             if self._state == ARRET_EN_COURS:
                 status = self._gc.status()
                 self._tick_arret_en_cours(self._clock.now() if now is None else now, status)
+            elif self._state == ARRET_FORCE:
+                self._judge_points(self._gc.status())
+                self._save()
             elif self._state == REDEMARRAGE:
                 self._tick_redemarrage(self._clock.now() if now is None else now)
             return self._state
@@ -346,24 +341,23 @@ class StopDriver:
         if self._pending_restart_check:
             self._pending_restart_check = False
             if not status.get("suspended"):
-                self._ecarts = _diff_sessions(self._snapshot, status)
+                self._ecarts = _gaps(self._held, status)
                 self._state = ARRET_INTERROMPU
                 self._save()
                 return
 
-        live = {s.get("session_id") for s in status.get("sessions") or []}
-        self._saved_sessions = [held.get("session_id") for held in self._held if held.get("session_id") not in live]
+        self._judge_points(status, now)
         if status.get("suspended"):
             self._suspended_seen = True
             if not status.get("sessions"):
                 if self._drained_at is None:
                     self._drained_at = now
-                current = self._snapshot_fn()
-                if current.get("beads") is None or current.get("read_began_at", now) < self._drained_at:
-                    # No conclusion on tickets read before the last session left.
+                if any(held.get("session_id") not in self._points for held in self._held):
+                    # A work whose tickets were not read since its session left.
                     self._save()
                     return
-                self._perdu = _lost_beads(self._snapshot, current)
+                self._perdu = sorted(held.get("bead_id") for held in self._held
+                                     if self._points.get(held.get("session_id")) != POINT_KEPT)
                 self._stopped_at = now
                 self._state = ARRETEE_PROPREMENT
                 self._save()
@@ -384,6 +378,27 @@ class StopDriver:
             self._no_progress_flagged = True
         self._save()
 
+    def _judge_points(self, status, now=None):
+        """Each work whose session left: its point of resuming, once the
+        tickets were read since it left."""
+        now = self._clock.now() if now is None else now
+        live = {s.get("session_id") for s in status.get("sessions") or []}
+        waiting = []
+        for held in self._held:
+            session_id = held.get("session_id")
+            if session_id in live or session_id in self._points:
+                continue
+            self._left_at.setdefault(session_id, now)
+            waiting.append(held)
+        if not waiting:
+            return
+        photo = self._snapshot_fn()
+        if photo.get("beads") is None:
+            return
+        for held in waiting:
+            if photo.get("read_began_at", now) >= self._left_at[held.get("session_id")]:
+                self._points[held.get("session_id")] = _point_of(held, photo)
+
     def force_stop(self, now=None):
         with self._lock:
             self._force_stop(now)
@@ -397,9 +412,13 @@ class StopDriver:
         status = self._gc.status()
         sessions = status.get("sessions") or []
         self._gc.force_stop_sessions([s.get("session_id") for s in sessions])
-        # Sessions are stopped, their bead and work stay assigned (spec:
+        # Sessions are stopped, their work is meant to stay assigned (spec:
         # "arrête les sessions en gardant leur bead et leur travail
-        # assigné") -- what's "perdu" is the work they were mid-ticket on.
+        # assigné"): what the tracker shows once they are is read at the next
+        # ticks -- what's "perdu" is the work they were mid-ticket on.
+        for session in sessions:
+            self._points.pop(session.get("session_id"), None)
+            self._left_at[session.get("session_id")] = now
         self._perdu = sorted({s.get("bead_id") for s in sessions if s.get("bead_id")})
         self._stopped_at = now
         self._state = ARRET_FORCE
@@ -410,7 +429,7 @@ class StopDriver:
             self._resume(now)
 
     def _resume(self, now):
-        if self._state not in (ARRETEE_PROPREMENT, ARRET_FORCE, ARRET_INTERROMPU):
+        if self._state not in RESUMABLE_STATES:
             raise ValueError("resume only applies after a stop (state=%s)" % self._state)
         now = self._clock.now() if now is None else now
         self._gc.resume()
@@ -420,16 +439,7 @@ class StopDriver:
         self._save()
 
     def _tick_redemarrage(self, now):
-        status = self._gc.status()
-        expected = _work_map(self._snapshot or {})
-        current = {
-            s.get("bead_id"): s.get("assignee")
-            for s in status.get("sessions", [])
-            if s.get("bead_id")
-        }
-        gaps = sorted(
-            bead_id for bead_id, assignee in expected.items() if current.get(bead_id) != assignee
-        )
+        gaps = _gaps(self._held, self._gc.status())
         if gaps and now - (self._redemarrage_started_at or now) < self._resume_grace_seconds:
             return
         self._resumed_at = now
