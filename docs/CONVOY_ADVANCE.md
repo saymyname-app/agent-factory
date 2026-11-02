@@ -1361,5 +1361,7 @@ City with the real patch door — one merge and the convoy closed on
 « abandonné », a conflict after « accepté » merging nothing and the pass
 publishing one `repair`. `tests/convoy-manual-lifecycle-isolated-city-test.sh`
 (local-only) shows, under the real order, that no pass names a convoy
-closed by command any more. No isolated-city trial runs a merge under the
-real order, and no real convoy reached it.
+closed by command any more. Its post-closing observation starts after
+`close-convoy` returns: that command may first wait for an older pass, whose
+record is not evidence of a pass after the closing. No isolated-city trial
+runs a merge under the real order, and no real convoy reached it.
