@@ -1,0 +1,7 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/runs-trace-first-collection-test.py::RunsTraceFirstCollection.test_a_session_at_work_is_kept_from_the_first_collection_and_the_replay_adds_nothing"
+    ]
+  }
+}
