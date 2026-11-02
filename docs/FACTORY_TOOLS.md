@@ -181,6 +181,10 @@ premier horodatage. Au-delà de **150k tokens** (`MAYOR_CONTEXT_GUARD_TOKENS`) o
 envoie au Mayor un mail `HANDOFF:` (champs OPEN_MAIL/OPEN_DECISIONS/IN_FLIGHT/NEXT
 marqués inconnus). Un reset en échec n'est pas enregistré et sort en 1 (l'ordre
 échoue, la passe suivante réessaie).
+Le reset et le mail ont chacun un budget de 20 s dans les 120 s de l'ordre et
+leur groupe de processus est tué au délai. Un reset au délai garde la même
+sortie en échec et sera réessayé ; un mail au délai est journalisé sans répéter
+le reset déjà réussi.
 Une seule rotation par conversation (`.gc/runtime/mayor-context-guard-state.json`),
 journal dans `var/mayor-context-guard.log`, jamais une autre session.
 

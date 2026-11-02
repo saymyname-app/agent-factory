@@ -7,7 +7,7 @@
 2026-10-30	bin/factory-doctor:200	Gas City doctor is an existing single health command.
 2026-10-30	bin/factory-gh-rollup:31	GitHub Actions lookup is an existing single API read.
 2026-10-30	bin/factory-metrics:67	Metrics tracker lookup is an existing single control-plane read.
-2026-10-30	bin/mayor-context-guard:84	Session inventory is an existing single control-plane read.
+2026-10-30	bin/mayor-context-guard:90	Session inventory is an existing single control-plane read.
 2026-10-30	bin/order-pause:134	Order-pause tracker wrapper is outside study B's open set.
 2026-10-30	bin/outcome-evaluation:150	Outcome Evaluation wrapper retains its detached-launch mode.
 2026-10-30	bin/outcome-promote:115	Outcome promotion wrapper retains its detached-launch mode.
