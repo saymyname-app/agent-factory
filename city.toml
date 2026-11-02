@@ -204,12 +204,15 @@ check = "/home/benja/agent-factory/orders/lib/orders-restart-stagger.sh beads-he
 # window closes.
 # af-8x3vwg: the sweep normally finishes in seconds, but Dolt contention made
 # five runs hit Gas City's inherited 300s exec deadline exactly. Give this
-# bounded maintenance scan 10m; the 24h retention below still bounds its work.
+# bounded maintenance scan 10m.
+# af-260e1x: with 7,098 rows retained from the preceding 24h, five runs again
+# exhausted that 10m bound while successful runs took 1-8m. The 6h retention
+# below measured 909 rows; keep 2x the observed failure boundary as headroom.
 # T10 (af-u61al3): see the dolt-health override above.
 name = "order-tracking-sweep"
 trigger = "condition"
 interval = "10m"
-timeout = "10m"
+timeout = "20m"
 check = "/home/benja/agent-factory/orders/lib/orders-restart-stagger.sh order-tracking-sweep 600"
 
 [[orders.overrides]]
@@ -221,14 +224,13 @@ trigger = "condition"
 check = "test \"$(bd gate list --json 2>/dev/null | jq 'length' 2>/dev/null || echo 0)\" -gt 0"
 
 [beads.policies.order_tracking]
-# af-hpux0u: order-tracking-sweep lists every retained closed tracking bead,
-# twice per run (confirm-gate count, then prune). At the 7d default that was
-# ~60,000 wisps (~10,000 closed per day): ~1 min idle, past the Dolt read
-# budget under load (6 failures out of 10 runs, 2026-10-13). 24h keeps the
-# scan ~7x smaller. The latest 10 closed runs per order are always kept
-# (hardcoded upstream), so cooldown/last-run reads are unaffected, and
-# on-order-failed reads events, not these beads.
-delete_after_close = "24h"
+# af-hpux0u/af-260e1x: order-tracking-sweep lists every retained closed
+# tracking bead twice per run (confirm-gate count, then prune). The 7d default
+# held ~60,000 rows; 24h still held 7,098 and repeatedly exhausted 10m under
+# load. Six hours measured 909 rows. The latest 10 closed runs per order are
+# always kept upstream, so cooldown/last-run reads are unaffected, and
+# on-order-failed reads events rather than these beads.
+delete_after_close = "6h"
 
 [events.rotation]
 # 14 days (336h), per the Spec's decision -- the ticket text is authoritative

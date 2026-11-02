@@ -10,7 +10,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
 class OrderTrackingSweepConfigTest(unittest.TestCase):
-    def test_sweep_override_keeps_bounded_retention_and_ten_minute_timeout(self):
+    def test_sweep_override_keeps_bounded_retention_and_measured_timeout(self):
         with (ROOT / "city.toml").open("rb") as config_file:
             config = tomllib.load(config_file)
 
@@ -21,9 +21,9 @@ class OrderTrackingSweepConfigTest(unittest.TestCase):
         ]
         self.assertEqual(1, len(overrides))
         self.assertEqual("10m", overrides[0]["interval"])
-        self.assertEqual("10m", overrides[0]["timeout"])
+        self.assertEqual("20m", overrides[0]["timeout"])
         self.assertEqual(
-            "24h", config["beads"]["policies"]["order_tracking"]["delete_after_close"]
+            "6h", config["beads"]["policies"]["order_tracking"]["delete_after_close"]
         )
 
 
