@@ -17,7 +17,7 @@ from cockpit.projects.hors_chantier import HorsChantierItem, hors_chantier_par_p
 from cockpit.projects.model import Chantier, Project, RoadmapStep
 from cockpit.projects.promu import MERGE_COMMIT_KEY, read_promotion_results
 from cockpit.projects.outcome import pack_folder, read_pack_sections
-from cockpit.projects.stage import CONVOY_ISSUE_TYPE, DELIVERY_LABEL, GRAPH_DIGEST_KEY, MAP_LABEL, PROJECT_KEY
+from cockpit.projects.stage import CONVOY_ISSUE_TYPE, DELIVERY_LABEL, GRAPH_DIGEST_KEY, MAP_LABEL, PROJECT_KEY, _accepted
 from convoy_state import outcome_records_of
 
 TARGET_KEY = "planning_run_target"
@@ -82,14 +82,17 @@ def read_targeting_beads(bd_bin="bd", timeout=20):
 
 
 def roadmap_chantiers(targeting, beads):
-    """``{project_id: {step id: [{"id", "closed", "merged"}]}}``: for each
+    """``{project_id: {step id: [{"id", "closed", "merged", "accepted"}]}}``: for each
     Spec that targets a Roadmap Step, its chantier -- the Spec and the
     convoys published from it (``gc.spec_id``). It is closed when the Spec
     and every such convoy are closed; merged when one of those convoys
     records the proof of its merge (the promotion of the D01 flow, read
     by :func:`convoy_state.outcome_records_of`), or when every ticket of
     one of them recorded the merge of its PR (``gc.merge_commit``) -- one
-    PR merged among tickets still at work is a chantier under way. The
+    PR merged among tickets still at work is a chantier under way;
+    accepted when Benjamin accepted one of those convoys (his recorded
+    answer in the D01 flow, the trace of his click before it:
+    :func:`cockpit.projects.stage._accepted`; R3, af-plu8kn). The
     project is the Spec's, else its convoy's. E, af-8rbceu: what the
     roadmap of a project is held to
     (:func:`cockpit.projects.roadmap.roadmap_rows`)."""
@@ -112,14 +115,16 @@ def roadmap_chantiers(targeting, beads):
             None)
         if not isinstance(target, str) or not target or not project:
             continue
-        merged = False
+        merged = accepted = False
         for convoy in convoys:
+            accepted = accepted or _accepted(convoy.get("metadata") or {})
             promotion = (outcome_records_of(convoy) or {}).get("promotion")
             tickets = tickets_by_digest.get((convoy.get("metadata") or {}).get(GRAPH_DIGEST_KEY), [])
             prs_merged = bool(tickets) and all((t.get("metadata") or {}).get(MERGE_COMMIT_KEY) for t in tickets)
             merged = merged or prs_merged or (isinstance(promotion, dict) and "unruled" not in promotion)
         closed = spec.get("status") == "closed" and all(c.get("status") == "closed" for c in convoys)
-        out.setdefault(project, {}).setdefault(target, []).append({"id": spec["id"], "closed": closed, "merged": merged})
+        out.setdefault(project, {}).setdefault(target, []).append(
+            {"id": spec["id"], "closed": closed, "merged": merged, "accepted": accepted})
     return out
 
 

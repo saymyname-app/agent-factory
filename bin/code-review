@@ -85,6 +85,7 @@ DESCRIPTORS = ROOT / "config" / "project-descriptors"
 sys.path.insert(0, str(BIN.parent / "lib"))
 import delivery_reads  # noqa: E402
 from convoy_state import session_conversation  # noqa: E402
+from delivery_rules import review_replay_due  # noqa: E402
 from delivery_role_identity import role_identity  # noqa: E402
 
 NEW_FLOW = "new-flow/v1"
@@ -629,27 +630,16 @@ def wanted_round(convoy: Convoy, ticket: dict[str, Any]) -> tuple[str, Any]:
         # No review yet, or a commit added after a favorable one: the review
         # is replayed in full on the new tip (Spec §8).
         return full_review(convoy, tip)
+    if last["kind"] == JUDGEMENT and stale:
+        return "open", (JUDGEMENT, tip, last["base"])
+    correction_commit = (ticket.get("correction") or {}).get("commit")
+    overridden = {entry.get("finding") for entry in ticket.get("overrides") or [] if isinstance(entry, dict)}
+    if review_replay_due(last, tip, correction_commit, review["state"]["unsettled"], overridden):
+        return full_review(convoy, tip)
     if last["kind"] == JUDGEMENT:
-        if stale:
-            return "open", (JUDGEMENT, tip, last["base"])
-        if (ticket.get("correction") or {}).get("commit") == last["commit"] and last["commit"] != tip:
-            # A later correction round took up the answers judged unfavorably
-            # (bin/correction-round, af-bv0ikr): its tip is reviewed in full.
-            return full_review(convoy, tip)
-        overridden = {entry.get("finding") for entry in ticket.get("overrides") or [] if isinstance(entry, dict)}
-        if last["commit"] != tip and set(review["state"]["unsettled"]) <= overridden:
-            # Every Blocking Finding left unsettled was overridden, which stands
-            # for a favorable verdict (bin/spec-integration): a commit added
-            # since is reviewed in full (F and G1 of af-strhoy, 22/10/2026).
-            return full_review(convoy, tip)
         return "waiting", (f"encore refusé après son tour de correction ({', '.join(review['state']['unsettled'])}) : "
                            "aucune revue ne s'ouvre, rien ne fusionne")
     responses = last.get("responses") or {}
-    if last["commit"] != tip and not responses and ticket.get("correction") is None:
-        # An unfavorable review outdated by commits made outside the
-        # correction round (a resume): no session will answer its findings,
-        # so it is replayed in full on the new tip (af-s31cvi).
-        return full_review(convoy, tip)
     unanswered = [finding["id"] for finding in blocking_findings(last) if finding["id"] not in responses]
     if unanswered:
         return "waiting", (f"Blocking Finding sans réponse ({', '.join(unanswered)}) : chacun reçoit « corrigé » ou "

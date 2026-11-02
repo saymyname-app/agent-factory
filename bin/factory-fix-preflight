@@ -47,7 +47,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import signal
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -55,6 +54,7 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+from bounded_process import run as bounded_run  # noqa: E402
 from defect_classes import NO_CLASS, RegistryError, load  # noqa: E402
 
 EXIT_FOUND, EXIT_REFUSED = 1, 2
@@ -70,7 +70,7 @@ class Refusal(Exception):
 
 def run(argv: list[str], what: str, cwd: Path | None = None) -> str:
     try:
-        proc = subprocess.run(argv, cwd=cwd, text=True, capture_output=True, timeout=TIMEOUT)
+        proc = bounded_run(argv, cwd=cwd, text=True, capture_output=True, timeout=TIMEOUT)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise Refusal(f"{what} impossible : {exc}") from exc
     if proc.returncode != 0:
@@ -151,16 +151,13 @@ def defect_class(repo: Path, code: str) -> dict[str, Any]:
 def run_control(repo: Path, command: str) -> dict[str, Any]:
     """One command of a class's control, in its own session: past the delay
     its whole group is stopped, never only its first process (class P)."""
-    proc = subprocess.Popen(["bash", "-c", command], cwd=repo, text=True, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, start_new_session=True)
     try:
-        out, _ = proc.communicate(timeout=CONTROL_TIMEOUT)
+        proc = bounded_run(["bash", "-c", command], cwd=repo, text=True, stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT, timeout=CONTROL_TIMEOUT)
     except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGKILL)
-        out, _ = proc.communicate()
         return {"command": command, "ok": False, "exit": None, "tail": [f"arrêté après {CONTROL_TIMEOUT} s"]}
     return {"command": command, "ok": proc.returncode == 0, "exit": proc.returncode,
-            "tail": (out or "").strip().splitlines()[-5:]}
+            "tail": (proc.stdout or "").strip().splitlines()[-5:]}
 
 
 def recent_decisions(days: int) -> list[dict[str, Any]]:

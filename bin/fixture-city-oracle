@@ -68,6 +68,9 @@ TICKET_END_VERSION = "ticket-end/v1"
 TICKET_END_CONDITIONS = (
     "criteria", "handoff", "evaluation", "fidelity", "deferral", "merge", "evidence", "tdd", "review")
 BIN = Path(__file__).resolve().parent
+sys.path.insert(0, str(BIN.parent / "lib"))
+from bounded_process import run as bounded_run  # noqa: E402
+
 SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 REVISION = re.compile(r"^[0-9a-f]{40}$")
 
@@ -246,7 +249,7 @@ def git_env() -> dict[str, str]:
 
 def run_git(*arguments: str) -> str:
     try:
-        result = subprocess.run(
+        result = bounded_run(
             ("git", *arguments),
             env=git_env(),
             text=True,
@@ -447,7 +450,7 @@ def run_interface(
             seccomp_filter.seek(0)
             sandbox.extend(("--seccomp", str(seccomp_filter.fileno())))
             sandbox.extend(command_line)
-            result = subprocess.run(
+            result = bounded_run(
                 sandbox,
                 cwd=workspace,
                 env=environment,
@@ -1166,7 +1169,7 @@ def run_driver(driver: Path, workspace: Path, command: str, *arguments: str, flo
     if not driver.is_absolute() or not driver.is_file() or not os.access(driver, os.X_OK):
         raise OracleError(f"delivery driver must be an absolute executable file: {driver}")
     try:
-        result = subprocess.run(
+        result = bounded_run(
             (str(driver), "--workspace", str(workspace), command, *arguments),
             cwd=workspace, env={**hermetic_env(workspace), **({FLOW_BIN_VARIABLE: str(flow.directory)} if flow else {})},
             text=True, capture_output=True,
@@ -1201,8 +1204,8 @@ class DeliveryTarget:
     def read(self, tool: str, *arguments: str) -> tuple[int, dict[str, Any]]:
         """One read-only command of the flow, run by the oracle itself."""
         try:
-            result = subprocess.run((str(BIN / tool), *arguments), env=self.environment, text=True,
-                                    capture_output=True, stdin=subprocess.DEVNULL, timeout=120, check=False)
+            result = bounded_run((str(BIN / tool), *arguments), env=self.environment, text=True,
+                                 capture_output=True, stdin=subprocess.DEVNULL, timeout=120, check=False)
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise OracleError(f"{tool} {arguments[0]} failed to run: {exc}") from exc
         return result.returncode, json_output(result, f"{tool} {arguments[0]}")
@@ -1210,8 +1213,8 @@ class DeliveryTarget:
     def requests(self) -> list[str]:
         """The lines of the operator's list, as bin/escalation-door prints them."""
         try:
-            result = subprocess.run((str(BIN / "escalation-door"), "list"), env=self.environment, text=True,
-                                    capture_output=True, stdin=subprocess.DEVNULL, timeout=120, check=False)
+            result = bounded_run((str(BIN / "escalation-door"), "list"), env=self.environment, text=True,
+                                 capture_output=True, stdin=subprocess.DEVNULL, timeout=120, check=False)
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise OracleError(f"escalation-door list failed to run: {exc}") from exc
         if result.returncode != 0 or "NEEDS BENJAMIN:" not in result.stdout:

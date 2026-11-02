@@ -19,6 +19,8 @@
 #     the same head, CLEAN state and green required check takes the pinned
 #     direct path; an unknown read, moved head, non-green check or non-CLEAN
 #     state never does.
+#  7. a zero exit from that direct merge request is also re-read: an OPEN PR
+#     waiting in GitHub's merge queue is never announced as merged.
 
 set -Eeuo pipefail
 
@@ -135,6 +137,10 @@ out=$(pilot)
 grep -qxF "pr merge 30 --repo $REPO --squash --match-head-commit af30" "$TMP/gh.log" \
   || { echo "$out" >&2; fail "armed, green, CLEAN PR #30 still open after the delay was not merged directly"; }
 [ "$(merges_of 30)" = 1 ] || { echo "$out" >&2; fail "PR #30 got $(merges_of 30) merge calls, expected 1"; }
+grep -q "^pr view 30 --repo $REPO --json state" "$TMP/gh.log" \
+  || { echo "$out" >&2; fail "PR #30's server state was not re-read after the successful direct merge request"; }
+grep -qF "merge requested; GitHub still reports OPEN" <<<"$out" \
+  || { echo "$out" >&2; fail "PR #30 waiting in GitHub's queue was announced as merged"; }
 grep -qF "PR #30: armed, required check green for 1020s, CLEAN, still open -> direct squash merge" <<<"$out" \
   || { echo "$out" >&2; fail "PR #30's direct merge was not logged with its reason"; }
 if grep -qE '^pr merge (30|31|32|33|34|35|36) .*--auto' "$TMP/gh.log"; then

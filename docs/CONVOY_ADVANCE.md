@@ -372,7 +372,11 @@ Exit (`formulas/mol-ticket-resume.formula.toml`).
 An `evaluation_no_result`, `stage_removed` or `code_review_no_result` resume lifts the stop in that same write: the stop
 leaves the ticket and is kept on its resume (`resume.entries[].stop`), never
 erased; the request the stop raised is withdrawn first (`bin/escalation-door
-clear <ticket>`). A Ticket Evaluation without result is most often a defect
+clear <ticket>`). The answer and the withdrawal share the escalation door's
+lock: after the withdrawal, the pass reads the request again before opening
+the resume. An answer that won the lock after the first read therefore leaves
+the ticket stopped with the operator instead of being consumed by the resume
+(af-npz9v1.35). A Ticket Evaluation without result is most often a defect
 of the factory (an Evaluator role, a brief, a launch) whose repair is merged
 elsewhere; the fresh author session brings the integration branch into the
 ticket branch and finishes again, and the next passes withdraw the
@@ -464,6 +468,10 @@ If option `a` is recorded while the same pass is resuming another ticket,
 the pass applies it before withdrawing the grouped request: the request-door
 lock orders the answer and the withdrawal, so the named exhausted tickets
 are lifted and their counted resumes are launched exactly once (af-g2ukoq).
+The same ordering holds when the parkings changed and the request would be
+raised again: the answer is applied from the old record, while that record
+still names the exhausted tickets, before a new timestamp can replace it
+(af-npz9v1.35).
 
 Two decisions taken here:
 

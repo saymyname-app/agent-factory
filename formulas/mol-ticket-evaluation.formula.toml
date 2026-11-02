@@ -90,13 +90,16 @@ For every game in `.datasets`, capture a sealed piece on that game
 before switching away. Ask the controller for another game with:
 
 ```bash
+gc runtime heartbeat --duration 10m
 "$FACTORY_ROOT/bin/ticket-evaluation" product "$TICKET_CONVOY" "$TICKET" --dataset NAME --wait 540 > product.json
 ```
 
 `--wait 540` blocks until the controller has the game ready, at most 9
 minutes: run it as one foreground shell call with the Bash tool
-`timeout` set to 600000 (its maximum; the default 120 s is too short). If `ready` is
-still false, run the same command once more. When true, use its `address`
+`timeout` set to 600000 (its maximum; the default 120 s is too short). The
+10-minute runtime heartbeat keeps this same session active for the whole
+wait. If `ready` is still false, run the same two-command block once more.
+When true, use its `address`
 and `launch_state` to capture. `--fresh` requests a reset of a game at the
 same commit; the wait covers that reset too. Keep one `{dataset,evidence}` entry per
 game of `.datasets` in `coverage`. A missing game or piece from another game's

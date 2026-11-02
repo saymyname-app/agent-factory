@@ -537,7 +537,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         if row["value"] is None or row["freshness"] == UNKNOWN:
             return render_projects_unknown(row["read_at"])
         projects, sans_projet = projects_from_value(row["value"])
-        apply_to_projects(projects, snapshot.get("depots"))
+        apply_to_projects(projects, snapshot.get("depots"), row["value"].get("roadmap_chantiers") or {})
         return render_projects_section(
             projects,
             sans_projet,
@@ -593,7 +593,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                 inner = render_project_unknown(fresh_html, unknown_project=True)
             else:
                 project, hors_chantier, historique = data
-                apply_to_projects([project], snapshot.get("depots"))
+                apply_to_projects([project], snapshot.get("depots"), row["value"].get("roadmap_chantiers") or {})
                 below = render_project_page(project, hors_chantier=hors_chantier,
                                             historique_html=render_historique_section([historique]),
                                             fresh_html=fresh_html, topbar=False)

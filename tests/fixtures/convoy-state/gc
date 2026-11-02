@@ -45,6 +45,11 @@ CONVOY_STATE_FAKE_SLING_FAIL (comma-separated) makes its sling fail. For the
 grouped-answer race, CONVOY_STATE_FAKE_ANSWER_ON_SLING=REQUEST=OPTION records
 that response after the first successful sling.
 
+For answer/clear races, CONVOY_STATE_FAKE_ANSWER_ON_CLEAR=REQUEST=OPTION
+records the response immediately before escalation-door clears that request.
+CONVOY_STATE_FAKE_ANSWER_ON_GROUPED_NOTE=REQUEST=OPTION records it while
+convoy-advance prepares to replace a grouped request whose parkings changed.
+
 For the factory incident of bin/convoy-advance and for bin/escalation-door
 (T34, af-ckwina): `bd update` also takes `--unset-metadata KEY`, `--status
 VALUE` and `--append-notes TEXT`; as bd 1.4.1 does, `--status closed` on a
@@ -88,6 +93,20 @@ def coerce(value):
     if value in ("true", "false"):
         return value == "true"
     return value
+
+
+def fake_answer(env_name, bead_id, metadata):
+    answer = os.environ.get(env_name)
+    if not answer:
+        return
+    request, separator, option = answer.partition("=")
+    if not separator or not request or not option:
+        fail(f"{env_name} must be REQUEST=OPTION")
+    if request != bead_id or "gc.escalation_response_option" in metadata:
+        return
+    metadata.update({"gc.needs_benjamin": "none", "gc.escalation_response_option": option,
+                     "gc.escalation_response_at": "9999-01-01T00:00:00Z",
+                     "gc.escalation_response_actor": "fake-race"})
 
 
 def view(bead_id, bead):
@@ -136,6 +155,10 @@ def update(state, bead_id, rest):
     metadata = dict(bead.get("metadata") or {})
     forced = "--force" in rest
     rest = [arg for arg in rest if arg != "--force"]
+    if any(arg.startswith("gc.escalation_cleared_at=") for arg in rest):
+        fake_answer("CONVOY_STATE_FAKE_ANSWER_ON_CLEAR", bead_id, metadata)
+    if "--append-notes" in rest:
+        fake_answer("CONVOY_STATE_FAKE_ANSWER_ON_GROUPED_NOTE", bead_id, metadata)
     i = 0
     while i < len(rest):
         flag = rest[i]
@@ -248,6 +271,10 @@ def create(state, rest):
 def close(state, bead_id, rest):
     if bead_id not in state["beads"] or rest[:1] != ["--reason"] or rest[2:] not in ([], ["--json"]):
         fail(f"no canned response configured for: bd close {bead_id} {' '.join(rest)}")
+    blockers = [dep for dep in state["beads"][bead_id].get("blocks") or []
+                if (state["beads"].get(dep) or {}).get("status") != "closed"]
+    if blockers:
+        fail(f"cannot close blocked issue: {bead_id} is blocked by [{' '.join(blockers)}]")
     state["beads"][bead_id]["status"] = "closed"
     log_write(["close", bead_id])
     print(json.dumps([{"id": bead_id, "status": "closed"}]))

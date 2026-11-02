@@ -92,6 +92,15 @@ GRANTED = "amendment_granted"
 # Benjamin, 25/10/2026: « Seul le ticket nommé dans le test (par exemple
 # « jusqu'à A2 ») peut le modifier, une seule fois »).
 SUCCESSOR_WORDS = r"(?:until|jusqu['’]à)\s+"
+# af-kgu40t: Benjamin's option « a » authorized one otherwise unnamed
+# succession, for this ticket and file only. The succession evidence below
+# records its first use and refuses a different digest thereafter.
+AUTHORIZED_SUCCESSION = {
+    "ticket": "af-ocz64w",
+    "path": "tests/cockpit-criteria/commands/home-d01-records-test.py",
+    "lifted_at": "2026-10-30T11:55:11Z",
+    "parked_at": "2026-10-29T05:56:01Z",
+}
 
 EXIT_REFUSED = 1
 EXIT_NOT_NEW_FLOW = 4
@@ -104,6 +113,8 @@ EXIT_STOPPED = 5
 # green, full elsewhere -- and a minute more. Exit 75 is its NOT RUN: no
 # answer, never a red (study C, T1).
 sys.path.insert(0, str(BIN.parent / "lib"))
+from bounded_process import run as bounded_run  # noqa: E402
+from delivery_rules import tdd_evidence_piece  # noqa: E402
 import test_budgets  # noqa: E402
 
 BUDGETS = test_budgets.load(BIN.parent)
@@ -476,8 +487,8 @@ class Check:
         argv = [token.replace("{test}", test_id).replace("{report}", str(report)) for token in self.test_command()]
         env = {**os.environ, "PRODUCT_ADDRESS": address, "PYTHONDONTWRITEBYTECODE": "1"}
         try:
-            proc = subprocess.run(argv, cwd=tree, env=env, stdin=subprocess.DEVNULL, capture_output=True,
-                                  timeout=COMMAND_TIMEOUT)
+            proc = bounded_run(argv, cwd=tree, env=env, stdin=subprocess.DEVNULL, capture_output=True,
+                               timeout=COMMAND_TIMEOUT)
         except subprocess.TimeoutExpired as exc:
             raise Refusal(f"la commande de test n'a pas fini en {COMMAND_TIMEOUT} s : {test_id}") from exc
         except OSError as exc:
@@ -587,6 +598,20 @@ class Check:
                 named.update(by_code.get(mention.group(1).casefold(), set()))
                 mention = re.match(r"\s*(?:/|\bor\b|\bou\b)\s*([\w.-]+)(.*)", mention.group(2), re.IGNORECASE)
         return named == {self.args.ticket}
+
+    def has_authorized_succession(self, path: str) -> bool:
+        """The one operator-granted succession that does not name A2 in its
+        start-commit text (af-kgu40t)."""
+        if (self.args.ticket, path) != (AUTHORIZED_SUCCESSION["ticket"], AUTHORIZED_SUCCESSION["path"]):
+            return False
+        entries = self.ticket.get("park_lifts") or []
+        return any(
+            (entry.get("request"), entry.get("option"), entry.get("at"), entry.get("parked_at")) == (
+                AUTHORIZED_SUCCESSION["ticket"], "a", AUTHORIZED_SUCCESSION["lifted_at"],
+                AUTHORIZED_SUCCESSION["parked_at"],
+            )
+            for entry in entries
+        )
 
     def succession(self) -> dict[str, dict[str, str]]:
         """The frozen tests of other tickets this ticket's amendments changed,
@@ -839,8 +864,7 @@ def check_freeze(check: Check) -> dict[str, Any]:
     amended = bool(amendment and amendment["commit"] == check.head)
     if "freeze" in check.tdd and not amended:
         raise Refusal("les tests de critère de ce ticket sont déjà gelés : un nouveau gel ne suit qu'un amendement")
-    # After an amendment, the red of the amended tests is its own piece.
-    proof = check.sealed("tdd_amendment" if amended else "tdd_red", check.head, "preuve du rouge")
+    proof = check.sealed(tdd_evidence_piece(check.tdd, "red"), check.head, "preuve du rouge")
     try:
         paths = [proof["table"], *(test_id.partition("::")[0] for test_id in unique_ids(proof["criteria"])),
                  *proof["frozen_harness_paths"]]
@@ -872,8 +896,8 @@ def regression_run(check: Check, commit: str, moment: str, ticket_tests: list[st
         env["TDD_STEP_TICKET_TESTS"] = " ".join(ticket_tests)
     timeout = test_budgets.deadline(BUDGETS, "green" if ticket_tests else "full")
     try:
-        proc = subprocess.run(command, cwd=check.export(commit), stdin=subprocess.DEVNULL, capture_output=True,
-                              timeout=timeout, env=env)
+        proc = bounded_run(command, cwd=check.export(commit), stdin=subprocess.DEVNULL, capture_output=True,
+                           timeout=timeout, env=env)
     except subprocess.TimeoutExpired as exc:
         raise Refusal(f"la commande de régression n'a pas fini en {timeout} s {moment}") from exc
     except OSError as exc:
@@ -996,7 +1020,7 @@ def check_amend(check: Check) -> dict[str, Any]:
         if path in succession:
             if succession[path]["digest"] != digest:
                 refused.append(f"test gelé du ticket {owner} déjà changé une fois par {check.args.ticket} : {path}")
-        elif not check.names_this_ticket(base, path):
+        elif not (check.names_this_ticket(base, path) or check.has_authorized_succession(path)):
             refused.append(f"test gelé du ticket {owner} modifié : {path} ; il ne nomme pas {check.args.ticket} "
                            "comme successeur (« until <ticket> ») : seul le ticket qu'il nomme le change")
         else:

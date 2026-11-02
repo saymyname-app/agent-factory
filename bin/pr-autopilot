@@ -334,12 +334,16 @@ direct_merge() {  # repo num head_sha
   [ "$sha" != "unknown" ] && args+=(--match-head-commit "$sha")
   if [ "$DRY_RUN" = "1" ]; then log "  DRY-RUN: gh ${args[*]}"; return 0; fi
   bounded "$AP_WRITE_CAP" gh "${args[@]}" >/dev/null 2>&1; d_rc=$?
-  # A successful request may only enqueue the PR; read GitHub before claiming merge.
-  if [ "$d_rc" = 0 ]; then log "    merge requested (GitHub confirms completion)"; ARMED=$((ARMED+1)); return 0; fi
+  # A successful request may only enqueue the PR; always read GitHub before
+  # claiming merge (PR #778 waited in the queue after gh returned zero).
   final=$(bounded "$AP_READ_CAP" gh pr view "$num" --repo "$repo" --json state \
     --jq .state 2>/dev/null); rc=$?
   if [ "$final" = "MERGED" ]; then
-    log "    merged (local cleanup failed; see factory-guard worktrees)"
+    if [ "$d_rc" = 0 ]; then log "    merged (server-confirmed)"
+    else log "    merged (local cleanup failed; see factory-guard worktrees)"; fi
+    ARMED=$((ARMED+1))
+  elif [ "$d_rc" = 0 ] && [ "$rc" = 0 ] && [ "$final" = "OPEN" ]; then
+    log "    merge requested; GitHub still reports OPEN"
     ARMED=$((ARMED+1))
   elif timed_out "$d_rc" || timed_out "$rc"; then
     log "    direct merge outcome unknown (a gh call timed out) -- re-read next tick"
