@@ -199,21 +199,24 @@ interval = "2m"
 check = "/home/benja/agent-factory/orders/lib/orders-restart-stagger.sh beads-health 120"
 
 [[orders.overrides]]
-# gc order sweep-tracking --stale-after 10m is idempotent and only prunes;
-# a 10m sweep cadence still catches everything before its own 10m staleness
-# window closes.
+# gc order sweep-tracking --stale-after 10m is idempotent and only prunes.
 # af-8x3vwg: the sweep normally finishes in seconds, but Dolt contention made
 # five runs hit Gas City's inherited 300s exec deadline exactly. Give this
 # bounded maintenance scan 10m.
 # af-260e1x: with 7,098 rows retained from the preceding 24h, five runs again
 # exhausted that 10m bound while successful runs took 1-8m. The 6h retention
 # below measured 909 rows; keep 2x the observed failure boundary as headroom.
+# af-w7oqex: Gas City's 2m tracking watchdog closes this long-running order's
+# single-flight bead before the command finishes. A 10m cadence could therefore
+# overlap two scans under the 20m execution bound and make both contend until
+# timeout. Run every 30m so one process group is gone before the next can start;
+# this also cuts the maximum scan rate from six per hour to two.
 # T10 (af-u61al3): see the dolt-health override above.
 name = "order-tracking-sweep"
 trigger = "condition"
-interval = "10m"
+interval = "30m"
 timeout = "20m"
-check = "/home/benja/agent-factory/orders/lib/orders-restart-stagger.sh order-tracking-sweep 600"
+check = "/home/benja/agent-factory/orders/lib/orders-restart-stagger.sh order-tracking-sweep 1800"
 
 [[orders.overrides]]
 # gate-sweep.sh is a pure mechanical evaluation (no LLM) that is a no-op
