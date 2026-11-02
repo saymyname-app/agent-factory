@@ -66,6 +66,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from dataclasses import replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -124,6 +125,10 @@ SEAL_KEY_FILE = ".seal-key"
 # the processes that carry it, and the controller of an evaluation attests
 # that the process listening on the port carries it. The cockpit keeps it.
 LAUNCH_MARK = "FACTORY_LAUNCH_ID"
+# Where two launches of a commit share a synthetic projection and evidence
+# store (`retention`, C2b): under the temporary directory, in a folder of this
+# account alone, never a place a dataset names.
+RETENTION_ROOT = Path(tempfile.gettempdir()) / "cockpit-synthetic-retention"
 
 
 def read_city(path: Path) -> synthetic_city.SyntheticCity:
@@ -610,6 +615,35 @@ def write_evidence(city: synthetic_city.SyntheticCity, home: str) -> dict[str, s
     return {"EVIDENCE_STORE_DIR": str(store)}
 
 
+def retained(city: synthetic_city.SyntheticCity) -> synthetic_city.SyntheticCity:
+    """`city` keeping its projection and its pieces in the disposable place
+    of its `retention`, one per commit, so a restart of the evaluated
+    product finds them: a launch that does not purge starts that place
+    over, a launch that purges takes what the one before left."""
+    if not city.retention:
+        return city
+    RETENTION_ROOT.mkdir(mode=0o700, exist_ok=True)
+    if RETENTION_ROOT.is_symlink() or RETENTION_ROOT.stat().st_uid != os.getuid():
+        sys.exit(f"cockpit-isolated: {RETENTION_ROOT} is not a folder of this account")
+    commit = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], check=True, capture_output=True, text=True)
+    place = RETENTION_ROOT / f"{city.retention}-{commit.stdout.strip()}"
+    if not city.retention_purge:
+        shutil.rmtree(place, ignore_errors=True)
+    place.mkdir(exist_ok=True)
+    return replace(city, session_trace=str(place / "sessions.jsonl"), evidence_store=str(place / "evidence"))
+
+
+def purge_retained(city: synthetic_city.SyntheticCity, store: str) -> None:
+    """Purge the Specs of `city` from its synthetic `store` with the real
+    bin/evidence-capture, on no other store: the pieces the launch before
+    filed are gone, their fingerprints left in the tracker."""
+    for spec in sorted({path.split("/")[0] for path in city.evidence}):
+        subprocess.run([sys.executable, str(ROOT / "bin" / "evidence-capture"), "purge", "--spec", spec], check=True,
+                       stdout=subprocess.DEVNULL,
+                       env={"PATH": os.environ.get("PATH", os.defpath), "HOME": str(Path(store).parent),
+                            "EVIDENCE_STORE_DIR": store})
+
+
 def write_knowledge_repos(city: synthetic_city.SyntheticCity, home: str) -> dict[str, str]:
     """Put the knowledge repositories of the projects under `home`: a Git
     repository for each one the city writes, its files committed at the
@@ -649,7 +683,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--dataset", required=True)
     args = parser.parse_args(argv)
-    city = read_city(Path(args.dataset))
+    city = retained(read_city(Path(args.dataset)))
     doors = read_doors(Path(args.dataset))
     restarted = read_restart(Path(args.dataset))
     https = read_https(Path(args.dataset))
@@ -699,6 +733,8 @@ def main(argv: list[str]) -> int:
         **write_knowledge_repos(city, home),
         **write_evidence(city, home),
     }
+    if city.retention_purge:
+        purge_retained(city, env["EVIDENCE_STORE_DIR"])
     if LAUNCH_MARK in os.environ:
         env[LAUNCH_MARK] = os.environ[LAUNCH_MARK]
     env.update(write_stop(restarted, city, home))

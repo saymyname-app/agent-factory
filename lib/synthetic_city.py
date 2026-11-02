@@ -132,6 +132,10 @@ class SyntheticCity:
     # (`evidence_store`), else in the home of the launch.
     evidence: dict = field(default_factory=dict)
     evidence_store: str | None = None
+    # A disposable place two launches share (`retention`, C2b): its name,
+    # never a path, and whether this launch purges its store.
+    retention: str | None = None
+    retention_purge: bool = False
 
 
 # Where a value of a source names a file of `SyntheticCity.files`.
@@ -158,12 +162,29 @@ def from_dataset(dataset) -> SyntheticCity:
             if not isinstance(path, str) or not os.path.isabs(path):
                 raise DatasetRefused(f"its {key} is not an absolute path: {path!r}")
             city = replace(city, **{key: path})
-        return city
+        return _with_retention(city, dataset)
     if "tracker" in dataset:
         return _tracker_city(name, dataset["tracker"], dataset.get("projects"), dataset.get("repos"))
     return _panorama_city(name, _fixed_time(at), ui, dataset.get("visible_text"), _folded(dataset.get("folded")),
                           _folded(dataset.get("drawn"), "drawn"), _run_cards(dataset.get("runs")),
                           _result_values(dataset.get("result")), dataset.get("release"))
+
+
+def _with_retention(city: SyntheticCity, dataset: dict) -> SyntheticCity:
+    """`city` with the disposable place `dataset` shares with another launch
+    (`retention`: its `place`, a name, and `purge`). A place is a name and
+    goes with no path of the dataset: bin/cockpit-isolated alone says where
+    it is, so a dataset cannot point a purge at a store it names."""
+    retention = dataset.get("retention")
+    if retention is None:
+        return city
+    place = retention.get("place") if isinstance(retention, dict) else None
+    purge = retention.get("purge", False) if isinstance(retention, dict) else None
+    if not isinstance(place, str) or not RETENTION_PLACE.fullmatch(place) or not isinstance(purge, bool):
+        raise DatasetRefused(f"its retention is not a place and a purge: {retention!r}")
+    if city.session_trace or city.evidence_store:
+        raise DatasetRefused("its retention goes with no session_trace and no evidence_store")
+    return replace(city, retention=place, retention_purge=purge)
 
 
 def _folded(folded, key="folded") -> dict:
@@ -858,6 +879,8 @@ SCREENS = {
 RUN_FORMULAS = {"Livraison D01": "mol-ticket-author", "Maintenance": "mol-do-work"}
 # What a session a job says carries as the supervisor lists it.
 SESSION_SAID = ("model", "context_pct", "context_window", "work_dir")
+# The name of a place two launches share (`retention`).
+RETENTION_PLACE = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
 RUN_FILTERS = {"all": "tous", "active": "en-cours", "completed": "termines"}
 RUN_PROJECT = "agent-factory"
 RUN_TRIGGERED_BY = "benjamin"
@@ -1006,7 +1029,7 @@ def _run_records(run, lanes, moment, sessions, opened, ui, view, trace) -> list:
         records.append({"id": run_id, "title": run["title"], "issue_type": "convoy", "created_at": at(0),
                         "created_by": RUN_TRIGGERED_BY, **ended(run["end"]),
                         "metadata": {"gc.flow.mark": "new-flow/v1", "gc.graph_digest": digest,
-                                     "gc.project_id": RUN_PROJECT, "gc.spec_id": f"synthetic-spec-{key}"}})
+                                     "gc.project_id": RUN_PROJECT, "gc.spec_id": f"synthetic-{key}"}})
         ticket = {"gc.flow.mark": "new-flow/v1", "gc.graph_digest": digest, "gc.ticket_id": key}
         if run["status"] == "Fusionné":
             ticket["gc.flow.merge"] = json.dumps({"at": at(run["end"]), "outcome": "merged"})
@@ -1016,7 +1039,7 @@ def _run_records(run, lanes, moment, sessions, opened, ui, view, trace) -> list:
             ticket["gc.flow.models"] = json.dumps(run["declared"], ensure_ascii=False)
         records.append({"id": ticket_id, "title": run["title"], "issue_type": "task", "created_at": at(0),
                         **ended(run["end"]), "metadata": ticket})
-        filed = (f"synthetic-spec-{key}", ticket_id, ticket)
+        filed = (f"synthetic-{key}", ticket_id, ticket)
         roots[None] = workflow("", formula, ticket_id, formula)
         for prefix, workflow_formula, title in DISPATCHED:
             if any(lanes[job["lane"]]["role"].startswith(prefix) for job in run["jobs"]):

@@ -251,6 +251,8 @@
       "job-system-prompt": "config/cockpit-datasets/job-system-prompt.json",
       "job-usage": "config/cockpit-datasets/job-usage.json",
       "job-usage-unavailable": "config/cockpit-datasets/job-usage-unavailable.json",
+      "job-retention-before": "config/cockpit-datasets/job-retention-before.json",
+      "job-retention-purged": "config/cockpit-datasets/job-retention-purged.json",
       "job-user-prompt-raw": "config/cockpit-datasets/job-user-prompt-raw.json",
       "job-user-prompt-rendered": "config/cockpit-datasets/job-user-prompt-rendered.json",
       "chantier-decisions": "config/cockpit-datasets/chantier-decisions.json"

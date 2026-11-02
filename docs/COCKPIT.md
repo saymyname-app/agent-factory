@@ -1300,6 +1300,7 @@ ways:
 | where the cockpit keeps its trace of the sessions (`session_trace`, an absolute path) | `COCKPIT_TRACE_FILE`; else in the home of the launch, removed with it | the projection a case reads, and keeps from one launch to the next |
 | the attempts a job of an agent says (`attempts`: each its `end` from the trigger -- none, still at work --, its `outcome`, `pass` or `fail`, what its check printed, `log`, the structured output it recorded, `output`, as written, `output_valid` false when its check refused it, and the pieces it captured, `pieces`) (C2b, af-ofz29f) | in place of the one attempt of the job: one attempt per entry (`gc.attempt`, claimed at the end of the one before, closed at its `end` with its `gc.outcome`, its `gc.output_json`, `gc.failure_reason` `invalid_required_output_json` for an output refused); what the check said of each closed attempt on the step (`gc.attempt_log`: `action`, `attempt`, `outcome`, `stderr`, `reason`), as Gas City writes it; each piece filed in the evidence store a second before the end of its attempt (`<spec>/<ticket>/<piece>.json`) and fingerprinted on the ticket (`gc.flow.evidence.<piece>`), as `bin/evidence-capture` does | the controls and outputs of `GET /runs/job` |
 | where the flow files its pieces (`evidence_store`, an absolute path) | `EVIDENCE_STORE_DIR` of the cockpit, else a store in the home of the launch; the pieces are filed with a seal key only into a store that has none, so a store purged since (its key kept) stays purged | the pieces a control says present or absent, and the purge a case does |
+| a disposable place two launches of a commit share (`retention`: `place`, a name, and `purge`), with no `session_trace` and no `evidence_store` | `bin/cockpit-isolated` keeps the projection and the store there, the first launch starts it over, one that purges runs `bin/evidence-capture purge` on that store alone | `job-retention-before`, `job-retention-purged` |
 | what the flow declared for each role of a run (`declared`: `{role: {agent, provider, model, at}}`) | written on its ticket as the flow writes it (`gc.flow.models`) | the configuration declared in `GET /runs/job` |
 | what a Runs state selects: `ui.filter`, `ui.run`, `ui.selected_job`, `ui.selected_event`, `ui.detail` | the filter, the run, the job, the event and the state of the detail (the sections it opens, the prompts it shows raw) a page opens when its address names none (`COCKPIT_RUNS_VIEW`) | `GET /runs`, `GET /runs/run`, `GET /runs/job` |
 | the moment a Runs state shows (the latest `started` + `elapsed` of an open run) | the clock of the cockpit starts there and runs on (`COCKPIT_CLOCK_START`) | the horizon of the open runs, `read_at` |
@@ -1669,7 +1670,17 @@ evidence store, never copied.
 The states `job-gates`, `job-output`, `job-usage` and
 `job-usage-unavailable` open « Contrôles », « Sorties » and « Tokens et
 coût ». Tests:
-`tests/cockpit-criteria/commands/runs-trace-{events,controls,outputs,usage,layout,retention}-test.py`.
+`tests/cockpit-criteria/commands/runs-trace-{events,controls,outputs,usage,layout,retention,retention-datasets}-test.py`.
+
+The datasets `job-retention-before` and `job-retention-purged` let the
+read-only Evaluator see the purge with no gesture but two launches, in that
+order, at one commit. Each says `retention` (`place`, a name; `purge`), and
+the recipe alone says where: `cockpit-synthetic-retention/<place>-<commit>`
+in the temporary directory, the projection and the store of both launches.
+The first starts that place over and files the pieces. The second holds no
+transcript and runs the real `bin/evidence-capture purge` on that store and
+no other, before its cockpit starts: the job shows the same trace, once,
+and its pieces « absente ». Launched alone, it has no trace to show.
 
 The frise is drawn on a track of 720 px, scrolled in its box on a narrower
 screen. A job is a box at its start, as wide as its time and at least as
