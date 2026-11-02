@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -36,7 +37,10 @@ class IdleReadyWorkWakeTest(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="idle-ready-work-wake-test-"))
         self.gc_log = self.tmp / "gc.log"
 
-    def run_tick(self, now, ready=READY_ONE_DELIVERY_BEAD, worker_active="0"):
+    def run_tick(
+        self, now, ready=READY_ONE_DELIVERY_BEAD, worker_active="0",
+        mail_sleep="0", notify_timeout=None,
+    ):
         env = {
             **os.environ,
             "BD_BIN": str(FAKE_BD),
@@ -44,8 +48,11 @@ class IdleReadyWorkWakeTest(unittest.TestCase):
             "IDLE_TEST_READY": ready,
             "IDLE_TEST_WORKER_ACTIVE": worker_active,
             "IDLE_TEST_GC_LOG": str(self.gc_log),
+            "IDLE_TEST_MAIL_SLEEP": mail_sleep,
             "IDLE_READY_WORK_NOW": now,
         }
+        if notify_timeout is not None:
+            env["IDLE_READY_WORK_NOTIFY_TIMEOUT_SECONDS"] = notify_timeout
         proc = subprocess.run(
             (str(TOOL), "--repo-root", str(self.tmp)),
             env=env, text=True, capture_output=True, check=True,
@@ -113,6 +120,23 @@ class IdleReadyWorkWakeTest(unittest.TestCase):
         calls = self.wake_calls()
         self.assertEqual(1, len(calls))
         self.assertEqual(["mail", "send", "mayor", "--notify"], calls[0][:4])
+
+    def test_a_hung_notification_is_bounded_without_changing_wake_cooldown(self):
+        self.run_tick("2026-09-28T10:00:00+00:00")
+
+        started = time.monotonic()
+        fired = self.run_tick(
+            "2026-09-28T10:15:01+00:00", mail_sleep="2", notify_timeout="0.1",
+        )
+        elapsed = time.monotonic() - started
+
+        self.assertLess(elapsed, 1.5)
+        self.assertTrue(fired["fired"])
+        self.assertEqual(1, len(self.wake_calls()))
+
+        cooling = self.run_tick("2026-09-28T10:15:02+00:00")
+        self.assertFalse(cooling["fired"])
+        self.assertEqual(1, len(self.wake_calls()))
 
     def test_stays_silent_while_a_worker_is_active(self):
         self.run_tick("2026-09-28T10:00:00+00:00", worker_active="1")
