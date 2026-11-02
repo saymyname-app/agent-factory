@@ -81,7 +81,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 - Occurrences : #624, #628, #629, #630, #631, #636, #647, #657, #658, #661,
   #667, #694, #696, #705, #706, #708, #710, #713, #721 ; copies orphelines du
   22/10 (sans PR) ; af-kky570 ; af-npz9v1.46 ; af-npz9v1.26 ; af-30zwwu ;
-  af-95zqgx ; af-d3dj4j ; af-ll4hju ; af-bl2jyj ; af-p4rdr7.
+  af-95zqgx ; af-d3dj4j ; af-ll4hju ; af-bl2jyj ; af-p4rdr7 ; af-6go1ss.
 - Ouvertes : les invocations directes antérieures hors des occurrences de
   l'étude B sont nommées une par une, avec leur date et leur motif, dans
   `config/bounded-process-exceptions.tsv` ; une vingtaine de délais écrits à
