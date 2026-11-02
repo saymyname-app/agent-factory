@@ -562,9 +562,9 @@ class Check:
 
     def foreign_changes(self, base: str) -> dict[str, str]:
         """The criterion tests another ticket of the convoy froze that differ
-        between the start commit and HEAD, with the ticket that froze each
-        (af-npz9v1.19). A test absent at the start commit is not changed by
-        this ticket: its owner has not reached this branch."""
+        by this ticket between the start commit and HEAD, with the ticket that
+        froze each (af-npz9v1.19). A test absent at the start commit, or held
+        unchanged from a merged base, is not changed by this ticket."""
         owners: dict[str, str] = {}
         for other in self.others:
             freeze = (other.get("tdd") or {}).get("freeze")
@@ -577,7 +577,8 @@ class Check:
                 continue
             owners.update((path, other["id"]) for path in paths)
         return {path: owner for path, owner in sorted(owners.items())
-                if (before := self.blob(base, path)) is not None and self.blob(self.head, path) != before}
+                if (before := self.blob(base, path)) is not None
+                and self.blob(self.head, path) != before and not self.inherited(path)}
 
     def names_this_ticket(self, base: str, path: str) -> bool:
         """The test, at the start commit, names this ticket as the one that

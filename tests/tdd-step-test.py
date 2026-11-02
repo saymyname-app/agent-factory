@@ -1099,6 +1099,24 @@ class TddStepTest(unittest.TestCase):
     def successor_app(self):
         return self.base_app.replace('{"status": "ok"}', '{"status": "ok", "ticket": "A2"}')
 
+    def test_amendment_ignores_another_ticket_s_frozen_test_inherited_from_main(self):
+        self.successor_frozen(owner_health=HEALTH_TEST)
+        self.git("checkout", "-q", "-b", "ticket")
+        self.git("checkout", "-q", "main")
+        self.commit("maintenance du test hérité", {HEALTH_FILE: HEALTH_TEST + "# maintenance\n"})
+        self.git("checkout", "-q", "ticket")
+        amended = TICKET_TEST.replace('body.get("ticket")', 'body.get("ticket_name")')
+        app = self.base_app.replace(
+            '{"status": "ok"}', '{"status": "ok", "ticket_name": "A2"}')
+        self.commit("code et test ciblé amendé", {APP: app, TICKET_FILE: amended})
+        self.git("merge", "-q", "--no-edit", "main")
+
+        self.ok("amend", SUCCESSOR, "--reason", "le champ s'appelle ticket_name")
+
+        _, proof = self.piece("tdd_amendment", SUCCESSOR)
+        self.assertEqual([TICKET_FILE], proof["amendment"]["files"])
+        self.assertEqual({}, proof["amendment"]["succession"])
+
     def operator_authorized_successor_frozen(self, successor=SUCCESSOR):
         """A1 froze the exact D01 test and another test that names no
         successor; then `successor` froze its own criterion tests."""
