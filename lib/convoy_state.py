@@ -397,6 +397,7 @@ STOP_REASONS = ("criterion_already_green", "amendment_exhausted", "test_review_r
 # stopped ticket the operator may override a Blocking Finding of the review,
 # never a criterion that was not observed, or grant a round the bound allows.
 STOP_STILL_REFUSED = "still_refused"
+STOP_EVALUATION_NO_RESULT = "evaluation_no_result"
 STOP_EVALUATION_OUTAGE = "evaluation_outage"
 BOUND_CORRECTION_ROUNDS = "correction_rounds"
 # ADR-0035 (af-npz9v1.40): at the bound, the Mayor arbitrates; it may grant a
@@ -500,6 +501,7 @@ def resume_lifts(cause: str, reason: str) -> bool:
     stop, only once open-resume has checked the overrides."""
     return reason in RESUMABLE_STOPS.get(cause, ()) \
         or (cause, reason) in ((OVERRIDDEN_STOP_CAUSE, STOP_STILL_REFUSED),
+                               ("unblocked", STOP_EVALUATION_NO_RESULT),
                                ("unblocked", STOP_EVALUATION_OUTAGE))
 
 
@@ -5293,14 +5295,14 @@ def cmd_link_technical_repair(args: argparse.Namespace) -> int:
     exit_record = stored_record(metadata.get(KEY_EXIT), ("exit", "at")) if KEY_EXIT in metadata else None
     park = park_record(metadata[KEY_PARK]) if KEY_PARK in metadata else None
     stop = stop_record(metadata[KEY_STOP]) if KEY_STOP in metadata else None
-    if stop is not None and stop["reason"] == STOP_EVALUATION_OUTAGE:
+    if stop is not None and stop["reason"] in (STOP_EVALUATION_NO_RESULT, STOP_EVALUATION_OUTAGE):
         generation = {"stop_at": stop["at"]}
     elif exit_record is not None and exit_record["exit"] == "operator_request" \
             and park is not None and park["cause"] == "operator_request" and park["origin"] == args.ticket:
         generation = {"exit_at": exit_record["at"], "parked_at": park["at"]}
     else:
         raise Refusal(
-            f"{args.ticket} n'est ni parqué par sa propre demande opérateur ni arrêté pour evaluation_outage : "
+            f"{args.ticket} n'est ni parqué par sa propre demande opérateur ni arrêté par son évaluation : "
             "seules ces classes peuvent être reliées à une réparation technique")
     if not isinstance(args.repair, str) or not BEAD_ID_RE.match(args.repair) or args.repair == args.ticket:
         raise Refusal(f"bead de réparation absent ou mal formé : {args.repair!r}")

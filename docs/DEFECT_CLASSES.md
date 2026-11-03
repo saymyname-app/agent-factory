@@ -103,6 +103,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/code-review-test.py CodeReviewTest.test_an_unfavorable_judgement_from_the_previous_contract_is_rejudged_once_at_the_same_tip`,
   `python3 tests/tdd-step-test.py TddStepTest.test_an_ambiguous_short_successor_does_not_name_either_ticket`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_factory_technical_request_waits_for_every_linked_repair_s_delivery_proof_then_resumes_once`,
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_an_evaluation_without_result_resumes_once_after_its_linked_factory_repair_is_delivered`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_an_evaluation_outage_resumes_once_after_its_linked_factory_repair_is_delivered`,
   `bash tests/factory-work-dispatch-test.sh`. Les courses réponse/retrait qui
   pourraient consommer une réponse sont tenues par
@@ -111,7 +112,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 - Occurrences : #635, #637, #650, #653, #662, #666, #672, #673, #679, #682,
   #687, #702, #704, #709, #711, #712, #718 ; af-npz9v1.44 ; af-npz9v1.47 ; af-npz9v1.48 ; af-npz9v1.35 ;
   af-bf0e7d (`evaluation_outage` repris une fois après la livraison prouvée
-  de sa maintenance liée).
+  de sa maintenance liée) ; af-e0n71v (`evaluation_no_result` refusait sa
+  maintenance liée et restait arrêté).
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
   contrôle : `criterion_already_green` reste au Planning Run ;
   `outcome_evaluation_no_result` et `outcome_evaluation_outage` ne repartent

@@ -33,6 +33,10 @@ AMENDMENT_PROOF = (
 STAGE_REMOVED_PROOF = "lib/convoy_state.py::\"stage_removed\": (\"test_review_refused\", \"test_review_no_result\")"
 CODE_REVIEW_PROOF = "lib/convoy_state.py::\"code_review_no_result\": (\"code_review_no_result\",)"
 EVALUATION_PROOF = "tests/convoy-state-test.py::test_open_resume_lifts_a_stop_without_evaluation_result_only_and_keeps_it"
+EVALUATION_NO_RESULT_REPAIR_PROOF = (
+    "tests/convoy-advance-resumes-stops-end-test.py::"
+    "test_an_evaluation_without_result_resumes_once_after_its_linked_factory_repair_is_delivered"
+)
 EVALUATION_OUTAGE_PROOF = (
     "tests/convoy-advance-resumes-stops-end-test.py::"
     "test_an_evaluation_outage_resumes_once_after_its_linked_factory_repair_is_delivered"
@@ -97,7 +101,8 @@ CONTRACT = {
         "exit": transition("open-resume --cause evaluation_no_result on a new integration tip", EVALUATION_PROOF),
         "options": {
             "Faire vérifier le rôle Evaluator par la maintenance de l'usine":
-                operator("escalation-door on the stopped ticket, after Evaluator maintenance"),
+                transition("link-technical-repair, then open-resume --cause unblocked after delivery",
+                           EVALUATION_NO_RESULT_REPAIR_PROOF),
             "Laisser le ticket arrêté": operator("escalation-door on the stopped ticket"),
         },
     },

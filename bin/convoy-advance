@@ -965,7 +965,7 @@ def technical_repairs(ticket: dict[str, Any]) -> list[str]:
         return []
     current_parking = park.get("cause") == "operator_request" and exit_record.get("exit") == "operator_request" \
         and record.get("parked_at") == park.get("at") and record.get("exit_at") == exit_record.get("at")
-    current_stop = stop.get("reason") == EVALUATION_OUTAGE and record.get("stop_at") == stop.get("at")
+    current_stop = stop.get("reason") in EVALUATION_STOPS and record.get("stop_at") == stop.get("at")
     if not current_parking and not current_stop:
         return []
     entries = record.get("entries")
@@ -1000,7 +1000,7 @@ def delivered_technical_repairs(ticket: dict[str, Any]) -> list[str]:
 
 
 def evaluation_repair_due(ticket: dict[str, Any]) -> tuple[str, str, str] | None:
-    """One resume for an evaluation-outage stop once every explicitly
+    """One resume for an evaluation stop once every explicitly
     linked Factory repair has structural delivery proof."""
     repairs = delivered_technical_repairs(ticket)
     if not repairs or ticket.get("resumes_left") == 0:
@@ -1245,8 +1245,10 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
                 due = once_per_stop_due(ticket, CODE_REVIEW_STOP)
             elif ticket["stop"]["reason"] == AMENDMENT_STOP:
                 due = amendment_granted_due(ticket) or inherited_change_due(convoy, ticket)
-            elif ticket["stop"]["reason"] == EVALUATION_OUTAGE:
+            elif ticket["stop"]["reason"] in EVALUATION_STOPS and technical_repairs(ticket):
                 due = evaluation_repair_due(ticket)
+            elif ticket["stop"]["reason"] == EVALUATION_OUTAGE:
+                due = None
             elif overridden_at_work(ticket):
                 # Only the merge that returned it lifts its stop; no resume left, it stays with the operator.
                 due = resume_due(ticket, alive) if ticket.get("resumes_left") != 0 else None

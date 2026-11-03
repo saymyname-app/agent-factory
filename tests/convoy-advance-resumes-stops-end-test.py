@@ -283,6 +283,33 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual([(T1, self.NO_RESULT)], [(r["id"], r["cause"]) for r in self.of(again, "resumed")])
         self.assertEqual(2, self.resumes())
 
+    def test_an_evaluation_without_result_resumes_once_after_its_linked_factory_repair_is_delivered(self):
+        self.evaluation_stopped()
+        repair = "fx-er1"
+        state = self.tracker_state()
+        state["beads"][repair] = {
+            "title": "réparer le rôle Evaluator", "status": "open", "issue_type": "bug",
+            "labels": ["maintenance"], "metadata": {"gc.authorized_by": "af-authority"},
+        }
+        self.tracker.write_text(json.dumps(state))
+
+        self.run_ok(STATE, "link-technical-repair", CONVOY, T1, "--repair", repair)
+        waiting = self.advance(CONVOY)
+        self.assertEqual([], self.of(waiting, "resumed"))
+        self.assertEqual(self.NO_RESULT, self.shown_state(T1)["stop"]["reason"])
+
+        self.edit(repair, status="closed", metadata=delivered(43, "1" * 40, "2" * 40))
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "unblocked")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+        shown = self.shown_state(T1)
+        self.assertEqual((None, None, 1),
+                         (shown["stop"], shown["technical_repairs"], shown["counters"]["resumes"]))
+        self.assertEqual(self.NO_RESULT, shown["resume"]["entries"][-1]["stop"]["reason"])
+        self.assertEqual([], [line for line in self.needs() if T1 in line])
+        self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
+        self.assertEqual(1, self.resumes())
+
     def test_a_ticket_stopped_without_an_evaluation_result_at_its_third_resume_is_parked_not_restarted(self):
         self.evaluation_stopped()
         self.earlier_resumes(self.NO_RESULT, 2)
