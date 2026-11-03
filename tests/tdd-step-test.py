@@ -47,6 +47,8 @@ TABLE = f"{TESTS}/criteria.json"
 REGRESSION_FILE = f"{TESTS}/regression.py"
 COUNT_FILE, HEALTH_FILE = f"{TESTS}/test_count.py", f"{TESTS}/test_health.py"
 HELPER_FILE = f"{TESTS}/health_field.py"
+LEGACY_IMPORT_FILE = f"{TESTS}/legacy_import_test.py"
+ADDED_IMPORT_FILE = f"{TESTS}/added_import_test.py"
 COUNT_ID = f"{COUNT_FILE}::CountTest.test_count_is_shown"
 HEALTH_ID = f"{HEALTH_FILE}::HealthTest.test_dataset_is_named"
 AUTHORIZED_SUCCESSION_ID = f"{AUTHORIZED_SUCCESSION_FILE}::HealthTest.test_dataset_is_named"
@@ -864,6 +866,43 @@ class TddStepTest(unittest.TestCase):
         error = self.refused("amend", SLICE, "--reason", "le harnais a changé")
 
         self.assertIn("seulement par la base fusionnée", error)
+
+    def test_amendment_ignores_an_import_rule_violation_in_an_unchanged_test_inherited_from_main(self):
+        profile = self.descriptor(
+            seam_mode="import_rule", import_rule=self.IMPORT_RULE, red_error_types=["AttributeError"])
+        self.commit_tests({COUNT_FILE: IMPORT_TEST}, table=self.table({"1": [COUNT_ID], "2": [COUNT_ID]}))
+        self.red(profile=profile)
+        self.ok("freeze")
+        self.git("checkout", "-q", "-b", "ticket")
+        self.git("checkout", "-q", "main")
+        self.commit("test hérité", {LEGACY_IMPORT_FILE: "from app import FixtureHandler\n"})
+        self.git("checkout", "-q", "ticket")
+        amended = IMPORT_TEST.replace("app.count_items", "app.count_entries")
+        self.commit("test ciblé amendé", {COUNT_FILE: amended})
+        self.git("merge", "-q", "--no-edit", "main")
+
+        self.ok("amend", SLICE, "--reason", "la fonction s'appelle count_entries", profile=profile)
+
+    def test_amendment_still_refuses_import_rule_violations_added_or_modified_by_the_ticket(self):
+        self.base = self.commit("test existant", {LEGACY_IMPORT_FILE: "import app\n"})
+        profile = self.descriptor(
+            seam_mode="import_rule", import_rule=self.IMPORT_RULE, red_error_types=["AttributeError"])
+        self.commit_tests({COUNT_FILE: IMPORT_TEST}, table=self.table({"1": [COUNT_ID], "2": [COUNT_ID]}))
+        self.red(profile=profile)
+        self.ok("freeze")
+        amended = IMPORT_TEST.replace("app.count_items", "app.count_entries")
+        forbidden = "from app import FixtureHandler\n"
+        self.commit("tests amendés", {
+            COUNT_FILE: amended,
+            LEGACY_IMPORT_FILE: forbidden,
+            ADDED_IMPORT_FILE: forbidden,
+        })
+
+        error = self.refused(
+            "amend", SLICE, "--reason", "la fonction s'appelle count_entries", profile=profile)
+
+        self.assertIn(f"règle d'import : {LEGACY_IMPORT_FILE}:1", error)
+        self.assertIn(f"règle d'import : {ADDED_IMPORT_FILE}:1", error)
 
     def test_changes_reads_a_stopped_ticket_and_tells_its_own_from_the_base_s(self):
         self.ticket_merges("main")
