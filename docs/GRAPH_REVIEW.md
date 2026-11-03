@@ -94,8 +94,9 @@ cites), ask the second pass, or let Benjamin rule `--graph`.
 ### Une révision se juge sur le graphe résultant (af-npz9v1.16)
 
 Une révision (`revises_digest`) ne porte que les tickets qu'elle ajoute ou
-change, et `bin/replacement-draft` comme `bd-patch` n'y gardent pas les
-bloqueurs déjà livrés. Le 23/10/2026, la passe 1 sur `af-r1f9ac6bc`
+change. Elle peut référencer un bloqueur inchangé que le convoi résultant suit
+déjà, sans recopier ni modifier ce ticket. Le 23/10/2026, avant cette règle,
+la passe 1 sur `af-r1f9ac6bc`
 (remplacement de B par BR, convoi `af-strhoy`) a ainsi refusé BR, A2, G2, I
 et le graphe : « consomme la page posée par A1/G1, mais A1/G1 ne sont pas
 dans le graphe », alors que A1 et G1 étaient livrés et fusionnés.
@@ -166,7 +167,7 @@ dont le brouillon d'origine est introuvable sont jugés en entier. Un ticket
 sans question posée n'a pas besoin de réponse dans le verdict.
 
 La comparaison ignore ce qui n'est pas un changement du ticket : dans
-`blocked_by`, les bloqueurs livrés (la révision ne les garde pas) et le
+`blocked_by`, les bloqueurs livrés (la révision peut les omettre) et le
 ticket remplacé nommé sous l'identifiant de son remplaçant ; dans `title` et
 `what_it_delivers`, ce que `bin/replacement-draft` ajoute (« — replacement
 of … », « Authorized replacement: decision … »). Rejouée en mémoire sur
