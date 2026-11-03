@@ -301,7 +301,8 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.edit(repair, status="closed", metadata=delivered(43, "1" * 40, "2" * 40))
         answer = self.advance(CONVOY)
 
-        self.assertEqual([(T1, "unblocked")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+        self.assertEqual([(T1, "repair_delivered")],
+                         [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
         shown = self.shown_state(T1)
         self.assertEqual((None, None, 1),
                          (shown["stop"], shown["technical_repairs"], shown["counters"]["resumes"]))
@@ -604,7 +605,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.edit(repair, status="closed", metadata=delivered(43, "1" * 40, "2" * 40))
         answer = self.advance(CONVOY)
 
-        self.assertEqual([(T1, "unblocked")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+        self.assertEqual([(T1, "repair_delivered")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
         shown = self.shown_state(T1)
         self.assertEqual((None, None, 1),
                          (shown["stop"], shown["technical_repairs"], shown["counters"]["resumes"]))
@@ -667,7 +668,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.edit(repair1, status="closed", metadata=delivered(41, sha1, merge1))
         answer = self.advance(CONVOY)
 
-        self.assertEqual([(T1, "unblocked")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+        self.assertEqual([(T1, "repair_delivered")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
         self.assertEqual([(T1, [T1, T3])], [(entry["id"], entry["lifted"]) for entry in self.of(answer, "lifted")])
         self.assertEqual([repair1, repair2], self.shown_state(T1)["park_lifts"][-1]["repairs"])
         self.assertIsNone(self.shown_state(T1)["technical_repairs"])
@@ -714,6 +715,38 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual(human_request["quoi"], self.park_of(T1)["detail"])
         self.assertIn(T1, "\n".join(self.needs()))
         self.assertEqual(1, self.resumes())
+
+    def test_a_legacy_delivered_repair_at_the_unblocked_bound_is_migrated_and_sent_once(self):
+        # af-o5ritb: A2 (af-ocz64w) already had two `unblocked` resumes and
+        # four resumes in all. Its next linked repair was counted as the third
+        # `unblocked`, then parked with an empty launch instead of reaching the
+        # author through the door.
+        self.started_convoy()
+        self.taken(T1, "auteur-a2")
+        self.earlier_resumes("answered", 1)
+        self.earlier_resumes("unblocked", 2)
+        self.run_ok(STATE, "bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
+        self.run_ok(STATE, "open-resume", CONVOY, T1, "--cause", "unblocked",
+                    "--ref", "repairs:b39d09d98a2aa52e/exit:2026-11-02T05:41:08Z")
+        self.run_ok(STATE, "park", CONVOY, T1, "--cause", "resumes_exhausted",
+                    "--detail", "reprises épuisées pour la cause unblocked (5 reprises en tout)")
+        before = self.shown_state(T1)
+        self.assertEqual((5, "resumes_exhausted", "unblocked", []),
+                         (before["counters"]["resumes"], before["park"]["cause"],
+                          before["resume"]["entries"][-1]["cause"], before["resume"]["entries"][-1]["launches"]))
+        self.write_log.write_text("")
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "repair_delivered")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+        shown = self.shown_state(T1)
+        last = shown["resume"]["entries"][-1]
+        self.assertEqual((5, None, "repair_delivered", 1, 2),
+                         (shown["counters"]["resumes"], shown["park"], last["cause"], len(last["launches"]),
+                          shown["resumes_left_by_cause"]["repair_delivered"]))
+        self.assertIsNone(shown["technical_repairs"])
+        self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
+        self.assertEqual(1, len(self.resume_launches()))
 
     def test_a_finished_ticket_behind_the_integration_tip_goes_back_to_its_author_once_and_is_counted(self):
         self.integrated()
