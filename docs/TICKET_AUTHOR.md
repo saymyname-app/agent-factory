@@ -180,8 +180,11 @@ stopped the ticket is what raises it to the operator.
   it with `bin/factory-work-dispatch <repair> --technical-request <convoy>
   <ticket>` (`--link-only` if it was already delivered); that door asks
   `bin/convoy-state` to bind the current request. `bin/convoy-advance` then waits
-  for its structural merge and exact-head CI proof, withdraws the technical
-  request and resumes the ticket as `repair_delivered`, exactly once. A repair
+  for its structural merge and exact-head CI proof; when that merge targets
+  this project's protected branch, it also passes through the tested
+  `bin/spec-integration take-up` gate and is verified in the integration tip.
+  Only then does code withdraw the technical request and resume the ticket as
+  `repair_delivered`, exactly once. A repair
   merely open, failed, closed without proof, or not explicitly linked lifts
   nothing. An ordinary operator request without that link still needs the
   operator's answer. The same explicit link applies to a Ticket Evaluation
