@@ -1003,6 +1003,63 @@ def delivered_technical_repairs(ticket: dict[str, Any]) -> list[str]:
     return repairs
 
 
+def repairs_missing_from_integration(convoy: Convoy) -> dict[str, str]:
+    """Delivered repairs from this project's protected branch that its
+    integration branch does not contain yet."""
+    if not convoy.rig or not convoy.integration:
+        return {}
+    try:
+        project = tomllib.loads((PROJECTS / f"{convoy.rig}.toml").read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise Refusal(f"config/projects/{convoy.rig}.toml illisible : {exc}") from exc
+    protected = convoy.integration.get("protected")
+    commits: dict[str, str] = {}
+    for ticket in convoy.tickets:
+        for repair_id in delivered_technical_repairs(ticket):
+            metadata = read_bead(repair_id).get("metadata")
+            if isinstance(metadata, dict) and metadata.get("gc.github_repo") == project.get("repo") \
+                    and metadata.get("merged_target") == protected:
+                commits[repair_id] = metadata["gc.merge_commit"]
+    if not commits:
+        return {}
+    branch = convoy.integration["branch"]
+    tip = ""
+    for ref in (f"refs/remotes/origin/{branch}", f"refs/heads/{branch}"):
+        tip = run(["git", "-C", str(convoy.repo), "rev-parse", "--verify", "--quiet",
+                   f"{ref}^{{commit}}"]).stdout.strip()
+        if tip:
+            break
+    return {repair_id: commit for repair_id, commit in commits.items()
+            if not tip or run(["git", "-C", str(convoy.repo), "merge-base", "--is-ancestor", commit, tip]).returncode}
+
+
+def take_up_delivered_repairs(convoy: Convoy) -> dict[str, Any] | None:
+    """Use the integration gate before releasing a same-repository repair."""
+    missing = repairs_missing_from_integration(convoy)
+    if not missing:
+        return None
+    proc = run([str(INTEGRATION_BIN), "take-up", convoy.id, "--repo", str(convoy.repo),
+                "--profile", str(rig_profile(convoy.rig))])
+    try:
+        answer = parsed(proc, f"spec-integration take-up {convoy.id}")
+    except Refusal as exc:
+        return {"repairs": sorted(missing), "error": f"refus : {exc}"}
+    if not isinstance(answer, dict):
+        return {"repairs": sorted(missing),
+                "error": f"refus : spec-integration take-up {convoy.id} a rendu une réponse illisible"}
+    kept = ("branch", "integration", "protected_tip", "takeover", "tests", "red", "error", "message", "unruled")
+    result = {name: answer[name] for name in kept if name in answer}
+    result["repairs"] = sorted(missing)
+    if proc.returncode != 0 and "error" not in result:
+        result["error"] = f"refus : spec-integration take-up {convoy.id} a échoué (exit {proc.returncode})"
+    elif proc.returncode == 0:
+        still_missing = repairs_missing_from_integration(convoy)
+        if still_missing:
+            result["error"] = "refus : réparation(s) livrée(s) absente(s) de la branche d'intégration après reprise : " \
+                + ", ".join(sorted(still_missing))
+    return result
+
+
 def evaluation_repair_due(ticket: dict[str, Any]) -> tuple[str, str, str] | None:
     """One resume for an evaluation stop once every explicitly
     linked Factory repair has structural delivery proof."""
@@ -2238,6 +2295,15 @@ def advance_convoy(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
     outcome_repairs = settle_outcome_repairs(convoy)
     if outcome_repairs:
         out["outcome_repairs"] = outcome_repairs
+    # A same-repository maintenance repair first enters the integration tree
+    # through its existing tested take-up gate. Only that green result can
+    # release the parking and consume the one repair_delivered resume.
+    if not convoy.red:
+        take_up = take_up_delivered_repairs(convoy)
+        if take_up:
+            out["repair_take_up"] = take_up
+            if "error" in take_up or "message" in take_up or "unruled" in take_up:
+                return out
     # The answers first: a ticket whose parking is lifted is resumed, and
     # those behind it started, by the same pass.
     settle_lifts(convoy, out)
@@ -2576,6 +2642,7 @@ def settle_ticket_end(convoy: Convoy, merge: dict[str, Any] | None) -> dict[str,
 # carrying one of them.
 FAILING_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("incident", ("error",)), ("grouped_request", ("error",)), ("repair", ("error",)),
+    ("repair_take_up", ("error", "message", "unruled")),
     ("item_repairs", ("error",)), ("outcome_repairs", ("error",)), ("outcome_evaluation", ("error",)),
     ("spec_end", ("error", "message")), ("end_review", ("error",)), ("evidence_pack", ("error",)),
     ("non_conforme", ("error",)), ("acceptance", ("error",)), ("promotion", ("error", "message", "pending")),

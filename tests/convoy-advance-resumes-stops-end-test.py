@@ -716,6 +716,60 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertIn(T1, "\n".join(self.needs()))
         self.assertEqual(1, self.resumes())
 
+    def test_a_factory_repair_is_taken_up_and_tested_before_its_resume_is_consumed_once(self):
+        self.integrated(regression="test -f budget.txt")
+        self.resumable()
+        self.advance(CONVOY)
+        self.taken(T1, "auteur-1")
+        request = {
+            "quoi": "Le budget vert de l'usine manque à la branche d'intégration",
+            "pourquoi": "Le correctif livré sur main n'est pas dans l'arbre que le ticket teste.",
+            "que_faire": [{"option": "Reprendre main par la porte d'intégration",
+                            "consequence": "Le ticket reprend seulement sur le résultat vert."}],
+            "langue": "fr", "bloquant": True,
+        }
+        self.run_ok(ESCALATION, "benjamin", T1, json.dumps(request))
+        self.run_ok(STATE, "park", CONVOY, T1, "--cause", "operator_request", "--detail", request["quoi"])
+        self.run_ok(STATE, "set-exit", CONVOY, T1, "--exit", "operator_request")
+
+        repair = "fx-rmain"
+        state = self.tracker_state()
+        state["beads"][repair] = {
+            "title": "budget vert livré", "status": "open", "issue_type": "bug",
+            "labels": ["maintenance"], "metadata": {"gc.authorized_by": "af-authority"},
+        }
+        self.tracker.write_text(json.dumps(state))
+        self.run_ok(STATE, "link-technical-repair", CONVOY, T1, "--repair", repair)
+
+        (self.root / "budget.txt").write_text("1140\n")
+        self.git("add", "budget.txt")
+        self.git("commit", "-q", "-m", "repair delivered on main")
+        repair_commit = self.git("rev-parse", "main")
+        proof = delivered(41, "1" * 40, repair_commit)
+        proof["gc.github_repo"] = "example/fx"
+        proof["gc.pr_url"] = "https://github.com/example/fx/pull/41"
+        self.edit(repair, status="closed", metadata=proof)
+        before = self.git("rev-parse", self.INTEGRATION)
+
+        answer = self.advance(CONVOY)
+
+        convoy = next(entry for entry in answer["convoys"] if entry["id"] == CONVOY)
+        self.assertEqual([(T1, "repair_delivered")],
+                         [(entry["id"], entry["cause"]) for entry in convoy["resumed"]], answer)
+        self.assertEqual((repair, 0),
+                         (convoy["repair_take_up"]["repairs"][0],
+                          convoy["repair_take_up"]["tests"]["exit_code"]))
+        self.assertIsNotNone(convoy["repair_take_up"]["takeover"])
+        self.assertNotEqual(before, self.git("rev-parse", self.INTEGRATION))
+        self.git("merge-base", "--is-ancestor", repair_commit, self.INTEGRATION)
+        resumed_tip = self.git("rev-parse", self.INTEGRATION)
+
+        again = self.advance(CONVOY)
+
+        self.assertEqual([], self.of(again, "resumed"))
+        self.assertEqual(resumed_tip, self.git("rev-parse", self.INTEGRATION))
+        self.assertEqual(1, self.resumes())
+
     def test_a_legacy_delivered_repair_at_the_unblocked_bound_is_migrated_and_sent_once(self):
         # af-o5ritb: A2 (af-ocz64w) already had two `unblocked` resumes and
         # four resumes in all. Its next linked repair was counted as the third

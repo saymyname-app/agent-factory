@@ -302,7 +302,7 @@ the parking only):
 
 | Parked for | Lifted by |
 |---|---|
-| `operator_request` explicitly linked to Factory-maintenance bead(s) (`gc.flow.technical_repairs`) | code only, once every linked bead has the existing structural PR merge and exact-head CI proof; an open, failed or merely closed repair waits, any human answer is ignored for this linked technical class |
+| `operator_request` explicitly linked to Factory-maintenance bead(s) (`gc.flow.technical_repairs`) | code only, once every linked bead has the existing structural PR merge and exact-head CI proof; when the repair merged into this project's protected branch, `bin/spec-integration take-up` must also have put that merge in the tested green integration tip; an open, failed, merely closed or not-yet-taken-up repair waits, any human answer is ignored for this linked technical class |
 | `operator_request` (its own Ticket Exit) | any answer given to the request of that ticket (`bin/escalation-door repondre`) after the parking |
 | `planning_exception` (its own Ticket Exit) | only the option that accepts the deviation: the last Planning Exception of the ticket is `accepted` (it was answered by its `accept_option`, `docs/CONVOY_STATE.md`; every exception raised since ADR-0030 L5 has one, with or without anchors). Any other answer leaves the ticket parked |
 | `planning_exception` (its Ticket Evaluation: the ticket is `finished`, its last evaluation's outcome is `planning_exception`, no entry under `planning_exceptions`) | only option `a`, « Juger ce qui est inobservable prouvé par son test de critère vert » (`bin/ticket-evaluation`); `lift-park` records what that evaluation found unobservable by the criterion under `proven_by_test`, and the evaluation the lift sends again counts it proven (`docs/TICKET_EVALUATION.md`); or option `c`, « Réévaluer sur le produit relancé » (af-npz9v1.38): the lift records nothing proven, and the evaluation it sends again judges every item on the products launched again. Option `b` (remove the ticket from the graph) or no answer: parked |
@@ -350,7 +350,7 @@ ticket:
 | `interrupted` | the Ticket Exit is `interrupted`; or the ticket is `in_progress` with no Ticket Exit and its recorded session is not among the live ones (`gc session list`); or the bead of its last resume is closed and no session took the ticket since |
 | `returned` | the Ticket Exit is `finished` and the merge returned the ticket (`merge.outcome` `conflict` or `red`) at the tip of its branch. Also on a ticket stopped `still_refused` whose every Blocking Finding the operator overrode, which `bin/spec-integration` merges as if at work: the resume lifts that stop, keeps it on its entry and withdraws its request; with no resume left the stop stays with the operator (af-n4bn62: F and G1 of af-strhoy, returned red on 21/10/2026, were neither merged again nor resumed) |
 | `unblocked` | the Ticket Exit is `technically_blocked` and no bead it waits for with a `blocks` edge is open any more |
-| `repair_delivered` | the ticket is an `operator_request` carrying explicit Factory-maintenance links whose every bead has structural delivery proof, after code lifted its parking; or it is stopped `evaluation_no_result` or `evaluation_outage` and every Factory-maintenance bead explicitly linked to that exact stop has the same proof. This separate bounded cause prevents ordinary blocker closures from spending the resumes reserved for independently delivered repairs (af-o5ritb) |
+| `repair_delivered` | the ticket is an `operator_request` carrying explicit Factory-maintenance links whose every bead has structural delivery proof, after code lifted its parking; or it is stopped `evaluation_no_result` or `evaluation_outage` and every Factory-maintenance bead explicitly linked to that exact stop has the same proof. A repair merged into the protected branch of the ticket's own project must also be an ancestor of the integration tip after its tested `spec-integration take-up`. This separate bounded cause prevents ordinary blocker closures from spending the resumes reserved for independently delivered repairs (af-o5ritb) |
 | `answered` | the Ticket Exit is `planning_exception` or `operator_request` and the ticket is no longer parked: its parking was lifted |
 | `behind` | the Ticket Exit is `finished`, the ticket is not merged, and `bin/code-review show <convoy> <ticket> --repo` reports `behind`: its branch does not contain the tip of the integration branch, so no reviewer is sent on it (T44, `docs/CODE_REVIEW.md`). The fact is `integration:<tip>/exit:<exit time>`: once per Ticket Exit |
 | `evaluation_no_result` | the ticket is stopped `evaluation_no_result` (its Ticket Evaluation gave no result, relaunch included, `docs/TICKET_EVALUATION.md`), it has no explicit Factory-maintenance link, is neither parked nor closed, has a resume left, the operator has not answered the request of that stop, and no resume of this cause was opened yet on the current tip of the integration branch (on `origin` when it is there, else local). The fact is `integration:<tip>/stop:<stop time>`: once per tip of the integration branch (af-xhc0sj) |
@@ -427,11 +427,17 @@ author merges the integration branch into the ticket branch, corrects,
 commits and finishes again; the review then runs on the new tip.
 
 A `repair_delivered` resume brings the integration branch into the ticket branch
-too: the repair the ticket waited for landed there, not on the ticket's
-branch, and without it the ticket meets the same defect again (af-m4np8z;
-T59 met the regression its repair had fixed). For a linked Factory request,
-the same pass first lifts the parking; for a linked evaluation stop,
-there is no parking to lift. It then clears its escalation through
+too. When the repair merged into the protected branch of that same project,
+the pass first calls the existing `bin/spec-integration take-up` gate: the
+gate merges the protected tip, runs the declared regression, pushes only a
+green result, and the pass verifies that the repair's merge commit is its
+ancestor. A failed or red take-up releases nothing; a later pass retries, and
+an integration tip that already contains the repair runs no second take-up.
+Only then does the author receive the integration branch, not a pre-repair
+tree (af-qjw5lm; before it, R9 resumed as soon as #795 reached `main` while
+`integration/af-fgcw0d` still held the old budget). For a linked Factory request,
+the same pass then lifts the parking; for a linked evaluation stop,
+there is no parking to lift. It clears the escalation through
 `bin/escalation-door` and only then opens this resume. The active link
 remains the release marker until `open-resume` consumes it atomically with
 the Ticket Exit or stop. A refusal or interruption before that write therefore
