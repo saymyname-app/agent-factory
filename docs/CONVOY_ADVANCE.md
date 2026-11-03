@@ -349,7 +349,8 @@ ticket:
 |---|---|
 | `interrupted` | the Ticket Exit is `interrupted`; or the ticket is `in_progress` with no Ticket Exit and its recorded session is not among the live ones (`gc session list`); or the bead of its last resume is closed and no session took the ticket since |
 | `returned` | the Ticket Exit is `finished` and the merge returned the ticket (`merge.outcome` `conflict` or `red`) at the tip of its branch. Also on a ticket stopped `still_refused` whose every Blocking Finding the operator overrode, which `bin/spec-integration` merges as if at work: the resume lifts that stop, keeps it on its entry and withdraws its request; with no resume left the stop stays with the operator (af-n4bn62: F and G1 of af-strhoy, returned red on 21/10/2026, were neither merged again nor resumed) |
-| `unblocked` | the Ticket Exit is `technically_blocked` and no bead it waits for with a `blocks` edge is open any more; or it is an `operator_request` carrying explicit Factory-maintenance links whose every bead has structural delivery proof, after code lifted its parking; or the ticket is stopped `evaluation_no_result` or `evaluation_outage` and every Factory-maintenance bead explicitly linked to that exact stop has the same proof |
+| `unblocked` | the Ticket Exit is `technically_blocked` and no bead it waits for with a `blocks` edge is open any more |
+| `repair_delivered` | the ticket is an `operator_request` carrying explicit Factory-maintenance links whose every bead has structural delivery proof, after code lifted its parking; or it is stopped `evaluation_no_result` or `evaluation_outage` and every Factory-maintenance bead explicitly linked to that exact stop has the same proof. This separate bounded cause prevents ordinary blocker closures from spending the resumes reserved for independently delivered repairs (af-o5ritb) |
 | `answered` | the Ticket Exit is `planning_exception` or `operator_request` and the ticket is no longer parked: its parking was lifted |
 | `behind` | the Ticket Exit is `finished`, the ticket is not merged, and `bin/code-review show <convoy> <ticket> --repo` reports `behind`: its branch does not contain the tip of the integration branch, so no reviewer is sent on it (T44, `docs/CODE_REVIEW.md`). The fact is `integration:<tip>/exit:<exit time>`: once per Ticket Exit |
 | `evaluation_no_result` | the ticket is stopped `evaluation_no_result` (its Ticket Evaluation gave no result, relaunch included, `docs/TICKET_EVALUATION.md`), it has no explicit Factory-maintenance link, is neither parked nor closed, has a resume left, the operator has not answered the request of that stop, and no resume of this cause was opened yet on the current tip of the integration branch (on `origin` when it is there, else local). The fact is `integration:<tip>/stop:<stop time>`: once per tip of the integration branch (af-xhc0sj) |
@@ -425,7 +426,7 @@ review nor the Ticket Evaluation is sent on the old tip meanwhile. Its
 author merges the integration branch into the ticket branch, corrects,
 commits and finishes again; the review then runs on the new tip.
 
-An `unblocked` resume brings the integration branch into the ticket branch
+A `repair_delivered` resume brings the integration branch into the ticket branch
 too: the repair the ticket waited for landed there, not on the ticket's
 branch, and without it the ticket meets the same defect again (af-m4np8z;
 T59 met the regression its repair had fixed). For a linked Factory request,
@@ -438,6 +439,14 @@ preserves the request and the next pass retries it. The repair ids and exact
 Ticket Exit time remain on the parking lift as history; an evaluation-stop link instead
 names the exact stop time. Neither request text, a second-resolution timestamp
 alone, nor R-codes can let a later human request reuse the old release.
+
+The one state already written before `repair_delivered` existed is migrated
+by code (af-o5ritb): an own `resumes_exhausted` parking whose last resume is
+an empty `unblocked` entry with a `repairs:` fact. The pass calls
+`bin/convoy-state migrate-repair-resume`, which changes only that entry's
+cause and no counter. The existing bounds-changed lift then removes the
+parking without an answer and the same pass sends that already-counted resume
+through the dispatch door. No other exhausted parking is migrated or lifted.
 
 A ticket to resume that names no single known project, or when the
 settings have no `resume` entry, is listed under `refused` (exit 1) before

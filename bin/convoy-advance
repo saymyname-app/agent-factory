@@ -302,6 +302,10 @@ CODE_REVIEW_STOP = "code_review_no_result"
 # The stops the Ticket Evaluation of a ticket writes (bin/convoy-state).
 EVALUATION_STOPS = ("evaluation_no_result", "evaluation_outage")
 EVALUATION_OUTAGE = "evaluation_outage"
+# A structurally delivered Factory repair explicitly linked to the current
+# operator request or evaluation-outage stop. It has its own bounded bucket:
+# ordinary blocker closures cannot spend the repairs' resumes (af-o5ritb).
+REPAIR_DELIVERED = "repair_delivered"
 # The stop of a ticket still refused after its correction round (bin/correction-round).
 CORRECTION_STOP = "still_refused"
 # The stops bin/tdd-step writes on a ticket and that no settlement of a review
@@ -1006,7 +1010,7 @@ def evaluation_repair_due(ticket: dict[str, Any]) -> tuple[str, str, str] | None
     if not repairs or ticket.get("resumes_left") == 0:
         return None
     ref = hashlib.sha256(",".join(repairs).encode("utf-8")).hexdigest()[:16]
-    return "new", "unblocked", f"repairs:{ref}/stop:{ticket['stop']['at']}"
+    return "new", REPAIR_DELIVERED, f"repairs:{ref}/stop:{ticket['stop']['at']}"
 
 
 def resume_due(ticket: dict[str, Any], alive: set[str]) -> tuple[str, str, str] | None:
@@ -1035,7 +1039,7 @@ def resume_due(ticket: dict[str, Any], alive: set[str]) -> tuple[str, str, str] 
     if exit_name == "operator_request" and released_repairs:
         repairs = ",".join(released_repairs)
         ref = hashlib.sha256(repairs.encode("utf-8")).hexdigest()[:16]
-        return "new", "unblocked", f"repairs:{ref}/exit:{exit_at}"
+        return "new", REPAIR_DELIVERED, f"repairs:{ref}/exit:{exit_at}"
     if exit_name in PARKING_EXITS:
         # Its parking was lifted: the answer goes to a fresh session.
         return "new", "answered", f"exit:{exit_at}"
@@ -1280,7 +1284,7 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
                     if cause in (NO_RESULT, STAGE_REMOVED, CODE_REVIEW_STOP) \
                             and request_answer(read_bead(ticket_id), ticket["stop"]["at"]) is not None:
                         continue
-                elif cause == "unblocked" and released_technical_repairs(ticket):
+                elif cause == REPAIR_DELIVERED and released_technical_repairs(ticket):
                     # The parking was removed first. If clearing refuses or
                     # this pass is interrupted, the request remains and the
                     # next pass retries before opening the resume.
@@ -1326,6 +1330,18 @@ def request_answer(bead: dict[str, Any], since: str) -> str | None:
     return option if at >= since else None
 
 
+def legacy_repair_resume_due(ticket: dict[str, Any]) -> bool:
+    """The af-o5ritb state already written before `repair_delivered` existed:
+    the delivered-repair resume exhausted `unblocked` but was never launched."""
+    park = ticket.get("park") or {}
+    entries = (ticket.get("resume") or {}).get("entries") or []
+    last = entries[-1] if entries else {}
+    return ticket.get("status") != "closed" and park.get("cause") == PARK_EXHAUSTED \
+        and park.get("origin") == ticket["id"] and ticket.get("resumes_left") == 0 \
+        and last.get("cause") == "unblocked" and str(last.get("ref", "")).startswith("repairs:") \
+        and last.get("launches") == []
+
+
 def settle_lifts(convoy: Convoy, out: dict[str, Any]) -> None:
     """An answer of the operator that lifts a parking is applied by the
     pass: any answer to the request an operator request left on its ticket;
@@ -1337,6 +1353,18 @@ def settle_lifts(convoy: Convoy, out: dict[str, Any]) -> None:
     parked. A ticket parked for exhausted resumes that has resumes left
     under the bounds of now is lifted without an answer: an answered resume
     takes no bound since af-npz9v1.41, and nothing is left to ask."""
+    migrated = False
+    for ticket in convoy.tickets:
+        if not legacy_repair_resume_due(ticket):
+            continue
+        try:
+            state_write("migrate-repair-resume", convoy.id, ticket["id"])
+            migrated = True
+        except Refusal as exc:
+            out["refused"].append({"id": ticket["id"], "reason": str(exc)})
+    if migrated:
+        convoy.load()
+
     lifts: list[tuple[str, str, str | None, list[str]]] = []
     for ticket in convoy.tickets:
         park = ticket.get("park") or {}

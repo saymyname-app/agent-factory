@@ -101,17 +101,17 @@ CONTRACT = {
         "exit": transition("open-resume --cause evaluation_no_result on a new integration tip", EVALUATION_PROOF),
         "options": {
             "Faire vérifier le rôle Evaluator par la maintenance de l'usine":
-                transition("link-technical-repair, then open-resume --cause unblocked after delivery",
+                transition("link-technical-repair, then open-resume --cause repair_delivered after delivery",
                            EVALUATION_NO_RESULT_REPAIR_PROOF),
             "Laisser le ticket arrêté": operator("escalation-door on the stopped ticket"),
         },
     },
     ("ticket_stop", "evaluation_outage"): {
-        "exit": transition("open-resume --cause unblocked after linked Factory repair delivery",
+        "exit": transition("open-resume --cause repair_delivered after linked Factory repair delivery",
                            EVALUATION_OUTAGE_PROOF),
         "options": {
             "Faire réparer l'environnement d'évaluation par la maintenance de l'usine":
-                transition("link-technical-repair, then open-resume --cause unblocked after delivery",
+                transition("link-technical-repair, then open-resume --cause repair_delivered after delivery",
                            EVALUATION_OUTAGE_PROOF),
             "Laisser le ticket arrêté": operator("escalation-door on the stopped ticket"),
         },

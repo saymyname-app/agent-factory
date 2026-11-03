@@ -469,16 +469,17 @@ PARK_CAUSES = ("planning_exception", "operator_request", PARK_EXHAUSTED)
 BOUND_RESUMES = "resumes"
 BOUND_END_ROUNDS = "end_rounds"
 # Why code sends a ticket back to a fresh author session (T20): its session
-# was interrupted, the merge returned it, the repair it waited for is closed,
-# the request that parked it was answered, or its branch, finished, does not
+# was interrupted, the merge returned it, a linked repair was delivered, the
+# request that parked it was answered, or its branch, finished, does not
 # contain the tip of the integration branch (T44), or its Ticket Evaluation
 # gave no result (af-xhc0sj), or a stage the flow removed stopped it
 # (ADR-0030 L3, af-pjvsgo), or its code review gave no result (af-wu6xj7),
 # or the operator answered « a » to its stop at a second amendment
 # (af-25o7vr): those resumes lift the stop. The correction round and a commit after a
 # verdict are counted where they are written.
-RESUME_CAUSES = ("interrupted", "returned", "unblocked", "answered", "behind", "evaluation_no_result",
-                 "stage_removed", "code_review_no_result", "amendment_granted", "inherited_change")
+RESUME_CAUSES = ("interrupted", "returned", "unblocked", "repair_delivered", "answered", "behind",
+                 "evaluation_no_result", "stage_removed", "code_review_no_result", "amendment_granted",
+                 "inherited_change")
 # The stops a resume lifts, by the cause that lifts them: a Ticket Evaluation
 # without result (af-xhc0sj), the stops of the test review, a stage
 # ADR-0030 L3 removed (af-pjvsgo), a code review without result
@@ -501,8 +502,8 @@ def resume_lifts(cause: str, reason: str) -> bool:
     stop, only once open-resume has checked the overrides."""
     return reason in RESUMABLE_STOPS.get(cause, ()) \
         or (cause, reason) in ((OVERRIDDEN_STOP_CAUSE, STOP_STILL_REFUSED),
-                               ("unblocked", STOP_EVALUATION_NO_RESULT),
-                               ("unblocked", STOP_EVALUATION_OUTAGE))
+                               ("repair_delivered", STOP_EVALUATION_NO_RESULT),
+                               ("repair_delivered", STOP_EVALUATION_OUTAGE))
 
 
 # A commit after a verdict counts a resume without an entry (T18): it is a
@@ -2221,7 +2222,9 @@ def taken_at_lift(lift: dict[str, Any], metadata: dict[str, Any]) -> dict[str, i
     than the lift and the rest of its count, less the correction round when
     it was recorded before the lift (one without a record counts as before)."""
     if "taken" in lift:
-        return lift["taken"]
+        # A cause added after this lift starts at zero; old durable records do
+        # not need rewriting before the current bounds can be read.
+        return {cause: lift["taken"].get(cause, 0) for cause in BOUNDED_RESUME_CAUSES}
     entries = resume_record(metadata[KEY_RESUME])["entries"] if KEY_RESUME in metadata else []
     before = [entry for entry in entries if entry["at"] < lift["at"]]
     taken = dict.fromkeys(BOUNDED_RESUME_CAUSES, 0)
@@ -5424,6 +5427,32 @@ def cmd_lift_park(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_migrate_repair_resume(args: argparse.Namespace) -> int:
+    """Move the one pre-af-o5ritb repair signal out of the `unblocked`
+    bucket. The pass owns this narrow migration: it changes no counter and
+    only the last, unlaunched repair resume of an exhausted ticket."""
+    ticket = marked_ticket(args.convoy, args.ticket)
+    metadata = metadata_of(ticket)
+    park = park_record(metadata[KEY_PARK]) if KEY_PARK in metadata else None
+    record = resume_record(metadata[KEY_RESUME]) if KEY_RESUME in metadata else None
+    last = record["entries"][-1] if record and record["entries"] else None
+    if park is None or park["cause"] != PARK_EXHAUSTED or park["origin"] != args.ticket:
+        raise Refusal(f"{args.ticket} n'est pas parqué par ses reprises épuisées : aucune reprise à migrer")
+    if not isinstance(last, dict) or last["cause"] != "unblocked" or not last["ref"].startswith("repairs:") \
+            or last["launches"]:
+        raise Refusal(f"la dernière reprise de {args.ticket} n'est pas une réparation livrée restée sans lancement")
+    if resumes_left(metadata) != 0:
+        raise Refusal(f"{args.ticket} a encore des reprises : aucune migration d'un parcage épuisé")
+    last["cause"] = "repair_delivered"
+    value = encode(record)
+    candidate = {**metadata, KEY_RESUME: value}
+    if resumes_left(candidate) == 0:
+        raise Refusal(f"la migration de la réparation livrée ne rend aucune reprise à {args.ticket}")
+    values = {KEY_RESUME: value}
+    write_metadata(args.ticket, values)
+    return done(args.convoy, args.ticket, values)
+
+
 def cmd_open_resume(args: argparse.Namespace) -> int:
     """Count one resume of a ticket and record it (T20, Spec §8): code sends
     the ticket back to a fresh author session, on the same branch. The
@@ -5482,7 +5511,7 @@ def cmd_open_resume(args: argparse.Namespace) -> int:
             values[KEY_CODE_REVIEW] = encode(review)
             update += ["--set-metadata", f"{KEY_CODE_REVIEW}={values[KEY_CODE_REVIEW]}"]
     technical_release = technical_repairs_record(metadata[KEY_TECHNICAL_REPAIRS]) \
-        if cause == "unblocked" and KEY_TECHNICAL_REPAIRS in metadata else None
+        if cause == "repair_delivered" and KEY_TECHNICAL_REPAIRS in metadata else None
     unset = {KEY_EXIT: replaced, KEY_STOP: lifted, KEY_TECHNICAL_REPAIRS: technical_release}
     for key, was in unset.items():
         if was is not None:
@@ -7762,6 +7791,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--request")
     p.add_argument("--option")
     p.add_argument("--repair", action="append", default=[])
+    command("migrate-repair-resume", cmd_migrate_repair_resume)
     p = command("open-resume", cmd_open_resume)
     p.add_argument("--cause")
     p.add_argument("--ref")
