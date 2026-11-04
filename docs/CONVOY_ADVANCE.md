@@ -448,11 +448,16 @@ alone, nor R-codes can let a later human request reuse the old release.
 
 The one state already written before `repair_delivered` existed is migrated
 by code (af-o5ritb): an own `resumes_exhausted` parking whose last resume is
-an empty `unblocked` entry with a `repairs:` fact. The pass calls
+an empty `unblocked` entry with a `repairs:` fact. Its older, already-launched
+`unblocked` repair entry may still preserve the `evaluation_no_result` or
+`evaluation_outage` stop that contract lifted. Before treating that legacy
+record as an unknown state, the pass calls
 `bin/convoy-state migrate-repair-resume`, which changes only that entry's
 cause and no counter. The existing bounds-changed lift then removes the
 parking without an answer and the same pass sends that already-counted resume
-through the dispatch door. No other exhausted parking is migrated or lifted.
+through the dispatch door. The current reader accepts the preserved old stop
+only when this migrated final repair signal proves that compatibility path;
+no other exhausted parking is migrated or lifted.
 
 A ticket to resume that names no single known project, or when the
 settings have no `resume` entry, is listed under `refused` (exit 1) before

@@ -2084,7 +2084,7 @@ def launches_of(launches: Any, what: str) -> list[dict[str, Any]]:
     return launches
 
 
-def resume_record(raw: Any) -> dict[str, Any]:
+def resume_record(raw: Any, *, migrating_legacy_repair: bool = False) -> dict[str, Any]:
     """The resumes code opened on a ticket (T20), oldest first: why, the
     fact that asked for it (`ref`), the session and the Ticket Exit it
     replaces, the stop it lifted, and the fresh author session it was sent
@@ -2093,19 +2093,29 @@ def resume_record(raw: Any) -> dict[str, Any]:
     entries = record["entries"]
     if not isinstance(entries, list) or not entries:
         raise Refusal(f"reprises mal formées : {entries!r}")
+    last = entries[-1]
+    migrated_legacy_repair = isinstance(last, dict) \
+        and last.get("cause") == "repair_delivered" \
+        and isinstance(last.get("ref"), str) and last["ref"].startswith("repairs:")
     for entry in entries:
         if not isinstance(entry, dict) or set(entry) - {"stop"} != {"cause", "ref", "session", "exit", "launches", "at"}:
             raise Refusal(f"reprise mal formée : {entry!r}")
-        if "stop" in entry and not resume_lifts(entry["cause"], stop_record(encode(entry["stop"]))["reason"]):
-            raise Refusal(f"arrêt levé par la reprise mal formé : {entry!r}")
         one_of(entry["cause"], RESUME_CAUSES, "cause de reprise")
         single_line(entry["ref"], "repère de la reprise")
         if entry["session"] is not None:
             single_line(entry["session"], "session")
         if entry["exit"] is not None and (not isinstance(entry["exit"], dict) or set(entry["exit"]) != {"exit", "at"}):
             raise Refusal(f"sortie remplacée par la reprise mal formée : {entry['exit']!r}")
-        if len(launches_of(entry["launches"], "de la reprise")) > RESUME_MAX_LAUNCHES:
+        launches = launches_of(entry["launches"], "de la reprise")
+        if len(launches) > RESUME_MAX_LAUNCHES:
             raise Refusal(f"plus d'une session pour une reprise : {entry['launches']!r}")
+        if "stop" in entry:
+            reason = stop_record(encode(entry["stop"]))["reason"]
+            legacy_repair_stop = entry["cause"] == "unblocked" and entry["ref"].startswith("repairs:") \
+                and bool(launches) and reason in (STOP_EVALUATION_NO_RESULT, STOP_EVALUATION_OUTAGE)
+            if not resume_lifts(entry["cause"], reason) \
+                    and not (legacy_repair_stop and (migrating_legacy_repair or migrated_legacy_repair)):
+                raise Refusal(f"arrêt levé par la reprise mal formé : {entry!r}")
     return record
 
 
@@ -2183,14 +2193,15 @@ def option_letter(value: Any) -> str:
     return value
 
 
-def resumes_taken(metadata: dict[str, Any]) -> dict[str, int]:
+def resumes_taken(metadata: dict[str, Any], *, migrating_legacy_repair: bool = False) -> dict[str, int]:
     """The resumes the ticket took over its life, per cause (ADR-0030 L2):
     its resume entries by their cause, and the commits after a verdict, the
     rest of the counter once the entries and the correction round are taken
     out."""
     resumes = counter_value(metadata.get(COUNTER_PREFIX + "resumes"), "resumes")
     corrections = counter_value(metadata.get(COUNTER_PREFIX + "correction_rounds"), "correction_rounds")
-    entries = resume_record(metadata[KEY_RESUME])["entries"] if KEY_RESUME in metadata else []
+    entries = resume_record(metadata[KEY_RESUME], migrating_legacy_repair=migrating_legacy_repair)["entries"] \
+        if KEY_RESUME in metadata else []
     taken = dict.fromkeys(BOUNDED_RESUME_CAUSES, 0)
     for entry in counted_entries(entries):
         if entry["cause"] in taken:
@@ -2238,11 +2249,11 @@ def taken_at_lift(lift: dict[str, Any], metadata: dict[str, Any]) -> dict[str, i
     return taken
 
 
-def resumes_left_by_cause(metadata: dict[str, Any]) -> dict[str, int]:
+def resumes_left_by_cause(metadata: dict[str, Any], *, migrating_legacy_repair: bool = False) -> dict[str, int]:
     """How many resumes of each cause the ticket may still take, counted
     since the last lift of its exhausted parking: at 0 for one cause, it is
     parked."""
-    taken = resumes_taken(metadata)
+    taken = resumes_taken(metadata, migrating_legacy_repair=migrating_legacy_repair)
     lifts = park_lifts_record(metadata[KEY_PARK_LIFTS]) if KEY_PARK_LIFTS in metadata else []
     exhausted = [lift for lift in lifts if lift["cause"] == PARK_EXHAUSTED]
     before = taken_at_lift(exhausted[-1], metadata) if exhausted else {}
@@ -2250,10 +2261,10 @@ def resumes_left_by_cause(metadata: dict[str, Any]) -> dict[str, int]:
     return {cause: max(0, bounds[cause] - max(0, taken[cause] - before.get(cause, 0))) for cause in bounds}
 
 
-def resumes_left(metadata: dict[str, Any]) -> int:
+def resumes_left(metadata: dict[str, Any], *, migrating_legacy_repair: bool = False) -> int:
     """How many resumes the ticket may still take before it is parked: the
     fewest any one cause has left."""
-    return min(resumes_left_by_cause(metadata).values())
+    return min(resumes_left_by_cause(metadata, migrating_legacy_repair=migrating_legacy_repair).values())
 
 
 def exhausted_causes(metadata: dict[str, Any]) -> str:
@@ -5434,14 +5445,14 @@ def cmd_migrate_repair_resume(args: argparse.Namespace) -> int:
     ticket = marked_ticket(args.convoy, args.ticket)
     metadata = metadata_of(ticket)
     park = park_record(metadata[KEY_PARK]) if KEY_PARK in metadata else None
-    record = resume_record(metadata[KEY_RESUME]) if KEY_RESUME in metadata else None
+    record = resume_record(metadata[KEY_RESUME], migrating_legacy_repair=True) if KEY_RESUME in metadata else None
     last = record["entries"][-1] if record and record["entries"] else None
     if park is None or park["cause"] != PARK_EXHAUSTED or park["origin"] != args.ticket:
         raise Refusal(f"{args.ticket} n'est pas parqué par ses reprises épuisées : aucune reprise à migrer")
     if not isinstance(last, dict) or last["cause"] != "unblocked" or not last["ref"].startswith("repairs:") \
             or last["launches"]:
         raise Refusal(f"la dernière reprise de {args.ticket} n'est pas une réparation livrée restée sans lancement")
-    if resumes_left(metadata) != 0:
+    if resumes_left(metadata, migrating_legacy_repair=True) != 0:
         raise Refusal(f"{args.ticket} a encore des reprises : aucune migration d'un parcage épuisé")
     last["cause"] = "repair_delivered"
     value = encode(record)
