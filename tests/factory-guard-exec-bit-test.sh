@@ -38,7 +38,31 @@ git branch -M main
 git push -q origin main
 git fetch -q origin
 
-guard() { FACTORY_ROOT="$TMP/city" "$GUARD" "$@" 2>&1 || true; }
+# This fixture is a city root, so later factory-guard sections would otherwise
+# inherit this agent's live GC_BIN/GH_BIN and scan the real Beads/GitHub state.
+# Keep the test local: it exercises exec-bit repair, not delivery proof.
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/gc" <<'STUB'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "bd show")      echo '[]' ;;
+  "bd list")      echo '[]' ;;
+  "session list") echo '{"sessions":[]}' ;;
+  "rig list")     echo '[]' ;;
+esac
+exit 0
+STUB
+chmod +x "$TMP/bin/gc"
+cat > "$TMP/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+exit 1
+STUB
+chmod +x "$TMP/bin/gh"
+
+guard() {
+  FACTORY_ROOT="$TMP/city" GC_BIN="$TMP/bin/gc" GH_BIN="$TMP/bin/gh" \
+    PATH="$TMP/bin:$PATH" "$GUARD" "$@" 2>&1 || true
+}
 
 # --- baseline: everything executable, guard reports it and repairs nothing --
 out=$(guard --check-only)

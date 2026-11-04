@@ -40,6 +40,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 
 import factory_observe as fo  # noqa: E402
 import factory_measures as fm  # noqa: E402
+from bounded_process import run as bounded_run  # noqa: E402
 
 FACTORY_ROOT = Path(os.environ.get("FACTORY_ROOT") or ROOT)
 POLICY_FILE = Path(
@@ -80,6 +81,8 @@ LIVE_FLOW_KEYS = {
     "gc.flow.technical_repairs",
 }
 FREEFORM_SIGNAL_FIELDS = {"detail", "reason", "ref", "text"}
+LIVE_SOURCE_TIMEOUT_SECONDS = float(os.environ.get("FACTORY_OBSERVE_SOURCE_TIMEOUT_SECONDS", "15"))
+MAIL_TIMEOUT_SECONDS = float(os.environ.get("FACTORY_OBSERVE_MAIL_TIMEOUT_SECONDS", "20"))
 
 
 def now() -> float:
@@ -141,7 +144,14 @@ def read_json_arg(path: str | None) -> dict[str, Any]:
 
 
 def command_text(command: list[str]) -> str:
-    result = subprocess.run(command, text=True, capture_output=True)
+    try:
+        result = bounded_run(
+            command, text=True, capture_output=True, timeout=LIVE_SOURCE_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise fo.ObservePolicyError(
+            f"{Path(command[0]).name} source timed out after {LIVE_SOURCE_TIMEOUT_SECONDS:g}s"
+        ) from exc
     if result.returncode != 0:
         raise fo.ObservePolicyError(f"{Path(command[0]).name} source failed (exit {result.returncode})")
     return result.stdout.strip()
@@ -373,14 +383,19 @@ def route_pending(live: dict[str, Any], moment: str, live_sessions: set[str]) ->
             f"EVIDENCE: {STATE_FILE}; events {facts}\n"
             "NEXT: inspect ./bin/factory-observe status --json and act only on the cited transition(s)"
         )
-        result = subprocess.run(
-            [
-                GC_BIN, "mail", "send", str(recipient), "--notify",
-                "--dedup", str(route["route_id"]),
-                "-s", "factory-observe: live transition", "-m", message,
-            ],
-            text=True, capture_output=True,
-        )
+        try:
+            result = bounded_run(
+                [
+                    GC_BIN, "mail", "send", str(recipient), "--notify",
+                    "--dedup", str(route["route_id"]),
+                    "-s", "factory-observe: live transition", "-m", message,
+                ],
+                text=True, capture_output=True, timeout=MAIL_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired:
+            failures.append(str(recipient))
+            remaining.append(route)
+            continue
         if result.returncode != 0:
             failures.append(str(recipient))
             remaining.append(route)

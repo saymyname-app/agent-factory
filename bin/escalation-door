@@ -99,9 +99,13 @@
 #                              pourquoi", "continuer avec un agent").
 #                              Deterministic: the clock is `date +%s`,
 #                              overridable with $ESCALATION_DOOR_NOW for
-#                              tests. Reads one list, then one bead per
-#                              escalation still pending: a settled one
-#                              costs nothing (af-io8tb7).
+#                              tests. Reads one list, then re-reads only a
+#                              page that is due or can be cleared: a settled
+#                              or not-yet-due one costs nothing (af-io8tb7,
+#                              af-kj34b5). If another escalation owns the
+#                              door, exits 75 so the periodic order retries
+#                              without reporting ordinary serialization as
+#                              a chronic failure.
 #   clear <bead>                Once the decision is resolved without a
 #                              recorded answer, clear gc.needs_benjamin and
 #                              any Mayor-first paging state on <bead>, and
@@ -178,7 +182,7 @@ show_bead() {  # $1 = bead id -> prints the single-object JSON, or dies
 }
 
 # emit_benjamin performs the write + mail once a request has validated;
-# never called directly from a command handler -- cmd_benjamin validates
+# never called directly from a command handler -- benjamin_payload validates
 # first, sweep's repli path always builds a request that will validate.
 emit_benjamin() {  # bead quoi pourquoi lettered_que_faire_json bloquant [lien]
   local bead=$1 quoi=$2 pourquoi=$3 que_faire_json=$4 bloquant=$5 lien=${6:-}
@@ -219,13 +223,13 @@ NEXT: escalation-door repondre $bead <lettre>, ou escalation-door clear $bead" \
   printf 'ESCALATED (benjamin): %s — %s\n' "$bead" "$quoi"
 }
 
-cmd_benjamin() {
-  local bead=${1:-} payload=${2:-}
+benjamin_payload() {  # bead payload [already-read issue]
+  local bead=${1:-} payload=${2:-} issue=${3:-}
   [[ -n $bead && -n $payload ]] || die "Usage: $PROGRAM_NAME benjamin <bead> <json>"
   valid_bead_id "$bead" || die "'$bead' is not a Bead id."
   jq -e 'type == "object"' <<<"$payload" >/dev/null 2>&1 \
     || die "requête incomplète : le corps n'est pas un objet JSON valide."
-  local quoi pourquoi langue bloquant que_faire_raw lettered expected_language lien issue
+  local quoi pourquoi langue bloquant que_faire_raw lettered expected_language lien
   quoi=$(jq -r '.quoi // ""' <<<"$payload")
   pourquoi=$(jq -r '.pourquoi // ""' <<<"$payload")
   langue=$(jq -r '.langue // ""' <<<"$payload")
@@ -243,11 +247,15 @@ cmd_benjamin() {
   expected_language=$(operator_language)
   [[ $langue == "$expected_language" ]] \
     || die "la requête est dans la langue « $langue », la langue de l'opérateur est « $expected_language »."
-  issue=$(show_bead "$bead")
+  [[ -n $issue ]] || issue=$(show_bead "$bead")
   if [[ -z ${lien:-} ]] && jq -e '.metadata | has("gc.escalation_lien")' <<<"$issue" >/dev/null; then
     lien=none
   fi
   emit_benjamin "$bead" "$quoi" "$pourquoi" "$lettered" "$bloquant" "${lien:-}"
+}
+
+cmd_benjamin() {
+  benjamin_payload "${1:-}" "${2:-}"
 }
 
 # af-1al0t1: work parked by `deliver-close --outcome blocked` (status
@@ -364,6 +372,15 @@ sweep_payload() {  # bead issue_json reason
     '{quoi: $quoi, pourquoi: $pourquoi, que_faire: $que_faire, langue: $langue, bloquant: false}'
 }
 
+page_resolved_by_closing() {  # issue_json reason
+  jq -e --arg reason "$2" '
+    .status == "closed" and (((.metadata["gc.order_subject"] // "") != "")
+    or (.metadata["gc.delivery_status"] == "merged"
+        and ((.metadata["gc.pr_number"] // "" | tostring) as $n
+             | $n != "" and ($reason | startswith("PR #" + $n + " ")))))' \
+    <<<"$1" >/dev/null 2>&1
+}
+
 cmd_sweep() {
   local now due_json
   now=$(now_epoch)
@@ -373,9 +390,25 @@ cmd_sweep() {
     || die "Could not list Mayor-first escalations."
   [[ -n $due_json ]] || due_json='[]'
   local count=0
-  while IFS= read -r bead; do
+  while IFS= read -r listed_issue; do
+    [[ -n $listed_issue ]] || continue
+    local bead issue paged_at needs reason paged_epoch age payload
+    bead=$(jq -r '.id // empty' <<<"$listed_issue")
     [[ -n $bead ]] || continue
-    local issue paged_at needs reason paged_epoch age payload
+    issue=$listed_issue
+    # A normal `bd list --json` row already carries the issue. Skip a fresh
+    # tracker round-trip until this page is old enough to act on (or its
+    # closing can clear it). A deliberately thin/older list still gets the
+    # compatibility read before any decision.
+    if jq -e '(.metadata | type) == "object"' <<<"$issue" >/dev/null 2>&1; then
+      paged_at=$(jq -r '.metadata["gc.escalation_mayor_paged_at"] // empty' <<<"$issue")
+      reason=$(jq -r '.metadata["gc.escalation_mayor_reason"] // "unresolved"' <<<"$issue")
+      paged_epoch=$(date -u -d "$paged_at" +%s 2>/dev/null) || continue
+      age=$(( now - paged_epoch ))
+      if ! page_resolved_by_closing "$issue" "$reason" && ((age < MAYOR_FIRST_GRACE_SECONDS)); then
+        continue
+      fi
+    fi
     issue=$(show_bead "$bead")
     paged_at=$(jq -r '.metadata["gc.escalation_mayor_paged_at"] // empty' <<<"$issue")
     [[ -n $paged_at && $paged_at != none ]] || continue
@@ -389,11 +422,7 @@ cmd_sweep() {
     # failing order once its bead is closed: the order opens a new bead if it
     # fails again (af-drwmqm, 2026-10-22). A page about anything else, or
     # about another PR, is left to the 2h rule.
-    if jq -e --arg reason "$reason" '
-        .status == "closed" and (((.metadata["gc.order_subject"] // "") != "")
-        or (.metadata["gc.delivery_status"] == "merged"
-            and ((.metadata["gc.pr_number"] // "" | tostring) as $n
-                 | $n != "" and ($reason | startswith("PR #" + $n + " ")))))' <<<"$issue" >/dev/null 2>&1; then
+    if page_resolved_by_closing "$issue" "$reason"; then
       "$GC_BIN" bd update "$bead" \
         --set-metadata "gc.escalation_mayor_paged_at=none" \
         --set-metadata "gc.escalation_mayor_reason=none" \
@@ -406,21 +435,20 @@ cmd_sweep() {
     age=$(( now - paged_epoch ))
     ((age >= MAYOR_FIRST_GRACE_SECONDS)) || continue
     payload=$(sweep_payload "$bead" "$issue" "$reason")
-    cmd_benjamin "$bead" "$payload" >/dev/null \
+    benjamin_payload "$bead" "$payload" "$issue" >/dev/null \
       || die "sweep could not escalate $bead to $OPERATOR_NAME."
     printf 'SWEPT: %s promoted to %s after %ds unresolved\n' "$bead" "$OPERATOR_NAME" "$age"
     count=$((count + 1))
-  # Only a page still pending is read again, one `gc bd show` each. A settled
-  # escalation keeps its key for ever, at "none", so the list only grows:
-  # reading every bead of it cost 25 `gc bd show` and 32 s for nothing due on
-  # an idle host on 2026-10-09, and more than the order's 60 s on a loaded one
-  # (af-io8tb7). A bead listed without its metadata is read, never skipped.
-  done < <(jq -r '(if type == "array" then . else [.] end)[]
+  # A settled escalation keeps its key for ever, at "none", so the list only
+  # grows. The list row is enough to reject settled and not-yet-due pages;
+  # only a page about to be changed is re-read against a concurrent closing.
+  # A bead listed without metadata is read, never skipped.
+  done < <(jq -c '(if type == "array" then . else [.] end)[]
     | select((.metadata | type) != "object"
         or (((.metadata["gc.escalation_mayor_paged_at"] // "") | tostring) as $paged
             | ((.metadata["gc.needs_benjamin"] // "") | tostring) as $needs
             | $paged != "" and $paged != "none" and ($needs == "" or $needs == "none")))
-    | .id' <<<"$due_json")
+    ' <<<"$due_json")
   ((count > 0)) || printf 'SWEPT: nothing due\n'
 }
 
@@ -507,7 +535,13 @@ require_command "$GC_BIN"
 require_command flock
 LOCK_FILE="${ESCALATION_DOOR_LOCK_FILE:-${XDG_RUNTIME_DIR:-/tmp}/agent-factory-escalation-door.lock}"
 exec 9>"$LOCK_FILE"
-flock -w 10 9 || die "Could not acquire the escalation-door lock."
+if ! flock -w "${ESCALATION_DOOR_LOCK_WAIT_SECONDS:-10}" 9; then
+  if [[ ${1:-} == sweep ]]; then
+    printf 'SWEPT: NOT RUN -- another escalation owns the door; retry next pass\n'
+    exit 75
+  fi
+  die "Could not acquire the escalation-door lock."
+fi
 # The lock belongs to this process alone (af-wnj692). `9>&-` closes fd 9 for
 # everything main runs; bash keeps the lock on a close-on-exec copy, so it is
 # held until this script exits but no child can inherit it. Without this, the

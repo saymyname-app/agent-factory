@@ -476,6 +476,9 @@ marked file. A test stopped after `LOCAL_ONLY_TEST_TIMEOUT` (default
 3600 s) counts as failed; the one-hour per-test budget covers the observed
 long isolated-city journey. The order's timeout (`6h`) bounds the night: run one at a
 time on a loaded host, the marked tests take a little over two hours.
+The isolated author trials allow 900 seconds for their initial controller
+tick and formula claims: this is the measured loaded-host startup bound, not
+the budget of the ticket journey that follows.
 A trial on the real tracker that calls `bin/convoy-state` or a tool built on
 it exports `FACTORY_ROOT` to its disposable city: the tools name their city
 to `gc` from it, and left unset they name the repository they run from.

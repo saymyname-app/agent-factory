@@ -12,6 +12,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,7 +25,7 @@ EXCEPTIONS = ROOT / "config" / "bounded-process-exceptions.tsv"
 def alive(pid: int) -> bool:
     try:
         return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] != "Z"
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
         return False
 
 
@@ -65,6 +66,10 @@ def listed_exceptions() -> set[str]:
 
 
 class BoundedProcessTest(unittest.TestCase):
+    def test_a_process_disappearing_during_liveness_read_is_not_alive(self) -> None:
+        with mock.patch.object(Path, "read_text", side_effect=ProcessLookupError):
+            self.assertFalse(alive(123))
+
     def test_timeout_kills_the_commands_descendants(self) -> None:
         with tempfile.TemporaryDirectory(prefix="bounded-process-") as folder:
             child_pid = Path(folder) / "child.pid"
