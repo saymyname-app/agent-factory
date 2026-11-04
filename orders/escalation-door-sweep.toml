@@ -4,4 +4,7 @@ trigger = "condition"
 interval = "15m"
 check = "/home/benja/agent-factory/orders/lib/orders-restart-stagger.sh escalation-door-sweep 900"
 exec = "/home/benja/agent-factory/bin/order-pause gate escalation-door-sweep -- /home/benja/agent-factory/bin/escalation-door sweep"
+# One full list, then one action-time revalidation + write + mail per due page.
+# tests/escalation-door-test.sh holds this operation budget under slow calls;
+# lock contention is an explicit exit-75 deferral retried on the next pass.
 timeout = "60s"

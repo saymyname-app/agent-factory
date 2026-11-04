@@ -286,6 +286,29 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual(1, len(self.end_review_launches()))
         self.assertTrue(again["ok"])
 
+    def test_product_capacity_defers_the_end_review_until_both_can_launch_in_one_pass(self):
+        tip = self.every_ticket_closed()
+        occupied = Path(self.env["TICKET_EVALUATION_STATE_DIR"])
+        occupied.mkdir(parents=True, exist_ok=True)
+        blockers = [occupied / f"occupied-{number}.json" for number in (1, 2)]
+        for blocker in blockers:
+            blocker.write_text("{}")
+
+        deferred = self.advance(CONVOY)
+
+        self.assertEqual("deferred", self.outcome_of(deferred)["action"])
+        self.assertIsNone(self.end_review_of(deferred))
+        self.assertEqual([], self.end_review_launches())
+
+        for blocker in blockers:
+            blocker.unlink()
+        launched = self.advance(CONVOY)
+
+        self.assertEqual(("launched", tip),
+                         (self.outcome_of(launched)["action"], self.outcome_of(launched)["commit"]))
+        self.assertEqual(("launched", tip),
+                         (self.end_review_of(launched)["action"], self.end_review_of(launched)["commit"]))
+
     def test_no_end_review_is_settled_while_a_ticket_is_open_or_the_gate_refuses_before_its_verdicts(self):
         self.every_ticket_closed(but=(T3,))
         self.assertIsNone(self.end_review_of(self.advance(CONVOY)))

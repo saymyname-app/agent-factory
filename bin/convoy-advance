@@ -301,6 +301,11 @@ PASS_RUNNING = "passe déjà en cours : elle avance les convois, celle-ci ne fai
 CODE_REVIEW_STOP = "code_review_no_result"
 # The stops the Ticket Evaluation of a ticket writes (bin/convoy-state).
 EVALUATION_STOPS = ("evaluation_no_result", "evaluation_outage")
+EVALUATION_OUTAGE = "evaluation_outage"
+# A structurally delivered Factory repair explicitly linked to the current
+# operator request or evaluation-outage stop. It has its own bounded bucket:
+# ordinary blocker closures cannot spend the repairs' resumes (af-o5ritb).
+REPAIR_DELIVERED = "repair_delivered"
 # The stop of a ticket still refused after its correction round (bin/correction-round).
 CORRECTION_STOP = "still_refused"
 # The stops bin/tdd-step writes on a ticket and that no settlement of a review
@@ -959,9 +964,13 @@ def technical_repairs(ticket: dict[str, Any]) -> list[str]:
     """The Factory-maintenance links bound to the current request."""
     record = ticket.get("technical_repairs")
     park, exit_record = ticket.get("park") or {}, ticket.get("exit") or {}
-    if not isinstance(record, dict) or park.get("cause") != "operator_request" \
-            or exit_record.get("exit") != "operator_request" \
-            or record.get("parked_at") != park.get("at") or record.get("exit_at") != exit_record.get("at"):
+    stop = ticket.get("stop") or {}
+    if not isinstance(record, dict):
+        return []
+    current_parking = park.get("cause") == "operator_request" and exit_record.get("exit") == "operator_request" \
+        and record.get("parked_at") == park.get("at") and record.get("exit_at") == exit_record.get("at")
+    current_stop = stop.get("reason") in EVALUATION_STOPS and record.get("stop_at") == stop.get("at")
+    if not current_parking and not current_stop:
         return []
     entries = record.get("entries")
     return [entry["id"] for entry in entries] if isinstance(entries, list) else []
@@ -994,6 +1003,73 @@ def delivered_technical_repairs(ticket: dict[str, Any]) -> list[str]:
     return repairs
 
 
+def repairs_missing_from_integration(convoy: Convoy) -> dict[str, str]:
+    """Delivered repairs from this project's protected branch that its
+    integration branch does not contain yet."""
+    if not convoy.rig or not convoy.integration:
+        return {}
+    try:
+        project = tomllib.loads((PROJECTS / f"{convoy.rig}.toml").read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise Refusal(f"config/projects/{convoy.rig}.toml illisible : {exc}") from exc
+    protected = convoy.integration.get("protected")
+    commits: dict[str, str] = {}
+    for ticket in convoy.tickets:
+        for repair_id in delivered_technical_repairs(ticket):
+            metadata = read_bead(repair_id).get("metadata")
+            if isinstance(metadata, dict) and metadata.get("gc.github_repo") == project.get("repo") \
+                    and metadata.get("merged_target") == protected:
+                commits[repair_id] = metadata["gc.merge_commit"]
+    if not commits:
+        return {}
+    branch = convoy.integration["branch"]
+    tip = ""
+    for ref in (f"refs/remotes/origin/{branch}", f"refs/heads/{branch}"):
+        tip = run(["git", "-C", str(convoy.repo), "rev-parse", "--verify", "--quiet",
+                   f"{ref}^{{commit}}"]).stdout.strip()
+        if tip:
+            break
+    return {repair_id: commit for repair_id, commit in commits.items()
+            if not tip or run(["git", "-C", str(convoy.repo), "merge-base", "--is-ancestor", commit, tip]).returncode}
+
+
+def take_up_delivered_repairs(convoy: Convoy) -> dict[str, Any] | None:
+    """Use the integration gate before releasing a same-repository repair."""
+    missing = repairs_missing_from_integration(convoy)
+    if not missing:
+        return None
+    proc = run([str(INTEGRATION_BIN), "take-up", convoy.id, "--repo", str(convoy.repo),
+                "--profile", str(rig_profile(convoy.rig))])
+    try:
+        answer = parsed(proc, f"spec-integration take-up {convoy.id}")
+    except Refusal as exc:
+        return {"repairs": sorted(missing), "error": f"refus : {exc}"}
+    if not isinstance(answer, dict):
+        return {"repairs": sorted(missing),
+                "error": f"refus : spec-integration take-up {convoy.id} a rendu une réponse illisible"}
+    kept = ("branch", "integration", "protected_tip", "takeover", "tests", "red", "error", "message", "unruled")
+    result = {name: answer[name] for name in kept if name in answer}
+    result["repairs"] = sorted(missing)
+    if proc.returncode != 0 and "error" not in result:
+        result["error"] = f"refus : spec-integration take-up {convoy.id} a échoué (exit {proc.returncode})"
+    elif proc.returncode == 0:
+        still_missing = repairs_missing_from_integration(convoy)
+        if still_missing:
+            result["error"] = "refus : réparation(s) livrée(s) absente(s) de la branche d'intégration après reprise : " \
+                + ", ".join(sorted(still_missing))
+    return result
+
+
+def evaluation_repair_due(ticket: dict[str, Any]) -> tuple[str, str, str] | None:
+    """One resume for an evaluation stop once every explicitly
+    linked Factory repair has structural delivery proof."""
+    repairs = delivered_technical_repairs(ticket)
+    if not repairs or ticket.get("resumes_left") == 0:
+        return None
+    ref = hashlib.sha256(",".join(repairs).encode("utf-8")).hexdigest()[:16]
+    return "new", REPAIR_DELIVERED, f"repairs:{ref}/stop:{ticket['stop']['at']}"
+
+
 def resume_due(ticket: dict[str, Any], alive: set[str]) -> tuple[str, str, str] | None:
     """What the pass owes a ticket at work, read on the tracker alone:
     ("new", cause, ref) a fact that asks for a resume not counted yet;
@@ -1020,7 +1096,7 @@ def resume_due(ticket: dict[str, Any], alive: set[str]) -> tuple[str, str, str] 
     if exit_name == "operator_request" and released_repairs:
         repairs = ",".join(released_repairs)
         ref = hashlib.sha256(repairs.encode("utf-8")).hexdigest()[:16]
-        return "new", "unblocked", f"repairs:{ref}/exit:{exit_at}"
+        return "new", REPAIR_DELIVERED, f"repairs:{ref}/exit:{exit_at}"
     if exit_name in PARKING_EXITS:
         # Its parking was lifted: the answer goes to a fresh session.
         return "new", "answered", f"exit:{exit_at}"
@@ -1125,10 +1201,12 @@ def behind_due(convoy: Convoy, ticket: dict[str, Any]) -> tuple[str, str, str] |
 def stopped_without_result(ticket: dict[str, Any]) -> bool:
     """Started, not closed nor parked, and stopped because its Ticket
     Evaluation or its code review gave no result, by a stage the flow
-    removed, or at its second amendment: the stops a resume may lift."""
+    removed, at its second amendment, or for an evaluation outage carrying
+    an explicit technical-repair link: the stops a resume may lift."""
     return started(ticket) and ticket.get("status") != "closed" and not ticket.get("park") \
-        and (ticket.get("stop") or {}).get("reason") in (NO_RESULT, CODE_REVIEW_STOP, AMENDMENT_STOP,
-                                                         *REMOVED_STAGE_STOPS)
+        and ((ticket.get("stop") or {}).get("reason") in (NO_RESULT, CODE_REVIEW_STOP, AMENDMENT_STOP,
+                                                          *REMOVED_STAGE_STOPS)
+             or ((ticket.get("stop") or {}).get("reason") == EVALUATION_OUTAGE and technical_repairs(ticket)))
 
 
 def amendment_granted_due(ticket: dict[str, Any]) -> tuple[str, str, str] | None:
@@ -1228,6 +1306,10 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
                 due = once_per_stop_due(ticket, CODE_REVIEW_STOP)
             elif ticket["stop"]["reason"] == AMENDMENT_STOP:
                 due = amendment_granted_due(ticket) or inherited_change_due(convoy, ticket)
+            elif ticket["stop"]["reason"] in EVALUATION_STOPS and technical_repairs(ticket):
+                due = evaluation_repair_due(ticket)
+            elif ticket["stop"]["reason"] == EVALUATION_OUTAGE:
+                due = None
             elif overridden_at_work(ticket):
                 # Only the merge that returned it lifts its stop; no resume left, it stays with the operator.
                 due = resume_due(ticket, alive) if ticket.get("resumes_left") != 0 else None
@@ -1259,7 +1341,7 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
                     if cause in (NO_RESULT, STAGE_REMOVED, CODE_REVIEW_STOP) \
                             and request_answer(read_bead(ticket_id), ticket["stop"]["at"]) is not None:
                         continue
-                elif cause == "unblocked" and released_technical_repairs(ticket):
+                elif cause == REPAIR_DELIVERED and released_technical_repairs(ticket):
                     # The parking was removed first. If clearing refuses or
                     # this pass is interrupted, the request remains and the
                     # next pass retries before opening the resume.
@@ -1303,6 +1385,26 @@ def request_answer(bead: dict[str, Any], since: str) -> str | None:
     if metadata.get("gc.needs_benjamin") not in (None, "none") or not isinstance(option, str) or not isinstance(at, str):
         return None
     return option if at >= since else None
+
+
+def legacy_repair_resume_due(ticket: dict[str, Any]) -> bool:
+    """The af-o5ritb state already written before `repair_delivered` existed:
+    the delivered-repair resume exhausted `unblocked` but was never launched."""
+    park = ticket.get("park") or {}
+    resume = ticket.get("resume") or {}
+    entries = resume.get("entries") or []
+    if not entries and isinstance(resume.get("raw"), str):
+        try:
+            entries = json.loads(resume["raw"]).get("entries") or []
+        except (json.JSONDecodeError, AttributeError):
+            return False
+    if not isinstance(entries, list) or not entries or not isinstance(entries[-1], dict):
+        return False
+    last = entries[-1]
+    return ticket.get("status") != "closed" and park.get("cause") == PARK_EXHAUSTED \
+        and park.get("origin") == ticket["id"] and ticket.get("resumes_left") in (0, None) \
+        and last.get("cause") == "unblocked" and str(last.get("ref", "")).startswith("repairs:") \
+        and last.get("launches") == []
 
 
 def settle_lifts(convoy: Convoy, out: dict[str, Any]) -> None:
@@ -2161,6 +2263,17 @@ def dispatch(convoy: Convoy, ticket_id: str, rig: str, settings: dict[str, Any])
 def advance_convoy(convoy: Convoy, settings: dict[str, Any], free: int, alive: set[str]) -> dict[str, Any]:
     out: dict[str, Any] = {"id": convoy.id, "started": [], "waiting": [], "deferred": [], "refused": [],
                            "resumed": [], "parked": [], "lifted": []}
+    migrated = False
+    for ticket in convoy.tickets:
+        if not legacy_repair_resume_due(ticket):
+            continue
+        try:
+            state_write("migrate-repair-resume", convoy.id, ticket["id"])
+            migrated = True
+        except Refusal as exc:
+            out["refused"].append({"id": ticket["id"], "reason": str(exc)})
+    if migrated:
+        convoy.load()
     incident = settle_incident(convoy)
     if incident:
         out["incident"] = incident
@@ -2189,6 +2302,15 @@ def advance_convoy(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
     outcome_repairs = settle_outcome_repairs(convoy)
     if outcome_repairs:
         out["outcome_repairs"] = outcome_repairs
+    # A same-repository maintenance repair first enters the integration tree
+    # through its existing tested take-up gate. Only that green result can
+    # release the parking and consume the one repair_delivered resume.
+    if not convoy.red:
+        take_up = take_up_delivered_repairs(convoy)
+        if take_up:
+            out["repair_take_up"] = take_up
+            if "error" in take_up or "message" in take_up or "unruled" in take_up:
+                return out
     # The answers first: a ticket whose parking is lifted is resumed, and
     # those behind it started, by the same pass.
     settle_lifts(convoy, out)
@@ -2527,6 +2649,7 @@ def settle_ticket_end(convoy: Convoy, merge: dict[str, Any] | None) -> dict[str,
 # carrying one of them.
 FAILING_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("incident", ("error",)), ("grouped_request", ("error",)), ("repair", ("error",)),
+    ("repair_take_up", ("error", "message", "unruled")),
     ("item_repairs", ("error",)), ("outcome_repairs", ("error",)), ("outcome_evaluation", ("error",)),
     ("spec_end", ("error", "message")), ("end_review", ("error",)), ("evidence_pack", ("error",)),
     ("non_conforme", ("error",)), ("acceptance", ("error",)), ("promotion", ("error", "message", "pending")),
@@ -2642,10 +2765,13 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
         if outcome is not None:
             result["outcome_evaluation"] = outcome
         # On the commit of those verdicts, in the same pass: the end code
-        # review of the whole assembled diff, and the repairs it drafted.
-        end_review = settle_end_review(convoys[result["id"]])
-        if end_review is not None:
-            result["end_review"] = end_review
+        # review of the whole assembled diff, and the repairs it drafted. A
+        # capacity deferral must defer both launches so a later pass can still
+        # start them together on that commit.
+        if (outcome or {}).get("action") != "deferred":
+            end_review = settle_end_review(convoys[result["id"]])
+            if end_review is not None:
+                result["end_review"] = end_review
         # Every condition before it met on that commit: the Evidence Pack is
         # generated by code, and the gate reads it in this same pass.
         pack = settle_evidence_pack(convoys[result["id"]], ending)

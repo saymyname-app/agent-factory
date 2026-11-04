@@ -57,7 +57,11 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   façon dont il finit ; tout délai vient d'une mesure.
 - Contrôle : `python3 tests/bounded-process-test.py`,
   `python3 tests/project-launch-test.py`, `python3 tests/test-budgets-test.py`,
-  `bash tests/agent-wait-polling-test.sh`
+  `bash tests/agent-wait-polling-test.sh`,
+  `bash tests/mayor-context-guard-test.sh`,
+  `python3 tests/factory-observe-test.py LiveObservationTest.test_a_hung_mail_is_bounded_and_remains_pending`,
+  `bash tests/factory-watchdog-test.sh`,
+  `python3 tests/idle-ready-work-wake-test.py IdleReadyWorkWakeTest.test_a_hung_notification_is_bounded_without_changing_wake_cooldown`
   — complet pour les commandes Python bornées de `bin/`, `lib/` et
   `tests/cockpit-criteria/` : un seul lanceur (`lib/bounded_process.py`)
   ouvre une session et tue son groupe au délai ; le lint refuse toute
@@ -67,16 +71,23 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   les délais mesurés des tests d'un ticket et de l'ordre convoy-advance
   (`config/test-budgets.json`, étude C T3), pas les autres délais écrits à
   la main. Le quatrième refuse une attente de formule qui peut atteindre les
-  cinq minutes sans `gc runtime heartbeat`.
+  cinq minutes sans `gc runtime heartbeat`. Le cinquième tue le groupe d'un
+  reset ou d'un mail Mayor bloqué et tient leur sémantique de reprise. Le
+  contrôle `factory-watchdog-test.sh` injecte un `gc` bloqué dans le vrai
+  `factory-watchdog` et prouve que son budget interne rend avant celui de
+  l'order et tue tout son groupe de processus ; le dernier tient la
+  notification de `idle-ready-work-wake` dans son budget sans changer son
+  réveil ni son cooldown.
 - Occurrences : #624, #628, #629, #630, #631, #636, #647, #657, #658, #661,
   #667, #694, #696, #705, #706, #708, #710, #713, #721 ; copies orphelines du
   22/10 (sans PR) ; af-kky570 ; af-npz9v1.46 ; af-npz9v1.26 ; af-30zwwu ;
-  af-95zqgx.
+  af-95zqgx ; af-d3dj4j ; af-ll4hju ; af-bl2jyj ; af-p4rdr7 ; af-6go1ss.
 - Ouvertes : les invocations directes antérieures hors des occurrences de
   l'étude B sont nommées une par une, avec leur date et leur motif, dans
   `config/bounded-process-exceptions.tsv` ; une vingtaine de délais écrits à
-  la main restent à l'étude C. Aucune autre invocation Python bornée ni
-  aucun lanceur de produit sans propriétaire n'est connu hors du contrôle.
+  la main restent à l'étude C. Aucune autre invocation
+  Python bornée ni aucun lanceur de produit sans propriétaire n'est connu
+  hors du contrôle.
 
 ## I — Impasse d'état : un arrêt ou une attente sans sortie codée
 
@@ -92,15 +103,27 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/code-review-test.py CodeReviewTest.test_an_unfavorable_judgement_from_the_previous_contract_is_rejudged_once_at_the_same_tip`,
   `python3 tests/tdd-step-test.py TddStepTest.test_an_ambiguous_short_successor_does_not_name_either_ticket`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_factory_technical_request_waits_for_every_linked_repair_s_delivery_proof_then_resumes_once`,
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_an_evaluation_without_result_resumes_once_after_its_linked_factory_repair_is_delivered`,
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_an_evaluation_outage_resumes_once_after_its_linked_factory_repair_is_delivered`,
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_legacy_delivered_repair_at_the_unblocked_bound_is_migrated_and_sent_once`,
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_malformed_legacy_resume_is_left_to_the_incident_door_without_crashing`,
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_factory_repair_is_taken_up_and_tested_before_its_resume_is_consumed_once`,
   `bash tests/factory-work-dispatch-test.sh`. Les courses réponse/retrait qui
   pourraient consommer une réponse sont tenues par
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_an_evaluation_stop_answered_while_its_request_is_cleared_is_not_resumed ConvoyAdvanceTest.test_a_removed_stage_stop_answered_while_its_request_is_cleared_is_not_resumed ConvoyAdvanceTest.test_a_grouped_answer_recorded_while_changed_parkings_are_re_raised_is_applied_first`
   et `python3 tests/convoy-advance-review-evaluation-correction-test.py ConvoyAdvanceTest.test_a_code_review_stop_answered_while_its_request_is_cleared_is_not_resumed`.
 - Occurrences : #635, #637, #650, #653, #662, #666, #672, #673, #679, #682,
-  #687, #702, #704, #709, #711, #712, #718 ; af-npz9v1.44 ; af-npz9v1.47 ; af-npz9v1.48 ; af-npz9v1.35.
+  #687, #702, #704, #709, #711, #712, #718 ; af-npz9v1.44 ; af-npz9v1.47 ; af-npz9v1.48 ; af-npz9v1.35 ;
+  af-bf0e7d (`evaluation_outage` repris une fois après la livraison prouvée
+  de sa maintenance liée) ; af-e0n71v (`evaluation_no_result` refusait sa
+  maintenance liée et restait arrêté) ; af-o5ritb (la livraison d'une réparation liée
+  reprend par sa propre cause bornée, sans épuiser le seau `unblocked`) ; af-qjw5lm
+  (la réparation livrée sur `main` ne libère la reprise qu'après sa présence
+  vérifiée dans la pointe d'intégration testée) ; af-62duoi (la migration
+  historique de `unblocked` refusait l'ancien arrêt d'évaluation avant de
+  pouvoir convertir son dernier signal de réparation).
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
-  contrôle : `evaluation_outage` reste à la porte du ticket et à la
-  maintenance d'usine ; `criterion_already_green` reste au Planning Run ;
+  contrôle : `criterion_already_green` reste au Planning Run ;
   `outcome_evaluation_no_result` et `outcome_evaluation_outage` ne repartent
   qu'à une nouvelle pointe d'intégration ; `story_unobservable` reste au
   Planning Run. Elles sont retirées de la table dès qu'une transition codée

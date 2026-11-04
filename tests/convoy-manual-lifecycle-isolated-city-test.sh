@@ -326,11 +326,14 @@ refused_as_closed() { # <convoy> <convoy-state command...>
 }
 closed_by_command() { # <convoy> <ticket> <spec> <draft> <how> <said>
   local convoy=$1 ticket=$2 spec=$3 draft=$4 how=$5 said=$6 out shown closed ticket_before passes sweeps
-  passes=$(count "$PASSES"); sweeps=$(count "$SWEEPS")
+  sweeps=$(count "$SWEEPS")
   ticket_before=$(bead_bytes "$ticket")
   : > "$WRITES"
   out=$(GC_BIN="$TRIAL/gc-noting-updates" "$CITY/bin/convoy-state" close-convoy "$convoy") \
     || fail "convoy-state close-convoy $convoy did not pass: $out"
+  # close-convoy waits for a pass that already holds the shared advance lock.
+  # Exclude that older pass even when it writes its record while the close waits.
+  passes=$(count "$PASSES")
   echo "$(date -u +%H:%M:%S) l'essai ferme le convoi $convoy par la commande, sur « $said »"
 
   # The mechanism under trial: one update of the real tracker carries the
