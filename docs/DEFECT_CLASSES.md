@@ -106,6 +106,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_an_evaluation_without_result_resumes_once_after_its_linked_factory_repair_is_delivered`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_an_evaluation_outage_resumes_once_after_its_linked_factory_repair_is_delivered`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_legacy_delivered_repair_at_the_unblocked_bound_is_migrated_and_sent_once`,
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_malformed_legacy_resume_is_left_to_the_incident_door_without_crashing`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_factory_repair_is_taken_up_and_tested_before_its_resume_is_consumed_once`,
   `bash tests/factory-work-dispatch-test.sh`. Les courses réponse/retrait qui
   pourraient consommer une réponse sont tenues par
@@ -118,7 +119,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   maintenance liée et restait arrêté) ; af-o5ritb (la livraison d'une réparation liée
   reprend par sa propre cause bornée, sans épuiser le seau `unblocked`) ; af-qjw5lm
   (la réparation livrée sur `main` ne libère la reprise qu'après sa présence
-  vérifiée dans la pointe d'intégration testée).
+  vérifiée dans la pointe d'intégration testée) ; af-62duoi (la migration
+  historique de `unblocked` refusait l'ancien arrêt d'évaluation avant de
+  pouvoir convertir son dernier signal de réparation).
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
   contrôle : `criterion_already_green` reste au Planning Run ;
   `outcome_evaluation_no_result` et `outcome_evaluation_outage` ne repartent

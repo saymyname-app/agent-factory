@@ -1391,10 +1391,18 @@ def legacy_repair_resume_due(ticket: dict[str, Any]) -> bool:
     """The af-o5ritb state already written before `repair_delivered` existed:
     the delivered-repair resume exhausted `unblocked` but was never launched."""
     park = ticket.get("park") or {}
-    entries = (ticket.get("resume") or {}).get("entries") or []
-    last = entries[-1] if entries else {}
+    resume = ticket.get("resume") or {}
+    entries = resume.get("entries") or []
+    if not entries and isinstance(resume.get("raw"), str):
+        try:
+            entries = json.loads(resume["raw"]).get("entries") or []
+        except (json.JSONDecodeError, AttributeError):
+            return False
+    if not isinstance(entries, list) or not entries or not isinstance(entries[-1], dict):
+        return False
+    last = entries[-1]
     return ticket.get("status") != "closed" and park.get("cause") == PARK_EXHAUSTED \
-        and park.get("origin") == ticket["id"] and ticket.get("resumes_left") == 0 \
+        and park.get("origin") == ticket["id"] and ticket.get("resumes_left") in (0, None) \
         and last.get("cause") == "unblocked" and str(last.get("ref", "")).startswith("repairs:") \
         and last.get("launches") == []
 
@@ -1410,18 +1418,6 @@ def settle_lifts(convoy: Convoy, out: dict[str, Any]) -> None:
     parked. A ticket parked for exhausted resumes that has resumes left
     under the bounds of now is lifted without an answer: an answered resume
     takes no bound since af-npz9v1.41, and nothing is left to ask."""
-    migrated = False
-    for ticket in convoy.tickets:
-        if not legacy_repair_resume_due(ticket):
-            continue
-        try:
-            state_write("migrate-repair-resume", convoy.id, ticket["id"])
-            migrated = True
-        except Refusal as exc:
-            out["refused"].append({"id": ticket["id"], "reason": str(exc)})
-    if migrated:
-        convoy.load()
-
     lifts: list[tuple[str, str, str | None, list[str]]] = []
     for ticket in convoy.tickets:
         park = ticket.get("park") or {}
@@ -2267,6 +2263,17 @@ def dispatch(convoy: Convoy, ticket_id: str, rig: str, settings: dict[str, Any])
 def advance_convoy(convoy: Convoy, settings: dict[str, Any], free: int, alive: set[str]) -> dict[str, Any]:
     out: dict[str, Any] = {"id": convoy.id, "started": [], "waiting": [], "deferred": [], "refused": [],
                            "resumed": [], "parked": [], "lifted": []}
+    migrated = False
+    for ticket in convoy.tickets:
+        if not legacy_repair_resume_due(ticket):
+            continue
+        try:
+            state_write("migrate-repair-resume", convoy.id, ticket["id"])
+            migrated = True
+        except Refusal as exc:
+            out["refused"].append({"id": ticket["id"], "reason": str(exc)})
+    if migrated:
+        convoy.load()
     incident = settle_incident(convoy)
     if incident:
         out["incident"] = incident

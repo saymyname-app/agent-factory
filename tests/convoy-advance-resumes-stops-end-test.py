@@ -47,6 +47,7 @@ T1 = first.T1
 T2 = first.T2
 T3 = first.T3
 EXIT_REFUSED = first.EXIT_REFUSED
+EXIT_UNRULED = first.EXIT_UNRULED
 EXIT_NOT_NEW_FLOW = first.EXIT_NOT_NEW_FLOW
 ticket = first.ticket
 session = first.session
@@ -784,10 +785,31 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
                     "--ref", "repairs:b39d09d98a2aa52e/exit:2026-11-02T05:41:08Z")
         self.run_ok(STATE, "park", CONVOY, T1, "--cause", "resumes_exhausted",
                     "--detail", "reprises épuisées pour la cause unblocked (5 reprises en tout)")
-        before = self.shown_state(T1)
-        self.assertEqual((5, "resumes_exhausted", "unblocked", []),
-                         (before["counters"]["resumes"], before["park"]["cause"],
-                          before["resume"]["entries"][-1]["cause"], before["resume"]["entries"][-1]["launches"]))
+        metadata = self.bead(T1)["metadata"]
+        resume = json.loads(metadata["gc.flow.resume"])
+        # Exact durable entry reported by af-ihjw25 on af-ocz64w. It predates
+        # `repair_delivered`, so its preserved evaluation stop was lifted by
+        # `unblocked`; the current reader must accept it only through the
+        # narrow migration of the final, still-unlaunched repair signal.
+        resume["entries"][1] = {
+            "at": "2026-11-02T00:39:47Z", "cause": "unblocked",
+            "exit": {"at": "2026-10-30T18:24:02Z", "exit": "finished"},
+            "launches": [{"at": "2026-11-02T00:40:01Z", "bead": "af-vokni8"}],
+            "ref": "repairs:ab580b5b24002f19/stop:2026-10-30T21:06:32Z",
+            "session": "delivery-author-af-wisp-ea4lfm",
+            "stop": {"at": "2026-10-30T21:06:32Z",
+                     "detail": "l'environnement d'évaluation a manqué 2 fois de suite au commit 0de042ff0bf7",
+                     "raised": "2026-10-30T21:06:41Z", "reason": "evaluation_outage"},
+        }
+        metadata["gc.flow.resume"] = json.dumps(resume)
+        self.edit(T1, metadata=metadata)
+        before = self.bead(T1)["metadata"]
+        before_resume = json.loads(before["gc.flow.resume"])["entries"]
+        self.assertEqual((5, "resumes_exhausted", "unblocked", "evaluation_outage", 1, "unblocked", []),
+                         (before["gc.flow.counter.resumes"], json.loads(before["gc.flow.park"])["cause"],
+                          before_resume[1]["cause"], before_resume[1]["stop"]["reason"],
+                          len(before_resume[1]["launches"]), before_resume[-1]["cause"],
+                          before_resume[-1]["launches"]))
         self.write_log.write_text("")
 
         answer = self.advance(CONVOY)
@@ -801,6 +823,20 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertIsNone(shown["technical_repairs"])
         self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
         self.assertEqual(1, len(self.resume_launches()))
+
+    def test_a_malformed_legacy_resume_is_left_to_the_incident_door_without_crashing(self):
+        self.started_convoy()
+        metadata = self.bead(T1)["metadata"]
+        metadata["gc.flow.resume"] = json.dumps({"entries": 1})
+        self.edit(T1, metadata=metadata)
+
+        answer = self.advance(CONVOY, expect=EXIT_UNRULED)
+
+        convoy = next(entry for entry in answer["convoys"] if entry["id"] == CONVOY)
+        self.assertEqual(([], "état sans règle"), (convoy["resumed"], convoy["signal"]))
+        self.assertTrue(convoy["incident"]["raised"])
+        self.assertEqual("gc.flow.resume", convoy["unruled"][0]["field"])
+        self.assertEqual({"entries": 1}, json.loads(self.bead(T1)["metadata"]["gc.flow.resume"]))
 
     def test_a_finished_ticket_behind_the_integration_tip_goes_back_to_its_author_once_and_is_counted(self):
         self.integrated()
