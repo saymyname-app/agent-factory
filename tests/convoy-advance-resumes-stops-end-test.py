@@ -47,9 +47,23 @@ T1 = first.T1
 T2 = first.T2
 T3 = first.T3
 EXIT_REFUSED = first.EXIT_REFUSED
+EXIT_UNRULED = first.EXIT_UNRULED
 EXIT_NOT_NEW_FLOW = first.EXIT_NOT_NEW_FLOW
 ticket = first.ticket
 session = first.session
+
+
+def delivered(number, head, merge):
+    return {
+        "gc.delivery_contract": "pr-ci-merged-v1",
+        "gc.delivery_status": "merged", "gc.work_outcome": "shipped",
+        "gc.github_repo": "example/factory", "gc.pr_number": number,
+        "gc.pr_head": head, "gc.merge_commit": merge,
+        "gc.pr_url": f"https://github.com/example/factory/pull/{number}",
+        "pr_number": number, "merge_result": "merged", "merged_sha": merge,
+        "merged_target": "main", "gc.required_ci_workflow": "Factory CI",
+        "gc.ci_run_id": number, "gc.ci_head_sha": head, "gc.ci_conclusion": "success",
+    }
 
 
 class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
@@ -269,6 +283,34 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         again = self.advance(CONVOY)
         self.assertEqual([(T1, self.NO_RESULT)], [(r["id"], r["cause"]) for r in self.of(again, "resumed")])
         self.assertEqual(2, self.resumes())
+
+    def test_an_evaluation_without_result_resumes_once_after_its_linked_factory_repair_is_delivered(self):
+        self.evaluation_stopped()
+        repair = "fx-er1"
+        state = self.tracker_state()
+        state["beads"][repair] = {
+            "title": "réparer le rôle Evaluator", "status": "open", "issue_type": "bug",
+            "labels": ["maintenance"], "metadata": {"gc.authorized_by": "af-authority"},
+        }
+        self.tracker.write_text(json.dumps(state))
+
+        self.run_ok(STATE, "link-technical-repair", CONVOY, T1, "--repair", repair)
+        waiting = self.advance(CONVOY)
+        self.assertEqual([], self.of(waiting, "resumed"))
+        self.assertEqual(self.NO_RESULT, self.shown_state(T1)["stop"]["reason"])
+
+        self.edit(repair, status="closed", metadata=delivered(43, "1" * 40, "2" * 40))
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "repair_delivered")],
+                         [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+        shown = self.shown_state(T1)
+        self.assertEqual((None, None, 1),
+                         (shown["stop"], shown["technical_repairs"], shown["counters"]["resumes"]))
+        self.assertEqual(self.NO_RESULT, shown["resume"]["entries"][-1]["stop"]["reason"])
+        self.assertEqual([], [line for line in self.needs() if T1 in line])
+        self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
+        self.assertEqual(1, self.resumes())
 
     def test_a_ticket_stopped_without_an_evaluation_result_at_its_third_resume_is_parked_not_restarted(self):
         self.evaluation_stopped()
@@ -531,6 +573,48 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual([(T1, "unblocked")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
         self.assertEqual(1, self.resumes())
 
+    def test_an_evaluation_outage_resumes_once_after_its_linked_factory_repair_is_delivered(self):
+        self.started_convoy()
+        self.taken(T1, "auteur-1")
+        self.run_ok(STATE, "stop-ticket", CONVOY, T1, "--reason", "evaluation_outage",
+                    "--detail", "l'environnement d'évaluation a manqué 2 fois de suite")
+        request = {
+            "quoi": f"Ticket {T1} arrêté : l'environnement d'évaluation est en panne",
+            "pourquoi": "Une panne de l'environnement n'est pas un refus.",
+            "que_faire": [{"option": "Faire réparer l'environnement d'évaluation par la maintenance de l'usine",
+                            "consequence": "Le ticket reprend après livraison."}],
+            "langue": "fr", "bloquant": True,
+        }
+        self.run_ok(ESCALATION, "benjamin", T1, json.dumps(request))
+        self.run_ok(STATE, "stop-raised", CONVOY, T1)
+        self.env["ESCALATION_DOOR_NOW"] = "4102444800"
+        self.run_ok(ESCALATION, "repondre", T1, "a", "--actor", "operateur-test")
+
+        repair = "fx-er1"
+        state = self.tracker_state()
+        state["beads"][repair] = {
+            "title": "réparer l'environnement d'évaluation", "status": "open", "issue_type": "bug",
+            "labels": ["maintenance"], "metadata": {"gc.authorized_by": "af-authority"},
+        }
+        self.tracker.write_text(json.dumps(state))
+        self.run_ok(STATE, "link-technical-repair", CONVOY, T1, "--repair", repair)
+
+        waiting = self.advance(CONVOY)
+        self.assertEqual([], self.of(waiting, "resumed"))
+        self.assertEqual("evaluation_outage", self.shown_state(T1)["stop"]["reason"])
+
+        self.edit(repair, status="closed", metadata=delivered(43, "1" * 40, "2" * 40))
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "repair_delivered")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+        shown = self.shown_state(T1)
+        self.assertEqual((None, None, 1),
+                         (shown["stop"], shown["technical_repairs"], shown["counters"]["resumes"]))
+        self.assertEqual("evaluation_outage", shown["resume"]["entries"][-1]["stop"]["reason"])
+        self.assertEqual([], [line for line in self.needs() if T1 in line])
+        self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
+        self.assertEqual(1, self.resumes())
+
     def test_a_factory_technical_request_waits_for_every_linked_repair_s_delivery_proof_then_resumes_once(self):
         self.started_convoy()
         self.taken(T1, "auteur-1")
@@ -574,18 +658,6 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
 
         sha1, sha2, merge1, merge2 = "1" * 40, "2" * 40, "3" * 40, "4" * 40
 
-        def delivered(number, head, merge):
-            return {
-                "gc.delivery_contract": "pr-ci-merged-v1",
-                "gc.delivery_status": "merged", "gc.work_outcome": "shipped",
-                "gc.github_repo": "example/factory", "gc.pr_number": number,
-                "gc.pr_head": head, "gc.merge_commit": merge,
-                "gc.pr_url": f"https://github.com/example/factory/pull/{number}",
-                "pr_number": number, "merge_result": "merged", "merged_sha": merge,
-                "merged_target": "main", "gc.required_ci_workflow": "Factory CI",
-                "gc.ci_run_id": number, "gc.ci_head_sha": head, "gc.ci_conclusion": "success",
-            }
-
         # One delivered repair cannot release a request whose other linked
         # repair is merely closed without merge/CI proof.
         self.edit(repair1, status="closed", metadata={"gc.delivery_contract": "pr-ci-merged-v1"})
@@ -597,7 +669,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.edit(repair1, status="closed", metadata=delivered(41, sha1, merge1))
         answer = self.advance(CONVOY)
 
-        self.assertEqual([(T1, "unblocked")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+        self.assertEqual([(T1, "repair_delivered")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
         self.assertEqual([(T1, [T1, T3])], [(entry["id"], entry["lifted"]) for entry in self.of(answer, "lifted")])
         self.assertEqual([repair1, repair2], self.shown_state(T1)["park_lifts"][-1]["repairs"])
         self.assertIsNone(self.shown_state(T1)["technical_repairs"])
@@ -644,6 +716,127 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual(human_request["quoi"], self.park_of(T1)["detail"])
         self.assertIn(T1, "\n".join(self.needs()))
         self.assertEqual(1, self.resumes())
+
+    def test_a_factory_repair_is_taken_up_and_tested_before_its_resume_is_consumed_once(self):
+        self.integrated(regression="test -f budget.txt")
+        self.resumable()
+        self.advance(CONVOY)
+        self.taken(T1, "auteur-1")
+        request = {
+            "quoi": "Le budget vert de l'usine manque à la branche d'intégration",
+            "pourquoi": "Le correctif livré sur main n'est pas dans l'arbre que le ticket teste.",
+            "que_faire": [{"option": "Reprendre main par la porte d'intégration",
+                            "consequence": "Le ticket reprend seulement sur le résultat vert."}],
+            "langue": "fr", "bloquant": True,
+        }
+        self.run_ok(ESCALATION, "benjamin", T1, json.dumps(request))
+        self.run_ok(STATE, "park", CONVOY, T1, "--cause", "operator_request", "--detail", request["quoi"])
+        self.run_ok(STATE, "set-exit", CONVOY, T1, "--exit", "operator_request")
+
+        repair = "fx-rmain"
+        state = self.tracker_state()
+        state["beads"][repair] = {
+            "title": "budget vert livré", "status": "open", "issue_type": "bug",
+            "labels": ["maintenance"], "metadata": {"gc.authorized_by": "af-authority"},
+        }
+        self.tracker.write_text(json.dumps(state))
+        self.run_ok(STATE, "link-technical-repair", CONVOY, T1, "--repair", repair)
+
+        (self.root / "budget.txt").write_text("1140\n")
+        self.git("add", "budget.txt")
+        self.git("commit", "-q", "-m", "repair delivered on main")
+        repair_commit = self.git("rev-parse", "main")
+        proof = delivered(41, "1" * 40, repair_commit)
+        proof["gc.github_repo"] = "example/fx"
+        proof["gc.pr_url"] = "https://github.com/example/fx/pull/41"
+        self.edit(repair, status="closed", metadata=proof)
+        before = self.git("rev-parse", self.INTEGRATION)
+
+        answer = self.advance(CONVOY)
+
+        convoy = next(entry for entry in answer["convoys"] if entry["id"] == CONVOY)
+        self.assertEqual([(T1, "repair_delivered")],
+                         [(entry["id"], entry["cause"]) for entry in convoy["resumed"]], answer)
+        self.assertEqual((repair, 0),
+                         (convoy["repair_take_up"]["repairs"][0],
+                          convoy["repair_take_up"]["tests"]["exit_code"]))
+        self.assertIsNotNone(convoy["repair_take_up"]["takeover"])
+        self.assertNotEqual(before, self.git("rev-parse", self.INTEGRATION))
+        self.git("merge-base", "--is-ancestor", repair_commit, self.INTEGRATION)
+        resumed_tip = self.git("rev-parse", self.INTEGRATION)
+
+        again = self.advance(CONVOY)
+
+        self.assertEqual([], self.of(again, "resumed"))
+        self.assertEqual(resumed_tip, self.git("rev-parse", self.INTEGRATION))
+        self.assertEqual(1, self.resumes())
+
+    def test_a_legacy_delivered_repair_at_the_unblocked_bound_is_migrated_and_sent_once(self):
+        # af-o5ritb: A2 (af-ocz64w) already had two `unblocked` resumes and
+        # four resumes in all. Its next linked repair was counted as the third
+        # `unblocked`, then parked with an empty launch instead of reaching the
+        # author through the door.
+        self.started_convoy()
+        self.taken(T1, "auteur-a2")
+        self.earlier_resumes("answered", 1)
+        self.earlier_resumes("unblocked", 2)
+        self.run_ok(STATE, "bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
+        self.run_ok(STATE, "open-resume", CONVOY, T1, "--cause", "unblocked",
+                    "--ref", "repairs:b39d09d98a2aa52e/exit:2026-11-02T05:41:08Z")
+        self.run_ok(STATE, "park", CONVOY, T1, "--cause", "resumes_exhausted",
+                    "--detail", "reprises épuisées pour la cause unblocked (5 reprises en tout)")
+        metadata = self.bead(T1)["metadata"]
+        resume = json.loads(metadata["gc.flow.resume"])
+        # Exact durable entry reported by af-ihjw25 on af-ocz64w. It predates
+        # `repair_delivered`, so its preserved evaluation stop was lifted by
+        # `unblocked`; the current reader must accept it only through the
+        # narrow migration of the final, still-unlaunched repair signal.
+        resume["entries"][1] = {
+            "at": "2026-11-02T00:39:47Z", "cause": "unblocked",
+            "exit": {"at": "2026-10-30T18:24:02Z", "exit": "finished"},
+            "launches": [{"at": "2026-11-02T00:40:01Z", "bead": "af-vokni8"}],
+            "ref": "repairs:ab580b5b24002f19/stop:2026-10-30T21:06:32Z",
+            "session": "delivery-author-af-wisp-ea4lfm",
+            "stop": {"at": "2026-10-30T21:06:32Z",
+                     "detail": "l'environnement d'évaluation a manqué 2 fois de suite au commit 0de042ff0bf7",
+                     "raised": "2026-10-30T21:06:41Z", "reason": "evaluation_outage"},
+        }
+        metadata["gc.flow.resume"] = json.dumps(resume)
+        self.edit(T1, metadata=metadata)
+        before = self.bead(T1)["metadata"]
+        before_resume = json.loads(before["gc.flow.resume"])["entries"]
+        self.assertEqual((5, "resumes_exhausted", "unblocked", "evaluation_outage", 1, "unblocked", []),
+                         (before["gc.flow.counter.resumes"], json.loads(before["gc.flow.park"])["cause"],
+                          before_resume[1]["cause"], before_resume[1]["stop"]["reason"],
+                          len(before_resume[1]["launches"]), before_resume[-1]["cause"],
+                          before_resume[-1]["launches"]))
+        self.write_log.write_text("")
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "repair_delivered")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+        shown = self.shown_state(T1)
+        last = shown["resume"]["entries"][-1]
+        self.assertEqual((5, None, "repair_delivered", 1, 2),
+                         (shown["counters"]["resumes"], shown["park"], last["cause"], len(last["launches"]),
+                          shown["resumes_left_by_cause"]["repair_delivered"]))
+        self.assertIsNone(shown["technical_repairs"])
+        self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
+        self.assertEqual(1, len(self.resume_launches()))
+
+    def test_a_malformed_legacy_resume_is_left_to_the_incident_door_without_crashing(self):
+        self.started_convoy()
+        metadata = self.bead(T1)["metadata"]
+        metadata["gc.flow.resume"] = json.dumps({"entries": 1})
+        self.edit(T1, metadata=metadata)
+
+        answer = self.advance(CONVOY, expect=EXIT_UNRULED)
+
+        convoy = next(entry for entry in answer["convoys"] if entry["id"] == CONVOY)
+        self.assertEqual(([], "état sans règle"), (convoy["resumed"], convoy["signal"]))
+        self.assertTrue(convoy["incident"]["raised"])
+        self.assertEqual("gc.flow.resume", convoy["unruled"][0]["field"])
+        self.assertEqual({"entries": 1}, json.loads(self.bead(T1)["metadata"]["gc.flow.resume"]))
 
     def test_a_finished_ticket_behind_the_integration_tip_goes_back_to_its_author_once_and_is_counted(self):
         self.integrated()

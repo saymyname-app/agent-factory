@@ -125,20 +125,26 @@ def ticket_scope_paths(ticket: dict[str, Any], ticket_id: str) -> list[str]:
     return [str(item) for item in paths]
 
 
-def validate_tickets(raw_tickets: list[Any]) -> list[dict[str, Any]]:
+def validate_tickets(
+    raw_tickets: list[Any], known_external_blockers: frozenset[str] | None = frozenset(),
+) -> list[dict[str, Any]]:
     """Ticket-level validation for the bead-mode draft (W05): the
-    `tickets:` shape lives in the bead description as YAML."""
+    `tickets:` shape lives in the bead description as YAML. A patch first
+    defers unknown blockers, then validates them against the convoy it revises."""
     tickets = [as_dict(item, f"tickets[{index}]") for index, item in enumerate(raw_tickets)]
     if not tickets:
         raise PublishError("draft has no publishable tickets")
     ids = [str(ticket.get("id") or "").strip() for ticket in tickets]
     if any(not ticket_id for ticket_id in ids) or len(set(ids)) != len(ids):
         raise PublishError("ticket IDs must be non-empty and unique")
-    known = set(ids)
+    known = set(ids) | set(known_external_blockers or ())
     for ticket in tickets:
         ticket_id = str(ticket["id"])
         blockers = as_list(ticket.get("blocked_by"), f"{ticket_id}.blocked_by")
-        unknown = sorted(str(item) for item in blockers if str(item) not in known)
+        unknown = sorted(
+            str(item) for item in blockers
+            if known_external_blockers is not None and str(item) not in known
+        )
         if unknown:
             raise PublishError(f"{ticket_id} has unknown blockers: {', '.join(unknown)}")
         if ticket_id in {str(item) for item in blockers}:
@@ -164,7 +170,8 @@ def validate_tickets(raw_tickets: list[Any]) -> list[dict[str, Any]]:
             return
         visiting.add(ticket_id)
         for blocker in by_id[ticket_id]["blocked_by"]:
-            visit(str(blocker))
+            if str(blocker) in by_id:
+                visit(str(blocker))
         visiting.remove(ticket_id)
         visited.add(ticket_id)
 
@@ -1521,7 +1528,8 @@ def blockers_first(keys: list[str], ticket_by_key: dict[str, dict[str, Any]]) ->
     while remaining:
         ready = next(
             key for key in remaining
-            if all(str(blocker) in ordered for blocker in ticket_by_key[key]["blocked_by"])
+            if all(str(blocker) not in ticket_by_key or str(blocker) in ordered
+                   for blocker in ticket_by_key[key]["blocked_by"])
         )
         ordered.append(ready)
         remaining.remove(ready)
@@ -1918,6 +1926,7 @@ def load_approved_spec_bead(spec_id: str) -> dict[str, Any]:
 
 def load_approved_bead_draft(
     draft_id: str, human_approver: str, bead: dict[str, Any] | None = None, require_approval: bool = True,
+    known_external_blockers: frozenset[str] | None = frozenset(),
 ) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any], str]:
     """`require_approval` is False only for a patch of the new flow that
     carries no approval at all: it is then held to what a patch may do
@@ -1953,7 +1962,8 @@ def load_approved_bead_draft(
     except yaml.YAMLError as exc:
         raise PublishError(f"draft bead {draft_id} description is not valid YAML: {exc}") from exc
     parsed = as_dict(parsed, f"draft bead {draft_id} description")
-    tickets = validate_tickets(as_list(parsed.get("tickets"), "tickets"))
+    tickets = validate_tickets(
+        as_list(parsed.get("tickets"), "tickets"), known_external_blockers=known_external_blockers)
     return bead, tickets, parsed, digest
 
 
@@ -2381,7 +2391,8 @@ def cmd_bd_patch_new_flow(args: argparse.Namespace, bead: dict[str, Any], human_
             "le reslice est le geste du Mayor, qui ne modifie pas les tickets d'un convoi marqué ; rien n'est écrit"
         )
     approved = any(str(metadata.get(key) or "").strip() for key in ("approved_by", "approved_evidence", "approved_digest"))
-    bead, tickets, parsed, digest = load_approved_bead_draft(draft_id, human_approver, bead, require_approval=approved)
+    bead, tickets, parsed, digest = load_approved_bead_draft(
+        draft_id, human_approver, bead, require_approval=approved, known_external_blockers=None)
     spec_id = str(metadata.get("spec_id") or "").strip()
     if not spec_id:
         raise PublishError("refused: draft bead has no spec_id")
@@ -2428,6 +2439,7 @@ def cmd_bd_patch_new_flow(args: argparse.Namespace, bead: dict[str, Any], human_
         if not key or key in members:
             raise PublishError(f"convoy {convoy_id} tracks a ticket without a ticket id, or two with the same: {entry['id']}")
         members[key] = entry
+    tickets = validate_tickets(tickets, known_external_blockers=frozenset(members))
     spec = spec_view(spec_id, spec_bead)
     spec_digest = spec["digest"]
     launch, descriptor = project_launch(project_id, descriptors_dir(args, repo_root), profile_bin)
@@ -2543,7 +2555,8 @@ def cmd_bd_patch(args: argparse.Namespace) -> int:
     bead = bd_show(draft_id)
     if declared_contract(bead, draft_id) == NEW_FLOW:
         return cmd_bd_patch_new_flow(args, bead, human_approver)
-    bead, tickets, parsed, digest = load_approved_bead_draft(draft_id, human_approver, bead)
+    bead, tickets, parsed, digest = load_approved_bead_draft(
+        draft_id, human_approver, bead, known_external_blockers=None)
     metadata = bead.get("metadata") or {}
     spec_id = str(metadata.get("spec_id") or "").strip()
     if not spec_id:
@@ -2554,6 +2567,7 @@ def cmd_bd_patch(args: argparse.Namespace) -> int:
     if not revises:
         raise PublishError("refused: draft bead metadata.revises_digest must be a non-empty string")
     revised = graph_members(revises)
+    tickets = validate_tickets(tickets, known_external_blockers=frozenset(revised))
     # A ticket added to a marked convoy is never weaker than an original one
     # (Spec §2, user story 12): a draft that does not declare the contract
     # does not revise a convoy published under it.

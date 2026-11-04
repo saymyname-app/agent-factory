@@ -127,7 +127,9 @@ The report names, per test, its `seam` and `seam_mode`.
   applied to each line: a line matching `product_import` must match
   `entry_point_import` (« règle d'import », file, line and text named), and
   every criterion test file must import an entry point. The rule is applied
-  to the files of import-rule seams only.
+  to the files of import-rule seams only. Outside the criterion files, it
+  checks tests added or changed by the ticket; an unchanged test brought by
+  a merged base is not attributed to the ticket.
 
 ## Freeze
 

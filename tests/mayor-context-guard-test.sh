@@ -24,10 +24,14 @@ CALLS="$TMP/calls.log"; : > "$CALLS"
 KEY_FILE="$TMP/mayor-key"
 ATTACHED_FILE="$TMP/mayor-attached"; printf 'false' > "$ATTACHED_FILE"
 RESET_RC_FILE="$TMP/reset-rc"; printf '0' > "$RESET_RC_FILE"
+HANG_COMMAND_FILE="$TMP/hang-command"; : > "$HANG_COMMAND_FILE"
 
 cat > "$TMP/bin/gc" <<STUB
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$CALLS"
+if [ "\$(cat "$HANG_COMMAND_FILE")" = "\$1 \$2" ]; then
+  sleep 10
+fi
 if [ "\$1 \$2" = "session list" ]; then
   jq -n --arg k "\$(cat "$KEY_FILE")" --argjson a "\$(cat "$ATTACHED_FILE")" '{ok:true, sessions:[
     {id:"af-worker", alias:"factory-worker", name:"factory-worker", state:"active", session_key:"worker-key"},
@@ -56,6 +60,10 @@ transcript() {
 printf '{"type":"assistant","timestamp":"%s","message":{"stop_reason":"end_turn","usage":{"input_tokens":900000}}}\n' "$(iso $NOW)" > "$TMP/transcripts/worker-key.jsonl"
 
 guard() { FACTORY_ROOT="$TMP/city" "$GUARD" "$@" 2>&1; }
+guard_with_short_command_budget() {
+  MAYOR_CONTEXT_GUARD_COMMAND_TIMEOUT_SECONDS=0.2 timeout 3 \
+    env FACTORY_ROOT="$TMP/city" "$GUARD" "$@" 2>&1
+}
 mails()  { grep -c '^mail send mayor' "$CALLS" || true; }
 resets() { grep -c '^session reset' "$CALLS" || true; }
 field()  { jq -r ".$1" <<<"$2"; }
@@ -131,5 +139,28 @@ printf '1' > "$RESET_RC_FILE"
 printf '0' > "$RESET_RC_FILE"
 : > "$CALLS"; out=$(guard)
 [ "$(field action "$out")" = "rotated" ] || fail "a failed reset must be retried: $out"
+
+# 11. hung reset -> bounded failure, not recorded, retried next run ---------
+transcript conv-f 160000 3600 end_turn
+printf 'session reset' > "$HANG_COMMAND_FILE"
+: > "$CALLS"; rc=0; out=$(guard_with_short_command_budget) || rc=$?
+[ "$rc" = "1" ] || fail "a reset timeout must fail within its child budget: rc=$rc $out"
+[ "$(field action "$out")" = "reset-failed" ] || fail "reset timeout must use reset-failed semantics: $out"
+[ "$(mails)" = "0" ] || fail "a timed-out reset must not mail"
+: > "$HANG_COMMAND_FILE"
+: > "$CALLS"; out=$(guard)
+[ "$(field action "$out")" = "rotated" ] || fail "a timed-out reset must be retried: $out"
+
+# 12. hung mail -> bounded non-fatal result, rotation stays recorded --------
+transcript conv-g 160000 3600 end_turn
+printf 'mail send' > "$HANG_COMMAND_FILE"
+: > "$CALLS"; out=$(guard_with_short_command_budget) || fail "a mail timeout stays non-fatal: $out"
+[ "$(field action "$out")" = "rotated" ] || fail "mail timeout must preserve completed reset: $out"
+grep -q 'conversation=conv-g.*mail_rc=timeout.*reset_rc=0' \
+  "$TMP/city/var/mayor-context-guard.log" || fail "mail timeout must be recorded"
+: > "$HANG_COMMAND_FILE"
+: > "$CALLS"; out=$(guard)
+[ "$(field action "$out")" = "already-rotated" ] || fail "mail timeout must not repeat the reset: $out"
+[ "$(mails)$(resets)" = "00" ] || fail "mail timeout must preserve once-per-conversation state"
 
 printf 'PASS: mayor-context-guard rotates the Mayor once per conversation above 150k tokens or 8h\n'

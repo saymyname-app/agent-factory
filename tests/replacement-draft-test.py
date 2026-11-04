@@ -227,16 +227,21 @@ class ReplacementDraftTest(unittest.TestCase):
         parsed = yaml.safe_load(draft["description"])
         self.assertEqual(self.LATER, draft["metadata"]["revises_digest"])
         self.assertEqual(["T01R3", "T02"], [ticket["id"] for ticket in parsed["tickets"]])
-        # A delivered blocker outside the revision is dropped: bd-patch keeps it on
-        # the tickets it patches, and refuses any blocker the draft does not carry.
-        self.assertEqual([], parsed["tickets"][0]["blocked_by"])
-        self.assertEqual(["T01R3"], parsed["tickets"][1]["blocked_by"])
+        # The partial revision names unchanged blockers from the resulting graph
+        # without carrying or modifying their tickets.
+        self.assertEqual(["T00"], parsed["tickets"][0]["blocked_by"])
+        self.assertEqual(["T01R3", "T00"], parsed["tickets"][1]["blocked_by"])
         self.assertEqual([{"ticket": "T01R2", "planning_exception": "pe-replacement"}], parsed["withdrawn"])
-        publish_gate().validate_tickets(parsed["tickets"])
+        publish_gate().validate_tickets(parsed["tickets"], known_external_blockers=frozenset({"T00"}))
 
-    def test_refuses_an_open_blocker_outside_the_revision(self):
+    def test_preserves_an_open_blocker_outside_the_revision(self):
         self.later_revision(blocker_status="open")
-        self.assert_refused_unwritten("waits for T00")
+        proc = self.run_create()
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        draft = json.loads(self.state_path.read_text())["beads"][json.loads(proc.stdout)["draft"]]
+        parsed = yaml.safe_load(draft["description"])
+        self.assertEqual(["T00"], parsed["tickets"][0]["blocked_by"])
+        self.assertEqual(["T01R3", "T00"], parsed["tickets"][1]["blocked_by"])
 
     def test_refuses_a_ticket_the_convoy_does_not_track(self):
         self.later_revision(untrack=True)
