@@ -105,7 +105,12 @@ case "\$1 \$2" in
   "bd create")
     id="af-new\$RANDOM"
     title="\$3"
-    printf '%s' "\$title" | jq -R --arg id "\$id" '[{"id":\$id,"status":"open","title":.,"metadata":{}}]' > "$BEADS_DIR/\$id.json"
+    metadata='{}'
+    argv=("\$@")
+    for ((i=0; i<\${#argv[@]}; i++)); do
+      [[ "\${argv[i]}" == "--metadata" ]] && metadata="\${argv[i+1]}"
+    done
+    printf '%s' "\$title" | jq -R --arg id "\$id" --argjson metadata "\$metadata" '[{"id":\$id,"status":"open","title":.,"metadata":\$metadata}]' > "$BEADS_DIR/\$id.json"
     printf '{"id":"%s"}' "\$id"
     exit 0 ;;
   "bd update")
@@ -468,6 +473,8 @@ out=$(watchdog)
 grep -q "flagged ticket af-t9 without a next step" <<<"$out" || { echo "$out" >&2; fail "a ticket without a next step was not paged"; }
 [ "$(creates)" = "1" ] || fail "a ticket without a next step should be filed exactly once"
 stall_bead=$(grep -l '\[watchdog\] ticket sans suite : af-t9' "$BEADS_DIR"/*.json | head -1)
+jq -e '.[0].metadata["gc.source"] == "factory-watchdog" and .[0].metadata["gc.ticket"] == "af-t9"' "$stall_bead" >/dev/null \
+  || { cat "$stall_bead" >&2; fail "the ticket incident lost its create metadata"; }
 jq -e '.[0].metadata["gc.needs_benjamin"] | startswith("Incident d'"'"'usine : ticket af-t9 sans suite")' "$stall_bead" >/dev/null \
   || { cat "$stall_bead" >&2; fail "the ticket without a next step is not on the operator's list"; }
 grep -q '^mail send' "$MAIL" || fail "the operator was not mailed about the ticket without a next step"

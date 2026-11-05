@@ -199,7 +199,7 @@ if command -v gh >/dev/null 2>&1; then
 https://github.com/$REPO/pull/$pr_num
 
 Detected by factory-watchdog. pr-autopilot's \"merge on green CI\" assumption never resolves this on its own. Observe-and-page only (ADR-0016 section 7): this bead does not merge, close, or edit the PR." \
-          --set-metadata "gc.pr_number=$pr_num" --set-metadata "gc.source=factory-watchdog" \
+          --metadata "$(jq -cn --arg pr "$pr_num" '{"gc.pr_number":$pr,"gc.source":"factory-watchdog"}')" \
           --json 2>/dev/null | jq -r '(.[0]?.id // .id // empty)')
         if [ -n "$created" ]; then
           "$ESCALATION_DOOR" mayor "$created" "factory-watchdog: stuck PR #$pr_num -- $msg (https://github.com/$REPO/pull/$pr_num)" \
@@ -296,7 +296,7 @@ if command -v gh >/dev/null 2>&1; then
 Affected gh-dependent scripts: $GH_AUTH_SCRIPTS
 
 Detected by factory-watchdog. Only a human can re-authenticate (gh auth login -h github.com) -- this bead is visibility only; watchdog auto-resolves it once auth recovers." \
-          --set-metadata "gc.source=factory-watchdog" --json 2>/dev/null | jq -r '(.[0]?.id // .id // empty)')
+          --metadata '{"gc.source":"factory-watchdog"}' --json 2>/dev/null | jq -r '(.[0]?.id // .id // empty)')
         if [ -n "$created" ]; then
           "$ESCALATION_DOOR" mayor "$created" "factory-watchdog: gh auth unreachable -- $gh_msg (affects $GH_AUTH_SCRIPTS)" \
             >/tmp/edoor-out.log 2>&1 \
@@ -352,7 +352,7 @@ if command -v gc >/dev/null 2>&1; then
             -d "$msg
 
 Detected by factory-watchdog from $rig_name's gc:control-quarantined beads. Observe-and-page only (ADR-0016 section 7): this bead does not unquarantine, retry, or touch the control steps themselves. Auto-resolves once no new quarantine in $rig_name with failure_reason=$reason lands for ${QUARANTINE_WINDOW_HOURS}h." \
-            --set-metadata "gc.source=factory-watchdog" --json 2>/dev/null | jq -r '(.[0]?.id // .id // empty)')
+            --metadata '{"gc.source":"factory-watchdog"}' --json 2>/dev/null | jq -r '(.[0]?.id // .id // empty)')
           if [ -n "$created" ]; then
             "$ESCALATION_DOOR" mayor "$created" "factory-watchdog: control quarantine $rig_name/$reason -- $msg" \
               >/tmp/edoor-out.log 2>&1 \
@@ -437,7 +437,7 @@ if [ -x "$CONVOY_STATE" ]; then
       [ -n "$existing" ] && continue
       created=$(gc bd create "$title" -p 1 -t bug -d "$msg
 
-Detected by factory-watchdog (af-1fvzns): the ticket is started and not closed, no live session holds it, no launch of it is open, and no request of it or of convoy $convoy_id is on Benjamin's list. The repair is Factory maintenance: give code the rule that moves the ticket on (bin/convoy-state show $convoy_id). It never consists in advancing or closing the ticket by hand. Observe-and-page only (ADR-0016 section 7): the watchdog withdraws this request and closes this bead once the ticket moves again." --set-metadata "gc.source=factory-watchdog" --set-metadata "gc.ticket=$ticket_id" --json 2>/dev/null | jq -r '(.[0]?.id // .id // empty)')
+Detected by factory-watchdog (af-1fvzns): the ticket is started and not closed, no live session holds it, no launch of it is open, and no request of it or of convoy $convoy_id is on Benjamin's list. The repair is Factory maintenance: give code the rule that moves the ticket on (bin/convoy-state show $convoy_id). It never consists in advancing or closing the ticket by hand. Observe-and-page only (ADR-0016 section 7): the watchdog withdraws this request and closes this bead once the ticket moves again." --metadata "$(jq -cn --arg ticket "$ticket_id" '{"gc.source":"factory-watchdog","gc.ticket":$ticket}')" --json 2>/dev/null | jq -r '(.[0]?.id // .id // empty)')
       if [ -n "$created" ] && "$ESCALATION_DOOR" benjamin "$created" "$(stall_request "$ticket_id" "$msg")" >/tmp/edoor-out.log 2>&1; then
         did "flagged ticket $ticket_id without a next step as $created on the operator's list"
       else
