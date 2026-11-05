@@ -77,6 +77,34 @@ class TestBudgets(unittest.TestCase):
         self.assertEqual(60 * 10, new["full_seconds"])        # 1.5 x (20 + 372) = 588 -> 600
         self.assertEqual(600, new["host_wait_seconds"])
 
+    def test_refresh_cli_raises_every_measured_budget_from_recent_evidence(self):
+        root = self.tmp / "root"
+        (root / "config").mkdir(parents=True)
+        (root / "config" / "test-budgets.json").write_text(json.dumps({
+            "host_wait_seconds": 600, "green_seconds": 1140, "full_seconds": 1320,
+            "criterion_test_seconds": 600, "margin_seconds": 60, "alert_ratio": 0.8,
+        }))
+        for n, (total, criterion) in enumerate(((900, 500), (1049, 773), (800, 600))):
+            answer = {"regression": [{"timing": [
+                f"regression: took {criterion}s for criterion class example.py::Example",
+                f"regression: took {total}s with the host held (green budget 1140s)",
+            ]}]}
+            piece(self.store, f"g{n}", "tdd_green.json", json.dumps(answer), at=f"2026-11-05T0{n}:00:00Z")
+        for n, (total, criterion) in enumerate(((900, 500), (1148, 671), (1000, 600))):
+            piece(self.store, f"m{n}", "merged_tests.json",
+                  f"regression: took {criterion}s for criterion class example.py::Example\n"
+                  f"regression: took {total}s with the host held (full budget 1320s)\n",
+                  at=f"2026-11-05T1{n}:00:00Z")
+
+        proc = self.tool("refresh", "--root", str(root), "--store", str(self.store))
+
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        after = json.loads(proc.stdout)["after"]
+        self.assertEqual(1620, after["green_seconds"])          # 1.5 x 1049 -> 27 min
+        self.assertEqual(1740, after["full_seconds"])           # 1.5 x 1148 -> 29 min
+        self.assertEqual(1200, after["criterion_test_seconds"]) # 1.5 x 773 -> 20 min
+        self.assertEqual(after, json.loads((root / "config" / "test-budgets.json").read_text()))
+
     def test_a_kind_with_fewer_than_three_runs_keeps_its_budget(self):
         piece(self.store, "g", "tdd_green.json", "regression: took 900s with the host held (green budget 600s)\n")
         new = test_budgets.refreshed({**test_budgets.DEFAULTS, "green_seconds": 480}, test_budgets.runs(self.store))
@@ -85,6 +113,7 @@ class TestBudgets(unittest.TestCase):
     def test_a_red_merged_run_is_no_measure(self):
         piece(self.store, "m", "merged_tests.json",
               "FAIL tests/cockpit-criteria-test.py (900s)\n"
+              "regression: took 850s for criterion class example.py::Example\n"
               "regression: took 900s with the host held (full budget 900s)\n", exit_code=1)
         self.assertEqual([], test_budgets.runs(self.store))
 
