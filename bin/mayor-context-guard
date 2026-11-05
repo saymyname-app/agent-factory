@@ -32,11 +32,17 @@ import sys
 import time
 from datetime import datetime, timezone
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
+from bounded_process import run as bounded_run  # noqa: E402
+
 ROOT = os.environ.get("FACTORY_ROOT", "/home/benja/agent-factory")
 GC = os.environ.get("GC_BIN", "gc")
 ALIAS = "mayor"
 TOKENS = int(os.environ.get("MAYOR_CONTEXT_GUARD_TOKENS", "150000"))
 MAX_AGE = float(os.environ.get("MAYOR_CONTEXT_GUARD_MAX_AGE_HOURS", "8")) * 3600
+# The order owns 120s: inventory may use 60s; two 20s mutations leave 20s
+# for transcript, state and log I/O. The override keeps timeout tests fast.
+COMMAND_TIMEOUT = float(os.environ.get("MAYOR_CONTEXT_GUARD_COMMAND_TIMEOUT_SECONDS", "20"))
 STATE = os.path.join(ROOT, ".gc/runtime/mayor-context-guard-state.json")
 LOG = os.path.join(ROOT, "var/mayor-context-guard.log")
 
@@ -119,9 +125,15 @@ def main(argv):
 
     # Reset first: a failed reset is not recorded, mails nothing and fails the
     # order (on-order-failed), so the next run retries.
-    reset = subprocess.run([GC, "session", "reset", ALIAS], cwd=ROOT, capture_output=True, text=True)
+    try:
+        reset_rc = bounded_run(
+            [GC, "session", "reset", ALIAS], cwd=ROOT, capture_output=True,
+            text=True, timeout=COMMAND_TIMEOUT,
+        ).returncode
+    except subprocess.TimeoutExpired:
+        reset_rc = "timeout"
     mail_rc = None
-    if reset.returncode == 0:
+    if reset_rc == 0:
         os.makedirs(os.path.dirname(STATE), exist_ok=True)
         with open(STATE, "w", encoding="utf-8") as fh:
             json.dump({"rotated": (rotated + [key])[-20:]}, fh)
@@ -132,16 +144,21 @@ def main(argv):
             reason=reason, tokens=tokens, age_h=round(age / 3600, 1),
             limit=TOKENS, max_h=round(MAX_AGE / 3600, 1))
         subject = f"HANDOFF: automatic context rotation ({reason})"
-        mail_rc = subprocess.run([GC, "mail", "send", ALIAS, "-s", subject, "-m", body],
-                                 cwd=ROOT, capture_output=True, text=True).returncode
-    status = "rotated" if reset.returncode == 0 else "reset-failed"
+        try:
+            mail_rc = bounded_run(
+                [GC, "mail", "send", ALIAS, "-s", subject, "-m", body],
+                cwd=ROOT, capture_output=True, text=True, timeout=COMMAND_TIMEOUT,
+            ).returncode
+        except subprocess.TimeoutExpired:
+            mail_rc = "timeout"
+    status = "rotated" if reset_rc == 0 else "reset-failed"
     os.makedirs(os.path.dirname(LOG), exist_ok=True)
     with open(LOG, "a", encoding="utf-8") as fh:
         fh.write(f"{datetime.fromtimestamp(now, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}\tstatus={status}"
                  f"\treason={reason}\tconversation={key}\ttokens={tokens}\tage_seconds={age}"
-                 f"\tmail_rc={mail_rc}\treset_rc={reset.returncode}\n")
+                 f"\tmail_rc={mail_rc}\treset_rc={reset_rc}\n")
     emit(action=status, reason=reason, **base)
-    return 0 if reset.returncode == 0 else 1
+    return 0 if reset_rc == 0 else 1
 
 
 if __name__ == "__main__":

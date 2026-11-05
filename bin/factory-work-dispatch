@@ -30,7 +30,7 @@ The target and --reassign behavior are fixed so a provider class, raw provider,
 or infrastructure role cannot be selected accidentally.
 
 --technical-request explicitly binds this maintenance bead to one marked
-ticket's current Factory operator request before dispatch. --link-only records
+ticket's current Factory operator request or evaluation stop before dispatch. --link-only records
 that same relation for an already-routed or already-delivered repair without
 dispatching it again. The convoy transition remains owned by convoy-state and
 convoy-advance; this door never edits a marked ticket directly.

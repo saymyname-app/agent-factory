@@ -33,12 +33,19 @@ from typing import Any
 
 PROGRAM = "idle-ready-work-wake"
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "lib"))
+
+from bounded_process import run as bounded_run  # noqa: E402
+
 # Gas City 1.5 gives an order BD_BIN set and empty: an empty value is no
 # override (af-d130xt).
 BD_BIN = os.environ.get("BD_BIN") or "bd"
 GC_BIN = os.environ.get("GC_BIN", "gc")
 IDLE_THRESHOLD = timedelta(minutes=15)
 NOTIFY_COOLDOWN = timedelta(hours=1)
+# The order owns 60s total; use the Factory's established 20s mail slice so
+# ready/session probes and wrapper cleanup retain the rest of that budget.
+NOTIFY_TIMEOUT_SECONDS = float(os.environ.get("IDLE_READY_WORK_NOTIFY_TIMEOUT_SECONDS", "20"))
 
 
 def state_path(repo_root: Path) -> Path:
@@ -120,21 +127,24 @@ def write_state(path: Path, idle_since: str | None, notified_at: str | None) -> 
 
 
 def notify_mayor(ready_count: int, idle_since: str) -> None:
-    subprocess.run(
-        [
-            GC_BIN, "mail", "send", "mayor", "--notify",
-            "-s", "idle-ready-work: ready delivery-plane work, no active worker",
-            "-m", (
-                f"ACTION: idle-ready-work-wake observed {ready_count} ready delivery-plane "
-                f"bead(s) with no active worker session since {idle_since}\n"
-                "STATE: idle > 15m\n"
-                "EVIDENCE: bd ready --json (gc.plane=delivery); gc session list --template factory-worker\n"
-                "NEXT: dispatch the ready work, or investigate why the primary publish-time wake "
-                "did not reach the Mayor"
-            ),
-        ],
-        check=False, capture_output=True, text=True,
-    )
+    try:
+        bounded_run(
+            [
+                GC_BIN, "mail", "send", "mayor", "--notify",
+                "-s", "idle-ready-work: ready delivery-plane work, no active worker",
+                "-m", (
+                    f"ACTION: idle-ready-work-wake observed {ready_count} ready delivery-plane "
+                    f"bead(s) with no active worker session since {idle_since}\n"
+                    "STATE: idle > 15m\n"
+                    "EVIDENCE: bd ready --json (gc.plane=delivery); gc session list --template factory-worker\n"
+                    "NEXT: dispatch the ready work, or investigate why the primary publish-time wake "
+                    "did not reach the Mayor"
+                ),
+            ],
+            check=False, capture_output=True, text=True, timeout=NOTIFY_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        pass
 
 
 def evaluate(repo_root: Path, notify: bool = True) -> dict[str, Any]:

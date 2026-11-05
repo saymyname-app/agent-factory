@@ -50,7 +50,9 @@ A condition that is not met stops the gate there: the following ones are
 **not launched** (`not_run`); the end review alone does not wait for the
 Outcome Evaluation: both are made in parallel on the commit of the three
 verdicts (Spec §9, point 4), and condition 6 is read whatever conditions 4
-and 5 say. Condition 7 is read only once the six before it are met: the
+and 5 say. If host product capacity defers the Outcome Evaluation, the pass
+holds the review launch and retries both on the next pass. Condition 7 is read
+only once the six before it are met: the
 gate generates nothing, `bin/convoy-advance` has the pack generated
 (`bin/evidence-pack generate`) and runs the gate again in the same pass. Changing the list means a new version. Conditions 1 to 3 are the
 **mechanical** ones: their verdicts are what the gate records, as soon as

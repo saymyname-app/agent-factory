@@ -398,7 +398,7 @@ ESCALATION_DOOR_NOW=$((T0 + 7200)) door sweep >/dev/null || fail "sweep should s
   || fail "a resolved Mayor-first escalation must not be swept to Benjamin"
 grep -Fq 'mail send human' "$TEST_TMP/calls.log" && fail "sweep mailed Benjamin for a resolved escalation"
 
-# The sweep's cost follows the escalations still pending, not every bead that
+# The sweep's cost follows actionable escalations, not every bead that
 # ever carried one (af-io8tb7, 2026-10-09: 25 settled beads, one `gc bd show`
 # each, 32 s for nothing due on an idle host, over the order's 60 s on a
 # loaded one). A settled escalation keeps its key at "none" for ever.
@@ -418,7 +418,8 @@ out=$(ESCALATION_DOOR_NOW=$((T0 + 7200)) door sweep) || fail "sweep should succe
 [[ $(wc -l <"$TEST_TMP/calls.log") -eq 1 ]] && grep -q '^bd list .*--limit 0 ' "$TEST_TMP/calls.log" \
   || { cat "$TEST_TMP/calls.log" >&2; fail "sweep with nothing pending must cost one unlimited list and nothing else"; }
 
-# One pending page among the settled ones: that bead alone is read again.
+# One not-yet-due page among the settled ones needs no extra tracker read: the
+# full list row already carries the age and pending state.
 seed af-pending "$(jq -nc --arg paged "$(date -u -d "@$T0" +%Y-%m-%dT%H:%M:%SZ)" '
   {id: "af-pending", status: "open",
    metadata: {"gc.escalation_mayor_paged_at": $paged, "gc.escalation_mayor_reason": "stuck PR"},
@@ -426,12 +427,59 @@ seed af-pending "$(jq -nc --arg paged "$(date -u -d "@$T0" +%Y-%m-%dT%H:%M:%SZ)"
 TESTS_RUN=$((TESTS_RUN + 1))
 : >"$TEST_TMP/calls.log"
 ESCALATION_DOOR_NOW=$((T0 + 3600)) door sweep >/dev/null || fail "sweep should succeed with one page pending"
-[[ $(grep -c '^bd show ' "$TEST_TMP/calls.log") -eq 1 ]] && grep -q '^bd show af-pending ' "$TEST_TMP/calls.log" \
-  || { cat "$TEST_TMP/calls.log" >&2; fail "sweep must read the pending bead and no settled one"; }
+if grep -q '^bd show ' "$TEST_TMP/calls.log"; then
+  cat "$TEST_TMP/calls.log" >&2
+  fail "sweep re-read a not-yet-due page already present in the full list"
+fi
 TESTS_RUN=$((TESTS_RUN + 1))
 ESCALATION_DOOR_NOW=$((T0 + 7200)) door sweep >/dev/null || fail "sweep should succeed on the pending page at 2h"
 [[ $(jq -r '.metadata["gc.needs_benjamin"] // "none"' "$TEST_TMP/beads/af-pending.json") == *"non résolue après 2h"* ]] \
   || fail "the pending page among settled ones must still be promoted at 2h"
+
+# The periodic sweep is retryable work. If another escalation owns the door,
+# it defers with the repository's explicit NOT RUN exit instead of reporting a
+# chronic order failure about ordinary serialization.
+TESTS_RUN=$((TESTS_RUN + 1))
+exec 8>"$TEST_TMP/lock"
+flock -n 8 || fail "the lock-contention check could not hold the fixture lock"
+set +e
+lock_out=$(GC_BIN="$FIXTURE" ED_BEAD_DIR="$TEST_TMP/beads" ED_CALL_LOG="$TEST_TMP/calls.log" \
+  ESCALATION_DOOR_LOCK_FILE="$TEST_TMP/lock" ESCALATION_DOOR_LOCK_WAIT_SECONDS=0 \
+  "$SCRIPT" sweep 2>&1)
+lock_status=$?
+set -e
+exec 8>&-
+[[ $lock_status -eq 75 ]] \
+  || { echo "$lock_out" >&2; fail "a sweep contending for the door must defer with exit 75"; }
+
+# A loaded tracker must not make one due promotion consume the order's whole
+# deadline while another, not-yet-due page waits behind it. The fixture blocks
+# any sixth tracker call beyond this scenario's deterministic operation budget:
+# full list + one action-time revalidation + update + mail.
+reset_beads
+seed af-due "$(jq -nc --arg paged "$(date -u -d "@$T0" +%Y-%m-%dT%H:%M:%SZ)" '
+  {id: "af-due", status: "open",
+   metadata: {"gc.escalation_mayor_paged_at": $paged, "gc.escalation_mayor_reason": "stuck PR"},
+   notes: "", labels: []}')"
+seed af-later "$(jq -nc --arg paged "$(date -u -d "@$((T0 + 3600))" +%Y-%m-%dT%H:%M:%SZ)" '
+  {id: "af-later", status: "open",
+   metadata: {"gc.escalation_mayor_paged_at": $paged, "gc.escalation_mayor_reason": "stuck PR"},
+   notes: "", labels: []}')"
+TESTS_RUN=$((TESTS_RUN + 1))
+printf '0\n' >"$TEST_TMP/call-count"
+set +e
+out=$(ED_CALL_BUDGET=5 ED_CALL_COUNT_FILE="$TEST_TMP/call-count" ED_CALL_BUDGET_BLOCK_SECONDS=20 \
+  GC_BIN="$FIXTURE" ED_BEAD_DIR="$TEST_TMP/beads" ED_CALL_LOG="$TEST_TMP/calls.log" \
+  ESCALATION_DOOR_LOCK_FILE="$TEST_TMP/lock" ESCALATION_DOOR_NOW=$((T0 + 7200)) \
+  timeout 5s "$SCRIPT" sweep 2>&1)
+timed_status=$?
+set -e
+[[ $timed_status -eq 0 ]] \
+  || { echo "$out" >&2; cat "$TEST_TMP/calls.log" >&2; fail "one due promotion exceeded the sweep's operation budget"; }
+grep -Fq "SWEPT: af-due promoted" <<<"$out" \
+  || { echo "$out" >&2; fail "the deadline check did not exercise a due promotion"; }
+[[ $(jq -r '.metadata["gc.needs_benjamin"] // "none"' "$TEST_TMP/beads/af-later.json") == none ]] \
+  || fail "the deadline check promoted the page that was not due"
 
 # A bead the list returns without its metadata is read, never skipped: a
 # pending page must not be lost to a thinner list.

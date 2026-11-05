@@ -326,9 +326,9 @@ dump() {
 
 # --- two author sessions alive at the same moment, under N=2 -----------------------
 both_hold() { [ -n "$(step_session "$A" red)" ] && [ -n "$(step_session "$B" red)" ]; }
-# A controller tick and two formula claims can take just over seven minutes
-# under gc 1.5 even while both sessions keep advancing (af-x3re4a).
-wait_for 600 both_hold || { dump; fail "the two ready tickets were not both held by an author session within 600s (N=$CEILING; live author sessions: $(live delivery-author))"; }
+# A controller tick and two formula claims exceeded ten minutes on a loaded
+# gc 1.5 host while both sessions stayed healthy (af-nedjis).
+wait_for 900 both_hold || { dump; fail "the two ready tickets were not both held by an author session within 900s (N=$CEILING; live author sessions: $(live delivery-author))"; }
 author_a=$(step_session "$A" red); author_b=$(step_session "$B" red)
 [ "$author_a" != "$author_b" ] || fail "one author session holds both tickets: $author_a"
 authors=$(live delivery-author)
