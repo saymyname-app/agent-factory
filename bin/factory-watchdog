@@ -43,8 +43,9 @@
 #                        quarantine lands in the window.
 #   9. TICKET SANS SUITE  a started ticket of a marked convoy that nobody
 #                        moves: no live session, no open launch, no request
-#                        of it or of its convoy on Benjamin's list, nothing
-#                        recorded for 30 min. T02R (18/10, #673) and T02R2
+#                        of it, its convoy, or the convoy's grouped request
+#                        on Benjamin's list, nothing recorded for 30 min. T02R
+#                        (18/10, #673) and T02R2
 #                        (19/10, #687) sat so for hours; only an operator's
 #                        own watcher saw it (af-1fvzns). The Mayor keeps its
 #                        hands off marked convoys, so this one goes to the

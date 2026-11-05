@@ -468,6 +468,22 @@ grep -q "ticket sans suite —" <<<"$out" \
   && { echo "$out" >&2; fail "a ticket whose convoy is on the operator list must not be reported"; }
 unlink "$BEADS_DIR/af-cv1.json"
 
+# A convoy's grouped request carries the operator wait for every parked ticket
+# it covers. The request bead, rather than the convoy itself, is on the list.
+jq --arg at "$(iso $((NOW - 3000)))" \
+  '.convoy.grouped_request = {bead:"af-grouped", at:$at}' \
+  "$CONVOY_SHOW" > "$CONVOY_SHOW.next"
+mv "$CONVOY_SHOW.next" "$CONVOY_SHOW"
+printf '[{"id":"af-grouped","status":"open","metadata":{"gc.needs_benjamin":"Décision groupée attendue"}}]' > "$BEADS_DIR/af-grouped.json"
+reset_logs
+out=$(watchdog --check-only)
+grep -q "ticket sans suite —" <<<"$out" \
+  && { echo "$out" >&2; fail "a ticket covered by the active grouped request must not be reported"; }
+grep -q '^bd show af-cv1 af-grouped af-t9 --json$' "$CALLS" \
+  || { cat "$CALLS" >&2; fail "ticket scan did not read the grouped request in its batch"; }
+unlink "$BEADS_DIR/af-grouped.json"
+stalled_show in_progress
+
 reset_logs
 out=$(watchdog)
 grep -q "flagged ticket af-t9 without a next step" <<<"$out" || { echo "$out" >&2; fail "a ticket without a next step was not paged"; }
