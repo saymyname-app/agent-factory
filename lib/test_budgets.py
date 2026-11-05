@@ -24,12 +24,13 @@ them all, and every reader takes them from here:
 `refresh` sets `green_seconds` and `full_seconds` to 1.5 times the slowest of
 the last ten successful runs of each kind found in the evidence store (the line
 « regression: took Ns » the regression prints, or for older merged runs its
-per-file seconds), rounded up to the minute; a kind with fewer than three
-runs keeps its figure. `show` prints the budgets, the deadlines derived from
-them, the last runs and how many more criterion classes the full series holds
-before its alert. `check-order` exits 1 when the order convoy-advance gives
-a pass less than one wait and two full runs (a take-up control, then the
-tests of the merged result).
+per-file seconds). It sets `criterion_test_seconds` from the slowest criterion
+class in each successful run. Figures are rounded up to the minute; a kind with
+fewer than three runs keeps its figure. `show` prints the budgets, the deadlines
+derived from them, the last runs and how many more criterion classes the full
+series holds before its alert. `check-order` exits 1 when the order
+convoy-advance gives a pass less than one wait and two full runs (a take-up
+control, then the tests of the merged result).
 """
 from __future__ import annotations
 
@@ -50,6 +51,7 @@ DEFAULTS = {"host_wait_seconds": 600, "green_seconds": 600, "full_seconds": 600,
 # Anywhere in the output: a green piece holds it inside the JSON answer of
 # bin/tdd-step, a merged piece on a line of its own.
 TOOK = re.compile(r"regression: took (\d+)s [^\n\"]*\((green|full)\b")
+CRITERION_TOOK = re.compile(r"regression: took (\d+)s for criterion class ([^\n\"]+)")
 FILE_LINE = re.compile(r"^(?:PASS|FAIL|LATE) (\S+) \((\d+)s\)", re.MULTILINE)
 JOBS = 4  # the files run 4 at a time before the criterion tests (regression.py)
 CRITERIA = "tests/cockpit-criteria-test.py"
@@ -102,6 +104,11 @@ def runs(store: Path) -> list[dict]:
                 found.append({"kind": "full", "seconds": math.ceil(others / JOBS) + criteria,
                               "at": record.get("at", ""), "commit": record.get("commit"), "estimated": True,
                               "criteria": criteria})
+        criterion_runs = [(int(seconds), name) for seconds, name in CRITERION_TOOK.findall(output)]
+        if criterion_runs:
+            seconds, name = max(criterion_runs)
+            found.append({"kind": "criterion_test", "seconds": seconds, "at": record.get("at", ""),
+                          "commit": record.get("commit"), "test": name})
     return sorted(found, key=lambda run: run["at"])
 
 
@@ -111,7 +118,7 @@ def budget_of(seconds: list[int]) -> int:
 
 def refreshed(budgets: dict, found: list[dict]) -> dict:
     new = dict(budgets)
-    for kind in ("green", "full"):
+    for kind in ("green", "full", "criterion_test"):
         last = [run["seconds"] for run in found if run["kind"] == kind][-10:]
         if len(last) >= 3:
             new[f"{kind}_seconds"] = budget_of(last)

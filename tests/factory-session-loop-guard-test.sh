@@ -78,7 +78,12 @@ case "\$1 \$2" in
   "bd create")
     id="af-new\$RANDOM"
     title="\$3"
-    printf '%s' "\$title" | jq -R --arg id "\$id" '[{"id":\$id,"status":"open","title":.,"metadata":{}}]' > "$BEADS_DIR/\$id.json"
+    metadata='{}'
+    argv=("\$@")
+    for ((i=0; i<\${#argv[@]}; i++)); do
+      [[ "\${argv[i]}" == "--metadata" ]] && metadata="\${argv[i+1]}"
+    done
+    printf '%s' "\$title" | jq -R --arg id "\$id" --argjson metadata "\$metadata" '[{"id":\$id,"status":"open","title":.,"metadata":\$metadata}]' > "$BEADS_DIR/\$id.json"
     printf '{"id":"%s"}' "\$id"
     exit 0 ;;
   "bd update")
@@ -137,6 +142,9 @@ grep -q "wake/stop loop — session af-loopy woke and stopped 11 times" <<<"$out
 [ "$(creates)" = "1" ] || fail "a looping session should be filed exactly once"
 [ "$(mails)" = "1" ] || fail "a looping session should be paged exactly once"
 [ "$(suspends)" = "1" ] || fail "a looping session should be suspended exactly once"
+loop_bead=$(grep -l '\[session-loop\] af-loopy' "$BEADS_DIR"/*.json | head -1)
+jq -e '.[0].metadata["gc.source"] == "factory-session-loop-guard" and .[0].metadata["gc.session_id"] == "af-loopy"' "$loop_bead" >/dev/null \
+  || { cat "$loop_bead" >&2; fail "the session-loop incident lost its create metadata"; }
 grep -q "^af-loopy$" "$SUSPENDS" || fail "the looping session id was not the one suspended"
 grep -q "^mail send mayor" "$MAIL" || { cat "$MAIL" >&2; fail "did not route through escalation-door's mayor-first class"; }
 [ -f "$FACTORY_SESSION_LOOP_GUARD_LOG" ] || fail "no gesture log was written"
