@@ -37,7 +37,7 @@ l'usine en pause (`gc suspend` / `gc resume`, rien d'autre) sans rien couper
 côté PC, WSL ou Dolt, pour éteindre le PC ou jouer sans perdre de travail
 (T23 af-s5e3yo, T24 af-j2mkpa — `lib/cockpit/stop/driver.py`).
 
-- **Bouton « Arrêter proprement l'usine »** : suspend la cité (jamais `gc
+- **Bouton « Demander la suspension »** (page Usine) : suspend la cité (jamais `gc
   stop`, jamais `gc stop --force`), suit l'arrêt jusqu'à « Arrêtée
   proprement à HH:MM » avec un bilan de 0 perte, et propose « Forcer l'arrêt
   » seulement après 30 min sans aucune progression (jamais de bascule

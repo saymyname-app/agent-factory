@@ -204,6 +204,31 @@ def check_fake_inventory():
     print(f"OK inventory: {len(found)} executable bd/gc fakes are declared")
 
 
+def check_bd_create_flags():
+    """Refuse the removed create flag that permissive inline fakes masked."""
+    command_endings = (")", ") " + chr(92))
+    for path in sorted((ROOT / "bin").iterdir()):
+        if not path.is_file():
+            continue
+        lines = path.read_text(errors="ignore").splitlines()
+        index = 0
+        while index < len(lines):
+            line = lines[index]
+            before_create = line.split("bd create", 1)[0]
+            if "bd create" not in line or "$(" not in before_create:
+                index += 1
+                continue
+            start = index
+            command = [line]
+            while not lines[index].rstrip().endswith(command_endings) and index + 1 < len(lines):
+                index += 1
+                command.append(lines[index])
+            if "--set-metadata" in "\n".join(command):
+                fail(f"{path.relative_to(ROOT)}:{start + 1}: bd create uses removed "
+                     "--set-metadata; pass one JSON object with --metadata")
+            index += 1
+
+
 def rejects_large_argument(command):
     """Return whether exec refused one argument at Linux MAX_ARG_STRLEN."""
     try:
@@ -532,6 +557,7 @@ def main():
             fail(f"missing base fixture fake-{name}.py")
 
     check_fake_inventory()
+    check_bd_create_flags()
     check_argument_size_contract(real_runtime)
 
     if real_runtime and shutil.which("gh"):

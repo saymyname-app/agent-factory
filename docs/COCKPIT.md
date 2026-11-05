@@ -142,7 +142,22 @@ one ping per 5 min while sources are fresh, no ping while one is not, a
 missing secret and a failing ping each showing up in `health_issues()`,
 and pausing in no state other than `CLEANLY_STOPPED`.
 
-## Clean stop / restart (T23, af-s5e3yo)
+## Clean stop / restart (T23, af-s5e3yo; its gestures, H af-69qhlk)
+
+The page Usine draws the stop (`render_stop`, panel « Suspension, reprise et
+arrêt ») from `StopDriver.view()`, what was observed and nothing from a timer,
+and carries its gestures: `POST /api/actions/arreter`, `redemarrer`, and on
+the home page `forcer_arret`, offered by the request « L'arrêt n'avance plus »
+after 30 min without progress. Each goes to the supervisor by the writes it
+publishes (`GcCityReader`, header `X-GC-Request`): no other write exists, no
+complete stop, no power-off; the machine's procedure is read on the page from
+this repository's runbook. A stop needs fresh readings of the sessions and the
+tickets. A confirmation rests on a reading of the tickets begun after the last
+session left; a resume waits `COCKPIT_STOP_RESUME_GRACE_SECONDS` (300) for the
+sessions before calling a missing one a gap. `bin/cockpit-isolated` plays the
+supervisor from a dataset's `stop_supervisor`. These writes have met only the
+synthetic supervisor: the real trial is Benjamin's ADMIN window, after
+Delivered.
 
 `lib/cockpit/stop/driver.py` — `StopDriver`: Clean stop by suspending the
 city (`gc.suspend()`, the PATCH `suspended=true`) and restart by `gc
