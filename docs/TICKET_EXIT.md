@@ -143,6 +143,11 @@ the parking and uses the existing `unblocked` resume. The link remains the
 release marker until it is consumed atomically with that resume; later
 requests without their own link keep the human-answer rule above.
 
+The same door may bind a maintenance bead to the exact stop time of an
+`evaluation_outage`. Once delivery has merge and exact-head CI proof,
+`bin/convoy-advance` withdraws that stop's request and opens one `unblocked`
+resume; an unlinked or unproven outage remains stopped.
+
 **Technically blocked.** `--repair` is a JSON object with exactly `title`,
 `what_it_delivers`, `restores` (`{kind, ref}`), `demonstration_line` and
 `acceptance_criteria` (`[{entry_point, observable, false_if}]`), the fields

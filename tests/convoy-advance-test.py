@@ -1069,12 +1069,12 @@ class ConvoyAdvanceTest(ConvoyAdvanceHarness):
                 children = Path(f"/proc/{first.pid}/task/{first.pid}/children")
                 try:
                     child_ids = children.read_text().split()
-                except FileNotFoundError:
+                except (FileNotFoundError, ProcessLookupError):
                     child_ids = ()
                 for child in child_ids:
                     try:
                         command = Path(f"/proc/{child}/cmdline").read_bytes()
-                    except FileNotFoundError:
+                    except (FileNotFoundError, ProcessLookupError):
                         continue  # The child exited between enumeration and inspection.
                     if b"escalation-door" in command:
                         reached = True

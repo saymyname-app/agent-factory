@@ -302,7 +302,7 @@ the parking only):
 
 | Parked for | Lifted by |
 |---|---|
-| `operator_request` explicitly linked to Factory-maintenance bead(s) (`gc.flow.technical_repairs`) | code only, once every linked bead has the existing structural PR merge and exact-head CI proof; an open, failed or merely closed repair waits, any human answer is ignored for this linked technical class |
+| `operator_request` explicitly linked to Factory-maintenance bead(s) (`gc.flow.technical_repairs`) | code only, once every linked bead has the existing structural PR merge and exact-head CI proof; when the repair merged into this project's protected branch, `bin/spec-integration take-up` must also have put that merge in the tested green integration tip; an open, failed, merely closed or not-yet-taken-up repair waits, any human answer is ignored for this linked technical class |
 | `operator_request` (its own Ticket Exit) | any answer given to the request of that ticket (`bin/escalation-door repondre`) after the parking |
 | `planning_exception` (its own Ticket Exit) | only the option that accepts the deviation: the last Planning Exception of the ticket is `accepted` (it was answered by its `accept_option`, `docs/CONVOY_STATE.md`; every exception raised since ADR-0030 L5 has one, with or without anchors). Any other answer leaves the ticket parked |
 | `planning_exception` (its Ticket Evaluation: the ticket is `finished`, its last evaluation's outcome is `planning_exception`, no entry under `planning_exceptions`) | only option `a`, « Juger ce qui est inobservable prouvé par son test de critère vert » (`bin/ticket-evaluation`); `lift-park` records what that evaluation found unobservable by the criterion under `proven_by_test`, and the evaluation the lift sends again counts it proven (`docs/TICKET_EVALUATION.md`); or option `c`, « Réévaluer sur le produit relancé » (af-npz9v1.38): the lift records nothing proven, and the evaluation it sends again judges every item on the products launched again. Option `b` (remove the ticket from the graph) or no answer: parked |
@@ -349,10 +349,11 @@ ticket:
 |---|---|
 | `interrupted` | the Ticket Exit is `interrupted`; or the ticket is `in_progress` with no Ticket Exit and its recorded session is not among the live ones (`gc session list`); or the bead of its last resume is closed and no session took the ticket since |
 | `returned` | the Ticket Exit is `finished` and the merge returned the ticket (`merge.outcome` `conflict` or `red`) at the tip of its branch. Also on a ticket stopped `still_refused` whose every Blocking Finding the operator overrode, which `bin/spec-integration` merges as if at work: the resume lifts that stop, keeps it on its entry and withdraws its request; with no resume left the stop stays with the operator (af-n4bn62: F and G1 of af-strhoy, returned red on 21/10/2026, were neither merged again nor resumed) |
-| `unblocked` | the Ticket Exit is `technically_blocked` and no bead it waits for with a `blocks` edge is open any more; or it is an `operator_request` carrying explicit Factory-maintenance links whose every bead has structural delivery proof, after code lifted its parking |
+| `unblocked` | the Ticket Exit is `technically_blocked` and no bead it waits for with a `blocks` edge is open any more |
+| `repair_delivered` | the ticket is an `operator_request` carrying explicit Factory-maintenance links whose every bead has structural delivery proof, after code lifted its parking; or it is stopped `evaluation_no_result` or `evaluation_outage` and every Factory-maintenance bead explicitly linked to that exact stop has the same proof. A repair merged into the protected branch of the ticket's own project must also be an ancestor of the integration tip after its tested `spec-integration take-up`. This separate bounded cause prevents ordinary blocker closures from spending the resumes reserved for independently delivered repairs (af-o5ritb) |
 | `answered` | the Ticket Exit is `planning_exception` or `operator_request` and the ticket is no longer parked: its parking was lifted |
 | `behind` | the Ticket Exit is `finished`, the ticket is not merged, and `bin/code-review show <convoy> <ticket> --repo` reports `behind`: its branch does not contain the tip of the integration branch, so no reviewer is sent on it (T44, `docs/CODE_REVIEW.md`). The fact is `integration:<tip>/exit:<exit time>`: once per Ticket Exit |
-| `evaluation_no_result` | the ticket is stopped `evaluation_no_result` (its Ticket Evaluation gave no result, relaunch included, `docs/TICKET_EVALUATION.md`), it is neither parked nor closed, it has a resume left, the operator has not answered the request of that stop, and no resume of this cause was opened yet on the current tip of the integration branch (on `origin` when it is there, else local). The fact is `integration:<tip>/stop:<stop time>`: once per tip of the integration branch (af-xhc0sj) |
+| `evaluation_no_result` | the ticket is stopped `evaluation_no_result` (its Ticket Evaluation gave no result, relaunch included, `docs/TICKET_EVALUATION.md`), it has no explicit Factory-maintenance link, is neither parked nor closed, has a resume left, the operator has not answered the request of that stop, and no resume of this cause was opened yet on the current tip of the integration branch (on `origin` when it is there, else local). The fact is `integration:<tip>/stop:<stop time>`: once per tip of the integration branch (af-xhc0sj) |
 | `stage_removed` | the ticket is stopped by a stage ADR-0030 L3 removed from the flow, the test review (`test_review_refused`, `test_review_no_result`), it is neither parked nor closed, it has a resume left, and the operator has not answered the request of that stop. The fact is `stop:<reason>/<stop time>`: once per stop; the stage that wrote it no longer runs, so it cannot stop the ticket again (af-pjvsgo) |
 | `code_review_no_result` | the ticket is stopped `code_review_no_result` (its code review gave no verdict, relaunch included, `docs/CODE_REVIEW.md`), it is neither parked nor closed, it has a resume left, and the operator has not answered the request of that stop. The fact is `stop:<reason>/<stop time>`: once per stop; a review stopped again writes a new stop time, resumed again within K (af-wu6xj7) |
 
@@ -369,14 +370,18 @@ launch-resume`): one session per resume. The session takes the ticket with
 `bin/ticket-author start`, does only what is missing, and leaves by a Ticket
 Exit (`formulas/mol-ticket-resume.formula.toml`).
 
-An `evaluation_no_result`, `stage_removed` or `code_review_no_result` resume lifts the stop in that same write: the stop
+An unlinked `evaluation_no_result`, a `stage_removed`, a `code_review_no_result`,
+or a linked-and-delivered `evaluation_no_result` or `evaluation_outage`
+resume lifts the stop in that same write: the stop
 leaves the ticket and is kept on its resume (`resume.entries[].stop`), never
 erased; the request the stop raised is withdrawn first (`bin/escalation-door
-clear <ticket>`). The answer and the withdrawal share the escalation door's
-lock: after the withdrawal, the pass reads the request again before opening
-the resume. An answer that won the lock after the first read therefore leaves
-the ticket stopped with the operator instead of being consumed by the resume
-(af-npz9v1.35). A Ticket Evaluation without result is most often a defect
+clear <ticket>`). For the first three causes, the answer and the withdrawal
+share the escalation door's lock: after the withdrawal, the pass reads the
+request again before opening the resume. An answer that won the lock after
+the first read therefore leaves the ticket stopped with the operator instead
+of being consumed by the resume (af-npz9v1.35). A linked evaluation stop
+is instead code-owned by its explicit repair link: its answer does not release
+it early or prevent the one resume after delivery. A Ticket Evaluation without result is most often a defect
 of the factory (an Evaluator role, a brief, a launch) whose repair is merged
 elsewhere; the fresh author session brings the integration branch into the
 ticket branch and finishes again, and the next passes withdraw the
@@ -393,8 +398,9 @@ resume also drops the spent round of the review in that write
 the next pass sends a fresh reviewer on that exit, even at the same commit.
 A review without result is most often a defect of the factory (T59 and T62R,
 2026-10-17: the reviewer seat was held by a session that answered `no_work`,
-af-epkrcv). Every other stop — `evaluation_outage`, `amendment_exhausted`, a
-ticket still refused — is never resumed.
+af-epkrcv). An `evaluation_outage` without an explicit repair link, or whose
+repair lacks structural delivery proof, stays stopped. Every other stop —
+`amendment_exhausted`, a ticket still refused — is never resumed.
 
 A `behind` resume is recorded like the others (an entry, one more
 `resumes`, a fresh author session) but **K does not count it**: the
@@ -420,18 +426,38 @@ review nor the Ticket Evaluation is sent on the old tip meanwhile. Its
 author merges the integration branch into the ticket branch, corrects,
 commits and finishes again; the review then runs on the new tip.
 
-An `unblocked` resume brings the integration branch into the ticket branch
-too: the repair the ticket waited for landed there, not on the ticket's
-branch, and without it the ticket meets the same defect again (af-m4np8z;
-T59 met the regression its repair had fixed). For a linked Factory request,
-the same pass first lifts the parking, then clears its escalation through
-`bin/escalation-door`, and only then opens this resume. The active link
+A `repair_delivered` resume brings the integration branch into the ticket branch
+too. When the repair merged into the protected branch of that same project,
+the pass first calls the existing `bin/spec-integration take-up` gate: the
+gate merges the protected tip, runs the declared regression, pushes only a
+green result, and the pass verifies that the repair's merge commit is its
+ancestor. A failed or red take-up releases nothing; a later pass retries, and
+an integration tip that already contains the repair runs no second take-up.
+Only then does the author receive the integration branch, not a pre-repair
+tree (af-qjw5lm; before it, R9 resumed as soon as #795 reached `main` while
+`integration/af-fgcw0d` still held the old budget). For a linked Factory request,
+the same pass then lifts the parking; for a linked evaluation stop,
+there is no parking to lift. It clears the escalation through
+`bin/escalation-door` and only then opens this resume. The active link
 remains the release marker until `open-resume` consumes it atomically with
-the Ticket Exit. A refusal or interruption before that write therefore
+the Ticket Exit or stop. A refusal or interruption before that write therefore
 preserves the request and the next pass retries it. The repair ids and exact
-Ticket Exit time remain on the parking lift as history; neither request text,
-a second-resolution timestamp alone, nor R-codes can let a later human
-request reuse the old release.
+Ticket Exit time remain on the parking lift as history; an evaluation-stop link instead
+names the exact stop time. Neither request text, a second-resolution timestamp
+alone, nor R-codes can let a later human request reuse the old release.
+
+The one state already written before `repair_delivered` existed is migrated
+by code (af-o5ritb): an own `resumes_exhausted` parking whose last resume is
+an empty `unblocked` entry with a `repairs:` fact. Its older, already-launched
+`unblocked` repair entry may still preserve the `evaluation_no_result` or
+`evaluation_outage` stop that contract lifted. Before treating that legacy
+record as an unknown state, the pass calls
+`bin/convoy-state migrate-repair-resume`, which changes only that entry's
+cause and no counter. The existing bounds-changed lift then removes the
+parking without an answer and the same pass sends that already-counted resume
+through the dispatch door. The current reader accepts the preserved old stop
+only when this migrated final repair signal proves that compatibility path;
+no other exhausted parking is migrated or lifted.
 
 A ticket to resume that names no single known project, or when the
 settings have no `resume` entry, is listed under `refused` (exit 1) before
@@ -486,9 +512,10 @@ Two decisions taken here:
 
 ### What is not resumed
 
-- **A stopped ticket**, but for its stop `evaluation_no_result`, its stop
-  `code_review_no_result` and the stops of the removed test review
-  (`stage_removed`, above). Nor is a ticket stopped by the removed test
+- **A stopped ticket**, except for `evaluation_no_result`,
+  `code_review_no_result`, the stops of the removed test review
+  (`stage_removed`, above), and an `evaluation_outage` with explicitly linked
+  and delivered Factory repairs. Nor is a ticket stopped by the removed test
   review or by a code review without result whose request the operator
   answered or that is out of resumes.
   Its sequence failed and it is with the operator; it is never read as
@@ -785,7 +812,9 @@ The review is so launched by the pass that recorded the three mechanical
 verdicts, on their commit — the pass, and the commit, the Outcome Evaluation
 is launched in and on (T24): the two are made in parallel. Until the review
 is favorable there, `spec_end` carries the refusal of condition 6 in its
-`reason`.
+`reason`. When host product capacity defers the Outcome Evaluation, the pass
+does not settle the review; the next pass retries both on that commit. A
+deferral by the review's own dispatch door is retried independently.
 
 One reviewer session reviews the whole assembled diff of the Spec. A review
 left without result is launched once more, then stopped and raised. A
@@ -1353,5 +1382,7 @@ City with the real patch door — one merge and the convoy closed on
 « abandonné », a conflict after « accepté » merging nothing and the pass
 publishing one `repair`. `tests/convoy-manual-lifecycle-isolated-city-test.sh`
 (local-only) shows, under the real order, that no pass names a convoy
-closed by command any more. No isolated-city trial runs a merge under the
-real order, and no real convoy reached it.
+closed by command any more. Its post-closing observation starts after
+`close-convoy` returns: that command may first wait for an older pass, whose
+record is not evidence of a pass after the closing. No isolated-city trial
+runs a merge under the real order, and no real convoy reached it.

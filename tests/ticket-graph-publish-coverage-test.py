@@ -967,6 +967,24 @@ class PatchDoorTest(Harness):
         # The delivered sibling is still named to the added ticket.
         self.assertIn(T4_LINE, self.beads()[result["ids"]["T5"]]["description"])
 
+    def test_partial_revision_can_wait_for_an_unchanged_published_ticket(self):
+        draft = self.revision(keep=("T4",))
+        self.ticket(draft, "T4")["blocked_by"] = ["T2"]
+        self.propose(draft)
+        unchanged = copy.deepcopy(self.beads()[self.ids["T2"]])
+
+        result = self.patched()
+
+        self.assertEqual("T2", self.beads()[result["ids"]["T4"]]["metadata"]["gc.blocked_by"])
+        self.assertEqual(unchanged, self.beads()[self.ids["T2"]])
+
+    def test_partial_revision_refuses_a_blocker_absent_from_the_resulting_graph(self):
+        draft = self.revision(keep=("T4",))
+        self.ticket(draft, "T4")["blocked_by"] = ["absent"]
+        self.propose(draft)
+
+        self.assert_refused_and_nothing_written(self.patch, "T4", "absent")
+
     # --- the contract a convoy was published under is the one it is patched under
 
     def test_refuses_a_draft_without_the_declaration_against_a_marked_convoy(self):
