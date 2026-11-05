@@ -1,5 +1,5 @@
 """What the Clean stop driver may ask of the real gc supervisor
-(af-mjfvwx, slice 7a) -- the read side only.
+(af-mjfvwx, slice 7a; its writes, H af-69qhlk).
 
 :class:`~cockpit.stop.driver.StopDriver` was built against a Python object
 (``tests/fixtures/cockpit/stop/fake_gc_city.py``), never against gc's HTTP
@@ -33,10 +33,13 @@ The ticket says it: an ``in_progress`` bead carries ``gc.session_id`` (and
 ``active_bead`` alone and showed « Aucun travail en vol » over a worker
 at work; ``held_work`` is the join that was missing.
 
-Suspending, resuming and force-stopping are NOT here. Benjamin, 2026-10-06:
-« ok pour les deux temps » -- the write side comes with his real trial,
-when no delivery is running; until then nothing in the cockpit can stop
-the factory (spec .91), and a driver handed this reader refuses to try.
+Its writes are the three gc 1.5.0 publishes (``/openapi.json`` of the live
+host, read 2026-10-31), each carrying the anti-CSRF header ``X-GC-Request``
+it requires: ``PATCH /v0/city/<city>`` ``{"suspended": true|false}`` suspends
+or resumes the city, ``POST /v0/city/<city>/session/<id>/stop`` stops one
+session. There is no other: no complete stop, no power-off. The real trial
+is Benjamin's ADMIN window, after Delivered (Spec af-fgcw0d, Testing
+Decision 4): until then no write of this module met the installed supervisor.
 """
 import json
 import urllib.error
@@ -55,8 +58,8 @@ SESSION_EVENTS_PAGE = 50
 SESSION_EVENTS_PAGES = 10
 
 
-class StopUnavailable(RuntimeError):
-    """The cockpit cannot act on the city yet (spec .91)."""
+class StopUncertain(RuntimeError):
+    """A write got no answer: it may have been applied. The source says."""
 
 
 def _get_json(base_url, path, timeout):
@@ -129,6 +132,7 @@ class GcCityReader:
                         "session_id": item["id"],
                         "bead_id": held.get(item["id"]) or item["active_bead"],
                         "assignee": item.get("session_name") or item.get("template"),
+                        "template": item.get("template"),
                         "last_event_at": _epoch(item.get("last_active")),
                     }
                     for item in sessions
@@ -200,11 +204,26 @@ class GcCityReader:
         messages = answer.get("messages") if isinstance(answer, dict) else None
         return messages if isinstance(messages, list) else None
 
+    def _write(self, method, path, body=None):
+        """One write. Refused: ValueError with what gc said. No answer:
+        StopUncertain."""
+        data = b"" if body is None else json.dumps(body).encode("utf-8")
+        req = urllib.request.Request(self._base_url + path, data=data, method=method,
+                                     headers={"Content-Type": "application/json", "X-GC-Request": "cockpit"})
+        try:
+            with urllib.request.urlopen(req, timeout=self._timeout):
+                return
+        except urllib.error.HTTPError as exc:
+            raise ValueError("le superviseur a refusé la commande (%s)" % exc.code)
+        except OSError as exc:
+            raise StopUncertain("le superviseur n'a pas répondu : %s" % exc)
+
     def suspend(self):
-        raise StopUnavailable("l'arrêt depuis le cockpit attend l'essai réel de Benjamin")
+        self._write("PATCH", self._city_path("").rstrip("/"), {"suspended": True})
 
     def resume(self):
-        raise StopUnavailable("le redémarrage depuis le cockpit attend l'essai réel de Benjamin")
+        self._write("PATCH", self._city_path("").rstrip("/"), {"suspended": False})
 
     def force_stop_sessions(self, session_ids):
-        raise StopUnavailable("l'arrêt forcé n'est pas disponible : le geste gc correspondant n'est pas identifié")
+        for session_id in session_ids:
+            self._write("POST", self._city_path("session/%s/stop" % urllib.parse.quote(str(session_id), safe="")))

@@ -30,6 +30,7 @@ from cockpit.requests.sources.paused_orders import TYPE_ORDRE_EN_PAUSE
 from cockpit.requests.sources.paused_sessions import TYPE_SESSION_EN_PAUSE
 from cockpit.requests.sources.readability import TYPE_SOURCE_ILLISIBLE
 from cockpit.requests.sources.silence import TYPE_USINE_MUETTE
+from cockpit.stop.requests import TYPE_ARRET_BLOQUE
 from cockpit.text.fallback import FALLBACK_NO_RECOMMENDATION, FIELD_LABELS, incomplete_label
 from cockpit.ui.actions.render import REPORT_OPTIONS, FREE_TIME_OPTION, render_actions
 from cockpit.ui.home.page import LEVEL_CLASS, _render_option, _since
@@ -148,6 +149,9 @@ def _gestures(request):
     elif request.type == TYPE_ORDRE_EN_PAUSE:
         own = ('<button type="button" class="btn primary" data-action="relancer" data-bead-id="%s" '
                'data-target-type="order" data-order-name="%s">Relancer</button>' % (bead, _e(request.titre)))
+    elif request.type == TYPE_ARRET_BLOQUE:
+        own = ('<button type="button" class="btn" data-action="forcer_arret" data-bead-id="%s">Forcer l\'arrêt</button>'
+               % bead)
     elif request.type == TYPE_USINE_MUETTE:
         return ('<a class="btn primary" href="%s">Vérifier l’usine</a>'
                 '<form method="post" action="/api/health/recheck"><button type="submit" class="btn">'
