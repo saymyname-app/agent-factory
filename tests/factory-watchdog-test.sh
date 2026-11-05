@@ -105,7 +105,12 @@ case "\$1 \$2" in
   "bd create")
     id="af-new\$RANDOM"
     title="\$3"
-    printf '%s' "\$title" | jq -R --arg id "\$id" '[{"id":\$id,"status":"open","title":.,"metadata":{}}]' > "$BEADS_DIR/\$id.json"
+    metadata='{}'
+    argv=("\$@")
+    for ((i=0; i<\${#argv[@]}; i++)); do
+      [[ "\${argv[i]}" == "--metadata" ]] && metadata="\${argv[i+1]}"
+    done
+    printf '%s' "\$title" | jq -R --arg id "\$id" --argjson metadata "\$metadata" '[{"id":\$id,"status":"open","title":.,"metadata":\$metadata}]' > "$BEADS_DIR/\$id.json"
     printf '{"id":"%s"}' "\$id"
     exit 0 ;;
   "bd update")
@@ -463,11 +468,29 @@ grep -q "ticket sans suite —" <<<"$out" \
   && { echo "$out" >&2; fail "a ticket whose convoy is on the operator list must not be reported"; }
 unlink "$BEADS_DIR/af-cv1.json"
 
+# A convoy's grouped request carries the operator wait for every parked ticket
+# it covers. The request bead, rather than the convoy itself, is on the list.
+jq --arg at "$(iso $((NOW - 3000)))" \
+  '.convoy.grouped_request = {bead:"af-grouped", at:$at}' \
+  "$CONVOY_SHOW" > "$CONVOY_SHOW.next"
+mv "$CONVOY_SHOW.next" "$CONVOY_SHOW"
+printf '[{"id":"af-grouped","status":"open","metadata":{"gc.needs_benjamin":"Décision groupée attendue"}}]' > "$BEADS_DIR/af-grouped.json"
+reset_logs
+out=$(watchdog --check-only)
+grep -q "ticket sans suite —" <<<"$out" \
+  && { echo "$out" >&2; fail "a ticket covered by the active grouped request must not be reported"; }
+grep -q '^bd show af-cv1 af-grouped af-t9 --json$' "$CALLS" \
+  || { cat "$CALLS" >&2; fail "ticket scan did not read the grouped request in its batch"; }
+unlink "$BEADS_DIR/af-grouped.json"
+stalled_show in_progress
+
 reset_logs
 out=$(watchdog)
 grep -q "flagged ticket af-t9 without a next step" <<<"$out" || { echo "$out" >&2; fail "a ticket without a next step was not paged"; }
 [ "$(creates)" = "1" ] || fail "a ticket without a next step should be filed exactly once"
 stall_bead=$(grep -l '\[watchdog\] ticket sans suite : af-t9' "$BEADS_DIR"/*.json | head -1)
+jq -e '.[0].metadata["gc.source"] == "factory-watchdog" and .[0].metadata["gc.ticket"] == "af-t9"' "$stall_bead" >/dev/null \
+  || { cat "$stall_bead" >&2; fail "the ticket incident lost its create metadata"; }
 jq -e '.[0].metadata["gc.needs_benjamin"] | startswith("Incident d'"'"'usine : ticket af-t9 sans suite")' "$stall_bead" >/dev/null \
   || { cat "$stall_bead" >&2; fail "the ticket without a next step is not on the operator's list"; }
 grep -q '^mail send' "$MAIL" || fail "the operator was not mailed about the ticket without a next step"
