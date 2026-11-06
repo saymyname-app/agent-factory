@@ -4,6 +4,11 @@
 
 GitHub is authoritative for branches, commits, pull requests, checks and merges. Beads is authoritative for executable work, dependencies and gates. Gas City provides dispatch through existing formulas and provider configuration. Worker pools are capped explicitly (`agents/factory-worker/agent.toml`, `[[patches.agent]]` in `city.toml`), not left uncapped: since 2026-09-29 (P17) the `agent-factory` rig runs up to 2 concurrent `factory-worker` sessions, each isolated in its own worktree with its own declared scope; product rigs stay at 1 writer until the same canary work runs there. `ticket-graph-publish` serializes any two not-yet-ordered tickets whose declared scopes overlap, and the dispatch door defers a dispatch whose scope touches a hot-file path an in-progress ticket already holds — a rejected ticket returns to the pool rather than being left stranded. Concurrent worktrees are PROVEN on the agent-factory rig by this rollout; wider multi-rig, multi-writer scaling remains TARGET.
 
+`dispatch-door` also enforces the dependency edge at final admission: a bead
+with an unfinished `blocks` dependency is deferred before `sling` can create
+its workspace. This keeps the publication-time scope serialization effective
+even when a caller mistakenly asks the door to route a non-ready bead.
+
 The configured writer provider inherits `builtin:codex` and appends `-m gpt-5.6-sol`. M2 observed and proved that effective model on a real writer session. Mechanical decisions such as exit codes, diffs, SHAs, PR state and check conclusions are L0 deterministic work.
 
 ## Provider routing

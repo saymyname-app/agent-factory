@@ -180,9 +180,11 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 - Contrôle : `python3 tests/delivery-rules-test.py` tient les quatre paires
   connues sur leurs fonctions communes ; `bash tests/operator-bd-test.sh`
   tient l'identité `po-agent/<session>` entre l'écrivain opérateur et
-  `factory-orphan-sweep`.
+  `factory-orphan-sweep` ; `bash tests/dispatch-door-test.sh` tient les
+  arêtes `blocks` écrites pour sérialiser les périmètres jusqu'à la dernière
+  porte d'admission, avant la création de l'espace de travail.
 - Occurrences : #620, #625, #659, #660, #681, #685, #686, #693, #695, #703,
-  #716 ; af-npz9v1.42 ; af-npz9v1.52.
+  #716 ; af-npz9v1.42 ; af-npz9v1.52 ; af-9wnmid.
 - Ouvertes : aucune ; `review_replay_due`, `tdd_evidence_piece` et
   `names_in_texts` ont remplacé les trois paires ouvertes de l'étude B § 4.4
   (af-npz9v1.29), et `evaluation_proven_by_test` tient l'écrivain de la
