@@ -3223,6 +3223,18 @@ class ConvoyStateTest(unittest.TestCase):
                          (shown["counters"]["resumes"], shown["park"]["cause"],
                           shown["resumes_left_by_cause"]["repair_delivered"]))
 
+        # convoy-advance lifts the migrated parking before opening the next
+        # answer; that new entry must not make the preserved history unreadable.
+        state = self.tracker_state()
+        del state["beads"][T1]["metadata"]["gc.flow.park"]
+        self.tracker.write_text(json.dumps(state))
+        self.ok("set-exit", CONVOY, T1, "--exit", "operator_request")
+        self.ok("open-resume", CONVOY, T1, "--cause", "answered", "--ref", "exit:2026-11-06T00:12:48Z")
+
+        answered = self.ticket(self.show(), T1)
+        self.assertEqual(["answered", "unblocked", "unblocked", "repair_delivered", "answered"],
+                         [entry["cause"] for entry in answered["resume"]["entries"]])
+
     def test_a_behind_resume_on_each_new_integration_tip_is_recorded_but_not_counted(self):
         # af-npz9v1.36: ticket D (af-ten1sp) was parked after 8 resumes, each
         # merge of another ticket moving the integration branch it had to take.
