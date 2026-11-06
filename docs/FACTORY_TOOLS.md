@@ -527,7 +527,9 @@ skills du compte claude.ai, dont un autre `code-review`.
 ```
 
 - **Relevé** : `config/role-adoption-trials.json`, versionné. Il se committe par
-  PR depuis un worktree ; ne jamais l'éditer à la main, relancer l'essai.
+  PR depuis un worktree ; ne jamais l'éditer à la main, relancer l'essai. Chaque
+  couple rôle/fournisseur est écrit dès qu'il finit : l'échec d'un fournisseur
+  suivant ne jette pas le relevé déjà produit.
 - **`check`** (lu par `bin/dispatch-door --role`) ne se fie pas au seul
   `passed` du relevé : il relit les lancements relevés et refuse, en nommant le
   skill, un relevé où un skill de revue hors du rôle s'est lancé, où le

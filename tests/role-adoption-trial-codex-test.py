@@ -152,6 +152,51 @@ class CodexTranscriptTest(unittest.TestCase):
         self.assertFalse(self.transcript().said("TRIAL-DONE-OLD"))
 
 
+class RecordingTest(unittest.TestCase):
+    def test_a_completed_provider_is_recorded_before_the_next_provider_starts(self):
+        class City:
+            def __init__(self, *_args):
+                pass
+
+            def build(self, *_args):
+                pass
+
+            def start(self):
+                pass
+
+            def stop(self):
+                pass
+
+        originals = {name: getattr(trial, name) for name in
+                     ("RECORD_FILE", "TrialCity", "load_roles", "distribution_problems",
+                      "declared_providers", "tool_versions", "trial_one")}
+        with tempfile.TemporaryDirectory() as tmp:
+            trial.RECORD_FILE = Path(tmp) / "record.json"
+            trial.TrialCity = City
+            trial.load_roles = lambda: {"roles": {"reviewer": {"agent": "delivery-reviewer"}}}
+            trial.distribution_problems = lambda _data: []
+            trial.declared_providers = lambda _agent: ["codex-readonly", "claude-readonly"]
+            trial.tool_versions = lambda _city: {"gc": "test"}
+
+            def run_one(_city, _data, role, provider):
+                if provider == "claude-readonly":
+                    raise trial.Refusal("later provider failed")
+                return {"role": role, "provider": provider, "passed": True, "failures": []}
+
+            trial.trial_one = run_one
+            try:
+                with self.assertRaisesRegex(trial.Refusal, "later provider failed"):
+                    trial.cmd_run(trial.argparse.Namespace(
+                        role=["reviewer"], trial_dir=tmp, port=1, no_record=False))
+                record = json.loads(trial.RECORD_FILE.read_text())
+            finally:
+                for name, value in originals.items():
+                    setattr(trial, name, value)
+
+        self.assertEqual(list(record["trials"]), ["reviewer/codex-readonly"])
+        self.assertEqual(record["trials"]["reviewer/codex-readonly"]["versions"], {"gc": "test"})
+
+
 class CodexRestartTest(unittest.TestCase):
     class City:
         def __init__(self):

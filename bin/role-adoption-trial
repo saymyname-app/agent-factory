@@ -890,18 +890,17 @@ def cmd_run(args: argparse.Namespace) -> int:
             city.start()
             for role, provider in round_roles.items():
                 print(f"{PROGRAM}: essai du rôle {role} sur {provider}…", file=sys.stderr, flush=True)
-                trials.append(trial_one(city, data, role, provider))
+                completed = trial_one(city, data, role, provider)
+                completed["versions"] = versions
+                trials.append(completed)
+                if not args.no_record:
+                    record = load_record()
+                    record["contract"] = RECORD_CONTRACT
+                    record.setdefault("description", "Relevés des essais d'adoption par rôle et par fournisseur, écrits par bin/role-adoption-trial run (sessions réelles, cité isolée). bin/dispatch-door les lit par bin/role-adoption-trial check. Ne pas éditer à la main : relancer l'essai.")
+                    record["trials"][f"{role}/{provider}"] = completed
+                    RECORD_FILE.write_text(json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
         finally:
             city.stop()
-    for trial in trials:
-        trial["versions"] = versions
-    if not args.no_record:
-        record = load_record()
-        record["contract"] = RECORD_CONTRACT
-        record.setdefault("description", "Relevés des essais d'adoption par rôle et par fournisseur, écrits par bin/role-adoption-trial run (sessions réelles, cité isolée). bin/dispatch-door les lit par bin/role-adoption-trial check. Ne pas éditer à la main : relancer l'essai.")
-        for trial in trials:
-            record["trials"][f"{trial['role']}/{trial['provider']}"] = trial
-        RECORD_FILE.write_text(json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
     print(render(trials))
     return 0 if all(t["passed"] for t in trials) else 1
 
