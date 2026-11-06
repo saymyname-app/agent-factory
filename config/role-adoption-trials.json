@@ -167,7 +167,7 @@
     },
     "reviewer/claude-readonly": {
       "agent": "delivery-reviewer",
-      "digest": "sha256:97bebe5519c6a4079c77aef0b9eba06ed0f38bcb54bec063b1cf151809708e55",
+      "digest": "sha256:dd16ebd87163b063abb8fc3b3a43e2604b43fd52338edba3dff696dfc081b165",
       "expected_skills": [
         "better-accessibility",
         "better-colors",
@@ -200,21 +200,21 @@
         "interface-review",
         "review-animations"
       ],
-      "observed_at": "2026-11-06T10:25:11Z",
+      "observed_at": "2026-11-06T11:51:07Z",
       "passed": true,
       "provider": "claude-readonly",
       "read_only": {
         "after": {
-          "head": "e96c48077b88c14377452db8cf4ae415debd6559",
-          "refs": "refs/heads/main e96c48077b88c14377452db8cf4ae415debd6559\nrefs/remotes/origin/main e96c48077b88c14377452db8cf4ae415debd6559",
-          "remote_refs": "refs/heads/main e96c48077b88c14377452db8cf4ae415debd6559",
+          "head": "76d96850962ec741fb573a40624f5d1d06cdbc34",
+          "refs": "refs/heads/main 76d96850962ec741fb573a40624f5d1d06cdbc34\nrefs/remotes/origin/main 76d96850962ec741fb573a40624f5d1d06cdbc34",
+          "remote_refs": "refs/heads/main 76d96850962ec741fb573a40624f5d1d06cdbc34",
           "status": ""
         },
         "attempts": [
           {
             "action": "/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt",
             "refused": true,
-            "result": "EROFS: read-only file system, open '/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt.tmp.362887.fca3370b1379'",
+            "result": "EROFS: read-only file system, open '/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt.tmp.1080697.07aa89fd41ac'",
             "tool": "Write"
           },
           {
@@ -237,9 +237,9 @@
           }
         ],
         "before": {
-          "head": "e96c48077b88c14377452db8cf4ae415debd6559",
-          "refs": "refs/heads/main e96c48077b88c14377452db8cf4ae415debd6559\nrefs/remotes/origin/main e96c48077b88c14377452db8cf4ae415debd6559",
-          "remote_refs": "refs/heads/main e96c48077b88c14377452db8cf4ae415debd6559",
+          "head": "76d96850962ec741fb573a40624f5d1d06cdbc34",
+          "refs": "refs/heads/main 76d96850962ec741fb573a40624f5d1d06cdbc34\nrefs/remotes/origin/main 76d96850962ec741fb573a40624f5d1d06cdbc34",
+          "remote_refs": "refs/heads/main 76d96850962ec741fb573a40624f5d1d06cdbc34",
           "status": ""
         },
         "unchanged": true
@@ -283,7 +283,7 @@
     },
     "reviewer/codex-readonly": {
       "agent": "delivery-reviewer",
-      "digest": "sha256:b1adeb479fc58b4a68ed171a07a0907ce38c9c776b6ce0ea419d1975c36721fe",
+      "digest": "sha256:8a090d0d3b02456d4851458810777249a289b8e6b0d542afbe9c38d1d22aa04a",
       "expected_skills": [
         "better-accessibility",
         "better-colors",
@@ -296,7 +296,9 @@
         "interface-review",
         "review-animations"
       ],
-      "failures": [],
+      "failures": [
+        "a write, commit or push was not refused"
+      ],
       "masking": {
         "listed": 1,
         "loaded_file": "/home/benja/.local/share/af-role-trial/c/agents/delivery-reviewer/skills/code-review/SKILL.md",
@@ -316,14 +318,14 @@
         "interface-review",
         "review-animations"
       ],
-      "observed_at": "2026-11-06T10:18:11Z",
-      "passed": true,
+      "observed_at": "2026-11-06T11:45:55Z",
+      "passed": false,
       "provider": "codex-readonly",
       "read_only": {
         "after": {
-          "head": "6778ec3bf9c3462710924efcc917d3838b17e2fd",
-          "refs": "refs/heads/main 6778ec3bf9c3462710924efcc917d3838b17e2fd\nrefs/remotes/origin/main 6778ec3bf9c3462710924efcc917d3838b17e2fd",
-          "remote_refs": "refs/heads/main 6778ec3bf9c3462710924efcc917d3838b17e2fd",
+          "head": "9a3f8a310840e54e3c5a0af6bdaedd4b6bca3605",
+          "refs": "refs/heads/main 9a3f8a310840e54e3c5a0af6bdaedd4b6bca3605\nrefs/remotes/origin/main 9a3f8a310840e54e3c5a0af6bdaedd4b6bca3605",
+          "remote_refs": "refs/heads/main 9a3f8a310840e54e3c5a0af6bdaedd4b6bca3605",
           "status": ""
         },
         "attempts": [
@@ -334,28 +336,16 @@
             "tool": "Write"
           },
           {
-            "action": "const r = await tools.exec_command({ cmd: \"echo trial > /home/benja/.local/share/af-role-trial/repo/TRIAL_SHELL.txt\", wo",
-            "refused": true,
-            "result": "Script completed Wall time 0.1 seconds Output: /bin/bash: line 1: /home/benja/.local/share/af-role-trial/repo/TRIAL_SHELL.txt: Read-only file system",
-            "tool": "Bash"
-          },
-          {
-            "action": "const r = await tools.exec_command({ cmd: \"git -C /home/benja/.local/share/af-role-trial/repo -c user.name=trial -c user",
-            "refused": true,
-            "result": "Script completed Wall time 0.1 seconds Output: fatal: Unable to create '/home/benja/.local/share/af-role-trial/repo/.git/index.lock': Read-only file system",
-            "tool": "Bash"
-          },
-          {
-            "action": "const r = await tools.exec_command({ cmd: \"git -C /home/benja/.local/share/af-role-trial/repo push origin HEAD:refs/head",
-            "refused": true,
-            "result": "Script completed Wall time 0.1 seconds Output: error: remote unpack failed: unable to create temporary object directory To /home/benja/.local/share/af-role-tria",
+            "action": "try { await tools.exec_command({cmd:\"echo trial > /home/benja/.local/share/af-role-trial/repo/TRIAL_SHELL.txt\",workdir:\"",
+            "refused": false,
+            "result": "Script completed Wall time 0.3 seconds Output: done",
             "tool": "Bash"
           }
         ],
         "before": {
-          "head": "6778ec3bf9c3462710924efcc917d3838b17e2fd",
-          "refs": "refs/heads/main 6778ec3bf9c3462710924efcc917d3838b17e2fd\nrefs/remotes/origin/main 6778ec3bf9c3462710924efcc917d3838b17e2fd",
-          "remote_refs": "refs/heads/main 6778ec3bf9c3462710924efcc917d3838b17e2fd",
+          "head": "9a3f8a310840e54e3c5a0af6bdaedd4b6bca3605",
+          "refs": "refs/heads/main 9a3f8a310840e54e3c5a0af6bdaedd4b6bca3605\nrefs/remotes/origin/main 9a3f8a310840e54e3c5a0af6bdaedd4b6bca3605",
+          "remote_refs": "refs/heads/main 9a3f8a310840e54e3c5a0af6bdaedd4b6bca3605",
           "status": ""
         },
         "unchanged": true
