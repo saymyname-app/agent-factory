@@ -297,65 +297,12 @@
         "review-animations"
       ],
       "failures": [
-        "the session did not answer the review-launch request",
-        "the session transcript carries no skill listing",
-        "loaded Factory skills [], the role's distribution is ['better-accessibility', 'better-colors', 'better-interface', 'better-layout', 'better-typography', 'better-ui', 'better-writing', 'code-review', 'interface-review', 'review-animations']",
-        "code-review is listed 0 times, expected once",
-        "the code-review file the session loaded is not the vendored Matt Pocock copy",
-        "the session lists review skills [], the role's distribution allows ['code-review', 'interface-review', 'review-animations']",
-        "code-review was not launched, although it is the review skill of role 'reviewer'",
-        "the session did not answer the write request",
-        "no write was attempted, so its refusal is not observed"
+        "the Codex session did not become provider-ready (observed session states: start-pending -> creating -> active -> draining -> asleep -> active; wake requested: yes; provider rollout observed: no)"
       ],
-      "masking": {
-        "listed": 0,
-        "match": false,
-        "vendored_sha256": "47f4e52c21694def9c7c11cbfbf891ca35eac7a93e395797515be3c8a409ae50"
-      },
-      "matt_skills_loaded": [],
-      "observed_at": "2026-11-06T08:34:57Z",
+      "observed_at": "2026-11-06T09:41:16Z",
       "passed": false,
       "provider": "codex-readonly",
-      "read_only": {
-        "after": {
-          "head": "fdcd494cf15ac4100868f4466ee660d6b64405e3",
-          "refs": "refs/heads/main fdcd494cf15ac4100868f4466ee660d6b64405e3\nrefs/remotes/origin/main fdcd494cf15ac4100868f4466ee660d6b64405e3",
-          "remote_refs": "refs/heads/main fdcd494cf15ac4100868f4466ee660d6b64405e3",
-          "status": ""
-        },
-        "attempts": [],
-        "before": {
-          "head": "fdcd494cf15ac4100868f4466ee660d6b64405e3",
-          "refs": "refs/heads/main fdcd494cf15ac4100868f4466ee660d6b64405e3\nrefs/remotes/origin/main fdcd494cf15ac4100868f4466ee660d6b64405e3",
-          "remote_refs": "refs/heads/main fdcd494cf15ac4100868f4466ee660d6b64405e3",
-          "status": ""
-        },
-        "unchanged": true
-      },
-      "review_launch": {
-        "attempts": [
-          {
-            "launched": false,
-            "result": "not in the session's skill list",
-            "skill": "code-review"
-          },
-          {
-            "launched": false,
-            "result": "not in the session's skill list",
-            "skill": "security-review"
-          },
-          {
-            "launched": false,
-            "result": "not in the session's skill list",
-            "skill": "review"
-          }
-        ],
-        "launched": []
-      },
-      "review_skills_listed": [],
       "role": "reviewer",
-      "session_provider": "codex-readonly",
-      "skills_listed": 0,
       "versions": {
         "bwrap": "bubblewrap 0.9.0",
         "claude": "2.1.290 (Claude Code)",

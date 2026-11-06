@@ -168,6 +168,36 @@ class CodexRestartTest(unittest.TestCase):
         def said(_nonce):
             return True
 
+    def test_active_lifecycle_without_a_codex_rollout_is_not_provider_ready_after_one_nudge(self):
+        city = self.City()
+        city.states = [{"state": "active"}] * 12
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            city.city = root / "city"
+            city.repo = root / "repo"
+            city.repo_state = lambda: {"head": "same", "status": "", "refs": "same", "remote_refs": "same"}
+            original_providers = trial.city_providers
+            original_time = trial.time.time
+            original_sleep = trial.time.sleep
+            now = [0.0]
+            trial.city_providers = lambda: {
+                "codex-readonly": {"base": "builtin:codex", "env": {"CODEX_HOME": str(root / "codex")}}
+            }
+            trial.time.time = lambda: now[0]
+            trial.time.sleep = lambda seconds: now.__setitem__(0, now[0] + seconds)
+            try:
+                result = trial.trial_one(city, trial.load_roles(), "reviewer", "codex-readonly")
+            finally:
+                trial.city_providers = original_providers
+                trial.time.time = original_time
+                trial.time.sleep = original_sleep
+
+        self.assertEqual(result["failures"], [
+            "the session was lifecycle-active but the Codex provider created no rollout after its review-launch nudge "
+            "(observed session states: active; wake requested: no; provider rollout observed: no; nudge answered: no)"
+        ])
+        self.assertEqual(sum(call[:2] == ("session", "nudge") for call in city.calls), 1)
+
     def test_delivery_after_drift_wake_does_not_require_a_replacement_key(self):
         city = self.City()
         city.states = ([{"state": "active"}, {"state": "draining"}] +
@@ -243,6 +273,22 @@ class SandboxTest(unittest.TestCase):
 
 
 class DistributionTest(unittest.TestCase):
+    def test_the_isolated_codex_trial_trusts_its_dotted_role_path_without_a_dialog(self):
+        work = Path("/tmp/trial/.gc/agents/delivery-reviewer")
+        self.assertEqual(
+            trial.codex_projects_override([work]),
+            'projects={"/tmp/trial/.gc/agents/delivery-reviewer"={trust_level="trusted"}}')
+
+    def test_unattended_codex_profiles_skip_interactive_startup_dialogs(self):
+        providers = trial.city_providers()
+        for name in ("codex", "codex-readonly"):
+            args = providers[name]["args_append"]
+            setting = args.index("-c")
+            self.assertEqual(args[setting + 1], "check_for_update_on_startup=false")
+            self.assertIn("--dangerously-bypass-hook-trust", args)
+        self.assertIn("-c check_for_update_on_startup=false", providers["codex-readonly"]["resume_command"])
+        self.assertIn("--dangerously-bypass-hook-trust", providers["codex-readonly"]["resume_command"])
+
     def test_the_reviewer_copy_of_interface_review_is_invocable_by_codex_too(self):
         # Codex honours agents/openai.yaml (allow_implicit_invocation), not
         # disable-model-invocation: the first real trial did not list

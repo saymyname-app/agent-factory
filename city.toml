@@ -13,7 +13,10 @@ provider = "claude-standard"
 [providers]
 [providers.codex]
 base = "builtin:codex"
-args_append = ["-m", "gpt-5.6-sol"]
+# Unattended sessions cannot answer Codex's delayed update/hook dialogs: Gas
+# City otherwise reports them active while nudges land on a dialog. The hooks
+# come from the Factory's pinned packs and generated agent directory (af-pd6m09).
+args_append = ["-m", "gpt-5.6-sol", "-c", "check_for_update_on_startup=false", "--dangerously-bypass-hook-trust"]
 ready_delay_ms = 0
 accept_startup_dialogs = true
 
@@ -128,10 +131,10 @@ effort = "high"
 [providers.codex-readonly]
 base = "builtin:codex"
 command = "/home/benja/agent-factory/bin/delivery-role-sandbox"
-args_append = ["--model", "gpt-5.6-sol"]
+args_append = ["--model", "gpt-5.6-sol", "-c", "check_for_update_on_startup=false", "--dangerously-bypass-hook-trust"]
 # gc refuses a wrapper of a subcommand-style resume provider without its own
 # resume invocation; the role wakes fresh (wake_mode), this is the required form.
-resume_command = "/home/benja/agent-factory/bin/delivery-role-sandbox --model gpt-5.6-sol resume {{.SessionKey}}"
+resume_command = "/home/benja/agent-factory/bin/delivery-role-sandbox --model gpt-5.6-sol -c check_for_update_on_startup=false --dangerously-bypass-hook-trust resume {{.SessionKey}}"
 ready_delay_ms = 0
 accept_startup_dialogs = true
 

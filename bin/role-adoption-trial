@@ -279,6 +279,12 @@ def providers_toml(providers: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def codex_projects_override(work_dirs: list[Path]) -> str:
+    projects = ",".join(
+        f"{json.dumps(path)}={{trust_level=\"trusted\"}}" for path in sorted(map(str, work_dirs)))
+    return f"projects={{{projects}}}"
+
+
 class TrialCity:
     def __init__(self, trial_dir: Path, port: int) -> None:
         self.dir = trial_dir
@@ -332,6 +338,13 @@ class TrialCity:
         for profile in providers.values():
             if Path(str(profile.get("command", ""))).name == SANDBOX.name:
                 profile["command"] = str(SANDBOX)
+        for provider in sorted(set(assignments.values())):
+            profile = providers.get(provider) or {}
+            if str(profile.get("base", "")).endswith("codex"):
+                work_dirs = [self.city / ".gc" / "agents" / agent
+                             for agent, assigned in assignments.items() if assigned == provider]
+                profile["args_append"] = [*(profile.get("args_append") or []),
+                                          "-c", codex_projects_override(work_dirs)]
         patches = "".join(f'\n[[patches.agent]]\nname = "{agent}"\nprovider = "{provider}"\n'
                           for agent, provider in assignments.items())
         (self.city / "city.toml").write_text(f'[workspace]\nprovider = "{first}"\n\n{providers_toml(providers)}{patches}')
@@ -716,6 +729,12 @@ def trial_one(city: TrialCity, data: dict[str, Any], role: str, provider: str) -
 
         # 1. Review launch: every role is asked, whatever its distribution.
         answered = ask(city, alias, transcript, transcript.review_launch_request(REVIEW_PROBES))
+        if not answered and isinstance(transcript, CodexTranscript) and not transcript.entries():
+            failures.append(
+                "the session was lifecycle-active but the Codex provider created no rollout after its review-launch nudge "
+                f"({diagnostic}; provider rollout observed: no; nudge answered: no)")
+            trial.update(passed=False, failures=failures)
+            return trial
         if not answered:
             failures.append("the session did not answer the review-launch request")
         listing = transcript.skill_listing()
