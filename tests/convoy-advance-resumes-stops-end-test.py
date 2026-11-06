@@ -65,6 +65,8 @@ RETURNED_RELEASE_ENV = "CONVOY_ADVANCE_TEST_RETURNED_RELEASE"
 RETURNED_RELEASE_MAINTENANCE = "fx-returned-release"
 RETURNED_RELEASE_REPAIR = "fx-r9"
 RETURNED_RELEASE_EVIDENCE = "sha256:46fe2ee17aa730ba261b6a8bd940f17d1c3cb7eb0a66607eebf4051b3fb7fedd"
+RETURNED_RESULT_RELEASE_ENV = "CONVOY_ADVANCE_TEST_RETURNED_RESULT_RELEASE"
+RETURNED_RESULT_RELEASE_REPAIR = "fx-c59"
 C2B_RELEASE_ENV = "CONVOY_ADVANCE_TEST_C2B_RELEASE"
 C2B_RELEASE_REPAIR = "fx-c2b-repair"
 C2B_RELEASE_MIGRATION = "fx-c2b-migration"
@@ -293,6 +295,20 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         park = json.loads(metadata["gc.flow.park"])
         park["at"] = "2026-11-06T20:58:20Z"
         metadata["gc.flow.park"] = json.dumps(park)
+        metadata["gc.flow.park_lifts"] = json.dumps({"entries": [{
+            "at": "2026-11-02T00:51:08Z",
+            "cause": "planning_exception",
+            "detail": "Planning Exception sur C2b : inobservable sur le produit lancé",
+            "option": "c",
+            "parked_at": "2026-10-29T09:59:31Z",
+            "request": T1,
+            "resumes": 0,
+            "taken": {
+                "behind": 0, "code_review_no_result": 0, "commit_after_verdict": 0,
+                "evaluation_no_result": 0, "inherited_change": 0, "interrupted": 0,
+                "returned": 0, "stage_removed": 0, "unblocked": 0,
+            },
+        }]})
         state["beads"][T3]["metadata"]["gc.flow.park"] = json.dumps(park)
         state["beads"][C2B_RESULT_RELEASE_REPAIR] = {
             "title": "release repaired C2b result", "status": "closed", "issue_type": "bug",
@@ -309,6 +325,80 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
             "resume_bead": resume["entries"][-1]["launches"][0]["bead"],
             "invalidated_at": verdict["invalidated"]["at"],
             "repair_bead": C2B_RESULT_RELEASE_REPAIR,
+        }
+
+    def exact_returned_result_release(self):
+        """D's repaired result with its four historical parking lifts."""
+        authorization = self.exact_returned_release()
+        self.advance(CONVOY, env={**self.env, RETURNED_RELEASE_ENV: json.dumps(authorization)})
+        self.code_reviewed("silent")
+        self.evaluated()
+
+        self.taken(T1, "auteur-returned-result")
+        self.git("checkout", "-q", f"ticket/{T1}")
+        (self.root / "d-result.txt").write_text("repaired D result\n")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "repair D result")
+        tip = self.git("rev-parse", "HEAD")
+        base = self.git("rev-parse", "main")
+        self.git("checkout", "-q", "--detach", "main")
+        first.ticket_proofs.finish(
+            self.env, self.root, CONVOY, T1, tip, base, f"ticket/{T1}",
+            sections=dict.fromkeys(("done", "deviations", "not_done", "out_of_ticket"), "aucun"),
+        )
+        self.run_ok(STATE, "park", CONVOY, T1, "--cause", "resumes_exhausted",
+                    "--detail", "reprises épuisées pour la cause returned")
+
+        state = self.tracker_state()
+        metadata = state["beads"][T1]["metadata"]
+        exit_record = json.loads(metadata["gc.flow.exit"])
+        exit_record["at"] = "2026-11-06T19:45:34Z"
+        metadata["gc.flow.exit"] = json.dumps(exit_record)
+        resume = json.loads(metadata["gc.flow.resume"])
+        resume["entries"][-1]["at"] = "2026-11-06T02:50:06Z"
+        resume["entries"][-1]["launches"][0]["at"] = "2026-11-06T19:10:51Z"
+        metadata["gc.flow.resume"] = json.dumps(resume)
+        metadata["gc.flow.counter.resumes"] = 13
+        park = json.loads(metadata["gc.flow.park"])
+        park["at"] = "2026-11-06T19:15:40Z"
+        metadata["gc.flow.park"] = json.dumps(park)
+        metadata["gc.flow.park_lifts"] = json.dumps({"entries": [
+            {"at": "2026-10-21T02:15:51Z", "cause": "operator_request", "detail": "green impossible",
+             "option": "a", "parked_at": "2026-10-21T00:35:02Z", "request": T1, "resumes": 1,
+             "taken": {"amendment_granted": 1, "answered": 0, "behind": 0, "code_review_no_result": 0,
+                       "commit_after_verdict": 0, "evaluation_no_result": 0, "interrupted": 0,
+                       "returned": 0, "stage_removed": 0, "unblocked": 0}},
+            {"at": "2026-10-21T16:26:26Z", "cause": "planning_exception", "detail": "inobservable",
+             "option": "a", "parked_at": "2026-10-21T04:16:56Z", "request": T1, "resumes": 2,
+             "taken": {"amendment_granted": 1, "answered": 1, "behind": 0, "code_review_no_result": 0,
+                       "commit_after_verdict": 0, "evaluation_no_result": 0, "interrupted": 0,
+                       "returned": 0, "stage_removed": 0, "unblocked": 0}},
+            {"at": "2026-10-27T14:10:16Z", "cause": "resumes_exhausted", "detail": "behind exhausted",
+             "option": "a", "parked_at": "2026-10-23T16:36:17Z", "request": "af-89ctnv", "resumes": 8,
+             "taken": {"amendment_granted": 1, "answered": 1, "behind": 3, "code_review_no_result": 0,
+                       "commit_after_verdict": 0, "evaluation_no_result": 0, "interrupted": 0,
+                       "returned": 0, "stage_removed": 0, "unblocked": 0}},
+            {"at": "2026-10-31T23:42:04Z", "cause": "operator_request", "detail": "red merge",
+             "option": "a", "parked_at": "2026-10-31T04:58:15Z", "request": T1, "resumes": 10,
+             "taken": {"behind": 0, "code_review_no_result": 0, "commit_after_verdict": 0,
+                       "evaluation_no_result": 0, "inherited_change": 0, "interrupted": 0,
+                       "returned": 2, "stage_removed": 0, "unblocked": 0}},
+        ]})
+        state["beads"][T3]["metadata"]["gc.flow.park"] = json.dumps(park)
+        state["beads"][RETURNED_RESULT_RELEASE_REPAIR] = {
+            "title": "release repaired D result", "status": "closed", "issue_type": "bug",
+            "labels": ["maintenance"], "metadata": delivered(819, "a" * 40, "b" * 40),
+        }
+        self.tracker.write_text(json.dumps(state))
+        self.write_log.write_text("")
+        return {
+            "ticket": T1,
+            "tip": tip,
+            "exit_at": exit_record["at"],
+            "parked_at": park["at"],
+            "resume_at": resume["entries"][-1]["at"],
+            "resume_bead": resume["entries"][-1]["launches"][0]["bead"],
+            "repair_bead": RETURNED_RESULT_RELEASE_REPAIR,
         }
 
     def test_a_pass_sends_an_interrupted_ticket_to_a_fresh_author_session_and_counts_the_resume(self):
@@ -1269,6 +1359,93 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertIsNone(self.park_of(T1))
         self.assertEqual(before["gc.flow.counter.resumes"], self.resumes())
 
+    def test_the_repaired_D_result_is_judged_without_another_author_resume(self):
+        authorization = self.exact_returned_result_release()
+        env = {**self.env, RETURNED_RESULT_RELEASE_ENV: json.dumps(authorization)}
+        before = self.bead(T1)["metadata"]
+        before_resume = json.loads(before["gc.flow.resume"])
+        before_lifts = json.loads(before["gc.flow.park_lifts"])["entries"]
+        before_left = self.shown_state(T1)["resumes_left_by_cause"]
+        author_launches = len(self.resume_launches())
+
+        answer = self.advance(CONVOY, env=env)
+
+        [lifted] = self.of(answer, "lifted")
+        self.assertEqual((T1, None, RETURNED_RESULT_RELEASE_REPAIR, [T1, T3], "returned_result_once"),
+                         (lifted["id"], lifted["option"], lifted["request"], lifted["lifted"], lifted["release"]))
+        self.assertEqual([], self.of(answer, "resumed"))
+        self.assertEqual(author_launches, len(self.resume_launches()))
+        self.assertEqual((None, None), (self.park_of(T1), self.park_of(T3)))
+        after = self.bead(T1)["metadata"]
+        shown = self.shown_state(T1)
+        self.assertEqual(13, after["gc.flow.counter.resumes"])
+        self.assertEqual(before_resume, json.loads(after["gc.flow.resume"]))
+        self.assertEqual(3, shown["resumes_left_by_cause"]["returned"])
+        self.assertEqual({key: value for key, value in before_left.items() if key != "returned"},
+                         {key: value for key, value in shown["resumes_left_by_cause"].items()
+                          if key != "returned"})
+        after_lifts = shown["park_lifts"]
+        self.assertEqual(before_lifts, after_lifts[:-1])
+        self.assertEqual((RETURNED_RESULT_RELEASE_REPAIR, None, "returned"),
+                         tuple(after_lifts[-1][key] for key in ("request", "option", "reset_cause")))
+        self.assertEqual([T1], [entry["ticket"] for entry in self.code_review_of(answer)["launched"]])
+        self.assertEqual([T1], [entry["ticket"] for entry in self.evaluation_of(answer)["started"]])
+
+        again = self.advance(CONVOY, env=env)
+
+        self.assertEqual(([], [], 1),
+                         (self.of(again, "lifted"), self.of(again, "resumed"), len(self.code_review_launches())))
+        self.assertIsNone(self.evaluation_of(again))
+
+    def test_the_repaired_D_result_release_rejects_nearby_state_and_incomplete_delivery(self):
+        authorization = self.exact_returned_result_release()
+        seeded = self.tracker.read_text()
+
+        def wrong_tip(state, auth):
+            auth["tip"] = "0" * 40
+
+        def wrong_exit(state, auth):
+            auth["exit_at"] = "2000-01-01T00:00:00Z"
+
+        def wrong_park(state, auth):
+            auth["parked_at"] = "2000-01-01T00:00:00Z"
+
+        def wrong_resume(state, auth):
+            auth["resume_at"] = "2000-01-01T00:00:00Z"
+
+        def wrong_launch(state, auth):
+            auth["resume_bead"] = "fx-other"
+
+        def wrong_history(state, auth):
+            lifts = json.loads(state["beads"][T1]["metadata"]["gc.flow.park_lifts"])
+            lifts["entries"][-1]["taken"]["returned"] = 1
+            state["beads"][T1]["metadata"]["gc.flow.park_lifts"] = json.dumps(lifts)
+
+        def undelivered_repair(state, auth):
+            state["beads"][RETURNED_RESULT_RELEASE_REPAIR]["status"] = "open"
+
+        changes = (
+            ("tip", wrong_tip), ("exit", wrong_exit), ("parking", wrong_park),
+            ("resume", wrong_resume), ("launch", wrong_launch), ("history", wrong_history),
+            ("delivery", undelivered_repair),
+        )
+        for name, change in changes:
+            with self.subTest(name=name):
+                self.tracker.write_text(seeded)
+                self.write_log.write_text("")
+                state = self.tracker_state()
+                auth = json.loads(json.dumps(authorization))
+                change(state, auth)
+                self.tracker.write_text(json.dumps(state))
+
+                answer = self.advance(CONVOY, env={**self.env, RETURNED_RESULT_RELEASE_ENV: json.dumps(auth)})
+
+                self.assertEqual(([], []), (self.of(answer, "lifted"), self.of(answer, "resumed")), name)
+                self.assertEqual("resumes_exhausted", self.park_of(T1)["cause"], name)
+                self.assertEqual([], self.resume_launches(), name)
+                self.assertIsNone(self.code_review_of(answer), name)
+                self.assertIsNone(self.evaluation_of(answer), name)
+
     def test_the_returned_release_rejects_every_nearby_state(self):
         authorization = self.exact_returned_release()
         seeded = self.tracker.read_text()
@@ -1430,6 +1607,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         env = {**self.env, C2B_RESULT_RELEASE_ENV: json.dumps(authorization)}
         before = self.bead(T1)["metadata"]
         before_resume = json.loads(before["gc.flow.resume"])
+        before_lifts = json.loads(before["gc.flow.park_lifts"])["entries"]
         before_decisions = {key: value for key, value in before.items()
                             if key.startswith("gc.escalation_response_") or key == "gc.needs_benjamin"}
 
@@ -1448,6 +1626,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual(3, shown["resumes_left_by_cause"]["commit_after_verdict"])
         self.assertEqual(1, shown["resumes_left_by_cause"]["evaluation_no_result"])
         self.assertEqual(2, shown["resumes_left_by_cause"]["repair_delivered"])
+        self.assertEqual(before_lifts, shown["park_lifts"][:-1])
         self.assertEqual((C2B_RESULT_RELEASE_REPAIR, None, "commit_after_verdict"),
                          tuple(shown["park_lifts"][-1][key] for key in ("request", "option", "reset_cause")))
         self.assertEqual(before_decisions, {key: value for key, value in after.items()
@@ -1484,13 +1663,19 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         def wrong_invalidation(state, auth):
             auth["invalidated_at"] = "2000-01-01T00:00:00Z"
 
+        def wrong_history(state, auth):
+            lifts = json.loads(state["beads"][T1]["metadata"]["gc.flow.park_lifts"])
+            lifts["entries"][0]["at"] = "2000-01-01T00:00:00Z"
+            state["beads"][T1]["metadata"]["gc.flow.park_lifts"] = json.dumps(lifts)
+
         def undelivered_repair(state, auth):
             state["beads"][C2B_RESULT_RELEASE_REPAIR]["status"] = "open"
 
         changes = (
             ("tip", wrong_tip), ("exit", wrong_exit), ("parking", wrong_park),
             ("resume", wrong_resume), ("launch", wrong_launch),
-            ("invalidation", wrong_invalidation), ("delivery", undelivered_repair),
+            ("invalidation", wrong_invalidation), ("history", wrong_history),
+            ("delivery", undelivered_repair),
         )
         for name, change in changes:
             with self.subTest(name=name):

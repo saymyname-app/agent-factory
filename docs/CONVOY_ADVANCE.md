@@ -478,6 +478,19 @@ durable consumption. A different ticket, parking time, merge, integration
 history, evidence or maintenance state does nothing. If D returns from a new
 red merge, the ordinary exhausted bound applies again.
 
+The repaired result of D has one symmetric code-owned release
+(`af-npz9v1.59`). It finished at
+`8ec7997b80a480db6cd590b2c8933a70be9599a7` on
+`2026-11-06T19:45:34Z`, after its last `returned` resume recorded at
+`2026-11-06T02:50:06Z` was launched once by `af-kkmgcy`, and was parked at
+`2026-11-06T19:15:40Z`. Once `af-npz9v1.59` has structural PR+CI delivery
+proof, the pass uses `lift-park --reset-cause returned`. The native record
+preserves D's four older `park_lifts`, keeps the raw counter at `13`, and
+gives a fresh window only to `returned`; it opens no author resume. The same
+pass opens one code review and one Ticket Evaluation at `8ec7997`. Another
+ticket, tip, exit, parking, last launch, lift history or incomplete delivery
+proof does nothing.
+
 C2b has one equally bounded release (`af-npz9v1.57`). The ticket
 `af-ofz29f` was parked at `2026-11-05T06:48:34Z` after its already-counted
 third `evaluation_no_result` resume, recorded at `2026-11-05T06:48:15Z`
@@ -503,8 +516,10 @@ finished at `4ddad77361e0970c03e55829d97e871f86b30722` on
 `commit_after_verdict` reached its bound before the review and evaluation
 gates. Once `af-npz9v1.58` has structural PR+CI delivery proof, the pass
 uses `lift-park --reset-cause commit_after_verdict`: the native `park_lifts`
-record gives that cause one fresh window while retaining the raw counter `6`,
-the resume history and every other cause's consumed budget. It opens no
+record appends to, and preserves, the Planning Exception lift of
+`2026-11-02T00:51:08Z`; it gives that cause one fresh window while retaining
+the raw counter `6`, the resume history and every other cause's consumed
+budget. It opens no
 author resume and records no operator answer; the same pass opens the code
 review and Ticket Evaluation at `4ddad773`. A different tip, exit, parking,
 last repair launch, invalidation time or incomplete maintenance delivery
