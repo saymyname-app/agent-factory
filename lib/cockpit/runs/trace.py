@@ -163,8 +163,9 @@ class SessionTrace:
         self.path = path
         self._lock = threading.Lock()
         self._read_at = {}
-        # The last event of the log of the supervisor collected: None until
-        # the first collection, which reads the log of the last week.
+        # The last event of each type of the log of the supervisor collected
+        # ({type: seq}): None until the first collection, which reads the log
+        # of the last week.
         self._after = None
         # The keys written, and the projection as last read with the size of
         # the file it was read at: each reading of the sessions and each page
@@ -190,7 +191,8 @@ class SessionTrace:
         except (OSError, ValueError, KeyError, TypeError):
             events = []
         for event in events:
-            self._after = max(self._after or 0, event["seq"])
+            seen = self._after or {}
+            self._after = {**seen, event["type"]: max(seen.get(event["type"], 0), event["seq"])}
             moment = {"kind": LOGGED[event["type"]], "id": event["session_id"], "at": _epoch(event["ts"])}
             if moment["kind"] == "started":
                 moment["bead"] = event.get("bead")

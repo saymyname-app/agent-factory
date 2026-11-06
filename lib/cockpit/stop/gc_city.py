@@ -153,19 +153,21 @@ class GcCityReader:
 
     def session_events(self, after=None):
         """The moments the supervisor woke and stopped a session, or a
-        session took a step, after its event ``after`` (a ``seq``; None, the
-        latest SESSION_EVENTS_PAGE of each), the oldest first: each
-        ``{"seq", "type", "ts", "session_id"}``, and the ``bead`` taken for
-        a step."""
+        session took a step, after the event ``after`` says of their type
+        (``{type: seq}``, one for each: an event logged between two questions
+        can be numbered below one already answered; None, the latest
+        SESSION_EVENTS_PAGE of each), the oldest first: each ``{"seq",
+        "type", "ts", "session_id"}``, and the ``bead`` taken for a step."""
         found = {}
         for kind in SESSION_EVENT_TYPES:
             query = {"type": kind, "limit": str(SESSION_EVENTS_PAGE)}
+            since = None if after is None else after.get(kind, 0)
             for _ in range(SESSION_EVENTS_PAGES if after is not None else 1):
                 answer = _get_json(self._base_url, self._city_path("events?" + urllib.parse.urlencode(query)),
                                    self._timeout)
                 items = [item for item in (answer.get("items") or []) if isinstance(item, dict)
                          and isinstance(item.get("seq"), int) and item.get("type") == kind]
-                fresh = [item for item in items if after is None or item["seq"] > after]
+                fresh = [item for item in items if since is None or item["seq"] > since]
                 for item in fresh:
                     payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
                     session_id = item.get("session_id") or payload.get("session_id")
