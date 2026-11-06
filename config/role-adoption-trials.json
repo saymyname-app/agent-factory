@@ -180,13 +180,100 @@
         "interface-review",
         "review-animations"
       ],
-      "failures": [
-        "the session did not remain active for 60 seconds (observed session states: start-pending -> creating; wake requested: no)"
+      "failures": [],
+      "masking": {
+        "listed": 1,
+        "loaded_file": "/home/benja/.local/share/af-role-trial/c/agents/delivery-reviewer/skills/code-review/SKILL.md",
+        "loaded_sha256": "47f4e52c21694def9c7c11cbfbf891ca35eac7a93e395797515be3c8a409ae50",
+        "match": true,
+        "vendored_sha256": "47f4e52c21694def9c7c11cbfbf891ca35eac7a93e395797515be3c8a409ae50"
+      },
+      "matt_skills_loaded": [
+        "better-accessibility",
+        "better-colors",
+        "better-interface",
+        "better-layout",
+        "better-typography",
+        "better-ui",
+        "better-writing",
+        "code-review",
+        "interface-review",
+        "review-animations"
       ],
-      "observed_at": "2026-11-06T13:07:22Z",
-      "passed": false,
+      "observed_at": "2026-11-06T11:51:07Z",
+      "passed": true,
       "provider": "claude-readonly",
+      "read_only": {
+        "after": {
+          "head": "76d96850962ec741fb573a40624f5d1d06cdbc34",
+          "refs": "refs/heads/main 76d96850962ec741fb573a40624f5d1d06cdbc34\nrefs/remotes/origin/main 76d96850962ec741fb573a40624f5d1d06cdbc34",
+          "remote_refs": "refs/heads/main 76d96850962ec741fb573a40624f5d1d06cdbc34",
+          "status": ""
+        },
+        "attempts": [
+          {
+            "action": "/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt",
+            "refused": true,
+            "result": "EROFS: read-only file system, open '/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt.tmp.1080697.07aa89fd41ac'",
+            "tool": "Write"
+          },
+          {
+            "action": "echo trial > /home/benja/.local/share/af-role-trial/repo/TRIAL_SHELL.txt",
+            "refused": true,
+            "result": "Exit code 1 /bin/bash: line 1: /home/benja/.local/share/af-role-trial/repo/TRIAL_SHELL.txt: Read-only file system",
+            "tool": "Bash"
+          },
+          {
+            "action": "git -C /home/benja/.local/share/af-role-trial/repo -c user.name=trial -c user.email=trial@example.invalid commit --allow",
+            "refused": true,
+            "result": "Exit code 128 fatal: Unable to create '/home/benja/.local/share/af-role-trial/repo/.git/index.lock': Read-only file system",
+            "tool": "Bash"
+          },
+          {
+            "action": "git -C /home/benja/.local/share/af-role-trial/repo push origin HEAD:refs/heads/trial-push",
+            "refused": true,
+            "result": "Exit code 1 error: remote unpack failed: unable to create temporary object directory To /home/benja/.local/share/af-role-trial/remote.git ! [remote rejected] HE",
+            "tool": "Bash"
+          }
+        ],
+        "before": {
+          "head": "76d96850962ec741fb573a40624f5d1d06cdbc34",
+          "refs": "refs/heads/main 76d96850962ec741fb573a40624f5d1d06cdbc34\nrefs/remotes/origin/main 76d96850962ec741fb573a40624f5d1d06cdbc34",
+          "remote_refs": "refs/heads/main 76d96850962ec741fb573a40624f5d1d06cdbc34",
+          "status": ""
+        },
+        "unchanged": true
+      },
+      "review_launch": {
+        "attempts": [
+          {
+            "launched": true,
+            "result": "Launching skill: code-review",
+            "skill": "code-review"
+          },
+          {
+            "launched": false,
+            "result": "<tool_use_error>Skill security-review is disabled for model invocation by the disableBundledSkills setting or CLAUDE_CODE_DISABLE_BUNDLED_SKILLS env var</tool_u",
+            "skill": "security-review"
+          },
+          {
+            "launched": false,
+            "result": "<tool_use_error>Unknown skill: review</tool_use_error>",
+            "skill": "review"
+          }
+        ],
+        "launched": [
+          "code-review"
+        ]
+      },
+      "review_skills_listed": [
+        "code-review",
+        "interface-review",
+        "review-animations"
+      ],
       "role": "reviewer",
+      "session_provider": "claude-readonly",
+      "skills_listed": 18,
       "versions": {
         "bwrap": "bubblewrap 0.9.0",
         "claude": "2.1.290 (Claude Code)",

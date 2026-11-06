@@ -187,7 +187,7 @@ class RecordingTest(unittest.TestCase):
             try:
                 with self.assertRaisesRegex(trial.Refusal, "later provider failed"):
                     trial.cmd_run(trial.argparse.Namespace(
-                        role=["reviewer"], trial_dir=tmp, port=1, no_record=False))
+                        role=["reviewer"], provider=None, trial_dir=tmp, port=1, no_record=False))
                 record = json.loads(trial.RECORD_FILE.read_text())
             finally:
                 for name, value in originals.items():
@@ -195,6 +195,54 @@ class RecordingTest(unittest.TestCase):
 
         self.assertEqual(list(record["trials"]), ["reviewer/codex-readonly"])
         self.assertEqual(record["trials"]["reviewer/codex-readonly"]["versions"], {"gc": "test"})
+
+    def test_a_provider_filter_does_not_replace_another_providers_record(self):
+        class City:
+            def __init__(self, *_args):
+                pass
+
+            def build(self, *_args):
+                pass
+
+            def start(self):
+                pass
+
+            def stop(self):
+                pass
+
+        originals = {name: getattr(trial, name) for name in
+                     ("RECORD_FILE", "TrialCity", "load_roles", "distribution_problems",
+                      "declared_providers", "tool_versions", "trial_one")}
+        with tempfile.TemporaryDirectory() as tmp:
+            trial.RECORD_FILE = Path(tmp) / "record.json"
+            prior_claude = {"role": "reviewer", "provider": "claude-readonly", "passed": True}
+            trial.RECORD_FILE.write_text(json.dumps({
+                "contract": trial.RECORD_CONTRACT,
+                "trials": {"reviewer/claude-readonly": prior_claude},
+            }))
+            trial.TrialCity = City
+            trial.load_roles = lambda: {"roles": {"reviewer": {"agent": "delivery-reviewer"}}}
+            trial.distribution_problems = lambda _data: []
+            trial.declared_providers = lambda _agent: ["codex-readonly", "claude-readonly"]
+            trial.tool_versions = lambda _city: {"gc": "test"}
+            calls = []
+
+            def run_one(_city, _data, role, provider):
+                calls.append((role, provider))
+                return {"role": role, "provider": provider, "passed": True, "failures": []}
+
+            trial.trial_one = run_one
+            try:
+                result = trial.cmd_run(trial.argparse.Namespace(
+                    role=["reviewer"], provider="codex-readonly", trial_dir=tmp, port=1, no_record=False))
+                record = json.loads(trial.RECORD_FILE.read_text())
+            finally:
+                for name, value in originals.items():
+                    setattr(trial, name, value)
+
+        self.assertEqual(result, 0)
+        self.assertEqual(calls, [("reviewer", "codex-readonly")])
+        self.assertEqual(record["trials"]["reviewer/claude-readonly"], prior_claude)
 
 
 class CodexRestartTest(unittest.TestCase):
