@@ -684,9 +684,10 @@ regression, `bin/tdd-step` and `bin/spec-integration` read it through
 runs of its kind in the evidence store, rounded up to the minute; a red run is
 not a duration measure, and a kind with fewer than three runs keeps its figure.
 For `criterion_test_seconds`, one sample is the slowest criterion-class timing
-inside a successful green or full run. On 05/11/2026, the last ten samples gave
-green 1620 s from 1049 s, full 1740 s from 1148 s, and one criterion test
-1200 s from 773 s. Proof: `tests/test-budgets-test.py`.
+inside a successful green or full run. On 06/11/2026, the last ten samples gave
+green 1680 s from 1106 s, full 2340 s from 1534 s, and one criterion test
+1200 s from 798 s (the 1534 s full run measured 750 s for its slowest
+criterion). Proof: `tests/test-budgets-test.py`.
 
 What it does not cover:
 
