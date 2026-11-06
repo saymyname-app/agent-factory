@@ -99,7 +99,8 @@ class SyntheticCity:
     # no repository declared, GitHub is not read.
     github: dict | None = None
     # The moment the cockpit's clock starts at, then runs: the fixed time of
-    # a dataset, or for a Runs state the moment it shows; what a Runs state
+    # a dataset that gives records of the flow or of GitHub, or for a Runs
+    # state the moment it shows; what a Runs state
     # selects -- the filter, the run, the job, the event the cockpit opens
     # when the address names none.
     clock_start: str | None = None
@@ -160,7 +161,7 @@ def from_dataset(dataset) -> SyntheticCity:
     city = _panorama_city(name, _fixed_time(at), ui, dataset.get("visible_text"), _folded(dataset.get("folded")),
                           _folded(dataset.get("drawn"), "drawn"), _run_cards(dataset.get("runs")),
                           _result_values(dataset.get("result")), dataset.get("release"))
-    return _with_sources(replace(city, clock_start=at), dataset.get("flow"), dataset.get("github"))
+    return _with_sources(city, at, dataset.get("flow"), dataset.get("github"))
 
 
 def _folded(folded, key="folded") -> dict:
@@ -822,11 +823,13 @@ SCREENS = {
 FLOW_MARK = "new-flow/v1"
 
 
-def _with_sources(city, flow, github) -> SyntheticCity:
+def _with_sources(city, at, flow, github) -> SyntheticCity:
     """`city` with the records of the delivery flow (`flow`: its results,
     tickets and decisions) as the flow writes them on the tracker, and what
     GitHub answers (`github`: the repository, its pull requests and its
-    workflow runs, as the REST API gives them)."""
+    workflow runs, as the REST API gives them), its clock starting at their
+    fixed time `at`. Without either, `city` unchanged: its clock is the
+    host's, which a case that times a stop from its launch reads."""
     if flow is None and github is None:
         return city
     try:
@@ -886,7 +889,7 @@ def _with_sources(city, flow, github) -> SyntheticCity:
     except (KeyError, TypeError, AttributeError) as exc:
         raise DatasetRefused(f"its records of the flow (flow) or of GitHub (github) cannot be read: {exc!r}") from exc
     return replace(city, beads=beads, projects=sorted(projects.values(), key=lambda d: d["project_id"]),
-                   github=github)
+                   github=github, clock_start=at)
 
 
 # Runs: lanes, runs and their jobs -------------------------------------------

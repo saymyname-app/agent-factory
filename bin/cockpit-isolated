@@ -31,7 +31,8 @@ synthetic sources only:
 - when the dataset gives what GitHub answers, a synthetic GitHub client
   (`tests/fixtures/cockpit/github/fake-gh`) for the repository it names;
   otherwise no repository is declared, and GitHub is not read;
-- a clock that starts at the fixed time of the dataset (`generated_at`);
+- when the dataset gives records of the flow or of GitHub, a clock that
+  starts at its fixed time (`generated_at`); otherwise the host's clock;
 - an empty environment: a temporary HOME, no local settings file, so no
   secret, no notification, no heartbeat and no project clone -- but the
   heartbeat a dataset declares (`heartbeat`: where it goes, at what pace;
