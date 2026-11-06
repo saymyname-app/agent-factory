@@ -111,22 +111,138 @@ class CodexTranscriptTest(unittest.TestCase):
         self.assertEqual(self.transcript().skill_base_dirs(), [])
 
     def test_a_write_refused_by_the_sandbox_is_seen_as_a_shell_call(self):
-        self.rollout(self.work, [*call("c2", 'await tools.exec_command({cmd:"echo trial > /repo/T.txt"})',
-                                       "/bin/bash: line 1: /repo/T.txt: Read-only file system\n"),
-                                 *call("c3", 'await tools.apply_patch("*** Begin Patch\\n*** Add File: /repo/W.txt\\n+trial\\n*** End Patch")',
-                                       "Script error:\nExit code: 1\nOutput:\nFailed to write file /repo/W.txt\n")])
+        self.rollout(self.work, [*call("c1", 'await tools.apply_patch("*** Begin Patch\\n*** Add File: /repo/TRIAL_WRITE.txt\\n+trial\\n*** End Patch")',
+                                       "Script error:\nExit code: 1\nOutput:\nFailed to write file /repo/TRIAL_WRITE.txt\n"),
+                                 *call("c2", 'await tools.exec_command({cmd:"echo trial > /repo/TRIAL_SHELL.txt"})',
+                                       "/bin/bash: line 1: /repo/TRIAL_SHELL.txt: Read-only file system\n"),
+                                 *call("c3", 'await tools.exec_command({cmd:"git -C /repo commit --allow-empty -m trial"})',
+                                       "fatal: Unable to create '/repo/.git/index.lock': Read-only file system\n"),
+                                 *call("c4", 'await tools.exec_command({cmd:"git -C /repo push origin HEAD:refs/heads/trial-push"})',
+                                       "remote rejected: unable to create temporary object directory\n")])
         calls = self.transcript().tool_calls()
-        self.assertEqual([c["tool"] for c in calls], ["Bash", "Write"])
-        self.assertIn("/repo/T.txt", calls[0]["input"]["command"])
-        self.assertIn("Read-only file system", calls[0]["result"])
-        self.assertIn("/repo/W.txt", calls[1]["input"]["file_path"])
+        self.assertEqual([c["tool"] for c in calls], ["Write", "Bash", "Bash", "Bash"])
         # codex-cli 0.155 says only « Failed to write file » when the sandbox refuses apply_patch.
         self.assertTrue(all(trial.write_refused(c) for c in calls))
+        attempts, failures = trial.read_only_attempts(self.transcript(), Path("/repo"))
+        self.assertEqual([attempt["gate"] for attempt in attempts], ["write-tool", "shell-write", "commit", "push"])
+        self.assertEqual(failures, [])
+
+    def test_a_combined_tool_call_does_not_turn_hidden_refusals_into_an_accepted_write(self):
+        code = ('try { await tools.exec_command({cmd:"echo trial > /repo/TRIAL_SHELL.txt"}); } catch {}\n'
+                'try { await tools.exec_command({cmd:"git -C /repo commit --allow-empty -m trial"}); } catch {}\n'
+                'try { await tools.exec_command({cmd:"git -C /repo push origin HEAD:refs/heads/trial"}); } catch {}\n'
+                'text("done");')
+        self.rollout(self.work, call("c4", code, "done"))
+        [observed] = self.transcript().tool_calls()
+        self.assertTrue(observed["composite"])
+        self.assertIsNone(trial.write_refused(observed))
+        attempts, failures = trial.read_only_attempts(self.transcript(), Path("/repo"))
+        self.assertIsNone(attempts[0]["refused"])
+        self.assertIn("protected actions were combined in a Codex tool call, so their refusals are not individually observable",
+                      failures)
+        self.assertNotIn("a write, commit or push was not refused", failures)
+        rendered = trial.render([{"role": "reviewer", "provider": "codex-readonly", "observed_at": "now",
+                                  "read_only": {"attempts": attempts, "unchanged": True}, "failures": failures}])
+        self.assertIn("NON OBSERVÉE", rendered)
+        self.assertNotIn("ACCEPTÉE", rendered)
 
     def test_a_rollout_older_than_the_trial_is_ignored(self):
         self.rollout(self.work, [message("assistant", "TRIAL-DONE-OLD")])
         self.since = time.time() + 60
         self.assertFalse(self.transcript().said("TRIAL-DONE-OLD"))
+
+
+class RecordingTest(unittest.TestCase):
+    def test_a_completed_provider_is_recorded_before_the_next_provider_starts(self):
+        class City:
+            def __init__(self, *_args):
+                pass
+
+            def build(self, *_args):
+                pass
+
+            def start(self):
+                pass
+
+            def stop(self):
+                pass
+
+        originals = {name: getattr(trial, name) for name in
+                     ("RECORD_FILE", "TrialCity", "load_roles", "distribution_problems",
+                      "declared_providers", "tool_versions", "trial_one")}
+        with tempfile.TemporaryDirectory() as tmp:
+            trial.RECORD_FILE = Path(tmp) / "record.json"
+            trial.TrialCity = City
+            trial.load_roles = lambda: {"roles": {"reviewer": {"agent": "delivery-reviewer"}}}
+            trial.distribution_problems = lambda _data: []
+            trial.declared_providers = lambda _agent: ["codex-readonly", "claude-readonly"]
+            trial.tool_versions = lambda _city: {"gc": "test"}
+
+            def run_one(_city, _data, role, provider):
+                if provider == "claude-readonly":
+                    raise trial.Refusal("later provider failed")
+                return {"role": role, "provider": provider, "passed": True, "failures": []}
+
+            trial.trial_one = run_one
+            try:
+                with self.assertRaisesRegex(trial.Refusal, "later provider failed"):
+                    trial.cmd_run(trial.argparse.Namespace(
+                        role=["reviewer"], provider=None, trial_dir=tmp, port=1, no_record=False))
+                record = json.loads(trial.RECORD_FILE.read_text())
+            finally:
+                for name, value in originals.items():
+                    setattr(trial, name, value)
+
+        self.assertEqual(list(record["trials"]), ["reviewer/codex-readonly"])
+        self.assertEqual(record["trials"]["reviewer/codex-readonly"]["versions"], {"gc": "test"})
+
+    def test_a_provider_filter_does_not_replace_another_providers_record(self):
+        class City:
+            def __init__(self, *_args):
+                pass
+
+            def build(self, *_args):
+                pass
+
+            def start(self):
+                pass
+
+            def stop(self):
+                pass
+
+        originals = {name: getattr(trial, name) for name in
+                     ("RECORD_FILE", "TrialCity", "load_roles", "distribution_problems",
+                      "declared_providers", "tool_versions", "trial_one")}
+        with tempfile.TemporaryDirectory() as tmp:
+            trial.RECORD_FILE = Path(tmp) / "record.json"
+            prior_claude = {"role": "reviewer", "provider": "claude-readonly", "passed": True}
+            trial.RECORD_FILE.write_text(json.dumps({
+                "contract": trial.RECORD_CONTRACT,
+                "trials": {"reviewer/claude-readonly": prior_claude},
+            }))
+            trial.TrialCity = City
+            trial.load_roles = lambda: {"roles": {"reviewer": {"agent": "delivery-reviewer"}}}
+            trial.distribution_problems = lambda _data: []
+            trial.declared_providers = lambda _agent: ["codex-readonly", "claude-readonly"]
+            trial.tool_versions = lambda _city: {"gc": "test"}
+            calls = []
+
+            def run_one(_city, _data, role, provider):
+                calls.append((role, provider))
+                return {"role": role, "provider": provider, "passed": True, "failures": []}
+
+            trial.trial_one = run_one
+            try:
+                result = trial.cmd_run(trial.argparse.Namespace(
+                    role=["reviewer"], provider="codex-readonly", trial_dir=tmp, port=1, no_record=False))
+                record = json.loads(trial.RECORD_FILE.read_text())
+            finally:
+                for name, value in originals.items():
+                    setattr(trial, name, value)
+
+        self.assertEqual(result, 0)
+        self.assertEqual(calls, [("reviewer", "codex-readonly")])
+        self.assertEqual(record["trials"]["reviewer/claude-readonly"], prior_claude)
 
 
 class CodexRestartTest(unittest.TestCase):
@@ -256,6 +372,41 @@ class CodexRestartTest(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("bwrap"), "bwrap is not installed")
 class SandboxTest(unittest.TestCase):
+    def test_the_trial_repository_refuses_shell_write_commit_and_push(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            work, repo, remote = home / "work", home / "repo", home / "remote.git"
+            work.mkdir()
+            subprocess.run(["git", "init", "--quiet", "--bare", str(remote)], check=True)
+            subprocess.run(["git", "init", "--quiet", "-b", "main", str(repo)], check=True)
+            (repo / "README.md").write_text("trial\n")
+            subprocess.run(["git", "-C", str(repo), "add", "README.md"], check=True)
+            subprocess.run(["git", "-C", str(repo), "-c", "user.name=trial", "-c",
+                            "user.email=trial@example.invalid", "commit", "--quiet", "-m", "seed"], check=True)
+            subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", str(remote)], check=True)
+            subprocess.run(["git", "-C", str(repo), "push", "--quiet", "origin", "main"], check=True)
+            def snapshot():
+                return [subprocess.run(command, check=True, text=True, capture_output=True).stdout.strip()
+                        for command in (["git", "-C", str(repo), "rev-parse", "HEAD"],
+                                        ["git", "-C", str(repo), "status", "--porcelain"],
+                                        ["git", "-C", str(repo), "for-each-ref"],
+                                        ["git", "-C", str(remote), "for-each-ref"])]
+
+            before = snapshot()
+            env = {"PATH": os.environ["PATH"], "HOME": str(home),
+                   "DELIVERY_ROLE_SANDBOX_EXEC": "/bin/sh"}
+            commands = [
+                f"echo trial > {repo}/TRIAL_SHELL.txt",
+                f"git -C {repo} -c user.name=trial -c user.email=trial@example.invalid commit --allow-empty -m trial",
+                f"git -C {repo} push origin HEAD:refs/heads/trial-push",
+            ]
+            results = [subprocess.run([str(ROOT / "bin" / "delivery-role-sandbox"), "-c", command],
+                                      env=env, cwd=work, capture_output=True, text=True, timeout=30)
+                       for command in commands]
+            self.assertTrue(all(result.returncode != 0 for result in results))
+            self.assertEqual(snapshot(), before)
+            self.assertFalse((repo / "TRIAL_SHELL.txt").exists())
+
     def test_the_user_skills_of_codex_are_hidden_from_a_read_only_role(self):
         # Codex reads ~/.agents/skills on top of the role's own copies: seen
         # on the first real trial, it listed tdd, codebase-design and

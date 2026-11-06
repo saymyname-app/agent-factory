@@ -152,7 +152,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   lance les trois décors résultat d'Essai derrière le proxy d'identité et
   tient leur suivi jetable. Le quatrième tient l'admission partagée des
   produits d'évaluation et refuse qu'une cité isolée lise les lancements, le
-  verrou ou les attestations de l'usine en service.
+  verrou ou les attestations de l'usine en service ; il tient aussi le
+  sous-montage des attestations en lecture seule quand leur état isolé vit
+  sous le parent inscriptible `$HOME/.cache`.
 - Occurrences : #566, #618, #641, #648, #656, #664, #665, #669, #671, #674,
   #675, #676, #680, #689, #690, #692, #699, #700, #714, #715 ; af-vf51g6 ;
   af-dtsy06 ; af-h6nyqc.

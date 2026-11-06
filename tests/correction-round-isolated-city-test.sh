@@ -285,7 +285,9 @@ stub stub-evaluator-inner <<'STUB'
 LOG="$TRIAL/evaluator.log"
 say() { echo "$(date -u +%H:%M:%S) ${GC_SESSION_NAME:-?} $*" >> "$LOG"; }
 while true; do
-  CLAIM=$(gc hook --claim --json 2>/dev/null)
+  CLAIM=$(gc hook --claim --json 2>&1)
+  CLAIM_RC=$?
+  say "claim GC_AGENT=${GC_AGENT:-?} GC_SESSION_NAME=${GC_SESSION_NAME:-?} GC_SESSION_ID=${GC_SESSION_ID:-?} BEADS_ACTOR=${BEADS_ACTOR:-?} rc=$CLAIM_RC result=$CLAIM"
   ACTION=$(printf '%s' "$CLAIM" | jq -r '.action // empty' 2>/dev/null)
   BEAD=$(printf '%s' "$CLAIM" | jq -r '.bead_id // empty' 2>/dev/null)
   if [ "$ACTION" != work ] || [ -z "$BEAD" ]; then sleep 3; continue; fi

@@ -523,11 +523,14 @@ skills du compte claude.ai, dont un autre `code-review`.
 ./bin/role-adoption-trial status                # chaque rôle × fournisseur déclaré : essai valide ou non
 ./bin/role-adoption-trial run                   # essai réel (~1 min par rôle, consomme du quota), écrit le relevé
 ./bin/role-adoption-trial run --role reviewer   # un seul rôle
+./bin/role-adoption-trial run --role reviewer --provider codex-readonly  # un seul couple rôle/fournisseur
 ./bin/role-adoption-trial verify-distribution   # les copies par rôle = la distribution, octet pour octet
 ```
 
 - **Relevé** : `config/role-adoption-trials.json`, versionné. Il se committe par
-  PR depuis un worktree ; ne jamais l'éditer à la main, relancer l'essai.
+  PR depuis un worktree ; ne jamais l'éditer à la main, relancer l'essai. Chaque
+  couple rôle/fournisseur est écrit dès qu'il finit : l'échec d'un fournisseur
+  suivant ne jette pas le relevé déjà produit.
 - **`check`** (lu par `bin/dispatch-door --role`) ne se fie pas au seul
   `passed` du relevé : il relit les lancements relevés et refuse, en nommant le
   skill, un relevé où un skill de revue hors du rôle s'est lancé, où le
@@ -560,6 +563,11 @@ skills du compte claude.ai, dont un autre `code-review`.
   `*-readonly`, lancé par `bin/delivery-role-sandbox` (Bubblewrap : tout en
   lecture seule sauf le répertoire de travail de la session, l'état du
   fournisseur, `.gc/` et `.beads/` ; aucun identifiant de push).
+  L'essai demande et observe exactement une fois, dans quatre appels distincts,
+  le refus de l'outil d'écriture, de l'écriture shell, du commit et du push. Un
+  appel Codex qui combine plusieurs gestes ou masque leurs erreurs est relevé
+  `NON OBSERVÉE` et refuse l'essai : sa sortie globale ne prouve aucun refus
+  individuel, même si le dépôt est resté inchangé.
 - **Dossier de l'essai** : `~/.local/share/af-role-trial` par défaut, effacé à
   chaque essai. Le garder court (chemins de sockets) et stable : Claude Code
   refuse de démarrer sans surveillance dans un dossier jamais approuvé ; Codex
