@@ -109,6 +109,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_an_evaluation_outage_resumes_once_after_its_linked_factory_repair_is_delivered`,
   `python3 tests/convoy-state-test.py ConvoyStateTest.test_migrate_repair_resume_accepts_only_the_exact_legacy_history_and_changes_only_the_last_cause`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_legacy_delivered_repair_at_the_unblocked_bound_is_migrated_and_sent_once`,
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_the_exact_delivered_C2b_release_becomes_one_native_repair_resume ConvoyAdvanceTest.test_the_C2b_release_rejects_nearby_state_and_incomplete_delivery_proof`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_malformed_legacy_resume_is_left_to_the_incident_door_without_crashing`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_factory_repair_is_taken_up_and_tested_before_its_resume_is_consumed_once`,
   `bash tests/factory-work-dispatch-test.sh`. Les courses réponse/retrait qui
@@ -126,7 +127,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   historique de `unblocked` refusait l'ancien arrêt d'évaluation avant de
   pouvoir convertir son dernier signal de réparation) ; af-wjhpx9 (une
   reprise `answered` ajoutée après cette conversion rendait de nouveau
-  l'historique illisible).
+  l'historique illisible) ; af-npz9v1.57 (l'entrée C2b déjà comptée et
+  parquée n'avait plus son lien de réparation après la livraison des deux
+  réparations qui permettaient sa reprise).
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
   contrôle : `criterion_already_green` reste au Planning Run ;
   `outcome_evaluation_no_result` et `outcome_evaluation_outage` ne repartent

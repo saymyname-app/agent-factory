@@ -476,6 +476,23 @@ durable consumption. A different ticket, parking time, merge, integration
 history, evidence or maintenance state does nothing. If D returns from a new
 red merge, the ordinary exhausted bound applies again.
 
+C2b has one equally bounded release (`af-npz9v1.57`). The ticket
+`af-ofz29f` was parked at `2026-11-05T06:48:34Z` after its already-counted
+third `evaluation_no_result` resume, recorded at `2026-11-05T06:48:15Z`
+with no launch for stop `2026-11-05T06:07:57Z` and integration tip
+`1c8287226d6db22e4e0a529eab3b7c756caf1ed6`. Its active technical-repair
+link had already been consumed. The pass therefore releases this occurrence
+only after both replacement proofs are structurally complete: `af-e0n71v`
+merged as `fbe2a2240f203e4591172d008176d3c2447d4be1`, and `af-wjhpx9` merged as
+`15cb8d36843661f00f6af5f7a66611f1ee7f6b23`, each with exact-head CI.
+It changes only that empty resume's cause to `repair_delivered`, removes the
+parking and launches the ordinary fresh-author resume. The total counter,
+older history, preserved stop, unfavorable verdicts and escalation records
+do not change; no answer is recorded for the operator. The launch on the
+relabeled entry is the durable single-use marker. A different ticket,
+parking, entry time, stop, integration reference, author session, prior
+launch or incomplete delivery proof does nothing.
+
 A ticket to resume that names no single known project, or when the
 settings have no `resume` entry, is listed under `refused` (exit 1) before
 anything is counted or written. A resume the door deferred is listed under
