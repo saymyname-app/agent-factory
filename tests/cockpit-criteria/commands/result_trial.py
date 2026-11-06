@@ -6,13 +6,22 @@ it.
 - `serve`: a dataset the profile declares, as it is or with what its result
   says of itself (`result`: its commit, the words of its answer…), written
   at a commit of its own in the tree of a `home_destination.LaunchTree`,
-  and the cockpit the launcher of the profile starts on it;
+  and the cockpit the launcher of the profile starts on it: the address the
+  operator reaches it at, the HTTPS address of the identity proxy in front
+  of it when its dataset carries one (`https_identity_proxy`, #781), as
+  the section « Accès » of GET /usine gives it;
+- `read_json`, `Operator`: what the cockpit serves, and the gestures of the
+  operator as the browser sends them (pour_moi.Operator), at that address:
+  through the identity proxy, as the member of the tailnet the operator is,
+  when it is an HTTPS address;
 - `walk`: the page the launched cockpit serves, walked in a headless
   Chromium behind the identity proxy of B (pour_moi), as the walk of B does
   it, with the choices a judgement needs besides -- a radio button, an
   option of a list -- and what the page leaves behind it: the addresses
   the tabs it opened went to, as the proxy saw them, the texts it copied
-  for the session (result_walk.js);
+  for the session (result_walk.js). At an HTTPS address, the browser goes
+  to the identity proxy in front of the cockpit through that proxy of B,
+  which ends its tunnel and says who connects;
 - `result_of`: the chantier whose result the cockpit serves at
   GET /api/projects, and that result;
 - `product_text`: what the address a tab was opened on answers, once it
@@ -26,11 +35,14 @@ where the cockpit serves it.
 from __future__ import annotations
 
 import html
+import http.client
 import json
 import os
 import re
 import shutil
 import signal
+import socketserver
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -45,8 +57,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pour_moi  # noqa: E402
 from home_destination import COLOUR_SCHEMES, PROFILE, find_browser, git  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "fixtures" / "cockpit" / "synthetic-city"))
+import identity_proxy  # noqa: E402
+
 # The datasets this file writes are named after it, numbered.
 SERVED = "a2-result"
+# The HTTPS address of the identity proxy in front of a launch, as the
+# section « Accès » of GET /usine gives it.
+SECURE_ADDRESS = re.compile(r"https://127\.0\.0\.1:\d+")
+# The certificate of the identity proxy is the launch's own, made for the
+# trial: the operator's client trusts it as it is.
+TRUSTED = ssl._create_unverified_context()
 
 
 def serve(tree, base: str, result: dict | None = None) -> str:
@@ -69,12 +90,67 @@ def serve(tree, base: str, result: dict | None = None) -> str:
     (repo / PROFILE).write_text(json.dumps(profile, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     git(repo, "add", "--all")
     git(repo, "commit", "--quiet", "--message", f"{name}: {base} with its result")
-    return tree.launch(name, git(repo, "rev-parse", "HEAD"))
+    address = tree.launch(name, git(repo, "rev-parse", "HEAD"))
+    if not dataset.get("https_identity_proxy"):
+        return address
+    with urllib.request.urlopen(address + "/usine", timeout=20) as response:
+        secure = set(SECURE_ADDRESS.findall(response.read().decode("utf-8")))
+    assert len(secure) == 1, f"GET /usine of {name} gives not one HTTPS address: {sorted(secure)}"
+    return secure.pop()
+
+
+def _open(address: str, path: str, *, data: bytes | None = None, headers: dict | None = None,
+          timeout: float = 20):
+    """`path` of the cockpit at `address`, asked as the operator: through
+    the identity proxy, as the member of the tailnet the operator is, when
+    `address` is HTTPS."""
+    sent = dict(headers or {})
+    secure = address.startswith("https://")
+    if secure:
+        sent[identity_proxy.IDENTITY] = pour_moi.LOGIN
+    request = urllib.request.Request(address + path, data=data, headers=sent,
+                                     method="POST" if data is not None else "GET")
+    return urllib.request.urlopen(request, timeout=timeout, context=TRUSTED if secure else None)
 
 
 def read_json(address: str, path: str) -> dict:
-    with urllib.request.urlopen(address + path, timeout=20) as response:
+    with _open(address, path) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+class Operator(pour_moi.Operator):
+    """The operator's gestures as the browser sends them from a page the
+    cockpit served at `address` (pour_moi.Operator): its session cookie,
+    its Origin -- `address` -- and, at an HTTPS address, through the
+    identity proxy in front of the cockpit."""
+
+    def __init__(self, address: str):
+        if not address.startswith("https://"):
+            super().__init__(address)
+            return
+        self.address = address
+        with _open(address, "/") as response:
+            self.cookie = (response.headers.get("Set-Cookie") or "").split(";", 1)[0]
+
+    def gesture(self, name: str, payload: dict) -> pour_moi.Answer:
+        if not self.address.startswith("https://"):
+            return super().gesture(name, payload)
+        started = time.monotonic()
+        try:
+            with _open(self.address, f"/api/actions/{name}", data=json.dumps(payload).encode("utf-8"),
+                       headers={"Content-Type": "application/json", "Origin": self.address,
+                                "Cookie": self.cookie},
+                       timeout=pour_moi.ANSWER_SECONDS) as response:
+                status, raw = response.status, response.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as answer:
+            status, raw = answer.code, answer.read().decode("utf-8", errors="replace")
+        except (urllib.error.URLError, ConnectionError, TimeoutError, OSError) as broke:
+            return pour_moi.Answer(seconds=time.monotonic() - started, broken=f"{type(broke).__name__}: {broke}")
+        try:
+            body = json.loads(raw)
+        except ValueError:
+            body = None
+        return pour_moi.Answer(status, body, raw, time.monotonic() - started)
 
 
 def result_of(address: str) -> tuple[str, dict]:
@@ -127,19 +203,58 @@ WALK_RE = re.compile(r'<pre id="walk">(.*?)</pre>', re.S)
 FRAME_HEIGHT = 900
 
 
+_tunnel_context: ssl.SSLContext | None = None
+
+
+def _tunnel() -> ssl.SSLContext:
+    """What the proxy of the walk ends the browser's HTTPS tunnels with: a
+    certificate for 127.0.0.1 made for this process, which the browser of
+    the walk is told to accept."""
+    global _tunnel_context
+    if _tunnel_context is None:
+        cert, key = identity_proxy.certificate(Path(tempfile.mkdtemp(prefix="cockpit-result-tunnel-")))
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(cert, key)
+        _tunnel_context = context
+    return _tunnel_context
+
+
 class _Walk(pour_moi._Forward):
     """The identity proxy of B, which serves this walking page besides, and
     sees each tab of the browser: a page the browser loads as a document of
     its own, not in the frame of the walk. `opened`: their addresses, for
-    the walk under way."""
+    the walk under way. The browser's HTTPS tunnel to the identity proxy in
+    front of a cockpit ends here: what it asks in it goes on to that proxy,
+    from the member of the tailnet the operator is, its Origin as the
+    browser sent it."""
 
     opened: list[str] = []
+    tunnel = ""
+
+    def do_CONNECT(self) -> None:  # noqa: N802
+        self.send_response(200, "Connection Established")
+        self.end_headers()
+        try:
+            tls = _tunnel().wrap_socket(self.connection, server_side=True)
+        except (ssl.SSLError, OSError):
+            self.close_connection = True
+            return
+        self.connection, self.tunnel = tls, self.path
+        self.rfile = tls.makefile("rb")
+        self.wfile = socketserver._SocketWriter(tls)
+        self.close_connection = False
+
+    def finish(self) -> None:
+        super().finish()
+        if self.tunnel:
+            self.connection.close()
 
     def _forward(self) -> None:
         url = urllib.parse.urlsplit(self.path)
+        asked = f"https://{self.tunnel}{self.path}" if self.tunnel else self.path
         if url.path != WALK_PATH and self.headers.get("Sec-Fetch-Dest") == "document":
-            _Walk.opened.append(self.path)
-        if url.hostname and url.path == WALK_PATH:
+            _Walk.opened.append(asked)
+        if (url.hostname or self.tunnel) and url.path == WALK_PATH:
             body = (WALK_PAGE % WALK_SCRIPT).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -148,7 +263,36 @@ class _Walk(pour_moi._Forward):
             self.end_headers()
             self.wfile.write(body)
             return
+        if self.tunnel:
+            self._through_identity_proxy()
+            return
         super()._forward()
+
+    def _through_identity_proxy(self) -> None:
+        length = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(length) if length else None
+        headers = {key: value for key, value in self.headers.items()
+                   if key.lower() not in ("proxy-connection", "connection", "keep-alive")}
+        headers[identity_proxy.IDENTITY] = pour_moi.LOGIN
+        host, _, port = self.tunnel.rpartition(":")
+        connection = http.client.HTTPSConnection(host, int(port), timeout=pour_moi.ANSWER_SECONDS, context=TRUSTED)
+        try:
+            connection.request(self.command, self.path, body=body, headers=headers)
+            response = connection.getresponse()
+            data = response.read()
+        except (OSError, http.client.HTTPException) as broke:
+            self.send_error(502, f"the identity proxy did not answer: {broke}")
+            return
+        finally:
+            connection.close()
+        self.send_response(response.status, response.reason)
+        for key, value in response.getheaders():
+            if key.lower() not in ("transfer-encoding", "connection", "content-length"):
+                self.send_header(key, value)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(data)
 
     do_GET = do_POST = _forward
 
@@ -165,7 +309,9 @@ def walk(address: str, steps: list[dict], *, width: int = 1440, theme: str = "da
     first step whose control is not found. The page as the walk left it
     (`last`) has besides `opened`: the address of each real tab the browser
     opened during the walk, as the proxy saw it asked. `blocked`: the
-    browser refuses every tab. `seconds` bounds the browser."""
+    browser refuses every tab. `seconds` bounds the browser. At an HTTPS
+    `address`, the identity proxy in front of the cockpit, the browser
+    accepts the certificate the proxy of the walk ends its tunnel with."""
     proxy = pour_moi._served("result-walk", _Walk)
     _Walk.opened = []
     query = urllib.parse.urlencode({
@@ -176,6 +322,7 @@ def walk(address: str, steps: list[dict], *, width: int = 1440, theme: str = "da
     argv = [
         find_browser(), "--headless", "--disable-gpu", "--hide-scrollbars", f"--user-data-dir={work}/profile",
         f"--proxy-server=http://127.0.0.1:{proxy}", "--proxy-bypass-list=<-loopback>",
+        *(["--ignore-certificate-errors"] if address.startswith("https://") else []),
         f"--window-size={width + 20},{FRAME_HEIGHT + 20}",
         f"--blink-settings=preferredColorScheme={COLOUR_SCHEMES[theme]}",
         f"--virtual-time-budget={seconds * 1000}", "--dump-dom", f"{address}{WALK_PATH}?{query}",

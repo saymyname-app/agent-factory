@@ -10,7 +10,9 @@ bin/project-launch, on a dataset of the profile -- as it is, or with what
 its result says of itself (`result`) at a commit of its own -- and walks the
 page it serves at GET / in a headless Chromium (result_trial.walk): a tab the
 page opens is a real tab of the browser, whose address the proxy in front of
-the browser sees it ask.
+the browser sees it ask. These three datasets put the identity proxy in
+front of the cockpit (#781): the page is walked, read and its gestures sent
+through it, at the HTTPS address the cockpit gives.
 
 - result-ready: Essai opens a new tab on the product launched at the
   revision of the dossier, by the isolated recipe of the project. The
@@ -44,8 +46,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from home_destination import LaunchTree  # noqa: E402
-from pour_moi import Operator  # noqa: E402
-from result_trial import controls, last, product_text, result_of, serve, shown, walk  # noqa: E402
+from result_trial import Operator, controls, last, product_text, result_of, serve, shown, walk  # noqa: E402
 
 # The sentence of the first dataset of the profile, and what the revision of
 # the dossier says instead.
