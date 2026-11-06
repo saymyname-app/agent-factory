@@ -2156,7 +2156,7 @@ def park_lifts_record(raw: Any) -> list[dict[str, Any]]:
         raise Refusal(f"parcages levés mal formés : {entries!r}")
     for entry in entries:
         if not isinstance(entry, dict) \
-                or set(entry) - {"taken", "proven_by_test", "repairs", "exit_at"} != {"cause", "detail", "parked_at", "request", "option", "resumes", "at"}:
+                or set(entry) - {"taken", "proven_by_test", "repairs", "exit_at", "reset_cause"} != {"cause", "detail", "parked_at", "request", "option", "resumes", "at"}:
             raise Refusal(f"parcage levé mal formé : {entry!r}")
         if "proven_by_test" in entry:
             proven = entry["proven_by_test"]
@@ -2185,6 +2185,11 @@ def park_lifts_record(raw: Any) -> list[dict[str, Any]]:
                 raise Refusal(f"réparations du parcage levé mal formées : {repairs!r}")
         elif "exit_at" in entry:
             raise Refusal(f"sortie de demande sans réparations liées : {entry['exit_at']!r}")
+        if "reset_cause" in entry:
+            if entry["cause"] != PARK_EXHAUSTED or entry["option"] is not None or "repairs" in entry \
+                    or "taken" not in entry:
+                raise Refusal(f"cause rendue par code incohérente : {entry['reset_cause']!r}")
+            one_of(entry["reset_cause"], BOUNDED_RESUME_CAUSES, "cause rendue par code")
         counter_value(entry["resumes"], "resumes")
     return entries
 
@@ -5368,6 +5373,11 @@ def cmd_lift_park(args: argparse.Namespace) -> int:
         raise Refusal(f"bead de la demande absent ou mal formé : {args.request!r} (--request)")
     option = option_letter(args.option) if args.option is not None else None
     repairs = list(args.repair or [])
+    reset_cause = one_of(args.reset_cause, BOUNDED_RESUME_CAUSES, "cause rendue par code") \
+        if args.reset_cause is not None else None
+    if reset_cause is not None and (park["cause"] != PARK_EXHAUSTED or option is not None or repairs):
+        raise Refusal(
+            "--reset-cause ne vaut que pour un parcage resumes_exhausted levé par code, sans option ni réparation liée")
     linked_record = None
     if repairs:
         linked_record = technical_repairs_record(metadata[KEY_TECHNICAL_REPAIRS]) \
@@ -5393,17 +5403,26 @@ def cmd_lift_park(args: argparse.Namespace) -> int:
     resumes = counter_value(metadata.get(COUNTER_PREFIX + "resumes"), "resumes")
     taken = resumes_taken(metadata)
     if park["cause"] == PARK_EXHAUSTED and option is None:
-        # No answer: the exhaustion no longer holds under the bounds of now
-        # (af-npz9v1.41). The bounds keep counting from where they did: the
-        # lift gives no resume back.
-        if resumes_left(metadata) == 0:
-            raise Refusal(
-                f"reprises épuisées : le ticket {args.ticket} a pris {exhausted_causes(metadata)} ; "
-                "seule la réponse de la demande groupée (--option) le lève")
         exhausted = [lift for lift in lifts if lift["cause"] == PARK_EXHAUSTED]
-        taken = taken_at_lift(exhausted[-1], metadata) if exhausted else dict.fromkeys(BOUNDED_RESUME_CAUSES, 0)
+        before = taken_at_lift(exhausted[-1], metadata) if exhausted else dict.fromkeys(BOUNDED_RESUME_CAUSES, 0)
+        if reset_cause is not None:
+            # A proven code repair gives one cause a fresh window. Every
+            # other cause keeps the baseline of the preceding lift.
+            current = taken
+            taken = before
+            taken[reset_cause] = current[reset_cause]
+        else:
+            # No answer: the exhaustion no longer holds under the bounds of
+            # now (af-npz9v1.41). The lift gives no resume back.
+            if resumes_left(metadata) == 0:
+                raise Refusal(
+                    f"reprises épuisées : le ticket {args.ticket} a pris {exhausted_causes(metadata)} ; "
+                    "seule la réponse de la demande groupée (--option) le lève")
+            taken = before
     lift = {"cause": park["cause"], "detail": park["detail"], "parked_at": park["at"], "request": args.request,
             "option": option, "resumes": resumes, "taken": taken, "at": now()}
+    if reset_cause is not None:
+        lift["reset_cause"] = reset_cause
     if repairs:
         lift["repairs"] = repairs
         lift["exit_at"] = linked_record["exit_at"]
@@ -7804,6 +7823,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--request")
     p.add_argument("--option")
     p.add_argument("--repair", action="append", default=[])
+    p.add_argument("--reset-cause")
     command("migrate-repair-resume", cmd_migrate_repair_resume)
     p = command("open-resume", cmd_open_resume)
     p.add_argument("--cause")

@@ -3468,6 +3468,23 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertEqual((2, 2, 2), (ticket["resumes_left"], ticket["resumes_left_by_cause"]["interrupted"],
                                      ticket["resumes_left_by_cause"]["commit_after_verdict"]))
 
+    def test_a_code_owned_lift_gives_back_only_the_named_resume_cause(self):
+        self.interrupted_ticket()
+        for ref in ("a", "b"):
+            self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", ref)
+        for _ in range(3):
+            self.ok("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
+        self.ok("park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "3 commits après verdict")
+
+        self.ok("lift-park", CONVOY, T1, "--request", "fx-repair", "--reset-cause", "commit_after_verdict")
+
+        ticket = self.ticket(self.show(), T1)
+        self.assertIsNone(ticket["park"])
+        self.assertEqual(5, ticket["counters"]["resumes"])
+        self.assertEqual((3, 1), (ticket["resumes_left_by_cause"]["commit_after_verdict"],
+                                  ticket["resumes_left_by_cause"]["interrupted"]))
+        self.assertEqual("commit_after_verdict", ticket["park_lifts"][-1]["reset_cause"])
+
     def test_a_lift_recorded_before_the_bounds_per_cause_still_gives_the_resumes_back(self):
         # A lift written before ADR-0030 L2 carries no per-cause count: what
         # was taken before it is read from the entries older than the lift.

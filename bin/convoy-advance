@@ -388,6 +388,20 @@ C2B_RELEASE = {
     "migration_repo": "saymyname-app/agent-factory",
 }
 C2B_RELEASE_TEST_ENV = "CONVOY_ADVANCE_TEST_C2B_RELEASE"
+# af-npz9v1.58: the repaired C2b result finished at a new tip, invalidated
+# its old judgement, then exhausted commit_after_verdict before the gates.
+# Release only that recorded occurrence once this maintenance is delivered.
+C2B_RESULT_RELEASE = {
+    "ticket": "af-ofz29f",
+    "tip": "4ddad77361e0970c03e55829d97e871f86b30722",
+    "exit_at": "2026-11-06T20:57:26Z",
+    "parked_at": "2026-11-06T20:58:20Z",
+    "resume_at": "2026-11-05T06:48:15Z",
+    "resume_bead": "af-rnf0i6",
+    "invalidated_at": "2026-11-06T20:57:37Z",
+    "repair_bead": "af-npz9v1.58",
+}
+C2B_RESULT_RELEASE_TEST_ENV = "CONVOY_ADVANCE_TEST_C2B_RESULT_RELEASE"
 # The resume that lifts that stop when every change since the freeze is the
 # base's the branch merged, not the ticket's (af-npz9v1.39): no amendment
 # was the ticket's to take, so no answer of the operator is asked.
@@ -400,6 +414,7 @@ STAGE_REMOVED = "stage_removed"
 REMOVED_STAGE_STOPS = ("test_review_refused", "test_review_no_result")
 # Spec §8, K: a ticket out of resumes is parked for this cause (bin/convoy-state).
 PARK_EXHAUSTED = "resumes_exhausted"
+COMMIT_AFTER_VERDICT = "commit_after_verdict"
 # The words of the operator for each cause of parking.
 PARK_CAUSES = {PARK_EXHAUSTED: "reprises épuisées", "operator_request": "demande opérateur",
                "planning_exception": "Planning Exception"}
@@ -1076,6 +1091,19 @@ def c2b_release_authorization() -> dict[str, str]:
         and all(isinstance(value, str) and value for value in candidate.values()) else {}
 
 
+def c2b_result_release_authorization() -> dict[str, str]:
+    """The fixed repaired C2b result; synthetic trackers may replace ids."""
+    raw = os.environ.get(C2B_RESULT_RELEASE_TEST_ENV) if os.environ.get("CONVOY_STATE_FAKE_TRACKER") else None
+    if raw is None:
+        return C2B_RESULT_RELEASE
+    try:
+        candidate = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return candidate if isinstance(candidate, dict) and set(candidate) == set(C2B_RESULT_RELEASE) \
+        and all(isinstance(value, str) and value for value in candidate.values()) else {}
+
+
 def metadata_record(bead: dict[str, Any], key: str) -> dict[str, Any]:
     raw = (bead.get("metadata") or {}).get(key)
     try:
@@ -1210,6 +1238,50 @@ def release_exact_c2b_parking(convoy: Convoy, ticket: dict[str, Any]) -> list[st
                 "--set-metadata", f"gc.flow.resume={json.dumps(resume, ensure_ascii=False)}",
                 "--unset-metadata", "gc.flow.park"]), f"gc bd update {ticket['id']}")
     return sorted(affected)
+
+
+def exact_c2b_result_release_state(ticket: dict[str, Any]) -> bool:
+    """Whether only C2b's repaired result still waits behind its bound."""
+    authorization = c2b_result_release_authorization()
+    if ticket.get("id") != authorization.get("ticket") or ticket.get("status") != "in_progress" \
+            or ticket.get("stop") is not None or ticket.get("technical_repairs") is not None:
+        return False
+    park, exit_record = ticket.get("park"), ticket.get("exit")
+    if not isinstance(park, dict) or (park.get("cause"), park.get("origin"), park.get("at")) != (
+            PARK_EXHAUSTED, ticket["id"], authorization["parked_at"]):
+        return False
+    if not isinstance(exit_record, dict) or (exit_record.get("exit"), exit_record.get("at"), ticket.get("tip")) != (
+            "finished", authorization["exit_at"], authorization["tip"]):
+        return False
+    entries = (ticket.get("resume") or {}).get("entries") or []
+    last = entries[-1] if entries and isinstance(entries[-1], dict) else {}
+    launches = last.get("launches") or []
+    if (last.get("at"), last.get("cause"), len(launches)) != (
+            authorization["resume_at"], REPAIR_DELIVERED, 1) \
+            or launches[0].get("bead") != authorization["resume_bead"]:
+        return False
+    left = ticket.get("resumes_left_by_cause") or {}
+    if (ticket.get("counters") or {}).get("resumes") != 6 or ticket.get("resumes_left") != 0 \
+            or left.get(COMMIT_AFTER_VERDICT) != 0 or ticket.get("park_lifts") not in (None, []):
+        return False
+    verdict = ((ticket.get("verdicts") or {}).get("code_review") or {}).get("invalidated") or {}
+    if (verdict.get("at"), verdict.get("tip")) != (
+            authorization["invalidated_at"], authorization["tip"]):
+        return False
+    if any((ticket.get(kind) or {}).get("request") for kind in ("code_review", "evaluation")):
+        return False
+    repair = read_bead(authorization["repair_bead"])
+    readiness = delivery_readiness(repair)
+    return bool(readiness["ready"] and readiness["pr_backed"]
+                and (repair.get("metadata") or {}).get("merged_target") == "main")
+
+
+def release_exact_c2b_result(convoy: Convoy, ticket: dict[str, Any]) -> list[str]:
+    """Lift that result through the native record, resetting only its cause."""
+    authorization = c2b_result_release_authorization()
+    answer = state_write("lift-park", convoy.id, ticket["id"], "--request", authorization["repair_bead"],
+                         "--reset-cause", COMMIT_AFTER_VERDICT)
+    return answer["lifted"]
 
 
 def repairs_missing_from_integration(convoy: Convoy) -> dict[str, str]:
@@ -1684,6 +1756,19 @@ def settle_lifts(convoy: Convoy, out: dict[str, Any]) -> None:
             out["lifted"].append({"id": ticket["id"], "option": None,
                                   "request": authorization["repair_bead"], "lifted": lifted,
                                   "release": "repair_delivered_once"})
+            convoy.load()
+        except Refusal as exc:
+            out["refused"].append({"id": ticket["id"], "reason": str(exc)})
+        break
+    for ticket in convoy.tickets:
+        if not exact_c2b_result_release_state(ticket):
+            continue
+        try:
+            authorization = c2b_result_release_authorization()
+            lifted = release_exact_c2b_result(convoy, ticket)
+            out["lifted"].append({"id": ticket["id"], "option": None,
+                                  "request": authorization["repair_bead"], "lifted": lifted,
+                                  "release": "c2b_result_once"})
             convoy.load()
         except Refusal as exc:
             out["refused"].append({"id": ticket["id"], "reason": str(exc)})

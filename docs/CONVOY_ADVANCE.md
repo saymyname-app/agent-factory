@@ -309,11 +309,13 @@ the parking only):
 | `resumes_exhausted` | option `a` of the convoy's grouped request (below), for the tickets that request names as lifted; or, without an answer, the ticket has resumes left under the bounds of now (`resumes_left` above 0): a parking left by a bound that no longer holds, such as the one an answered resume took before af-npz9v1.41. That lift gives no resume back |
 
 The lift is `bin/convoy-state lift-park <convoy> <ticket> --request <bead>
-[--option <letter> | --repair <bead> ...]`: the parking is removed from the ticket and from those
+[--option <letter> | --repair <bead> ... | --reset-cause <cause>]`: the parking is removed from the ticket and from those
 parked behind it — a ticket that still waits for another parked ticket is
 parked behind that one instead — and kept on the ticket under `park_lifts`.
-An exhausted ticket takes its resumes again, three per cause, counted from
-the lift; the counter itself is never reset. No hand is put on a ticket.
+An answered exhausted ticket takes its resumes again, three per cause,
+counted from the lift. A proven code repair can instead reset only the cause
+it names; the lift records `reset_cause` and keeps every other cause's prior
+baseline. The counter itself is never reset. No hand is put on a ticket.
 
 **2. It parks the ticket that is out of resumes.** A ticket at work (started
 through the door, not closed, neither parked nor stopped) whose
@@ -492,6 +494,21 @@ do not change; no answer is recorded for the operator. The launch on the
 relabeled entry is the durable single-use marker. A different ticket,
 parking, entry time, stop, integration reference, author session, prior
 launch or incomplete delivery proof does nothing.
+
+The repaired result of that same C2b has one final code-owned release
+(`af-npz9v1.58`), still an occurrence rather than a general rule. The ticket
+finished at `4ddad77361e0970c03e55829d97e871f86b30722` on
+`2026-11-06T20:57:26Z`; its former code-review verdict was invalidated on
+`2026-11-06T20:57:37Z`, then it was parked at `2026-11-06T20:58:20Z` when
+`commit_after_verdict` reached its bound before the review and evaluation
+gates. Once `af-npz9v1.58` has structural PR+CI delivery proof, the pass
+uses `lift-park --reset-cause commit_after_verdict`: the native `park_lifts`
+record gives that cause one fresh window while retaining the raw counter `6`,
+the resume history and every other cause's consumed budget. It opens no
+author resume and records no operator answer; the same pass opens the code
+review and Ticket Evaluation at `4ddad773`. A different tip, exit, parking,
+last repair launch, invalidation time or incomplete maintenance delivery
+does nothing.
 
 A ticket to resume that names no single known project, or when the
 settings have no `resume` entry, is listed under `refused` (exit 1) before
