@@ -68,6 +68,8 @@ RETURNED_RELEASE_EVIDENCE = "sha256:46fe2ee17aa730ba261b6a8bd940f17d1c3cb7eb0a66
 C2B_RELEASE_ENV = "CONVOY_ADVANCE_TEST_C2B_RELEASE"
 C2B_RELEASE_REPAIR = "fx-c2b-repair"
 C2B_RELEASE_MIGRATION = "fx-c2b-migration"
+C2B_RESULT_RELEASE_ENV = "CONVOY_ADVANCE_TEST_C2B_RESULT_RELEASE"
+C2B_RESULT_RELEASE_REPAIR = "fx-c58"
 
 
 def delivered(number, head, merge):
@@ -239,6 +241,74 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
             "migration_bead": C2B_RELEASE_MIGRATION,
             "migration_commit": "7" * 40,
             "migration_repo": "example/factory",
+        }
+
+    def exact_c2b_result_release(self):
+        """The repaired C2b result parked before its fresh judgements."""
+        authorization = self.exact_c2b_release()
+        self.advance(CONVOY, env={**self.env, C2B_RELEASE_ENV: json.dumps(authorization)})
+
+        self.env["EVIDENCE_STORE_DIR"] = str(self.tmp / "store")
+        self.env["EVIDENCE_PACK_DIR"] = str(self.tmp / "packs")
+        descriptor = json.loads((ROOT / "tests" / "fixtures" / "delivery-fixture-city" / "descriptor.json").read_text())
+        descriptor["rigs"] = ["fx-rig"]
+        descriptor["stacks"] = {"fx-rig": ["fixture-stack"]}
+        descriptor["launch"]["regression_command"] = "true"
+        (self.root / "config" / "project-descriptors").mkdir(parents=True)
+        (self.root / "config" / "project-descriptors" / "fx.json").write_text(json.dumps(descriptor))
+        (self.root / ".gitignore").write_text("config/\n")
+        shutil.copytree(ROOT / first.FIXTURE, self.root / first.FIXTURE)
+        self.run_ok(first.INTEGRATION_TOOL, "open", CONVOY, "--repo", self.root, "--protected", "main")
+        self.code_reviewed("silent")
+        self.evaluated()
+
+        self.taken(T1, "auteur-c2b-result")
+        self.git("checkout", "-q", f"ticket/{T1}")
+        (self.root / "c2b.txt").write_text("repaired C2b result\n")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "repair C2b result")
+        tip = self.git("rev-parse", "HEAD")
+        base = self.git("rev-parse", "main")
+        self.git("checkout", "-q", "--detach", "main")
+        first.ticket_proofs.finish(
+            self.env, self.root, CONVOY, T1, tip, base, f"ticket/{T1}",
+            sections=dict.fromkeys(("done", "deviations", "not_done", "out_of_ticket"), "aucun"),
+        )
+        self.run_ok(STATE, "invalidate-verdicts", CONVOY, T1, "--tip", tip,
+                    "--kind", "code_review", "--kind", "evaluation")
+        self.run_ok(STATE, "park", CONVOY, T1, "--cause", "resumes_exhausted",
+                    "--detail", "reprises épuisées pour la cause commit_after_verdict")
+
+        state = self.tracker_state()
+        metadata = state["beads"][T1]["metadata"]
+        exit_record = json.loads(metadata["gc.flow.exit"])
+        exit_record["at"] = "2026-11-06T20:57:26Z"
+        metadata["gc.flow.exit"] = json.dumps(exit_record)
+        resume = json.loads(metadata["gc.flow.resume"])
+        resume["entries"][-1]["launches"][0]["at"] = "2026-11-05T06:49:00Z"
+        metadata["gc.flow.resume"] = json.dumps(resume)
+        verdict = json.loads(metadata["gc.flow.verdict.code_review"])
+        verdict["invalidated"]["at"] = "2026-11-06T20:57:37Z"
+        metadata["gc.flow.verdict.code_review"] = json.dumps(verdict)
+        park = json.loads(metadata["gc.flow.park"])
+        park["at"] = "2026-11-06T20:58:20Z"
+        metadata["gc.flow.park"] = json.dumps(park)
+        state["beads"][T3]["metadata"]["gc.flow.park"] = json.dumps(park)
+        state["beads"][C2B_RESULT_RELEASE_REPAIR] = {
+            "title": "release repaired C2b result", "status": "closed", "issue_type": "bug",
+            "labels": ["maintenance"], "metadata": delivered(818, "8" * 40, "9" * 40),
+        }
+        self.tracker.write_text(json.dumps(state))
+        self.write_log.write_text("")
+        return {
+            "ticket": T1,
+            "tip": tip,
+            "exit_at": exit_record["at"],
+            "parked_at": park["at"],
+            "resume_at": resume["entries"][-1]["at"],
+            "resume_bead": resume["entries"][-1]["launches"][0]["bead"],
+            "invalidated_at": verdict["invalidated"]["at"],
+            "repair_bead": C2B_RESULT_RELEASE_REPAIR,
         }
 
     def test_a_pass_sends_an_interrupted_ticket_to_a_fresh_author_session_and_counts_the_resume(self):
@@ -1354,6 +1424,90 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
                 self.assertEqual([], self.of(answer, "resumed"), name)
                 self.assertEqual("resumes_exhausted", self.park_of(T1)["cause"], name)
                 self.assertEqual([], self.resume_launches(), name)
+
+    def test_the_repaired_C2b_result_is_judged_without_another_author_resume(self):
+        authorization = self.exact_c2b_result_release()
+        env = {**self.env, C2B_RESULT_RELEASE_ENV: json.dumps(authorization)}
+        before = self.bead(T1)["metadata"]
+        before_resume = json.loads(before["gc.flow.resume"])
+        before_decisions = {key: value for key, value in before.items()
+                            if key.startswith("gc.escalation_response_") or key == "gc.needs_benjamin"}
+
+        answer = self.advance(CONVOY, env=env)
+
+        [lifted] = self.of(answer, "lifted")
+        self.assertEqual((T1, None, C2B_RESULT_RELEASE_REPAIR, [T1, T3], "c2b_result_once"),
+                         (lifted["id"], lifted["option"], lifted["request"], lifted["lifted"], lifted["release"]))
+        self.assertEqual([], self.of(answer, "resumed"))
+        self.assertEqual([], self.resume_launches())
+        self.assertEqual((None, None), (self.park_of(T1), self.park_of(T3)))
+        after = self.bead(T1)["metadata"]
+        self.assertEqual(6, after["gc.flow.counter.resumes"])
+        self.assertEqual(before_resume, json.loads(after["gc.flow.resume"]))
+        shown = self.shown_state(T1)
+        self.assertEqual(3, shown["resumes_left_by_cause"]["commit_after_verdict"])
+        self.assertEqual(1, shown["resumes_left_by_cause"]["evaluation_no_result"])
+        self.assertEqual(2, shown["resumes_left_by_cause"]["repair_delivered"])
+        self.assertEqual((C2B_RESULT_RELEASE_REPAIR, None, "commit_after_verdict"),
+                         tuple(shown["park_lifts"][-1][key] for key in ("request", "option", "reset_cause")))
+        self.assertEqual(before_decisions, {key: value for key, value in after.items()
+                                            if key.startswith("gc.escalation_response_")
+                                            or key == "gc.needs_benjamin"})
+        self.assertEqual([T1], [entry["ticket"] for entry in self.code_review_of(answer)["launched"]])
+        self.assertEqual([T1], [entry["ticket"] for entry in self.evaluation_of(answer)["started"]])
+
+        again = self.advance(CONVOY, env=env)
+
+        self.assertEqual(([], [], 1),
+                         (self.of(again, "lifted"), self.of(again, "resumed"), len(self.code_review_launches())))
+        self.assertEqual({}, self.evaluation_of(again))
+
+    def test_the_repaired_C2b_result_release_rejects_nearby_state_and_incomplete_delivery(self):
+        authorization = self.exact_c2b_result_release()
+        seeded = self.tracker.read_text()
+
+        def wrong_tip(state, auth):
+            auth["tip"] = "0" * 40
+
+        def wrong_exit(state, auth):
+            auth["exit_at"] = "2000-01-01T00:00:00Z"
+
+        def wrong_park(state, auth):
+            auth["parked_at"] = "2000-01-01T00:00:00Z"
+
+        def wrong_resume(state, auth):
+            auth["resume_at"] = "2000-01-01T00:00:00Z"
+
+        def wrong_launch(state, auth):
+            auth["resume_bead"] = "fx-other"
+
+        def wrong_invalidation(state, auth):
+            auth["invalidated_at"] = "2000-01-01T00:00:00Z"
+
+        def undelivered_repair(state, auth):
+            state["beads"][C2B_RESULT_RELEASE_REPAIR]["status"] = "open"
+
+        changes = (
+            ("tip", wrong_tip), ("exit", wrong_exit), ("parking", wrong_park),
+            ("resume", wrong_resume), ("launch", wrong_launch),
+            ("invalidation", wrong_invalidation), ("delivery", undelivered_repair),
+        )
+        for name, change in changes:
+            with self.subTest(name=name):
+                self.tracker.write_text(seeded)
+                self.write_log.write_text("")
+                state = self.tracker_state()
+                auth = json.loads(json.dumps(authorization))
+                change(state, auth)
+                self.tracker.write_text(json.dumps(state))
+
+                answer = self.advance(CONVOY, env={**self.env, C2B_RESULT_RELEASE_ENV: json.dumps(auth)})
+
+                self.assertEqual(([], []), (self.of(answer, "lifted"), self.of(answer, "resumed")), name)
+                self.assertEqual("resumes_exhausted", self.park_of(T1)["cause"], name)
+                self.assertEqual([], self.resume_launches(), name)
+                self.assertIsNone(self.code_review_of(answer), name)
+                self.assertIsNone(self.evaluation_of(answer), name)
 
     def overridden_then_returned(self, override=True):
         """T1 stopped still refused, its one Blocking Finding overridden by
