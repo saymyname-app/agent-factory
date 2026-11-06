@@ -279,6 +279,12 @@ def providers_toml(providers: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def codex_projects_override(work_dirs: list[Path]) -> str:
+    projects = ",".join(
+        f"{json.dumps(path)}={{trust_level=\"trusted\"}}" for path in sorted(map(str, work_dirs)))
+    return f"projects={{{projects}}}"
+
+
 class TrialCity:
     def __init__(self, trial_dir: Path, port: int) -> None:
         self.dir = trial_dir
@@ -332,6 +338,13 @@ class TrialCity:
         for profile in providers.values():
             if Path(str(profile.get("command", ""))).name == SANDBOX.name:
                 profile["command"] = str(SANDBOX)
+        for provider in sorted(set(assignments.values())):
+            profile = providers.get(provider) or {}
+            if str(profile.get("base", "")).endswith("codex"):
+                work_dirs = [self.city / ".gc" / "agents" / agent
+                             for agent, assigned in assignments.items() if assigned == provider]
+                profile["args_append"] = [*(profile.get("args_append") or []),
+                                          "-c", codex_projects_override(work_dirs)]
         patches = "".join(f'\n[[patches.agent]]\nname = "{agent}"\nprovider = "{provider}"\n'
                           for agent, provider in assignments.items())
         (self.city / "city.toml").write_text(f'[workspace]\nprovider = "{first}"\n\n{providers_toml(providers)}{patches}')
@@ -631,11 +644,20 @@ def ask(city: TrialCity, alias: str, transcript: ClaudeTranscript | CodexTranscr
     return False
 
 
-def wait_active(city: TrialCity, alias: str, timeout: int = 300) -> str | None:
-    """Wait for the session to be usable; returns the provider gc reports for it, if any."""
+def wait_active(city: TrialCity, alias: str, timeout: int = 300) -> tuple[str | None, str]:
+    """Wait for one stable active minute and report the states seen along the way."""
+    stability_seconds = 60
     deadline = time.time() + timeout
+    hard_deadline = deadline + stability_seconds
     provider = None
     active_polls = 0
+    observed_states: list[str] = []
+    wake_requested = False
+
+    def diagnostic() -> str:
+        states = " -> ".join(observed_states) or "none"
+        return f"observed session states: {states}; wake requested: {'yes' if wake_requested else 'no'}"
+
     while time.time() < deadline:
         time.sleep(5)
         proc = city.gc("session", "list", "--json", check=False)
@@ -649,16 +671,21 @@ def wait_active(city: TrialCity, alias: str, timeout: int = 300) -> str | None:
             if isinstance(session, dict) and alias in (session.get("alias"), session.get("name"), session.get("id")):
                 provider = session.get("provider") or provider
                 state = str(session.get("state", "")).lower()
+                if not observed_states or observed_states[-1] != state:
+                    observed_states.append(state or "unknown")
                 active = state == "active"
                 if state == "asleep":
                     city.gc("session", "wake", alias, check=False)
+                    wake_requested = True
         # Active for a minute in a row: a Codex session is drained for config
         # drift about 35 s after its first start (seen twice, af-npz9v1.12),
         # and woken again above; it is not usable before that has passed.
         active_polls = active_polls + 1 if active else 0
+        if active_polls == 1:
+            deadline = min(hard_deadline, max(deadline, time.time() + stability_seconds))
         if active_polls >= 12:
-            return provider or ""
-    return None
+            return provider or "", diagnostic()
+    return None, diagnostic()
 
 
 def trial_one(city: TrialCity, data: dict[str, Any], role: str, provider: str) -> dict[str, Any]:
@@ -692,9 +719,9 @@ def trial_one(city: TrialCity, data: dict[str, Any], role: str, provider: str) -
     # it asleep (af-npz9v1.12). Pinned and woken (wait_active), it comes back.
     city.gc("session", "pin", alias, check=False)
     try:
-        reported = wait_active(city, alias)
+        reported, diagnostic = wait_active(city, alias)
         if reported is None:
-            trial.update(passed=False, failures=["the session never became active"])
+            trial.update(passed=False, failures=[f"the session did not remain active for 60 seconds ({diagnostic})"])
             return trial
         trial["session_provider"] = reported
         if reported and reported != provider:
@@ -702,6 +729,12 @@ def trial_one(city: TrialCity, data: dict[str, Any], role: str, provider: str) -
 
         # 1. Review launch: every role is asked, whatever its distribution.
         answered = ask(city, alias, transcript, transcript.review_launch_request(REVIEW_PROBES))
+        if not answered and isinstance(transcript, CodexTranscript) and not transcript.entries():
+            failures.append(
+                "the session was lifecycle-active but the Codex provider created no rollout after its review-launch nudge "
+                f"({diagnostic}; provider rollout observed: no; nudge answered: no)")
+            trial.update(passed=False, failures=failures)
+            return trial
         if not answered:
             failures.append("the session did not answer the review-launch request")
         listing = transcript.skill_listing()
