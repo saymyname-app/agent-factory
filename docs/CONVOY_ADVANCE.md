@@ -803,6 +803,14 @@ then no amendment was the ticket's to take, and the pass lifts the stop by
 a resume of cause `inherited_change` (af-npz9v1.39), its request withdrawn,
 once per stop. Before af-25o7vr (2026-10-21) no code carried out answer a.
 
+One bounded A2 exception also consumes Benjamin's exact answer **a** at
+`2026-11-06T16:22:23Z`, although it preceded the stop: only ticket
+`af-ocz64w`, at commit `e62cb740`, and only when `bin/tdd-step changes` names
+`home-result-essai-test.py` and `result_trial.py`. It opens the same native
+`amendment_granted` resume with authorization reference `af-atrg8o`; an
+existing resume with that reference refuses a second consumption, and
+`bin/tdd-step amend` holds the file boundary after the author resumes.
+
 ## The end code review of the assembled diff (T25)
 
 Spec §6 « Fin de Spec », §9 point 4: right after the gate, in the same pass,
