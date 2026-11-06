@@ -29,10 +29,11 @@ failure behind a CLOSED status":
              pages once, not once per bead.
   tickets    a started ticket of a marked convoy that nobody moves: no live
              session holds it, no launch of it is open, no request of it or
-             of its convoy is on Benjamin's list, and nothing was recorded
-             for it within the threshold. Twice in two days a ticket sat so
-             for hours -- T02R (#673), T02R2 (#687) -- and only an operator's
-             own watcher noticed (af-1fvzns).
+             of its convoy or the convoy's grouped request is on Benjamin's
+             list, and nothing was recorded for it within the threshold.
+             Twice in two days a ticket sat so for hours -- T02R (#673),
+             T02R2 (#687) -- and only an operator's own watcher noticed
+             (af-1fvzns).
 
 Each assessor is a pure function over already-fetched JSON, so it is
 unit-testable without gc/gh. bin/factory-watchdog does the fetching, paging,
@@ -49,6 +50,7 @@ state.
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 import os
 import sys
@@ -56,10 +58,12 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
+import test_budgets
+
 GATE_AGE_MINUTES_DEFAULT = 30
 PR_STUCK_MINUTES_DEFAULT = 30
 QUARANTINE_WINDOW_HOURS_DEFAULT = 24
-TICKET_STALL_MINUTES_DEFAULT = 30
+TICKET_STALL_MINUTES_DEFAULT = math.ceil(test_budgets.pass_seconds(test_budgets.load()) / 60)
 # The gates a closed or withdrawn ticket carries (lib/convoy_state.py).
 CLOSING_GATES = ("ticket_end", "withdrawn")
 
@@ -292,10 +296,17 @@ def _at_stake(ticket: dict[str, Any]) -> bool:
     return ticket.get("status") != "closed" and "dispatch" in gates and not any(g in gates for g in CLOSING_GATES)
 
 
+def grouped_request_bead(show: dict[str, Any]) -> str | None:
+    request = (show.get("convoy") or {}).get("grouped_request") or {}
+    if not isinstance(request, dict):
+        return None
+    return str(request.get("bead") or "") or None
+
+
 def stalled_lookups(show: dict[str, Any]) -> list[str]:
     """The beads bin/factory-watchdog reads before assess_ticket: the convoy,
-    then each ticket at stake followed by its launches."""
-    ids = [str((show.get("convoy") or {}).get("id") or "")]
+    its grouped request, then each ticket at stake followed by its launches."""
+    ids = [str((show.get("convoy") or {}).get("id") or ""), grouped_request_bead(show) or ""]
     for ticket in show.get("tickets") or []:
         if isinstance(ticket, dict) and _at_stake(ticket):
             ids += [str(ticket.get("id") or ""), *_launch_beads(ticket)]
@@ -308,9 +319,10 @@ def assess_ticket(
 ) -> tuple[str, str] | None:
     """A ticket at stake that nobody moves (af-1fvzns): no live session holds
     it, no launch of it is open, neither it nor its convoy has a request on
-    Benjamin's list, it does not wait for its blockers, and its last record is
-    older than `minutes`. The record times are those convoy-state writes
-    (`at`, `raised`): the pass acts within minutes of any of them."""
+    Benjamin's list (the caller maps an active grouped request to the convoy),
+    it does not wait for its blockers, and its last record is older than
+    `minutes`. The record times are those convoy-state writes (`at`, `raised`):
+    the pass acts within minutes of any of them."""
     if not _at_stake(ticket):
         return None
     ticket_id = str(ticket.get("id") or "")
@@ -492,6 +504,8 @@ def _cli_tickets(argv: list[str]) -> int:
     now = float(os.environ.get("FACTORY_GUARD_NOW") or time.time())
     minutes = int(os.environ.get("FACTORY_WATCHDOG_TICKET_MINUTES") or TICKET_STALL_MINUTES_DEFAULT)
     sets = [set(map(str, payload.get(key) or [])) for key in ("alive", "open", "listed")]
+    if grouped_request_bead(show) in sets[2]:
+        sets[2].add(convoy_id)
     for ticket in show.get("tickets") or []:
         if isinstance(ticket, dict):
             found = assess_ticket(ticket, convoy_id, now, *sets, minutes)

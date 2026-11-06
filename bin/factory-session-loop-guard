@@ -134,7 +134,7 @@ cmd_detect() {
           -d "$msg
 
 Detected by factory-session-loop-guard. Session suspended pending investigation (reversible: \`factory-session-loop-guard resume $session_id\`). af-6675l safety net -- this pages independent of cause." \
-          --set-metadata "gc.session_id=$session_id" --set-metadata "gc.source=factory-session-loop-guard" \
+          --metadata "$(jq -cn --arg session "$session_id" '{"gc.session_id":$session,"gc.source":"factory-session-loop-guard"}')" \
           --json 2>/dev/null | jq -r '(.[0]?.id // .id // empty)')
         if [ -n "$created" ]; then
           "$ESCALATION_DOOR" mayor "$created" "factory-session-loop-guard: session $session_id looping -- $msg" \

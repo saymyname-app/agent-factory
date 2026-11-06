@@ -22,6 +22,26 @@ DESCRIPTOR = ROOT / "tests" / "fixtures" / "delivery-fixture-city" / "descriptor
 
 
 class CapacityTest(unittest.TestCase):
+    def test_isolated_evaluation_journeys_do_not_read_live_capacity(self):
+        required = {
+            "TICKET_EVALUATION_STATE_DIR",
+            "OUTCOME_EVALUATION_STATE_DIR",
+            "EVALUATION_CAPACITY_STATE_DIR",
+        }
+        missing = {}
+        journeys = []
+        for path in sorted((ROOT / "tests").glob("*-isolated-city-test.sh")):
+            text = path.read_text(encoding="utf-8")
+            if not any(tool in text for tool in ("bin/ticket-evaluation", "bin/outcome-evaluation")):
+                continue
+            journeys.append(path.name)
+            absent = sorted(name for name in required if name not in text)
+            if absent:
+                missing[path.name] = absent
+
+        self.assertTrue(journeys)
+        self.assertEqual({}, missing)
+
     def test_sandbox_reuses_only_the_controller_attested_listener(self):
         if not shutil.which("bwrap"):
             self.skipTest("Bubblewrap required")

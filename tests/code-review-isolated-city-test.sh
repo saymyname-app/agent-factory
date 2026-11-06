@@ -231,7 +231,9 @@ cat > "$CITY/agents/trial-reviewer/agent.toml" <<'TOML'
 description = "Reviewer of the code-review trial (scripted stub, spends nothing)"
 scope = "city"
 min_active_sessions = 0
-max_active_sessions = 2
+# B is deliberately held while A and C finish. The role ceiling is tested
+# elsewhere; this journey needs one stub seat for each of its three reviews.
+max_active_sessions = 3
 provider = "stub-reviewer"
 wake_mode = "fresh"
 TOML
@@ -405,7 +407,8 @@ printf '%s' "$first" | jq -e --arg line "$SPEC_LINE" --arg tip "$TIP_A" \
    and .findings[0].citation.source == "spec" and .findings[0].citation.quote == $line' >/dev/null \
   || fail "the review of A did not record one Blocking Finding that cites the line of the Spec: $first"
 reviewer_a=$(printf '%s' "$first" | jq -r '.recorded_by')
-[ "$reviewer_a" != "trial-author-$A" ] && [ "$reviewer_a" = "$(sessions_of "$A" | head -1)" ] \
+reviewer_sessions=$(sessions_of "$A")
+[ "$reviewer_a" != "trial-author-$A" ] && grep -Fxq "$reviewer_a" <<<"$reviewer_sessions" \
   || fail "the review of A was not recorded by a reviewer session distinct from its author: $reviewer_a"
 printf '%s' "$first" | jq -e '.models == {author: "modele-relecteur", reviewer: "modele-relecteur", same_model: true}' >/dev/null \
   || fail "the review of A does not carry the mention of identical models: $(printf '%s' "$first" | jq -c .models)"

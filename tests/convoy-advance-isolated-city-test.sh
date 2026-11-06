@@ -122,7 +122,9 @@ cat > "$CITY/agents/trial-author/agent.toml" <<'TOML'
 description = "Author of the convoy-advance trial (stub provider, spends nothing)"
 scope = "city"
 min_active_sessions = 0
-max_active_sessions = 3
+# The trial's N=2 ticket ceiling is the subject under test. Its four starts
+# and one resume must not be throttled by a separate warm-stub seat ceiling.
+max_active_sessions = 5
 TOML
 echo "Stub of the convoy-advance trial." > "$CITY/agents/trial-author/prompt.template.md"
 cat > "$CITY/formulas/trial-start.formula.toml" <<'TOML'

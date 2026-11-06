@@ -210,6 +210,7 @@
       "factory-suspended": "config/cockpit-datasets/factory-suspended.json",
       "factory-resuming": "config/cockpit-datasets/factory-resuming.json",
       "factory-blocked": "config/cockpit-datasets/factory-blocked.json",
+      "factory-stop-demo": "config/cockpit-datasets/factory-stop-demo.json",
       "factory-machine": "config/cockpit-datasets/factory-machine.json",
       "factory-configure": "config/cockpit-datasets/factory-configure.json",
       "factory-configure-scope": "config/cockpit-datasets/factory-configure-scope.json",
