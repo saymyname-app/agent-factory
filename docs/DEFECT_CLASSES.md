@@ -74,15 +74,16 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   cinq minutes sans `gc runtime heartbeat`. Le cinquième tue le groupe d'un
   reset ou d'un mail Mayor bloqué et tient leur sémantique de reprise. Le
   contrôle `factory-watchdog-test.sh` injecte un `gc` bloqué dans le vrai
-  `factory-watchdog` et prouve que son budget interne rend avant celui de
-  l'order et tue tout son groupe de processus ; le dernier tient la
-  notification de `idle-ready-work-wake` dans son budget sans changer son
-  réveil ni son cooldown.
+  `factory-watchdog`, prouve que son budget interne rend avant celui de
+  l'order et tue tout son groupe de processus, puis tient le délai d'incident
+  ticket sur le `pass_seconds` mesuré sans casser l'override d'exploitation ;
+  le dernier tient la notification de `idle-ready-work-wake` dans son budget
+  sans changer son réveil ni son cooldown.
 - Occurrences : #624, #628, #629, #630, #631, #636, #647, #657, #658, #661,
   #667, #694, #696, #705, #706, #708, #710, #713, #721 ; copies orphelines du
   22/10 (sans PR) ; af-kky570 ; af-npz9v1.46 ; af-npz9v1.26 ; af-30zwwu ;
   af-95zqgx ; af-d3dj4j ; af-ll4hju ; af-bl2jyj ; af-p4rdr7 ; af-6go1ss ;
-  af-npz9v1.55.1.
+  af-npz9v1.55.1 ; af-npz9v1.55.2.
 - Ouvertes : les invocations directes antérieures hors des occurrences de
   l'étude B sont nommées une par une, avec leur date et leur motif, dans
   `config/bounded-process-exceptions.tsv` ; une vingtaine de délais écrits à

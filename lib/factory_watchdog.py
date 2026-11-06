@@ -50,6 +50,7 @@ state.
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 import os
 import sys
@@ -57,10 +58,12 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
+import test_budgets
+
 GATE_AGE_MINUTES_DEFAULT = 30
 PR_STUCK_MINUTES_DEFAULT = 30
 QUARANTINE_WINDOW_HOURS_DEFAULT = 24
-TICKET_STALL_MINUTES_DEFAULT = 30
+TICKET_STALL_MINUTES_DEFAULT = math.ceil(test_budgets.pass_seconds(test_budgets.load()) / 60)
 # The gates a closed or withdrawn ticket carries (lib/convoy_state.py).
 CLOSING_GATES = ("ticket_end", "withdrawn")
 
