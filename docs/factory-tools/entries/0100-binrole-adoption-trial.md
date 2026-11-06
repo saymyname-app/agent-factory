@@ -49,8 +49,9 @@ skills du compte claude.ai, dont un autre `code-review`.
   `bin/dispatch-door --role <rôle>` refuse, jusqu'au nouvel essai.
 - **Fournisseurs déclarés** d'un rôle : la chaîne de la cible de son agent dans
   `config/provider-policy.json`. N'y ajouter un fournisseur qu'avec son essai.
-  Seul Claude Code est observable aujourd'hui (aucun observateur pour Codex :
-  un essai sur Codex échoue, donc la porte tient le rôle hors de Codex).
+  Après le redémarrage que la création des hooks Codex peut provoquer, l'essai
+  attend un état `active` stable puis écrit sa demande dans la session active ;
+  il ne redémarre pas la conversation et ne dépend pas de la clé perdue.
 - **Lecture seule** : le relecteur et l'Evaluator tournent sur un profil
   `*-readonly`, lancé par `bin/delivery-role-sandbox` (Bubblewrap : tout en
   lecture seule sauf le répertoire de travail de la session, l'état du

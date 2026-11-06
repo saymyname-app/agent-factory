@@ -618,8 +618,11 @@ def excerpt(text: Any, limit: int = 160) -> str:
 
 def ask(city: TrialCity, alias: str, transcript: ClaudeTranscript | CodexTranscript, instruction: str, timeout: int = 300) -> bool:
     nonce = f"TRIAL-DONE-{uuid.uuid4().hex[:10]}"
-    city.gc("session", "submit", alias,
-            f"Adoption trial. {instruction} Do nothing else. When you have finished, reply with exactly this line: {nonce}")
+    message = f"Adoption trial. {instruction} Do nothing else. When you have finished, reply with exactly this line: {nonce}"
+    if isinstance(transcript, CodexTranscript):
+        city.gc("session", "nudge", alias, message, "--delivery", "wait-idle")
+    else:
+        city.gc("session", "submit", alias, message)
     deadline = time.time() + timeout
     while time.time() < deadline:
         time.sleep(5)
