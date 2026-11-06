@@ -184,7 +184,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   produit une alerte.
 - Contrôle : `bash tests/on-order-failed-test.sh`,
   `python3 tests/factory-observe-test.py LiveObservationTest`,
-  `bash tests/pr-autopilot-armed-not-merged-test.sh` — partiel : le premier
+  `bash tests/pr-autopilot-armed-not-merged-test.sh`,
+  `python3 tests/role-adoption-trial-codex-test.py CodexRestartTest` — partiel : le premier
   tient la frontière entre un report explicite (sortie 75, rejoué sans
   alerte) et une vraie panne répétée (bead et page Mayor) ; le deuxième tient
   la collecte VM Beads/Git/GitHub, le silence sur état inchangé, la route
@@ -195,11 +196,13 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   au contrôle requis vert ; il relit aussi GitHub après toute demande de fusion
   directe et n'annonce la fusion que si le serveur répond `MERGED`. Le contrôle
   9 du gardien (#688) couvre les tickets que personne ne bouge, pas les autres
-  signaux.
+  signaux. Le dernier tient la minute de stabilité après un réveil Codex proche
+  de l'échéance dans une borne fixe et exige qu'un délai dépassé nomme les états
+  observés et la demande de réveil.
 - Occurrences : #651, #679, #688, #717 ; af-npz9v1.50 ; #767 (armement local
   annoncé mais `autoMergeRequest=null`, af-npz9v1.50.1) ; af-ncg9qy ; #778
   (demande directe acceptée localement mais encore `AWAITING_CHECKS`,
-  af-nk5nm6).
+  af-nk5nm6) ; af-27yx7q.2.1.
 - Ouvertes : aucune connue.
 
 ## A — Autre

@@ -170,17 +170,46 @@ class CodexRestartTest(unittest.TestCase):
 
     def test_delivery_after_drift_wake_does_not_require_a_replacement_key(self):
         city = self.City()
+        city.states = ([{"state": "active"}, {"state": "draining"}] +
+                       [{"state": "asleep"}] * 8 +
+                       [{"state": "active"}] * 12)
         city.gc("session", "new", "delivery-reviewer", "--alias", "trial-reviewer")
+        now = [0.0]
+        original_time = trial.time.time
         original_sleep = trial.time.sleep
-        trial.time.sleep = lambda _seconds: None
+        trial.time.time = lambda: now[0]
+        trial.time.sleep = lambda seconds: now.__setitem__(0, now[0] + seconds)
         try:
-            self.assertEqual(trial.wait_active(city, "trial-reviewer", timeout=1), "codex-readonly")
+            reported, diagnostic = trial.wait_active(city, "trial-reviewer", timeout=60)
+            self.assertEqual(reported, "codex-readonly")
+            self.assertEqual(diagnostic,
+                             "observed session states: active -> draining -> asleep -> active; wake requested: yes")
             self.assertTrue(trial.ask(city, "trial-reviewer", self.Transcript(), "review", timeout=1))
         finally:
+            trial.time.time = original_time
             trial.time.sleep = original_sleep
         self.assertIn(("session", "wake", "trial-reviewer"), city.calls)
         self.assertTrue(city.delivered_without_key)
         self.assertFalse(any(call[:2] == ("session", "submit") for call in city.calls))
+
+    def test_timeout_names_the_observed_drift_and_stays_bounded(self):
+        city = self.City()
+        city.states = ([{"state": "active"}, {"state": "draining"}] +
+                       [{"state": "asleep"}] * 20)
+        now = [0.0]
+        original_time = trial.time.time
+        original_sleep = trial.time.sleep
+        trial.time.time = lambda: now[0]
+        trial.time.sleep = lambda seconds: now.__setitem__(0, now[0] + seconds)
+        try:
+            reported, diagnostic = trial.wait_active(city, "trial-reviewer", timeout=20)
+        finally:
+            trial.time.time = original_time
+            trial.time.sleep = original_sleep
+        self.assertIsNone(reported)
+        self.assertEqual(diagnostic,
+                         "observed session states: active -> draining -> asleep; wake requested: yes")
+        self.assertLessEqual(now[0], 80)
 
     def test_claude_evaluator_keeps_the_existing_submit_transport(self):
         city = self.City()

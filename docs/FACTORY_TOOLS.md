@@ -542,7 +542,10 @@ skills du compte claude.ai, dont un autre `code-review`.
   `config/provider-policy.json`. N'y ajouter un fournisseur qu'avec son essai.
   Après le redémarrage que la création des hooks Codex peut provoquer, l'essai
   attend un état `active` stable puis écrit sa demande dans la session active ;
-  il ne redémarre pas la conversation et ne dépend pas de la clé perdue.
+  il ne redémarre pas la conversation et ne dépend pas de la clé perdue. Une
+  reprise `active` proche de l'échéance reçoit jusqu'à une minute de stabilité
+  supplémentaire, dans une borne totale fixe ; un échec nomme les états
+  observés et si le réveil a été demandé.
 - **Lecture seule** : le relecteur et l'Evaluator tournent sur un profil
   `*-readonly`, lancé par `bin/delivery-role-sandbox` (Bubblewrap : tout en
   lecture seule sauf le répertoire de travail de la session, l'état du
