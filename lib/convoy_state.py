@@ -2093,11 +2093,12 @@ def resume_record(raw: Any, *, migrating_legacy_repair: bool = False) -> dict[st
     entries = record["entries"]
     if not isinstance(entries, list) or not entries:
         raise Refusal(f"reprises mal formées : {entries!r}")
-    last = entries[-1]
-    migrated_legacy_repair = isinstance(last, dict) \
-        and last.get("cause") == "repair_delivered" \
-        and isinstance(last.get("ref"), str) and last["ref"].startswith("repairs:")
-    for entry in entries:
+    migrated_legacy_repair_at = max((index for index, entry in enumerate(entries)
+                                     if isinstance(entry, dict)
+                                     and entry.get("cause") == "repair_delivered"
+                                     and isinstance(entry.get("ref"), str)
+                                     and entry["ref"].startswith("repairs:")), default=-1)
+    for index, entry in enumerate(entries):
         if not isinstance(entry, dict) or set(entry) - {"stop"} != {"cause", "ref", "session", "exit", "launches", "at"}:
             raise Refusal(f"reprise mal formée : {entry!r}")
         one_of(entry["cause"], RESUME_CAUSES, "cause de reprise")
@@ -2114,7 +2115,8 @@ def resume_record(raw: Any, *, migrating_legacy_repair: bool = False) -> dict[st
             legacy_repair_stop = entry["cause"] == "unblocked" and entry["ref"].startswith("repairs:") \
                 and bool(launches) and reason in (STOP_EVALUATION_NO_RESULT, STOP_EVALUATION_OUTAGE)
             if not resume_lifts(entry["cause"], reason) \
-                    and not (legacy_repair_stop and (migrating_legacy_repair or migrated_legacy_repair)):
+                    and not (legacy_repair_stop
+                             and (migrating_legacy_repair or index < migrated_legacy_repair_at)):
                 raise Refusal(f"arrêt levé par la reprise mal formé : {entry!r}")
     return record
 
