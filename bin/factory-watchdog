@@ -44,8 +44,8 @@
 #   9. TICKET SANS SUITE  a started ticket of a marked convoy that nobody
 #                        moves: no live session, no open launch, no request
 #                        of it, its convoy, or the convoy's grouped request
-#                        on Benjamin's list, nothing recorded for 30 min. T02R
-#                        (18/10, #673) and T02R2
+#                        on Benjamin's list, nothing recorded for the measured
+#                        convoy-advance pass budget. T02R (18/10, #673) and T02R2
 #                        (19/10, #687) sat so for hours; only an operator's
 #                        own watcher saw it (af-1fvzns). The Mayor keeps its
 #                        hands off marked convoys, so this one goes to the
@@ -76,7 +76,6 @@ PR_MINUTES="${FACTORY_WATCHDOG_PR_MINUTES:-30}"
 RENUDGE_MINUTES="${FACTORY_WATCHDOG_RENUDGE_MINUTES:-30}"
 WORKFLOW_LOOKBACK_HOURS="${FACTORY_WATCHDOG_WORKFLOW_LOOKBACK_HOURS:-24}"
 QUARANTINE_WINDOW_HOURS="${FACTORY_WATCHDOG_QUARANTINE_WINDOW_HOURS:-24}"
-TICKET_MINUTES="${FACTORY_WATCHDOG_TICKET_MINUTES:-30}"
 CONVOY_STATE="${FACTORY_WATCHDOG_CONVOY_STATE_BIN:-$(dirname "${BASH_SOURCE[0]}")/convoy-state}"
 OPERATOR_CONFIG="${OPERATOR_CONFIG_BIN:-$(dirname "${BASH_SOURCE[0]}")/operator-config}"
 OBSERVE_BIN="${FACTORY_WATCHDOG_OBSERVE_BIN:-$(dirname "${BASH_SOURCE[0]}")/factory-observe}"
@@ -444,7 +443,7 @@ Detected by factory-watchdog (af-1fvzns): the ticket is started and not closed, 
       else
         bad "could not raise ticket $ticket_id without a next step on the operator's list"
       fi
-    done < <(FACTORY_WATCHDOG_TICKET_MINUTES="$TICKET_MINUTES" python3 "$LIB/factory_watchdog.py" tickets < "$stall_payload" 2>/dev/null)
+    done < <(python3 "$LIB/factory_watchdog.py" tickets < "$stall_payload" 2>/dev/null)
   done
   # Withdrawn only on a complete reading: an unreadable convoy or bead keeps the request.
   if [ "$CHECK_ONLY" != "1" ] && [ "$stall_ok" = "1" ]; then

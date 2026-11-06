@@ -445,21 +445,32 @@ esac
 STUB
 chmod +x "$TMP/bin/convoy-state"
 export FACTORY_WATCHDOG_CONVOY_STATE_BIN="$TMP/bin/convoy-state"
-stalled_show() {  # stalled_show <status> -> a convoy with one ticket left since 50 min
-  jq -n --arg s "$1" --arg at "$(iso $((NOW - 3000)))" '{convoy:{id:"af-cv1"},tickets:[{id:"af-t9",title:"T09",status:$s,
+stalled_show() {  # stalled_show <status> [age-seconds] -> a convoy with one ticket left
+  jq -n --arg s "$1" --arg at "$(iso $((NOW - ${2:-4800})))" '{convoy:{id:"af-cv1"},tickets:[{id:"af-t9",title:"T09",status:$s,
     gates:{dispatch:{at:$at}},session:{at:$at,name:"delivery-author-gone"},exit:{at:$at,exit:"finished"},
     stop:{at:$at,raised:$at,reason:"still_refused"}}]}' > "$CONVOY_SHOW"
 }
-stalled_show in_progress
+stalled_show in_progress 3000
 reset_logs
 out=$(watchdog --check-only)
+grep -q "ticket sans suite —" <<<"$out" \
+  && { echo "$out" >&2; fail "a ticket still inside the current order budget must not be reported"; }
+
+reset_logs
+out=$(FACTORY_WATCHDOG_TICKET_MINUTES=30 watchdog --check-only)
 grep -q "ticket sans suite — af-t9 (T09) du convoi af-cv1 : sans suite depuis" <<<"$out" \
-  || { echo "$out" >&2; fail "--check-only should still report a ticket without a next step"; }
+  || { echo "$out" >&2; fail "the ticket-stall override should still report after its explicit limit"; }
 [ "$(creates)" = "0" ] || fail "--check-only must never file a bead for a ticket without a next step"
 [ "$(grep -c '^bd show ' "$CALLS")" = "1" ] \
   || fail "ticket scan must read the convoy and ticket in one batched tracker call"
 grep -q '^bd show af-cv1 af-t9 --json$' "$CALLS" \
   || { cat "$CALLS" >&2; fail "ticket scan did not batch its tracker reads"; }
+
+stalled_show in_progress
+reset_logs
+out=$(watchdog --check-only)
+grep -q "ticket sans suite — af-t9 (T09) du convoi af-cv1 : sans suite depuis" <<<"$out" \
+  || { echo "$out" >&2; fail "--check-only should still report a ticket beyond the current order budget"; }
 
 printf '[{"id":"af-cv1","status":"open","metadata":{"gc.needs_benjamin":"Decision attendue"}}]' > "$BEADS_DIR/af-cv1.json"
 reset_logs
