@@ -61,6 +61,11 @@ AUTHORIZED_FILES = [
 ]
 AUTHORIZED_REF = "authorization:af-atrg8o"
 
+RETURNED_RELEASE_ENV = "CONVOY_ADVANCE_TEST_RETURNED_RELEASE"
+RETURNED_RELEASE_MAINTENANCE = "fx-returned-release"
+RETURNED_RELEASE_REPAIR = "fx-r9"
+RETURNED_RELEASE_EVIDENCE = "sha256:46fe2ee17aa730ba261b6a8bd940f17d1c3cb7eb0a66607eebf4051b3fb7fedd"
+
 
 def delivered(number, head, merge):
     return {
@@ -91,6 +96,71 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         metadata["gc.flow.resume"] = json.dumps(record)
         metadata["gc.flow.counter.resumes"] += count
         self.edit(ticket_id, metadata=metadata)
+
+    def exact_returned_release(self):
+        """The shape of D's one authorized release, on a disposable graph."""
+        self.integrated()
+        self.resumable()
+        self.advance(CONVOY)
+        self.taken(T1, "auteur-returned")
+
+        self.git("checkout", "-q", "--detach", self.INTEGRATION)
+        (self.root / "r9.md").write_text("repair R9\n")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "repair R9")
+        repair_commit = self.git("rev-parse", "HEAD")
+        (self.root / "integration-tip.md").write_text("integration after R9\n")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "integration after R9")
+        integration_tip = self.git("rev-parse", "HEAD")
+        self.returned_release_unrelated = self.git(
+            "commit-tree", f"{integration_tip}^{{tree}}", "-m", "unrelated integration history")
+        self.git("update-ref", f"refs/heads/{self.INTEGRATION}", integration_tip)
+        self.git("checkout", "-q", "--detach", "main")
+
+        ticket_commit = self.finished(T1)
+        self.git("checkout", "-q", "--detach", integration_tip)
+        self.git("merge", "-q", "--no-ff", "-m", "returned merge candidate", f"ticket/{T1}")
+        merge_commit = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "--detach", "main")
+        self.run_ok(STATE, "set-merge", CONVOY, T1, "--outcome", "red", "--ticket-commit", ticket_commit,
+                    "--integration", integration_tip, "--commit", merge_commit)
+        merge = self.shown_state(T1)["merge"]
+        self.run_ok(STATE, "open-resume", CONVOY, T1, "--cause", "returned", "--ref",
+                    f"merge:{merge['at']}/exit:{self.shown_state(T1)['exit']['at']}")
+        self.earlier_resumes("returned", 2)
+        self.run_ok(STATE, "park", CONVOY, T1, "--cause", "resumes_exhausted",
+                    "--detail", "reprises épuisées pour la cause returned")
+
+        state = self.tracker_state()
+        metadata = state["beads"][T1]["metadata"]
+        metadata["gc.flow.evidence.merged_tests"] = json.dumps({
+            "at": merge["at"], "commit": merge_commit, "digest": RETURNED_RELEASE_EVIDENCE,
+        })
+        state["beads"][RETURNED_RELEASE_MAINTENANCE] = {
+            "title": "release D once", "status": "closed", "issue_type": "bug", "metadata":
+                delivered(901, "a" * 40, "b" * 40),
+        }
+        state["beads"][RETURNED_RELEASE_REPAIR] = {
+            "title": "R9", "status": "closed", "issue_type": "task", "metadata": {
+                "gc.flow.merge": json.dumps({"at": merge["at"], "commit": integration_tip,
+                                              "integration": repair_commit, "outcome": "merged",
+                                              "ticket_commit": repair_commit}),
+            },
+        }
+        self.tracker.write_text(json.dumps(state))
+        park = self.shown_state(T1)["park"]
+        authorization = {
+            "ticket": T1,
+            "parked_at": park["at"],
+            "merge_commit": merge_commit,
+            "integration_tip": integration_tip,
+            "repair_bead": RETURNED_RELEASE_REPAIR,
+            "repair_commit": repair_commit,
+            "maintenance_bead": RETURNED_RELEASE_MAINTENANCE,
+        }
+        self.write_log.write_text("")
+        return authorization
 
     def test_a_pass_sends_an_interrupted_ticket_to_a_fresh_author_session_and_counts_the_resume(self):
         self.started_convoy()
@@ -1014,6 +1084,94 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual(1, self.resumes())
         self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
         self.assertEqual(1, self.resumes())
+
+    def test_the_exact_delivered_release_sends_D_s_counted_returned_resume_once(self):
+        authorization = self.exact_returned_release()
+        env = {**self.env, RETURNED_RELEASE_ENV: json.dumps(authorization)}
+        before = self.bead(T1)["metadata"]
+        before_resume = json.loads(before["gc.flow.resume"])
+        before_decisions = {key: value for key, value in before.items()
+                            if key.startswith("gc.escalation_response_") or key == "gc.needs_benjamin"}
+
+        answer = self.advance(CONVOY, env=env)
+
+        [lifted] = self.of(answer, "lifted")
+        self.assertEqual((T1, None, RETURNED_RELEASE_MAINTENANCE, [T1, T3], "returned_once"),
+                         (lifted["id"], lifted["option"], lifted["request"], lifted["lifted"], lifted["release"]))
+        self.assertEqual([(T1, "returned")], [(entry["id"], entry["cause"])
+                                               for entry in self.of(answer, "resumed")])
+        shown = self.shown_state(T1)
+        after = self.bead(T1)["metadata"]
+        after_resume = json.loads(after["gc.flow.resume"])
+        self.assertIsNone(shown["park"])
+        self.assertEqual(before["gc.flow.counter.resumes"], after["gc.flow.counter.resumes"])
+        self.assertEqual(before_resume["entries"][:-1], after_resume["entries"][:-1])
+        self.assertEqual({**before_resume["entries"][-1], "launches": after_resume["entries"][-1]["launches"]},
+                         after_resume["entries"][-1])
+        self.assertEqual(1, len(after_resume["entries"][-1]["launches"]))
+        self.assertEqual(before_decisions, {key: value for key, value in after.items()
+                                            if key.startswith("gc.escalation_response_")
+                                            or key == "gc.needs_benjamin"})
+        self.assertEqual([], self.log("clear"))
+
+        again = self.advance(CONVOY, env=env)
+
+        self.assertEqual(([], 1), (self.of(again, "resumed"), len(self.resume_launches())))
+        self.assertIsNone(self.park_of(T1))
+        self.assertEqual(before["gc.flow.counter.resumes"], self.resumes())
+
+    def test_the_returned_release_rejects_every_nearby_state(self):
+        authorization = self.exact_returned_release()
+        seeded = self.tracker.read_text()
+
+        def wrong_ticket(state, auth):
+            auth["ticket"] = T2
+
+        def wrong_park(state, auth):
+            park = json.loads(state["beads"][T1]["metadata"]["gc.flow.park"])
+            park["at"] = "2000-01-01T00:00:00Z"
+            state["beads"][T1]["metadata"]["gc.flow.park"] = json.dumps(park)
+
+        def wrong_merge(state, auth):
+            merge = json.loads(state["beads"][T1]["metadata"]["gc.flow.merge"])
+            merge["commit"] = "0" * 40
+            state["beads"][T1]["metadata"]["gc.flow.merge"] = json.dumps(merge)
+
+        def wrong_integration(state, auth):
+            merge = json.loads(state["beads"][T1]["metadata"]["gc.flow.merge"])
+            merge["integration"] = "0" * 40
+            state["beads"][T1]["metadata"]["gc.flow.merge"] = json.dumps(merge)
+
+        def wrong_current_tip(state, auth):
+            self.git("update-ref", f"refs/heads/{self.INTEGRATION}", auth["repair_commit"])
+
+        def wrong_ancestor(state, auth):
+            merge = json.loads(state["beads"][RETURNED_RELEASE_REPAIR]["metadata"]["gc.flow.merge"])
+            merge["ticket_commit"] = self.returned_release_unrelated
+            state["beads"][RETURNED_RELEASE_REPAIR]["metadata"]["gc.flow.merge"] = json.dumps(merge)
+            auth["repair_commit"] = self.returned_release_unrelated
+
+        def undelivered_maintenance(state, auth):
+            state["beads"][RETURNED_RELEASE_MAINTENANCE]["status"] = "open"
+
+        for name, change in (("ticket", wrong_ticket), ("park", wrong_park), ("merge", wrong_merge),
+                             ("integration", wrong_integration), ("current tip", wrong_current_tip),
+                             ("ancestor", wrong_ancestor), ("maintenance", undelivered_maintenance)):
+            with self.subTest(name=name):
+                self.git("update-ref", f"refs/heads/{self.INTEGRATION}", authorization["integration_tip"])
+                self.tracker.write_text(seeded)
+                self.write_log.write_text("")
+                state = self.tracker_state()
+                auth = json.loads(json.dumps(authorization))
+                change(state, auth)
+                self.tracker.write_text(json.dumps(state))
+
+                answer = self.advance(CONVOY, env={**self.env, RETURNED_RELEASE_ENV: json.dumps(auth)})
+
+                self.assertEqual([], self.of(answer, "lifted"), name)
+                self.assertEqual([], self.of(answer, "resumed"), name)
+                self.assertEqual("resumes_exhausted", self.park_of(T1)["cause"], name)
+                self.assertEqual([], self.resume_launches(), name)
 
     def overridden_then_returned(self, override=True):
         """T1 stopped still refused, its one Blocking Finding overridden by

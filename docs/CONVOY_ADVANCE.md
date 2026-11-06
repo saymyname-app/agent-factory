@@ -459,6 +459,23 @@ through the dispatch door. The current reader accepts the preserved old stop
 only when this migrated final repair signal proves that compatibility path;
 no other exhausted parking is migrated or lifted.
 
+One other release is deliberately an occurrence, not a rule
+(`af-npz9v1.56`). D (`af-ten1sp`) was parked at
+`2026-11-06T02:50:25Z` after the already-counted third `returned` resume for
+the red merge candidate `bf9d408015732a8f92fd7fca95031d33e8930f65`.
+The pass removes only that parking, and only after the maintenance bead
+`af-npz9v1.56` has structural PR+CI delivery proof, the `merged_tests` piece
+still has its recorded digest, the candidate's first parent and the current
+integration tip are `5f277f3bc566d41388da28c0fce8c0ef63a8862f`, and R9's delivered commit
+`153260074fcf5537fc6245a5b7693987ee7c0387` is still their ancestor. It then
+launches the existing empty `returned` resume through the ordinary resume
+door. It writes no exhausted `park_lifts` entry (such an entry starts a new K
+window), changes no counter or resume entry, clears no escalation and records
+no answer for Benjamin; the one launch written on that existing resume is the
+durable consumption. A different ticket, parking time, merge, integration
+history, evidence or maintenance state does nothing. If D returns from a new
+red merge, the ordinary exhausted bound applies again.
+
 A ticket to resume that names no single known project, or when the
 settings have no `resume` entry, is listed under `refused` (exit 1) before
 anything is counted or written. A resume the door deferred is listed under
