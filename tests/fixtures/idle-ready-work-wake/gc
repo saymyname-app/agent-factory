@@ -7,6 +7,7 @@ window."""
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 args = sys.argv[1:]
@@ -21,6 +22,7 @@ if args[:3] == ["mail", "send", "mayor"]:
     log = Path(os.environ["IDLE_TEST_GC_LOG"])
     with log.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(args) + "\n")
+    time.sleep(float(os.environ.get("IDLE_TEST_MAIL_SLEEP", "0")))
     raise SystemExit(0)
 
 print(f"unexpected fake gc arguments: {args}", file=sys.stderr)

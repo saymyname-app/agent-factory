@@ -916,9 +916,10 @@ def _with_sources(city, flow, github) -> SyntheticCity:
 # records in the provider's own format, read as the supervisor answers
 # them), and when the supervisor recorded it stopped (`end`, from the
 # trigger; absent, no stop is recorded). A session may be sent once the
-# cockpit is up (`dispatched`: `after_seconds` from the launch, then
-# `running_seconds` listed at work with only its first
-# `recorded_while_running` records, or all of them, before it stops), as
+# cockpit is up (`dispatched`: `after_seconds` from its first reading of the
+# sessions, then `running_seconds` listed at work with only its first
+# `recorded_while_running` records, or all of them, and until a reading has
+# listed it, before it stops), as
 # the supervisor sends the sessions of a dispatched ticket. The tracker
 # records the last of them as the session of the attempt, as gc does when a
 # session takes over; an empty list is a job no session is recorded for. A run may say what the flow declared for each role

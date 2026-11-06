@@ -130,7 +130,8 @@ export DISPATCH_DOOR_PROVIDER_FAILOVER_BIN="$TRIAL/provider-failover" DISPATCH_D
 export DELIVERY_ROLE_PROVIDER_FAILOVER_BIN="$TRIAL/provider-failover"
 export TICKET_GRAPH_BD_WORKSPACE="$CITY" TICKET_GRAPH_PUBLISH_SKIP_MAYOR_NOTIFY=1
 export GC_BIN=gc OUTCOME_EVALUATION_DISPATCH_DOOR_BIN="$ROOT/tests/fixtures/outcome-evaluation/evaluator"
-export OUTCOME_EVALUATION_STATE_DIR="$TRIAL/products" OUTCOME_EVALUATION_FAKE_LOG="$TRIAL/evaluator.log"
+export TICKET_EVALUATION_STATE_DIR="$TRIAL/ticket-products" OUTCOME_EVALUATION_STATE_DIR="$TRIAL/products"
+export EVALUATION_CAPACITY_STATE_DIR="$TRIAL/evaluation-capacity" OUTCOME_EVALUATION_FAKE_LOG="$TRIAL/evaluator.log"
 export OUTCOME_EVALUATION_FAKE_PLAN="$TRIAL/evaluator-plan.json" OUTCOME_EVALUATION_FAKE_BRIEFS="$TRIAL/evaluator-briefs"
 export GIT_AUTHOR_NAME=essai GIT_AUTHOR_EMAIL=essai@example.invalid GIT_COMMITTER_NAME=essai GIT_COMMITTER_EMAIL=essai@example.invalid
 ENV
@@ -515,7 +516,7 @@ jq -e --arg line "$STORY_ONE" --arg commit "$GATE1" --arg base "$BASE" \
    and .models == {authors: ["modele-auteur"], reviewer: "modele-relecteur", same_model: false}' <<<"$round1" >/dev/null \
   || fail "the end review did not record one cited Blocking Finding with its drafted repair: $round1"
 reviewer1=$(jq -r '.recorded_by' <<<"$round1")
-[ "$reviewer1" = "$(sed -n "s/^[^ ]* \\([^ ]*\\) $GATE1\$/\\1/p" "$TRIAL/review-sessions" | head -1)" ] \
+grep -Fxq "$bead1 $reviewer1 $GATE1" "$TRIAL/review-sessions" \
   || fail "the end review was not recorded by the reviewer session Gas City routed it to: $reviewer1"
 [ "$(field "$CONVOY" gc.flow.counter.end_rounds)" = 1 ] || fail "the unfavorable end review did not count one round of the end"
 set +e
@@ -562,6 +563,7 @@ reviewer2=$(jq -r '.recorded_by' <<<"$round2")
 [ "$reviewer2 $(jq -r '.conversation // ""' <<<"$round2")" != "$reviewer1 $(jq -r '.conversation // ""' <<<"$round1")" ] \
   || fail "the second end review was made by the conversation of the first: $reviewer2 $(jq -c '.conversation' <<<"$round2")"
 pass2=$(launch_pass "$GATE2")
+bead2=$(jq -r '.end_review.bead' <<<"$pass2")
 jq -e --arg commit "$GATE2" '.spec_end.commit == $commit and .spec_end.verdicts.end_review == "fail"
   and (.spec_end.reason | test("jamais réutilisé"))' <<<"$pass2" >/dev/null \
   || fail "the pass that replayed the gate did not refuse the earlier round and launch the review again: $pass2"
@@ -569,7 +571,7 @@ jq -e --arg commit "$GATE2" '.outcome_evaluation.action == "launched" and .outco
   || fail "the Outcome Evaluation was not launched again with the review, on the new commit of the gate: $pass2"
 brief2="$TRIAL/brief.$GATE2.json"
 [ -f "$brief2" ] || fail "the second reviewer was given no brief for the new commit of the gate $GATE2"
-[ "$reviewer2" = "$(sed -n "s/^[^ ]* \\([^ ]*\\) $GATE2\$/\\1/p" "$TRIAL/review-sessions" | head -1)" ] \
+grep -Fxq "$bead2 $reviewer2 $GATE2" "$TRIAL/review-sessions" \
   || fail "the second end review was not recorded by the session that was given the brief of $GATE2: $reviewer2"
 expected_files=$(git -C "$PRODUCT" diff --name-only "$BASE" "$GATE2" | sort | tr '\n' ' ')
 [ "$(jq -r '[.diff.files[].path] | sort | join(" ")' "$brief2") " = "$expected_files" ] \

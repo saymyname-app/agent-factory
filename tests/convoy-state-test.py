@@ -3167,12 +3167,61 @@ class ConvoyStateTest(unittest.TestCase):
 
         self.assertEqual(3, ticket["counters"]["resumes"])
         self.assertEqual(2, ticket["resumes_left"])
-        self.assertEqual({"interrupted": 2, "returned": 2, "unblocked": 2, "behind": 3,
+        self.assertEqual({"interrupted": 2, "returned": 2, "unblocked": 2, "repair_delivered": 3, "behind": 3,
                           "evaluation_no_result": 3, "stage_removed": 3, "code_review_no_result": 3,
                           "inherited_change": 3,
                           "commit_after_verdict": 3},
                          ticket["resumes_left_by_cause"])
         self.assertEqual(["interrupted", "returned", "unblocked"], [e["cause"] for e in ticket["resume"]["entries"]])
+
+    def test_migrate_repair_resume_accepts_only_the_exact_legacy_history_and_changes_only_the_last_cause(self):
+        self.started_ticket()
+        resume = {"entries": [
+            {"at": "2026-10-30T11:55:59Z", "cause": "answered",
+             "exit": {"at": "2026-10-29T06:50:10Z", "exit": "operator_request"},
+             "launches": [{"at": "2026-10-30T11:56:14Z", "bead": "af-g681ir"}],
+             "ref": "exit:2026-10-29T06:50:10Z", "session": "delivery-author-af-wisp-725xt6"},
+            {"at": "2026-10-30T13:10:24Z", "cause": "unblocked",
+             "exit": {"at": "2026-10-30T12:01:56Z", "exit": "operator_request"},
+             "launches": [{"at": "2026-10-30T13:10:40Z", "bead": "af-nisfrm"}],
+             "ref": "repairs:d494f994704d2725/exit:2026-10-30T12:01:56Z",
+             "session": "delivery-author-af-wisp-941ahd"},
+            {"at": "2026-11-02T00:39:47Z", "cause": "unblocked",
+             "exit": {"at": "2026-10-30T18:24:02Z", "exit": "finished"},
+             "launches": [{"at": "2026-11-02T00:40:01Z", "bead": "af-vokni8"}],
+             "ref": "repairs:ab580b5b24002f19/stop:2026-10-30T21:06:32Z",
+             "session": "delivery-author-af-wisp-ea4lfm",
+             "stop": {"at": "2026-10-30T21:06:32Z",
+                      "detail": "l'environnement d'évaluation a manqué 2 fois de suite au commit 0de042ff0bf7",
+                      "raised": "2026-10-30T21:06:41Z", "reason": "evaluation_outage"}},
+            {"at": "2026-11-02T19:33:51Z", "cause": "unblocked",
+             "exit": {"at": "2026-11-02T05:41:08Z", "exit": "operator_request"},
+             "launches": [], "ref": "repairs:b39d09d98a2aa52e/exit:2026-11-02T05:41:08Z",
+             "session": "delivery-author-af-wisp-8zsxhq"},
+        ]}
+        park = {"at": "2026-11-02T19:34:13Z", "cause": "resumes_exhausted",
+                "detail": "reprises épuisées pour la cause unblocked (5 reprises en tout)", "origin": T1}
+        self.edit_tracker(T1, **{
+            "gc.flow.counter.resumes": 5, "gc.flow.counter.correction_rounds": 1,
+            "gc.flow.resume": json.dumps(resume), "gc.flow.park": json.dumps(park),
+        })
+        before = self.tracker_state()["beads"][T1]["metadata"].copy()
+        unreadable = self.ticket(self.show(expect=EXIT_UNRULED), T1)
+        self.assertIn("arrêt levé par la reprise mal formé", unreadable["resume"]["unruled"])
+
+        self.ok("migrate-repair-resume", CONVOY, T1)
+
+        after = self.tracker_state()["beads"][T1]["metadata"]
+        migrated = json.loads(after["gc.flow.resume"])
+        self.assertEqual(resume["entries"][:-1], migrated["entries"][:-1])
+        self.assertEqual(
+            {**resume["entries"][-1], "cause": "repair_delivered"}, migrated["entries"][-1])
+        self.assertEqual({key: value for key, value in before.items() if key != "gc.flow.resume"},
+                         {key: value for key, value in after.items() if key != "gc.flow.resume"})
+        shown = self.ticket(self.show(), T1)
+        self.assertEqual((5, "resumes_exhausted", 2),
+                         (shown["counters"]["resumes"], shown["park"]["cause"],
+                          shown["resumes_left_by_cause"]["repair_delivered"]))
 
     def test_a_behind_resume_on_each_new_integration_tip_is_recorded_but_not_counted(self):
         # af-npz9v1.36: ticket D (af-ten1sp) was parked after 8 resumes, each
@@ -3427,6 +3476,21 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertEqual(3, self.ticket(self.show(), T1)["resumes_left"])
         self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "d")
         self.assertEqual(2, self.ticket(self.show(), T1)["resumes_left"])
+
+    def test_a_lift_recorded_before_a_new_resume_cause_starts_that_cause_at_zero(self):
+        self.interrupted_ticket()
+        for ref in ("a", "b", "c"):
+            self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", ref)
+        self.ok("park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "3 reprises")
+        self.ok("lift-park", CONVOY, T1, "--request", "fx-new1", "--option", "a")
+        metadata = self.tracker_state()["beads"][T1]["metadata"]
+        lifts = json.loads(metadata["gc.flow.park_lifts"])
+        del lifts["entries"][-1]["taken"]["repair_delivered"]
+        self.edit_tracker(T1, **{"gc.flow.park_lifts": json.dumps(lifts)})
+
+        ticket = self.ticket(self.show(), T1)
+
+        self.assertEqual((3, 3), (ticket["resumes_left"], ticket["resumes_left_by_cause"]["repair_delivered"]))
 
     def test_an_old_lift_takes_out_only_the_correction_round_recorded_before_it(self):
         # Three commits after a verdict exhausted the ticket; the lift, written
@@ -3725,7 +3789,7 @@ class ConvoyStateTest(unittest.TestCase):
 
     def test_the_bound_of_the_resumes_may_be_set_per_cause(self):
         self.interrupted_ticket()
-        per_cause = {"interrupted": 1, "returned": 2, "unblocked": 3, "behind": 3,
+        per_cause = {"interrupted": 1, "returned": 2, "unblocked": 3, "repair_delivered": 3, "behind": 3,
                      "evaluation_no_result": 3, "stage_removed": 3, "code_review_no_result": 3,
                      "inherited_change": 3, "commit_after_verdict": 3}
         self.bounds(resumes=per_cause, open_planning_exceptions=2)
@@ -3741,7 +3805,7 @@ class ConvoyStateTest(unittest.TestCase):
 
     def test_a_malformed_bound_of_the_resumes_is_refused_and_nothing_is_written(self):
         self.interrupted_ticket()
-        all_causes = ("interrupted", "returned", "unblocked", "behind", "evaluation_no_result",
+        all_causes = ("interrupted", "returned", "unblocked", "repair_delivered", "behind", "evaluation_no_result",
                       "stage_removed", "code_review_no_result", "inherited_change", "commit_after_verdict")
         missing = {cause: 3 for cause in all_causes[1:]}
         unknown = {**missing, "interrupted": 3, "fatigue": 3}

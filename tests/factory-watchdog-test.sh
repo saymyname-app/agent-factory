@@ -46,10 +46,15 @@ BEADS_DIR="$TMP/beads"; mkdir -p "$BEADS_DIR"
 DEPS_DIR="$TMP/deps"; mkdir -p "$DEPS_DIR"
 CALLS="$TMP/calls.log"; : > "$CALLS"
 MAIL="$TMP/mail.log"; : > "$MAIL"
+GC_SLEEP_DONE="$TMP/gc-sleep-done"; : > "$GC_SLEEP_DONE"
 
 cat > "$TMP/bin/gc" <<STUB
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$CALLS"
+if [[ -n "\${FACTORY_WATCHDOG_TEST_GC_SLEEP_MATCH:-}" && "\$*" == "\$FACTORY_WATCHDOG_TEST_GC_SLEEP_MATCH"* ]]; then
+  sleep "\$FACTORY_WATCHDOG_TEST_GC_SLEEP_SECONDS"
+  printf 'done\n' > "\$FACTORY_WATCHDOG_TEST_GC_SLEEP_DONE"
+fi
 case "\$1 \$2" in
   "events --since") cat "$EVENTS"; exit 0 ;;
   "bd gate")
@@ -100,7 +105,12 @@ case "\$1 \$2" in
   "bd create")
     id="af-new\$RANDOM"
     title="\$3"
-    printf '%s' "\$title" | jq -R --arg id "\$id" '[{"id":\$id,"status":"open","title":.,"metadata":{}}]' > "$BEADS_DIR/\$id.json"
+    metadata='{}'
+    argv=("\$@")
+    for ((i=0; i<\${#argv[@]}; i++)); do
+      [[ "\${argv[i]}" == "--metadata" ]] && metadata="\${argv[i+1]}"
+    done
+    printf '%s' "\$title" | jq -R --arg id "\$id" --argjson metadata "\$metadata" '[{"id":\$id,"status":"open","title":.,"metadata":\$metadata}]' > "$BEADS_DIR/\$id.json"
     printf '{"id":"%s"}' "\$id"
     exit 0 ;;
   "bd update")
@@ -162,6 +172,25 @@ watchdog() { FACTORY_ROOT="$TMP/city" "$WATCHDOG" "$@" 2>&1 || true; }
 mails()   { grep -c '^mail send' "$MAIL" || true; }
 creates() { grep -c '^bd create' "$CALLS" || true; }
 reset_logs() { : > "$CALLS"; : > "$MAIL"; }
+
+# 0. the watchdog owns a budget below the order's 180-second deadline -------
+started_ns=$(date +%s%N)
+set +e
+out=$(FACTORY_WATCHDOG_BUDGET_SECONDS=0.1 \
+  FACTORY_WATCHDOG_TEST_GC_SLEEP_MATCH='bd gate list' \
+  FACTORY_WATCHDOG_TEST_GC_SLEEP_SECONDS=3 \
+  FACTORY_WATCHDOG_TEST_GC_SLEEP_DONE="$GC_SLEEP_DONE" \
+  FACTORY_ROOT="$TMP/city" "$WATCHDOG" --check-only 2>&1)
+rc=$?
+set -e
+elapsed_ns=$(( $(date +%s%N) - started_ns ))
+[ "$rc" = "2" ] || { echo "$out" >&2; fail "a watchdog budget expiry must exit 2 (was $rc)"; }
+grep -q 'internal budget exceeded after 0.1s' <<<"$out" \
+  || { echo "$out" >&2; fail "a watchdog budget expiry must name its own deadline"; }
+[ "$elapsed_ns" -lt 2000000000 ] \
+  || fail "a hung child must return before the watchdog's outer deadline"
+sleep 3
+[ ! -s "$GC_SLEEP_DONE" ] || fail "the hung child survived the watchdog budget"
 
 # 1. a quiet factory pages nothing -------------------------------------------
 out=$(watchdog)
@@ -439,11 +468,29 @@ grep -q "ticket sans suite —" <<<"$out" \
   && { echo "$out" >&2; fail "a ticket whose convoy is on the operator list must not be reported"; }
 unlink "$BEADS_DIR/af-cv1.json"
 
+# A convoy's grouped request carries the operator wait for every parked ticket
+# it covers. The request bead, rather than the convoy itself, is on the list.
+jq --arg at "$(iso $((NOW - 3000)))" \
+  '.convoy.grouped_request = {bead:"af-grouped", at:$at}' \
+  "$CONVOY_SHOW" > "$CONVOY_SHOW.next"
+mv "$CONVOY_SHOW.next" "$CONVOY_SHOW"
+printf '[{"id":"af-grouped","status":"open","metadata":{"gc.needs_benjamin":"Décision groupée attendue"}}]' > "$BEADS_DIR/af-grouped.json"
+reset_logs
+out=$(watchdog --check-only)
+grep -q "ticket sans suite —" <<<"$out" \
+  && { echo "$out" >&2; fail "a ticket covered by the active grouped request must not be reported"; }
+grep -q '^bd show af-cv1 af-grouped af-t9 --json$' "$CALLS" \
+  || { cat "$CALLS" >&2; fail "ticket scan did not read the grouped request in its batch"; }
+unlink "$BEADS_DIR/af-grouped.json"
+stalled_show in_progress
+
 reset_logs
 out=$(watchdog)
 grep -q "flagged ticket af-t9 without a next step" <<<"$out" || { echo "$out" >&2; fail "a ticket without a next step was not paged"; }
 [ "$(creates)" = "1" ] || fail "a ticket without a next step should be filed exactly once"
 stall_bead=$(grep -l '\[watchdog\] ticket sans suite : af-t9' "$BEADS_DIR"/*.json | head -1)
+jq -e '.[0].metadata["gc.source"] == "factory-watchdog" and .[0].metadata["gc.ticket"] == "af-t9"' "$stall_bead" >/dev/null \
+  || { cat "$stall_bead" >&2; fail "the ticket incident lost its create metadata"; }
 jq -e '.[0].metadata["gc.needs_benjamin"] | startswith("Incident d'"'"'usine : ticket af-t9 sans suite")' "$stall_bead" >/dev/null \
   || { cat "$stall_bead" >&2; fail "the ticket without a next step is not on the operator's list"; }
 grep -q '^mail send' "$MAIL" || fail "the operator was not mailed about the ticket without a next step"

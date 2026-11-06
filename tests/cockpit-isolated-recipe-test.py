@@ -263,7 +263,7 @@ class TheRecipe(unittest.TestCase):
             # read (a read of its tracker ending) is no socket of the port.
             try:
                 held.add(os.readlink(fd))
-            except FileNotFoundError:
+            except (FileNotFoundError, ProcessLookupError):
                 pass
         # The process the launcher holds is the one that listens on the port...
         self.assertTrue(listening & held, "the launched process does not hold the listening socket")

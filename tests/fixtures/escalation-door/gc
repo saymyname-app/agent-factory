@@ -11,6 +11,15 @@ set -Eeuo pipefail
 : "${ED_CALL_LOG:?ED_CALL_LOG must be set by the test}"
 printf '%q ' "$@" >>"$ED_CALL_LOG"
 printf '\n' >>"$ED_CALL_LOG"
+if [[ -n ${ED_CALL_BUDGET:-} ]]; then
+  : "${ED_CALL_COUNT_FILE:?ED_CALL_COUNT_FILE must accompany ED_CALL_BUDGET}"
+  count=$(cat "$ED_CALL_COUNT_FILE" 2>/dev/null || printf '0')
+  count=$((count + 1))
+  printf '%s\n' "$count" >"$ED_CALL_COUNT_FILE"
+  if ((count > ED_CALL_BUDGET)); then
+    sleep "${ED_CALL_BUDGET_BLOCK_SECONDS:-20}"
+  fi
+fi
 
 bead_file() { printf '%s/%s.json' "$ED_BEAD_DIR" "$1"; }
 has_open_blocker() {

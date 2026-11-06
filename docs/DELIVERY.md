@@ -476,6 +476,9 @@ marked file. A test stopped after `LOCAL_ONLY_TEST_TIMEOUT` (default
 3600 s) counts as failed; the one-hour per-test budget covers the observed
 long isolated-city journey. The order's timeout (`6h`) bounds the night: run one at a
 time on a loaded host, the marked tests take a little over two hours.
+The isolated author trials allow 900 seconds for their initial controller
+tick and formula claims: this is the measured loaded-host startup bound, not
+the budget of the ticket journey that follows.
 A trial on the real tracker that calls `bin/convoy-state` or a tool built on
 it exports `FACTORY_ROOT` to its disposable city: the tools name their city
 to `gc` from it, and left unset they name the repository they run from.
@@ -679,10 +682,11 @@ regression, `bin/tdd-step` and `bin/spec-integration` read it through
 
 `refresh` sets each budget to 1.5 times the slowest of the last ten successful
 runs of its kind in the evidence store, rounded up to the minute; a red run is
-not a duration measure, and a kind with
-fewer than three runs keeps its figure (on 27/10/2026: full 780 s from
-495 s measured; green 600 s, not yet measured since T4). Proof:
-`tests/test-budgets-test.py`.
+not a duration measure, and a kind with fewer than three runs keeps its figure.
+For `criterion_test_seconds`, one sample is the slowest criterion-class timing
+inside a successful green or full run. On 05/11/2026, the last ten samples gave
+green 1620 s from 1049 s, full 1740 s from 1148 s, and one criterion test
+1200 s from 773 s. Proof: `tests/test-budgets-test.py`.
 
 What it does not cover:
 
@@ -694,6 +698,9 @@ What it does not cover:
   (on that night a secret scan of the archive's whole history held 4 GB): they
   do not take the lock.
 - The order of arrival: when several batteries wait, any of them is next.
+- Criterion timings are recorded per class by the regression, while
+  `bin/tdd-step` may run one method from that class. The class measure is a
+  conservative upper bound; individual command durations are not retained.
 - A game or anything else Benjamin runs on the PC: the lock does not look at
   the load, it only keeps batteries from adding to each other.
 
