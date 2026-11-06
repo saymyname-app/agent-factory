@@ -18,7 +18,7 @@ synthetic sources only:
   (`GET /v0/city/<city>/session/<id>`, `…/transcript?format=raw`,
   `GET /v0/city/<city>/events?type=session.woke`, as gc 1.5.0 answers
   them) -- and sends the sessions the dataset dispatches once the cockpit
-  is up;
+  has read the sessions, however long it took to come up;
 - what a dataset says of a clean stop (`stop_supervisor`, H, af-69qhlk;
   `read_stop_supervisor`): the sessions at work on tickets, how each leaves a
   suspended city, who comes back at the resume, and a file of each write the
@@ -176,17 +176,22 @@ def serve_sessions(supervisor, city: synthetic_city.SyntheticCity) -> None:
     /v0/city/<city>/events?type=session.woke|session.stopped``, when it
     woke and stopped, and ``…?type=execution.step_started``, the bead it
     took (the subject), the latest first -- a 404 for a session it knows
-    nothing of. Then send the sessions `city` dispatches once the cockpit is
-    up: each wakes, is listed at work for a while with only its first
-    records and the bead it works (``active_bead``), then stops and is
-    listed no more, as the installed supervisor lists only the sessions it
-    runs; a session it keeps once stopped says no bead (gc 1.5.0 on the
-    live host, 2026-10-28: no ``active_bead``)."""
+    nothing of. Then send the sessions `city` dispatches once the cockpit
+    has read the sessions a first time, so that a slow start takes nothing
+    from them: each wakes, is listed at work for a while with only its first
+    records and the bead it works (``active_bead``), and stops once a
+    reading has listed it so -- then it is listed no more, as the installed
+    supervisor lists only the sessions it runs; a session it keeps once
+    stopped says no bead (gc 1.5.0 on the live host, 2026-10-28: no
+    ``active_bead``)."""
     handler = supervisor._server.RequestHandlerClass
     answer_other = handler.do_GET
     prefix = "/v0/city/%s/" % city.name
     sessions = {session["id"]: dict(session) for session in city.sessions}
     lock = threading.Lock()
+    # The readings of the sessions answered so far.
+    reading = threading.Condition(lock)
+    readings = 0
     # What the supervisor knows now: the sessions it sent, how many records
     # of each it serves (None: all), its events.
     known = {name: None for name in sessions if name not in city.dispatched}
@@ -217,8 +222,15 @@ def serve_sessions(supervisor, city: synthetic_city.SyntheticCity) -> None:
         return [dict(sessions[name]) for name in known if name not in city.dispatched or sessions[name]["running"]]
 
     def do_GET(self):  # noqa: N802
+        nonlocal readings
         path, _, query = self.path.partition("?")
         rest = path[len(prefix):] if path.startswith(prefix) else None
+        if rest == "sessions" and not supervisor._down:
+            with reading:
+                answer_other(self)
+                readings += 1
+                reading.notify_all()
+            return
         if supervisor._down or rest is None or not (rest == "events" or rest.startswith("session/")):
             answer_other(self)
             return
@@ -241,10 +253,12 @@ def serve_sessions(supervisor, city: synthetic_city.SyntheticCity) -> None:
     handler.do_GET = do_GET
 
     def dispatch(name: str, said: dict) -> None:
+        with reading:
+            reading.wait_for(lambda: readings > 0)
         time.sleep(float(said.get("after_seconds") or 0))
         running = float(said.get("running_seconds") or 0)
         logged = city.session_log.get(name) or {}
-        with lock:
+        with reading:
             if logged.get("woke") or sessions[name].get("created_at"):
                 record("session.woke", name, logged.get("woke") or sessions[name]["created_at"])
             took(name, logged.get("started"))
@@ -253,9 +267,12 @@ def serve_sessions(supervisor, city: synthetic_city.SyntheticCity) -> None:
                 sessions[name]["active_bead"] = logged["started"]["bead"]
             known[name] = said.get("recorded_while_running") if running > 0 else None
             supervisor.set_sessions(listed())
+            sent_at = readings
         if running > 0:
             time.sleep(running)
-        with lock:
+        with reading:
+            if running > 0:
+                reading.wait_for(lambda: readings > sent_at)
             sessions[name]["running"] = False
             sessions[name].pop("active_bead", None)
             known[name] = None
