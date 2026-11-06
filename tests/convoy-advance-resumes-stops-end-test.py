@@ -52,6 +52,15 @@ EXIT_NOT_NEW_FLOW = first.EXIT_NOT_NEW_FLOW
 ticket = first.ticket
 session = first.session
 
+AUTHORIZED_TICKET = "af-ocz64w"
+AUTHORIZED_COMMIT = "e62cb740dc8d134f26758c24fea4634d3787ffe8"
+AUTHORIZED_RESPONSE_AT = "2026-11-06T16:22:23Z"
+AUTHORIZED_FILES = [
+    "tests/cockpit-criteria/commands/home-result-essai-test.py",
+    "tests/cockpit-criteria/commands/result_trial.py",
+]
+AUTHORIZED_REF = "authorization:af-atrg8o"
+
 
 def delivered(number, head, merge):
     return {
@@ -478,6 +487,82 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.env["ESCALATION_DOOR_NOW"] = "4102444800"  # the answer comes after the stop
         self.run_ok(ESCALATION, "repondre", T1, letter, "--actor", "operateur-test")
         self.write_log.write_text("")
+
+    def preauthorized_amendment(self, *, ticket_id=AUTHORIZED_TICKET, own=AUTHORIZED_FILES,
+                                commit=AUTHORIZED_COMMIT):
+        """The exact A2 response and commit, on an unraised amendment stop."""
+        self.amendment_exhausted()
+        state = self.tracker_state()
+        bead = state["beads"].pop(T1)
+        state["beads"][ticket_id] = bead
+        state["beads"][CONVOY]["tracks"] = [ticket_id if item == T1 else item
+                                               for item in state["beads"][CONVOY]["tracks"]]
+        state["beads"][T3]["blocks"] = [ticket_id if item == T1 else item
+                                          for item in state["beads"][T3]["blocks"]]
+        bead["metadata"].update({
+            "gc.escalation_response_actor": "benjamin",
+            "gc.escalation_response_option": "a",
+            "gc.escalation_response_at": AUTHORIZED_RESPONSE_AT,
+            "gc.needs_benjamin": "none",
+        })
+        self.tracker.write_text(json.dumps(state))
+
+        self.git("init", "-q", "-b", "main")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "base")
+        branch = f"ticket/{ticket_id}"
+        self.git("branch", branch, "HEAD")
+        self.run_ok(STATE, "set-branch", CONVOY, ticket_id, "--branch", branch)
+        descriptors = self.root / "config" / "project-descriptors"
+        descriptors.mkdir(parents=True, exist_ok=True)
+        (descriptors / "fx.json").write_text(json.dumps({"rigs": ["fx-rig"]}))
+        fake = self.tmp / "authorized-tdd-changes"
+        fake.write_text("#!/bin/sh\necho '" + json.dumps(
+            {"ok": True, "ticket": ticket_id, "commit": commit, "own": own, "inherited": []}) + "'\n")
+        fake.chmod(0o755)
+        self.env["CONVOY_ADVANCE_TDD_STEP_BIN"] = str(fake)
+
+    def test_the_exact_a2_response_before_the_stop_resumes_its_exact_commit_and_files_once(self):
+        self.preauthorized_amendment()
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(AUTHORIZED_TICKET, "amendment_granted")],
+                         [(entry["id"], entry["cause"]) for entry in self.of(answer, "resumed")])
+        shown = self.shown_state(AUTHORIZED_TICKET)
+        self.assertIsNone(shown["stop"])
+        self.assertTrue(shown["resume"]["entries"][-1]["ref"].endswith(f"/{AUTHORIZED_REF}"))
+        self.run_ok(STATE, "stop-ticket", CONVOY, AUTHORIZED_TICKET,
+                    "--reason", "amendment_exhausted", "--detail", "seconde consommation")
+
+        repeated = self.advance(CONVOY)
+
+        self.assertEqual([], self.of(repeated, "resumed"))
+        self.assertEqual(1, self.resumes(AUTHORIZED_TICKET))
+
+    def test_the_a2_pre_stop_response_refuses_another_file(self):
+        self.preauthorized_amendment(own=[*AUTHORIZED_FILES, "tests/other.py"])
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([], self.of(answer, "resumed"))
+        self.assertEqual(0, self.resumes(AUTHORIZED_TICKET))
+
+    def test_the_a2_pre_stop_response_refuses_another_ticket(self):
+        self.preauthorized_amendment(ticket_id="af-other")
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([], self.of(answer, "resumed"))
+        self.assertEqual(0, self.resumes("af-other"))
+
+    def test_the_a2_pre_stop_response_refuses_another_commit(self):
+        self.preauthorized_amendment(commit="0" * 40)
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([], self.of(answer, "resumed"))
+        self.assertEqual(0, self.resumes(AUTHORIZED_TICKET))
 
     def test_an_exhausted_amendment_answered_a_is_resumed_once_and_its_stop_kept_on_the_resume(self):
         self.amendment_answered("a")

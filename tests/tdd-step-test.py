@@ -36,6 +36,12 @@ PLAIN_CONVOY, PLAIN_TICKET = "fx-plain", "fx-q1"
 AUTHORIZED_SUCCESSION_RESPONSE_AT = "2026-10-30T11:53:34Z"
 AUTHORIZED_SUCCESSION_LIFT_AT = "2026-10-30T11:55:11Z"
 AUTHORIZED_SUCCESSION_FILE = "tests/cockpit-criteria/commands/home-d01-records-test.py"
+PREAUTHORIZED_AMENDMENT_FILES = (
+    "tests/cockpit-criteria/commands/home-result-essai-test.py",
+    "tests/cockpit-criteria/commands/result_trial.py",
+)
+PREAUTHORIZED_AMENDMENT_OTHER_FILE = "tests/cockpit-criteria/commands/other-result-test.py"
+PREAUTHORIZED_AMENDMENT_REF = "stop:amendment_exhausted/x/authorization:af-atrg8o"
 
 EXIT_REFUSED = 1
 EXIT_NOT_NEW_FLOW = 4
@@ -1026,6 +1032,61 @@ class TddStepTest(unittest.TestCase):
         proc = self.run_tool("amend", SLICE, "--reason", "encore une")
         self.assertEqual(EXIT_STOPPED, proc.returncode, proc.stdout + proc.stderr)
         self.assertEqual("amendment_exhausted", self.ticket_state()["stop"]["reason"])
+
+    def preauthorized_amendment(self, ticket=SUCCESSOR, changed=PREAUTHORIZED_AMENDMENT_FILES):
+        """A ticket already amended once, stopped on the next change, then
+        resumed through the bounded A2 authorization."""
+        profile = self.descriptor(test_perimeter=[f"{TESTS}/", "tests/cockpit-criteria/commands/"])
+        self.commit_tests()
+        self.red(profile=profile)
+        self.ok("freeze")
+        start = self.git("rev-parse", "HEAD")
+        self.commit("tests du successeur", {
+            TICKET_FILE: TICKET_TEST,
+            SUCCESSOR_TABLE: json.dumps({"criteria": {"1": [TICKET_ID]}}),
+            **{path: "# avant l'autorisation\n" for path in (
+                *PREAUTHORIZED_AMENDMENT_FILES, PREAUTHORIZED_AMENDMENT_OTHER_FILE)},
+        })
+        self.ok("red", ticket, "--base", start, "--table", SUCCESSOR_TABLE, profile=profile)
+        self.ok("freeze", ticket)
+        amended = TICKET_TEST.replace('body.get("ticket")', 'body.get("ticket_name")')
+        app = self.base_app.replace('{"status": "ok"}', '{"status": "ok", "ticket_name": "A2"}')
+        self.commit("premier amendement", {APP: app, TICKET_FILE: amended})
+        self.ok("amend", ticket, "--reason", "le champ s'appelle ticket_name", profile=profile)
+        self.commit("changement autorisé", {path: "# après l'autorisation\n" for path in changed})
+        stopped = self.run_tool("amend", ticket, "--reason", "proxy HTTPS", profile=profile)
+        self.assertEqual(EXIT_STOPPED, stopped.returncode, stopped.stdout + stopped.stderr)
+        state = json.loads(self.tracker.read_text())
+        state["beads"][ticket]["metadata"]["gc.flow.gate.dispatch"] = json.dumps(
+            {"at": "2026-10-20T20:00:00Z"})
+        self.tracker.write_text(json.dumps(state))
+        self.state("open-resume", CONVOY, ticket, "--cause", "amendment_granted",
+                   "--ref", PREAUTHORIZED_AMENDMENT_REF)
+        return profile
+
+    def test_the_bounded_a2_resume_amends_only_its_two_files_once(self):
+        profile = self.preauthorized_amendment()
+
+        self.ok("amend", SUCCESSOR, "--reason", "proxy HTTPS", profile=profile)
+
+        self.commit("nouveau changement", {PREAUTHORIZED_AMENDMENT_FILES[0]: "# encore\n"})
+        proc = self.run_tool("amend", SUCCESSOR, "--reason", "seconde consommation", profile=profile)
+        self.assertEqual(EXIT_STOPPED, proc.returncode, proc.stdout + proc.stderr)
+
+    def test_the_bounded_a2_resume_refuses_another_file(self):
+        profile = self.preauthorized_amendment(
+            changed=(*PREAUTHORIZED_AMENDMENT_FILES, PREAUTHORIZED_AMENDMENT_OTHER_FILE))
+
+        error = self.refused("amend", SUCCESSOR, "--reason", "hors autorisation", profile=profile)
+
+        self.assertIn("ne vaut que pour", error)
+
+    def test_the_bounded_a2_resume_refuses_another_ticket(self):
+        profile = self.preauthorized_amendment(ticket=OTHER_SUCCESSOR)
+
+        error = self.refused("amend", OTHER_SUCCESSOR, "--reason", "hors autorisation", profile=profile)
+
+        self.assertIn("ne vaut que pour", error)
 
     def open_correction_after_the_amendment(self, ticket=SLICE):
         """The correction round (gc.flow.correction) opened after the

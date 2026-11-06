@@ -341,6 +341,21 @@ NO_RESULT = "evaluation_no_result"
 AMENDMENT_STOP = "amendment_exhausted"
 AMENDMENT_GRANTED = "amendment_granted"
 AMENDMENT_RESUME_OPTION = "a"
+# af-atrg8o: Benjamin answered the preceding A2 operator request before the
+# authorized test amendment could write its stop. Consume that exact answer
+# once, at that exact commit and file set, through the ordinary resume door.
+PREAUTHORIZED_AMENDMENT = {
+    "ticket": "af-ocz64w",
+    "actor": "benjamin",
+    "option": "a",
+    "answered_at": "2026-11-06T16:22:23Z",
+    "commit": "e62cb740dc8d134f26758c24fea4634d3787ffe8",
+    "files": (
+        "tests/cockpit-criteria/commands/home-result-essai-test.py",
+        "tests/cockpit-criteria/commands/result_trial.py",
+    ),
+    "ref": "authorization:af-atrg8o",
+}
 # The resume that lifts that stop when every change since the freeze is the
 # base's the branch merged, not the ticket's (af-npz9v1.39): no amendment
 # was the ticket's to take, so no answer of the operator is asked.
@@ -1223,6 +1238,39 @@ def amendment_granted_due(ticket: dict[str, Any]) -> tuple[str, str, str] | None
     return "new", AMENDMENT_GRANTED, f"stop:{stop['reason']}/{stop['at']}"
 
 
+def preauthorized_amendment_due(convoy: Convoy, ticket: dict[str, Any]) -> tuple[str, str, str] | None:
+    """The one A2 answer recorded before its amendment stop existed.
+
+    It is valid only at the already-produced commit and only when
+    ``tdd-step changes`` names the two authorized files. The authorization
+    marker on the native resume makes the response single-use and lets
+    ``tdd-step amend`` keep the same boundary after the author resumes.
+    """
+    stop = ticket["stop"]
+    authorization = PREAUTHORIZED_AMENDMENT
+    if ticket["id"] != authorization["ticket"] or ticket.get("resumes_left") == 0 or not ticket.get("tip"):
+        return None
+    metadata = read_bead(ticket["id"]).get("metadata") or {}
+    if (metadata.get("gc.escalation_response_actor"), metadata.get("gc.escalation_response_option"),
+            metadata.get("gc.escalation_response_at")) != (
+                authorization["actor"], authorization["option"], authorization["answered_at"]):
+        return None
+    entries = (ticket.get("resume") or {}).get("entries") or []
+    if any(str(entry.get("ref", "")).endswith(f"/{authorization['ref']}") for entry in entries):
+        return None
+    try:
+        proc = run([str(TDD_STEP_BIN), "changes", convoy.id, ticket["id"], "--repo", str(convoy.repo),
+                    "--profile", str(rig_profile(convoy.rig)), "--at", ticket["tip"]])
+        answer = json.loads(proc.stdout)
+    except (Refusal, json.JSONDecodeError):
+        return None
+    if proc.returncode != 0 or not isinstance(answer, dict) or answer.get("commit") != authorization["commit"] \
+            or sorted(answer.get("own") or []) != sorted(authorization["files"]):
+        return None
+    return ("new", AMENDMENT_GRANTED,
+            f"stop:{stop['reason']}/{stop['at']}/{authorization['ref']}")
+
+
 def inherited_change_due(convoy: Convoy, ticket: dict[str, Any]) -> tuple[str, str, str] | None:
     """The resume a stop at the second amendment asks for when, at the
     tip, no frozen file and no file of the test perimeter changed since the
@@ -1305,7 +1353,8 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
             elif ticket["stop"]["reason"] == CODE_REVIEW_STOP:
                 due = once_per_stop_due(ticket, CODE_REVIEW_STOP)
             elif ticket["stop"]["reason"] == AMENDMENT_STOP:
-                due = amendment_granted_due(ticket) or inherited_change_due(convoy, ticket)
+                due = preauthorized_amendment_due(convoy, ticket) or amendment_granted_due(ticket) \
+                    or inherited_change_due(convoy, ticket)
             elif ticket["stop"]["reason"] in EVALUATION_STOPS and technical_repairs(ticket):
                 due = evaluation_repair_due(ticket)
             elif ticket["stop"]["reason"] == EVALUATION_OUTAGE:
