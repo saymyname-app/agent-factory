@@ -560,6 +560,11 @@ skills du compte claude.ai, dont un autre `code-review`.
   `*-readonly`, lancé par `bin/delivery-role-sandbox` (Bubblewrap : tout en
   lecture seule sauf le répertoire de travail de la session, l'état du
   fournisseur, `.gc/` et `.beads/` ; aucun identifiant de push).
+  L'essai demande et observe exactement une fois, dans quatre appels distincts,
+  le refus de l'outil d'écriture, de l'écriture shell, du commit et du push. Un
+  appel Codex qui combine plusieurs gestes ou masque leurs erreurs est relevé
+  `NON OBSERVÉE` et refuse l'essai : sa sortie globale ne prouve aucun refus
+  individuel, même si le dépôt est resté inchangé.
 - **Dossier de l'essai** : `~/.local/share/af-role-trial` par défaut, effacé à
   chaque essai. Le garder court (chemins de sockets) et stable : Claude Code
   refuse de démarrer sans surveillance dans un dossier jamais approuvé ; Codex
