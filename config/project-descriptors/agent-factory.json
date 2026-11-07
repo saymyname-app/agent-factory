@@ -238,7 +238,6 @@
       "runs-active": "config/cockpit-datasets/runs-active.json",
       "runs-all": "config/cockpit-datasets/runs-all.json",
       "runs-completed": "config/cockpit-datasets/runs-completed.json",
-      "runs-recent": "config/cockpit-datasets/runs-recent.json",
       "run-abandoned": "config/cockpit-datasets/run-abandoned.json",
       "run-active": "config/cockpit-datasets/run-active.json",
       "run-completed": "config/cockpit-datasets/run-completed.json",
