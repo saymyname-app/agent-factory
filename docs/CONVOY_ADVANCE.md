@@ -525,6 +525,25 @@ review and Ticket Evaluation at `4ddad773`. A different tip, exit, parking,
 last repair launch, invalidation time or incomplete maintenance delivery
 does nothing.
 
+R8 has one close-without-merge transition (`af-npz9v1.60`), also an
+occurrence rather than a general rule. Benjamin answered option `a` on
+`af-nxis0q` at `2026-11-06T22:53:14Z`; the answered resume `af-k3nji4`
+then left the same tip `57b5655012a276234e296e1ba4a984c5fea2a346` parked
+again because the author had no closing door. Once `af-npz9v1.60` has
+structural PR+CI delivery proof, and only while that exact response, resume,
+tip, exit, parking, current session and repair link still match, the pass
+replays the profile regression through `spec-integration take-up`. A
+definitive green or red result lifts the inherited parking, clears the live
+request and closes R8 through `convoy-state withdraw-ticket`; no author is
+resumed, and the response and resume history remain. Green leaves no red.
+Red keeps the recorded red and the existing integration-stop path publishes
+one repair. A refused replay leaves R8 open for retry. Another ticket, tip,
+response option, state or incomplete maintenance delivery does nothing; a
+second pass neither closes nor publishes again. The native lift is also the
+durable phase marker: an interruption after it retries only the remaining
+request clearance and atomic withdrawal, without replaying the control or
+resuming an author.
+
 A ticket to resume that names no single known project, or when the
 settings have no `resume` entry, is listed under `refused` (exit 1) before
 anything is counted or written. A resume the door deferred is listed under
@@ -932,6 +951,9 @@ withdrawn}`, or `error`), `stop` when the convoy is stopped by one of its
 two stops (T21: `{reason: integration_red, control, repair}` or `{reason:
 planning_exceptions, open, bound}`), `repair` when the pass published the
 repair of a red (`{id, key, draft, published}`, or `error`),
+`closed_without_merge` for the exact R8 transition (`ticket`, delivered
+maintenance `repair`, lifted descendants and the `spec-integration take-up`
+result),
 `integration` when the pass ran a merge, `tdd_stops` when it raised a ticket
 stopped at its second amendment (T45), `code_review` when it settled code reviews,
 `evaluation` when it settled Ticket Evaluations, `correction` when a
