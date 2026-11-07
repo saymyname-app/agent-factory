@@ -414,24 +414,26 @@ C2B_RESULT_RELEASE = {
     "repair_bead": "af-npz9v1.58",
 }
 C2B_RESULT_RELEASE_TEST_ENV = "CONVOY_ADVANCE_TEST_C2B_RESULT_RELEASE"
-# af-npz9v1.60: Benjamin chose to close R8 without merging once its red no
-# longer reproduced. The author re-asked because no native door implemented
-# that choice. Consume only this recorded occurrence after this maintenance
-# is structurally delivered, then replay the declared integration control.
+# af-npz9v1.61: Benjamin chose to close R8 without merging once its red no
+# longer reproduced. The first native attempt was consumed by the generic
+# repair-delivered lift and one author resume. Consume only the resulting
+# recorded occurrence after this maintenance is structurally delivered, then
+# replay the declared integration control.
 R8_CLOSE_RELEASE = {
     "ticket": "af-nxis0q",
     "tip": "57b5655012a276234e296e1ba4a984c5fea2a346",
-    "session": "delivery-author-af-wisp-5d0qo6",
+    "session": "delivery-author-af-wisp-5m6mim",
     "response_at": "2026-11-06T22:53:14Z",
     "response_actor": "benjamin",
     "response_option": "a",
-    "needs": "R8 : réponse a (clore sans fusion) reçue, mais aucune porte de l'auteur ne clôt un ticket non fusionné",
-    "resume_at": "2026-11-06T22:55:35Z",
-    "resume_bead": "af-k3nji4",
-    "resume_session": "delivery-author-af-wisp-yvv05l",
-    "parked_at": "2026-11-06T22:59:39Z",
-    "exit_at": "2026-11-06T22:59:52Z",
-    "repair_bead": "af-npz9v1.60",
+    "needs": "R8 : la porte « clore sans fusion » de #822 ne s'est pas déclenchée ; un auteur a été relancé (repair_delivered)",
+    "resume_at": "2026-11-07T03:15:14Z",
+    "resume_bead": "af-5k8z0b",
+    "resume_session": "delivery-author-af-wisp-5d0qo6",
+    "resume_cause": "repair_delivered",
+    "parked_at": "2026-11-07T03:20:29Z",
+    "exit_at": "2026-11-07T03:20:49Z",
+    "repair_bead": "af-npz9v1.61",
 }
 R8_CLOSE_RELEASE_TEST_ENV = "CONVOY_ADVANCE_TEST_R8_CLOSE_RELEASE"
 # The resume that lifts that stop when every change since the freeze is the
@@ -1433,7 +1435,8 @@ def exact_r8_close_release_phase(convoy: Convoy, ticket: dict[str, Any]) -> str 
     if (last.get("at"), last.get("cause"), last.get("session"), len(launches),
             launches[0].get("bead") if launches else None,
             (ticket.get("session") or {}).get("name")) != (
-                authorization.get("resume_at"), "answered", authorization.get("resume_session"), 1,
+                authorization.get("resume_at"), authorization.get("resume_cause"),
+                authorization.get("resume_session"), 1,
                 authorization.get("resume_bead"), authorization.get("session")):
         return None
     repairs = ticket.get("technical_repairs") or {}
@@ -1449,8 +1452,10 @@ def exact_r8_close_release_phase(convoy: Convoy, ticket: dict[str, Any]) -> str 
                 authorization.get("response_at"), authorization.get("response_actor"),
                 authorization.get("response_option")):
         return None
-    readiness = delivery_readiness(read_bead(authorization["repair_bead"]))
-    if not readiness["ready"] or not readiness["pr_backed"]:
+    repair = read_bead(authorization["repair_bead"])
+    readiness = delivery_readiness(repair)
+    if not readiness["ready"] or not readiness["pr_backed"] \
+            or (repair.get("metadata") or {}).get("merged_target") != "main":
         return None
     if (park.get("cause"), park.get("origin"), park.get("at")) == (
             "operator_request", ticket["id"], authorization.get("parked_at")):

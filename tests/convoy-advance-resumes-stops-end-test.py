@@ -74,6 +74,7 @@ C2B_RESULT_RELEASE_ENV = "CONVOY_ADVANCE_TEST_C2B_RESULT_RELEASE"
 C2B_RESULT_RELEASE_REPAIR = "fx-c58"
 R8_CLOSE_RELEASE_ENV = "CONVOY_ADVANCE_TEST_R8_CLOSE_RELEASE"
 R8_CLOSE_RELEASE_REPAIR = "fx-r8close"
+R8_CLOSE_CURRENT_REPAIR = "fx-r8current"
 
 
 def delivered(number, head, merge):
@@ -468,9 +469,66 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
             "resume_at": resume["at"],
             "resume_bead": resume["launches"][0]["bead"],
             "resume_session": resume["session"],
+            "resume_cause": resume["cause"],
             "parked_at": park["at"],
             "exit_at": exit_record["at"],
             "repair_bead": R8_CLOSE_RELEASE_REPAIR,
+        }
+
+    def exact_r8_close_release_after_generic_lift(self):
+        """R8 after its delivered repair was generically lifted and resumed."""
+        self.exact_r8_close_release()
+        lifted = self.advance(CONVOY)
+        resume = json.loads(self.bead(T1)["metadata"]["gc.flow.resume"])["entries"][-1]
+        park_lift = json.loads(self.bead(T1)["metadata"]["gc.flow.park_lifts"])["entries"][-1]
+        self.assertEqual(("repair_delivered", 1), (resume["cause"], len(resume["launches"])))
+        self.assertEqual((None, [R8_CLOSE_RELEASE_REPAIR]),
+                         (park_lift["option"], park_lift["repairs"]))
+        self.assertEqual([(T1, "repair_delivered")],
+                         [(entry["id"], entry["cause"]) for entry in self.of(lifted, "resumed")])
+
+        self.taken(T1, "auteur-r8-3")
+        request = {
+            "quoi": "R8 : la clôture sans fusion n'a pas reconnu la levée générique",
+            "pourquoi": "La reprise repair_delivered a consommé l'état attendu par la porte dédiée.",
+            "que_faire": [
+                {"option": "Réparer la clôture sans fusion pour l'état actuel de R8",
+                 "consequence": "R8 est fermé sans fusion sans nouvel auteur."},
+                {"option": "Laisser R8 parqué", "consequence": "R8 reste ouvert."},
+            ],
+            "langue": "fr", "bloquant": True,
+        }
+        self.run_ok(ESCALATION, "benjamin", T1, json.dumps(request))
+        self.run_ok(STATE, "park", CONVOY, T1, "--cause", "operator_request", "--detail", request["quoi"])
+        self.run_ok(STATE, "set-exit", CONVOY, T1, "--exit", "operator_request")
+        state = self.tracker_state()
+        state["beads"][R8_CLOSE_CURRENT_REPAIR] = {
+            "title": "close current R8 without merge", "status": "open", "issue_type": "bug",
+            "labels": ["maintenance"], "metadata": {"gc.authorized_by": R8_CLOSE_RELEASE_REPAIR},
+        }
+        self.tracker.write_text(json.dumps(state))
+        self.run_ok(STATE, "link-technical-repair", CONVOY, T1, "--repair", R8_CLOSE_CURRENT_REPAIR)
+        self.edit(R8_CLOSE_CURRENT_REPAIR, status="closed", metadata=delivered(821, "c" * 40, "d" * 40))
+        metadata = self.bead(T1)["metadata"]
+        park = json.loads(metadata["gc.flow.park"])
+        exit_record = json.loads(metadata["gc.flow.exit"])
+        resume = json.loads(metadata["gc.flow.resume"])["entries"][-1]
+        self.write_log.write_text("")
+        return {
+            "ticket": T1,
+            "tip": self.shown_state(T1)["tip"],
+            "session": "auteur-r8-3",
+            "response_at": metadata["gc.escalation_response_at"],
+            "response_actor": metadata["gc.escalation_response_actor"],
+            "response_option": "a",
+            "needs": metadata["gc.needs_benjamin"],
+            "resume_at": resume["at"],
+            "resume_bead": resume["launches"][0]["bead"],
+            "resume_session": resume["session"],
+            "resume_cause": resume["cause"],
+            "parked_at": park["at"],
+            "exit_at": exit_record["at"],
+            "repair_bead": R8_CLOSE_CURRENT_REPAIR,
         }
 
     def test_a_pass_sends_an_interrupted_ticket_to_a_fresh_author_session_and_counts_the_resume(self):
@@ -1811,6 +1869,42 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual((T1, [], None),
                          (release["ticket"], release["lifted"], release.get("tests")))
 
+    def test_the_current_R8_after_generic_lift_closes_without_another_author(self):
+        authorization = self.exact_r8_close_release_after_generic_lift()
+        env = {**self.env, R8_CLOSE_RELEASE_ENV: json.dumps(authorization)}
+        before = self.bead(T1)
+        before_state = self.shown_state(T1)
+        before_other = self.bead(T2)
+        before_lifts = json.loads(before["metadata"]["gc.flow.park_lifts"])["entries"]
+        preserved = {
+            key: value for key, value in before["metadata"].items()
+            if key == "gc.flow.resume" or key.startswith("gc.flow.counter.")
+            or key.startswith("gc.flow.evidence.") or key.startswith("gc.escalation_response_")
+        }
+
+        answer = self.advance(CONVOY, env=env)
+
+        after = self.bead(T1)
+        after_state = self.shown_state(T1)
+        after_lifts = json.loads(after["metadata"]["gc.flow.park_lifts"])["entries"]
+        self.assertEqual("closed", after["status"])
+        self.assertIn("withdrawn", after_state["gates"])
+        self.assertIsNone(after_state["merge"])
+        self.assertEqual(before_state["tip"], after_state["tip"])
+        self.assertEqual(preserved, {key: after["metadata"].get(key) for key in preserved})
+        self.assertEqual(before_lifts, after_lifts[:-1])
+        self.assertEqual(("a", T1), (after_lifts[-1]["option"], after_lifts[-1]["request"]))
+        self.assertEqual(before_other, self.bead(T2))
+        self.assertEqual([], self.resume_launches())
+        release = self.of(answer, "closed_without_merge")
+        self.assertEqual((T1, R8_CLOSE_CURRENT_REPAIR, 0),
+                         (release["ticket"], release["repair"], release["tests"]["exit_code"]))
+
+        again = self.advance(CONVOY, env=env)
+
+        self.assertEqual([], self.of(again, "closed_without_merge"))
+        self.assertEqual([], self.resume_launches())
+
     def test_the_exact_answered_R8_closes_without_merge_and_one_repair_follows_a_red_control(self):
         authorization = self.exact_r8_close_release(regression="false")
         env = {**self.env, R8_CLOSE_RELEASE_ENV: json.dumps(authorization)}
@@ -1863,11 +1957,18 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
             auth["response_option"] = "b"
             state["beads"][T1]["metadata"]["gc.escalation_response_option"] = "b"
 
+        def wrong_resume_cause(state, auth):
+            auth["resume_cause"] = "repair_delivered"
+
         def undelivered_repair(state, auth):
             state["beads"][R8_CLOSE_RELEASE_REPAIR]["status"] = "open"
 
+        def wrong_merge_target(state, auth):
+            state["beads"][R8_CLOSE_RELEASE_REPAIR]["metadata"]["merged_target"] = "dev"
+
         for name, change in (("tip", wrong_tip), ("parking", wrong_parking),
-                             ("option b", option_b), ("delivery", undelivered_repair)):
+                             ("option b", option_b), ("resume cause", wrong_resume_cause),
+                             ("delivery", undelivered_repair), ("merge target", wrong_merge_target)):
             with self.subTest(name=name):
                 self.tracker.write_text(seeded)
                 self.write_log.write_text("")
