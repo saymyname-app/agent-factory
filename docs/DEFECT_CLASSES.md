@@ -139,7 +139,10 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   af-npz9v1.60 (l'option répondue
   « clore R8 sans fusion » n'avait aucune porte native et relançait un auteur) ;
   af-npz9v1.66 (la requête de la seconde route Evaluator de C2b avait été
-  effacée avant le correctif, puis son parcage empêchait de la reconstruire).
+  effacée avant le correctif, puis son parcage empêchait de la reconstruire) ;
+  af-npz9v1.67 (`open-resume` avait effacé la sortie au sommet de C2b alors
+  que sa dernière reprise en conservait la copie, donc la transition exacte
+  ne reconnaissait pas l'état réel).
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
   contrôle : `criterion_already_green` reste au Planning Run ;
   `outcome_evaluation_no_result` et `outcome_evaluation_outage` ne repartent

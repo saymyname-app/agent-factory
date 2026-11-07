@@ -357,6 +357,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         state = self.tracker_state()
         metadata = state["beads"][T1]["metadata"]
         exit_at = json.loads(metadata["gc.flow.exit"])["at"]
+        metadata.pop("gc.flow.exit")
         evaluation = json.loads(metadata["gc.flow.evaluation"])
         cleaned_launch = evaluation["request"]["launches"][-1]["bead"]
         evaluation.pop("request")
@@ -1919,10 +1920,12 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         review = before["gc.flow.code_review"]
         shown = self.shown_state(T1)
         latest = shown["resume"]["entries"][-1]
-        self.assertEqual((authorization["ticket"], authorization["tip"], authorization["exit_at"],
+        self.assertEqual((authorization["ticket"], authorization["tip"], None,
                           authorization["parked_at"], authorization["session"], 7, 0),
-                         (shown["id"], shown["tip"], shown["exit"]["at"], shown["park"]["at"],
+                         (shown["id"], shown["tip"], shown["exit"], shown["park"]["at"],
                           shown["session"]["name"], shown["counters"]["resumes"], shown["resumes_left"]))
+        self.assertEqual(("finished", authorization["exit_at"]),
+                         (latest["exit"]["exit"], latest["exit"]["at"]))
         self.assertEqual((authorization["resume_at"], authorization["stop_at"], [], 0, 2),
                          (latest["at"], latest["stop"]["at"], latest["launches"],
                           shown["resumes_left_by_cause"]["evaluation_no_result"], len(shown["park_lifts"])))
@@ -1951,9 +1954,12 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual(["c2b_evaluation_once"], [entry["release"] for entry in self.of(answer, "lifted")], answer)
         self.assertIsNotNone(self.evaluation_of(answer), answer)
         [launched] = self.evaluation_of(answer)["launched"]
-        request = self.shown_state(T1)["evaluation"]["request"]
+        after = self.shown_state(T1)
+        request = after["evaluation"]["request"]
         self.assertEqual(T1, launched["ticket"])
         self.assertEqual(1, len(request["launches"]))
+        self.assertEqual(("finished", authorization["exit_at"]),
+                         (after["exit"]["exit"], after["exit"]["at"]))
         self.assertEqual((None, None), (self.park_of(T1), self.park_of(T3)))
         self.assertEqual((7, [], review),
                          (self.resumes(), self.resume_launches(), self.bead(T1)["metadata"]["gc.flow.code_review"]))

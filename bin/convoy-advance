@@ -1507,18 +1507,21 @@ def exact_c2b_evaluation_recovery_state(ticket: dict[str, Any], *, parked: bool)
             or ticket.get("tip") != authorization.get("tip") or ticket.get("stop") is not None \
             or ticket.get("technical_repairs") is not None:
         return False
-    park, exit_record = ticket.get("park"), ticket.get("exit")
+    park = ticket.get("park")
     if parked:
         if not isinstance(park, dict) or (park.get("cause"), park.get("origin"), park.get("at")) != (
                 PARK_EXHAUSTED, ticket["id"], authorization["parked_at"]):
             return False
     elif park is not None:
         return False
+    entries = (ticket.get("resume") or {}).get("entries") or []
+    last = entries[-1] if entries and isinstance(entries[-1], dict) else {}
+    exit_record = last.get("exit")
     if not isinstance(exit_record, dict) or (exit_record.get("exit"), exit_record.get("at")) != (
             "finished", authorization["exit_at"]):
         return False
-    entries = (ticket.get("resume") or {}).get("entries") or []
-    last = entries[-1] if entries and isinstance(entries[-1], dict) else {}
+    if ticket.get("exit") is not None and ticket.get("exit") != exit_record:
+        return False
     old_stop = last.get("stop") or {}
     expected_ref = f"integration:{authorization['integration_tip']}/stop:{authorization['stop_at']}"
     if (last.get("at"), last.get("cause"), last.get("ref"), last.get("session"), last.get("launches"),
@@ -1564,12 +1567,16 @@ def exact_c2b_evaluation_recovery_state(ticket: dict[str, Any], *, parked: bool)
 
 
 def release_exact_c2b_evaluation(convoy: Convoy, ticket: dict[str, Any]) -> list[str]:
-    """Remove only the obsolete parking; normal evaluation recreates the request."""
+    """Restore the cleaned exit and remove the obsolete parking."""
     affected = [other["id"] for other in convoy.tickets
                 if (other.get("park") or {}).get("origin") == ticket["id"]]
     for ticket_id in [name for name in affected if name != ticket["id"]] + [ticket["id"]]:
-        passed(run([GC_BIN, "--city", str(ROOT), "bd", "update", ticket_id,
-                    "--unset-metadata", "gc.flow.park"]), f"gc bd update {ticket_id}")
+        argv = [GC_BIN, "--city", str(ROOT), "bd", "update", ticket_id,
+                "--unset-metadata", "gc.flow.park"]
+        if ticket_id == ticket["id"]:
+            exit_record = ticket["resume"]["entries"][-1]["exit"]
+            argv += ["--set-metadata", f"gc.flow.exit={json.dumps(exit_record, separators=(',', ':'))}"]
+        passed(run(argv), f"gc bd update {ticket_id}")
     return sorted(affected)
 
 
