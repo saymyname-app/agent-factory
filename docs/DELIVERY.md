@@ -4,6 +4,11 @@
 
 GitHub is authoritative for branches, commits, pull requests, checks and merges. Beads is authoritative for executable work, dependencies and gates. Gas City provides dispatch through existing formulas and provider configuration. Worker pools are capped explicitly (`agents/factory-worker/agent.toml`, `[[patches.agent]]` in `city.toml`), not left uncapped: since 2026-09-29 (P17) the `agent-factory` rig runs up to 2 concurrent `factory-worker` sessions, each isolated in its own worktree with its own declared scope; product rigs stay at 1 writer until the same canary work runs there. `ticket-graph-publish` serializes any two not-yet-ordered tickets whose declared scopes overlap, and the dispatch door defers a dispatch whose scope touches a hot-file path an in-progress ticket already holds — a rejected ticket returns to the pool rather than being left stranded. Concurrent worktrees are PROVEN on the agent-factory rig by this rollout; wider multi-rig, multi-writer scaling remains TARGET.
 
+`dispatch-door` also enforces the dependency edge at final admission: a bead
+with an unfinished `blocks` dependency is deferred before `sling` can create
+its workspace. This keeps the publication-time scope serialization effective
+even when a caller mistakenly asks the door to route a non-ready bead.
+
 The configured writer provider inherits `builtin:codex` and appends `-m gpt-5.6-sol`. M2 observed and proved that effective model on a real writer session. Mechanical decisions such as exit codes, diffs, SHAs, PR state and check conclusions are L0 deterministic work.
 
 ## Provider routing
@@ -684,9 +689,10 @@ regression, `bin/tdd-step` and `bin/spec-integration` read it through
 runs of its kind in the evidence store, rounded up to the minute; a red run is
 not a duration measure, and a kind with fewer than three runs keeps its figure.
 For `criterion_test_seconds`, one sample is the slowest criterion-class timing
-inside a successful green or full run. On 05/11/2026, the last ten samples gave
-green 1620 s from 1049 s, full 1740 s from 1148 s, and one criterion test
-1200 s from 773 s. Proof: `tests/test-budgets-test.py`.
+inside a successful green or full run. On 06/11/2026, the last ten samples gave
+green 1680 s from 1106 s, full 2340 s from 1534 s, and one criterion test
+1200 s from 798 s (the 1534 s full run measured 750 s for its slowest
+criterion). Proof: `tests/test-budgets-test.py`.
 
 What it does not cover:
 

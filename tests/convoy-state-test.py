@@ -3223,6 +3223,18 @@ class ConvoyStateTest(unittest.TestCase):
                          (shown["counters"]["resumes"], shown["park"]["cause"],
                           shown["resumes_left_by_cause"]["repair_delivered"]))
 
+        # convoy-advance lifts the migrated parking before opening the next
+        # answer; that new entry must not make the preserved history unreadable.
+        state = self.tracker_state()
+        del state["beads"][T1]["metadata"]["gc.flow.park"]
+        self.tracker.write_text(json.dumps(state))
+        self.ok("set-exit", CONVOY, T1, "--exit", "operator_request")
+        self.ok("open-resume", CONVOY, T1, "--cause", "answered", "--ref", "exit:2026-11-06T00:12:48Z")
+
+        answered = self.ticket(self.show(), T1)
+        self.assertEqual(["answered", "unblocked", "unblocked", "repair_delivered", "answered"],
+                         [entry["cause"] for entry in answered["resume"]["entries"]])
+
     def test_a_behind_resume_on_each_new_integration_tip_is_recorded_but_not_counted(self):
         # af-npz9v1.36: ticket D (af-ten1sp) was parked after 8 resumes, each
         # merge of another ticket moving the integration branch it had to take.
@@ -3455,6 +3467,23 @@ class ConvoyStateTest(unittest.TestCase):
         ticket = self.ticket(self.show(), T1)
         self.assertEqual((2, 2, 2), (ticket["resumes_left"], ticket["resumes_left_by_cause"]["interrupted"],
                                      ticket["resumes_left_by_cause"]["commit_after_verdict"]))
+
+    def test_a_code_owned_lift_gives_back_only_the_named_resume_cause(self):
+        self.interrupted_ticket()
+        for ref in ("a", "b"):
+            self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", ref)
+        for _ in range(3):
+            self.ok("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
+        self.ok("park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "3 commits après verdict")
+
+        self.ok("lift-park", CONVOY, T1, "--request", "fx-repair", "--reset-cause", "commit_after_verdict")
+
+        ticket = self.ticket(self.show(), T1)
+        self.assertIsNone(ticket["park"])
+        self.assertEqual(5, ticket["counters"]["resumes"])
+        self.assertEqual((3, 1), (ticket["resumes_left_by_cause"]["commit_after_verdict"],
+                                  ticket["resumes_left_by_cause"]["interrupted"]))
+        self.assertEqual("commit_after_verdict", ticket["park_lifts"][-1]["reset_cause"])
 
     def test_a_lift_recorded_before_the_bounds_per_cause_still_gives_the_resumes_back(self):
         # A lift written before ADR-0030 L2 carries no per-cause count: what

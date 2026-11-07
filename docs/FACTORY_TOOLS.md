@@ -523,11 +523,14 @@ skills du compte claude.ai, dont un autre `code-review`.
 ./bin/role-adoption-trial status                # chaque rôle × fournisseur déclaré : essai valide ou non
 ./bin/role-adoption-trial run                   # essai réel (~1 min par rôle, consomme du quota), écrit le relevé
 ./bin/role-adoption-trial run --role reviewer   # un seul rôle
+./bin/role-adoption-trial run --role reviewer --provider codex-readonly  # un seul couple rôle/fournisseur
 ./bin/role-adoption-trial verify-distribution   # les copies par rôle = la distribution, octet pour octet
 ```
 
 - **Relevé** : `config/role-adoption-trials.json`, versionné. Il se committe par
-  PR depuis un worktree ; ne jamais l'éditer à la main, relancer l'essai.
+  PR depuis un worktree ; ne jamais l'éditer à la main, relancer l'essai. Chaque
+  couple rôle/fournisseur est écrit dès qu'il finit : l'échec d'un fournisseur
+  suivant ne jette pas le relevé déjà produit.
 - **`check`** (lu par `bin/dispatch-door --role`) ne se fie pas au seul
   `passed` du relevé : il relit les lancements relevés et refuse, en nommant le
   skill, un relevé où un skill de revue hors du rôle s'est lancé, où le
@@ -540,15 +543,35 @@ skills du compte claude.ai, dont un autre `code-review`.
   `bin/dispatch-door --role <rôle>` refuse, jusqu'au nouvel essai.
 - **Fournisseurs déclarés** d'un rôle : la chaîne de la cible de son agent dans
   `config/provider-policy.json`. N'y ajouter un fournisseur qu'avec son essai.
-  Seul Claude Code est observable aujourd'hui (aucun observateur pour Codex :
-  un essai sur Codex échoue, donc la porte tient le rôle hors de Codex).
+  Après le redémarrage que la création des hooks Codex peut provoquer, l'essai
+  attend un état `active` stable puis écrit sa demande dans la session active ;
+  il ne redémarre pas la conversation et ne dépend pas de la clé perdue. Une
+  reprise `active` proche de l'échéance reçoit jusqu'à une minute de stabilité
+  supplémentaire, dans une borne totale fixe ; un échec nomme les états
+  observés et si le réveil a été demandé. `active` ne prouve que le cycle de
+  vie : chez Codex, la première demande de revue doit aussi créer le rollout du
+  répertoire de travail. Sans rollout ni réponse, l'essai s'arrête sur un seul
+  échec `lifecycle-active`/provider-ready, avant les contrôles de skills et
+  d'écriture.
+- **Codex sans opérateur** : les deux profils Codex désactivent la recherche de
+  mise à jour au démarrage et autorisent les hooks épinglés de la Factory ; la
+  cité isolée ajoute à son profil Codex la confiance du répertoire exact du rôle
+  qu'elle vient de générer. Les dialogues tardifs de mise à jour, confiance du
+  dossier et revue des hooks ne peuvent ainsi recevoir un nudge à la place du
+  prompt, sans changer le sandbox partagé par les rôles Claude.
 - **Lecture seule** : le relecteur et l'Evaluator tournent sur un profil
   `*-readonly`, lancé par `bin/delivery-role-sandbox` (Bubblewrap : tout en
   lecture seule sauf le répertoire de travail de la session, l'état du
   fournisseur, `.gc/` et `.beads/` ; aucun identifiant de push).
+  L'essai demande et observe exactement une fois, dans quatre appels distincts,
+  le refus de l'outil d'écriture, de l'écriture shell, du commit et du push. Un
+  appel Codex qui combine plusieurs gestes ou masque leurs erreurs est relevé
+  `NON OBSERVÉE` et refuse l'essai : sa sortie globale ne prouve aucun refus
+  individuel, même si le dépôt est resté inchangé.
 - **Dossier de l'essai** : `~/.local/share/af-role-trial` par défaut, effacé à
   chaque essai. Le garder court (chemins de sockets) et stable : Claude Code
-  refuse de démarrer sans surveillance dans un dossier jamais approuvé.
+  refuse de démarrer sans surveillance dans un dossier jamais approuvé ; Codex
+  reçoit la confiance exacte du dossier dans le profil de cette cité isolée.
 
 Sortie de `run` et `status` : `0` tout est réussi · `1` au moins un échec ·
 `2` l'essai n'a pas pu être mené.

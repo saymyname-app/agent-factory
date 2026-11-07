@@ -341,6 +341,79 @@ NO_RESULT = "evaluation_no_result"
 AMENDMENT_STOP = "amendment_exhausted"
 AMENDMENT_GRANTED = "amendment_granted"
 AMENDMENT_RESUME_OPTION = "a"
+# af-atrg8o: Benjamin answered the preceding A2 operator request before the
+# authorized test amendment could write its stop. Consume that exact answer
+# once, at that exact commit and file set, through the ordinary resume door.
+PREAUTHORIZED_AMENDMENT = {
+    "ticket": "af-ocz64w",
+    "actor": "benjamin",
+    "option": "a",
+    "answered_at": "2026-11-06T16:22:23Z",
+    "commit": "e62cb740dc8d134f26758c24fea4634d3787ffe8",
+    "files": (
+        "tests/cockpit-criteria/commands/home-result-essai-test.py",
+        "tests/cockpit-criteria/commands/result_trial.py",
+    ),
+    "ref": "authorization:af-atrg8o",
+}
+# af-npz9v1.56: one code-owned release of D's exact exhausted `returned`
+# resume. It is not a new rule: every observed field and both Git facts must
+# still match after this maintenance bead is delivered.
+RETURNED_RELEASE = {
+    "ticket": "af-ten1sp",
+    "parked_at": "2026-11-06T02:50:25Z",
+    "merge_commit": "bf9d408015732a8f92fd7fca95031d33e8930f65",
+    "integration_tip": "5f277f3bc566d41388da28c0fce8c0ef63a8862f",
+    "repair_bead": "af-gfqzbk",
+    "repair_commit": "153260074fcf5537fc6245a5b7693987ee7c0387",
+    "maintenance_bead": "af-npz9v1.56",
+}
+RETURNED_RELEASE_EVIDENCE = "sha256:46fe2ee17aa730ba261b6a8bd940f17d1c3cb7eb0a66607eebf4051b3fb7fedd"
+RETURNED_RELEASE_TEST_ENV = "CONVOY_ADVANCE_TEST_RETURNED_RELEASE"
+# af-npz9v1.59: D's repaired result kept the four parking lifts that
+# preceded its current exhausted `returned` window. Release only that result.
+RETURNED_RESULT_RELEASE = {
+    "ticket": "af-ten1sp",
+    "tip": "8ec7997b80a480db6cd590b2c8933a70be9599a7",
+    "exit_at": "2026-11-06T19:45:34Z",
+    "parked_at": "2026-11-06T19:15:40Z",
+    "resume_at": "2026-11-06T02:50:06Z",
+    "resume_bead": "af-kkmgcy",
+    "repair_bead": "af-npz9v1.59",
+}
+RETURNED_RESULT_RELEASE_TEST_ENV = "CONVOY_ADVANCE_TEST_RETURNED_RESULT_RELEASE"
+# af-npz9v1.57: C2b had already counted its third `evaluation_no_result`
+# resume before both repairs of that path were delivered. Release only that
+# recorded occurrence; this is not a rule for another exhausted stop.
+C2B_RELEASE = {
+    "ticket": "af-ofz29f",
+    "parked_at": "2026-11-05T06:48:34Z",
+    "resume_at": "2026-11-05T06:48:15Z",
+    "stop_at": "2026-11-05T06:07:57Z",
+    "integration_tip": "1c8287226d6db22e4e0a529eab3b7c756caf1ed6",
+    "session": "delivery-author-af-wisp-d8j1m",
+    "repair_bead": "af-e0n71v",
+    "repair_commit": "fbe2a2240f203e4591172d008176d3c2447d4be1",
+    "repair_repo": "saymyname-app/agent-factory",
+    "migration_bead": "af-wjhpx9",
+    "migration_commit": "15cb8d36843661f00f6af5f7a66611f1ee7f6b23",
+    "migration_repo": "saymyname-app/agent-factory",
+}
+C2B_RELEASE_TEST_ENV = "CONVOY_ADVANCE_TEST_C2B_RELEASE"
+# af-npz9v1.58: the repaired C2b result finished at a new tip, invalidated
+# its old judgement, then exhausted commit_after_verdict before the gates.
+# Release only that recorded occurrence once this maintenance is delivered.
+C2B_RESULT_RELEASE = {
+    "ticket": "af-ofz29f",
+    "tip": "4ddad77361e0970c03e55829d97e871f86b30722",
+    "exit_at": "2026-11-06T20:57:26Z",
+    "parked_at": "2026-11-06T20:58:20Z",
+    "resume_at": "2026-11-05T06:48:15Z",
+    "resume_bead": "af-rnf0i6",
+    "invalidated_at": "2026-11-06T20:57:37Z",
+    "repair_bead": "af-npz9v1.58",
+}
+C2B_RESULT_RELEASE_TEST_ENV = "CONVOY_ADVANCE_TEST_C2B_RESULT_RELEASE"
 # The resume that lifts that stop when every change since the freeze is the
 # base's the branch merged, not the ticket's (af-npz9v1.39): no amendment
 # was the ticket's to take, so no answer of the operator is asked.
@@ -353,6 +426,7 @@ STAGE_REMOVED = "stage_removed"
 REMOVED_STAGE_STOPS = ("test_review_refused", "test_review_no_result")
 # Spec §8, K: a ticket out of resumes is parked for this cause (bin/convoy-state).
 PARK_EXHAUSTED = "resumes_exhausted"
+COMMIT_AFTER_VERDICT = "commit_after_verdict"
 # The words of the operator for each cause of parking.
 PARK_CAUSES = {PARK_EXHAUSTED: "reprises épuisées", "operator_request": "demande opérateur",
                "planning_exception": "Planning Exception"}
@@ -1003,6 +1077,312 @@ def delivered_technical_repairs(ticket: dict[str, Any]) -> list[str]:
     return repairs
 
 
+def returned_release_authorization() -> dict[str, str]:
+    """The fixed live authorization; synthetic trackers may replace its SHAs."""
+    raw = os.environ.get(RETURNED_RELEASE_TEST_ENV) if os.environ.get("CONVOY_STATE_FAKE_TRACKER") else None
+    if raw is None:
+        return RETURNED_RELEASE
+    try:
+        candidate = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return candidate if isinstance(candidate, dict) and set(candidate) == set(RETURNED_RELEASE) \
+        and all(isinstance(value, str) and value for value in candidate.values()) else {}
+
+
+def c2b_release_authorization() -> dict[str, str]:
+    """The fixed C2b occurrence; synthetic trackers may replace its ids."""
+    raw = os.environ.get(C2B_RELEASE_TEST_ENV) if os.environ.get("CONVOY_STATE_FAKE_TRACKER") else None
+    if raw is None:
+        return C2B_RELEASE
+    try:
+        candidate = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return candidate if isinstance(candidate, dict) and set(candidate) == set(C2B_RELEASE) \
+        and all(isinstance(value, str) and value for value in candidate.values()) else {}
+
+
+def returned_result_release_authorization() -> dict[str, str]:
+    """The fixed repaired D result; synthetic trackers may replace ids."""
+    raw = os.environ.get(RETURNED_RESULT_RELEASE_TEST_ENV) \
+        if os.environ.get("CONVOY_STATE_FAKE_TRACKER") else None
+    if raw is None:
+        return RETURNED_RESULT_RELEASE
+    try:
+        candidate = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return candidate if isinstance(candidate, dict) and set(candidate) == set(RETURNED_RESULT_RELEASE) \
+        and all(isinstance(value, str) and value for value in candidate.values()) else {}
+
+
+def c2b_result_release_authorization() -> dict[str, str]:
+    """The fixed repaired C2b result; synthetic trackers may replace ids."""
+    raw = os.environ.get(C2B_RESULT_RELEASE_TEST_ENV) if os.environ.get("CONVOY_STATE_FAKE_TRACKER") else None
+    if raw is None:
+        return C2B_RESULT_RELEASE
+    try:
+        candidate = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return candidate if isinstance(candidate, dict) and set(candidate) == set(C2B_RESULT_RELEASE) \
+        and all(isinstance(value, str) and value for value in candidate.values()) else {}
+
+
+def metadata_record(bead: dict[str, Any], key: str) -> dict[str, Any]:
+    raw = (bead.get("metadata") or {}).get(key)
+    try:
+        record = json.loads(raw) if isinstance(raw, str) else None
+    except json.JSONDecodeError:
+        return {}
+    return record if isinstance(record, dict) else {}
+
+
+def integration_branch_tip(convoy: Convoy) -> str:
+    if not convoy.integration or not convoy.repo:
+        return ""
+    branch = convoy.integration["branch"]
+    for ref in (f"refs/remotes/origin/{branch}", f"refs/heads/{branch}"):
+        tip = run(["git", "-C", str(convoy.repo), "rev-parse", "--verify", "--quiet",
+                   f"{ref}^{{commit}}"]).stdout.strip()
+        if tip:
+            return tip
+    return ""
+
+
+def exact_returned_release_state(convoy: Convoy, ticket: dict[str, Any], *, parked: bool) -> bool:
+    """Whether only D's authorized 6 November parking is still present."""
+    authorization = returned_release_authorization()
+    if ticket.get("id") != authorization.get("ticket") or ticket.get("status") != "in_progress":
+        return False
+    park, merge = ticket.get("park"), ticket.get("merge") or {}
+    if parked:
+        if not isinstance(park, dict) or (park.get("cause"), park.get("origin"), park.get("at")) != (
+                PARK_EXHAUSTED, ticket["id"], authorization["parked_at"]):
+            return False
+    elif park is not None:
+        return False
+    entries = (ticket.get("resume") or {}).get("entries") or []
+    last = entries[-1] if entries and isinstance(entries[-1], dict) else {}
+    launches = last.get("launches") or []
+    exit_record = last.get("exit") or {}
+    expected_ref = f"merge:{merge.get('at')}/exit:{exit_record.get('at')}"
+    if ticket.get("resumes_left") != 0 or (last.get("cause"), last.get("ref")) != ("returned", expected_ref) \
+            or exit_record.get("exit") != "finished" or len(launches) > (0 if parked else 1):
+        return False
+    if not parked and launches and read_bead(launches[-1]["bead"]).get("status") == "closed" \
+            and last.get("session") == (ticket.get("session") or {}).get("name") and not ticket.get("exit"):
+        return False
+    if (merge.get("outcome"), merge.get("commit"), merge.get("integration"), merge.get("ticket_commit")) != (
+            "red", authorization["merge_commit"], authorization["integration_tip"], ticket.get("tip")):
+        return False
+    raw_ticket = read_bead(ticket["id"])
+    evidence = metadata_record(raw_ticket, "gc.flow.evidence.merged_tests")
+    if (evidence.get("commit"), evidence.get("digest")) != (authorization["merge_commit"],
+                                                               RETURNED_RELEASE_EVIDENCE):
+        return False
+    tip = integration_branch_tip(convoy)
+    if tip != authorization["integration_tip"]:
+        return False
+    first_parent = run(["git", "-C", str(convoy.repo), "rev-parse", "--verify", "--quiet",
+                        f"{authorization['merge_commit']}^1"]).stdout.strip()
+    if first_parent != tip:
+        return False
+    repair_merge = metadata_record(read_bead(authorization["repair_bead"]), "gc.flow.merge")
+    if (repair_merge.get("outcome"), repair_merge.get("ticket_commit")) != (
+            "merged", authorization["repair_commit"]):
+        return False
+    if run(["git", "-C", str(convoy.repo), "merge-base", "--is-ancestor",
+            authorization["repair_commit"], tip]).returncode != 0:
+        return False
+    readiness = delivery_readiness(read_bead(authorization["maintenance_bead"]))
+    return bool(readiness["ready"] and readiness["pr_backed"])
+
+
+def release_exact_returned_parking(convoy: Convoy, ticket: dict[str, Any]) -> list[str]:
+    """Remove that one parking by code, descendants first; touch no history."""
+    affected = [other["id"] for other in convoy.tickets
+                if (other.get("park") or {}).get("origin") == ticket["id"]]
+    for ticket_id in [name for name in affected if name != ticket["id"]] + [ticket["id"]]:
+        passed(run([GC_BIN, "--city", str(ROOT), "bd", "update", ticket_id,
+                    "--unset-metadata", "gc.flow.park"]), f"gc bd update {ticket_id}")
+    return sorted(affected)
+
+
+def exact_returned_result_release_state(ticket: dict[str, Any], *, parked: bool) -> bool:
+    """Whether only D's repaired result still waits behind its bound."""
+    authorization = returned_result_release_authorization()
+    if ticket.get("id") != authorization.get("ticket") or ticket.get("status") != "in_progress" \
+            or ticket.get("stop") is not None or ticket.get("technical_repairs") is not None:
+        return False
+    park, exit_record = ticket.get("park"), ticket.get("exit")
+    if parked:
+        if not isinstance(park, dict) or (park.get("cause"), park.get("origin"), park.get("at")) != (
+                PARK_EXHAUSTED, ticket["id"], authorization["parked_at"]):
+            return False
+    elif park is not None:
+        return False
+    if not isinstance(exit_record, dict) or (exit_record.get("exit"), exit_record.get("at"), ticket.get("tip")) != (
+            "finished", authorization["exit_at"], authorization["tip"]):
+        return False
+    entries = (ticket.get("resume") or {}).get("entries") or []
+    last = entries[-1] if entries and isinstance(entries[-1], dict) else {}
+    launches = last.get("launches") or []
+    if (last.get("at"), last.get("cause"), len(launches)) != (
+            authorization["resume_at"], "returned", 1) \
+            or launches[0].get("bead") != authorization["resume_bead"]:
+        return False
+    left = ticket.get("resumes_left_by_cause") or {}
+    if (ticket.get("counters") or {}).get("resumes") != 13 or ticket.get("resumes_left") != 0 \
+            or left.get("returned") != (0 if parked else 3):
+        return False
+    lifts = ticket.get("park_lifts")
+    if not isinstance(lifts, list) or len(lifts) != (4 if parked else 5):
+        return False
+    expected = (
+        ("2026-10-21T02:15:51Z", "operator_request", "2026-10-21T00:35:02Z", ticket["id"], "a", 1, 0),
+        ("2026-10-21T16:26:26Z", "planning_exception", "2026-10-21T04:16:56Z", ticket["id"], "a", 2, 0),
+        ("2026-10-27T14:10:16Z", PARK_EXHAUSTED, "2026-10-23T16:36:17Z", "af-89ctnv", "a", 8, 0),
+        ("2026-10-31T23:42:04Z", "operator_request", "2026-10-31T04:58:15Z", ticket["id"], "a", 10, 2),
+    )
+    actual = tuple((lift.get("at"), lift.get("cause"), lift.get("parked_at"), lift.get("request"),
+                    lift.get("option"), lift.get("resumes"), (lift.get("taken") or {}).get("returned"))
+                   for lift in lifts[:4] if isinstance(lift, dict))
+    if actual != expected or (not parked and (
+            lifts[-1].get("cause"), lifts[-1].get("parked_at"), lifts[-1].get("request"),
+            lifts[-1].get("option"), lifts[-1].get("reset_cause")) != (
+                PARK_EXHAUSTED, authorization["parked_at"], authorization["repair_bead"], None, "returned")) \
+            or any((ticket.get(kind) or {}).get("request")
+                                 for kind in ("code_review", "evaluation")):
+        return False
+    repair = read_bead(authorization["repair_bead"])
+    readiness = delivery_readiness(repair)
+    return bool(readiness["ready"] and readiness["pr_backed"]
+                and (repair.get("metadata") or {}).get("merged_target") == "main")
+
+
+def release_exact_returned_result(convoy: Convoy, ticket: dict[str, Any]) -> list[str]:
+    """Lift D's repaired result while giving back only `returned`."""
+    authorization = returned_result_release_authorization()
+    answer = state_write("lift-park", convoy.id, ticket["id"], "--request", authorization["repair_bead"],
+                         "--reset-cause", "returned")
+    return answer["lifted"]
+
+
+def exact_c2b_release_state(ticket: dict[str, Any]) -> bool:
+    """Whether only C2b's authorized exhausted evaluation resume remains."""
+    authorization = c2b_release_authorization()
+    if ticket.get("id") != authorization.get("ticket") or ticket.get("status") != "in_progress" \
+            or ticket.get("exit") is not None or ticket.get("stop") is not None \
+            or ticket.get("technical_repairs") is not None:
+        return False
+    park = ticket.get("park")
+    if not isinstance(park, dict) or (park.get("cause"), park.get("origin"), park.get("at")) != (
+            PARK_EXHAUSTED, ticket["id"], authorization["parked_at"]):
+        return False
+    entries = (ticket.get("resume") or {}).get("entries") or []
+    last = entries[-1] if entries and isinstance(entries[-1], dict) else {}
+    stop = last.get("stop") or {}
+    expected_ref = f"integration:{authorization['integration_tip']}/stop:{authorization['stop_at']}"
+    if (last.get("at"), last.get("cause"), last.get("ref"), last.get("session"), last.get("launches"),
+            stop.get("reason"), stop.get("at")) != (
+                authorization["resume_at"], NO_RESULT, expected_ref, authorization["session"], [],
+                NO_RESULT, authorization["stop_at"]):
+        return False
+    if any(entry.get("cause") == REPAIR_DELIVERED for entry in entries if isinstance(entry, dict)) \
+            or (ticket.get("session") or {}).get("name") != authorization["session"] \
+            or (ticket.get("counters") or {}).get("resumes") != 5 \
+            or ticket.get("resumes_left") != 0:
+        return False
+    left = ticket.get("resumes_left_by_cause") or {}
+    if (left.get(NO_RESULT), left.get(REPAIR_DELIVERED)) != (0, 3):
+        return False
+    for prefix in ("repair", "migration"):
+        bead = read_bead(authorization[f"{prefix}_bead"])
+        metadata = bead.get("metadata") or {}
+        readiness = delivery_readiness(bead)
+        if not readiness["ready"] or not readiness["pr_backed"] \
+                or metadata.get("gc.merge_commit") != authorization[f"{prefix}_commit"] \
+                or metadata.get("gc.github_repo") != authorization[f"{prefix}_repo"] \
+                or metadata.get("merged_target") != "main":
+            return False
+    return True
+
+
+def release_exact_c2b_parking(convoy: Convoy, ticket: dict[str, Any]) -> list[str]:
+    """Relabel C2b's counted resume and remove only its inherited parking."""
+    affected = [other["id"] for other in convoy.tickets
+                if (other.get("park") or {}).get("origin") == ticket["id"]]
+    for ticket_id in [name for name in affected if name != ticket["id"]]:
+        passed(run([GC_BIN, "--city", str(ROOT), "bd", "update", ticket_id,
+                    "--unset-metadata", "gc.flow.park"]), f"gc bd update {ticket_id}")
+    raw_ticket = read_bead(ticket["id"])
+    resume = metadata_record(raw_ticket, "gc.flow.resume")
+    resume["entries"][-1]["cause"] = REPAIR_DELIVERED
+    passed(run([GC_BIN, "--city", str(ROOT), "bd", "update", ticket["id"],
+                "--set-metadata", f"gc.flow.resume={json.dumps(resume, ensure_ascii=False)}",
+                "--unset-metadata", "gc.flow.park"]), f"gc bd update {ticket['id']}")
+    return sorted(affected)
+
+
+def exact_c2b_result_release_state(ticket: dict[str, Any]) -> bool:
+    """Whether only C2b's repaired result still waits behind its bound."""
+    authorization = c2b_result_release_authorization()
+    if ticket.get("id") != authorization.get("ticket") or ticket.get("status") != "in_progress" \
+            or ticket.get("stop") is not None or ticket.get("technical_repairs") is not None:
+        return False
+    park, exit_record = ticket.get("park"), ticket.get("exit")
+    if not isinstance(park, dict) or (park.get("cause"), park.get("origin"), park.get("at")) != (
+            PARK_EXHAUSTED, ticket["id"], authorization["parked_at"]):
+        return False
+    if not isinstance(exit_record, dict) or (exit_record.get("exit"), exit_record.get("at"), ticket.get("tip")) != (
+            "finished", authorization["exit_at"], authorization["tip"]):
+        return False
+    entries = (ticket.get("resume") or {}).get("entries") or []
+    last = entries[-1] if entries and isinstance(entries[-1], dict) else {}
+    launches = last.get("launches") or []
+    if (last.get("at"), last.get("cause"), len(launches)) != (
+            authorization["resume_at"], REPAIR_DELIVERED, 1) \
+            or launches[0].get("bead") != authorization["resume_bead"]:
+        return False
+    left = ticket.get("resumes_left_by_cause") or {}
+    if (ticket.get("counters") or {}).get("resumes") != 6 or ticket.get("resumes_left") != 0 \
+            or left.get(COMMIT_AFTER_VERDICT) != 0:
+        return False
+    lifts = ticket.get("park_lifts")
+    expected_taken = {"behind": 0, "code_review_no_result": 0, "commit_after_verdict": 0,
+                      "evaluation_no_result": 0, "inherited_change": 0, "interrupted": 0,
+                      "returned": 0, "stage_removed": 0, "unblocked": 0}
+    if not isinstance(lifts, list) or len(lifts) != 1:
+        return False
+    lift = lifts[0]
+    if not isinstance(lift, dict) or (
+            lift.get("at"), lift.get("cause"), lift.get("parked_at"), lift.get("request"),
+            lift.get("option"), lift.get("resumes"), lift.get("taken")) != (
+                "2026-11-02T00:51:08Z", "planning_exception", "2026-10-29T09:59:31Z", ticket["id"],
+                "c", 0, expected_taken):
+        return False
+    verdict = ((ticket.get("verdicts") or {}).get("code_review") or {}).get("invalidated") or {}
+    if (verdict.get("at"), verdict.get("tip")) != (
+            authorization["invalidated_at"], authorization["tip"]):
+        return False
+    if any((ticket.get(kind) or {}).get("request") for kind in ("code_review", "evaluation")):
+        return False
+    repair = read_bead(authorization["repair_bead"])
+    readiness = delivery_readiness(repair)
+    return bool(readiness["ready"] and readiness["pr_backed"]
+                and (repair.get("metadata") or {}).get("merged_target") == "main")
+
+
+def release_exact_c2b_result(convoy: Convoy, ticket: dict[str, Any]) -> list[str]:
+    """Lift that result through the native record, resetting only its cause."""
+    authorization = c2b_result_release_authorization()
+    answer = state_write("lift-park", convoy.id, ticket["id"], "--request", authorization["repair_bead"],
+                         "--reset-cause", COMMIT_AFTER_VERDICT)
+    return answer["lifted"]
+
+
 def repairs_missing_from_integration(convoy: Convoy) -> dict[str, str]:
     """Delivered repairs from this project's protected branch that its
     integration branch does not contain yet."""
@@ -1223,6 +1603,39 @@ def amendment_granted_due(ticket: dict[str, Any]) -> tuple[str, str, str] | None
     return "new", AMENDMENT_GRANTED, f"stop:{stop['reason']}/{stop['at']}"
 
 
+def preauthorized_amendment_due(convoy: Convoy, ticket: dict[str, Any]) -> tuple[str, str, str] | None:
+    """The one A2 answer recorded before its amendment stop existed.
+
+    It is valid only at the already-produced commit and only when
+    ``tdd-step changes`` names the two authorized files. The authorization
+    marker on the native resume makes the response single-use and lets
+    ``tdd-step amend`` keep the same boundary after the author resumes.
+    """
+    stop = ticket["stop"]
+    authorization = PREAUTHORIZED_AMENDMENT
+    if ticket["id"] != authorization["ticket"] or ticket.get("resumes_left") == 0 or not ticket.get("tip"):
+        return None
+    metadata = read_bead(ticket["id"]).get("metadata") or {}
+    if (metadata.get("gc.escalation_response_actor"), metadata.get("gc.escalation_response_option"),
+            metadata.get("gc.escalation_response_at")) != (
+                authorization["actor"], authorization["option"], authorization["answered_at"]):
+        return None
+    entries = (ticket.get("resume") or {}).get("entries") or []
+    if any(str(entry.get("ref", "")).endswith(f"/{authorization['ref']}") for entry in entries):
+        return None
+    try:
+        proc = run([str(TDD_STEP_BIN), "changes", convoy.id, ticket["id"], "--repo", str(convoy.repo),
+                    "--profile", str(rig_profile(convoy.rig)), "--at", ticket["tip"]])
+        answer = json.loads(proc.stdout)
+    except (Refusal, json.JSONDecodeError):
+        return None
+    if proc.returncode != 0 or not isinstance(answer, dict) or answer.get("commit") != authorization["commit"] \
+            or sorted(answer.get("own") or []) != sorted(authorization["files"]):
+        return None
+    return ("new", AMENDMENT_GRANTED,
+            f"stop:{stop['reason']}/{stop['at']}/{authorization['ref']}")
+
+
 def inherited_change_due(convoy: Convoy, ticket: dict[str, Any]) -> tuple[str, str, str] | None:
     """The resume a stop at the second amendment asks for when, at the
     tip, no frozen file and no file of the test perimeter changed since the
@@ -1294,7 +1707,9 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
         try:
             ticket = convoy.ticket(ticket_id)
             stopped = bool(ticket.get("stop"))
-            if ticket.get("resumes_left") == 0 and not stopped:
+            released_once = exact_returned_release_state(convoy, ticket, parked=False) \
+                or exact_returned_result_release_state(ticket, parked=False)
+            if ticket.get("resumes_left") == 0 and not stopped and not released_once:
                 out["parked"].append(park_exhausted(convoy, ticket))
                 convoy.load()
                 continue
@@ -1305,7 +1720,8 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
             elif ticket["stop"]["reason"] == CODE_REVIEW_STOP:
                 due = once_per_stop_due(ticket, CODE_REVIEW_STOP)
             elif ticket["stop"]["reason"] == AMENDMENT_STOP:
-                due = amendment_granted_due(ticket) or inherited_change_due(convoy, ticket)
+                due = preauthorized_amendment_due(convoy, ticket) or amendment_granted_due(ticket) \
+                    or inherited_change_due(convoy, ticket)
             elif ticket["stop"]["reason"] in EVALUATION_STOPS and technical_repairs(ticket):
                 due = evaluation_repair_due(ticket)
             elif ticket["stop"]["reason"] == EVALUATION_OUTAGE:
@@ -1418,6 +1834,58 @@ def settle_lifts(convoy: Convoy, out: dict[str, Any]) -> None:
     parked. A ticket parked for exhausted resumes that has resumes left
     under the bounds of now is lifted without an answer: an answered resume
     takes no bound since af-npz9v1.41, and nothing is left to ask."""
+    for ticket in convoy.tickets:
+        if not exact_returned_release_state(convoy, ticket, parked=True):
+            continue
+        try:
+            authorization = returned_release_authorization()
+            lifted = release_exact_returned_parking(convoy, ticket)
+            out["lifted"].append({"id": ticket["id"], "option": None,
+                                  "request": authorization["maintenance_bead"], "lifted": lifted,
+                                  "release": "returned_once"})
+            convoy.load()
+        except Refusal as exc:
+            out["refused"].append({"id": ticket["id"], "reason": str(exc)})
+        break
+    for ticket in convoy.tickets:
+        if not exact_c2b_release_state(ticket):
+            continue
+        try:
+            authorization = c2b_release_authorization()
+            lifted = release_exact_c2b_parking(convoy, ticket)
+            out["lifted"].append({"id": ticket["id"], "option": None,
+                                  "request": authorization["repair_bead"], "lifted": lifted,
+                                  "release": "repair_delivered_once"})
+            convoy.load()
+        except Refusal as exc:
+            out["refused"].append({"id": ticket["id"], "reason": str(exc)})
+        break
+    for ticket in convoy.tickets:
+        if not exact_returned_result_release_state(ticket, parked=True):
+            continue
+        try:
+            authorization = returned_result_release_authorization()
+            lifted = release_exact_returned_result(convoy, ticket)
+            out["lifted"].append({"id": ticket["id"], "option": None,
+                                  "request": authorization["repair_bead"], "lifted": lifted,
+                                  "release": "returned_result_once"})
+            convoy.load()
+        except Refusal as exc:
+            out["refused"].append({"id": ticket["id"], "reason": str(exc)})
+        break
+    for ticket in convoy.tickets:
+        if not exact_c2b_result_release_state(ticket):
+            continue
+        try:
+            authorization = c2b_result_release_authorization()
+            lifted = release_exact_c2b_result(convoy, ticket)
+            out["lifted"].append({"id": ticket["id"], "option": None,
+                                  "request": authorization["repair_bead"], "lifted": lifted,
+                                  "release": "c2b_result_once"})
+            convoy.load()
+        except Refusal as exc:
+            out["refused"].append({"id": ticket["id"], "reason": str(exc)})
+        break
     lifts: list[tuple[str, str, str | None, list[str]]] = []
     for ticket in convoy.tickets:
         park = ticket.get("park") or {}
