@@ -20,11 +20,13 @@ one entry per call, the last one repeated:
      "path": "<path>",              « not_observed » otherwise; `path` is the entry point captured instead of the
      "states": {"<n>|demo": {...}}} home page (a product with no web page); `states` gives the state of an item instead
     "silent"                        the session starts and never answers
+    "unclaimed"                     the route waits for the Evaluator seat and no session starts
     "closed"                        the session closes its bead without states
     "door-refuses"                  the door refuses the dispatch
     "door-defers"                   the door defers the dispatch (exit 75)
 """
 import atexit
+import fcntl
 import json
 import time
 import os
@@ -53,9 +55,31 @@ if step == "door-refuses":
 if step == "door-defers":
     print("dispatch-door: deferred -- guest MemAvailable is 1.0 GiB, below the 1.5 GiB floor", file=sys.stderr)
     raise SystemExit(75)
+bead_id = sys.argv[1]
+claimed_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+tracker = Path(os.environ["CONVOY_STATE_FAKE_TRACKER"])
+with tracker.open("r+", encoding="utf-8") as handle:
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    state = json.load(handle)
+    input_id, root_id, step_id = (f"{bead_id}-input", f"{bead_id}-root", f"{bead_id}-step")
+    state["beads"][input_id] = {"title": f"input convoy for {bead_id}", "status": "open",
+                                 "issue_type": "convoy", "tracks": [bead_id]}
+    state["beads"][root_id] = {"title": "mol-ticket-evaluation", "status": "in_progress",
+                                "metadata": {"gc.formula_name": "mol-ticket-evaluation",
+                                             "gc.input_convoy_id": input_id}}
+    metadata = {"gc.root_bead_id": root_id, "gc.step_id": "mol-ticket-evaluation.evaluate"}
+    evaluator_step = {"title": "evaluate", "status": "open", "metadata": metadata}
+    if step != "unclaimed":
+        metadata["gc.claimed_at"] = claimed_at
+        evaluator_step.update(status="in_progress", assignee="delivery-evaluator-fixture")
+    state["beads"][step_id] = evaluator_step
+    handle.seek(0)
+    handle.truncate()
+    json.dump(state, handle, indent=2, sort_keys=True)
+if step == "unclaimed":
+    raise SystemExit(0)
 if step == "silent":
     raise SystemExit(0)
-bead_id = sys.argv[1]
 if step == "closed":
     subprocess.run([GC, "bd", "close", bead_id, "--reason", "aucun état"], capture_output=True, check=True)
     raise SystemExit(0)

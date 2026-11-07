@@ -2197,6 +2197,22 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertEqual(["fx-e1", "fx-e2"], [launch["bead"] for launch in self.evaluation()["request"]["launches"]])
         self.assert_refused_and_nothing_written("launch-evaluation", CONVOY, T1, "--bead", "fx-e3", mention="une seule relance")
 
+    def test_launch_evaluation_preserves_one_unclaimed_route_without_spending_an_attempt(self):
+        self.finished_slice()
+        self.open_evaluation()
+        self.ok("launch-evaluation", CONVOY, T1, "--bead", "fx-e1")
+        self.ok("launch-evaluation", CONVOY, T1, "--bead", "fx-e2")
+
+        self.ok("launch-evaluation", CONVOY, T1, "--bead", "fx-e3",
+                "--replaces-unclaimed", "fx-e2")
+
+        launches = self.evaluation()["request"]["launches"]
+        self.assertEqual(["fx-e1", "fx-e2", "fx-e3"], [launch["bead"] for launch in launches])
+        self.assertTrue(launches[1]["unclaimed"])
+        self.assert_refused_and_nothing_written(
+            "launch-evaluation", CONVOY, T1, "--bead", "fx-e4",
+            "--replaces-unclaimed", "fx-e3", mention="unique route non réclamée")
+
     def test_record_evaluation_computes_a_favorable_verdict_when_everything_is_observed(self):
         self.opened_evaluation()
 
