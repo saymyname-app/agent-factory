@@ -992,7 +992,8 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         checked = datetime.fromtimestamp(row["read_at"], tz=PARIS).strftime("%H:%M") if row["read_at"] else None
         sessions = (snapshot.get("sessions") or {}).get("value") or {}
         trace = self.server.session_trace.read() if self.server.session_trace is not None else None
-        runs = workflow_runs(row["value"], sessions.get("agents"), read_model.now(), trace)
+        runs = workflow_runs(row["value"], sessions.get("agents"), read_model.now(), trace,
+                             getattr(self.server, "evidence_pieces", None))
         return waiting_on(runs, self._chantier_decisions(snapshot, read_model.now())), False, checked
 
     def _query(self):
@@ -1138,6 +1139,10 @@ VIEW_DETAILS = {
     "job-system-prompt": {"open": ("prompts", "system")},
     "job-user-prompt-rendered": {"open": ("prompts", "user")},
     "job-user-prompt-raw": {"open": ("prompts", "user"), "raw": ("user",)},
+    "job-gates": {"open": ("controles",)},
+    "job-output": {"open": ("sorties",)},
+    "job-usage": {"open": ("usage",)},
+    "job-usage-unavailable": {"open": ("usage",)},
 }
 
 
@@ -1238,6 +1243,7 @@ def make_server(
     server.cleanup_uncertain = None
     server.cleanup_previewed_at = None
     server.session_trace = None
+    server.evidence_pieces = None
     server.stop_driver = None
     server.benjamin_login = ""
     # The address the operator opens the cockpit at: the HTTPS address of
