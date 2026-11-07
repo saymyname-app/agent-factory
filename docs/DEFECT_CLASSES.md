@@ -111,6 +111,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_legacy_delivered_repair_at_the_unblocked_bound_is_migrated_and_sent_once`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_the_exact_delivered_C2b_release_becomes_one_native_repair_resume ConvoyAdvanceTest.test_the_C2b_release_rejects_nearby_state_and_incomplete_delivery_proof`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_the_repaired_D_result_is_judged_without_another_author_resume ConvoyAdvanceTest.test_the_repaired_D_result_release_rejects_nearby_state_and_incomplete_delivery ConvoyAdvanceTest.test_the_repaired_C2b_result_is_judged_without_another_author_resume ConvoyAdvanceTest.test_the_repaired_C2b_result_release_rejects_nearby_state_and_incomplete_delivery`,
+  `python3 tests/convoy-state-test.py ConvoyStateTest.test_withdraw_ticket_writes_its_gate_no_op_outcome_note_and_closed_status_in_one_tracker_write`,
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_the_exact_answered_R8_is_closed_without_merge_then_its_control_runs_green ConvoyAdvanceTest.test_the_exact_R8_close_retry_finishes_after_its_durable_native_lift ConvoyAdvanceTest.test_the_exact_answered_R8_closes_without_merge_and_one_repair_follows_a_red_control ConvoyAdvanceTest.test_the_R8_close_release_rejects_nearby_state_and_option_b`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_malformed_legacy_resume_is_left_to_the_incident_door_without_crashing`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_factory_repair_is_taken_up_and_tested_before_its_resume_is_consumed_once`,
   `bash tests/factory-work-dispatch-test.sh`. Les courses réponse/retrait qui
@@ -132,7 +134,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   parquée n'avait plus son lien de réparation après la livraison des deux
   réparations qui permettaient sa reprise) ; af-npz9v1.59 (les levées
   historiques légitimes empêchaient la libération du résultat réparé de C2b,
-  et le résultat réparé de D n'avait aucune libération symétrique).
+  et le résultat réparé de D n'avait aucune libération symétrique) ;
+  af-npz9v1.60 (l'option répondue
+  « clore R8 sans fusion » n'avait aucune porte native et relançait un auteur).
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
   contrôle : `criterion_already_green` reste au Planning Run ;
   `outcome_evaluation_no_result` et `outcome_evaluation_outage` ne repartent
@@ -198,6 +202,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 - Contrôle : `bash tests/on-order-failed-test.sh`,
   `python3 tests/factory-observe-test.py LiveObservationTest`,
   `bash tests/pr-autopilot-armed-not-merged-test.sh`,
+  `bash tests/pr-autopilot-transient-retry-test.sh`,
   `python3 tests/role-adoption-trial-codex-test.py` — partiel : le premier
   tient la frontière entre un report explicite (sortie 75, rejoué sans
   alerte) et une vraie panne répétée (bead et page Mayor) ; le deuxième tient
@@ -209,7 +214,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   au contrôle requis vert ; il relit aussi GitHub après toute demande de fusion
   directe et n'annonce la fusion que si le serveur répond `MERGED`. Le contrôle
   9 du gardien (#688) couvre les tickets que personne ne bouge, pas les autres
-  signaux. Le dernier tient la minute de stabilité après un réveil Codex proche
+  signaux. Le quatrième refuse qu'un workflow encore actif ou une demande de
+  rerun refusée soit annoncé comme déjà retenté. Le dernier tient la minute de
+  stabilité après un réveil Codex proche
   de l'échéance dans une borne fixe et exige qu'un délai dépassé nomme les états
   observés et la demande de réveil ; il refuse aussi que `active` compte comme
   provider-ready quand le premier nudge ne crée aucun rollout, et tient les
@@ -218,7 +225,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 - Occurrences : #651, #679, #688, #717 ; af-npz9v1.50 ; #767 (armement local
   annoncé mais `autoMergeRequest=null`, af-npz9v1.50.1) ; af-ncg9qy ; #778
   (demande directe acceptée localement mais encore `AWAITING_CHECKS`,
-  af-nk5nm6) ; af-27yx7q.2.1 ; af-pd6m09.
+  af-nk5nm6) ; af-27yx7q.2.1 ; af-pd6m09 ; af-1l3znv (un workflow encore
+  actif ou une demande de rerun refusée était annoncé comme déjà retenté).
 - Ouvertes : aucune connue.
 
 ## A — Autre

@@ -3068,6 +3068,22 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertEqual({"pass"}, {entry["verdict"] for entry in record["conditions"]})
         self.assertEqual([], ticket["unruled"])
 
+    def test_withdraw_ticket_writes_its_gate_no_op_outcome_note_and_closed_status_in_one_tracker_write(self):
+        self.started_ticket()
+        self.write_log.write_text("")
+
+        answer = self.ok("withdraw-ticket", CONVOY, T1, "--reason", "choix a : clore sans fusion")
+
+        self.assertTrue(answer["closed"])
+        writes = [line for line in self.write_log.read_text().splitlines() if line.strip()]
+        self.assertEqual(1, len(writes), writes)
+        bead = self.tracker_state()["beads"][T1]
+        ticket = self.ticket(self.show(), T1)
+        self.assertEqual(("closed", "no-op"), (ticket["status"], bead["metadata"]["gc.work_outcome"]))
+        self.assertIn("at", ticket["gates"]["withdrawn"])
+        self.assertIn("choix a : clore sans fusion", bead["notes"])
+        self.assertEqual([], ticket["unruled"])
+
     def test_close_ticket_refuses_a_record_that_is_not_the_nine_passing_verdicts_of_the_known_version(self):
         tip = self.started_ticket()
         conditions = json.loads(GATE_REPORT.read_text())["conditions"]

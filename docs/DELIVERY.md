@@ -202,9 +202,12 @@ records what was verified about the machinery underneath.
    does not fail the order. Once `escalation-door repondre` or `clear` sets
    the field to `none`, the next tick indexes the bead again and performs the
    normal exact-head reconciliation.
-5. A PR whose required check **failed** is never armed. It is raised as a P1
-   bug bead in the rig instead, so a red build becomes ready work rather than a
-   silently open PR.
+5. A PR whose required check **failed** is never armed. `pr-autopilot` first
+   requests its single retry after the workflow has completed; a still-running
+   workflow or a rejected retry request waits for the next pass and does not
+   consume that retry. Only an accepted retry is marked, and a check still red
+   after that mark is raised as P1 work in the rig, so a red build becomes ready
+   work rather than a silently open PR.
 
 Repository settings changed to support this: `allow_auto_merge=true` and
 `delete_branch_on_merge=true` on `saymyname-app/Say-my-name-back` and

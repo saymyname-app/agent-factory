@@ -56,6 +56,7 @@ invents a `gc.flow.*` field: a missing field is added here.
                               (TICKET is CONVOY for a piece of the end of the Spec)
     convoy-state record-gate  CONVOY TICKET --gate GATE [--commit SHA]
     convoy-state close-ticket CONVOY TICKET --commit SHA --file PATH
+    convoy-state withdraw-ticket CONVOY TICKET --reason LINE
     convoy-state set-tdd      CONVOY TICKET --step STEP --commit SHA [--base SHA] [--reason TEXT]
     convoy-state stop-ticket  CONVOY TICKET --reason REASON --detail LINE
     convoy-state stop-raised  CONVOY TICKET
@@ -301,6 +302,7 @@ CONVOY_COUNTERS = ("end_rounds",)
 GATES = ("dispatch", "ticket_end", "withdrawn")
 CLOSING_GATES = ("ticket_end", "withdrawn")
 GATE_TICKET_END = "ticket_end"
+GATE_WITHDRAWN = "withdrawn"
 # The ticket-end gate (T19, Spec §9): a closed, versioned list of nine
 # conditions. bin/ticket-end computes each verdict; its record is written
 # here, with the closing of the ticket, and only when the nine pass.
@@ -3962,6 +3964,27 @@ def cmd_close_ticket(args: argparse.Namespace) -> int:
     update = ["bd", "update", args.ticket, "--status", "closed"]
     for key, value in values.items():
         update += ["--set-metadata", f"{key}={value}"]
+    run_gc(update)
+    print(json.dumps({"ok": True, "convoy": args.convoy, "bead": args.ticket, "closed": True, "written": values},
+                     indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+def cmd_withdraw_ticket(args: argparse.Namespace) -> int:
+    """Close one unmerged ticket with its withdrawal proof in one write."""
+    ticket = marked_ticket(args.convoy, args.ticket)
+    metadata = metadata_of(ticket)
+    if ticket.get("status") == "closed" or any(GATE_PREFIX + gate in metadata for gate in CLOSING_GATES):
+        raise Refusal(f"le ticket {args.ticket} est déjà fermé, ou porte déjà un relevé de fermeture")
+    reason = single_line(args.reason, "raison de la clôture sans fusion")
+    values = {
+        GATE_PREFIX + GATE_WITHDRAWN: encode({"at": now()}),
+        "gc.work_outcome": "no-op",
+    }
+    update = ["bd", "update", args.ticket, "--status", "closed"]
+    for key, value in values.items():
+        update += ["--set-metadata", f"{key}={value}"]
+    update += ["--append-notes", f"WITHDRAWN by convoy-state (sans fusion) : {reason}"]
     run_gc(update)
     print(json.dumps({"ok": True, "convoy": args.convoy, "bead": args.ticket, "closed": True, "written": values},
                      indent=2, sort_keys=True, ensure_ascii=False))
@@ -7798,6 +7821,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = command("close-ticket", cmd_close_ticket)
     p.add_argument("--commit")
     p.add_argument("--file")
+    command("withdraw-ticket", cmd_withdraw_ticket).add_argument("--reason")
     p = command("set-tdd", cmd_set_tdd)
     p.add_argument("--step")
     p.add_argument("--commit")

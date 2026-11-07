@@ -72,6 +72,8 @@ C2B_RELEASE_REPAIR = "fx-c2b-repair"
 C2B_RELEASE_MIGRATION = "fx-c2b-migration"
 C2B_RESULT_RELEASE_ENV = "CONVOY_ADVANCE_TEST_C2B_RESULT_RELEASE"
 C2B_RESULT_RELEASE_REPAIR = "fx-c58"
+R8_CLOSE_RELEASE_ENV = "CONVOY_ADVANCE_TEST_R8_CLOSE_RELEASE"
+R8_CLOSE_RELEASE_REPAIR = "fx-r8close"
 
 
 def delivered(number, head, merge):
@@ -399,6 +401,76 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
             "resume_at": resume["entries"][-1]["at"],
             "resume_bead": resume["entries"][-1]["launches"][0]["bead"],
             "repair_bead": RETURNED_RESULT_RELEASE_REPAIR,
+        }
+
+    def exact_r8_close_release(self, regression="true"):
+        """R8 after its answered close-without-merge choice was re-asked."""
+        tip = self.integrated(regression=regression)
+        self.resumable()
+        self.advance(CONVOY)
+        self.git("branch", f"ticket/{T1}", tip)
+        self.run_ok(STATE, "set-branch", CONVOY, T1, "--branch", f"ticket/{T1}")
+        self.taken(T1, "auteur-r8-1")
+        first_request = {
+            "quoi": "R8 : le rouge ne se reproduit pas",
+            "pourquoi": "Le même arbre passe le contrôle.",
+            "que_faire": [
+                {"option": "Clore R8 sans fusion", "consequence": "R8 est fermé sans fusion."},
+                {"option": "Conserver R8", "consequence": "R8 reste ouvert."},
+            ],
+            "langue": "fr", "bloquant": True,
+        }
+        self.run_ok(ESCALATION, "benjamin", T1, json.dumps(first_request))
+        self.run_ok(STATE, "park", CONVOY, T1, "--cause", "operator_request", "--detail", first_request["quoi"])
+        self.run_ok(STATE, "set-exit", CONVOY, T1, "--exit", "operator_request")
+        self.env["ESCALATION_DOOR_NOW"] = "4102444800"
+        self.run_ok(ESCALATION, "repondre", T1, "a", "--actor", "operateur-test")
+        resumed = self.advance(CONVOY)
+        self.assertEqual([(T1, "answered")], [(entry["id"], entry["cause"])
+                                               for entry in self.of(resumed, "resumed")])
+
+        self.taken(T1, "auteur-r8-2")
+        second_request = {
+            "quoi": "R8 : réponse a reçue, mais aucune porte ne clôt un ticket non fusionné",
+            "pourquoi": "Le rouge est déjà retiré ; seule reste la clôture sans fusion.",
+            "que_faire": [
+                {"option": "Clore R8 sans fusion dans le Planning Run",
+                 "consequence": "R8 est fermé sans fusion et le convoi continue."},
+                {"option": "Corriger la porte par maintenance",
+                 "consequence": "Le ticket reprend après la maintenance."},
+            ],
+            "langue": "fr", "bloquant": True,
+        }
+        self.run_ok(ESCALATION, "benjamin", T1, json.dumps(second_request))
+        self.run_ok(STATE, "park", CONVOY, T1, "--cause", "operator_request", "--detail", second_request["quoi"])
+        self.run_ok(STATE, "set-exit", CONVOY, T1, "--exit", "operator_request")
+        state = self.tracker_state()
+        state["beads"][R8_CLOSE_RELEASE_REPAIR] = {
+            "title": "execute R8 close without merge", "status": "open", "issue_type": "bug",
+            "labels": ["maintenance"], "metadata": {"gc.authorized_by": "af-authority"},
+        }
+        self.tracker.write_text(json.dumps(state))
+        self.run_ok(STATE, "link-technical-repair", CONVOY, T1, "--repair", R8_CLOSE_RELEASE_REPAIR)
+        self.edit(R8_CLOSE_RELEASE_REPAIR, status="closed", metadata=delivered(820, "a" * 40, "b" * 40))
+        metadata = self.bead(T1)["metadata"]
+        park = json.loads(metadata["gc.flow.park"])
+        exit_record = json.loads(metadata["gc.flow.exit"])
+        resume = json.loads(metadata["gc.flow.resume"])["entries"][-1]
+        self.write_log.write_text("")
+        return {
+            "ticket": T1,
+            "tip": tip,
+            "session": "auteur-r8-2",
+            "response_at": metadata["gc.escalation_response_at"],
+            "response_actor": metadata["gc.escalation_response_actor"],
+            "response_option": "a",
+            "needs": metadata["gc.needs_benjamin"],
+            "resume_at": resume["at"],
+            "resume_bead": resume["launches"][0]["bead"],
+            "resume_session": resume["session"],
+            "parked_at": park["at"],
+            "exit_at": exit_record["at"],
+            "repair_bead": R8_CLOSE_RELEASE_REPAIR,
         }
 
     def test_a_pass_sends_an_interrupted_ticket_to_a_fresh_author_session_and_counts_the_resume(self):
@@ -1693,6 +1765,122 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
                 self.assertEqual([], self.resume_launches(), name)
                 self.assertIsNone(self.code_review_of(answer), name)
                 self.assertIsNone(self.evaluation_of(answer), name)
+
+    def test_the_exact_answered_R8_is_closed_without_merge_then_its_control_runs_green(self):
+        authorization = self.exact_r8_close_release()
+        env = {**self.env, R8_CLOSE_RELEASE_ENV: json.dumps(authorization)}
+        before = self.bead(T1)["metadata"]
+        before_resume = before["gc.flow.resume"]
+        before_response = {key: value for key, value in before.items()
+                           if key.startswith("gc.escalation_response_")}
+
+        answer = self.advance(CONVOY, env=env)
+
+        after = self.bead(T1)
+        shown = self.shown_state(T1)
+        self.assertEqual("closed", after["status"])
+        self.assertIn("withdrawn", shown["gates"])
+        self.assertIsNone(shown["merge"])
+        self.assertEqual(before_resume, after["metadata"]["gc.flow.resume"])
+        self.assertEqual(before_response, {key: value for key, value in after["metadata"].items()
+                                           if key.startswith("gc.escalation_response_")})
+        self.assertNotIn(T1, "\n".join(self.needs()))
+        self.assertEqual([], self.resume_launches())
+        release = self.of(answer, "closed_without_merge")
+        self.assertEqual((T1, R8_CLOSE_RELEASE_REPAIR, 0),
+                         (release["ticket"], release["repair"], release["tests"]["exit_code"]))
+        shown_convoy = json.loads(self.run_ok(STATE, "show", CONVOY, "--repo", self.root).stdout)["convoy"]
+        self.assertIsNone(shown_convoy["integration_red"])
+
+        again = self.advance(CONVOY, env=env)
+
+        self.assertEqual([], self.of(again, "closed_without_merge"))
+        self.assertEqual([], self.resume_launches())
+
+    def test_the_exact_R8_close_retry_finishes_after_its_durable_native_lift(self):
+        authorization = self.exact_r8_close_release()
+        env = {**self.env, R8_CLOSE_RELEASE_ENV: json.dumps(authorization)}
+        self.run_ok(STATE, "lift-park", CONVOY, T1, "--request", T1, "--option", "a")
+
+        answer = self.advance(CONVOY, env=env)
+
+        self.assertEqual("closed", self.bead(T1)["status"])
+        self.assertIn("withdrawn", self.shown_state(T1)["gates"])
+        self.assertEqual([], self.resume_launches())
+        release = self.of(answer, "closed_without_merge")
+        self.assertEqual((T1, [], None),
+                         (release["ticket"], release["lifted"], release.get("tests")))
+
+    def test_the_exact_answered_R8_closes_without_merge_and_one_repair_follows_a_red_control(self):
+        authorization = self.exact_r8_close_release(regression="false")
+        env = {**self.env, R8_CLOSE_RELEASE_ENV: json.dumps(authorization)}
+        repair = "fx-r8red"
+        state = self.tracker_state()
+        state["beads"][repair] = {
+            **ticket(repair),
+            "title": f"Rétablir le contrôle rouge de la branche d'intégration ({authorization['tip'][:12]})",
+            "metadata": {"gc.ticket_kind": "repair"},
+        }
+        state["beads"][CONVOY]["tracks"].append(repair)
+        self.tracker.write_text(json.dumps(state))
+        self.run_ok(STATE, "mark", CONVOY, "--demonstration-line",
+                    f"{repair}=La commande de régression se termine avec le code 0")
+        self.write_log.write_text("")
+
+        answer = self.advance(CONVOY, env=env)
+
+        self.assertEqual("closed", self.bead(T1)["status"])
+        self.assertIn("withdrawn", self.shown_state(T1)["gates"])
+        release = self.of(answer, "closed_without_merge")
+        self.assertEqual((T1, R8_CLOSE_RELEASE_REPAIR), (release["ticket"], release["repair"]))
+        shown = json.loads(self.run_ok(STATE, "show", CONVOY, "--repo", self.root).stdout)["convoy"]
+        red = shown["integration_red"]
+        self.assertIsNotNone(red)
+        self.assertIn("commande de régression (false)", red["control"])
+        self.assertEqual(repair, red["repair"])
+        self.assertEqual({"id": repair, "published": False}, self.of(answer, "repair"))
+
+        again = self.advance(CONVOY, env=env)
+
+        self.assertEqual([], self.of(again, "closed_without_merge"))
+        matching = [entry for entry in self.tracker_state()["beads"].values()
+                    if entry.get("title", "").startswith("Rétablir le contrôle rouge de la branche d'intégration")]
+        self.assertEqual(1, len(matching))
+        shown_again = json.loads(self.run_ok(STATE, "show", CONVOY, "--repo", self.root).stdout)["convoy"]
+        self.assertEqual(red["repair"], shown_again["integration_red"]["repair"])
+
+    def test_the_R8_close_release_rejects_nearby_state_and_option_b(self):
+        authorization = self.exact_r8_close_release()
+        seeded = self.tracker.read_text()
+
+        def wrong_tip(state, auth):
+            auth["tip"] = "0" * 40
+
+        def wrong_parking(state, auth):
+            auth["parked_at"] = "2000-01-01T00:00:00Z"
+
+        def option_b(state, auth):
+            auth["response_option"] = "b"
+            state["beads"][T1]["metadata"]["gc.escalation_response_option"] = "b"
+
+        def undelivered_repair(state, auth):
+            state["beads"][R8_CLOSE_RELEASE_REPAIR]["status"] = "open"
+
+        for name, change in (("tip", wrong_tip), ("parking", wrong_parking),
+                             ("option b", option_b), ("delivery", undelivered_repair)):
+            with self.subTest(name=name):
+                self.tracker.write_text(seeded)
+                self.write_log.write_text("")
+                state = self.tracker_state()
+                auth = json.loads(json.dumps(authorization))
+                change(state, auth)
+                self.tracker.write_text(json.dumps(state))
+
+                answer = self.advance(CONVOY, env={**self.env, R8_CLOSE_RELEASE_ENV: json.dumps(auth)})
+
+                self.assertNotEqual("closed", self.bead(T1)["status"], name)
+                self.assertNotIn("withdrawn", self.shown_state(T1)["gates"], name)
+                self.assertEqual([], self.of(answer, "closed_without_merge"), name)
 
     def overridden_then_returned(self, override=True):
         """T1 stopped still refused, its one Blocking Finding overridden by
