@@ -257,7 +257,8 @@
       "job-retention-purged": "config/cockpit-datasets/job-retention-purged.json",
       "job-user-prompt-raw": "config/cockpit-datasets/job-user-prompt-raw.json",
       "job-user-prompt-rendered": "config/cockpit-datasets/job-user-prompt-rendered.json",
-      "chantier-decisions": "config/cockpit-datasets/chantier-decisions.json"
+      "chantier-decisions": "config/cockpit-datasets/chantier-decisions.json",
+      "home-decisions-relaunches": "config/cockpit-datasets/home-decisions-relaunches.json"
     },
     "test_perimeter": [
       "tests/cockpit-criteria/"
