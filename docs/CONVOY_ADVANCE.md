@@ -525,6 +525,19 @@ review and Ticket Evaluation at `4ddad773`. A different tip, exit, parking,
 last repair launch, invalidation time or incomplete maintenance delivery
 does nothing.
 
+R6 and R7 of `af-strhoy` have one paired withdrawal transition
+(`af-npz9v1.62`), also an occurrence rather than a general rule. Benjamin
+answered option `b`, « Retirer le ticket du graphe », on R6 `af-32xzpz` at
+`2026-10-31T00:28:21Z` and on R7 `af-vvascv` at
+`2026-10-31T00:28:52Z`. Once `af-npz9v1.62` has structural PR+CI delivery
+proof, one pass verifies both identities, tips, `planning_exception` exits,
+parkings, responses and absence of merge before writing either ticket. It
+clears only a still-live request through `escalation-door clear`, then closes
+each through `convoy-state withdraw-ticket`, without merging, relaunching an
+author or recording another human answer. A divergent precondition refuses
+the pair before any write; a later pass does not replay already withdrawn
+tickets. R8, R9 and every unrelated ticket are untouched by this transition.
+
 R8 has one close-without-merge transition (`af-npz9v1.61`), also an
 occurrence rather than a general rule. Benjamin answered option `a` on
 `af-nxis0q` at `2026-11-06T22:53:14Z`. The first native attempt did not match
@@ -956,6 +969,9 @@ repair of a red (`{id, key, draft, published}`, or `error`),
 `closed_without_merge` for the exact R8 transition (`ticket`, delivered
 maintenance `repair`, lifted descendants and the `spec-integration take-up`
 result),
+`withdrawn_by_decision` for the exact paired R6/R7 transition (delivered
+maintenance `repair`, tickets `withdrawn`, obsolete requests `cleared`, or a
+readable `error` before any write),
 `integration` when the pass ran a merge, `tdd_stops` when it raised a ticket
 stopped at its second amendment (T45), `code_review` when it settled code reviews,
 `evaluation` when it settled Ticket Evaluations, `correction` when a
