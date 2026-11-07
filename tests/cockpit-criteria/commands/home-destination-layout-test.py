@@ -97,7 +97,9 @@ class HomeDestinationLayout(unittest.TestCase):
         # Activated by the keyboard -- focused, then Enter --, an indicator,
         # a project and an entry of the navigation lead where a click does.
         address = self.tree.launch("home-content")
-        for control, where in (("Décisions à prendre", r"/"), ("Notes", r"/projet/.+"), ("Journal", r"/journal")):
+        # « Décisions à prendre » opens its view of the Analyses (K, af-jr8bsh).
+        for control, where in (("Décisions à prendre", r"/analyses"), ("Notes", r"/projet/.+"),
+                               ("Journal", r"/journal")):
             for frame in measure(address, theme="dark", widths=WIDTHS, click=control, keys=True):
                 after = frame["after"]
                 self.assertTrue(after["found"], f"no control « {control} » at {frame['width']} px")

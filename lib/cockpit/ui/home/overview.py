@@ -3,7 +3,7 @@ result (T02 Prototype Fold, af-0gonc9; Spec af-2zseit, user stories 111,
 124, 147 and 175; Validated Prototype prototype/cockpit-b-zones-20261012 at
 632deea, prototypes/c01-complete/frozen-panorama-home).
 
-    view = overview_view(snapshot, requests)
+    view = overview_view(snapshot, requests, analysis=analyses(snapshot, now, requests), runs=runs)
     main_html = render_overview(view, anchors, details_html)
 
 :func:`overview_view` reads, from the read model's snapshot and the
@@ -16,7 +16,8 @@ The states:
 - ``loading``: the tracker has not answered yet; ``error``: it was never
   read and its last read failed -- the page says the real state is unknown
   and offers to read again;
-- ``empty``: nothing waits, no project, no result, no indicator;
+- ``empty``: nothing waits, no project, no result, and no indicator lacks
+  its source (one that does says why it is unavailable);
 - ``content``: four indicators, the activity, the last runs, what waits
   (« Ce qui t’attend ») beside the result open under it, the projects. A
   reading of the supervisor or the tracker that is no longer current keeps
@@ -60,8 +61,8 @@ from cockpit.projects.source import from_value as projects_from_value
 from cockpit.requests.model import URGENT
 from cockpit.requests.sources.unknown_signal import unknown_signals_of
 from cockpit.text.validate import speaks_plainly
-from cockpit.runs.derive import runs_from_beads
-from cockpit.ui.runs.page import duration
+from cockpit.analyses.indicators import CI, DECISIONS as OPEN_DECISIONS, DELAY, RESULTS
+from cockpit.ui.runs.page import recent_cards_document
 from cockpit.ui.home.page import UNKNOWN_TEXT, UNKNOWN_TEXT_NO_TIME
 from cockpit.ui.home.pour_moi import CSS as POUR_MOI_CSS, links_of, render_details, render_request, render_signals
 from cockpit.ui.panorama.shell import Anchors, anchor_slug, open_button
@@ -70,14 +71,15 @@ from cockpit.ui.projects.project_page import project_page_url
 
 LOADING, ERROR, EMPTY, CONTENT = "loading", "error", "empty", "content"
 PROJECT_CARD = "gc.project_card"
-RUN_CARD = "gc.run_card"
 SAID = "said"
 
 DECISIONS = "Décisions à prendre"
-# The indicators the cockpit has no source for yet: what the tracker keeps
-# as said of them (one bead under each title: its value, then its period),
-# or « non collecté ».
-SAID_INDICATORS = ("Résultats fusionnés", "Délai de livraison", "Vérifications CI réussies")
+# The four indicators, as the Analyses compute them (ticket K, af-jr8bsh;
+# cockpit.analyses.indicators): the key of each, its label here and the
+# view of the Analyses it opens.
+INDICATORS = ((OPEN_DECISIONS, DECISIONS, "activite"), (RESULTS, "Résultats fusionnés", "resultats"),
+              (DELAY, "Délai de livraison", "delais"), (CI, "Vérifications CI réussies", "verifications"))
+UNAVAILABLE = "indisponible"
 CHART_LABEL = ("Volumes quotidiens comparés sur sept jours : PR fusionnées, tickets livrés, "
                "exécutions CI réussies")
 # Each series its colour (a token of the page, 3:1 at least on the surface
@@ -134,11 +136,16 @@ def recette(stop_trial_passed):
 LEGACY_SUMMARY = "Détails techniques et actions"
 
 
-def overview_view(snapshot, requests, stop_trial_passed=False, now=None, undelivered=(), uncertain=None):
+def overview_view(snapshot, requests, stop_trial_passed=False, now=None, undelivered=(), uncertain=None,
+                  analysis=None, runs=None, runs_failed=False):
     """What the destination shows: ``state`` (see the module), ``stale``,
     ``checked`` (HH:MM of the reading shown), ``requests`` (« Pour moi »,
     each opened with its gestures, :mod:`cockpit.ui.home.pour_moi`),
-    ``indicators``, ``activity``, ``runs`` (the cards of the last runs),
+    ``indicators`` (those of ``analysis``, what
+    :func:`cockpit.analyses.indicators.analyses` gives: the Analyses
+    compute them once for both pages), ``activity``, ``runs`` (the document
+    of the frame « Derniers runs »: the cards of the page Runs for ``runs``,
+    the workflow runs it lists, None while unread or with ``runs_failed``),
     ``dossier`` (the result open), ``projects``. ``stop_trial_passed``:
     whether a real stop and restart reached a verified restart (the
     recette). ``requests`` are those the cockpit knows even while the
@@ -149,7 +156,7 @@ def overview_view(snapshot, requests, stop_trial_passed=False, now=None, undeliv
     whose outcome is uncertain."""
     beads_row = snapshot.get("beads")
     view = {"state": CONTENT, "stale": False, "checked": None, "requests": [], "indicators": [],
-            "activity": {}, "runs": [], "dossier": None, "projects": [], "projects_unread": False, "now": now,
+            "activity": {}, "runs": None, "dossier": None, "projects": [], "projects_unread": False, "now": now,
             "unknown": _unknown(beads_row), "signals": []}
     urls = _project_urls(snapshot.get("projets"))
     view["requests"] = [
@@ -175,23 +182,39 @@ def overview_view(snapshot, requests, stop_trial_passed=False, now=None, undeliv
     view["checked"] = _hhmm(min(read_ats) if view["stale"] else max(read_ats))
     view["dossier"] = _result_open(snapshot.get("projets"), recette(stop_trial_passed))
     said = {bead.get("title"): _lines(bead) for bead in beads if SAID in (bead.get("labels") or [])}
-    view["indicators"] = [(DECISIONS, str(len(requests)), "Maintenant · demandes ouvertes", "#pn-inbox")] + [
-        (label, *(said[label] + ["", ""])[:2], "/analyses") if said.get(label)
-        else (label, "—", "Non collecté", "/analyses")
-        for label in SAID_INDICATORS
-    ]
+    view["indicators"] = _indicators(analysis) if analysis else []
     view["activity"] = _activity(said.get(ACTIVITY) or [])
-    view["runs"] = [card for card in (_record(bead, RUN_CARD) for bead in beads) if card]
-    runs_row = snapshot.get("runs")
-    if not view["runs"] and runs_row and runs_row["value"]:
-        view["runs"] = runs_from_beads(runs_row["value"], max(r["read_at"] or 0 for r in rows + [runs_row]))[:3]
+    view["runs"] = recent_cards_document(runs, now, runs_failed)
     view["projects"] = _projects(snapshot.get("projets"), beads, view["requests"])
     projets = snapshot.get("projets")
     view["projects_unread"] = projets is not None and projets["value"] is None
-    if not (view["requests"] or view["signals"] or view["dossier"] or view["projects"] or view["activity"] or view["runs"]
-            or any(said.get(label) for label in SAID_INDICATORS)):
+    # An indicator without its source says why: the home is not empty of
+    # it (K2, code review F1.3).
+    unsourced = analysis and any(indicator["unsourced"] for indicator in analysis["indicators"].values())
+    if not (view["requests"] or view["signals"] or view["dossier"] or view["projects"] or view["activity"] or runs
+            or unsourced):
         view["state"] = EMPTY
     return view
+
+
+def _indicators(analysis):
+    """The four indicators of ``analysis``, each (label, value, what it
+    counts, the view of the Analyses it opens): its value as the Analyses
+    give it, or « indisponible » and the reason they give -- never a value
+    they do not compute."""
+    found = []
+    for key, label, view in INDICATORS:
+        indicator = analysis["indicators"][key]
+        value, caption = indicator["value"], indicator["reason"]
+        if value is not None:
+            caption = {
+                OPEN_DECISIONS: "Maintenant · demandes ouvertes",
+                RESULTS: "%d derniers jours · preuves de fusion" % len(analysis["days"]),
+                DELAY: "Médiane · %d résultats fusionnés" % len(analysis["results"]),
+                CI: "%d derniers jours · %s" % (len(analysis["days"]), indicator["calculation"]),
+            }[key]
+        found.append((label, UNAVAILABLE if value is None else value, caption, "/analyses?vue=%s" % view))
+    return found
 
 
 def _unknown(beads_row):
@@ -423,7 +446,7 @@ def _render_content(view, anchors):
         '<section class="pn-panel" %s><div class="pn-section-heading" %s><h2 %s>Derniers runs</h2>%s</div>'
         '<iframe class="pn-runs" title="Cartes des derniers runs" srcdoc="%s" %s></iframe></section>'
         % (panel, heading, anchors("h2"), open_button("/runs", "Tout voir", anchors("link"), "pn-link"),
-           _e(_runs_document(view["runs"])), anchors("overview-runs")))
+           _e(view["runs"]), anchors("overview-runs")))
     inbox, requests_panel = anchors("inbox"), anchors("panel")
     title = '<h2 %s>Ce qui t’attend</h2>' % anchors("h2")
     result = view["dossier"]
@@ -715,91 +738,6 @@ def _render_projects(projects, anchors, unread=False):
     return '<section class="pn-panel pn-projects" %s>%s<div class="pn-rows" %s>%s</div></section>' % (
         panel, title, rows_anchor, body)
 
-
-# The cards of the last runs, inside their frame, as the reference draws
-# them: three a row, one under the other in a frame under 850 px. A card
-# opens the destination Runs; opening the run itself is T44's. The status of
-# a run waiting for a decision is written darker in the light theme, where
-# the reference's is under 4.5:1 on the surface.
-RUNS_CSS = (
-    ":root{color-scheme:light;--surface:#fff;--line:#dbe0e8;--ink:#17202e;--muted:#657185;--accent:#415fce;"
-    "--ok:#1c7954;--human:#e4bc6d;--code:#55b5ae;--agent:#a897eb;--wait:#85590f}"
-    "@media (prefers-color-scheme: dark){:root{color-scheme:dark;--surface:#161b23;--line:#2a3240;--ink:#ecedf3;"
-    "--muted:#9aa6b9;--accent:#99aaff;--ok:#55c89d;--wait:#e4bc6d}}"
-    "*{box-sizing:border-box}html,body{margin:0;background:var(--surface);color:var(--ink);font:15px system-ui,sans-serif}"
-    ".grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}"
-    ".card{display:block;height:100%;background:var(--surface);border:1px solid var(--line);border-radius:10px;"
-    "padding:18px;color:inherit;text-decoration:none}"
-    ".card:hover{border-color:var(--accent)}.card:focus-visible{outline:2px solid var(--accent);outline-offset:-4px}"
-    ".card h2{margin:12px 0 7px;font-size:18px;overflow-wrap:anywhere}"
-    ".card p{margin:0 0 14px;font-size:14px;line-height:1.5;color:var(--muted);overflow-wrap:anywhere}"
-    ".card-top{display:flex;justify-content:space-between;gap:12px;font-size:12px;color:var(--muted)}"
-    ".badge{color:var(--ok)}.badge.live{color:var(--accent)}.badge.wait{color:var(--wait)}"
-    ".live-dot{display:inline-block;width:7px;height:7px;border-radius:100%;background:var(--accent);margin-right:6px}"
-    ".card-foot{display:flex;justify-content:space-between;gap:10px;margin-top:15px;font-size:13px;color:var(--muted)}"
-    ".mono{font:13px ui-monospace,monospace}"
-    ".mini{display:grid;gap:6px;font-size:11px}"
-    ".mini-row{display:grid;grid-template-columns:70px 1fr;gap:8px;align-items:center}"
-    ".mini-track{height:8px;position:relative;border-bottom:1px solid var(--line);"
-    "background:repeating-linear-gradient(90deg,transparent 0,transparent calc(25% - 1px),var(--line) 25%)}"
-    ".mini-bar{position:absolute;height:5px;border-radius:4px;top:1px;background:var(--agent);min-width:2px}"
-    ".mini-bar.code{background:var(--code)}.mini-bar.human{background:var(--human)}"
-    ".mini-axis{margin:8px 0 0 78px;display:flex;justify-content:space-between;color:var(--muted);font-size:10px}"
-    ".none{margin:12px 0;font-size:14px;line-height:1.5;color:var(--muted)}"
-    "@media(max-width:850px){.grid{grid-template-columns:1fr}}"
-)
-
-
-def _runs_document(runs):
-    """The document of the frame « Derniers runs »: a card for each run of
-    ``runs``, or that the cockpit reads none."""
-    anchors = Anchors()
-    cards = "".join(_run_card(run, anchors) for run in runs)
-    body = ('<div class="grid" %s>%s</div>' % (anchors("grid"), cards) if cards
-            else '<p class="none">Aucun run récent n’est lu par le cockpit.</p>')
-    return ('<!doctype html><html lang="fr"><head><meta charset="utf-8"><base target="_top">'
-            "<style>%s</style></head><body>%s</body></html>" % (RUNS_CSS, body))
-
-
-def _run_card(run, anchors):
-    """One card: the workflow and the status of the run, its title and its
-    step, a lane per participant with a bar per job, placed within the run,
-    its axis, its start and its duration."""
-    elapsed = run["elapsed"]
-    card, top = anchors("card"), anchors("card-top")
-    tone = run.get("tone")
-    dot = '<span class="live-dot" %s></span>' % anchors("live-dot") if tone in ("wait", "live") else ""
-    head = ('<div class="card-top" %s><span %s>%s</span><span class="badge %s" %s>%s%s</span></div>'
-            % (top, anchors("span"), _e(run["type"]), tone if tone in ("wait", "live") else "", anchors("badge"),
-               dot, _e(run["status"])))
-    title = "<h2 %s>%s</h2><p %s>%s</p>" % (anchors("h2"), _e(run["title"]), anchors("p"), _e(run["step"]))
-    mini = anchors("mini")
-    rows = []
-    for lane in run["lanes"]:
-        row, name, track = anchors("mini-row"), anchors("span"), anchors("mini-track")
-        bars = "".join('<span class="mini-bar %s" style="left:%s%%;width:%s%%" %s></span>'
-                       % (_e(lane["kind"]), _n(100 * start / elapsed), _n(100 * (end - start) / elapsed),
-                          anchors("mini-bar"))
-                       for start, end in lane["jobs"])
-        rows.append('<div class="mini-row" %s><span %s>%s</span><div class="mini-track" %s>%s</div></div>'
-                    % (row, name, _e(lane["name"]), track, bars))
-    axis = anchors("mini-axis")
-    ticks = "".join("<span %s>%s</span>" % (anchors("span"), _tick(seconds)) for seconds in (0, elapsed / 2, elapsed))
-    foot = anchors("card-foot")
-    return (
-        '<a class="card" href="%s" %s>%s%s<div class="mini" %s>%s</div><div class="mini-axis" %s>%s</div>'
-        '<div class="card-foot" %s><span %s>Début %s (Paris)</span><span class="mono" %s>%s</span></div></a>'
-    ) % (_e(run.get("href") or "/runs"), card, head, title, mini, "".join(rows), axis, ticks, foot, anchors("span"), _e(run["started"]),
-         anchors("mono"), duration(elapsed))
-
-
-def _tick(seconds):
-    """A mark of the axis of a card: « 0s », « 45s », « 6m », « 4m06s »."""
-    seconds = int(round(seconds))
-    minutes, rest = divmod(seconds, 60)
-    if not minutes:
-        return "%ds" % rest
-    return "%dm%02ds" % (minutes, rest) if rest else "%dm" % minutes
 
 CSS = """
 :root{--pn-series-1:#415fce;--pn-series-2:#1c7954;--pn-series-3:#97691e}

@@ -1,0 +1,16 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/home-indicators-test.py::HomeIndicators.test_home_content_counts_the_decisions_and_results_the_analyses_count",
+      "tests/cockpit-criteria/commands/home-indicators-test.py::HomeIndicators.test_the_home_shows_the_four_indicators_the_records_give_as_the_analyses_do",
+      "tests/cockpit-criteria/commands/home-indicators-test.py::HomeIndicators.test_each_indicator_of_the_home_opens_its_view_of_the_analyses",
+      "tests/cockpit-criteria/commands/home-recent-runs-test.py::HomeRecentRuns.test_home_content_draws_the_card_the_page_runs_draws",
+      "tests/cockpit-criteria/commands/home-recent-runs-test.py::HomeRecentRuns.test_the_recent_runs_are_of_every_status_the_last_started_first",
+      "tests/cockpit-criteria/commands/home-recent-runs-test.py::HomeRecentRuns.test_a_card_of_the_home_is_drawn_as_on_the_page_runs"
+    ],
+    "2": [
+      "tests/cockpit-criteria/commands/home-indicators-test.py::HomeIndicators.test_home_content_says_the_delay_and_the_ci_unavailable_as_the_analyses_do",
+      "tests/cockpit-criteria/commands/home-indicators-test.py::HomeIndicators.test_without_a_readable_ci_the_home_says_it_unavailable_and_computes_the_others"
+    ]
+  }
+}

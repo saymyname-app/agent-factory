@@ -2,7 +2,7 @@
 the sources the cockpit reads (D, af-ten1sp; Spec af-fgcw0d, user stories
 148, 149 and 150).
 
-    view = analyses(snapshot, now)
+    view = analyses(snapshot, now, requests)
 
 One call gives everything the Analyses show, and what the overview reuses
 (ticket K): over the seven days that end today (Paris),
@@ -20,7 +20,10 @@ One call gives everything the Analyses show, and what the overview reuses
 The sources are those the cockpit reads: the runs (``runs``: a ticket is
 delivered on its merge into the integration branch, a result is merged on
 the proof of its merge, ``gc.flow.promotion``, that ends the run of its
-delivery), the journal (``journal``: the decisions open and those
+delivery), the requests « Ce qui t’attend » lists (``requests``, assembled
+from the tracker, ``beads``: the decisions open, relaunches of a session
+or an order included -- rule of Benjamin, 07/11/2026, the same number
+everywhere, K2 af-unu7jp), the journal (``journal``: the decisions
 answered) and GitHub (``github``: a CI run counts on its conclusion). Only
 a fresh source gives a value
 (GLOSSARY.md, Freshness): one not read yet, failing or stale gives none,
@@ -37,7 +40,7 @@ from datetime import datetime, timedelta, timezone
 
 from cockpit.core.freshness import FRESH, STALE
 from cockpit.core.readmodel import PARIS
-from cockpit.requests.journal import entries_from_value, open_from_value
+from cockpit.requests.journal import entries_from_value
 from cockpit.runs.derive import runs_from_beads
 
 DAYS = 7
@@ -56,6 +59,8 @@ NO_REPOSITORY = "aucun dépôt GitHub n’est déclaré pour la CI du cockpit (r
 # window.
 UNREAD = {
     "runs": ("les runs sont en cours de lecture", "les runs n’ont pas pu être lus", "les runs ne sont plus à jour"),
+    "beads": ("le tracker est en cours de lecture", "le tracker n’a pas pu être lu",
+              "le tracker n’est plus à jour"),
     "journal": ("le journal est en cours de lecture", "le journal n’a pas pu être lu", "le journal n’est plus à jour"),
     "github": ("GitHub est en cours de lecture", "GitHub n’a pas répondu", "la CI GitHub n’est plus à jour"),
 }
@@ -63,9 +68,12 @@ UNREAD = {
 ANSWERING = ("escalation-door", "cockpit")
 
 
-def analyses(snapshot, now, days=DAYS):
+def analyses(snapshot, now, requests, days=DAYS):
     """What the Analyses show over the ``days`` days that end on the day of
-    ``now`` (Paris), from the read model's ``snapshot``. See the module."""
+    ``now`` (Paris), from the read model's ``snapshot`` and the
+    ``requests`` « Ce qui t’attend » lists, assembled from it
+    (:func:`cockpit.requests.assemble.assemble_from_snapshot`). See the
+    module."""
     span = _days(now, days)
     period = "%d jours, du %s au %s (Paris)" % (days, span[0].strftime("%d/%m"), span[-1].strftime("%d/%m"))
     within = lambda at: at is not None and span[0] <= _day(at) <= span[-1]
@@ -97,10 +105,12 @@ def analyses(snapshot, now, days=DAYS):
     pulls = [at for at in (_ts(pull.get("merged_at")) for pull in github.get("pull_requests") or []
                            if isinstance(pull, dict)) if within(at)]
 
+    # The decisions open are the requests « Ce qui t’attend » lists, while
+    # the tracker they are read from gives its value.
+    requests_reason = reasons["beads"]
+    decisions = [] if requests_reason else [
+        {"quoi": request.quoi, "projet": names.get(request.projet, request.projet)} for request in requests]
     journal_reason = reasons["journal"]
-    decisions = [] if journal_reason else [
-        {"quoi": decision["quoi"], "projet": names.get(decision["projet"], decision["projet"])}
-        for decision in open_from_value(value("journal"))]
     answered = None if journal_reason else sorted(
         ({"title": entry.demande or entry.quoi, "answer": entry.quoi, "at": _ts(entry.quand)}
          for entry in entries_from_value(value("journal"))
@@ -124,16 +134,18 @@ def analyses(snapshot, now, days=DAYS):
     results_sources = "runs des livraisons, lus sur le tracker"
     indicators = {
         DECISIONS: _indicator(
-            DECISIONS, None if journal_reason else str(len(decisions)), journal_reason,
-            population="les décisions qui t’attendent : questions, propositions et résultats à juger, "
+            DECISIONS, None if requests_reason else str(len(decisions)), requests_reason, requests_reason,
+            population="les demandes qui t’attendent, celles que liste « Ce qui t’attend » : questions, "
+                       "propositions, résultats à juger et relances d’une session ou d’un ordre en pause, "
                        "ouvertes maintenant",
             period="%s ; une décision ouverte est comptée tant qu’elle attend, même posée avant" % period,
-            sources="le journal des décisions, lu sur le tracker : les décisions posées et leurs réponses",
-            read=_read(rows["journal"]),
-            calculation="le nombre de décisions posées que le journal ne dit pas répondues ; une décision "
-                        "répondue ne compte plus, elle est listée parmi les décisions répondues"),
+            sources="les demandes de « Ce qui t’attend », lues sur le tracker ; les réponses, au journal des "
+                    "décisions",
+            read=_read(rows["beads"]),
+            calculation="le nombre de demandes que liste « Ce qui t’attend » ; une décision répondue ne compte "
+                        "plus, elle est listée parmi les décisions répondues"),
         RESULTS: _indicator(
-            RESULTS, None if results_reason else str(len(results)), results_reason,
+            RESULTS, None if results_reason else str(len(results)), results_reason, results_reason,
             population="les résultats de chantier dont la fusion est prouvée ; les PR et les tickets ne sont "
                        "pas des résultats",
             period=period, sources="la preuve de fusion (gc.flow.promotion) qui clôt le run de chaque "
@@ -143,7 +155,7 @@ def analyses(snapshot, now, days=DAYS):
                         "(Paris)"),
         DELAY: _indicator(
             DELAY, None if results_reason or not totals else delay_text(_median(totals)),
-            results_reason or (None if totals else "aucun résultat fusionné sur la période"),
+            results_reason or (None if totals else "aucun résultat fusionné sur la période"), results_reason,
             population="les résultats fusionnés de la période" if results_reason
             else "les %d résultats fusionnés de la période" % len(results),
             period=period, sources="la publication du graphe, la livraison, l’acceptation et la preuve de fusion "
@@ -153,7 +165,7 @@ def analyses(snapshot, now, days=DAYS):
                         "s’additionnent pas"),
         CI: _indicator(
             CI, None if github_reason or not completed else "%d %%" % round(100 * len(succeeded) / len(completed)),
-            github_reason or (None if completed else "aucune exécution CI terminée sur la période"),
+            github_reason or (None if completed else "aucune exécution CI terminée sur la période"), github_reason,
             population="les exécutions CI terminées de la période ; une exécution en cours n’est pas comptée",
             period=period, sources="la CI GitHub%s, toutes ses exécutions créées sur la période" % (
                 " du dépôt %s" % repository if repository else ""),
@@ -174,9 +186,12 @@ def analyses(snapshot, now, days=DAYS):
             "answered": answered, "answered_reason": journal_reason, "now": now}
 
 
-def _indicator(key, value, reason, **method):
+def _indicator(key, value, reason, source_reason, **method):
+    """One indicator: ``unsourced`` when it is unavailable because its
+    source gives no value (``source_reason``), not because the period holds
+    nothing to compute."""
     return {"key": key, "label": LABELS[key], "value": value, "reason": None if value is not None else reason,
-            **method}
+            "unsourced": value is None and bool(source_reason), **method}
 
 
 def _unread(row, reading, failing, stale):

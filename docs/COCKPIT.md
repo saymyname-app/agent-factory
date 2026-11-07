@@ -275,25 +275,31 @@ the read model, never from the frozen page:
   « Cette vue est indisponible » with « Réessayer » (`POST /api/health/recheck`)
   once a read of it failed (`ReadModel.fail`, from the poller; a `bd` call
   fails after `COCKPIT_BEADS_READ_TIMEOUT_SECONDS`, 10 s);
-  « Rien à afficher ici » when nothing waits and nothing is declared;
-  otherwise four indicators (« Décisions à prendre » counts the requests;
-  the three others are what the tracker keeps as said of them, or « Non
-  collecté »), the activity of seven days (the daily volumes of its three
+  « Rien à afficher ici » when nothing waits, nothing is declared and no
+  indicator lacks its source (K2, code review F1.3: one that does is said
+  unavailable with its reason);
+  otherwise four indicators, those of the Analyses (K, af-jr8bsh: the one
+  call `cockpit.analyses.indicators.analyses` computes them for both pages
+  -- « Décisions à prendre » the open decisions, « Résultats fusionnés »,
+  « Délai de livraison » and « Vérifications CI réussies » --, each its
+  value, or « indisponible » and the reason the Analyses give, never a
+  value of example; each opens its view, `/analyses?vue=activite`,
+  `resultats`, `delais`, `verifications`), the activity of seven days (the daily volumes of its three
   series the tracker keeps as said under « Activité sur 7 jours », one
   line a day and a series, « PR fusionnées · Lundi : 1 », drawn as the
   reference draws them, each series told apart by its dashes as well as
   its colour -- a token at 3:1 at least on the surface in both themes --,
   and said in a table a screen reader reads; without them, an empty grid
-  and the volumes said not collected), the last runs (the cards the
-  tracker carries under `gc.run_card`, drawn in their frame as the
-  reference draws them -- workflow, status, title, step, a lane per
-  participant with a bar per job, axis, start, duration --, the frame as
-  tall as its cards; a card opens Runs, the reuse of the Runs card itself
-  and the opening of its run are T44's; without one, the frame says the
-  cockpit reads none), « Ce qui t’attend » beside the result
+  and the volumes said not collected), the last runs (K: the three
+  workflow runs started last, of every status, as the page Runs lists
+  them, each the card of Runs, `run_card`, under the stylesheets of
+  Runs -- `recent_cards_document` of `lib/cockpit/ui/runs/page.py` --, in
+  the frame the reference draws, as tall as its cards; a card opens its
+  run; without one, the frame says the cockpit reads none), « Ce qui
+  t’attend » beside the result
   open under it, and the projects, those something waits for first. An
-  indicator and a project's card are links (to `/analyses`, to the
-  requests, to `/projet/<key>`), so the keyboard opens them as a click
+  indicator and a project's card are links (to its view of `/analyses`,
+  to `/projet/<key>`), so the keyboard opens them as a click
   does; the line of the request open carries `aria-current` and an
   accent mark, not only its background. Selecting a request scrolls to
   its detail under « Détails techniques et actions » and moves the focus
@@ -1336,9 +1342,9 @@ ways:
 | « Vue d’ensemble »: the dossier open under those lines (« projet · sujet », its title, what it shows), and the state of the result when `ui.state` names one (`ready`, `dossier`, `outdated`, `outage`, `accepted`, `merging`, `merged`, `abandoned`, `findings`, `returned`, `repairing`, `conflict`; none is a result to judge), and what the result says of itself (`result`: its commits, the times of its records, the words of the answer, the reason of an abandon -- required for `abandoned` -- unsaid, those of the reference) | the records the D01 commands write on the convoy of its chantier (A1): the new-flow mark, the result delivered, its dossier, the request of the acceptance and, by state, the answer, the promotion, the closing; the request of its project the page lists becomes the convoy's while the result waits for a judgement, and is gone once answered; the title of its Spec is what the dossier first says; the page of its dossier, one rubric per part that unfolds (« Ce qui reste à vérifier » as « Ce qui n'a PAS été vérifié »), its lines in `folded`, written in the home of the launch (`SyntheticCity.files`) -- the parts that open and the bar are the cockpit's own. `request` and `confirmation` open a decision: their dossier stays one open bead `synthetic-dossier` | `beads.value`; `GET /` |
 | a tracker the commands of the flow wrote (`tracker`: `{"beads": {id: bead}}`, as the fake `gc` of `tests/fixtures/convoy-state` holds it), with `ui.id`; the descriptors of its projects (`projects`, optional) and where their knowledge repositories are (`repos`, optional: `{knowledge_repo: absolute path of a Git repository on this host}`) | its beads, as they are; each descriptor declared as it is, and one project per other `gc.project_id` the beads name, under that key; each knowledge repository read through a link to it in the home of the launch | `beads.value`; `depots.value`; `GET /`; `GET /projet/<key>` |
 | « Vue d’ensemble »: the cards under « Projets » (name, « chantier · étape », then the figures of the card) | one declared project per name; one open chantier per project, under its title, whose description is the stage and the other lines of the card, and whose `gc.project_card` is the stage, the figures and, last, the line of the release | `projets.value.projects`; `GET /api/projects`; `beads.value`; `GET /` |
-| « Vue d’ensemble »: the four indicators | one bead kept as said per indicator (value, period) | `beads.value` |
+| « Vue d’ensemble »: the four indicators | one bead kept as said per indicator (value, period); no screen reads it since K (af-jr8bsh): the overview shows the indicators of the Analyses, computed from `flow` and `github` | `beads.value` |
 | a drawing of the screen: `drawn` under « Activité sur 7 jours », one line a day and a series | one bead kept as said under that heading, whose description is those lines | `beads.value`; `GET /` |
-| « Vue d’ensemble »: `runs`, the cards under « Derniers runs » (workflow, status and its tone, title, step, start, elapsed seconds, lanes with the start and end of each job) | one bead `synthetic-run-card-N` per card, under the title of its run, whose `gc.run_card` is the card | `beads.value`; `GET /` |
+| « Vue d’ensemble »: `runs`, the cards under « Derniers runs » (workflow, status and its tone, title, step, start, elapsed seconds, lanes with the start and end of each job) | one bead `synthetic-run-card-N` per card, under the title of its run, whose `gc.run_card` is the card; no screen reads it since K (af-jr8bsh): « Derniers runs » shows the cards of the page Runs for the runs the tracker holds | `beads.value` |
 | the page of a project (« ← Projets »): its name, what is said above the first section; « CHANTIER ACTUEL »; « Derniers changements »; « Prochaine release » and « PROCHAIN JALON » (a target, its gains, what remains, its decisions, its milestone, its estimate -- unavailable and why, or a range and its conditions), with what they show folded (`release`: the proof of each gain by its title, each change of the target, and for a range what it rests on: `comparables`, `hypotheses`, `computed_at`); « ROADMAP » (a heading, then each step and its status) | the project is declared; one bead under its name (purpose, stage, indicators); its open chantier; « Derniers changements » kept as said; its knowledge repository `synthetic/<key>`, a Git repository of the launch committed at the fixed time of the dataset, holding `roadmap.toml` and, when the page shows a target, `release.toml` (`lib/cockpit/projects/release.py`) | `projets.value.projects`, `GET /projet/<key>`; `beads.value`; `depots.value` |
 | « Journal »: each event, « HH:MM (Paris) · projet · nature » or « HH:MM (Paris) · source », under « Aujourd’hui » or « Hier », its title and what follows | one bead of type `event` per event, as `bd create --type event` writes it: its title, its nature or source as `event_kind`, as label and as `gc.journal_event`, its project (declared), `created_at` the day of the dataset or the day before at that time, its line « Voir … » as `gc.journal_link`, the other lines as its description (the labels « Détail et source », « Événement brut » and the note under the logs are the page's); what `folded` says under its title as `gc.journal_folded` | `beads.value`; `projets.value.projects`; `GET /api/journal` `entries`: one entry per event, its title as `quoi`, its `created_at` as `quand`, its nature or source as `voie`, newest first (`lib/cockpit/ui/journal/entries.py`, T01R6 af-ltchro) |
 | « Usine »: « Machine d’exécution », « Connexions », « Fournisseurs et accès API », « Agents dans le workflow », « Auteur livraison », « Autres rôles », « Suspension, reprise et arrêt », « Nettoyer les espaces inutilisés », « Ressources et libellés longs » | one bead kept as said per section | `beads.value` |
@@ -2053,7 +2059,7 @@ criterion tests `tests/cockpit-criteria/commands/journal-destination-*-test.py`.
 today (Paris), one view per indicator of the Spec: « Résultats fusionnés »,
 « Délai de livraison » (« Où passe le temps ? »), « Vérifications CI
 réussies » and « Décisions ouvertes ». Each is computed once by
-`cockpit.analyses.indicators.analyses(snapshot, now)`, the call
+`cockpit.analyses.indicators.analyses(snapshot, now, requests)`, the call
 the overview reuses (ticket K):
 
 | Indicator | Computed from |
@@ -2061,7 +2067,7 @@ the overview reuses (ticket K):
 | Résultats fusionnés | the runs: the convoys whose merge the flow proved (`gc.flow.promotion`), which ends the run of their delivery, counted on the day of the merge |
 | Délai de livraison | the same runs: the median, from the publication of the graph (the convoy's creation) to the proof of merge; per portion, the median of « Réalisation et vérifications » (to `gc.flow.delivered`), « Attente de jugement » (to the accepted answer of `gc.flow.judgement`, a voided one excluded) and « Fusion » (to the proof) |
 | Vérifications CI réussies | the CI runs GitHub gives for the declared repository: those that succeeded over those completed; a run in progress is not counted |
-| Décisions ouvertes | the journal: the questions and proposals asked of Benjamin it holds that are still open, by the rule of the requests (`cockpit.requests.builder.build_requests`); the decisions answered over the period, as the journal records them, are listed under it |
+| Décisions ouvertes | the requests « Ce qui t’attend » lists, assembled once from the tracker as the home assembles them (`cockpit.requests.assemble.assemble_from_snapshot`): questions, proposals, results to judge and relaunches of a session or an order in pause -- the same number on the home and in the Analyses (rule of Benjamin, 07/11/2026, K2 af-unu7jp); a signal of an unknown producer is information and is not counted; unavailable with its reason while the tracker gives no current value; the decisions answered over the period, as the journal records them, are listed under it |
 
 The sources are those the cockpit already reads -- `runs` (a ticket is
 delivered on its merge into the integration branch, « Fusionné » in its

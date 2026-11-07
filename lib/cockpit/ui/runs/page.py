@@ -27,6 +27,9 @@ FILTERS = (("tous", "Tous"), ("en-cours", "En cours"), ("termines", "Terminés")
 LEGEND = ("Origine 0 : déclencheur · traits : outils (turquoise), contrôles (vert), sessions (violet), "
           "autres (gris) · clic : détail")
 NOT_COLLECTED = "Pas encore disponible : donnée non collectée."
+READING = "Lecture des runs…"
+UNREAD = "Les runs n’ont pas pu être lus : le tracker ne répond pas (tracker injoignable)."
+NO_RUN = "Aucun run n’est encore lu par le cockpit."
 EVENT_KINDS = {TOOLS: "outil", CONTROLS: "contrôle", SESSIONS: "session", OTHERS: "autre"}
 TICKS = 5
 # How a job is drawn by its state: its mark, the word that says the state
@@ -186,9 +189,7 @@ def render_runs_page(runs, filtre, checked=None, error=False, now=None):
                           ' aria-current="page"' if chosen else "", label))
     nav = '<nav class="rn-filters" aria-label="Filtrer les runs" %s>%s</nav>' % (filters, "".join(buttons))
     if runs is None:
-        body = '<section class="pn-panel"><p>%s</p></section>' % (
-            "Les runs n’ont pas pu être lus : le tracker ne répond pas (tracker injoignable)."
-            if error else "Lecture des runs…")
+        body = '<section class="pn-panel"><p>%s</p></section>' % (UNREAD if error else READING)
     else:
         shown = _selected(runs, filtre)[:SHOWN]
         body = ('<div class="rn-grid" %s>%s</div>' % (anchors("grid"), "".join(run_card(run, now, anchors)
@@ -196,6 +197,44 @@ def render_runs_page(runs, filtre, checked=None, error=False, now=None):
                 if shown else '<section class="pn-panel"><p>Aucun run dans ce filtre. '
                               '<a href="/runs?filtre=tous">Voir tous les runs</a></p></section>')
     return head + nav + body
+
+
+# --- the last runs, in a frame of another page -------------------------------------------
+
+# The cards the overview shows (ticket K, af-jr8bsh; Spec af-fgcw0d,
+# decision 7 « Une seule carte de run »): the runs last started, of every
+# status.
+RECENT = 3
+# The frame is as wide as the panel that holds it: three cards a row there,
+# one under the other on a phone; its page is the surface of that panel.
+FRAME_CSS = (
+    "html,body{margin:0;padding:0;background:var(--surface)}"
+    ".rn-grid{grid-template-columns:repeat(3,minmax(0,1fr))}"
+    "@media (max-width:700px){.rn-grid{grid-template-columns:1fr}}"
+)
+
+
+def recent_cards_document(runs, now=None, error=False):
+    """The cards of the :data:`RECENT` runs of ``runs`` started last (as the
+    list orders them, the last started first), as a document of their own
+    for a frame of another page: each :func:`run_card`, under the
+    stylesheets of this page, its link opening the run in the page around
+    the frame. ``runs`` None: not read yet, or not read at all with
+    ``error``."""
+    from cockpit.ui.base.tokens import CSS as BASE_CSS, FONTS_HEAD
+    from cockpit.ui.panorama.shell import CSS as SHELL_CSS
+
+    if runs is None:
+        body = '<p class="rn-muted">%s</p>' % (UNREAD if error else READING)
+    elif not runs:
+        body = '<p class="rn-muted">%s</p>' % NO_RUN
+    else:
+        anchors = RunAnchors()
+        body = '<div class="rn-grid" %s>%s</div>' % (anchors("grid"), "".join(run_card(run, now, anchors)
+                                                                             for run in runs[:RECENT]))
+    return ('<!doctype html><html lang="fr"><head><meta charset="utf-8"><base target="_top">%s'
+            "<style>%s%s%s%s</style></head><body>%s</body></html>"
+            % (FONTS_HEAD, BASE_CSS, SHELL_CSS, CSS, FRAME_CSS, body))
 
 
 # --- one run, and the detail of a job --------------------------------------------------
