@@ -3,7 +3,7 @@ result (T02 Prototype Fold, af-0gonc9; Spec af-2zseit, user stories 111,
 124, 147 and 175; Validated Prototype prototype/cockpit-b-zones-20261012 at
 632deea, prototypes/c01-complete/frozen-panorama-home).
 
-    view = overview_view(snapshot, requests, analysis=analyses(snapshot, now), runs=runs)
+    view = overview_view(snapshot, requests, analysis=analyses(snapshot, now, requests), runs=runs)
     main_html = render_overview(view, anchors, details_html)
 
 :func:`overview_view` reads, from the read model's snapshot and the

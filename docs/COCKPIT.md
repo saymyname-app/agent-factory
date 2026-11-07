@@ -2057,7 +2057,7 @@ criterion tests `tests/cockpit-criteria/commands/journal-destination-*-test.py`.
 today (Paris), one view per indicator of the Spec: « Résultats fusionnés »,
 « Délai de livraison » (« Où passe le temps ? »), « Vérifications CI
 réussies » and « Décisions ouvertes ». Each is computed once by
-`cockpit.analyses.indicators.analyses(snapshot, now)`, the call
+`cockpit.analyses.indicators.analyses(snapshot, now, requests)`, the call
 the overview reuses (ticket K):
 
 | Indicator | Computed from |
@@ -2065,7 +2065,7 @@ the overview reuses (ticket K):
 | Résultats fusionnés | the runs: the convoys whose merge the flow proved (`gc.flow.promotion`), which ends the run of their delivery, counted on the day of the merge |
 | Délai de livraison | the same runs: the median, from the publication of the graph (the convoy's creation) to the proof of merge; per portion, the median of « Réalisation et vérifications » (to `gc.flow.delivered`), « Attente de jugement » (to the accepted answer of `gc.flow.judgement`, a voided one excluded) and « Fusion » (to the proof) |
 | Vérifications CI réussies | the CI runs GitHub gives for the declared repository: those that succeeded over those completed; a run in progress is not counted |
-| Décisions ouvertes | the journal: the questions and proposals asked of Benjamin it holds that are still open, by the rule of the requests (`cockpit.requests.builder.build_requests`); the decisions answered over the period, as the journal records them, are listed under it |
+| Décisions ouvertes | the requests « Ce qui t’attend » lists, assembled once from the tracker as the home assembles them (`cockpit.requests.assemble.assemble_from_snapshot`): questions, proposals, results to judge and relaunches of a session or an order in pause -- the same number on the home and in the Analyses (rule of Benjamin, 07/11/2026, K2 af-unu7jp); a signal of an unknown producer is information and is not counted; unavailable with its reason while the tracker gives no current value; the decisions answered over the period, as the journal records them, are listed under it |
 
 The sources are those the cockpit already reads -- `runs` (a ticket is
 delivered on its merge into the integration branch, « Fusionné » in its

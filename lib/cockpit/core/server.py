@@ -370,7 +370,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         driver = getattr(self.server, "stop_driver", None)
         view = overview_view(snapshot, requests, now=now, undelivered=self._undelivered(), uncertain=uncertain,
                              stop_trial_passed=bool(driver is not None and driver.essai_reussi()),
-                             analysis=analyses(snapshot, now), runs=runs, runs_failed=runs_failed)
+                             analysis=analyses(snapshot, now, requests), runs=runs, runs_failed=runs_failed)
         # T13, af-cx20q9: the SameSite=Strict cookie an action POST must
         # echo back -- a cross-site POST never carries it, so its presence
         # alone proves this request came from a page the cockpit itself
@@ -635,11 +635,13 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         daily volumes, computed from the sources the cockpit reads
         (cockpit.analyses.indicators). Served once the projects are read,
         as the overview is: a result or a decision is named by its project,
-        not by its key."""
+        not by its key. The decisions open are the requests the overview
+        lists, assembled as it assembles them (K2, af-unu7jp)."""
         snapshot = self._first_reading(read_model)
         now = read_model.now()
+        requests, _, _ = self._assemble_requests(snapshot, now)
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
-        main = render_analyses(analyses(snapshot, now), (query.get("vue") or [None])[0])
+        main = render_analyses(analyses(snapshot, now, requests), (query.get("vue") or [None])[0])
         self._send_page(read_model, "analyses", main, extra_css=ANALYSES_CSS, snapshot=snapshot)
 
     def _send_factory_page(self, read_model):
