@@ -323,12 +323,13 @@ the read model, never from the frozen page:
   fusion à ce stade. », the reason of an abandon. A project's card says its
   current chantier -- its last one ended when none is active -- at the
   issue of its result when it has one, else at the stage of its
-  `gc.project_card`, else at its computed stage. No door is wired to
-  Essai, Avis or a resource that opens on this destination (A2): Essai and
-  Avis are drawn unavailable under every result, judged or not, and the
-  bar says why (not wired yet on a result to judge; of no use on a result
-  already judged; unsure on a result unknown or inconsistent); nothing
-  shows a command done that no door recorded. A chantier whose Outcome is
+  `gc.project_card`, else at its computed stage. Essai and Avis are in
+  the bar of every result, once each, and work on a result to judge (A2,
+  af-ocz64w, below); where they cannot be used they stay drawn and the bar
+  says why (the dossier outdated; the launch down, for Essai; a new dossier
+  awaited; a result already judged; a result unknown or inconsistent; a
+  stale reading). No resource that opens has a door on this destination
+  yet, and nothing shows a command done that no door recorded. A chantier whose Outcome is
   to judge offers no « Accepter » on the page of its project nor in « Ce
   qui t’attend »: its chip leads to its result on the home page
   (`#pn-result`), and its request is the Acceptance Request the escalation
@@ -353,6 +354,36 @@ scroll kept. `home-result-states-test.py`, `home-d01-records-test.py` and
 `home-recette-test.py` (A1) hold the result states, the records of the
 D01 commands read back on the home and the project page, and the recette.
 
+**Essai and Avis** (A2, af-ocz64w; Spec af-fgcw0d, user stories 30, 31,
+109, 110, 112-116, 118, 120, 121). Essai sends `POST /api/actions/essai`
+`{"chantier": id}`: the cockpit reads the Outcome it serves, refuses one
+that is not to judge with what it says of itself (`périmé`, …), and runs
+`bin/acceptance-session open <convoy> --trial`
+(`COCKPIT_ACCEPTANCE_SESSION_BIN`), which launches the product at the commit
+of the dossier on the first dataset of the profile, records an outage on the
+convoy, and answers the same address while the session stays open. The page
+opens the tab in the gesture, then leads it to that address, or closes it
+and says the outage. In an isolated launch the door is
+`tests/fixtures/cockpit/synthetic-city/acceptance-session`: no Evidence Pack
+exists there, the launch itself is the real `bin/project-launch`, owned by
+that cockpit. Limit: the address is the loopback address of the host, so a
+browser on another device does not reach it.
+
+Avis (panel `#pn-avis`, inside the result, its actions in the same bar) runs
+in the page and writes nothing. It asks one answer of D01, the verdict on each
+proposition (`propositions_of`, read with the Outcome; « Avant d’accepter »
+holds back an acceptance), the words -- for each answer --, the reason of an
+abandon, then prepares
+a neutral message for the session of the operator: the lines of
+`bin/owner-answer` with the words, quoted for the shell, the commit and the
+fingerprint. Any change
+withdraws the message; copying it records nothing. The answer comes back only
+through the records: « Historique et preuves » gives its words, the version
+and the fingerprint judged, each finding with how the factory takes it up;
+`REPAIRING` is a finding whose repair has its ticket. A new dossier opens with
+« Depuis ton dernier jugement ». An acceptance voided is a request of its own
+(« Acceptation annulée », `projects/demandes.py`).
+
 **The Outcome of a chantier** (`projects/outcome.py`, A1; « résultat » on
 the screens). `read_outcome` reads, on a convoy that carries the new-flow
 mark, the Delivered Outcome, its Evidence Pack, the acceptance, the
@@ -373,6 +404,7 @@ project page, its chantiers and its history all say:
 | an acceptance voided (conflict, red check) | Acceptation annulée |
 | an acceptance in force | Accepté (the merge pending) |
 | « constats rendus » | Constats rendus |
+| « constats rendus », the repair of a finding published (its ticket named) | Correction en cours |
 | a result delivered and no answer since: the request of the acceptance says the trial failed | Essai en panne |
 | the same, the dossier of another version or fingerprint | Dossier périmé |
 | the same, otherwise | À juger -- « à toi de jouer », never « bloqué » for its closed tickets |
@@ -1223,6 +1255,7 @@ copy. What it gives the cockpit to read:
 | how long a check of a section of the page Usine stays current (G2, af-f8nlhr) | the five minutes of service, unless a dataset says `"usine_check_validity_seconds": <n>` (above 0): the configuration read then goes stale in seconds (`COCKPIT_VALIDITY_USINE_SECONDS`); anything else is refused |
 | a heartbeat (I, af-cp4fzd) | a dataset that says `"heartbeat": {"ping_url": "<http(s) address>", "interval_seconds": <n>}` gives the cockpit that address as its heartbeat secret, written in a private file of the temporary HOME (`COCKPIT_HEARTBEAT_URL_FILE`), at that pace (`COCKPIT_HEARTBEAT_INTERVAL_SECONDS`, the five minutes of service), ticked four times as often; anything else is refused |
 | Tailscale Serve in front of the cockpit | a dataset that says `"https_identity_proxy": true` puts a synthetic identity proxy in front of it (`tests/fixtures/cockpit/synthetic-city/identity_proxy.py`, af-npz9v1.22): HTTPS on 127.0.0.1 with a certificate made for the launch, its address and the authority to trust in the cockpit's environment (`COCKPIT_TRIAL_HTTPS_URL`, `COCKPIT_TRIAL_HTTPS_CA`), its origin and the address « Accès » gives the cockpit's own (`COCKPIT_ALLOWED_ORIGIN`, `COCKPIT_PUBLIC_URL`). Who connects is said in `X-Synthetic-Tailnet-Login`: without it, 403 (not on the tailnet), the refusal naming that header (I, af-cp4fzd); with it, the request goes to the cockpit alone with `Tailscale-User-Login` and `Tailscale-User-Name` set from it, every `Tailscale-User-*` the client sent removed. Benjamin's login is `synthetic@example.ts.net` (`COCKPIT_BENJAMIN_LOGIN`). Nothing of the tailnet is used |
+| the operator's browser named by Serve | a dataset that says `"operator_front": true` puts the operator at the address of the launch (A2, af-ocz64w; `identity_proxy.operator_front`): on `127.0.0.1:PORT`, a synthetic Serve in plain HTTP relays to the cockpit, which listens on a port of its own, and names whoever connects `synthetic@example.ts.net` (`Tailscale-User-Login`, `Tailscale-User-Name`), every `Tailscale-User-*` the client sent removed. Without it, a browser at the address of a launch is named by no one and every gesture is refused (403 identity). The cockpit keeps every check of its guard, its origin the address of the launch; not taken beside `https_identity_proxy`. `result-essai`, the trial of Essai at the address an Evaluator is given, carries it; `python3 tests/cockpit-isolated-operator-front-test.py` is its control |
 
 `home-gestes` carries such a tracker: a proposal, a session the loop guard
 paused, a question and the pause of the order `convoy-advance` as

@@ -135,14 +135,12 @@ class HomeDestinationStates(unittest.TestCase):
              sum(c["name"] == "Avis" for c in page["controls"])),
             "the page has not exactly one Essai and one Avis",
         )
-        # No door records Essai or Avis from this destination: both are
-        # drawn unavailable, and the result says they are not wired.
+        # Both can be used on a result to judge (A2 holds what they do).
         self.assertEqual(
-            [True, True],
+            [False, False],
             [c["disabled"] for c in page["controls"] if c["name"].startswith("Essai") or c["name"] == "Avis"],
-            "Essai or Avis is offered on this destination as if a door recorded it",
+            "Essai or Avis cannot be used on a result to judge",
         )
-        assert_says(self, page, "actions-possibles-1", "pas encore raccordés")
         # The request whose result is open is said to be the one open -- a
         # state a screen reader reads, and a mark the other line has not,
         # not only another colour.
@@ -183,11 +181,11 @@ class HomeDestinationStates(unittest.TestCase):
         assert_destination(self, page, CONTENT_PARTS)
         self.assert_content(address, page)
         self.assert_theme(page, "dark")
-        # Pressed, Avis does nothing: the page stays where it is, and the
-        # result says what it said -- no command shown done.
+        # Pressed, Avis opens in the result: the page stays where it is, and
+        # the result still says what it said (A2 holds the rest).
         after = measure(address, click="Avis")[0]["after"]
-        self.assertEqual((True, True, "/"), (after["found"], after["disabled"], after["path"]))
-        self.assertEqual(says(page, "panel-3"), says(after, "panel-3"), "pressing Avis changed the result")
+        self.assertEqual((True, False, "/"), (after["found"], after["disabled"], after["path"]))
+        assert_says(self, after, "panel-3", "Usine · Reprise du cockpit", "Ta réponse")
 
     def test_home_content_full_is_the_destination_with_its_whole_content(self):
         # The reference draws home-content-full dark, at 1440 px.

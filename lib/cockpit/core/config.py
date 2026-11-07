@@ -128,6 +128,10 @@ class Config:
         self.order_pause_bin = env.get(
             "COCKPIT_ORDER_PAUSE_BIN", os.path.join(_REPO_ROOT, "bin", "order-pause")
         )
+        # The Acceptance Session, which launches the product Essai opens (A2).
+        self.acceptance_session_bin = env.get(
+            "COCKPIT_ACCEPTANCE_SESSION_BIN", os.path.join(_REPO_ROOT, "bin", "acceptance-session")
+        )
         # The doors of the settings and the upkeep of the page Usine (G2,
         # af-f8nlhr): the provider order of a role, and the cleaning of the
         # unused work spaces.
