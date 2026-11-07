@@ -209,6 +209,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/factory-observe-test.py LiveObservationTest`,
   `bash tests/pr-autopilot-armed-not-merged-test.sh`,
   `bash tests/pr-autopilot-transient-retry-test.sh`,
+  `python3 tests/tdd-step-test.py TddStepTest.test_green_refusal_keeps_the_failing_control_after_long_regression_output`,
   `python3 tests/role-adoption-trial-codex-test.py` — partiel : le premier
   tient la frontière entre un report explicite (sortie 75, rejoué sans
   alerte) et une vraie panne répétée (bead et page Mayor) ; le deuxième tient
@@ -221,7 +222,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   directe et n'annonce la fusion que si le serveur répond `MERGED`. Le contrôle
   9 du gardien (#688) couvre les tickets que personne ne bouge, pas les autres
   signaux. Le quatrième refuse qu'un workflow encore actif ou une demande de
-  rerun refusée soit annoncé comme déjà retenté. Le dernier tient la minute de
+  rerun refusée soit annoncé comme déjà retenté. Le contrôle `tdd-step`
+  conserve le début et la fin d'une longue sortie bornée, dont le nom du
+  contrôle en échec. Le dernier tient la minute de
   stabilité après un réveil Codex proche
   de l'échéance dans une borne fixe et exige qu'un délai dépassé nomme les états
   observés et la demande de réveil ; il refuse aussi que `active` compte comme
@@ -232,7 +235,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   annoncé mais `autoMergeRequest=null`, af-npz9v1.50.1) ; af-ncg9qy ; #778
   (demande directe acceptée localement mais encore `AWAITING_CHECKS`,
   af-nk5nm6) ; af-27yx7q.2.1 ; af-pd6m09 ; af-1l3znv (un workflow encore
-  actif ou une demande de rerun refusée était annoncé comme déjà retenté).
+  actif ou une demande de rerun refusée était annoncé comme déjà retenté) ;
+  af-0rdubb.
 - Ouvertes : aucune connue.
 
 ## A — Autre

@@ -163,7 +163,8 @@ def digest_of(data: bytes) -> str:
 
 def short(text: str) -> str:
     text = " ".join(text.split())
-    return text if len(text) <= MAX_DETAIL else text[:MAX_DETAIL] + "…"
+    half = MAX_DETAIL // 2
+    return text if len(text) <= MAX_DETAIL else text[:half] + "…" + text[-half:]
 
 
 # --- the other commands ----------------------------------------------------------
