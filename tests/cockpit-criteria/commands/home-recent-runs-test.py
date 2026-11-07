@@ -7,7 +7,8 @@ the cards of the page Runs. The indicators are in home-indicators-test.py.
 
 Each case launches the real cockpit with the launcher of the profile,
 bin/project-launch, on a dataset of the profile -- home-content, or
-runs-all and its five workflows of every status -- and reads the part
+runs-all and its five workflows of every status, or runs-recent where the
+waiting and abandoned ones are among the last started -- and reads the part
 « Derniers runs » of the home at GET / -- the cards drawn there, in the
 page or in the document of the frame the reference draws there -- and the
 list of the page Runs at GET /runs (filter « Tous »): over HTTP, the markup
@@ -133,17 +134,29 @@ class HomeRecentRuns(unittest.TestCase):
     def test_the_recent_runs_are_of_every_status_the_last_started_first(self):
         """runs-all: five workflows, started at 15:00 (in progress), 14:10
         (merged), 13:45 (a maintenance, finished), 13:00 (waits for Benjamin)
-        and 12:20 (abandoned). The home draws the three last started, of
-        whatever status, the last first, each as the page Runs draws it."""
-        address = self.tree.launch("runs-all")
-        cards = [text(card) for card in self.assert_cards_of_runs(address).values()]
-        expected = [("Reprise du cockpit", "En cours", "Début 15:00 (Paris)"),
-                    ("Recherche dans les notes", "Fusionné", "Début 14:10 (Paris)"),
-                    ("Corriger le tri des demandes", "Terminé", "Début 13:45 (Paris)")]
-        self.assertEqual(len(expected), len(cards), f"the home does not draw the three runs last started: {cards}")
-        self.assertEqual(expected, [tuple(part for part in parts if part in card)
-                                    for card, parts in zip(cards, expected)],
-                         f"the home does not draw the three runs last started, the last first: {cards}")
+        and 12:20 (abandoned); runs-recent: the same, the one that waits
+        started at 14:40 and the abandoned one at 14:30. The home draws the
+        three last started, of whatever status -- in progress, merged and
+        finished, then in progress, waiting and abandoned --, the last
+        first, each as the page Runs draws it."""
+        for dataset, expected in (
+            ("runs-all", [("Reprise du cockpit", "En cours", "Début 15:00 (Paris)"),
+                          ("Recherche dans les notes", "Fusionné", "Début 14:10 (Paris)"),
+                          ("Corriger le tri des demandes", "Terminé", "Début 13:45 (Paris)")]),
+            ("runs-recent", [("Reprise du cockpit", "En cours", "Début 15:00 (Paris)"),
+                             ("Préciser le périmètre du dossier", "Ta décision", "Début 14:40 (Paris)"),
+                             ("Ancienne proposition de filtre", "Abandonné", "Début 14:30 (Paris)")]),
+        ):
+            with self.subTest(dataset=dataset):
+                address = self.tree.launch(dataset)
+                cards = [text(card) for card in self.assert_cards_of_runs(address).values()]
+                self.assertEqual(len(expected), len(cards),
+                                 f"{dataset}: the home does not draw the three runs last started: {cards}")
+                self.assertEqual(expected, [tuple(part for part in parts if part in card)
+                                            for card, parts in zip(cards, expected)],
+                                 f"{dataset}: the home does not draw the three runs last started, "
+                                 f"the last first: {cards}")
+                self.tree.stop_all()
 
     def test_a_card_of_the_home_is_drawn_as_on_the_page_runs(self):
         """runs-all, in a headless Chromium, dark at 1440 px and light at
