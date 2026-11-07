@@ -16,11 +16,18 @@ at GET / and the views of the Analyses at GET /analyses.
 Criterion 1 is false if an indicator of the home says another value than
 its view in the Analyses, or if it does not open that view. Criterion 2 is
 false if the home shows a value -- a figure of example -- for an indicator
-the Analyses say unavailable, or does not say why.
+the Analyses say unavailable, or does not say why. Criterion 3 (af-unu7jp,
+replacement of K) is false if « Décisions à prendre » of the home or
+« Décisions ouvertes » of the Analyses says another number than the
+requests « Ce qui t’attend » lists, relaunches of a session or an order
+included, or if a signal of an unknown producer leaves « Pour moi »; its
+case declares a tracker as the doors of the Factory write it.
 """
 
 from __future__ import annotations
 
+import html
+import json
 import re
 import sys
 import time
@@ -30,7 +37,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from analyses_destination import LaunchTree, Page, ci_run, decision, result, served, sources  # noqa: E402
-from project_destination import launch_declared  # noqa: E402
+from home_destination import fetch  # noqa: E402
+from project_destination import descriptor_of, launch_declared  # noqa: E402
 
 # The four indicators of the home, by their label, as the reference names them.
 DECISIONS, RESULTS, DELAY, CI = ("Décisions à prendre", "Résultats fusionnés", "Délai de livraison",
@@ -89,6 +97,11 @@ def indicator(page: Page, label: str) -> tuple[str, str | None]:
             links = list(page.links(f"metric-{n}").values())
             return said[len(label):].strip() if said.startswith(label) else said, (links[0] if links else None)
     return "", None
+
+
+def one_line(fragment: str) -> str:
+    """The text of an HTML fragment on one line, spaces collapsed."""
+    return " ".join(html.unescape(re.sub(r"<[^>]+>", " ", fragment)).split())
 
 
 class HomeIndicators(unittest.TestCase):
@@ -192,6 +205,72 @@ class HomeIndicators(unittest.TestCase):
         self.assert_says(indicator(page, DECISIONS)[0], "3", DECISIONS)
         self.assert_says(indicator(page, RESULTS)[0], "4", RESULTS)
         self.assert_says(indicator(page, DELAY)[0], "3 h 05", DELAY)
+
+    # --- criterion 3 -------------------------------------------------------------
+
+    def test_the_relaunches_waiting_count_in_the_decisions_of_the_home_and_of_the_analyses(self):
+        """The tracker holds, as the doors of the Factory write them, a
+        question of the escalation door, a session the loop guard paused and
+        an order paused by bin/order-pause -- the last two in no record of
+        the journal of decisions --, and a signal of a producer the cockpit
+        has no reading for. « Ce qui t’attend » lists the three requests;
+        « Décisions à prendre » on the home and « Décisions ouvertes » in
+        the Analyses say 3, and the view of the decisions lists these three
+        requests. The signal stays in « Pour moi » as information, counted
+        nowhere (rule of Benjamin, 07/11/2026: every request listed counts,
+        relaunches included, the same number everywhere)."""
+        options = json.dumps([{"lettre": "a", "option": "Garder le format actuel",
+                               "consequence": "L’export reste en CSV", "recommande": True}], ensure_ascii=False)
+        beads = [
+            {"id": "af-esc1", "title": "Format de l’export", "status": "open", "labels": [], "notes": "",
+             "description": "", "created_at": "2026-10-12T09:00:00+02:00",
+             "metadata": {"gc.needs_benjamin": "Choisir le format de l’export des notes",
+                          "gc.escalation_pourquoi": "Deux formats tiennent la Spec ; elle n’en fixe aucun.",
+                          "gc.escalation_que_faire": options, "gc.escalation_bloquant": "false",
+                          "gc.escalation_horodatage": "2026-10-12T09:00:00+02:00"}},
+            # A session the Factory paused waits on the operator, to relaunch.
+            {"id": "af-loop1", "title": "[session-loop] s-1", "status": "open", "labels": [], "notes": "",
+             "description": "", "created_at": "2026-10-12T10:00:00+02:00",
+             "metadata": {"gc.source": "factory-session-loop-guard", "gc.session_id": "s-1",
+                          "gc.escalation_mayor_paged_at": "2026-10-12T10:00:00+02:00"}},
+            # An order paused by its door, to relaunch.
+            {"id": "af-ord1", "title": "Ordre en pause : convoy-advance", "status": "open",
+             "labels": ["order-pause"], "notes": "", "description": "", "created_at": "2026-10-12T10:30:00+02:00",
+             "metadata": {"gc.order_pause": "convoy-advance", "gc.order_pause_by": "mayor",
+                          "gc.order_pause_words": "pause : intégration rouge",
+                          "gc.order_pause_at": "2026-10-12T10:30:00+02:00", "gc.order_pause_reason": ""}},
+            # A signal of a producer the cockpit has no reading for.
+            {"id": "af-sig1", "title": "Disk quota at 92% on /var", "status": "open", "labels": [], "notes": "",
+             "description": "backup volume nearly full", "created_at": "2026-10-12T11:00:00+02:00",
+             "metadata": {"gc.source": "disk-watch"}},
+        ]
+        dataset = {"generated_at": "2026-10-12T12:00:00+02:00", "synthetic": True,
+                   "ui": {"id": "home-decisions-relaunches", "page": "home"},
+                   "projects": [descriptor_of(self.tree, "agent-factory")], "repos": {},
+                   "tracker": {"beads": {bead["id"]: bead for bead in beads}}}
+        address = launch_declared(self.tree, "home-decisions-relaunches", dataset)
+        page = home(address)
+        _, _, body = fetch(address + "/")
+        inbox = body[body.index('id="pn-inbox"'):]
+        listed = [one_line(said) for said in
+                  re.findall(r'(?s)<button[^>]*class="pn-request"[^>]*data-request="[^"]+"[^>]*>\s*<strong[^>]*>(.*?)'
+                             r'</strong>', inbox)]
+        self.assertEqual(3, len(listed), f"« Ce qui t’attend » does not list the three requests: {listed}")
+        self.assertIn("Choisir le format de l’export des notes", listed)
+
+        self.assert_says(indicator(page, DECISIONS)[0], "3", DECISIONS)
+        view = served(address, "Activité")
+        self.assertIn("3 décisions ouvertes", view.says("p-1"),
+                      "« Décisions ouvertes » of the Analyses does not count the three requests waiting")
+        history = re.search(r'(?s)<div class="an-history"[^>]*>(.*?)</div>\s*(?:<p|$)',
+                            fetch(address + view.path)[2])
+        in_analyses = [one_line(said) for said in re.findall(r"(?s)<strong[^>]*>(.*?)</strong>",
+                                                             history.group(1) if history else "")]
+        self.assertEqual(sorted(listed), sorted(in_analyses),
+                         "the view of the decisions of the Analyses does not list what « Ce qui t’attend » lists")
+
+        self.assertIn('id="s-af-sig1"', inbox, "the signal of an unknown producer is no longer in « Pour moi »")
+        self.assertNotIn('data-request="af-sig1"', body, "the signal of an unknown producer is listed as a request")
 
 
 if __name__ == "__main__":
