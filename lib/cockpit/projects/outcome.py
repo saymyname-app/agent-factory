@@ -2,7 +2,7 @@
 af-c662qx; Spec af-fgcw0d, user stories 8, 40, 44, 47, 108, 111, 117,
 118, 119, 120, 121, 123 and 136; decision « État D01 commun aux vues »).
 
-    outcome = read_outcome(convoy, spec_title, pack)
+    outcome = read_outcome(convoy, spec_title, pack, tickets)
     sections = read_pack_sections(folder)
 
 :func:`read_outcome` is the one reader, in the cockpit, of the Outcome of a
@@ -38,7 +38,7 @@ import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from convoy_state import outcome_records_of
+from convoy_state import Refusal, OWNER_VERDICTS, outcome_records_of, propositions_of
 
 PARIS = ZoneInfo("Europe/Paris")
 REQUEST_KEY = "gc.needs_benjamin"
@@ -53,6 +53,7 @@ TO_JUDGE = "to_judge"
 OUTDATED = "outdated"
 OUTAGE = "outage"
 RETURNED = "returned"
+REPAIRING = "repairing"
 ACCEPTED = "accepted"
 VOIDED = "voided"
 MERGING = "merging"
@@ -62,12 +63,19 @@ UNKNOWN = "unknown"
 INCONSISTENT = "inconsistent"
 # Issues where the Outcome is the one to judge now: Essai and Avis belong there.
 JUDGED_NOW = (TO_JUDGE, OUTDATED, OUTAGE)
+# A trial is launched on a result to judge, whose dossier is current; an
+# outage is no judgement, so an answer can still be prepared during one (A2).
+TRIAL_ISSUES = (TO_JUDGE,)
+ANSWER_ISSUES = (TO_JUDGE, OUTAGE)
+# The issues that wait for a new dossier: their Essai and Avis come back with it.
+RENEWED = (RETURNED, REPAIRING, VOIDED)
 
 LABELS = {
     TO_JUDGE: "À juger",
     OUTDATED: "Dossier périmé",
     OUTAGE: "Essai en panne",
     RETURNED: "Constats rendus",
+    REPAIRING: "Correction en cours",
     ACCEPTED: "Accepté",
     VOIDED: "Acceptation annulée",
     MERGING: "Fusion en cours",
@@ -80,10 +88,12 @@ SENTENCES = {
     TO_JUDGE: "Le résultat attend ton jugement.",
     OUTDATED: "Dossier périmé : il ne correspond plus à la version livrée. Il ne peut plus être accepté "
               "ni essayé comme s’il était courant ; un nouveau dossier doit être préparé.",
-    OUTAGE: "L’essai n’a pas pu démarrer : c’est une panne de lancement, pas un jugement sur le produit.",
-    RETURNED: "Tu as rendu tes constats. L’usine reprend le résultat ; un nouveau dossier te sera présenté.",
+    OUTAGE: "Le produit ne démarre pas : c’est une panne de lancement, pas un jugement sur le produit. "
+            "L’usine répare le lancement.",
+    RETURNED: "Tes constats ont été rendus. L’usine reprend le résultat ; un nouveau dossier te sera présenté.",
+    REPAIRING: "L’usine corrige tes constats. Un nouveau dossier te sera présenté.",
     ACCEPTED: "Tu as accepté. La fusion est en attente.",
-    VOIDED: "Ton acceptation est annulée : la version a changé depuis. Un nouveau jugement sera nécessaire.",
+    VOIDED: "Acceptation annulée : la version a changé depuis. Un nouveau jugement sera nécessaire.",
     MERGING: "La fusion est en cours.",
     MERGED: "La fusion est confirmée.",
     ABANDONED: "Chantier abandonné. Rien n’a été fusionné.",
@@ -91,6 +101,11 @@ SENTENCES = {
 }
 VOID_CAUSES = {"conflict": "conflit avec la branche protégée", "regression": "vérification rouge",
                "fidelity": "fidélité non tenue", "start": "le produit ne démarre plus"}
+VOIDED_WITH_CAUSE = "Acceptation annulée (%s). Un nouveau jugement sera nécessaire."
+# How the factory takes up a finding returned, by the route code gave it.
+LATER_ROUTE = "plus tard, noté comme proposition"
+REPAIR_ROUTE = "l’usine le corrige : %s"
+PLANNING_ROUTE = "l’usine reprend la planification"
 NO_MERGE_PROOF = "Aucune preuve de fusion à ce stade."
 NOT_VERIFIED = "Ce qui n'a PAS été vérifié"
 REPORT = "Compte rendu"
@@ -130,14 +145,16 @@ def pack_folder(convoy):
     return pack["path"] if isinstance(pack, dict) and "unruled" not in pack else None
 
 
-def read_outcome(convoy, spec_title=None, pack=None):
+def read_outcome(convoy, spec_title=None, pack=None, tickets=()):
     """The Outcome of ``convoy`` (a bead) as its D01 records give it, or
     None when it carries none of them (not of the new flow, or still in
     delivery).
 
     ``spec_title``: the title of the Spec of the convoy, what the Outcome
     delivers. ``pack``: the rubrics of its dossier page,
-    :func:`read_pack_sections`, or None when it was not read.
+    :func:`read_pack_sections`, or None when it was not read. ``tickets``:
+    the tickets of the convoy (beads), which hold the propositions of its
+    dossier.
 
     The record: ``issue`` (one of :data:`LABELS`), ``label``, ``sentence``,
     ``title`` and ``summary`` (what the request of the acceptance and the
@@ -146,7 +163,10 @@ def read_outcome(convoy, spec_title=None, pack=None):
     (the version delivered and the fingerprint of its dossier), ``spec``,
     ``unverified`` (what the dossier says was not verified), ``reports``
     (its parts named « Compte rendu … »: label and lines), ``rubrics`` (its
-    other parts), ``pack_read``, ``open``."""
+    other parts), ``pack_read``, ``open``, ``convoy`` (its id),
+    ``propositions`` (each proposition of the dossier: ``id``, ``text`` and
+    the ``verdict`` recorded on it), ``since`` (what changed since the last
+    judgement of a new dossier: lines, or none)."""
     records = outcome_records_of(convoy)
     if records is None:
         return None
@@ -156,9 +176,11 @@ def read_outcome(convoy, spec_title=None, pack=None):
     metadata = convoy.get("metadata") or {}
     is_open = convoy.get("status") != "closed"
     outcome = _base(metadata, spec_title, pack, is_open)
+    outcome["convoy"] = convoy.get("id")
     if any("unruled" in record for record in present.values()):
         return _issue(outcome, UNKNOWN)
-    answers = present.get("judgement", {}).get("answers", [])
+    judgement = present.get("judgement", {})
+    answers = judgement.get("answers", [])
     delivered = present.get("delivered")
     promotion = present.get("promotion")
     closed = present.get("closed")
@@ -177,6 +199,11 @@ def read_outcome(convoy, spec_title=None, pack=None):
         history.append("%s · Résultat prêt" % ready_at)
     if current is not None and _hhmm(current.get("at")):
         history.append("%s · Réponse enregistrée" % _hhmm(current.get("at")))
+    if current is not None:
+        history.extend(_answer_lines(current))
+    elif last is not None:
+        outcome["since"] = [_judged_version(last, outcome["commit"]), *_answer_lines(last)]
+    outcome["propositions"] = _propositions(tickets, judgement.get("verdicts", []))
     if promotion:
         outcome["judged"], outcome["merged"] = promotion.get("judged"), promotion.get("merged")
     response = (current or {}).get("response")
@@ -209,12 +236,13 @@ def read_outcome(convoy, spec_title=None, pack=None):
         cause = (current.get("voided") or {}).get("cause")
         sentence = SENTENCES[VOIDED]
         if cause in VOID_CAUSES:
-            sentence = "Ton acceptation est annulée (%s). Un nouveau jugement sera nécessaire." % VOID_CAUSES[cause]
+            sentence = VOIDED_WITH_CAUSE % VOID_CAUSES[cause]
         return _issue(outcome, VOIDED, sentence)
     if response == "accepted":
         return _issue(outcome, ACCEPTED, history_end=NO_MERGE_PROOF)
     if response == "findings":
-        return _issue(outcome, RETURNED)
+        taken_up = any(finding.get("ticket") for finding in current["findings"])
+        return _issue(outcome, REPAIRING if taken_up else RETURNED)
     if delivered is None:
         return None
     if (acceptance or {}).get("panne"):
@@ -231,7 +259,8 @@ def _base(metadata, spec_title, pack, is_open):
         "issue": None, "label": None, "sentence": None,
         "title": request if isinstance(request, str) and request not in ("", "none") else None,
         "summary": spec_title or metadata.get(REQUEST_WHY_KEY) or None,
-        "history": [], "reason": None, "judged": None, "merged": None, "commit": None, "pack": None,
+        "history": [], "since": [], "propositions": [], "convoy": None,
+        "reason": None, "judged": None, "merged": None, "commit": None, "pack": None,
         "spec": metadata.get(SPEC_KEY),
         "unverified": next((lines for title, lines in sections if title == NOT_VERIFIED), []),
         "reports": [{"label": title, "said": lines} for title, lines in sections if title.startswith(REPORT)],
@@ -240,6 +269,46 @@ def _base(metadata, spec_title, pack, is_open):
         "pack_read": pack is not None,
         "open": is_open,
     }
+
+
+def _answer_lines(answer):
+    """What an answer recorded says, each line in its words: what was
+    answered, the version and the dossier judged, each finding returned with
+    how the factory takes it up."""
+    lines = []
+    if answer.get("words"):
+        lines.append("Tes mots : « %s »" % answer["words"])
+    if answer.get("commit"):
+        lines.append("Version jugée : commit %s · empreinte %s"
+                     % (_short(answer["commit"]), str(answer.get("pack") or "").removeprefix("sha256:")[:12]))
+    return lines + ["Constat : « %s » · %s" % (finding["text"], _take_up(finding))
+                    for finding in answer.get("findings") or []]
+
+
+def _take_up(finding):
+    route = finding.get("route")
+    if route == "repair":
+        return REPAIR_ROUTE % finding["draft"]["title"]
+    return PLANNING_ROUTE if route == "planning_exception" else LATER_ROUTE
+
+
+def _judged_version(answer, commit):
+    """The version a new dossier follows: the one last judged, then its own."""
+    return "Version précédente %s → version présentée %s" % (_short(answer.get("commit")), _short(commit))
+
+
+def _propositions(tickets, verdicts):
+    """The propositions of the dossier, each with the verdict recorded on
+    it; none when the tickets cannot be read: Avis then asks no verdict, and
+    bin/owner-answer still refuses an acceptance without one."""
+    try:
+        known = propositions_of(list(tickets))
+    except Refusal:
+        return []
+    given = {verdict["proposition"]: verdict["verdict"] for verdict in verdicts}
+    return [{"id": proposition, "text": text,
+             "verdict": given[proposition] if given.get(proposition) in OWNER_VERDICTS else None}
+            for proposition, text in known.items()]
 
 
 def _issue(outcome, issue, sentence=None, history_end=None):

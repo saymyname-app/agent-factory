@@ -692,7 +692,7 @@ Left to a human or the Mayor: resolve the conflict, push a commit to (re)trigger
 # comment naming the exact head SHA, not a label -- a label survives a new
 # push and would silently skip the retry on a commit that was never
 # actually retried.
-retry_ci_failure() {  # repo num sha workflow -> 0 retried this pass, 1 flag as before, 2 unknown (a call timed out)
+retry_ci_failure() {  # repo num sha workflow -> 0 retried, 1 already retried, 2 not confirmed yet
   local repo=$1 num=$2 sha=$3 workflow=$4 marker run_id comments rc
   marker="pr-autopilot: retried CI once for ${sha:0:12}"
   comments=$(bounded "$AP_READ_CAP" gh pr view "$num" --repo "$repo" --json comments --jq '.comments[].body' 2>/dev/null); rc=$?
@@ -702,11 +702,11 @@ retry_ci_failure() {  # repo num sha workflow -> 0 retried this pass, 1 flag as 
     --jq --arg wf "$workflow" \
     '[.[]|select(.name==$wf and .conclusion=="failure")][0].databaseId // empty' 2>/dev/null); rc=$?
   timed_out "$rc" && return 2
-  [ -n "$run_id" ] || return 1
+  [ -n "$run_id" ] || return 2
   log "  PR #$num: required check failed -> retrying once (run $run_id)"
   run gh run rerun "$run_id" --repo "$repo" --failed >/dev/null 2>&1; rc=$?
   timed_out "$rc" && return 2
-  [ "$rc" = 0 ] || return 1
+  [ "$rc" = 0 ] || return 2
   run gh pr comment "$num" --repo "$repo" --body "$marker" >/dev/null 2>&1
   return 0
 }
@@ -1039,7 +1039,7 @@ for entry in "${RIGS[@]}"; do
         [ "$state" = "DIRTY" ] || QUEUE_HEAD=${QUEUE_HEAD:-$num}
         continue
       elif [ "$rc" = 2 ]; then
-        log "  PR #$num: required check failed, retry state unknown (a call timed out) -> nothing decided this pass"
+        log "  PR #$num: required check failed, retry not confirmed yet -> nothing decided this pass"
         continue
       fi
       # P06: a ticket-owned PR still red after the single retry goes straight

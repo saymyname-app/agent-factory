@@ -49,16 +49,19 @@ def certificate(folder: Path) -> tuple[Path, Path]:
     return cert, key
 
 
-def server(cockpit_port: int, home: str) -> ThreadingHTTPServer:
-    """The proxy, bound and wrapped in TLS, not yet serving."""
-    cert, key = certificate(Path(home, "https"))
+def relay_to(cockpit_port: int, login_of):
+    """The handler that relays a request to the cockpit alone, as Serve does:
+    `login_of(headers)` is the member of the tailnet who connects, or None
+    when the request is not from the tailnet (403, nothing reaches the
+    cockpit); `Tailscale-User-Login` and `Tailscale-User-Name` are set from
+    that login, every `Tailscale-User-*` the client sent removed."""
 
     class Relay(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args):
             pass
 
         def relay(self):
-            login = self.headers.get(IDENTITY)
+            login = login_of(self.headers)
             if not login:
                 self.send_response(403)
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
@@ -91,17 +94,31 @@ def server(cockpit_port: int, home: str) -> ThreadingHTTPServer:
 
         do_GET = do_HEAD = do_POST = do_PUT = do_PATCH = do_DELETE = relay
 
-    class Quiet(ThreadingHTTPServer):
-        daemon_threads = True
+    return Relay
 
-        def handle_error(self, request, client_address):
-            pass  # a client that refuses the certificate, or leaves
 
-    proxy = Quiet(("127.0.0.1", 0), Relay)
+class Quiet(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        pass  # a client that refuses the certificate, or leaves
+
+
+def server(cockpit_port: int, home: str) -> ThreadingHTTPServer:
+    """The proxy, bound and wrapped in TLS, not yet serving."""
+    cert, key = certificate(Path(home, "https"))
+    proxy = Quiet(("127.0.0.1", 0), relay_to(cockpit_port, lambda headers: headers.get(IDENTITY)))
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(cert, key)
     proxy.socket = context.wrap_socket(proxy.socket, server_side=True)
     return proxy
+
+
+def operator_front(cockpit_port: int, port: int, login: str) -> ThreadingHTTPServer:
+    """The operator at the address of a launch (A2, af-ocz64w): plain HTTP
+    on 127.0.0.1:`port`, which names whoever connects `login`, as Serve
+    names the operator's browser in service. Bound, not yet serving."""
+    return Quiet(("127.0.0.1", port), relay_to(cockpit_port, lambda headers: login))
 
 
 def serve(cockpit_port: int, home: str, announce: int, alive: int) -> None:

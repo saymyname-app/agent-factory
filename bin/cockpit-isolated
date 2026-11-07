@@ -69,6 +69,7 @@ import re
 import shlex
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -87,6 +88,8 @@ import synthetic_city  # noqa: E402
 
 # The tracker, the `gc` and the doors of the launch.
 SYNTHETIC = FIXTURES / "synthetic-city"
+# The operator of a launch, as the identity proxies name him.
+BENJAMIN_LOGIN = "synthetic@example.ts.net"
 # The doors of the Factory the cockpit calls, by their name in a dataset:
 # what each one is, and the variable that tells the cockpit where it is.
 DOORS = {
@@ -100,6 +103,8 @@ DOORS = {
     "provider-failover": (ROOT / "bin" / "provider-failover", "COCKPIT_PROVIDER_FAILOVER_BIN"),
     "factory-maintain": (ROOT / "bin" / "factory-maintain", "COCKPIT_FACTORY_MAINTAIN_BIN"),
     "operator-config": (ROOT / "bin" / "operator-config", "COCKPIT_OPERATOR_CONFIG_BIN"),
+    # Essai (A2): the launcher of the profile on the commit of the result.
+    "acceptance-session": (SYNTHETIC / "acceptance-session", "COCKPIT_ACCEPTANCE_SESSION_BIN"),
     "gc": (SYNTHETIC / "gc", "COCKPIT_GC_BIN"),
 }
 # How a dataset may say a door answers (`doors`): it never does, or it
@@ -520,6 +525,65 @@ def start_identity_proxy(cockpit_port: int, home: str, held: list[int]) -> dict[
             "COCKPIT_TRIAL_HTTPS_CA": os.path.join(home, "https", "cert.pem")}
 
 
+def free_port() -> int:
+    """A port of the loopback no one listens on, now."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def read_operator_front(path: Path, https: bool) -> bool:
+    """Whether the dataset at `path` puts the operator at the address of the
+    launch (`operator_front`, A2 af-ocz64w); exits when it is not true or
+    false, or when the cockpit is also behind the HTTPS identity proxy,
+    whose origin is the only one the cockpit takes."""
+    front = json.loads(path.read_text(encoding="utf-8")).get("operator_front", False)
+    if not isinstance(front, bool):
+        sys.exit(f"cockpit-isolated: {path}: operator_front is true or false")
+    if front and https:
+        sys.exit(f"cockpit-isolated: {path}: operator_front and https_identity_proxy are not taken together")
+    return front
+
+
+def start_operator_front(port: int, cockpit_port: int, held: list[int]) -> None:
+    """The operator at the address of the launch (A2, af-ocz64w;
+    `identity_proxy.operator_front`): on 127.0.0.1:`port`, a synthetic Serve
+    in plain HTTP that relays to the cockpit on `cockpit_port` and names
+    whoever connects the operator of the launch, as Tailscale Serve names
+    the operator's browser in service. The cockpit keeps every check of its
+    guard, its origin the address of the launch. It lives until the cockpit
+    ends; `held` are the ends of the other pipes it must not keep open."""
+    announce_read, announce_write = os.pipe()
+    alive_read, alive_write = os.pipe()
+    if os.fork() == 0:
+        os.close(announce_read)
+        os.close(alive_write)
+        for fd in held:
+            os.close(fd)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        try:
+            sys.path.insert(0, str(SYNTHETIC))
+            import identity_proxy
+
+            front = identity_proxy.operator_front(cockpit_port, port, BENJAMIN_LOGIN)
+            threading.Thread(target=front.serve_forever, daemon=True).start()
+            os.write(announce_write, b"up")
+            os.close(announce_write)
+            while os.read(alive_read, 1):
+                pass
+            front.shutdown()
+        finally:
+            os._exit(0)
+    os.close(announce_write)
+    os.close(alive_read)
+    with os.fdopen(announce_read, "rb") as announced:
+        if not announced.read():
+            sys.exit("cockpit-isolated: the operator at the address of the launch did not start")
+    # Kept open by the cockpit for as long as it lives, and by nothing else.
+    os.set_inheritable(alive_write, True)
+
+
 def read_heartbeat(path: Path) -> dict | None:
     """The heartbeat the dataset at `path` declares (`heartbeat`: its
     `ping_url`, an http(s) address, and its `interval_seconds`, the pace
@@ -826,6 +890,7 @@ def main(argv: list[str]) -> int:
     restarted = read_restart(Path(args.dataset))
     stop, city = read_stop_supervisor(Path(args.dataset), city)
     https = read_https(Path(args.dataset))
+    front = read_operator_front(Path(args.dataset), https)
     heartbeat = read_heartbeat(Path(args.dataset))
     usine_validity = read_usine_validity(Path(args.dataset))
     cockpit_url = f"http://127.0.0.1:{args.port}"
@@ -856,7 +921,7 @@ def main(argv: list[str]) -> int:
         "COCKPIT_HOST": "127.0.0.1",
         "COCKPIT_PORT": str(args.port),
         "COCKPIT_ALLOWED_ORIGIN": cockpit_url,
-        "COCKPIT_BENJAMIN_LOGIN": "synthetic@example.ts.net",
+        "COCKPIT_BENJAMIN_LOGIN": BENJAMIN_LOGIN,
         "COCKPIT_PID_FILE": os.path.join(home, "cockpit.pid"),
         "COCKPIT_LOCAL_CONFIG": os.path.join(home, "absent.json"),
         "COCKPIT_GC_BASE_URL": supervisor_url,
@@ -879,6 +944,10 @@ def main(argv: list[str]) -> int:
     env.update(usine_validity)
     if https:
         env.update(start_identity_proxy(args.port, home, [alive_write]))
+    if front:
+        # The cockpit listens behind the operator, on a port of its own.
+        env["COCKPIT_PORT"] = str(free_port())
+        start_operator_front(args.port, int(env["COCKPIT_PORT"]), [alive_write])
     if city.reading == synthetic_city.READ_ONCE:
         # Its state and its sessions alike: both are read from it.
         env["COCKPIT_VALIDITY_GC_SECONDS"] = SILENT_VALIDITY_SECONDS

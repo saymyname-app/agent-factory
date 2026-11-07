@@ -309,11 +309,13 @@ the parking only):
 | `resumes_exhausted` | option `a` of the convoy's grouped request (below), for the tickets that request names as lifted; or, without an answer, the ticket has resumes left under the bounds of now (`resumes_left` above 0): a parking left by a bound that no longer holds, such as the one an answered resume took before af-npz9v1.41. That lift gives no resume back |
 
 The lift is `bin/convoy-state lift-park <convoy> <ticket> --request <bead>
-[--option <letter> | --repair <bead> ...]`: the parking is removed from the ticket and from those
+[--option <letter> | --repair <bead> ... | --reset-cause <cause>]`: the parking is removed from the ticket and from those
 parked behind it — a ticket that still waits for another parked ticket is
 parked behind that one instead — and kept on the ticket under `park_lifts`.
-An exhausted ticket takes its resumes again, three per cause, counted from
-the lift; the counter itself is never reset. No hand is put on a ticket.
+An answered exhausted ticket takes its resumes again, three per cause,
+counted from the lift. A proven code repair can instead reset only the cause
+it names; the lift records `reset_cause` and keeps every other cause's prior
+baseline. The counter itself is never reset. No hand is put on a ticket.
 
 **2. It parks the ticket that is out of resumes.** A ticket at work (started
 through the door, not closed, neither parked nor stopped) whose
@@ -458,6 +460,89 @@ parking without an answer and the same pass sends that already-counted resume
 through the dispatch door. The current reader accepts the preserved old stop
 only when this migrated final repair signal proves that compatibility path;
 no other exhausted parking is migrated or lifted.
+
+One other release is deliberately an occurrence, not a rule
+(`af-npz9v1.56`). D (`af-ten1sp`) was parked at
+`2026-11-06T02:50:25Z` after the already-counted third `returned` resume for
+the red merge candidate `bf9d408015732a8f92fd7fca95031d33e8930f65`.
+The pass removes only that parking, and only after the maintenance bead
+`af-npz9v1.56` has structural PR+CI delivery proof, the `merged_tests` piece
+still has its recorded digest, the candidate's first parent and the current
+integration tip are `5f277f3bc566d41388da28c0fce8c0ef63a8862f`, and R9's delivered commit
+`153260074fcf5537fc6245a5b7693987ee7c0387` is still their ancestor. It then
+launches the existing empty `returned` resume through the ordinary resume
+door. It writes no exhausted `park_lifts` entry (such an entry starts a new K
+window), changes no counter or resume entry, clears no escalation and records
+no answer for Benjamin; the one launch written on that existing resume is the
+durable consumption. A different ticket, parking time, merge, integration
+history, evidence or maintenance state does nothing. If D returns from a new
+red merge, the ordinary exhausted bound applies again.
+
+The repaired result of D has one symmetric code-owned release
+(`af-npz9v1.59`). It finished at
+`8ec7997b80a480db6cd590b2c8933a70be9599a7` on
+`2026-11-06T19:45:34Z`, after its last `returned` resume recorded at
+`2026-11-06T02:50:06Z` was launched once by `af-kkmgcy`, and was parked at
+`2026-11-06T19:15:40Z`. Once `af-npz9v1.59` has structural PR+CI delivery
+proof, the pass uses `lift-park --reset-cause returned`. The native record
+preserves D's four older `park_lifts`, keeps the raw counter at `13`, and
+gives a fresh window only to `returned`; it opens no author resume. The same
+pass opens one code review and one Ticket Evaluation at `8ec7997`. Another
+ticket, tip, exit, parking, last launch, lift history or incomplete delivery
+proof does nothing.
+
+C2b has one equally bounded release (`af-npz9v1.57`). The ticket
+`af-ofz29f` was parked at `2026-11-05T06:48:34Z` after its already-counted
+third `evaluation_no_result` resume, recorded at `2026-11-05T06:48:15Z`
+with no launch for stop `2026-11-05T06:07:57Z` and integration tip
+`1c8287226d6db22e4e0a529eab3b7c756caf1ed6`. Its active technical-repair
+link had already been consumed. The pass therefore releases this occurrence
+only after both replacement proofs are structurally complete: `af-e0n71v`
+merged as `fbe2a2240f203e4591172d008176d3c2447d4be1`, and `af-wjhpx9` merged as
+`15cb8d36843661f00f6af5f7a66611f1ee7f6b23`, each with exact-head CI.
+It changes only that empty resume's cause to `repair_delivered`, removes the
+parking and launches the ordinary fresh-author resume. The total counter,
+older history, preserved stop, unfavorable verdicts and escalation records
+do not change; no answer is recorded for the operator. The launch on the
+relabeled entry is the durable single-use marker. A different ticket,
+parking, entry time, stop, integration reference, author session, prior
+launch or incomplete delivery proof does nothing.
+
+The repaired result of that same C2b has one final code-owned release
+(`af-npz9v1.58`), still an occurrence rather than a general rule. The ticket
+finished at `4ddad77361e0970c03e55829d97e871f86b30722` on
+`2026-11-06T20:57:26Z`; its former code-review verdict was invalidated on
+`2026-11-06T20:57:37Z`, then it was parked at `2026-11-06T20:58:20Z` when
+`commit_after_verdict` reached its bound before the review and evaluation
+gates. Once `af-npz9v1.58` has structural PR+CI delivery proof, the pass
+uses `lift-park --reset-cause commit_after_verdict`: the native `park_lifts`
+record appends to, and preserves, the Planning Exception lift of
+`2026-11-02T00:51:08Z`; it gives that cause one fresh window while retaining
+the raw counter `6`, the resume history and every other cause's consumed
+budget. It opens no
+author resume and records no operator answer; the same pass opens the code
+review and Ticket Evaluation at `4ddad773`. A different tip, exit, parking,
+last repair launch, invalidation time or incomplete maintenance delivery
+does nothing.
+
+R8 has one close-without-merge transition (`af-npz9v1.60`), also an
+occurrence rather than a general rule. Benjamin answered option `a` on
+`af-nxis0q` at `2026-11-06T22:53:14Z`; the answered resume `af-k3nji4`
+then left the same tip `57b5655012a276234e296e1ba4a984c5fea2a346` parked
+again because the author had no closing door. Once `af-npz9v1.60` has
+structural PR+CI delivery proof, and only while that exact response, resume,
+tip, exit, parking, current session and repair link still match, the pass
+replays the profile regression through `spec-integration take-up`. A
+definitive green or red result lifts the inherited parking, clears the live
+request and closes R8 through `convoy-state withdraw-ticket`; no author is
+resumed, and the response and resume history remain. Green leaves no red.
+Red keeps the recorded red and the existing integration-stop path publishes
+one repair. A refused replay leaves R8 open for retry. Another ticket, tip,
+response option, state or incomplete maintenance delivery does nothing; a
+second pass neither closes nor publishes again. The native lift is also the
+durable phase marker: an interruption after it retries only the remaining
+request clearance and atomic withdrawal, without replaying the control or
+resuming an author.
 
 A ticket to resume that names no single known project, or when the
 settings have no `resume` entry, is listed under `refused` (exit 1) before
@@ -803,6 +888,14 @@ then no amendment was the ticket's to take, and the pass lifts the stop by
 a resume of cause `inherited_change` (af-npz9v1.39), its request withdrawn,
 once per stop. Before af-25o7vr (2026-10-21) no code carried out answer a.
 
+One bounded A2 exception also consumes Benjamin's exact answer **a** at
+`2026-11-06T16:22:23Z`, although it preceded the stop: only ticket
+`af-ocz64w`, at commit `e62cb740`, and only when `bin/tdd-step changes` names
+`home-result-essai-test.py` and `result_trial.py`. It opens the same native
+`amendment_granted` resume with authorization reference `af-atrg8o`; an
+existing resume with that reference refuses a second consumption, and
+`bin/tdd-step amend` holds the file boundary after the author resumes.
+
 ## The end code review of the assembled diff (T25)
 
 Spec §6 « Fin de Spec », §9 point 4: right after the gate, in the same pass,
@@ -858,6 +951,9 @@ withdrawn}`, or `error`), `stop` when the convoy is stopped by one of its
 two stops (T21: `{reason: integration_red, control, repair}` or `{reason:
 planning_exceptions, open, bound}`), `repair` when the pass published the
 repair of a red (`{id, key, draft, published}`, or `error`),
+`closed_without_merge` for the exact R8 transition (`ticket`, delivered
+maintenance `repair`, lifted descendants and the `spec-integration take-up`
+result),
 `integration` when the pass ran a merge, `tdd_stops` when it raised a ticket
 stopped at its second amendment (T45), `code_review` when it settled code reviews,
 `evaluation` when it settled Ticket Evaluations, `correction` when a

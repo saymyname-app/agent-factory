@@ -225,7 +225,7 @@ def _is_delivery_ticket(bead, digest):
 # issues that end it (it then goes to the historique).
 OUTCOME_STAGES = {
     outcome_mod.TO_JUDGE: LIVRE, outcome_mod.OUTDATED: LIVRE, outcome_mod.OUTAGE: LIVRE,
-    outcome_mod.RETURNED: LIVRAISON, outcome_mod.VOIDED: LIVRAISON,
+    outcome_mod.RETURNED: LIVRAISON, outcome_mod.REPAIRING: LIVRAISON, outcome_mod.VOIDED: LIVRAISON,
     outcome_mod.ACCEPTED: ACCEPTE, outcome_mod.MERGING: ACCEPTE, outcome_mod.MERGED: ACCEPTE,
     outcome_mod.ABANDONED: LIVRE, outcome_mod.UNKNOWN: LIVRE, outcome_mod.INCONSISTENT: LIVRE,
 }
@@ -321,7 +321,7 @@ def _convoy_chantiers_all(beads, promotion_results=None, pack_reads=None):
         pret = sum(1 for t in tickets if t.get("status") == "open")
         metadata = bead.get("metadata") or {}
         spec = by_id.get(metadata.get(outcome_mod.SPEC_KEY)) or {}
-        outcome = outcome_mod.read_outcome(bead, spec.get("title"), pack_reads.get(bead_id))
+        outcome = outcome_mod.read_outcome(bead, spec.get("title"), pack_reads.get(bead_id), tickets)
         if outcome is not None:
             out.append(_outcome_chantier(bead, tickets, outcome, rigs))
             continue

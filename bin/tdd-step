@@ -88,6 +88,17 @@ STOP_AMENDMENT_EXHAUSTED = "amendment_exhausted"
 # The resume bin/convoy-advance sends once the operator answered « a » to that
 # stop: it allows one more amendment (af-25o7vr).
 GRANTED = "amendment_granted"
+# The one pre-stop answer convoy-advance consumes for A2 (af-atrg8o). The
+# pass pins the exact response and commit; this side of the native resume
+# keeps the resumed author inside the two authorized frozen files.
+PREAUTHORIZED_AMENDMENT = {
+    "ticket": "af-ocz64w",
+    "files": (
+        "tests/cockpit-criteria/commands/home-result-essai-test.py",
+        "tests/cockpit-criteria/commands/result_trial.py",
+    ),
+    "ref": "authorization:af-atrg8o",
+}
 # How a frozen test names the ticket allowed to change it (af-npz9v1.19;
 # Benjamin, 25/10/2026: « Seul le ticket nommé dans le test (par exemple
 # « jusqu'à A2 ») peut le modifier, une seule fois »).
@@ -1000,9 +1011,10 @@ def check_amend(check: Check) -> dict[str, Any]:
                       "il n'y a rien à amender")
     entries = (check.ticket.get("resume") or {}).get("entries") or []
     correction = check.ticket.get("correction") or {}
-    if "amendment" in check.tdd and not any(
-            entry.get("cause") == GRANTED and entry.get("at", "") > check.tdd["amendment"]["at"]
-            for entry in [*entries, {"cause": GRANTED, "at": correction.get("at", "")}]):
+    grants = [entry for entry in [*entries, {"cause": GRANTED, "at": correction.get("at", "")}]
+              if entry.get("cause") == GRANTED
+              and entry.get("at", "") > (check.tdd.get("amendment") or {}).get("at", "")]
+    if "amendment" in check.tdd and not grants:
         # af-25o7vr: a resume the operator granted allows one amendment more.
         # af-vsni1n: so does the correction round opened after the amendment,
         # since the code review is the only review of the frozen tests.
@@ -1010,6 +1022,14 @@ def check_amend(check: Check) -> dict[str, Any]:
             f"un seul amendement par ticket : {check.args.ticket} a déjà amendé ses tests gelés au commit "
             f"{check.tdd['amendment']['commit']}",
             stop=STOP_AMENDMENT_EXHAUSTED,
+        )
+    grant = max(grants, key=lambda entry: entry.get("at", ""), default={})
+    if str(grant.get("ref", "")).endswith(f"/{PREAUTHORIZED_AMENDMENT['ref']}") \
+            and (check.args.ticket != PREAUTHORIZED_AMENDMENT["ticket"]
+                 or sorted(changed) != sorted(PREAUTHORIZED_AMENDMENT["files"])):
+        raise Refusal(
+            "l'autorisation A2 de Benjamin ne vaut que pour "
+            f"{', '.join(PREAUTHORIZED_AMENDMENT['files'])} au commit déjà autorisé"
         )
     # af-npz9v1.19: another ticket's frozen test changes only for the ticket
     # it names as its successor, once; the change is recorded and reviewed.
