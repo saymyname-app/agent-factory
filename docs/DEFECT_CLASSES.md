@@ -193,6 +193,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 - Contrôle : `bash tests/on-order-failed-test.sh`,
   `python3 tests/factory-observe-test.py LiveObservationTest`,
   `bash tests/pr-autopilot-armed-not-merged-test.sh`,
+  `bash tests/pr-autopilot-transient-retry-test.sh`,
   `python3 tests/role-adoption-trial-codex-test.py` — partiel : le premier
   tient la frontière entre un report explicite (sortie 75, rejoué sans
   alerte) et une vraie panne répétée (bead et page Mayor) ; le deuxième tient
@@ -204,7 +205,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   au contrôle requis vert ; il relit aussi GitHub après toute demande de fusion
   directe et n'annonce la fusion que si le serveur répond `MERGED`. Le contrôle
   9 du gardien (#688) couvre les tickets que personne ne bouge, pas les autres
-  signaux. Le dernier tient la minute de stabilité après un réveil Codex proche
+  signaux. Le quatrième refuse qu'un workflow encore actif ou une demande de
+  rerun refusée soit annoncé comme déjà retenté. Le dernier tient la minute de
+  stabilité après un réveil Codex proche
   de l'échéance dans une borne fixe et exige qu'un délai dépassé nomme les états
   observés et la demande de réveil ; il refuse aussi que `active` compte comme
   provider-ready quand le premier nudge ne crée aucun rollout, et tient les
@@ -213,7 +216,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 - Occurrences : #651, #679, #688, #717 ; af-npz9v1.50 ; #767 (armement local
   annoncé mais `autoMergeRequest=null`, af-npz9v1.50.1) ; af-ncg9qy ; #778
   (demande directe acceptée localement mais encore `AWAITING_CHECKS`,
-  af-nk5nm6) ; af-27yx7q.2.1 ; af-pd6m09.
+  af-nk5nm6) ; af-27yx7q.2.1 ; af-pd6m09 ; af-1l3znv (un workflow encore
+  actif ou une demande de rerun refusée était annoncé comme déjà retenté).
 - Ouvertes : aucune connue.
 
 ## A — Autre
