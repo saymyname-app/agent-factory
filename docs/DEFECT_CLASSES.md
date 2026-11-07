@@ -111,6 +111,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_legacy_delivered_repair_at_the_unblocked_bound_is_migrated_and_sent_once`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_the_exact_delivered_C2b_release_becomes_one_native_repair_resume ConvoyAdvanceTest.test_the_C2b_release_rejects_nearby_state_and_incomplete_delivery_proof`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_the_repaired_D_result_is_judged_without_another_author_resume ConvoyAdvanceTest.test_the_repaired_D_result_release_rejects_nearby_state_and_incomplete_delivery ConvoyAdvanceTest.test_the_repaired_C2b_result_is_judged_without_another_author_resume ConvoyAdvanceTest.test_the_repaired_C2b_result_release_rejects_nearby_state_and_incomplete_delivery`,
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_the_cleaned_C2b_evaluation_request_is_rebuilt_once_without_an_author_resume`,
   `python3 tests/convoy-state-test.py ConvoyStateTest.test_withdraw_ticket_writes_its_gate_no_op_outcome_note_and_closed_status_in_one_tracker_write`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_the_exact_answered_R8_is_closed_without_merge_then_its_control_runs_green ConvoyAdvanceTest.test_the_exact_R8_close_retry_finishes_after_its_durable_native_lift ConvoyAdvanceTest.test_the_exact_answered_R8_closes_without_merge_and_one_repair_follows_a_red_control ConvoyAdvanceTest.test_the_R8_close_release_rejects_nearby_state_and_option_b`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_malformed_legacy_resume_is_left_to_the_incident_door_without_crashing`,
@@ -136,7 +137,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   historiques légitimes empêchaient la libération du résultat réparé de C2b,
   et le résultat réparé de D n'avait aucune libération symétrique) ;
   af-npz9v1.60 (l'option répondue
-  « clore R8 sans fusion » n'avait aucune porte native et relançait un auteur).
+  « clore R8 sans fusion » n'avait aucune porte native et relançait un auteur) ;
+  af-npz9v1.66 (la requête de la seconde route Evaluator de C2b avait été
+  effacée avant le correctif, puis son parcage empêchait de la reconstruire).
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
   contrôle : `criterion_already_green` reste au Planning Run ;
   `outcome_evaluation_no_result` et `outcome_evaluation_outage` ne repartent
