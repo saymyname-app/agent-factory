@@ -356,6 +356,16 @@ when the Evaluator seat becomes available—no model polling or parallel
 Evaluator is added. A claimed replacement has the ordinary timeout and
 counts toward the same bound.
 
+One route of C2b (`af-ofz29f`) was cleaned before that rule was loaded, so
+its request had already disappeared and its exhausted-resume parking kept
+`settle` from reconstructing it. The exact migration in
+`bin/convoy-advance` (`af-npz9v1.66`) removes only that obsolete parking
+after structural delivery proof. `settle` then opens one ordinary request at
+the same tip; the open unclaimed route still waits for the single Evaluator
+seat, and the existing two-attempt bound still applies. No resume or
+correction counter is reset and the blocking code-review findings remain for
+the normal correction round after evaluation.
+
 An evaluation handed in by a session that already rendered a review of
 tests, a code review or a Ticket Evaluation of the convoy is refused the
 same way (Spec §5, T42; `docs/CODE_REVIEW.md`, « A fresh session per

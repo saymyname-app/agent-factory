@@ -72,6 +72,8 @@ C2B_RELEASE_REPAIR = "fx-c2b-repair"
 C2B_RELEASE_MIGRATION = "fx-c2b-migration"
 C2B_RESULT_RELEASE_ENV = "CONVOY_ADVANCE_TEST_C2B_RESULT_RELEASE"
 C2B_RESULT_RELEASE_REPAIR = "fx-c58"
+C2B_EVALUATION_RECOVERY_ENV = "CONVOY_ADVANCE_TEST_C2B_EVALUATION_RECOVERY"
+C2B_EVALUATION_RECOVERY_REPAIR = "fx-c63"
 R8_CLOSE_RELEASE_ENV = "CONVOY_ADVANCE_TEST_R8_CLOSE_RELEASE"
 R8_CLOSE_RELEASE_REPAIR = "fx-r8close"
 R8_CLOSE_CURRENT_REPAIR = "fx-r8current"
@@ -330,6 +332,112 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
             "resume_bead": resume["entries"][-1]["launches"][0]["bead"],
             "invalidated_at": verdict["invalidated"]["at"],
             "repair_bead": C2B_RESULT_RELEASE_REPAIR,
+        }
+
+    def exact_cleaned_c2b_evaluation(self):
+        """C2b after its unclaimed second Evaluator route was cleaned."""
+        result_release = self.exact_c2b_result_release()
+        tip = result_release["tip"]
+        findings = [
+            {"axis": "standards", "blocking": True, "summary": "secret encore persisté",
+             "citation": {"source": "spec", "quote": "As Benjamin, I want un essai."}},
+            {"axis": "spec", "blocking": True, "summary": "usage manquant encore affiché comme zéro",
+             "citation": {"source": "spec", "quote": "As Benjamin, I want un essai."}},
+        ]
+        self.code_reviewed({"findings": findings})
+        self.evaluated("unclaimed")
+        self.env["CONVOY_ADVANCE_EVALUATION_BIN"] = str(
+            ROOT / "tests" / "fixtures" / "convoy-advance" / "evaluation")
+        self.env["CONVOY_ADVANCE_FAKE_EVALUATION_LOG"] = str(self.tmp / "convoy-evaluation.log")
+        self.corrected("leaves")
+        prepared = self.advance(
+            CONVOY, env={**self.env, C2B_RESULT_RELEASE_ENV: json.dumps(result_release)})
+        self.assertIn("launched", self.evaluation_of(prepared), prepared)
+
+        state = self.tracker_state()
+        metadata = state["beads"][T1]["metadata"]
+        exit_at = json.loads(metadata["gc.flow.exit"])["at"]
+        metadata.pop("gc.flow.exit")
+        evaluation = json.loads(metadata["gc.flow.evaluation"])
+        cleaned_launch = evaluation["request"]["launches"][-1]["bead"]
+        evaluation.pop("request")
+        evaluation.pop("live", None)
+        metadata["gc.flow.evaluation"] = json.dumps(evaluation)
+        first_launch = "fx-c2b-claimed-evaluation"
+        for bead_id in (first_launch, cleaned_launch):
+            state["beads"][bead_id] = {
+                "title": "old C2b evaluation", "status": "closed", "issue_type": "task",
+                "metadata": {"gc.dispatch_formula": "mol-ticket-evaluation",
+                             "gc.execution_routed_to": "evaluator"},
+            }
+        integration_tip = self.git("rev-parse", self.INTEGRATION)
+        resume = {"entries": [{
+            "at": "2026-11-02T03:32:59Z", "cause": "evaluation_no_result",
+            "exit": {"at": "2026-10-29T07:43:22Z", "exit": "finished"}, "launches": [],
+            "ref": "integration:6fb1abcedd29b405ec056b71e4ed2fa40b58993a/stop:2026-11-02T03:30:55Z",
+            "session": "auteur-c2b-old-1",
+            "stop": {"at": "2026-11-02T03:30:55Z", "detail": "aucun état", "raised": "2026-11-02T03:31:08Z",
+                     "reason": "evaluation_no_result"}},
+            {"at": "2026-11-05T02:01:03Z", "cause": "evaluation_no_result",
+             "exit": {"at": "2026-11-02T04:18:07Z", "exit": "finished"}, "launches": [],
+             "ref": "integration:10e1c4376a9d5dabb40e8bd07a2b57d1b615f51e/stop:2026-11-02T08:28:29Z",
+             "session": "auteur-c2b-old-2",
+             "stop": {"at": "2026-11-02T08:28:29Z", "detail": "aucun état", "raised": "2026-11-02T08:29:28Z",
+                      "reason": "evaluation_no_result"}},
+            {"at": "2026-11-05T06:48:15Z", "cause": "repair_delivered",
+             "exit": {"at": "2026-11-05T03:11:03Z", "exit": "finished"}, "launches": [],
+             "ref": "integration:1c8287226d6db22e4e0a529eab3b7c756caf1ed6/stop:2026-11-05T06:07:57Z",
+             "session": "auteur-c2b-repair",
+             "stop": {"at": "2026-11-05T06:07:57Z", "detail": "aucun état", "raised": "2026-11-05T06:08:28Z",
+                      "reason": "evaluation_no_result"}},
+            {
+            "at": "2026-11-07T03:38:30Z", "cause": "evaluation_no_result",
+            "exit": {"at": exit_at, "exit": "finished"}, "launches": [],
+            "ref": f"integration:{integration_tip}/stop:2026-11-07T03:36:06Z",
+            "session": "auteur-c2b-current",
+            "stop": {"at": "2026-11-07T03:36:06Z",
+                     "detail": f"aucun état en 2 lancements ({first_launch}, {cleaned_launch})",
+                     "raised": "2026-11-07T03:36:25Z", "reason": "evaluation_no_result"},
+        }]}
+        metadata["gc.flow.resume"] = json.dumps(resume)
+        metadata["gc.flow.counter.resumes"] = 7
+        metadata["gc.flow.session"] = json.dumps(
+            {"at": "2026-11-06T20:29:21Z", "name": "auteur-c2b-current"})
+        park = {"at": "2026-11-07T03:38:57Z", "cause": "resumes_exhausted",
+                "detail": "reprises épuisées pour la cause evaluation_no_result", "origin": T1}
+        metadata["gc.flow.park"] = json.dumps(park)
+        metadata["gc.flow.park_lifts"] = json.dumps({"entries": [
+            {"at": "2026-11-02T00:51:08Z", "cause": "planning_exception", "detail": "inobservable",
+             "option": "c", "parked_at": "2026-10-29T09:59:31Z", "request": T1, "resumes": 0,
+             "taken": {"behind": 0, "code_review_no_result": 0, "commit_after_verdict": 0,
+                       "evaluation_no_result": 0, "inherited_change": 0, "interrupted": 0,
+                       "returned": 0, "stage_removed": 0, "unblocked": 0}},
+            {"at": "2026-11-07T00:12:20Z", "cause": "resumes_exhausted", "detail": "C2b result release",
+             "option": None, "parked_at": "2026-11-06T20:58:20Z", "request": C2B_RESULT_RELEASE_REPAIR,
+             "reset_cause": "commit_after_verdict", "resumes": 6,
+             "taken": {"behind": 0, "code_review_no_result": 0, "commit_after_verdict": 3,
+                       "evaluation_no_result": 0, "inherited_change": 0, "interrupted": 0,
+                       "repair_delivered": 0, "returned": 0, "stage_removed": 0, "unblocked": 0}},
+        ]})
+        state["beads"][T3]["metadata"]["gc.flow.park"] = json.dumps(park)
+        state["beads"][C2B_EVALUATION_RECOVERY_REPAIR] = {
+            "title": "recover cleaned C2b evaluation", "status": "closed", "issue_type": "bug",
+            "labels": ["maintenance"], "metadata": delivered(826, "a" * 40, "b" * 40),
+        }
+        review = json.loads(metadata["gc.flow.code_review"])
+        blocking = ",".join(finding["id"] for finding in review["rounds"][-1]["findings"]
+                            if finding["blocking"])
+        self.tracker.write_text(json.dumps(state))
+        self.write_log.write_text("")
+        return {
+            "ticket": T1, "tip": tip, "exit_at": exit_at,
+            "parked_at": park["at"], "resume_at": resume["entries"][-1]["at"],
+            "stop_at": resume["entries"][-1]["stop"]["at"],
+            "integration_tip": integration_tip,
+            "session": "auteur-c2b-current", "first_launch": first_launch,
+            "cleaned_launch": cleaned_launch, "blocking_findings": blocking,
+            "previous_repair": C2B_RESULT_RELEASE_REPAIR,
+            "repair_bead": C2B_EVALUATION_RECOVERY_REPAIR,
         }
 
     def exact_returned_result_release(self):
@@ -1804,6 +1912,68 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual(([], [], 1),
                          (self.of(again, "lifted"), self.of(again, "resumed"), len(self.code_review_launches())))
         self.assertEqual({}, self.evaluation_of(again))
+
+    def test_the_cleaned_C2b_evaluation_request_is_rebuilt_once_without_an_author_resume(self):
+        authorization = self.exact_cleaned_c2b_evaluation()
+        env = {**self.env, C2B_EVALUATION_RECOVERY_ENV: json.dumps(authorization)}
+        before = self.bead(T1)["metadata"]
+        review = before["gc.flow.code_review"]
+        shown = self.shown_state(T1)
+        latest = shown["resume"]["entries"][-1]
+        self.assertEqual((authorization["ticket"], authorization["tip"], None,
+                          authorization["parked_at"], authorization["session"], 7, 0),
+                         (shown["id"], shown["tip"], shown["exit"], shown["park"]["at"],
+                          shown["session"]["name"], shown["counters"]["resumes"], shown["resumes_left"]))
+        self.assertEqual(("finished", authorization["exit_at"]),
+                         (latest["exit"]["exit"], latest["exit"]["at"]))
+        self.assertEqual((authorization["resume_at"], authorization["stop_at"], [], 0, 2),
+                         (latest["at"], latest["stop"]["at"], latest["launches"],
+                          shown["resumes_left_by_cause"]["evaluation_no_result"], len(shown["park_lifts"])))
+        self.assertEqual(("evaluation_no_result",
+                          f"integration:{authorization['integration_tip']}/stop:{authorization['stop_at']}",
+                          authorization["session"], "evaluation_no_result", authorization["previous_repair"],
+                          "commit_after_verdict"),
+                         (latest["cause"], latest["ref"], latest["session"], latest["stop"]["reason"],
+                          shown["park_lifts"][-1]["request"], shown["park_lifts"][-1]["reset_cause"]))
+        recorded_review = json.loads(review)["rounds"][-1]
+        self.assertEqual((authorization["tip"], "unfavorable", authorization["blocking_findings"]),
+                         (recorded_review["commit"], recorded_review["verdict"],
+                          ",".join(finding["id"] for finding in recorded_review["findings"]
+                                   if finding["blocking"])))
+        for name in ("first_launch", "cleaned_launch"):
+            route = self.bead(authorization[name])
+            self.assertEqual(("closed", "mol-ticket-evaluation"),
+                             (route["status"], route["metadata"]["gc.dispatch_formula"]))
+        repair = self.bead(authorization["repair_bead"])
+        self.assertEqual(("closed", "merged", "success", "main"),
+                         (repair["status"], repair["metadata"]["gc.delivery_status"],
+                          repair["metadata"]["gc.ci_conclusion"], repair["metadata"]["merged_target"]))
+
+        answer = self.advance(CONVOY, env=env)
+
+        self.assertEqual(["c2b_evaluation_once"], [entry["release"] for entry in self.of(answer, "lifted")], answer)
+        self.assertIsNotNone(self.evaluation_of(answer), answer)
+        [launched] = self.evaluation_of(answer)["launched"]
+        after = self.shown_state(T1)
+        request = after["evaluation"]["request"]
+        self.assertEqual(T1, launched["ticket"])
+        self.assertEqual(1, len(request["launches"]))
+        self.assertEqual(("finished", authorization["exit_at"]),
+                         (after["exit"]["exit"], after["exit"]["at"]))
+        self.assertEqual((None, None), (self.park_of(T1), self.park_of(T3)))
+        self.assertEqual((7, [], review),
+                         (self.resumes(), self.resume_launches(), self.bead(T1)["metadata"]["gc.flow.code_review"]))
+        launch_bead = request["launches"][0]["bead"]
+        step = self.bead(f"{launch_bead}-step")
+        self.assertEqual(("open", None), (step["status"], step["metadata"].get("gc.claimed_at")))
+
+        again = self.advance(CONVOY, env=env)
+
+        same = self.shown_state(T1)["evaluation"]["request"]
+        self.assertEqual(request, same)
+        self.assertEqual([0], [entry["launches"] for entry in self.evaluation_of(again)["pending"]])
+        self.assertEqual((7, [], review),
+                         (self.resumes(), self.resume_launches(), self.bead(T1)["metadata"]["gc.flow.code_review"]))
 
     def test_the_repaired_C2b_result_release_rejects_nearby_state_and_incomplete_delivery(self):
         authorization = self.exact_c2b_result_release()

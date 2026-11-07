@@ -525,6 +525,20 @@ review and Ticket Evaluation at `4ddad773`. A different tip, exit, parking,
 last repair launch, invalidation time or incomplete maintenance delivery
 does nothing.
 
+Before the Evaluator-at-claim correction was loaded, that Ticket Evaluation
+closed its second route while it was still unclaimed, erased the request, and
+parked C2b again at `2026-11-07T03:38:57Z`. `af-npz9v1.66` gives that exact
+post-cleanup occurrence one final controller transition. After structural
+delivery proof, the pass reads the `finished` exit that `open-resume` preserved
+on the last resume, restores that same record at the top level and removes
+only the inherited parking; it does not add an author resume, reset a resume
+counter, clear F4.1/F4.2, or record an operator answer. The ordinary Ticket
+Evaluation controller then rebuilds one request at `4ddad773` and routes
+exactly one Evaluator. While that request is open, the same exact-state guard
+prevents the old exhausted-resume parking from being written again. A
+different history, review, route, tip, parking or incomplete delivery proof
+does nothing.
+
 R6 and R7 of `af-strhoy` have one paired withdrawal transition
 (`af-npz9v1.62`), also an occurrence rather than a general rule. Benjamin
 answered option `b`, « Retirer le ticket du graphe », on R6 `af-32xzpz` at
