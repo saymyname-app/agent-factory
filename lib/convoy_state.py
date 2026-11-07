@@ -421,6 +421,7 @@ TEST_REVIEW_MAX_LAUNCHES = 2
 # Blocking Findings.
 CODE_REVIEW_KINDS = ("review", "judgement")
 CODE_REVIEW_MAX_LAUNCHES = 2
+CODE_REVIEW_MAX_LAUNCH_HISTORY = CODE_REVIEW_MAX_LAUNCHES + 1
 REVIEW_AXES = ("standards", "spec")
 # What a Blocking Finding may cite (Spec §6): a line of the Spec, of the
 # ticket, or a written rule of the repository.
@@ -1304,11 +1305,17 @@ def code_review_request(value: Any) -> dict[str, Any]:
     review_questions(value["questions"])
     review_models(value["models"])
     launches = value["launches"]
-    if not isinstance(launches, list) or len(launches) > CODE_REVIEW_MAX_LAUNCHES:
+    if not isinstance(launches, list) or len(launches) > CODE_REVIEW_MAX_LAUNCH_HISTORY:
         raise Refusal(f"lancements de revue mal formés : {launches!r}")
     for launch in launches:
-        if not review_launch(launch):
+        core = ({name: field for name, field in launch.items() if name != "unclaimed"}
+                if isinstance(launch, dict) else launch)
+        if not review_launch(core) or ("unclaimed" in launch and launch["unclaimed"] is not True):
             raise Refusal(f"lancement de revue mal formé : {launch!r}")
+    unclaimed = sum(launch.get("unclaimed") is True for launch in launches)
+    attempts = len(launches) - unclaimed
+    if unclaimed > 1 or attempts > CODE_REVIEW_MAX_LAUNCHES:
+        raise Refusal(f"lancements de revue mal formés : {launches!r}")
     return value
 
 
@@ -4303,16 +4310,24 @@ def cmd_open_code_review(args: argparse.Namespace) -> int:
 
 def cmd_launch_code_review(args: argparse.Namespace) -> int:
     """Record that a reviewer session was sent the open round: the first
-    launch, then one relaunch when the first gave no result (Spec §6)."""
+    launch, then one relaunch when the first claimed attempt gave no result.
+    One cleaned route that was never claimed may remain in history."""
     _, record = code_review_target(args)
     request = record.get("request")
     if not request:
         raise Refusal(f"aucune revue de code n'est demandée sur {args.ticket} : rien à lancer")
     if not isinstance(args.bead, str) or not BEAD_ID_RE.match(args.bead):
         raise Refusal(f"bead de revue absent ou mal formé : {args.bead!r}")
-    if len(request["launches"]) >= CODE_REVIEW_MAX_LAUNCHES:
+    if args.replaces_unclaimed:
+        matches = [launch for launch in request["launches"] if launch["bead"] == args.replaces_unclaimed]
+        if len(matches) != 1 or matches[0].get("refused") or any(
+                launch.get("unclaimed") is True for launch in request["launches"]):
+            raise Refusal("le remplacement ne nomme pas l'unique route non réclamée de cette revue")
+        matches[0]["unclaimed"] = True
+    attempts = [launch for launch in request["launches"] if launch.get("unclaimed") is not True]
+    if len(attempts) >= CODE_REVIEW_MAX_LAUNCHES:
         raise Refusal(
-            f"une seule relance par revue : {args.ticket} en a déjà lancé {len(request['launches'])} sans résultat")
+            f"une seule relance par revue : {args.ticket} en a déjà lancé {len(attempts)} sans résultat")
     request["launches"].append({"bead": args.bead, "at": now()})
     values = {KEY_CODE_REVIEW: encode(record)}
     write_metadata(args.ticket, values)
@@ -7828,7 +7843,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--base")
     p.add_argument("--file")
     p.add_argument("--contract")
-    command("launch-code-review", cmd_launch_code_review).add_argument("--bead")
+    p = command("launch-code-review", cmd_launch_code_review)
+    p.add_argument("--bead")
+    p.add_argument("--replaces-unclaimed")
     command("record-code-review", cmd_record_code_review).add_argument("--file")
     command("respond-code-review", cmd_respond_code_review).add_argument("--file")
     p = command("open-evaluation", cmd_open_evaluation)
