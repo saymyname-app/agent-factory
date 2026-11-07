@@ -280,13 +280,18 @@ de modèle non établie ». The mention is never left out.
 
 ## A review that gives no result
 
-A launch gives no result when `timeout_seconds` passed since it was sent
-(`config/delivery-flow.json`, `code_review`; 3600 s, a value without a
-measured base), or when its review bead was closed while the request is
-still open. It is not a passed review: no verdict is written and the merge
-stays refused. The round is launched **once more**, on a new bead, for a new
-session. When that second launch gives no result either, the ticket is
-stopped (`code_review_no_result`) and raised once to the operator through
+A launch gives no result when `timeout_seconds` passed since the
+`mol-code-review.review` step was claimed (`gc.claimed_at`;
+`config/delivery-flow.json`, `code_review`; 3600 s, a value without a
+measured base), or when that claimed step or its review bead was closed while
+the request is still open. A routed bead that no reviewer ever claimed stays
+pending: it consumes neither the timeout nor one of the two attempts. If
+workflow cleanup closes it, its history is kept and one replacement may be
+routed; a cleaned replacement is not replaced again. A launch without a
+result is not a passed review: no verdict is written and the merge stays
+refused. The claimed attempt is launched **once more**, on a new bead, for a
+new session. When that second claimed launch gives no result either, the
+ticket is stopped (`code_review_no_result`) and raised once to the operator through
 `bin/escalation-door`; `bin/convoy-state stop-raised` records it, and a stop
 whose request could not be sent is raised by the next pass. `bin/convoy-advance`
 then resumes the ticket once per stop, within K (cause `code_review_no_result`,
@@ -338,7 +343,7 @@ On the ticket, written by `bin/convoy-state` only (`docs/CONVOY_STATE.md`):
 
 | Key | Value |
 |---|---|
-| `gc.flow.code_review` | `rounds`: each recorded round — `kind` (`review`, `judgement`), `commit`, `base`, `verdict`, `models`, `recorded_by`, `conversation` when known, `at`; a review with its `findings`, `answers` and, once given, `responses`; a judgement with its `judgements`, the optional historical `contract`, and `invalidated: {contract, at}` when a newer contract superseded it. `request`, while a round is open — `kind`, `commit`, `base`, `questions`, `models`, `launches` (`bead`, `at`, and `refused`: `{session, at}` when the session that answered had already served), `at`, and `contract` for a judgement |
+| `gc.flow.code_review` | `rounds`: each recorded round — `kind` (`review`, `judgement`), `commit`, `base`, `verdict`, `models`, `recorded_by`, `conversation` when known, `at`; a review with its `findings`, `answers` and, once given, `responses`; a judgement with its `judgements`, the optional historical `contract`, and `invalidated: {contract, at}` when a newer contract superseded it. `request`, while a round is open — `kind`, `commit`, `base`, `questions`, `models`, `launches` (`bead`, `at`, `unclaimed: true` on the one cleaned route replaced before claim, and `refused`: `{session, at}` when the session that answered had already served), `at`, and `contract` for a judgement |
 | `gc.flow.verdict.code_review` | the verdict of the last effective round and the commit it judged; `invalidated` may name the same tip and the replacement judgement contract |
 | `gc.flow.models` | per delivery role: `agent`, `provider`, `model`, `at` |
 | `gc.flow.stop` | reason `code_review_no_result`, a one-line detail, and `raised` once the escalation door accepted the request |
@@ -380,7 +385,7 @@ caching a verdict or authorising an action from stale state (af-8cfygl).
   asks for both. It has no check of the integration tip of its own: it is
   kept off the old tip by the Ticket Exit the `behind` resume takes back.
 - The reviewer role holds one session at a time: a review waits behind
-  another one, and the time of a launch runs from the dispatch.
+  another one, and the time of an attempt runs from the reviewer step's claim.
 - Nothing lifts a stop yet. A ticket still refused after its judgement is
   stopped by `bin/correction-round`, not here.
 

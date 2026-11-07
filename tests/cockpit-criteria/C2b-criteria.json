@@ -1,0 +1,20 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/runs-trace-events-test.py::RunsTraceEvents.test_job_event_lists_each_tool_call_once_in_order_with_its_paris_time_its_duration_and_its_session",
+      "tests/cockpit-criteria/commands/runs-trace-events-test.py::RunsTraceEvents.test_opening_a_tool_call_shows_what_it_was_given_its_session_and_its_duration_and_a_reload_keeps_it",
+      "tests/cockpit-criteria/commands/runs-trace-controls-test.py::RunsTraceControls.test_job_gates_lists_each_attempt_of_the_check_with_its_state_its_time_and_its_pieces",
+      "tests/cockpit-criteria/commands/runs-trace-controls-test.py::RunsTraceControls.test_a_check_whose_session_still_runs_is_awaited_and_never_said_passed",
+      "tests/cockpit-criteria/commands/runs-trace-outputs-test.py::RunsTraceOutputs.test_job_output_lists_each_structured_output_with_its_content_its_validity_its_attempt_and_its_artifacts",
+      "tests/cockpit-criteria/commands/runs-trace-outputs-test.py::RunsTraceOutputs.test_a_job_that_recorded_no_output_says_so_and_shows_none",
+      "tests/cockpit-criteria/commands/runs-trace-usage-test.py::RunsTraceUsage.test_job_usage_gives_each_codex_category_and_the_total_codex_records_never_their_sum",
+      "tests/cockpit-criteria/commands/runs-trace-usage-test.py::RunsTraceUsage.test_a_session_that_worked_two_jobs_counts_for_each_only_what_it_used_while_it_worked_it",
+      "tests/cockpit-criteria/commands/runs-trace-usage-test.py::RunsTraceUsage.test_a_claude_code_session_counts_each_message_once_in_the_categories_of_claude",
+      "tests/cockpit-criteria/commands/runs-trace-usage-test.py::RunsTraceUsage.test_a_usage_missing_for_a_session_is_said_not_collected_never_zero_and_a_running_one_partial",
+      "tests/cockpit-criteria/commands/runs-trace-layout-test.py::RunsTraceLayout.test_the_controls_the_usage_and_the_outputs_open_from_the_keyboard_readable_on_a_desktop_and_a_phone"
+    ],
+    "2": [
+      "tests/cockpit-criteria/commands/runs-trace-retention-test.py::RunsTraceRetention.test_the_trace_of_a_dispatched_ticket_is_found_again_after_a_restart_once_and_a_purged_piece_is_said_absent"
+    ]
+  }
+}

@@ -695,7 +695,8 @@ def open_round(convoy: Convoy, ticket: dict[str, Any], kind: str, commit: str, b
         state_write("open-code-review", convoy.id, ticket["id"], *args, "--contract", JUDGEMENT_CONTRACT)
 
 
-def launch(convoy: Convoy, ticket_id: str, request: dict[str, Any], settings: dict[str, Any]) -> str:
+def launch(convoy: Convoy, ticket_id: str, request: dict[str, Any], settings: dict[str, Any],
+           replaces_unclaimed: str | None = None) -> str:
     """Send the open round to a new reviewer session: a bead of its own,
     routed through the dispatch door on the reviewer role."""
     number = len(request["launches"]) + 1
@@ -724,7 +725,10 @@ def launch(convoy: Convoy, ticket_id: str, request: dict[str, Any], settings: di
             f"la revue de code du ticket {ticket_id} n'a pas été routée vers le rôle relecteur : "
             f"{detail_of(routed)} ; aucun lancement n'est compté")
     try:
-        state_write("launch-code-review", convoy.id, ticket_id, "--bead", bead_id)
+        state_args = ["launch-code-review", convoy.id, ticket_id, "--bead", bead_id]
+        if replaces_unclaimed:
+            state_args.extend(("--replaces-unclaimed", replaces_unclaimed))
+        state_write(*state_args)
     except Refusal:
         # The reviewer answered before its launch was written: its verdict
         # closed the request, and there is nothing left to record.
@@ -734,26 +738,81 @@ def launch(convoy: Convoy, ticket_id: str, request: dict[str, Any], settings: di
     return bead_id
 
 
-def launched_at(launched: dict[str, Any]) -> int:
+def stamp_seconds(value: Any, error: str) -> int:
     try:
-        return calendar.timegm(time.strptime(launched["at"], "%Y-%m-%dT%H:%M:%SZ"))
-    except (KeyError, TypeError, ValueError) as exc:
-        raise Refusal(f"heure de lancement de la revue illisible : {launched!r}") from exc
+        return calendar.timegm(time.strptime(value, "%Y-%m-%dT%H:%M:%SZ"))
+    except (TypeError, ValueError) as exc:
+        raise Refusal(error) from exc
 
 
-def expired(launched: dict[str, Any], timeout: int) -> bool:
-    """A launch that gave no result: its time is over, its bead was
-    closed without a verdict (the verdict closes the request first),
-    or the session that answered it had already rendered another review of
-    the convoy (`refused`, set by bin/convoy-state)."""
+def gc_data(*args: str) -> Any:
+    proc = run([GC_BIN, *args])
+    if proc.returncode != 0:
+        raise Refusal(f"gc {' '.join(args)} a échoué : {detail_of(proc)}")
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise Refusal(f"gc {' '.join(args)} a rendu un JSON illisible") from exc
+
+
+def launch_state(launched: dict[str, Any]) -> tuple[int | None, bool]:
+    """When the reviewer really claimed this route, and whether it ended."""
+    bead_id = launched["bead"]
+    try:
+        source = read_bead(bead_id)
+    except Refusal:
+        return None, False
+    try:
+        inputs = gc_data("bd", "dep", "list", bead_id, "--direction", "up", "--type", "tracks", "--json")
+        if not isinstance(inputs, list):
+            raise Refusal(f"convois d'entrée de {bead_id} illisibles")
+        roots = []
+        for input_ in inputs:
+            found = gc_data("bd", "list", "--all", "--metadata-field",
+                            f"gc.input_convoy_id={input_['id']}", "--json", "--limit", "0")
+            if not isinstance(found, list):
+                raise Refusal(f"workflow de revue de {bead_id} illisible")
+            roots.extend(root for root in found
+                         if (root.get("metadata") or {}).get("gc.formula_name") == "mol-code-review")
+        steps = []
+        for root in roots:
+            found = gc_data("bd", "list", "--all", "--metadata-field",
+                            f"gc.root_bead_id={root['id']}", "--json", "--limit", "0")
+            if not isinstance(found, list):
+                raise Refusal(f"étapes de revue de {bead_id} illisibles")
+            steps.extend(step for step in found
+                         if (step.get("metadata") or {}).get("gc.step_id") == "mol-code-review.review")
+    except (KeyError, Refusal):
+        return None, False
+    if not roots or not steps:
+        return None, False
+    claimed = []
+    for step in steps:
+        value = (step.get("metadata") or {}).get("gc.claimed_at")
+        if value is not None:
+            claimed.append((stamp_seconds(value, f"prise de l'étape de revue illisible : {value!r}"), step))
+    if not claimed:
+        return None, source.get("status") == "closed"
+    at, step = max(claimed, key=lambda item: item[0])
+    return at, source.get("status") == "closed" or step.get("status") == "closed"
+
+
+def launch_states(launches: list[dict[str, Any]]) -> tuple[list[tuple[dict[str, Any], int | None, bool]],
+                                                           list[dict[str, Any]]]:
+    states = [(launched, *launch_state(launched)) for launched in launches]
+    attempts = [launched for launched, claimed_at, _closed in states
+                if launched.get("unclaimed") is not True
+                and (claimed_at is not None or launched.get("refused"))]
+    return states, attempts
+
+
+def expired(launched: dict[str, Any], claimed_at: int | None, closed: bool, timeout: int) -> bool:
+    """A claimed attempt gave no result; an unclaimed route never expires."""
     if launched.get("refused"):
         return True
-    if time.time() >= launched_at(launched) + timeout:
-        return True
-    try:
-        return read_bead(launched["bead"]).get("status") == "closed"
-    except Refusal:
+    if claimed_at is None:
         return False
+    return time.time() >= claimed_at + timeout or closed
 
 
 # --- a stopped ticket reaches the operator ------------------------------------------
@@ -805,9 +864,17 @@ def launch_due(request: dict[str, Any] | None, timeout: int) -> bool:
     launch that gave no result. Not a launch still awaited, nor a round
     whose launches are spent (the ticket is stopped)."""
     launches = request["launches"] if request else []
-    if not launches:
+    states, attempts = launch_states(launches)
+    return route_due(states, attempts, timeout)
+
+
+def route_due(states: list[tuple[dict[str, Any], int | None, bool]],
+              attempts: list[dict[str, Any]], timeout: int) -> bool:
+    if not states:
         return True
-    return expired(launches[-1], timeout) and len(launches) < MAX_LAUNCHES
+    latest = states[-1]
+    return (expired(latest[0], latest[1], latest[2], timeout)
+            or latest[1] is None and latest[2]) and len(attempts) < MAX_LAUNCHES
 
 
 def behind_integration(convoy: Convoy, commit: str) -> tuple[str, str] | None:
@@ -853,7 +920,9 @@ def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> d
         kind, commit, base = detail
         request = held_request(ticket, kind, commit, base)
         timeout = settings["timeout_seconds"]
-        if launch_due(request, timeout):
+        launches = request["launches"] if request else []
+        states, attempts = launch_states(launches)
+        if route_due(states, attempts, timeout):
             behind = behind_integration(convoy, commit)
             if behind:
                 raise Behind(*behind)
@@ -862,21 +931,28 @@ def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> d
             convoy.load()
             request = review_of(convoy.ticket(ticket_id))["request"]
         launches = request["launches"]
-        if launches and not expired(launches[-1], timeout):
-            deadline = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(launched_at(launches[-1]) + timeout))
+        latest = states[-1] if states else None
+        if latest and latest[1] is None and not latest[2] and not latest[0].get("refused"):
             return {"ticket": ticket_id, "action": "pending", "kind": kind, "commit": commit,
-                    "launches": len(launches), "deadline": deadline}
-        if len(launches) >= MAX_LAUNCHES:
-            detail = (f"la revue de code n'a rendu aucun verdict en {len(launches)} lancements "
-                      f"({', '.join(launch_['bead'] for launch_ in launches)})")
+                    "launches": len(attempts)}
+        if latest and latest[1] is not None and not expired(latest[0], latest[1], latest[2], timeout):
+            deadline = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(latest[1] + timeout))
+            return {"ticket": ticket_id, "action": "pending", "kind": kind, "commit": commit,
+                    "launches": len(attempts), "deadline": deadline}
+        if len(attempts) >= MAX_LAUNCHES:
+            detail = (f"la revue de code n'a rendu aucun verdict en {len(attempts)} lancements "
+                      f"({', '.join(launch_['bead'] for launch_ in attempts)})")
             state_write("stop-ticket", convoy.id, ticket_id, "--reason", STOP_NO_RESULT, "--detail", detail)
             convoy.load()
             ticket = convoy.ticket(ticket_id)
             raise_stop(convoy.id, ticket, ticket["stop"])
             return {"ticket": ticket_id, "action": "stopped", "stop": STOP_NO_RESULT}
-        bead_id = launch(convoy, ticket_id, request, settings)
+        replaces_unclaimed = latest[0]["bead"] if latest and latest[1] is None and latest[2] else None
+        if replaces_unclaimed and any(launch_.get("unclaimed") is True for launch_ in launches):
+            raise Refusal("l'unique remplacement d'une route de revue non réclamée a lui aussi été nettoyé")
+        bead_id = launch(convoy, ticket_id, request, settings, replaces_unclaimed)
         return {"ticket": ticket_id, "action": "relaunched" if launches else "launched", "kind": kind,
-                "commit": commit, "bead": bead_id, "launches": len(launches) + 1}
+                "commit": commit, "bead": bead_id, "launches": len(attempts)}
 
 
 def cmd_settle(args: argparse.Namespace) -> int:

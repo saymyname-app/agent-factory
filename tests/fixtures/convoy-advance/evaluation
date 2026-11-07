@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+"""Fast Ticket Evaluation controller adapter for convoy-advance tests.
+
+It crosses the same public convoy-state seam as bin/ticket-evaluation, but
+does not launch a product: ticket-evaluation-test.py owns that lower-level
+proof. This adapter proves only that convoy-advance transmits a recovered
+finished ticket to the controller once and then leaves its one route open.
+"""
+import fcntl
+import json
+import os
+import sys
+from pathlib import Path
+
+
+TRACKER = Path(os.environ["CONVOY_STATE_FAKE_TRACKER"])
+LOG = Path(os.environ["CONVOY_ADVANCE_FAKE_EVALUATION_LOG"])
+
+
+convoy = sys.argv[2]
+with TRACKER.open(encoding="utf-8") as handle:
+    state = json.load(handle)
+ticket_id = next(ticket_id for ticket_id in state["beads"][convoy]["tracks"]
+                 if "gc.flow.exit" in state["beads"][ticket_id]["metadata"]
+                 and "gc.flow.park" not in state["beads"][ticket_id]["metadata"])
+metadata = state["beads"][ticket_id]["metadata"]
+evaluation = json.loads(metadata.get("gc.flow.evaluation") or '{"rounds": []}')
+
+calls = LOG.read_text().splitlines() if LOG.exists() else []
+with LOG.open("a", encoding="utf-8") as handle:
+    handle.write(json.dumps([convoy, ticket_id]) + "\n")
+
+if evaluation.get("request"):
+    print(json.dumps({"ok": True, "pending": [{"ticket": ticket_id, "launches": 0}]}))
+    raise SystemExit(0)
+
+commit = json.loads(metadata["gc.flow.handoff"])["commit"]
+bead_id = f"fx-e{len(calls) + 1}"
+with TRACKER.open("r+", encoding="utf-8") as handle:
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    state = json.load(handle)
+    state["beads"][bead_id] = {
+        "title": "evaluation route", "status": "open", "issue_type": "task",
+        "metadata": {"gc.dispatch_formula": "mol-ticket-evaluation",
+                     "gc.execution_routed_to": "evaluator"},
+    }
+    state["beads"][f"{bead_id}-step"] = {
+        "title": "evaluate", "status": "open", "issue_type": "task",
+        "metadata": {"gc.step_id": "mol-ticket-evaluation.evaluate"},
+    }
+    ticket_metadata = state["beads"][ticket_id]["metadata"]
+    evaluation = json.loads(ticket_metadata.get("gc.flow.evaluation") or '{"rounds": []}')
+    state_file = f"/tmp/{ticket_id}-evaluation.json"
+    evaluation["request"] = {
+        "commit": commit,
+        "criteria": ["synthetic criterion"],
+        "demonstration_line": "synthetic demonstration",
+        "roles": {"author": None, "evaluator": None, "same_provider": None, "other_declared": []},
+        "environment": [{"dataset": "content", "address": "http://127.0.0.1:9",
+                         "state_file": state_file}],
+        "datasets": ["content"],
+        "launches": [{"bead": bead_id, "at": "2026-11-07T03:35:00Z"}],
+        "at": "2026-11-07T03:35:00Z",
+    }
+    evaluation["live"] = [state_file]
+    ticket_metadata["gc.flow.evaluation"] = json.dumps(evaluation)
+    handle.seek(0)
+    handle.truncate()
+    json.dump(state, handle)
+print(json.dumps({"ok": True, "launched": [{"ticket": ticket_id, "commit": commit,
+                                               "bead": bead_id, "launches": 0}]}))
