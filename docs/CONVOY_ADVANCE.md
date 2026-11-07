@@ -525,14 +525,16 @@ review and Ticket Evaluation at `4ddad773`. A different tip, exit, parking,
 last repair launch, invalidation time or incomplete maintenance delivery
 does nothing.
 
-R8 has one close-without-merge transition (`af-npz9v1.60`), also an
+R8 has one close-without-merge transition (`af-npz9v1.61`), also an
 occurrence rather than a general rule. Benjamin answered option `a` on
-`af-nxis0q` at `2026-11-06T22:53:14Z`; the answered resume `af-k3nji4`
-then left the same tip `57b5655012a276234e296e1ba4a984c5fea2a346` parked
-again because the author had no closing door. Once `af-npz9v1.60` has
-structural PR+CI delivery proof, and only while that exact response, resume,
-tip, exit, parking, current session and repair link still match, the pass
-replays the profile regression through `spec-integration take-up`. A
+`af-nxis0q` at `2026-11-06T22:53:14Z`. The first native attempt did not match
+before the generic `repair_delivered` path lifted the parking with option
+`null`; that path launched `af-5k8z0b` once, then left the same tip
+`57b5655012a276234e296e1ba4a984c5fea2a346` parked again. Once
+`af-npz9v1.61` has structural PR+CI delivery proof, and only while that exact
+response, `repair_delivered` resume, tip, exit, parking, current session and
+repair link still match, the pass replays the profile regression through
+`spec-integration take-up`. A
 definitive green or red result lifts the inherited parking, clears the live
 request and closes R8 through `convoy-state withdraw-ticket`; no author is
 resumed, and the response and resume history remain. Green leaves no red.
