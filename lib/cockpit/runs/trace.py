@@ -91,10 +91,15 @@ CALL_INPUT_CHARACTERS = 2000
 # What a credential looks like where a tool was given it: a token of a
 # known service, a secret after a name that says so, the password of an
 # address. Each is replaced by MASK, what names it kept.
+CREDENTIAL_NAME = r"[A-Z0-9_-]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD)[A-Z0-9_-]*"
 CREDENTIALS = (
     re.compile(r"()\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{12,}"
                r"|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|glpat-[A-Za-z0-9_-]{16,})"),
-    re.compile(r"(?i)(\b[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD)[A-Z0-9_]*\s*[=:]\s*)[^\s\"']+"),
+    # A value named a credential -- `NAME=value`, `NAME: value`, a JSON
+    # field "name": "value" --, quoted or not, its quotes kept.
+    re.compile(r"(?i)(\b%s[\"']?\s*[=:]\s*\")(?:[^\"\\]|\\.)*(?=\")" % CREDENTIAL_NAME),
+    re.compile(r"(?i)(\b%s[\"']?\s*[=:]\s*')[^']*(?=')" % CREDENTIAL_NAME),
+    re.compile(r"(?i)(\b%s[\"']?\s*[=:]\s*)[^\s\"']+" % CREDENTIAL_NAME),
     re.compile(r"(?i)(\bauthorization:\s*(?:bearer|basic|token)\s+)[^\s\"']+"),
     re.compile(r"(://)[^/\s@]+@"),
 )
@@ -201,7 +206,10 @@ def _given(value):
     if isinstance(value, str):
         text = value
     elif isinstance(value, dict) and len(value) == 1 and isinstance(next(iter(value.values())), str):
-        text = next(iter(value.values()))
+        # The value alone, unless its name says it is a credential.
+        name, text = next(iter(value.items()))
+        if re.fullmatch("(?i)" + CREDENTIAL_NAME, name):
+            text = MASK
     else:
         text = json.dumps(value, ensure_ascii=False, sort_keys=True)
     return masked(text)[:CALL_INPUT_CHARACTERS]

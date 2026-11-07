@@ -756,15 +756,17 @@ def _usage(job, now):
         running = session.get("end") is None
         if running:
             complete = False
-        if not points:
+        # What the session used for the job is known only from a count made
+        # while it worked it: no count within the job is a usage missing.
+        after = next((p for p in reversed(points) if job["start"] <= (p.get("at") or 0) <= end), None)
+        if after is None:
             lines.append({"name": session["name"], "total": None, "running": running})
             complete = False
             continue
         before = next((p for p in reversed(points) if (p.get("at") or 0) <= job["start"]), None)
-        after = next((p for p in reversed(points) if (p.get("at") or 0) <= end), None)
         base = before["counts"] if before else {}
-        used = {key: value - base.get(key, 0) for key, value in after["counts"].items()} if after else {}
-        counted = providers.setdefault((after or points[-1]).get("provider") or "inconnu", {})
+        used = {key: value - base.get(key, 0) for key, value in after["counts"].items()}
+        counted = providers.setdefault(after.get("provider") or "inconnu", {})
         for key, value in used.items():
             counted[key] = counted.get(key, 0) + value
         lines.append({"name": session["name"], "total": used.get("total", 0), "running": running})

@@ -1677,8 +1677,10 @@ evidence store, never copied.
   `function_call` and its output sharing a `call_id`, Claude Code a
   `tool_use` and the `tool_result` naming it -- the tool, what it was given
   (credentials masked, `•••`: a token of a known service, a value after a
-  name holding KEY, TOKEN, SECRET or PASSWORD, an Authorization header, the
-  password of an address; 2 000 characters at most), when, and how long
+  name holding KEY, TOKEN, SECRET or PASSWORD -- `NAME=value`, quoted or
+  not, a JSON field `"api_key": "…"`, the one field of what a tool was
+  given --, an Authorization header, the password of an address; 2 000
+  characters at most), when, and how long
   until what it printed was recorded. Each is an event « Outil » of the job
   the session worked at that moment, its duration on its line, its session
   and what it was given when opened. A call a later session replays at its
@@ -1712,7 +1714,8 @@ evidence store, never copied.
   `output_tokens_details.thinking_tokens`; its total, the four added). A job
   counts, of each session, its count at the end of the job less its count
   at its start, so a session that worked several jobs counts in each only
-  its part; the counts are added by provider, one table each, every row
+  its part, and a session none of whose counts falls within the job is
+  « non collecté » for it, never zero; the counts are added by provider, one table each, every row
   said as the provider counts it -- the total its own, never the rows added
   -- and a category it does not give « non fourni ». The cost is « Non
   collecté »: no source gives a price. « Usage complet » only when every
