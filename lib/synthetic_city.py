@@ -95,9 +95,14 @@ class SyntheticCity:
     beads: list = field(default_factory=list)
     projects: list = field(default_factory=list)
     sessions: list = field(default_factory=list)
-    # A Runs state: the moment the state shows (its clock starts there, then
-    # runs), and what it selects -- the filter, the run, the job, the event
-    # the cockpit opens when the address names none.
+    # What GitHub answers for the declared repository (`github`), or None:
+    # no repository declared, GitHub is not read.
+    github: dict | None = None
+    # The moment the cockpit's clock starts at, then runs: the fixed time of
+    # a dataset that gives records of the flow or of GitHub, or for a Runs
+    # state the moment it shows; what a Runs state
+    # selects -- the filter, the run, the job, the event the cockpit opens
+    # when the address names none.
     clock_start: str | None = None
     view: dict = field(default_factory=dict)
     # Files the sources point at (the page of a dossier), by their path under
@@ -153,9 +158,10 @@ def from_dataset(dataset) -> SyntheticCity:
         return replace(city, session_trace=trace)
     if "tracker" in dataset:
         return _tracker_city(name, dataset["tracker"], dataset.get("projects"), dataset.get("repos"))
-    return _panorama_city(name, _fixed_time(at), ui, dataset.get("visible_text"), _folded(dataset.get("folded")),
+    city = _panorama_city(name, _fixed_time(at), ui, dataset.get("visible_text"), _folded(dataset.get("folded")),
                           _folded(dataset.get("drawn"), "drawn"), _run_cards(dataset.get("runs")),
                           _result_values(dataset.get("result")), dataset.get("release"))
+    return _with_sources(city, at, dataset.get("flow"), dataset.get("github"))
 
 
 def _folded(folded, key="folded") -> dict:
@@ -839,6 +845,80 @@ SCREENS = {
     "Vue d’ensemble": _overview, "← Projets": _project_page, "Journal": _journal, "Usine": _factory,
     "Rituels": _rituals, "← Rituels": _ritual_page, "Analyses": _analyses,
 }
+
+
+# The records of the flow and of GitHub the Analyses read ---------------------
+
+FLOW_MARK = "new-flow/v1"
+
+
+def _with_sources(city, at, flow, github) -> SyntheticCity:
+    """`city` with the records of the delivery flow (`flow`: its results,
+    tickets and decisions) as the flow writes them on the tracker, and what
+    GitHub answers (`github`: the repository, its pull requests and its
+    workflow runs, as the REST API gives them), its clock starting at their
+    fixed time `at`. Without either, `city` unchanged: its clock is the
+    host's, which a case that times a stop from its launch reads."""
+    if flow is None and github is None:
+        return city
+    try:
+        beads, projects = list(city.beads), {d["project_id"]: d for d in city.projects}
+
+        def project(name):
+            projects.setdefault(project_id(name), _descriptor(name))
+            return project_id(name)
+
+        def record(**fields):
+            return json.dumps({key: value for key, value in fields.items() if value is not None}, ensure_ascii=False)
+
+        for number, result in enumerate((flow or {}).get("results", []), 1):
+            metadata = {"gc.flow.mark": FLOW_MARK, "gc.project_id": project(result["project"])}
+            if result.get("delivered"):
+                metadata["gc.flow.delivered"] = record(at=result["delivered"])
+            if result.get("accepted"):
+                metadata["gc.flow.judgement"] = json.dumps(
+                    {"answers": [{"response": "accepted", "approver": "benjamin", "at": result["accepted"]}]})
+            if result.get("merged"):
+                metadata["gc.flow.promotion"] = record(at=result["merged"])
+            beads.append({"id": f"synthetic-result-{number}", "title": result["title"], "issue_type": "convoy",
+                          "status": "closed" if result.get("merged") else "open", "created_at": result["published"],
+                          "labels": ["owned"], "metadata": metadata})
+        # A ticket is a run: an author was launched on it when it was
+        # dispatched (gc.flow.models), as the flow records it.
+        for number, ticket in enumerate((flow or {}).get("tickets", []), 1):
+            merge = ticket["merge"]
+            beads.append({
+                "id": f"synthetic-ticket-{number}", "title": ticket["title"], "issue_type": "task",
+                "status": "closed" if merge["outcome"] == "merged" else "open", "created_at": ticket["dispatched"],
+                "updated_at": merge["at"],
+                "metadata": {"gc.flow.mark": FLOW_MARK, "gc.project_id": project(ticket["project"]),
+                             "gc.flow.gate.dispatch": record(at=ticket["dispatched"]),
+                             "gc.flow.models": json.dumps({"author": {"agent": "delivery-author",
+                                                                      "at": ticket["dispatched"]}}),
+                             "gc.flow.merge": record(outcome=merge["outcome"], at=merge["at"])},
+            })
+        # A decision answered is as bin/escalation-door leaves it: its
+        # question cleared, its answer in the notes, which the journal reads.
+        for number, decision in enumerate((flow or {}).get("decisions", []), 1):
+            metadata = {"gc.escalation_pourquoi": "décision", "gc.escalation_horodatage": decision["asked"]}
+            notes = f"NEEDS BENJAMIN: {decision['title']}"
+            if decision.get("answered"):
+                metadata.update({"gc.escalation_response_at": decision["answered"], NEEDS_BENJAMIN: "none",
+                                 "gc.escalation_response_actor": "benjamin"})
+                notes += "\nRÉPONSE: a — réponse enregistrée"
+            else:
+                metadata[NEEDS_BENJAMIN] = decision["title"]
+            beads.append({"id": f"synthetic-decision-{number}", "title": decision["title"], "issue_type": "task",
+                          "status": "closed" if decision.get("answered") else "open", "created_at": decision["asked"],
+                          "notes": notes, "metadata": {**metadata, PROJECT_KEY: project(decision["project"])}})
+        if github is not None and not (isinstance(github.get("repository"), str) and github["repository"]
+                                       and isinstance(github.get("pull_requests"), list)
+                                       and isinstance(github.get("workflow_runs"), list)):
+            raise TypeError("github")
+    except (KeyError, TypeError, AttributeError) as exc:
+        raise DatasetRefused(f"its records of the flow (flow) or of GitHub (github) cannot be read: {exc!r}") from exc
+    return replace(city, beads=beads, projects=sorted(projects.values(), key=lambda d: d["project_id"]),
+                   github=github, clock_start=at)
 
 
 # Runs: lanes, runs and their jobs -------------------------------------------

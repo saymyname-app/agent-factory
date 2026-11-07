@@ -28,6 +28,11 @@ synthetic sources only:
 - the knowledge repositories of those projects (their roadmap and release
   plan), Git repositories in the temporary HOME -- or links to ones on this
   host a dataset names --, read in clones of the cockpit's own;
+- when the dataset gives what GitHub answers, a synthetic GitHub client
+  (`tests/fixtures/cockpit/github/fake-gh`) for the repository it names;
+  otherwise no repository is declared, and GitHub is not read;
+- when the dataset gives records of the flow or of GitHub, a clock that
+  starts at its fixed time (`generated_at`); otherwise the host's clock;
 - an empty environment: a temporary HOME, no local settings file, so no
   secret, no notification, no heartbeat and no project clone -- but the
   heartbeat a dataset declares (`heartbeat`: where it goes, at what pace;
@@ -825,6 +830,11 @@ def write_tracker_and_projects(city: synthetic_city.SyntheticCity, home: str) ->
         "FAKE_BD_STATE_FILE": str(beads),
         "COCKPIT_DESCRIPTORS_DIR": str(projects),
     }
+    if city.github is not None:
+        github = Path(home, "github.json")
+        github.write_text(json.dumps(city.github, ensure_ascii=False), encoding="utf-8")
+        env.update({"COCKPIT_GH_BIN": str(FIXTURES / "github" / "fake-gh"), "FAKE_GH_STATE_FILE": str(github),
+                    "COCKPIT_GITHUB_REPO": city.github["repository"]})
     if city.reading == synthetic_city.FAILING:
         # The tracker fails for as long as this file exists: always.
         env["FAKE_BD_FAIL_FLAG_FILE"] = str(beads)
@@ -921,6 +931,7 @@ def main(argv: list[str]) -> int:
         "COCKPIT_PROJECTS_POLL_SECONDS": POLL_SECONDS,
         "COCKPIT_JOURNAL_POLL_SECONDS": POLL_SECONDS,
         "COCKPIT_SESSIONS_POLL_SECONDS": POLL_SECONDS,
+        "COCKPIT_GITHUB_POLL_SECONDS": POLL_SECONDS,
         "COCKPIT_FIRST_READ_SECONDS": FIRST_READ_SECONDS,
         **write_doors(doors, home),
         **write_tracker_and_projects(city, home),
@@ -941,8 +952,9 @@ def main(argv: list[str]) -> int:
         # Its state and its sessions alike: both are read from it.
         env["COCKPIT_VALIDITY_GC_SECONDS"] = SILENT_VALIDITY_SECONDS
         env["COCKPIT_VALIDITY_SESSIONS_SECONDS"] = SILENT_VALIDITY_SECONDS
-    # A Runs state: the clock starts at the moment the state shows, and its
-    # selection is what a page opens when its address names none.
+    # The clock starts at the fixed time of the dataset -- for a Runs state,
+    # the moment the state shows --; a Runs state's selection is what a page
+    # opens when its address names none.
     if city.clock_start:
         env["COCKPIT_CLOCK_START"] = city.clock_start
     if city.view:

@@ -18,6 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from cockpit.access.guard import session_cookie_header
 from cockpit.actions.registry import DOOR_TIMEOUT_SECONDS, ActionError, ActionUncertain, expired
 from cockpit.actions.uncertain import UncertainOutcomes
+from cockpit.analyses.indicators import analyses
 from cockpit.core.freshness import FRESH, STALE, UNKNOWN
 from cockpit.core.readmodel import PARIS
 from cockpit.factory.checks import VALIDITY_SECONDS as CHECK_VALIDITY_SECONDS
@@ -622,15 +623,16 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         return runs_from_beads(row["value"], read_model.now()), False, checked
 
     def _send_analyses_page(self, read_model):
-        """GET /analyses?vue=&periode=: the numbers of the runs, by day."""
-        runs, _, checked = self._runs(read_model)
-        row = read_model.snapshot().get("journal")
-        entries = (journal_entries_from_value(row["value"])
-                   if row and row["value"] is not None and row["freshness"] != UNKNOWN else [])
+        """GET /analyses?vue=: the four indicators, each its view, and the
+        daily volumes, computed from the sources the cockpit reads
+        (cockpit.analyses.indicators). Served once the projects are read,
+        as the overview is: a result or a decision is named by its project,
+        not by its key."""
+        snapshot = self._first_reading(read_model)
+        now = read_model.now()
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
-        main = render_analyses(runs or [], journal_items(entries, []), read_model.now(),
-                               (query.get("vue") or ["resultats"])[0], (query.get("periode") or ["7"])[0], checked=checked)
-        self._send_page(read_model, "analyses", main, extra_css=ANALYSES_CSS)
+        main = render_analyses(analyses(snapshot, now), (query.get("vue") or [None])[0])
+        self._send_page(read_model, "analyses", main, extra_css=ANALYSES_CSS, snapshot=snapshot)
 
     def _send_factory_page(self, read_model):
         """GET /usine?role=: the machine, the connections and the roles,

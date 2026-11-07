@@ -16,6 +16,7 @@ from datetime import datetime
 
 from cockpit.access.guard import ActionGuard, new_session_token
 from cockpit.actions.registry import build_action_handlers
+from cockpit.analyses.sources import read_github
 from cockpit.core.beads_source import read_operator_beads
 from cockpit.core.clock import ShiftedClock, SystemClock
 from cockpit.core.freshness import UNKNOWN
@@ -113,6 +114,14 @@ def build(config, clock=None):
         read_model.register("runs", display_name="runs")
         pollers.append(PollingSource(read_model, "runs", lambda: read_workflow_beads(bd_bin=config.bd_bin),
                                      config.journal_poll_seconds))
+    if config.github_repo:
+        # The CI and the pull requests of the declared repository, over the
+        # last eight days: the period of the Analyses and the day before it.
+        read_model.register("github", display_name="CI GitHub")
+        pollers.append(PollingSource(
+            read_model, "github",
+            lambda: read_github(config.gh_bin, config.github_repo, read_model.now() - 8 * 86400),
+            config.github_poll_seconds))
     if config.repo_dir:
         read_model.register("git", display_name="version de l'usine")
         pollers.append(
