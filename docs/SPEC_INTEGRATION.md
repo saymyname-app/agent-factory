@@ -207,6 +207,13 @@ result, **whether there was anything to take up or not**.
 The tests of `take-up` are not filed in the evidence store: a piece belongs
 to a ticket, and this tip belongs to none.
 
+`bin/convoy-advance` also uses this same gate for the one authorized R8
+close-without-merge occurrence (`af-npz9v1.60`). A definitive result is
+required before the native withdrawal close: green leaves the convoy
+unblocked; red is recorded here and goes through the ordinary one-repair
+integration-stop path. A conflict, timeout or other refusal closes nothing,
+so the next pass can retry the control.
+
 ## Limits
 
 - **A ready ticket is merged only when the ticket-end gate agrees** (T19):

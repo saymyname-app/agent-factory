@@ -35,6 +35,7 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state set-counter  af-convoy --counter end_rounds --value 0
 ./bin/convoy-state add-evidence af-convoy af-t1 --piece red_proof --digest sha256:<hex> --commit <sha>
 ./bin/convoy-state close-ticket af-convoy af-t1 --commit <merged tip> --file report.json   # bin/ticket-end: the record of the gate and the closed status, in one write
+./bin/convoy-state withdraw-ticket af-convoy af-t1 --reason "choix de clôture sans fusion"   # withdrawn gate, no-op outcome, note and closed status in one write
 ./bin/convoy-state set-tdd      af-convoy af-t1 --step red --commit <sha> --base <start sha>   # bin/tdd-step, once a step is proven
 ./bin/convoy-state stop-ticket  af-convoy af-t1 --reason criterion_already_green --detail "critère 2 déjà vert : …"   # bin/tdd-step
 ./bin/convoy-state stop-raised af-convoy af-t1                                              # once the escalation door accepted the stop
@@ -133,7 +134,7 @@ Every answer is one JSON object on stdout.
 | Verdict | `gc.flow.verdict.<kind>` | ticket | kind: `code_review`, `evaluation`, `fidelity`; state: `favorable`, `unfavorable`; always with the full commit SHA it judged; `invalidated` (`tip`, `at`) once `invalidate-verdicts` wrote that a newer commit outdated it, or (`tip`, `contract`, `at`) when a newer code-review judgement contract invalidated it at the same tip |
 | Counter | `gc.flow.counter.<name>` | ticket: `resumes`, `correction_rounds`; convoy: `end_rounds` | integer ≥ 0 |
 | Evidence fingerprint | `gc.flow.evidence.<piece>` | ticket | `sha256:<64 hex>` and the commit of the piece |
-| Gate record | `gc.flow.gate.<gate>` | ticket | `dispatch`, `ticket_end` (written only by `close-ticket`, with the closing: the merged commit, the version of the list `ticket-end/v1` and its nine passing verdicts; T19, `docs/TICKET_END.md`), `withdrawn` (removed from the graph by a resolved Planning Exception, or by `bin/outcome-promote` when the convoy is abandoned during delivery) |
+| Gate record | `gc.flow.gate.<gate>` | ticket | `dispatch`, `ticket_end` (written only by `close-ticket`, with the closing: the merged commit, the version of the list `ticket-end/v1` and its nine passing verdicts; T19, `docs/TICKET_END.md`), `withdrawn` (removed from the graph by a resolved Planning Exception, by `bin/outcome-promote` when the convoy is abandoned during delivery, or written atomically with `gc.work_outcome=no-op`, the close note and the closed status by `withdraw-ticket` for an authorized close without merge) |
 | Frozen criteria | `gc.flow.criteria` | ticket | `{digest, graph_digest, at}`: the fingerprint of the acceptance criteria of the ticket, in order, and the digest of the approved graph it was published under (`gc.graph_digest`, read only; null when the door wrote none). Written by `mark`; written again only when `gc.graph_digest` has changed since (a patch of the graph went through the publication door), never on a closed ticket (T19) |
 | TDD step | `gc.flow.tdd.<step>` | ticket | step: `red`, `freeze`, `green`, `amendment`, `prefactoring`; always with the full commit SHA it was proven at; `red` and `prefactoring` with their start commit (`base`), `amendment` with its one-line reason |
 | Stop | `gc.flow.stop` | ticket | reason: `criterion_already_green`, `amendment_exhausted`, `test_review_no_result` (written before ADR-0030 L3, read only), `code_review_no_result`, `evaluation_no_result`, `evaluation_outage`, `still_refused`; with a one-line detail, and `raised` once `stop-raised` wrote that the escalation door accepted it |
@@ -1017,7 +1018,8 @@ as described above; a
 only); a `close-ticket` whose report is not the nine conditions of the known
 version, in order, all passing, each with a one-line detail, or that names
 no full commit SHA, or on a ticket already closed or carrying a closing
-gate record; a TDD step outside its closed
+gate record; a `withdraw-ticket` without a one-line reason, or on a ticket
+already closed or carrying a closing gate record; a TDD step outside its closed
 list, without a full commit SHA, out of order, or on a stopped ticket; a
 request, a
 launch or a verdict of the test review as described above, or on a stopped
