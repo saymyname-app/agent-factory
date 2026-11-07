@@ -95,9 +95,14 @@ class SyntheticCity:
     beads: list = field(default_factory=list)
     projects: list = field(default_factory=list)
     sessions: list = field(default_factory=list)
-    # A Runs state: the moment the state shows (its clock starts there, then
-    # runs), and what it selects -- the filter, the run, the job, the event
-    # the cockpit opens when the address names none.
+    # What GitHub answers for the declared repository (`github`), or None:
+    # no repository declared, GitHub is not read.
+    github: dict | None = None
+    # The moment the cockpit's clock starts at, then runs: the fixed time of
+    # a dataset that gives records of the flow or of GitHub, or for a Runs
+    # state the moment it shows; what a Runs state
+    # selects -- the filter, the run, the job, the event the cockpit opens
+    # when the address names none.
     clock_start: str | None = None
     view: dict = field(default_factory=dict)
     # Files the sources point at (the page of a dossier), by their path under
@@ -165,9 +170,10 @@ def from_dataset(dataset) -> SyntheticCity:
         return _with_retention(city, dataset)
     if "tracker" in dataset:
         return _tracker_city(name, dataset["tracker"], dataset.get("projects"), dataset.get("repos"))
-    return _panorama_city(name, _fixed_time(at), ui, dataset.get("visible_text"), _folded(dataset.get("folded")),
+    city = _panorama_city(name, _fixed_time(at), ui, dataset.get("visible_text"), _folded(dataset.get("folded")),
                           _folded(dataset.get("drawn"), "drawn"), _run_cards(dataset.get("runs")),
                           _result_values(dataset.get("result")), dataset.get("release"))
+    return _with_sources(city, at, dataset.get("flow"), dataset.get("github"))
 
 
 def _with_retention(city: SyntheticCity, dataset: dict) -> SyntheticCity:
@@ -459,23 +465,33 @@ def _dossier_record(title: str, lines) -> dict:
 # page shows. The request of the acceptance is the convoy's while the result
 # waits for a judgement, and is gone once it is answered.
 TO_JUDGE_STATE = "ready"
-JUDGED_NOW_STATES = ("ready", "dossier", "outdated", "outage")
-# The states where the panel opens a decision a project waits for, not a
-# result: their dossier stays the open bead the page says.
+JUDGED_NOW_STATES = ("ready", "dossier", "findings", "outdated", "outage")
+# The states where the page opens a decision a project waits for: their
+# dossier stays the open bead the page says, and the result its first line
+# waits for is to judge, its summary said by the dataset (`result.summary`).
 DECISION_STATES = ("request", "confirmation")
 ACCEPTED_STATES = ("accepted", "merging", "merged")
-RETURNED_STATES = ("findings", "returned", "repairing")
+RETURNED_STATES = ("returned", "repairing")
 RESULT_STATES = (*JUDGED_NOW_STATES, *ACCEPTED_STATES, *RETURNED_STATES, *DECISION_STATES, "abandoned", "conflict")
 NOT_VERIFIED = "Ce qui n'a PAS été vérifié"
 TO_VERIFY = "Ce qui reste à vérifier"
 APPROVER = "benjamin"
+# The repair of a finding the factory took up (result-repairing), as
+# bin/owner-answer drafts it and the next pass names its ticket.
+REPAIR_TICKET = "syn-repair"
+REPAIR_DRAFT = {
+    "title": "Corriger le constat rendu", "what_it_delivers": "Le constat rendu est corrigé.",
+    "demonstration_line": "Le produit lancé ne présente plus le constat.",
+    "restores": {"kind": "user_story", "ref": "user story 31"},
+    "acceptance_criteria": [{"entry_point": "le produit lancé", "observable": "le constat n’est plus présent",
+                             "false_if": "le constat est encore présent"}]}
 # What a result in a dataset may say of itself (`result`): its commits, the
 # times its records were written (HH:MM, Paris, the day of the dataset), the
 # words of the answer, the reason of an abandon, what a failed trial said.
 # Unsaid, the commits and times are those the reference writes.
 RESULT_VALUES = {"commit": "1" * 40, "merged": "2" * 40, "outdated_commit": "3" * 40, "ready_at": "14:30",
                  "answered_at": "14:48", "merged_at": "14:50", "words": "C’est ce que je voulais.",
-                 "reason": None, "outage": "Le produit ne démarre pas au commit du dossier."}
+                 "reason": None, "outage": "Le produit ne démarre pas au commit du dossier.", "summary": None}
 
 
 def _result_values(values) -> dict:
@@ -499,8 +515,10 @@ def _result(tracker, dossier: dict, state: str, folded: dict, values: dict) -> d
     if unread:
         raise DatasetRefused(f"folded parts that no part of the dossier unfolds: {unread}")
     if state in DECISION_STATES:
-        return {}
-    tracker.beads.remove(dossier)
+        record = _awaited_result(tracker, values)
+        project, state, folded = record.pop("project"), TO_JUDGE_STATE, {}
+    else:
+        tracker.beads.remove(dossier)
     convoy_id = f"synthetic-chantier-{project}"
     if not any(bead["id"] == convoy_id for bead in tracker.beads):
         _chantier(tracker, project, AWAITED.match(record["about"])["kind"], [])
@@ -547,8 +565,11 @@ def _result(tracker, dossier: dict, state: str, folded: dict, values: dict) -> d
             records["gc.flow.closed"] = {"how": "accepted", "said": values["words"], "approver": APPROVER,
                                          "at": at["merged_at"]}
     elif state in RETURNED_STATES:
+        finding = {"text": values["words"], "route": "later"}
+        if state == "repairing":
+            finding = {"text": values["words"], "route": "repair", "draft": REPAIR_DRAFT, "ticket": REPAIR_TICKET}
         records["gc.flow.judgement"] = {"verdicts": [], "answers": [{**answer, "response": "findings",
-                                                     "findings": [{"text": values["words"], "route": "later"}]}]}
+                                                                     "findings": [finding]}]}
     elif state == "conflict":
         records["gc.flow.judgement"] = {"verdicts": [], "answers": [{**answer, "response": "accepted",
                                                      "voided": {"cause": "conflict", "at": at["merged_at"]}}]}
@@ -564,6 +585,20 @@ def _result(tracker, dossier: dict, state: str, folded: dict, values: dict) -> d
         convoy["status"] = "closed"
     _hand_over_request(tracker, project, metadata if state in JUDGED_NOW_STATES else None)
     return {path: page}
+
+
+def _awaited_result(tracker, values: dict) -> dict:
+    """The record of the result the first line of a page that opens a
+    decision waits for: the request « résultat prêt » of its project."""
+    if not values["summary"]:
+        raise DatasetRefused("a decision open beside a result that says nothing of itself (result.summary)")
+    request = next((bead for bead in tracker.beads if bead["id"].startswith("synthetic-request-")
+                    and bead["metadata"]["gc.escalation_pourquoi"] == "résultat prêt"), None)
+    if request is None:
+        raise DatasetRefused("a decision open, and no result waits under « Ce qui t’attend »")
+    project = request["metadata"][PROJECT_KEY]
+    return {"about": f"{tracker.projects[project]['display_name']} · {request['metadata']['gc.escalation_pourquoi']}",
+            "title": request["title"], "summary": values["summary"], "resources": [], "reports": [], "project": project}
 
 
 def _hand_over_request(tracker, project: str, metadata) -> None:
@@ -839,6 +874,80 @@ SCREENS = {
     "Vue d’ensemble": _overview, "← Projets": _project_page, "Journal": _journal, "Usine": _factory,
     "Rituels": _rituals, "← Rituels": _ritual_page, "Analyses": _analyses,
 }
+
+
+# The records of the flow and of GitHub the Analyses read ---------------------
+
+FLOW_MARK = "new-flow/v1"
+
+
+def _with_sources(city, at, flow, github) -> SyntheticCity:
+    """`city` with the records of the delivery flow (`flow`: its results,
+    tickets and decisions) as the flow writes them on the tracker, and what
+    GitHub answers (`github`: the repository, its pull requests and its
+    workflow runs, as the REST API gives them), its clock starting at their
+    fixed time `at`. Without either, `city` unchanged: its clock is the
+    host's, which a case that times a stop from its launch reads."""
+    if flow is None and github is None:
+        return city
+    try:
+        beads, projects = list(city.beads), {d["project_id"]: d for d in city.projects}
+
+        def project(name):
+            projects.setdefault(project_id(name), _descriptor(name))
+            return project_id(name)
+
+        def record(**fields):
+            return json.dumps({key: value for key, value in fields.items() if value is not None}, ensure_ascii=False)
+
+        for number, result in enumerate((flow or {}).get("results", []), 1):
+            metadata = {"gc.flow.mark": FLOW_MARK, "gc.project_id": project(result["project"])}
+            if result.get("delivered"):
+                metadata["gc.flow.delivered"] = record(at=result["delivered"])
+            if result.get("accepted"):
+                metadata["gc.flow.judgement"] = json.dumps(
+                    {"answers": [{"response": "accepted", "approver": "benjamin", "at": result["accepted"]}]})
+            if result.get("merged"):
+                metadata["gc.flow.promotion"] = record(at=result["merged"])
+            beads.append({"id": f"synthetic-result-{number}", "title": result["title"], "issue_type": "convoy",
+                          "status": "closed" if result.get("merged") else "open", "created_at": result["published"],
+                          "labels": ["owned"], "metadata": metadata})
+        # A ticket is a run: an author was launched on it when it was
+        # dispatched (gc.flow.models), as the flow records it.
+        for number, ticket in enumerate((flow or {}).get("tickets", []), 1):
+            merge = ticket["merge"]
+            beads.append({
+                "id": f"synthetic-ticket-{number}", "title": ticket["title"], "issue_type": "task",
+                "status": "closed" if merge["outcome"] == "merged" else "open", "created_at": ticket["dispatched"],
+                "updated_at": merge["at"],
+                "metadata": {"gc.flow.mark": FLOW_MARK, "gc.project_id": project(ticket["project"]),
+                             "gc.flow.gate.dispatch": record(at=ticket["dispatched"]),
+                             "gc.flow.models": json.dumps({"author": {"agent": "delivery-author",
+                                                                      "at": ticket["dispatched"]}}),
+                             "gc.flow.merge": record(outcome=merge["outcome"], at=merge["at"])},
+            })
+        # A decision answered is as bin/escalation-door leaves it: its
+        # question cleared, its answer in the notes, which the journal reads.
+        for number, decision in enumerate((flow or {}).get("decisions", []), 1):
+            metadata = {"gc.escalation_pourquoi": "décision", "gc.escalation_horodatage": decision["asked"]}
+            notes = f"NEEDS BENJAMIN: {decision['title']}"
+            if decision.get("answered"):
+                metadata.update({"gc.escalation_response_at": decision["answered"], NEEDS_BENJAMIN: "none",
+                                 "gc.escalation_response_actor": "benjamin"})
+                notes += "\nRÉPONSE: a — réponse enregistrée"
+            else:
+                metadata[NEEDS_BENJAMIN] = decision["title"]
+            beads.append({"id": f"synthetic-decision-{number}", "title": decision["title"], "issue_type": "task",
+                          "status": "closed" if decision.get("answered") else "open", "created_at": decision["asked"],
+                          "notes": notes, "metadata": {**metadata, PROJECT_KEY: project(decision["project"])}})
+        if github is not None and not (isinstance(github.get("repository"), str) and github["repository"]
+                                       and isinstance(github.get("pull_requests"), list)
+                                       and isinstance(github.get("workflow_runs"), list)):
+            raise TypeError("github")
+    except (KeyError, TypeError, AttributeError) as exc:
+        raise DatasetRefused(f"its records of the flow (flow) or of GitHub (github) cannot be read: {exc!r}") from exc
+    return replace(city, beads=beads, projects=sorted(projects.values(), key=lambda d: d["project_id"]),
+                   github=github, clock_start=at)
 
 
 # Runs: lanes, runs and their jobs -------------------------------------------

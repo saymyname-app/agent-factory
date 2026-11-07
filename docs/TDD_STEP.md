@@ -246,6 +246,15 @@ that ticket, to amend
 `amendment.succession` record still makes the authorization single-use; every
 other ticket and path follows the naming rule above (af-kgu40t).
 
+A second closed exception consumes the exact option `a` Benjamin recorded
+for A2 at `2026-11-06T16:22:23Z` before its `amendment_exhausted` stop
+existed. `bin/convoy-advance` opens the ordinary `amendment_granted` resume
+only at commit `e62cb740`, when `tdd-step changes` names exactly
+`home-result-essai-test.py` and `result_trial.py`. The resume carries the
+authorization reference; `amend` accepts only those two files, and recording
+the amendment puts that resume before the new amendment, so it cannot be
+consumed a second time (af-atrg8o).
+
 ## Prefactoring
 
 A `prefactoring` ticket has no red step (`red` refuses it; `prefactoring`

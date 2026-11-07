@@ -16,6 +16,7 @@ from datetime import datetime
 
 from cockpit.access.guard import ActionGuard, new_session_token
 from cockpit.actions.registry import build_action_handlers
+from cockpit.analyses.sources import read_github
 from cockpit.core.beads_source import read_operator_beads
 from cockpit.core.clock import ShiftedClock, SystemClock
 from cockpit.core.freshness import UNKNOWN
@@ -34,7 +35,7 @@ from cockpit.stop.driver import StopDriver, tickets_photo
 from cockpit.stop.gc_city import GcCityReader
 from cockpit.projects.depots import read_depots, read_rig_repos
 from cockpit.projects.descriptors import load_descriptors
-from cockpit.projects.source import READ_TIMEOUT_SECONDS as PROJECTS_READ_TIMEOUT_SECONDS, read_projects
+from cockpit.projects.source import READ_TIMEOUT_SECONDS as PROJECTS_READ_TIMEOUT_SECONDS, outcome_of, read_projects
 from cockpit.requests.assemble import assemble_from_snapshot
 from cockpit.requests.defects import DefectCounter
 from cockpit.requests.journal import read_journal
@@ -114,6 +115,14 @@ def build(config, clock=None):
         read_model.register("runs", display_name="runs")
         pollers.append(PollingSource(read_model, "runs", lambda: read_workflow_beads(bd_bin=config.bd_bin),
                                      config.journal_poll_seconds))
+    if config.github_repo:
+        # The CI and the pull requests of the declared repository, over the
+        # last eight days: the period of the Analyses and the day before it.
+        read_model.register("github", display_name="CI GitHub")
+        pollers.append(PollingSource(
+            read_model, "github",
+            lambda: read_github(config.gh_bin, config.github_repo, read_model.now() - 8 * 86400),
+            config.github_poll_seconds))
     if config.repo_dir:
         read_model.register("git", display_name="version de l'usine")
         pollers.append(
@@ -148,6 +157,8 @@ def build(config, clock=None):
         loop_guard_bin=config.loop_guard_bin,
         order_pause_bin=config.order_pause_bin,
         door_timeout=config.action_timeout_seconds,
+        acceptance_session_bin=config.acceptance_session_bin,
+        outcome_of=lambda chantier: outcome_of((read_model.snapshot().get("projets") or {}).get("value"), chantier),
     )
     server = make_server(
         read_model,

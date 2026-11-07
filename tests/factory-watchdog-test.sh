@@ -14,6 +14,8 @@ set -Eeuo pipefail
 
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 WATCHDOG="$REPO_ROOT/bin/factory-watchdog"
+TICKET_STALL_SECONDS=$(PYTHONPATH="$REPO_ROOT/lib" python3 -c \
+  'import factory_watchdog; print(60 * factory_watchdog.TICKET_STALL_MINUTES_DEFAULT)')
 # tests/lib/sandbox.sh (P10, af-ygibh): a throwaway HOME/city and, crucially,
 # GC_BIN/BD_BIN/GH_BIN pointed off the real binaries -- every Gas City agent
 # session (this one included) pre-exports GC_BIN to the real `gc`, and
@@ -446,11 +448,12 @@ STUB
 chmod +x "$TMP/bin/convoy-state"
 export FACTORY_WATCHDOG_CONVOY_STATE_BIN="$TMP/bin/convoy-state"
 stalled_show() {  # stalled_show <status> [age-seconds] -> a convoy with one ticket left
-  jq -n --arg s "$1" --arg at "$(iso $((NOW - ${2:-4800})))" '{convoy:{id:"af-cv1"},tickets:[{id:"af-t9",title:"T09",status:$s,
+  local age_seconds="${2:-$((TICKET_STALL_SECONDS + 60))}"
+  jq -n --arg s "$1" --arg at "$(iso $((NOW - age_seconds)))" '{convoy:{id:"af-cv1"},tickets:[{id:"af-t9",title:"T09",status:$s,
     gates:{dispatch:{at:$at}},session:{at:$at,name:"delivery-author-gone"},exit:{at:$at,exit:"finished"},
     stop:{at:$at,raised:$at,reason:"still_refused"}}]}' > "$CONVOY_SHOW"
 }
-stalled_show in_progress 3000
+stalled_show in_progress "$((TICKET_STALL_SECONDS - 60))"
 reset_logs
 out=$(watchdog --check-only)
 grep -q "ticket sans suite —" <<<"$out" \

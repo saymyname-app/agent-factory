@@ -152,6 +152,33 @@ fi
 BEAD_LABELS_JSON='[{"labels":[]}]'
 
 # ---------------------------------------------------------------------------
+# 4c. A bead that still waits for a `blocks` dependency is not ready and is
+#     deferred before sling can create its workspace. Parent/child tracking
+#     is not a blocker. af-npz9v1.60 was dispatched while .59 was in progress.
+# ---------------------------------------------------------------------------
+: > "$CALLS"
+BEAD_LABELS_JSON='[{"labels":[],"metadata":{"gc.scope_paths":"bin/convoy-advance,tests/spec-integration-test.py"},"dependencies":[{"id":"af-holder","status":"in_progress","dependency_type":"blocks"},{"id":"af-parent","status":"open","dependency_type":"parent-child"}]}]'
+set +e
+GC_BIN="$TMP/gc" FACTORY_ROOT="$REPO_ROOT" \
+  "$DOOR" af-fixture --rig agent-factory --formula mol-do-work >/dev/null 2>/tmp/dispatch-door-blocker-err.$$
+rc=$?
+set -e
+err=$(cat "/tmp/dispatch-door-blocker-err.$$"); rm -f "/tmp/dispatch-door-blocker-err.$$"
+[ "$rc" -eq 75 ] || fail "open-blocker gate did not exit 75 (deferral), got $rc: $err"
+[[ $err == *"af-holder"* ]] || fail "open-blocker refusal did not name the blocker: $err"
+grep -qF 'sling ' "$CALLS" && fail "dispatched (sling) while a blocks dependency was unfinished"
+
+# Once the blocking dependency closes, the still-open parent/child edge does
+# not stop dispatch.
+: > "$CALLS"
+BEAD_LABELS_JSON='[{"labels":[],"dependencies":[{"id":"af-holder","status":"closed","dependency_type":"blocks"},{"id":"af-parent","status":"open","dependency_type":"parent-child"}]}]'
+out=$(GC_BIN="$TMP/gc" FACTORY_ROOT="$REPO_ROOT" \
+  "$DOOR" af-fixture --rig agent-factory --formula mol-do-work)
+[[ -n $out ]] || fail "dispatch after the blocker closed produced no output"
+grep -qF 'sling ' "$CALLS" || fail "closed blocker still prevented dispatch: $(cat "$CALLS")"
+BEAD_LABELS_JSON='[{"labels":[]}]'
+
+# ---------------------------------------------------------------------------
 # 5. The Mayor prompt names only the door for dispatch (O03 acceptance
 #    criterion): it points at bin/dispatch-door for every rig, and every
 #    remaining `gc sling` mention is a prohibition or an incident citation,

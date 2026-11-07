@@ -84,13 +84,13 @@ class TestBudgets(unittest.TestCase):
             "host_wait_seconds": 600, "green_seconds": 1140, "full_seconds": 1320,
             "criterion_test_seconds": 600, "margin_seconds": 60, "alert_ratio": 0.8,
         }))
-        for n, (total, criterion) in enumerate(((900, 500), (1049, 773), (800, 600))):
+        for n, (total, criterion) in enumerate(((900, 500), (1106, 798), (252, 51))):
             answer = {"regression": [{"timing": [
                 f"regression: took {criterion}s for criterion class example.py::Example",
                 f"regression: took {total}s with the host held (green budget 1140s)",
             ]}]}
             piece(self.store, f"g{n}", "tdd_green.json", json.dumps(answer), at=f"2026-11-05T0{n}:00:00Z")
-        for n, (total, criterion) in enumerate(((900, 500), (1148, 671), (1000, 600))):
+        for n, (total, criterion) in enumerate(((900, 500), (1534, 750), (1000, 600))):
             piece(self.store, f"m{n}", "merged_tests.json",
                   f"regression: took {criterion}s for criterion class example.py::Example\n"
                   f"regression: took {total}s with the host held (full budget 1320s)\n",
@@ -100,9 +100,9 @@ class TestBudgets(unittest.TestCase):
 
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         after = json.loads(proc.stdout)["after"]
-        self.assertEqual(1620, after["green_seconds"])          # 1.5 x 1049 -> 27 min
-        self.assertEqual(1740, after["full_seconds"])           # 1.5 x 1148 -> 29 min
-        self.assertEqual(1200, after["criterion_test_seconds"]) # 1.5 x 773 -> 20 min
+        self.assertEqual(1680, after["green_seconds"])          # 1.5 x 1106 -> 28 min
+        self.assertEqual(2340, after["full_seconds"])           # 1.5 x 1534 -> 39 min
+        self.assertEqual(1200, after["criterion_test_seconds"]) # 1.5 x 798 -> 20 min
         self.assertEqual(after, json.loads((root / "config" / "test-budgets.json").read_text()))
 
     def test_a_kind_with_fewer_than_three_runs_keeps_its_budget(self):

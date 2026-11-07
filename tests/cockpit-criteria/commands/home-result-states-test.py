@@ -16,14 +16,14 @@ reference, and the project of the result (its line under « Projets ») to
 the same issue.
 
 In every state Essai and Avis are there, under every other part of the
-result, and cannot be used, each state saying why: on a result to judge,
-they are not wired to this destination yet (A2); on a result already judged
-(accepted, merging, merged, abandoned), they apply only to a result to
-judge. A control that is absent is not one that is unavailable.
+result: usable on a result to judge (A2, which holds what they do), and
+otherwise unavailable, each state saying why: its dossier is outdated, or
+the result is already judged (accepted, merging, merged, abandoned). A
+control that is absent is not one that is unavailable.
 
 False if a Delivered result on an open convoy is shown blocked, a closed
 ticket is shown merged, an abandon lets one believe in a merge, or Essai or
-Avis looks usable.
+Avis looks usable where it is not.
 
 Two places where the reference is not followed, both rendering defects the
 Spec asks to correct (Testing Decisions 5, « incohérences entre vues »;
@@ -59,9 +59,9 @@ READY_RESOURCES = ("Ce qui a été livré", "Changements et version à essayer",
 # result-dossier.
 DOSSIER_PARTS = ("Dossier du résultat", "Reprise complète du cockpit · version 1", "Parcours et relecture",
                  "Pièces et version")
-# Why Essai and Avis cannot be used from this destination until A2, on a
-# result to judge; and why they cannot be used on a result already judged.
-UNWIRED = "pas encore raccordés"
+# Why Essai and Avis cannot be used on an outdated dossier, and on a result
+# already judged.
+OUTDATED = "périmé"
 JUDGED = "déjà jugé"
 # The part of a result judged that holds its follow-up, above its bar.
 HISTORY = "Historique et preuves"
@@ -126,7 +126,14 @@ class HomeResultStates(unittest.TestCase):
         self.assertTrue("Essai" in bar and "Avis" in bar and bar.index("Essai") < bar.index("Avis"),
                         f"the bar does not hold Essai, then Avis; it says « {bar} »")
 
-    def assert_unavailable(self, page: dict, reason: str = UNWIRED) -> None:
+    def assert_usable(self, page: dict) -> None:
+        """Essai and Avis are there, once each, and can be used."""
+        actions = [c for c in page["controls"] if c["name"].startswith("Essai") or c["name"] == "Avis"]
+        self.assertEqual([("Essai", False), ("Avis", False)],
+                         [("Essai" if c["name"].startswith("Essai") else "Avis", c["disabled"]) for c in actions],
+                         "the result to judge has not one usable Essai and one usable Avis")
+
+    def assert_unavailable(self, page: dict, reason: str) -> None:
         """Essai and Avis are there, once each, and cannot be used; the bar
         says why, in the words `reason`. A control that is absent is not
         one that is unavailable."""
@@ -150,7 +157,7 @@ class HomeResultStates(unittest.TestCase):
         assert_says(self, page, "panel-3", f"{PROJECT} · {CHANTIER}", "Le cockpit attend ton avis",
                     "Les nouveaux parcours du cockpit sont prêts.")
         self.assert_above_the_bar(page, *READY_RESOURCES)
-        self.assert_unavailable(page)
+        self.assert_usable(page)
         self.assert_issue(page, "À juger")
         self.assertEqual(1, len(self.requests_ready(page)),
                          "« Ce qui t’attend » does not ask for the judgement of the result ready")
@@ -159,7 +166,7 @@ class HomeResultStates(unittest.TestCase):
         page = self.served("result-dossier")
         assert_says(self, page, "panel-3", f"{PROJECT} · {CHANTIER}", "Le cockpit attend ton avis")
         self.assert_above_the_bar(page, *DOSSIER_PARTS)
-        self.assert_unavailable(page)
+        self.assert_usable(page)
         self.assert_issue(page, "À juger")
 
     def test_result_accepted_says_accepted_and_the_merge_pending(self):
@@ -213,7 +220,7 @@ class HomeResultStates(unittest.TestCase):
         assert_says(self, page, "panel-3", f"{PROJECT} · {CHANTIER}")
         self.assertRegex(says(page, "panel-3"), r"(?i)dossier périmé", "the result does not say its dossier is outdated")
         self.assert_above_the_bar(page)
-        self.assert_unavailable(page)
+        self.assert_unavailable(page, OUTDATED)
         self.assertNotRegex(page["text"], r"(?i)bloqué", "the result is shown blocked")
 
 

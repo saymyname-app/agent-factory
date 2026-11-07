@@ -40,12 +40,15 @@
 # new work while it reads active, resuming on its own the moment a provider
 # is available again -- no human action needed to unpause dispatch itself.
 #
-# It also defers -- never permanently refuses -- a dispatch in two cases
+# It also defers -- never permanently refuses -- a dispatch in three cases
 # (P12, af-8j7tb):
 #   - the guest is critically low on memory (WSL MemAvailable below a 1.5
 #     GiB floor): starting one more worker session costs about the same
 #     regardless of the ticket, so this check runs before any bead is even
 #     read.
+#   - the bead still has an unfinished `blocks` dependency: publication uses
+#     those edges to serialize overlapping declared scopes, so the door must
+#     enforce them before sling creates a workspace (af-9wnmid).
 #   - the target ticket's declared scope (`gc.scope_paths`, stamped by
 #     ticket-graph-publish/P11) touches a hot path (config/hot-paths.json)
 #     that an in-progress ticket's own declared scope already touches. P11's
@@ -137,9 +140,9 @@ Exits 2 on a permanent refusal (invalid rig/formula, a planning-plane bead, a pr
 bead, total provider exhaustion, a delivery role on a provider with no
 passing adoption trial, a --convoy that is not marked or does not track the
 bead, a ticket of a marked convoy dispatched without --convoy or from an
-agent session). Exits 75 on a deferral -- low guest
-memory, or the bead's scope touching a hot path an in-progress ticket
-already holds -- which is transient and safe to retry on the next dispatch.
+agent session). Exits 75 on a deferral -- low guest memory, an unfinished
+blocking dependency, or the bead's scope touching a hot path an in-progress
+ticket already holds -- which is transient and safe to retry on the next dispatch.
 USAGE
 }
 
@@ -315,6 +318,15 @@ if printf '%s' "$bead_json" | jq -e '(.[0].labels // []) | index("proposal") != 
 fi
 if printf '%s' "$bead_json" | jq -e '(.[0].metadata["gc.plane"] // "") == "planning"' >/dev/null 2>&1; then
   fail "$BEAD_ID is a planning-plane bead (gc.plane=planning) -- Planning Map/Decision Beads are worked in the operator session, never dispatched"
+fi
+open_blockers=$(printf '%s' "$bead_json" | jq -r '
+  [.[0].dependencies[]?
+   | select(.dependency_type == "blocks" and .status != "closed")
+   | .id]
+  | join(",")
+' 2>/dev/null) || open_blockers=""
+if [ -n "$open_blockers" ]; then
+  defer "$BEAD_ID waits for unfinished blocking dependencies: $open_blockers -- retry once they close"
 fi
 
 # A ticket of the new flow: only bin/convoy-advance starts it.

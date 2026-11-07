@@ -56,6 +56,7 @@ invents a `gc.flow.*` field: a missing field is added here.
                               (TICKET is CONVOY for a piece of the end of the Spec)
     convoy-state record-gate  CONVOY TICKET --gate GATE [--commit SHA]
     convoy-state close-ticket CONVOY TICKET --commit SHA --file PATH
+    convoy-state withdraw-ticket CONVOY TICKET --reason LINE
     convoy-state set-tdd      CONVOY TICKET --step STEP --commit SHA [--base SHA] [--reason TEXT]
     convoy-state stop-ticket  CONVOY TICKET --reason REASON --detail LINE
     convoy-state stop-raised  CONVOY TICKET
@@ -65,7 +66,7 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state record-code-review  CONVOY TICKET --file PATH
     convoy-state respond-code-review CONVOY TICKET --file PATH
     convoy-state open-evaluation    CONVOY TICKET --commit SHA --file PATH
-    convoy-state launch-evaluation  CONVOY TICKET --bead BEAD
+    convoy-state launch-evaluation  CONVOY TICKET --bead BEAD [--replaces-unclaimed BEAD]
     convoy-state record-evaluation  CONVOY TICKET --file PATH
     convoy-state record-startup     CONVOY TICKET --commit SHA (--piece NAME --file PATH | --detail LINE)
     convoy-state release-evaluation CONVOY TICKET --state-file PATH [--state-file PATH] [--withdraw]
@@ -301,6 +302,7 @@ CONVOY_COUNTERS = ("end_rounds",)
 GATES = ("dispatch", "ticket_end", "withdrawn")
 CLOSING_GATES = ("ticket_end", "withdrawn")
 GATE_TICKET_END = "ticket_end"
+GATE_WITHDRAWN = "withdrawn"
 # The ticket-end gate (T19, Spec §9): a closed, versioned list of nine
 # conditions. bin/ticket-end computes each verdict; its record is written
 # here, with the closing of the ticket, and only when the nine pass.
@@ -448,6 +450,7 @@ EVALUATION_OUTCOMES = ("favorable", "return_to_author", "planning_exception", "e
 # 01:20 Paris, relayed from the central chat: « Oui aux deux recommandations : fais ajouter puis utiliser l’option de réévaluation réelle pour les trois tickets, et accorde le tour de correction exceptionnel. Coordonne tout et vérifie que ça repart. »
 REEVALUATE_OPTION = "c"
 EVALUATION_MAX_LAUNCHES = 2
+EVALUATION_MAX_LAUNCH_HISTORY = EVALUATION_MAX_LAUNCHES + 1
 KIND_WITHOUT_EVALUATOR = "prefactoring"
 ADDRESS_RE = re.compile(r"^http://127\.0\.0\.1:[0-9]{1,5}$")
 MAX_FINDING_LINE = 600
@@ -1479,11 +1482,17 @@ def evaluation_criteria(value: Any) -> list[str]:
 
 
 def evaluation_launches(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list) or len(value) > EVALUATION_MAX_LAUNCHES:
+    if not isinstance(value, list) or len(value) > EVALUATION_MAX_LAUNCH_HISTORY:
         raise Refusal(f"lancements d'évaluation mal formés : {value!r}")
     for launch in value:
-        if not review_launch(launch):
+        core = ({name: field for name, field in launch.items() if name != "unclaimed"}
+                if isinstance(launch, dict) else launch)
+        if not review_launch(core) or ("unclaimed" in launch and launch["unclaimed"] is not True):
             raise Refusal(f"lancement d'évaluation mal formé : {launch!r}")
+    unclaimed = sum(launch.get("unclaimed") is True for launch in value)
+    attempts = len(value) - unclaimed
+    if unclaimed > 1 or attempts > EVALUATION_MAX_LAUNCHES:
+        raise Refusal(f"lancements d'évaluation mal formés : {value!r}")
     return value
 
 
@@ -2093,11 +2102,12 @@ def resume_record(raw: Any, *, migrating_legacy_repair: bool = False) -> dict[st
     entries = record["entries"]
     if not isinstance(entries, list) or not entries:
         raise Refusal(f"reprises mal formées : {entries!r}")
-    last = entries[-1]
-    migrated_legacy_repair = isinstance(last, dict) \
-        and last.get("cause") == "repair_delivered" \
-        and isinstance(last.get("ref"), str) and last["ref"].startswith("repairs:")
-    for entry in entries:
+    migrated_legacy_repair_at = max((index for index, entry in enumerate(entries)
+                                     if isinstance(entry, dict)
+                                     and entry.get("cause") == "repair_delivered"
+                                     and isinstance(entry.get("ref"), str)
+                                     and entry["ref"].startswith("repairs:")), default=-1)
+    for index, entry in enumerate(entries):
         if not isinstance(entry, dict) or set(entry) - {"stop"} != {"cause", "ref", "session", "exit", "launches", "at"}:
             raise Refusal(f"reprise mal formée : {entry!r}")
         one_of(entry["cause"], RESUME_CAUSES, "cause de reprise")
@@ -2114,7 +2124,8 @@ def resume_record(raw: Any, *, migrating_legacy_repair: bool = False) -> dict[st
             legacy_repair_stop = entry["cause"] == "unblocked" and entry["ref"].startswith("repairs:") \
                 and bool(launches) and reason in (STOP_EVALUATION_NO_RESULT, STOP_EVALUATION_OUTAGE)
             if not resume_lifts(entry["cause"], reason) \
-                    and not (legacy_repair_stop and (migrating_legacy_repair or migrated_legacy_repair)):
+                    and not (legacy_repair_stop
+                             and (migrating_legacy_repair or index < migrated_legacy_repair_at)):
                 raise Refusal(f"arrêt levé par la reprise mal formé : {entry!r}")
     return record
 
@@ -2154,7 +2165,7 @@ def park_lifts_record(raw: Any) -> list[dict[str, Any]]:
         raise Refusal(f"parcages levés mal formés : {entries!r}")
     for entry in entries:
         if not isinstance(entry, dict) \
-                or set(entry) - {"taken", "proven_by_test", "repairs", "exit_at"} != {"cause", "detail", "parked_at", "request", "option", "resumes", "at"}:
+                or set(entry) - {"taken", "proven_by_test", "repairs", "exit_at", "reset_cause"} != {"cause", "detail", "parked_at", "request", "option", "resumes", "at"}:
             raise Refusal(f"parcage levé mal formé : {entry!r}")
         if "proven_by_test" in entry:
             proven = entry["proven_by_test"]
@@ -2183,6 +2194,11 @@ def park_lifts_record(raw: Any) -> list[dict[str, Any]]:
                 raise Refusal(f"réparations du parcage levé mal formées : {repairs!r}")
         elif "exit_at" in entry:
             raise Refusal(f"sortie de demande sans réparations liées : {entry['exit_at']!r}")
+        if "reset_cause" in entry:
+            if entry["cause"] != PARK_EXHAUSTED or entry["option"] is not None or "repairs" in entry \
+                    or "taken" not in entry:
+                raise Refusal(f"cause rendue par code incohérente : {entry['reset_cause']!r}")
+            one_of(entry["reset_cause"], BOUNDED_RESUME_CAUSES, "cause rendue par code")
         counter_value(entry["resumes"], "resumes")
     return entries
 
@@ -3961,6 +3977,27 @@ def cmd_close_ticket(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_withdraw_ticket(args: argparse.Namespace) -> int:
+    """Close one unmerged ticket with its withdrawal proof in one write."""
+    ticket = marked_ticket(args.convoy, args.ticket)
+    metadata = metadata_of(ticket)
+    if ticket.get("status") == "closed" or any(GATE_PREFIX + gate in metadata for gate in CLOSING_GATES):
+        raise Refusal(f"le ticket {args.ticket} est déjà fermé, ou porte déjà un relevé de fermeture")
+    reason = single_line(args.reason, "raison de la clôture sans fusion")
+    values = {
+        GATE_PREFIX + GATE_WITHDRAWN: encode({"at": now()}),
+        "gc.work_outcome": "no-op",
+    }
+    update = ["bd", "update", args.ticket, "--status", "closed"]
+    for key, value in values.items():
+        update += ["--set-metadata", f"{key}={value}"]
+    update += ["--append-notes", f"WITHDRAWN by convoy-state (sans fusion) : {reason}"]
+    run_gc(update)
+    print(json.dumps({"ok": True, "convoy": args.convoy, "bead": args.ticket, "closed": True, "written": values},
+                     indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
 def amendment_granted(entries: list[dict[str, Any]], amendment: dict[str, Any]) -> bool:
     """One more amendment is allowed once a resume `amendment_granted` (the
     operator answered « a » to the stop of the second amendment, af-25o7vr)
@@ -4673,16 +4710,24 @@ def cmd_append_evaluation_product(args: argparse.Namespace) -> int:
 
 def cmd_launch_evaluation(args: argparse.Namespace) -> int:
     """Record that an Evaluator session was sent the open evaluation: the
-    first launch, then one relaunch when the first gave no result."""
+    first launch, then one relaunch when the first claimed attempt gave no
+    result. One cleaned route that was never claimed may remain in history."""
     _, _, record = evaluation_target(args)
     request = record.get("request")
     if not request:
         raise Refusal(f"aucune évaluation n'est demandée sur {args.ticket} : rien à lancer")
     if not isinstance(args.bead, str) or not BEAD_ID_RE.match(args.bead):
         raise Refusal(f"bead d'évaluation absent ou mal formé : {args.bead!r}")
-    if len(request["launches"]) >= EVALUATION_MAX_LAUNCHES:
+    if args.replaces_unclaimed:
+        matches = [launch for launch in request["launches"] if launch["bead"] == args.replaces_unclaimed]
+        if len(matches) != 1 or matches[0].get("refused") or any(
+                launch.get("unclaimed") is True for launch in request["launches"]):
+            raise Refusal("le remplacement ne nomme pas l'unique route non réclamée de cette évaluation")
+        matches[0]["unclaimed"] = True
+    attempts = [launch for launch in request["launches"] if launch.get("unclaimed") is not True]
+    if len(attempts) >= EVALUATION_MAX_LAUNCHES:
         raise Refusal(
-            f"une seule relance par évaluation : {args.ticket} en a déjà lancé {len(request['launches'])} sans résultat")
+            f"une seule relance par évaluation : {args.ticket} en a déjà lancé {len(attempts)} sans résultat")
     request["launches"].append({"bead": args.bead, "at": now()})
     # A new launch has its own time: the waits of the previous one are spent.
     request.pop("waited", None)
@@ -5366,6 +5411,11 @@ def cmd_lift_park(args: argparse.Namespace) -> int:
         raise Refusal(f"bead de la demande absent ou mal formé : {args.request!r} (--request)")
     option = option_letter(args.option) if args.option is not None else None
     repairs = list(args.repair or [])
+    reset_cause = one_of(args.reset_cause, BOUNDED_RESUME_CAUSES, "cause rendue par code") \
+        if args.reset_cause is not None else None
+    if reset_cause is not None and (park["cause"] != PARK_EXHAUSTED or option is not None or repairs):
+        raise Refusal(
+            "--reset-cause ne vaut que pour un parcage resumes_exhausted levé par code, sans option ni réparation liée")
     linked_record = None
     if repairs:
         linked_record = technical_repairs_record(metadata[KEY_TECHNICAL_REPAIRS]) \
@@ -5391,17 +5441,26 @@ def cmd_lift_park(args: argparse.Namespace) -> int:
     resumes = counter_value(metadata.get(COUNTER_PREFIX + "resumes"), "resumes")
     taken = resumes_taken(metadata)
     if park["cause"] == PARK_EXHAUSTED and option is None:
-        # No answer: the exhaustion no longer holds under the bounds of now
-        # (af-npz9v1.41). The bounds keep counting from where they did: the
-        # lift gives no resume back.
-        if resumes_left(metadata) == 0:
-            raise Refusal(
-                f"reprises épuisées : le ticket {args.ticket} a pris {exhausted_causes(metadata)} ; "
-                "seule la réponse de la demande groupée (--option) le lève")
         exhausted = [lift for lift in lifts if lift["cause"] == PARK_EXHAUSTED]
-        taken = taken_at_lift(exhausted[-1], metadata) if exhausted else dict.fromkeys(BOUNDED_RESUME_CAUSES, 0)
+        before = taken_at_lift(exhausted[-1], metadata) if exhausted else dict.fromkeys(BOUNDED_RESUME_CAUSES, 0)
+        if reset_cause is not None:
+            # A proven code repair gives one cause a fresh window. Every
+            # other cause keeps the baseline of the preceding lift.
+            current = taken
+            taken = before
+            taken[reset_cause] = current[reset_cause]
+        else:
+            # No answer: the exhaustion no longer holds under the bounds of
+            # now (af-npz9v1.41). The lift gives no resume back.
+            if resumes_left(metadata) == 0:
+                raise Refusal(
+                    f"reprises épuisées : le ticket {args.ticket} a pris {exhausted_causes(metadata)} ; "
+                    "seule la réponse de la demande groupée (--option) le lève")
+            taken = before
     lift = {"cause": park["cause"], "detail": park["detail"], "parked_at": park["at"], "request": args.request,
             "option": option, "resumes": resumes, "taken": taken, "at": now()}
+    if reset_cause is not None:
+        lift["reset_cause"] = reset_cause
     if repairs:
         lift["repairs"] = repairs
         lift["exit_at"] = linked_record["exit_at"]
@@ -6482,6 +6541,8 @@ def cmd_record_owner_answer(args: argparse.Namespace) -> int:
         if dossier is not None:
             answer: dict[str, Any] = {"response": response, "approver": approver, "commit": dossier["commit"],
                                       "pack": dossier["pack"], "reason": reason, "at": now()}
+            if args.words is not None:
+                answer["words"] = owner_words(args.words, "« abandonné »")
         else:
             # Abandoned during delivery: no dossier was judged. His words
             # stand for it, with the tip the integration branch keeps, if
@@ -7775,6 +7836,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = command("close-ticket", cmd_close_ticket)
     p.add_argument("--commit")
     p.add_argument("--file")
+    command("withdraw-ticket", cmd_withdraw_ticket).add_argument("--reason")
     p = command("set-tdd", cmd_set_tdd)
     p.add_argument("--step")
     p.add_argument("--commit")
@@ -7809,7 +7871,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = command("append-evaluation-product", cmd_append_evaluation_product)
     p.add_argument("--commit")
     p.add_argument("--file")
-    command("launch-evaluation", cmd_launch_evaluation).add_argument("--bead")
+    p = command("launch-evaluation", cmd_launch_evaluation)
+    p.add_argument("--bead")
+    p.add_argument("--replaces-unclaimed")
     p = command("record-evaluation", cmd_record_evaluation)
     p.add_argument("--file")
     p.add_argument("--repo")
@@ -7830,6 +7894,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--request")
     p.add_argument("--option")
     p.add_argument("--repair", action="append", default=[])
+    p.add_argument("--reset-cause")
     command("migrate-repair-resume", cmd_migrate_repair_resume)
     p = command("open-resume", cmd_open_resume)
     p.add_argument("--cause")

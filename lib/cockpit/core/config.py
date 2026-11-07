@@ -129,6 +129,10 @@ class Config:
         self.order_pause_bin = env.get(
             "COCKPIT_ORDER_PAUSE_BIN", os.path.join(_REPO_ROOT, "bin", "order-pause")
         )
+        # The Acceptance Session, which launches the product Essai opens (A2).
+        self.acceptance_session_bin = env.get(
+            "COCKPIT_ACCEPTANCE_SESSION_BIN", os.path.join(_REPO_ROOT, "bin", "acceptance-session")
+        )
         # The doors of the settings and the upkeep of the page Usine (G2,
         # af-f8nlhr): the provider order of a role, and the cleaning of the
         # unused work spaces.
@@ -189,6 +193,14 @@ class Config:
             "COCKPIT_RIG_FILES_DIR", os.path.join(_REPO_ROOT, "config", "projects")
         )
         self.depots_poll_seconds = float(env.get("COCKPIT_DEPOTS_POLL_SECONDS", "600"))
+        # The CI and the pull requests of the Analyses (D, af-ten1sp): the
+        # GitHub repository whose CI they read, « owner/name », through the
+        # GitHub client. Opt-in, as the version of the factory below: no
+        # repository declared, no read of GitHub, and the indicator of the
+        # CI says it is unavailable for that reason.
+        self.github_repo = env.get("COCKPIT_GITHUB_REPO") or local.get("github_repo", "")
+        self.gh_bin = env.get("COCKPIT_GH_BIN") or local.get("gh_bin", "") or "gh"
+        self.github_poll_seconds = float(env.get("COCKPIT_GITHUB_POLL_SECONDS", "300"))
         # Where the page Usine reads the Factory's configuration of its roles
         # and what the provider failover observed (.gc/provider-state.json,
         # city.provider.toml): the tree the cockpit runs from.
@@ -245,7 +257,7 @@ class Config:
 LOCAL_CONFIG_NAME = "cockpit-local.json"
 LOCAL_CONFIG_KEYS = (
     "pushover_secrets_file", "heartbeat_url_file", "public_url", "benjamin_login", "allowed_origin",
-    "tailscale_bin", "clones_dir",
+    "tailscale_bin", "clones_dir", "github_repo", "gh_bin",
 )
 
 

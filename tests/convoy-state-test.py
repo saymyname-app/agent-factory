@@ -2197,6 +2197,22 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertEqual(["fx-e1", "fx-e2"], [launch["bead"] for launch in self.evaluation()["request"]["launches"]])
         self.assert_refused_and_nothing_written("launch-evaluation", CONVOY, T1, "--bead", "fx-e3", mention="une seule relance")
 
+    def test_launch_evaluation_preserves_one_unclaimed_route_without_spending_an_attempt(self):
+        self.finished_slice()
+        self.open_evaluation()
+        self.ok("launch-evaluation", CONVOY, T1, "--bead", "fx-e1")
+        self.ok("launch-evaluation", CONVOY, T1, "--bead", "fx-e2")
+
+        self.ok("launch-evaluation", CONVOY, T1, "--bead", "fx-e3",
+                "--replaces-unclaimed", "fx-e2")
+
+        launches = self.evaluation()["request"]["launches"]
+        self.assertEqual(["fx-e1", "fx-e2", "fx-e3"], [launch["bead"] for launch in launches])
+        self.assertTrue(launches[1]["unclaimed"])
+        self.assert_refused_and_nothing_written(
+            "launch-evaluation", CONVOY, T1, "--bead", "fx-e4",
+            "--replaces-unclaimed", "fx-e3", mention="unique route non réclamée")
+
     def test_record_evaluation_computes_a_favorable_verdict_when_everything_is_observed(self):
         self.opened_evaluation()
 
@@ -3068,6 +3084,22 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertEqual({"pass"}, {entry["verdict"] for entry in record["conditions"]})
         self.assertEqual([], ticket["unruled"])
 
+    def test_withdraw_ticket_writes_its_gate_no_op_outcome_note_and_closed_status_in_one_tracker_write(self):
+        self.started_ticket()
+        self.write_log.write_text("")
+
+        answer = self.ok("withdraw-ticket", CONVOY, T1, "--reason", "choix a : clore sans fusion")
+
+        self.assertTrue(answer["closed"])
+        writes = [line for line in self.write_log.read_text().splitlines() if line.strip()]
+        self.assertEqual(1, len(writes), writes)
+        bead = self.tracker_state()["beads"][T1]
+        ticket = self.ticket(self.show(), T1)
+        self.assertEqual(("closed", "no-op"), (ticket["status"], bead["metadata"]["gc.work_outcome"]))
+        self.assertIn("at", ticket["gates"]["withdrawn"])
+        self.assertIn("choix a : clore sans fusion", bead["notes"])
+        self.assertEqual([], ticket["unruled"])
+
     def test_close_ticket_refuses_a_record_that_is_not_the_nine_passing_verdicts_of_the_known_version(self):
         tip = self.started_ticket()
         conditions = json.loads(GATE_REPORT.read_text())["conditions"]
@@ -3222,6 +3254,18 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertEqual((5, "resumes_exhausted", 2),
                          (shown["counters"]["resumes"], shown["park"]["cause"],
                           shown["resumes_left_by_cause"]["repair_delivered"]))
+
+        # convoy-advance lifts the migrated parking before opening the next
+        # answer; that new entry must not make the preserved history unreadable.
+        state = self.tracker_state()
+        del state["beads"][T1]["metadata"]["gc.flow.park"]
+        self.tracker.write_text(json.dumps(state))
+        self.ok("set-exit", CONVOY, T1, "--exit", "operator_request")
+        self.ok("open-resume", CONVOY, T1, "--cause", "answered", "--ref", "exit:2026-11-06T00:12:48Z")
+
+        answered = self.ticket(self.show(), T1)
+        self.assertEqual(["answered", "unblocked", "unblocked", "repair_delivered", "answered"],
+                         [entry["cause"] for entry in answered["resume"]["entries"]])
 
     def test_a_behind_resume_on_each_new_integration_tip_is_recorded_but_not_counted(self):
         # af-npz9v1.36: ticket D (af-ten1sp) was parked after 8 resumes, each
@@ -3455,6 +3499,23 @@ class ConvoyStateTest(unittest.TestCase):
         ticket = self.ticket(self.show(), T1)
         self.assertEqual((2, 2, 2), (ticket["resumes_left"], ticket["resumes_left_by_cause"]["interrupted"],
                                      ticket["resumes_left_by_cause"]["commit_after_verdict"]))
+
+    def test_a_code_owned_lift_gives_back_only_the_named_resume_cause(self):
+        self.interrupted_ticket()
+        for ref in ("a", "b"):
+            self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", ref)
+        for _ in range(3):
+            self.ok("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
+        self.ok("park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "3 commits après verdict")
+
+        self.ok("lift-park", CONVOY, T1, "--request", "fx-repair", "--reset-cause", "commit_after_verdict")
+
+        ticket = self.ticket(self.show(), T1)
+        self.assertIsNone(ticket["park"])
+        self.assertEqual(5, ticket["counters"]["resumes"])
+        self.assertEqual((3, 1), (ticket["resumes_left_by_cause"]["commit_after_verdict"],
+                                  ticket["resumes_left_by_cause"]["interrupted"]))
+        self.assertEqual("commit_after_verdict", ticket["park_lifts"][-1]["reset_cause"])
 
     def test_a_lift_recorded_before_the_bounds_per_cause_still_gives_the_resumes_back(self):
         # A lift written before ADR-0030 L2 carries no per-cause count: what

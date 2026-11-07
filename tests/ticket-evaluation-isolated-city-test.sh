@@ -169,7 +169,9 @@ BIN="$ROOT/bin"
 LOG="$TRIAL/evaluator.log"
 say() { echo "\$(date -u +%H:%M:%S) \${GC_SESSION_NAME:-?} \$*" >> "\$LOG"; }
 while true; do
-  CLAIM=\$(gc hook --claim --json 2>/dev/null)
+  CLAIM=\$(gc hook --claim --json 2>&1)
+  CLAIM_RC=\$?
+  say "claim GC_AGENT=\${GC_AGENT:-?} GC_SESSION_NAME=\${GC_SESSION_NAME:-?} GC_SESSION_ID=\${GC_SESSION_ID:-?} BEADS_ACTOR=\${BEADS_ACTOR:-?} rc=\$CLAIM_RC result=\$CLAIM"
   ACTION=\$(printf '%s' "\$CLAIM" | jq -r '.action // empty' 2>/dev/null)
   BEAD=\$(printf '%s' "\$CLAIM" | jq -r '.bead_id // empty' 2>/dev/null)
   if [ "\$ACTION" != work ] || [ -z "\$BEAD" ]; then
@@ -534,9 +536,11 @@ done
 [ "$(printf '%s' "$second" | jq -r '.recorded_by')" != "$evaluator_a" ] || fail "the second evaluation of A was made by the session of the first"
 [ "$(grep -c "^$A " "$TRIAL/evaluation-sessions")" = 2 ] || fail "A was not evaluated by exactly two Evaluator sessions"
 on_integration "$FIX_A" || fail "the corrected tip of A is not on the integration branch"
-no_product_left() { [ -z "$(find "$TRIAL/launches" -name '*.json' 2>/dev/null)" ]; }
+no_product_left() {
+  [ -z "$(find "$TRIAL/launches" -name '*.json' 2>/dev/null)" ] \
+    && [ "$(evaluation_of "$A" | jq -r 'has("live")')" = false ]
+}
 wait_for 120 no_product_left || fail "a launched product of A was never stopped: $(find "$TRIAL/launches" -name '*.json')"
-[ "$(evaluation_of "$A" | jq -r 'has("live")')" = false ] || fail "A still names a launched product to stop"
 echo "$(date -u +%H:%M:%S) A : corrigée au commit $FIX_A ; nouvelle session ($(printf '%s' "$second" | jq -r '.recorded_by')) sur un nouveau produit lancé à $(piece "$A" evaluation.demo | jq -r '.address') ; ligne de démonstration « observée » avec preuve ; verdict calculé favorable ; ticket fusionné ; produits arrêtés"
 
 gc session list --state all --json | jq -e '[.sessions[] | select(.template | test("mayor"))] | length == 0' >/dev/null \

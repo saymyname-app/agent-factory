@@ -45,9 +45,9 @@ class CapacityTest(unittest.TestCase):
     def test_sandbox_reuses_only_the_controller_attested_listener(self):
         if not shutil.which("bwrap"):
             self.skipTest("Bubblewrap required")
-        state_home = Path.home() / ".local" / "state"
-        state_home.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=state_home) as temporary:
+        cache_home = Path.home() / ".cache"
+        cache_home.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=cache_home) as temporary:
             root = Path(temporary)
             state = root / "product.json"
             capacity = root / "capacity"

@@ -79,6 +79,14 @@ if [[ \$1 == pr && \$2 == list ]]; then
   esac
   exit 0
 fi
+if [[ \$1 == pr && \$2 == view && "\$*" == *"--json comments"* ]]; then
+  case "\$3" in
+    11) echo "pr-autopilot: retried CI once for af11" ;;
+    21) echo "pr-autopilot: retried CI once for be21" ;;
+    31) echo "pr-autopilot: retried CI once for fe31" ;;
+  esac
+  exit 0
+fi
 if [[ \$1 == pr && \$2 == view ]]; then echo '["OPEN","false"]' | jq -r '@tsv'; exit 0; fi
 if [[ \$1 == run && \$2 == list ]]; then echo ''; exit 0; fi
 exit 0

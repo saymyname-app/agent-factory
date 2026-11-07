@@ -71,6 +71,13 @@ if [[ \$1 == pr && \$2 == list ]]; then
   else echo '[]'; fi
   exit 0
 fi
+if [[ \$1 == pr && \$2 == view && "\$*" == *"--json comments"* ]]; then
+  case " \$* " in
+    *" 98 "*) echo "pr-autopilot: retried CI once for hhh1" ;;
+    *" 99 "*) echo "pr-autopilot: retried CI once for ggg1" ;;
+  esac
+  exit 0
+fi
 if [[ \$1 == pr && \$2 == view ]]; then echo '["OPEN","false"]' | jq -r '@tsv'; exit 0; fi
 exit 0
 STUB

@@ -83,7 +83,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   #667, #694, #696, #705, #706, #708, #710, #713, #721 ; copies orphelines du
   22/10 (sans PR) ; af-kky570 ; af-npz9v1.46 ; af-npz9v1.26 ; af-30zwwu ;
   af-95zqgx ; af-d3dj4j ; af-ll4hju ; af-bl2jyj ; af-p4rdr7 ; af-6go1ss ;
-  af-npz9v1.55.1 ; af-npz9v1.55.2.
+  af-npz9v1.55.1 ; af-npz9v1.55.2 ; af-npz9v1.55.3.
 - Ouvertes : les invocations directes antérieures hors des occurrences de
   l'étude B sont nommées une par une, avec leur date et leur motif, dans
   `config/bounded-process-exceptions.tsv` ; une vingtaine de délais écrits à
@@ -107,7 +107,12 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_factory_technical_request_waits_for_every_linked_repair_s_delivery_proof_then_resumes_once`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_an_evaluation_without_result_resumes_once_after_its_linked_factory_repair_is_delivered`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_an_evaluation_outage_resumes_once_after_its_linked_factory_repair_is_delivered`,
+  `python3 tests/convoy-state-test.py ConvoyStateTest.test_migrate_repair_resume_accepts_only_the_exact_legacy_history_and_changes_only_the_last_cause`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_legacy_delivered_repair_at_the_unblocked_bound_is_migrated_and_sent_once`,
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_the_exact_delivered_C2b_release_becomes_one_native_repair_resume ConvoyAdvanceTest.test_the_C2b_release_rejects_nearby_state_and_incomplete_delivery_proof`,
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_the_repaired_D_result_is_judged_without_another_author_resume ConvoyAdvanceTest.test_the_repaired_D_result_release_rejects_nearby_state_and_incomplete_delivery ConvoyAdvanceTest.test_the_repaired_C2b_result_is_judged_without_another_author_resume ConvoyAdvanceTest.test_the_repaired_C2b_result_release_rejects_nearby_state_and_incomplete_delivery`,
+  `python3 tests/convoy-state-test.py ConvoyStateTest.test_withdraw_ticket_writes_its_gate_no_op_outcome_note_and_closed_status_in_one_tracker_write`,
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_the_exact_answered_R8_is_closed_without_merge_then_its_control_runs_green ConvoyAdvanceTest.test_the_exact_R8_close_retry_finishes_after_its_durable_native_lift ConvoyAdvanceTest.test_the_exact_answered_R8_closes_without_merge_and_one_repair_follows_a_red_control ConvoyAdvanceTest.test_the_R8_close_release_rejects_nearby_state_and_option_b`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_malformed_legacy_resume_is_left_to_the_incident_door_without_crashing`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_factory_repair_is_taken_up_and_tested_before_its_resume_is_consumed_once`,
   `bash tests/factory-work-dispatch-test.sh`. Les courses réponse/retrait qui
@@ -123,7 +128,15 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   (la réparation livrée sur `main` ne libère la reprise qu'après sa présence
   vérifiée dans la pointe d'intégration testée) ; af-62duoi (la migration
   historique de `unblocked` refusait l'ancien arrêt d'évaluation avant de
-  pouvoir convertir son dernier signal de réparation).
+  pouvoir convertir son dernier signal de réparation) ; af-wjhpx9 (une
+  reprise `answered` ajoutée après cette conversion rendait de nouveau
+  l'historique illisible) ; af-npz9v1.57 (l'entrée C2b déjà comptée et
+  parquée n'avait plus son lien de réparation après la livraison des deux
+  réparations qui permettaient sa reprise) ; af-npz9v1.59 (les levées
+  historiques légitimes empêchaient la libération du résultat réparé de C2b,
+  et le résultat réparé de D n'avait aucune libération symétrique) ;
+  af-npz9v1.60 (l'option répondue
+  « clore R8 sans fusion » n'avait aucune porte native et relançait un auteur).
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
   contrôle : `criterion_already_green` reste au Planning Run ;
   `outcome_evaluation_no_result` et `outcome_evaluation_outage` ne repartent
@@ -152,7 +165,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   lance les trois décors résultat d'Essai derrière le proxy d'identité et
   tient leur suivi jetable. Le quatrième tient l'admission partagée des
   produits d'évaluation et refuse qu'une cité isolée lise les lancements, le
-  verrou ou les attestations de l'usine en service.
+  verrou ou les attestations de l'usine en service ; il tient aussi le
+  sous-montage des attestations en lecture seule quand leur état isolé vit
+  sous le parent inscriptible `$HOME/.cache`.
 - Occurrences : #566, #618, #641, #648, #656, #664, #665, #669, #671, #674,
   #675, #676, #680, #689, #690, #692, #699, #700, #714, #715 ; af-vf51g6 ;
   af-dtsy06 ; af-h6nyqc.
@@ -169,9 +184,11 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 - Contrôle : `python3 tests/delivery-rules-test.py` tient les quatre paires
   connues sur leurs fonctions communes ; `bash tests/operator-bd-test.sh`
   tient l'identité `po-agent/<session>` entre l'écrivain opérateur et
-  `factory-orphan-sweep`.
+  `factory-orphan-sweep` ; `bash tests/dispatch-door-test.sh` tient les
+  arêtes `blocks` écrites pour sérialiser les périmètres jusqu'à la dernière
+  porte d'admission, avant la création de l'espace de travail.
 - Occurrences : #620, #625, #659, #660, #681, #685, #686, #693, #695, #703,
-  #716 ; af-npz9v1.42 ; af-npz9v1.52.
+  #716 ; af-npz9v1.42 ; af-npz9v1.52 ; af-9wnmid.
 - Ouvertes : aucune ; `review_replay_due`, `tdd_evidence_piece` et
   `names_in_texts` ont remplacé les trois paires ouvertes de l'étude B § 4.4
   (af-npz9v1.29), et `evaluation_proven_by_test` tient l'écrivain de la
@@ -184,7 +201,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   produit une alerte.
 - Contrôle : `bash tests/on-order-failed-test.sh`,
   `python3 tests/factory-observe-test.py LiveObservationTest`,
-  `bash tests/pr-autopilot-armed-not-merged-test.sh` — partiel : le premier
+  `bash tests/pr-autopilot-armed-not-merged-test.sh`,
+  `bash tests/pr-autopilot-transient-retry-test.sh`,
+  `python3 tests/role-adoption-trial-codex-test.py` — partiel : le premier
   tient la frontière entre un report explicite (sortie 75, rejoué sans
   alerte) et une vraie panne répétée (bead et page Mayor) ; le deuxième tient
   la collecte VM Beads/Git/GitHub, le silence sur état inchangé, la route
@@ -195,11 +214,19 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   au contrôle requis vert ; il relit aussi GitHub après toute demande de fusion
   directe et n'annonce la fusion que si le serveur répond `MERGED`. Le contrôle
   9 du gardien (#688) couvre les tickets que personne ne bouge, pas les autres
-  signaux.
+  signaux. Le quatrième refuse qu'un workflow encore actif ou une demande de
+  rerun refusée soit annoncé comme déjà retenté. Le dernier tient la minute de
+  stabilité après un réveil Codex proche
+  de l'échéance dans une borne fixe et exige qu'un délai dépassé nomme les états
+  observés et la demande de réveil ; il refuse aussi que `active` compte comme
+  provider-ready quand le premier nudge ne crée aucun rollout, et tient les
+  trois dialogues interactifs (mise à jour, confiance du dossier, hooks) hors
+  des profils Codex sans opérateur.
 - Occurrences : #651, #679, #688, #717 ; af-npz9v1.50 ; #767 (armement local
   annoncé mais `autoMergeRequest=null`, af-npz9v1.50.1) ; af-ncg9qy ; #778
   (demande directe acceptée localement mais encore `AWAITING_CHECKS`,
-  af-nk5nm6).
+  af-nk5nm6) ; af-27yx7q.2.1 ; af-pd6m09 ; af-1l3znv (un workflow encore
+  actif ou une demande de rerun refusée était annoncé comme déjà retenté).
 - Ouvertes : aucune connue.
 
 ## A — Autre

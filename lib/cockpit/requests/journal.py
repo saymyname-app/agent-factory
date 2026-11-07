@@ -13,6 +13,12 @@ An event bead marked for the journal (``gc.journal_event``: its nature, or
 the technical source it comes from) is one entry of its own, at the time it
 was created (T01R6, af-ltchro; Spec af-2zseit, user story 126).
 
+The same beads say which decisions still wait for Benjamin (``open``: the
+questions and proposals of :func:`cockpit.requests.builder.build_requests`
+among them, by the same rule as the requests): the journal holds every
+decision asked, answered or not, and the Analyses count the open ones there
+(D, af-ten1sp).
+
 A bead naming a technical source under ``gc.journal_source`` declares that
 source connected: the factory writes its events to the journal, whether it
 sent one yet or not (F, af-njwz8v; user story 158).
@@ -20,6 +26,7 @@ sent one yet or not (F, af-njwz8v; user story 158).
 from dataclasses import asdict
 
 from cockpit.core.beads_source import read_beads_json
+from cockpit.requests.builder import build_requests
 from cockpit.ui.journal.entries import JOURNAL_EVENT_KEY, JOURNAL_SOURCE_KEY, JournalEntry, journal_from_beads
 
 # A bead carries one of these from the day it bears a request or a trace;
@@ -50,11 +57,19 @@ def read_journal(bd_bin="bd", timeout=READ_TIMEOUT_SECONDS):
         if isinstance(bead, dict)
     }
     return {"entries": [asdict(entry) for entry in journal_from_beads(by_id.values())],
+            "open": [{"quoi": request.quoi, "projet": request.projet, "depuis_quand": request.depuis_quand}
+                     for request in build_requests(list(by_id.values()))],
             "sources": sorted(source for source in sources if source)}
 
 
 def entries_from_value(value):
     return [JournalEntry(**raw) for raw in (value or {}).get("entries") or []]
+
+
+def open_from_value(value):
+    """The decisions open when the journal was read: ``quoi``, ``projet``
+    (its key) and ``depuis_quand`` (epoch seconds, or None)."""
+    return list((value or {}).get("open") or [])
 
 
 def sources_from_value(value):

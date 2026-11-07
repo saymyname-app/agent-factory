@@ -325,12 +325,13 @@ def port_free(port: int) -> bool:
     return True
 
 
-def launch_products(convoy: Convoy, commit: str, folder: Path) -> list[dict[str, Any]]:
+def launch_products(convoy: Convoy, commit: str, folder: Path, trial: bool = False) -> list[dict[str, Any]]:
     """Launch the product from a clean copy of `commit`, once per synthetic
-    dataset the profile declares, each on its own free port. All of them,
-    or none: one that does not start is the outage of the session."""
+    dataset the profile declares (for Essai, `trial`, on the first one),
+    each on its own free port. All of them, or none: one that does not start
+    is the outage of the session."""
     profile, _ = convoy.profile()
-    datasets = convoy.datasets()
+    datasets = convoy.datasets()[:1] if trial else convoy.datasets()
     launched: list[dict[str, Any]] = []
     try:
         for dataset in datasets:
@@ -362,7 +363,14 @@ def launch_products(convoy: Convoy, commit: str, folder: Path) -> list[dict[str,
 def cmd_open(args: argparse.Namespace) -> dict[str, Any]:
     convoy = Convoy(args.convoy, args.repo, args.profile)
     dossier = convoy.dossier()
-    if read_session(convoy.id) is not None:
+    held = read_session(convoy.id)
+    if held is not None and args.trial and held["commit"] == dossier["commit"]:
+        # Essai again: the product already prepared.
+        return {"ok": True, "convoy": convoy.id, "kind": held["kind"], "commit": held["commit"],
+                "digest": held["digest"], "page": held["page"], "address": held["products"][0]["address"],
+                "products": [{"dataset": entry["dataset"], "address": entry["address"]} for entry in held["products"]],
+                "rules": list(RULES)}
+    if held is not None:
         raise Refusal(
             f"une Acceptance Session est déjà ouverte sur le convoi {convoy.id} : la fermer par "
             f"« {PROGRAM} close {convoy.id} » avant d'en ouvrir une autre")
@@ -379,7 +387,7 @@ def cmd_open(args: argparse.Namespace) -> dict[str, Any]:
     folder = session_folder(convoy.id)
     folder.mkdir(parents=True, exist_ok=True)
     try:
-        products = launch_products(convoy, dossier["commit"], folder)
+        products = launch_products(convoy, dossier["commit"], folder, args.trial)
     except Outage as exc:
         folder.rmdir()
         status, answer = tool(STATE_TOOL, "acceptance-launch-failed", convoy.id, "--commit", dossier["commit"],
@@ -467,6 +475,8 @@ def main() -> int:
     p.add_argument("convoy")
     p.add_argument("--repo")
     p.add_argument("--profile")
+    p.add_argument("--trial", action="store_true",
+                   help="Essai of the cockpit: one product, on the first dataset; the session already open answers again")
     p.set_defaults(run=cmd_open)
     p = sub.add_parser("close")
     p.add_argument("convoy")

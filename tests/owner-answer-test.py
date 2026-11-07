@@ -624,6 +624,14 @@ class OwnerAnswerTest(sessions.AcceptanceSessionTest):
         self.assertEqual("fx-p1", self.judgement()["answers"][-1]["findings"][1]["proposal"])
         self.assertIn("export CSV", self.proposals_made()[0]["quoi"])
 
+    def test_abandoned_keeps_his_words_and_is_held_to_the_dossier_named(self):
+        commit, digest = self.delivered_dossier()
+        self.assertIn("commit", self.refusal_of(
+            lambda: self.respond("abandonné", "0" * 40, digest, "--reason", "Le besoin a disparu.", words="Je m'arrête.")))
+        self.passed(self.respond("abandonné", commit, digest, "--reason", "Le besoin a disparu.", words="Je m'arrête."))
+        answer = self.judgement()["answers"][-1]
+        self.assertEqual(("Je m'arrête.", commit, digest), (answer["words"], answer["commit"], answer["pack"]))
+
     def test_abandoned_on_a_non_conforme_dossier_takes_its_request_off_the_operators_list(self):
         commit = self.non_conforme()
         declared = self.root / "config" / "projects" / "fx-rig.toml"
