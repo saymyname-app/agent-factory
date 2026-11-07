@@ -66,7 +66,7 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state record-code-review  CONVOY TICKET --file PATH
     convoy-state respond-code-review CONVOY TICKET --file PATH
     convoy-state open-evaluation    CONVOY TICKET --commit SHA --file PATH
-    convoy-state launch-evaluation  CONVOY TICKET --bead BEAD
+    convoy-state launch-evaluation  CONVOY TICKET --bead BEAD [--replaces-unclaimed BEAD]
     convoy-state record-evaluation  CONVOY TICKET --file PATH
     convoy-state record-startup     CONVOY TICKET --commit SHA (--piece NAME --file PATH | --detail LINE)
     convoy-state release-evaluation CONVOY TICKET --state-file PATH [--state-file PATH] [--withdraw]
@@ -450,6 +450,7 @@ EVALUATION_OUTCOMES = ("favorable", "return_to_author", "planning_exception", "e
 # 01:20 Paris, relayed from the central chat: « Oui aux deux recommandations : fais ajouter puis utiliser l’option de réévaluation réelle pour les trois tickets, et accorde le tour de correction exceptionnel. Coordonne tout et vérifie que ça repart. »
 REEVALUATE_OPTION = "c"
 EVALUATION_MAX_LAUNCHES = 2
+EVALUATION_MAX_LAUNCH_HISTORY = EVALUATION_MAX_LAUNCHES + 1
 KIND_WITHOUT_EVALUATOR = "prefactoring"
 ADDRESS_RE = re.compile(r"^http://127\.0\.0\.1:[0-9]{1,5}$")
 MAX_FINDING_LINE = 600
@@ -1481,11 +1482,17 @@ def evaluation_criteria(value: Any) -> list[str]:
 
 
 def evaluation_launches(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list) or len(value) > EVALUATION_MAX_LAUNCHES:
+    if not isinstance(value, list) or len(value) > EVALUATION_MAX_LAUNCH_HISTORY:
         raise Refusal(f"lancements d'évaluation mal formés : {value!r}")
     for launch in value:
-        if not review_launch(launch):
+        core = ({name: field for name, field in launch.items() if name != "unclaimed"}
+                if isinstance(launch, dict) else launch)
+        if not review_launch(core) or ("unclaimed" in launch and launch["unclaimed"] is not True):
             raise Refusal(f"lancement d'évaluation mal formé : {launch!r}")
+    unclaimed = sum(launch.get("unclaimed") is True for launch in value)
+    attempts = len(value) - unclaimed
+    if unclaimed > 1 or attempts > EVALUATION_MAX_LAUNCHES:
+        raise Refusal(f"lancements d'évaluation mal formés : {value!r}")
     return value
 
 
@@ -4703,16 +4710,24 @@ def cmd_append_evaluation_product(args: argparse.Namespace) -> int:
 
 def cmd_launch_evaluation(args: argparse.Namespace) -> int:
     """Record that an Evaluator session was sent the open evaluation: the
-    first launch, then one relaunch when the first gave no result."""
+    first launch, then one relaunch when the first claimed attempt gave no
+    result. One cleaned route that was never claimed may remain in history."""
     _, _, record = evaluation_target(args)
     request = record.get("request")
     if not request:
         raise Refusal(f"aucune évaluation n'est demandée sur {args.ticket} : rien à lancer")
     if not isinstance(args.bead, str) or not BEAD_ID_RE.match(args.bead):
         raise Refusal(f"bead d'évaluation absent ou mal formé : {args.bead!r}")
-    if len(request["launches"]) >= EVALUATION_MAX_LAUNCHES:
+    if args.replaces_unclaimed:
+        matches = [launch for launch in request["launches"] if launch["bead"] == args.replaces_unclaimed]
+        if len(matches) != 1 or matches[0].get("refused") or any(
+                launch.get("unclaimed") is True for launch in request["launches"]):
+            raise Refusal("le remplacement ne nomme pas l'unique route non réclamée de cette évaluation")
+        matches[0]["unclaimed"] = True
+    attempts = [launch for launch in request["launches"] if launch.get("unclaimed") is not True]
+    if len(attempts) >= EVALUATION_MAX_LAUNCHES:
         raise Refusal(
-            f"une seule relance par évaluation : {args.ticket} en a déjà lancé {len(request['launches'])} sans résultat")
+            f"une seule relance par évaluation : {args.ticket} en a déjà lancé {len(attempts)} sans résultat")
     request["launches"].append({"bead": args.bead, "at": now()})
     # A new launch has its own time: the waits of the previous one are spent.
     request.pop("waited", None)
@@ -7856,7 +7871,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = command("append-evaluation-product", cmd_append_evaluation_product)
     p.add_argument("--commit")
     p.add_argument("--file")
-    command("launch-evaluation", cmd_launch_evaluation).add_argument("--bead")
+    p = command("launch-evaluation", cmd_launch_evaluation)
+    p.add_argument("--bead")
+    p.add_argument("--replaces-unclaimed")
     p = command("record-evaluation", cmd_record_evaluation)
     p.add_argument("--file")
     p.add_argument("--repo")

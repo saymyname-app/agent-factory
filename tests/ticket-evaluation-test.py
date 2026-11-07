@@ -116,6 +116,47 @@ def staged(helper):
     return reached
 
 
+class EvaluationClaimTest(unittest.TestCase):
+    def load_tool(self, name):
+        import importlib.util
+        from importlib.machinery import SourceFileLoader
+
+        loader = SourceFileLoader(name, str(TOOL))
+        module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+        loader.exec_module(module)
+        return module
+
+    def test_attempt_starts_at_the_formula_evaluator_step_claim(self):
+        module = self.load_tool("ticket_evaluation_claim_tool")
+        claimed_at = "2026-11-07T02:32:49Z"
+
+        def gc_data(*args):
+            if args[:3] == ("bd", "dep", "list"):
+                return [{"id": "fx-input"}]
+            if "gc.input_convoy_id=fx-input" in args:
+                return [{"id": "fx-root", "metadata": {"gc.formula_name": "mol-ticket-evaluation"}}]
+            if "gc.root_bead_id=fx-root" in args:
+                return [{"id": "fx-step", "status": "in_progress", "metadata": {
+                    "gc.step_id": "mol-ticket-evaluation.evaluate", "gc.claimed_at": claimed_at}}]
+            raise AssertionError(args)
+
+        module.read_bead = lambda _bead_id: {"id": "fx-launch", "status": "open", "metadata": {}}
+        module.gc_data = gc_data
+
+        started, closed = module.launch_state({"bead": "fx-launch", "at": "2026-11-07T01:00:00Z"})
+
+        self.assertEqual(module.stamp_seconds(claimed_at, "bad claim"), started)
+        self.assertFalse(closed)
+
+    def test_an_unreadable_graph_never_turns_a_closed_source_into_an_unclaimed_replacement(self):
+        module = self.load_tool("ticket_evaluation_unreadable_claim_tool")
+        module.read_bead = lambda _bead_id: {"id": "fx-launch", "status": "closed", "metadata": {}}
+        module.gc_data = lambda *_args: (_ for _ in ()).throw(module.Refusal("unreadable graph"))
+
+        self.assertEqual((None, False), module.launch_state({
+            "bead": "fx-launch", "at": "2026-11-07T01:00:00Z"}))
+
+
 class TicketEvaluationTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -2099,6 +2140,60 @@ class TicketEvaluationTest(unittest.TestCase):
         merged = self.merge()
         self.assertEqual(([], [SLICE]), (merged["merged"], [entry["id"] for entry in merged["waiting"]]))
         self.assertIn("Ticket Evaluation en cours", merged["waiting"][0]["reason"])
+
+    def test_an_evaluation_never_claimed_by_an_evaluator_stays_pending_without_using_an_attempt(self):
+        self.finished_slice(self.realized())
+        self.settings(timeout_seconds=0)
+        self.evaluator("unclaimed")
+
+        launched, waiting = self.settle(), self.settle()
+
+        self.assertEqual([SLICE], [entry["ticket"] for entry in launched["launched"]])
+        self.assertEqual([SLICE], [entry["ticket"] for entry in waiting["pending"]])
+        self.assertEqual(0, waiting["pending"][0]["launches"])
+        self.assertEqual(1, len(self.evaluation()["request"]["launches"]))
+        self.assertIsNone(self.shown()["stop"])
+
+    def test_waiting_before_the_evaluator_claim_does_not_consume_its_deadline(self):
+        self.finished_slice(self.realized())
+        self.settings(timeout_seconds=600)
+        self.evaluator("silent")
+        self.settle()
+        state = json.loads(self.tracker.read_text())
+        metadata = state["beads"][SLICE]["metadata"]
+        record = json.loads(metadata["gc.flow.evaluation"])
+        record["request"]["launches"][-1]["at"] = time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 900))
+        metadata["gc.flow.evaluation"] = json.dumps(record)
+        self.tracker.write_text(json.dumps(state))
+
+        waiting = self.settle()
+
+        self.assertEqual([SLICE], [entry["ticket"] for entry in waiting["pending"]])
+        self.assertEqual(1, waiting["pending"][0]["launches"])
+        self.assertEqual(1, len(self.launches()))
+
+    def test_a_cleaned_unclaimed_route_stays_in_history_and_gets_one_replacement(self):
+        self.finished_slice(self.realized())
+        self.settings(timeout_seconds=0)
+        self.evaluator("silent", "unclaimed", "unclaimed")
+
+        first, second = self.settle(), self.settle()
+        unclaimed = self.evaluation()["request"]["launches"][-1]["bead"]
+        closed = self.run_cmd(self.tmp / "path" / "gc", "bd", "close", unclaimed,
+                              "--reason", "workflow cleanup before claim")
+        self.assertEqual(0, closed.returncode, closed.stdout + closed.stderr)
+
+        replacement, waiting = self.settle(), self.settle()
+
+        self.assertEqual([SLICE], [entry["ticket"] for entry in first["launched"]])
+        self.assertEqual([SLICE], [entry["ticket"] for entry in second["relaunched"]])
+        self.assertEqual([SLICE], [entry["ticket"] for entry in replacement["relaunched"]])
+        self.assertEqual([SLICE], [entry["ticket"] for entry in waiting["pending"]])
+        self.assertEqual(1, waiting["pending"][0]["launches"])
+        self.assertEqual(3, len(self.evaluation()["request"]["launches"]))
+        self.assertEqual(3, len(self.launches()))
+        self.assertIsNone(self.shown()["stop"])
 
     def test_an_evaluation_without_a_result_is_launched_once_more_then_the_ticket_is_stopped_and_raised_once(self):
         self.finished_slice(self.realized())

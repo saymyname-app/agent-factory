@@ -436,6 +436,34 @@ R8_CLOSE_RELEASE = {
     "repair_bead": "af-npz9v1.61",
 }
 R8_CLOSE_RELEASE_TEST_ENV = "CONVOY_ADVANCE_TEST_R8_CLOSE_RELEASE"
+# af-npz9v1.62: Benjamin had already chosen option b, withdraw from the
+# graph, for the parked historical R6 and R7. Consume only those two exact
+# occurrences together after this maintenance is structurally delivered.
+R6_R7_WITHDRAWAL = {
+    "convoy": "af-strhoy",
+    "repair_bead": "af-npz9v1.62",
+    "tickets": [
+        {
+            "ticket": "af-32xzpz",
+            "tip": "8ec9fba8e0889fb03da69672b8e9e80bdc64f429",
+            "exit_at": "2026-10-29T18:53:10Z",
+            "parked_at": "2026-10-29T18:53:07Z",
+            "response_at": "2026-10-31T00:28:21Z",
+            "response_actor": "benjamin",
+            "response_option": "b",
+        },
+        {
+            "ticket": "af-vvascv",
+            "tip": "57b5655012a276234e296e1ba4a984c5fea2a346",
+            "exit_at": "2026-10-29T16:34:34Z",
+            "parked_at": "2026-10-29T16:34:31Z",
+            "response_at": "2026-10-31T00:28:52Z",
+            "response_actor": "benjamin",
+            "response_option": "b",
+        },
+    ],
+}
+R6_R7_WITHDRAWAL_TEST_ENV = "CONVOY_ADVANCE_TEST_R6_R7_WITHDRAWAL"
 # The resume that lifts that stop when every change since the freeze is the
 # base's the branch merged, not the ticket's (af-npz9v1.39): no amendment
 # was the ticket's to take, so no answer of the operator is asked.
@@ -1165,6 +1193,27 @@ def r8_close_release_authorization() -> dict[str, str]:
         and all(isinstance(value, str) and value for value in candidate.values()) else {}
 
 
+def r6_r7_withdrawal_authorization() -> dict[str, Any]:
+    """The fixed R6/R7 occurrences; synthetic trackers may replace ids."""
+    raw = os.environ.get(R6_R7_WITHDRAWAL_TEST_ENV) if os.environ.get("CONVOY_STATE_FAKE_TRACKER") else None
+    if raw is None:
+        return R6_R7_WITHDRAWAL
+    try:
+        candidate = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    fields = {"ticket", "tip", "exit_at", "parked_at", "response_at", "response_actor", "response_option"}
+    tickets = candidate.get("tickets") if isinstance(candidate, dict) else None
+    valid = isinstance(candidate, dict) and set(candidate) == {"convoy", "repair_bead", "tickets"} \
+        and all(isinstance(candidate.get(name), str) and candidate[name] for name in ("convoy", "repair_bead")) \
+        and isinstance(tickets, list) and len(tickets) == 2 \
+        and all(isinstance(ticket, dict) and set(ticket) == fields
+                and all(isinstance(value, str) and value for value in ticket.values()) for ticket in tickets) \
+        and all(ticket["response_option"] == "b" for ticket in tickets) \
+        and len({ticket["ticket"] for ticket in tickets}) == 2
+    return candidate if valid else {}
+
+
 def metadata_record(bead: dict[str, Any], key: str) -> dict[str, Any]:
     raw = (bead.get("metadata") or {}).get(key)
     try:
@@ -1567,6 +1616,78 @@ def close_exact_answered_r8(convoy: Convoy) -> dict[str, Any] | None:
     except Refusal as exc:
         return {"ticket": ticket["id"], "repair": authorization["repair_bead"], "error": f"refus : {exc}"}
     return {"ticket": ticket["id"], "repair": authorization["repair_bead"], "lifted": lifted, **replay}
+
+
+def withdraw_exact_answered_r6_r7(convoy: Convoy) -> dict[str, Any] | None:
+    """Consume the two recorded option-b withdrawals, and nothing nearby."""
+    authorization = r6_r7_withdrawal_authorization()
+    if convoy.id != authorization.get("convoy"):
+        return None
+    repair_id = authorization["repair_bead"]
+    repair = read_bead(repair_id)
+    readiness = delivery_readiness(repair)
+    if not readiness["ready"] or not readiness["pr_backed"] \
+            or (repair.get("metadata") or {}).get("merged_target") != "main":
+        return None
+
+    by_id = {ticket["id"]: ticket for ticket in convoy.tickets}
+    pending: list[tuple[dict[str, Any], dict[str, str], dict[str, Any]]] = []
+    problems: list[str] = []
+    for expected in authorization["tickets"]:
+        ticket_id = expected["ticket"]
+        ticket = by_id.get(ticket_id)
+        if ticket is None:
+            problems.append(f"{ticket_id}: absent du convoi")
+            continue
+        raw = read_bead(ticket_id)
+        metadata = raw.get("metadata") or {}
+        withdrawn = ticket.get("status") == "closed" and "withdrawn" in (ticket.get("gates") or {})
+        checks = {
+            "statut": withdrawn or ticket.get("status") == "in_progress",
+            "pointe": ticket.get("tip") == expected["tip"],
+            "sortie": (ticket.get("exit") or {}).get("exit") == "planning_exception"
+                      and (ticket.get("exit") or {}).get("at") == expected["exit_at"],
+            "parcage": (ticket.get("park") or {}).get("cause") == "planning_exception"
+                        and (ticket.get("park") or {}).get("origin") == ticket_id
+                        and (ticket.get("park") or {}).get("at") == expected["parked_at"],
+            "réponse": (
+                metadata.get("gc.escalation_response_at"),
+                metadata.get("gc.escalation_response_actor"),
+                metadata.get("gc.escalation_response_option"),
+            ) == (expected["response_at"], expected["response_actor"], expected["response_option"]),
+            "absence de fusion": ticket.get("merge") is None,
+            "absence d'autre fermeture": withdrawn or not any(
+                gate in (ticket.get("gates") or {}) for gate in CLOSING_GATES
+            ),
+            "demande": metadata.get("gc.needs_benjamin") in ("none", (ticket.get("park") or {}).get("detail")),
+        }
+        failed = [name for name, holds in checks.items() if not holds]
+        if failed:
+            problems.append(f"{ticket_id}: précondition divergente ({', '.join(failed)})")
+        elif not withdrawn:
+            pending.append((ticket, expected, raw))
+    if problems:
+        return {"repair": repair_id, "withdrawn": [], "error": "refus : retrait R6/R7 : " + "; ".join(problems)}
+    if not pending:
+        return None
+
+    withdrawn_ids: list[str] = []
+    cleared: list[str] = []
+    try:
+        for ticket, expected, raw in pending:
+            if (raw.get("metadata") or {}).get("gc.needs_benjamin") != "none":
+                passed(run([str(ESCALATION_BIN), "clear", ticket["id"]]), "escalation-door clear")
+                cleared.append(ticket["id"])
+            state_write(
+                "withdraw-ticket", convoy.id, ticket["id"], "--reason",
+                f"choix b de Benjamin du {expected['response_at']} : retirer {ticket['id']} du graphe "
+                f"après livraison prouvée de {repair_id}",
+            )
+            withdrawn_ids.append(ticket["id"])
+        convoy.load()
+    except Refusal as exc:
+        return {"repair": repair_id, "withdrawn": withdrawn_ids, "cleared": cleared, "error": f"refus : {exc}"}
+    return {"repair": repair_id, "withdrawn": withdrawn_ids, "cleared": cleared}
 
 
 def evaluation_repair_due(ticket: dict[str, Any]) -> tuple[str, str, str] | None:
@@ -2882,6 +3003,10 @@ def advance_convoy(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
         # Closed by command: an Accepted or abandoned Outcome is not reopened.
         out["closed"] = convoy.closed
         return out
+    withdrawn_by_decision = withdraw_exact_answered_r6_r7(convoy)
+    if withdrawn_by_decision:
+        out["withdrawn_by_decision"] = withdrawn_by_decision
+        return out
     closed_without_merge = close_exact_answered_r8(convoy)
     if closed_without_merge:
         out["closed_without_merge"] = closed_without_merge
@@ -3251,6 +3376,7 @@ def settle_ticket_end(convoy: Convoy, merge: dict[str, Any] | None) -> dict[str,
 # carrying one of them.
 FAILING_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("incident", ("error",)), ("grouped_request", ("error",)), ("repair", ("error",)),
+    ("withdrawn_by_decision", ("error",)),
     ("closed_without_merge", ("error", "message", "unruled")),
     ("repair_take_up", ("error", "message", "unruled")),
     ("item_repairs", ("error",)), ("outcome_repairs", ("error",)), ("outcome_evaluation", ("error",)),

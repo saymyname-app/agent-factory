@@ -75,6 +75,8 @@ C2B_RESULT_RELEASE_REPAIR = "fx-c58"
 R8_CLOSE_RELEASE_ENV = "CONVOY_ADVANCE_TEST_R8_CLOSE_RELEASE"
 R8_CLOSE_RELEASE_REPAIR = "fx-r8close"
 R8_CLOSE_CURRENT_REPAIR = "fx-r8current"
+R6_R7_WITHDRAWAL_ENV = "CONVOY_ADVANCE_TEST_R6_R7_WITHDRAWAL"
+R6_R7_WITHDRAWAL_REPAIR = "fx-r6-r7-withdrawal"
 
 
 def delivered(number, head, merge):
@@ -530,6 +532,38 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
             "exit_at": exit_record["at"],
             "repair_bead": R8_CLOSE_CURRENT_REPAIR,
         }
+
+    def exact_r6_r7_withdrawal(self):
+        """The two historical Planning Exceptions Benjamin answered b."""
+        first_tip = self.integrated()
+        self.resumable()
+        self.advance(CONVOY)
+        second_tip = self.git("commit-tree", f"{first_tip}^{{tree}}", "-p", first_tip, "-m", "R7 tip")
+        tickets = []
+        for ticket_id, tip in ((T1, first_tip), (T2, second_tip)):
+            self.git("branch", f"ticket/{ticket_id}", tip)
+            self.run_ok(STATE, "set-branch", CONVOY, ticket_id, "--branch", f"ticket/{ticket_id}")
+            self.taken(ticket_id, f"author-{ticket_id}")
+            self.planning_exception(ticket_id)
+            self.run_ok(ESCALATION, "repondre", ticket_id, "b", "--actor", "benjamin")
+            metadata = self.bead(ticket_id)["metadata"]
+            tickets.append({
+                "ticket": ticket_id,
+                "tip": tip,
+                "exit_at": json.loads(metadata["gc.flow.exit"])["at"],
+                "parked_at": json.loads(metadata["gc.flow.park"])["at"],
+                "response_at": metadata["gc.escalation_response_at"],
+                "response_actor": "benjamin",
+                "response_option": "b",
+            })
+        state = self.tracker_state()
+        state["beads"][R6_R7_WITHDRAWAL_REPAIR] = {
+            "title": "withdraw R6 and R7", "status": "closed", "issue_type": "bug",
+            "labels": ["maintenance"], "metadata": delivered(822, "e" * 40, "f" * 40),
+        }
+        self.tracker.write_text(json.dumps(state))
+        self.write_log.write_text("")
+        return {"convoy": CONVOY, "repair_bead": R6_R7_WITHDRAWAL_REPAIR, "tickets": tickets}
 
     def test_a_pass_sends_an_interrupted_ticket_to_a_fresh_author_session_and_counts_the_resume(self):
         self.started_convoy()
@@ -1854,6 +1888,90 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
 
         self.assertEqual([], self.of(again, "closed_without_merge"))
         self.assertEqual([], self.resume_launches())
+
+    def test_the_exact_answered_R6_and_R7_are_withdrawn_together_after_delivery(self):
+        authorization = self.exact_r6_r7_withdrawal()
+        env = {**self.env, R6_R7_WITHDRAWAL_ENV: json.dumps(authorization)}
+        before_unrelated = self.tickets_snapshot(T3, "fx-o1", "fx-p1")
+        before_responses = {
+            ticket_id: {key: value for key, value in self.bead(ticket_id)["metadata"].items()
+                        if key.startswith("gc.escalation_response_")}
+            for ticket_id in (T1, T2)
+        }
+
+        answer = self.advance(CONVOY, env=env)
+
+        for ticket_id in (T1, T2):
+            ticket_state = self.shown_state(ticket_id)
+            self.assertEqual("closed", self.bead(ticket_id)["status"])
+            self.assertIn("withdrawn", ticket_state["gates"])
+            self.assertIsNone(ticket_state["merge"])
+            self.assertEqual(before_responses[ticket_id], {
+                key: value for key, value in self.bead(ticket_id)["metadata"].items()
+                if key.startswith("gc.escalation_response_")
+            })
+            self.assertNotIn(ticket_id, "\n".join(self.needs()))
+        self.assertEqual(before_unrelated, self.tickets_snapshot(T3, "fx-o1", "fx-p1"))
+        self.assertEqual([], self.resume_launches())
+        release = self.of(answer, "withdrawn_by_decision")
+        self.assertEqual(
+            ([T1, T2], R6_R7_WITHDRAWAL_REPAIR),
+            (release["withdrawn"], release["repair"]),
+        )
+
+        before_second_pass = self.tickets_snapshot(T1, T2)
+        again = self.advance(CONVOY, env=env)
+
+        self.assertEqual(before_second_pass, self.tickets_snapshot(T1, T2))
+        self.assertEqual([], self.of(again, "withdrawn_by_decision"))
+
+    def test_the_R6_R7_withdrawal_rejects_every_nearby_state_before_writing(self):
+        authorization = self.exact_r6_r7_withdrawal()
+        seeded = self.tracker.read_text()
+
+        def wrong_identity(state, auth):
+            auth["tickets"][0]["ticket"] = "fx-not-r6"
+
+        def wrong_tip(state, auth):
+            auth["tickets"][0]["tip"] = "0" * 40
+
+        def wrong_exit(state, auth):
+            auth["tickets"][0]["exit_at"] = "2000-01-01T00:00:00Z"
+
+        def wrong_parking(state, auth):
+            auth["tickets"][1]["parked_at"] = "2000-01-01T00:00:00Z"
+
+        def wrong_response(state, auth):
+            state["beads"][T2]["metadata"]["gc.escalation_response_option"] = "a"
+
+        def already_merged(state, auth):
+            tip = auth["tickets"][0]["tip"]
+            state["beads"][T1]["metadata"]["gc.flow.merge"] = json.dumps({
+                "at": "2026-11-07T00:00:00Z", "outcome": "merged",
+                "ticket_commit": tip, "integration": tip, "commit": tip,
+            })
+
+        for name, change in (
+            ("identity", wrong_identity), ("tip", wrong_tip), ("exit", wrong_exit),
+            ("parking", wrong_parking), ("response", wrong_response), ("merge", already_merged),
+        ):
+            with self.subTest(name=name):
+                self.tracker.write_text(seeded)
+                self.write_log.write_text("")
+                state = self.tracker_state()
+                auth = json.loads(json.dumps(authorization))
+                change(state, auth)
+                self.tracker.write_text(json.dumps(state))
+                before = self.tickets_snapshot(T1, T2, T3)
+
+                answer = self.advance(
+                    CONVOY, expect=1, env={**self.env, R6_R7_WITHDRAWAL_ENV: json.dumps(auth)}
+                )
+
+                self.assertEqual(before, self.tickets_snapshot(T1, T2, T3), name)
+                release = self.of(answer, "withdrawn_by_decision")
+                self.assertIn("refus : retrait R6/R7", release["error"], name)
+                self.assertEqual([], release["withdrawn"], name)
 
     def test_the_exact_R8_close_retry_finishes_after_its_durable_native_lift(self):
         authorization = self.exact_r8_close_release()

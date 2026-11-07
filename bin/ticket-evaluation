@@ -818,7 +818,8 @@ def ticket_lock(ticket_id: str) -> Iterator[None]:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
-def launch(convoy: Convoy, ticket_id: str, request: dict[str, Any], settings: dict[str, Any]) -> str:
+def launch(convoy: Convoy, ticket_id: str, request: dict[str, Any], settings: dict[str, Any],
+           replaces_unclaimed: str | None = None) -> str:
     """Send the open evaluation to a new Evaluator session: a bead of its
     own, routed through the dispatch door on the Evaluator role."""
     number = len(request["launches"]) + 1
@@ -846,7 +847,10 @@ def launch(convoy: Convoy, ticket_id: str, request: dict[str, Any], settings: di
             f"l'évaluation du ticket {ticket_id} n'a pas été routée vers le rôle Evaluator : "
             f"{detail_of(routed)} ; aucun lancement n'est compté")
     try:
-        state_write("launch-evaluation", convoy.id, ticket_id, "--bead", bead_id)
+        state_args = ["launch-evaluation", convoy.id, ticket_id, "--bead", bead_id]
+        if replaces_unclaimed:
+            state_args.extend(("--replaces-unclaimed", replaces_unclaimed))
+        state_write(*state_args)
     except Refusal:
         # The Evaluator answered before its launch was written: its states
         # closed the request, and there is nothing left to record.
@@ -857,10 +861,72 @@ def launch(convoy: Convoy, ticket_id: str, request: dict[str, Any], settings: di
 
 
 def launched_at(launched: dict[str, Any]) -> int:
+    return stamp_seconds(launched.get("at"), f"heure de lancement de l'évaluation illisible : {launched!r}")
+
+
+def stamp_seconds(value: Any, error: str) -> int:
     try:
-        return calendar.timegm(time.strptime(launched["at"], "%Y-%m-%dT%H:%M:%SZ"))
-    except (KeyError, TypeError, ValueError) as exc:
-        raise Refusal(f"heure de lancement de l'évaluation illisible : {launched!r}") from exc
+        return calendar.timegm(time.strptime(value, "%Y-%m-%dT%H:%M:%SZ"))
+    except (TypeError, ValueError) as exc:
+        raise Refusal(error) from exc
+
+
+def gc_data(*args: str) -> Any:
+    proc = run([GC_BIN, *args])
+    if proc.returncode != 0:
+        raise Refusal(f"gc {' '.join(args)} a échoué : {detail_of(proc)}")
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise Refusal(f"gc {' '.join(args)} a rendu un JSON illisible") from exc
+
+
+def launch_state(launched: dict[str, Any]) -> tuple[int | None, bool]:
+    """When the Evaluator really claimed this route, and whether it ended.
+
+    Dispatch only creates routed work. The attempt starts at the claim on the
+    formula's Evaluator step; a route that never received that stamp consumes
+    neither its timeout nor one of the two attempts.
+    """
+    bead_id = launched["bead"]
+    try:
+        source = read_bead(bead_id)
+    except Refusal:
+        return None, False
+    try:
+        inputs = gc_data("bd", "dep", "list", bead_id, "--direction", "up", "--type", "tracks", "--json")
+        if not isinstance(inputs, list):
+            raise Refusal(f"convois d'entrée de {bead_id} illisibles")
+        roots = []
+        for input_ in inputs:
+            found = gc_data("bd", "list", "--all", "--metadata-field",
+                            f"gc.input_convoy_id={input_['id']}", "--json", "--limit", "0")
+            if not isinstance(found, list):
+                raise Refusal(f"workflow d'évaluation de {bead_id} illisible")
+            roots.extend(root for root in found
+                         if (root.get("metadata") or {}).get("gc.formula_name") == "mol-ticket-evaluation")
+        steps = []
+        for root in roots:
+            found = gc_data("bd", "list", "--all", "--metadata-field",
+                            f"gc.root_bead_id={root['id']}", "--json", "--limit", "0")
+            if not isinstance(found, list):
+                raise Refusal(f"étapes d'évaluation de {bead_id} illisibles")
+            steps.extend(step for step in found
+                         if (step.get("metadata") or {}).get("gc.step_id") == "mol-ticket-evaluation.evaluate")
+    except (KeyError, Refusal):
+        # No transition is inferred from a graph that could not be read.
+        return None, False
+    if not roots or not steps:
+        return None, False
+    claimed = []
+    for step in steps:
+        value = (step.get("metadata") or {}).get("gc.claimed_at")
+        if value is not None:
+            claimed.append((stamp_seconds(value, f"prise de l'étape Evaluator illisible : {value!r}"), step))
+    if not claimed:
+        return None, source.get("status") == "closed"
+    at, step = max(claimed, key=lambda item: item[0])
+    return at, source.get("status") == "closed" or step.get("status") == "closed"
 
 
 def waited(request: dict[str, Any], launched: dict[str, Any]) -> int:
@@ -874,22 +940,18 @@ def waited(request: dict[str, Any], launched: dict[str, Any]) -> int:
     return int(request.get("waited", 0)) + pending
 
 
-def expired(launched: dict[str, Any], timeout: int, waited_seconds: int = 0) -> bool:
-    """A launch that gave no result: its time, less what it waited for a
-    requested dataset, is over; its bead was closed without states (the
-    record closes the request first), or the session that answered it had
-    already rendered another review of the convoy (`refused`, set by
-    bin/convoy-state)."""
+def expired(launched: dict[str, Any], claimed_at: int | None, closed: bool,
+            timeout: int, waited_seconds: int = 0) -> bool:
+    """A claimed attempt gave no result; an unclaimed route never expires."""
     if launched.get("refused"):
         return True
+    if claimed_at is None:
+        return False
     # At most one more delay: a controller that never opens the dataset
     # still lets the launch end.
-    if time.time() >= launched_at(launched) + timeout + min(waited_seconds, timeout):
+    if time.time() >= claimed_at + timeout + min(waited_seconds, timeout):
         return True
-    try:
-        return read_bead(launched["bead"]).get("status") == "closed"
-    except Refusal:
-        return False
+    return closed
 
 
 # --- what leaves the flow: the operator ----------------------------------------------
@@ -1102,7 +1164,13 @@ def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> d
             return startup_control(convoy, ticket_id, commit, settings)
         launches = current["launches"] if current else []
         timeout = launch_timeout(settings, len((current or {}).get("datasets") or datasets))
-        timed_out = bool(launches and expired(launches[-1], timeout, waited(current, launches[-1])))
+        states = [(launched, *launch_state(launched)) for launched in launches]
+        attempts = [launched for launched, claimed_at, _closed in states
+                    if launched.get("unclaimed") is not True
+                    and (claimed_at is not None or launched.get("refused"))]
+        latest = states[-1] if states else None
+        timed_out = bool(latest and expired(latest[0], latest[1], latest[2], timeout,
+                                           waited(current, latest[0])))
         desired = current.get("wanted") if current else None
         if timed_out:
             live = set(evaluation_of(ticket).get("live") or [])
@@ -1146,14 +1214,16 @@ def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> d
                         "dataset": entry["dataset"], "address": entry["address"]}
             convoy.load()
             current = evaluation_of(convoy.ticket(ticket_id))["request"]
-        if launches and not expired(launches[-1], timeout, waited(current, launches[-1])):
+        if latest and latest[1] is None and not latest[2]:
+            return {"ticket": ticket_id, "action": "pending", "commit": commit, "launches": len(attempts)}
+        if latest and latest[1] is not None and not timed_out:
             deadline = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(
-                launched_at(launches[-1]) + timeout + min(waited(current, launches[-1]), timeout)))
-            return {"ticket": ticket_id, "action": "pending", "commit": commit, "launches": len(launches),
+                latest[1] + timeout + min(waited(current, latest[0]), timeout)))
+            return {"ticket": ticket_id, "action": "pending", "commit": commit, "launches": len(attempts),
                     "deadline": deadline}
-        if len(launches) >= MAX_LAUNCHES:
-            stop_detail = (f"la Ticket Evaluation n'a rendu aucun état en {len(launches)} lancements "
-                           f"({', '.join(launch_['bead'] for launch_ in launches)})")
+        if len(attempts) >= MAX_LAUNCHES:
+            stop_detail = (f"la Ticket Evaluation n'a rendu aucun état en {len(attempts)} lancements "
+                           f"({', '.join(launch_['bead'] for launch_ in attempts)})")
             if ticket.get("stop"):
                 return {"ticket": ticket_id, "action": "waiting", "reason": f"{stop_detail} ; le ticket reste arrêté"}
             state_write("stop-ticket", convoy.id, ticket_id, "--reason", STOP_NO_RESULT, "--detail", stop_detail)
@@ -1193,9 +1263,12 @@ def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> d
             ticket = convoy.ticket(ticket_id)
             reap(convoy, ticket, [entry["state_file"] for entry in environment])
             current = evaluation_of(convoy.ticket(ticket_id))["request"]
-        bead_id = launch(convoy, ticket_id, current, settings)
+        replaces_unclaimed = latest[0]["bead"] if latest and latest[1] is None and latest[2] else None
+        if replaces_unclaimed and any(launch_.get("unclaimed") is True for launch_ in launches):
+            raise Refusal("l'unique remplacement d'une route non réclamée a lui aussi été nettoyé")
+        bead_id = launch(convoy, ticket_id, current, settings, replaces_unclaimed)
         return {"ticket": ticket_id, "action": "relaunched" if launches else "launched", "commit": commit,
-                "bead": bead_id, "launches": len(launches) + 1,
+                "bead": bead_id, "launches": len(attempts),
                 "environment": [{"dataset": entry["dataset"], "address": entry["address"]}
                                 for entry in current["environment"]]}
 

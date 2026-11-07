@@ -315,8 +315,11 @@ in the round for the Evidence Pack. It is never left out.
 
 ## An evaluation that gives no result
 
-A launch gives no result when its delay passed since it was sent, or when
-its bead was closed while the request is still open. The delay is
+A launch gives no result when its delay passed since the Evaluator formula
+step was actually claimed, or when that claimed work was closed while the
+request is still open. Dispatch alone is not an attempt: a route that still
+waits for the one Evaluator seat has no deadline and consumes neither of the
+two launches. The delay is
 `max(timeout_seconds, datasets × per_dataset_seconds)`
 (`config/delivery-flow.json`, `evaluation`): `timeout_seconds` (3600 s, a
 value without a measured base) is the floor, and an evaluation that covers
@@ -343,6 +346,15 @@ the operator through `bin/escalation-door`. That stop alone is lifted by
 code: `bin/convoy-advance` resumes the ticket itself, once per tip of the
 integration branch and within the bound K of the resumes, withdrawing the
 request (`docs/CONVOY_ADVANCE.md`, cause `evaluation_no_result`).
+
+The claim proof is `gc.claimed_at` on the
+`mol-ticket-evaluation.evaluate` formula step. If cleanup already closed a
+route that never got that proof, its launch bead remains in the request's
+history but is not one of the two attempts; the controller may route one
+replacement. An open unclaimed route is simply left for Gas City to assign
+when the Evaluator seat becomes available—no model polling or parallel
+Evaluator is added. A claimed replacement has the ordinary timeout and
+counts toward the same bound.
 
 An evaluation handed in by a session that already rendered a review of
 tests, a code review or a Ticket Evaluation of the convoy is refused the
@@ -373,7 +385,7 @@ On the ticket, written by `bin/convoy-state` only (`docs/CONVOY_STATE.md`):
 
 | Key | Value |
 |---|---|
-| `gc.flow.evaluation` | `rounds`: each recorded round — an `evaluation` (`commit`, `criteria`: number, text, state, evidence, reason, cause, only for a criterion a validated expectation compares since ADR-0030 L4, one per criterion before; `demonstration_line`; optional `screen_findings`; `outcome`, `verdict`, `roles`, `environment`: dataset and address of each product, `recorded_by`, `conversation` when known, `at`) or a `startup` (`commit`, `started`, `evidence` and `environment`, or `detail`; `model`: `not_required` on a started ticket without interface, ADR-0030 L4; `outcome`, `verdict`, `at`). `request`, while an evaluation is open — `commit`, `criteria`, `demonstration_line`, `roles`, `environment` (with `state_file`), `launches` (`bead`, `at`, and `refused`: `{session, at}` when the session that answered had already served), `at`. `live`: the launch records of the products still to stop |
+| `gc.flow.evaluation` | `rounds`: each recorded round — an `evaluation` (`commit`, `criteria`: number, text, state, evidence, reason, cause, only for a criterion a validated expectation compares since ADR-0030 L4, one per criterion before; `demonstration_line`; optional `screen_findings`; `outcome`, `verdict`, `roles`, `environment`: dataset and address of each product, `recorded_by`, `conversation` when known, `at`) or a `startup` (`commit`, `started`, `evidence` and `environment`, or `detail`; `model`: `not_required` on a started ticket without interface, ADR-0030 L4; `outcome`, `verdict`, `at`). `request`, while an evaluation is open — `commit`, `criteria`, `demonstration_line`, `roles`, `environment` (with `state_file`), `launches` (`bead`, `at`; `unclaimed: true` on the one cleaned route retained without counting as an attempt; and `refused`: `{session, at}` when the session that answered had already served), `at`. `live`: the launch records of the products still to stop |
 | `gc.flow.verdict.evaluation` | the verdict of the last round that gave one, and the commit it judged |
 | `gc.flow.models` | per delivery role: `agent`, `provider`, `model`, `at` |
 | `gc.flow.stop` | reason `evaluation_no_result` or `evaluation_outage`, a one-line detail, and `raised` once the escalation door accepted the request |
@@ -416,8 +428,8 @@ reference receive neither brief field.
   observed in the sessions. `record` checks that it runs in a read-only
   role session, not which one.
 - The Evaluator role holds one session at a time: an evaluation waits
-  behind another one, and the time of a launch runs from the dispatch. The
-  products of a waiting evaluation stay up meanwhile.
+  behind another one, and its time runs only from the formula step's
+  `gc.claimed_at`. The products of a waiting evaluation stay up meanwhile.
 - A launched product belongs to no service manager: if the host restarts
   between the launch and the session, the Evaluator finds nothing at the
   address (an `unobservable` by the environment, or no result), and the
