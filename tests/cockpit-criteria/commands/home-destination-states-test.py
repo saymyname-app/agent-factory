@@ -99,24 +99,14 @@ class HomeDestinationStates(unittest.TestCase):
         assert_says(self, page, "metric-label-4", "Vérifications CI réussies")
         assert_says(self, page, "bilan-1", "Activité sur 7 jours")
         assert_says(self, page, "panel-1", "Derniers runs", "Tout voir")
-        # « Derniers runs » shows, in its frame, the three cards the
-        # reference freezes there, in its order: each its workflow, its
-        # status, its title, its step, a lane per participant with the bar
-        # of each of its jobs, its axis, its start and its duration -- read
-        # in the document the frame shows, not in the page around it.
-        self.assertEqual(
-            [
-                ("Livraison D01 Ta décision Reprise du cockpit Juger le résultat Humain Code Alex Léa Noé "
-                 "0s 6m 12m Début 15:00 (Paris) 12 min 0 s", 11),
-                ("Livraison D01 En cours Recherche dans les notes · nouvelle version "
-                 "Préparer les tests · Relire les tests Humain Code Alex Léa 0s 4m06s 8m12s "
-                 "Début 14:34 (Paris) 8 min 12 s", 4),
-                ("Livraison D01 ✓ Fusionné Recherche dans les notes Exécution terminée · historique disponible "
-                 "Humain Code Alex Léa Noé 0s 6m 12m Début 14:10 (Paris) 12 min 0 s", 12),
-            ],
-            self.run_cards(page),
-            "« Derniers runs » does not show the cards of the reference",
-        )
+        # « Derniers runs » shows, in its frame, the cards of the page Runs
+        # for the runs the tracker holds (K, af-jr8bsh: no card of example;
+        # home-recent-runs-test.py holds each to its card on the page Runs):
+        # the run of « Reprise du cockpit », waiting for Benjamin, first.
+        cards = self.run_cards(page)
+        self.assertTrue(cards and all(part in cards[0][0] for part in ("Livraison D01", "Ta décision",
+                                                                       "Reprise du cockpit")),
+                        f"« Derniers runs » does not show first the run of « Reprise du cockpit »: {cards}")
         assert_says(self, page, "panel-2", "Ce qui t’attend")
         assert_says(self, page, "request-1", "Le cockpit attend ton avis", "Usine")
         assert_says(self, page, "request-2", "Choisir le format d’export", "Notes")
@@ -168,7 +158,7 @@ class HomeDestinationStates(unittest.TestCase):
         job its lanes draw."""
         inside = page["inside"].get("overview-runs-1")
         self.assertIsNotNone(inside, "the frame « Derniers runs » shows no document the page can read")
-        cards = [anchor for anchor in inside["anchors"] if re.fullmatch(r"card-\d+", anchor["name"])]
+        cards = [anchor for anchor in inside["anchors"] if re.fullmatch(r"card(?:-\d+)?", anchor["name"])]
         return [(card["text"], sum(1 for anchor in inside["anchors"]
                                    if anchor["name"].startswith("mini-bar-") and card["name"] in anchor["chain"]))
                 for card in cards]
