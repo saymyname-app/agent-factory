@@ -338,9 +338,16 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         """GET /: the destination « Vue d’ensemble » of Panorama (T02,
         af-0gonc9), with the zones of the cockpit no destination of
         Panorama holds yet folded under it."""
+        # The runs are those of the page Runs, their agents named as there
+        # (C1): the frame « Derniers runs » shows the same cards (K). The
+        # sessions are waited for once the tracker was read: before, they
+        # are refused, and a home whose tracker fails is served at once.
         snapshot = self._first_reading(read_model)
+        if (snapshot.get("beads") or {}).get("read_at") is not None:
+            snapshot = self._first_reading(read_model, agents=True)
         now = read_model.now()
         requests, beads_row, _ = self._assemble_requests(snapshot, now)
+        runs, runs_failed, _ = self._workflow_runs(read_model, snapshot)
         # A gesture whose outcome is uncertain is drawn unavailable for as
         # long as a POST on it would be refused (af-fksj2c).
         uncertain = self.server.uncertain.pending(beads_row["read_at"] if beads_row else None,
@@ -362,7 +369,8 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         )
         driver = getattr(self.server, "stop_driver", None)
         view = overview_view(snapshot, requests, now=now, undelivered=self._undelivered(), uncertain=uncertain,
-                             stop_trial_passed=bool(driver is not None and driver.essai_reussi()))
+                             stop_trial_passed=bool(driver is not None and driver.essai_reussi()),
+                             analysis=analyses(snapshot, now), runs=runs, runs_failed=runs_failed)
         # T13, af-cx20q9: the SameSite=Strict cookie an action POST must
         # echo back -- a cross-site POST never carries it, so its presence
         # alone proves this request came from a page the cockpit itself
