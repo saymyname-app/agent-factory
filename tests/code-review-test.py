@@ -1100,6 +1100,43 @@ class CodeReviewTest(unittest.TestCase):
         self.assertEqual(1, len(self.launches()))
         self.assertIsNone(self.shown()["stop"])
 
+    def test_an_unclaimed_replacement_route_stays_pending_without_consuming_an_attempt(self):
+        self.finished_slice()
+        self.reviewer("silent", "unclaimed")
+        self.settings(timeout_seconds=0)
+        launched = self.settle()
+        relaunched = self.settle()
+        pending = self.settle()
+
+        self.assertEqual([SLICE], [entry["ticket"] for entry in launched["launched"]])
+        self.assertEqual([SLICE], [entry["ticket"] for entry in relaunched["relaunched"]])
+        self.assertEqual([SLICE], [entry["ticket"] for entry in pending["pending"]])
+        self.assertEqual(1, pending["pending"][0]["launches"])
+        self.assertEqual(2, len(self.review()["request"]["launches"]))
+        self.assertIsNone(self.shown()["stop"])
+
+        unclaimed = self.review()["request"]["launches"][-1]["bead"]
+        closed = self.run_cmd(self.tmp / "path" / "gc", "bd", "close", unclaimed,
+                              "--reason", "workflow cleanup before claim")
+        self.assertEqual(0, closed.returncode, closed.stdout + closed.stderr)
+        replacement, waiting = self.settle(), self.settle()
+
+        self.assertEqual([SLICE], [entry["ticket"] for entry in replacement["relaunched"]])
+        self.assertEqual([SLICE], [entry["ticket"] for entry in waiting["pending"]])
+        self.assertEqual(1, waiting["pending"][0]["launches"])
+        self.assertEqual(3, len(self.review()["request"]["launches"]))
+        self.assertIsNone(self.shown()["stop"])
+
+        last = self.review()["request"]["launches"][-1]["bead"]
+        closed = self.run_cmd(self.tmp / "path" / "gc", "bd", "close", last,
+                              "--reason", "second workflow cleanup before claim")
+        self.assertEqual(0, closed.returncode, closed.stdout + closed.stderr)
+        refused = self.settle(expect=EXIT_REFUSED)
+
+        self.assertIn("unique remplacement", refused["refused"][0]["reason"])
+        self.assertEqual(3, len(self.launches()))
+        self.assertIsNone(self.shown()["stop"])
+
     def test_a_review_without_result_is_not_passed_and_is_launched_once_more(self):
         self.finished_slice()
         self.reviewer("silent", "favorable")
