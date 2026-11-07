@@ -275,7 +275,9 @@ the read model, never from the frozen page:
   « Cette vue est indisponible » with « Réessayer » (`POST /api/health/recheck`)
   once a read of it failed (`ReadModel.fail`, from the poller; a `bd` call
   fails after `COCKPIT_BEADS_READ_TIMEOUT_SECONDS`, 10 s);
-  « Rien à afficher ici » when nothing waits and nothing is declared;
+  « Rien à afficher ici » when nothing waits, nothing is declared and no
+  indicator lacks its source (K2, code review F1.3: one that does is said
+  unavailable with its reason);
   otherwise four indicators, those of the Analyses (K, af-jr8bsh: the one
   call `cockpit.analyses.indicators.analyses` computes them for both pages
   -- « Décisions à prendre » the open decisions, « Résultats fusionnés »,

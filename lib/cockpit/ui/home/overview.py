@@ -16,7 +16,8 @@ The states:
 - ``loading``: the tracker has not answered yet; ``error``: it was never
   read and its last read failed -- the page says the real state is unknown
   and offers to read again;
-- ``empty``: nothing waits, no project, no result, no indicator;
+- ``empty``: nothing waits, no project, no result, and no indicator lacks
+  its source (one that does says why it is unavailable);
 - ``content``: four indicators, the activity, the last runs, what waits
   (« Ce qui t’attend ») beside the result open under it, the projects. A
   reading of the supervisor or the tracker that is no longer current keeps
@@ -187,7 +188,11 @@ def overview_view(snapshot, requests, stop_trial_passed=False, now=None, undeliv
     view["projects"] = _projects(snapshot.get("projets"), beads, view["requests"])
     projets = snapshot.get("projets")
     view["projects_unread"] = projets is not None and projets["value"] is None
-    if not (view["requests"] or view["signals"] or view["dossier"] or view["projects"] or view["activity"] or runs):
+    # An indicator without its source says why: the home is not empty of
+    # it (K2, code review F1.3).
+    unsourced = analysis and any(indicator["unsourced"] for indicator in analysis["indicators"].values())
+    if not (view["requests"] or view["signals"] or view["dossier"] or view["projects"] or view["activity"] or runs
+            or unsourced):
         view["state"] = EMPTY
     return view
 

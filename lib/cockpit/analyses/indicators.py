@@ -134,7 +134,7 @@ def analyses(snapshot, now, requests, days=DAYS):
     results_sources = "runs des livraisons, lus sur le tracker"
     indicators = {
         DECISIONS: _indicator(
-            DECISIONS, None if requests_reason else str(len(decisions)), requests_reason,
+            DECISIONS, None if requests_reason else str(len(decisions)), requests_reason, requests_reason,
             population="les demandes qui t’attendent, celles que liste « Ce qui t’attend » : questions, "
                        "propositions, résultats à juger et relances d’une session ou d’un ordre en pause, "
                        "ouvertes maintenant",
@@ -145,7 +145,7 @@ def analyses(snapshot, now, requests, days=DAYS):
             calculation="le nombre de demandes que liste « Ce qui t’attend » ; une décision répondue ne compte "
                         "plus, elle est listée parmi les décisions répondues"),
         RESULTS: _indicator(
-            RESULTS, None if results_reason else str(len(results)), results_reason,
+            RESULTS, None if results_reason else str(len(results)), results_reason, results_reason,
             population="les résultats de chantier dont la fusion est prouvée ; les PR et les tickets ne sont "
                        "pas des résultats",
             period=period, sources="la preuve de fusion (gc.flow.promotion) qui clôt le run de chaque "
@@ -155,7 +155,7 @@ def analyses(snapshot, now, requests, days=DAYS):
                         "(Paris)"),
         DELAY: _indicator(
             DELAY, None if results_reason or not totals else delay_text(_median(totals)),
-            results_reason or (None if totals else "aucun résultat fusionné sur la période"),
+            results_reason or (None if totals else "aucun résultat fusionné sur la période"), results_reason,
             population="les résultats fusionnés de la période" if results_reason
             else "les %d résultats fusionnés de la période" % len(results),
             period=period, sources="la publication du graphe, la livraison, l’acceptation et la preuve de fusion "
@@ -165,7 +165,7 @@ def analyses(snapshot, now, requests, days=DAYS):
                         "s’additionnent pas"),
         CI: _indicator(
             CI, None if github_reason or not completed else "%d %%" % round(100 * len(succeeded) / len(completed)),
-            github_reason or (None if completed else "aucune exécution CI terminée sur la période"),
+            github_reason or (None if completed else "aucune exécution CI terminée sur la période"), github_reason,
             population="les exécutions CI terminées de la période ; une exécution en cours n’est pas comptée",
             period=period, sources="la CI GitHub%s, toutes ses exécutions créées sur la période" % (
                 " du dépôt %s" % repository if repository else ""),
@@ -186,9 +186,12 @@ def analyses(snapshot, now, requests, days=DAYS):
             "answered": answered, "answered_reason": journal_reason, "now": now}
 
 
-def _indicator(key, value, reason, **method):
+def _indicator(key, value, reason, source_reason, **method):
+    """One indicator: ``unsourced`` when it is unavailable because its
+    source gives no value (``source_reason``), not because the period holds
+    nothing to compute."""
     return {"key": key, "label": LABELS[key], "value": value, "reason": None if value is not None else reason,
-            **method}
+            "unsourced": value is None and bool(source_reason), **method}
 
 
 def _unread(row, reading, failing, stale):
