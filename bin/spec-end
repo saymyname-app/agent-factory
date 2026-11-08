@@ -140,7 +140,12 @@ FIDELITY_RED = 1
 
 UNRULED = "état sans règle"
 REMOTE = "origin"
-DEFAULT_TIMEOUT = 600
+# The take-up waits its turn on the host, then runs the whole regression
+# within its measured full budget, plus the shared margin (study C, T3).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+import test_budgets  # noqa: E402
+
+DEFAULT_TIMEOUT = test_budgets.deadline(test_budgets.load(Path(__file__).resolve().parents[1]), "full")
 MAX_DETAIL = 300
 REQUEST_LINE_MAX = 140
 MAX_NAMED = 5

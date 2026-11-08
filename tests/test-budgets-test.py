@@ -6,6 +6,7 @@ lib/test_budgets.py)."""
 from __future__ import annotations
 
 import json
+import runpy
 import shutil
 import subprocess
 import sys
@@ -57,6 +58,12 @@ class TestBudgets(unittest.TestCase):
             self.assertEqual(data[field], budgets[field], field)
         self.assertEqual(budgets["host_wait_seconds"] + budgets["full_seconds"] + budgets["margin_seconds"],
                          test_budgets.deadline(budgets, "full"))
+
+    def test_full_regression_callers_share_the_measured_deadline(self):
+        expected = test_budgets.deadline(test_budgets.load(ROOT), "full")
+        for path in ("bin/spec-integration", "bin/spec-end"):
+            namespace = runpy.run_path(str(ROOT / path))
+            self.assertEqual(expected, namespace["DEFAULT_TIMEOUT"], path)
 
     def test_a_missing_file_falls_back_to_600_s(self):
         self.assertEqual(600, test_budgets.load(self.tmp)["full_seconds"])
