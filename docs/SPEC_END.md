@@ -252,11 +252,11 @@ conditions that refused; `check` every condition that is not green.
 
 ## Limits
 
-- **The gate runs inside the pass of the order**, whose timeout is 300 s
-  (`orders/convoy-advance.toml`), and under the Factory-wide lock of the
-  passes. The regression command and the fidelity of every screen with a
-  real browser may take longer: the order is then killed before the record
-  is written and the next pass starts over. Not measured on a real project.
+- **The gate runs inside the pass of the order**, under the Factory-wide lock
+  of the passes. Its default regression deadline is the measured full deadline
+  from `config/test-budgets.json` (host wait + `full_seconds` + margin), the
+  same source as `bin/spec-integration`; the order timeout is derived from the
+  budget of one complete pass and held by `bin/test-budgets check-order`.
 - **No sealed piece for the end tests and the end fidelity.** The evidence
   store files pieces per ticket; what the two controls read is kept in the
   record on the convoy (`records`), which is not sealed.
