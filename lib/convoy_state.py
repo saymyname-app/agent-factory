@@ -91,7 +91,7 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state record-integration-red CONVOY --commit SHA --integration SHA --protected SHA --control LINE [--detail LINE]
                                         [--check regression|fidelity] [--end-round]
     convoy-state set-integration-repair CONVOY --ticket TICKET
-    convoy-state clear-integration-red  CONVOY
+    convoy-state clear-integration-red  CONVOY [--green SHA --protected SHA --green-command LINE]
     convoy-state record-spec-end CONVOY --commit SHA --protected SHA --file PATH
     convoy-state record-evidence-pack CONVOY --commit SHA --digest sha256:HEX --path DIR (--conforming | --non-conforming)
                                       [--inadmissible N]
@@ -232,6 +232,7 @@ KEY_PARK = PREFIX + "park"
 KEY_INCIDENT = PREFIX + "incident"
 KEY_INTEGRATION = PREFIX + "integration"
 KEY_INTEGRATION_RED = PREFIX + "integration_red"
+KEY_INTEGRATION_RED_CLEARED = PREFIX + "integration_red_cleared"
 KEY_MERGE = PREFIX + "merge"
 KEY_SESSION = PREFIX + "session"
 KEY_CODE_REVIEW = PREFIX + "code_review"
@@ -2364,6 +2365,21 @@ def integration_red_record(raw: Any) -> dict[str, Any]:
     return record
 
 
+def integration_red_cleared_record(raw: Any) -> dict[str, Any]:
+    """The last red of the integration branch a control found green again
+    while its repair was still open (af-6vhm6r): the red control, that
+    repair, the green tip and the tip of the protected branch it holds,
+    and the command that was green there."""
+    record = stored_record(raw, ("control", "repair", "commit", "protected", "command", "at"))
+    single_line(record["control"], "contrôle rouge retiré")
+    single_line(record["command"], "commande verte")
+    valid_commit(record["commit"], "pointe verte de la branche d'intégration")
+    valid_commit(record["protected"], "pointe de la branche protégée")
+    if not isinstance(record["repair"], str) or not BEAD_ID_RE.match(record["repair"]):
+        raise Refusal(f"ticket repair du rouge retiré absent ou mal formé : {record['repair']!r}")
+    return record
+
+
 def spec_end_conditions(value: Any) -> list[dict[str, Any]]:
     """The three verdicts of the end-of-Spec gate, in the order of its list,
     all passing, each with the one line that says what was read."""
@@ -3493,6 +3509,14 @@ def cmd_show(args: argparse.Namespace) -> int:
         except Refusal as exc:
             integration_red = {"unruled": f"{KEY_INTEGRATION_RED} : {exc}", "raw": metadata[KEY_INTEGRATION_RED]}
             convoy_unruled.append({"field": KEY_INTEGRATION_RED, "reason": integration_red["unruled"]})
+    integration_red_cleared: dict[str, Any] | None = None
+    if KEY_INTEGRATION_RED_CLEARED in metadata:
+        try:
+            integration_red_cleared = integration_red_cleared_record(metadata[KEY_INTEGRATION_RED_CLEARED])
+        except Refusal as exc:
+            integration_red_cleared = {"unruled": f"{KEY_INTEGRATION_RED_CLEARED} : {exc}",
+                                       "raw": metadata[KEY_INTEGRATION_RED_CLEARED]}
+            convoy_unruled.append({"field": KEY_INTEGRATION_RED_CLEARED, "reason": integration_red_cleared["unruled"]})
     grouped_request: dict[str, Any] | None = None
     if KEY_GROUPED_REQUEST in metadata:
         try:
@@ -3574,7 +3598,8 @@ def cmd_show(args: argparse.Namespace) -> int:
     # The fingerprints of the pieces captured on the assembled product (T24).
     evidence: dict[str, Any] = {}
     for key in sorted(metadata):
-        known = (KEY_MARK, KEY_INCIDENT, KEY_INTEGRATION, KEY_INTEGRATION_RED, KEY_GROUPED_REQUEST, KEY_SPEC_END,
+        known = (KEY_MARK, KEY_INCIDENT, KEY_INTEGRATION, KEY_INTEGRATION_RED, KEY_INTEGRATION_RED_CLEARED,
+                 KEY_GROUPED_REQUEST, KEY_SPEC_END,
                  KEY_OUTCOME_EVALUATION, KEY_END_REVIEW, KEY_END_ROUND, KEY_EVIDENCE_PACK, KEY_END_STOP, KEY_DELIVERED,
                  KEY_ACCEPTANCE, KEY_JUDGEMENT, KEY_PROMOTION, KEY_CLOSED, *(COUNTER_PREFIX + name for name in CONVOY_COUNTERS))
         if key.startswith(EVIDENCE_PREFIX):
@@ -3598,6 +3623,7 @@ def cmd_show(args: argparse.Namespace) -> int:
         "incident": incident,
         "integration": integration,
         "integration_red": integration_red,
+        "integration_red_cleared": integration_red_cleared,
         "grouped_request": grouped_request,
         "spec_end": spec_end,
         "end_review": end_review,
@@ -7212,10 +7238,31 @@ def cmd_set_integration_repair(args: argparse.Namespace) -> int:
 
 
 def cmd_clear_integration_red(args: argparse.Namespace) -> int:
-    convoy, _ = load_convoy(args.convoy)
+    """Withdraw the red of the integration branch. `--green SHA --protected
+    SHA --green-command LINE`: a control found it green again at that tip (bin/
+    spec-integration); if its repair is still open, the same write keeps
+    that proof (`integration_red_cleared`), so code can close the repair
+    without merge instead of leaving it with nothing to restore
+    (af-6vhm6r)."""
+    convoy, tickets = load_convoy(args.convoy)
     require_marked(convoy)
-    run_gc(["bd", "update", args.convoy, "--unset-metadata", KEY_INTEGRATION_RED])
-    return done(args.convoy, args.convoy, {KEY_INTEGRATION_RED: None})
+    green = (args.green, args.protected, args.green_command)
+    if any(value is not None for value in green) and None in green:
+        raise Refusal("--green, --protected et --green-command vont ensemble : la pointe verte, la branche protégée "
+                      "qu'elle tient et la commande verte")
+    values: dict[str, Any] = {KEY_INTEGRATION_RED: None}
+    metadata = metadata_of(convoy)
+    if args.green is not None and KEY_INTEGRATION_RED in metadata:
+        known = integration_red_record(metadata[KEY_INTEGRATION_RED])
+        repair = next((ticket for ticket in tickets if ticket.get("id") == known.get("repair")), None)
+        if repair is not None and repair.get("status") != "closed":
+            values[KEY_INTEGRATION_RED_CLEARED] = encode(integration_red_cleared_record(encode({
+                "control": known["control"], "repair": known["repair"],
+                "commit": valid_commit(args.green, "pointe verte de la branche d'intégration"),
+                "protected": valid_commit(args.protected, "pointe de la branche protégée"),
+                "command": single_line(args.green_command, "commande verte"), "at": now()})))
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
 
 
 def cmd_record_grouped_request(args: argparse.Namespace) -> int:
@@ -8067,7 +8114,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = command("resolve-owner-exception", cmd_resolve_owner_exception, ticket=False)
     p.add_argument("--approver")
     p.add_argument("--words")
-    command("clear-integration-red", cmd_clear_integration_red, ticket=False)
+    p = command("clear-integration-red", cmd_clear_integration_red, ticket=False)
+    p.add_argument("--green")
+    p.add_argument("--protected")
+    p.add_argument("--green-command")
     p = sub.add_parser("ticket")
     p.add_argument("ticket")
     p.add_argument("--bead-json")

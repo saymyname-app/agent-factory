@@ -115,6 +115,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/convoy-state-test.py ConvoyStateTest.test_withdraw_ticket_writes_its_gate_no_op_outcome_note_and_closed_status_in_one_tracker_write`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_the_exact_answered_R8_is_closed_without_merge_then_its_control_runs_green ConvoyAdvanceTest.test_the_exact_R8_close_retry_finishes_after_its_durable_native_lift ConvoyAdvanceTest.test_the_exact_answered_R8_closes_without_merge_and_one_repair_follows_a_red_control ConvoyAdvanceTest.test_the_R8_close_release_rejects_nearby_state_and_option_b`,
   `python3 tests/convoy-advance-red-replay-test.py`,
+  `python3 tests/convoy-advance-red-cleared-test.py`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_malformed_legacy_resume_is_left_to_the_incident_door_without_crashing`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_factory_repair_is_taken_up_and_tested_before_its_resume_is_consumed_once`,
   `bash tests/factory-work-dispatch-test.sh`. Les courses réponse/retrait qui
@@ -146,7 +147,10 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   ne reconnaissait pas l'état réel) ; af-3p6iz7 (un repair red_check sans
   commit dont le rouge ne se reproduit pas n'avait aucune clôture codée : R10
   restait parqué ; la règle générale rejoue le contrôle et clôt sans fusion
-  au vert).
+  au vert) ; af-6vhm6r (la même règle ignorait un rouge déjà retiré au vert
+  par `spec-integration merge` après un déplacement de pointe : R10 restait
+  ouvert sans rouge à rétablir ; ce vert est gardé comme preuve et le repair
+  se clôt sans fusion dessus).
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
   contrôle : `criterion_already_green` reste au Planning Run ;
   `outcome_evaluation_no_result` et `outcome_evaluation_outage` ne repartent

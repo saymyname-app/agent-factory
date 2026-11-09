@@ -43,7 +43,9 @@ FLAKY = ("sh -c 'echo \"FAIL tests/flaky-test.py (3s)\"; "
          "echo \"regression: took 9s with the host held (full budget 2340s)\"; exit 1'")
 
 
-class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
+class RedRepairHarness(first.ConvoyAdvanceHarness):
+    """The repair of a red integration branch, its author gone by an
+    operator request (tests/convoy-advance-red-cleared-test.py loads it)."""
 
     def red_repair_asked(self, regression="true", commit=False):
         """The repair of the red at work, its author gone by an operator
@@ -74,6 +76,9 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
 
     def red(self):
         return json.loads(self.run_ok(STATE, "show", CONVOY, "--repo", self.root).stdout)["convoy"]["integration_red"]
+
+
+class ConvoyAdvanceTest(RedRepairHarness):
 
     def test_a_red_repair_with_nothing_to_merge_is_closed_without_merge_once_the_replay_is_green(self):
         self.red_repair_asked()
