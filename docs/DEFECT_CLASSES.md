@@ -114,6 +114,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_the_cleaned_C2b_evaluation_request_is_rebuilt_once_without_an_author_resume`,
   `python3 tests/convoy-state-test.py ConvoyStateTest.test_withdraw_ticket_writes_its_gate_no_op_outcome_note_and_closed_status_in_one_tracker_write`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_the_exact_answered_R8_is_closed_without_merge_then_its_control_runs_green ConvoyAdvanceTest.test_the_exact_R8_close_retry_finishes_after_its_durable_native_lift ConvoyAdvanceTest.test_the_exact_answered_R8_closes_without_merge_and_one_repair_follows_a_red_control ConvoyAdvanceTest.test_the_R8_close_release_rejects_nearby_state_and_option_b`,
+  `python3 tests/convoy-advance-red-replay-test.py`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_malformed_legacy_resume_is_left_to_the_incident_door_without_crashing`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_factory_repair_is_taken_up_and_tested_before_its_resume_is_consumed_once`,
   `bash tests/factory-work-dispatch-test.sh`. Les courses réponse/retrait qui
@@ -142,7 +143,10 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   effacée avant le correctif, puis son parcage empêchait de la reconstruire) ;
   af-npz9v1.67 (`open-resume` avait effacé la sortie au sommet de C2b alors
   que sa dernière reprise en conservait la copie, donc la transition exacte
-  ne reconnaissait pas l'état réel).
+  ne reconnaissait pas l'état réel) ; af-3p6iz7 (un repair red_check sans
+  commit dont le rouge ne se reproduit pas n'avait aucune clôture codée : R10
+  restait parqué ; la règle générale rejoue le contrôle et clôt sans fusion
+  au vert).
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
   contrôle : `criterion_already_green` reste au Planning Run ;
   `outcome_evaluation_no_result` et `outcome_evaluation_outage` ne repartent
@@ -192,9 +196,11 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   tient l'identité `po-agent/<session>` entre l'écrivain opérateur et
   `factory-orphan-sweep` ; `bash tests/dispatch-door-test.sh` tient les
   arêtes `blocks` écrites pour sérialiser les périmètres jusqu'à la dernière
-  porte d'admission, avant la création de l'espace de travail.
+  porte d'admission, avant la création de l'espace de travail ;
+  `python3 tests/test-budgets-test.py` tient le délai de la régression complète
+  lu par `spec-integration` et `spec-end` sur la même source mesurée.
 - Occurrences : #620, #625, #659, #660, #681, #685, #686, #693, #695, #703,
-  #716 ; af-npz9v1.42 ; af-npz9v1.52 ; af-9wnmid.
+  #716 ; af-npz9v1.42 ; af-npz9v1.52 ; af-9wnmid ; af-a53dy2.
 - Ouvertes : aucune ; `review_replay_due`, `tdd_evidence_piece` et
   `names_in_texts` ont remplacé les trois paires ouvertes de l'étude B § 4.4
   (af-npz9v1.29), et `evaluation_proven_by_test` tient l'écrivain de la

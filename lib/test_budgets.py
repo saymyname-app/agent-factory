@@ -17,7 +17,8 @@ them all, and every reader takes them from here:
   lock (tests/cockpit-criteria/regression.py);
 - `green_seconds` / `full_seconds`: its budget once the lock is held, at a
   ticket's green (the ticket's families, study C T4) and for the whole series
-  (a merge, a take-up, prefactoring);
+  (a merge, a take-up, prefactoring); `bin/spec-integration` and `bin/spec-end`
+  derive their full-regression deadline from it;
 - `criterion_test_seconds`: one criterion test run by bin/tdd-step;
 - `margin_seconds`, `alert_ratio`.
 

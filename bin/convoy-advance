@@ -1651,24 +1651,29 @@ def repairs_missing_from_integration(convoy: Convoy) -> dict[str, str]:
                 commits[repair_id] = metadata["gc.merge_commit"]
     if not commits:
         return {}
-    branch = convoy.integration["branch"]
-    tip = ""
-    for ref in (f"refs/remotes/origin/{branch}", f"refs/heads/{branch}"):
-        tip = run(["git", "-C", str(convoy.repo), "rev-parse", "--verify", "--quiet",
-                   f"{ref}^{{commit}}"]).stdout.strip()
-        if tip:
-            break
+    tip = integration_tip(convoy)
     return {repair_id: commit for repair_id, commit in commits.items()
             if not tip or run(["git", "-C", str(convoy.repo), "merge-base", "--is-ancestor", commit, tip]).returncode}
 
 
-def integration_take_up(convoy: Convoy) -> tuple[dict[str, Any], int]:
+def integration_tip(convoy: Convoy) -> str:
+    """The tip of the convoy's integration branch, the remote one first."""
+    branch = (convoy.integration or {})["branch"]
+    for ref in (f"refs/remotes/origin/{branch}", f"refs/heads/{branch}"):
+        tip = run(["git", "-C", str(convoy.repo), "rev-parse", "--verify", "--quiet",
+                   f"{ref}^{{commit}}"]).stdout.strip()
+        if tip:
+            return tip
+    return ""
+
+
+def integration_take_up(convoy: Convoy, *extra: str) -> tuple[dict[str, Any], int]:
     """Run the integration branch's declared control through its native gate."""
     if not convoy.rig:
         raise Refusal(f"les tickets du convoi {convoy.id} ne nomment pas un seul projet connu de "
                       "config/projects : le profil de régression est inconnu")
     proc = run([str(INTEGRATION_BIN), "take-up", convoy.id, "--repo", str(convoy.repo),
-                "--profile", str(rig_profile(convoy.rig))])
+                "--profile", str(rig_profile(convoy.rig)), *extra])
     answer = parsed(proc, f"spec-integration take-up {convoy.id}")
     if not isinstance(answer, dict):
         raise Refusal(f"spec-integration take-up {convoy.id} a rendu une réponse illisible")
@@ -1694,6 +1699,71 @@ def take_up_delivered_repairs(convoy: Convoy) -> dict[str, Any] | None:
             result["error"] = "refus : réparation(s) livrée(s) absente(s) de la branche d'intégration après reprise : " \
                 + ", ".join(sorted(still_missing))
     return result
+
+
+def green_red_repair(convoy: Convoy) -> dict[str, Any] | None:
+    """The open repair of the integration red whose author left by an
+    operator request with nothing to merge (its branch is in the
+    integration tip), not replayed yet for that exit: the red did not
+    reproduce for its author, and code alone says whether it still holds."""
+    red = convoy.red or {}
+    if not convoy.integration or "repair" not in red:
+        return None
+    ticket = next((entry for entry in convoy.tickets if entry["id"] == red["repair"]), None)
+    if ticket is None or ticket.get("status") == "closed" or ticket.get("kind") != "repair" \
+            or ticket.get("merge") is not None or any(gate in (ticket.get("gates") or {}) for gate in CLOSING_GATES):
+        return None
+    exit_record, park = ticket.get("exit") or {}, ticket.get("park") or {}
+    if exit_record.get("exit") != "operator_request" or not exit_record.get("at") \
+            or red.get("replay") == exit_record["at"]:
+        return None
+    # Parked by its own request, or lifted by a pass that stopped before
+    # the close: never parked behind another ticket.
+    if park and (park.get("origin"), park.get("cause")) != (ticket["id"], "operator_request"):
+        return None
+    tip, integration = ticket.get("tip"), integration_tip(convoy)
+    if not integration or (tip and run(["git", "-C", str(convoy.repo), "merge-base", "--is-ancestor",
+                                        tip, integration]).returncode != 0):
+        return None
+    return ticket
+
+
+def close_green_red_repair(convoy: Convoy) -> dict[str, Any] | None:
+    """Spec §8, a red that does not reproduce (af-3p6iz7): code runs the
+    red control again on the current integration tip, the protected branch
+    taken up. Green: the repair is closed without merge, the replay as its
+    proof, and the red withdrawn. Red: the red is recorded again with that
+    exit as replayed, and the repair stays open on it, as any repair."""
+    ticket = green_red_repair(convoy)
+    if ticket is None:
+        return None
+    exit_at = ticket["exit"]["at"]
+    try:
+        replay, returncode = integration_take_up(convoy, "--red-repair", ticket["id"], "--replay", exit_at)
+        if returncode != 0:
+            if "red" not in replay:
+                detail = replay.get("error") or replay.get("message") or f"exit {returncode}"
+                raise Refusal(f"spec-integration take-up {convoy.id} a échoué : {detail}")
+            replay.pop("error", None)
+            convoy.load()
+            return {"ticket": ticket["id"], "closed": False, **replay}
+        lifted: list[str] = []
+        if ticket.get("park"):
+            repairs = [part for repair in delivered_technical_repairs(ticket) for part in ("--repair", repair)]
+            lifted = state_write("lift-park", convoy.id, ticket["id"], "--request", ticket["id"], *repairs)["lifted"]
+        if (read_bead(ticket["id"]).get("metadata") or {}).get("gc.needs_benjamin") not in (None, "none"):
+            passed(run([str(ESCALATION_BIN), "clear", ticket["id"]]), "escalation-door clear")
+        tests = replay.get("tests") or {}
+        state_write("withdraw-ticket", convoy.id, ticket["id"], "--reason",
+                    f"rouge non reproduit, clos sans fusion par le code : {tests.get('command')} "
+                    f"code {tests.get('exit_code')} sur {replay.get('branch')} au commit {tests.get('commit')} "
+                    f"({convoy.integration.get('protected')} reprise au {replay.get('protected_tip')}), "
+                    f"sortie rejouée {exit_at}, rien à fusionner")
+        state_write("clear-integration-red", convoy.id)
+        convoy.load()
+    except Refusal as exc:
+        return {"ticket": ticket["id"], "error": f"refus : {exc}"}
+    return {"ticket": ticket["id"], "closed": True, "lifted": lifted, **replay}
 
 
 def close_exact_answered_r8(convoy: Convoy) -> dict[str, Any] | None:
@@ -3138,6 +3208,13 @@ def advance_convoy(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
     if closed_without_merge:
         out["closed_without_merge"] = closed_without_merge
         if "error" in closed_without_merge:
+            return out
+    # The repair of a red that did not reproduce for its author, nothing to
+    # merge: code replays the red control before anyone is asked again.
+    replayed = close_green_red_repair(convoy)
+    if replayed:
+        out["red_repair_replay"] = replayed
+        if "error" in replayed:
             return out
     # A red integration branch (T21): its one repair is published, and
     # nothing but that repair starts or is resumed.
