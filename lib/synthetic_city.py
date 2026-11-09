@@ -1088,6 +1088,24 @@ def _utc(moment: datetime) -> str:
     return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _merged_delivery(at: str, key: str) -> dict:
+    """The records of a D01 delivery accepted and merged at `at`, as
+    bin/convoy-state writes them on its convoy (read back by
+    convoy_state.outcome_records_of)."""
+    commit = hashlib.sha1(f"synthetic-run-{key}".encode("utf-8")).hexdigest()
+    pack = "sha256:" + hashlib.sha256(f"synthetic-run-{key}".encode("utf-8")).hexdigest()
+    words = "Accepté."
+    records = {
+        "gc.flow.delivered": {"at": at, "commit": commit, "pack": pack, "protected": "0" * 40,
+                              "version": "spec-end/v4"},
+        "gc.flow.judgement": {"verdicts": [], "answers": [{"approver": APPROVER, "commit": commit, "pack": pack,
+                                                           "at": at, "words": words, "response": "accepted"}]},
+        "gc.flow.promotion": {"at": at, "judged": commit, "merged": commit, "protected": "0" * 40, "tip": commit},
+        "gc.flow.closed": {"how": "accepted", "said": words, "approver": APPROVER, "at": at},
+    }
+    return {name: json.dumps(record, ensure_ascii=False) for name, record in records.items()}
+
+
 def _run_records(run, lanes, moment, sessions, opened, ui, view, trace) -> list:
     """The beads of one run of the fixtures; the sessions of its agents in
     `sessions` (by lane, then by name: one per job, or those the job says),
@@ -1136,13 +1154,17 @@ def _run_records(run, lanes, moment, sessions, opened, ui, view, trace) -> list:
     roots, filed = {}, None
     if formula == "mol-ticket-author":
         run_id, ticket_id, digest = f"synthetic-run-{key}", f"synthetic-ticket-{key}", f"sha256:synthetic-{key}"
+        convoy = {"gc.flow.mark": "new-flow/v1", "gc.graph_digest": digest, "gc.project_id": RUN_PROJECT,
+                  "gc.spec_id": f"synthetic-{key}"}
         records.append({"id": run_id, "title": run["title"], "issue_type": "convoy", "created_at": at(0),
-                        "created_by": RUN_TRIGGERED_BY, **ended(run["end"]),
-                        "metadata": {"gc.flow.mark": "new-flow/v1", "gc.graph_digest": digest,
-                                     "gc.project_id": RUN_PROJECT, "gc.spec_id": f"synthetic-{key}"}})
+                        "created_by": RUN_TRIGGERED_BY, **ended(run["end"]), "metadata": convoy})
         ticket = {"gc.flow.mark": "new-flow/v1", "gc.graph_digest": digest, "gc.ticket_id": key}
         if run["status"] == "Fusionné":
             ticket["gc.flow.merge"] = json.dumps({"at": at(run["end"]), "outcome": "merged"})
+            # A ticket merged into the integration branch is no merge of the
+            # result: the delivery merged is the one its records say
+            # accepted, then merged into the protected branch.
+            convoy.update(_merged_delivery(at(run["end"]), key))
         elif run["status"] == "Abandonné":
             ticket["gc.flow.gate.withdrawn"] = json.dumps({"at": at(run["end"])})
         if run.get("declared"):
