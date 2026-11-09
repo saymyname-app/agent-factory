@@ -503,8 +503,10 @@ class OutcomeEvaluationTest(Harness):
         self.assertEqual("launched", self.settle()["action"])
         answer = self.settle()
         self.assertEqual("pending", answer["action"], answer)
-        launched = self.outcome()["request"]["launches"][-1]["at"]
-        start = calendar.timegm(time.strptime(launched, "%Y-%m-%dT%H:%M:%SZ"))
+        # The delay runs from the Evaluator's claim of its step, not from the dispatch.
+        bead = self.outcome()["request"]["launches"][-1]["bead"]
+        claimed = json.loads(self.tracker.read_text())["beads"][f"{bead}-step"]["metadata"]["gc.claimed_at"]
+        start = calendar.timegm(time.strptime(claimed, "%Y-%m-%dT%H:%M:%SZ"))
         self.assertEqual(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(start + 2 * 3600)), answer["deadline"])
 
     def test_a_per_dataset_delay_that_is_not_a_number_of_seconds_is_refused(self):
