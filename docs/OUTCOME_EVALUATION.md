@@ -180,7 +180,7 @@ contradiction.
 
 | Reason | When |
 | --- | --- |
-| `outcome_evaluation_no_result` | Two launches, each left without states past the delay of one launch (« Which datasets ») |
+| `outcome_evaluation_no_result` | Two claimed launches, each left without states past the delay of one launch (« Which datasets ») |
 | `outcome_evaluation_outage` | The clean copy does not start, or two outages in a row at the same commit |
 | `story_unobservable` | A story handed in as `unobservable` |
 
@@ -193,6 +193,14 @@ of an author while another declared supplier is available
 it is never recorded as `outcome_evaluation_outage`. When no other supplier
 is available, or a supplier was not recorded, the evaluation runs and the
 record says so (`independence`).
+
+A routed evaluation becomes an attempt only when the `evaluate` step of its
+`mol-outcome-evaluation` workflow carries `gc.claimed_at`. Its timeout starts
+at that claim, not at dispatch. A route waiting for the single Evaluator seat
+therefore stays pending and consumes neither attempt. If workflow cleanup
+closes such an unclaimed route, its history is retained and one replacement
+may be routed; only the two actually claimed attempts count toward
+`outcome_evaluation_no_result`.
 
 ## Settings
 
