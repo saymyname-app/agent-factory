@@ -96,7 +96,7 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state record-evidence-pack CONVOY --commit SHA --digest sha256:HEX --path DIR (--conforming | --non-conforming)
                                       [--inadmissible N]
     convoy-state open-end-review        CONVOY --commit SHA --file PATH
-    convoy-state launch-end-review      CONVOY --bead BEAD
+    convoy-state launch-end-review      CONVOY --bead BEAD [--replaces-unclaimed BEAD]
     convoy-state record-end-review      CONVOY --file PATH
     convoy-state set-end-review-repair  CONVOY --finding ID (--ticket TICKET | --refused LINE)
     convoy-state stop-end-review        CONVOY --reason REASON --detail LINE
@@ -334,6 +334,7 @@ EVIDENCE_PACK_VERSION = "evidence-pack/v1"
 END_REVIEW_OUTCOMES = ("favorable", "unfavorable", "incomplete")
 END_REVIEW_INCOMPLETE = "incomplete"
 END_REVIEW_MAX_LAUNCHES = 2
+END_REVIEW_MAX_LAUNCH_HISTORY = END_REVIEW_MAX_LAUNCHES + 1
 END_REVIEW_STOPS = ("end_review_no_result", "end_review_repair_refused")
 END_REVIEW_SOURCE = "end_review"
 # What refuses a tip of the integration branch at the end of a Spec (Spec §8,
@@ -2544,13 +2545,18 @@ def end_finding(value: Any) -> dict[str, Any]:
 
 
 def end_launches(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list) or len(value) > END_REVIEW_MAX_LAUNCHES:
+    if not isinstance(value, list) or len(value) > END_REVIEW_MAX_LAUNCH_HISTORY:
         raise Refusal(f"lancements de la revue de fin mal formés : {value!r}")
     for launch in value:
-        if not isinstance(launch, dict) or not {"bead", "at"} <= set(launch) or set(launch) - {"bead", "at", "result"} \
+        if not isinstance(launch, dict) or not {"bead", "at"} <= set(launch) \
+                or set(launch) - {"bead", "at", "result", "unclaimed"} \
                 or not isinstance(launch["bead"], str) or not BEAD_ID_RE.match(launch["bead"]) \
-                or launch.get("result", END_REVIEW_INCOMPLETE) != END_REVIEW_INCOMPLETE:
+                or launch.get("result", END_REVIEW_INCOMPLETE) != END_REVIEW_INCOMPLETE \
+                or ("unclaimed" in launch and (launch["unclaimed"] is not True or "result" in launch)):
             raise Refusal(f"lancement de la revue de fin mal formé : {launch!r}")
+    unclaimed = sum(launch.get("unclaimed") is True for launch in value)
+    if unclaimed > 1 or len(value) - unclaimed > END_REVIEW_MAX_LAUNCHES:
+        raise Refusal(f"lancements de la revue de fin mal formés : {value!r}")
     return value
 
 
@@ -6971,16 +6977,24 @@ def cmd_open_end_review(args: argparse.Namespace) -> int:
 
 def cmd_launch_end_review(args: argparse.Namespace) -> int:
     """Record that a reviewer session was sent the open end review: the
-    first launch, then one relaunch when the first gave no result."""
+    first launch, then one relaunch when the first claimed attempt gave no
+    result. One cleaned route that was never claimed may remain in history."""
     _, _, _, record = end_review_target(args.convoy)
     request = record.get("request")
     if not request or "stop" in record:
         raise Refusal(f"aucune revue de fin n'est demandée sur le convoi {args.convoy} : rien à lancer")
     if not isinstance(args.bead, str) or not BEAD_ID_RE.match(args.bead):
         raise Refusal(f"bead de revue absent ou mal formé : {args.bead!r}")
-    if len(request["launches"]) >= END_REVIEW_MAX_LAUNCHES:
+    if args.replaces_unclaimed:
+        matches = [launch for launch in request["launches"] if launch["bead"] == args.replaces_unclaimed]
+        if len(matches) != 1 or "result" in matches[0] or any(
+                launch.get("unclaimed") is True for launch in request["launches"]):
+            raise Refusal("le remplacement ne nomme pas l'unique route non réclamée de cette revue de fin")
+        matches[0]["unclaimed"] = True
+    attempts = [launch for launch in request["launches"] if launch.get("unclaimed") is not True]
+    if len(attempts) >= END_REVIEW_MAX_LAUNCHES:
         raise Refusal(
-            f"une seule relance par revue de fin : le convoi {args.convoy} en a déjà lancé {len(request['launches'])} "
+            f"une seule relance par revue de fin : le convoi {args.convoy} en a déjà lancé {len(attempts)} "
             "sans résultat")
     launch: dict[str, Any] = {"bead": args.bead, "at": now()}
     incomplete = sum(1 for round_ in record["rounds"]
@@ -8073,7 +8087,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = command("open-end-review", cmd_open_end_review, ticket=False)
     p.add_argument("--commit")
     p.add_argument("--file")
-    command("launch-end-review", cmd_launch_end_review, ticket=False).add_argument("--bead")
+    p = command("launch-end-review", cmd_launch_end_review, ticket=False)
+    p.add_argument("--bead")
+    p.add_argument("--replaces-unclaimed")
     command("record-end-review", cmd_record_end_review, ticket=False).add_argument("--file")
     p = command("set-end-review-repair", cmd_set_end_review_repair, ticket=False)
     p.add_argument("--finding")
