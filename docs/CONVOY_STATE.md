@@ -1123,7 +1123,12 @@ convoy: exit 0 and `"new_flow": true`, or exit 4 and `"new_flow": false`.
 With `--bead-json -` it reads the bead from stdin, as `gc bd show --json`
 printed it, instead of reading the tracker again: `bin/dispatch-door` asks
 it that way on every dispatch, so a bead without the mark costs no further
-tracker read and is dispatched exactly as before.
+tracker read and is dispatched exactly as before. For a marked bead it
+also says `closed_outside_gate`: closed with no record of the ticket-end
+gate nor of the withdrawal (the same rule `show` flags as « fermé hors
+porte »), and then `reopen_status`, the status its gates allow (`in_progress`
+once the dispatch gate is recorded, `open` before). `bin/factory-delivery-guard`
+reads it to undo a close it wrote itself (`af-epwkmn`).
 
 **Verdict validity** (Spec §8, « commit après verdict »). A verdict carries
 `"valid": true` only while its commit is the tip of the ticket's branch in

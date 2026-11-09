@@ -51,6 +51,15 @@ The caller verifies with the same `gh pr view` path and flags
 (gc.delivery_proof_flagged_at) exactly once whatever does not verify as
 merged. Reopening a flagged bead stays a human/Mayor call.
 
+A formula step's gc.outcome=pass is not such a claim (af-eyi5wa): it says
+the step ran, and mol-do-work's push-and-pr step passes by *opening* the PR
+it records in gc.pr_url. The delivery claim and its proof live on the work
+bead that step serves (pr-autopilot finalizes it after the merge), so a
+step bead -- one carrying gc.step_ref or gc.step_id -- is in scope only
+when it says gc.work_outcome=shipped itself. Five such steps (af-j9lv5x,
+af-f66nd, af-lxjh0k, af-u7wonu, af-6oab1k) were flagged as unproven
+deliveries while their PRs were open, or merged and proven elsewhere.
+
 ADR-0026 adds a separate structural readiness predicate below. It preserves
 the original six-field reporting API, while requiring PR-backed dependencies
 and named waits to carry coherent merge target/SHA and successful required-CI
@@ -316,18 +325,23 @@ def _parse_pr_url(value: Any) -> tuple[str, str] | None:
     return match.group(1), match.group(2)
 
 
+def _is_formula_step(metadata: dict[str, Any]) -> bool:
+    return bool(_text(metadata.get("gc.step_ref")) or _text(metadata.get("gc.step_id")))
+
+
 def _claims_shipped(metadata: dict[str, Any]) -> bool:
-    return (
-        _text(metadata.get("gc.outcome")).lower() == "pass"
-        or _text(metadata.get("gc.work_outcome")).lower() == "shipped"
-    )
+    if _text(metadata.get("gc.work_outcome")).lower() == "shipped":
+        return True
+    # A step's pass says the step ran, not that the work shipped (af-eyi5wa).
+    return _text(metadata.get("gc.outcome")).lower() == "pass" and not _is_formula_step(metadata)
 
 
 def is_claimed_shipped_bead(bead: dict[str, Any]) -> bool:
     """A closed bead (any label, not just product-goal) that claims a shipped
     outcome via gc.outcome=pass or gc.work_outcome=shipped and names its own
     gc.pr_url, but does not already carry the six verified ADR-0016 proof
-    fields -- the af-x45xw shape (af-1xz1g)."""
+    fields -- the af-x45xw shape (af-1xz1g). A formula step claims it only
+    through gc.work_outcome=shipped (af-eyi5wa)."""
     if not isinstance(bead, dict):
         return False
     if _text(bead.get("status")) != "closed":

@@ -61,7 +61,8 @@ if [[ ${1:-} == bd && ${2:-} == list ]]; then
   fi
   # an unfiltered `list --all` sees every bead: fixtures plus execution beads
   echo "list-all" >> "$TMP_LIST_ALL_LOG"
-  jq -s '.[0] + (.[1] | to_entries | map({id: .key, status: .value}))' "$BEADS_FILE" "$EXEC_STATUS_FILE"
+  jq -s '.[0] + (.[1] | to_entries | map({id: .key, status: .value})) + .[2]' \
+    "$BEADS_FILE" "$EXEC_STATUS_FILE" "$TICKETS_FILE"
   exit 0
 fi
 if [[ ${1:-} == bd && ${2:-} == update ]]; then
@@ -94,6 +95,8 @@ export EXEC_STATUS_FILE="$TMP/exec_status.json"; echo '{}' > "$EXEC_STATUS_FILE"
 export TMP_SHOW_LOG="$TMP/show.log" TMP_LIST_ALL_LOG="$TMP/list-all.log"
 : > "$TMP_SHOW_LOG"; : > "$TMP_LIST_ALL_LOG"
 export CONVOY_CHILDREN_FILE="$TMP/convoy_children.json"; echo '{}' > "$CONVOY_CHILDREN_FILE"
+# Tickets of a new-flow convoy, with their metadata, seen by `list --all`.
+export TICKETS_FILE="$TMP/tickets.json"; echo '[]' > "$TICKETS_FILE"
 
 # --- stub gh: `pr view <n> --repo <repo>` reports per-scenario -------------
 cat > "$TMP/bin/gh" <<'STUB'
@@ -398,16 +401,17 @@ done
 grep -q "^zz-fixture-convoy --status=closed" "$UPDATE_LOG" \
   || { echo "$UPDATE_LOG contents:"; cat "$UPDATE_LOG" >&2; fail "the input convoy was not closed alongside its execution bead"; }
 
-# 10. direct gc.authorized_by shape (smb-jz34 -> smb-fpbj): no convoy_id, so
-#     no convoy is touched -- only the execution bead closes.
+# 10. gc.authorized_by names the authority of the work (an ADR, a decision,
+#     the proposal, epic or ticket that asked for it), never the bead it
+#     delivers (af-epwkmn: read as one, it closed R10 af-30ix43 and four
+#     proposals, and was about to close epic af-npz9v1): an open bead it
+#     names is not written.
 jq -n --argjson r "$authorized_by_root" '[$r]' > "$BEADS_FILE"
 jq -n '{"zzfixture-direct":"open"}' > "$EXEC_STATUS_FILE"
 jq -n '{}' > "$CONVOY_CHILDREN_FILE"
 : > "$UPDATE_LOG"
 out=$(guard)
-grep -q "^zzfixture-direct .*--status=closed" "$UPDATE_LOG" \
-  || { echo "$out" >&2; fail "gc.authorized_by-linked execution bead was not closed"; }
-[ "$(grep -c '^zzfixture-direct ' "$UPDATE_LOG")" = "1" ] || fail "expected exactly one write to the directly-linked execution bead"
+[ ! -s "$UPDATE_LOG" ] || { echo "$out" >&2; fail "the bead gc.authorized_by names was written: $(cat "$UPDATE_LOG")"; }
 
 # 11. gc.authorized_by names a non-bead reference (an ADR citation, the real
 #     af-gpq0y shape on af-hc2mx-authored beads) -- never guessed at as a
@@ -452,8 +456,77 @@ grep -q "execution bead zz-fixture-exec-buildbasic is still open" <<<"$out" \
 [ ! -s "$TMP_SHOW_LOG" ] || fail "convoy-delivery still looks beads up one by one: $(tr '\n' ' ' < "$TMP_SHOW_LOG")"
 [ "$(wc -l < "$TMP_LIST_ALL_LOG")" = "1" ] || fail "the city store should be read exactly once"
 
+# --- a ticket of a new-flow convoy is closed only by its own gates
+# (af-epwkmn). bin/convoy-state itself answers, on the bead of the one store
+# read. -----------------------------------------------------------------------
+
+maintenance_root='{
+  "id": "zz-fixture-maintenance", "status": "closed", "title": "Delivered workflow tracking a ticket",
+  "labels": ["maintenance"],
+  "metadata": {
+    "gc.delivery_status": "merged", "gc.work_outcome": "shipped",
+    "gc.github_repo": "example-org/example-repo", "gc.pr_number": 832,
+    "gc.pr_head": "3333333333333333333333333333333333333333",
+    "gc.merge_commit": "4444444444444444444444444444444444444444",
+    "gc.var.convoy_id": "zz-fixture-flow-convoy"
+  }
+}'
+# ticket <status> <extra-metadata-json>
+ticket() {
+  jq -n --arg status "$1" --argjson extra "$2" '[{id: "zzfixture-ticket", status: $status,
+    metadata: ({"gc.flow.mark": "new-flow/v1", "gc.flow.gate.dispatch": "{\"at\":\"2026-11-08T18:25:28Z\"}",
+                "gc.flow.exit": "{\"at\":\"2026-11-09T13:23:50Z\",\"exit\":\"operator_request\"}"} + $extra)}]'
+}
+copied='{"gc.delivery_status": "merged", "gc.work_outcome": "shipped",
+  "gc.github_repo": "example-org/example-repo", "gc.pr_number": "832",
+  "gc.pr_head": "3333333333333333333333333333333333333333",
+  "gc.merge_commit": "4444444444444444444444444444444444444444", "gc.delivered_via": "zz-fixture-maintenance"}'
+jq -n --argjson r "$maintenance_root" '[$r]' > "$BEADS_FILE"
+jq -n '{"zz-fixture-flow-convoy":"open"}' > "$EXEC_STATUS_FILE"
+jq -n '{"zz-fixture-flow-convoy":"zzfixture-ticket"}' > "$CONVOY_CHILDREN_FILE"
+
+# 15. the open ticket a delivered workflow's convoy tracks is left to its
+#     gates, and so is that convoy.
+ticket in_progress '{}' > "$TICKETS_FILE"
+: > "$UPDATE_LOG"
+out=$(guard)
+[ ! -s "$UPDATE_LOG" ] || { echo "$out" >&2; fail "a ticket of a new-flow convoy was written by the reconciliation: $(cat "$UPDATE_LOG")"; }
+grep -q "its tracked bead zzfixture-ticket is a ticket of a new-flow convoy, closed only by its own gates" <<<"$out" \
+  || { echo "$out" >&2; fail "the new-flow ticket left to its gates was not said"; }
+jq -n '{}' > "$CONVOY_CHILDREN_FILE"
+
+# 16. the same ticket closed here before, with no closing gate: reopened to
+#     the status its dispatch gate allows; only the fields copied from that
+#     maintenance are removed, never a value it did not write.
+ticket closed "$(jq -c '. + {"gc.work_outcome": "no-op"}' <<<"$copied")" > "$TICKETS_FILE"
+: > "$UPDATE_LOG"
+out=$(guard --check-only)
+[ ! -s "$UPDATE_LOG" ] || fail "--check-only reopened a ticket"
+grep -q "zzfixture-ticket (city) was closed outside its gate by factory-delivery-guard" <<<"$out" \
+  || { echo "$out" >&2; fail "--check-only did not report the ticket closed outside its gate"; }
+out=$(guard)
+call=$(grep "^zzfixture-ticket " "$UPDATE_LOG" || true)
+[ "$(grep -c '^zzfixture-ticket ' "$UPDATE_LOG")" = "1" ] || { echo "$out" >&2; fail "expected one write reopening the ticket: $(cat "$UPDATE_LOG")"; }
+for field in "--status=in_progress" \
+  "--unset-metadata gc.delivery_status" "--unset-metadata gc.github_repo" "--unset-metadata gc.pr_number" \
+  "--unset-metadata gc.pr_head" "--unset-metadata gc.merge_commit" "--unset-metadata gc.delivered_via"
+do
+  [[ $call == *"$field"* ]] || fail "reopen call missing $field: $call"
+done
+[[ $call != *"gc.work_outcome"* ]] || fail "the reopen removed a value the guard did not copy: $call"
+
+# 17. closed by its withdrawal gate, or delivered via another bead: untouched.
+ticket closed "$(jq -c '. + {"gc.flow.gate.withdrawn": "{\"at\":\"2026-11-09T15:00:00Z\"}"}' <<<"$copied")" > "$TICKETS_FILE"
+: > "$UPDATE_LOG"
+out=$(guard)
+[ ! -s "$UPDATE_LOG" ] || { echo "$out" >&2; fail "a ticket closed by its own gate was reopened: $(cat "$UPDATE_LOG")"; }
+ticket closed "$(jq -c '. + {"gc.delivered_via": "zz-fixture-other"}' <<<"$copied")" > "$TICKETS_FILE"
+out=$(guard)
+[ ! -s "$UPDATE_LOG" ] || { echo "$out" >&2; fail "a ticket closed by another writer was reopened: $(cat "$UPDATE_LOG")"; }
+
 # reset the fixture files so they don't leak into any test appended after this one
-jq -n '{}' > "$EXEC_STATUS_FILE"; jq -n '{}' > "$CONVOY_CHILDREN_FILE"
+jq -n '{}' > "$EXEC_STATUS_FILE"; jq -n '{}' > "$CONVOY_CHILDREN_FILE"; echo '[]' > "$TICKETS_FILE"
+echo '[]' > "$BEADS_FILE"
 
 # 14. O01/P24: a rig named only in a config/projects/*.toml file (never
 #     hardcoded anywhere in the guard) is scanned exactly like the city and

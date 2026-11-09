@@ -3431,7 +3431,7 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
     def has_gate(name: str) -> bool:
         return "at" in gates.get(name, {})
 
-    if status == "closed" and not any(has_gate(gate) for gate in CLOSING_GATES):
+    if closed_outside_gate(status, [gate for gate in gates if has_gate(gate)]):
         flag("status", "ticket fermé sans relevé de porte (ni porte de fin de ticket, ni retrait du graphe) : fermé hors porte")
     if status == "in_progress" and not has_gate("dispatch"):
         flag("status", "ticket démarré sans relevé de la porte de dispatch : démarré hors porte")
@@ -3440,6 +3440,12 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
     if unruled:
         out["signal"] = UNRULED
     return out
+
+
+def closed_outside_gate(status: Any, gates: list[str]) -> bool:
+    """A ticket closed with no record of a closing gate (Spec §9): neither
+    the ticket-end gate nor the withdrawal from the graph wrote its close."""
+    return status == "closed" and not any(gate in gates for gate in CLOSING_GATES)
 
 
 def cmd_show(args: argparse.Namespace) -> int:
@@ -3633,7 +3639,8 @@ def cmd_show(args: argparse.Namespace) -> int:
 
 
 def cmd_ticket(args: argparse.Namespace) -> int:
-    """Whether one ticket carries the mark, without naming its convoy."""
+    """Whether one ticket carries the mark, without naming its convoy, and,
+    for a marked one, whether it is closed outside its gates."""
     if args.bead_json not in (None, "-"):
         raise Refusal(f"--bead-json n'accepte que « - » (le bead lu sur l'entrée standard) : {args.bead_json!r}")
     out = sys.stdin.read() if args.bead_json == "-" else run_gc(["bd", "show", args.ticket, "--json"])
@@ -3656,6 +3663,12 @@ def cmd_ticket(args: argparse.Namespace) -> int:
         if mark != MARK:
             answer.update(unruled=True, message=f"{UNRULED} : marque inconnue : {mark!r}")
             status = EXIT_UNRULED
+        # A close no gate wrote (af-epwkmn): the writer that made it undoes
+        # it, back to the status the gates recorded so far allow.
+        gates = [key[len(GATE_PREFIX):] for key in metadata_of(data) if key.startswith(GATE_PREFIX)]
+        answer["closed_outside_gate"] = closed_outside_gate(data.get("status"), gates)
+        if answer["closed_outside_gate"]:
+            answer["reopen_status"] = "in_progress" if "dispatch" in gates else "open"
     print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
     return status
 

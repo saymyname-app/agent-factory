@@ -57,8 +57,8 @@ PY
 # gh stub: `api -X PUT .../pulls/<num>/update-branch` makes that PR up to date
 # with its required run started (BLOCKED, Tests in progress), as GitHub does.
 # `pr view --json comments` prints $TMP/comments.txt (the retry marker lives
-# in a PR comment); `run list --commit` prints $RETRY_RUN, the failed run to
-# rerun, when set.
+# in a PR comment); `run list --commit --json` lists $RETRY_RUN, the failed
+# "Factory CI" run to rerun, when set.
 cat > "$TMP/bin/gh" <<STUB
 #!/usr/bin/env bash
 echo "\$*" >> "$TMP/gh.log"
@@ -98,7 +98,11 @@ if [[ \$1 == pr && \$2 == view ]]; then
   if [[ "\$*" == *"--json comments"* ]]; then cat "$TMP/comments.txt"; exit 0; fi
   echo '["OPEN","false"]' | jq -r '@tsv'; exit 0
 fi
-if [[ \$1 == run && \$2 == list ]]; then echo "\${RETRY_RUN:-}"; exit 0; fi
+if [[ \$1 == run && \$2 == list ]]; then
+  [[ " \$* " == *" --arg "* || " \$* " == *" --jq "* ]] && { echo "unsupported by this fake: \$*" >&2; exit 1; }
+  [ -n "\${RETRY_RUN:-}" ] && echo "[{\\"databaseId\\":\$RETRY_RUN,\\"name\\":\\"Factory CI\\",\\"conclusion\\":\\"failure\\"}]" || echo '[]'
+  exit 0
+fi
 exit 0
 STUB
 cat > "$TMP/bin/gc" <<STUB

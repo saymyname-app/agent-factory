@@ -693,15 +693,18 @@ Left to a human or the Mayor: resolve the conflict, push a commit to (re)trigger
 # push and would silently skip the retry on a commit that was never
 # actually retried.
 retry_ci_failure() {  # repo num sha workflow -> 0 retried, 1 already retried, 2 not confirmed yet
-  local repo=$1 num=$2 sha=$3 workflow=$4 marker run_id comments rc
+  local repo=$1 num=$2 sha=$3 workflow=$4 marker run_id runs comments rc
   marker="pr-autopilot: retried CI once for ${sha:0:12}"
   comments=$(bounded "$AP_READ_CAP" gh pr view "$num" --repo "$repo" --json comments --jq '.comments[].body' 2>/dev/null); rc=$?
   timed_out "$rc" && return 2
   grep -qF "$marker" <<<"$comments" && return 1
-  run_id=$(bounded "$AP_READ_CAP" gh run list --repo "$repo" --commit "$sha" --json databaseId,name,conclusion \
-    --jq --arg wf "$workflow" \
-    '[.[]|select(.name==$wf and .conclusion=="failure")][0].databaseId // empty' 2>/dev/null); rc=$?
+  # gh's --jq takes one expression and has no --arg: `--jq --arg wf ...` made
+  # gh read `--arg` as the expression and fail on `wf`, so every red was
+  # "not confirmed yet" forever (af-toyety, since #207). Filter with jq.
+  runs=$(bounded "$AP_READ_CAP" gh run list --repo "$repo" --commit "$sha" --json databaseId,name,conclusion 2>/dev/null); rc=$?
   timed_out "$rc" && return 2
+  run_id=$(jq -r --arg wf "$workflow" \
+    '[.[]|select(.name==$wf and .conclusion=="failure")][0].databaseId // empty' <<<"$runs" 2>/dev/null)
   [ -n "$run_id" ] || return 2
   log "  PR #$num: required check failed -> retrying once (run $run_id)"
   run gh run rerun "$run_id" --repo "$repo" --failed >/dev/null 2>&1; rc=$?

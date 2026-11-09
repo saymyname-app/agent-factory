@@ -162,7 +162,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 - Contrôle : `python3 tests/account-home-lint-test.py`,
   `python3 tests/fake-tool-contract-test.py`,
   `python3 tests/cockpit-isolated-https-test.py`,
-  `python3 tests/evaluation-capacity-test.py` — complet pour le dossier
+  `python3 tests/evaluation-capacity-test.py`,
+  `bash tests/gh-unsupported-subcommand-guard-test.sh` — complet pour le dossier
   personnel et les faux exécutables `bd`/`gc` : le second tient en CI la
   liste fermée des 27 faux, rejoue la limite d'un argument sur chacun, la
   fermeture d'un bloqué sur les 11 qui écrivent l'état et les huit formes
@@ -177,10 +178,13 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   produits d'évaluation et refuse qu'une cité isolée lise les lancements, le
   verrou ou les attestations de l'usine en service ; il tient aussi le
   sous-montage des attestations en lecture seule quand leur état isolé vit
-  sous le parent inscriptible `$HOME/.cache`.
+  sous le parent inscriptible `$HOME/.cache`. Le cinquième refuse dans
+  `bin/` et `lib/` les formes de `gh` absentes du vrai : `gh pr
+  update-branch`, et `--jq` suivi de `--arg`, que le faux `gh` de la
+  relance d'un contrôle rouge acceptait (af-toyety).
 - Occurrences : #566, #618, #641, #648, #656, #664, #665, #669, #671, #674,
   #675, #676, #680, #689, #690, #692, #699, #700, #714, #715 ; af-vf51g6 ;
-  af-dtsy06 ; af-h6nyqc.
+  af-dtsy06 ; af-h6nyqc ; af-toyety.
 - Ouvertes : exception datée du 29/10/2026 : la relecture de code par modèle
   n'est pas rejouée sur un cas connu (étude B § 4.3). Elle reste bornée par
   ses citations vérifiées et ses passes ciblées, mais n'est pas déclarée
@@ -198,10 +202,22 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   arêtes `blocks` écrites pour sérialiser les périmètres jusqu'à la dernière
   porte d'admission, avant la création de l'espace de travail ;
   `python3 tests/test-budgets-test.py` tient le délai de la régression complète
-  lu par `spec-integration` et `spec-end` sur la même source mesurée.
+  lu par `spec-integration` et `spec-end` sur la même source mesurée ;
+  `python3 tests/bead-close-writers-test.py` nomme chaque écriture qui ferme
+  un bead dans `bin/` et `lib/` avec ce qu'elle ferme, et
+  `bash tests/factory-delivery-guard-test.sh` tient la règle de fermeture
+  d'un ticket du nouveau flux lue dans `bin/convoy-state ticket` par
+  `factory-delivery-guard` comme par `deliver-close`, et `gc.authorized_by`
+  lu comme l'autorité du travail, jamais comme le bead qu'il livre.
 - Occurrences : #620, #625, #659, #660, #681, #685, #686, #693, #695, #703,
-  #716 ; af-npz9v1.42 ; af-npz9v1.52 ; af-9wnmid ; af-a53dy2.
-- Ouvertes : aucune ; `review_replay_due`, `tdd_evidence_piece` et
+  #716 ; af-npz9v1.42 ; af-npz9v1.52 ; af-9wnmid ; af-a53dy2 ; af-epwkmn
+  (`factory-delivery-guard` lisait `gc.authorized_by` comme le bead livré et
+  a fermé hors porte R10 af-30ix43, ce qui a arrêté son convoi ; il rouvre
+  ce ticket au statut que ses portes permettent).
+- Ouvertes : les quatre propositions que `factory-delivery-guard` a fermées
+  hors de `bin/proposal-door` avant af-epwkmn (af-p1q5pz, af-ze0zan,
+  af-pgckwt, af-rmbml9) attendent leur résolution par la porte, af-8a2e9d ;
+  `review_replay_due`, `tdd_evidence_piece` et
   `names_in_texts` ont remplacé les trois paires ouvertes de l'étude B § 4.4
   (af-npz9v1.29), et `evaluation_proven_by_test` tient l'écrivain de la
   Ticket Evaluation avec son lecteur de fin de ticket (`lib/delivery_rules.py`,
@@ -216,7 +232,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `bash tests/pr-autopilot-armed-not-merged-test.sh`,
   `bash tests/pr-autopilot-transient-retry-test.sh`,
   `python3 tests/tdd-step-test.py TddStepTest.test_green_refusal_keeps_the_failing_control_after_long_regression_output`,
-  `python3 tests/role-adoption-trial-codex-test.py` — partiel : le premier
+  `python3 tests/role-adoption-trial-codex-test.py`,
+  `python3 tests/factory-delivery-proof-test.py ClaimedShippedBead` — partiel : le premier
   tient la frontière entre un report explicite (sortie 75, rejoué sans
   alerte) et une vraie panne répétée (bead et page Mayor) ; le deuxième tient
   la collecte VM Beads/Git/GitHub, le silence sur état inchangé, la route
@@ -236,13 +253,17 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   observés et la demande de réveil ; il refuse aussi que `active` compte comme
   provider-ready quand le premier nudge ne crée aucun rollout, et tient les
   trois dialogues interactifs (mise à jour, confiance du dossier, hooks) hors
-  des profils Codex sans opérateur.
+  des profils Codex sans opérateur. Le contrôle `factory-delivery-proof` refuse
+  qu'un `gc.outcome=pass` d'étape de formule (`gc.step_ref`/`gc.step_id`)
+  compte comme livraison annoncée : l'étape qui ouvre la PR n'est pas une
+  livraison non prouvée.
 - Occurrences : #651, #679, #688, #717 ; af-npz9v1.50 ; #767 (armement local
   annoncé mais `autoMergeRequest=null`, af-npz9v1.50.1) ; af-ncg9qy ; #778
   (demande directe acceptée localement mais encore `AWAITING_CHECKS`,
   af-nk5nm6) ; af-27yx7q.2.1 ; af-pd6m09 ; af-1l3znv (un workflow encore
   actif ou une demande de rerun refusée était annoncé comme déjà retenté) ;
-  af-0rdubb.
+  af-0rdubb ; af-eyi5wa (l'étape push-and-pr, passée en ouvrant sa PR, signalée
+  comme livraison non prouvée).
 - Ouvertes : aucune connue.
 
 ## A — Autre
