@@ -794,6 +794,43 @@ class ConvoyStopsOnTheFixtureCity(Staged, publication.Harness):
         self.assertEqual("réparé", self.shown_ticket(t4)["findings"][0]["state"])
         self.assertFalse(self.shown()["unruled"])
 
+    def test_a_drafted_repair_the_patch_door_refuses_is_recorded_once_then_the_evaluation_is_stopped_and_raised(self):
+        # af-68sgzq: convoy-advance failed on every pass, three refused drafts retried and nothing recorded.
+        t4 = self.ids["T4"]
+        self.delivered(out_of_ticket=self.FINDING)
+        stories = self.evaluation_open()
+        story = stories[-1]["number"]
+        draft = self.drafted("la version servie par la sonde de santé", {"kind": "user_story", "ref": f"user story {story}"})
+        draft["acceptance_criteria"][0]["observable"] = "la version y est servie, comme le fait src/health.py"
+        self.run_ok(STATE, "classify-finding", self.convoy, t4, "--item", "out_of_ticket.1", "--as", "repaired",
+                    "--file", self.json_file("finding-repair.json", draft), "--recorded-by", self.EVALUATOR)
+        self.evaluated(stories, not_observed=story)
+
+        answer = self.one_pass()
+
+        # The story's draft is published; the finding's is refused, recorded on it, and the evaluation stops there.
+        published, refused, stopped = answer["outcome_repairs"]
+        self.assertEqual((story, "R1"), (published["story"], published["key"]))
+        self.assertEqual(f"{t4}:out_of_ticket.1", refused["finding"])
+        self.assertIn("nomme un fichier", refused["refused"])
+        self.assertEqual(("outcome_repair_refused", self.base), (stopped["stop"], stopped["commit"]))
+        finding = self.shown_ticket(t4)["findings"][0]
+        self.assertEqual("à réparer", finding["state"])
+        self.assertNotIn("repair", finding)
+        self.assertIn("nomme un fichier", finding["repair_refused"])
+        stop = self.outcome()["stop"]
+        self.assertEqual(("outcome_repair_refused", self.base), (stop["reason"], stop["commit"]))
+        self.assertIn("raised", stop)
+        self.assertEqual(1, len(self.requests()), self.requests())
+
+        # Nothing is published, stopped or raised again: the next pass is clean.
+        tracked = sorted(self.tracked())
+        again = self.one_pass()
+        self.assertNotIn("outcome_repairs", again)
+        self.assertEqual(tracked, sorted(self.tracked()))
+        self.assertEqual(stop, self.outcome()["stop"])
+        self.assertEqual(1, len(self.requests()))
+
 
     # --- the end code review of the assembled diff (T25, af-ji2ruy) --------------------
 

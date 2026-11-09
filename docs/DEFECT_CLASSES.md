@@ -118,7 +118,12 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/convoy-advance-red-cleared-test.py`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_malformed_legacy_resume_is_left_to_the_incident_door_without_crashing`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_factory_repair_is_taken_up_and_tested_before_its_resume_is_consumed_once`,
-  `bash tests/factory-work-dispatch-test.sh`. Les courses réponse/retrait qui
+  `bash tests/factory-work-dispatch-test.sh`. Sa même table tient chaque
+  fonction de `bin/convoy-advance` qui publie un repair rédigé par la porte
+  de patch : un refus de la porte y est noté là où le repair a été rédigé et
+  arrête le convoi, ou la fonction est une exception datée qui nomme son
+  Bead (`test_every_publisher_of_a_drafted_repair_gives_a_patch_door_refusal_an_exit`).
+  Les courses réponse/retrait qui
   pourraient consommer une réponse sont tenues par
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_an_evaluation_stop_answered_while_its_request_is_cleared_is_not_resumed ConvoyAdvanceTest.test_a_removed_stage_stop_answered_while_its_request_is_cleared_is_not_resumed ConvoyAdvanceTest.test_a_grouped_answer_recorded_while_changed_parkings_are_re_raised_is_applied_first`
   et `python3 tests/convoy-advance-review-evaluation-correction-test.py ConvoyAdvanceTest.test_a_code_review_stop_answered_while_its_request_is_cleared_is_not_resumed`.
@@ -150,13 +155,21 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   au vert) ; af-6vhm6r (la même règle ignorait un rouge déjà retiré au vert
   par `spec-integration merge` après un déplacement de pointe : R10 restait
   ouvert sans rouge à rétablir ; ce vert est gardé comme preuve et le repair
-  se clôt sans fusion dessus).
+  se clôt sans fusion dessus) ; af-68sgzq (un repair rédigé par l'Evaluator
+  de fin et refusé par la porte de patch était renvoyé à chaque passe,
+  `convoy-advance` en échec sans rien noter : le refus est noté sur la story
+  ou le constat et l'Outcome Evaluation s'arrête, `outcome_repair_refused`).
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
   contrôle : `criterion_already_green` reste au Planning Run ;
   `outcome_evaluation_no_result` et `outcome_evaluation_outage` ne repartent
   qu'à une nouvelle pointe d'intégration ; `story_unobservable` reste au
-  Planning Run. Elles sont retirées de la table dès qu'une transition codée
-  remplace cette porte (étude B § 4.2, af-npz9v1.27).
+  Planning Run ; datée du 09/11/2026, `outcome_repair_refused` ne repart
+  qu'à une nouvelle pointe d'intégration. Datés du 09/11/2026, les repairs
+  écrits par le code dont la porte de patch refuse le brouillon sont encore
+  renvoyés à chaque passe : `settle_red` (af-dtt6dn), `settle_item_repairs`
+  (af-uz9bh9), `settle_acceptance` (af-k369au). Elles sont retirées de la
+  table dès qu'une transition codée remplace cette porte (étude B § 4.2,
+  af-npz9v1.27).
 
 ## D — Doublure, instrument ou vue partielle qui ne se comporte pas comme le réel
 

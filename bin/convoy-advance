@@ -174,7 +174,11 @@ are in: one `repair` per user story it did not observe, and one per finding
 « hors ticket » it classified « repaired », each named where it was drafted
 (bin/convoy-state set-outcome-repair). Such a repair starts, merges and
 closes like any ticket; the gate then renders its verdicts on the new tip
-and the product is evaluated again.
+and the product is evaluated again. A draft the patch door refuses is
+recorded where it was drafted, with the reason (set-outcome-repair
+--refused), never published again, and stops the Outcome Evaluation at the
+commit of its last round (`outcome_repair_refused`): bin/outcome-evaluation
+raises that stop once to the operator.
 In the same pass, on the commit of those three verdicts, it has the whole
 assembled diff of the Spec reviewed (T25, af-ji2ruy; Spec §6 « Fin de
 Spec », §9 point 4), through bin/spec-end-review settle: one reviewer
@@ -511,6 +515,8 @@ ITEM_LABELS = {"deviations": "écart", "not_done": "« non fait »"}
 # closed by the ticket-end gate yet (bin/convoy-state).
 FINDING_TO_REPAIR = "à réparer"
 STOP_RED, STOP_EXCEPTIONS = "integration_red", "planning_exceptions"
+# The Outcome Evaluation stopped by a drafted repair the patch door refused (lib/convoy_state.py OUTCOME_STOPS).
+STOP_OUTCOME_REPAIR_REFUSED = "outcome_repair_refused"
 BOUND_EXCEPTIONS = "open_planning_exceptions"
 NEW_FLOW = "new-flow/v1"
 
@@ -525,6 +531,11 @@ RIGS_SECTION_RE = re.compile(r"^## Target rigs[ \t]*\n+([^\n#]*)$", re.MULTILINE
 
 class Refusal(RuntimeError):
     """The pass cannot be made: nothing is started."""
+
+
+class DoorRefusal(Refusal):
+    """The patch door ran and refused the draft: publishing it again
+    refuses again, so it is recorded where it was drafted, not retried."""
 
 
 class NotNewFlow(RuntimeError):
@@ -829,16 +840,33 @@ class Convoy:
         did not observe, and the one of each finding « hors ticket » it
         classified « repaired ». Nothing while an evaluation is open: a
         classification may still change, and a ticket more would outdate it.
-        Nothing once the rounds of the end are stopped (T26)."""
+        Nothing once the rounds of the end are stopped (T26). A draft the
+        patch door refused is never due again."""
         outcome = self.outcome
         if outcome is None or outcome.get("request") or self.end_stop:
             return []
         last = outcome["rounds"][-1] if outcome["rounds"] else {"repairs": []}
-        due = [{"story": entry["story"], "draft": entry["draft"]} for entry in last["repairs"] if not entry.get("repair")]
+        due = [{"story": entry["story"], "draft": entry["draft"]} for entry in last["repairs"]
+               if not entry.get("repair") and "repair_refused" not in entry]
         due += [{"finding": finding["id"], "ticket": finding["ticket"], "item": finding["item"], "draft": finding["draft"]}
                 for t in self.tickets for finding in t.get("findings") or []
-                if finding.get("state") == FINDING_TO_REPAIR and not finding.get("repair")]
+                if finding.get("state") == FINDING_TO_REPAIR and not finding.get("repair")
+                and "repair_refused" not in finding]
         return due
+
+    def outcome_repairs_refused(self) -> list[str]:
+        """What the Evaluator of the end drafted and the patch door refused,
+        each with the reason, while it still stands: on a user story of the
+        last round, or on a finding « hors ticket » still to repair."""
+        outcome = self.outcome
+        if outcome is None or not outcome["rounds"]:
+            return []
+        refused = [f"user story {entry['story']} : {entry['repair_refused']}"
+                   for entry in outcome["rounds"][-1]["repairs"] if "repair_refused" in entry]
+        refused += [f"constat hors ticket {finding['id']} : {finding['repair_refused']}"
+                    for t in self.tickets for finding in t.get("findings") or []
+                    if finding.get("state") == FINDING_TO_REPAIR and "repair_refused" in finding]
+        return refused
 
     def item_repairs_due(self) -> list[tuple[dict[str, Any], list[dict[str, Any]]]]:
         """The tickets whose tracked elements the operator asked to have
@@ -2713,7 +2741,7 @@ def publish_repair(convoy: Convoy, repair: dict[str, Any], label: str, reason: s
     if proc.returncode != 0 or not isinstance(ticket_id, str) or not ticket_id:
         reason = proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}"
         abandon(reason)
-        raise Refusal(f"la porte de patch a refusé le ticket repair {whose} : {reason[-600:]}")
+        raise DoorRefusal(f"la porte de patch a refusé le ticket repair {whose} : {reason[-600:]}")
     return {"id": ticket_id, "key": key, "draft": draft_id, "published": True}
 
 
@@ -2950,7 +2978,10 @@ def settle_outcome_repairs(convoy: Convoy) -> list[dict[str, Any]]:
     """Spec §7, §9: the Evaluator of the end drafts a `repair` and does not
     publish it. Code publishes each one through the patch door, as the
     Evaluator wrote it, and names it where it was drafted: on the user story
-    of the last Outcome Evaluation, or on the finding « hors ticket »."""
+    of the last Outcome Evaluation, or on the finding « hors ticket ». A
+    draft the door refuses is recorded there with the reason, and stops the
+    Outcome Evaluation at the commit of its last round: bin/outcome-evaluation
+    raises it once to the operator. A refusal is never published again."""
     done = []
     for due in convoy.outcome_repairs_due():
         if "story" in due:
@@ -2964,13 +2995,48 @@ def settle_outcome_repairs(convoy: Convoy) -> list[dict[str, Any]]:
         try:
             repair = publish_repair(convoy, due["draft"], what, reason, f"de la {what}" if "story" in due else f"du {what}",
                                     f"la {what}" if "story" in due else f"le {what}")
+        except DoorRefusal as exc:
+            try:
+                state_write("set-outcome-repair", convoy.id, "--refused", one_line(str(exc), 500), *where)
+                done.append({**named, "refused": f"refus : {exc}"})
+            except Refusal as second:
+                done.append({**named, "error": f"refus : {exc} ; {second}"})
+            continue
+        except Refusal as exc:
+            done.append({**named, "error": f"refus : {exc}"})
+            continue
+        try:
             state_write("set-outcome-repair", convoy.id, "--repair", repair["id"], *where)
             done.append({**repair, **named})
         except Refusal as exc:
-            done.append({**named, "error": f"refus : {exc}"})
+            done.append({**repair, **named, "error": f"refus : {exc}"})
     if any("error" not in entry for entry in done):
         convoy.load()
+    stopped = stop_refused_outcome_repairs(convoy)
+    if stopped:
+        done.append(stopped)
     return done
+
+
+def stop_refused_outcome_repairs(convoy: Convoy) -> dict[str, Any] | None:
+    """The stop of the Outcome Evaluation a refused draft calls for, written
+    once at the commit of its last round; None when none is due. Not while
+    an evaluation is open (its classifications may still change) nor once
+    the rounds of the end are stopped (T26)."""
+    outcome = convoy.outcome
+    if outcome is None or outcome.get("request") or convoy.end_stop or not outcome["rounds"]:
+        return None
+    refused = convoy.outcome_repairs_refused()
+    commit = outcome["rounds"][-1]["commit"]
+    if not refused or (outcome.get("stop") or {}).get("commit") == commit:
+        return None
+    try:
+        state_write("stop-outcome-evaluation", convoy.id, "--commit", commit, "--reason", STOP_OUTCOME_REPAIR_REFUSED,
+                    "--detail", one_line("repair rédigé refusé par la porte de patch — " + " ; ".join(refused), 240))
+        convoy.load()
+    except Refusal as exc:
+        return {"stop": STOP_OUTCOME_REPAIR_REFUSED, "error": f"refus : {exc}"}
+    return {"stop": STOP_OUTCOME_REPAIR_REFUSED, "commit": commit, "refused": refused}
 
 
 def settle_outcome_evaluation(convoy: Convoy) -> dict[str, Any] | None:
