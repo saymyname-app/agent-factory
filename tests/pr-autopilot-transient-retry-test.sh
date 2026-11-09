@@ -53,12 +53,26 @@ if [[ "\$1" == pr && "\$2" == view && "\$*" == *"--json comments"* ]]; then
   exit 0
 fi
 if [[ "\$1" == pr && "\$2" == view ]]; then echo '["OPEN","false"]' | jq -r '@tsv'; exit 0; fi
+# Like the real gh: --json prints JSON, --jq takes one expression and gh has
+# no --arg (af-toyety: \`--jq --arg wf ...\` fails on the real gh, so a fake
+# that answered it anyway kept the retry green while it never ran).
 if [[ "\$1" == run && "\$2" == list ]]; then
+  jq_expr=.
+  args=("\$@")
+  for ((i=0; i<\${#args[@]}; i++)); do
+    case "\${args[\$i]}" in
+      --arg|--argjson) echo "unknown flag: \${args[\$i]}" >&2; exit 1 ;;
+      --jq) i=\$((i+1)); jq_expr="\${args[\$i]}" ;;
+    esac
+  done
   case " \$* " in
-    *" aaa1 "*) echo "run-50" ;;
-    *" ddd4 "*) echo "run-53" ;;
+    *" aaa1 "*) runs='[{"databaseId":"run-50","name":"Backend CI","conclusion":"failure"}]' ;;
+    *" ccc3 "*) runs='[{"databaseId":"run-52-lint","name":"Lint","conclusion":"failure"},{"databaseId":"run-52","name":"Backend CI","conclusion":""}]' ;;
+    *" ddd4 "*) runs='[{"databaseId":"run-53","name":"Backend CI","conclusion":"failure"}]' ;;
+    *) runs='[]' ;;
   esac
-  exit 0
+  jq -r "\$jq_expr" <<<"\$runs"
+  exit
 fi
 if [[ "\$1" == run && "\$2" == rerun ]]; then
   [[ "\$3" == run-50 ]]
@@ -101,7 +115,7 @@ grep -q "bd create \[ci\] PR #51 failed required checks on dev" "$TMP/gc.log" \
 
 # PR 52: the required check can turn red before the workflow completes. Its
 # active run is neither rerun nor treated as proof that the retry was spent.
-grep -q "^run rerun run-52 " "$TMP/gh.log" \
+grep -q "^run rerun run-52" "$TMP/gh.log" \
   && { echo "$out" >&2; fail "PR #52's still-running workflow was sent a rerun request"; }
 grep -q "^pr comment 52 .*retried CI once" "$TMP/gh.log" \
   && { echo "$out" >&2; fail "PR #52's still-running workflow consumed the retry marker"; }
