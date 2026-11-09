@@ -52,8 +52,8 @@ review: the next pass retries both launches on the same commit.
 | `action` | Meaning |
 | --- | --- |
 | `waiting` | Not due: the reason is given. |
-| `launched` / `relaunched` | A request was opened on the commit of the gate and a review bead routed to the reviewer role (`bead`, `launches`, `extent`). |
-| `pending` | A launch is running; `deadline` says until when. |
+| `launched` / `relaunched` | A request was opened on the commit of the gate and a review bead routed to the reviewer role (`bead`, `launches`: the rank of this route among the counted launches, `extent`). |
+| `pending` | A launch is running; `launches` counts the claimed attempts; `deadline` says until when, once a reviewer claimed it. |
 | `deferred` | The dispatch door deferred the launch: nothing is counted, the next pass tries again. |
 | `reviewed` | A complete round exists on this commit: `outcome`, `blocking`, and `repairs_due` for the Blocking Findings whose drafted repair is not published yet. |
 | `stopped` | The review is stopped on this commit (`stop`); `raised` says whether this call sent the request to the operator. |
@@ -172,7 +172,7 @@ not recorded. It is never left out, and it refuses nothing.
 
 ## A review that gives no result
 
-A launch gives no result when `timeout_seconds` passed since it was sent
+A launch gives no result when `timeout_seconds` passed since a reviewer claimed it
 (`config/delivery-flow.json`, `end_review`; 7200 s, far above the one measure of « Proof »), when its review bead was closed while the request is still
 open, or when its output is `incomplete`. It is not a passed review: the
 gate goes on refusing. The review is launched **once more**, on a new bead,
@@ -189,13 +189,23 @@ held on a diff of a real size.
 A dispatch the door refuses or defers launched nothing: it counts no launch
 and its bead is closed.
 
+A routed review becomes an attempt only when the `review` step of its
+`mol-end-review` workflow carries `gc.claimed_at`, or when its session
+handed in an incomplete output. Its timeout starts at that claim, not at
+dispatch. A route waiting for the single reviewer seat therefore stays
+pending and consumes neither its timeout nor one of the two launches. If
+workflow cleanup closes such an unclaimed route, it stays in history marked
+`unclaimed` and one replacement may be routed; a second cleaned route is
+refused. Only the two actually claimed launches count toward
+`end_review_no_result`.
+
 ## Stored state
 
 On the convoy, written by `bin/convoy-state` only (`docs/CONVOY_STATE.md`):
 
 | Key | Value |
 | --- | --- |
-| `gc.flow.end_review` | `rounds`: each recorded round — `commit`, `base`, `outcome`, `findings`, `coverage`, `extent`, `models`, `recorded_by`, `conversation` (`"c:"` + `CLAUDE_CODE_SESSION_ID`, else `"g"` + `GC_RUNTIME_EPOCH`, when known), `launched_at`, `duration_seconds`, `at`. `request`, while a review is open — `commit`, `base`, `extent`, `models`, `launches` (`bead`, `at`, and `result: incomplete`), `at`. `stop` — `reason`, `detail`, `commit`, `at`, then `bead` and `raised`. |
+| `gc.flow.end_review` | `rounds`: each recorded round — `commit`, `base`, `outcome`, `findings`, `coverage`, `extent`, `models`, `recorded_by`, `conversation` (`"c:"` + `CLAUDE_CODE_SESSION_ID`, else `"g"` + `GC_RUNTIME_EPOCH`, when known), `launched_at`, `duration_seconds`, `at`. `request`, while a review is open — `commit`, `base`, `extent`, `models`, `launches` (`bead`, `at`, and `result: incomplete`, or `unclaimed: true` on the one cleaned route never claimed), `at`. `stop` — `reason`, `detail`, `commit`, `at`, then `bead` and `raised`. |
 | `gc.flow.end_round` | `commit`, `source`, `at`: the tip the last round of the end was counted for (T26: and the stories not observed, for the early stops). |
 | `gc.flow.counter.end_rounds` | the rounds of the end of the Spec, every source together. |
 | `gc.flow.end_stop` | T26: the stop of the rounds — `reason`, `detail`, `commit`, `source`, `rounds`, `at`, then `request` (`docs/CONVOY_STATE.md`). |
@@ -231,7 +241,7 @@ it.
   new review; on the same tip the gate goes on refusing.
 - **No closed questions on the tests at the end**: they are asked per ticket.
 - **The reviewer role holds one session at a time**: an end review waits
-  behind a ticket review, and the time of a launch runs from the dispatch.
+  behind a ticket review, and the time of a launch runs from its claim.
 - **The models are the configured ones**, not ones observed in the sessions.
 - **The time limit has one measure behind it**: one real reviewer session
   on 50 files and about 14,000 changed lines took 548 s (see « Proof »);
