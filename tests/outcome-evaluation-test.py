@@ -1001,6 +1001,8 @@ class OutcomeEvaluationTest(Harness):
         self.assertEqual("launched", first["action"])
         self.assertEqual("relaunched", second["action"])
         self.assertEqual("relaunched", replacement["action"])
+        # The replacement takes the place of the cleaned route: still the second launch.
+        self.assertEqual((1, 2, 2), (first["launches"], second["launches"], replacement["launches"]))
         self.assertEqual("pending", waiting["action"])
         self.assertEqual(1, waiting["launches"])
         self.assertEqual(3, len(self.outcome()["request"]["launches"]))

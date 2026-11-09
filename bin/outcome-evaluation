@@ -839,8 +839,12 @@ def settle(convoy: Convoy, settings: dict[str, Any]) -> dict[str, Any]:
     if replaces_unclaimed and any(launch_.get("unclaimed") is True for launch_ in launches):
         raise Refusal("l'unique remplacement d'une route non réclamée a lui aussi été nettoyé")
     bead_id = launch(convoy, current, settings, replaces_unclaimed)
+    # The ordinal of this route among the launches that count: a replaced
+    # unclaimed route leaves the count, the new route enters it.
+    routed = sum(1 for launch_ in launches
+                 if launch_.get("unclaimed") is not True and launch_["bead"] != replaces_unclaimed) + 1
     return {"action": "relaunched" if launches else "launched", "commit": commit, "bead": bead_id,
-            "launches": len(attempts),
+            "launches": routed,
             "environment": [{"dataset": entry["dataset"], "address": entry["address"]} for entry in current["environment"]]}
 
 
