@@ -877,10 +877,16 @@ evaluation is an outcome of the pass, not a failure.
   Evaluator wrote it, is named where it was drafted (`bin/convoy-state
   set-outcome-repair`) and starts like any ticket. The entry carries
   `outcome_repairs` (`{id, key, draft, published, story}` or `{…, finding}`,
-  or `error`). Nothing is published while an evaluation is open, nor once
-  the rounds of the end are stopped (T26). One repair
-  per draft, whatever the number of passes; one that could not be published
-  fails the pass and is tried again by the next.
+  `{story|finding, refused}`, `{stop, commit, refused}`, or `error`).
+  Nothing is published while an evaluation is open, nor once the rounds of
+  the end are stopped (T26). One repair per draft, whatever the number of
+  passes. A draft the patch door refuses is recorded where it was drafted
+  (`set-outcome-repair --refused`), never sent again, and the pass stops the
+  Outcome Evaluation at the commit of its last round
+  (`outcome_repair_refused`), which `bin/outcome-evaluation settle` raises
+  once to the operator; the pass does not fail on it (af-68sgzq). One that
+  could not be published for another reason fails the pass and is tried
+  again by the next.
 
 Once such a repair is merged and closed, the tip moved: the gate renders its
 mechanical verdicts again and the product is evaluated again. The round is
