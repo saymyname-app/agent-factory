@@ -366,6 +366,34 @@ def queue_routes(live: dict[str, Any], events: list[dict[str, Any]]) -> None:
             existing["event_ids"].append(event["event_id"])
 
 
+def mail_delivered(recipient: str, dedup: str, event_ids: list[Any]) -> bool:
+    message = (
+        f"ACTION: factory-observe recorded {len(event_ids)} new live transition(s)\n"
+        f"STATE: ROUTED once to {recipient}\n"
+        f"EVIDENCE: {STATE_FILE}; events {', '.join(event_ids)}\n"
+        "NEXT: inspect ./bin/factory-observe status --json and act only on the cited transition(s)"
+    )
+    # A loaded host can create the mail and still overrun the timeout before
+    # gc answers (af-usvfdb). The second send carries the same --dedup key, so
+    # it is suppressed (exit 0) when the first one landed and cannot double the
+    # alert; only a failed second attempt is a failed route.
+    for _ in range(2):
+        try:
+            result = bounded_run(
+                [
+                    GC_BIN, "mail", "send", str(recipient), "--notify",
+                    "--dedup", dedup,
+                    "-s", "factory-observe: live transition", "-m", message,
+                ],
+                text=True, capture_output=True, timeout=MAIL_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired:
+            continue
+        if result.returncode == 0:
+            return True
+    return False
+
+
 def route_pending(live: dict[str, Any], moment: str, live_sessions: set[str]) -> list[str]:
     failures: list[str] = []
     remaining: list[dict[str, Any]] = []
@@ -376,27 +404,7 @@ def route_pending(live: dict[str, Any], moment: str, live_sessions: set[str]) ->
         if recipient != "mayor" and recipient not in live_sessions:
             recipient = "mayor"
             route["recipient"] = recipient
-        facts = ", ".join(event_ids)
-        message = (
-            f"ACTION: factory-observe recorded {len(event_ids)} new live transition(s)\n"
-            f"STATE: ROUTED once to {recipient}\n"
-            f"EVIDENCE: {STATE_FILE}; events {facts}\n"
-            "NEXT: inspect ./bin/factory-observe status --json and act only on the cited transition(s)"
-        )
-        try:
-            result = bounded_run(
-                [
-                    GC_BIN, "mail", "send", str(recipient), "--notify",
-                    "--dedup", str(route["route_id"]),
-                    "-s", "factory-observe: live transition", "-m", message,
-                ],
-                text=True, capture_output=True, timeout=MAIL_TIMEOUT_SECONDS,
-            )
-        except subprocess.TimeoutExpired:
-            failures.append(str(recipient))
-            remaining.append(route)
-            continue
-        if result.returncode != 0:
+        if not mail_delivered(recipient, str(route["route_id"]), event_ids):
             failures.append(str(recipient))
             remaining.append(route)
             continue

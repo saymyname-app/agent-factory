@@ -3,7 +3,9 @@
 calls without a live Gas City. Every invocation is appended, one JSON array
 per line, to TICKET_GRAPH_GC_LOG; its cwd, one per line, to
 TICKET_GRAPH_GC_CWD_LOG when set. TICKET_GRAPH_GC_MAIL_FAIL=1 makes the mail
-fail the way a real gc does outside a city.
+fail the way a real gc does outside a city. TICKET_GRAPH_GC_MAIL_SLOW_ONCE=<path>
+makes the first mail create <path> (the mail landed) then hang past any
+timeout, the way a loaded host answers late (af-usvfdb); later mails answer.
 
 It also serves the two tracker calls bin/convoy-state makes (`gc bd show <id>
 --json`, `gc bd update <id> [--status S] [--add-label L] [--unset-metadata k] --set-metadata k=v ...`) on the same store as the
@@ -36,6 +38,11 @@ if command[:3] == ["mail", "send", "mayor"]:
     if os.environ.get("TICKET_GRAPH_GC_MAIL_FAIL"):
         print("gc mail send: not in a city directory (no city.toml or .gc/ found)", file=sys.stderr)
         raise SystemExit(1)
+    slow_once = os.environ.get("TICKET_GRAPH_GC_MAIL_SLOW_ONCE")
+    if slow_once and not Path(slow_once).exists():
+        Path(slow_once).write_text("sent\n", encoding="utf-8")
+        import time
+        time.sleep(30)
     raise SystemExit(0)
 
 

@@ -80,7 +80,7 @@ BD_BIN = os.environ.get("BD_BIN") or "bd"
 BD_WORKSPACE = Path(os.environ.get("TICKET_GRAPH_BD_WORKSPACE", str(ROOT)))
 GC_BIN = os.environ.get("GC_BIN", "gc")
 SKIP_MAYOR_NOTIFY_ENV = "TICKET_GRAPH_PUBLISH_SKIP_MAYOR_NOTIFY"
-MAYOR_NOTIFY_TIMEOUT_SECONDS = 60
+MAYOR_NOTIFY_TIMEOUT_SECONDS = float(os.environ.get("TICKET_GRAPH_MAYOR_NOTIFY_TIMEOUT_SECONDS", "60"))
 
 
 class PublishError(RuntimeError):
@@ -1787,6 +1787,10 @@ def notify_mayor(command: str, graph_digest: str, convoy_id: str | None) -> dict
     if os.environ.get(SKIP_MAYOR_NOTIFY_ENV):
         return {"mayor_notified": None}
     city = mayor_city()
+    # A loaded host can create the mail yet overrun the timeout (af-usvfdb): the
+    # retry's --dedup key is suppressed (exit 0) if the first landed, and is
+    # drawn per call so a later publish of the same graph still wakes the Mayor.
+    dedup = f"ticket-graph-{command}:{graph_digest}:{os.urandom(6).hex()}"
     subject = f"ticket-graph-{command}: {graph_digest}"
     body = (
         f"ACTION: ticket-graph-publish {command} completed\n"
@@ -1796,19 +1800,20 @@ def notify_mayor(command: str, graph_digest: str, convoy_id: str | None) -> dict
         + "\n"
         "NEXT: dispatch newly ready delivery-plane tickets"
     )
-    try:
-        proc = subprocess.run(
-            [GC_BIN, "--city", str(city), "mail", "send", "mayor", "--notify", "-s", subject, "-m", body],
-            cwd=str(city), check=False, capture_output=True, text=True,
-            timeout=MAYOR_NOTIFY_TIMEOUT_SECONDS,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        error = f"could not run gc mail send: {exc}"
-    else:
-        if proc.returncode == 0:
-            return {"mayor_notified": True, "mayor_city": str(city)}
-        detail = (proc.stderr or proc.stdout or "").strip() or "no output"
-        error = f"gc mail send exited {proc.returncode}: {detail}"
+    for _ in range(2):
+        try:
+            proc = subprocess.run(
+                [GC_BIN, "--city", str(city), "mail", "send", "mayor", "--notify", "--dedup", dedup,
+                 "-s", subject, "-m", body],
+                cwd=str(city), check=False, capture_output=True, text=True, timeout=MAYOR_NOTIFY_TIMEOUT_SECONDS,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            error = f"could not run gc mail send: {exc}"
+        else:
+            if proc.returncode == 0:
+                return {"mayor_notified": True, "mayor_city": str(city)}
+            detail = (proc.stderr or proc.stdout or "").strip() or "no output"
+            error = f"gc mail send exited {proc.returncode}: {detail}"
     print(
         f"{PROGRAM}: WARNING: {command} succeeded but the Mayor was NOT woken "
         f"(city {city}): {error}",
