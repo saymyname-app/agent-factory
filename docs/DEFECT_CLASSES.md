@@ -202,10 +202,22 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   arêtes `blocks` écrites pour sérialiser les périmètres jusqu'à la dernière
   porte d'admission, avant la création de l'espace de travail ;
   `python3 tests/test-budgets-test.py` tient le délai de la régression complète
-  lu par `spec-integration` et `spec-end` sur la même source mesurée.
+  lu par `spec-integration` et `spec-end` sur la même source mesurée ;
+  `python3 tests/bead-close-writers-test.py` nomme chaque écriture qui ferme
+  un bead dans `bin/` et `lib/` avec ce qu'elle ferme, et
+  `bash tests/factory-delivery-guard-test.sh` tient la règle de fermeture
+  d'un ticket du nouveau flux lue dans `bin/convoy-state ticket` par
+  `factory-delivery-guard` comme par `deliver-close`, et `gc.authorized_by`
+  lu comme l'autorité du travail, jamais comme le bead qu'il livre.
 - Occurrences : #620, #625, #659, #660, #681, #685, #686, #693, #695, #703,
-  #716 ; af-npz9v1.42 ; af-npz9v1.52 ; af-9wnmid ; af-a53dy2.
-- Ouvertes : aucune ; `review_replay_due`, `tdd_evidence_piece` et
+  #716 ; af-npz9v1.42 ; af-npz9v1.52 ; af-9wnmid ; af-a53dy2 ; af-epwkmn
+  (`factory-delivery-guard` lisait `gc.authorized_by` comme le bead livré et
+  a fermé hors porte R10 af-30ix43, ce qui a arrêté son convoi ; il rouvre
+  ce ticket au statut que ses portes permettent).
+- Ouvertes : les quatre propositions que `factory-delivery-guard` a fermées
+  hors de `bin/proposal-door` avant af-epwkmn (af-p1q5pz, af-ze0zan,
+  af-pgckwt, af-rmbml9) attendent leur résolution par la porte, af-8a2e9d ;
+  `review_replay_due`, `tdd_evidence_piece` et
   `names_in_texts` ont remplacé les trois paires ouvertes de l'étude B § 4.4
   (af-npz9v1.29), et `evaluation_proven_by_test` tient l'écrivain de la
   Ticket Evaluation avec son lecteur de fin de ticket (`lib/delivery_rules.py`,

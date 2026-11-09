@@ -59,11 +59,18 @@
 # convoy's tracked child (unlike mol-do-work/mol-polecat-commit, which close
 # that child directly). Any closed bead carrying gc.delivery_status=merged is
 # followed back to its execution bead via `gc.var.convoy_id` (through the
-# convoy) or a direct `gc.authorized_by` bead id; if that execution bead is
-# still open, its six proof fields are copied over, it is closed, and its
-# convoy (when found via gc.var.convoy_id) is closed alongside it. No new
+# convoy); if that execution bead is still open, its six proof fields are
+# copied over, it is closed, and its convoy is closed alongside it. No new
 # GitHub verification happens here -- the workflow bead's own proof fields
-# already are that verification.
+# already are that verification. `gc.authorized_by` is not followed
+# (af-epwkmn): everywhere else it names the authority of the work (an ADR,
+# a decision, the proposal, epic or ticket that asked for it), never the
+# bead it delivers; read here as one, it closed a new-flow ticket, four
+# proposals and nearly an epic. A ticket of a new-flow convoy is never
+# closed here either: only its ticket-end gate or its withdrawal closes it,
+# as bin/convoy-state says. One this reconciliation closed before is
+# reopened to the status its gates allow, with only the proof fields it
+# copied removed.
 #
 # --check-only reports without writing anything (no repair, no flag).
 #
@@ -77,6 +84,7 @@ GH_BIN="${GH_BIN:-gh}"
 # Host-local cache of PRs gh already confirmed merged ("<repo>#<pr>\t<head>\t<merge>").
 MERGED_CACHE="${FACTORY_DELIVERY_GUARD_MERGED_CACHE:-$ROOT/.gc/runtime/delivery-guard-merged-prs.tsv}"
 PY_BIN="${PYTHON_BIN:-python3}"
+CONVOY_STATE_BIN="${CONVOY_STATE_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/convoy-state}"
 LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../lib" 2>/dev/null && pwd -P)"
 CHECK_ONLY=0
 # shellcheck source=lib/project_registry.sh
@@ -236,14 +244,48 @@ convoy_target() {
   jq -r 'if (.children|length)==1 then .children[0].id else empty end' <<<"$out" 2>/dev/null
 }
 
-# scope_statuses rig -> {id: status} for every bead of that store, in ONE
-# read. Looking each bead up with `bd show` cost ~1 s a call and ~64 calls a
-# tick (2026-09-27), most of factory-guard's 180 s order budget.
-scope_statuses() {
+# scope_read rig -> two maps of every bead of that store, in ONE read, on two
+# lines: {id: status}, then {id: {id, status, metadata}} for the beads that
+# carry a new-flow mark, with only the metadata a close or its undoing reads
+# (null when the read failed).
+# Looking each bead up with `bd show` cost ~1 s a call and ~64 calls a tick
+# (2026-09-27), most of factory-guard's 180 s order budget.
+scope_read() {
   local rig=$1
   (cd "$ROOT" && $(gc_for "$rig") list --all --limit 0 --json 2>/dev/null) \
-    | jq -c 'if type=="array" then (map({(.id): .status}) | add // {}) else {} end' 2>/dev/null \
-    || echo '{}'
+    | jq -c --argjson proof "$PROOF_KEYS_JSON" 'if type=="array" then . else [] end
+        | (map({(.id): .status}) | add // {}),
+          (map(select((.metadata // {})["gc.flow.mark"] != null)
+               | {(.id): {id, status, metadata: (.metadata | with_entries(select(.key == "gc.flow.mark"
+                   or (.key | startswith("gc.flow.gate.")) or (.key as $k | $proof | index($k)))))}})
+           | add // {})' 2>/dev/null \
+    || printf '{}\nnull\n'
+}
+
+# The proof fields this reconciliation copies onto an execution bead.
+PROOF_KEYS_JSON='["gc.delivery_status","gc.work_outcome","gc.github_repo","gc.pr_number","gc.pr_head","gc.merge_commit","gc.delivered_via"]'
+
+# flow_ticket marked rig id -> the bead as convoy-state reads it, when it
+# carries a new-flow mark; empty for any other bead. Without the one read
+# (null), the bead is read alone, never assumed unmarked.
+flow_ticket() {
+  local marked=$1 rig=$2 id=$3
+  if [ "$marked" = null ] || [ -z "$marked" ]; then
+    (cd "$ROOT" && $(gc_for "$rig") show "$id" --json 2>/dev/null) \
+      | jq -c 'if type=="array" then .[0] else . end | select(type=="object" and (.metadata // {})["gc.flow.mark"] != null)' 2>/dev/null
+    return
+  fi
+  jq -c --arg id "$id" '.[$id] // empty' <<<"$marked"
+}
+
+# ticket_gate bead-json id -> what bin/convoy-state ticket answers on that
+# bead (no second tracker read), or nothing when it cannot tell. Only the
+# ticket-end gate and the withdrawal close a ticket of a new-flow convoy
+# (Spec af-wf4w5r §9): the rule is read there, as bin/deliver-close does.
+ticket_gate() {
+  local answer status=0
+  answer=$("$CONVOY_STATE_BIN" ticket "$2" --bead-json - <<<"$1" 2>/dev/null) || status=$?
+  case "$status" in 0|3) printf '%s' "$answer" ;; esac
 }
 
 # status_of statuses rig id -> status from the one-read map; falls back to a
@@ -261,6 +303,53 @@ bead_status() {
     | jq -r 'if type=="array" then .[0].status else .status end // empty' 2>/dev/null
 }
 
+# undo_closes_of_tickets rig label marked delivered: a ticket of a new-flow
+# convoy this reconciliation closed before af-epwkmn (gc.delivered_via names
+# a delivered workflow bead), with no closing gate recorded, goes back to the
+# status its gates allow, and only the proof fields copied from that workflow
+# bead are removed. Nothing else is touched: the convoy resumes it by its own
+# rules (bin/convoy-advance). Read on the map of the one store read: no
+# further read unless such a ticket exists.
+undo_closes_of_tickets() {
+  local rig=$1 label=$2 marked=$3 delivered=$4 ticket exec_id id row gate reopen
+  [ "$marked" != null ] && [ -n "$marked" ] || return 0
+  while IFS= read -r ticket; do
+    [ -n "$ticket" ] || continue
+    exec_id=$(jq -r '.id' <<<"$ticket")
+    id=$(jq -r '.metadata["gc.delivered_via"]' <<<"$ticket")
+    row=$(jq -c --arg id "$id" 'first(.[] | select(.id == $id)) // empty' <<<"$delivered")
+    [ -n "$row" ] || continue
+    gate=$(ticket_gate "$ticket" "$exec_id")
+    if [ -z "$gate" ]; then
+      bad "$exec_id ($label) was closed by factory-delivery-guard, and whether that close had a gate could not be told through convoy-state -- left as it is"
+      continue
+    fi
+    [ "$(jq -r '.closed_outside_gate == true' <<<"$gate")" = "true" ] || continue
+    reopen=$(jq -r '.reopen_status // empty' <<<"$gate")
+    [ -n "$reopen" ] || continue
+    found=1
+    CHECKED=$((CHECKED + 1))
+    INCOMPLETE=$((INCOMPLETE + 1))
+    say "  · $exec_id ($label) is a ticket of a new-flow convoy closed outside its gate by this guard (delivered via $id) -- reopening it"
+    if [ "$CHECK_ONLY" = "1" ]; then
+      bad "$exec_id ($label) was closed outside its gate by factory-delivery-guard (delivered via $id) -- run factory-delivery-guard to reopen it"
+      continue
+    fi
+    local unset=() key
+    while IFS= read -r key; do
+      [ -n "$key" ] && unset+=(--unset-metadata "$key")
+    done < <(jq -r --argjson row "$row" --argjson proof "$PROOF_KEYS_JSON" \
+      '.metadata as $m | $proof[] | select($m[.] != null and ($m[.] | tostring) == ((if . == "gc.delivered_via" then $row.id else $row.metadata[.] end) // "" | tostring))' \
+      <<<"$ticket")
+    if (cd "$ROOT" && $(gc_for "$rig") update "$exec_id" --status="$reopen" "${unset[@]}" \
+          --append-notes "Reopened by factory-delivery-guard (af-epwkmn): closed here earlier from $id's merge, which is not this ticket's delivery; only its own gates close it." >/dev/null 2>&1); then
+      did "$exec_id ($label) reopened to $reopen -- closed outside its gate from $id's merge"
+    else
+      bad "$exec_id ($label) was closed outside its gate by factory-delivery-guard, and reopening it failed -- the Beads write itself failed"
+    fi
+  done < <(jq -c '.[] | select(.status == "closed" and .metadata["gc.delivered_via"] != null)' <<<"$marked" 2>/dev/null)
+}
+
 # process_convoy_delivery_scope: af-gpq0y. A closed workflow bead (e.g. a
 # build-basic root such as smb-44tt) can carry full verified delivery proof
 # (gc.delivery_status=merged, gc.pr_number, gc.merge_commit, ...) while the
@@ -269,41 +358,52 @@ bead_status() {
 # Root cause: build-basic's graph.v2 contract creates its own workflow-root
 # bead as the unit it closes with delivery proof, instead of closing the
 # convoy's tracked child directly the way mol-do-work/mol-polecat-commit do
-# on every other rig. The link back to the execution bead is either
+# on every other rig. The link back to the execution bead is
 # `gc.var.convoy_id` (build-basic: the input convoy id, whose single tracked
-# child is the execution bead) or a direct `gc.authorized_by` execution-bead
-# id (other workflow shapes, e.g. smb-jz34 -> smb-fpbj). This never
-# re-verifies against GitHub: the workflow bead's own six proof fields
-# already are that verification (deliver-close or the graph.v2 dispatcher
-# wrote them), so this only copies them onto the still-open execution bead
-# (and closes its convoy alongside it, when resolved via gc.var.convoy_id).
+# child is the execution bead); `gc.authorized_by` is the authority of the
+# work, not that link (af-epwkmn). This never re-verifies against GitHub:
+# the workflow bead's own six proof fields already are that verification
+# (deliver-close or the graph.v2 dispatcher wrote them), so this only copies
+# them onto the still-open execution bead and closes its convoy alongside it.
 process_convoy_delivery_scope() {  # rig label
   local rig=$1 label=$2 delivered row found=0
   delivered=$(cd "$ROOT" && $(gc_for "$rig") list --all --status closed \
     --has-metadata-key gc.delivery_status --metadata-field gc.delivery_status=merged \
     --limit 0 --json 2>/dev/null)
   jq -e . >/dev/null 2>&1 <<<"$delivered" || delivered='[]'
-  local statuses='{}'
-  [ "$(jq length <<<"$delivered")" = "0" ] || statuses=$(scope_statuses "$rig")
+  local statuses='{}' marked='{}' scope
+  if [ "$(jq length <<<"$delivered")" != "0" ]; then
+    scope=$(scope_read "$rig")
+    statuses=$(sed -n 1p <<<"$scope"); marked=$(sed -n 2p <<<"$scope")
+  fi
 
   while IFS= read -r row; do
     [ -z "$row" ] && continue
-    local id convoy_id authorized_by exec_id exec_status
+    local id convoy_id exec_id exec_status
     id=$(jq -r '.id' <<<"$row")
     convoy_id=$(jq -r '.metadata["gc.var.convoy_id"] // empty' <<<"$row")
-    authorized_by=$(jq -r '.metadata["gc.authorized_by"] // empty' <<<"$row")
-    exec_id=""
-    if [ -n "$convoy_id" ]; then
-      exec_id=$(convoy_target "$rig" "$convoy_id")
-    elif [[ $authorized_by =~ ^[a-zA-Z][a-zA-Z0-9]*-[a-zA-Z0-9]+$ ]]; then
-      [ -n "$(status_of "$statuses" "$rig" "$authorized_by")" ] && exec_id=$authorized_by
-    fi
+    [ -n "$convoy_id" ] || continue
+    exec_id=$(convoy_target "$rig" "$convoy_id")
     [ -n "$exec_id" ] || continue
     [ "$exec_id" != "$id" ] || continue
 
     exec_status=$(status_of "$statuses" "$rig" "$exec_id")
     [ -n "$exec_status" ] || continue          # lookup failed -- nothing safe to do
     [ "$exec_status" != "closed" ] || continue # already fine
+
+    # af-epwkmn: a ticket of a new-flow convoy is closed by its ticket-end
+    # gate or its withdrawal, never here (R10 af-30ix43 was closed here on
+    # 2026-11-09, and its convoy stopped on a ticket closed outside its gate).
+    local ticket
+    ticket=$(flow_ticket "$marked" "$rig" "$exec_id")
+    if [ -n "$ticket" ]; then
+      if [ -z "$(ticket_gate "$ticket" "$exec_id")" ]; then
+        bad "$id ($label) delivered, but whether its tracked bead $exec_id may be closed could not be told through convoy-state -- left as it is"
+      else
+        say "  · $id ($label) delivered; its tracked bead $exec_id is a ticket of a new-flow convoy, closed only by its own gates -- left as it is"
+      fi
+      continue
+    fi
 
     found=1
     CHECKED=$((CHECKED + 1))
@@ -330,20 +430,19 @@ process_convoy_delivery_scope() {  # rig label
           --notes "Closed by factory-delivery-guard: delivered via $id ($ghr#$prn, $mc)." >/dev/null 2>&1); then
       did "$exec_id ($label) closed -- delivery proof copied from workflow bead $id ($ghr#$prn)"
       INCOMPLETE=$((INCOMPLETE + 1))
-      if [ -n "$convoy_id" ]; then
-        local convoy_stat
-        convoy_stat=$(status_of "$statuses" "$rig" "$convoy_id")
-        if [ -n "$convoy_stat" ] && [ "$convoy_stat" != "closed" ]; then
-          if (cd "$ROOT" && $(gc_for "$rig") update "$convoy_id" --status=closed \
-                --notes "Closed by factory-delivery-guard: tracked bead $exec_id delivered via $id." >/dev/null 2>&1); then
-            did "$convoy_id ($label) input convoy closed alongside $exec_id"
-          fi
+      local convoy_stat
+      convoy_stat=$(status_of "$statuses" "$rig" "$convoy_id")
+      if [ -n "$convoy_stat" ] && [ "$convoy_stat" != "closed" ]; then
+        if (cd "$ROOT" && $(gc_for "$rig") update "$convoy_id" --status=closed \
+              --notes "Closed by factory-delivery-guard: tracked bead $exec_id delivered via $id." >/dev/null 2>&1); then
+          did "$convoy_id ($label) input convoy closed alongside $exec_id"
         fi
       fi
     else
       bad "$id ($label) delivered but closing its execution bead $exec_id failed -- the Beads write itself failed"
     fi
   done < <(jq -c '.[]' <<<"$delivered")
+  undo_closes_of_tickets "$rig" "$label" "$marked" "$delivered"
   [ "$found" = "1" ] || say "✓ convoy-delivery:$label — no delivered workflow bead has an open execution bead behind it"
 }
 

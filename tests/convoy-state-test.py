@@ -872,6 +872,27 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         self.assertTrue(json.loads(proc.stdout)["new_flow"])
 
+    def test_ticket_says_a_close_no_gate_wrote_and_the_status_its_gates_allow(self):
+        # af-epwkmn: R10 closed by another writer, with its dispatch gate only.
+        self.ok("mark", CONVOY)
+        metadata = self.tracker_state()["beads"][T1]["metadata"]
+        dispatched = {**metadata, "gc.flow.gate.dispatch": json.dumps({"at": "2026-11-08T18:25:28Z"})}
+        withdrawn = {**dispatched, "gc.flow.gate.withdrawn": json.dumps({"at": "2026-11-09T15:00:00Z"})}
+
+        def answer(status, given):
+            proc = self.run_tool("ticket", T1, "--bead-json", "-",
+                                 input=json.dumps([{"id": T1, "status": status, "metadata": given}]))
+            self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+            return json.loads(proc.stdout)
+
+        for given, reopen in ((dispatched, "in_progress"), (metadata, "open")):
+            got = answer("closed", given)
+            self.assertEqual((True, reopen), (got["closed_outside_gate"], got["reopen_status"]))
+        for status, given in (("closed", withdrawn), ("in_progress", dispatched)):
+            got = answer(status, given)
+            self.assertIs(False, got["closed_outside_gate"])
+            self.assertNotIn("reopen_status", got)
+
     def test_every_tracker_call_names_the_city(self):
         # Left to find the city by itself, gc starts one more command before
         # each read (af-2o6oyl).
