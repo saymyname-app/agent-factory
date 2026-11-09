@@ -2345,8 +2345,10 @@ def integration_red_record(raw: Any) -> dict[str, Any]:
     """The red of the convoy's integration branch (Spec §8): the control
     that is red, quoted, the commit it was red on, the tips of the
     integration and of the protected branches then, and the one repair
-    ticket that restores it once code has published it."""
-    record = stored_record(raw, ("control", "commit", "integration", "protected", "at"), ("detail", "repair", "check"))
+    ticket that restores it once code has published it, and the exit of
+    that repair whose code replay found the branch still red (`replay`)."""
+    record = stored_record(raw, ("control", "commit", "integration", "protected", "at"),
+                           ("detail", "repair", "check", "replay"))
     if "check" in record:
         one_of(record["check"], RED_CHECKS, "contrôle rouge (check)")
     single_line(record["control"], "contrôle rouge")
@@ -2355,6 +2357,8 @@ def integration_red_record(raw: Any) -> dict[str, Any]:
     valid_commit(record["protected"], "pointe de la branche protégée")
     if "detail" in record:
         single_line(record["detail"], "détail du contrôle rouge")
+    if "replay" in record:
+        single_line(record["replay"], "sortie du repair rejouée (replay)")
     if "repair" in record and (not isinstance(record["repair"], str) or not BEAD_ID_RE.match(record["repair"])):
         raise Refusal(f"ticket repair du rouge absent ou mal formé : {record['repair']!r}")
     return record
@@ -5924,7 +5928,10 @@ def cmd_record_integration_red(args: argparse.Namespace) -> int:
     control, same commit -- writes nothing, so a red seen by several passes
     stays one red. A branch found red elsewhere while it is red (its tips
     moved) updates the record and keeps its repair: one repair per red. A
-    branch found red once that repair is closed has no repair any more."""
+    branch found red once that repair is closed has no repair any more.
+    `--replay EXIT_AT`: found red by the code replay of that open repair's
+    exit (bin/convoy-advance): written even when the same, so that exit is
+    replayed once."""
     convoy, tickets = load_convoy(args.convoy)
     require_marked(convoy)
     metadata = metadata_of(convoy)
@@ -5940,14 +5947,19 @@ def cmd_record_integration_red(args: argparse.Namespace) -> int:
         record["detail"] = single_line(args.detail, "détail du contrôle rouge")
     if args.check is not None:
         record["check"] = one_of(args.check, RED_CHECKS, "contrôle rouge (--check)")
+    if args.replay is not None:
+        record["replay"] = single_line(args.replay, "sortie du repair rejouée (--replay)")
     if KEY_INTEGRATION_RED in metadata:
         known = integration_red_record(metadata[KEY_INTEGRATION_RED])
         repair = next((ticket for ticket in tickets if ticket.get("id") == known.get("repair")), None)
         repaired = repair is not None and repair.get("status") == "closed"
-        if (known["control"], known["commit"]) == (record["control"], record["commit"]) and not repaired:
+        if (known["control"], known["commit"], known.get("replay")) == (
+                record["control"], record["commit"], record.get("replay", known.get("replay"))) and not repaired:
             return done(args.convoy, args.convoy, {})
         if "repair" in known and not repaired:
             record["repair"] = known["repair"]
+            if "replay" in known:
+                record.setdefault("replay", known["replay"])
     at = now()
     values: dict[str, Any] = {KEY_INTEGRATION_RED: encode(integration_red_record(encode({**record, "at": at})))}
     if args.end_round:
@@ -7942,6 +7954,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--detail")
     p.add_argument("--check")
     p.add_argument("--end-round", action="store_true")
+    p.add_argument("--replay")
     p = command("record-spec-end", cmd_record_spec_end, ticket=False)
     p.add_argument("--commit")
     p.add_argument("--protected")

@@ -14,7 +14,7 @@ the acceptance, made by `bin/outcome-promote` (T30,
 ```bash
 ./bin/spec-integration open  af-convoy --repo <project repository> --protected main
 ./bin/spec-integration merge af-convoy --repo <project repository> --profile <descriptor.json> [--limit 1] [--timeout SECONDS]
-./bin/spec-integration take-up af-convoy --repo <project repository> --profile <descriptor.json> [--timeout SECONDS] [--end-round]
+./bin/spec-integration take-up af-convoy --repo <project repository> --profile <descriptor.json> [--timeout SECONDS] [--end-round] [--red-repair TICKET --replay EXIT_AT]
 ```
 
 Who calls it: `bin/ticket-graph-publish bd-publish` calls `open` once the
@@ -203,6 +203,19 @@ result, **whether there was anything to take up or not**.
   red (before any control), no integration branch, a takeover in conflict,
   a profile without `regression_command`, a malformed `--timeout`. An
   « état sans règle » is exit 3, a convoy without the mark exit 4.
+
+With `--red-repair TICKET --replay EXIT_AT` (both or neither), `take-up`
+runs under a recorded red, for `bin/convoy-advance` only: TICKET must be the
+open repair of that red and EXIT_AT its current Ticket Exit, otherwise the
+red refuses as above (and a convoy that is not red refuses the pair). Green:
+the takeover is pushed and the red stays recorded, for the caller to close
+the repair and then withdraw the red. Red: the red is recorded with
+`replay` EXIT_AT, its repair kept (`docs/CONVOY_STATE.md`).
+
+The detail of a red control keeps each file the regression names `FAIL` or
+`LATE`, then the output of the first one (its start and its end, about
+1,500 characters in all), then the end of the run. A run that names no file
+keeps its last 300 characters, as before.
 
 The tests of `take-up` are not filed in the evidence store: a piece belongs
 to a ticket, and this tip belongs to none.
