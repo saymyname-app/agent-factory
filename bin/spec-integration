@@ -832,7 +832,11 @@ def cmd_merge(args: argparse.Namespace) -> int:
                     # been merged: is the branch still red?
                     merges = open_pass()
                     takeover = control(checked=True)
-                    state_write("clear-integration-red", args.convoy)
+                    # Green: an open repair of that red is left with nothing
+                    # to restore, so the proof is kept for convoy-advance to
+                    # close it without merge (af-6vhm6r).
+                    state_write("clear-integration-red", args.convoy, "--green", merges.tip,
+                                "--protected", protected_tip, "--green-command", shlex.join(merges.command))
                     red = None
                 else:
                     raise Refusal(red_refusal(red), {"red": red})

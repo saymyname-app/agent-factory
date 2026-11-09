@@ -72,7 +72,7 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state clear-incident  af-convoy            # bin/convoy-advance, once the state is valid again
 ./bin/convoy-state record-integration-red af-convoy --commit <sha> --integration <sha> --protected <sha> --control "<line>" [--detail "<line>"] [--check fidelity] [--end-round] [--replay EXIT_AT]   # bin/spec-integration, bin/spec-end
 ./bin/convoy-state set-integration-repair af-convoy --ticket af-r1   # bin/convoy-advance, once the patch door published the repair
-./bin/convoy-state clear-integration-red  af-convoy     # bin/spec-integration, once the control is green again
+./bin/convoy-state clear-integration-red  af-convoy [--green <sha> --protected <sha> --green-command "<line>"]   # bin/spec-integration, once the control is green again
 ./bin/convoy-state record-spec-end af-convoy --commit <integration tip> --protected <protected tip> --file report.json   # bin/spec-end: three green verdicts, one commit
 ./bin/convoy-state record-evidence-pack af-convoy --commit <integration tip> --digest sha256:<hex> --path <folder> (--conforming | --non-conforming) [--inadmissible N]   # bin/evidence-pack generate
 ./bin/convoy-state open-outcome-evaluation    af-convoy --commit <commit of the gate> --file request.json   # bin/outcome-evaluation: the products launched, the roles
@@ -159,6 +159,7 @@ Every answer is one JSON object on stdout.
 | Acceptance criteria | the bead's description (read only) | ticket | the checkbox lines under `## Acceptance criteria`, in order |
 | Factory incident | `gc.flow.incident` | convoy | the bead that carries the open incident of a stopped convoy and, once it reached the escalation door, the `sha256:` signature of the anomalies it names |
 | Red of the integration branch | `gc.flow.integration_red` | convoy | T21: the control that is red, quoted on one line (`control`), the commit it was red on (`commit`), the tips of the integration and of the protected branches then (`integration`, `protected`), the end of what the control printed (`detail`, optional) and, once code published it, the one `repair` ticket that restores it (`repair`), and the Ticket Exit of that repair whose code replay found it still red (`replay`, optional, `record-integration-red --replay`, af-3p6iz7: that exit is not replayed twice); T23: `check` (`regression`, `fidelity`; absent means the regression command), what is red |
+| Red withdrawn green, its repair open | `gc.flow.integration_red_cleared` | convoy | af-6vhm6r: the last red a control found green again while its `repair` was still open: that red's `control` and `repair`, the green tip (`commit`), the tip of the protected branch it holds (`protected`), the `command` that was green there, `at`; written by `clear-integration-red --green`, read by `bin/convoy-advance` to close that repair without merge |
 | Red control of a technical block | `gc.flow.blocking_red` | ticket | T40: the red control the author of the ticket named when it left « bloqué technique » (`control`, one line; `at`), written by `bin/ticket-exit` (`record-blocking-red`) before the `repair` that cites it goes through the patch door, and withdrawn (`clear-blocking-red`) if the door refuses it. Rendered as `blocking_red` on the ticket and among `convoy.red_checks` |
 | Record of the end-of-Spec gate | `gc.flow.spec_end` | convoy | T23: `commit` (the one commit of the integration branch the three verdicts are tied to), `protected` (the tip of the protected branch that commit holds), `version` (`spec-end/v4`; a record under `spec-end/v1`, `spec-end/v2` or `spec-end/v3` is still read, and held outdated by the gate), `conditions` (`registry`, `tests`, `fidelity`, in that order, all `pass`, each with its `detail`), `records` (optional: what `tests` and `fidelity` read), `at` |
 | Outcome Evaluation | `gc.flow.outcome_evaluation` | convoy | T24: `rounds` (each: `commit`, `stories` — one per numbered user story of the Spec, with `state` `observed` / `not_observed` / `unobservable` and its `evidence` piece —, `exploration`, `fidelity_deviations`, `repairs` — the `draft` of each story not observed and, once published, its `repair` —, `contradictions`, the computed `outcome` and `verdict`, `roles`, `environment`, `recorded_by`, `at`), the open `request` (`commit`, `stories`, `roles`, `environment`, `launches`, `at`), `live` (launch records of products still to stop) and `stop` (`commit`, `reason` among `outcome_evaluation_no_result`, `outcome_evaluation_outage`, `story_unobservable`, `detail`, `raised`) |
@@ -455,7 +456,10 @@ more. `set-integration-repair` names the repair code published for the red:
 a tracked ticket of the convoy, of kind `repair`; it refuses a convoy that
 is not red, a ticket that is not a repair, and a second repair while the
 first is open (« un seul repair par rouge »). `clear-integration-red`
-removes the record. The three refuse a convoy without the mark (exit 4).
+removes the record; with `--green SHA --protected SHA --green-command
+LINE` (the three together), a control found it green at that tip, and if
+its repair is still open the same write keeps that proof as
+`integration_red_cleared` (af-6vhm6r). The three refuse a convoy without the mark (exit 4).
 
 **The end of the Spec (T23, `docs/SPEC_END.md`).** `record-integration-red
 --check fidelity` says that what is red is the mechanical fidelity the

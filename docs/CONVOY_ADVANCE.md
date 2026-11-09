@@ -594,6 +594,18 @@ Only the integration source of a red check is replayed this way: an
 Acceptance Session outage and the end-gate registry of tracked elements are
 other controls, which this gate does not run.
 
+The same rule when the red is gone already (`af-6vhm6r`): a tip moved and
+`spec-integration merge` ran the red control again, green, while its repair
+was still open; it withdrew the red and kept that green as
+`integration_red_cleared` (the control, the repair, the green tip, the
+protected tip it holds, the command). That repair, its author gone by an
+operator request with its branch in that green tip, is closed without merge
+the same way (its own parking lifted, a live request cleared, `convoy-state
+withdraw-ticket` with the command, exit code 0, the commit and the exit in
+its close note); nothing is replayed, since that control is the proof. A
+repair with a commit to merge, another exit, parked behind another ticket,
+or named by the red recorded now is not touched.
+
 A ticket to resume that names no single known project, or when the
 settings have no `resume` entry, is listed under `refused` (exit 1) before
 anything is counted or written. A resume the door deferred is listed under
@@ -1008,6 +1020,9 @@ result),
 of a red that did not reproduce (`ticket`, `closed`, `lifted`, and the
 `spec-integration take-up` result: `tests` when green, `red` when not, or a
 readable `error`),
+`red_repair_cleared` when the pass closed the repair of a red a control had
+already withdrawn green (`ticket`, `closed`, `lifted`, `tests` and
+`protected_tip` from `integration_red_cleared`, or a readable `error`),
 `withdrawn_by_decision` for the exact paired R6/R7 transition (delivered
 maintenance `repair`, tickets `withdrawn`, obsolete requests `cleared`, or a
 readable `error` before any write),
