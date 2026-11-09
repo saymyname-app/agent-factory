@@ -262,6 +262,26 @@ class ClaimedShippedBead(unittest.TestCase):
         })
         self.assertFalse(is_claimed_shipped_bead(bead))
 
+    def test_a_formula_step_that_passed_by_opening_its_pr_is_out_of_scope(self):
+        """af-eyi5wa: mol-do-work's push-and-pr step closes gc.outcome=pass
+        once it has opened the PR; its pass is the step's, not a delivery."""
+        for step_key in ("gc.step_ref", "gc.step_id"):
+            bead = self.af_x45xw_shape(metadata={
+                "gc.outcome": "pass",
+                "gc.pr_url": "https://github.com/example-org/example-repo/pull/833",
+                step_key: "mol-do-work.push-and-pr",
+            })
+            self.assertFalse(is_claimed_shipped_bead(bead), step_key)
+
+    def test_a_formula_step_saying_shipped_itself_stays_in_scope(self):
+        bead = self.af_x45xw_shape(metadata={
+            "gc.outcome": "pass",
+            "gc.work_outcome": "shipped",
+            "gc.pr_url": "https://github.com/example-org/example-repo/pull/833",
+            "gc.step_ref": "mol-do-work.push-and-pr",
+        })
+        self.assertTrue(is_claimed_shipped_bead(bead))
+
     def test_a_malformed_pr_url_is_out_of_scope(self):
         bead = self.af_x45xw_shape(metadata={
             "gc.outcome": "pass",
