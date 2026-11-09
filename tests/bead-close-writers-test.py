@@ -29,32 +29,37 @@ CLOSE = re.compile(
 READ = re.compile(r"\blist\b")
 
 # path -> (number of close writes, what they close and why that is allowed).
+# The bin/ entries are named without their directory: this file only reads
+# the scripts, and a path to one reads as running it (tests/sandbox-isolation-check-test.sh).
+BIN_CLOSERS: dict[str, tuple[int, str]] = {
+    "deliver-close": (1, "a delivery bead, after convoy-state says it is not a new-flow ticket"),
+    "factory-delivery-guard": (2, "the one bead a delivered workflow's input convoy tracks, and that "
+                                  "convoy, after convoy-state says the bead is not a new-flow ticket"),
+    "outcome-promote": (1, "the open tickets of an abandoned convoy, after record-gate withdrawn"),
+    "ticket-graph-publish": (3, "a withdrawn ticket after record-gate withdrawn; merges/supersedes of "
+                                "an old-flow graph only (the new-flow ticket fields refuse them)"),
+    "convoy-advance": (4, "its own beads: an incident, a resume or a draft it created"),
+    "code-review": (1, "its own review bead the dispatch door refused"),
+    "correction-round": (1, "its own correction bead the dispatch door refused"),
+    "ticket-evaluation": (1, "its own evaluation bead the dispatch door refused"),
+    "outcome-evaluation": (1, "its own evaluation bead the dispatch door refused"),
+    "spec-end-review": (2, "its own end-review or request bead a door refused"),
+    "ticket-exit": (1, "its own revision draft the patch door refused"),
+    "evaluation-launch-cancel": (1, "the evaluation launch bead it cancels"),
+    "factory-watchdog": (3, "its own incident beads, once recovered"),
+    "factory-session-loop-guard": (2, "its own incident beads, once recovered"),
+    "pr-autopilot": (2, "its own stuck/CI-failure beads, once the PR recovered"),
+    "provider-failover": (1, "its own provider-exhaustion bead"),
+    "order-pause": (1, "its own pause record"),
+    "mail-reply-reap": (2, "mail beads answered"),
+    "planning-map": (1, "a planning-map issue"),
+    "planning-artifacts-close": (1, "the planning artifact of a closed convoy"),
+    "proposal-door": (1, "the maintenance bead of a proposal reconverted into a decision"),
+}
 CLOSERS: dict[str, tuple[int, str]] = {
     "lib/convoy_state.py": (3, "the gates themselves: close-ticket, withdraw-ticket, close-convoy, "
                                "each with its record in the same write"),
-    "bin/deliver-close": (1, "a delivery bead, after convoy-state says it is not a new-flow ticket"),
-    "bin/factory-delivery-guard": (2, "the one bead a delivered workflow's input convoy tracks, and that "
-                                      "convoy, after convoy-state says the bead is not a new-flow ticket"),
-    "bin/outcome-promote": (1, "the open tickets of an abandoned convoy, after record-gate withdrawn"),
-    "bin/ticket-graph-publish": (3, "a withdrawn ticket after record-gate withdrawn; merges/supersedes of "
-                                    "an old-flow graph only (the new-flow ticket fields refuse them)"),
-    "bin/convoy-advance": (4, "its own beads: an incident, a resume or a draft it created"),
-    "bin/code-review": (1, "its own review bead the dispatch door refused"),
-    "bin/correction-round": (1, "its own correction bead the dispatch door refused"),
-    "bin/ticket-evaluation": (1, "its own evaluation bead the dispatch door refused"),
-    "bin/outcome-evaluation": (1, "its own evaluation bead the dispatch door refused"),
-    "bin/spec-end-review": (2, "its own end-review or request bead a door refused"),
-    "bin/ticket-exit": (1, "its own revision draft the patch door refused"),
-    "bin/evaluation-launch-cancel": (1, "the evaluation launch bead it cancels"),
-    "bin/factory-watchdog": (3, "its own incident beads, once recovered"),
-    "bin/factory-session-loop-guard": (2, "its own incident beads, once recovered"),
-    "bin/pr-autopilot": (2, "its own stuck/CI-failure beads, once the PR recovered"),
-    "bin/provider-failover": (1, "its own provider-exhaustion bead"),
-    "bin/order-pause": (1, "its own pause record"),
-    "bin/mail-reply-reap": (2, "mail beads answered"),
-    "bin/planning-map": (1, "a planning-map issue"),
-    "bin/planning-artifacts-close": (1, "the planning artifact of a closed convoy"),
-    "bin/proposal-door": (1, "the maintenance bead of a proposal reconverted into a decision"),
+    **{f"bin/{name}": entry for name, entry in BIN_CLOSERS.items()},
 }
 
 
