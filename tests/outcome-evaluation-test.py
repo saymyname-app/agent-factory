@@ -61,6 +61,44 @@ UNCOVERED = "4. As a visiteur, I want une page à propos, so that je sache qui p
 UNSERVED_PLAN = {"stories": {"3": {"path": "/version"}, "4": {"path": "/a-propos"}}}
 
 
+class OutcomeEvaluationClaimTest(unittest.TestCase):
+    def load_tool(self, name):
+        loader = importlib.machinery.SourceFileLoader(name, str(TOOL))
+        module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+        loader.exec_module(module)
+        return module
+
+    def test_attempt_starts_at_the_formula_evaluator_step_claim(self):
+        module = self.load_tool("outcome_evaluation_claim_tool")
+        claimed_at = "2026-11-07T02:32:49Z"
+
+        def gc_data(*args):
+            if args[:3] == ("bd", "dep", "list"):
+                return [{"id": "fx-input"}]
+            if "gc.input_convoy_id=fx-input" in args:
+                return [{"id": "fx-root", "metadata": {"gc.formula_name": "mol-outcome-evaluation"}}]
+            if "gc.root_bead_id=fx-root" in args:
+                return [{"id": "fx-step", "status": "in_progress", "metadata": {
+                    "gc.step_id": "mol-outcome-evaluation.evaluate", "gc.claimed_at": claimed_at}}]
+            raise AssertionError(args)
+
+        module.read_bead = lambda _bead_id: {"id": "fx-launch", "status": "open", "metadata": {}}
+        module.gc_data = gc_data
+
+        started, closed = module.launch_state({"bead": "fx-launch", "at": "2026-11-07T01:00:00Z"})
+
+        self.assertEqual(module.stamp_seconds(claimed_at, "bad claim"), started)
+        self.assertFalse(closed)
+
+    def test_an_unreadable_graph_never_turns_a_closed_source_into_an_unclaimed_replacement(self):
+        module = self.load_tool("outcome_evaluation_unreadable_claim_tool")
+        module.read_bead = lambda _bead_id: {"id": "fx-launch", "status": "closed", "metadata": {}}
+        module.gc_data = lambda *_args: (_ for _ in ()).throw(module.Refusal("unreadable graph"))
+
+        self.assertEqual((None, False), module.launch_state({
+            "bead": "fx-launch", "at": "2026-11-07T01:00:00Z"}))
+
+
 def repair(story=None, restores=None):
     what = f"la user story {story}" if story else "le pied de page"
     return {
@@ -465,8 +503,10 @@ class OutcomeEvaluationTest(Harness):
         self.assertEqual("launched", self.settle()["action"])
         answer = self.settle()
         self.assertEqual("pending", answer["action"], answer)
-        launched = self.outcome()["request"]["launches"][-1]["at"]
-        start = calendar.timegm(time.strptime(launched, "%Y-%m-%dT%H:%M:%SZ"))
+        # The delay runs from the Evaluator's claim of its step, not from the dispatch.
+        bead = self.outcome()["request"]["launches"][-1]["bead"]
+        claimed = json.loads(self.tracker.read_text())["beads"][f"{bead}-step"]["metadata"]["gc.claimed_at"]
+        start = calendar.timegm(time.strptime(claimed, "%Y-%m-%dT%H:%M:%SZ"))
         self.assertEqual(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(start + 2 * 3600)), answer["deadline"])
 
     def test_a_per_dataset_delay_that_is_not_a_number_of_seconds_is_refused(self):
@@ -933,6 +973,51 @@ class OutcomeEvaluationTest(Harness):
         status, answer = self.run_gate()
         self.assertEqual((EXIT_REFUSED, (4, "outcome_evaluation", "fail")), (status, self.conditions(answer)[3]))
         self.assertIn("outcome_evaluation_no_result", answer["error"])
+
+    def test_an_evaluation_never_claimed_by_an_evaluator_stays_pending_without_using_an_attempt(self):
+        self.verified()
+        self.settings(timeout_seconds=0)
+        self.evaluator("unclaimed")
+
+        launched, waiting = self.settle(), self.settle()
+
+        self.assertEqual("launched", launched["action"])
+        self.assertEqual("pending", waiting["action"])
+        self.assertEqual(0, waiting["launches"])
+        self.assertEqual(1, len(self.outcome()["request"]["launches"]))
+        self.assertIsNone(self.outcome()["stop"])
+
+    def test_a_cleaned_unclaimed_route_stays_in_history_and_gets_one_replacement(self):
+        self.verified()
+        self.settings(timeout_seconds=0)
+        self.evaluator("silent", "unclaimed", "unclaimed")
+
+        first, second = self.settle(), self.settle()
+        unclaimed = self.outcome()["request"]["launches"][-1]["bead"]
+        closed = self.run_cmd(self.tmp / "path" / "gc", "bd", "close", unclaimed,
+                              "--reason", "workflow cleanup before claim")
+        self.assertEqual(0, closed.returncode, closed.stdout + closed.stderr)
+
+        replacement, waiting = self.settle(), self.settle()
+
+        self.assertEqual("launched", first["action"])
+        self.assertEqual("relaunched", second["action"])
+        self.assertEqual("relaunched", replacement["action"])
+        # The replacement takes the place of the cleaned route: still the second launch.
+        self.assertEqual((1, 2, 2), (first["launches"], second["launches"], replacement["launches"]))
+        self.assertEqual("pending", waiting["action"])
+        self.assertEqual(1, waiting["launches"])
+        self.assertEqual(3, len(self.outcome()["request"]["launches"]))
+        self.assertIsNone(self.outcome()["stop"])
+
+        replacement_bead = self.outcome()["request"]["launches"][-1]["bead"]
+        closed = self.run_cmd(self.tmp / "path" / "gc", "bd", "close", replacement_bead,
+                              "--reason", "second workflow cleanup before claim")
+        self.assertEqual(0, closed.returncode, closed.stdout + closed.stderr)
+        status, refused = self.tool("settle", "--profile", self.outcome_profile)
+        self.assertEqual(EXIT_REFUSED, status, refused)
+        self.assertIn("unique remplacement", refused["error"])
+        self.assertEqual(3, len(self.outcome()["request"]["launches"]))
 
     def test_second_settlement_on_the_same_state_does_nothing(self):
         self.opened()

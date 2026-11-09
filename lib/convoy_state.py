@@ -7491,16 +7491,25 @@ def cmd_append_outcome_product(args: argparse.Namespace) -> int:
 
 def cmd_launch_outcome_evaluation(args: argparse.Namespace) -> int:
     """Record that an Evaluator session was sent the open Outcome
-    Evaluation: the first launch, then one relaunch."""
+    Evaluation: the first launch, then one relaunch when the first claimed
+    attempt gave no result. One cleaned route that was never claimed may
+    remain in history."""
     _, _, _, record = outcome_target(args)
     request = record.get("request")
     if not request:
         raise Refusal(f"aucune Outcome Evaluation n'est demandée sur {args.convoy} : rien à lancer")
     if not isinstance(args.bead, str) or not BEAD_ID_RE.match(args.bead):
         raise Refusal(f"bead d'évaluation absent ou mal formé : {args.bead!r}")
-    if len(request["launches"]) >= EVALUATION_MAX_LAUNCHES:
+    if args.replaces_unclaimed:
+        matches = [launch for launch in request["launches"] if launch["bead"] == args.replaces_unclaimed]
+        if len(matches) != 1 or matches[0].get("refused") or any(
+                launch.get("unclaimed") is True for launch in request["launches"]):
+            raise Refusal("le remplacement ne nomme pas l'unique route non réclamée de cette évaluation")
+        matches[0]["unclaimed"] = True
+    attempts = [launch for launch in request["launches"] if launch.get("unclaimed") is not True]
+    if len(attempts) >= EVALUATION_MAX_LAUNCHES:
         raise Refusal(
-            f"une seule relance par évaluation : {args.convoy} en a déjà lancé {len(request['launches'])} sans résultat")
+            f"une seule relance par évaluation : {args.convoy} en a déjà lancé {len(attempts)} sans résultat")
     request["launches"].append({"bead": args.bead, "at": now()})
     values = {KEY_OUTCOME_EVALUATION: encode(record)}
     write_metadata(args.convoy, values)
@@ -8019,7 +8028,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = command("append-outcome-product", cmd_append_outcome_product, ticket=False)
     p.add_argument("--commit")
     p.add_argument("--file")
-    command("launch-outcome-evaluation", cmd_launch_outcome_evaluation, ticket=False).add_argument("--bead")
+    p = command("launch-outcome-evaluation", cmd_launch_outcome_evaluation, ticket=False)
+    p.add_argument("--bead")
+    p.add_argument("--replaces-unclaimed")
     command("record-outcome-evaluation", cmd_record_outcome_evaluation, ticket=False).add_argument("--file")
     p = command("release-outcome-evaluation", cmd_release_outcome_evaluation, ticket=False)
     p.add_argument("--state-file", action="append", default=[])
