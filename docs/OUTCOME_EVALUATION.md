@@ -147,7 +147,12 @@ piece, at the commit the gate rendered its mechanical verdicts on.
 The Evaluator drafts a repair and **publishes nothing**: `bin/convoy-advance`
 publishes it through the patch door (`bin/ticket-graph-publish`), then names
 it on the story (`bin/convoy-state set-outcome-repair`), once. Nothing is
-published while an evaluation is open.
+published while an evaluation is open. A draft the patch door refuses (a
+criterion that names a file, say) is recorded where it was drafted with the
+reason (`set-outcome-repair --refused`), never published again, and stops
+the evaluation at the commit of its last round (`outcome_repair_refused`)
+(af-68sgzq). A finding whose draft was refused may be classified again by
+the next evaluation.
 
 One commit more on the integration branch, or a move of the protected
 branch, outdates the mechanical verdicts and with them the evaluation: it is
@@ -197,6 +202,7 @@ contradiction.
 | `outcome_evaluation_no_result` | Two claimed launches, each left without states past the delay of one launch (« Which datasets ») |
 | `outcome_evaluation_outage` | The clean copy does not start, or two outages in a row at the same commit |
 | `story_unobservable` | A story handed in as `unobservable` |
+| `outcome_repair_refused` | The patch door refused a repair the Evaluator drafted, for a story or a finding « hors ticket » (written by `bin/convoy-advance`) |
 
 **A `story_unobservable` the factory caused** is lifted by code, not by an
 answer (`af-ip0nrq`). A Factory maintenance that repairs the cause is linked

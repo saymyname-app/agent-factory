@@ -86,8 +86,8 @@ CLASSES = ("repaired", "proposal", "dismissed")
 RESTORES_KINDS = ("user_story", "anchor", "spec_line", "repo_rule", "red_check")
 NOTHING = "aucun"
 FAVORABLE, REPAIR, PLANNING_EXCEPTION, OUTAGE = "favorable", "repair", "planning_exception", "environment_outage"
-STOP_NO_RESULT, STOP_OUTAGE, STOP_UNOBSERVABLE = (
-    "outcome_evaluation_no_result", "outcome_evaluation_outage", "story_unobservable")
+STOP_NO_RESULT, STOP_OUTAGE, STOP_UNOBSERVABLE, STOP_REPAIR_REFUSED = (
+    "outcome_evaluation_no_result", "outcome_evaluation_outage", "story_unobservable", "outcome_repair_refused")
 # The states code reads for a finding « hors ticket » (bin/convoy-state).
 UNCLASSIFIED = "non classé"
 FINAL_STATES = ("réparé", "proposition pour Benjamin", "écarté")
@@ -691,6 +691,17 @@ def raise_stop(convoy: Convoy, stop: dict[str, Any]) -> bool:
              "consequence": "La fin de Spec attend ta décision ; aucun Delivered Outcome avant elle."},
             {"option": "Retirer la story par un graphe révisé",
              "consequence": "La Spec amendée et le graphe révisé repassent par leurs portes."},
+        ]
+    elif stop["reason"] == STOP_REPAIR_REFUSED:
+        # Written by bin/convoy-advance once the patch door refused a draft:
+        # the next tip of the integration branch opens a new evaluation,
+        # whose Evaluator drafts again.
+        what = f"Convoi {convoy.id} : un repair rédigé par l'Evaluator de fin est refusé par la porte de patch"
+        why = "Sans repair publié, ce que l'Outcome Evaluation a demandé de réparer reste ouvert : la fin de Spec reste refusée."
+        options = [
+            {"option": "Faire reprendre le repair refusé dans le Planning Run",
+             "consequence": "Le repair corrigé passe par la porte de patch ; l'évaluation repart sur la nouvelle pointe."},
+            {"option": "Laisser la fin de Spec arrêtée", "consequence": "Aucun Delivered Outcome n'est rendu pour ce convoi."},
         ]
     else:
         if stop["reason"] == STOP_OUTAGE:

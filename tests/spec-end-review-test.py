@@ -11,10 +11,12 @@ reaches the operator through the real bin/escalation-door, read back from
 its list. No agent runs: tests/fixtures/spec-end-review/reviewer stands in
 for the dispatch door and the reviewer sessions it starts."""
 
+import calendar
 import importlib.machinery
 import importlib.util
 import json
 import shutil
+import time
 import unittest
 from pathlib import Path
 
@@ -388,6 +390,54 @@ class SpecEndReviewTest(gate.Harness):
         self.assertEqual(("pending", 1), (answer["action"], answer["launches"]))
         self.assertEqual((before, 1), (self.snapshot(), len(self.launches())))
         self.assertIn("revue de fin en cours", self.gate_error())
+        # The delay runs from the reviewer's claim of its step, not from the dispatch.
+        bead = self.review()["request"]["launches"][-1]["bead"]
+        claimed = json.loads(self.tracker.read_text())["beads"][f"{bead}-step"]["metadata"]["gc.claimed_at"]
+        start = calendar.timegm(time.strptime(claimed, "%Y-%m-%dT%H:%M:%SZ"))
+        self.assertEqual(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(start + 3600)), answer["deadline"])
+
+    def test_an_end_review_a_busy_reviewer_never_claimed_stays_pending_without_using_a_launch(self):
+        self.contradiction()
+        self.settings(timeout_seconds=0)
+        self.reviewer("unclaimed")
+
+        launched, waiting, again = self.settle(), self.settle(), self.settle()
+
+        self.assertEqual(("launched", 1), (launched["action"], launched["launches"]))
+        self.assertEqual([("pending", 0)] * 2, [(answer["action"], answer["launches"]) for answer in (waiting, again)])
+        self.assertNotIn("deadline", waiting)
+        review = self.review()
+        self.assertEqual((1, None), (len(review["request"]["launches"]), review.get("stop")))
+        self.assertEqual(1, len(self.launches()))
+
+    def test_a_cleaned_unclaimed_end_review_route_stays_in_history_and_gets_one_replacement(self):
+        self.contradiction()
+        self.settings(timeout_seconds=0)
+        self.reviewer("silent", "unclaimed")
+
+        first, second = self.settle(), self.settle()
+        unclaimed = self.review()["request"]["launches"][-1]["bead"]
+        closed = self.run_cmd(self.tmp / "path" / "gc", "bd", "close", unclaimed, "--reason", "workflow cleanup before claim")
+        self.assertEqual(0, closed.returncode, closed.stdout + closed.stderr)
+
+        replacement, waiting = self.settle(), self.settle()
+
+        self.assertEqual(["launched", "relaunched", "relaunched"], [a["action"] for a in (first, second, replacement)])
+        # The replacement takes the place of the cleaned route: still the second launch.
+        self.assertEqual((1, 2, 2), (first["launches"], second["launches"], replacement["launches"]))
+        self.assertEqual(("pending", 1), (waiting["action"], waiting["launches"]))
+        review = self.review()
+        self.assertEqual([None, True, None], [launch.get("unclaimed") for launch in review["request"]["launches"]])
+        self.assertIsNone(review.get("stop"))
+
+        # A second cleaned route is not replaced again.
+        closed = self.run_cmd(self.tmp / "path" / "gc", "bd", "close", replacement["bead"], "--reason", "second cleanup")
+        self.assertEqual(0, closed.returncode, closed.stdout + closed.stderr)
+        before = self.snapshot()
+        status, refused = self.review_tool("settle")
+        self.assertEqual(EXIT_REFUSED, status, refused)
+        self.assertIn("unique remplacement", refused["error"])
+        self.assertEqual((before, 3), (self.snapshot(), len(self.launches())))
 
     def test_an_end_review_without_result_is_launched_once_more_then_stopped_and_raised_once(self):
         tip = self.contradiction()
