@@ -8,6 +8,7 @@ branch; no ticket opens a pull request toward the protected branch.
     spec-integration open  CONVOY --repo DIR --protected BRANCH
     spec-integration merge CONVOY --repo DIR --profile DESCRIPTOR [--limit N] [--timeout SECONDS]
     spec-integration take-up CONVOY --repo DIR --profile DESCRIPTOR [--timeout SECONDS] [--end-round]
+                             [--red-repair TICKET --replay EXIT_AT]
 
 A ticket is merged only once the conditions of the ticket-end gate that are
 read before the merge are met (T19, bin/ticket-end check --before-merge:
@@ -52,7 +53,15 @@ anything to take up or not: the one tip the end-of-Spec gate renders its
 verdicts on. Green, the takeover is pushed and the tip is answered with the
 tip of the protected branch it holds. Red, nothing is pushed and the red is
 recorded on the convoy as above -- with `--end-round`, one round of the end
-of the Spec is counted in the same write.
+of the Spec is counted in the same write. While a red is recorded, `take-up`
+refuses, but for `--red-repair TICKET --replay EXIT_AT` (bin/convoy-advance):
+the open repair of that red left at EXIT_AT with nothing to merge, the
+control is run again the same way. Green, the takeover is pushed and the red
+stays recorded: the caller closes the repair, then withdraws the red. Red,
+the red is recorded with `replay` EXIT_AT, and its repair is kept.
+
+A red control's detail keeps each failing file the regression names (`FAIL`
+or `LATE`) and the output of the first one, not only the end of the run.
 
 With a remote `origin`, the protected and the integration branches are read
 there (after a fetch) and the integration branch is pushed there; without
@@ -118,6 +127,8 @@ import test_budgets  # noqa: E402
 DEFAULT_TIMEOUT = test_budgets.deadline(test_budgets.load(Path(__file__).resolve().parents[1]), "full")
 NOT_RUN = 75
 MAX_DETAIL = 300
+# A red's detail names the failing file and keeps its output (af-3p6iz7).
+MAX_RED_DETAIL = 1500
 BRANCH_RE = re.compile(r"^[^\s~^:?*\[\\]+$")
 
 
@@ -166,6 +177,30 @@ def last_lines(text: str, limit: int = MAX_DETAIL) -> str | None:
     what is red."""
     text = " ".join(text.split())
     return (text if len(text) <= limit else "…" + text[-(limit - 1):]) or None
+
+
+def red_detail(text: str, limit: int = MAX_RED_DETAIL) -> str | None:
+    """What a red regression said, on one line: each file it names `FAIL`
+    or `LATE`, then the output of the first one (its start and its end),
+    then the end of the run. Without such a line, the end of the run."""
+    lines = text.splitlines()
+    failing = [index for index, line in enumerate(lines) if line.startswith(("FAIL ", "LATE "))]
+    if not failing:
+        return last_lines(text)
+    first = failing[0]
+    # Its output ends at the next file's line, or at the run's own measure.
+    end = next((index for index in range(first + 1, len(lines))
+                if lines[index].startswith(("PASS ", "FAIL ", "LATE "))
+                or (lines[index].startswith("regression: took ") and "with the host held" in lines[index])),
+               len(lines))
+    names = short(" ; ".join(" ".join(lines[index].split()) for index in failing), limit // 3)
+    tail = last_lines("\n".join(lines[end:]), MAX_DETAIL // 2) or ""
+    room = max(limit - len(names) - len(tail) - 30, MAX_DETAIL)
+    output = " ".join(" ".join(lines[first + 1:end]).split())
+    if len(output) > room:
+        half = room // 2
+        output = output[:half] + "…" + output[-half:]
+    return " — ".join(part for part in (names, f"sortie : {output}" if output else "", tail) if part)
 
 
 # --- the other commands ----------------------------------------------------------
@@ -603,7 +638,7 @@ class Pass:
             self.git("reset", "--quiet", "--hard", self.tip)
             raise RedControl(
                 f"commande de régression ({shlex.join(self.command)}) : code {proc.returncode}, sur {where}",
-                result, last_lines(proc.stdout + "\n" + proc.stderr), self.protected if taken else None)
+                result, red_detail(proc.stdout + "\n" + proc.stderr), self.protected if taken else None)
         if result != self.tip:
             self.repo.move(self.branch, result, self.tip)
         self.tip = self.held = result
@@ -678,15 +713,17 @@ class Pass:
 
 
 def record_red(convoy_id: str, repo: Repo, found: RedControl, tip: str, protected_tip: str,
-               end_round: bool = False) -> dict[str, Any]:
+               end_round: bool = False, replay: str | None = None) -> dict[str, Any]:
     """Write the red of the integration branch on the convoy, and return it
     as it is recorded (with its repair, when the branch was red already).
     `end_round`: the red was found by the end-of-Spec gate, and counts one of
-    its rounds in the same write."""
+    its rounds in the same write. `replay`: found by the code replay of its
+    repair's exit at that time."""
     state_write("record-integration-red", convoy_id, "--commit", found.commit, "--integration", tip,
                 "--protected", protected_tip, "--control", found.control,
                 *(("--detail", found.detail) if found.detail else ()),
-                *(("--end-round",) if end_round else ()))
+                *(("--end-round",) if end_round else ()),
+                *(("--replay", replay) if replay else ()))
     recorded = read_state(convoy_id, repo)["convoy"].get("integration_red")
     if not isinstance(recorded, dict) or "control" not in recorded:
         raise Refusal(f"le rouge de la branche d'intégration du convoi {convoy_id} n'a pas pu être relu après son enregistrement")
@@ -834,6 +871,8 @@ def cmd_take_up(args: argparse.Namespace) -> int:
         raise Refusal(f"--timeout mal formé : {args.timeout!r}") from exc
     if not 0 < timeout < float("inf"):
         raise Refusal(f"--timeout mal formé : {args.timeout!r}")
+    if (args.red_repair is None) != (args.replay is None):
+        raise Refusal("--red-repair et --replay vont ensemble : le repair du rouge et la sortie rejouée")
 
     with integration_lock(args.convoy):
         integration = read_state(args.convoy, repo)["convoy"].get("integration")
@@ -853,15 +892,23 @@ def cmd_take_up(args: argparse.Namespace) -> int:
         if protected_tip is None:
             raise Refusal(f"branche protégée introuvable dans le dépôt {repo.path} : {protected}")
         red = state["convoy"].get("integration_red")
+        replayed = None
         if red:
-            raise Refusal(red_refusal(red), {"red": red})
+            repair = next((ticket for ticket in state["tickets"] if ticket["id"] == red.get("repair")), None)
+            if args.red_repair is None or repair is None or repair["id"] != args.red_repair \
+                    or repair.get("status") == "closed" or (repair.get("exit") or {}).get("at") != args.replay:
+                raise Refusal(red_refusal(red), {"red": red})
+            replayed = args.replay
+        elif args.red_repair is not None:
+            raise Refusal(f"la branche d'intégration du convoi {args.convoy} n'est pas rouge : aucun repair à rejouer")
         command = regression_command(args.profile)
         with work_tree(repo, args.convoy, tip) as tree:
             merges = Pass(repo, args.convoy, branch, protected, tip, tree, command, timeout)
             try:
                 takeover = merges.take_up_protected(protected_tip, checked=True)
             except RedControl as found:
-                recorded = record_red(args.convoy, repo, found, tip, protected_tip, end_round=args.end_round)
+                recorded = record_red(args.convoy, repo, found, tip, protected_tip, end_round=args.end_round,
+                                      replay=replayed)
                 raise Refusal(red_refusal(recorded, found.taken_up), {"red": recorded}) from found
             tip = merges.tip
 
@@ -913,6 +960,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--profile")
     p.add_argument("--timeout", default=DEFAULT_TIMEOUT)
     p.add_argument("--end-round", action="store_true")
+    p.add_argument("--red-repair")
+    p.add_argument("--replay")
     p.set_defaults(handler=cmd_take_up)
     p = sub.add_parser("tests")
     p.add_argument("--tree")

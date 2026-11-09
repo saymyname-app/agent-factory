@@ -573,6 +573,27 @@ durable phase marker: an interruption after it retries only the remaining
 request clearance and atomic withdrawal, without replaying the control or
 resuming an author.
 
+The general rule that R6, R7 and R8 lacked (`af-3p6iz7`): the open repair
+of the convoy's integration red whose author left by an operator request,
+with its branch already in the integration tip (nothing to merge), is
+replayed by code before anyone is asked again. The pass runs the red
+control through `spec-integration take-up --red-repair TICKET --replay
+EXIT_AT` on the current integration tip, the protected branch taken up;
+the author's word that it is green is never enough. Green: the parking is
+lifted (with its delivered linked maintenance, if any), a live request is
+cleared, the repair is closed through `convoy-state withdraw-ticket` with
+the command, its exit code, the commit and the replayed exit in its close
+note, and the red is withdrawn; no author is resumed. Red: the red is
+recorded again with `replay` set to that exit and its repair kept; the
+repair stays open and parked on it, so the ordinary paths go on (a delivered
+linked maintenance or an answer resumes it), and that exit is not replayed
+again. A branch with a commit to merge, another exit, a repair parked
+behind another ticket, or a closed or merged repair is not touched. A
+refused replay (timeout, conflict) closes nothing; the next pass retries.
+Only the integration source of a red check is replayed this way: an
+Acceptance Session outage and the end-gate registry of tracked elements are
+other controls, which this gate does not run.
+
 A ticket to resume that names no single known project, or when the
 settings have no `resume` entry, is listed under `refused` (exit 1) before
 anything is counted or written. A resume the door deferred is listed under
@@ -983,6 +1004,10 @@ repair of a red (`{id, key, draft, published}`, or `error`),
 `closed_without_merge` for the exact R8 transition (`ticket`, delivered
 maintenance `repair`, lifted descendants and the `spec-integration take-up`
 result),
+`red_repair_replay` when the pass replayed the red control for the repair
+of a red that did not reproduce (`ticket`, `closed`, `lifted`, and the
+`spec-integration take-up` result: `tests` when green, `red` when not, or a
+readable `error`),
 `withdrawn_by_decision` for the exact paired R6/R7 transition (delivered
 maintenance `repair`, tickets `withdrawn`, obsolete requests `cleared`, or a
 readable `error` before any write),
