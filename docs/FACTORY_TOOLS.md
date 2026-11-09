@@ -1624,7 +1624,13 @@ calculé par du code**.
 - **Story « non observée »** : l'Evaluator rédige un `repair` qui cite la
   story et ne le publie pas ; `./bin/convoy-advance` le publie par la porte
   de patch. **Story inobservable** : l'évaluation s'arrête et une question
-  t'est posée (`./bin/escalation-door list`).
+  t'est posée (`./bin/escalation-door list`). L'Evaluator peut ouvrir, un à
+  la fois, chacun des jeux déclarés du profil (af-ip0nrq) ; il doit couvrir
+  les jeux cités, et une story n'est rendue inobservable qu'avec la liste des
+  jeux essayés. Un arrêt causé par l'usine se relie à sa maintenance
+  (`./bin/convoy-state link-outcome-repair`) : une fois celle-ci fusionnée et
+  sa CI prouvée, ta question est retirée sans réponse et l'évaluation repart
+  au même commit, sans tour de fin.
 - **Constats hors ticket** : chacun est classé « réparé » (citation de ce
   qu'il rétablit et repair rédigé obligatoires), « proposition pour
   Benjamin » (gardé pour le dossier) ou « écarté » (raison obligatoire). Un

@@ -39,15 +39,17 @@ and 5 of the end-of-Spec gate (`verdict`).
 
 `brief`, `classify` and `record` are refused outside a session of the
 read-only Evaluator role. The session is given no repository: it sees the
-product through its addresses only. `brief.datasets` lists the datasets the
-evaluation covers (« Which datasets », below) while `brief.environments`
-lists only the active product. `product
+product through its addresses only. `brief.datasets` lists every declared
+dataset the Evaluator may open, `brief.cited` the ones it must cover, and
+`brief.screens` which datasets show which screen (« Which datasets », below),
+while `brief.environments` lists only the active product. `product
 CONVOY --dataset NAME` returns `ready=false` until the controller's next
 pass confirms the old product stopped and opens the requested one;
 `--wait SECONDS` blocks for that inside one call (af-oowsc2). `--fresh`
 revisits a game from its initial state at the same commit. Capture before
 switching. The sealed result includes one `coverage` entry (`dataset`,
-`evidence`) for each game; a missing game or wrong address refuses it.
+`evidence`) for each game opened, every cited one among them; a missing game
+or wrong address refuses it.
 Historical addresses remain in the request and round for proof checks
 after their products stop. Ticket and Outcome Evaluation share two host
 slots, with one active product per evaluation. Startup and shutdown count;
@@ -67,30 +69,36 @@ réduit ? » he answered « Réduire aux jeux cités ».
 Mechanism (agent interpretation, `af-npz9v1.11`): the rule of the Ticket
 Evaluation (`af-kdxk6k`) applied to the Spec.
 
-- **Covered:** the declared datasets of the project's profile
-  (`launch.datasets`) that a numbered user story of the Spec, the
+- **Cited (`brief.cited`), due:** the declared datasets of the project's
+  profile (`launch.datasets`) that a numbered user story of the Spec, the
   demonstration line of a ticket of the convoy, or a validated expectation of
   a story names, by their exact name. The Spec carries no demonstration line
-  of its own: those of its tickets are what demonstrate it.
-- **Fallback:** none named, the first declared dataset (in name order) alone.
-- **Asked for another one:** `product --dataset` refuses a declared dataset
-  outside that list (« jeu absent de la demande »), and the sealed result
-  carries one `coverage` entry per covered dataset only.
+  of its own: those of its tickets are what demonstrate it. None named, the
+  first declared dataset (in name order) alone. The first cited dataset is
+  the product launched first; each cited one is opened and covered.
+- **Every other declared dataset, on demand** (Benjamin, 2026-11-09 21:53
+  Paris, to « On ouvre à l'Evaluator tous les jeux déclarés, un à la fois ? »:
+  « Oui, ouvre-les », `af-ip0nrq`): `product --dataset` opens any dataset of
+  `brief.datasets`, one product at a time as before. On 2026-11-09 the
+  Cockpit convoy `af-strhoy` was stopped with 57 of 89 stories
+  « unobservable » on the one cited dataset, whose situations other declared
+  datasets showed: the factory, not the stories, made them unobservable.
+  `brief.screens` (the profile's `launch.screens`: screen, path, datasets)
+  helps choose where a story's situation is.
+- **The coverage:** one `coverage` entry per dataset opened, every cited one
+  among them; nothing more is due for a dataset never opened.
 - **The delay of one launch:** `max(timeout_seconds, datasets ×
   per_dataset_seconds)`, the very function of the Ticket Evaluation
   (`launch_timeout`, `lib/evaluation_capacity.py`, `af-vtg5kl`); the datasets
-  counted are those of the request, ready or not yet opened.
-- **An evaluation opened before this rule** keeps the datasets of its
-  request until it is replayed (a new commit at the gate); its delay is
-  computed on them from the next pass (95 datasets: 22 800 s).
+  counted are those the Evaluator may open (95 datasets: 22 800 s).
+- **An evaluation opened before this rule** (no `cited` in its request)
+  keeps its datasets and the coverage of each until it is replayed.
 
-**What this changes before Benjamin's Acceptance Session.** Until
-2026-10-17 every declared dataset (95 on the Cockpit) was walked by the
-Evaluator of the end before the Acceptance Request. Now only the covered
-ones are: a story that holds on a covered dataset and fails on another one
-is no longer caught by this evaluation, nor by the condition 4 of the gate;
-it is found in the Acceptance Session or not at all. The Acceptance Session
-itself is unchanged (`docs/ACCEPTANCE_SESSION.md`).
+**What this changes before Benjamin's Acceptance Session.** Only the cited
+datasets are due: a story that holds on an opened dataset and fails on one
+never opened is not caught by this evaluation, nor by the condition 4 of the
+gate; it is found in the Acceptance Session or not at all. The Acceptance
+Session itself is unchanged (`docs/ACCEPTANCE_SESSION.md`).
 
 `record` takes one JSON file:
 
@@ -112,6 +120,12 @@ itself is unchanged (`docs/ACCEPTANCE_SESSION.md`).
   captured it under the convoy, at the commit of the gate, on one of the
   launched products (`docs/EVIDENCE_STORE.md`).
 - **States**: `observed`, `not_observed`, `unobservable`.
+- **An `unobservable` names the datasets tried** (`tried`: each declared
+  dataset opened in this evaluation to look for that story). Without it, or
+  with a dataset never opened, `record` refuses the whole hand-in
+  (`af-ip0nrq`). Which dataset is relevant to a story is the Evaluator's
+  judgement, helped by `brief.screens`; code proves the try was made on a
+  product it opened.
 - **`exploration` and `fidelity_deviations`** are kept for the Evidence Pack
   and change nothing to the verdict.
 - **A `verdict`, an `outcome` or a `contradictions` field is refused**: code
@@ -183,6 +197,22 @@ contradiction.
 | `outcome_evaluation_no_result` | Two claimed launches, each left without states past the delay of one launch (« Which datasets ») |
 | `outcome_evaluation_outage` | The clean copy does not start, or two outages in a row at the same commit |
 | `story_unobservable` | A story handed in as `unobservable` |
+
+**A `story_unobservable` the factory caused** is lifted by code, not by an
+answer (`af-ip0nrq`). A Factory maintenance that repairs the cause is linked
+to the stop: `bin/convoy-state link-outcome-repair CONVOY --repair BEAD`
+(an authorized maintenance or a bead under the PR+CI delivery contract,
+the same check as `link-technical-repair`). Once every linked repair is
+merged with its CI proven on the exact head (`delivery_readiness`), the next
+`settle` clears the request from the operator's list
+(`bin/escalation-door clear`, no answer recorded), lifts the stop
+(`bin/convoy-state lift-outcome-stop`, kept under `lifts`, the round it
+stopped on set aside) and opens the evaluation again at the same commit.
+No counter moves: a refusal at that same commit counts no round of the end
+(`end_rounds`, once per tip, `docs/CONVOY_STATE.md`). Until the repair is
+delivered the stop holds and its request stays on the list. If the new
+evaluation still renders a story `unobservable`, with its datasets tried,
+that is a new stop and a new request.
 
 A stop is raised once to the operator through `bin/escalation-door benjamin`
 on the convoy, in French, and holds for its commit: nothing is launched

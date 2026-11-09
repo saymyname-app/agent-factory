@@ -813,10 +813,11 @@ class Convoy:
         """The end-of-Spec gate is due, or the Outcome Evaluation has
         something left to settle whatever the tickets: an open request, a
         launched product to stop, a stop that did not reach the operator
-        (T24)."""
+        (T24), a stop a Factory maintenance is linked to (af-ip0nrq)."""
         outcome = self.outcome or {}
         stop = outcome.get("stop") or {}
-        return bool(self.end_due() or outcome.get("request") or outcome.get("live") or (stop and "raised" not in stop))
+        return bool(self.end_due() or outcome.get("request") or outcome.get("live")
+                    or (stop and ("raised" not in stop or stop.get("repairs"))))
 
     def red_check(self, source: str, ticket: str | None = None) -> str | None:
         """The name of the red control the convoy records from `source`."""

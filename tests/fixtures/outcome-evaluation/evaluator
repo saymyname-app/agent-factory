@@ -184,6 +184,8 @@ def state_of(story, product):
         raise RuntimeError(f"capture {piece} failed for {product}: {captured.stdout}{captured.stderr}")
     record = json.loads(Path(json.loads(captured.stdout)["path"]).read_text(encoding="utf-8"))
     state = {"number": story["number"], "text": story["text"], "evidence": piece}
+    if "unobservable" in look:
+        return {**state, "state": "unobservable", **look["unobservable"]}
     if record["exit_code"] == 0 and look.get("look_for", "") in record["output"]:
         return {**state, "state": "observed"}
     return {**state, "state": "not_observed",
@@ -210,7 +212,9 @@ if len(brief.get("datasets") or []) > 1:
     first = brief["environments"][0]["dataset"]
     states = {}
     coverage = []
-    for dataset in brief["datasets"]:
+    # Every cited dataset, then any other declared one a story is looked for in.
+    chosen_elsewhere = [look["dataset"] for look in given.get("stories", {}).values() if "dataset" in look]
+    for dataset in dict.fromkeys([*(brief.get("cited") or brief["datasets"]), *chosen_elsewhere]):
         product = product_for(dataset)
         compare(product)
         for story in brief["stories"]:

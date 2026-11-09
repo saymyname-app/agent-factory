@@ -119,6 +119,8 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state record-outcome-evaluation  CONVOY --file PATH
     convoy-state release-outcome-evaluation CONVOY --state-file PATH [--state-file PATH] [--withdraw]
     convoy-state stop-outcome-evaluation    CONVOY (--commit SHA --reason REASON --detail LINE | --raised)
+    convoy-state link-outcome-repair        CONVOY --repair BEAD
+    convoy-state lift-outcome-stop          CONVOY --commit SHA
     convoy-state classify-finding   CONVOY TICKET --item out_of_ticket.N --as repaired|proposal|dismissed
                                     --recorded-by SESSION [--reason LINE] [--file PATH]
     convoy-state set-outcome-repair CONVOY --repair TICKET (--story N | --ticket TICKET --item out_of_ticket.N)
@@ -381,6 +383,10 @@ REPAIR_CRITERION_FIELDS = ("entry_point", "observable", "false_if")
 OUTCOME_OUTCOMES = ("favorable", "repair", "planning_exception", "environment_outage")
 OUTCOME_SECTIONS = ("exploration", "fidelity_deviations")
 OUTCOME_STOPS = ("outcome_evaluation_no_result", "outcome_evaluation_outage", "story_unobservable")
+# A story the factory made unobservable (one dataset opened of all declared,
+# af-ip0nrq): a Factory maintenance linked to that stop lifts it by code once
+# delivered, without an answer of the operator and without a round of the end.
+OUTCOME_LIFTABLE_STOPS = ("story_unobservable",)
 ITEM_OPEN = "ouvert"
 ITEM_REPAIRED = "réparé"
 ITEM_ACCEPTED = "accepté par Benjamin"
@@ -2867,10 +2873,14 @@ def outcome_notes(value: Any, name: str) -> Any:
 
 def outcome_request(value: Any) -> dict[str, Any]:
     required = {"commit", "stories", "roles", "environment", "launches", "at"}
-    if not isinstance(value, dict) or not required <= set(value) or set(value) - required - {"datasets", "wanted"}:
+    if not isinstance(value, dict) or not required <= set(value) \
+            or set(value) - required - {"datasets", "cited", "wanted"}:
         raise Refusal(f"demande d'Outcome Evaluation mal formée : {value!r}")
     if "datasets" in value:
         evaluation_datasets(value["datasets"])
+    if "cited" in value and ("datasets" not in value or any(
+            dataset not in value["datasets"] for dataset in evaluation_datasets(value["cited"]))):
+        raise Refusal(f"jeux cités hors des jeux de la demande d'Outcome Evaluation : {value['cited']!r}")
     if "wanted" in value:
         wanted = value["wanted"]
         if (not isinstance(wanted, dict) or set(wanted) != {"dataset", "fresh", "at"} or
@@ -2913,7 +2923,9 @@ def outcome_round(value: Any) -> dict[str, Any]:
         number = story.get("number") if isinstance(story, dict) else None
         if isinstance(number, bool) or not isinstance(number, int) or number < 1:
             raise Refusal(f"user story sans numéro dans une passe d'Outcome Evaluation : {story!r}")
-        evaluation_item(story, f"user story {number}")
+        evaluation_item({name: field for name, field in story.items() if name != "tried"}, f"user story {number}")
+        if "tried" in story and (story["state"] != "unobservable" or evaluation_datasets(story["tried"]) is None):
+            raise Refusal(f"user story {number} : des jeux essayés ne se donnent qu'avec « unobservable »")
     numbers = [story["number"] for story in value["stories"]]
     if len(set(numbers)) != len(numbers):
         raise Refusal("passe d'Outcome Evaluation mal formée : deux états pour une user story")
@@ -2958,7 +2970,7 @@ def outcome_evaluation_record(raw: Any) -> dict[str, Any]:
     the products still to stop (`live`), and what stopped it at a commit
     (`stop`: no result, an environment that failed twice, a story that
     cannot be observed)."""
-    record = stored_record(raw, ("rounds",), ("request", "live", "stop"))
+    record = stored_record(raw, ("rounds",), ("request", "live", "stop", "lifts"))
     if not isinstance(record["rounds"], list):
         raise Refusal(f"passes d'Outcome Evaluation mal formées : {record['rounds']!r}")
     for value in record["rounds"]:
@@ -2972,12 +2984,33 @@ def outcome_evaluation_record(raw: Any) -> dict[str, Any]:
     if "stop" in record:
         stop = record["stop"]
         if not isinstance(stop, dict) or not {"reason", "detail", "commit", "at"} <= set(stop) \
-                or set(stop) - {"reason", "detail", "commit", "at", "raised"}:
+                or set(stop) - {"reason", "detail", "commit", "at", "raised", "repairs"}:
             raise Refusal(f"arrêt de l'Outcome Evaluation mal formé : {stop!r}")
         one_of(stop["reason"], OUTCOME_STOPS, "raison d'arrêt de l'Outcome Evaluation")
         single_line(stop["detail"], "précision de l'arrêt")
         valid_commit(stop["commit"], "commit de l'arrêt")
+        if "repairs" in stop:
+            if stop["reason"] not in OUTCOME_LIFTABLE_STOPS:
+                raise Refusal(f"réparation liée à un arrêt qui ne se lève pas par code : {stop!r}")
+            technical_repairs_record(encode({"stop_at": stop["at"], "entries": stop["repairs"]}))
+    for lift in record.get("lifts", []) if isinstance(record.get("lifts", []), list) else [None]:
+        if not isinstance(lift, dict) or set(lift) != {"reason", "commit", "stop_at", "repairs", "at"} \
+                or lift["reason"] not in OUTCOME_LIFTABLE_STOPS or not isinstance(lift["repairs"], list) \
+                or not lift["repairs"] or any(not isinstance(repair, str) or not BEAD_ID_RE.match(repair)
+                                              for repair in lift["repairs"]):
+            raise Refusal(f"levée d'arrêt de l'Outcome Evaluation mal formée : {lift!r}")
+        valid_commit(lift["commit"], "commit de la levée")
+        single_line(lift["at"], "date de la levée")
+    if "lifts" in record and not record["lifts"]:
+        raise Refusal("levées d'arrêt de l'Outcome Evaluation vides")
     return record
+
+
+def superseded_round(record: dict[str, Any], round_: dict[str, Any] | None) -> bool:
+    """A round a code-owned lift of its stop set aside: evaluated again at
+    its commit (af-ip0nrq)."""
+    return round_ is not None and any(lift["commit"] == round_["commit"] and lift["at"] >= round_["at"]
+                                      for lift in record.get("lifts", []))
 
 
 def outcome_state(record: dict[str, Any]) -> dict[str, Any]:
@@ -5402,6 +5435,27 @@ def cmd_park(args: argparse.Namespace) -> int:
     return 0
 
 
+def provable_repair(repair_id: Any) -> None:
+    """A technical request is linked only to a repair whose delivery can be
+    proven: an authorized Factory maintenance, or work under the PR+CI
+    delivery contract."""
+    if not isinstance(repair_id, str) or not BEAD_ID_RE.match(repair_id):
+        raise Refusal(f"bead de réparation absent ou mal formé : {repair_id!r}")
+    repair = load_bead(repair_id)
+    # Imported only on this rare write, not on every convoy-state read.
+    from factory_delivery_proof import requires_pr_delivery_proof
+    repair_metadata = metadata_of(repair)
+    authorized_maintenance = repair.get("issue_type") == "bug" \
+        and "maintenance" in (repair.get("labels") or []) \
+        and isinstance(repair_metadata.get("gc.authorized_by"), str) \
+        and bool(repair_metadata["gc.authorized_by"].strip())
+    if repair_metadata.get("gc.delivery_contract") != "pr-ci-merged-v1" \
+            and not requires_pr_delivery_proof(repair) and not authorized_maintenance:
+        raise Refusal(
+            f"{repair_id} n'est ni une maintenance autorisée ni gouverné par un contrat de livraison PR+CI : "
+            "une demande technique ne se lie qu'à une réparation dont la livraison pourra être prouvée")
+
+
 def cmd_link_technical_repair(args: argparse.Namespace) -> int:
     """Turn only an explicitly linked Factory defect request into a
     code-owned wait. The pass lifts it after every repair has structural
@@ -5421,21 +5475,9 @@ def cmd_link_technical_repair(args: argparse.Namespace) -> int:
         raise Refusal(
             f"{args.ticket} n'est ni parqué par sa propre demande opérateur ni arrêté par son évaluation : "
             "seules ces classes peuvent être reliées à une réparation technique")
-    if not isinstance(args.repair, str) or not BEAD_ID_RE.match(args.repair) or args.repair == args.ticket:
+    if args.repair == args.ticket:
         raise Refusal(f"bead de réparation absent ou mal formé : {args.repair!r}")
-    repair = load_bead(args.repair)
-    # Imported only on this rare write, not on every convoy-state read.
-    from factory_delivery_proof import requires_pr_delivery_proof
-    repair_metadata = metadata_of(repair)
-    authorized_maintenance = repair.get("issue_type") == "bug" \
-        and "maintenance" in (repair.get("labels") or []) \
-        and isinstance(repair_metadata.get("gc.authorized_by"), str) \
-        and bool(repair_metadata["gc.authorized_by"].strip())
-    if metadata_of(repair).get("gc.delivery_contract") != "pr-ci-merged-v1" \
-            and not requires_pr_delivery_proof(repair) and not authorized_maintenance:
-        raise Refusal(
-            f"{args.repair} n'est ni une maintenance autorisée ni gouverné par un contrat de livraison PR+CI : "
-            "une demande technique ne se lie qu'à une réparation dont la livraison pourra être prouvée")
+    provable_repair(args.repair)
     record = technical_repairs_record(metadata[KEY_TECHNICAL_REPAIRS]) if KEY_TECHNICAL_REPAIRS in metadata else None
     if record is None or {name: value for name, value in record.items() if name != "entries"} != generation:
         record = {**generation, "entries": []}
@@ -7441,26 +7483,29 @@ def cmd_open_outcome_evaluation(args: argparse.Namespace) -> int:
     if stop and stop["commit"] == commit:
         raise Refusal(f"l'Outcome Evaluation du convoi {args.convoy} est arrêtée au commit {commit} ({stop['reason']})")
     given = json_argument(args.file, "demande d'Outcome Evaluation")
-    unknown = sorted(set(given) - {"roles", "environment", "datasets"})
+    unknown = sorted(set(given) - {"roles", "environment", "datasets", "cited"})
     if unknown:
         raise Refusal(f"champs inconnus dans la demande d'Outcome Evaluation : {', '.join(unknown)}")
     roles = outcome_roles(given.get("roles"))
     environment = evaluation_environment(given.get("environment"), launched=True)
     datasets = evaluation_datasets(given["datasets"]) if "datasets" in given else None
     last = record["rounds"][-1] if record["rounds"] else None
-    if last and last["commit"] == commit and last["verdict"] is not None:
+    if last and last["commit"] == commit and last["verdict"] is not None and not superseded_round(record, last):
         raise Refusal(f"le convoi {args.convoy} a déjà son Outcome Evaluation au commit {commit} ({last['outcome']})")
     stories = spec_of(convoy)["stories"]
     request = record.get("request")
     wanted = {"commit": commit, "stories": stories}
     if datasets is not None:
         wanted["datasets"] = datasets
+    if "cited" in given:
+        wanted["cited"] = given["cited"]
     if request and {name: request.get(name) for name in wanted} == wanted:
         if request["roles"] == roles and request["environment"] == environment:
             return done(args.convoy, args.convoy, {})
         request.update(roles=roles, environment=environment)
     else:
-        record["request"] = {**wanted, "roles": roles, "environment": environment, "launches": [], "at": now()}
+        record["request"] = outcome_request({**wanted, "roles": roles, "environment": environment, "launches": [],
+                                             "at": now()})
     record.pop("stop", None)
     record["live"] = list(dict.fromkeys([entry["state_file"] for entry in environment] + record.get("live", [])))
     values = {KEY_OUTCOME_EVALUATION: encode(outcome_evaluation_record(encode(record)))}
@@ -7678,12 +7723,27 @@ def cmd_record_outcome_evaluation(args: argparse.Namespace) -> int:
         else:
             by_number[number] = item
     stories = []
+    opened = {entry["dataset"] for entry in request["environment"]}
     for number, text in wanted.items():
         if number not in by_number:
             problems.append(f"user story {number} sans état : aucun état rendu pour « {text} »")
             continue
-        stories.append({"number": number, **given_state(by_number[number], f"user story {number}", text, metadata, commit,
-                                                        problems)})
+        item = dict(by_number[number])
+        tried = item.pop("tried", None)
+        story = {"number": number, **given_state(item, f"user story {number}", text, metadata, commit, problems)}
+        if tried is not None:
+            # The declared datasets opened to look for an unobservable story (af-ip0nrq).
+            if story["state"] != "unobservable":
+                problems.append(f"user story {number} : des jeux essayés ne se donnent qu'avec « unobservable »")
+            elif not isinstance(tried, list) or not tried or len({str(name) for name in tried}) != len(tried) \
+                    or any(name not in opened for name in tried):
+                problems.append(f"user story {number} : jeux essayés mal formés ou jamais ouverts dans cette "
+                                f"évaluation : {tried!r}")
+            else:
+                story["tried"] = tried
+        elif story["state"] == "unobservable" and "cited" in request and request.get("datasets") != [None]:
+            problems.append(f"user story {number} « unobservable » sans la liste des jeux essayés (tried)")
+        stories.append(story)
     notes = {name: given_notes(given.get(name), name, metadata, commit, problems) for name in OUTCOME_SECTIONS}
     drafts = given.get("repairs", [])
     if not isinstance(drafts, list):
@@ -7710,6 +7770,12 @@ def cmd_record_outcome_evaluation(args: argparse.Namespace) -> int:
     coverage = None
     declared = request.get("datasets") or list(dict.fromkeys(
         entry["dataset"] for entry in request["environment"]))
+    if "cited" in request:
+        # Every declared dataset may be opened (af-ip0nrq): one piece per
+        # dataset opened, every cited one among them.
+        declared = list(dict.fromkeys(entry["dataset"] for entry in request["environment"]))
+        problems += [f"jeu cité {dataset} jamais ouvert : chaque jeu cité est ouvert et couvert"
+                     for dataset in request["cited"] if dataset not in declared]
     if "datasets" in request or len(declared) > 1:
         try:
             coverage = evaluation_coverage(given.get("coverage"), declared)
@@ -7809,6 +7875,49 @@ def cmd_stop_outcome_evaluation(args: argparse.Namespace) -> int:
         record["stop"] = {"reason": one_of(args.reason, OUTCOME_STOPS, "raison d'arrêt de l'Outcome Evaluation"),
                           "detail": single_line(args.detail, "précision de l'arrêt"), "commit": commit, "at": now()}
         record.pop("request", None)
+    values = {KEY_OUTCOME_EVALUATION: encode(outcome_evaluation_record(encode(record)))}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
+def cmd_link_outcome_repair(args: argparse.Namespace) -> int:
+    """Link a Factory maintenance to the stop of an Outcome Evaluation the
+    factory caused (af-ip0nrq): a story rendered unobservable because the
+    Evaluator could not open the dataset its situation is in. The stop then
+    waits on that repair, in code: bin/outcome-evaluation settle lifts it
+    once the repair is merged with its CI proven, never on an answer."""
+    _, _, _, record = outcome_target(args)
+    stop = record.get("stop")
+    if not stop or stop["reason"] not in OUTCOME_LIFTABLE_STOPS:
+        raise Refusal(
+            f"l'Outcome Evaluation du convoi {args.convoy} n'est pas arrêtée sur une user story inobservable : "
+            "seul cet arrêt se relie à une maintenance de l'usine")
+    provable_repair(args.repair)
+    entries = list(stop.get("repairs", []))
+    if any(entry["id"] == args.repair for entry in entries):
+        return done(args.convoy, args.convoy, {})
+    stop["repairs"] = entries + [{"id": args.repair, "at": now()}]
+    values = {KEY_OUTCOME_EVALUATION: encode(outcome_evaluation_record(encode(record)))}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
+def cmd_lift_outcome_stop(args: argparse.Namespace) -> int:
+    """Lift, at its commit, a stop a Factory maintenance is linked to: the
+    stop is kept under `lifts`, the round it stopped on is set aside, and
+    the evaluation may be opened again at that commit. No counter moves: a
+    stop the factory caused takes no round of the end (af-ip0nrq). Whether
+    the repairs are delivered is read by the caller, bin/outcome-evaluation."""
+    _, _, _, record = outcome_target(args)
+    commit = valid_commit(args.commit, "commit de la levée")
+    stop = record.get("stop")
+    if not stop or not stop.get("repairs") or stop["commit"] != commit:
+        raise Refusal(f"aucun arrêt de l'Outcome Evaluation du convoi {args.convoy} relié à une maintenance au "
+                      f"commit {commit} : rien à lever")
+    record["lifts"] = record.get("lifts", []) + [{
+        "reason": stop["reason"], "commit": commit, "stop_at": stop["at"],
+        "repairs": [entry["id"] for entry in stop["repairs"]], "at": now()}]
+    del record["stop"]
     values = {KEY_OUTCOME_EVALUATION: encode(outcome_evaluation_record(encode(record)))}
     write_metadata(args.convoy, values)
     return done(args.convoy, args.convoy, values)
@@ -8058,6 +8167,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reason")
     p.add_argument("--detail")
     p.add_argument("--raised", action="store_true")
+    command("link-outcome-repair", cmd_link_outcome_repair, ticket=False).add_argument("--repair")
+    command("lift-outcome-stop", cmd_lift_outcome_stop, ticket=False).add_argument("--commit")
     p = command("classify-finding", cmd_classify_finding)
     p.add_argument("--item")
     p.add_argument("--as", dest="classification")

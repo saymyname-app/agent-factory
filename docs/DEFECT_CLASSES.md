@@ -118,6 +118,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/convoy-advance-red-cleared-test.py`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_malformed_legacy_resume_is_left_to_the_incident_door_without_crashing`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_factory_repair_is_taken_up_and_tested_before_its_resume_is_consumed_once`,
+  `python3 tests/outcome-evaluation-every-dataset-test.py`,
   `bash tests/factory-work-dispatch-test.sh`. Les courses réponse/retrait qui
   pourraient consommer une réponse sont tenues par
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_an_evaluation_stop_answered_while_its_request_is_cleared_is_not_resumed ConvoyAdvanceTest.test_a_removed_stage_stop_answered_while_its_request_is_cleared_is_not_resumed ConvoyAdvanceTest.test_a_grouped_answer_recorded_while_changed_parkings_are_re_raised_is_applied_first`
@@ -150,12 +151,17 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   au vert) ; af-6vhm6r (la même règle ignorait un rouge déjà retiré au vert
   par `spec-integration merge` après un déplacement de pointe : R10 restait
   ouvert sans rouge à rétablir ; ce vert est gardé comme preuve et le repair
-  se clôt sans fusion dessus).
+  se clôt sans fusion dessus) ; af-ip0nrq (un `story_unobservable` causé par
+  l'usine, un seul jeu ouvert sur les 95 déclarés, n'avait que les options
+  « Planning Run » et « retirer la story » : une maintenance liée à l'arrêt le
+  lève par code une fois livrée et l'évaluation repart au même commit, sans
+  tour de fin).
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
   contrôle : `criterion_already_green` reste au Planning Run ;
   `outcome_evaluation_no_result` et `outcome_evaluation_outage` ne repartent
   qu'à une nouvelle pointe d'intégration ; `story_unobservable` reste au
-  Planning Run. Elles sont retirées de la table dès qu'une transition codée
+  Planning Run, sauf l'arrêt qu'une maintenance de l'usine liée lève par code
+  (af-ip0nrq). Elles sont retirées de la table dès qu'une transition codée
   remplace cette porte (étude B § 4.2, af-npz9v1.27).
 
 ## D — Doublure, instrument ou vue partielle qui ne se comporte pas comme le réel
