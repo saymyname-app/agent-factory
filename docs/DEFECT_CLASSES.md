@@ -256,7 +256,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `bash tests/pr-autopilot-transient-retry-test.sh`,
   `python3 tests/tdd-step-test.py TddStepTest.test_green_refusal_keeps_the_failing_control_after_long_regression_output`,
   `python3 tests/role-adoption-trial-codex-test.py`,
-  `python3 tests/factory-delivery-proof-test.py ClaimedShippedBead` — partiel : le premier
+  `python3 tests/factory-delivery-proof-test.py ClaimedShippedBead`,
+  `python3 tests/ticket-graph-publish-test.py TicketGraphPublishBeadModeTest.test_a_mayor_wake_delivered_but_slow_to_answer_is_not_reported_as_lost` — partiel : le premier
   tient la frontière entre un report explicite (sortie 75, rejoué sans
   alerte) et une vraie panne répétée (bead et page Mayor) ; le deuxième tient
   la collecte VM Beads/Git/GitHub, le silence sur état inchangé, la route
@@ -279,14 +280,19 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   des profils Codex sans opérateur. Le contrôle `factory-delivery-proof` refuse
   qu'un `gc.outcome=pass` d'étape de formule (`gc.step_ref`/`gc.step_id`)
   compte comme livraison annoncée : l'étape qui ouvre la PR n'est pas une
-  livraison non prouvée.
+  livraison non prouvée. Le contrôle `factory-observe` et le dernier refusent
+  qu'un `gc mail send` borné, déjà remis mais lent à répondre, compte comme
+  perdu : l'envoi est rejoué une fois sous la même clé `--dedup`, et seul un
+  second échec est un échec.
 - Occurrences : #651, #679, #688, #717 ; af-npz9v1.50 ; #767 (armement local
   annoncé mais `autoMergeRequest=null`, af-npz9v1.50.1) ; af-ncg9qy ; #778
   (demande directe acceptée localement mais encore `AWAITING_CHECKS`,
   af-nk5nm6) ; af-27yx7q.2.1 ; af-pd6m09 ; af-1l3znv (un workflow encore
   actif ou une demande de rerun refusée était annoncé comme déjà retenté) ;
   af-0rdubb ; af-eyi5wa (l'étape push-and-pr, passée en ouvrant sa PR, signalée
-  comme livraison non prouvée).
+  comme livraison non prouvée) ; af-usvfdb (un mail d'alerte remis mais
+  confirmé après le délai de 20 s comptait comme échec du gardien, et le même
+  délai faisait écrire « Mayor NOT woken » à `ticket-graph-publish`).
 - Ouvertes : aucune connue.
 
 ## A — Autre

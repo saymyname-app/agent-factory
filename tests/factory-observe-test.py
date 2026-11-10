@@ -163,6 +163,7 @@ class LiveToolCase(ToolCase):
         self.mail_rc.write_text("0")
         self.mail_sleep = self.tmp / "mail-sleep"
         self.mail_sleep.write_text("0")
+        self.mail_sleep_after = self.tmp / "mail-sleep-after"
         self.active = self.tmp / "active.json"
         self.requests = self.tmp / "requests.json"
         self.prs = self.tmp / "prs.json"
@@ -245,7 +246,12 @@ elif args[:2] == ['session', 'list']:
     print(pathlib.Path({str(self.sessions)!r}).read_text())
 elif args[:2] == ['mail', 'send']:
     pathlib.Path({str(self.mail_state)!r}).write_text(pathlib.Path({str(self.state_file)!r}).read_text())
-    time.sleep(float(pathlib.Path({str(self.mail_sleep)!r}).read_text()))
+    sleep = float(pathlib.Path({str(self.mail_sleep)!r}).read_text())
+    after = pathlib.Path({str(self.mail_sleep_after)!r})
+    if after.exists():
+        pathlib.Path({str(self.mail_sleep)!r}).write_text(after.read_text())
+        after.unlink()
+    time.sleep(sleep)
     active = {{
         session['name']
         for session in json.loads(pathlib.Path({str(self.sessions)!r}).read_text())['sessions']
@@ -388,7 +394,8 @@ class LiveObservationTest(unittest.TestCase):
             retried = json.loads(case.run_live(1600).stdout)
             quiet = json.loads(case.run_live(1900).stdout)
             self.assertEqual((retried["action"], quiet["action"]), ("none", "none"))
-            self.assertEqual(2, len(case.calls_matching(["mail", "send"])))
+            # Two attempts on the failed run (the second under the same --dedup), one on the retry.
+            self.assertEqual(3, len(case.calls_matching(["mail", "send"])))
 
     def test_a_hung_mail_is_bounded_and_remains_pending(self):
         with LiveToolCase() as case:
@@ -425,6 +432,31 @@ class LiveObservationTest(unittest.TestCase):
             self.assertEqual([], final["live"]["pending"])
             self.assertEqual(route_id, final["live"]["routes"][0]["route_id"])
 
+    def test_a_mail_delivered_but_slow_to_answer_is_not_a_failed_route(self):
+        with LiveToolCase() as case:
+            case.run_live(1000)
+            case.write_incident(resumed=True, request_active=True)
+            case.mail_sleep.write_text("30")
+            case.mail_sleep_after.write_text("0")
+            env = {
+                **case.live_env(1300),
+                "FACTORY_OBSERVE_MAIL_TIMEOUT_SECONDS": "0.5",
+            }
+
+            result = json.loads(case.run_tool("live", env=env).stdout)
+
+            self.assertTrue(result["ok"])
+            self.assertEqual([], result["route_failures"])
+            sends = case.calls_matching(["mail", "send"])
+            self.assertEqual(2, len(sends))
+            dedup_keys = {send[send.index("--dedup") + 1] for send in sends}
+            self.assertEqual(1, len(dedup_keys))
+            status = json.loads(case.run_tool(
+                "status", "--json", env=case.live_env(1300), check=True,
+            ).stdout)
+            self.assertEqual([], status["live"]["pending"])
+            self.assertEqual(dedup_keys, {route["route_id"] for route in status["live"]["routes"]})
+
     def test_a_failed_route_falls_back_to_mayor_when_its_worker_disappears(self):
         with LiveToolCase() as case:
             case.run_live(1000)
@@ -444,8 +476,8 @@ class LiveObservationTest(unittest.TestCase):
             self.assertEqual([], reassigned["route_failures"])
             self.assertEqual((reassigned["action"], quiet["action"]), ("wake", "none"))
             mails = case.calls_matching(["mail", "send"])
-            self.assertEqual(2, len(mails))
-            self.assertEqual("mayor", mails[1][2])
+            self.assertEqual(3, len(mails))
+            self.assertEqual("mayor", mails[2][2])
             status = json.loads(case.run_tool(
                 "status", "--json", env=case.live_env(1900), check=True,
             ).stdout)

@@ -374,6 +374,24 @@ class TicketGraphPublishBeadModeTest(unittest.TestCase):
         )
         self.assertIsNotNone(reservation_after["cleared_at"])
 
+    def test_a_mayor_wake_delivered_but_slow_to_answer_is_not_reported_as_lost(self):
+        self.seed({"draft-1": self.draft_bead(), "spec-1": self.spec_bead(target="A6b")})
+        gc_log = self.tmp / "gc.log"
+        proc = self.bd_publish(check=True, env={
+            SKIP_MAYOR_NOTIFY_ENV: "",
+            "GC_BIN": str(FAKE_GC),
+            "TICKET_GRAPH_GC_LOG": str(gc_log),
+            "TICKET_GRAPH_GC_MAIL_SLOW_ONCE": str(self.tmp / "mail-landed"),
+            "TICKET_GRAPH_MAYOR_NOTIFY_TIMEOUT_SECONDS": "0.5",
+        })
+        result = json.loads(proc.stdout)
+        self.assertIs(True, result["mayor_notified"])
+        self.assertNotIn("NOT woken", proc.stderr)
+        sends = [json.loads(line) for line in gc_log.read_text().splitlines() if "mail" in json.loads(line)]
+        self.assertEqual(2, len(sends))
+        dedup_keys = {send[send.index("--dedup") + 1] for send in sends}
+        self.assertEqual(1, len(dedup_keys))
+
     def test_bd_publish_accepts_a_spec_claimed_by_a_to_tickets_session(self):
         # Spec handoff (docs/agents/issue-tracker.md): the Spec offered for
         # /to-tickets stays claimed -- in_progress, assigned, maybe still
