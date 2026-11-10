@@ -59,14 +59,17 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/project-launch-test.py`, `python3 tests/test-budgets-test.py`,
   `bash tests/agent-wait-polling-test.sh`,
   `bash tests/mayor-context-guard-test.sh`,
-  `python3 tests/factory-observe-test.py LiveObservationTest.test_a_hung_mail_is_bounded_and_remains_pending`,
+  `python3 tests/factory-observe-test.py LiveObservationTest.test_a_mail_unanswered_within_its_timeout_is_deferred_to_the_next_pass`,
   `bash tests/factory-watchdog-test.sh`,
   `python3 tests/idle-ready-work-wake-test.py IdleReadyWorkWakeTest.test_a_hung_notification_is_bounded_without_changing_wake_cooldown`
   — complet pour les commandes Python bornées de `bin/`, `lib/` et
   `tests/cockpit-criteria/` : un seul lanceur (`lib/bounded_process.py`)
-  ouvre une session et tue son groupe au délai ; le lint refuse toute
-  nouvelle invocation directe et tient chaque existante dans la liste
-  datée `config/bounded-process-exceptions.tsv`. Le second test tient les
+  ouvre une session et tue son groupe au délai, et aussi quand l'appelant
+  meurt avant (un garde lit un tube dont l'appelant est le seul écrivain,
+  af-8cfygl) ; le lint refuse toute nouvelle invocation directe et tient
+  chaque existante dans la liste datée `config/bounded-process-exceptions.tsv`,
+  et refuse toute session ouverte hors du lanceur qui n'est pas détachée
+  exprès, avec son motif, dans `config/detached-process-exceptions.tsv`. Le second test tient les
   propriétaires de `project-launch` dans ces trois dossiers. Le troisième tient
   les délais mesurés des tests d'un ticket et de l'ordre convoy-advance
   (`config/test-budgets.json`, étude C T3), pas les autres délais écrits à
@@ -83,7 +86,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   #667, #694, #696, #705, #706, #708, #710, #713, #721 ; copies orphelines du
   22/10 (sans PR) ; af-kky570 ; af-npz9v1.46 ; af-npz9v1.26 ; af-30zwwu ;
   af-95zqgx ; af-d3dj4j ; af-ll4hju ; af-bl2jyj ; af-p4rdr7 ; af-6go1ss ;
-  af-npz9v1.55.1 ; af-npz9v1.55.2 ; af-npz9v1.55.3.
+  af-npz9v1.55.1 ; af-npz9v1.55.2 ; af-npz9v1.55.3 ; af-8cfygl (régression
+  survivant à sa passe tuée, ordre convoy-advance à 90 min sans compter une
+  attente par exécution).
 - Ouvertes : les invocations directes antérieures hors des occurrences de
   l'étude B sont nommées une par une, avec leur date et leur motif, dans
   `config/bounded-process-exceptions.tsv` ; une vingtaine de délais écrits à

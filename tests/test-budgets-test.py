@@ -65,6 +65,16 @@ class TestBudgets(unittest.TestCase):
             namespace = runpy.run_path(str(ROOT / path))
             self.assertEqual(expected, namespace["DEFAULT_TIMEOUT"], path)
 
+    def test_a_pass_counts_its_settlement_and_a_wait_for_each_of_its_two_runs(self):
+        # 09-10/11/2026: 90 min counted one wait for two runs and no
+        # settlement; three passes were killed at 90 min (af-8cfygl).
+        budgets = test_budgets.load(ROOT)
+        self.assertEqual(budgets["settle_seconds"] + 2 * test_budgets.deadline(budgets, "full"),
+                         test_budgets.pass_seconds(budgets))
+        self.assertEqual(budgets["settle_seconds"] + 2 * (budgets["host_wait_seconds"] + budgets["full_seconds"]
+                                                          + budgets["margin_seconds"]),
+                         test_budgets.pass_seconds(budgets))
+
     def test_a_missing_file_falls_back_to_600_s(self):
         self.assertEqual(600, test_budgets.load(self.tmp)["full_seconds"])
 

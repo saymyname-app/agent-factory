@@ -108,17 +108,23 @@ def files() -> list[Path]:
 
 def run(path: Path, deadline: float) -> tuple[Path, int | None, float, str]:
     """One test file, in a session of its own: past the deadline, it and
-    everything it started are killed, and its status is None."""
+    everything it started are killed, and its status is None. The session
+    also dies with the regression, however that ends (af-8cfygl)."""
+    sys.path.insert(0, str(ROOT / "lib"))
+    import bounded_process
+
     started = time.monotonic()
-    proc = subprocess.Popen([sys.executable, str(path)], cwd=ROOT, text=True, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
+    proc = bounded_process.popen([sys.executable, str(path)], cwd=ROOT, text=True, stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
     try:
         output, _ = proc.communicate(timeout=max(0.0, deadline - time.monotonic()))
         status: int | None = proc.returncode
     except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGKILL)
+        bounded_process.kill_group(proc)
         output, _ = proc.communicate()
         status = None
+    finally:
+        bounded_process.release(proc)
     return path, status, time.monotonic() - started, output
 
 
