@@ -1226,7 +1226,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
 
     # --- a repair that only moves a proof, stopped all green, is resumed (af-oa2ci4) ---
 
-    def stopped_all_green(self, restores):
+    def stopped_all_green(self, restores, raised=True):
         """T1, a repair that restores `restores`, at work under an author
         session that is over, stopped all green by bin/tdd-step red before
         it gave a moved proof its path, the stop raised to the operator (R12,
@@ -1242,6 +1242,10 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.taken(T1, "auteur-1")
         self.run_ok(STATE, "stop-ticket", CONVOY, T1, "--reason", "criterion_already_green",
                     "--detail", "critère 1 déjà vert : tests/roadmap-test.py::RoadmapTest.test_rows passe au commit de départ")
+        if raised:
+            self.stopped_all_green_request()
+
+    def stopped_all_green_request(self):
         request = {"quoi": f"Ticket {T1} arrêté : critères tous déjà verts",
                    "pourquoi": "Le code existant satisfait déjà ce ticket.",
                    "que_faire": [{"option": "Laisser le ticket arrêté", "consequence": "Rien ne fusionne."}],
@@ -1278,6 +1282,48 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual("criterion_already_green", self.shown_state(T1)["stop"]["reason"])
         self.assertEqual(1, len([line for line in self.needs() if T1 in line]))
         self.assertEqual(before, self.tickets_snapshot())
+
+    def answered_before_its_stop_request(self):
+        """R12 (af-vm0vua): stopped all green at 00:52, a Planning Exception
+        raised on the same bead at 00:54 and answered at 07:54, then the
+        stop's own request raised and recorded raised, and cleared."""
+        metadata = self.bead(T1)["metadata"]
+        metadata["gc.flow.stop"] = json.dumps({**json.loads(metadata["gc.flow.stop"]), "at": "2026-01-01T00:52:47Z"})
+        self.edit(T1, metadata=metadata)
+        exception = {"quoi": f"Planning Exception sur {T1}", "pourquoi": "Le critère est déjà vert.",
+                     "que_faire": [{"option": "a", "consequence": "a"}, {"option": "b", "consequence": "b"},
+                                   {"option": "c", "consequence": "c"}],
+                     "langue": "fr", "bloquant": True}
+        self.env["ESCALATION_DOOR_NOW"] = "1767228840"  # 2026-01-01T00:54:00Z
+        self.run_ok(ESCALATION, "benjamin", T1, json.dumps(exception))
+        self.env["ESCALATION_DOOR_NOW"] = "1767254060"  # 2026-01-01T07:54:20Z
+        self.run_ok(ESCALATION, "repondre", T1, "c", "--actor", "benjamin")
+        del self.env["ESCALATION_DOOR_NOW"]
+        self.stopped_all_green_request()
+
+    def test_an_answer_to_an_earlier_planning_exception_does_not_hold_a_proof_moved_resume(self):
+        self.stopped_all_green("repo_rule : docs/TEST_GUIDELINE.md : The internal functions stay forbidden: "
+                               "a test that calls one is not a test of the tool.", raised=False)
+        self.answered_before_its_stop_request()
+        self.run_ok(ESCALATION, "clear", T1)
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "proof_moved")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+        self.assertIsNone(self.shown_state(T1)["stop"])
+        self.assertEqual(1, self.resumes())
+
+    def test_a_proof_moved_stop_answered_after_its_own_request_is_not_resumed(self):
+        self.stopped_all_green("repo_rule : docs/TEST_GUIDELINE.md : The internal functions stay forbidden: "
+                               "a test that calls one is not a test of the tool.", raised=False)
+        self.answered_before_its_stop_request()
+        self.env["ESCALATION_DOOR_NOW"] = "4102444800"  # the answer comes after the stop's request
+        self.run_ok(ESCALATION, "repondre", T1, "a", "--actor", "benjamin")
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual(([], 0), (self.of(answer, "resumed"), self.resumes()))
+        self.assertEqual("criterion_already_green", self.shown_state(T1)["stop"]["reason"])
 
     def test_a_ticket_blocked_by_a_repair_is_resumed_once_the_repair_is_closed(self):
         self.started_convoy()

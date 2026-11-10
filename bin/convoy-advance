@@ -2115,7 +2115,7 @@ def amendment_granted_due(ticket: dict[str, Any]) -> tuple[str, str, str] | None
     stop = ticket["stop"]
     if "raised" not in stop or ticket.get("resumes_left") == 0:
         return None
-    if request_answer(read_bead(ticket["id"]), stop["at"]) != AMENDMENT_RESUME_OPTION:
+    if stop_answer(read_bead(ticket["id"]), stop) != AMENDMENT_RESUME_OPTION:
         return None
     return "new", AMENDMENT_GRANTED, f"stop:{stop['reason']}/{stop['at']}"
 
@@ -2163,7 +2163,7 @@ def inherited_change_due(convoy: Convoy, ticket: dict[str, Any]) -> tuple[str, s
     stop = ticket["stop"]
     if ticket.get("resumes_left") == 0 or not ticket.get("tip"):
         return None
-    if request_answer(read_bead(ticket["id"]), stop["at"]) is not None:
+    if stop_answer(read_bead(ticket["id"]), stop) is not None:
         return None
     try:
         proc = run([str(TDD_STEP_BIN), "changes", convoy.id, ticket["id"], "--repo", str(convoy.repo),
@@ -2182,7 +2182,7 @@ def once_per_stop_due(ticket: dict[str, Any], cause: str) -> tuple[str, str, str
     none when the ticket has no resume left (its stop stays with the
     operator). The fact is `stop:<reason>/<time>`."""
     stop = ticket["stop"]
-    if ticket.get("resumes_left") == 0 or request_answer(read_bead(ticket["id"]), stop["at"]) is not None:
+    if ticket.get("resumes_left") == 0 or stop_answer(read_bead(ticket["id"]), stop) is not None:
         return None
     return "new", cause, f"stop:{stop['reason']}/{stop['at']}"
 
@@ -2196,7 +2196,7 @@ def no_result_due(convoy: Convoy, ticket: dict[str, Any]) -> tuple[str, str, str
     stop = ticket["stop"]
     if ticket.get("resumes_left") == 0 or not convoy.integration:
         return None
-    if request_answer(read_bead(ticket["id"]), stop["at"]) is not None:
+    if stop_answer(read_bead(ticket["id"]), stop) is not None:
         return None
     branch = convoy.integration["branch"]
     # Where bin/code-review reads it: on origin when it is there, else local.
@@ -2275,7 +2275,7 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
                     # The answer and clear share the door lock. An answer may
                     # have landed after the due check but before clear won it.
                     if cause in (NO_RESULT, STAGE_REMOVED, CODE_REVIEW_STOP, PROOF_MOVED) \
-                            and request_answer(read_bead(ticket_id), ticket["stop"]["at"]) is not None:
+                            and stop_answer(read_bead(ticket_id), ticket["stop"]) is not None:
                         continue
                 elif cause == REPAIR_DELIVERED and released_technical_repairs(ticket):
                     # The parking was removed first. If clearing refuses or
@@ -2321,6 +2321,21 @@ def request_answer(bead: dict[str, Any], since: str) -> str | None:
     if metadata.get("gc.needs_benjamin") not in (None, "none") or not isinstance(option, str) or not isinstance(at, str):
         return None
     return option if at >= since else None
+
+
+def stop_answer(bead: dict[str, Any], stop: dict[str, Any]) -> str | None:
+    """The letter the operator answered the request of a ticket's stop
+    with: the request the escalation door put on the operator's list for
+    that stop -- stamped after the stop, before the stop recorded it was
+    raised -- and an answer given since that request. Never the answer to an
+    earlier request of the same bead, a Planning Exception or another stop,
+    even one given after the stop (af-vm0vua, R12: its answer to the
+    Planning Exception held its proof_moved resume forever)."""
+    metadata = bead.get("metadata") or {}
+    asked = metadata.get("gc.escalation_horodatage")
+    if "raised" not in stop or not isinstance(asked, str) or not stop["at"] <= asked <= stop["raised"]:
+        return None
+    return request_answer(bead, asked)
 
 
 def legacy_repair_resume_due(ticket: dict[str, Any]) -> bool:
