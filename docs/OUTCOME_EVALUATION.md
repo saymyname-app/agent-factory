@@ -220,6 +220,15 @@ delivered the stop holds and its request stays on the list. If the new
 evaluation still renders a story `unobservable`, with its datasets tried,
 that is a new stop and a new request.
 
+**A stop holds its commit only** (`af-mmefvq`). Once the gate renders its
+verdicts on another commit, whatever the reason of the stop, the next
+`settle` sets it aside: its request leaves the operator's list without an
+answer (`bin/escalation-door clear`, only while it is still the request on
+the convoy), the stop is kept under `lifts` with the commit that outdated it
+(`bin/convoy-state lift-outcome-stop --outdated-by`), and the evaluation is
+made at the new commit. No counter moves. If that evaluation stops again, it
+is a new stop and a new request.
+
 A stop is raised once to the operator through `bin/escalation-door benjamin`
 on the convoy, in French, and holds for its commit: nothing is launched
 again on it. An evaluation is **deferred**, not stopped, when the two host

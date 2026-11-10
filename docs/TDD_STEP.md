@@ -49,7 +49,7 @@ order of the steps under its lock.
 | `red` | `tdd_red` | `verdict: red`, `base`, `table`, `criteria` {number: [test id]}, `satisfied` [the numbers of the criteria already green at `base`], `tests` [{`id`, `outcome`, `seam`, `seam_mode`, `entry_points` for a black-box test}], `seam_mode` (the modes the tests went through, joined by `+`: `black_box`, `black_box+import_rule`), `launch.healthy` |
 | `freeze` | `tdd_freeze` | `files` {path: `sha256:`}, `table`, `criteria`, `satisfied` (from the red): the **registry of fingerprints** |
 | `green` | `tdd_green` | `verdict: green`, `k`, `satisfied` (from the registry), `tests` [{`id`, `runs`: k outcomes, `seam`, `seam_mode`}], `frozen` (the commit of the freeze), `regression` [{`commit`, `exit_code`}] at HEAD |
-| `amend` | `tdd_amendment` | the red report of the amended tests, plus `amendment` {`reason`, `diff`, `files`, `previous_freeze`, `succession` {path: {`owner`, `digest`}}} |
+| `amend` | `tdd_amendment` | the red report of the amended tests, plus `amendment` {`reason`, `diff`, `files`, `previous_freeze`, `succession` {path: {`owner`, `digest`, `accepted` (an accepted deviation only)}}} |
 | `prefactoring` | `tdd_prefactoring` | `verdict: unchanged`, `regression` [{`commit`, `exit_code`}] before and after |
 
 ## What the profile declares
@@ -271,6 +271,29 @@ only at commit `e62cb740`, when `tdd-step changes` names exactly
 authorization reference; `amend` accepts only those two files, and recording
 the amendment puts that resume before the new amendment, so it cannot be
 consumed a second time (af-atrg8o).
+
+### An accepted deviation names the frozen test (af-axppkz)
+
+Intent (Benjamin, his words, 10/11/2026 08:53 Paris, answering R18's
+Planning Exception `af-gnplfy`: « Oui, c aux deux »): accepting the deviation
+a Ticket Handoff describes accepts the change of another ticket's frozen test
+that deviation names.
+Mechanism (agent interpretation): `amend` also records in
+`amendment.succession` a test that names no successor when the ticket's own
+Planning Exception was answered by the option that accepts its deviation
+(`accept_option`, `docs/PLANNING_EXCEPTION.md`) and a deviation of the
+ticket's Ticket Handoff, written since that Planning Exception, names the
+test by its path or its bare file name. The answer is read from
+`gc.flow.park_lifts`: a `planning_exception` parking of the ticket that
+`bin/convoy-advance` lifted with an option lifts it only with that accepting
+option, and the lift stays when a later request replaces the operator's
+answer on the ticket. The entry carries `accepted` {`request`, `option`,
+`lifted_at`, `raised_at`, `actor`, `answered_at`, `deviation`}: `actor` and
+`answered_at` are those `bin/escalation-door` wrote, null once a later
+answer replaced them. Only the tests a deviation names; without an accepting
+answer the refusal stays; a second change of the same test is refused as
+above. The first case: R18 changes case G3 of R5's
+`projects-roadmap-requires-test.py`.
 
 ## Prefactoring
 

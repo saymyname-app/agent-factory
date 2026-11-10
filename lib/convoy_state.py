@@ -120,7 +120,7 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state release-outcome-evaluation CONVOY --state-file PATH [--state-file PATH] [--withdraw]
     convoy-state stop-outcome-evaluation    CONVOY (--commit SHA --reason REASON --detail LINE | --raised)
     convoy-state link-outcome-repair        CONVOY --repair BEAD
-    convoy-state lift-outcome-stop          CONVOY --commit SHA
+    convoy-state lift-outcome-stop          CONVOY --commit SHA [--outdated-by SHA]
     convoy-state classify-finding   CONVOY TICKET --item out_of_ticket.N --as repaired|proposal|dismissed
                                     --recorded-by SESSION [--reason LINE] [--file PATH]
     convoy-state set-outcome-repair CONVOY (--repair TICKET | --refused LINE) (--story N | --ticket TICKET --item out_of_ticket.N)
@@ -3033,12 +3033,19 @@ def outcome_evaluation_record(raw: Any) -> dict[str, Any]:
                 raise Refusal(f"réparation liée à un arrêt qui ne se lève pas par code : {stop!r}")
             technical_repairs_record(encode({"stop_at": stop["at"], "entries": stop["repairs"]}))
     for lift in record.get("lifts", []) if isinstance(record.get("lifts", []), list) else [None]:
-        if not isinstance(lift, dict) or set(lift) != {"reason", "commit", "stop_at", "repairs", "at"} \
-                or lift["reason"] not in OUTCOME_LIFTABLE_STOPS or not isinstance(lift["repairs"], list) \
-                or not lift["repairs"] or any(not isinstance(repair, str) or not BEAD_ID_RE.match(repair)
-                                              for repair in lift["repairs"]):
+        # Lifted by its delivered repairs, or set aside because the gate left its commit (af-mmefvq).
+        outdated = isinstance(lift, dict) and "outdated_by" in lift
+        repairs = lift.get("repairs") if isinstance(lift, dict) else None
+        if not isinstance(lift, dict) or not {"reason", "commit", "stop_at", "at"} <= set(lift) \
+                or set(lift) - {"reason", "commit", "stop_at", "repairs", "outdated_by", "at"} \
+                or lift["reason"] not in (OUTCOME_STOPS if outdated else OUTCOME_LIFTABLE_STOPS) \
+                or (repairs is not None or not outdated) and (
+                    not isinstance(repairs, list) or not repairs
+                    or any(not isinstance(repair, str) or not BEAD_ID_RE.match(repair) for repair in repairs)):
             raise Refusal(f"levée d'arrêt de l'Outcome Evaluation mal formée : {lift!r}")
         valid_commit(lift["commit"], "commit de la levée")
+        if outdated and valid_commit(lift["outdated_by"], "commit qui périme l'arrêt") == lift["commit"]:
+            raise Refusal(f"arrêt de l'Outcome Evaluation périmé par son propre commit : {lift!r}")
         single_line(lift["at"], "date de la levée")
     if "lifts" in record and not record["lifts"]:
         raise Refusal("levées d'arrêt de l'Outcome Evaluation vides")
@@ -7994,16 +8001,27 @@ def cmd_lift_outcome_stop(args: argparse.Namespace) -> int:
     stop is kept under `lifts`, the round it stopped on is set aside, and
     the evaluation may be opened again at that commit. No counter moves: a
     stop the factory caused takes no round of the end (af-ip0nrq). Whether
-    the repairs are delivered is read by the caller, bin/outcome-evaluation."""
+    the repairs are delivered is read by the caller, bin/outcome-evaluation.
+    `--outdated-by` sets aside, the same way, a stop of any reason whose
+    commit the gate has left for that one (af-mmefvq): it is kept under
+    `lifts` with that commit, and no counter moves either."""
     _, _, _, record = outcome_target(args)
     commit = valid_commit(args.commit, "commit de la levée")
+    outdated_by = valid_commit(args.outdated_by, "commit qui périme l'arrêt") if args.outdated_by else None
     stop = record.get("stop")
-    if not stop or not stop.get("repairs") or stop["commit"] != commit:
+    if outdated_by is not None:
+        if not stop or stop["commit"] != commit or outdated_by == commit:
+            raise Refusal(f"aucun arrêt de l'Outcome Evaluation du convoi {args.convoy} au commit {commit} que le "
+                          f"commit {outdated_by} périme : rien à lever")
+    elif not stop or not stop.get("repairs") or stop["commit"] != commit:
         raise Refusal(f"aucun arrêt de l'Outcome Evaluation du convoi {args.convoy} relié à une maintenance au "
                       f"commit {commit} : rien à lever")
-    record["lifts"] = record.get("lifts", []) + [{
-        "reason": stop["reason"], "commit": commit, "stop_at": stop["at"],
-        "repairs": [entry["id"] for entry in stop["repairs"]], "at": now()}]
+    lift = {"reason": stop["reason"], "commit": commit, "stop_at": stop["at"]}
+    if stop.get("repairs"):
+        lift["repairs"] = [entry["id"] for entry in stop["repairs"]]
+    if outdated_by is not None:
+        lift["outdated_by"] = outdated_by
+    record["lifts"] = record.get("lifts", []) + [{**lift, "at": now()}]
     del record["stop"]
     values = {KEY_OUTCOME_EVALUATION: encode(outcome_evaluation_record(encode(record)))}
     write_metadata(args.convoy, values)
@@ -8264,7 +8282,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--detail")
     p.add_argument("--raised", action="store_true")
     command("link-outcome-repair", cmd_link_outcome_repair, ticket=False).add_argument("--repair")
-    command("lift-outcome-stop", cmd_lift_outcome_stop, ticket=False).add_argument("--commit")
+    p = command("lift-outcome-stop", cmd_lift_outcome_stop, ticket=False)
+    p.add_argument("--commit")
+    p.add_argument("--outdated-by")
     p = command("classify-finding", cmd_classify_finding)
     p.add_argument("--item")
     p.add_argument("--as", dest="classification")
