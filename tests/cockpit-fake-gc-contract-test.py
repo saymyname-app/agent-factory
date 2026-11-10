@@ -152,6 +152,22 @@ class FakeGcAnswersLikeTheRealOne(unittest.TestCase):
             self.assertLessEqual({"id", "template", "running", "last_active"}, set(item))
         self.assertLessEqual(set(fake["items"][0]) - {"active_bead"}, set(real["items"][0]) | {"session_name"})
 
+    def test_city_event_stream_framing(self):
+        real = first_frames(REAL_BASE_URL, "/v0/city/%s/events/stream" % self.real_city, {"heartbeat"})
+        self.fake.emit("bead.closed", subject="af-fake")  # nobody listening yet: harmless
+        import threading
+
+        timer = threading.Timer(0.5, lambda: self.fake.emit("bead.closed", subject="af-fake"))
+        timer.start()
+        try:
+            fake = first_frames(self.fake_url, "/v0/city/%s/events/stream" % FAKE_CITY, {"heartbeat", "event"})
+        finally:
+            timer.cancel()
+        self.assertEqual(set(real["heartbeat"]), set(fake["heartbeat"]))
+        self.assertEqual(EVENT_KEYS, set(fake["event"]))
+        if "event" in real:
+            self.assertLessEqual(EVENT_KEYS, set(real["event"]))
+
     def test_events_journal_pages(self):
         # af-yxxa68: the journal by pages, newest first, the cursor passed
         # back giving the next page; the refusals of a bad limit or cursor.
@@ -171,22 +187,6 @@ class FakeGcAnswersLikeTheRealOne(unittest.TestCase):
         for query in ("events?limit=1001", "events?limit=-1", "events?limit=abc", "events?limit=2&cursor=garbage"):
             real, fake = self.both("/v0/city/%s/" + query)
             self.assertEqual(json.loads(real)["code"], json.loads(fake)["code"], query)
-
-    def test_city_event_stream_framing(self):
-        real = first_frames(REAL_BASE_URL, "/v0/city/%s/events/stream" % self.real_city, {"heartbeat"})
-        self.fake.emit("bead.closed", subject="af-fake")  # nobody listening yet: harmless
-        import threading
-
-        timer = threading.Timer(0.5, lambda: self.fake.emit("bead.closed", subject="af-fake"))
-        timer.start()
-        try:
-            fake = first_frames(self.fake_url, "/v0/city/%s/events/stream" % FAKE_CITY, {"heartbeat", "event"})
-        finally:
-            timer.cancel()
-        self.assertEqual(set(real["heartbeat"]), set(fake["heartbeat"]))
-        self.assertEqual(EVENT_KEYS, set(fake["event"]))
-        if "event" in real:
-            self.assertLessEqual(EVENT_KEYS, set(real["event"]))
 
 
 if __name__ == "__main__":
