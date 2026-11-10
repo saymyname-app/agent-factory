@@ -155,7 +155,9 @@ chmod +x "$TMP/bin/gh"
 cat > "$TMP/bin/factory-observe" <<STUB
 #!/usr/bin/env bash
 printf 'factory-observe %s\n' "\$*" >> "$CALLS"
+sleep "\${FACTORY_WATCHDOG_TEST_OBSERVE_SLEEP:-0}"
 printf '{"ok":true,"action":"none"}\n'
+exit "\${FACTORY_WATCHDOG_TEST_OBSERVE_RC:-0}"
 STUB
 chmod +x "$TMP/bin/factory-observe"
 
@@ -176,29 +178,56 @@ creates() { grep -c '^bd create' "$CALLS" || true; }
 reset_logs() { : > "$CALLS"; : > "$MAIL"; }
 
 # 0. the watchdog owns a budget below the order's 180-second deadline -------
-started_ns=$(date +%s%N)
-set +e
-out=$(FACTORY_WATCHDOG_BUDGET_SECONDS=0.1 \
+# A pass cut by it under load is deferred; only passes cut in a row fail.
+DEFERRED_FILE="$TMP/city/.gc/runtime/factory-watchdog-deferred-passes"
+cut_pass() {
+  FACTORY_WATCHDOG_BUDGET_SECONDS=0.1 \
   FACTORY_WATCHDOG_TEST_GC_SLEEP_MATCH='bd gate list' \
   FACTORY_WATCHDOG_TEST_GC_SLEEP_SECONDS=3 \
   FACTORY_WATCHDOG_TEST_GC_SLEEP_DONE="$GC_SLEEP_DONE" \
-  FACTORY_ROOT="$TMP/city" "$WATCHDOG" --check-only 2>&1)
-rc=$?
+  FACTORY_ROOT="$TMP/city" "$WATCHDOG" --check-only 2>&1
+}
+started_ns=$(date +%s%N)
+set +e
+out=$(cut_pass); rc=$?
 set -e
 elapsed_ns=$(( $(date +%s%N) - started_ns ))
-[ "$rc" = "2" ] || { echo "$out" >&2; fail "a watchdog budget expiry must exit 2 (was $rc)"; }
-grep -q 'internal budget exceeded after 0.1s' <<<"$out" \
-  || { echo "$out" >&2; fail "a watchdog budget expiry must name its own deadline"; }
+[ "$rc" = "0" ] || { echo "$out" >&2; fail "one pass cut by the budget must be deferred, not failed (was $rc)"; }
+grep -q 'internal budget exceeded after 0.1s — pass deferred (1 of 3 in a row' <<<"$out" \
+  || { echo "$out" >&2; fail "a deferred pass must name its own deadline and its count"; }
 [ "$elapsed_ns" -lt 2000000000 ] \
   || fail "a hung child must return before the watchdog's outer deadline"
+set +e
+cut_pass >/dev/null; out=$(cut_pass); rc=$?
+set -e
+[ "$rc" = "2" ] || { echo "$out" >&2; fail "a third pass cut in a row must exit 2 (was $rc)"; }
+grep -q 'internal budget exceeded after 0.1s — 3 passes in a row cut short' <<<"$out" \
+  || { echo "$out" >&2; fail "a repeated budget expiry must say it is repeated"; }
 sleep 3
 [ ! -s "$GC_SLEEP_DONE" ] || fail "the hung child survived the watchdog budget"
 
-# 1. a quiet factory pages nothing -------------------------------------------
+# 1. a quiet factory pages nothing, and a full pass clears the deferred count -
 out=$(watchdog)
 grep -q "quiet — nothing aged past its threshold" <<<"$out" || { echo "$out" >&2; fail "a quiet run was not reported quiet"; }
 [ "$(mails)" = "0" ] || fail "a quiet run must not send mail"
 grep -q '^factory-observe live$' "$CALLS" || fail "the existing watchdog order did not run live observation"
+[ ! -e "$DEFERRED_FILE" ] || fail "a full pass must clear the count of passes cut in a row"
+
+# 1b. a live observation slower than what is left of the budget is deferred;
+# one that fails is still a failure.
+set +e
+out=$(FACTORY_WATCHDOG_BUDGET_SECONDS=7 FACTORY_WATCHDOG_TEST_OBSERVE_SLEEP=30 \
+  FACTORY_ROOT="$TMP/city" "$WATCHDOG" 2>&1); rc=$?
+set -e
+[ "$rc" = "0" ] || { echo "$out" >&2; fail "a slow live observation must be deferred (was $rc)"; }
+grep -q 'live observation deferred: it did not fit in the 7s budget — pass deferred (1 of 3' <<<"$out" \
+  || { echo "$out" >&2; fail "a deferred live observation must say so"; }
+set +e
+out=$(FACTORY_WATCHDOG_TEST_OBSERVE_RC=2 FACTORY_ROOT="$TMP/city" "$WATCHDOG" 2>&1); rc=$?
+set -e
+[ "$rc" = "2" ] || { echo "$out" >&2; fail "a failed live observation must exit 2 (was $rc)"; }
+grep -q 'live observation failed' <<<"$out" || { echo "$out" >&2; fail "a failed live observation must be named"; }
+[ ! -e "$DEFERRED_FILE" ] || fail "a pass that ran to its end must clear the deferred count"
 
 # 2. an aged human gate is paged, and throttled on immediate re-run ----------
 jq -n --arg c "$(iso $((NOW - 3000)))" '[{"id":"af-oihx","status":"open","await_type":"human","created_at":$c,"description":"Ad-hoc gate blocking af-u8id.4"}]' > "$GATES"
