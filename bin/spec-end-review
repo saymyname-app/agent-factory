@@ -419,7 +419,8 @@ def open_request(convoy: Convoy, commit: str) -> None:
     state_write_file("open-end-review", convoy.id, {"extent": extent, "reviewer": reviewer_identity()}, "--commit", commit)
 
 
-def launch(convoy: Convoy, request: dict[str, Any], settings: dict[str, Any]) -> str:
+def launch(convoy: Convoy, request: dict[str, Any], settings: dict[str, Any],
+           replaces_unclaimed: str | None = None) -> str:
     """Send the open end review to a new reviewer session: a bead of its
     own, routed through the dispatch door on the reviewer role."""
     number = len(request["launches"]) + 1
@@ -447,7 +448,10 @@ def launch(convoy: Convoy, request: dict[str, Any], settings: dict[str, Any]) ->
             f"la revue de fin du convoi {convoy.id} n'a pas été routée vers le rôle relecteur : "
             f"{detail_of(routed)} ; aucun lancement n'est compté")
     try:
-        state_write("launch-end-review", convoy.id, "--bead", bead_id)
+        state_args = ["launch-end-review", convoy.id, "--bead", bead_id]
+        if replaces_unclaimed:
+            state_args.extend(("--replaces-unclaimed", replaces_unclaimed))
+        state_write(*state_args)
     except Refusal:
         # The reviewer answered before its launch was written: its complete
         # output closed the request, and there is nothing left to record.
@@ -457,23 +461,81 @@ def launch(convoy: Convoy, request: dict[str, Any], settings: dict[str, Any]) ->
     return bead_id
 
 
-def launched_at(launched: dict[str, Any]) -> int:
+def stamp_seconds(value: Any, error: str) -> int:
     try:
-        return calendar.timegm(time.strptime(launched["at"], "%Y-%m-%dT%H:%M:%SZ"))
-    except (KeyError, TypeError, ValueError) as exc:
-        raise Refusal(f"heure de lancement de la revue de fin illisible : {launched!r}") from exc
+        return calendar.timegm(time.strptime(value, "%Y-%m-%dT%H:%M:%SZ"))
+    except (TypeError, ValueError) as exc:
+        raise Refusal(error) from exc
 
 
-def expired(launched: dict[str, Any], timeout: int) -> bool:
-    """A launch that gave no result: its output was incomplete, its time is
-    over, or its bead was closed without an output (a complete output
-    closes the request first)."""
-    if launched.get("result") == INCOMPLETE or time.time() >= launched_at(launched) + timeout:
-        return True
+def gc_data(*args: str) -> Any:
+    proc = run([GC_BIN, *args])
+    if proc.returncode != 0:
+        raise Refusal(f"gc {' '.join(args)} a échoué : {detail_of(proc)}")
     try:
-        return read_bead(launched["bead"]).get("status") == "closed"
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise Refusal(f"gc {' '.join(args)} a rendu un JSON illisible") from exc
+
+
+def launch_state(launched: dict[str, Any]) -> tuple[int | None, bool]:
+    """When the reviewer really claimed this route, and whether it ended.
+
+    Dispatch only creates routed work. The attempt starts at the claim on the
+    `review` step of its `mol-end-review` workflow; a route that never
+    received that stamp consumes neither its timeout nor one of the two
+    launches.
+    """
+    bead_id = launched["bead"]
+    try:
+        source = read_bead(bead_id)
     except Refusal:
+        return None, False
+    try:
+        inputs = gc_data("bd", "dep", "list", bead_id, "--direction", "up", "--type", "tracks", "--json")
+        if not isinstance(inputs, list):
+            raise Refusal(f"convois d'entrée de {bead_id} illisibles")
+        roots = []
+        for input_ in inputs:
+            found = gc_data("bd", "list", "--all", "--metadata-field",
+                            f"gc.input_convoy_id={input_['id']}", "--json", "--limit", "0")
+            if not isinstance(found, list):
+                raise Refusal(f"workflow de revue de fin de {bead_id} illisible")
+            roots.extend(root for root in found
+                         if (root.get("metadata") or {}).get("gc.formula_name") == "mol-end-review")
+        steps = []
+        for root in roots:
+            found = gc_data("bd", "list", "--all", "--metadata-field",
+                            f"gc.root_bead_id={root['id']}", "--json", "--limit", "0")
+            if not isinstance(found, list):
+                raise Refusal(f"étapes de revue de fin de {bead_id} illisibles")
+            steps.extend(step for step in found
+                         if (step.get("metadata") or {}).get("gc.step_id") == "mol-end-review.review")
+    except (KeyError, Refusal):
+        # No transition is inferred from a graph that could not be read.
+        return None, False
+    if not roots or not steps:
+        return None, False
+    claimed = []
+    for step in steps:
+        value = (step.get("metadata") or {}).get("gc.claimed_at")
+        if value is not None:
+            claimed.append((stamp_seconds(value, f"prise de l'étape de revue de fin illisible : {value!r}"), step))
+    if not claimed:
+        return None, source.get("status") == "closed"
+    at, step = max(claimed, key=lambda item: item[0])
+    return at, source.get("status") == "closed" or step.get("status") == "closed"
+
+
+def expired(launched: dict[str, Any], claimed_at: int | None, closed: bool, timeout: int) -> bool:
+    """A claimed attempt gave no result: its output was incomplete, its time
+    is over, or its bead was closed without an output (a complete output
+    closes the request first). An unclaimed route never expires."""
+    if launched.get("result") == INCOMPLETE:
+        return True
+    if claimed_at is None:
         return False
+    return time.time() >= claimed_at + timeout or closed
 
 
 # --- a stopped end review reaches the operator ---------------------------------------
@@ -598,17 +660,34 @@ def settle(convoy: Convoy) -> dict[str, Any]:
         launches = request["launches"]
         timeout = settings["timeout_seconds"]
         extent = request["extent"]
-        if launches and not expired(launches[-1], timeout):
-            deadline = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(launched_at(launches[-1]) + timeout))
-            return {"action": "pending", "commit": commit, "launches": len(launches), "deadline": deadline, "extent": extent}
-        if len(launches) >= MAX_LAUNCHES:
+        states = [(launched, *launch_state(launched)) for launched in launches]
+        # An incomplete output was handed in by a session that ran: an attempt
+        # even when its claim cannot be read.
+        attempts = [launched for launched, claimed_at, _closed in states
+                    if launched.get("unclaimed") is not True
+                    and (claimed_at is not None or launched.get("result") == INCOMPLETE)]
+        latest = states[-1] if states else None
+        if latest and latest[1] is None and not latest[2] and latest[0].get("result") != INCOMPLETE:
+            return {"action": "pending", "commit": commit, "launches": len(attempts), "extent": extent}
+        if latest and latest[1] is not None and not expired(*latest, timeout):
+            deadline = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(latest[1] + timeout))
+            return {"action": "pending", "commit": commit, "launches": len(attempts), "deadline": deadline, "extent": extent}
+        if len(attempts) >= MAX_LAUNCHES:
             stop_review(convoy, STOP_NO_RESULT, (
-                f"la revue de fin n'a rendu aucun résultat complet en {len(launches)} lancements "
-                f"({', '.join(launch_['bead'] for launch_ in launches)})"))
+                f"la revue de fin n'a rendu aucun résultat complet en {len(attempts)} lancements "
+                f"({', '.join(launch_['bead'] for launch_ in attempts)})"))
             return {"action": "stopped", "stop": STOP_NO_RESULT, "commit": commit, "raised": True}
-        bead_id = launch(convoy, request, settings)
+        replaces_unclaimed = (latest[0]["bead"] if latest and latest[1] is None and latest[2]
+                              and latest[0].get("result") != INCOMPLETE else None)
+        if replaces_unclaimed and any(launch_.get("unclaimed") is True for launch_ in launches):
+            raise Refusal("l'unique remplacement d'une route de revue de fin non réclamée a lui aussi été nettoyé")
+        bead_id = launch(convoy, request, settings, replaces_unclaimed)
+        # The ordinal of this route among the launches that count: a replaced
+        # unclaimed route leaves the count, the new route enters it.
+        routed = sum(1 for launch_ in launches
+                     if launch_.get("unclaimed") is not True and launch_["bead"] != replaces_unclaimed) + 1
         return {"action": "relaunched" if launches else "launched", "commit": commit, "base": request["base"],
-                "bead": bead_id, "launches": len(launches) + 1, "extent": extent}
+                "bead": bead_id, "launches": routed, "extent": extent}
 
 
 def cmd_settle(args: argparse.Namespace) -> int:

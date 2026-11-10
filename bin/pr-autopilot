@@ -45,6 +45,45 @@ for arg in "$@"; do
   esac
 done
 
+# --- whole-run stop (af-pmbhlh, same shape as bin/factory-watchdog's, af-onrwp8)
+# The run budget below bounds each gh/gc call, but not what runs between them
+# (jq, python3, bash itself), and a host at load 15m ~30 slows all of it: two
+# passes still met the order's 120 s "context deadline exceeded" between 07
+# and 10/11/2026 with no hung call. So the whole run is owned here, below the
+# order's deadline, with a margin for bin/order-pause and the controller. A
+# pass cut by this stop loses nothing -- every write is re-read on the next
+# tick, 3 min later, and a cut call is already "unknown" -- so it is deferred
+# (exit 0), and only PR_AUTOPILOT_DEFER_LIMIT passes cut in a row fail the
+# order (exit 2). The count is reset by any pass that finishes.
+AP_STOP="${PR_AUTOPILOT_STOP_SECONDS:-105}"    # + 5 s kill stays 10 s under the order's 120 s
+AP_DEFER_LIMIT="${PR_AUTOPILOT_DEFER_LIMIT:-3}"
+AP_DEFERRED_FILE="$FACTORY/.gc/runtime/pr-autopilot-deferred-passes"
+if [ "${PR_AUTOPILOT_STOP_ACTIVE:-0}" != "1" ]; then
+  for _v in "$AP_STOP" "$AP_DEFER_LIMIT"; do
+    case "$_v" in *[!0-9]*|'') echo "invalid pr-autopilot stop: '$_v'" >&2; exit 2 ;; esac
+  done
+  # The run's scratch dir is owned here: a run killed at the stop never
+  # reaches its own EXIT trap.
+  PR_AUTOPILOT_TMPDIR=$(mktemp -d); trap 'rm -rf "$PR_AUTOPILOT_TMPDIR"' EXIT
+  PR_AUTOPILOT_STOP_ACTIVE=1 PR_AUTOPILOT_TMPDIR="$PR_AUTOPILOT_TMPDIR" \
+    timeout --kill-after=5s "$AP_STOP" "$0" "$@"
+  stop_rc=$?
+  if [ "$stop_rc" != "124" ] && [ "$stop_rc" != "137" ]; then
+    rm -f "$AP_DEFERRED_FILE"
+    exit "$stop_rc"
+  fi
+  load=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)
+  in_a_row=$(( $(cat "$AP_DEFERRED_FILE" 2>/dev/null || echo 0) + 1 ))
+  if mkdir -p "$(dirname "$AP_DEFERRED_FILE")" 2>/dev/null && printf '%s\n' "$in_a_row" > "$AP_DEFERRED_FILE" 2>/dev/null \
+     && [ "$in_a_row" -lt "$AP_DEFER_LIMIT" ]; then
+    printf 'pr-autopilot: run stopped at %ss — pass deferred (%s of %s in a row, loadavg %s), retried next tick\n' \
+      "$AP_STOP" "$in_a_row" "$AP_DEFER_LIMIT" "$load"
+    exit 0
+  fi
+  printf 'pr-autopilot: run stopped at %ss — %s passes in a row cut short (loadavg %s)\n' "$AP_STOP" "$in_a_row" "$load" >&2
+  exit 2
+fi
+
 # rig_dir | repo | protected branch | required GitHub Actions workflow
 #
 # af-09hxz: this table is the same one bin/factory-do-work-workspace consults
@@ -224,7 +263,11 @@ queue_head() {  # mergeStateStatus checks labels -> 0 when this PR holds the que
   case " ${3//,/ } " in *" $STUCK_LABEL "*) return 1 ;; esac
   return 0
 }
-TMPDIR_AP=$(mktemp -d); trap 'rm -rf "$TMPDIR_AP"' EXIT
+if [ -n "${PR_AUTOPILOT_TMPDIR:-}" ]; then
+  TMPDIR_AP=$PR_AUTOPILOT_TMPDIR   # removed by the whole-run stop above
+else
+  TMPDIR_AP=$(mktemp -d); trap 'rm -rf "$TMPDIR_AP"' EXIT
+fi
 
 # --- run budget (2026-09-30, same shape as bin/factory-guard's, PR #283) ----
 # O3: the order (orders/pr-autopilot.toml) hard-kills the whole run at 120 s
@@ -243,9 +286,12 @@ TMPDIR_AP=$(mktemp -d); trap 'rm -rf "$TMPDIR_AP"' EXIT
 #  - a run past PR_AUTOPILOT_SLOW_SECONDS, or one that skipped or cut anything,
 #    prints per-repo timings and the host loadavg, to tell a saturated host
 #    (every repo slower) from one hung call (a "timed out" line).
+#  - af-pmbhlh: past the hard stop no call starts at all (it was capped at
+#    1 s, + 5 s kill, each: a loaded pass kept going past the order's 120 s);
+#    it is "unknown" like a cut one, and the whole-run stop above holds the rest.
 # PR_AUTOPILOT_TICK_DEADLINE_SECONDS is the former name, still honoured.
 AP_BUDGET="${PR_AUTOPILOT_BUDGET_SECONDS:-${PR_AUTOPILOT_TICK_DEADLINE_SECONDS:-90}}"  # nothing new starts after this
-AP_GRACE="${PR_AUTOPILOT_GRACE_SECONDS:-15}"   # budget+grace (+5 s kill) stays under the order's 120 s
+AP_GRACE="${PR_AUTOPILOT_GRACE_SECONDS:-10}"   # budget+grace (+5 s kill) stays inside the whole-run stop
 AP_SLOW="${PR_AUTOPILOT_SLOW_SECONDS:-60}"     # print timings past this
 for _v in "$AP_BUDGET" "$AP_GRACE" "$AP_SLOW"; do
   case "$_v" in *[!0-9]*|'') log "invalid pr-autopilot time budget: '$_v'"; exit 2 ;; esac
@@ -267,7 +313,10 @@ not_checked() {
 # (from subshells and pipelines too: it is a file); callers treat it as unknown.
 bounded() {
   local cap=$1 left=$((AP_HARD - SECONDS)) rc; shift
-  [ "$left" -lt 1 ] && left=1
+  if [ "$left" -lt 1 ]; then
+    printf '%s: %.80s — not started (hard stop at %ss)\n' "$AP_REPO" "${*:1:4}" "$AP_HARD" >> "$AP_TMO"
+    return 124
+  fi
   [ "$cap" -gt "$left" ] && cap=$left
   timeout -k 5 "$cap" "$@"; rc=$?
   timed_out "$rc" && printf '%s: %.80s — cut at %ss\n' "$AP_REPO" "${*:1:4}" "$cap" >> "$AP_TMO"
