@@ -9,13 +9,13 @@ Both go through ``gc_client``, a small seam (see
 test can prove the driver never even has a way to call the forbidden
 commands.
 
-Seven states, same string constants the T18 heartbeat emitter's test
-already pins down (``tests/cockpit-heartbeat-test.py``): ``en_marche``,
-``arret_en_cours``, ``arretee_proprement`` (``CLEANLY_STOPPED``, imported
-from :mod:`cockpit.heartbeat.emitter` rather than redefined, since that is
-the exact value the heartbeat pauses on), ``redemarrage``,
-``reprise_verifiee``, ``reprise_avec_ecarts``, ``arret_force``,
-``arret_interrompu``.
+Seven states: ``en_marche``, ``arret_en_cours``, ``arretee_proprement``,
+``redemarrage``, ``reprise_verifiee``, ``reprise_avec_ecarts``,
+``arret_force``, ``arret_interrompu``. ``suspension_confirmee()`` is what
+the heartbeat pauses on: ``arretee_proprement`` with nothing lost, the stop
+the page Usine says « Suspension confirmée » -- one lost work and the page
+says « Suspension à vérifier », and the heartbeat keeps going (R17,
+af-8hq9o8).
 
 ``essai_reussi()`` (T24, af-j2mkpa -- spec "Bouton masqué tant que ... qu'un
 essai réel déclenché par Benjamin n'a pas réussi") is the persisted trace
@@ -63,14 +63,13 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from cockpit.core.freshness import UNKNOWN
-from cockpit.heartbeat.emitter import CLEANLY_STOPPED
 from cockpit.stop.requests import build_ecarts_request, build_no_progress_request
 
 PARIS = ZoneInfo("Europe/Paris")
 
 EN_MARCHE = "en_marche"
 ARRET_EN_COURS = "arret_en_cours"
-ARRETEE_PROPREMENT = CLEANLY_STOPPED  # "arretee_proprement"
+ARRETEE_PROPREMENT = "arretee_proprement"
 REDEMARRAGE = "redemarrage"
 REPRISE_VERIFIEE = "reprise_verifiee"
 REPRISE_AVEC_ECARTS = "reprise_avec_ecarts"
@@ -213,6 +212,11 @@ class StopDriver:
     def bilan(self):
         """0 perte -> []; else the bead ids a clean stop lost."""
         return list(self._perdu)
+
+    def suspension_confirmee(self):
+        """A clean stop confirmed on its proofs: the city suspended and every
+        work in flight kept. A work lost is a suspension still to verify."""
+        return self._state == ARRETEE_PROPREMENT and not self._perdu
 
     def ecarts(self):
         return list(self._ecarts)

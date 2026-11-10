@@ -128,10 +128,14 @@ naming another process.
 "Usine muette" check (Healthchecks.io, spec af-oohx2x) every 5 min, but
 only once `ReadModel.all_fresh()` says the main sources have read fresh; a
 missing secret file or a failing ping becomes a health issue instead of a
-crash. It pauses only for `CLEANLY_STOPPED` (Clean stop, requested by
-Benjamin — spec "Heartbeat et usine muette": never at a Windows reboot),
-via a `state_provider` callable so this module does not depend on the
-Clean stop driver (T23) to be tested. `tick()`/`health_issues()` are the
+crash. It pauses only while a clean stop requested by Benjamin is
+confirmed (spec "Heartbeat et usine muette": never at a Windows reboot;
+Spec af-fgcw0d: « pause uniquement à arrêt propre confirmé »), via a
+`stopped_cleanly` callable so this module does not depend on the Clean
+stop driver (T23) to be tested: the process gives it
+`StopDriver.suspension_confirmee`, so a suspension that lost a work -- the
+page Usine says « Suspension à vérifier » -- keeps the heartbeat going
+(R17, af-8hq9o8). `tick()`/`health_issues()` are the
 whole public interface; process wiring (secret file location, thread
 scheduling, the health zone display) is left to the tickets that build
 those.
@@ -140,7 +144,9 @@ those.
 clock and a fake pinger (no HTTP/CLI surface of its own yet), covering:
 one ping per 5 min while sources are fresh, no ping while one is not, a
 missing secret and a failing ping each showing up in `health_issues()`,
-and pausing in no state other than `CLEANLY_STOPPED`.
+and pausing only while `stopped_cleanly` says so;
+`tests/cockpit-stop-test.py` holds which states of the driver confirm a
+stop, a work lost included.
 
 ## Clean stop / restart (T23, af-s5e3yo; its gestures, H af-69qhlk)
 
@@ -169,9 +175,8 @@ Delivered.
 city (`gc.suspend()`, the PATCH `suspended=true`) and restart by `gc
 resume()`, rien d'autre — never `gc stop` / `gc stop --force` (those stay
 at the runbook). Seven states: `en_marche`, `arret_en_cours`,
-`arretee_proprement` (`CLEANLY_STOPPED`, imported from
-`cockpit.heartbeat.emitter` so the T18 pause condition and this driver
-can never drift apart), `redemarrage`, `reprise_verifiee`,
+`arretee_proprement` (confirmed, `suspension_confirmee()`, only with
+nothing lost: what the heartbeat pauses on), `redemarrage`, `reprise_verifiee`,
 `reprise_avec_ecarts`, `arret_force`, `arret_interrompu`. A "photo"
 (`snapshot_fn`) is taken at `request_stop()` and compared against a fresh
 read once the city is suspended with no live session (`bilan()` — empty

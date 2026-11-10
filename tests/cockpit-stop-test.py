@@ -216,7 +216,7 @@ class StopDriverTest(unittest.TestCase):
         read_model = self._fresh_read_model(clock)
         emitter = HeartbeatEmitter(
             read_model, clock, secret_loader=lambda: "https://hc-ping.com/x",
-            ping=lambda url: None, state_provider=driver.state,
+            ping=lambda url: None, stopped_cleanly=driver.suspension_confirmee,
         )
 
         self.assertEqual("pinged", emitter.tick())
@@ -233,6 +233,27 @@ class StopDriverTest(unittest.TestCase):
         self.assertEqual(ARRETEE_PROPREMENT, driver.state())
         clock.advance(300)
         self.assertEqual("paused", emitter.tick())
+
+    def test_heartbeat_keeps_going_while_a_suspension_lost_a_work(self):
+        # R17 (af-8hq9o8): arretee_proprement with a work lost is a
+        # suspension to verify, not a confirmed one -- the heartbeat goes on.
+        clock = FakeClock()
+        store = InMemoryStateStore()
+        fake = FakeGcCity(sessions=[{"session_id": "s1", "bead_id": "af-1", "assignee": "w1", "last_event_at": clock.now()}])
+        driver = new_driver(fake, clock, store)
+        read_model = self._fresh_read_model(clock)
+        emitter = HeartbeatEmitter(
+            read_model, clock, secret_loader=lambda: "https://hc-ping.com/x",
+            ping=lambda url: None, stopped_cleanly=driver.suspension_confirmee,
+        )
+
+        driver.request_stop()
+        fake.end_session("s1")
+        fake.lose_bead("af-1")
+        self.assertEqual(ARRETEE_PROPREMENT, driver.tick())
+        self.assertEqual(["af-1"], driver.bilan())
+        self.assertFalse(driver.suspension_confirmee())
+        self.assertEqual("pinged", emitter.tick())
 
     def test_pc_reboot_mid_stop_gives_arret_interrompu_with_ecarts(self):
         clock = FakeClock()

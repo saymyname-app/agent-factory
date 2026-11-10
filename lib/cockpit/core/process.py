@@ -308,7 +308,7 @@ def build(config, clock=None):
     )
     heartbeat = HeartbeatService(
         read_model, clock, config.heartbeat_url_file, config.heartbeat_interval_seconds,
-        state_provider=stop_driver.state,
+        stopped_cleanly=stop_driver.suspension_confirmee,
     )
     server.notify = notify
     server.heartbeat = heartbeat

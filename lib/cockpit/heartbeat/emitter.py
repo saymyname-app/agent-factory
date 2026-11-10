@@ -11,15 +11,15 @@ ping never crashes the emitter — it becomes a health issue instead (spec
 .62-64: never silent about a broken part), same contract as
 :class:`~cockpit.core.polling_source.PollingSource`.
 
-The heartbeat pauses only for ``CLEANLY_STOPPED`` — Clean stop, requested
-by Benjamin from the cockpit (spec "Heartbeat et usine muette": "jamais à
-l'arrêt de Windows"). ``state_provider`` is a plain callable so this
-module does not need to know about the Clean stop driver (T23) to be
-tested; it only compares whatever state it is given against this one
-constant.
+The heartbeat pauses only while a clean stop, requested by Benjamin from
+the cockpit, is confirmed (spec "Heartbeat et usine muette": "jamais à
+l'arrêt de Windows"; Spec af-fgcw0d, « pause uniquement à arrêt propre
+confirmé, reprise au redémarrage »): a suspension still to verify -- a
+work lost on the way -- keeps it going (R17, af-8hq9o8). ``stopped_cleanly``
+is a plain callable answering that question, so this module does not need
+to know about the Clean stop driver (T23) to be tested: what "confirmed"
+means is the driver's (``StopDriver.suspension_confirmee``).
 """
-
-CLEANLY_STOPPED = "arretee_proprement"
 
 MISSING_SECRET = "missing_secret"
 PING_FAILED = "ping_failed"
@@ -68,14 +68,14 @@ class HeartbeatEmitter:
         clock,
         secret_loader,
         ping=default_ping,
-        state_provider=lambda: None,
+        stopped_cleanly=lambda: False,
         interval_seconds=300,
     ):
         self._read_model = read_model
         self._clock = clock
         self._secret_loader = secret_loader
         self._ping = ping
-        self._state_provider = state_provider
+        self._stopped_cleanly = stopped_cleanly
         self._interval = interval_seconds
         self._last_ping_at = None
         self._last_issue = None
@@ -86,7 +86,7 @@ class HeartbeatEmitter:
         ``"ping-failed"``, ``"pinged"`` — for tests and logging."""
         now = self._clock.now()
 
-        if self._state_provider() == CLEANLY_STOPPED:
+        if self._stopped_cleanly():
             return "paused"
 
         if self._last_ping_at is not None and (now - self._last_ping_at) < self._interval:
