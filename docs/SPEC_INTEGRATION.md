@@ -169,7 +169,10 @@ is a refusal (exit 1) that carries the record under `red`.
 - **runs the control again** once a tip moved (the protected branch was
   mended elsewhere) or once the repair is closed without having been
   merged. Green: the takeover is pushed, the red is withdrawn and the ready
-  tickets are merged by the same pass. Red: the record is rewritten under
+  tickets are merged by the same pass; a repair of that red still open
+  keeps that green as its proof (`clear-integration-red --green`), for
+  `bin/convoy-advance` to close it without merge when it has nothing to
+  merge (af-6vhm6r). Red: the record is rewritten under
   the new tips, with its repair while that one is open, and the command
   refuses.
 
