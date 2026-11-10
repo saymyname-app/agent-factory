@@ -163,9 +163,17 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   af-ip0nrq (un `story_unobservable` causé par l'usine, un seul jeu ouvert
   sur les 95 déclarés, n'avait que les options « Planning Run » et « retirer
   la story » : une maintenance liée à l'arrêt le lève par code une fois
-  livrée et l'évaluation repart au même commit, sans tour de fin).
+  livrée et l'évaluation repart au même commit, sans tour de fin) ;
+  af-oa2ci4 (un repair qui ne fait que déplacer une preuve, R12, avait tous
+  ses critères verts au rouge : `criterion_already_green` l'arrêtait et seule
+  la clôture « satisfait » restait, qui ne fusionne rien ; prouvé par
+  `python3 tests/tdd-step-proof-move-test.py` et
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_repair_that_moves_a_proof_stopped_all_green_is_resumed_once_without_an_answer_nor_a_round_of_the_end ConvoyAdvanceTest.test_a_repair_of_a_behavior_stopped_all_green_stays_stopped_with_the_operator`).
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
-  contrôle : `criterion_already_green` reste au Planning Run ;
+  contrôle : `criterion_already_green` reste au Planning Run, sauf
+  le repair qui ne fait que déplacer une preuve (af-oa2ci4 : `tdd-step red`
+  ne l'arrête plus, et `convoy-advance` reprend une fois, cause
+  `proof_moved`, celui arrêté avant) ;
   `outcome_evaluation_no_result` et `outcome_evaluation_outage` ne repartent
   qu'à une nouvelle pointe d'intégration ; `story_unobservable` reste au
   Planning Run, sauf l'arrêt qu'une maintenance de l'usine liée lève par code
