@@ -50,7 +50,8 @@ jq -r '.commit, (.stories[] | "\\(.number). \\(.text)"), (.environments[] | "\\(
 ```
 
 The brief is everything you are given: the numbered user stories of the
-Spec (`.stories`), the declared games (`.datasets`), the active product (`.environments`
+Spec (`.stories`), every declared game you may open (`.datasets`), the games
+you must cover (`.cited`), which games show which screen (`.screens`), the active product (`.environments`
 with its address and launch record), the entry points of the product (`.entry_points`), the
 Validated Prototypes the Spec delivers (`.prototypes`), and the findings
 « hors ticket » the authors declared (`.findings`). Do not read anything
@@ -84,8 +85,11 @@ or a screenshot of one address of that product:
   --launch-state "$LAUNCH_STATE" --path /
 ```
 
-Capture a sealed piece for every declared game before switching
-away. Request another game with:
+Every game of `.cited` is opened and covered. Any other game of `.datasets`
+may be opened too, one at a time: when a story's situation is not on the
+product you have, look in `.screens` for the games that show its screen and
+open them before you call it unobservable. Capture a sealed piece for each
+game you open before switching away. Request another game with:
 
 ```bash
 gc runtime heartbeat --duration 10m
@@ -99,7 +103,7 @@ minutes: run it as one foreground shell call with the Bash tool
 wait. If `ready` is still false, run the same two-command block once more.
 When true, use its `address`
 and `launch_state`. `--fresh` requests a reset at the same commit; the wait
-covers that reset too. Record one `{dataset,evidence}` in `coverage` per game. A missing
+covers that reset too. Record one `{dataset,evidence}` in `coverage` per game you opened. A missing
 game or piece from another game's address refuses the result. The controller
 confirms cleanup before it launches the next product; do not launch or stop
 it yourself.
@@ -118,8 +122,10 @@ piece may back several states.
   Operator Language (`"$FACTORY_ROOT/bin/operator-config" language`); the
   piece shows what the product did instead. Draft one `repair` for it (step
   5).
-- `unobservable` — you could not get to an observation at all. Give the
-  `cause` and a one-line `reason`:
+- `unobservable` — you could not get to an observation at all, on any game
+  you opened for it. Give the `cause`, a one-line `reason`, and `tried`: the
+  list of the games you opened to look for this story (`record` refuses an
+  `unobservable` without it, or naming a game never opened):
   - `criterion`: the story names nothing that can be observed on the
     launched product (no entry point reaches it, no dataset shows it, it
     cannot be made false);
@@ -186,10 +192,10 @@ shape `.result_shape` shows, then record it:
 
 ```bash
 jq '{commit, stories: [.stories[] | {number, text, state: null, evidence: null}],
-     coverage: [.datasets[] | {dataset: ., evidence: null}],
+     coverage: [(.cited // .datasets)[] | {dataset: ., evidence: null}],
      exploration: "aucun", fidelity_deviations: "aucun", repairs: []}' outcome-brief.json > outcome-result.json
-# then set, for each story: .state, .evidence (the piece name), and .reason (unless observed) and .cause
-# (unobservable only); the two sections of step 4; and one entry of .repairs per not_observed story
+# then set, for each story: .state, .evidence (the piece name), and .reason (unless observed), .cause and
+# .tried (unobservable only); add a coverage entry for each other game you opened; the two sections of step 4; and one entry of .repairs per not_observed story
 # ({"story": N, ...the repair of step 5})
 "$FACTORY_ROOT/bin/outcome-evaluation" record "$SPEC_CONVOY" --file outcome-result.json
 ```

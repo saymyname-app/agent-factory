@@ -447,6 +447,7 @@ class OutcomeEvaluationTest(Harness):
         legacy = json.loads(metadata["gc.flow.outcome_evaluation"])
         self.assertEqual(2, len(legacy["request"]["environment"]))
         legacy["request"].pop("datasets")
+        legacy["request"].pop("cited")
         metadata["gc.flow.outcome_evaluation"] = json.dumps(legacy)
         self.tracker.write_text(json.dumps(tracker))
 
@@ -456,28 +457,32 @@ class OutcomeEvaluationTest(Harness):
                               {"dataset": "empty", "evidence": result["stories"][0]["evidence"]}]
         self.assert_record_refused(result, "adresse")
 
-    def test_only_the_datasets_the_spec_names_are_evaluated_else_the_first_declared_one(self):
-        # Benjamin, 2026-10-17: « Réduire aux jeux cités ». A Spec that names
-        # no declared dataset is evaluated on the first one alone.
+    def test_every_declared_dataset_is_offered_and_the_first_one_is_cited_when_the_spec_names_none(self):
+        # Benjamin, 2026-10-17: « Réduire aux jeux cités » keeps the cited
+        # datasets due; 2026-11-09, « Oui, ouvre-les » (af-ip0nrq): every
+        # declared one may be opened, one at a time, with the screens it shows.
         self.verified()
         self.every_declared_dataset()
         self.evaluator("silent")
         self.assertEqual("launched", self.settle()["action"])
         _, brief = self.tool("brief", "--profile", self.outcome_profile, env=self.session)
-        self.assertEqual(["content"], brief["datasets"])
+        self.assertEqual((["content", "empty"], ["content"]), (brief["datasets"], brief["cited"]))
+        self.assertEqual([{"name": "accueil", "path": "/", "states": ["empty", "content"]}], brief["screens"])
         self.assertEqual(["content"], [entry["dataset"] for entry in brief["environments"]])
         status, answer = self.tool("product", "--dataset", "empty", env=self.session)
+        self.assertEqual((0, False), (status, answer["ready"]), answer)
+        status, answer = self.tool("product", "--dataset", "absent", env=self.session)
         self.assertEqual(EXIT_REFUSED, status, answer)
         self.assertIn("jeu absent", answer["error"])
 
-    def test_a_dataset_named_by_a_story_of_the_spec_is_the_one_evaluated(self):
+    def test_a_dataset_named_by_a_story_of_the_spec_is_the_one_cited(self):
         self.verified()
         self.every_declared_dataset()
         self.spec_names("empty")
         self.evaluator("silent")
         self.assertEqual("launched", self.settle()["action"])
         _, brief = self.tool("brief", "--profile", self.outcome_profile, env=self.session)
-        self.assertEqual(["empty"], brief["datasets"])
+        self.assertEqual(["empty"], brief["cited"])
         self.assertEqual(["empty"], [entry["dataset"] for entry in brief["environments"]])
 
     def test_a_dataset_named_by_a_demonstration_line_of_the_convoy_is_evaluated_too(self):
@@ -490,7 +495,7 @@ class OutcomeEvaluationTest(Harness):
         self.evaluator("silent")
         self.assertEqual("launched", self.settle()["action"])
         _, brief = self.tool("brief", "--profile", self.outcome_profile, env=self.session)
-        self.assertEqual(["empty"], brief["datasets"])
+        self.assertEqual(["empty"], brief["cited"])
 
     def test_the_launch_delay_grows_with_the_datasets_of_the_evaluation(self):
         # The same delay as the Ticket Evaluation (af-vtg5kl): the floor, or

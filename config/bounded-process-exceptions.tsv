@@ -9,7 +9,7 @@
 2026-10-30	bin/factory-metrics:67	Metrics tracker lookup is an existing single control-plane read.
 2026-10-30	bin/mayor-context-guard:90	Session inventory is an existing single control-plane read.
 2026-10-30	bin/order-pause:134	Order-pause tracker wrapper is outside study B's open set.
-2026-10-30	bin/outcome-evaluation:150	Outcome Evaluation wrapper retains its detached-launch mode.
+2026-10-30	bin/outcome-evaluation:151	Outcome Evaluation wrapper retains its detached-launch mode.
 2026-10-30	bin/outcome-promote:115	Outcome promotion wrapper retains its detached-launch mode.
 2026-10-30	bin/project-isolation-oracle:211	Sandboxed read is outside study B's open set.
 2026-10-30	bin/reversibility-check:37	GitHub diff read is outside study B's open set.
