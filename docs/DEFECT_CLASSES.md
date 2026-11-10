@@ -195,7 +195,12 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   renvoyés à chaque passe : `settle_red` (af-dtt6dn), `settle_item_repairs`
   (af-uz9bh9), `settle_acceptance` (af-k369au). Elles sont retirées de la
   table dès qu'une transition codée remplace cette porte (étude B § 4.2,
-  af-npz9v1.27).
+  af-npz9v1.27). Hors de la table, constatée le 10/11/2026 (af-nh4c1t) :
+  la reprise de la branche protégée en conflit dans une branche
+  d'intégration n'a pas de sortie et refait échouer `convoy-advance` à
+  chaque passe (`docs/CONVOY_ADVANCE.md`, « What these stops leave open ») ;
+  le choix de sa sortie est une règle de méthode, proposée à Benjamin
+  (af-le1aas, ADR-0029 point 6).
 
 ## D — Doublure, instrument ou vue partielle qui ne se comporte pas comme le réel
 
