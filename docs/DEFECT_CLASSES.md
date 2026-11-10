@@ -119,6 +119,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_malformed_legacy_resume_is_left_to_the_incident_door_without_crashing`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_factory_repair_is_taken_up_and_tested_before_its_resume_is_consumed_once`,
   `python3 tests/outcome-evaluation-every-dataset-test.py`,
+  `python3 tests/outcome-evaluation-outdated-stop-test.py`,
   `bash tests/factory-work-dispatch-test.sh`. Sa même table tient chaque
   fonction de `bin/convoy-advance` qui publie un repair rédigé par la porte
   de patch : un refus de la porte y est noté là où le repair a été rédigé et
@@ -173,7 +174,13 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   portée par le même bead, passait pour la réponse à la demande de l'arrêt :
   R12 restait arrêté sans demande ni reprise ; une réponse ne compte plus
   que pour la demande de l'arrêt lui-même, `stop_answer`, prouvé par
-  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_an_answer_to_an_earlier_planning_exception_does_not_hold_a_proof_moved_resume ConvoyAdvanceTest.test_a_proof_moved_stop_answered_after_its_own_request_is_not_resumed`).
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_an_answer_to_an_earlier_planning_exception_does_not_hold_a_proof_moved_resume ConvoyAdvanceTest.test_a_proof_moved_stop_answered_after_its_own_request_is_not_resumed`) ;
+  af-mmefvq (un arrêt d'Outcome Evaluation tient son commit seul, mais sa
+  demande restait sur la liste de Benjamin une fois la porte passée à un
+  autre commit, et une maintenance liée ne pouvait plus le lever : `settle`
+  range l'arrêt périmé sous `lifts` (`outdated_by`), retire sa demande sans
+  réponse et évalue la nouvelle pointe, prouvé par
+  `python3 tests/outcome-evaluation-outdated-stop-test.py`).
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
   contrôle : `criterion_already_green` reste au Planning Run, sauf
   le repair qui ne fait que déplacer une preuve (af-oa2ci4 : `tdd-step red`
