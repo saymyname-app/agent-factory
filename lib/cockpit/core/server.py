@@ -98,6 +98,10 @@ READER_REFUSED_TEXT = ("Accès refusé : ce cockpit est réservé à l’opérat
 USINE_ACTIONS = frozenset({"regler", "preparer_reglage", "nettoyer"})
 # The gestures of the clean stop (H, af-69qhlk), served by _stop_action.
 STOP_ACTIONS = frozenset({"arreter", "forcer_arret", "redemarrer"})
+# A stop gesture whose last outcome is uncertain, before the supervisor was
+# read again (R15, af-0ilk7e).
+STOP_REREAD_PENDING = ("Le geste précédent a une issue incertaine : le cockpit relit le superviseur. "
+                       "Rien n’a été envoyé de nouveau ; réessaie une fois l’état relu.")
 ACTIONS_WITHOUT_WRITE = frozenset({"continuer", "pas_bon_vers_agent", "notifier_test"})
 # What "Ce qui t'attend", the projects and the journal are built from.
 SOURCES_REREAD_AFTER_ACTION = frozenset({"beads", "projets", "journal"})
@@ -808,18 +812,42 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         driver = self.server.stop_driver
         if driver is None or driver.state() not in STOPPABLE_STATES:
             return "Une suspension est déjà en cours : suis-la ici."
+        uncertain = self._stop_uncertain("arreter", snapshot, lift=False)
+        if uncertain:
+            return uncertain
         sessions, beads = snapshot.get("sessions"), snapshot.get("beads")
         if any(row is None or row["value"] is None or row["freshness"] != FRESH for row in (sessions, beads)):
             return "Suspension indisponible : travail en vol inconnu, la source ne répond pas. Revérifie les connexions."
         return None
+
+    def _stop_uncertain(self, action, snapshot, lift):
+        """Why ``action`` may not go again yet after its uncertain outcome,
+        or None: no reading of the supervisor begun after that outcome
+        (the read model dates a reading when it ends; a slow one may have
+        begun before). With ``lift``, a reading begun since lifts the mark,
+        and the gesture goes on to the checks of the moment."""
+        row = snapshot.get("sessions") or {}
+        read_at = row.get("read_at")
+        began = None if read_at is None else read_at - (row.get("latency") or 0)
+        outcomes = self.server.stop_uncertain
+        if lift:
+            refused = outcomes.refusal(action, began, {action}) is not None
+        else:
+            refused = action in outcomes.pending(began, {action})
+        return STOP_REREAD_PENDING if refused else None
 
     def _stop_action(self, action, payload):
         """POST /api/actions/arreter, forcer_arret, redemarrer (H,
         af-69qhlk): (status, body). What the moment does not allow is
         refused first, then a gesture without its confirmation; only then
         does the supervisor hear of it. No answer from it leaves the
-        outcome to the next reading of the page."""
+        outcome uncertain: the same gesture waits for a reading of the
+        supervisor begun after it (R15, af-0ilk7e), as the other gestures
+        wait for their source (af-fksj2c)."""
         driver = self.server.stop_driver
+        uncertain = self._stop_uncertain(action, self.server.read_model.snapshot(), lift=True)
+        if uncertain:
+            return 409, {"error": uncertain, "incertain": True}
         blocked = None
         if action == "arreter":
             blocked = self._stop_blocked(self.server.read_model.snapshot())
@@ -836,7 +864,9 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         try:
             gesture()
         except StopUncertain:
-            self._poll_soon()
+            # Not read again at once: the regular reading of the supervisor
+            # is the one that lifts the mark.
+            self.server.stop_uncertain.record(action, self.server.read_model.now())
             return 504, {"error": "Le superviseur n’a pas répondu : l’issue est incertaine. Relis cette page avant "
                                   "de réessayer.", "incertain": True}
         except ValueError as exc:
@@ -1211,6 +1241,9 @@ def make_server(
         raise ValueError("cockpit bound to %r, not 127.0.0.1 — refusing" % (sockname[0],))
     server.read_model = read_model
     server.uncertain = UncertainOutcomes()
+    # The stop gestures had an uncertain outcome: their source is the
+    # supervisor, not the tracker (R15, af-0ilk7e).
+    server.stop_uncertain = UncertainOutcomes()
     server.defect_counter = DefectCounter()
     # T13, af-cx20q9: no guard supplied (a caller that only wants GET /,
     # e.g. an older test) means every action is refused rather than left
