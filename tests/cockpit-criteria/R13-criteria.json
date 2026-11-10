@@ -1,0 +1,8 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/analyses-d01-records-test.py::AnalysesD01Records.test_a_proof_of_merge_the_reader_refuses_is_counted_neither_merged_nor_judged",
+      "tests/cockpit-criteria/commands/analyses-d01-records-test.py::AnalysesD01Records.test_a_proof_of_merge_over_a_voided_acceptance_is_counted_neither_merged_nor_judged"
+    ]
+  }
+}
