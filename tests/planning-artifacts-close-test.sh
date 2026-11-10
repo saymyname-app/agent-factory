@@ -37,6 +37,7 @@ set -Eeuo pipefail
 # city on every call (af-2o6oyl).
 if [[ ${1:-} == --city ]]; then shift 2; fi
 if [[ ${1:-} == bd && ${2:-} == list ]]; then
+  sleep "${GC_TEST_LIST_SLEEP:-0}"
   cat "$CONVOYS_FILE"
   exit 0
 fi
@@ -306,4 +307,47 @@ grep -q "closed=2 skipped=2 failed=0" <<<"$out" || { echo "$out" >&2; fail "expe
 [ "$(grep -c "does not resolve to a bead" <<<"$out")" = "2" ] || { echo "$out" >&2; fail "the file-draft ids were not left untouched beside the resolved ones"; }
 [ "$(bead_status zz-fixture-spec-6m)" = "open" ] || fail "the Spec of a marked convoy closed outside acceptance or abandon was closed"
 
-echo "PASS: planning-artifacts-close (open convoy untouched, bead-mode closes idempotently, claimed Spec closes, file-draft mode untouched without error, marked convoy closed outside its commands keeps its Spec and Draft, unreadable state closes nothing, one bd show per run)"
+# =============================================================================
+# 7. A loaded host slows every tracker call (af-p1d8ka): a run cut by the
+#    tool's own budget, below the order's 60 s timeout, is deferred (exit 0)
+#    and closes nothing half-way; only runs cut three times in a row fail,
+#    and a run that finishes clears the count.
+# =============================================================================
+
+DEFERRED_FILE="$TMP/.gc/runtime/planning-artifacts-close-deferred-passes"
+cut_run() {
+  PLANNING_ARTIFACTS_CLOSE_BUDGET_SECONDS=0.3 GC_TEST_LIST_SLEEP=5 "$TOOL" 2>&1
+}
+jq -n '{
+  "zz-fixture-spec-7": {"id": "zz-fixture-spec-7", "status": "open"},
+  "zz-fixture-draft-7": {"id": "zz-fixture-draft-7", "status": "open"}
+}' > "$SHOW_FILE"
+jq -n '[{
+  "id": "zz-fixture-convoy-7", "title": "Fixture Convoy Seven", "status": "closed", "issue_type": "convoy",
+  "metadata": {"gc.artifact_id": "zz-fixture-draft-7", "gc.spec_id": "zz-fixture-spec-7"}
+}]' > "$CONVOYS_FILE"
+: > "$CLOSE_LOG"
+
+started_ns=$(date +%s%N)
+rc=0
+out=$(cut_run) || rc=$?
+elapsed_ns=$(( $(date +%s%N) - started_ns ))
+[ "$rc" -eq 0 ] || { echo "$out" >&2; fail "one run cut by the budget must be deferred, not failed (was $rc)"; }
+grep -q 'internal budget exceeded after 0.3s — run deferred (1 of 3 in a row' <<<"$out" \
+  || { echo "$out" >&2; fail "a deferred run must name its own deadline and its count"; }
+[ "$elapsed_ns" -lt 4000000000 ] || fail "a slow tracker call must be cut at the tool's budget"
+[ -s "$CLOSE_LOG" ] && fail "a run cut by the budget closed something"
+rc=0
+cut_run >/dev/null || rc=$?
+[ "$rc" -eq 0 ] || fail "a second run cut in a row must still be deferred (was $rc)"
+rc=0
+out=$(cut_run) || rc=$?
+[ "$rc" -eq 2 ] || { echo "$out" >&2; fail "a third run cut in a row must exit 2 (was $rc)"; }
+grep -q 'internal budget exceeded after 0.3s — 3 runs in a row cut short' <<<"$out" \
+  || { echo "$out" >&2; fail "a repeated budget expiry must say it is repeated"; }
+
+out=$(run_tool)
+grep -q "closed=2 skipped=0 failed=0" <<<"$out" || { echo "$out" >&2; fail "the run after the deferred ones did not close what they left"; }
+[ ! -e "$DEFERRED_FILE" ] || fail "a run that finishes must clear the count of runs cut in a row"
+
+echo "PASS: planning-artifacts-close (open convoy untouched, bead-mode closes idempotently, claimed Spec closes, file-draft mode untouched without error, marked convoy closed outside its commands keeps its Spec and Draft, unreadable state closes nothing, one bd show per run, a run slowed past its budget deferred until cut three times in a row)"
