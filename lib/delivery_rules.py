@@ -17,6 +17,23 @@ TDD_EVIDENCE_PIECES = {
 # unobservable item proven by the frozen criterion test.
 PROVEN_BY_TEST_OPTION = "a"
 
+# The written rules of how a test is written: a repair that restores one of
+# them moves a proof, it changes no behavior (af-oa2ci4).
+TEST_RULE_PATHS = ("docs/TEST_GUIDELINE.md",)
+
+
+def moves_a_proof(ticket: dict) -> bool:
+    """Whether a ticket, as bin/convoy-state shows it, is a repair whose
+    Blocking Finding is about where or how a proof is written -- it restores
+    a rule of TEST_RULE_PATHS -- and not about a behavior. Its criteria can
+    hold at the start commit: the black-box proof replaces the one the rule
+    forbids (af-oa2ci4)."""
+    restores = ticket.get("restores") or {}
+    if ticket.get("kind") != "repair" or restores.get("kind") != "repo_rule":
+        return False
+    path, separator, _ = str(restores.get("ref") or "").partition(" : ")
+    return bool(separator) and path.strip() in TEST_RULE_PATHS
+
 
 def review_replay_due(last: dict, tip: str, correction_commit: str | None,
                       unsettled, overridden) -> bool:
