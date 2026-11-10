@@ -80,19 +80,45 @@ CONVOY_STATE="${FACTORY_WATCHDOG_CONVOY_STATE_BIN:-$(dirname "${BASH_SOURCE[0]}"
 OPERATOR_CONFIG="${OPERATOR_CONFIG_BIN:-$(dirname "${BASH_SOURCE[0]}")/operator-config}"
 OBSERVE_BIN="${FACTORY_WATCHDOG_OBSERVE_BIN:-$(dirname "${BASH_SOURCE[0]}")/factory-observe}"
 BUDGET_SECONDS="${FACTORY_WATCHDOG_BUDGET_SECONDS:-150}"
+DEFER_LIMIT="${FACTORY_WATCHDOG_DEFER_LIMIT:-3}"
+DEFERRED_FILE="$ROOT/.gc/runtime/factory-watchdog-deferred-passes"
+# The child's own "pass cut short, nothing lost" exit: the live observation
+# did not fit in what was left of the budget and runs again next pass.
+EXIT_DEFERRED=75
 
 # Own the whole process group below Gas City's 180-second order deadline. If
 # any live source wedges, timeout kills the watchdog and every child it owns;
-# the parent then returns a precise failure while the controller still has 30
+# the parent then returns a precise answer while the controller still has 30
 # seconds to collect it instead of reporting only "context deadline exceeded".
+#
+# A loaded host (load 15m ~34, af-onrwp8) can push a healthy pass past the
+# budget: every gc read is slower, none is wedged. One pass cut short loses
+# nothing -- the next one, five minutes later, reads the same state and resends
+# what factory-observe still holds pending -- so it is deferred (exit 0), and
+# only DEFER_LIMIT passes cut short in a row are a watchdog failure (exit 2).
 if [ "${FACTORY_WATCHDOG_BUDGET_ACTIVE:-0}" != "1" ]; then
-  FACTORY_WATCHDOG_BUDGET_ACTIVE=1 timeout --kill-after=5s "$BUDGET_SECONDS" "$0" "$@"
+  FACTORY_WATCHDOG_DEADLINE=$(awk -v now="$(date +%s.%N)" -v b="$BUDGET_SECONDS" 'BEGIN { printf "%.3f", now + b }') \
+    FACTORY_WATCHDOG_BUDGET_ACTIVE=1 timeout --kill-after=5s "$BUDGET_SECONDS" "$0" "$@"
   budget_rc=$?
-  if [ "$budget_rc" = "124" ] || [ "$budget_rc" = "137" ]; then
-    printf 'factory-watchdog: internal budget exceeded after %ss\n' "$BUDGET_SECONDS" >&2
-    exit 2
+  if [ "$budget_rc" != "124" ] && [ "$budget_rc" != "137" ] && [ "$budget_rc" != "$EXIT_DEFERRED" ]; then
+    rm -f "$DEFERRED_FILE"
+    exit "$budget_rc"
   fi
-  exit "$budget_rc"
+  if [ "$budget_rc" = "$EXIT_DEFERRED" ]; then
+    cut="live observation deferred: it did not fit in the ${BUDGET_SECONDS}s budget"
+  else
+    cut="internal budget exceeded after ${BUDGET_SECONDS}s"
+  fi
+  load=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)
+  in_a_row=$(( $(cat "$DEFERRED_FILE" 2>/dev/null || echo 0) + 1 ))
+  if mkdir -p "$(dirname "$DEFERRED_FILE")" 2>/dev/null && printf '%s\n' "$in_a_row" > "$DEFERRED_FILE" 2>/dev/null \
+     && [ "$in_a_row" -lt "$DEFER_LIMIT" ]; then
+    printf 'factory-watchdog: %s — pass deferred (%s of %s in a row, loadavg %s)\n' \
+      "$cut" "$in_a_row" "$DEFER_LIMIT" "$load"
+    exit 0
+  fi
+  printf 'factory-watchdog: %s — %s passes in a row cut short (loadavg %s)\n' "$cut" "$in_a_row" "$load" >&2
+  exit 2
 fi
 
 while [ $# -gt 0 ]; do
@@ -462,13 +488,29 @@ else
 fi
 
 # --- 10. live Beads/Git/GitHub observation -----------------------------------
+# It runs last, within what is left of the budget (less a margin to report):
+# cut short or never started, it is deferred to the next pass, whose read sees
+# the same transitions and resends what is still pending (af-onrwp8).
 OBSERVE_RC=0
+OBSERVE_MARGIN_SECONDS=5
 if [ "$CHECK_ONLY" != "1" ]; then
-  OBSERVE_OUT=$(FACTORY_ROOT="$ROOT" "$OBSERVE_BIN" live 2>&1) || OBSERVE_RC=$?
-  if [ "$OBSERVE_RC" != "0" ]; then
-    bad "live observation failed — ${OBSERVE_OUT:0:240}"
-    OBSERVE_RC=2
+  observe_cap=0  # no deadline (run by hand inside the budget): timeout 0 sets no limit
+  if [ -n "${FACTORY_WATCHDOG_DEADLINE:-}" ]; then
+    observe_cap=$(awk -v d="$FACTORY_WATCHDOG_DEADLINE" -v now="$(date +%s.%N)" -v m="$OBSERVE_MARGIN_SECONDS" \
+      'BEGIN { left = d - now - m; printf "%.1f", (left > 0 ? left : 0) }')
   fi
+  if [ -n "${FACTORY_WATCHDOG_DEADLINE:-}" ] && [ "$observe_cap" = "0.0" ]; then
+    OBSERVE_RC=$EXIT_DEFERRED
+  else
+    OBSERVE_OUT=$(FACTORY_ROOT="$ROOT" timeout --kill-after=2s "$observe_cap" "$OBSERVE_BIN" live 2>&1) || OBSERVE_RC=$?
+    if [ "$OBSERVE_RC" = "124" ] || [ "$OBSERVE_RC" = "137" ]; then
+      OBSERVE_RC=$EXIT_DEFERRED
+    elif [ "$OBSERVE_RC" != "0" ]; then
+      bad "live observation failed — ${OBSERVE_OUT:0:240}"
+      OBSERVE_RC=2
+    fi
+  fi
+  [ "$OBSERVE_RC" = "$EXIT_DEFERRED" ] && say "· live observation — deferred to the next pass (budget spent)"
 fi
 
 # --- report --------------------------------------------------------------------
@@ -487,5 +529,6 @@ fi
 # already-historical af-x4p4-class beads this fixes). "Found" is reported
 # above in stdout; only genuine watchdog failure (unreachable root, missing
 # gc/jq/state, a bad CLI argument, or unreadable live sources) means the
-# watchdog itself did not run.
+# watchdog itself did not run; 75 is a live observation deferred to the next
+# pass, which the budget wrapper above counts.
 exit "$OBSERVE_RC"

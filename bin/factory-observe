@@ -83,6 +83,7 @@ LIVE_FLOW_KEYS = {
 FREEFORM_SIGNAL_FIELDS = {"detail", "reason", "ref", "text"}
 LIVE_SOURCE_TIMEOUT_SECONDS = float(os.environ.get("FACTORY_OBSERVE_SOURCE_TIMEOUT_SECONDS", "15"))
 MAIL_TIMEOUT_SECONDS = float(os.environ.get("FACTORY_OBSERVE_MAIL_TIMEOUT_SECONDS", "20"))
+MAIL_UNCONFIRMED_PASSES = int(os.environ.get("FACTORY_OBSERVE_MAIL_UNCONFIRMED_PASSES", "3"))
 
 
 def now() -> float:
@@ -366,36 +367,41 @@ def queue_routes(live: dict[str, Any], events: list[dict[str, Any]]) -> None:
             existing["event_ids"].append(event["event_id"])
 
 
-def mail_delivered(recipient: str, dedup: str, event_ids: list[Any]) -> bool:
+def send_route(recipient: str, dedup: str, event_ids: list[Any]) -> str:
+    """One bounded send: "sent", "refused" (gc answered non-zero) or
+    "unconfirmed" (gc did not answer within the timeout)."""
     message = (
         f"ACTION: factory-observe recorded {len(event_ids)} new live transition(s)\n"
         f"STATE: ROUTED once to {recipient}\n"
         f"EVIDENCE: {STATE_FILE}; events {', '.join(event_ids)}\n"
         "NEXT: inspect ./bin/factory-observe status --json and act only on the cited transition(s)"
     )
-    # A loaded host can create the mail and still overrun the timeout before
-    # gc answers (af-usvfdb). The second send carries the same --dedup key, so
-    # it is suppressed (exit 0) when the first one landed and cannot double the
-    # alert; only a failed second attempt is a failed route.
-    for _ in range(2):
-        try:
-            result = bounded_run(
-                [
-                    GC_BIN, "mail", "send", str(recipient), "--notify",
-                    "--dedup", dedup,
-                    "-s", "factory-observe: live transition", "-m", message,
-                ],
-                text=True, capture_output=True, timeout=MAIL_TIMEOUT_SECONDS,
-            )
-        except subprocess.TimeoutExpired:
-            continue
-        if result.returncode == 0:
-            return True
-    return False
+    try:
+        result = bounded_run(
+            [
+                GC_BIN, "mail", "send", str(recipient), "--notify",
+                "--dedup", dedup,
+                "-s", "factory-observe: live transition", "-m", message,
+            ],
+            text=True, capture_output=True, timeout=MAIL_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return "unconfirmed"
+    return "sent" if result.returncode == 0 else "refused"
 
 
-def route_pending(live: dict[str, Any], moment: str, live_sessions: set[str]) -> list[str]:
+def route_pending(live: dict[str, Any], moment: str, live_sessions: set[str]) -> tuple[list[str], list[str]]:
+    """Send each pending route once. Returns (failures, deferred).
+
+    A loaded host can create the mail and still overrun the timeout before gc
+    answers (af-usvfdb, af-onrwp8). Such a route stays pending and is resent on
+    the next pass under the same --dedup key, which gc suppresses (exit 0) when
+    the first copy landed: it is deferred, not failed. Only a send gc refuses,
+    or a route left unconfirmed MAIL_UNCONFIRMED_PASSES passes in a row, is a
+    failed route.
+    """
     failures: list[str] = []
+    deferred: list[str] = []
     remaining: list[dict[str, Any]] = []
     routes = live.setdefault("routes", [])
     for route in live.get("pending", []):
@@ -404,14 +410,21 @@ def route_pending(live: dict[str, Any], moment: str, live_sessions: set[str]) ->
         if recipient != "mayor" and recipient not in live_sessions:
             recipient = "mayor"
             route["recipient"] = recipient
-        if not mail_delivered(recipient, str(route["route_id"]), event_ids):
-            failures.append(str(recipient))
+        outcome = send_route(recipient, str(route["route_id"]), event_ids)
+        if outcome != "sent":
+            if outcome == "unconfirmed":
+                passes = int(route.get("unconfirmed_passes") or 0) + 1
+                route["unconfirmed_passes"] = passes
+            if outcome == "refused" or route["unconfirmed_passes"] >= MAIL_UNCONFIRMED_PASSES:
+                failures.append(str(recipient))
+            else:
+                deferred.append(str(recipient))
             remaining.append(route)
             continue
         routes.append({"route_id": route.get("route_id"), "recipient": recipient, "event_ids": event_ids, "at": moment})
     live["pending"] = remaining
     live["routes"] = routes[-LIVE_EVENT_LIMIT:]
-    return failures
+    return failures, deferred
 
 
 def cmd_policy_validate(args: argparse.Namespace) -> int:
@@ -509,7 +522,7 @@ def cmd_live(args: argparse.Namespace) -> int:
 
         state["live"] = live
         save_state(state)
-        failures = route_pending(live, moment, live_sessions)
+        failures, deferred = route_pending(live, moment, live_sessions)
         save_state(state)
 
     payload = {
@@ -518,6 +531,7 @@ def cmd_live(args: argparse.Namespace) -> int:
         **result,
         "events": new_events,
         "route_failures": failures,
+        "route_deferred": deferred,
         "window": {
             "baseline_at": window.get("baseline_at"),
             "due_at": window.get("due_at"),
