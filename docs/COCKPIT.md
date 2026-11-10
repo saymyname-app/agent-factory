@@ -131,7 +131,14 @@ missing secret file or a failing ping becomes a health issue instead of a
 crash. It pauses only for `CLEANLY_STOPPED` (Clean stop, requested by
 Benjamin — spec "Heartbeat et usine muette": never at a Windows reboot),
 via a `state_provider` callable so this module does not depend on the
-Clean stop driver (T23) to be tested. `tick()`/`health_issues()` are the
+Clean stop driver (T23) to be tested. The process gives it
+`StopDriver.heartbeat_state`, which says `arretee_proprement` only for a
+clean stop confirmed with nothing lost: a suspension that lost a work --
+the page Usine says « Suspension à vérifier » -- keeps the heartbeat going
+(Spec af-fgcw0d, « pause uniquement à arrêt propre confirmé »; R17,
+af-8hq9o8, proven on the launched cockpit by
+`tests/cockpit-criteria/commands/factory-stop-heartbeat-test.py`).
+`tick()`/`health_issues()` are the
 whole public interface; process wiring (secret file location, thread
 scheduling, the health zone display) is left to the tickets that build
 those.
