@@ -260,7 +260,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/ticket-graph-publish-test.py TicketGraphPublishBeadModeTest.test_a_mayor_wake_delivered_but_slow_to_answer_is_not_reported_as_lost`,
   `bash tests/factory-watchdog-test.sh`,
   `bash tests/pr-autopilot-time-budget-test.sh`,
-  `bash tests/planning-artifacts-close-test.sh` — partiel : le premier
+  `bash tests/planning-artifacts-close-test.sh`,
+  `bash tests/convoy-parent-sweep-test.sh` — partiel : le premier
   tient la frontière entre un report explicite (sortie 75, rejoué sans
   alerte) et une vraie panne répétée (bead et page Mayor) ; le deuxième tient
   la collecte VM Beads/Git/GitHub, le silence sur état inchangé, la route
@@ -297,7 +298,11 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   ordre. Le contrôle `planning-artifacts-close` la tient pour la fermeture des
   Spec et brouillons : une passe coupée par son budget de 30 s, sous le délai
   de 60 s de son ordre, est reportée (sortie 0) sans rien fermer à moitié, et
-  seules trois passes coupées de suite sortent 2.
+  seules trois passes coupées de suite sortent 2. Le contrôle
+  `convoy-parent-sweep` la tient pour le balayage des convois : un
+  `gc convoy check` coupé par le budget de 90 s du script, sous le délai de
+  120 s de l'ordre, est reporté à la fermeture suivante (sortie 0), et seuls trois
+  balayages coupés de suite sortent 2.
 - Occurrences : #651, #679, #688, #717 ; af-npz9v1.50 ; #767 (armement local
   annoncé mais `autoMergeRequest=null`, af-npz9v1.50.1) ; af-ncg9qy ; #778
   (demande directe acceptée localement mais encore `AWAITING_CHECKS`,
@@ -315,9 +320,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   lancé 1 s + 5 s de kill, et rien ne bornait le passage entier ; 2 échecs
   sous load 15m ~30) ; af-p1d8ka (`planning-artifacts-close`, sans budget
   interne, tué trois fois au délai de 60 s de son ordre sous la charge, du 07
-  au 10/11/2026).
-- Ouvertes : un passage ralenti par la charge compté comme échec de l'ordre
-  dans `convoy-parent-sweep` (af-cbvryy).
+  au 10/11/2026) ; af-cbvryy (un `gc convoy check` ralenti par la charge tué
+  au délai de 120 s de `convoy-parent-sweep`, le 10/11/2026 à 00:01).
+- Ouvertes : aucune connue.
 
 ## A — Autre
 

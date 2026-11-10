@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# convoy-parent-sweep — the convoy sweep the order of the same name runs on
+# every `bead.closed`: Gas City's own `gc convoy check --json`, inside a budget
+# this script owns below the order's 120-second deadline.
+#
+# On 10/11/2026 at 00:01, under load, one sweep ran past the order's deadline:
+# the controller killed it and recorded `order.failed` ("context deadline
+# exceeded", a mysql i/o timeout on stderr) though nothing was wedged; every
+# read was only slower (af-cbvryy, class S, after af-onrwp8 for the watchdog).
+# One sweep cut short loses nothing: `gc convoy check` is idempotent and the
+# next closing runs it again over the same convoys. So a sweep cut by the
+# budget is deferred (exit 0), and only DEFER_LIMIT sweeps cut in a row are an
+# order failure (exit 2). A sweep that finishes, whatever its exit, clears the
+# count; its output and exit are gc's own.
+#
+# Usage: convoy-parent-sweep
+set -uo pipefail
+
+ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+GC="${CONVOY_PARENT_SWEEP_GC_BIN:-gc}"
+# The order allows 120 s; `bin/order-pause gate` may first spend up to 20 s on
+# its tracker read. 90 s plus the 5 s kill grace leaves the rest to report.
+# Successful city-wide sweeps reached 58.88 s (af-5e33u6).
+BUDGET_SECONDS="${CONVOY_PARENT_SWEEP_BUDGET_SECONDS:-90}"
+DEFER_LIMIT="${CONVOY_PARENT_SWEEP_DEFER_LIMIT:-3}"
+DEFERRED_FILE="$ROOT/.gc/runtime/convoy-parent-sweep-deferred-passes"
+
+if [ $# -gt 0 ]; then
+  printf 'convoy-parent-sweep: takes no argument (got: %s)\n' "$*" >&2
+  exit 2
+fi
+
+timeout --kill-after=5s "$BUDGET_SECONDS" "$GC" convoy check --json
+rc=$?
+if [ "$rc" != "124" ] && [ "$rc" != "137" ]; then
+  rm -f "$DEFERRED_FILE"
+  exit "$rc"
+fi
+
+load=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)
+in_a_row=$(( $(cat "$DEFERRED_FILE" 2>/dev/null || echo 0) + 1 ))
+if mkdir -p "$(dirname "$DEFERRED_FILE")" 2>/dev/null && printf '%s\n' "$in_a_row" > "$DEFERRED_FILE" 2>/dev/null \
+   && [ "$in_a_row" -lt "$DEFER_LIMIT" ]; then
+  printf 'convoy-parent-sweep: budget exceeded after %ss — sweep deferred to the next closing (%s of %s in a row, loadavg %s)\n' \
+    "$BUDGET_SECONDS" "$in_a_row" "$DEFER_LIMIT" "$load"
+  exit 0
+fi
+printf 'convoy-parent-sweep: budget exceeded after %ss — %s sweeps in a row cut short (loadavg %s)\n' \
+  "$BUDGET_SECONDS" "$in_a_row" "$load" >&2
+exit 2
