@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Criterion test 1 of R12 « Revue de fin 96b3429f0dee F1.5 : Prouver les
-lignes de roadmap par /projet/<id> ou bin/project-roadmap » (af-0p3nfo;
+lignes de roadmap par /projet/<id> ou la commande project-roadmap » (af-0p3nfo;
 Spec af-fgcw0d, decision « Projets et données » 10, Testing Decisions 1, 3
 and 8; docs/TEST_GUIDELINE.md, point 1, « The internal functions stay
 forbidden: a test that calls one is not a test of the tool »): each line
