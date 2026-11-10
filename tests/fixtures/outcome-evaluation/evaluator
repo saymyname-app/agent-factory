@@ -63,25 +63,29 @@ if step == "door-defers":
     raise SystemExit(75)
 bead_id = sys.argv[1]
 claimed_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-tracker = Path(os.environ["CONVOY_STATE_FAKE_TRACKER"])
-with tracker.open("r+", encoding="utf-8") as handle:
-    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-    state = json.load(handle)
-    input_id, root_id, step_id = (f"{bead_id}-input", f"{bead_id}-root", f"{bead_id}-step")
-    state["beads"][input_id] = {"title": f"input convoy for {bead_id}", "status": "open",
-                                 "issue_type": "convoy", "tracks": [bead_id]}
-    state["beads"][root_id] = {"title": "mol-outcome-evaluation", "status": "in_progress",
-                                "metadata": {"gc.formula_name": "mol-outcome-evaluation",
-                                             "gc.input_convoy_id": input_id}}
-    metadata = {"gc.root_bead_id": root_id, "gc.step_id": "mol-outcome-evaluation.evaluate"}
-    evaluator_step = {"title": "evaluate", "status": "open", "metadata": metadata}
-    if step != "unclaimed":
-        metadata["gc.claimed_at"] = claimed_at
-        evaluator_step.update(status="in_progress", assignee="delivery-evaluator-fixture")
-    state["beads"][step_id] = evaluator_step
-    handle.seek(0)
-    handle.truncate()
-    json.dump(state, handle, indent=2, sort_keys=True)
+# The route the door starts is written only to the fake tracker; in an
+# isolated city, which runs the real tracker, no route is written and the
+# launch stays unclaimed and never times out (af-nalv4e).
+tracker = os.environ.get("CONVOY_STATE_FAKE_TRACKER")
+if tracker:
+    with Path(tracker).open("r+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        state = json.load(handle)
+        input_id, root_id, step_id = (f"{bead_id}-input", f"{bead_id}-root", f"{bead_id}-step")
+        state["beads"][input_id] = {"title": f"input convoy for {bead_id}", "status": "open",
+                                     "issue_type": "convoy", "tracks": [bead_id]}
+        state["beads"][root_id] = {"title": "mol-outcome-evaluation", "status": "in_progress",
+                                    "metadata": {"gc.formula_name": "mol-outcome-evaluation",
+                                                 "gc.input_convoy_id": input_id}}
+        metadata = {"gc.root_bead_id": root_id, "gc.step_id": "mol-outcome-evaluation.evaluate"}
+        evaluator_step = {"title": "evaluate", "status": "open", "metadata": metadata}
+        if step != "unclaimed":
+            metadata["gc.claimed_at"] = claimed_at
+            evaluator_step.update(status="in_progress", assignee="delivery-evaluator-fixture")
+        state["beads"][step_id] = evaluator_step
+        handle.seek(0)
+        handle.truncate()
+        json.dump(state, handle, indent=2, sort_keys=True)
 if step == "unclaimed":
     raise SystemExit(0)
 if step == "silent":

@@ -466,6 +466,18 @@ humain : ni armée, ni fusionnée, ni relancée, ni étiquetée, ni transformée
 bead. Liste vide : rien n'est armé et le passage compte une erreur
 (af-996mmd, `docs/DELIVERY.md`, « Outside authors are left to a human »).
 
+Chaque appel `gh`/`gc` est borné, et rien de nouveau ne démarre après 90
+secondes (`PR_AUTOPILOT_BUDGET_SECONDS`) ; passé l'arrêt dur de 100 secondes,
+aucun appel n'est plus lancé. Le passage entier est en plus arrêté à 105
+secondes (`PR_AUTOPILOT_STOP_SECONDS`, + 5 s de kill), 10 secondes sous le
+délai de 120 secondes de son ordre : sous une forte charge (load 15m ~30), un
+passage sain peut l'atteindre sans appel bloqué. Un passage ainsi coupé ne
+perd rien, le suivant relit tout trois minutes plus tard ; il est donc reporté
+(sortie 0, avec `pass deferred (n of 3 in a row, loadavg …)`), et seuls trois
+passages coupés de suite sortent 2 (`PR_AUTOPILOT_DEFER_LIMIT`). Le compte est
+tenu dans `.gc/runtime/pr-autopilot-deferred-passes` et remis à zéro par un
+passage qui finit (`af-pmbhlh`).
+
 ---
 
 ## `./bin/reversibility-check` — ce changement peut-il être défait ?

@@ -10,8 +10,12 @@ description = "Deterministic zero-token cleanup (af-mu8j4): auto-close open conv
 # code, on the operator's words. A convoy without the mark is closed as before.
 trigger = "event"
 on = "bead.closed"
-exec = "/home/benja/agent-factory/bin/order-pause gate convoy-parent-sweep -- gc convoy check --json"
+exec = "/home/benja/agent-factory/bin/order-pause gate convoy-parent-sweep -- /home/benja/agent-factory/bin/convoy-parent-sweep"
 # af-5e33u6: successful city-wide scans reached 58.88s and five runs then hit
 # this order's old 60s deadline under load. Two minutes keeps one bounded run
 # while leaving headroom for the pause-gate tracker read and convoy scan.
+# af-cbvryy: bin/convoy-parent-sweep runs the same `gc convoy check --json`
+# inside its own 90s budget, so a sweep slowed by load is cut and deferred to
+# the next closing (exit 0) before this deadline counts it as an order
+# failure; only three sweeps cut in a row exit 2.
 timeout = "120s"
