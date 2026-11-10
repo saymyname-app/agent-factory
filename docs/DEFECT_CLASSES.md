@@ -119,6 +119,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_malformed_legacy_resume_is_left_to_the_incident_door_without_crashing`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_factory_repair_is_taken_up_and_tested_before_its_resume_is_consumed_once`,
   `python3 tests/outcome-evaluation-every-dataset-test.py`,
+  `python3 tests/outcome-evaluation-outdated-stop-test.py`,
   `bash tests/factory-work-dispatch-test.sh`. Sa même table tient chaque
   fonction de `bin/convoy-advance` qui publie un repair rédigé par la porte
   de patch : un refus de la porte y est noté là où le repair a été rédigé et
@@ -173,7 +174,13 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   portée par le même bead, passait pour la réponse à la demande de l'arrêt :
   R12 restait arrêté sans demande ni reprise ; une réponse ne compte plus
   que pour la demande de l'arrêt lui-même, `stop_answer`, prouvé par
-  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_an_answer_to_an_earlier_planning_exception_does_not_hold_a_proof_moved_resume ConvoyAdvanceTest.test_a_proof_moved_stop_answered_after_its_own_request_is_not_resumed`).
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_an_answer_to_an_earlier_planning_exception_does_not_hold_a_proof_moved_resume ConvoyAdvanceTest.test_a_proof_moved_stop_answered_after_its_own_request_is_not_resumed`) ;
+  af-mmefvq (un arrêt d'Outcome Evaluation tient son commit seul, mais sa
+  demande restait sur la liste de Benjamin une fois la porte passée à un
+  autre commit, et une maintenance liée ne pouvait plus le lever : `settle`
+  range l'arrêt périmé sous `lifts` (`outdated_by`), retire sa demande sans
+  réponse et évalue la nouvelle pointe, prouvé par
+  `python3 tests/outcome-evaluation-outdated-stop-test.py`).
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
   contrôle : `criterion_already_green` reste au Planning Run, sauf
   le repair qui ne fait que déplacer une preuve (af-oa2ci4 : `tdd-step red`
@@ -188,7 +195,12 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   renvoyés à chaque passe : `settle_red` (af-dtt6dn), `settle_item_repairs`
   (af-uz9bh9), `settle_acceptance` (af-k369au). Elles sont retirées de la
   table dès qu'une transition codée remplace cette porte (étude B § 4.2,
-  af-npz9v1.27).
+  af-npz9v1.27). Hors de la table, constatée le 10/11/2026 (af-nh4c1t) :
+  la reprise de la branche protégée en conflit dans une branche
+  d'intégration n'a pas de sortie et refait échouer `convoy-advance` à
+  chaque passe (`docs/CONVOY_ADVANCE.md`, « What these stops leave open ») ;
+  le choix de sa sortie est une règle de méthode, proposée à Benjamin
+  (af-le1aas, ADR-0029 point 6).
 
 ## D — Doublure, instrument ou vue partielle qui ne se comporte pas comme le réel
 
@@ -220,7 +232,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   relance d'un contrôle rouge acceptait (af-toyety).
 - Occurrences : #566, #618, #641, #648, #656, #664, #665, #669, #671, #674,
   #675, #676, #680, #689, #690, #692, #699, #700, #714, #715 ; af-vf51g6 ;
-  af-dtsy06 ; af-h6nyqc ; af-toyety.
+  af-dtsy06 ; af-h6nyqc ; af-toyety ; af-yxxa68.
 - Ouvertes : exception datée du 29/10/2026 : la relecture de code par modèle
   n'est pas rejouée sur un cas connu (étude B § 4.3). Elle reste bornée par
   ses citations vérifiées et ses passes ciblées, mais n'est pas déclarée

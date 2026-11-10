@@ -678,11 +678,9 @@ def operator_language() -> str:
     return language.stdout.strip()
 
 
-def raise_stop(convoy: Convoy, stop: dict[str, Any]) -> bool:
-    """One request per stop: the escalation door puts the convoy on the
-    operator's list, and bin/convoy-state records that it did."""
-    if "raised" in stop:
-        return False
+def stop_request(convoy: Convoy, stop: dict[str, Any]) -> dict[str, Any]:
+    """What the operator is asked about a stop, but the language: the line
+    of the request, why, and what can be done."""
     if stop["reason"] == STOP_UNOBSERVABLE:
         what = f"Planning Exception sur le convoi {convoy.id} : user story inobservable sur le produit assemblé"
         why = "Une user story que l'Evaluator de fin ne peut pas observer ne se dispense ni ne se reformule."
@@ -715,8 +713,15 @@ def raise_stop(convoy: Convoy, stop: dict[str, Any]) -> bool:
             {"option": first, "consequence": "L'évaluation repart sur la prochaine pointe de la branche d'intégration."},
             {"option": "Laisser la fin de Spec arrêtée", "consequence": "Aucun Delivered Outcome n'est rendu pour ce convoi."},
         ]
-    payload = {"quoi": short(what, REQUEST_LINE_MAX), "pourquoi": why, "que_faire": options,
-               "langue": operator_language(), "bloquant": True}
+    return {"quoi": short(what, REQUEST_LINE_MAX), "pourquoi": why, "que_faire": options, "bloquant": True}
+
+
+def raise_stop(convoy: Convoy, stop: dict[str, Any]) -> bool:
+    """One request per stop: the escalation door puts the convoy on the
+    operator's list, and bin/convoy-state records that it did."""
+    if "raised" in stop:
+        return False
+    payload = {**stop_request(convoy, stop), "langue": operator_language()}
     proc = run([str(ESCALATION_TOOL), "benjamin", convoy.id, json.dumps(payload, ensure_ascii=False)])
     if proc.returncode != 0:
         raise Refusal(
@@ -765,6 +770,24 @@ def lift_stop(convoy: Convoy, stop: dict[str, Any]) -> list[str] | None:
     return repairs
 
 
+def outdate_stop(convoy: Convoy, stop: dict[str, Any], commit: str) -> dict[str, str]:
+    """A stop holds its commit only (af-mmefvq): once the gate is at
+    another one, the stop is set aside under `lifts`, its request leaves
+    the operator's list without an answer -- when it is still the one on
+    the convoy -- and the evaluation is made at the new commit. No counter
+    moves; a story still unobservable there is a new stop and a new request."""
+    if "raised" in stop:
+        asked = (read_bead(convoy.id).get("metadata") or {}).get("gc.needs_benjamin")
+        if asked == stop_request(convoy, stop)["quoi"]:
+            cleared = run([str(ESCALATION_TOOL), "clear", convoy.id])
+            if cleared.returncode != 0:
+                raise Refusal(f"la demande de l'arrêt périmé {stop['reason']} du convoi {convoy.id} ne quitte pas la "
+                              f"liste de l'opérateur : {detail_of(cleared)}")
+    state_write("lift-outcome-stop", convoy.id, "--commit", stop["commit"], "--outdated-by", commit)
+    convoy.load()
+    return {"reason": stop["reason"], "commit": stop["commit"], "outdated_by": commit}
+
+
 def outages_at(record: dict[str, Any], commit: str) -> int:
     count = 0
     for round_ in reversed(record["rounds"]):
@@ -794,6 +817,9 @@ def settle(convoy: Convoy, settings: dict[str, Any]) -> dict[str, Any]:
     reap(convoy, [entry["state_file"] for entry in keep],
          withdraw=request is not None and current is None)
     stop = convoy.outcome.get("stop")
+    outdated = outdate_stop(convoy, stop, commit) if stop and commit and stop["commit"] != commit else None
+    if outdated is not None:
+        stop = None
     lifted = lift_stop(convoy, stop) if stop and stop.get("repairs") and commit and stop["commit"] == commit else None
     if lifted is not None:
         stop = None
@@ -893,6 +919,7 @@ def settle(convoy: Convoy, settings: dict[str, Any]) -> dict[str, Any]:
                  if launch_.get("unclaimed") is not True and launch_["bead"] != replaces_unclaimed) + 1
     return {"action": "relaunched" if launches else "launched", "commit": commit, "bead": bead_id,
             "launches": routed, **({"lifted": lifted} if lifted is not None else {}),
+            **({"outdated": outdated} if outdated is not None else {}),
             "environment": [{"dataset": entry["dataset"], "address": entry["address"]} for entry in current["environment"]]}
 
 
