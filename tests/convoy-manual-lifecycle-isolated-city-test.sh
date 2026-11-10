@@ -8,7 +8,7 @@
 #
 # What is real: the controller; the three orders of the Factory that react
 # to a closing, run by that controller (orders/convoy-parent-sweep.toml and
-# its `gc convoy check`, orders/planning-artifacts-close.toml,
+# its `gc convoy check` through bin/convoy-parent-sweep, orders/planning-artifacts-close.toml,
 # orders/convoy-advance.toml); the tracker (gc/bd); bin/convoy-state,
 # bin/convoy-advance, bin/planning-artifacts-close and bin/escalation-door.
 # What the trial does by hand: it publishes nothing (the convoys, their
@@ -135,17 +135,19 @@ jq -e '.bounds | type == "object"' "$CITY/config/delivery-flow.json" >/dev/null 
 
 # The three real orders. Each command is the one the order names, wrapped
 # only to record that it ran.
-grep -qF -- '-- gc convoy check --json"' "$ROOT/orders/convoy-parent-sweep.toml" \
-  || fail "orders/convoy-parent-sweep.toml no longer runs gc convoy check --json"
+grep -qF -- '-- /home/benja/agent-factory/bin/convoy-parent-sweep"' "$ROOT/orders/convoy-parent-sweep.toml" \
+  || fail "orders/convoy-parent-sweep.toml no longer runs bin/convoy-parent-sweep"
+grep -qF -- '"$GC" convoy check --json' "$ROOT/bin/convoy-parent-sweep" \
+  || fail "bin/convoy-parent-sweep no longer runs gc convoy check --json"
 grep -qF -- 'timeout = "120s"' "$ROOT/orders/convoy-parent-sweep.toml" \
   || fail "orders/convoy-parent-sweep.toml does not leave two minutes for the city-wide scan"
 cat > "$TRIAL/sweep" <<WRAP
 #!/bin/sh
-out=\$(gc convoy check --json); rc=\$?
+out=\$(FACTORY_ROOT="$CITY" "$CITY/bin/convoy-parent-sweep"); rc=\$?
 printf '%s\n' "\$out" >> "$SWEEPS"
 exit "\$rc"
 WRAP
-sed "s#-- gc convoy check --json\"\$#-- $TRIAL/sweep\"#" "$ROOT/orders/convoy-parent-sweep.toml" \
+sed "s#-- /home/benja/agent-factory/bin/convoy-parent-sweep\"\$#-- $TRIAL/sweep\"#" "$ROOT/orders/convoy-parent-sweep.toml" \
   > "$CITY/orders/convoy-parent-sweep.toml"
 
 cat > "$TRIAL/artifacts" <<WRAP
