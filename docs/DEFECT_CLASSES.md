@@ -168,7 +168,12 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   ses critères verts au rouge : `criterion_already_green` l'arrêtait et seule
   la clôture « satisfait » restait, qui ne fusionne rien ; prouvé par
   `python3 tests/tdd-step-proof-move-test.py` et
-  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_repair_that_moves_a_proof_stopped_all_green_is_resumed_once_without_an_answer_nor_a_round_of_the_end ConvoyAdvanceTest.test_a_repair_of_a_behavior_stopped_all_green_stays_stopped_with_the_operator`).
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_repair_that_moves_a_proof_stopped_all_green_is_resumed_once_without_an_answer_nor_a_round_of_the_end ConvoyAdvanceTest.test_a_repair_of_a_behavior_stopped_all_green_stays_stopped_with_the_operator`) ;
+  af-vm0vua (la réponse de Benjamin à une Planning Exception antérieure,
+  portée par le même bead, passait pour la réponse à la demande de l'arrêt :
+  R12 restait arrêté sans demande ni reprise ; une réponse ne compte plus
+  que pour la demande de l'arrêt lui-même, `stop_answer`, prouvé par
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_an_answer_to_an_earlier_planning_exception_does_not_hold_a_proof_moved_resume ConvoyAdvanceTest.test_a_proof_moved_stop_answered_after_its_own_request_is_not_resumed`).
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
   contrôle : `criterion_already_green` reste au Planning Run, sauf
   le repair qui ne fait que déplacer une preuve (af-oa2ci4 : `tdd-step red`
