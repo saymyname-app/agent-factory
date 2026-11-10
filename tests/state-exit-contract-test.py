@@ -49,7 +49,11 @@ OUTCOME_LIFT_PROOF = (
     "tests/outcome-evaluation-every-dataset-test.py::"
     "test_a_stop_linked_to_a_delivered_maintenance_is_lifted_and_evaluated_again_without_a_round_of_the_end"
 )
-NEW_TIP_PROOF = "lib/convoy_state.py::record.pop(\"stop\", None)"
+# A stop at a commit the gate left is set aside and its request cleared (af-mmefvq).
+NEW_TIP_PROOF = (
+    "tests/outcome-evaluation-outdated-stop-test.py::"
+    "test_a_stop_the_gate_moved_past_leaves_the_list_without_an_answer_and_is_evaluated_at_the_new_tip"
+)
 LIFT_PROOF = "tests/convoy-state-test.py::test_lift_park_unparks_the_ticket_and_those_it_parked_and_keeps_the_record"
 EXHAUSTED_PROOF = (
     "tests/convoy-advance-resumes-stops-end-test.py::"
@@ -61,6 +65,10 @@ EXHAUSTED_PROOF = (
 # covers the stop/parking itself; ``options`` covers every choice its request
 # builder can offer.  ``*`` means any answer to an operator-authored request.
 CONTRACT = {
+    # A repair that only moves a proof is no longer stopped all green, and one
+    # stopped so before is resumed by code (cause proof_moved, af-oa2ci4,
+    # tests/convoy-advance-resumes-stops-end-test.py); every other ticket's
+    # stop stays the Planning Run's.
     ("ticket_stop", "criterion_already_green"): {
         "exit": operator("Planning Run: close or revise the approved ticket"),
         "options": {
@@ -135,7 +143,8 @@ CONTRACT = {
         },
     },
     ("outcome_stop", "outcome_evaluation_no_result"): {
-        "exit": transition("open-outcome-evaluation on a new integration tip", NEW_TIP_PROOF),
+        "exit": transition("lift-outcome-stop --outdated-by on a new integration tip, its request cleared, "
+                           "then open-outcome-evaluation", NEW_TIP_PROOF),
         "options": {
             "Faire vérifier le rôle Evaluator par la maintenance de l'usine":
                 operator("Factory maintenance; the next integration tip reopens Outcome Evaluation"),
@@ -143,7 +152,8 @@ CONTRACT = {
         },
     },
     ("outcome_stop", "outcome_evaluation_outage"): {
-        "exit": transition("open-outcome-evaluation on a new integration tip", NEW_TIP_PROOF),
+        "exit": transition("lift-outcome-stop --outdated-by on a new integration tip, its request cleared, "
+                           "then open-outcome-evaluation", NEW_TIP_PROOF),
         "options": {
             "Faire réparer l'environnement d'évaluation par la maintenance de l'usine":
                 operator("Factory maintenance; the next integration tip reopens Outcome Evaluation"),
@@ -151,7 +161,8 @@ CONTRACT = {
         },
     },
     ("outcome_stop", "outcome_repair_refused"): {
-        "exit": transition("open-outcome-evaluation on a new integration tip", NEW_TIP_PROOF),
+        "exit": transition("lift-outcome-stop --outdated-by on a new integration tip, its request cleared, "
+                           "then open-outcome-evaluation", NEW_TIP_PROOF),
         "options": {
             "Faire reprendre le repair refusé dans le Planning Run":
                 operator("Planning Run: redraft the refused repair; the next integration tip reopens Outcome Evaluation"),
@@ -223,7 +234,7 @@ BUILDERS = {
     ("bin/ticket-evaluation", "raise_stop"): (
         {2}, {("ticket_stop", "evaluation_no_result"), ("ticket_stop", "evaluation_outage")}),
     ("bin/ticket-evaluation", "planning_exception_request"): ({3}, {("park", "planning_exception")}),
-    ("bin/outcome-evaluation", "raise_stop"): (
+    ("bin/outcome-evaluation", "stop_request"): (
         {2}, {("outcome_stop", reason) for reason in
               ("outcome_evaluation_no_result", "outcome_evaluation_outage", "story_unobservable",
                "outcome_repair_refused")}),

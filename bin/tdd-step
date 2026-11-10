@@ -19,7 +19,8 @@ start commit is healthy, and every criterion test fails there by assertion
 and goes through an entry point of the product. A criterion whose tests
 all pass at the start commit is recorded as satisfied by the existing code
 (`satisfied`, ADR-0030 L5); only a ticket whose criteria are all already
-green stops. `freeze`: the fingerprints of the table, of the criterion
+green stops, but for a repair that moves a proof (it restores a rule of
+docs/TEST_GUIDELINE.md): it goes on all satisfied (af-oa2ci4). `freeze`: the fingerprints of the table, of the criterion
 test files and of the frozen harness paths go into a registry of the Spec,
 outside any work tree; no test review precedes it, the code review reads
 the criterion tests after the green (ADR-0030 L3). `green`: the frozen
@@ -29,8 +30,9 @@ change of frozen tests a ticket is allowed, with its reason, a new red and a
 new freeze, recorded with its diff. A criterion test another ticket of the
 convoy froze is no ticket's to change, but for the one ticket its text names
 as its successor (« until A2 », « jusqu'à A2 », or that ticket's id), once,
-by its `amend` (af-npz9v1.19): `red` and `green` refuse any other change of
-it. A file the ticket branch holds as the base it last merged holds it (a
+by its `amend` (af-npz9v1.19), or for the ticket whose accepted Planning
+Exception deviation names it (af-axppkz): `red` and `green` refuse any other
+change of it. A file the ticket branch holds as the base it last merged holds it (a
 harness main's maintenance changed) is the base's change, not the ticket's:
 `green` runs the tests with it and `amend` does not count it
 (af-npz9v1.39); `changes` says which are which. `prefactoring`: the regression command of
@@ -112,6 +114,12 @@ AUTHORIZED_SUCCESSION = {
     "lifted_at": "2026-10-30T11:55:11Z",
     "parked_at": "2026-10-29T05:56:01Z",
 }
+# af-axppkz: the parking of a ticket's own Planning Exception, lifted by the
+# option that accepts its deviation (bin/convoy-advance lifts it with no
+# other), is the operator's acceptance of the deviation its Ticket Handoff
+# describes; a frozen test of another ticket those « Écarts » name is then
+# this ticket's to change, once (Benjamin, 10/11/2026: « Oui, c aux deux »).
+PLANNING_EXCEPTION_PARK = "planning_exception"
 
 EXIT_REFUSED = 1
 EXIT_NOT_NEW_FLOW = 4
@@ -125,7 +133,8 @@ EXIT_STOPPED = 5
 # answer, never a red (study C, T1).
 sys.path.insert(0, str(BIN.parent / "lib"))
 from bounded_process import run as bounded_run  # noqa: E402
-from delivery_rules import tdd_evidence_piece  # noqa: E402
+from delivery_rules import moves_a_proof, tdd_evidence_piece  # noqa: E402
+import convoy_state  # noqa: E402
 import test_budgets  # noqa: E402
 
 BUDGETS = test_budgets.load(BIN.parent)
@@ -202,6 +211,15 @@ def git(repo: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
 def in_paths(path: str, entries: list[str]) -> bool:
     """Whether a file of the repository sits under one of the declared paths."""
     return any(path == entry.rstrip("/") or path.startswith(entry.rstrip("/") + "/") for entry in entries)
+
+
+def names_path(text: str, path: str) -> bool:
+    """Whether a line names a file of the repository: its full path, or its
+    bare file name -- not the same name under another directory."""
+    edge = r"(?![\w-])(?!\.\w)"
+    if re.search(rf"(?<![\w./-]){re.escape(path)}{edge}", text):
+        return True
+    return re.search(rf"(?<![\w./-]){re.escape(Path(path).name)}{edge}", text) is not None
 
 
 # --- the recording proxy of the black-box seam ---------------------------------
@@ -626,6 +644,50 @@ class Check:
             for entry in entries
         )
 
+    def accepted_deviation(self, path: str) -> dict[str, Any] | None:
+        """The operator's answer that accepted the deviation of this ticket's
+        last Planning Exception, when a deviation of its Ticket Handoff
+        written since names `path` (its full path, or its bare file name):
+        the reference of that answer, recorded with the succession
+        (af-axppkz). None without such an answer."""
+        lifts = self.ticket.get("park_lifts")
+        raised = self.ticket.get("planning_exceptions")
+        handoff = self.ticket.get("handoff")
+        sections = handoff.get("sections") if isinstance(handoff, dict) else None
+        deviations = sections.get("deviations") if isinstance(sections, dict) else None
+        if not isinstance(lifts, list) or not isinstance(raised, list) or not isinstance(deviations, list):
+            return None
+        named = [item for item in deviations if isinstance(item, str) and names_path(item, path)]
+        for lift in reversed(lifts):
+            if (lift.get("cause"), lift.get("request")) != (PLANNING_EXCEPTION_PARK, self.args.ticket) \
+                    or not lift.get("option"):
+                continue
+            before = [entry for entry in raised if str(entry.get("at", "")) <= str(lift.get("parked_at", ""))]
+            if not before or before[-1].get("accept_option") != lift["option"]:
+                continue
+            exception = before[-1]
+            if not named or str(handoff.get("at", "")) < str(exception.get("at", "")):
+                return None
+            return {"request": lift["request"], "option": lift["option"], "lifted_at": lift.get("at"),
+                    "raised_at": exception.get("at"), **self.answer_of(lift["option"], exception, lift),
+                    "deviation": named[0]}
+        return None
+
+    def answer_of(self, option: str, exception: dict[str, Any], lift: dict[str, Any]) -> dict[str, Any]:
+        """Who gave that answer and when, as bin/escalation-door wrote it on
+        the ticket, while the ticket still carries it; null otherwise."""
+        try:
+            data = json.loads(convoy_state.run_gc(["bd", "show", self.args.ticket, "--json"]))
+        except (convoy_state.Refusal, json.JSONDecodeError):
+            data = None
+        data = data[0] if isinstance(data, list) and data else data
+        metadata = (data.get("metadata") if isinstance(data, dict) else None) or {}
+        at = metadata.get("gc.escalation_response_at")
+        if metadata.get("gc.escalation_response_option") == option and isinstance(at, str) \
+                and str(exception.get("at", "")) <= at <= str(lift.get("at", "")):
+            return {"actor": metadata.get("gc.escalation_response_actor"), "answered_at": at}
+        return {"actor": None, "answered_at": None}
+
     def succession(self) -> dict[str, dict[str, str]]:
         """The frozen tests of other tickets this ticket's amendments changed,
         each with the fingerprint it was left at."""
@@ -823,8 +885,11 @@ def red_proof(check: Check, base: str, table_path: str | None, amendment: bool,
         raise Refusal(" ; ".join(problems))
     # ADR-0030 L5: a criterion whose tests all pass at the start commit is
     # satisfied by the existing code; only a ticket with nothing left red stops.
+    # A repair that moves a proof changes no behavior: its black-box tests,
+    # green at the start commit, stand for the red, and it goes on to remove
+    # the proof its rule forbids (af-oa2ci4).
     satisfied = [number for number in sorted(criteria, key=int) if all(t in green for t in criteria[number])]
-    if not amendment and green and len(satisfied) == len(criteria):
+    if not amendment and green and len(satisfied) == len(criteria) and not moves_a_proof(check.ticket):
         raise Refusal(" ; ".join(
             f"critère {number} déjà vert : {test_id} passe au commit de départ"
             for number in criteria for test_id in criteria[number] if test_id in green
@@ -1042,11 +1107,15 @@ def check_amend(check: Check) -> dict[str, Any]:
         if path in succession:
             if succession[path]["digest"] != digest:
                 refused.append(f"test gelé du ticket {owner} déjà changé une fois par {check.args.ticket} : {path}")
-        elif not (check.names_this_ticket(base, path) or check.has_authorized_succession(path)):
-            refused.append(f"test gelé du ticket {owner} modifié : {path} ; il ne nomme pas {check.args.ticket} "
-                           "comme successeur (« until <ticket> ») : seul le ticket qu'il nomme le change")
-        else:
+        elif check.names_this_ticket(base, path) or check.has_authorized_succession(path):
             succession[path] = {"owner": owner, "digest": digest}
+        elif (accepted := check.accepted_deviation(path)) is not None:
+            # af-axppkz: the deviation the operator accepted names this test.
+            succession[path] = {"owner": owner, "digest": digest, "accepted": accepted}
+        else:
+            refused.append(f"test gelé du ticket {owner} modifié : {path} ; il ne nomme pas {check.args.ticket} "
+                           "comme successeur (« until <ticket> ») et aucun écart accepté de son Handoff ne le nomme : "
+                           "seul le ticket qu'il nomme le change")
     if refused:
         raise Refusal(" ; ".join(refused))
     proof = red_proof(check, check.tdd["red"]["base"], registry["table"], amendment=True,
