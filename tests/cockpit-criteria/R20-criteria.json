@@ -1,0 +1,7 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/runs-trace-stopped-cockpit-test.py::RunsTraceStoppedCockpit.test_a_session_sent_while_the_cockpit_was_stopped_shows_its_prompts_and_configuration_once_it_is_up"
+    ]
+  }
+}
