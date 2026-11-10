@@ -15,6 +15,10 @@
 # on a busy host. The command makes a fixed number of them however many
 # convoys have closed (one `bd show` for all the ids); the timeout holds only
 # as long as that does (tests/planning-artifacts-close-test.sh, case 6).
+# af-p1d8ka: a loaded host still slows that fixed number of calls past 60 s.
+# The command owns a 30 s budget below this timeout (and order-pause's 20 s
+# read before it): a run cut by it closes nothing half-way and is deferred
+# (exit 0) to the next bead close; only three runs cut in a row fail (case 7).
 [order]
 description = "Closes the Spec bead and Ticket Graph Draft bead a convoy was published from, with a reason naming the convoy, once that convoy closes (W06, A6b)."
 trigger = "event"
