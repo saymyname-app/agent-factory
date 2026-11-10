@@ -19,7 +19,8 @@ start commit is healthy, and every criterion test fails there by assertion
 and goes through an entry point of the product. A criterion whose tests
 all pass at the start commit is recorded as satisfied by the existing code
 (`satisfied`, ADR-0030 L5); only a ticket whose criteria are all already
-green stops. `freeze`: the fingerprints of the table, of the criterion
+green stops, but for a repair that moves a proof (it restores a rule of
+docs/TEST_GUIDELINE.md): it goes on all satisfied (af-oa2ci4). `freeze`: the fingerprints of the table, of the criterion
 test files and of the frozen harness paths go into a registry of the Spec,
 outside any work tree; no test review precedes it, the code review reads
 the criterion tests after the green (ADR-0030 L3). `green`: the frozen
@@ -125,7 +126,7 @@ EXIT_STOPPED = 5
 # answer, never a red (study C, T1).
 sys.path.insert(0, str(BIN.parent / "lib"))
 from bounded_process import run as bounded_run  # noqa: E402
-from delivery_rules import tdd_evidence_piece  # noqa: E402
+from delivery_rules import moves_a_proof, tdd_evidence_piece  # noqa: E402
 import test_budgets  # noqa: E402
 
 BUDGETS = test_budgets.load(BIN.parent)
@@ -823,8 +824,11 @@ def red_proof(check: Check, base: str, table_path: str | None, amendment: bool,
         raise Refusal(" ; ".join(problems))
     # ADR-0030 L5: a criterion whose tests all pass at the start commit is
     # satisfied by the existing code; only a ticket with nothing left red stops.
+    # A repair that moves a proof changes no behavior: its black-box tests,
+    # green at the start commit, stand for the red, and it goes on to remove
+    # the proof its rule forbids (af-oa2ci4).
     satisfied = [number for number in sorted(criteria, key=int) if all(t in green for t in criteria[number])]
-    if not amendment and green and len(satisfied) == len(criteria):
+    if not amendment and green and len(satisfied) == len(criteria) and not moves_a_proof(check.ticket):
         raise Refusal(" ; ".join(
             f"critère {number} déjà vert : {test_id} passe au commit de départ"
             for number in criteria for test_id in criteria[number] if test_id in green

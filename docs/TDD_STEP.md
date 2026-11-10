@@ -109,6 +109,23 @@ names them (« critère 2 déjà vert »), `bin/convoy-state stop-ticket` writes
 the stop (`criterion_already_green`) and the exit status is 5. A stopped
 ticket is refused by every step.
 
+**A repair that only moves a proof goes on all green** (af-oa2ci4). Intent
+(Benjamin, his words, 2026-11-10 08:53 Paris): « Oui, c aux deux », to the
+Planning Exception of R12 (af-0p3nfo), whose author wrote that the behavior
+is already green and only the place of the proof changes. Mechanism (agent
+interpretation): a `repair` whose `## Restores` cites a rule of
+`docs/TEST_GUIDELINE.md` (`repo_rule : docs/TEST_GUIDELINE.md : …`, read by
+`bin/convoy-state show` as `restores`; `moves_a_proof` in
+`lib/delivery_rules.py`) changes no behavior: its Blocking Finding is about
+where or how a proof is written. Its black-box tests, green at the start
+commit, stand for the red: every criterion is recorded `satisfied`, the
+ticket is not stopped, and it goes on to its freeze, removes the proof the
+rule forbids (a file outside the test perimeter, after the freeze) and
+proves its green like any other. Any other ticket whose criteria all hold
+at the start commit — a slice, a repair of a behavior, a repair of another
+rule — still stops. A repair of this kind stopped all green before this
+path existed is resumed by `bin/convoy-advance` (cause `proof_moved`).
+
 ### Proof of the seam
 
 Each criterion test is proven by the mode of the seam it goes through: the

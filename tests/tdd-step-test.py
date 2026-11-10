@@ -230,9 +230,14 @@ class TddStepTest(unittest.TestCase):
                            "metadata": {"gc.spec_id": "fx-spec2"}, "tracks": [PLAIN_TICKET]},
             PLAIN_TICKET: ticket("vertical_slice"),
         }
+        repairs = self.repair_tickets()
+        for ticket_id, description in repairs.items():
+            beads[ticket_id] = ticket("repair", description)
+            beads[CONVOY]["tracks"].append(ticket_id)
         self.tracker.write_text(json.dumps({"beads": beads}))
         proc = subprocess.run(
             (str(STATE_TOOL), "mark", CONVOY,
+             *(f"--demonstration-line={ticket_id}=La page d'accueil affiche le jeu" for ticket_id in repairs),
              "--demonstration-line", f"{SLICE}=La page d'accueil affiche 3",
              "--demonstration-line", f"{RECIPE_SLICE}=Le produit se lance",
              "--demonstration-line", f"{SUCCESSOR}=La sonde nomme le ticket",
@@ -243,6 +248,10 @@ class TddStepTest(unittest.TestCase):
              "--establishes-launch-recipe", RECIPE_SLICE),
             env=self.env, text=True, capture_output=True)
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+
+    def repair_tickets(self):
+        """Repairs more in the marked convoy, by id: their description."""
+        return {}
 
     def git(self, *args):
         return subprocess.run(
