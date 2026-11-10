@@ -1,0 +1,7 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/factory-stop-uncertain-test.py::FactoryStopUncertain.test_a_stop_the_supervisor_did_not_answer_is_uncertain_then_not_sent_again_before_it_is_read_again"
+    ]
+  }
+}

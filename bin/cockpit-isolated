@@ -21,8 +21,8 @@ synthetic sources only:
   has read the sessions, however long it took to come up;
 - what a dataset says of a clean stop (`stop_supervisor`, H, af-69qhlk;
   `read_stop_supervisor`): the sessions at work on tickets, how each leaves a
-  suspended city, who comes back at the resume, and a file of each write the
-  supervisor receives;
+  suspended city, who comes back at the resume, a file of each write the
+  supervisor receives, and whether it answers them (`unanswered_writes`);
 - a synthetic tracker (`tests/fixtures/cockpit/requests/fake-bd`) and the
   projects declared for this launch alone;
 - the knowledge repositories of those projects (their roadmap and release
@@ -438,6 +438,23 @@ def follow_stop(supervisor, stop: dict, home: str) -> None:
         time.sleep(0.1)
 
 
+def answer_no_write(supervisor) -> None:
+    """The supervisor records each write it receives, as before, then drops
+    it: applied to nothing, answered by nothing -- a supervisor that stops
+    answering between a reading and a command (`unanswered_writes`, R15,
+    af-0ilk7e). Its readings answer as before."""
+    answering = supervisor._server.RequestHandlerClass
+
+    class Unanswered(answering):
+        def _city_write(self, method):
+            if super()._city_write(method) is not None:
+                self.close_connection = True
+                self.connection.close()
+            return None
+
+    supervisor._server.RequestHandlerClass = Unanswered
+
+
 def serve_synthetic_supervisor(
     city: synthetic_city.SyntheticCity, stop: dict, cockpit_url: str, home: str, announce: int, cockpit_alive: int
 ) -> None:
@@ -457,6 +474,8 @@ def serve_synthetic_supervisor(
     serve_sessions(supervisor, city)
     if stop.get("writes"):
         supervisor.writes = RecordedWrites(stop["writes"])
+    if stop.get("unanswered_writes"):
+        answer_no_write(supervisor)
     if stop.get("work"):
         with supervisor._lock:
             for session in supervisor._sessions:
