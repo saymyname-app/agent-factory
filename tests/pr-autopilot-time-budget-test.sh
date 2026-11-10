@@ -135,4 +135,26 @@ pilot PR_AUTOPILOT_BUDGET_SECONDS=soon
 [ "$rc" = 2 ] || fail "(e) an invalid budget exited $rc instead of 2"
 [ -s "$TMP/gh.log" ] && fail "(e) an invalid budget still ran"
 
+# --- (f) a pass the whole-run stop cuts is deferred; three in a row fail ------
+# af-pmbhlh: at load 15m ~30 a healthy pass slowed by the host met the order's
+# 120 s deadline. The whole run is stopped below it; one cut pass loses
+# nothing (exit 0), only three in a row fail the order, and a pass that
+# finishes resets the count.
+deferred="$FACTORY_ROOT/.gc/runtime/pr-autopilot-deferred-passes"
+pilot GH_HANG="example-backend --state open" PR_AUTOPILOT_STOP_SECONDS=2
+[ "$rc" = 0 ] || fail "(f) the first cut pass exited $rc instead of being deferred"
+[ "$elapsed" -lt 10 ] || fail "(f) ran ${elapsed}s: the whole-run stop did not cut the pass"
+grep -qE "^pr-autopilot: run stopped at 2s — pass deferred \(1 of 3 in a row, loadavg [0-9]" <<<"$out" \
+  || fail "(f) the deferred pass was not reported with its count and loadavg"
+pilot GH_HANG="example-backend --state open" PR_AUTOPILOT_STOP_SECONDS=2
+[ "$rc" = 0 ] || fail "(f) the second cut pass in a row exited $rc instead of being deferred"
+pilot GH_HANG="example-backend --state open" PR_AUTOPILOT_STOP_SECONDS=2
+[ "$rc" = 2 ] || fail "(f) the third cut pass in a row exited $rc instead of 2"
+grep -q "run stopped at 2s — 3 passes in a row cut short" <<<"$out" || fail "(f) the repeated cut was not named"
+pilot
+[ "$rc" = 0 ] || fail "(f) a healthy pass after the cut ones exited $rc"
+[ -e "$deferred" ] && fail "(f) a finished pass did not reset the count of cut passes"
+pilot GH_HANG="example-backend --state open" PR_AUTOPILOT_STOP_SECONDS=2
+grep -q "(1 of 3 in a row" <<<"$out" || fail "(f) the count did not start again after a finished pass"
+
 echo "OK pr-autopilot bounds every call and stays inside its time budget"
