@@ -245,7 +245,8 @@ elif args[:2] == ['session', 'list']:
     print(pathlib.Path({str(self.sessions)!r}).read_text())
 elif args[:2] == ['mail', 'send']:
     pathlib.Path({str(self.mail_state)!r}).write_text(pathlib.Path({str(self.state_file)!r}).read_text())
-    time.sleep(float(pathlib.Path({str(self.mail_sleep)!r}).read_text()))
+    sleep = float(pathlib.Path({str(self.mail_sleep)!r}).read_text())
+    time.sleep(sleep)
     active = {{
         session['name']
         for session in json.loads(pathlib.Path({str(self.sessions)!r}).read_text())['sessions']
@@ -382,15 +383,17 @@ class LiveObservationTest(unittest.TestCase):
             case.run_live(1000)
             case.write_incident(resumed=True, request_active=True)
             case.mail_rc.write_text("1")
-            failed = json.loads(case.run_live(1300, check=False).stdout)
-            self.assertFalse(failed["ok"])
+            failed = case.run_live(1300, check=False)
+            self.assertEqual(2, failed.returncode)
+            self.assertFalse(json.loads(failed.stdout)["ok"])
             case.mail_rc.write_text("0")
             retried = json.loads(case.run_live(1600).stdout)
             quiet = json.loads(case.run_live(1900).stdout)
             self.assertEqual((retried["action"], quiet["action"]), ("none", "none"))
+            # One send on the refused pass, one on the retry.
             self.assertEqual(2, len(case.calls_matching(["mail", "send"])))
 
-    def test_a_hung_mail_is_bounded_and_remains_pending(self):
+    def test_a_mail_unanswered_within_its_timeout_is_deferred_to_the_next_pass(self):
         with LiveToolCase() as case:
             case.run_live(1000)
             case.write_incident(resumed=True, request_active=True)
@@ -401,13 +404,15 @@ class LiveObservationTest(unittest.TestCase):
             }
 
             started = time.monotonic()
-            timed_out = case.run_tool("live", env=env, check=False)
+            slow = case.run_tool("live", env=env, check=False)
             elapsed = time.monotonic() - started
 
-            self.assertEqual(2, timed_out.returncode)
+            self.assertEqual(0, slow.returncode)
             self.assertLess(elapsed, 20)
-            result = json.loads(timed_out.stdout)
-            self.assertEqual(["factory-worker-af-fixture"], result["route_failures"])
+            result = json.loads(slow.stdout)
+            self.assertTrue(result["ok"])
+            self.assertEqual([], result["route_failures"])
+            self.assertEqual(["factory-worker-af-fixture"], result["route_deferred"])
             status = json.loads(case.run_tool(
                 "status", "--json", env=case.live_env(1300), check=True,
             ).stdout)
@@ -418,12 +423,30 @@ class LiveObservationTest(unittest.TestCase):
             case.mail_sleep.write_text("0")
             retried = json.loads(case.run_live(1600).stdout)
             self.assertEqual("none", retried["action"])
-            self.assertEqual([], retried["route_failures"])
+            self.assertEqual(([], []), (retried["route_failures"], retried["route_deferred"]))
             final = json.loads(case.run_tool(
                 "status", "--json", env=case.live_env(1600), check=True,
             ).stdout)
             self.assertEqual([], final["live"]["pending"])
             self.assertEqual(route_id, final["live"]["routes"][0]["route_id"])
+            sends = case.calls_matching(["mail", "send"])
+            self.assertEqual({route_id}, {send[send.index("--dedup") + 1] for send in sends})
+
+    def test_a_mail_unanswered_three_passes_in_a_row_is_a_failed_route(self):
+        with LiveToolCase() as case:
+            case.run_live(1000)
+            case.write_incident(resumed=True, request_active=True)
+            case.mail_sleep.write_text("30")
+            codes = []
+            for moment in (1300, 1600, 1900):
+                env = {
+                    **case.live_env(moment),
+                    "FACTORY_OBSERVE_MAIL_TIMEOUT_SECONDS": "0.1",
+                }
+                run = case.run_tool("live", env=env, check=False)
+                codes.append(run.returncode)
+            self.assertEqual([0, 0, 2], codes)
+            self.assertEqual(["factory-worker-af-fixture"], json.loads(run.stdout)["route_failures"])
 
     def test_a_failed_route_falls_back_to_mayor_when_its_worker_disappears(self):
         with LiveToolCase() as case:

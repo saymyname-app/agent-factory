@@ -256,7 +256,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `bash tests/pr-autopilot-transient-retry-test.sh`,
   `python3 tests/tdd-step-test.py TddStepTest.test_green_refusal_keeps_the_failing_control_after_long_regression_output`,
   `python3 tests/role-adoption-trial-codex-test.py`,
-  `python3 tests/factory-delivery-proof-test.py ClaimedShippedBead` — partiel : le premier
+  `python3 tests/factory-delivery-proof-test.py ClaimedShippedBead`,
+  `python3 tests/ticket-graph-publish-test.py TicketGraphPublishBeadModeTest.test_a_mayor_wake_delivered_but_slow_to_answer_is_not_reported_as_lost`,
+  `bash tests/factory-watchdog-test.sh` — partiel : le premier
   tient la frontière entre un report explicite (sortie 75, rejoué sans
   alerte) et une vraie panne répétée (bead et page Mayor) ; le deuxième tient
   la collecte VM Beads/Git/GitHub, le silence sur état inchangé, la route
@@ -270,7 +272,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   signaux. Le quatrième refuse qu'un workflow encore actif ou une demande de
   rerun refusée soit annoncé comme déjà retenté. Le contrôle `tdd-step`
   conserve le début et la fin d'une longue sortie bornée, dont le nom du
-  contrôle en échec. Le dernier tient la minute de
+  contrôle en échec. Le contrôle `role-adoption-trial-codex` tient la minute de
   stabilité après un réveil Codex proche
   de l'échéance dans une borne fixe et exige qu'un délai dépassé nomme les états
   observés et la demande de réveil ; il refuse aussi que `active` compte comme
@@ -279,15 +281,32 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   des profils Codex sans opérateur. Le contrôle `factory-delivery-proof` refuse
   qu'un `gc.outcome=pass` d'étape de formule (`gc.step_ref`/`gc.step_id`)
   compte comme livraison annoncée : l'étape qui ouvre la PR n'est pas une
-  livraison non prouvée.
+  livraison non prouvée. Le contrôle `factory-observe` et
+  `ticket-graph-publish` refusent qu'un `gc mail send` borné, déjà remis mais
+  lent à répondre, compte comme perdu : `ticket-graph-publish` rejoue l'envoi
+  une fois sous la même clé `--dedup` ; `factory-observe` garde la route en
+  attente et la renvoie sous la même clé au passage suivant, et seul un envoi
+  refusé par gc ou resté sans réponse trois passages de suite est un échec. Le
+  contrôle `factory-watchdog` refuse qu'un passage du gardien coupé par son budget sous la charge,
+  ou dont l'observation live n'a pas tenu dans le temps restant, compte comme
+  un échec de l'ordre : il est reporté (sortie 0), et seuls trois passages
+  coupés de suite sortent 2.
 - Occurrences : #651, #679, #688, #717 ; af-npz9v1.50 ; #767 (armement local
   annoncé mais `autoMergeRequest=null`, af-npz9v1.50.1) ; af-ncg9qy ; #778
   (demande directe acceptée localement mais encore `AWAITING_CHECKS`,
   af-nk5nm6) ; af-27yx7q.2.1 ; af-pd6m09 ; af-1l3znv (un workflow encore
   actif ou une demande de rerun refusée était annoncé comme déjà retenté) ;
   af-0rdubb ; af-eyi5wa (l'étape push-and-pr, passée en ouvrant sa PR, signalée
-  comme livraison non prouvée).
-- Ouvertes : aucune connue.
+  comme livraison non prouvée) ; af-usvfdb (un mail d'alerte remis mais
+  confirmé après le délai de 20 s comptait comme échec du gardien, et le même
+  délai faisait écrire « Mayor NOT woken » à `ticket-graph-publish`) ;
+  af-onrwp8 (après af-usvfdb, les deux envois d'un même passage restaient sans
+  réponse sous load 15m ~34, et un passage ralenti par la charge dépassait le
+  budget de 150 s : 3 échecs du gardien sur 9 passages, alertes pourtant
+  parties).
+- Ouvertes : un passage ralenti par la charge compté comme échec de l'ordre
+  dans `planning-artifacts-close` (af-p1d8ka), `pr-autopilot` (af-pmbhlh) et
+  `convoy-parent-sweep` (af-cbvryy).
 
 ## A — Autre
 
