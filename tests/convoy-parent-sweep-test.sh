@@ -75,6 +75,7 @@ set -e
 # 5. the order runs this sweep, and its deadline covers the gate, the budget
 #    and the kill grace -----------------------------------------------------------
 ORDER="$REPO_ROOT/orders/convoy-parent-sweep.toml"
+# sandbox: allow-live-root -- matches the order's literal exec path, reads no live state
 grep -qF -- 'exec = "/home/benja/agent-factory/bin/order-pause gate convoy-parent-sweep -- /home/benja/agent-factory/bin/convoy-parent-sweep"' "$ORDER" \
   || fail "orders/convoy-parent-sweep.toml must run bin/convoy-parent-sweep through the pause gate"
 order_s=$(sed -n 's/^timeout = "\([0-9]*\)s"$/\1/p' "$ORDER")
