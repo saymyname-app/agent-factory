@@ -91,12 +91,12 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state record-integration-red CONVOY --commit SHA --integration SHA --protected SHA --control LINE [--detail LINE]
                                         [--check regression|fidelity] [--end-round]
     convoy-state set-integration-repair CONVOY --ticket TICKET
-    convoy-state clear-integration-red  CONVOY
+    convoy-state clear-integration-red  CONVOY [--green SHA --protected SHA --green-command LINE]
     convoy-state record-spec-end CONVOY --commit SHA --protected SHA --file PATH
     convoy-state record-evidence-pack CONVOY --commit SHA --digest sha256:HEX --path DIR (--conforming | --non-conforming)
                                       [--inadmissible N]
     convoy-state open-end-review        CONVOY --commit SHA --file PATH
-    convoy-state launch-end-review      CONVOY --bead BEAD
+    convoy-state launch-end-review      CONVOY --bead BEAD [--replaces-unclaimed BEAD]
     convoy-state record-end-review      CONVOY --file PATH
     convoy-state set-end-review-repair  CONVOY --finding ID (--ticket TICKET | --refused LINE)
     convoy-state stop-end-review        CONVOY --reason REASON --detail LINE
@@ -119,9 +119,11 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state record-outcome-evaluation  CONVOY --file PATH
     convoy-state release-outcome-evaluation CONVOY --state-file PATH [--state-file PATH] [--withdraw]
     convoy-state stop-outcome-evaluation    CONVOY (--commit SHA --reason REASON --detail LINE | --raised)
+    convoy-state link-outcome-repair        CONVOY --repair BEAD
+    convoy-state lift-outcome-stop          CONVOY --commit SHA
     convoy-state classify-finding   CONVOY TICKET --item out_of_ticket.N --as repaired|proposal|dismissed
                                     --recorded-by SESSION [--reason LINE] [--file PATH]
-    convoy-state set-outcome-repair CONVOY --repair TICKET (--story N | --ticket TICKET --item out_of_ticket.N)
+    convoy-state set-outcome-repair CONVOY (--repair TICKET | --refused LINE) (--story N | --ticket TICKET --item out_of_ticket.N)
 
 Every answer is one JSON object on stdout. Exit status: 0 done; 1 refused or
 could not run (nothing written); 3 `show` or `ticket` found an "état sans
@@ -232,6 +234,7 @@ KEY_PARK = PREFIX + "park"
 KEY_INCIDENT = PREFIX + "incident"
 KEY_INTEGRATION = PREFIX + "integration"
 KEY_INTEGRATION_RED = PREFIX + "integration_red"
+KEY_INTEGRATION_RED_CLEARED = PREFIX + "integration_red_cleared"
 KEY_MERGE = PREFIX + "merge"
 KEY_SESSION = PREFIX + "session"
 KEY_CODE_REVIEW = PREFIX + "code_review"
@@ -333,6 +336,7 @@ EVIDENCE_PACK_VERSION = "evidence-pack/v1"
 END_REVIEW_OUTCOMES = ("favorable", "unfavorable", "incomplete")
 END_REVIEW_INCOMPLETE = "incomplete"
 END_REVIEW_MAX_LAUNCHES = 2
+END_REVIEW_MAX_LAUNCH_HISTORY = END_REVIEW_MAX_LAUNCHES + 1
 END_REVIEW_STOPS = ("end_review_no_result", "end_review_repair_refused")
 END_REVIEW_SOURCE = "end_review"
 # What refuses a tip of the integration branch at the end of a Spec (Spec §8,
@@ -379,7 +383,12 @@ REPAIR_CRITERION_FIELDS = ("entry_point", "observable", "false_if")
 # Evaluation, one per numbered user story; its two non-blocking sections.
 OUTCOME_OUTCOMES = ("favorable", "repair", "planning_exception", "environment_outage")
 OUTCOME_SECTIONS = ("exploration", "fidelity_deviations")
-OUTCOME_STOPS = ("outcome_evaluation_no_result", "outcome_evaluation_outage", "story_unobservable")
+OUTCOME_STOPS = ("outcome_evaluation_no_result", "outcome_evaluation_outage", "story_unobservable",
+                 "outcome_repair_refused")
+# A story the factory made unobservable (one dataset opened of all declared,
+# af-ip0nrq): a Factory maintenance linked to that stop lifts it by code once
+# delivered, without an answer of the operator and without a round of the end.
+OUTCOME_LIFTABLE_STOPS = ("story_unobservable",)
 ITEM_OPEN = "ouvert"
 ITEM_REPAIRED = "réparé"
 ITEM_ACCEPTED = "accepté par Benjamin"
@@ -2364,6 +2373,21 @@ def integration_red_record(raw: Any) -> dict[str, Any]:
     return record
 
 
+def integration_red_cleared_record(raw: Any) -> dict[str, Any]:
+    """The last red of the integration branch a control found green again
+    while its repair was still open (af-6vhm6r): the red control, that
+    repair, the green tip and the tip of the protected branch it holds,
+    and the command that was green there."""
+    record = stored_record(raw, ("control", "repair", "commit", "protected", "command", "at"))
+    single_line(record["control"], "contrôle rouge retiré")
+    single_line(record["command"], "commande verte")
+    valid_commit(record["commit"], "pointe verte de la branche d'intégration")
+    valid_commit(record["protected"], "pointe de la branche protégée")
+    if not isinstance(record["repair"], str) or not BEAD_ID_RE.match(record["repair"]):
+        raise Refusal(f"ticket repair du rouge retiré absent ou mal formé : {record['repair']!r}")
+    return record
+
+
 def spec_end_conditions(value: Any) -> list[dict[str, Any]]:
     """The three verdicts of the end-of-Spec gate, in the order of its list,
     all passing, each with the one line that says what was read."""
@@ -2528,13 +2552,18 @@ def end_finding(value: Any) -> dict[str, Any]:
 
 
 def end_launches(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list) or len(value) > END_REVIEW_MAX_LAUNCHES:
+    if not isinstance(value, list) or len(value) > END_REVIEW_MAX_LAUNCH_HISTORY:
         raise Refusal(f"lancements de la revue de fin mal formés : {value!r}")
     for launch in value:
-        if not isinstance(launch, dict) or not {"bead", "at"} <= set(launch) or set(launch) - {"bead", "at", "result"} \
+        if not isinstance(launch, dict) or not {"bead", "at"} <= set(launch) \
+                or set(launch) - {"bead", "at", "result", "unclaimed"} \
                 or not isinstance(launch["bead"], str) or not BEAD_ID_RE.match(launch["bead"]) \
-                or launch.get("result", END_REVIEW_INCOMPLETE) != END_REVIEW_INCOMPLETE:
+                or launch.get("result", END_REVIEW_INCOMPLETE) != END_REVIEW_INCOMPLETE \
+                or ("unclaimed" in launch and (launch["unclaimed"] is not True or "result" in launch)):
             raise Refusal(f"lancement de la revue de fin mal formé : {launch!r}")
+    unclaimed = sum(launch.get("unclaimed") is True for launch in value)
+    if unclaimed > 1 or len(value) - unclaimed > END_REVIEW_MAX_LAUNCHES:
+        raise Refusal(f"lancements de la revue de fin mal formés : {value!r}")
     return value
 
 
@@ -2739,7 +2768,7 @@ def findings_record(raw: Any) -> list[dict[str, Any]]:
     seen = set()
     for entry in entries:
         common = {"item", "handoff_at", "classification", "commit", "recorded_by", "at"}
-        if not isinstance(entry, dict) or not common <= set(entry) or set(entry) - common - {"reason", "draft", "repair"}:
+        if not isinstance(entry, dict) or not common <= set(entry) or set(entry) - common - {"reason", "draft", "repair", "repair_refused"}:
             raise Refusal(f"classement de constat hors ticket mal formé : {entry!r}")
         if not isinstance(entry["item"], str) or not FINDING_ITEM_RE.match(entry["item"]) or entry["item"] in seen:
             raise Refusal(f"constat hors ticket mal nommé, ou classé deux fois : {entry['item']!r}")
@@ -2758,6 +2787,10 @@ def findings_record(raw: Any) -> list[dict[str, Any]]:
         if "repair" in entry and not (
                 classification == "repaired" and isinstance(entry["repair"], str) and BEAD_ID_RE.match(entry["repair"])):
             raise Refusal(f"repair du constat {entry['item']} mal formé : {entry['repair']!r}")
+        if "repair_refused" in entry and ("repair" in entry or classification != "repaired"):
+            raise Refusal(f"constat {entry['item']} : un refus de la porte de patch va avec un repair rédigé et non publié")
+        if "repair_refused" in entry:
+            single_line(entry["repair_refused"], "refus du repair rédigé")
     return entries
 
 
@@ -2782,7 +2815,8 @@ def findings_rendered(ticket: dict[str, Any], by_id: dict[str, dict[str, Any]]) 
                                     "text": text, "state": FINDING_UNCLASSIFIED, "classification": None}
         entry = known.get(item)
         if entry:
-            rendered.update({key: entry[key] for key in ("classification", "reason", "draft", "repair", "commit",
+            rendered.update({key: entry[key] for key in ("classification", "reason", "draft", "repair", "repair_refused",
+                                                         "commit",
                                                          "recorded_by", "at") if key in entry})
             if entry["classification"] == "proposal":
                 rendered["state"] = FINDING_PROPOSAL
@@ -2851,10 +2885,14 @@ def outcome_notes(value: Any, name: str) -> Any:
 
 def outcome_request(value: Any) -> dict[str, Any]:
     required = {"commit", "stories", "roles", "environment", "launches", "at"}
-    if not isinstance(value, dict) or not required <= set(value) or set(value) - required - {"datasets", "wanted"}:
+    if not isinstance(value, dict) or not required <= set(value) \
+            or set(value) - required - {"datasets", "cited", "wanted"}:
         raise Refusal(f"demande d'Outcome Evaluation mal formée : {value!r}")
     if "datasets" in value:
         evaluation_datasets(value["datasets"])
+    if "cited" in value and ("datasets" not in value or any(
+            dataset not in value["datasets"] for dataset in evaluation_datasets(value["cited"]))):
+        raise Refusal(f"jeux cités hors des jeux de la demande d'Outcome Evaluation : {value['cited']!r}")
     if "wanted" in value:
         wanted = value["wanted"]
         if (not isinstance(wanted, dict) or set(wanted) != {"dataset", "fresh", "at"} or
@@ -2897,7 +2935,9 @@ def outcome_round(value: Any) -> dict[str, Any]:
         number = story.get("number") if isinstance(story, dict) else None
         if isinstance(number, bool) or not isinstance(number, int) or number < 1:
             raise Refusal(f"user story sans numéro dans une passe d'Outcome Evaluation : {story!r}")
-        evaluation_item(story, f"user story {number}")
+        evaluation_item({name: field for name, field in story.items() if name != "tried"}, f"user story {number}")
+        if "tried" in story and (story["state"] != "unobservable" or evaluation_datasets(story["tried"]) is None):
+            raise Refusal(f"user story {number} : des jeux essayés ne se donnent qu'avec « unobservable »")
     numbers = [story["number"] for story in value["stories"]]
     if len(set(numbers)) != len(numbers):
         raise Refusal("passe d'Outcome Evaluation mal formée : deux états pour une user story")
@@ -2909,8 +2949,11 @@ def outcome_round(value: Any) -> dict[str, Any]:
                                          for entry in repairs} != not_observed or len(repairs) != len(not_observed):
         raise Refusal("passe d'Outcome Evaluation mal formée : un repair rédigé par user story « non observée », et aucun autre")
     for entry in repairs:
-        if set(entry) - {"story", "draft", "repair"} or "draft" not in entry:
+        if set(entry) - {"story", "draft", "repair", "repair_refused"} or "draft" not in entry \
+                or {"repair", "repair_refused"} <= set(entry):
             raise Refusal(f"repair rédigé mal formé : {entry!r}")
+        if "repair_refused" in entry:
+            single_line(entry["repair_refused"], "refus du repair rédigé")
         draft = repair_draft(entry["draft"], f"le repair de la user story {entry['story']}")
         if cited_story(draft["restores"]) != str(entry["story"]):
             raise Refusal(f"le repair de la user story {entry['story']} ne la cite pas (restores : {draft['restores']!r})")
@@ -2941,8 +2984,8 @@ def outcome_evaluation_record(raw: Any) -> dict[str, Any]:
     mechanical verdicts on, the request that is open, the launch records of
     the products still to stop (`live`), and what stopped it at a commit
     (`stop`: no result, an environment that failed twice, a story that
-    cannot be observed)."""
-    record = stored_record(raw, ("rounds",), ("request", "live", "stop"))
+    cannot be observed, a drafted repair the patch door refused)."""
+    record = stored_record(raw, ("rounds",), ("request", "live", "stop", "lifts"))
     if not isinstance(record["rounds"], list):
         raise Refusal(f"passes d'Outcome Evaluation mal formées : {record['rounds']!r}")
     for value in record["rounds"]:
@@ -2956,12 +2999,33 @@ def outcome_evaluation_record(raw: Any) -> dict[str, Any]:
     if "stop" in record:
         stop = record["stop"]
         if not isinstance(stop, dict) or not {"reason", "detail", "commit", "at"} <= set(stop) \
-                or set(stop) - {"reason", "detail", "commit", "at", "raised"}:
+                or set(stop) - {"reason", "detail", "commit", "at", "raised", "repairs"}:
             raise Refusal(f"arrêt de l'Outcome Evaluation mal formé : {stop!r}")
         one_of(stop["reason"], OUTCOME_STOPS, "raison d'arrêt de l'Outcome Evaluation")
         single_line(stop["detail"], "précision de l'arrêt")
         valid_commit(stop["commit"], "commit de l'arrêt")
+        if "repairs" in stop:
+            if stop["reason"] not in OUTCOME_LIFTABLE_STOPS:
+                raise Refusal(f"réparation liée à un arrêt qui ne se lève pas par code : {stop!r}")
+            technical_repairs_record(encode({"stop_at": stop["at"], "entries": stop["repairs"]}))
+    for lift in record.get("lifts", []) if isinstance(record.get("lifts", []), list) else [None]:
+        if not isinstance(lift, dict) or set(lift) != {"reason", "commit", "stop_at", "repairs", "at"} \
+                or lift["reason"] not in OUTCOME_LIFTABLE_STOPS or not isinstance(lift["repairs"], list) \
+                or not lift["repairs"] or any(not isinstance(repair, str) or not BEAD_ID_RE.match(repair)
+                                              for repair in lift["repairs"]):
+            raise Refusal(f"levée d'arrêt de l'Outcome Evaluation mal formée : {lift!r}")
+        valid_commit(lift["commit"], "commit de la levée")
+        single_line(lift["at"], "date de la levée")
+    if "lifts" in record and not record["lifts"]:
+        raise Refusal("levées d'arrêt de l'Outcome Evaluation vides")
     return record
+
+
+def superseded_round(record: dict[str, Any], round_: dict[str, Any] | None) -> bool:
+    """A round a code-owned lift of its stop set aside: evaluated again at
+    its commit (af-ip0nrq)."""
+    return round_ is not None and any(lift["commit"] == round_["commit"] and lift["at"] >= round_["at"]
+                                      for lift in record.get("lifts", []))
 
 
 def outcome_state(record: dict[str, Any]) -> dict[str, Any]:
@@ -3493,6 +3557,14 @@ def cmd_show(args: argparse.Namespace) -> int:
         except Refusal as exc:
             integration_red = {"unruled": f"{KEY_INTEGRATION_RED} : {exc}", "raw": metadata[KEY_INTEGRATION_RED]}
             convoy_unruled.append({"field": KEY_INTEGRATION_RED, "reason": integration_red["unruled"]})
+    integration_red_cleared: dict[str, Any] | None = None
+    if KEY_INTEGRATION_RED_CLEARED in metadata:
+        try:
+            integration_red_cleared = integration_red_cleared_record(metadata[KEY_INTEGRATION_RED_CLEARED])
+        except Refusal as exc:
+            integration_red_cleared = {"unruled": f"{KEY_INTEGRATION_RED_CLEARED} : {exc}",
+                                       "raw": metadata[KEY_INTEGRATION_RED_CLEARED]}
+            convoy_unruled.append({"field": KEY_INTEGRATION_RED_CLEARED, "reason": integration_red_cleared["unruled"]})
     grouped_request: dict[str, Any] | None = None
     if KEY_GROUPED_REQUEST in metadata:
         try:
@@ -3574,7 +3646,8 @@ def cmd_show(args: argparse.Namespace) -> int:
     # The fingerprints of the pieces captured on the assembled product (T24).
     evidence: dict[str, Any] = {}
     for key in sorted(metadata):
-        known = (KEY_MARK, KEY_INCIDENT, KEY_INTEGRATION, KEY_INTEGRATION_RED, KEY_GROUPED_REQUEST, KEY_SPEC_END,
+        known = (KEY_MARK, KEY_INCIDENT, KEY_INTEGRATION, KEY_INTEGRATION_RED, KEY_INTEGRATION_RED_CLEARED,
+                 KEY_GROUPED_REQUEST, KEY_SPEC_END,
                  KEY_OUTCOME_EVALUATION, KEY_END_REVIEW, KEY_END_ROUND, KEY_EVIDENCE_PACK, KEY_END_STOP, KEY_DELIVERED,
                  KEY_ACCEPTANCE, KEY_JUDGEMENT, KEY_PROMOTION, KEY_CLOSED, *(COUNTER_PREFIX + name for name in CONVOY_COUNTERS))
         if key.startswith(EVIDENCE_PREFIX):
@@ -3598,6 +3671,7 @@ def cmd_show(args: argparse.Namespace) -> int:
         "incident": incident,
         "integration": integration,
         "integration_red": integration_red,
+        "integration_red_cleared": integration_red_cleared,
         "grouped_request": grouped_request,
         "spec_end": spec_end,
         "end_review": end_review,
@@ -5376,6 +5450,27 @@ def cmd_park(args: argparse.Namespace) -> int:
     return 0
 
 
+def provable_repair(repair_id: Any) -> None:
+    """A technical request is linked only to a repair whose delivery can be
+    proven: an authorized Factory maintenance, or work under the PR+CI
+    delivery contract."""
+    if not isinstance(repair_id, str) or not BEAD_ID_RE.match(repair_id):
+        raise Refusal(f"bead de réparation absent ou mal formé : {repair_id!r}")
+    repair = load_bead(repair_id)
+    # Imported only on this rare write, not on every convoy-state read.
+    from factory_delivery_proof import requires_pr_delivery_proof
+    repair_metadata = metadata_of(repair)
+    authorized_maintenance = repair.get("issue_type") == "bug" \
+        and "maintenance" in (repair.get("labels") or []) \
+        and isinstance(repair_metadata.get("gc.authorized_by"), str) \
+        and bool(repair_metadata["gc.authorized_by"].strip())
+    if repair_metadata.get("gc.delivery_contract") != "pr-ci-merged-v1" \
+            and not requires_pr_delivery_proof(repair) and not authorized_maintenance:
+        raise Refusal(
+            f"{repair_id} n'est ni une maintenance autorisée ni gouverné par un contrat de livraison PR+CI : "
+            "une demande technique ne se lie qu'à une réparation dont la livraison pourra être prouvée")
+
+
 def cmd_link_technical_repair(args: argparse.Namespace) -> int:
     """Turn only an explicitly linked Factory defect request into a
     code-owned wait. The pass lifts it after every repair has structural
@@ -5395,21 +5490,9 @@ def cmd_link_technical_repair(args: argparse.Namespace) -> int:
         raise Refusal(
             f"{args.ticket} n'est ni parqué par sa propre demande opérateur ni arrêté par son évaluation : "
             "seules ces classes peuvent être reliées à une réparation technique")
-    if not isinstance(args.repair, str) or not BEAD_ID_RE.match(args.repair) or args.repair == args.ticket:
+    if args.repair == args.ticket:
         raise Refusal(f"bead de réparation absent ou mal formé : {args.repair!r}")
-    repair = load_bead(args.repair)
-    # Imported only on this rare write, not on every convoy-state read.
-    from factory_delivery_proof import requires_pr_delivery_proof
-    repair_metadata = metadata_of(repair)
-    authorized_maintenance = repair.get("issue_type") == "bug" \
-        and "maintenance" in (repair.get("labels") or []) \
-        and isinstance(repair_metadata.get("gc.authorized_by"), str) \
-        and bool(repair_metadata["gc.authorized_by"].strip())
-    if metadata_of(repair).get("gc.delivery_contract") != "pr-ci-merged-v1" \
-            and not requires_pr_delivery_proof(repair) and not authorized_maintenance:
-        raise Refusal(
-            f"{args.repair} n'est ni une maintenance autorisée ni gouverné par un contrat de livraison PR+CI : "
-            "une demande technique ne se lie qu'à une réparation dont la livraison pourra être prouvée")
+    provable_repair(args.repair)
     record = technical_repairs_record(metadata[KEY_TECHNICAL_REPAIRS]) if KEY_TECHNICAL_REPAIRS in metadata else None
     if record is None or {name: value for name, value in record.items() if name != "entries"} != generation:
         record = {**generation, "entries": []}
@@ -6975,16 +7058,24 @@ def cmd_open_end_review(args: argparse.Namespace) -> int:
 
 def cmd_launch_end_review(args: argparse.Namespace) -> int:
     """Record that a reviewer session was sent the open end review: the
-    first launch, then one relaunch when the first gave no result."""
+    first launch, then one relaunch when the first claimed attempt gave no
+    result. One cleaned route that was never claimed may remain in history."""
     _, _, _, record = end_review_target(args.convoy)
     request = record.get("request")
     if not request or "stop" in record:
         raise Refusal(f"aucune revue de fin n'est demandée sur le convoi {args.convoy} : rien à lancer")
     if not isinstance(args.bead, str) or not BEAD_ID_RE.match(args.bead):
         raise Refusal(f"bead de revue absent ou mal formé : {args.bead!r}")
-    if len(request["launches"]) >= END_REVIEW_MAX_LAUNCHES:
+    if args.replaces_unclaimed:
+        matches = [launch for launch in request["launches"] if launch["bead"] == args.replaces_unclaimed]
+        if len(matches) != 1 or "result" in matches[0] or any(
+                launch.get("unclaimed") is True for launch in request["launches"]):
+            raise Refusal("le remplacement ne nomme pas l'unique route non réclamée de cette revue de fin")
+        matches[0]["unclaimed"] = True
+    attempts = [launch for launch in request["launches"] if launch.get("unclaimed") is not True]
+    if len(attempts) >= END_REVIEW_MAX_LAUNCHES:
         raise Refusal(
-            f"une seule relance par revue de fin : le convoi {args.convoy} en a déjà lancé {len(request['launches'])} "
+            f"une seule relance par revue de fin : le convoi {args.convoy} en a déjà lancé {len(attempts)} "
             "sans résultat")
     launch: dict[str, Any] = {"bead": args.bead, "at": now()}
     incomplete = sum(1 for round_ in record["rounds"]
@@ -7242,10 +7333,31 @@ def cmd_set_integration_repair(args: argparse.Namespace) -> int:
 
 
 def cmd_clear_integration_red(args: argparse.Namespace) -> int:
-    convoy, _ = load_convoy(args.convoy)
+    """Withdraw the red of the integration branch. `--green SHA --protected
+    SHA --green-command LINE`: a control found it green again at that tip (bin/
+    spec-integration); if its repair is still open, the same write keeps
+    that proof (`integration_red_cleared`), so code can close the repair
+    without merge instead of leaving it with nothing to restore
+    (af-6vhm6r)."""
+    convoy, tickets = load_convoy(args.convoy)
     require_marked(convoy)
-    run_gc(["bd", "update", args.convoy, "--unset-metadata", KEY_INTEGRATION_RED])
-    return done(args.convoy, args.convoy, {KEY_INTEGRATION_RED: None})
+    green = (args.green, args.protected, args.green_command)
+    if any(value is not None for value in green) and None in green:
+        raise Refusal("--green, --protected et --green-command vont ensemble : la pointe verte, la branche protégée "
+                      "qu'elle tient et la commande verte")
+    values: dict[str, Any] = {KEY_INTEGRATION_RED: None}
+    metadata = metadata_of(convoy)
+    if args.green is not None and KEY_INTEGRATION_RED in metadata:
+        known = integration_red_record(metadata[KEY_INTEGRATION_RED])
+        repair = next((ticket for ticket in tickets if ticket.get("id") == known.get("repair")), None)
+        if repair is not None and repair.get("status") != "closed":
+            values[KEY_INTEGRATION_RED_CLEARED] = encode(integration_red_cleared_record(encode({
+                "control": known["control"], "repair": known["repair"],
+                "commit": valid_commit(args.green, "pointe verte de la branche d'intégration"),
+                "protected": valid_commit(args.protected, "pointe de la branche protégée"),
+                "command": single_line(args.green_command, "commande verte"), "at": now()})))
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
 
 
 def cmd_record_grouped_request(args: argparse.Namespace) -> int:
@@ -7424,26 +7536,29 @@ def cmd_open_outcome_evaluation(args: argparse.Namespace) -> int:
     if stop and stop["commit"] == commit:
         raise Refusal(f"l'Outcome Evaluation du convoi {args.convoy} est arrêtée au commit {commit} ({stop['reason']})")
     given = json_argument(args.file, "demande d'Outcome Evaluation")
-    unknown = sorted(set(given) - {"roles", "environment", "datasets"})
+    unknown = sorted(set(given) - {"roles", "environment", "datasets", "cited"})
     if unknown:
         raise Refusal(f"champs inconnus dans la demande d'Outcome Evaluation : {', '.join(unknown)}")
     roles = outcome_roles(given.get("roles"))
     environment = evaluation_environment(given.get("environment"), launched=True)
     datasets = evaluation_datasets(given["datasets"]) if "datasets" in given else None
     last = record["rounds"][-1] if record["rounds"] else None
-    if last and last["commit"] == commit and last["verdict"] is not None:
+    if last and last["commit"] == commit and last["verdict"] is not None and not superseded_round(record, last):
         raise Refusal(f"le convoi {args.convoy} a déjà son Outcome Evaluation au commit {commit} ({last['outcome']})")
     stories = spec_of(convoy)["stories"]
     request = record.get("request")
     wanted = {"commit": commit, "stories": stories}
     if datasets is not None:
         wanted["datasets"] = datasets
+    if "cited" in given:
+        wanted["cited"] = given["cited"]
     if request and {name: request.get(name) for name in wanted} == wanted:
         if request["roles"] == roles and request["environment"] == environment:
             return done(args.convoy, args.convoy, {})
         request.update(roles=roles, environment=environment)
     else:
-        record["request"] = {**wanted, "roles": roles, "environment": environment, "launches": [], "at": now()}
+        record["request"] = outcome_request({**wanted, "roles": roles, "environment": environment, "launches": [],
+                                             "at": now()})
     record.pop("stop", None)
     record["live"] = list(dict.fromkeys([entry["state_file"] for entry in environment] + record.get("live", [])))
     values = {KEY_OUTCOME_EVALUATION: encode(outcome_evaluation_record(encode(record)))}
@@ -7661,12 +7776,30 @@ def cmd_record_outcome_evaluation(args: argparse.Namespace) -> int:
         else:
             by_number[number] = item
     stories = []
+    opened = {entry["dataset"] for entry in request["environment"]}
     for number, text in wanted.items():
         if number not in by_number:
             problems.append(f"user story {number} sans état : aucun état rendu pour « {text} »")
             continue
-        stories.append({"number": number, **given_state(by_number[number], f"user story {number}", text, metadata, commit,
-                                                        problems)})
+        item = dict(by_number[number])
+        tried = item.pop("tried", None)
+        story = {"number": number, **given_state(item, f"user story {number}", text, metadata, commit, problems)}
+        if tried is not None:
+            # The declared datasets opened to look for an unobservable story (af-ip0nrq).
+            if story["state"] != "unobservable":
+                problems.append(f"user story {number} : des jeux essayés ne se donnent qu'avec « unobservable »")
+            elif not isinstance(tried, list) or not tried or len({str(name) for name in tried}) != len(tried) \
+                    or any(name not in opened for name in tried):
+                problems.append(f"user story {number} : jeux essayés mal formés ou jamais ouverts dans cette "
+                                f"évaluation : {tried!r}")
+            else:
+                story["tried"] = tried
+        elif story["state"] == "unobservable" and story.get("cause") != "criterion" \
+                and "cited" in request and request.get("datasets") != [None]:
+            # A validated expectation missing from the profile (cause « criterion »)
+            # is the factory's own planning gap: no dataset was there to try.
+            problems.append(f"user story {number} « unobservable » sans la liste des jeux essayés (tried)")
+        stories.append(story)
     notes = {name: given_notes(given.get(name), name, metadata, commit, problems) for name in OUTCOME_SECTIONS}
     drafts = given.get("repairs", [])
     if not isinstance(drafts, list):
@@ -7693,6 +7826,12 @@ def cmd_record_outcome_evaluation(args: argparse.Namespace) -> int:
     coverage = None
     declared = request.get("datasets") or list(dict.fromkeys(
         entry["dataset"] for entry in request["environment"]))
+    if "cited" in request:
+        # Every declared dataset may be opened (af-ip0nrq): one piece per
+        # dataset opened, every cited one among them.
+        declared = list(dict.fromkeys(entry["dataset"] for entry in request["environment"]))
+        problems += [f"jeu cité {dataset} jamais ouvert : chaque jeu cité est ouvert et couvert"
+                     for dataset in request["cited"] if dataset not in declared]
     if "datasets" in request or len(declared) > 1:
         try:
             coverage = evaluation_coverage(given.get("coverage"), declared)
@@ -7773,7 +7912,8 @@ def cmd_release_outcome_evaluation(args: argparse.Namespace) -> int:
 def cmd_stop_outcome_evaluation(args: argparse.Namespace) -> int:
     """Record that the Outcome Evaluation of a convoy does not go on at a
     commit (`--reason`, `--detail`): it gave no result, relaunch included,
-    its environment failed twice, or a story cannot be observed. The open
+    its environment failed twice, a story cannot be observed, or the patch
+    door refused a repair its Evaluator drafted. The open
     request ends with it. `--raised` records that the escalation door put it
     on the operator's list. A gate that renders its verdicts on another
     commit starts a new evaluation."""
@@ -7797,17 +7937,68 @@ def cmd_stop_outcome_evaluation(args: argparse.Namespace) -> int:
     return done(args.convoy, args.convoy, values)
 
 
+def cmd_link_outcome_repair(args: argparse.Namespace) -> int:
+    """Link a Factory maintenance to the stop of an Outcome Evaluation the
+    factory caused (af-ip0nrq): a story rendered unobservable because the
+    Evaluator could not open the dataset its situation is in. The stop then
+    waits on that repair, in code: bin/outcome-evaluation settle lifts it
+    once the repair is merged with its CI proven, never on an answer."""
+    _, _, _, record = outcome_target(args)
+    stop = record.get("stop")
+    if not stop or stop["reason"] not in OUTCOME_LIFTABLE_STOPS:
+        raise Refusal(
+            f"l'Outcome Evaluation du convoi {args.convoy} n'est pas arrêtée sur une user story inobservable : "
+            "seul cet arrêt se relie à une maintenance de l'usine")
+    provable_repair(args.repair)
+    entries = list(stop.get("repairs", []))
+    if any(entry["id"] == args.repair for entry in entries):
+        return done(args.convoy, args.convoy, {})
+    stop["repairs"] = entries + [{"id": args.repair, "at": now()}]
+    values = {KEY_OUTCOME_EVALUATION: encode(outcome_evaluation_record(encode(record)))}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
+def cmd_lift_outcome_stop(args: argparse.Namespace) -> int:
+    """Lift, at its commit, a stop a Factory maintenance is linked to: the
+    stop is kept under `lifts`, the round it stopped on is set aside, and
+    the evaluation may be opened again at that commit. No counter moves: a
+    stop the factory caused takes no round of the end (af-ip0nrq). Whether
+    the repairs are delivered is read by the caller, bin/outcome-evaluation."""
+    _, _, _, record = outcome_target(args)
+    commit = valid_commit(args.commit, "commit de la levée")
+    stop = record.get("stop")
+    if not stop or not stop.get("repairs") or stop["commit"] != commit:
+        raise Refusal(f"aucun arrêt de l'Outcome Evaluation du convoi {args.convoy} relié à une maintenance au "
+                      f"commit {commit} : rien à lever")
+    record["lifts"] = record.get("lifts", []) + [{
+        "reason": stop["reason"], "commit": commit, "stop_at": stop["at"],
+        "repairs": [entry["id"] for entry in stop["repairs"]], "at": now()}]
+    del record["stop"]
+    values = {KEY_OUTCOME_EVALUATION: encode(outcome_evaluation_record(encode(record)))}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
 def cmd_set_outcome_repair(args: argparse.Namespace) -> int:
     """Name the `repair` code published through the patch door
     (bin/convoy-advance) for what the Evaluator of the end drafted: the one
     of a story « non observée » of the last Outcome Evaluation (`--story`),
     or the one of a finding « hors ticket » classified « repaired »
-    (`--ticket`, `--item`). Nothing here says a finding is repaired: `show`
-    reads it once the ticket-end gate has closed that repair."""
+    (`--ticket`, `--item`) -- or why that door refused the draft
+    (`--refused`, in place of `--repair`). Written once per element.
+    Nothing here says a finding is repaired: `show` reads it once the
+    ticket-end gate has closed that repair."""
     _, tickets, _, record = outcome_target(args)
-    repair = marked_ticket_among(tickets, args.convoy, args.repair)
-    if metadata_of(repair).get(KEY_KIND) != "repair":
-        raise Refusal(f"le ticket {args.repair} n'est pas un repair")
+    if (args.repair is None) == (args.refused is None):
+        raise Refusal("--repair ou --refused : le repair publié, ou la raison pour laquelle la porte de patch l'a refusé")
+    if args.repair is not None:
+        repair = marked_ticket_among(tickets, args.convoy, args.repair)
+        if metadata_of(repair).get(KEY_KIND) != "repair":
+            raise Refusal(f"le ticket {args.repair} n'est pas un repair")
+        wanted = ("repair", args.repair)
+    else:
+        wanted = ("repair_refused", single_line(args.refused, "raison du refus (--refused)")[:MAX_FINDING_LINE])
     if (args.story is None) == (args.ticket is None and args.item is None):
         raise Refusal("--story, ou --ticket et --item : un repair publié se rattache à une user story ou à un constat hors ticket")
     if args.story is not None:
@@ -7825,11 +8016,12 @@ def cmd_set_outcome_repair(args: argparse.Namespace) -> int:
             raise Refusal(f"le constat {args.item!r} du ticket {args.ticket} n'est pas classé « repaired » : aucun repair ne s'y rattache")
         target, values_of = args.ticket, lambda: {KEY_FINDINGS: encode({"entries": findings_record(encode({"entries": entries}))})}
         what = f"le constat {args.item} du ticket {args.ticket}"
-    if entry.get("repair") == args.repair:
+    if entry.get(wanted[0]) == wanted[1]:
         return done(args.convoy, target, {})
-    if "repair" in entry:
-        raise Refusal(f"{what} a déjà son repair ({entry['repair']}) : un seul repair par élément")
-    entry["repair"] = args.repair
+    if "repair" in entry or "repair_refused" in entry:
+        raise Refusal(f"{what} a déjà son repair ({entry.get('repair') or 'refusé par la porte de patch'}) : "
+                      "un seul repair par élément")
+    entry[wanted[0]] = wanted[1]
     values = values_of()
     write_metadata(target, values)
     return done(args.convoy, target, values)
@@ -8041,6 +8233,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reason")
     p.add_argument("--detail")
     p.add_argument("--raised", action="store_true")
+    command("link-outcome-repair", cmd_link_outcome_repair, ticket=False).add_argument("--repair")
+    command("lift-outcome-stop", cmd_lift_outcome_stop, ticket=False).add_argument("--commit")
     p = command("classify-finding", cmd_classify_finding)
     p.add_argument("--item")
     p.add_argument("--as", dest="classification")
@@ -8049,6 +8243,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--recorded-by")
     p = command("set-outcome-repair", cmd_set_outcome_repair, ticket=False)
     p.add_argument("--repair")
+    p.add_argument("--refused")
     p.add_argument("--story")
     p.add_argument("--ticket")
     p.add_argument("--item")
@@ -8056,7 +8251,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = command("open-end-review", cmd_open_end_review, ticket=False)
     p.add_argument("--commit")
     p.add_argument("--file")
-    command("launch-end-review", cmd_launch_end_review, ticket=False).add_argument("--bead")
+    p = command("launch-end-review", cmd_launch_end_review, ticket=False)
+    p.add_argument("--bead")
+    p.add_argument("--replaces-unclaimed")
     command("record-end-review", cmd_record_end_review, ticket=False).add_argument("--file")
     p = command("set-end-review-repair", cmd_set_end_review_repair, ticket=False)
     p.add_argument("--finding")
@@ -8108,7 +8305,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = command("resolve-owner-exception", cmd_resolve_owner_exception, ticket=False)
     p.add_argument("--approver")
     p.add_argument("--words")
-    command("clear-integration-red", cmd_clear_integration_red, ticket=False)
+    p = command("clear-integration-red", cmd_clear_integration_red, ticket=False)
+    p.add_argument("--green")
+    p.add_argument("--protected")
+    p.add_argument("--green-command")
     p = sub.add_parser("ticket")
     p.add_argument("ticket")
     p.add_argument("--bead-json")

@@ -115,9 +115,16 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/convoy-state-test.py ConvoyStateTest.test_withdraw_ticket_writes_its_gate_no_op_outcome_note_and_closed_status_in_one_tracker_write`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_the_exact_answered_R8_is_closed_without_merge_then_its_control_runs_green ConvoyAdvanceTest.test_the_exact_R8_close_retry_finishes_after_its_durable_native_lift ConvoyAdvanceTest.test_the_exact_answered_R8_closes_without_merge_and_one_repair_follows_a_red_control ConvoyAdvanceTest.test_the_R8_close_release_rejects_nearby_state_and_option_b`,
   `python3 tests/convoy-advance-red-replay-test.py`,
+  `python3 tests/convoy-advance-red-cleared-test.py`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_malformed_legacy_resume_is_left_to_the_incident_door_without_crashing`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_factory_repair_is_taken_up_and_tested_before_its_resume_is_consumed_once`,
-  `bash tests/factory-work-dispatch-test.sh`. Les courses réponse/retrait qui
+  `python3 tests/outcome-evaluation-every-dataset-test.py`,
+  `bash tests/factory-work-dispatch-test.sh`. Sa même table tient chaque
+  fonction de `bin/convoy-advance` qui publie un repair rédigé par la porte
+  de patch : un refus de la porte y est noté là où le repair a été rédigé et
+  arrête le convoi, ou la fonction est une exception datée qui nomme son
+  Bead (`test_every_publisher_of_a_drafted_repair_gives_a_patch_door_refusal_an_exit`).
+  Les courses réponse/retrait qui
   pourraient consommer une réponse sont tenues par
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_an_evaluation_stop_answered_while_its_request_is_cleared_is_not_resumed ConvoyAdvanceTest.test_a_removed_stage_stop_answered_while_its_request_is_cleared_is_not_resumed ConvoyAdvanceTest.test_a_grouped_answer_recorded_while_changed_parkings_are_re_raised_is_applied_first`
   et `python3 tests/convoy-advance-review-evaluation-correction-test.py ConvoyAdvanceTest.test_a_code_review_stop_answered_while_its_request_is_cleared_is_not_resumed`.
@@ -146,13 +153,29 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   ne reconnaissait pas l'état réel) ; af-3p6iz7 (un repair red_check sans
   commit dont le rouge ne se reproduit pas n'avait aucune clôture codée : R10
   restait parqué ; la règle générale rejoue le contrôle et clôt sans fusion
-  au vert).
+  au vert) ; af-6vhm6r (la même règle ignorait un rouge déjà retiré au vert
+  par `spec-integration merge` après un déplacement de pointe : R10 restait
+  ouvert sans rouge à rétablir ; ce vert est gardé comme preuve et le repair
+  se clôt sans fusion dessus) ; af-68sgzq (un repair rédigé par l'Evaluator
+  de fin et refusé par la porte de patch était renvoyé à chaque passe,
+  `convoy-advance` en échec sans rien noter : le refus est noté sur la story
+  ou le constat et l'Outcome Evaluation s'arrête, `outcome_repair_refused`) ;
+  af-ip0nrq (un `story_unobservable` causé par l'usine, un seul jeu ouvert
+  sur les 95 déclarés, n'avait que les options « Planning Run » et « retirer
+  la story » : une maintenance liée à l'arrêt le lève par code une fois
+  livrée et l'évaluation repart au même commit, sans tour de fin).
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
   contrôle : `criterion_already_green` reste au Planning Run ;
   `outcome_evaluation_no_result` et `outcome_evaluation_outage` ne repartent
   qu'à une nouvelle pointe d'intégration ; `story_unobservable` reste au
-  Planning Run. Elles sont retirées de la table dès qu'une transition codée
-  remplace cette porte (étude B § 4.2, af-npz9v1.27).
+  Planning Run, sauf l'arrêt qu'une maintenance de l'usine liée lève par code
+  (af-ip0nrq) ; datée du 09/11/2026, `outcome_repair_refused` ne repart
+  qu'à une nouvelle pointe d'intégration. Datés du 09/11/2026, les repairs
+  écrits par le code dont la porte de patch refuse le brouillon sont encore
+  renvoyés à chaque passe : `settle_red` (af-dtt6dn), `settle_item_repairs`
+  (af-uz9bh9), `settle_acceptance` (af-k369au). Elles sont retirées de la
+  table dès qu'une transition codée remplace cette porte (étude B § 4.2,
+  af-npz9v1.27).
 
 ## D — Doublure, instrument ou vue partielle qui ne se comporte pas comme le réel
 

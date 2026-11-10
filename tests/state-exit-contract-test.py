@@ -45,6 +45,10 @@ OVERRIDE_PROOF = (
     "tests/convoy-advance-resumes-stops-end-test.py::"
     "test_a_ticket_stopped_still_refused_without_its_override_is_not_resumed_by_a_returned_merge"
 )
+OUTCOME_LIFT_PROOF = (
+    "tests/outcome-evaluation-every-dataset-test.py::"
+    "test_a_stop_linked_to_a_delivered_maintenance_is_lifted_and_evaluated_again_without_a_round_of_the_end"
+)
 NEW_TIP_PROOF = "lib/convoy_state.py::record.pop(\"stop\", None)"
 LIFT_PROOF = "tests/convoy-state-test.py::test_lift_park_unparks_the_ticket_and_those_it_parked_and_keeps_the_record"
 EXHAUSTED_PROOF = (
@@ -146,8 +150,17 @@ CONTRACT = {
             "Laisser la fin de Spec arrêtée": operator("escalation-door on the stopped convoy"),
         },
     },
+    ("outcome_stop", "outcome_repair_refused"): {
+        "exit": transition("open-outcome-evaluation on a new integration tip", NEW_TIP_PROOF),
+        "options": {
+            "Faire reprendre le repair refusé dans le Planning Run":
+                operator("Planning Run: redraft the refused repair; the next integration tip reopens Outcome Evaluation"),
+            "Laisser la fin de Spec arrêtée": operator("escalation-door on the stopped convoy"),
+        },
+    },
     ("outcome_stop", "story_unobservable"): {
-        "exit": operator("Planning Run on the stopped convoy"),
+        "exit": transition("link-outcome-repair, then lift-outcome-stop and a new evaluation at the same commit "
+                           "after the linked Factory maintenance is delivered", OUTCOME_LIFT_PROOF),
         "options": {
             "Trancher dans le Planning Run": operator("Planning Run: decide the unobservable story"),
             "Retirer la story par un graphe révisé": operator("Planning Run: revise the Spec and ticket graph"),
@@ -177,7 +190,7 @@ CONTRACT = {
 }
 
 
-# These are the four open occurrences named by the class-I registry.  The
+# These are the open occurrences named by the class-I registry.  The
 # date is when the complete control first made each gap explicit.  Removing a
 # gap means removing it here and replacing its operator route above with a
 # proved transition; adding an exception without a date makes this test fail.
@@ -186,6 +199,18 @@ DATED_EXCEPTIONS = {
     ("outcome_stop", "outcome_evaluation_no_result"): ("2026-10-29", "next integration tip only"),
     ("outcome_stop", "outcome_evaluation_outage"): ("2026-10-29", "next integration tip only"),
     ("outcome_stop", "story_unobservable"): ("2026-10-29", "Planning Run"),
+    ("outcome_stop", "outcome_repair_refused"): ("2026-11-09", "next integration tip only"),
+}
+
+
+# A repair draft the patch door refuses is refused again on every pass: the
+# function that publishes it records the refusal where the draft was made
+# (`--refused`, or a catch of DoorRefusal) and the convoy stops there, or it
+# is an open occurrence named here with its date and the bead that fixes it.
+PATCH_REFUSAL_EXCEPTIONS = {
+    "settle_red": ("2026-11-09", "af-dtt6dn"),
+    "settle_item_repairs": ("2026-11-09", "af-uz9bh9"),
+    "settle_acceptance": ("2026-11-09", "af-k369au"),
 }
 
 
@@ -200,7 +225,8 @@ BUILDERS = {
     ("bin/ticket-evaluation", "planning_exception_request"): ({3}, {("park", "planning_exception")}),
     ("bin/outcome-evaluation", "raise_stop"): (
         {2}, {("outcome_stop", reason) for reason in
-              ("outcome_evaluation_no_result", "outcome_evaluation_outage", "story_unobservable")}),
+              ("outcome_evaluation_no_result", "outcome_evaluation_outage", "story_unobservable",
+               "outcome_repair_refused")}),
     ("bin/correction-round", "operator_request"): ({3, 4}, {("ticket_stop", "still_refused")}),
     ("bin/convoy-advance", "grouped_request"): ({2}, {("park", "resumes_exhausted")}),
 }
@@ -310,6 +336,7 @@ class StateExitContractTest(unittest.TestCase):
             ("outcome_stop", "outcome_evaluation_no_result"),
             ("outcome_stop", "outcome_evaluation_outage"),
             ("outcome_stop", "story_unobservable"),
+            ("outcome_stop", "outcome_repair_refused"),
         }, set(DATED_EXCEPTIONS))
         today = dt.date.today()
         for key, (written, gate) in DATED_EXCEPTIONS.items():
@@ -319,6 +346,41 @@ class StateExitContractTest(unittest.TestCase):
                 self.assertTrue(gate.strip())
                 routes = (CONTRACT[key]["exit"], *CONTRACT[key]["options"].values())
                 self.assertTrue(any(route["outcome"] == "operator" for route in routes))
+
+    def test_every_publisher_of_a_drafted_repair_gives_a_patch_door_refusal_an_exit(self) -> None:
+        tree = ast.parse((ROOT / "bin/convoy-advance").read_text(encoding="utf-8"))
+        functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+
+        def calls(function: ast.FunctionDef) -> set[str]:
+            return {node.func.id for node in ast.walk(function)
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
+
+        # The publishers: publish_repair, and whatever lets its Refusal through to its own caller.
+        publishers, settlers = {"publish_repair"}, set()
+        while True:
+            reached = {name for name, function in functions.items() if calls(function) & publishers} - publishers
+            passing = {name for name in reached
+                       if not any(isinstance(node, ast.Try) for node in ast.walk(functions[name]))}
+            settlers |= reached - passing
+            if not passing:
+                break
+            publishers |= passing
+        self.assertIn("settle_outcome_repairs", settlers)
+        self.assertIn("publish_end_review_repairs", settlers)
+        for name in sorted(settlers):
+            with self.subTest(function=name):
+                source = ast.get_source_segment((ROOT / "bin/convoy-advance").read_text(encoding="utf-8"),
+                                                functions[name])
+                handled = "DoorRefusal" in source or '"--refused"' in source
+                if name in PATCH_REFUSAL_EXCEPTIONS:
+                    self.assertFalse(handled, f"{name} gives the refusal an exit now: remove its dated exception")
+                    written, bead = PATCH_REFUSAL_EXCEPTIONS[name]
+                    self.assertLessEqual(dt.date.fromisoformat(written), dt.date.today())
+                    self.assertRegex(bead, r"^af-[0-9a-z.]+$")
+                else:
+                    self.assertTrue(handled, f"{name} publishes a drafted repair and retries a patch-door refusal "
+                                             "on every pass: record it where it was drafted and stop there")
+        self.assertLessEqual(set(PATCH_REFUSAL_EXCEPTIONS), settlers)
 
     def test_the_paused_order_gap_has_a_state_changing_door(self) -> None:
         proof = ROOT / "tests/order-pause-test.py"
