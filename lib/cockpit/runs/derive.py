@@ -229,8 +229,10 @@ def run_from_bead(bead, now):
     }
 
 
-# A run ended that is not a success: abandoned, or closed without a merge.
-UNSUCCESSFUL = ("Abandonné", "Fermé")
+# A run ended that is not a success: abandoned, closed without a merge, or
+# a D01 delivery closed on a result its records contradict or do not let
+# read (cockpit.projects.outcome).
+UNSUCCESSFUL = ("Abandonné", "Fermé", "Incohérence", "Inconnu")
 
 
 def tone(state, status):
