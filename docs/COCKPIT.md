@@ -1989,9 +1989,12 @@ by its gain (« Voir la preuve : <gain> »).
 Tests: `tests/cockpit-home-projects-test.py` (`GET /projets` and the page of
 a project, through the running process), and the criterion tests of E
 (`tests/cockpit-criteria/commands/projects-{release,roadmap,recette}-test.py`).
-The flags and the current step of R3 are proven in process by
-`tests/cockpit-roadmap-rows-test.py`, their transmission to the launched
-cockpit by `tests/cockpit-criteria/commands/projects-roadmap-unlinked-test.py`.
+The flags and the current step of R3 are proven on the launched cockpit by
+`tests/cockpit-criteria/commands/projects-roadmap-unlinked-test.py`, the
+other cases of the roadmap lines (a result returned, steps all reserved, a
+step waiting on a required step, a roadmap all done, a tracker not read) by
+`tests/cockpit-criteria/commands/projects-roadmap-rows-test.py` (R12,
+af-0p3nfo), on `/projet/<id>` and the « Projets » zone of `GET /`.
 
 ## « Journal » in Panorama (F, af-njwz8v: the Prototype Fold of the Journal reference)
 
