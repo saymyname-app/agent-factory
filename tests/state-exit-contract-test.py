@@ -45,6 +45,10 @@ OVERRIDE_PROOF = (
     "tests/convoy-advance-resumes-stops-end-test.py::"
     "test_a_ticket_stopped_still_refused_without_its_override_is_not_resumed_by_a_returned_merge"
 )
+OUTCOME_LIFT_PROOF = (
+    "tests/outcome-evaluation-every-dataset-test.py::"
+    "test_a_stop_linked_to_a_delivered_maintenance_is_lifted_and_evaluated_again_without_a_round_of_the_end"
+)
 NEW_TIP_PROOF = "lib/convoy_state.py::record.pop(\"stop\", None)"
 LIFT_PROOF = "tests/convoy-state-test.py::test_lift_park_unparks_the_ticket_and_those_it_parked_and_keeps_the_record"
 EXHAUSTED_PROOF = (
@@ -155,7 +159,8 @@ CONTRACT = {
         },
     },
     ("outcome_stop", "story_unobservable"): {
-        "exit": operator("Planning Run on the stopped convoy"),
+        "exit": transition("link-outcome-repair, then lift-outcome-stop and a new evaluation at the same commit "
+                           "after the linked Factory maintenance is delivered", OUTCOME_LIFT_PROOF),
         "options": {
             "Trancher dans le Planning Run": operator("Planning Run: decide the unobservable story"),
             "Retirer la story par un graphe révisé": operator("Planning Run: revise the Spec and ticket graph"),

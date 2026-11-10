@@ -118,6 +118,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/convoy-advance-red-cleared-test.py`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_malformed_legacy_resume_is_left_to_the_incident_door_without_crashing`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_factory_repair_is_taken_up_and_tested_before_its_resume_is_consumed_once`,
+  `python3 tests/outcome-evaluation-every-dataset-test.py`,
   `bash tests/factory-work-dispatch-test.sh`. Sa même table tient chaque
   fonction de `bin/convoy-advance` qui publie un repair rédigé par la porte
   de patch : un refus de la porte y est noté là où le repair a été rédigé et
@@ -158,12 +159,17 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   se clôt sans fusion dessus) ; af-68sgzq (un repair rédigé par l'Evaluator
   de fin et refusé par la porte de patch était renvoyé à chaque passe,
   `convoy-advance` en échec sans rien noter : le refus est noté sur la story
-  ou le constat et l'Outcome Evaluation s'arrête, `outcome_repair_refused`).
+  ou le constat et l'Outcome Evaluation s'arrête, `outcome_repair_refused`) ;
+  af-ip0nrq (un `story_unobservable` causé par l'usine, un seul jeu ouvert
+  sur les 95 déclarés, n'avait que les options « Planning Run » et « retirer
+  la story » : une maintenance liée à l'arrêt le lève par code une fois
+  livrée et l'évaluation repart au même commit, sans tour de fin).
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
   contrôle : `criterion_already_green` reste au Planning Run ;
   `outcome_evaluation_no_result` et `outcome_evaluation_outage` ne repartent
   qu'à une nouvelle pointe d'intégration ; `story_unobservable` reste au
-  Planning Run ; datée du 09/11/2026, `outcome_repair_refused` ne repart
+  Planning Run, sauf l'arrêt qu'une maintenance de l'usine liée lève par code
+  (af-ip0nrq) ; datée du 09/11/2026, `outcome_repair_refused` ne repart
   qu'à une nouvelle pointe d'intégration. Datés du 09/11/2026, les repairs
   écrits par le code dont la porte de patch refuse le brouillon sont encore
   renvoyés à chaque passe : `settle_red` (af-dtt6dn), `settle_item_repairs`

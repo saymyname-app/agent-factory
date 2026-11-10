@@ -77,6 +77,7 @@ from evaluation_capacity import admission, Busy, launch_timeout, ready_product, 
 from convoy_state import KEY_SPEC, Refusal as StateRefusal, spec_of  # noqa: E402
 from validated_expectations import planned, enforce, sealed_record
 from delivery_role_identity import role_supplier, supplier_of  # noqa: E402
+from factory_delivery_proof import delivery_readiness  # noqa: E402
 
 EVALUATOR_ROLE = "evaluator"
 STATES = ("observed", "not_observed", "unobservable")
@@ -430,13 +431,16 @@ def declared_datasets(convoy: Convoy) -> list[str | None]:
     return sorted(launch.get("datasets") or {}) or [None]
 
 
-def evaluated_datasets(convoy: Convoy) -> list[str | None]:
-    """The declared datasets the assembled product is evaluated on: at
-    least one. Only those the numbered user stories of the Spec, the
-    demonstration lines of the convoy's tickets or a validated expectation
-    of the stories name, else the first declared one (Benjamin, 2026-10-17:
-    « Réduire aux jeux cités »; the same rule as the Ticket Evaluation,
-    af-kdxk6k)."""
+def cited_datasets(convoy: Convoy) -> list[str | None]:
+    """The declared datasets the evaluation must cover: at least one. Those
+    the numbered user stories of the Spec, the demonstration lines of the
+    convoy's tickets or a validated expectation of the stories name, else
+    the first declared one (Benjamin, 2026-10-17: « Réduire aux jeux
+    cités », af-kdxk6k). The first one is the product launched first. Every
+    other declared dataset stays open to the Evaluator, one at a time
+    (Benjamin, 2026-11-09: « Oui, ouvre-les », af-ip0nrq): a story whose
+    situation only another dataset shows is observed there, not rendered
+    unobservable by the factory."""
     path, launch = convoy.profile()
     declared = declared_datasets(convoy)
     if declared == [None]:
@@ -733,6 +737,34 @@ def stop_evaluation(convoy: Convoy, commit: str, reason: str, detail: str) -> di
 # --- settle: what is due on the Outcome Evaluation of the convoy ----------------------
 
 
+def superseded(record: dict[str, Any], round_: dict[str, Any]) -> bool:
+    """A round a lift of its stop set aside (af-ip0nrq): the factory caused
+    what it could not observe, and it is evaluated again at its commit."""
+    return any(lift["commit"] == round_["commit"] and lift["at"] >= round_["at"] for lift in record.get("lifts") or [])
+
+
+def lift_stop(convoy: Convoy, stop: dict[str, Any]) -> list[str] | None:
+    """A stop a Factory maintenance was linked to (bin/convoy-state
+    link-outcome-repair) is lifted by code once every linked repair is
+    merged with its CI proven: the request leaves the operator's list
+    without an answer, and the evaluation is made again at the same commit,
+    without a round of the end (af-ip0nrq). None while a repair is not
+    delivered yet."""
+    repairs = [entry["id"] for entry in stop["repairs"]]
+    for repair_id in repairs:
+        readiness = delivery_readiness(read_bead(repair_id))
+        if not readiness["ready"] or not readiness["pr_backed"]:
+            return None
+    if "raised" in stop:
+        cleared = run([str(ESCALATION_TOOL), "clear", convoy.id])
+        if cleared.returncode != 0:
+            raise Refusal(f"la demande de l'arrêt {stop['reason']} du convoi {convoy.id} ne quitte pas la liste de "
+                          f"l'opérateur : {detail_of(cleared)}")
+    state_write("lift-outcome-stop", convoy.id, "--commit", stop["commit"])
+    convoy.load()
+    return repairs
+
+
 def outages_at(record: dict[str, Any], commit: str) -> int:
     count = 0
     for round_ in reversed(record["rounds"]):
@@ -762,6 +794,9 @@ def settle(convoy: Convoy, settings: dict[str, Any]) -> dict[str, Any]:
     reap(convoy, [entry["state_file"] for entry in keep],
          withdraw=request is not None and current is None)
     stop = convoy.outcome.get("stop")
+    lifted = lift_stop(convoy, stop) if stop and stop.get("repairs") and commit and stop["commit"] == commit else None
+    if lifted is not None:
+        stop = None
     if stop and raise_stop(convoy, stop):
         return {"action": "escalated", "stop": stop["reason"]}
     if commit is None:
@@ -769,7 +804,8 @@ def settle(convoy: Convoy, settings: dict[str, Any]) -> dict[str, Any]:
     if stop and stop["commit"] == commit:
         return {"action": "none"}
     rounds = convoy.outcome["rounds"]
-    last = rounds[-1] if rounds and rounds[-1]["commit"] == commit else None
+    last = rounds[-1] if rounds and rounds[-1]["commit"] == commit and not superseded(convoy.outcome, rounds[-1]) \
+        else None
     if last is not None and current is None:
         if last["outcome"] in (FAVORABLE, REPAIR):
             # Favorable, or a story to repair: the repairs drafted are
@@ -827,9 +863,9 @@ def settle(convoy: Convoy, settings: dict[str, Any]) -> dict[str, Any]:
     if current is None:
         # The roles first: an evaluation that is deferred launches nothing.
         roles = roles_of_launch(convoy)
-        datasets = evaluated_datasets(convoy)
+        cited = cited_datasets(convoy)
         try:
-            environment = launch_products(convoy, commit, settings, dataset=datasets[0])
+            environment = launch_products(convoy, commit, settings, dataset=cited[0])
         except Deferred:
             raise
         except Refusal as exc:
@@ -837,7 +873,8 @@ def settle(convoy: Convoy, settings: dict[str, Any]) -> dict[str, Any]:
             return stop_evaluation(convoy, commit, STOP_OUTAGE, str(exc))
         try:
             state_write_file("open-outcome-evaluation",
-                             {"roles": roles, "environment": environment, "datasets": datasets},
+                             {"roles": roles, "environment": environment, "datasets": declared_datasets(convoy),
+                              "cited": cited},
                              convoy.id, "--commit", commit)
         except (Refusal, NotNewFlow):
             for entry in environment:
@@ -855,7 +892,7 @@ def settle(convoy: Convoy, settings: dict[str, Any]) -> dict[str, Any]:
     routed = sum(1 for launch_ in launches
                  if launch_.get("unclaimed") is not True and launch_["bead"] != replaces_unclaimed) + 1
     return {"action": "relaunched" if launches else "launched", "commit": commit, "bead": bead_id,
-            "launches": routed,
+            "launches": routed, **({"lifted": lifted} if lifted is not None else {}),
             "environment": [{"dataset": entry["dataset"], "address": entry["address"]} for entry in current["environment"]]}
 
 
@@ -973,6 +1010,10 @@ def cmd_brief(args: argparse.Namespace) -> int:
         "environments": [{"dataset": entry["dataset"], "address": entry["address"], "launch_state": entry["state_file"]}
                          for entry in active],
         "datasets": request.get("datasets") or [entry["dataset"] for entry in request["environment"]],
+        "cited": request.get("cited") or request.get("datasets") or [entry["dataset"] for entry in request["environment"]],
+        # Which datasets show which screen: help to choose the one a story's situation is in.
+        "screens": [{"name": screen.get("name"), "path": screen.get("path"), "states": screen.get("states") or []}
+                    for screen in launch_block.get("screens") or [] if isinstance(screen, dict)],
         "product": [str(BIN / PROGRAM), "product", args.convoy, "--dataset", "<declared dataset>", "--wait", "540"],
         "entry_points": launch_block.get("entry_points") or [],
         "states": list(STATES), "unobservable_causes": list(CAUSES),
@@ -996,10 +1037,12 @@ def cmd_brief(args: argparse.Namespace) -> int:
         "repair_shape": repair_shape,
         "result_shape": {
             "commit": request["commit"],
-            "coverage": [{"dataset": "<each dataset of datasets>", "evidence": "<sealed piece from that dataset>"}],
+            "coverage": [{"dataset": "<each dataset opened, every one of cited among them>",
+                          "evidence": "<sealed piece from that dataset>"}],
             "stories": [{"number": "<story number>", "text": "<the story, copied exactly>", "state": "|".join(STATES),
                          "evidence": "<piece name>", "reason": "<required unless observed>",
-                         "cause": "|".join(CAUSES) + " (unobservable only)"}],
+                         "cause": "|".join(CAUSES) + " (unobservable only)",
+                         "tried": ["<unobservable only: each declared dataset opened to look for this story>"]}],
             "exploration": [{"text": "<one line>", "evidence": "<piece name, optional>"}, f"or « {NOTHING} »"],
             "fidelity_deviations": [{"text": "<one line>", "evidence": "<piece name, optional>"}, f"or « {NOTHING} »"],
             "repairs": [{"story": "<number of a not_observed story>", **repair_shape}],
@@ -1074,6 +1117,43 @@ def cmd_classify(args: argparse.Namespace) -> int:
     return 0
 
 
+def covered_datasets(request: dict[str, Any]) -> list[str | None]:
+    """The datasets a coverage piece is due for: each one opened, when every
+    declared dataset may be opened (`cited`); before that, each one of the
+    request."""
+    if "cited" in request:
+        return list(dict.fromkeys(entry["dataset"] for entry in request["environment"]))
+    return request.get("datasets") or list(dict.fromkeys(entry["dataset"] for entry in request["environment"]))
+
+
+def opening_problems(request: dict[str, Any], given: dict[str, Any]) -> list[str]:
+    """An « unobservable » is handed in with the declared datasets opened to
+    look for its story (`tried`), and a cited dataset is never left
+    unopened: a story the factory hid by opening one dataset alone is not
+    unobservable (af-ip0nrq)."""
+    if "cited" not in request:
+        return []
+    opened = {entry["dataset"] for entry in request["environment"]}
+    problems = [f"jeu cité {dataset} jamais ouvert : chaque jeu cité est ouvert et couvert"
+                for dataset in request["cited"] if dataset not in opened]
+    if request.get("datasets") == [None]:
+        return problems
+    for item in given.get("stories") or []:
+        if not isinstance(item, dict) or item.get("state") != "unobservable":
+            continue
+        tried = item.get("tried")
+        what = f"user story {item.get('number')!r} « unobservable »"
+        if not isinstance(tried, list) or not tried or len(set(map(str, tried))) != len(tried):
+            problems.append(f"{what} sans la liste des jeux essayés (tried) : un inobservable nomme chaque jeu "
+                            "déclaré ouvert pour la chercher")
+            continue
+        unopened = [dataset for dataset in tried if dataset not in opened]
+        if unopened:
+            problems.append(f"{what} : jeu(x) essayé(s) jamais ouvert(s) dans cette évaluation : "
+                            f"{', '.join(map(str, unopened))} (product --dataset ouvre un jeu déclaré)")
+    return problems
+
+
 def cmd_record(args: argparse.Namespace) -> int:
     convoy = Convoy(args.convoy, args.repo)
     session = read_only_session()
@@ -1095,6 +1175,9 @@ def cmd_record(args: argparse.Namespace) -> int:
         addresses_for_game = [e["address"] for e in request["environment"] if e["dataset"] == dataset]
         return sealed_record(str(CAPTURE_TOOL), args.convoy, args.convoy, piece, request["commit"],
                              addresses_for_game)
+    untried = opening_problems(request, given)
+    if untried:
+        raise Refusal("état hors contrat : " + " ; ".join(untried))
     before = {item.get("number"): item.get("state") for item in given.get("stories", [])
               if isinstance(item, dict)}
     try:
@@ -1127,8 +1210,7 @@ def cmd_record(args: argparse.Namespace) -> int:
     addresses = [entry["address"] for entry in request["environment"]]
     refused = [reason for reason in (piece_refusal(args.convoy, piece, request["commit"], addresses)
                                      for piece in named_pieces(given)) if reason]
-    declared = request.get("datasets") or list(dict.fromkeys(
-        entry["dataset"] for entry in request["environment"]))
+    declared = covered_datasets(request)
     if "datasets" in request or len(declared) > 1:
         coverage = given.get("coverage")
         if not isinstance(coverage, list) or len(coverage) != len(declared):
