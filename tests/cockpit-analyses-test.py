@@ -52,10 +52,22 @@ def merged_pull(number, at):
 
 
 def merged_result(title, published, merged):
-    """A convoy whose merge the flow proved, as the flow leaves it."""
+    """A convoy whose merge the flow proved, as the flow leaves it: accepted
+    by Benjamin, its merge proven, then closed as accepted -- each record
+    as bin/convoy-state writes it, the only one the cockpit reads."""
+    commit, pack = "a" * 40, "sha256:" + "b" * 64
+    records = {
+        "gc.flow.judgement": {"verdicts": [], "answers": [{"approver": "benjamin", "commit": commit, "pack": pack,
+                                                           "at": merged, "words": "Accepté.",
+                                                           "response": "accepted"}]},
+        "gc.flow.promotion": {"at": merged, "judged": commit, "merged": commit, "protected": "0" * 40,
+                              "tip": commit},
+        "gc.flow.closed": {"how": "accepted", "said": "Accepté.", "approver": "benjamin", "at": merged},
+    }
     return {"id": "af-%s" % title.lower().replace(" ", "-"), "title": title, "issue_type": "convoy",
             "status": "closed", "created_at": published,
-            "metadata": {"gc.flow.mark": "new-flow/v1", "gc.flow.promotion": json.dumps({"at": merged})}}
+            "metadata": {"gc.flow.mark": "new-flow/v1",
+                         **{key: json.dumps(record, ensure_ascii=False) for key, record in records.items()}}}
 
 
 class AnalysesOfTheLaunchedCockpitTest(unittest.TestCase):

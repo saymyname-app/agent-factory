@@ -20,7 +20,8 @@ One call gives everything the Analyses show, and what the overview reuses
 The sources are those the cockpit reads: the runs (``runs``: a ticket is
 delivered on its merge into the integration branch, a result is merged on
 the proof of its merge, ``gc.flow.promotion``, that ends the run of its
-delivery), the requests « Ce qui t’attend » lists (``requests``, assembled
+delivery -- the records of the flow read by the reader of convoy-state, as
+the home and the page of a project read them), the requests « Ce qui t’attend » lists (``requests``, assembled
 from the tracker, ``beads``: the decisions open, relaunches of a session
 or an order included -- rule of Benjamin, 07/11/2026, the same number
 everywhere, K2 af-unu7jp), the journal (``journal``: the decisions
@@ -35,13 +36,14 @@ on a des métriques » ; « Bref faut pas que ca soit redondant ».
 Mechanism (agent interpretation): the four indicators of the Spec, each
 computed once here for every page that shows it.
 """
-import json
 from datetime import datetime, timedelta, timezone
 
 from cockpit.core.freshness import FRESH, STALE
 from cockpit.core.readmodel import PARIS
+from cockpit.projects.outcome import MERGED, MERGING, read_outcome
 from cockpit.requests.journal import entries_from_value
 from cockpit.runs.derive import runs_from_beads
+from convoy_state import outcome_records_of
 
 DAYS = 7
 DECISIONS, RESULTS, DELAY, CI = "decisions", "results", "delay", "ci"
@@ -240,32 +242,23 @@ def _ts(value):
     return (parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)).timestamp()
 
 
-def _record(metadata, key):
-    value = (metadata or {}).get(key)
-    if isinstance(value, str) and value[:1] in "{[":
-        try:
-            value = json.loads(value)
-        except ValueError:
-            return None
-    return value if isinstance(value, dict) else None
-
-
 def _result(bead):
     """A result whose merge the flow proved: title, project key, and the
     instants of its publication, delivery, acceptance and merge (None when
-    the flow did not write it)."""
-    metadata = bead.get("metadata") or {}
-    promotion = _record(metadata, "gc.flow.promotion")
-    merged = _ts((promotion or {}).get("at"))
-    if merged is None:
+    the flow did not write it). Its records are read by the reader of
+    convoy-state, as every screen reads them
+    (:func:`cockpit.projects.outcome.read_outcome`): a result is merged when
+    that reader says it merged or its merge under way -- never on a record
+    it refuses, nor on a proof of merge its acceptance voided contradicts."""
+    outcome = read_outcome(bead)
+    if outcome is None or outcome["issue"] not in (MERGED, MERGING):
         return None
-    judgement = _record(metadata, "gc.flow.judgement") or {}
-    accepted = [_ts(answer.get("at")) for answer in judgement.get("answers") or []
-                if isinstance(answer, dict) and answer.get("response") == "accepted" and not answer.get("voided")]
-    return {"title": bead.get("title") or "", "project": metadata.get("gc.project_id") or "",
+    records = outcome_records_of(bead)
+    answers = records["judgement"]["answers"]
+    return {"title": bead.get("title") or "", "project": (bead.get("metadata") or {}).get("gc.project_id") or "",
             "published": _ts(bead.get("created_at")),
-            "delivered": _ts((_record(metadata, "gc.flow.delivered") or {}).get("at")),
-            "accepted": max(filter(None, accepted), default=None), "merged": merged}
+            "delivered": _ts((records["delivered"] or {}).get("at")),
+            "accepted": _ts(answers[-1]["at"]), "merged": _ts(records["promotion"]["at"])}
 
 
 def _project_names(row):

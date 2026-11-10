@@ -901,14 +901,11 @@ def _with_sources(city, at, flow, github) -> SyntheticCity:
             return json.dumps({key: value for key, value in fields.items() if value is not None}, ensure_ascii=False)
 
         for number, result in enumerate((flow or {}).get("results", []), 1):
-            metadata = {"gc.flow.mark": FLOW_MARK, "gc.project_id": project(result["project"])}
-            if result.get("delivered"):
-                metadata["gc.flow.delivered"] = record(at=result["delivered"])
-            if result.get("accepted"):
-                metadata["gc.flow.judgement"] = json.dumps(
-                    {"answers": [{"response": "accepted", "approver": "benjamin", "at": result["accepted"]}]})
-            if result.get("merged"):
-                metadata["gc.flow.promotion"] = record(at=result["merged"])
+            # Each record as bin/convoy-state writes it: the Analyses read
+            # them through its reader, as every screen does.
+            metadata = {"gc.flow.mark": FLOW_MARK, "gc.project_id": project(result["project"]),
+                        **_delivery_records(f"result-{number}", result.get("delivered"), result.get("accepted"),
+                                            result.get("merged"))}
             beads.append({"id": f"synthetic-result-{number}", "title": result["title"], "issue_type": "convoy",
                           "status": "closed" if result.get("merged") else "open", "created_at": result["published"],
                           "labels": ["owned"], "metadata": metadata})
@@ -1092,17 +1089,31 @@ def _merged_delivery(at: str, key: str) -> dict:
     """The records of a D01 delivery accepted and merged at `at`, as
     bin/convoy-state writes them on its convoy (read back by
     convoy_state.outcome_records_of)."""
+    return _delivery_records(key, delivered=at, accepted=at, merged=at)
+
+
+def _delivery_records(key: str, delivered: str | None = None, accepted: str | None = None,
+                      merged: str | None = None) -> dict:
+    """The records of a D01 delivery, as bin/convoy-state writes them on its
+    convoy (read back by convoy_state.outcome_records_of): delivered at
+    `delivered`, accepted by Benjamin at `accepted`, its merge proven at
+    `merged` -- the convoy then closed as accepted --, each left out when
+    None."""
     commit = hashlib.sha1(f"synthetic-run-{key}".encode("utf-8")).hexdigest()
     pack = "sha256:" + hashlib.sha256(f"synthetic-run-{key}".encode("utf-8")).hexdigest()
     words = "Accepté."
-    records = {
-        "gc.flow.delivered": {"at": at, "commit": commit, "pack": pack, "protected": "0" * 40,
-                              "version": "spec-end/v4"},
-        "gc.flow.judgement": {"verdicts": [], "answers": [{"approver": APPROVER, "commit": commit, "pack": pack,
-                                                           "at": at, "words": words, "response": "accepted"}]},
-        "gc.flow.promotion": {"at": at, "judged": commit, "merged": commit, "protected": "0" * 40, "tip": commit},
-        "gc.flow.closed": {"how": "accepted", "said": words, "approver": APPROVER, "at": at},
-    }
+    records = {}
+    if delivered:
+        records["gc.flow.delivered"] = {"at": delivered, "commit": commit, "pack": pack, "protected": "0" * 40,
+                                        "version": "spec-end/v4"}
+    if accepted:
+        records["gc.flow.judgement"] = {"verdicts": [], "answers": [{
+            "approver": APPROVER, "commit": commit, "pack": pack, "at": accepted, "words": words,
+            "response": "accepted"}]}
+    if merged:
+        records["gc.flow.promotion"] = {"at": merged, "judged": commit, "merged": commit, "protected": "0" * 40,
+                                        "tip": commit}
+        records["gc.flow.closed"] = {"how": "accepted", "said": words, "approver": APPROVER, "at": merged}
     return {name: json.dumps(record, ensure_ascii=False) for name, record in records.items()}
 
 
