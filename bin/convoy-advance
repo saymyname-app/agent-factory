@@ -104,7 +104,9 @@ resume, and withdraws its request; so is a ticket stopped at its second
 amendment once the operator answered « a » to its request (af-25o7vr,
 cause `amendment_granted`, one amendment more), or whose every change
 since the freeze is the base's it merged (af-npz9v1.39, cause
-`inherited_change`, no answer asked); every other stop stays
+`inherited_change`, no answer asked), or a repair that only moves a proof
+stopped all green before bin/tdd-step gave it its path (af-oa2ci4, cause
+`proof_moved`, no answer asked, once per stop); every other stop stays
 with the operator. At the
 last resume of a same cause (bounds.resumes, one bound per cause, ADR-0030
 L2: these causes and a commit after a verdict; the correction rounds keep
@@ -244,6 +246,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 from convoy_state import PROVEN_BY_TEST_OPTION, REEVALUATE_OPTION, STOP_COUNT_WHY, overridden_ticket  # noqa: E402
+from delivery_rules import moves_a_proof  # noqa: E402
 from factory_delivery_proof import delivery_readiness  # noqa: E402
 
 
@@ -345,6 +348,10 @@ NO_RESULT = "evaluation_no_result"
 AMENDMENT_STOP = "amendment_exhausted"
 AMENDMENT_GRANTED = "amendment_granted"
 AMENDMENT_RESUME_OPTION = "a"
+# A repair that only moves a proof, stopped all green before bin/tdd-step
+# gave it its path: resumed once per stop, its request withdrawn, without
+# an answer (af-oa2ci4).
+PROOF_MOVED = "proof_moved"
 # af-atrg8o: Benjamin answered the preceding A2 operator request before the
 # authorized test amendment could write its stop. Consume that exact answer
 # once, at that exact commit and file set, through the ordinary resume door.
@@ -740,7 +747,7 @@ class Convoy:
         reached the operator."""
         return [t for t in self.tickets
                 if (t.get("stop") or {}).get("reason") in TDD_STOPS and "raised" not in t["stop"]
-                and (t["stop"]["reason"] != ALREADY_GREEN or already_green_due(t, alive))]
+                and (t["stop"]["reason"] != ALREADY_GREEN or (already_green_due(t, alive) and not moves_a_proof(t)))]
 
     def corrections_due(self) -> list[str]:
         """Tickets whose author has finished and that are not merged yet --
@@ -824,10 +831,11 @@ class Convoy:
         """The end-of-Spec gate is due, or the Outcome Evaluation has
         something left to settle whatever the tickets: an open request, a
         launched product to stop, a stop that did not reach the operator
-        (T24)."""
+        (T24), a stop a Factory maintenance is linked to (af-ip0nrq)."""
         outcome = self.outcome or {}
         stop = outcome.get("stop") or {}
-        return bool(self.end_due() or outcome.get("request") or outcome.get("live") or (stop and "raised" not in stop))
+        return bool(self.end_due() or outcome.get("request") or outcome.get("live")
+                    or (stop and ("raised" not in stop or stop.get("repairs"))))
 
     def red_check(self, source: str, ticket: str | None = None) -> str | None:
         """The name of the red control the convoy records from `source`."""
@@ -2088,12 +2096,14 @@ def behind_due(convoy: Convoy, ticket: dict[str, Any]) -> tuple[str, str, str] |
 def stopped_without_result(ticket: dict[str, Any]) -> bool:
     """Started, not closed nor parked, and stopped because its Ticket
     Evaluation or its code review gave no result, by a stage the flow
-    removed, at its second amendment, or for an evaluation outage carrying
-    an explicit technical-repair link: the stops a resume may lift."""
+    removed, at its second amendment, for an evaluation outage carrying
+    an explicit technical-repair link, or all green on a repair that moves a
+    proof (af-oa2ci4): the stops a resume may lift."""
+    reason = (ticket.get("stop") or {}).get("reason")
     return started(ticket) and ticket.get("status") != "closed" and not ticket.get("park") \
-        and ((ticket.get("stop") or {}).get("reason") in (NO_RESULT, CODE_REVIEW_STOP, AMENDMENT_STOP,
-                                                          *REMOVED_STAGE_STOPS)
-             or ((ticket.get("stop") or {}).get("reason") == EVALUATION_OUTAGE and technical_repairs(ticket)))
+        and (reason in (NO_RESULT, CODE_REVIEW_STOP, AMENDMENT_STOP, *REMOVED_STAGE_STOPS)
+             or (reason == EVALUATION_OUTAGE and technical_repairs(ticket))
+             or (reason == ALREADY_GREEN and moves_a_proof(ticket)))
 
 
 def amendment_granted_due(ticket: dict[str, Any]) -> tuple[str, str, str] | None:
@@ -2105,7 +2115,7 @@ def amendment_granted_due(ticket: dict[str, Any]) -> tuple[str, str, str] | None
     stop = ticket["stop"]
     if "raised" not in stop or ticket.get("resumes_left") == 0:
         return None
-    if request_answer(read_bead(ticket["id"]), stop["at"]) != AMENDMENT_RESUME_OPTION:
+    if stop_answer(read_bead(ticket["id"]), stop) != AMENDMENT_RESUME_OPTION:
         return None
     return "new", AMENDMENT_GRANTED, f"stop:{stop['reason']}/{stop['at']}"
 
@@ -2153,7 +2163,7 @@ def inherited_change_due(convoy: Convoy, ticket: dict[str, Any]) -> tuple[str, s
     stop = ticket["stop"]
     if ticket.get("resumes_left") == 0 or not ticket.get("tip"):
         return None
-    if request_answer(read_bead(ticket["id"]), stop["at"]) is not None:
+    if stop_answer(read_bead(ticket["id"]), stop) is not None:
         return None
     try:
         proc = run([str(TDD_STEP_BIN), "changes", convoy.id, ticket["id"], "--repo", str(convoy.repo),
@@ -2172,7 +2182,7 @@ def once_per_stop_due(ticket: dict[str, Any], cause: str) -> tuple[str, str, str
     none when the ticket has no resume left (its stop stays with the
     operator). The fact is `stop:<reason>/<time>`."""
     stop = ticket["stop"]
-    if ticket.get("resumes_left") == 0 or request_answer(read_bead(ticket["id"]), stop["at"]) is not None:
+    if ticket.get("resumes_left") == 0 or stop_answer(read_bead(ticket["id"]), stop) is not None:
         return None
     return "new", cause, f"stop:{stop['reason']}/{stop['at']}"
 
@@ -2186,7 +2196,7 @@ def no_result_due(convoy: Convoy, ticket: dict[str, Any]) -> tuple[str, str, str
     stop = ticket["stop"]
     if ticket.get("resumes_left") == 0 or not convoy.integration:
         return None
-    if request_answer(read_bead(ticket["id"]), stop["at"]) is not None:
+    if stop_answer(read_bead(ticket["id"]), stop) is not None:
         return None
     branch = convoy.integration["branch"]
     # Where bin/code-review reads it: on origin when it is there, else local.
@@ -2227,6 +2237,8 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
                 due = once_per_stop_due(ticket, STAGE_REMOVED)
             elif ticket["stop"]["reason"] == CODE_REVIEW_STOP:
                 due = once_per_stop_due(ticket, CODE_REVIEW_STOP)
+            elif ticket["stop"]["reason"] == ALREADY_GREEN:
+                due = once_per_stop_due(ticket, PROOF_MOVED)
             elif ticket["stop"]["reason"] == AMENDMENT_STOP:
                 due = preauthorized_amendment_due(convoy, ticket) or amendment_granted_due(ticket) \
                     or inherited_change_due(convoy, ticket)
@@ -2262,8 +2274,8 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
                     passed(run([str(ESCALATION_BIN), "clear", ticket_id]), "escalation-door clear")
                     # The answer and clear share the door lock. An answer may
                     # have landed after the due check but before clear won it.
-                    if cause in (NO_RESULT, STAGE_REMOVED, CODE_REVIEW_STOP) \
-                            and request_answer(read_bead(ticket_id), ticket["stop"]["at"]) is not None:
+                    if cause in (NO_RESULT, STAGE_REMOVED, CODE_REVIEW_STOP, PROOF_MOVED) \
+                            and stop_answer(read_bead(ticket_id), ticket["stop"]) is not None:
                         continue
                 elif cause == REPAIR_DELIVERED and released_technical_repairs(ticket):
                     # The parking was removed first. If clearing refuses or
@@ -2309,6 +2321,21 @@ def request_answer(bead: dict[str, Any], since: str) -> str | None:
     if metadata.get("gc.needs_benjamin") not in (None, "none") or not isinstance(option, str) or not isinstance(at, str):
         return None
     return option if at >= since else None
+
+
+def stop_answer(bead: dict[str, Any], stop: dict[str, Any]) -> str | None:
+    """The letter the operator answered the request of a ticket's stop
+    with: the request the escalation door put on the operator's list for
+    that stop -- stamped after the stop, before the stop recorded it was
+    raised -- and an answer given since that request. Never the answer to an
+    earlier request of the same bead, a Planning Exception or another stop,
+    even one given after the stop (af-vm0vua, R12: its answer to the
+    Planning Exception held its proof_moved resume forever)."""
+    metadata = bead.get("metadata") or {}
+    asked = metadata.get("gc.escalation_horodatage")
+    if "raised" not in stop or not isinstance(asked, str) or not stop["at"] <= asked <= stop["raised"]:
+        return None
+    return request_answer(bead, asked)
 
 
 def legacy_repair_resume_due(ticket: dict[str, Any]) -> bool:

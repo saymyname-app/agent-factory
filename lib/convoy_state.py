@@ -119,6 +119,8 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state record-outcome-evaluation  CONVOY --file PATH
     convoy-state release-outcome-evaluation CONVOY --state-file PATH [--state-file PATH] [--withdraw]
     convoy-state stop-outcome-evaluation    CONVOY (--commit SHA --reason REASON --detail LINE | --raised)
+    convoy-state link-outcome-repair        CONVOY --repair BEAD
+    convoy-state lift-outcome-stop          CONVOY --commit SHA [--outdated-by SHA]
     convoy-state classify-finding   CONVOY TICKET --item out_of_ticket.N --as repaired|proposal|dismissed
                                     --recorded-by SESSION [--reason LINE] [--file PATH]
     convoy-state set-outcome-repair CONVOY (--repair TICKET | --refused LINE) (--story N | --ticket TICKET --item out_of_ticket.N)
@@ -173,7 +175,7 @@ from pathlib import Path
 LIB = str(Path(__file__).resolve().parent)
 if LIB not in sys.path:
     sys.path.insert(0, LIB)
-from delivery_rules import PROVEN_BY_TEST_OPTION, evaluation_proven_by_test, review_replay_due
+from delivery_rules import PROVEN_BY_TEST_OPTION, evaluation_proven_by_test, moves_a_proof, review_replay_due
 
 # The two names serve annotations only, which are never evaluated here
 # (`from __future__ import annotations`): importing `typing` on each of the
@@ -383,6 +385,10 @@ OUTCOME_OUTCOMES = ("favorable", "repair", "planning_exception", "environment_ou
 OUTCOME_SECTIONS = ("exploration", "fidelity_deviations")
 OUTCOME_STOPS = ("outcome_evaluation_no_result", "outcome_evaluation_outage", "story_unobservable",
                  "outcome_repair_refused")
+# A story the factory made unobservable (one dataset opened of all declared,
+# af-ip0nrq): a Factory maintenance linked to that stop lifts it by code once
+# delivered, without an answer of the operator and without a round of the end.
+OUTCOME_LIFTABLE_STOPS = ("story_unobservable",)
 ITEM_OPEN = "ouvert"
 ITEM_REPAIRED = "réparé"
 ITEM_ACCEPTED = "accepté par Benjamin"
@@ -459,6 +465,9 @@ KIND_WITHOUT_EVALUATOR = "prefactoring"
 ADDRESS_RE = re.compile(r"^http://127\.0\.0\.1:[0-9]{1,5}$")
 MAX_FINDING_LINE = 600
 ACCEPTANCE_HEADING = "## acceptance criteria"
+# What a repair restores, as bin/ticket-graph-publish writes it in the
+# ticket's text: « <kind> : <ref> » under this heading.
+RESTORES_HEADING = "## restores"
 # The Ticket Handoff (Spec §5): four sections written by the author, each
 # with content or the word for "nothing", and the records written by code.
 HANDOFF_SECTIONS = ("done", "deviations", "not_done", "out_of_ticket")
@@ -482,11 +491,12 @@ BOUND_END_ROUNDS = "end_rounds"
 # gave no result (af-xhc0sj), or a stage the flow removed stopped it
 # (ADR-0030 L3, af-pjvsgo), or its code review gave no result (af-wu6xj7),
 # or the operator answered « a » to its stop at a second amendment
-# (af-25o7vr): those resumes lift the stop. The correction round and a commit after a
+# (af-25o7vr), or a repair that only moves a proof was stopped all green
+# before tdd-step gave it its path (af-oa2ci4): those resumes lift the stop. The correction round and a commit after a
 # verdict are counted where they are written.
 RESUME_CAUSES = ("interrupted", "returned", "unblocked", "repair_delivered", "answered", "behind",
                  "evaluation_no_result", "stage_removed", "code_review_no_result", "amendment_granted",
-                 "inherited_change")
+                 "inherited_change", "proof_moved")
 # The stops a resume lifts, by the cause that lifts them: a Ticket Evaluation
 # without result (af-xhc0sj), the stops of the test review, a stage
 # ADR-0030 L3 removed (af-pjvsgo), a code review without result
@@ -496,7 +506,9 @@ RESUMABLE_STOPS = {"evaluation_no_result": ("evaluation_no_result",),
                    "code_review_no_result": ("code_review_no_result",),
                    "amendment_granted": ("amendment_exhausted",),
                    # af-npz9v1.39: every change since the freeze is the merged base's.
-                   "inherited_change": ("amendment_exhausted",)}
+                   "inherited_change": ("amendment_exhausted",),
+                   # af-oa2ci4: a repair that moves a proof finishes all green.
+                   "proof_moved": ("criterion_already_green",)}
 # A ticket stopped still refused whose every Blocking Finding the operator
 # overrode is merged as if at work; the merge that returns it lifts its stop
 # like a resumable one (af-n4bn62). The cause stays one of a ticket not
@@ -522,7 +534,9 @@ COMMIT_AFTER_VERDICT = "commit_after_verdict"
 # recorded and counted in `resumes`, takes no bound and never parks its
 # ticket for exhausted resumes (af-npz9v1.41: R2, af-cifk1e, parked on
 # 28/10/2026 at its third answer, the resume that answer opened never sent).
-ANSWERED_CAUSES = ("answered", "amendment_granted")
+# A repair that moves a proof is lifted once per stop, and is never stopped
+# all green again (af-oa2ci4): no bound either.
+ANSWERED_CAUSES = ("answered", "amendment_granted", "proof_moved")
 BOUNDED_RESUME_CAUSES = tuple(cause for cause in RESUME_CAUSES if cause not in ANSWERED_CAUSES) \
     + (COMMIT_AFTER_VERDICT,)
 # A resume `behind` comes from the factory, not from the ticket: another
@@ -932,6 +946,22 @@ def acceptance_criteria(description: Any) -> list[str]:
         if inside and match:
             criteria.append(match.group(1))
     return criteria
+
+
+def restores_cited(description: Any) -> dict[str, str] | None:
+    """What a repair restores, as its published text cites it: the first
+    line « <kind> : <ref> » under "## Restores", with a kind the patch door
+    knows; None otherwise (af-oa2ci4: bin/tdd-step reads whether it moves a
+    proof)."""
+    inside = False
+    for line in description.splitlines() if isinstance(description, str) else []:
+        if line.startswith("## "):
+            inside = line.strip().lower() == RESTORES_HEADING
+            continue
+        if inside and line.strip():
+            kind, separator, ref = line.strip().partition(" : ")
+            return {"kind": kind, "ref": ref.strip()} if separator and kind in RESTORES_KINDS and ref.strip() else None
+    return None
 
 
 def criteria_digest(criteria: list[str]) -> str:
@@ -2879,10 +2909,14 @@ def outcome_notes(value: Any, name: str) -> Any:
 
 def outcome_request(value: Any) -> dict[str, Any]:
     required = {"commit", "stories", "roles", "environment", "launches", "at"}
-    if not isinstance(value, dict) or not required <= set(value) or set(value) - required - {"datasets", "wanted"}:
+    if not isinstance(value, dict) or not required <= set(value) \
+            or set(value) - required - {"datasets", "cited", "wanted"}:
         raise Refusal(f"demande d'Outcome Evaluation mal formée : {value!r}")
     if "datasets" in value:
         evaluation_datasets(value["datasets"])
+    if "cited" in value and ("datasets" not in value or any(
+            dataset not in value["datasets"] for dataset in evaluation_datasets(value["cited"]))):
+        raise Refusal(f"jeux cités hors des jeux de la demande d'Outcome Evaluation : {value['cited']!r}")
     if "wanted" in value:
         wanted = value["wanted"]
         if (not isinstance(wanted, dict) or set(wanted) != {"dataset", "fresh", "at"} or
@@ -2925,7 +2959,9 @@ def outcome_round(value: Any) -> dict[str, Any]:
         number = story.get("number") if isinstance(story, dict) else None
         if isinstance(number, bool) or not isinstance(number, int) or number < 1:
             raise Refusal(f"user story sans numéro dans une passe d'Outcome Evaluation : {story!r}")
-        evaluation_item(story, f"user story {number}")
+        evaluation_item({name: field for name, field in story.items() if name != "tried"}, f"user story {number}")
+        if "tried" in story and (story["state"] != "unobservable" or evaluation_datasets(story["tried"]) is None):
+            raise Refusal(f"user story {number} : des jeux essayés ne se donnent qu'avec « unobservable »")
     numbers = [story["number"] for story in value["stories"]]
     if len(set(numbers)) != len(numbers):
         raise Refusal("passe d'Outcome Evaluation mal formée : deux états pour une user story")
@@ -2973,7 +3009,7 @@ def outcome_evaluation_record(raw: Any) -> dict[str, Any]:
     the products still to stop (`live`), and what stopped it at a commit
     (`stop`: no result, an environment that failed twice, a story that
     cannot be observed, a drafted repair the patch door refused)."""
-    record = stored_record(raw, ("rounds",), ("request", "live", "stop"))
+    record = stored_record(raw, ("rounds",), ("request", "live", "stop", "lifts"))
     if not isinstance(record["rounds"], list):
         raise Refusal(f"passes d'Outcome Evaluation mal formées : {record['rounds']!r}")
     for value in record["rounds"]:
@@ -2987,12 +3023,40 @@ def outcome_evaluation_record(raw: Any) -> dict[str, Any]:
     if "stop" in record:
         stop = record["stop"]
         if not isinstance(stop, dict) or not {"reason", "detail", "commit", "at"} <= set(stop) \
-                or set(stop) - {"reason", "detail", "commit", "at", "raised"}:
+                or set(stop) - {"reason", "detail", "commit", "at", "raised", "repairs"}:
             raise Refusal(f"arrêt de l'Outcome Evaluation mal formé : {stop!r}")
         one_of(stop["reason"], OUTCOME_STOPS, "raison d'arrêt de l'Outcome Evaluation")
         single_line(stop["detail"], "précision de l'arrêt")
         valid_commit(stop["commit"], "commit de l'arrêt")
+        if "repairs" in stop:
+            if stop["reason"] not in OUTCOME_LIFTABLE_STOPS:
+                raise Refusal(f"réparation liée à un arrêt qui ne se lève pas par code : {stop!r}")
+            technical_repairs_record(encode({"stop_at": stop["at"], "entries": stop["repairs"]}))
+    for lift in record.get("lifts", []) if isinstance(record.get("lifts", []), list) else [None]:
+        # Lifted by its delivered repairs, or set aside because the gate left its commit (af-mmefvq).
+        outdated = isinstance(lift, dict) and "outdated_by" in lift
+        repairs = lift.get("repairs") if isinstance(lift, dict) else None
+        if not isinstance(lift, dict) or not {"reason", "commit", "stop_at", "at"} <= set(lift) \
+                or set(lift) - {"reason", "commit", "stop_at", "repairs", "outdated_by", "at"} \
+                or lift["reason"] not in (OUTCOME_STOPS if outdated else OUTCOME_LIFTABLE_STOPS) \
+                or (repairs is not None or not outdated) and (
+                    not isinstance(repairs, list) or not repairs
+                    or any(not isinstance(repair, str) or not BEAD_ID_RE.match(repair) for repair in repairs)):
+            raise Refusal(f"levée d'arrêt de l'Outcome Evaluation mal formée : {lift!r}")
+        valid_commit(lift["commit"], "commit de la levée")
+        if outdated and valid_commit(lift["outdated_by"], "commit qui périme l'arrêt") == lift["commit"]:
+            raise Refusal(f"arrêt de l'Outcome Evaluation périmé par son propre commit : {lift!r}")
+        single_line(lift["at"], "date de la levée")
+    if "lifts" in record and not record["lifts"]:
+        raise Refusal("levées d'arrêt de l'Outcome Evaluation vides")
     return record
+
+
+def superseded_round(record: dict[str, Any], round_: dict[str, Any] | None) -> bool:
+    """A round a code-owned lift of its stop set aside: evaluated again at
+    its commit (af-ip0nrq)."""
+    return round_ is not None and any(lift["commit"] == round_["commit"] and lift["at"] >= round_["at"]
+                                      for lift in record.get("lifts", []))
 
 
 def outcome_state(record: dict[str, Any]) -> dict[str, Any]:
@@ -3238,6 +3302,7 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
     stories = None
     out["user_stories"] = None
     out["criteria"] = acceptance_criteria(ticket.get("description"))
+    out["restores"] = restores_cited(ticket.get("description")) if kind == "repair" else None
     # The criteria as `mark` froze them with the approved graph (T19): the
     # ticket-end gate reads whether the ones on the ticket are still those.
     out["criteria_frozen"] = None
@@ -5417,6 +5482,27 @@ def cmd_park(args: argparse.Namespace) -> int:
     return 0
 
 
+def provable_repair(repair_id: Any) -> None:
+    """A technical request is linked only to a repair whose delivery can be
+    proven: an authorized Factory maintenance, or work under the PR+CI
+    delivery contract."""
+    if not isinstance(repair_id, str) or not BEAD_ID_RE.match(repair_id):
+        raise Refusal(f"bead de réparation absent ou mal formé : {repair_id!r}")
+    repair = load_bead(repair_id)
+    # Imported only on this rare write, not on every convoy-state read.
+    from factory_delivery_proof import requires_pr_delivery_proof
+    repair_metadata = metadata_of(repair)
+    authorized_maintenance = repair.get("issue_type") == "bug" \
+        and "maintenance" in (repair.get("labels") or []) \
+        and isinstance(repair_metadata.get("gc.authorized_by"), str) \
+        and bool(repair_metadata["gc.authorized_by"].strip())
+    if repair_metadata.get("gc.delivery_contract") != "pr-ci-merged-v1" \
+            and not requires_pr_delivery_proof(repair) and not authorized_maintenance:
+        raise Refusal(
+            f"{repair_id} n'est ni une maintenance autorisée ni gouverné par un contrat de livraison PR+CI : "
+            "une demande technique ne se lie qu'à une réparation dont la livraison pourra être prouvée")
+
+
 def cmd_link_technical_repair(args: argparse.Namespace) -> int:
     """Turn only an explicitly linked Factory defect request into a
     code-owned wait. The pass lifts it after every repair has structural
@@ -5436,21 +5522,9 @@ def cmd_link_technical_repair(args: argparse.Namespace) -> int:
         raise Refusal(
             f"{args.ticket} n'est ni parqué par sa propre demande opérateur ni arrêté par son évaluation : "
             "seules ces classes peuvent être reliées à une réparation technique")
-    if not isinstance(args.repair, str) or not BEAD_ID_RE.match(args.repair) or args.repair == args.ticket:
+    if args.repair == args.ticket:
         raise Refusal(f"bead de réparation absent ou mal formé : {args.repair!r}")
-    repair = load_bead(args.repair)
-    # Imported only on this rare write, not on every convoy-state read.
-    from factory_delivery_proof import requires_pr_delivery_proof
-    repair_metadata = metadata_of(repair)
-    authorized_maintenance = repair.get("issue_type") == "bug" \
-        and "maintenance" in (repair.get("labels") or []) \
-        and isinstance(repair_metadata.get("gc.authorized_by"), str) \
-        and bool(repair_metadata["gc.authorized_by"].strip())
-    if metadata_of(repair).get("gc.delivery_contract") != "pr-ci-merged-v1" \
-            and not requires_pr_delivery_proof(repair) and not authorized_maintenance:
-        raise Refusal(
-            f"{args.repair} n'est ni une maintenance autorisée ni gouverné par un contrat de livraison PR+CI : "
-            "une demande technique ne se lie qu'à une réparation dont la livraison pourra être prouvée")
+    provable_repair(args.repair)
     record = technical_repairs_record(metadata[KEY_TECHNICAL_REPAIRS]) if KEY_TECHNICAL_REPAIRS in metadata else None
     if record is None or {name: value for name, value in record.items() if name != "entries"} != generation:
         record = {**generation, "entries": []}
@@ -5605,7 +5679,8 @@ def cmd_open_resume(args: argparse.Namespace) -> int:
     resume left for one cause (that one is parked), and on a stopped ticket unless the
     cause is one that lifts its stop (RESUMABLE_STOPS): `evaluation_no_result`
     (af-xhc0sj), `stage_removed` for a stop of the removed test review
-    (af-pjvsgo), `code_review_no_result` (af-wu6xj7), or `returned` for a
+    (af-pjvsgo), `code_review_no_result` (af-wu6xj7), `proof_moved` for a
+    repair that moves a proof stopped all green (af-oa2ci4), or `returned` for a
     stop `still_refused` the operator overrode in full (af-n4bn62); that
     resume keeps the stop under it. A code review without result also loses its spent round:
     the next finished exit is reviewed afresh."""
@@ -5623,6 +5698,10 @@ def cmd_open_resume(args: argparse.Namespace) -> int:
                                    and lifted["reason"] == STOP_STILL_REFUSED
                                    and not overridden_metadata(metadata))):
         raise Refusal(f"ticket arrêté ({lifted['reason']}) : {args.ticket} ne se reprend pas pour la cause {cause}")
+    if cause == "proof_moved" and not moves_a_proof({"kind": metadata.get(KEY_KIND),
+                                                     "restores": restores_cited(ticket.get("description"))}):
+        raise Refusal(f"le ticket {args.ticket} ne déplace pas une preuve (un repair qui rétablit une règle de "
+                      "docs/TEST_GUIDELINE.md) : son arrêt « critères tous déjà verts » reste à l'opérateur")
     entries = resume_record(metadata[KEY_RESUME])["entries"] if KEY_RESUME in metadata else []
     if entries and (entries[-1]["cause"], entries[-1]["ref"]) == (cause, ref):
         return done(args.convoy, args.ticket, {})
@@ -7494,26 +7573,29 @@ def cmd_open_outcome_evaluation(args: argparse.Namespace) -> int:
     if stop and stop["commit"] == commit:
         raise Refusal(f"l'Outcome Evaluation du convoi {args.convoy} est arrêtée au commit {commit} ({stop['reason']})")
     given = json_argument(args.file, "demande d'Outcome Evaluation")
-    unknown = sorted(set(given) - {"roles", "environment", "datasets"})
+    unknown = sorted(set(given) - {"roles", "environment", "datasets", "cited"})
     if unknown:
         raise Refusal(f"champs inconnus dans la demande d'Outcome Evaluation : {', '.join(unknown)}")
     roles = outcome_roles(given.get("roles"))
     environment = evaluation_environment(given.get("environment"), launched=True)
     datasets = evaluation_datasets(given["datasets"]) if "datasets" in given else None
     last = record["rounds"][-1] if record["rounds"] else None
-    if last and last["commit"] == commit and last["verdict"] is not None:
+    if last and last["commit"] == commit and last["verdict"] is not None and not superseded_round(record, last):
         raise Refusal(f"le convoi {args.convoy} a déjà son Outcome Evaluation au commit {commit} ({last['outcome']})")
     stories = spec_of(convoy)["stories"]
     request = record.get("request")
     wanted = {"commit": commit, "stories": stories}
     if datasets is not None:
         wanted["datasets"] = datasets
+    if "cited" in given:
+        wanted["cited"] = given["cited"]
     if request and {name: request.get(name) for name in wanted} == wanted:
         if request["roles"] == roles and request["environment"] == environment:
             return done(args.convoy, args.convoy, {})
         request.update(roles=roles, environment=environment)
     else:
-        record["request"] = {**wanted, "roles": roles, "environment": environment, "launches": [], "at": now()}
+        record["request"] = outcome_request({**wanted, "roles": roles, "environment": environment, "launches": [],
+                                             "at": now()})
     record.pop("stop", None)
     record["live"] = list(dict.fromkeys([entry["state_file"] for entry in environment] + record.get("live", [])))
     values = {KEY_OUTCOME_EVALUATION: encode(outcome_evaluation_record(encode(record)))}
@@ -7731,12 +7813,30 @@ def cmd_record_outcome_evaluation(args: argparse.Namespace) -> int:
         else:
             by_number[number] = item
     stories = []
+    opened = {entry["dataset"] for entry in request["environment"]}
     for number, text in wanted.items():
         if number not in by_number:
             problems.append(f"user story {number} sans état : aucun état rendu pour « {text} »")
             continue
-        stories.append({"number": number, **given_state(by_number[number], f"user story {number}", text, metadata, commit,
-                                                        problems)})
+        item = dict(by_number[number])
+        tried = item.pop("tried", None)
+        story = {"number": number, **given_state(item, f"user story {number}", text, metadata, commit, problems)}
+        if tried is not None:
+            # The declared datasets opened to look for an unobservable story (af-ip0nrq).
+            if story["state"] != "unobservable":
+                problems.append(f"user story {number} : des jeux essayés ne se donnent qu'avec « unobservable »")
+            elif not isinstance(tried, list) or not tried or len({str(name) for name in tried}) != len(tried) \
+                    or any(name not in opened for name in tried):
+                problems.append(f"user story {number} : jeux essayés mal formés ou jamais ouverts dans cette "
+                                f"évaluation : {tried!r}")
+            else:
+                story["tried"] = tried
+        elif story["state"] == "unobservable" and story.get("cause") != "criterion" \
+                and "cited" in request and request.get("datasets") != [None]:
+            # A validated expectation missing from the profile (cause « criterion »)
+            # is the factory's own planning gap: no dataset was there to try.
+            problems.append(f"user story {number} « unobservable » sans la liste des jeux essayés (tried)")
+        stories.append(story)
     notes = {name: given_notes(given.get(name), name, metadata, commit, problems) for name in OUTCOME_SECTIONS}
     drafts = given.get("repairs", [])
     if not isinstance(drafts, list):
@@ -7763,6 +7863,12 @@ def cmd_record_outcome_evaluation(args: argparse.Namespace) -> int:
     coverage = None
     declared = request.get("datasets") or list(dict.fromkeys(
         entry["dataset"] for entry in request["environment"]))
+    if "cited" in request:
+        # Every declared dataset may be opened (af-ip0nrq): one piece per
+        # dataset opened, every cited one among them.
+        declared = list(dict.fromkeys(entry["dataset"] for entry in request["environment"]))
+        problems += [f"jeu cité {dataset} jamais ouvert : chaque jeu cité est ouvert et couvert"
+                     for dataset in request["cited"] if dataset not in declared]
     if "datasets" in request or len(declared) > 1:
         try:
             coverage = evaluation_coverage(given.get("coverage"), declared)
@@ -7863,6 +7969,60 @@ def cmd_stop_outcome_evaluation(args: argparse.Namespace) -> int:
         record["stop"] = {"reason": one_of(args.reason, OUTCOME_STOPS, "raison d'arrêt de l'Outcome Evaluation"),
                           "detail": single_line(args.detail, "précision de l'arrêt"), "commit": commit, "at": now()}
         record.pop("request", None)
+    values = {KEY_OUTCOME_EVALUATION: encode(outcome_evaluation_record(encode(record)))}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
+def cmd_link_outcome_repair(args: argparse.Namespace) -> int:
+    """Link a Factory maintenance to the stop of an Outcome Evaluation the
+    factory caused (af-ip0nrq): a story rendered unobservable because the
+    Evaluator could not open the dataset its situation is in. The stop then
+    waits on that repair, in code: bin/outcome-evaluation settle lifts it
+    once the repair is merged with its CI proven, never on an answer."""
+    _, _, _, record = outcome_target(args)
+    stop = record.get("stop")
+    if not stop or stop["reason"] not in OUTCOME_LIFTABLE_STOPS:
+        raise Refusal(
+            f"l'Outcome Evaluation du convoi {args.convoy} n'est pas arrêtée sur une user story inobservable : "
+            "seul cet arrêt se relie à une maintenance de l'usine")
+    provable_repair(args.repair)
+    entries = list(stop.get("repairs", []))
+    if any(entry["id"] == args.repair for entry in entries):
+        return done(args.convoy, args.convoy, {})
+    stop["repairs"] = entries + [{"id": args.repair, "at": now()}]
+    values = {KEY_OUTCOME_EVALUATION: encode(outcome_evaluation_record(encode(record)))}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
+def cmd_lift_outcome_stop(args: argparse.Namespace) -> int:
+    """Lift, at its commit, a stop a Factory maintenance is linked to: the
+    stop is kept under `lifts`, the round it stopped on is set aside, and
+    the evaluation may be opened again at that commit. No counter moves: a
+    stop the factory caused takes no round of the end (af-ip0nrq). Whether
+    the repairs are delivered is read by the caller, bin/outcome-evaluation.
+    `--outdated-by` sets aside, the same way, a stop of any reason whose
+    commit the gate has left for that one (af-mmefvq): it is kept under
+    `lifts` with that commit, and no counter moves either."""
+    _, _, _, record = outcome_target(args)
+    commit = valid_commit(args.commit, "commit de la levée")
+    outdated_by = valid_commit(args.outdated_by, "commit qui périme l'arrêt") if args.outdated_by else None
+    stop = record.get("stop")
+    if outdated_by is not None:
+        if not stop or stop["commit"] != commit or outdated_by == commit:
+            raise Refusal(f"aucun arrêt de l'Outcome Evaluation du convoi {args.convoy} au commit {commit} que le "
+                          f"commit {outdated_by} périme : rien à lever")
+    elif not stop or not stop.get("repairs") or stop["commit"] != commit:
+        raise Refusal(f"aucun arrêt de l'Outcome Evaluation du convoi {args.convoy} relié à une maintenance au "
+                      f"commit {commit} : rien à lever")
+    lift = {"reason": stop["reason"], "commit": commit, "stop_at": stop["at"]}
+    if stop.get("repairs"):
+        lift["repairs"] = [entry["id"] for entry in stop["repairs"]]
+    if outdated_by is not None:
+        lift["outdated_by"] = outdated_by
+    record["lifts"] = record.get("lifts", []) + [{**lift, "at": now()}]
+    del record["stop"]
     values = {KEY_OUTCOME_EVALUATION: encode(outcome_evaluation_record(encode(record)))}
     write_metadata(args.convoy, values)
     return done(args.convoy, args.convoy, values)
@@ -8121,6 +8281,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reason")
     p.add_argument("--detail")
     p.add_argument("--raised", action="store_true")
+    command("link-outcome-repair", cmd_link_outcome_repair, ticket=False).add_argument("--repair")
+    p = command("lift-outcome-stop", cmd_lift_outcome_stop, ticket=False)
+    p.add_argument("--commit")
+    p.add_argument("--outdated-by")
     p = command("classify-finding", cmd_classify_finding)
     p.add_argument("--item")
     p.add_argument("--as", dest="classification")

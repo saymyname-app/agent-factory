@@ -1,0 +1,10 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/runs-d01-outcome-test.py::RunsD01Outcome.test_an_abandoned_convoy_is_abandoned_on_its_run_card_as_on_the_result"
+    ],
+    "2": [
+      "tests/cockpit-criteria/commands/runs-d01-outcome-test.py::RunsD01Outcome.test_a_card_says_merged_only_with_the_proof_of_the_final_merge"
+    ]
+  }
+}

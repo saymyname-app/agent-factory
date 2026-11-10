@@ -118,6 +118,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/convoy-advance-red-cleared-test.py`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_malformed_legacy_resume_is_left_to_the_incident_door_without_crashing`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_factory_repair_is_taken_up_and_tested_before_its_resume_is_consumed_once`,
+  `python3 tests/outcome-evaluation-every-dataset-test.py`,
+  `python3 tests/outcome-evaluation-outdated-stop-test.py`,
   `bash tests/factory-work-dispatch-test.sh`. Sa même table tient chaque
   fonction de `bin/convoy-advance` qui publie un repair rédigé par la porte
   de patch : un refus de la porte y est noté là où le repair a été rédigé et
@@ -158,18 +160,47 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   se clôt sans fusion dessus) ; af-68sgzq (un repair rédigé par l'Evaluator
   de fin et refusé par la porte de patch était renvoyé à chaque passe,
   `convoy-advance` en échec sans rien noter : le refus est noté sur la story
-  ou le constat et l'Outcome Evaluation s'arrête, `outcome_repair_refused`).
+  ou le constat et l'Outcome Evaluation s'arrête, `outcome_repair_refused`) ;
+  af-ip0nrq (un `story_unobservable` causé par l'usine, un seul jeu ouvert
+  sur les 95 déclarés, n'avait que les options « Planning Run » et « retirer
+  la story » : une maintenance liée à l'arrêt le lève par code une fois
+  livrée et l'évaluation repart au même commit, sans tour de fin) ;
+  af-oa2ci4 (un repair qui ne fait que déplacer une preuve, R12, avait tous
+  ses critères verts au rouge : `criterion_already_green` l'arrêtait et seule
+  la clôture « satisfait » restait, qui ne fusionne rien ; prouvé par
+  `python3 tests/tdd-step-proof-move-test.py` et
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_repair_that_moves_a_proof_stopped_all_green_is_resumed_once_without_an_answer_nor_a_round_of_the_end ConvoyAdvanceTest.test_a_repair_of_a_behavior_stopped_all_green_stays_stopped_with_the_operator`) ;
+  af-vm0vua (la réponse de Benjamin à une Planning Exception antérieure,
+  portée par le même bead, passait pour la réponse à la demande de l'arrêt :
+  R12 restait arrêté sans demande ni reprise ; une réponse ne compte plus
+  que pour la demande de l'arrêt lui-même, `stop_answer`, prouvé par
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_an_answer_to_an_earlier_planning_exception_does_not_hold_a_proof_moved_resume ConvoyAdvanceTest.test_a_proof_moved_stop_answered_after_its_own_request_is_not_resumed`) ;
+  af-mmefvq (un arrêt d'Outcome Evaluation tient son commit seul, mais sa
+  demande restait sur la liste de Benjamin une fois la porte passée à un
+  autre commit, et une maintenance liée ne pouvait plus le lever : `settle`
+  range l'arrêt périmé sous `lifts` (`outdated_by`), retire sa demande sans
+  réponse et évalue la nouvelle pointe, prouvé par
+  `python3 tests/outcome-evaluation-outdated-stop-test.py`).
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
-  contrôle : `criterion_already_green` reste au Planning Run ;
+  contrôle : `criterion_already_green` reste au Planning Run, sauf
+  le repair qui ne fait que déplacer une preuve (af-oa2ci4 : `tdd-step red`
+  ne l'arrête plus, et `convoy-advance` reprend une fois, cause
+  `proof_moved`, celui arrêté avant) ;
   `outcome_evaluation_no_result` et `outcome_evaluation_outage` ne repartent
   qu'à une nouvelle pointe d'intégration ; `story_unobservable` reste au
-  Planning Run ; datée du 09/11/2026, `outcome_repair_refused` ne repart
+  Planning Run, sauf l'arrêt qu'une maintenance de l'usine liée lève par code
+  (af-ip0nrq) ; datée du 09/11/2026, `outcome_repair_refused` ne repart
   qu'à une nouvelle pointe d'intégration. Datés du 09/11/2026, les repairs
   écrits par le code dont la porte de patch refuse le brouillon sont encore
   renvoyés à chaque passe : `settle_red` (af-dtt6dn), `settle_item_repairs`
   (af-uz9bh9), `settle_acceptance` (af-k369au). Elles sont retirées de la
   table dès qu'une transition codée remplace cette porte (étude B § 4.2,
-  af-npz9v1.27).
+  af-npz9v1.27). Hors de la table, constatée le 10/11/2026 (af-nh4c1t) :
+  la reprise de la branche protégée en conflit dans une branche
+  d'intégration n'a pas de sortie et refait échouer `convoy-advance` à
+  chaque passe (`docs/CONVOY_ADVANCE.md`, « What these stops leave open ») ;
+  le choix de sa sortie est une règle de méthode, proposée à Benjamin
+  (af-le1aas, ADR-0029 point 6).
 
 ## D — Doublure, instrument ou vue partielle qui ne se comporte pas comme le réel
 
@@ -201,7 +232,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   relance d'un contrôle rouge acceptait (af-toyety).
 - Occurrences : #566, #618, #641, #648, #656, #664, #665, #669, #671, #674,
   #675, #676, #680, #689, #690, #692, #699, #700, #714, #715 ; af-vf51g6 ;
-  af-dtsy06 ; af-h6nyqc ; af-toyety.
+  af-dtsy06 ; af-h6nyqc ; af-toyety ; af-yxxa68.
 - Ouvertes : exception datée du 29/10/2026 : la relecture de code par modèle
   n'est pas rejouée sur un cas connu (étude B § 4.3). Elle reste bornée par
   ses citations vérifiées et ses passes ciblées, mais n'est pas déclarée
@@ -250,7 +281,12 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `bash tests/pr-autopilot-transient-retry-test.sh`,
   `python3 tests/tdd-step-test.py TddStepTest.test_green_refusal_keeps_the_failing_control_after_long_regression_output`,
   `python3 tests/role-adoption-trial-codex-test.py`,
-  `python3 tests/factory-delivery-proof-test.py ClaimedShippedBead` — partiel : le premier
+  `python3 tests/factory-delivery-proof-test.py ClaimedShippedBead`,
+  `python3 tests/ticket-graph-publish-test.py TicketGraphPublishBeadModeTest.test_a_mayor_wake_delivered_but_slow_to_answer_is_not_reported_as_lost`,
+  `bash tests/factory-watchdog-test.sh`,
+  `bash tests/pr-autopilot-time-budget-test.sh`,
+  `bash tests/planning-artifacts-close-test.sh`,
+  `bash tests/convoy-parent-sweep-test.sh` — partiel : le premier
   tient la frontière entre un report explicite (sortie 75, rejoué sans
   alerte) et une vraie panne répétée (bead et page Mayor) ; le deuxième tient
   la collecte VM Beads/Git/GitHub, le silence sur état inchangé, la route
@@ -264,7 +300,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   signaux. Le quatrième refuse qu'un workflow encore actif ou une demande de
   rerun refusée soit annoncé comme déjà retenté. Le contrôle `tdd-step`
   conserve le début et la fin d'une longue sortie bornée, dont le nom du
-  contrôle en échec. Le dernier tient la minute de
+  contrôle en échec. Le contrôle `role-adoption-trial-codex` tient la minute de
   stabilité après un réveil Codex proche
   de l'échéance dans une borne fixe et exige qu'un délai dépassé nomme les états
   observés et la demande de réveil ; il refuse aussi que `active` compte comme
@@ -273,14 +309,44 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   des profils Codex sans opérateur. Le contrôle `factory-delivery-proof` refuse
   qu'un `gc.outcome=pass` d'étape de formule (`gc.step_ref`/`gc.step_id`)
   compte comme livraison annoncée : l'étape qui ouvre la PR n'est pas une
-  livraison non prouvée.
+  livraison non prouvée. Le contrôle `factory-observe` et
+  `ticket-graph-publish` refusent qu'un `gc mail send` borné, déjà remis mais
+  lent à répondre, compte comme perdu : `ticket-graph-publish` rejoue l'envoi
+  une fois sous la même clé `--dedup` ; `factory-observe` garde la route en
+  attente et la renvoie sous la même clé au passage suivant, et seul un envoi
+  refusé par gc ou resté sans réponse trois passages de suite est un échec. Le
+  contrôle `factory-watchdog` refuse qu'un passage du gardien coupé par son budget sous la charge,
+  ou dont l'observation live n'a pas tenu dans le temps restant, compte comme
+  un échec de l'ordre : il est reporté (sortie 0), et seuls trois passages
+  coupés de suite sortent 2. Le contrôle `pr-autopilot-time-budget` tient la
+  même frontière pour `pr-autopilot`, arrêté en entier sous le délai de son
+  ordre. Le contrôle `planning-artifacts-close` la tient pour la fermeture des
+  Spec et brouillons : une passe coupée par son budget de 30 s, sous le délai
+  de 60 s de son ordre, est reportée (sortie 0) sans rien fermer à moitié, et
+  seules trois passes coupées de suite sortent 2. Le contrôle
+  `convoy-parent-sweep` la tient pour le balayage des convois : un
+  `gc convoy check` coupé par le budget de 90 s du script, sous le délai de
+  120 s de l'ordre, est reporté à la fermeture suivante (sortie 0), et seuls trois
+  balayages coupés de suite sortent 2.
 - Occurrences : #651, #679, #688, #717 ; af-npz9v1.50 ; #767 (armement local
   annoncé mais `autoMergeRequest=null`, af-npz9v1.50.1) ; af-ncg9qy ; #778
   (demande directe acceptée localement mais encore `AWAITING_CHECKS`,
   af-nk5nm6) ; af-27yx7q.2.1 ; af-pd6m09 ; af-1l3znv (un workflow encore
   actif ou une demande de rerun refusée était annoncé comme déjà retenté) ;
   af-0rdubb ; af-eyi5wa (l'étape push-and-pr, passée en ouvrant sa PR, signalée
-  comme livraison non prouvée).
+  comme livraison non prouvée) ; af-usvfdb (un mail d'alerte remis mais
+  confirmé après le délai de 20 s comptait comme échec du gardien, et le même
+  délai faisait écrire « Mayor NOT woken » à `ticket-graph-publish`) ;
+  af-onrwp8 (après af-usvfdb, les deux envois d'un même passage restaient sans
+  réponse sous load 15m ~34, et un passage ralenti par la charge dépassait le
+  budget de 150 s : 3 échecs du gardien sur 9 passages, alertes pourtant
+  parties) ; af-pmbhlh (`pr-autopilot` dépassait le délai de 120 s de son
+  ordre malgré son budget de 90 s : passé l'arrêt dur, chaque appel restait
+  lancé 1 s + 5 s de kill, et rien ne bornait le passage entier ; 2 échecs
+  sous load 15m ~30) ; af-p1d8ka (`planning-artifacts-close`, sans budget
+  interne, tué trois fois au délai de 60 s de son ordre sous la charge, du 07
+  au 10/11/2026) ; af-cbvryy (un `gc convoy check` ralenti par la charge tué
+  au délai de 120 s de `convoy-parent-sweep`, le 10/11/2026 à 00:01).
 - Ouvertes : aucune connue.
 
 ## A — Autre

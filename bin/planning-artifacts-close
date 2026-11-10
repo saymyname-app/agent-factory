@@ -31,6 +31,14 @@
 # resolved in ONE `bd show`, never one call per id (af-nybppo: two calls per
 # closed convoy outran the timeout once five convoys had closed).
 #
+# A loaded host still pushed a healthy run past those 60 s (three "context
+# deadline exceeded", 07-10/11/2026, af-p1d8ka): every tracker call is slower,
+# none is wedged. The run owns a budget below the order's timeout, which also
+# leaves room for order-pause's own tracker read before it. A run cut by it
+# loses nothing -- every close is idempotent, and the next bead close runs the
+# same pass again over the same convoys -- so it is deferred (exit 0); only
+# PLANNING_ARTIFACTS_CLOSE_DEFER_LIMIT runs cut in a row fail (exit 2).
+#
 # Usage: planning-artifacts-close [--check-only]
 set -uo pipefail
 
@@ -39,11 +47,38 @@ ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
 GC_BIN="${GC_BIN:-gc}"
 CONVOY_STATE_BIN="${CONVOY_STATE_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/convoy-state}"
 CHECK_ONLY=0
+BUDGET_SECONDS="${PLANNING_ARTIFACTS_CLOSE_BUDGET_SECONDS:-30}"
+DEFER_LIMIT="${PLANNING_ARTIFACTS_CLOSE_DEFER_LIMIT:-3}"
+DEFERRED_FILE="$ROOT/.gc/runtime/planning-artifacts-close-deferred-passes"
+
+# Own the whole process group below the order's 60 s deadline (and order-pause
+# gate's 20 s read before it), so a slow run answers precisely instead of the
+# controller's vague "context deadline exceeded" (af-p1d8ka, as af-onrwp8 did
+# for factory-watchdog).
+if [ "${PLANNING_ARTIFACTS_CLOSE_BUDGET_ACTIVE:-0}" != "1" ]; then
+  PLANNING_ARTIFACTS_CLOSE_BUDGET_ACTIVE=1 timeout --kill-after=3s "$BUDGET_SECONDS" "$0" "$@"
+  budget_rc=$?
+  if [ "$budget_rc" != "124" ] && [ "$budget_rc" != "137" ]; then
+    rm -f "$DEFERRED_FILE"
+    exit "$budget_rc"
+  fi
+  load=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)
+  in_a_row=$(( $(cat "$DEFERRED_FILE" 2>/dev/null || echo 0) + 1 ))
+  if mkdir -p "$(dirname "$DEFERRED_FILE")" 2>/dev/null && printf '%s\n' "$in_a_row" > "$DEFERRED_FILE" 2>/dev/null \
+     && [ "$in_a_row" -lt "$DEFER_LIMIT" ]; then
+    printf '%s: internal budget exceeded after %ss — run deferred (%s of %s in a row, loadavg %s)\n' \
+      "$PROGRAM_NAME" "$BUDGET_SECONDS" "$in_a_row" "$DEFER_LIMIT" "$load"
+    exit 0
+  fi
+  printf '%s: internal budget exceeded after %ss — %s runs in a row cut short (loadavg %s)\n' \
+    "$PROGRAM_NAME" "$BUDGET_SECONDS" "$in_a_row" "$load" >&2
+  exit 2
+fi
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --check-only) CHECK_ONLY=1 ;;
-    -h|--help) sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,42p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "$PROGRAM_NAME: unknown argument: $1" >&2; exit 2 ;;
   esac
   shift

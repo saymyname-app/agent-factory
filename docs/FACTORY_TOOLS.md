@@ -140,8 +140,19 @@ mesuré contre un passage live de 47 secondes le 02/11/2026. Il garde ainsi
 plus de trois fois cette durée tout en laissant 30 secondes au contrôleur de
 l'order pour recueillir une erreur précise et tuer le groupe avant sa propre
 limite de 180 secondes. Un enfant bloqué rend donc `factory-watchdog: internal
-budget exceeded` et le code 2 ; il ne survit pas au passage et ne devient pas
-un vague `context deadline exceeded` du contrôleur (`af-ll4hju`).
+budget exceeded` ; il ne survit pas au passage et ne devient pas un vague
+`context deadline exceeded` du contrôleur (`af-ll4hju`).
+
+Sous une forte charge (load 15m ~34), un passage sain peut dépasser ce budget
+sans qu'aucun appel soit bloqué : chaque lecture de `gc` est seulement plus
+lente. L'observation live tourne en dernier, bornée par le temps restant moins
+5 secondes. Un passage coupé par le budget, ou dont l'observation n'a pas tenu
+dans ce temps, ne perd rien : le passage suivant relit le même état et renvoie
+ce que `factory-observe` garde en attente. Il est donc reporté (sortie 0, avec
+`pass deferred (n of 3 in a row, loadavg …)`), et seuls trois passages coupés
+de suite sortent 2 (`FACTORY_WATCHDOG_DEFER_LIMIT`). Le compte est tenu dans
+`.gc/runtime/factory-watchdog-deferred-passes` et remis à zéro par un passage
+qui finit (`af-onrwp8`).
 
 **Observe et page seulement** (ADR-0016 §7) : il ne résout jamais une porte,
 ne fusionne ni ne ferme jamais une PR, et ne rouvre jamais un workflow. Chaque
@@ -454,6 +465,18 @@ un des comptes GitHub de l'opérateur (`config/operator.toml`,
 humain : ni armée, ni fusionnée, ni relancée, ni étiquetée, ni transformée en
 bead. Liste vide : rien n'est armé et le passage compte une erreur
 (af-996mmd, `docs/DELIVERY.md`, « Outside authors are left to a human »).
+
+Chaque appel `gh`/`gc` est borné, et rien de nouveau ne démarre après 90
+secondes (`PR_AUTOPILOT_BUDGET_SECONDS`) ; passé l'arrêt dur de 100 secondes,
+aucun appel n'est plus lancé. Le passage entier est en plus arrêté à 105
+secondes (`PR_AUTOPILOT_STOP_SECONDS`, + 5 s de kill), 10 secondes sous le
+délai de 120 secondes de son ordre : sous une forte charge (load 15m ~30), un
+passage sain peut l'atteindre sans appel bloqué. Un passage ainsi coupé ne
+perd rien, le suivant relit tout trois minutes plus tard ; il est donc reporté
+(sortie 0, avec `pass deferred (n of 3 in a row, loadavg …)`), et seuls trois
+passages coupés de suite sortent 2 (`PR_AUTOPILOT_DEFER_LIMIT`). Le compte est
+tenu dans `.gc/runtime/pr-autopilot-deferred-passes` et remis à zéro par un
+passage qui finit (`af-pmbhlh`).
 
 ---
 
@@ -1624,7 +1647,13 @@ calculé par du code**.
 - **Story « non observée »** : l'Evaluator rédige un `repair` qui cite la
   story et ne le publie pas ; `./bin/convoy-advance` le publie par la porte
   de patch. **Story inobservable** : l'évaluation s'arrête et une question
-  t'est posée (`./bin/escalation-door list`).
+  t'est posée (`./bin/escalation-door list`). L'Evaluator peut ouvrir, un à
+  la fois, chacun des jeux déclarés du profil (af-ip0nrq) ; il doit couvrir
+  les jeux cités, et une story n'est rendue inobservable qu'avec la liste des
+  jeux essayés. Un arrêt causé par l'usine se relie à sa maintenance
+  (`./bin/convoy-state link-outcome-repair`) : une fois celle-ci fusionnée et
+  sa CI prouvée, ta question est retirée sans réponse et l'évaluation repart
+  au même commit, sans tour de fin.
 - **Constats hors ticket** : chacun est classé « réparé » (citation de ce
   qu'il rétablit et repair rédigé obligatoires), « proposition pour
   Benjamin » (gardé pour le dossier) ou « écarté » (raison obligatoire). Un

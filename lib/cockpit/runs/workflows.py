@@ -107,6 +107,7 @@ from datetime import datetime
 
 from cockpit.core.readmodel import PARIS
 from cockpit.projects.decisions import decisions_line
+from cockpit.projects.outcome import ABANDONED, MERGED, read_outcome
 from cockpit.runs.derive import (AGENT, CODE, DONE, HUMAN, LIVE, PASSED, REFUSED, STOPPED, WAIT, WAITING, _decoded, _ts,
                                  run_from_bead, tone)
 from cockpit.runs.trace import _epoch
@@ -440,7 +441,13 @@ def _run(key, group, meta, steps, attempts, sessions, now, trace, absent=UNRECOR
     for job in jobs:
         job["start"] = max(job["start"], start)
     outcomes = [_outcome(meta[t["id"]]) for t in group["tickets"]]
-    state, status, step = _state(jobs, tickets, outcomes, closed)
+    result = None
+    if group["kind"] == "d01":
+        # A ticket merged into the integration branch is no merge of the
+        # result: only the records of the flow say how a delivery ended.
+        outcomes = [outcome for outcome in outcomes if outcome != "merged"]
+        result = read_outcome(root)
+    state, status, step = _state(jobs, tickets, outcomes, closed, result)
     end = closed or now
     trigger, project = _origin(group, meta)
     title = (group.get("tracked") or {}).get("title") if group["kind"] == "workflow" else None
@@ -647,9 +654,16 @@ def _outcome(m):
     return None
 
 
-def _state(jobs, tickets, outcomes, closed):
+def _state(jobs, tickets, outcomes, closed, result=None):
     """(state, status, step) of a run: ``outcomes``, what each of its
-    tickets ended in; ``closed``, when its root closed."""
+    tickets ended in; ``closed``, when its root closed; ``result``, the
+    Outcome of a D01 delivery as its records give it
+    (:func:`cockpit.projects.outcome.read_outcome`), or None. A D01 delivery
+    is merged or abandoned only as its records say, as the result says it;
+    closed otherwise, it says the issue of its result, never a merge."""
+    issue = (result or {}).get("issue")
+    if issue in (MERGED, ABANDONED) or (closed and result is not None):
+        return DONE, result["label"], DONE_STEP
     if closed:
         if "merged" in outcomes:
             return DONE, "Fusionné", DONE_STEP

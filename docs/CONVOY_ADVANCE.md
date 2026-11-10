@@ -921,6 +921,17 @@ one request. No door closes an unmerged ticket (`bin/ticket-end` closes on
 its nine conditions), so the close is done in the Planning Run, and the
 consequence says that this answer alone closes nothing.
 
+A repair that only moves a proof — its `## Restores` cites a rule of
+`docs/TEST_GUIDELINE.md` — is no longer stopped all green by `bin/tdd-step
+red` (af-oa2ci4, `docs/TDD_STEP.md`). One stopped so before that path
+existed (R12, af-0p3nfo) is not raised: the pass lifts its stop by a resume
+of cause `proof_moved`, once per stop, its request withdrawn through
+`bin/escalation-door clear`, without an answer; a fresh author session
+finishes it on that path. That resume takes no bound, and it counts no round
+of the end: only a refusal of the end review or of the Outcome Evaluation
+counts one. Answered before the pass took it, the stop stays with the
+operator.
+
 ## A ticket stopped at its second amendment reaches the operator (T45)
 
 `bin/tdd-step amend` stops a ticket at its second amendment

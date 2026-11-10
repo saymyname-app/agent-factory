@@ -154,8 +154,14 @@ complete stop, no power-off; the machine's procedure is read on the page from
 this repository's runbook. A stop needs fresh readings of the sessions and the
 tickets. A confirmation rests on a reading of the tickets begun after the last
 session left; a resume waits `COCKPIT_STOP_RESUME_GRACE_SECONDS` (300) for the
-sessions before calling a missing one a gap. `bin/cockpit-isolated` plays the
-supervisor from a dataset's `stop_supervisor`. These writes have met only the
+sessions before calling a missing one a gap. A write the supervisor does not
+answer leaves the outcome uncertain (504, `incertain: true`): the same gesture
+is refused (409, `incertain: true`), nothing sent, and « Demander la
+suspension » drawn unavailable, until a reading of the supervisor begun after
+that outcome -- the mechanism of the other gestures (`cockpit.actions.uncertain`),
+with the supervisor as source (R15, af-0ilk7e). `bin/cockpit-isolated` plays the
+supervisor from a dataset's `stop_supervisor` (`unanswered_writes`: it records
+each write and answers none). These writes have met only the
 synthetic supervisor: the real trial is Benjamin's ADMIN window, after
 Delivered.
 
