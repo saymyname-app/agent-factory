@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 
 from cockpit.core.readmodel import ReadModel  # noqa: E402
 from cockpit.heartbeat.emitter import (  # noqa: E402
+    CLEANLY_STOPPED,
     HeartbeatEmitter,
     read_url_from_file,
 )
@@ -154,28 +155,42 @@ class HeartbeatEmitterTest(unittest.TestCase):
             Path(path).unlink()
 
     # ------------------------------------------------------------------
-    # AC3 — the heartbeat pauses only while a clean stop is confirmed
-    # (R17, af-8hq9o8: the driver says it, a suspension to verify is not).
+    # AC3 — the heartbeat pauses in no state other than Clean stop
+    # ("Arrêtée proprement").
     # ------------------------------------------------------------------
-    def test_pauses_only_while_a_clean_stop_is_confirmed(self):
+    def test_pauses_only_when_cleanly_stopped(self):
         clock = FakeClock()
         read_model = fresh_read_model(clock)
         pinger = FakePinger()
-        confirmed = {"value": False}
+        state = {"value": "en_marche"}
         emitter = HeartbeatEmitter(
             read_model,
             clock,
             secret_loader=lambda: SECRET_URL,
             ping=pinger,
-            stopped_cleanly=lambda: confirmed["value"],
+            state_provider=lambda: state["value"],
         )
 
-        self.assertEqual("pinged", emitter.tick())
-        clock.advance(300)
-        for name in ("gc", "beads"):
-            read_model.ingest(name, {"ok": True}, at=clock.now())
+        non_pausing_states = [
+            "en_marche",
+            "arret_en_cours",
+            "redemarrage",
+            "reprise_verifiee",
+            "reprise_avec_ecarts",
+            "arret_force",
+            "arret_interrompu",
+            None,  # T23 not wired yet: an unknown state must not pause either.
+        ]
+        for value in non_pausing_states:
+            state["value"] = value
+            self.assertEqual(
+                "pinged", emitter.tick(), "must not pause in state %r" % (value,)
+            )
+            clock.advance(300)
+            for name in ("gc", "beads"):
+                read_model.ingest(name, {"ok": True}, at=clock.now())
 
-        confirmed["value"] = True
+        state["value"] = CLEANLY_STOPPED
         before = len(pinger.calls)
         self.assertEqual("paused", emitter.tick())
         self.assertEqual(before, len(pinger.calls))

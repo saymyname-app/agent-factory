@@ -155,7 +155,7 @@ class RestartTest(unittest.TestCase):
         read_model = self._fresh_read_model(clock)
         emitter = HeartbeatEmitter(
             read_model, clock, secret_loader=lambda: "https://hc-ping.com/x",
-            ping=lambda url: None, stopped_cleanly=driver.suspension_confirmee,
+            ping=lambda url: None, state_provider=driver.state,
         )
 
         driver.request_stop()
