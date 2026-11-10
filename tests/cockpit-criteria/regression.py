@@ -109,22 +109,33 @@ def files() -> list[Path]:
 def run(path: Path, deadline: float) -> tuple[Path, int | None, float, str]:
     """One test file, in a session of its own: past the deadline, it and
     everything it started are killed, and its status is None. The session
-    also dies with the regression, however that ends (af-8cfygl)."""
+    also dies with the regression, however that ends (af-8cfygl), where the
+    tree has lib/bounded_process.py; a tree without it keeps the session
+    alone, as budgets() keeps its defaults."""
     sys.path.insert(0, str(ROOT / "lib"))
-    import bounded_process
+    try:
+        import bounded_process
+    except ImportError:
+        bounded_process = None
 
     started = time.monotonic()
-    proc = bounded_process.popen([sys.executable, str(path)], cwd=ROOT, text=True, stdout=subprocess.PIPE,
-                                 stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+    argv = [sys.executable, str(path)]
+    options = dict(cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+    proc = (bounded_process.popen(argv, **options) if bounded_process
+            else subprocess.Popen(argv, start_new_session=True, **options))
     try:
         output, _ = proc.communicate(timeout=max(0.0, deadline - time.monotonic()))
         status: int | None = proc.returncode
     except subprocess.TimeoutExpired:
-        bounded_process.kill_group(proc)
+        if bounded_process:
+            bounded_process.kill_group(proc)
+        else:
+            os.killpg(proc.pid, signal.SIGKILL)
         output, _ = proc.communicate()
         status = None
     finally:
-        bounded_process.release(proc)
+        if bounded_process:
+            bounded_process.release(proc)
     return path, status, time.monotonic() - started, output
 
 

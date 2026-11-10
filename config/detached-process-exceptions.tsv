@@ -13,3 +13,4 @@
 2026-11-10	bin/role-adoption-trial:377	The supervisor of a throwaway trial city, stopped by the trial itself.
 2026-11-10	bin/ticket-evaluation:157	`detached`: the product launched for a Ticket Evaluation runs between passes.
 2026-11-10	tests/cockpit-criteria/commands/home_destination.py:256	Measuring browser killed by its finally, not when its caller dies; the file differs on integration/af-fgcw0d around these lines, so it moves to bounded_process.popen after convoy af-strhoy merges, not before (no take-up conflict).
+2026-11-10	tests/cockpit-criteria/regression.py:125	Fallback for a tree without lib/bounded_process.py (a tree older than af-8cfygl): its session stays alone, as before; every newer tree goes through bounded_process.popen.

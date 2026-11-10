@@ -52,6 +52,8 @@ class RegressionHostQueue(unittest.TestCase):
         self.marks.mkdir()
         (self.tree / "tests" / "cockpit-criteria").mkdir(parents=True)
         shutil.copy(REGRESSION, self.tree / "tests" / "cockpit-criteria" / "regression.py")
+        (self.tree / "lib").mkdir()
+        shutil.copy(ROOT / "lib" / "bounded_process.py", self.tree / "lib" / "bounded_process.py")
         for name in FILES:
             (self.tree / name).write_text(STAND_IN)
 
@@ -127,6 +129,35 @@ class RegressionHostQueue(unittest.TestCase):
         proc, took = self.regression(REGRESSION_HOST_WAIT="1", CI_RUN_TESTS_HOST_LOCK_HELD=str(self.lock))
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         self.assertNotIn("waiting", proc.stdout)
+
+
+    def test_a_regression_killed_takes_the_processes_of_its_test_files_with_it(self):
+        # 10/11/2026: the pass that ran the regression was killed and the
+        # regression ran on alone (af-8cfygl); its test files must not.
+        base = {key: value for key, value in os.environ.items()
+                if key not in ("GITHUB_ACTIONS", "CI_RUN_TESTS_HOST_LOCK_HELD", "REGRESSION_HOST_WAIT", "REGRESSION_BUDGET")}
+        proc = subprocess.Popen([sys.executable, "tests/cockpit-criteria/regression.py"], cwd=self.tree,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                                env={**base, "MARKS": str(self.marks), "CI_RUN_TESTS_HOST_LOCK_FILE": str(self.lock),
+                                     "SLOW": "cockpit-a-test.py"})
+        mark = self.marks / "grandchild.pid"
+        deadline = time.monotonic() + 30
+        while not (mark.exists() and mark.read_text()) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        grandchild = int(mark.read_text())
+        self.addCleanup(lambda: subprocess.run(["kill", "-9", str(grandchild)], capture_output=True))
+        proc.kill()
+        proc.wait()
+        deadline = time.monotonic() + 5
+        while Path(f"/proc/{grandchild}").exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertFalse(Path(f"/proc/{grandchild}").exists(), "a test file's process outlived its killed regression")
+
+    def test_a_tree_without_the_launcher_still_runs_green(self):
+        shutil.rmtree(self.tree / "lib")
+        proc, _ = self.regression()
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual(sorted(Path(name).name + ".ran" for name in FILES), self.ran())
 
 
 if __name__ == "__main__":
