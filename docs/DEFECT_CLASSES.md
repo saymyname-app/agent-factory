@@ -227,7 +227,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   relance d'un contrôle rouge acceptait (af-toyety).
 - Occurrences : #566, #618, #641, #648, #656, #664, #665, #669, #671, #674,
   #675, #676, #680, #689, #690, #692, #699, #700, #714, #715 ; af-vf51g6 ;
-  af-dtsy06 ; af-h6nyqc ; af-toyety.
+  af-dtsy06 ; af-h6nyqc ; af-toyety ; af-yxxa68.
 - Ouvertes : exception datée du 29/10/2026 : la relecture de code par modèle
   n'est pas rejouée sur un cas connu (étude B § 4.3). Elle reste bornée par
   ses citations vérifiées et ses passes ciblées, mais n'est pas déclarée

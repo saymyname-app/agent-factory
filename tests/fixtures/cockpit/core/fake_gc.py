@@ -17,12 +17,28 @@ resumes the city, ``POST /v0/city/<city>/session/<id>/stop`` stops one
 session; each answers ``{"status": "ok"}``. Every write it receives is kept
 in ``writes``, any other one too (``kill``, a session ``suspend``...) and
 answered 404: a test sees what a cockpit asked, a complete stop included.
+
+Its journal, ``GET /v0/city/<city>/events``, keeps every event it emitted
+and gives it by pages as gc 1.5.0 does (``/openapi.json`` and the installed
+supervisor, read on 2026-11-10; af-yxxa68): newest first, ``limit`` items
+(omitted or 0: 100; above 1000 or not a number: 422 ``validation-failed``),
+``next_cursor`` only on a truncated page, ``cursor`` passed back gives the
+next page, an unknown cursor is a 400 ``invalid-cursor``; ``type`` and
+``actor`` filter. ``/sessions`` takes the same ``limit`` and ``cursor``, in
+the order ``set_sessions`` gave. The blocking reads (``index``, ``wait``)
+and ``since`` are not played: they answer a 400 ``not-in-fake`` rather than
+a page that ignores them.
 """
+import base64
 import json
 import queue
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs
+
+DEFAULT_LIMIT = 100
+MAX_LIMIT = 1000
 
 CITY = "fake-city"
 DASHBOARD_HTML = b"<!doctype html><html><head><title>Gas City</title></head><body></body></html>"
@@ -52,6 +68,7 @@ class FakeGc:
         self._ready = []
         self._sessions = []
         self._subscribers = []
+        self._journal = []
         self._down = False
         self._stream_muted = False
         self._seq = 0
@@ -67,7 +84,7 @@ class FakeGc:
                     # A dead supervisor: drop the connection, answer nothing.
                     self.connection.close()
                     return
-                path = self.path.split("?", 1)[0]
+                path, _, query = self.path.partition("?")
                 if path in DASHBOARD_PATHS:
                     self._send(200, "text/html; charset=utf-8", DASHBOARD_HTML)
                     return
@@ -101,8 +118,21 @@ class FakeGc:
                         return
                     if rest == "sessions":
                         with gc._lock:
-                            items = list(gc._sessions)
-                        self._send_json({"items": items, "total": len(items)})
+                            items = [dict(item) for item in gc._sessions]
+                        self._send_page(query, "ss", items, key=lambda index, item: index)
+                        return
+                    if rest == "events":
+                        params = parse_qs(query)
+                        unplayed = sorted({"index", "wait", "since"} & set(params))
+                        if unplayed:
+                            self._problem(400, "not-in-fake", "the fake gc does not play " + ", ".join(unplayed))
+                            return
+                        with gc._lock:
+                            items = [dict(event) for event in reversed(gc._journal)]
+                        for name in ("type", "actor"):
+                            if params.get(name):
+                                items = [event for event in items if event[name] == params[name][-1]]
+                        self._send_page(query, "sq", items, key=lambda index, event: event["seq"])
                         return
                     if rest == "events/stream":
                         self._stream_events()
@@ -133,8 +163,8 @@ class FakeGc:
                     return None
                 return rest, body
 
-            def _problem(self, status, code, detail):
-                self._send_json({"type": "urn:gascity:error:" + code, "title": code, "status": status,
+            def _problem(self, status, code, detail, title=None):
+                self._send_json({"type": "urn:gascity:error:" + code, "title": title or code, "status": status,
                                  "detail": detail, "code": code}, status=status,
                                 content_type="application/problem+json")
 
@@ -166,6 +196,46 @@ class FakeGc:
                     self._problem(404, "session-not-found", "not_found: session " + parts[1])
                     return
                 self._send_json({"id": parts[1], "status": "ok"})
+
+            def _send_page(self, query, kind, items, key):
+                """One page of ``items`` as gc 1.5.0 lists them: ``key``
+                (of the position and the item) decreases along the list,
+                the cursor names the key of the last item given."""
+                params = parse_qs(query)
+                raw = params.get("limit", [""])[-1]
+                try:
+                    limit = int(raw) if raw != "" else 0
+                except ValueError:
+                    return self._invalid_limit("invalid integer", raw)
+                if limit < 0:
+                    return self._invalid_limit("expected number >= 0", limit)
+                if limit > MAX_LIMIT:
+                    return self._invalid_limit("expected number <= %d" % MAX_LIMIT, limit)
+                limit = limit or DEFAULT_LIMIT
+                keyed = [(key(index, item), item) for index, item in enumerate(items)]
+                if kind == "ss":
+                    # Positions grow along the list: walk it with the key negated.
+                    keyed = [(-k, item) for k, item in keyed]
+                if params.get("cursor"):
+                    after = _read_cursor(params["cursor"][-1], kind)
+                    if after is None:
+                        self._problem(400, "invalid-cursor",
+                                      "cursor is not a valid pagination token; re-fetch the first page",
+                                      title="Invalid Cursor")
+                        return
+                    keyed = [(k, item) for k, item in keyed if k < after]
+                page = keyed[:limit]
+                payload = {"items": [item for _, item in page], "total": len(items)}
+                if len(keyed) > limit:
+                    payload["next_cursor"] = _cursor(kind, page[-1][0])
+                self._send_json(payload)
+
+            def _invalid_limit(self, message, value):
+                self._send_json({"type": "urn:gascity:error:validation-failed", "title": "Validation Failed",
+                                 "status": 422, "detail": "validation failed",
+                                 "errors": [{"message": message, "location": "query.limit", "value": value}],
+                                 "code": "validation-failed"},
+                                status=422, content_type="application/problem+json")
 
             def _send(self, status, content_type, body):
                 self.send_response(status)
@@ -272,18 +342,23 @@ class FakeGc:
         with self._lock:
             self._sessions = [dict(item) for item in items]
 
-    def emit(self, event_type, subject="", payload=None):
-        """Send one city event to every open stream, e.g. ``bead.closed``."""
+    def emit(self, event_type, subject="", payload=None, ts=None, actor="controller", **fields):
+        """Log one city event in the journal and send it to every open
+        stream, e.g. ``bead.closed``. ``ts`` (now when omitted) and
+        ``actor`` as gc writes them; ``fields``, the keys gc adds to some
+        events (``session_id``, ``run_id``, ``step_id``...)."""
         with self._lock:
             self._seq += 1
-            event = {
+            event = dict(fields)
+            event.update({
                 "seq": self._seq,
                 "type": event_type,
-                "ts": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
-                "actor": "controller",
+                "ts": ts or time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
+                "actor": actor,
                 "subject": subject,
                 "payload": payload or {},
-            }
+            })
+            self._journal.append(event)
             subscribers = list(self._subscribers)
         for q in subscribers:
             q.put(event)
@@ -296,3 +371,24 @@ class FakeGc:
         with self._lock:
             if q in self._subscribers:
                 self._subscribers.remove(q)
+
+
+def _cursor(kind, key):
+    """``v1:`` and the unpadded base64 of ``{"k": kind, "s": key}``, the
+    form gc 1.5.0 gives its journal (``v1:eyJrIjoic3EiLCJzIjoxMzk2MzkyfQ``)."""
+    raw = json.dumps({"k": kind, "s": key}, separators=(",", ":")).encode("utf-8")
+    return "v1:" + base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _read_cursor(token, kind):
+    """The key a cursor of ``kind`` names, or None when it is not one."""
+    if not token.startswith("v1:"):
+        return None
+    body = token[len("v1:"):]
+    try:
+        data = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict) or data.get("k") != kind or type(data.get("s")) is not int:
+        return None
+    return data["s"]
