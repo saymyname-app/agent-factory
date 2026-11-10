@@ -169,15 +169,7 @@ def from_dataset(dataset) -> SyntheticCity:
             city = replace(city, **{key: path})
         return _with_retention(city, dataset)
     if "tracker" in dataset:
-        city = _tracker_city(name, dataset["tracker"], dataset.get("projects"), dataset.get("repos"))
-        # A tracker read on the host's clock, unless the state fixes it at
-        # its own time (`clock`: "fixed"), so that what its records date
-        # stays where it shows, over the seven days of the Analyses (R13).
-        if dataset.get("clock") == "fixed":
-            city = replace(city, clock_start=_fixed_time(at).isoformat())
-        elif "clock" in dataset:
-            raise DatasetRefused(f"its clock (clock) is not \"fixed\": {dataset['clock']!r}")
-        return city
+        return _tracker_city(name, dataset["tracker"], dataset.get("projects"), dataset.get("repos"))
     city = _panorama_city(name, _fixed_time(at), ui, dataset.get("visible_text"), _folded(dataset.get("folded")),
                           _folded(dataset.get("drawn"), "drawn"), _run_cards(dataset.get("runs")),
                           _result_values(dataset.get("result")), dataset.get("release"))

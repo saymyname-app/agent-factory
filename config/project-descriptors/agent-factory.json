@@ -235,7 +235,6 @@
       "analysis-narrow": "config/cockpit-datasets/analysis-narrow.json",
       "analysis-light": "config/cockpit-datasets/analysis-light.json",
       "analysis-time": "config/cockpit-datasets/analysis-time.json",
-      "analysis-d01-records": "config/cockpit-datasets/analysis-d01-records.json",
       "runs-active": "config/cockpit-datasets/runs-active.json",
       "runs-all": "config/cockpit-datasets/runs-all.json",
       "runs-completed": "config/cockpit-datasets/runs-completed.json",
