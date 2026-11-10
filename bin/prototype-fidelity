@@ -83,6 +83,9 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+import bounded_process  # noqa: E402
+
 
 PROGRAM = "prototype-fidelity"
 BIN = Path(__file__).resolve().parent
@@ -546,7 +549,7 @@ def dump_dom(browser: str, url: str, rendering: dict[str, Any]) -> str:
     try:
         with open(Path(work) / "dom.html", "wb") as out, open(Path(work) / "browser.log", "wb") as log:
             try:
-                proc = subprocess.Popen(argv, cwd=work, stdin=subprocess.DEVNULL, stdout=out, stderr=log, start_new_session=True)
+                proc = bounded_process.popen(argv, cwd=work, stdin=subprocess.DEVNULL, stdout=out, stderr=log)
                 proc.wait(timeout=BROWSER_TIMEOUT)
             except subprocess.TimeoutExpired as exc:
                 raise Refusal(f"le navigateur ({browser}) n'a rien rendu en {BROWSER_TIMEOUT} s : aucune mesure") from exc
@@ -555,10 +558,7 @@ def dump_dom(browser: str, url: str, rendering: dict[str, Any]) -> str:
         return (Path(work) / "dom.html").read_text(encoding="utf-8", errors="replace")
     finally:
         if proc is not None:
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+            bounded_process.kill_group(proc)
             proc.wait()
         for _ in range(20):
             shutil.rmtree(work, ignore_errors=True)

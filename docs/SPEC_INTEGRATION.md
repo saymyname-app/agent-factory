@@ -266,12 +266,16 @@ so the next pass can retry the control.
   (the wait for the host, the full budget, a margin: `bin/test-budgets
   show`), measured from the merged runs (study C, T3). A pass may run the
   regression command twice (the control after a take-up, then the tests of
-  the merged result): the order that runs `bin/convoy-advance` has 40 min,
+  the merged result): the order that runs `bin/convoy-advance` has 110 min,
   derived from the same file, and `bin/test-budgets check-order` fails when
-  it no longer covers one wait and two full runs
-  (`tests/test-budgets-test.py`). A run past `--timeout` is killed with
-  every process it started (its own session). A pass killed by the
-  controller has pushed nothing; its work tree is removed by the next.
+  it no longer covers the settlement of a pass and two full deadlines, each
+  with its own wait for the host (`tests/test-budgets-test.py`). A run past
+  `--timeout` is killed with every process it started (its own session).
+  So is a run whose caller dies first, the pass killed by the controller
+  included (`lib/bounded_process.py`, af-8cfygl): on 10/11/2026 a regression
+  outlived its killed pass and wrote a green piece no merge followed. A
+  pass killed by the controller has pushed nothing; its work tree is
+  removed by the next.
 
 ## Proof
 
