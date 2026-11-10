@@ -152,6 +152,26 @@ class FakeGcAnswersLikeTheRealOne(unittest.TestCase):
             self.assertLessEqual({"id", "template", "running", "last_active"}, set(item))
         self.assertLessEqual(set(fake["items"][0]) - {"active_bead"}, set(real["items"][0]) | {"session_name"})
 
+    def test_events_journal_pages(self):
+        # af-yxxa68: the journal by pages, newest first, the cursor passed
+        # back giving the next page; the refusals of a bad limit or cursor.
+        for _ in range(5):
+            self.fake.emit("bead.closed", subject="af-fake")
+        pages = {}
+        for name, base, city in (("real", REAL_BASE_URL, self.real_city), ("fake", self.fake_url, FAKE_CITY)):
+            first = json.loads(get(base, "/v0/city/%s/events?limit=2" % city)[2])
+            second = json.loads(get(base, "/v0/city/%s/events?limit=2&cursor=%s" % (city, first["next_cursor"]))[2])
+            pages[name] = (first, second)
+        for name, (first, second) in pages.items():
+            seqs = [e["seq"] for e in first["items"] + second["items"]]
+            self.assertEqual(sorted(seqs, reverse=True), seqs, name)
+            self.assertEqual(4, len(set(seqs)), name)
+            self.assertEqual({"items", "next_cursor", "total"}, set(first), name)
+        self.assertEqual(set(pages["real"][0]["items"][0]) & EVENT_KEYS, set(pages["fake"][0]["items"][0]))
+        for query in ("events?limit=1001", "events?limit=-1", "events?limit=abc", "events?limit=2&cursor=garbage"):
+            real, fake = self.both("/v0/city/%s/" + query)
+            self.assertEqual(json.loads(real)["code"], json.loads(fake)["code"], query)
+
     def test_city_event_stream_framing(self):
         real = first_frames(REAL_BASE_URL, "/v0/city/%s/events/stream" % self.real_city, {"heartbeat"})
         self.fake.emit("bead.closed", subject="af-fake")  # nobody listening yet: harmless
