@@ -61,6 +61,10 @@ EXHAUSTED_PROOF = (
 # covers the stop/parking itself; ``options`` covers every choice its request
 # builder can offer.  ``*`` means any answer to an operator-authored request.
 CONTRACT = {
+    # A repair that only moves a proof is no longer stopped all green, and one
+    # stopped so before is resumed by code (cause proof_moved, af-oa2ci4,
+    # tests/convoy-advance-resumes-stops-end-test.py); every other ticket's
+    # stop stays the Planning Run's.
     ("ticket_stop", "criterion_already_green"): {
         "exit": operator("Planning Run: close or revise the approved ticket"),
         "options": {

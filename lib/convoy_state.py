@@ -175,7 +175,7 @@ from pathlib import Path
 LIB = str(Path(__file__).resolve().parent)
 if LIB not in sys.path:
     sys.path.insert(0, LIB)
-from delivery_rules import PROVEN_BY_TEST_OPTION, evaluation_proven_by_test, review_replay_due
+from delivery_rules import PROVEN_BY_TEST_OPTION, evaluation_proven_by_test, moves_a_proof, review_replay_due
 
 # The two names serve annotations only, which are never evaluated here
 # (`from __future__ import annotations`): importing `typing` on each of the
@@ -465,6 +465,9 @@ KIND_WITHOUT_EVALUATOR = "prefactoring"
 ADDRESS_RE = re.compile(r"^http://127\.0\.0\.1:[0-9]{1,5}$")
 MAX_FINDING_LINE = 600
 ACCEPTANCE_HEADING = "## acceptance criteria"
+# What a repair restores, as bin/ticket-graph-publish writes it in the
+# ticket's text: « <kind> : <ref> » under this heading.
+RESTORES_HEADING = "## restores"
 # The Ticket Handoff (Spec §5): four sections written by the author, each
 # with content or the word for "nothing", and the records written by code.
 HANDOFF_SECTIONS = ("done", "deviations", "not_done", "out_of_ticket")
@@ -488,11 +491,12 @@ BOUND_END_ROUNDS = "end_rounds"
 # gave no result (af-xhc0sj), or a stage the flow removed stopped it
 # (ADR-0030 L3, af-pjvsgo), or its code review gave no result (af-wu6xj7),
 # or the operator answered « a » to its stop at a second amendment
-# (af-25o7vr): those resumes lift the stop. The correction round and a commit after a
+# (af-25o7vr), or a repair that only moves a proof was stopped all green
+# before tdd-step gave it its path (af-oa2ci4): those resumes lift the stop. The correction round and a commit after a
 # verdict are counted where they are written.
 RESUME_CAUSES = ("interrupted", "returned", "unblocked", "repair_delivered", "answered", "behind",
                  "evaluation_no_result", "stage_removed", "code_review_no_result", "amendment_granted",
-                 "inherited_change")
+                 "inherited_change", "proof_moved")
 # The stops a resume lifts, by the cause that lifts them: a Ticket Evaluation
 # without result (af-xhc0sj), the stops of the test review, a stage
 # ADR-0030 L3 removed (af-pjvsgo), a code review without result
@@ -502,7 +506,9 @@ RESUMABLE_STOPS = {"evaluation_no_result": ("evaluation_no_result",),
                    "code_review_no_result": ("code_review_no_result",),
                    "amendment_granted": ("amendment_exhausted",),
                    # af-npz9v1.39: every change since the freeze is the merged base's.
-                   "inherited_change": ("amendment_exhausted",)}
+                   "inherited_change": ("amendment_exhausted",),
+                   # af-oa2ci4: a repair that moves a proof finishes all green.
+                   "proof_moved": ("criterion_already_green",)}
 # A ticket stopped still refused whose every Blocking Finding the operator
 # overrode is merged as if at work; the merge that returns it lifts its stop
 # like a resumable one (af-n4bn62). The cause stays one of a ticket not
@@ -528,7 +534,9 @@ COMMIT_AFTER_VERDICT = "commit_after_verdict"
 # recorded and counted in `resumes`, takes no bound and never parks its
 # ticket for exhausted resumes (af-npz9v1.41: R2, af-cifk1e, parked on
 # 28/10/2026 at its third answer, the resume that answer opened never sent).
-ANSWERED_CAUSES = ("answered", "amendment_granted")
+# A repair that moves a proof is lifted once per stop, and is never stopped
+# all green again (af-oa2ci4): no bound either.
+ANSWERED_CAUSES = ("answered", "amendment_granted", "proof_moved")
 BOUNDED_RESUME_CAUSES = tuple(cause for cause in RESUME_CAUSES if cause not in ANSWERED_CAUSES) \
     + (COMMIT_AFTER_VERDICT,)
 # A resume `behind` comes from the factory, not from the ticket: another
@@ -938,6 +946,22 @@ def acceptance_criteria(description: Any) -> list[str]:
         if inside and match:
             criteria.append(match.group(1))
     return criteria
+
+
+def restores_cited(description: Any) -> dict[str, str] | None:
+    """What a repair restores, as its published text cites it: the first
+    line « <kind> : <ref> » under "## Restores", with a kind the patch door
+    knows; None otherwise (af-oa2ci4: bin/tdd-step reads whether it moves a
+    proof)."""
+    inside = False
+    for line in description.splitlines() if isinstance(description, str) else []:
+        if line.startswith("## "):
+            inside = line.strip().lower() == RESTORES_HEADING
+            continue
+        if inside and line.strip():
+            kind, separator, ref = line.strip().partition(" : ")
+            return {"kind": kind, "ref": ref.strip()} if separator and kind in RESTORES_KINDS and ref.strip() else None
+    return None
 
 
 def criteria_digest(criteria: list[str]) -> str:
@@ -3271,6 +3295,7 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
     stories = None
     out["user_stories"] = None
     out["criteria"] = acceptance_criteria(ticket.get("description"))
+    out["restores"] = restores_cited(ticket.get("description")) if kind == "repair" else None
     # The criteria as `mark` froze them with the approved graph (T19): the
     # ticket-end gate reads whether the ones on the ticket are still those.
     out["criteria_frozen"] = None
@@ -5647,7 +5672,8 @@ def cmd_open_resume(args: argparse.Namespace) -> int:
     resume left for one cause (that one is parked), and on a stopped ticket unless the
     cause is one that lifts its stop (RESUMABLE_STOPS): `evaluation_no_result`
     (af-xhc0sj), `stage_removed` for a stop of the removed test review
-    (af-pjvsgo), `code_review_no_result` (af-wu6xj7), or `returned` for a
+    (af-pjvsgo), `code_review_no_result` (af-wu6xj7), `proof_moved` for a
+    repair that moves a proof stopped all green (af-oa2ci4), or `returned` for a
     stop `still_refused` the operator overrode in full (af-n4bn62); that
     resume keeps the stop under it. A code review without result also loses its spent round:
     the next finished exit is reviewed afresh."""
@@ -5665,6 +5691,10 @@ def cmd_open_resume(args: argparse.Namespace) -> int:
                                    and lifted["reason"] == STOP_STILL_REFUSED
                                    and not overridden_metadata(metadata))):
         raise Refusal(f"ticket arrêté ({lifted['reason']}) : {args.ticket} ne se reprend pas pour la cause {cause}")
+    if cause == "proof_moved" and not moves_a_proof({"kind": metadata.get(KEY_KIND),
+                                                     "restores": restores_cited(ticket.get("description"))}):
+        raise Refusal(f"le ticket {args.ticket} ne déplace pas une preuve (un repair qui rétablit une règle de "
+                      "docs/TEST_GUIDELINE.md) : son arrêt « critères tous déjà verts » reste à l'opérateur")
     entries = resume_record(metadata[KEY_RESUME])["entries"] if KEY_RESUME in metadata else []
     if entries and (entries[-1]["cause"], entries[-1]["ref"]) == (cause, ref):
         return done(args.convoy, args.ticket, {})
