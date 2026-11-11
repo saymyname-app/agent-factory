@@ -1,0 +1,7 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/factory-configure-proposal-decided-test.py::FactoryConfigureProposalDecided.test_a_recorded_proposal_once_decided_in_pour_moi_lets_the_change_be_prepared_again"
+    ]
+  }
+}
