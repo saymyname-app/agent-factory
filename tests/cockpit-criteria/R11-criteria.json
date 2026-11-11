@@ -1,0 +1,7 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/home-result-essai-route-test.py::HomeResultEssaiRoute.test_essai_answers_the_address_of_the_product_launched_at_the_revision_of_the_dossier"
+    ]
+  }
+}
