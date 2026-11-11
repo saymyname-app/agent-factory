@@ -57,26 +57,6 @@ def selected(paths: list[Path], ticket_tests: str) -> list[Path]:
     return [path for path in paths if path.name == SMOKE or family(path.name) in families]
 
 
-def longest_first(ids: list[str], seconds: dict[str, int]) -> list[str]:
-    """The classes in the order they start: the longest measured first, and
-    one never measured before them all, as it may be the longest. Started in
-    the order of their names, the longest started last and ran alone at the
-    end: the 87 classes of integration/af-fgcw0d took 2000 s where their sum
-    shared on 8 cores is 1512 s (af-8a246o)."""
-    return sorted(ids, key=lambda test_id: -seconds.get(test_id, float("inf")))
-
-
-def measured() -> dict[str, int]:
-    """The last measured seconds of each class (lib/test_budgets.py); none
-    where the tree has no such reader."""
-    sys.path.insert(0, str(ROOT / "lib"))
-    try:
-        from test_budgets import class_seconds, store_dir
-    except ImportError:
-        return {}
-    return class_seconds(store_dir())
-
-
 def criterion_tests() -> list[str]:
     """One id per test class of each criterion test file."""
     ids = []
@@ -110,7 +90,7 @@ def run(test_id: str) -> str | None:
 
 class CockpitCriteria(unittest.TestCase):
     def test_every_criterion_test_of_the_cockpit_passes(self):
-        ids = longest_first(criterion_tests(), measured())
+        ids = criterion_tests()
         self.assertIn(
             "tests/cockpit-criteria/commands/isolated-launch-test.py::IsolatedCockpitLaunch", ids,
             "the criterion tests of the launch are not found",

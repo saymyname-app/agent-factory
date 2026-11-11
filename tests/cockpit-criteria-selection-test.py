@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """At a ticket's green, the cockpit's criterion tests keep to the ticket's
 families and the end-to-end launch (study C, T4, af-npz9v1.31); anywhere
-else they run whole. They start longest first (af-8a246o). Reads `selected`
-and `longest_first` of tests/cockpit-criteria-test.py."""
+else they run whole. Reads `selected` of tests/cockpit-criteria-test.py."""
 
 from __future__ import annotations
 
@@ -41,16 +40,6 @@ class Selection(unittest.TestCase):
     def test_a_ticket_of_a_new_screen_still_runs_the_end_to_end_launch(self):
         self.assertEqual(["isolated-launch-test.py"],
                          self.names("tests/cockpit-criteria/commands/analyses-indicators-test.py"))
-
-
-class Order(unittest.TestCase):
-    def test_the_longest_measured_class_starts_first_and_an_unmeasured_one_before_it(self):
-        self.assertEqual(["new.py::New", "a.py::Long", "c.py::Mid", "b.py::Short"],
-                         CRITERIA.longest_first(["a.py::Long", "b.py::Short", "c.py::Mid", "new.py::New"],
-                                                {"a.py::Long": 900, "b.py::Short": 40, "c.py::Mid": 300}))
-
-    def test_without_any_measure_the_classes_keep_their_order(self):
-        self.assertEqual(["a.py::A", "b.py::B"], CRITERIA.longest_first(["a.py::A", "b.py::B"], {}))
 
 
 if __name__ == "__main__":

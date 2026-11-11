@@ -63,8 +63,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `bash tests/factory-watchdog-test.sh`,
   `python3 tests/idle-ready-work-wake-test.py IdleReadyWorkWakeTest.test_a_hung_notification_is_bounded_without_changing_wake_cooldown`,
   `bash tests/ci-run-tests-leftover-test.sh`,
-  `python3 tests/regression-host-queue-test.py RegressionHostQueue.test_a_file_that_leaves_a_process_alive_is_red_and_the_process_is_killed`,
-  `python3 tests/cockpit-criteria-selection-test.py Order`
+  `python3 tests/regression-host-queue-test.py RegressionHostQueue.test_a_file_that_leaves_a_process_alive_is_red_and_the_process_is_killed`
   — complet pour les commandes Python bornées de `bin/`, `lib/` et
   `tests/cockpit-criteria/` : un seul lanceur (`lib/bounded_process.py`)
   ouvre une session et tue son groupe au délai, et aussi quand l'appelant
@@ -84,12 +83,11 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   l'order et tue tout son groupe de processus, puis tient le délai d'incident
   ticket sur le `pass_seconds` mesuré sans casser l'override d'exploitation ;
   le dernier tient la notification de `idle-ready-work-wake` dans son budget
-  sans changer son réveil ni son cooldown. Les deux suivants tiennent les
+  sans changer son réveil ni son cooldown. Les deux derniers tiennent les
   tests eux-mêmes : `bin/ci-run-tests` et la régression du Cockpit lancent
   chaque fichier sous `lib/ci_test_reaper.py`, sous-faucheur (subreaper) qui
   tue ce qu'un fichier laisse vivant en finissant, le nomme et le fait
-  échouer (af-i9llwm). Le dernier tient l'ordre des classes de critères :
-  la plus longue mesurée part la première (af-8a246o).
+  échouer (af-i9llwm).
 - Occurrences : #624, #628, #629, #630, #631, #636, #647, #657, #658, #661,
   #667, #694, #696, #705, #706, #708, #710, #713, #721 ; copies orphelines du
   22/10 (sans PR) ; af-kky570 ; af-npz9v1.46 ; af-npz9v1.26 ; af-30zwwu ;
@@ -98,9 +96,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   survivant à sa passe tuée, ordre convoy-advance à 90 min sans compter une
   attente par exécution) ; af-i9llwm (porte synthétique « expires » laissée
   par chaque régression du Cockpit, 23 vivantes le 11/11) ; af-8a246o
-  (classes de critères lancées par ordre de nom, la plus longue en dernier :
-  2077 s pour 1512 s de travail sur 8 cœurs, budget complet épuisé ; plafond
-  HTTP de 3 s des actions opérateur sous charge).
+  (plafonds d'attente de 3 s des actions opérateur et de 1,5 s du réveil
+  idle-ready-work-wake, rouges sous une charge de 37 à 39 sur 8 cœurs ;
+  budget complet de la régression du Cockpit dépassé, relevé par la mesure).
 - Ouvertes : les invocations directes antérieures hors des occurrences de
   l'étude B sont nommées une par une, avec leur date et leur motif, dans
   `config/bounded-process-exceptions.tsv` ; une vingtaine de délais écrits à
