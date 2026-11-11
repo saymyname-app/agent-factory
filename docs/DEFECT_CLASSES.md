@@ -117,6 +117,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/code-review-test.py CodeReviewTest.test_an_unfavorable_judgement_from_the_previous_contract_is_rejudged_once_at_the_same_tip`,
   `python3 tests/tdd-step-test.py TddStepTest.test_an_ambiguous_short_successor_does_not_name_either_ticket`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_factory_technical_request_waits_for_every_linked_repair_s_delivery_proof_then_resumes_once`,
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_maintenance_answer_waits_for_its_linked_repair_s_delivery_then_resumes_once`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_an_evaluation_without_result_resumes_once_after_its_linked_factory_repair_is_delivered`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_an_evaluation_outage_resumes_once_after_its_linked_factory_repair_is_delivered`,
   `python3 tests/convoy-state-test.py ConvoyStateTest.test_migrate_repair_resume_accepts_only_the_exact_legacy_history_and_changes_only_the_last_cause`,
@@ -192,7 +193,13 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   autre commit, et une maintenance liée ne pouvait plus le lever : `settle`
   range l'arrêt périmé sous `lifts` (`outdated_by`), retire sa demande sans
   réponse et évalue la nouvelle pointe, prouvé par
-  `python3 tests/outcome-evaluation-outdated-stop-test.py`).
+  `python3 tests/outcome-evaluation-outdated-stop-test.py`) ;
+  af-fv8ca4 (la réponse « Corriger par maintenance sur main » levait le
+  parcage avant que sa réparation soit liée, R13, et une passe qui avait lu
+  le ticket avant le lien le levait encore, R20 et R22 : ces tickets
+  reprenaient sans leur correctif ; la réponse attend la livraison de la
+  réparation liée et `lift-park` relit le lien à son écriture, prouvé par
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_maintenance_answer_waits_for_its_linked_repair_s_delivery_then_resumes_once`).
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
   contrôle : `criterion_already_green` reste au Planning Run, sauf
   le repair qui ne fait que déplacer une preuve (af-oa2ci4 : `tdd-step red`
