@@ -186,7 +186,8 @@ stopped the ticket is what raises it to the operator.
   Only then does code withdraw the technical request and resume the ticket as
   `repair_delivered`, exactly once. A repair
   merely open, failed, closed without proof, or not explicitly linked lifts
-  nothing. An ordinary operator request without that link still needs the
+  nothing, and neither does Benjamin's answer to that option: the ticket
+  waits for the link (af-fv8ca4). An ordinary operator request without that link still needs the
   operator's answer. The same explicit link applies to a Ticket Evaluation
   stopped `evaluation_no_result` or `evaluation_outage`: its exact stop
   resumes once as `repair_delivered` only after the maintenance delivery is proven.

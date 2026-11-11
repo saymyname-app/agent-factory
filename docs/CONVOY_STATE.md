@@ -843,7 +843,14 @@ parked by another one (a parking is lifted on the ticket that caused it), a
 `--request` that is not a bead id and an `--option` that is not one
 lowercase letter. Whether a human answer is one that lifts is the caller's
 decision (`bin/convoy-advance`); linked repair delivery is checked here and
-fails closed. Nothing here lifts a stop.
+fails closed. Without `--repair`, it also refuses an open ticket's
+`operator_request` parking that has repairs linked to its current request,
+read at the write, or whose answered `--option` is « Corriger par
+maintenance sur main » (`MAINTENANCE_OPTION`): that parking is lifted by
+the delivery of its linked repair, never by the answer (af-fv8ca4).
+`--withdrawing` lifts it anyway: the caller withdraws the ticket right
+after (`withdraw-ticket`), so no resume follows the lift. `show`
+marks such an answer `awaits_repair: true` under `park.answer`. Nothing here lifts a stop.
 
 `record-grouped-request` writes on the convoy the bead of its grouped
 request, first alone, then with `--signature`, `--lift-option` and `--lifts`
