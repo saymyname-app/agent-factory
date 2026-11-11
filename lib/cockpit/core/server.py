@@ -733,18 +733,24 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         read of the tracker the cockpit started after it ended
         (:meth:`_reread_proposals`): a read that ends later but began
         before may not hold what the door wrote. A proposal with the same
-        words seen waiting was recorded, and is never prepared twice; one a
-        read started after the outcome does not show lifts the mark."""
+        words seen waiting was recorded, and is never prepared twice while
+        it waits; one a read started after the outcome does not show lifts
+        the mark, and so does a read after the one that last saw it
+        waiting that no longer shows it: it was decided (af-yv2g3n)."""
         server = self.server
         with server.proposal_lock:
             mark = server.proposal_uncertain.get(role_key)
         if mark is None:
             return None
         read_model = server.read_model
-        requests, _, _ = self._assemble_requests(read_model.snapshot(), read_model.now())
+        requests, beads_row, _ = self._assemble_requests(read_model.snapshot(), read_model.now())
+        read_at = beads_row["read_at"] if beads_row else None
         with server.proposal_lock:
             if any(request.quoi == mark["quoi"] for request in requests):
-                mark["verdict"] = "recorded"
+                mark.update(verdict="recorded", seen_waiting_at=read_at)
+            elif (mark["verdict"] == "recorded" and read_at is not None
+                  and mark.get("seen_waiting_at") is not None and read_at > mark["seen_waiting_at"]):
+                mark["verdict"] = "absent"
             verdict = mark["verdict"]
             if verdict == "absent":
                 server.proposal_uncertain.pop(role_key, None)
@@ -783,6 +789,8 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                 with server.proposal_lock:
                     if verdict is not None and mark["verdict"] != "recorded":
                         mark["verdict"] = verdict
+                        if verdict == "recorded":
+                            mark["seen_waiting_at"] = beads_row["read_at"]
                     mark["rereading"] = False
 
         threading.Thread(target=reread, daemon=True).start()

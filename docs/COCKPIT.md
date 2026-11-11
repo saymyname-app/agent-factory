@@ -1899,7 +1899,10 @@ source: after its door did not answer, none for that role goes before the
 tracker -- what waits in « Pour moi » -- was read again (the cockpit reads
 it at once in the background); reading the configuration lifts nothing.
 Then, if a proposal with the same words waits, it was recorded: it is said
-« Proposition déjà enregistrée » and never prepared twice.
+« Proposition déjà enregistrée » and never prepared twice while it waits.
+Once decided in « Pour moi », a later read of the tracker that no longer
+shows it lifts the mark: « Préparer ce changement » is offered again,
+without a restart of the cockpit (af-yv2g3n).
 
 **The cleaning** (`lib/cockpit/factory/cleanup.py`). « Examiner le
 périmètre » (`/usine?nettoyage=apercu`) runs
