@@ -111,7 +111,10 @@ def run(path: Path, deadline: float) -> tuple[Path, int | None, float, str]:
     everything it started are killed, and its status is None. The session
     also dies with the regression, however that ends (af-8cfygl), where the
     tree has lib/bounded_process.py; a tree without it keeps the session
-    alone, as budgets() keeps its defaults."""
+    alone, as budgets() keeps its defaults. Where the tree has
+    lib/ci_test_reaper.py, the file runs through it: what it leaves alive
+    when it ends is killed, named, and fails it (af-i9llwm: one synthetic
+    door per regression, 23 alive on the host on 11/11/2026)."""
     sys.path.insert(0, str(ROOT / "lib"))
     try:
         import bounded_process
@@ -120,6 +123,9 @@ def run(path: Path, deadline: float) -> tuple[Path, int | None, float, str]:
 
     started = time.monotonic()
     argv = [sys.executable, str(path)]
+    reaper = ROOT / "lib" / "ci_test_reaper.py"
+    if reaper.is_file():
+        argv = [sys.executable, str(reaper), *argv]
     options = dict(cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
     proc = (bounded_process.popen(argv, **options) if bounded_process
             else subprocess.Popen(argv, start_new_session=True, **options))
