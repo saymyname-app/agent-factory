@@ -24,6 +24,10 @@
 #      that patch once only inside the trial city.
 #   5. latest-failure retention replaces only an earlier sibling trial with
 #      the same prefix and refuses unsafe targets.
+#   6. every trial waits through isolated_city_wait_for, never on a
+#      wall-clock deadline of its own, and that wait counts host time: a
+#      second at twice the CPUs counts half, up to a stretch ceiling, and
+#      giving up names the load (af-2crkwu).
 
 set -Eeuo pipefail
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
@@ -186,5 +190,39 @@ if isolated_city_preserve_latest_failure "$second" "$latest" 2>/dev/null; then
   fail "latest-failure retention replaced a regular file"
 fi
 [ "$(cat "$latest")" = occupied ] || fail "a refused rotation changed a regular file"
+
+# --- 6. a trial waits in host time, through the one helper (af-2crkwu) -------
+for f in "${trials[@]}"; do
+  own=$(grep -nE 'date \+%s\) \+ ' "$f" || true)
+  [ -z "$own" ] || fail "$(basename -- "$f") waits on a wall-clock deadline of its own instead of isolated_city_wait_for:
+$own"
+done
+
+LOAD="$TMP/loadavg"
+export ISOLATED_CITY_LOADAVG_FILE="$LOAD" ISOLATED_CITY_CPUS=8 ISOLATED_CITY_WAIT_INTERVAL=0.1
+never() { return 1; }
+waited() {  # waited <load> <stretch> <seconds>: wall-clock ms until it gave up
+  local start
+  echo "$1 $1 $1 1/100 1" > "$LOAD"
+  start=$(date +%s%3N)
+  if ISOLATED_CITY_WAIT_STRETCH_MAX=$2 isolated_city_wait_for "$3" never 2>"$TMP/gave-up"; then
+    fail "a command that never succeeds was waited for successfully"
+  fi
+  echo $(( $(date +%s%3N) - start ))
+}
+ms=$(waited 4.00 4 1)
+[ "$ms" -ge 1000 ] && [ "$ms" -lt 1800 ] || fail "below its CPUs, the host gave 1 s of wait in ${ms} ms of wall clock"
+grep -qF 'gave up after 1s of wall clock for 1s of host time (load 4.00 on 8 CPUs): never' "$TMP/gave-up" \
+  || fail "the give-up does not name the wall clock and the load: $(cat "$TMP/gave-up")"
+ms=$(waited 16.00 4 1)
+[ "$ms" -ge 2000 ] && [ "$ms" -lt 2800 ] || fail "at twice its CPUs, the host gave 1 s of wait in ${ms} ms instead of about 2 s"
+ms=$(waited 80.00 2 1)
+[ "$ms" -ge 2000 ] && [ "$ms" -lt 2800 ] || fail "the wait was stretched past twice its seconds: ${ms} ms"
+
+echo "4.00 4.00 4.00 1/100 1" > "$LOAD"
+calls="$TMP/calls"; : > "$calls"
+third() { echo . >> "$calls"; [ "$(wc -l < "$calls")" -ge 3 ]; }
+isolated_city_wait_for 5 third || fail "a command that succeeds on its third run was not waited for"
+[ "$(wc -l < "$calls")" = 3 ] || fail "the command ran $(wc -l < "$calls") times instead of 3"
 
 echo "PASS: $SELF"

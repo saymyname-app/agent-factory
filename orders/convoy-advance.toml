@@ -29,8 +29,12 @@ trigger = "condition"
 interval = "1m"
 check = "/home/benja/agent-factory/bin/convoy-advance --check-only"
 exec = "/home/benja/agent-factory/bin/order-pause gate convoy-advance -- /home/benja/agent-factory/bin/convoy-advance --all --stopped-ok"
-# 90 min, derived from config/test-budgets.json: one wait for the host and
-# two full regressions (a take-up control, then the tests of the merged
-# result), two margins. `bin/test-budgets check-order` holds it
-# (tests/test-budgets-test.py; study C, T3).
-timeout = "90m"
+# 148 min, derived from config/test-budgets.json: the settlement before the
+# merge, then two full regression deadlines (a take-up control, then the
+# tests of the merged result), each with its own wait for the host and its
+# margin. `bin/test-budgets check-order` holds it (tests/test-budgets-test.py;
+# study C, T3). At 90 min (one wait counted for two runs, no settlement) three
+# passes were killed in 21 h on 09-10/11/2026, one after a green regression
+# whose merge was never written (af-8cfygl). 110 min until 11/11/2026, when
+# the full regression's budget went from 2340 s to 3480 s (af-8a246o).
+timeout = "148m"

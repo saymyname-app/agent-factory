@@ -63,6 +63,13 @@ the red is recorded with `replay` EXIT_AT, and its repair is kept.
 A red control's detail keeps each failing file the regression names (`FAIL`
 or `LATE`) and the output of the first one, not only the end of the run.
 
+Before the regression command runs on a result (a takeover, or a ticket
+merged on the tip), the evidence store is read for a sealed green run of the
+same command on the same Git tree, left by a pass that could not push it
+(af-l8zgmw): found, the commit that run tested is pushed in the place of the
+new one and the answer names it (`reused_from`). A red, a NOT RUN, or a
+recorded red on that tree, is never reused: the command runs again.
+
 With a remote `origin`, the protected and the integration branches are read
 there (after a fetch) and the integration branch is pushed there; without
 one, the local branches are used. What was done of a ticket is written
@@ -322,6 +329,12 @@ class Repo:
 
     def is_ancestor(self, commit: str, tip: str) -> bool:
         return self.git("merge-base", "--is-ancestor", commit, tip).returncode == 0
+
+    def tree(self, commit: str) -> str | None:
+        """The tree of `commit`: what a regression run tests. Two merges of
+        the same commits differ by their time, never by their tree."""
+        proc = self.git("rev-parse", "--verify", "--quiet", f"{commit}^{{tree}}")
+        return proc.stdout.strip() if proc.returncode == 0 else None
 
     def move(self, branch: str, new: str, old: str | None) -> None:
         """Move the integration branch from `old` (None: it does not exist
@@ -583,18 +596,67 @@ class Pass:
     branch: it only ever holds a tested, green tip, or the result being tested."""
 
     def __init__(self, repo: Repo, convoy_id: str, branch: str, protected: str, tip: str, tree: Path,
-                 command: list[str], timeout: float):
+                 command: list[str], timeout: float, state: dict[str, Any]):
         self.repo, self.convoy_id, self.branch, self.protected = repo, convoy_id, branch, protected
         self.tip, self.tree, self.command, self.timeout = tip, tree, command, timeout
         # What the work tree holds before a ticket is merged: the pushed tip,
         # or, under a red, the protected branch taken up on it and not pushed.
         self.held = tip
+        # The commit each ticket's `merged_tests` piece was captured at, and
+        # the commit recorded red on the convoy: what a run may be reused from.
+        self.tested = {ticket["id"]: (((ticket.get("evidence") or {}).get(TESTS_PIECE) or {}).get("commit"))
+                       for ticket in state["tickets"]}
+        red = state["convoy"].get("integration_red")
+        self.red = red.get("commit") if isinstance(red, dict) else None
+        # The green run the control of the protected branch reused, if any.
+        self.control_reused: dict[str, Any] | None = None
 
     def git(self, *args: str) -> subprocess.CompletedProcess[str]:
         return self.repo.git(*args, cwd=self.tree)
 
     def head(self) -> str:
         return self.git("rev-parse", "HEAD").stdout.strip()
+
+    def same_command(self, argv: Any) -> bool:
+        """The argv `tests` has bin/evidence-capture run for this regression
+        command; the path of the work tree is not compared."""
+        return (isinstance(argv, list) and len(argv) == 5 + len(self.command)
+                and Path(str(argv[0])).name == PROGRAM and argv[1:3] == ["tests", "--tree"]
+                and argv[4] == "--" and argv[5:] == self.command)
+
+    def green_run(self, result: str, tickets: Any) -> dict[str, Any] | None:
+        """A sealed green run of the regression command on the tree of
+        `result`, among the `merged_tests` pieces of `tickets` (af-l8zgmw): a
+        pass killed after its tests, or stopped by a NOT RUN after them, left
+        it unpushed. Its commit holds the pushed tip and every parent of
+        `result`, so pushing it loses nothing. None when there is none, or
+        when that tree was ever seen red: a red is always replayed."""
+        tree = self.repo.tree(result)
+        if tree is None or (self.red and self.repo.tree(self.red) == tree):
+            return None
+        parents = self.git("rev-parse", f"{result}^@").stdout.split() if result != self.tip else []
+        found = None
+        for ticket_id in tickets:
+            commit = self.tested.get(ticket_id)
+            if not commit or self.repo.tree(commit) != tree:
+                continue
+            try:
+                status, answer = tool(CAPTURE_TOOL, "show", self.convoy_id, ticket_id, "--piece", TESTS_PIECE)
+            except Refusal:
+                continue
+            pieces = answer.get("pieces") if status == 0 else None
+            piece = pieces[0] if isinstance(pieces, list) and len(pieces) == 1 and isinstance(pieces[0], dict) else {}
+            record = piece.get("record")
+            # Verified by the capture tool: sealed, and still the piece the tracker names.
+            if not isinstance(record, dict) or record.get("commit") != commit \
+                    or not self.same_command(record.get("command")) or record.get("exit_code") == NOT_RUN:
+                continue
+            if record.get("exit_code") != 0:
+                return None
+            if found is None and all(self.repo.is_ancestor(needed, commit) for needed in (self.tip, *parents)):
+                found = {"ticket": ticket_id, "piece": TESTS_PIECE, "commit": commit,
+                         "digest": piece.get("digest"), "at": record.get("at")}
+        return found
 
     def try_merge(self, commit: str, message: str) -> list[str] | None:
         """Merge `commit` into the work tree. None: merged. Otherwise the
@@ -624,6 +686,14 @@ class Pass:
             self.merge_protected(protected_tip)
         result = self.head()
         where = f"{self.branch} après reprise de {self.protected}" if taken else self.branch
+        reused = self.control_reused = self.green_run(result, self.tested)
+        if reused:
+            self.git("reset", "--quiet", "--hard", reused["commit"])
+            result = reused["commit"]
+            if result != self.tip:
+                self.repo.move(self.branch, result, self.tip)
+            self.tip = self.held = result
+            return {"commit": result, "protected": protected_tip, "reused_from": reused} if taken else None
         try:
             proc = run(self.command, cwd=self.tree, timeout=self.timeout)
         except subprocess.TimeoutExpired as exc:
@@ -687,11 +757,19 @@ class Pass:
                            "ticket retourne à son auteur, qui reprend la pointe d'intégration dans une session neuve"),
             }
         result = self.head()
-        try:
-            tests = self.tests(ticket_id)
-        except Refusal:
-            self.git("reset", "--quiet", "--hard", held)
-            raise
+        # Only the ticket's own piece: the ticket-end gate reads it at the merged commit.
+        reused = self.green_run(result, [ticket_id])
+        if reused:
+            self.git("reset", "--quiet", "--hard", reused["commit"])
+            result = reused["commit"]
+            tests = {"piece": TESTS_PIECE, "exit_code": 0, "digest": reused["digest"], "commit": result,
+                     "reused_from": reused}
+        else:
+            try:
+                tests = self.tests(ticket_id)
+            except Refusal:
+                self.git("reset", "--quiet", "--hard", held)
+                raise
         if tests["exit_code"] == NOT_RUN:
             self.git("reset", "--quiet", "--hard", held)
             raise Refusal(f"les tests du résultat fusionné de {ticket_id} n'ont pas été exécutés (NOT RUN, exit 75) : "
@@ -797,7 +875,8 @@ def cmd_merge(args: argparse.Namespace) -> int:
 
             def open_pass() -> Pass:
                 tree = stack.enter_context(work_tree(repo, args.convoy, tip))
-                return Pass(repo, args.convoy, branch, protected, tip, tree, regression_command(args.profile), timeout)
+                return Pass(repo, args.convoy, branch, protected, tip, tree, regression_command(args.profile), timeout,
+                            state)
 
             def control(checked: bool) -> dict[str, Any] | None:
                 try:
@@ -861,6 +940,8 @@ def cmd_merge(args: argparse.Namespace) -> int:
     }
     if red:
         answer["red"] = red
+    if merges is not None and merges.control_reused and not takeover:
+        answer["control"] = {"commit": tip, "reused_from": merges.control_reused}
     print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
     return EXIT_REFUSED if out["refused"] else 0
 
@@ -907,7 +988,7 @@ def cmd_take_up(args: argparse.Namespace) -> int:
             raise Refusal(f"la branche d'intégration du convoi {args.convoy} n'est pas rouge : aucun repair à rejouer")
         command = regression_command(args.profile)
         with work_tree(repo, args.convoy, tip) as tree:
-            merges = Pass(repo, args.convoy, branch, protected, tip, tree, command, timeout)
+            merges = Pass(repo, args.convoy, branch, protected, tip, tree, command, timeout, state)
             try:
                 takeover = merges.take_up_protected(protected_tip, checked=True)
             except RedControl as found:
@@ -919,7 +1000,8 @@ def cmd_take_up(args: argparse.Namespace) -> int:
     print(json.dumps({
         "ok": True, "convoy": args.convoy, "branch": branch, "protected": protected, "integration": tip,
         "protected_tip": protected_tip, "takeover": takeover,
-        "tests": {"command": shlex.join(command), "exit_code": 0, "commit": tip},
+        "tests": {"command": shlex.join(command), "exit_code": 0, "commit": tip,
+                  **({"reused_from": merges.control_reused} if merges.control_reused else {})},
     }, indent=2, sort_keys=True, ensure_ascii=False))
     return 0
 

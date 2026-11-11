@@ -356,13 +356,7 @@ echo "$(date -u +%H:%M:%S) marque posée, branche integration/$SPEC ouverte à $
 
 flow() { gc bd show "$1" --json | jq -c '.[0].metadata'; }
 field() { flow "$1" | jq -r --arg k "$2" '.[$k] // empty'; }
-wait_for() { # <seconds> <command...>
-  local deadline=$(( $(date +%s) + $1 )); shift
-  until "$@"; do
-    [ "$(date +%s)" -lt "$deadline" ] || return 1
-    sleep 5
-  done
-}
+wait_for() { isolated_city_wait_for "$@"; }  # <seconds> of host time, <command...>
 step_seen() { grep -q "^$1 $2 " "$TRIAL/steps" 2>/dev/null; }
 workflow_of() { # the mol-ticket-author root started on a ticket
   gc bd list --all --limit 0 --json 2>/dev/null | jq -r --arg t "$1" \

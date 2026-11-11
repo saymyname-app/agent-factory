@@ -214,8 +214,8 @@ LIB
 
 # One stub per role: the header names the trial, the body is the session.
 stub() { # <name>: reads the body on stdin
-  printf '#!/bin/bash\nexport CLAUDE_CODE_SESSION_ID=$(cat /proc/sys/kernel/random/uuid)\n. "%s/env"\n. "%s/author-lib.sh"\n' \
-    "$TRIAL" "$TRIAL" > "$TRIAL/$1"
+  printf '#!/bin/bash\nexport CLAUDE_CODE_SESSION_ID=$(cat /proc/sys/kernel/random/uuid)\n. "%s/env"\n. "%s/author-lib.sh"\n. "%s/tests/lib/isolated-city.sh"\n' \
+    "$TRIAL" "$TRIAL" "$ROOT" > "$TRIAL/$1"
   cat >> "$TRIAL/$1"
   chmod +x "$TRIAL/$1"
 }
@@ -305,18 +305,16 @@ while true; do
     exit 0
   fi
   mv "$BRIEF.new" "$BRIEF"
+  product_ready() { # <dataset>: the product answers ready, or refused (PRODUCT_REFUSED=1)
+    ANSWER=$("$BIN/ticket-evaluation" product "$CONVOY" "$TICKET" --dataset "$1" 2>>"$LOG") || { PRODUCT_REFUSED=1; return 0; }
+    [ "$(printf '%s' "$ANSWER" | jq -r '.ready')" = true ]
+  }
   product_on() {
-    local answer deadline=$(( $(date +%s) + 300 ))
-    while true; do
-      answer=$("$BIN/ticket-evaluation" product "$CONVOY" "$TICKET" --dataset "$1" 2>>"$LOG") || return 1
-      if [ "$(printf '%s' "$answer" | jq -r '.ready')" = true ]; then
-        ADDRESS=$(printf '%s' "$answer" | jq -r '.address')
-        LAUNCH=$(printf '%s' "$answer" | jq -r '.launch_state')
-        return 0
-      fi
-      [ "$(date +%s)" -lt "$deadline" ] || return 1
-      sleep 2
-    done
+    PRODUCT_REFUSED=0
+    ISOLATED_CITY_WAIT_INTERVAL=2 isolated_city_wait_for 300 product_ready "$1" 2>>"$LOG" || return 1
+    [ "$PRODUCT_REFUSED" = 0 ] || return 1
+    ADDRESS=$(printf '%s' "$ANSWER" | jq -r '.address')
+    LAUNCH=$(printf '%s' "$ANSWER" | jq -r '.launch_state')
   }
   covered() {
     "$BIN/evidence-capture" command "$CONVOY" "$TICKET" --piece "evaluation.coverage.$1" --launch-state "$LAUNCH" -- curl -s "$ADDRESS/health" >/dev/null 2>>"$LOG" || return 1
@@ -578,13 +576,7 @@ grep -q "Controller: supervisor-managed" <<<"$(gc --city "$CITY" status 2>/dev/n
 gc order show convoy-advance --json >/dev/null 2>&1 || fail "the city does not accept orders/convoy-advance.toml"
 grep -q "^mol-ticket-correction\$" <<<"$(gc formula list 2>/dev/null)" || fail "the city does not resolve formulas/mol-ticket-correction.formula.toml"
 
-wait_for() { # <seconds> <command...>
-  local deadline=$(( $(date +%s) + $1 )); shift
-  until "$@"; do
-    [ "$(date +%s)" -lt "$deadline" ] || return 1
-    sleep 5
-  done
-}
+wait_for() { isolated_city_wait_for "$@"; }  # <seconds> of host time, <command...>
 merged() { [ "$(field "$1" gc.flow.merge | jq -r '.outcome // empty' 2>/dev/null)" = merged ]; }
 on_integration() { git -C "$PRODUCT" merge-base --is-ancestor "$1" "$INTEGRATION"; }
 dump() {

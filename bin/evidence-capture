@@ -71,6 +71,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 from account_home import account_home  # noqa: E402
+import bounded_process  # noqa: E402
 
 
 PROGRAM = "evidence-capture"
@@ -303,23 +304,16 @@ def launched_dataset(state_file: str | None) -> str | None:
 
 
 def run_command(argv: list[str], timeout: float) -> tuple[bytes, int]:
-    """Run the command with no input; its stdout and stderr, and its exit code."""
+    """Run the command with no input; its stdout and stderr, and its exit code.
+    Its whole group dies at the timeout, or with this capture (af-8cfygl)."""
     try:
-        proc = subprocess.Popen(
-            argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True,
-        )
+        proc = bounded_process.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, timeout=timeout)
     except OSError as exc:
         raise Refusal(f"commande impossible à exécuter : {argv[0]} ({exc.strerror or exc})") from exc
-    try:
-        output, _ = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired as exc:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        proc.communicate()
         raise Refusal(f"la commande n'a pas fini en {timeout:g} s : aucune pièce enregistrée") from exc
-    return output, proc.returncode
+    return proc.stdout, proc.returncode
 
 
 def find_browser() -> str:
@@ -375,9 +369,7 @@ def take_screenshot(browser: str, url: str, width: str, height: str, colour_sche
             # Its messages go to a file, not a pipe: a helper process that
             # outlives the browser would keep a pipe open.
             with open(Path(work) / "browser.log", "wb") as log:
-                proc = subprocess.Popen(
-                    argv, cwd=work, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True,
-                )
+                proc = bounded_process.popen(argv, cwd=work, stdin=subprocess.DEVNULL, stdout=log, stderr=log)
             proc.wait(timeout=BROWSER_TIMEOUT)
         except subprocess.TimeoutExpired as exc:
             raise Refusal(
@@ -399,10 +391,7 @@ def take_screenshot(browser: str, url: str, width: str, height: str, colour_sche
         # A Chromium exits before its helper processes have let go of the
         # profile: none of them outlives the capture.
         if proc is not None:
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+            bounded_process.kill_group(proc)
             proc.wait()
         for _ in range(20):
             shutil.rmtree(work, ignore_errors=True)

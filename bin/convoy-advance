@@ -1174,6 +1174,15 @@ def released_technical_repairs(ticket: dict[str, Any]) -> list[str]:
         and lift.get("exit_at") == record.get("exit_at") == exit_record.get("at") else []
 
 
+def awaits_repair(ticket: dict[str, Any]) -> bool:
+    """A ticket whose own operator request was answered with
+    « Corriger par maintenance sur main » (lib/convoy_state.py
+    MAINTENANCE_OPTION): it waits for the repair the Mayor links to it."""
+    park = ticket.get("park") or {}
+    return park.get("origin") == ticket["id"] and park.get("cause") == "operator_request" \
+        and bool((park.get("answer") or {}).get("awaits_repair"))
+
+
 def delivered_technical_repairs(ticket: dict[str, Any]) -> list[str]:
     """Every linked repair, only after structural PR merge and exact-head
     CI proof. Open, failed and merely closed work keeps waiting."""
@@ -1768,7 +1777,8 @@ def close_red_repair(convoy: Convoy, ticket: dict[str, Any], reason: str) -> lis
     lifted: list[str] = []
     if ticket.get("park"):
         repairs = [part for repair in delivered_technical_repairs(ticket) for part in ("--repair", repair)]
-        lifted = state_write("lift-park", convoy.id, ticket["id"], "--request", ticket["id"], *repairs)["lifted"]
+        lifted = state_write("lift-park", convoy.id, ticket["id"], "--request", ticket["id"], *repairs,
+                             "--withdrawing")["lifted"]
     if (read_bead(ticket["id"]).get("metadata") or {}).get("gc.needs_benjamin") not in (None, "none"):
         passed(run([str(ESCALATION_BIN), "clear", ticket["id"]]), "escalation-door clear")
     state_write("withdraw-ticket", convoy.id, ticket["id"], "--reason", reason)
@@ -1869,7 +1879,7 @@ def close_exact_answered_r8(convoy: Convoy) -> dict[str, Any] | None:
             if "red" in replay:
                 replay.pop("error", None)
             lifted = state_write("lift-park", convoy.id, ticket["id"], "--request", ticket["id"],
-                                 "--option", authorization["response_option"])["lifted"]
+                                 "--option", authorization["response_option"], "--withdrawing")["lifted"]
             convoy.load()
             ticket = convoy.ticket(ticket["id"])
         metadata = read_bead(ticket["id"]).get("metadata") or {}
@@ -2360,7 +2370,9 @@ def legacy_repair_resume_due(ticket: dict[str, Any]) -> bool:
 
 def settle_lifts(convoy: Convoy, out: dict[str, Any]) -> None:
     """An answer of the operator that lifts a parking is applied by the
-    pass: any answer to the request an operator request left on its ticket;
+    pass: any answer to the request an operator request left on its ticket,
+    except « Corriger par maintenance sur main », which waits for the
+    delivery of the repair linked to it (af-fv8ca4);
     the option that accepts the deviation a Planning Exception asked about;
     the option that judges proven by its test what an evaluation's Planning
     Exception could not observe, or the one that has it evaluated again on
@@ -2452,6 +2464,11 @@ def settle_lifts(convoy: Convoy, out: dict[str, Any]) -> None:
         answer = park.get("answer")
         if ticket.get("status") == "closed" or park.get("origin") != ticket["id"] or not answer:
             continue
+        if park.get("cause") == "operator_request" and answer.get("awaits_repair"):
+            # Answered « Corriger par maintenance sur main »: the ticket
+            # resumes once its linked repair is delivered, above, never on
+            # the answer (af-fv8ca4).
+            continue
         exceptions = ticket.get("planning_exceptions") or []
         accepted = bool(exceptions) and isinstance(exceptions, list) and exceptions[-1].get("accepted")
         # Raised by the Ticket Evaluation of a finished ticket: no entry under
@@ -2493,7 +2510,9 @@ def parked_origins(convoy: Convoy) -> dict[str, list[str]] | None:
     left = [t for t in convoy.tickets if t.get("status") != "closed"]
     if not left or not all(isinstance(t.get("park"), dict) and "origin" in t["park"] for t in left):
         return None
-    technical = {t["id"] for t in left if technical_repairs(t)}
+    # A technical wait, linked or answered to be repaired, is not the
+    # operator's to answer again.
+    technical = {t["id"] for t in left if technical_repairs(t) or awaits_repair(t)}
     origins: dict[str, list[str]] = {}
     for ticket in left:
         origin = ticket["park"]["origin"]

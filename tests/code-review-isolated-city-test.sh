@@ -383,13 +383,7 @@ grep -q "Controller: supervisor-managed" <<<"$(gc --city "$CITY" status 2>/dev/n
 gc order show convoy-advance --json >/dev/null 2>&1 || fail "the city does not accept orders/convoy-advance.toml"
 grep -q "^mol-code-review\$" <<<"$(gc formula list 2>/dev/null)" || fail "the city does not resolve formulas/mol-code-review.formula.toml"
 
-wait_for() { # <seconds> <command...>
-  local deadline=$(( $(date +%s) + $1 )); shift
-  until "$@"; do
-    [ "$(date +%s)" -lt "$deadline" ] || return 1
-    sleep 5
-  done
-}
+wait_for() { isolated_city_wait_for "$@"; }  # <seconds> of host time, <command...>
 review_of() { field "$1" gc.flow.code_review; }
 merged() { [ "$(field "$1" gc.flow.merge | jq -r '.outcome // empty' 2>/dev/null)" = merged ]; }
 on_integration() { git -C "$PRODUCT" merge-base --is-ancestor "$1" "$INTEGRATION"; }
