@@ -318,7 +318,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `bash tests/planning-artifacts-close-test.sh`,
   `bash tests/convoy-parent-sweep-test.sh`,
   `bash tests/factory-maintain-test.sh`,
-  `bash tests/isolated-city-stop-guard-test.sh` — partiel : le premier
+  `bash tests/isolated-city-stop-guard-test.sh`,
+  `bash tests/ci-apt-install-test.sh` — partiel : le premier
   tient la frontière entre un report explicite (sortie 75, rejoué sans
   alerte) et une vraie panne répétée (bead et page Mayor) ; le deuxième tient
   la collecte VM Beads/Git/GitHub, le silence sur état inchangé, la route
@@ -368,7 +369,11 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   (`tests/lib/isolated-city.sh`), qui compte le temps que l'hôte donne à
   l'essai (une seconde à deux fois plus de charge que de CPU compte pour
   moitié, jusqu'à quatre fois le délai écrit) et nomme la charge quand il
-  renonce.
+  renonce. Le contrôle `ci-apt-install` refuse dans `.github/workflows/`
+  un `apt-get` hors de `bin/ci-apt-install`, qui passe à l'archive
+  principale d'Ubuntu puis à la copie gardée de `config/ci-apt-kept/`
+  (vérifiée par son SHA256SUMS) quand le miroir du runner ne répond pas :
+  une panne du dépôt de paquets n'est plus un contrôle rouge.
 - Occurrences : #651, #679, #688, #717 ; af-npz9v1.50 ; #767 (armement local
   annoncé mais `autoMergeRequest=null`, af-npz9v1.50.1) ; af-ncg9qy ; #778
   (demande directe acceptée localement mais encore `AWAITING_CHECKS`,
@@ -393,7 +398,10 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   le 28/10, af-apbds3 le 11/11/2026) ; af-2crkwu (la nuit du 11/11/2026, sous
   une charge de 40 à 100 sur 8 CPU, trois essais en cité isolée arrêtés à leur
   échéance d'horloge fixe en plein parcours, sans rien de cassé, et signalés
-  comme régressions).
+  comme régressions) ; af-xcdibe (le 11/11/2026 de 14:28 à 15:45Z, les
+  quatre exécutions de la CI de #859 rouges sur `apt-get install
+  bubblewrap`, « Temporary failure resolving azure.archive.ubuntu.com »,
+  sans défaut dans le changement).
 - Ouvertes : aucune connue.
 
 ## A — Autre
