@@ -1748,6 +1748,28 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
         self.assertEqual(1, self.resumes())
 
+    def test_a_ticket_finished_without_its_green_at_the_tip_goes_back_to_its_author_once(self):
+        # af-1row55: R16 finished at a tip its green was not proven at; the
+        # review and the evaluation wait for a green tip, nothing moved it.
+        self.integrated()
+        self.resumable()
+        self.code_reviewed("favorable")
+        self.evaluated()
+        self.advance(CONVOY)
+        tip = self.finished(T1)
+        # Its regression proven one commit before the tip it finished at.
+        before = self.git("rev-parse", f"{tip}~1")
+        self.run_ok(STATE, "set-tdd", CONVOY, T1, "--step", "prefactoring", "--commit", before, "--base", before)
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "returned")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+        self.assertEqual(f"unproven:{tip}/", self.shown_state(T1)["resume"]["entries"][-1]["ref"][:len(tip) + 10])
+        self.assertEqual(1, self.resumes())
+        self.assertEqual([], self.code_review_launches())
+        self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
+        self.assertEqual(1, self.resumes())
+
     def test_the_exact_delivered_release_sends_D_s_counted_returned_resume_once(self):
         authorization = self.exact_returned_release()
         env = {**self.env, RETURNED_RELEASE_ENV: json.dumps(authorization)}

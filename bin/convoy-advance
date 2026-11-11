@@ -1975,6 +1975,13 @@ def evaluation_repair_due(ticket: dict[str, Any]) -> tuple[str, str, str] | None
     return "new", REPAIR_DELIVERED, f"repairs:{ref}/stop:{ticket['stop']['at']}"
 
 
+def green_at(ticket: dict[str, Any], tip: str) -> bool:
+    """The green proof of bin/tdd-step (the regression of a prefactoring)
+    is at `tip`, as bin/code-review and bin/ticket-evaluation read it."""
+    step = "prefactoring" if ticket.get("kind") == "prefactoring" else "green"
+    return ((ticket.get("tdd") or {}).get(step) or {}).get("commit") == tip
+
+
 def resume_due(ticket: dict[str, Any], alive: set[str]) -> tuple[str, str, str] | None:
     """What the pass owes a ticket at work, read on the tracker alone:
     ("new", cause, ref) a fact that asks for a resume not counted yet;
@@ -2009,6 +2016,13 @@ def resume_due(ticket: dict[str, Any], alive: set[str]) -> tuple[str, str, str] 
         merge = ticket.get("merge") or {}
         if merge.get("outcome") in RETURNED_MERGES and merge.get("ticket_commit") == ticket.get("tip"):
             return "new", "returned", f"merge:{merge.get('at')}/exit:{exit_at}"
+        tip, handoff = ticket.get("tip"), ticket.get("handoff") or {}
+        merged = merge.get("outcome") == "merged" and merge.get("ticket_commit") == tip
+        if tip and not merged and handoff.get("partial") is False and handoff.get("commit") == tip \
+                and not green_at(ticket, tip):
+            # Finished without its green at the tip: neither the review nor the
+            # Ticket Evaluation ever takes it, its author replays it (af-1row55).
+            return "new", "returned", f"unproven:{tip}/exit:{exit_at}"
         return None
     if exit_name is None and ticket.get("status") == "in_progress" and session and session not in alive:
         # Spec §5: a session that died without an exit is read as interrupted.
