@@ -1145,8 +1145,7 @@ class ProjectLaunchTest(unittest.TestCase):
         # The launcher ends at once: its program is handed to init.
         subprocess.run(["bash", "-c", f"cd {work_tree} && (sleep 300 </dev/null >/dev/null 2>&1 & echo $! > {pid_file})"], check=True)
         pid = int(pid_file.read_text())
-        self.addCleanup(lambda: contextlib.suppress(ProcessLookupError)(os.kill)(pid, signal.SIGKILL)
-                        if Path(f"/proc/{pid}").exists() else None)
+        self.addCleanup(subprocess.run, ["kill", "-9", str(pid)], capture_output=True)
         env = self._private_tmp()
 
         code, swept = self._sweep("none", env, "--work-root", str(root))

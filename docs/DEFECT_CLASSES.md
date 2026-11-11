@@ -59,14 +59,19 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/project-launch-test.py`, `python3 tests/test-budgets-test.py`,
   `bash tests/agent-wait-polling-test.sh`,
   `bash tests/mayor-context-guard-test.sh`,
-  `python3 tests/factory-observe-test.py LiveObservationTest.test_a_hung_mail_is_bounded_and_remains_pending`,
+  `python3 tests/factory-observe-test.py LiveObservationTest.test_a_mail_unanswered_within_its_timeout_is_deferred_to_the_next_pass`,
   `bash tests/factory-watchdog-test.sh`,
-  `python3 tests/idle-ready-work-wake-test.py IdleReadyWorkWakeTest.test_a_hung_notification_is_bounded_without_changing_wake_cooldown`
+  `python3 tests/idle-ready-work-wake-test.py IdleReadyWorkWakeTest.test_a_hung_notification_is_bounded_without_changing_wake_cooldown`,
+  `bash tests/ci-run-tests-leftover-test.sh`,
+  `python3 tests/regression-host-queue-test.py RegressionHostQueue.test_a_file_that_leaves_a_process_alive_is_red_and_the_process_is_killed`
   — complet pour les commandes Python bornées de `bin/`, `lib/` et
   `tests/cockpit-criteria/` : un seul lanceur (`lib/bounded_process.py`)
-  ouvre une session et tue son groupe au délai ; le lint refuse toute
-  nouvelle invocation directe et tient chaque existante dans la liste
-  datée `config/bounded-process-exceptions.tsv`. Le second test tient les
+  ouvre une session et tue son groupe au délai, et aussi quand l'appelant
+  meurt avant (un garde lit un tube dont l'appelant est le seul écrivain,
+  af-8cfygl) ; le lint refuse toute nouvelle invocation directe et tient
+  chaque existante dans la liste datée `config/bounded-process-exceptions.tsv`,
+  et refuse toute session ouverte hors du lanceur qui n'est pas détachée
+  exprès, avec son motif, dans `config/detached-process-exceptions.tsv`. Le second test tient les
   propriétaires de `project-launch` dans ces trois dossiers. Le troisième tient
   les délais mesurés des tests d'un ticket et de l'ordre convoy-advance
   (`config/test-budgets.json`, étude C T3), pas les autres délais écrits à
@@ -78,12 +83,22 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   l'order et tue tout son groupe de processus, puis tient le délai d'incident
   ticket sur le `pass_seconds` mesuré sans casser l'override d'exploitation ;
   le dernier tient la notification de `idle-ready-work-wake` dans son budget
-  sans changer son réveil ni son cooldown.
+  sans changer son réveil ni son cooldown. Les deux derniers tiennent les
+  tests eux-mêmes : `bin/ci-run-tests` et la régression du Cockpit lancent
+  chaque fichier sous `lib/ci_test_reaper.py`, sous-faucheur (subreaper) qui
+  tue ce qu'un fichier laisse vivant en finissant, le nomme et le fait
+  échouer (af-i9llwm).
 - Occurrences : #624, #628, #629, #630, #631, #636, #647, #657, #658, #661,
   #667, #694, #696, #705, #706, #708, #710, #713, #721 ; copies orphelines du
   22/10 (sans PR) ; af-kky570 ; af-npz9v1.46 ; af-npz9v1.26 ; af-30zwwu ;
   af-95zqgx ; af-d3dj4j ; af-ll4hju ; af-bl2jyj ; af-p4rdr7 ; af-6go1ss ;
-  af-npz9v1.55.1 ; af-npz9v1.55.2 ; af-npz9v1.55.3.
+  af-npz9v1.55.1 ; af-npz9v1.55.2 ; af-npz9v1.55.3 ; af-8cfygl (régression
+  survivant à sa passe tuée, ordre convoy-advance à 90 min sans compter une
+  attente par exécution) ; af-i9llwm (porte synthétique « expires » laissée
+  par chaque régression du Cockpit, 23 vivantes le 11/11) ; af-8a246o
+  (plafonds d'attente de 3 s des actions opérateur et de 1,5 s du réveil
+  idle-ready-work-wake, rouges sous une charge de 37 à 39 sur 8 cœurs ;
+  budget complet de la régression du Cockpit dépassé, relevé par la mesure).
 - Ouvertes : les invocations directes antérieures hors des occurrences de
   l'étude B sont nommées une par une, avec leur date et leur motif, dans
   `config/bounded-process-exceptions.tsv` ; une vingtaine de délais écrits à
@@ -105,6 +120,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/code-review-test.py CodeReviewTest.test_an_unfavorable_judgement_from_the_previous_contract_is_rejudged_once_at_the_same_tip`,
   `python3 tests/tdd-step-test.py TddStepTest.test_an_ambiguous_short_successor_does_not_name_either_ticket`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_factory_technical_request_waits_for_every_linked_repair_s_delivery_proof_then_resumes_once`,
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_maintenance_answer_waits_for_its_linked_repair_s_delivery_then_resumes_once`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_an_evaluation_without_result_resumes_once_after_its_linked_factory_repair_is_delivered`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_an_evaluation_outage_resumes_once_after_its_linked_factory_repair_is_delivered`,
   `python3 tests/convoy-state-test.py ConvoyStateTest.test_migrate_repair_resume_accepts_only_the_exact_legacy_history_and_changes_only_the_last_cause`,
@@ -120,7 +136,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_factory_repair_is_taken_up_and_tested_before_its_resume_is_consumed_once`,
   `python3 tests/outcome-evaluation-every-dataset-test.py`,
   `python3 tests/outcome-evaluation-outdated-stop-test.py`,
-  `bash tests/factory-work-dispatch-test.sh`. Sa même table tient chaque
+  `bash tests/factory-work-dispatch-test.sh`,
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_ticket_finished_without_its_green_at_the_tip_goes_back_to_its_author_once`. Sa même table tient chaque
   fonction de `bin/convoy-advance` qui publie un repair rédigé par la porte
   de patch : un refus de la porte y est noté là où le repair a été rédigé et
   arrête le convoi, ou la fonction est une exception datée qui nomme son
@@ -180,7 +197,20 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   autre commit, et une maintenance liée ne pouvait plus le lever : `settle`
   range l'arrêt périmé sous `lifts` (`outdated_by`), retire sa demande sans
   réponse et évalue la nouvelle pointe, prouvé par
-  `python3 tests/outcome-evaluation-outdated-stop-test.py`).
+  `python3 tests/outcome-evaluation-outdated-stop-test.py`) ;
+  af-fv8ca4 (la réponse « Corriger par maintenance sur main » levait le
+  parcage avant que sa réparation soit liée, R13, et une passe qui avait lu
+  le ticket avant le lien le levait encore, R20 et R22 : ces tickets
+  reprenaient sans leur correctif ; la réponse attend la livraison de la
+  réparation liée et `lift-park` relit le lien à son écriture, prouvé par
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_maintenance_answer_waits_for_its_linked_repair_s_delivery_then_resumes_once`) ;
+  af-1row55 (R16 af-yv2g3n sorti « terminé » à un commit de jeu de données
+  après son vert : la revue et l'évaluation attendaient un ticket vert à la
+  pointe, rien ne le renvoyait ; `bin/ticket-exit` refuse cette sortie et
+  `convoy-advance` renvoie à son auteur, cause `returned`, celle déjà
+  enregistrée, prouvé par
+  `python3 tests/ticket-exit-test.py TicketExitTest.test_finished_is_refused_when_the_green_was_proven_before_the_head_commit`
+  et `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_ticket_finished_without_its_green_at_the_tip_goes_back_to_its_author_once`).
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
   contrôle : `criterion_already_green` reste au Planning Run, sauf
   le repair qui ne fait que déplacer une preuve (af-oa2ci4 : `tdd-step red`
@@ -286,7 +316,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `bash tests/factory-watchdog-test.sh`,
   `bash tests/pr-autopilot-time-budget-test.sh`,
   `bash tests/planning-artifacts-close-test.sh`,
-  `bash tests/convoy-parent-sweep-test.sh` — partiel : le premier
+  `bash tests/convoy-parent-sweep-test.sh`,
+  `bash tests/factory-maintain-test.sh`,
+  `bash tests/isolated-city-stop-guard-test.sh` — partiel : le premier
   tient la frontière entre un report explicite (sortie 75, rejoué sans
   alerte) et une vraie panne répétée (bead et page Mayor) ; le deuxième tient
   la collecte VM Beads/Git/GitHub, le silence sur état inchangé, la route
@@ -327,7 +359,16 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `convoy-parent-sweep` la tient pour le balayage des convois : un
   `gc convoy check` coupé par le budget de 90 s du script, sous le délai de
   120 s de l'ordre, est reporté à la fermeture suivante (sortie 0), et seuls trois
-  balayages coupés de suite sortent 2.
+  balayages coupés de suite sortent 2. Le contrôle `factory-maintain` refuse
+  que `clean-worktrees` signale comme travail perdu la copie non publiée d'un
+  ticket en cours dont la session auteure est ouverte, et tient le
+  signalement de la copie d'un ticket dont la session est partie. Le contrôle
+  `isolated-city-stop-guard` refuse qu'un essai en cité isolée attende sur une
+  échéance d'horloge à lui : chaque attente passe par `isolated_city_wait_for`
+  (`tests/lib/isolated-city.sh`), qui compte le temps que l'hôte donne à
+  l'essai (une seconde à deux fois plus de charge que de CPU compte pour
+  moitié, jusqu'à quatre fois le délai écrit) et nomme la charge quand il
+  renonce.
 - Occurrences : #651, #679, #688, #717 ; af-npz9v1.50 ; #767 (armement local
   annoncé mais `autoMergeRequest=null`, af-npz9v1.50.1) ; af-ncg9qy ; #778
   (demande directe acceptée localement mais encore `AWAITING_CHECKS`,
@@ -346,7 +387,13 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   sous load 15m ~30) ; af-p1d8ka (`planning-artifacts-close`, sans budget
   interne, tué trois fois au délai de 60 s de son ordre sous la charge, du 07
   au 10/11/2026) ; af-cbvryy (un `gc convoy check` ralenti par la charge tué
-  au délai de 120 s de `convoy-parent-sweep`, le 10/11/2026 à 00:01).
+  au délai de 120 s de `convoy-parent-sweep`, le 10/11/2026 à 00:01) ;
+  af-mc1u08 (`clean-worktrees` a signalé comme non poussée la copie d'un
+  ticket dont l'auteur, session active, n'avait pas encore publié : af-h2boiv
+  le 28/10, af-apbds3 le 11/11/2026) ; af-2crkwu (la nuit du 11/11/2026, sous
+  une charge de 40 à 100 sur 8 CPU, trois essais en cité isolée arrêtés à leur
+  échéance d'horloge fixe en plein parcours, sans rien de cassé, et signalés
+  comme régressions).
 - Ouvertes : aucune connue.
 
 ## A — Autre

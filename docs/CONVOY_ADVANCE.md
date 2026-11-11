@@ -303,7 +303,8 @@ the parking only):
 | Parked for | Lifted by |
 |---|---|
 | `operator_request` explicitly linked to Factory-maintenance bead(s) (`gc.flow.technical_repairs`) | code only, once every linked bead has the existing structural PR merge and exact-head CI proof; when the repair merged into this project's protected branch, `bin/spec-integration take-up` must also have put that merge in the tested green integration tip; an open, failed, merely closed or not-yet-taken-up repair waits, any human answer is ignored for this linked technical class |
-| `operator_request` (its own Ticket Exit) | any answer given to the request of that ticket (`bin/escalation-door repondre`) after the parking |
+| `operator_request` answered « Corriger par maintenance sur main » (`MAINTENANCE_OPTION`), not yet linked | nothing: the answer waits for the Mayor to link the maintenance bead (`bin/factory-work-dispatch <repair> --technical-request <convoy> <ticket>`), then the row above applies; the ticket is not put in a grouped request again (af-fv8ca4) |
+| `operator_request` (its own Ticket Exit) | any other answer given to the request of that ticket (`bin/escalation-door repondre`) after the parking |
 | `planning_exception` (its own Ticket Exit) | only the option that accepts the deviation: the last Planning Exception of the ticket is `accepted` (it was answered by its `accept_option`, `docs/CONVOY_STATE.md`; every exception raised since ADR-0030 L5 has one, with or without anchors). Any other answer leaves the ticket parked |
 | `planning_exception` (its Ticket Evaluation: the ticket is `finished`, its last evaluation's outcome is `planning_exception`, no entry under `planning_exceptions`) | only option `a`, « Juger ce qui est inobservable prouvé par son test de critère vert » (`bin/ticket-evaluation`); `lift-park` records what that evaluation found unobservable by the criterion under `proven_by_test`, and the evaluation the lift sends again counts it proven (`docs/TICKET_EVALUATION.md`); or option `c`, « Réévaluer sur le produit relancé » (af-npz9v1.38): the lift records nothing proven, and the evaluation it sends again judges every item on the products launched again. Option `b` (remove the ticket from the graph) or no answer: parked |
 | `resumes_exhausted` | option `a` of the convoy's grouped request (below), for the tickets that request names as lifted; or, without an answer, the ticket has resumes left under the bounds of now (`resumes_left` above 0): a parking left by a bound that no longer holds, such as the one an answered resume took before af-npz9v1.41. That lift gives no resume back |
@@ -350,7 +351,7 @@ ticket:
 | Cause | Read on the tracker |
 |---|---|
 | `interrupted` | the Ticket Exit is `interrupted`; or the ticket is `in_progress` with no Ticket Exit and its recorded session is not among the live ones (`gc session list`); or the bead of its last resume is closed and no session took the ticket since |
-| `returned` | the Ticket Exit is `finished` and the merge returned the ticket (`merge.outcome` `conflict` or `red`) at the tip of its branch. Also on a ticket stopped `still_refused` whose every Blocking Finding the operator overrode, which `bin/spec-integration` merges as if at work: the resume lifts that stop, keeps it on its entry and withdraws its request; with no resume left the stop stays with the operator (af-n4bn62: F and G1 of af-strhoy, returned red on 21/10/2026, were neither merged again nor resumed) |
+| `returned` | the Ticket Exit is `finished` and the merge returned the ticket (`merge.outcome` `conflict` or `red`) at the tip of its branch. Also a Ticket Exit `finished` whose Handoff is complete at the tip while its green (the regression of a prefactoring) is proven at another commit, ref `unproven:<tip>/exit:<at>`: neither the code review nor the Ticket Evaluation takes such a ticket, its author replays the green (af-1row55; R16 af-yv2g3n waited there from 11/11/2026 05:31Z). Also on a ticket stopped `still_refused` whose every Blocking Finding the operator overrode, which `bin/spec-integration` merges as if at work: the resume lifts that stop, keeps it on its entry and withdraws its request; with no resume left the stop stays with the operator (af-n4bn62: F and G1 of af-strhoy, returned red on 21/10/2026, were neither merged again nor resumed) |
 | `unblocked` | the Ticket Exit is `technically_blocked` and no bead it waits for with a `blocks` edge is open any more |
 | `repair_delivered` | the ticket is an `operator_request` carrying explicit Factory-maintenance links whose every bead has structural delivery proof, after code lifted its parking; or it is stopped `evaluation_no_result` or `evaluation_outage` and every Factory-maintenance bead explicitly linked to that exact stop has the same proof. A repair merged into the protected branch of the ticket's own project must also be an ancestor of the integration tip after its tested `spec-integration take-up`. This separate bounded cause prevents ordinary blocker closures from spending the resumes reserved for independently delivered repairs (af-o5ritb) |
 | `answered` | the Ticket Exit is `planning_exception` or `operator_request` and the ticket is no longer parked: its parking was lifted |
@@ -1545,8 +1546,8 @@ closing of its Spec and its draft replayed.
 
 **What it leaves open.**
 
-- The merge is made inside the pass, under the timeout of the order (40 min, derived from
-  `config/test-budgets.json`);
+- The merge is made inside the pass, under the timeout of the order (110 min, derived from
+  `config/test-budgets.json`, `bin/test-budgets check-order`);
   a replay of the mechanical controls killed there is taken up by the next
   pass (`docs/OUTCOME_PROMOTE.md`, Limits).
 - Once an answer that ends the judgement stands, `settle_acceptance` no

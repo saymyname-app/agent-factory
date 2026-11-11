@@ -87,7 +87,12 @@ Work only in the work tree.
   (`git fetch origin && git merge "origin/$INTEGRATION"`), resolve the
   conflict or correct what the merged result breaks, and commit. That commit
   comes after the verdicts: the code review and the Ticket Evaluation replay
-  in full on your tip.
+  in full on your tip. With no `.merge` at your tip, the ref of the resume
+  starts `unproven:`: you finished at a tip whose green (the regression of a
+  prefactoring, `.tdd`) was proven at an earlier commit. Change nothing
+  unless the tip no longer proves: replay the green at the tip
+  (`bin/tdd-step`), capture the demonstration line again there and finish
+  again.
 - `behind` — you finished, and the integration branch moved since your
   branch last took it: the code review is not sent on a branch that does
   not hold its tip (`bin/code-review show` names the two commits under

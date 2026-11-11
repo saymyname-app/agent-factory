@@ -72,6 +72,15 @@ if [ "${PR_AUTOPILOT_STOP_ACTIVE:-0}" != "1" ]; then
     rm -f "$AP_DEFERRED_FILE"
     exit "$stop_rc"
   fi
+  # The stop kills the run's process group, but each bounded() call is a
+  # timeout(1) in a group of its own: a call in flight outlived the cut run
+  # until its own cap (af-i9llwm, caught by lib/ci_test_reaper.py). Every
+  # process of the run carries its scratch dir in its environment; what is
+  # left of it is killed here.
+  for _pid in $(grep -lzxF "PR_AUTOPILOT_TMPDIR=$PR_AUTOPILOT_TMPDIR" /proc/[0-9]*/environ 2>/dev/null \
+                | sed 's#^/proc/\([0-9]*\)/environ$#\1#'); do
+    kill -KILL "$_pid" 2>/dev/null
+  done
   load=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)
   in_a_row=$(( $(cat "$AP_DEFERRED_FILE" 2>/dev/null || echo 0) + 1 ))
   if mkdir -p "$(dirname "$AP_DEFERRED_FILE")" 2>/dev/null && printf '%s\n' "$in_a_row" > "$AP_DEFERRED_FILE" 2>/dev/null \

@@ -55,6 +55,11 @@ NEW_TIP_PROOF = (
     "test_a_stop_the_gate_moved_past_leaves_the_list_without_an_answer_and_is_evaluated_at_the_new_tip"
 )
 LIFT_PROOF = "tests/convoy-state-test.py::test_lift_park_unparks_the_ticket_and_those_it_parked_and_keeps_the_record"
+# The answer « Corriger par maintenance sur main » waits for its linked repair (af-fv8ca4).
+MAINTENANCE_ANSWER_PROOF = (
+    "tests/convoy-advance-resumes-stops-end-test.py::"
+    "test_a_maintenance_answer_waits_for_its_linked_repair_s_delivery_then_resumes_once"
+)
 EXHAUSTED_PROOF = (
     "tests/convoy-advance-resumes-stops-end-test.py::"
     "test_the_answer_that_lifts_makes_the_ticket_and_its_descendants_startable_again"
@@ -188,7 +193,12 @@ CONTRACT = {
     },
     ("park", "operator_request"): {
         "exit": transition("lift-park after any answer, or after every linked repair is delivered", LIFT_PROOF),
-        "options": {"*": transition("lift-park with the answered request", LIFT_PROOF)},
+        "options": {
+            "*": transition("lift-park with the answered request", LIFT_PROOF),
+            "Corriger par maintenance sur main": transition(
+                "lift-park --repair once the repair linked by factory-work-dispatch --technical-request is delivered",
+                MAINTENANCE_ANSWER_PROOF),
+        },
     },
     ("park", "resumes_exhausted"): {
         "exit": operator("grouped escalation-door request on the convoy"),

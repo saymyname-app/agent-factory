@@ -502,6 +502,16 @@ def build_records(ticket: Ticket, repo: Path, exit_name: str, sections: dict[str
             raise Refusal(
                 f"la preuve de démonstration a été capturée au commit {demonstration['commit']} et non au commit de "
                 f"tête ({head}) : elle se rejoue après le dernier commit")
+    if finished:
+        # The review and the Ticket Evaluation only take a ticket green at its
+        # tip: a « terminé » without that proof would wait there for ever (af-1row55).
+        step = "prefactoring" if ticket.kind == KIND_PREFACTORING else "green"
+        proven = ((ticket.state.get("tdd") or {}).get(step) or {}).get("commit")
+        if proven != head:
+            what = "la régression du prefactoring" if step == "prefactoring" else "le vert des tests de critère"
+            raise Refusal(
+                f"{what} est prouvé au commit {proven} et non au commit de tête ({head}) : il se rejoue après le "
+                f"dernier commit (bin/tdd-step {step})")
     if exit_name == "interrupted":
         remote = git(repo, "ls-remote", "--exit-code", "origin", f"refs/heads/{branch}")
         pushed = remote.stdout.split()[0] if remote.returncode == 0 and remote.stdout.split() else None

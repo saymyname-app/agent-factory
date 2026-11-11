@@ -444,13 +444,7 @@ grep -q "Controller: supervisor-managed" <<<"$(gc --city "$CITY" status 2>/dev/n
 gc order show convoy-advance --json >/dev/null 2>&1 || fail "the city does not accept orders/convoy-advance.toml"
 grep -q "^mol-end-review\$" <<<"$(gc formula list 2>/dev/null)" || fail "the city does not resolve formulas/mol-end-review.formula.toml"
 
-wait_for() { # <seconds> <command...>
-  local deadline=$(( $(date +%s) + $1 )); shift
-  until "$@"; do
-    [ "$(date +%s)" -lt "$deadline" ] || return 1
-    sleep 5
-  done
-}
+wait_for() { isolated_city_wait_for "$@"; }  # <seconds> of host time, <command...>
 end_review() { field "$CONVOY" gc.flow.end_review; }
 gate_record() { field "$CONVOY" gc.flow.spec_end; }
 dump() { tail -30 "$TRIAL/reviewer.log" >&2 || true; tail -3 "$TRIAL/passes.jsonl" >&2 || true; }

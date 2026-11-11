@@ -17,9 +17,24 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
+import bounded_process  # noqa: E402
 from bounded_process import run as bounded_run  # noqa: E402
 
 EXCEPTIONS = ROOT / "config" / "bounded-process-exceptions.tsv"
+DETACHED = ROOT / "config" / "detached-process-exceptions.tsv"
+OWNER = """
+import pathlib, subprocess, sys, time
+sys.path.insert(0, sys.argv[1])
+import bounded_process
+program = ("import pathlib,subprocess,sys,time; "
+           "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']); "
+           "pathlib.Path(sys.argv[1]).write_text(str(child.pid)); time.sleep(60)")
+if sys.argv[3] == "run":
+    bounded_process.run([sys.executable, "-c", program, sys.argv[2]], timeout=60)
+else:
+    bounded_process.popen([sys.executable, "-c", program, sys.argv[2]])
+    time.sleep(60)
+"""
 
 
 def alive(pid: int) -> bool:
@@ -48,19 +63,59 @@ def direct_timed_calls() -> set[str]:
     return found
 
 
-def listed_exceptions() -> set[str]:
+def guards() -> set[int]:
+    """The pids of the guards this test process started and that still run
+    (other guards of the host are not this test's business)."""
     found = set()
-    for number, line in enumerate(EXCEPTIONS.read_text(encoding="utf-8").splitlines(), 1):
+    for entry in Path("/proc").iterdir():
+        if entry.name.isdigit():
+            try:
+                argv = (entry / "cmdline").read_bytes().split(b"\0")
+                parent = int((entry / "stat").read_text().rsplit(")", 1)[1].split()[1])
+            except (OSError, ValueError, IndexError):
+                continue
+            if bounded_process.GUARD_NAME.encode() in argv and parent == os.getpid() and alive(int(entry.name)):
+                found.add(int(entry.name))
+    return found
+
+
+def detached_sessions() -> set[str]:
+    """Every subprocess.run/Popen given `start_new_session` (anything but a
+    literal False) outside the one launcher."""
+    found = set()
+    launcher = ROOT / "lib" / "bounded_process.py"
+    for directory in (ROOT / "bin", ROOT / "lib", ROOT / "tests" / "cockpit-criteria"):
+        for path in directory.rglob("*"):
+            if not path.is_file() or path == launcher:
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except (SyntaxError, UnicodeDecodeError):
+                continue
+            for node in ast.walk(tree):
+                function = node.func if isinstance(node, ast.Call) else None
+                if (isinstance(function, ast.Attribute) and isinstance(function.value, ast.Name)
+                        and function.value.id == "subprocess" and function.attr in {"run", "Popen"}
+                        and any(keyword.arg == "start_new_session"
+                                and not (isinstance(keyword.value, ast.Constant) and keyword.value.value is False)
+                                for keyword in node.keywords)):
+                    found.add(f"{path.relative_to(ROOT)}:{node.lineno}")
+    return found
+
+
+def listed_exceptions(listing: Path = EXCEPTIONS) -> set[str]:
+    found = set()
+    for number, line in enumerate(listing.read_text(encoding="utf-8").splitlines(), 1):
         if not line or line.startswith("#"):
             continue
         parts = line.split("\t")
         if len(parts) != 3 or not parts[2].strip():
-            raise AssertionError(f"{EXCEPTIONS.relative_to(ROOT)}:{number}: expected date, location and reason")
+            raise AssertionError(f"{listing.relative_to(ROOT)}:{number}: expected date, location and reason")
         observed = datetime.date.fromisoformat(parts[0])
         if observed > datetime.date.today():
-            raise AssertionError(f"{EXCEPTIONS.relative_to(ROOT)}:{number}: future observation date")
+            raise AssertionError(f"{listing.relative_to(ROOT)}:{number}: future observation date")
         if parts[1] in found:
-            raise AssertionError(f"{EXCEPTIONS.relative_to(ROOT)}:{number}: duplicate {parts[1]}")
+            raise AssertionError(f"{listing.relative_to(ROOT)}:{number}: duplicate {parts[1]}")
         found.add(parts[1])
     return found
 
@@ -92,6 +147,64 @@ class BoundedProcessTest(unittest.TestCase):
 
     def test_every_direct_subprocess_timeout_is_a_dated_exception(self) -> None:
         self.assertEqual(listed_exceptions(), direct_timed_calls())
+
+    def test_every_session_outside_the_launcher_is_a_dated_exception(self) -> None:
+        # A session of its own outlives its caller unless lib/bounded_process.py
+        # guards it: each other one is detached on purpose and says why.
+        self.assertEqual(listed_exceptions(DETACHED), detached_sessions())
+
+    def owner_killed(self, mode: str) -> int:
+        """Start an owner that runs a command through the launcher (`mode`:
+        run or popen), kill the owner with SIGKILL once the command has a
+        descendant, and return that descendant's pid."""
+        with tempfile.TemporaryDirectory(prefix="bounded-process-") as folder:
+            child_pid = Path(folder) / "child.pid"
+            owner = subprocess.Popen([sys.executable, "-c", OWNER, str(ROOT / "lib"), str(child_pid), mode])
+            try:
+                deadline = time.monotonic() + 20
+                while not (child_pid.exists() and child_pid.read_text()) and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                pid = int(child_pid.read_text())
+                self.assertTrue(alive(pid))
+            finally:
+                owner.kill()
+                owner.wait()
+            return pid
+
+    def assert_dies(self, pid: int) -> None:
+        try:
+            deadline = time.monotonic() + 5
+            while alive(pid) and time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertFalse(alive(pid), "a descendant outlived its killed caller")
+        finally:
+            if alive(pid):
+                os.kill(pid, signal.SIGKILL)
+
+    def test_a_caller_killed_during_run_takes_the_whole_group_with_it(self) -> None:
+        # 10/11/2026: the order killed the pass at 90 min, its regression ran
+        # on alone and wrote a green piece no merge followed (af-8cfygl).
+        self.assert_dies(self.owner_killed("run"))
+
+    def test_a_caller_killed_while_it_holds_a_popen_takes_the_group_with_it(self) -> None:
+        self.assert_dies(self.owner_killed("popen"))
+
+    def test_a_released_group_is_left_alone_and_its_guard_leaves(self) -> None:
+        process = bounded_process.popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        try:
+            watcher, _ = process.bounded_guard
+            bounded_process.release(process)
+            self.assertIsNotNone(watcher.poll(), "the guard outlived its release")
+            time.sleep(0.2)
+            self.assertIsNone(process.poll(), "a released group was killed")
+        finally:
+            bounded_process.kill_group(process)
+            process.wait()
+
+    def test_a_run_that_ends_leaves_no_guard_behind(self) -> None:
+        before = guards()
+        bounded_run([sys.executable, "-c", "pass"], timeout=30)
+        self.assertEqual(before, guards())
 
 
 if __name__ == "__main__":

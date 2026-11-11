@@ -1484,6 +1484,57 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertIn(T1, "\n".join(self.needs()))
         self.assertEqual(1, self.resumes())
 
+    def test_a_maintenance_answer_waits_for_its_linked_repair_s_delivery_then_resumes_once(self):
+        # af-fv8ca4: R13 and R20 resumed on « Corriger par maintenance sur
+        # main » before their repair was linked or merged.
+        self.started_convoy()
+        self.taken(T1, "auteur-1")
+        request = {
+            "quoi": "Le contrôle de l'usine est rouge",
+            "pourquoi": "Le défaut est dans un test de l'usine, hors du ticket",
+            "que_faire": [{"option": "Corriger par maintenance sur main",
+                            "consequence": "Le ticket reprend après la fusion de sa réparation."}],
+            "langue": "fr", "bloquant": True,
+        }
+        self.run_ok(ESCALATION, "benjamin", T1, json.dumps(request))
+        self.run_ok(STATE, "park", CONVOY, T1, "--cause", "operator_request", "--detail", request["quoi"])
+        self.run_ok(STATE, "set-exit", CONVOY, T1, "--exit", "operator_request")
+        self.run_ok(ESCALATION, "repondre", T1, "a", "--actor", "operateur-test")
+
+        answered = self.advance(CONVOY)
+        self.assertEqual(([], []), (self.of(answered, "lifted"), self.of(answered, "resumed")))
+        self.assertEqual("operator_request", self.park_of(T1)["cause"])
+        self.assertEqual([], [line for line in self.needs() if T1 in line])
+        refused = self.run_cmd(STATE, "lift-park", CONVOY, T1, "--request", T1, "--option", "a")
+        self.assertNotEqual(0, refused.returncode)
+        self.assertIn("livraison prouvée de la réparation liée", refused.stdout + refused.stderr)
+
+        repair, sha, merge = "fx-repair1", "1" * 40, "3" * 40
+        state = self.tracker_state()
+        state["beads"][repair] = {
+            "title": "réparation ouverte", "status": "open", "issue_type": "bug",
+            "labels": ["maintenance"], "metadata": {"gc.authorized_by": "af-authority"},
+        }
+        self.tracker.write_text(json.dumps(state))
+        self.run_ok(STATE, "link-technical-repair", CONVOY, T1, "--repair", repair)
+        # A pass that read the ticket before this link writes its lift after
+        # it: the write itself refuses.
+        raced = self.run_cmd(STATE, "lift-park", CONVOY, T1, "--request", T1)
+        self.assertNotEqual(0, raced.returncode)
+        self.assertIn(f"attend ses réparations techniques liées ({repair})", raced.stdout + raced.stderr)
+        linked = self.advance(CONVOY)
+        self.assertEqual(([], []), (self.of(linked, "lifted"), self.of(linked, "resumed")))
+        self.assertEqual("operator_request", self.park_of(T1)["cause"])
+
+        self.edit(repair, status="closed", metadata=delivered(41, sha, merge))
+        delivered_pass = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "repair_delivered")], [(r["id"], r["cause"]) for r in self.of(delivered_pass, "resumed")])
+        self.assertEqual([repair], self.shown_state(T1)["park_lifts"][-1]["repairs"])
+        self.assertIsNone(self.park_of(T1))
+        self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
+        self.assertEqual(1, self.resumes())
+
     def test_a_factory_repair_is_taken_up_and_tested_before_its_resume_is_consumed_once(self):
         self.integrated(regression="test -f budget.txt")
         self.resumable()
@@ -1694,6 +1745,28 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
 
         self.assertEqual([(T1, "returned")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
         self.assertEqual(1, self.resumes())
+        self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
+        self.assertEqual(1, self.resumes())
+
+    def test_a_ticket_finished_without_its_green_at_the_tip_goes_back_to_its_author_once(self):
+        # af-1row55: R16 finished at a tip its green was not proven at; the
+        # review and the evaluation wait for a green tip, nothing moved it.
+        self.integrated()
+        self.resumable()
+        self.code_reviewed("favorable")
+        self.evaluated()
+        self.advance(CONVOY)
+        tip = self.finished(T1)
+        # Its regression proven one commit before the tip it finished at.
+        before = self.git("rev-parse", f"{tip}~1")
+        self.run_ok(STATE, "set-tdd", CONVOY, T1, "--step", "prefactoring", "--commit", before, "--base", before)
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "returned")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+        self.assertEqual(f"unproven:{tip}/", self.shown_state(T1)["resume"]["entries"][-1]["ref"][:len(tip) + 10])
+        self.assertEqual(1, self.resumes())
+        self.assertEqual([], self.code_review_launches())
         self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
         self.assertEqual(1, self.resumes())
 
@@ -2247,7 +2320,8 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
     def test_the_exact_R8_close_retry_finishes_after_its_durable_native_lift(self):
         authorization = self.exact_r8_close_release()
         env = {**self.env, R8_CLOSE_RELEASE_ENV: json.dumps(authorization)}
-        self.run_ok(STATE, "lift-park", CONVOY, T1, "--request", T1, "--option", "a")
+        # The durable first write of the R8 release, which withdraws next.
+        self.run_ok(STATE, "lift-park", CONVOY, T1, "--request", T1, "--option", "a", "--withdrawing")
 
         answer = self.advance(CONVOY, env=env)
 

@@ -14,8 +14,10 @@ RUNNER="$ROOT/bin/ci-run-tests"
 TMP=$(mktemp -d)
 LOCK="$TMP/host.lock"
 cleanup() {
-  [ -s "$TMP/leak.pid" ] && kill "$(cat "$TMP/leak.pid")" 2>/dev/null
-  [ -n "${holder_pid:-}" ] && kill "$holder_pid" 2>/dev/null
+  # Each may already be gone (the left-behind process is killed by the
+  # runner): under set -e a failed kill would end the cleanup there.
+  [ -s "$TMP/leak.pid" ] && kill "$(cat "$TMP/leak.pid")" 2>/dev/null || true
+  [ -n "${holder_pid:-}" ] && kill "$holder_pid" 2>/dev/null || true
   rm -rf -- "$TMP"
 }
 trap cleanup EXIT
@@ -87,8 +89,9 @@ for name in first second; do
 done
 echo "ok   two batteries started at once run one after the other and both pass"
 
-# A process a test leaves behind does not keep the line; a ci-run-tests started
-# from inside a battery (a test of the runner) does not wait for its own battery.
+# A process a test leaves behind does not keep the line: it is killed and fails
+# its test (lib/ci_test_reaper.py, af-i9llwm); a ci-run-tests started from
+# inside a battery (a test of the runner) does not wait for its own battery.
 mkdir -p "$TMP/outer/tests" "$TMP/inner/tests"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$TMP/inner/tests/quick-test.sh"
 cat >"$TMP/outer/tests/leaves-a-process-test.sh" <<'TEST'
@@ -101,11 +104,13 @@ cat >"$TMP/outer/tests/runs-the-runner-test.sh" <<'TEST'
 out=$(FACTORY_ROOT="$INNER" CI_RUN_TESTS_HOST_WAIT=0 "$RUNNER" 2>&1) || { echo "$out"; exit 1; }
 grep -Fq 'ran 1 test(s), 0 failure(s)' <<<"$out" || { echo "$out"; exit 1; }
 TEST
-out=$(GITHUB_ACTIONS='' LEAK="$TMP/leak.pid" INNER="$TMP/inner" RUNNER="$RUNNER" battery "$TMP/outer" 2>&1) \
+out=$(GITHUB_ACTIONS='' LEAK="$TMP/leak.pid" INNER="$TMP/inner" RUNNER="$RUNNER" battery "$TMP/outer" 2>&1) || true
+grep -Fq 'ran 2 test(s), 1 failure(s)' <<<"$out" || { echo "$out" >&2; fail "the outer battery did not run its two files, one red"; }
+grep -Fqx 'FAILED: tests/leaves-a-process-test.sh' <<<"$out" \
   || { echo "$out" >&2; fail "a runner started from inside a battery waited for that battery"; }
-grep -Fq 'ran 2 test(s), 0 failure(s)' <<<"$out" || { echo "$out" >&2; fail "the outer battery did not run its two files"; }
 echo "ok   a ci-run-tests started from inside a battery does not wait for it"
-kill -0 "$(cat "$TMP/leak.pid")" 2>/dev/null || fail "the left-behind process is gone: the next check would prove nothing"
+leaked=$(cat "$TMP/leak.pid")
+! kill -0 "$leaked" 2>/dev/null || { kill -KILL "$leaked"; fail "the left-behind process still runs"; }
 flock --nonblock "$LOCK" true || fail "a process left behind by a test still holds the host"
 echo "ok   a process a test leaves behind does not keep the line"
 
