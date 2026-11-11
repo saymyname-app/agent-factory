@@ -183,6 +183,37 @@ next pass runs it again; the `merged_tests` piece keeps that exit 75 until
 then. A takeover in conflict is a refusal too: a conflict is not a red
 control.
 
+**A green run already sealed on the same tree is not run again**
+(af-l8zgmw, levier 2 of af-8cfygl). On 10/11/2026 the tests of R17 were
+green on its merged result four minutes after the pass that ran them was
+killed: nothing was pushed, and the next pass ran the 35-minute regression
+again on the same content. Before the regression command runs on a result —
+the takeover of the protected branch, or a ticket merged on the tip — the
+command reads the evidence store, through `bin/evidence-capture show`, for a
+`merged_tests` piece that is:
+
+- sealed by the capture tool and still the piece the tracker names;
+- a run of the same regression command (the path of the work tree is not
+  compared);
+- at a commit whose Git **tree** is the tree of the result (two merges of the
+  same commits differ by their time, never by their tree), and which holds
+  the pushed tip and every parent of the result;
+- green (exit 0).
+
+For a ticket being merged, only that ticket's own piece counts: the
+ticket-end gate reads it at the merged commit. For the takeover and the
+`take-up` control, the piece of any ticket of the convoy counts (the tip a
+merge just tested green is taken up again by `take-up` without a run).
+Found, the commit that run tested is pushed in the place of the new merge,
+and the answer names the run under `reused_from` (`ticket`, `piece`,
+`commit`, `digest`, `at`): in the merge's `tests`, in `takeover`, in
+`control` (a control run again under a red with nothing to take up), or in
+`take-up`'s `tests`. A red on that tree — a piece with a non-zero exit, or
+the red recorded on the convoy — is never reused: the command runs again. A
+NOT RUN (exit 75), a piece of another command, or one that does not verify,
+counts for nothing. A takeover control is not itself a piece: a pass killed
+during it leaves nothing to reuse.
+
 A profile without `regression_command` is refused when a ticket is ready: no
 test, no merge. A pass with no ready ticket does not read the profile,
 unless a red makes it run the control again.
@@ -298,7 +329,11 @@ Fixture City. T23: the same `tests/spec-integration-test.py` covers
 `take-up`: the regression command run with nothing to take up, the takeover
 pushed once green, a red takeover neither pushed nor counted without
 `--end-round`, one round counted once with it, the refusal under a red, a
-conflict, and the outright refusals. On the real `gc`/`bd`, in a
+conflict, and the outright refusals. af-l8zgmw: the same file proves that a
+merged result sealed green on the same tree is pushed without a run, that
+one sealed red is run again, that a green run on another tree spares
+nothing, and that `take-up` on the tip its last merge tested green does not
+run again. On the real `gc`/`bd`, in a
 disposable city (local-only): `tests/spec-integration-demonstration-test.sh`
 (the demonstration line), `tests/convoy-state-real-tracker-test.sh` and
 `tests/ticket-graph-publish-new-flow-real-tracker-test.sh`.
