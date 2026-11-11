@@ -229,13 +229,7 @@ observe() { # <label>: print one line of the record, fail above the ceiling
   [ "$in_flight" -le "$CEILING" ] || fail "$in_flight tickets in flight, above the ceiling $CEILING"
 }
 passes() { if [ -f "$PASSES" ]; then wc -l < "$PASSES" | tr -d ' '; else echo 0; fi; }
-wait_for() { # <seconds> <command...>
-  local deadline=$(( $(date +%s) + $1 )); shift
-  until "$@"; do
-    [ "$(date +%s)" -lt "$deadline" ] || return 1
-    sleep 5
-  done
-}
+wait_for() { isolated_city_wait_for "$@"; }  # <seconds> of host time, <command...>
 passes_reach() { [ "$(passes)" -ge "$1" ]; }
 wait_passes() { # <n more passes>
   local target=$(( $(passes) + $1 ))

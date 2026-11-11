@@ -171,7 +171,11 @@ real runtime; they cost CI nothing):
 | `tests/*-demonstration-test.sh` (3) | the demonstration line of a ticket on the real tracker, and a real browser where it needs one |
 | `tests/*-real-session-test.sh` (2) | one real model session held to what a command hands it |
 
-`bin/local-only-tests` runs them nightly. A test whose host cannot run it
+`bin/local-only-tests` runs them nightly. An isolated-city trial waits
+through `isolated_city_wait_for` (`tests/lib/isolated-city.sh`): its seconds
+are host time, so a loaded host stretches them (up to four times) instead of
+failing the trial, and a wait that gives up names the load (af-2crkwu).
+A test whose host cannot run it
 exits 77 with a `SKIP: <reason, bead>` line, decided by a cheap, precise probe
 (`tests/lib/capture-browser.sh` for the capture browser): the runner names it
 SKIPPED, not failed, on every run and in the bead of a failing run; exit 77

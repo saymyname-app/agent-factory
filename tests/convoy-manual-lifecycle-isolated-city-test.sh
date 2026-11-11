@@ -216,13 +216,7 @@ for order in convoy-parent-sweep planning-artifacts-close convoy-advance; do
 done
 
 count() { if [ -f "$1" ]; then wc -l < "$1" | tr -d ' '; else echo 0; fi; }
-wait_for() { # <seconds> <command...>
-  local deadline=$(( $(date +%s) + $1 )); shift
-  until "$@"; do
-    [ "$(date +%s)" -lt "$deadline" ] || return 1
-    sleep 5
-  done
-}
+wait_for() { isolated_city_wait_for "$@"; }  # <seconds> of host time, <command...>
 is_closed() { [ "$(field "$1" status)" = closed ]; }
 reaches() { [ "$(count "$1")" -ge "$2" ]; }
 incident_lines() { "$CITY/bin/escalation-door" list 2>/dev/null | grep "Incident d'usine" || true; }
