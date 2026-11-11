@@ -514,6 +514,23 @@ do
   [[ $call == *"$field"* ]] || fail "reopen call missing $field: $call"
 done
 [[ $call != *"gc.work_outcome"* ]] || fail "the reopen removed a value the guard did not copy: $call"
+# af-asymry: back in progress, its session still holds it.
+[[ $call != *"gc.session_name"* && $call != *"gc.routed_to"* ]] \
+  || fail "the reopen to in_progress released the session that holds the ticket: $call"
+
+# 16b. without its dispatch gate it is reopened to open, without the route
+#      and session of its last launch: only the convoy launches it again.
+ticket closed "$(jq -c '. + {"gc.work_outcome": "no-op", "gc.routed_to": "factory-worker",
+  "gc.session_name": "factory-worker-af-wisp-old"}' <<<"$copied")" \
+  | jq -c '.[0].metadata |= del(.["gc.flow.gate.dispatch"])' > "$TICKETS_FILE"
+: > "$UPDATE_LOG"
+out=$(guard)
+call=$(grep "^zzfixture-ticket " "$UPDATE_LOG" || true)
+for field in "--status=open" "--unset-metadata gc.routed_to" "--unset-metadata gc.session_id" \
+  "--unset-metadata gc.session_name"
+do
+  [[ $call == *"$field"* ]] || { echo "$out" >&2; fail "reopen to open missing $field: $call"; }
+done
 
 # 17. closed by its withdrawal gate, or delivered via another bead: untouched.
 ticket closed "$(jq -c '. + {"gc.flow.gate.withdrawn": "{\"at\":\"2026-11-09T15:00:00Z\"}"}' <<<"$copied")" > "$TICKETS_FILE"

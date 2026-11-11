@@ -117,8 +117,9 @@ out=$(pilot first)
 
 # PR 10 (DIRTY, ticket-owned, first rejection): reopened to the pool with a
 # structured reason and rejection_count=1; branch/PR untouched (no work_branch
-# or pr_url metadata write).
-grep -qF "bd update af-tick1 --status open --assignee  --set-metadata" "$TMP/gc.log" \
+# or pr_url metadata write). Without its route and session (af-asymry): it
+# waits for its next launch, never taken by a worker launched for another.
+grep -qF "bd update af-tick1 --status open --assignee  --unset-metadata gc.routed_to --unset-metadata gc.session_id --unset-metadata gc.session_name --set-metadata" "$TMP/gc.log" \
   || { echo "$out" >&2; fail "PR #10's ticket af-tick1 was not reopened to the pool"; }
 grep -qF "gc.pr_rejection_reason=conflict with dev@deadbeefcafe" "$TMP/gc.log" \
   || { echo "$out" >&2; fail "PR #10's rejection reason was not the DIRTY conflict-with-base form"; }
@@ -133,7 +134,7 @@ grep -qF "af-tick1" "$TMP/escalation.log" \
 
 # PR 20 (FAILURE after retry already marked, ticket-owned, third rejection):
 # reopened with rejection_count=3, and escalation-door mayor paged exactly once.
-grep -qF "bd update af-tick2 --status open --assignee  --set-metadata" "$TMP/gc.log" \
+grep -qF "bd update af-tick2 --status open --assignee  --unset-metadata gc.routed_to --unset-metadata gc.session_id --unset-metadata gc.session_name --set-metadata" "$TMP/gc.log" \
   || { echo "$out" >&2; fail "PR #20's ticket af-tick2 was not reopened to the pool"; }
 grep -qF "gc.pr_rejection_count=3" "$TMP/gc.log" \
   || { echo "$out" >&2; fail "PR #20's third rejection did not set rejection_count=3"; }
@@ -170,7 +171,7 @@ cat > "$TMP/all-beads.json" <<'JSON'
 JSON
 : > "$TMP/gc.log"; : > "$TMP/gh.log"
 out=$(pilot first)
-grep -qF "bd update af-tick1 --if-assignee worker-1 --status open --assignee  --set-metadata" "$TMP/gc.log" \
+grep -qF "bd update af-tick1 --if-assignee worker-1 --status open --assignee  --unset-metadata gc.routed_to --unset-metadata gc.session_id --unset-metadata gc.session_name --set-metadata" "$TMP/gc.log" \
   || { echo "$out" >&2; fail "a held ticket was not released by compare-and-set on the assignee read"; }
 : > "$TMP/gc.log"; : > "$TMP/gh.log"
 out=$(GC_UPDATE_RC=13 pilot first)

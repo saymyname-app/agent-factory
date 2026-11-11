@@ -100,6 +100,8 @@ fi
 # committing in place, so it lives in lib/protected_rigs.sh and both scripts
 # source it from there. Add a rig once, and it is protected everywhere.
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/lib/protected_rigs.sh"
+# shellcheck source=lib/work_route_release.sh
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/lib/work_route_release.sh"
 RIGS=("${PROTECTED_RIGS[@]}")
 DELIVER_CLOSE_BIN="${DELIVER_CLOSE_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/deliver-close}"
 DELIVERY_PROOF_BIN="${DELIVERY_PROOF_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../lib" && pwd -P)/factory_delivery_proof.py}"
@@ -955,7 +957,10 @@ reject_ticket() {  # repo rig_path num sha reason -> 0 handled (ticket-owned PR)
   held=$(printf '%s' "$candidate" | jq -r '.assignee // empty' 2>/dev/null)
   if_held=""
   [ -z "$held" ] || if_held="--if-assignee '${held//\'/}' "
+  # Without its route and session (af-asymry): the ticket waits to be
+  # launched again, never taken by a worker launched for another ticket.
   run bash -c "cd '$rig_path' && gc bd update '$bead' ${if_held}--status open --assignee '' \
+    ${WORK_ROUTE_RELEASE_ARGS[*]} \
     --set-metadata 'gc.pr_rejection_reason=$reason' \
     --set-metadata 'gc.pr_rejection_count=$count' \
     --append-notes 'pr-autopilot: rejected PR #$num ($reason); rejection $count.'"; rc=$?

@@ -89,6 +89,8 @@ LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../lib" 2>/dev/null && pwd -
 CHECK_ONLY=0
 # shellcheck source=lib/project_registry.sh
 . "$LIB_DIR/project_registry.sh"
+# shellcheck source=lib/work_route_release.sh
+. "$LIB_DIR/work_route_release.sh"
 RIGS=()
 while IFS= read -r rig_name; do RIGS+=("$rig_name"); done < <(project_registry_rig_names "$ROOT/config/projects")
 
@@ -341,7 +343,12 @@ undo_closes_of_tickets() {
     done < <(jq -r --argjson row "$row" --argjson proof "$PROOF_KEYS_JSON" \
       '.metadata as $m | $proof[] | select($m[.] != null and ($m[.] | tostring) == ((if . == "gc.delivered_via" then $row.id else $row.metadata[.] end) // "" | tostring))' \
       <<<"$ticket")
-    if (cd "$ROOT" && $(gc_for "$rig") update "$exec_id" --status="$reopen" "${unset[@]}" \
+    # Reopened to open, it goes without the route and session of its last
+    # launch (af-asymry): the convoy launches it again, no worker launched for
+    # another ticket takes it. In progress, its session still holds it.
+    local release=()
+    [ "$reopen" != open ] || release=("${WORK_ROUTE_RELEASE_ARGS[@]}")
+    if (cd "$ROOT" && $(gc_for "$rig") update "$exec_id" --status="$reopen" "${unset[@]}" "${release[@]}" \
           --append-notes "Reopened by factory-delivery-guard (af-epwkmn): closed here earlier from $id's merge, which is not this ticket's delivery; only its own gates close it." >/dev/null 2>&1); then
       did "$exec_id ($label) reopened to $reopen -- closed outside its gate from $id's merge"
     else

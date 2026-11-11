@@ -145,6 +145,8 @@ die() { log "ERROR: $1"; exit 1; }
 REQUEST_INCOMPLETE="requête incomplète"
 # shellcheck source=lib/request_fields.sh
 . "$ROOT/lib/request_fields.sh"
+# shellcheck source=lib/work_route_release.sh
+. "$ROOT/lib/work_route_release.sh"
 
 usage() {
   awk 'NR > 1 && /^set /{exit} NR > 1' "$0" | sed 's/^# \{0,1\}//'
@@ -262,9 +264,13 @@ cmd_benjamin() {
 # blocked) -- or closed as blocked before that fix -- waits on its NEEDS
 # BENJAMIN. Answering (repondre) or clearing it reopens the bead in the same
 # write, so it returns to the ready pool instead of staying parked forever,
-# and its dependents stay gated until it is actually delivered.
+# and its dependents stay gated until it is actually delivered. It goes back
+# without the route and session of the launch that parked it (af-asymry): it
+# waits to be launched again, never taken by a worker launched for another
+# ticket.
 REOPEN_ARGS=(--status open --unset-metadata gc.outcome
-  --unset-metadata gc.work_outcome --unset-metadata gc.blocked_classification)
+  --unset-metadata gc.work_outcome --unset-metadata gc.blocked_classification
+  "${WORK_ROUTE_RELEASE_ARGS[@]}")
 
 is_parked_blocked() {  # $1 = bead JSON
   jq -e '(.metadata["gc.work_outcome"] // "") == "blocked"
