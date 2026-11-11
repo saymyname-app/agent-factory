@@ -83,6 +83,7 @@ from bounded_process import run as bounded_run  # noqa: E402
 import delivery_reads  # noqa: E402
 from account_home import account_home  # noqa: E402
 from delivery_role_identity import role_identity  # noqa: E402
+import host_slots  # noqa: E402
 
 EXIT_REFUSED = 1
 EXIT_NOT_NEW_FLOW = 4
@@ -577,6 +578,12 @@ def cmd_demonstrate(args: argparse.Namespace) -> int:
     if not args.dataset:
         raise Refusal("--dataset absent : le produit se lance sur un jeu de données synthétique nommé")
 
+    # A slot of the host pool for this command's product, taken before the
+    # launch's timeout starts; the launch runs in its turn (af-lsbqj9).
+    try:
+        host_slots.hold(f"ticket-author {args.ticket} {head[:12]}")
+    except host_slots.NotRun as exc:
+        raise Refusal(f"aucune place sur l'hôte pour lancer le produit (NOT RUN), relancer la commande : {exc}") from exc
     with tempfile.TemporaryDirectory(prefix="ticket-author-") as scratch:
         launch_state = Path(scratch) / "launch.json"
         launched = run([str(LAUNCH_TOOL), "--repo-root", str(repo), "start", "--owner-pid", str(os.getpid()), str(profile), "--commit", head,

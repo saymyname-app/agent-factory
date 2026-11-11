@@ -77,8 +77,8 @@ def lifecycle_preflight(bin_dir, repo, profile, commit, dataset, state):
             raise ValueError('an interrupted lifecycle trial still needs cleanup')
         argv = [bin_dir / LAUNCH_TOOL, '--repo-root', repo, 'start', '--owner-pid', str(os.getpid()), profile,
                 '--commit', commit, '--dataset', dataset, '--state-file', state]
-        with admission(state) as lock_fd:
-            started = command(argv, pass_fds=(lock_fd,))
+        with admission(state) as lock_fds:
+            started = command(argv, pass_fds=lock_fds)
         lifecycle = {'start': started, 'existing_ports_before': sorted(before),
                      'sentinel_port': sentinel_port}
         try:

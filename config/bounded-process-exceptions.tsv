@@ -1,7 +1,7 @@
 # observed_on	path:line	reason
 # Existing direct timeouts outside study B's open set. New call sites are refused;
 # each line leaves when its caller adopts lib/bounded_process.py.
-2026-10-30	bin/acceptance-session:128	Acceptance command wrapper retains its detached-launch mode.
+2026-10-30	bin/acceptance-session:130	Acceptance command wrapper retains its detached-launch mode.
 2026-10-30	bin/cockpit-setup-wizard:169	Tailscale setup probe is an existing single control-plane command.
 2026-10-30	bin/factory-doctor:168	CI runner status is an existing single control-plane read.
 2026-10-30	bin/factory-doctor:200	Gas City doctor is an existing single health command.
@@ -10,7 +10,7 @@
 2026-10-30	bin/mayor-context-guard:90	Session inventory is an existing single control-plane read.
 2026-10-30	bin/order-pause:134	Order-pause tracker wrapper is outside study B's open set.
 2026-10-30	bin/outcome-evaluation:151	Outcome Evaluation wrapper retains its detached-launch mode.
-2026-10-30	bin/outcome-promote:115	Outcome promotion wrapper retains its detached-launch mode.
+2026-10-30	bin/outcome-promote:118	Outcome promotion wrapper retains its detached-launch mode.
 2026-10-30	bin/project-isolation-oracle:211	Sandboxed read is outside study B's open set.
 2026-10-30	bin/reversibility-check:37	GitHub diff read is outside study B's open set.
 2026-10-30	bin/reversibility-check:43	Local Git diff read is outside study B's open set.
@@ -32,5 +32,5 @@
 2026-10-30	lib/cockpit/projects/promotion.py:16	Cockpit promotion command is outside study B's open set.
 2026-10-30	lib/cockpit/projects/roadmap.py:26	Cockpit roadmap command is outside study B's open set.
 2026-10-30	lib/cockpit/runs/derive.py:39	Cockpit run inventory is an existing single tracker read.
-2026-10-30	lib/evaluation_capacity.py:180	Evaluation commit read is an existing single Git command.
+2026-10-30	lib/evaluation_capacity.py:176	Evaluation commit read is an existing single Git command.
 2026-10-30	lib/factory_build_gates.py:70	Formula resolution is an existing single control-plane command.

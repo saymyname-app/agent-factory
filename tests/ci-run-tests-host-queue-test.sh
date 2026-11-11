@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 #
-# bin/ci-run-tests runs one battery at a time on a host (af-7m7ymg): a second
-# battery started while one runs waits its turn, says whose battery it waits
+# bin/ci-run-tests takes a slot of the host pool (lib/host_slots.py,
+# af-lsbqj9; one battery at a time before it, af-7m7ymg): with the pool full,
+# a battery started while one runs waits its turn, says whose run it waits
 # for, and both pass; past its bounded wait it gives up with exit 75 and runs
-# nothing. Proven against throwaway tests/ trees and a lock file of its own,
-# without a clock: the first battery's test holds until this script has seen
-# the second one wait.
+# nothing. Proven against throwaway tests/ trees and a pool of one slot of
+# its own, without a clock: the first battery's test holds until this script
+# has seen the second one wait.
 
 set -Eeuo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 RUNNER="$ROOT/bin/ci-run-tests"
 TMP=$(mktemp -d)
-LOCK="$TMP/host.lock"
+SLOTS="$TMP/slots"
+LOCK="$SLOTS/slot-0.lock"
 cleanup() {
   # Each may already be gone (the left-behind process is killed by the
   # runner): under set -e a failed kill would end the cleanup there.
@@ -37,7 +39,7 @@ until_true() {  # description command... -> waits up to 120 s for the command to
 battery() {  # root runner-args... ; extra environment comes from the caller
   local root=$1
   shift
-  env -u CI_RUN_TESTS_JOBS CI_RUN_TESTS_HOST_LOCK_FILE="$LOCK" FACTORY_ROOT="$root" \
+  env -u CI_RUN_TESTS_JOBS -u HOST_SLOT_HELD HOST_SLOTS_DIR="$SLOTS" HOST_SLOTS=1 FACTORY_ROOT="$root" \
     BUSY="$TMP/busy" RELEASE="$TMP/release" RAN="$TMP/ran" "$RUNNER" "$@"
 }
 
@@ -62,8 +64,8 @@ until_true "the first battery to start its test" test -d "$TMP/busy"
 
 GITHUB_ACTIONS='' battery "$TMP/second" >"$TMP/second.out" 2>&1 &
 second_pid=$!
-until_true "the second battery to say it waits" grep -Fq 'waiting for the battery of' "$TMP/second.out"
-grep -Fq "waiting for the battery of $TMP/first " "$TMP/second.out" \
+until_true "the second battery to say it waits" grep -Fq 'waiting for a host slot' "$TMP/second.out"
+grep -Fq "held by: the battery of $TMP/first " "$TMP/second.out" \
   || { cat "$TMP/second.out" >&2; fail "the waiting line does not name the battery it waits for"; }
 [ ! -e "$TMP/ran/second" ] || fail "the second battery started its tests while the first was running"
 echo "ok   a second battery waits and names the one it waits for"
@@ -114,18 +116,19 @@ leaked=$(cat "$TMP/leak.pid")
 flock --nonblock "$LOCK" true || fail "a process left behind by a test still holds the host"
 echo "ok   a process a test leaves behind does not keep the line"
 
-# On a GitHub runner the lock is not taken: one run per machine.
+# On a GitHub runner no slot is taken: one run per machine.
+mkdir -p "$SLOTS"
 ( exec 9>"$LOCK"; flock 9; : >"$TMP/held"; exec sleep 300 ) >/dev/null 2>&1 &
 holder_pid=$!
 until_true "the stand-in battery to hold the host" test -e "$TMP/held"
 out=$(GITHUB_ACTIONS=true CI_RUN_TESTS_HOST_WAIT=0 battery "$TMP/inner" 2>&1) \
-  || { echo "$out" >&2; fail "a GitHub runner waited for the host lock"; }
+  || { echo "$out" >&2; fail "a GitHub runner waited for a host slot"; }
 grep -Fq 'ran 1 test(s), 0 failure(s)' <<<"$out" || { echo "$out" >&2; fail "the GitHub runner battery did not run"; }
-echo "ok   a GitHub runner does not take the host lock"
+echo "ok   a GitHub runner does not take a host slot"
 
 if GITHUB_ACTIONS='' CI_RUN_TESTS_HOST_WAIT=soon battery "$TMP/inner" >/dev/null 2>&1; then
   fail "a malformed CI_RUN_TESTS_HOST_WAIT was accepted"
 fi
 echo "ok   a malformed CI_RUN_TESTS_HOST_WAIT is refused"
 
-printf 'PASS: ci-run-tests runs one battery at a time on a host\n'
+printf 'PASS: ci-run-tests takes its turn in the host pool\n'

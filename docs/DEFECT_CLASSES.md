@@ -63,7 +63,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `bash tests/factory-watchdog-test.sh`,
   `python3 tests/idle-ready-work-wake-test.py IdleReadyWorkWakeTest.test_a_hung_notification_is_bounded_without_changing_wake_cooldown`,
   `bash tests/ci-run-tests-leftover-test.sh`,
-  `python3 tests/regression-host-queue-test.py RegressionHostQueue.test_a_file_that_leaves_a_process_alive_is_red_and_the_process_is_killed`
+  `python3 tests/regression-host-queue-test.py RegressionHostQueue.test_a_file_that_leaves_a_process_alive_is_red_and_the_process_is_killed`,
+  `python3 tests/host-slots-test.py`
   — complet pour les commandes Python bornées de `bin/`, `lib/` et
   `tests/cockpit-criteria/` : un seul lanceur (`lib/bounded_process.py`)
   ouvre une session et tue son groupe au délai, et aussi quand l'appelant
@@ -87,7 +88,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   tests eux-mêmes : `bin/ci-run-tests` et la régression du Cockpit lancent
   chaque fichier sous `lib/ci_test_reaper.py`, sous-faucheur (subreaper) qui
   tue ce qu'un fichier laisse vivant en finissant, le nomme et le fait
-  échouer (af-i9llwm).
+  échouer (af-i9llwm). Le dernier tient la limite unique de l'hôte : au
+  plus N exécutions lourdes ensemble (`lib/host_slots.py`), l'attente d'une
+  place n'étant ni un échec ni une part d'un budget (af-lsbqj9).
 - Occurrences : #624, #628, #629, #630, #631, #636, #647, #657, #658, #661,
   #667, #694, #696, #705, #706, #708, #710, #713, #721 ; copies orphelines du
   22/10 (sans PR) ; af-kky570 ; af-npz9v1.46 ; af-npz9v1.26 ; af-30zwwu ;
@@ -98,7 +101,13 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   par chaque régression du Cockpit, 23 vivantes le 11/11) ; af-8a246o
   (plafonds d'attente de 3 s des actions opérateur et de 1,5 s du réveil
   idle-ready-work-wake, rouges sous une charge de 37 à 39 sur 8 cœurs ;
-  budget complet de la régression du Cockpit dépassé, relevé par la mesure).
+  budget complet de la régression du Cockpit dépassé, relevé par la mesure) ;
+  af-lsbqj9 (PR 840 à 860 : des outils sains rouges sous une charge de 30 à
+  100 sur 8 CPU, budgets relevés trois fois, chaque correctif bornant un
+  seul outil ; arbres tdd-step, copies project-launch et régressions
+  spec-integration tournaient hors du verrou de `ci-run-tests`, lui-même
+  dans un `/tmp` que le bac à sable des rôles remplace : une seule limite
+  hôte les tient tous).
 - Ouvertes : les invocations directes antérieures hors des occurrences de
   l'étude B sont nommées une par une, avec leur date et leur motif, dans
   `config/bounded-process-exceptions.tsv` ; une vingtaine de délais écrits à
@@ -291,7 +300,12 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   #716 ; af-npz9v1.42 ; af-npz9v1.52 ; af-9wnmid ; af-a53dy2 ; af-epwkmn
   (`factory-delivery-guard` lisait `gc.authorized_by` comme le bead livré et
   a fermé hors porte R10 af-30ix43, ce qui a arrêté son convoi ; il rouvre
-  ce ticket au statut que ses portes permettent).
+  ce ticket au statut que ses portes permettent) ; af-lsbqj9 (le verrou
+  « une batterie à la fois » de `bin/ci-run-tests` et le plafond de deux
+  produits d'évaluation étaient deux règles de charge de l'hôte, chacune
+  pour un outil : les deux sont des usages du pool de `lib/host_slots.py`,
+  tenu par `python3 tests/host-slots-test.py` et
+  `python3 tests/evaluation-capacity-test.py`).
 - Ouvertes : les quatre propositions que `factory-delivery-guard` a fermées
   hors de `bin/proposal-door` avant af-epwkmn (af-p1q5pz, af-ze0zan,
   af-pgckwt, af-rmbml9) attendent leur résolution par la porte, af-8a2e9d ;

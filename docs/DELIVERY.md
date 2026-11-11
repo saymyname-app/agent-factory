@@ -636,47 +636,77 @@ there instead of after the long tests. It does not mean a test left out of
 a green run, nor another gate: green, every test ran
 (`tests/ci-run-tests-rule-checks-first-test.sh`).
 
-**One battery at a time on the host (af-7m7ymg).**
+**One limit for every heavy test run of the host (af-lsbqj9; before it, one
+battery at a time, af-7m7ymg).**
 
 Intent (Benjamin, his words, 2026-10-08): « je veux que l'usine finisse son
 taf pendant que je dors, et je veux que ca consomme pas toutes les minutes
 github et que les tests soient intelligents et econome en token, mais que la
-qualité soit là à la fin »
-Mechanism (agent interpretation): batteries started on the host run one
-after the other. It does not mean fewer tests, nor a different gate.
+qualité soit là à la fin »; and (2026-11-11, 20:31 Paris, « 1 puis 2 », on
+proposal 2 of the retro af-s8oxba): « Limiter le nombre de tests simultanés
+sur la VM au lieu de relever les délais outil par outil. »
+Mechanism (agent interpretation): one pool for the host (`lib/host_slots.py`),
+as many cores as it has processors, from which every heavy run takes its
+measured share; the others wait their turn.
+It does not mean fewer tests, nor a different gate, nor a raised deadline.
 
 On 2026-10-08, 06:04 to 06:35 (Paris), three batteries ran at once beside the
 live Factory (two delivery workers and an operator session): load 37 on 12
 cores, 8 GB of memory full, one test file at 504 s instead of about 60, and
 two Cockpit tests red on "nothing listening on 127.0.0.1:<port> after 5s"
-that pass alone in 14 s on the same commit. A false red costs an agent a
-diagnosis and a second run, and can send a red or a retry to GitHub.
+that pass alone in 14 s on the same commit. A lock then let one battery run
+at a time; but from 08 to 11/11 nine pull requests (840 to 860) still
+repaired healthy tools gone red under a load of 30 to 100 on 8 CPUs, and
+budgets were raised three times: tdd-step trees, project-launch copies and
+spec-integration regressions ran beside the battery, bounded by nothing, and
+the lock lived in `/tmp`, which `bin/delivery-role-sandbox` replaces.
+
+| Who takes a slot | When it lets it go |
+|---|---|
+| `bin/ci-run-tests` (a battery) | when the battery ends |
+| `tests/cockpit-criteria/regression.py` run alone | when it ends |
+| `bin/tdd-step` (every step but the freeze, and its `check`) | when the step ends: its product, its tests and its regression run in its turn |
+| `bin/spec-integration` (`merge`, `take-up`) | at the end of the pass, from its first regression on |
+| `bin/ticket-author`, `bin/prototype-fidelity`, `bin/outcome-promote` | when the command ends, its product with it |
+| `bin/acceptance-session`, and `bin/project-launch` started by no slot holder | the guard of the launch holds it until the product is stopped |
+| `bin/ticket-evaluation`, `bin/outcome-evaluation` | the product's launch record holds the place between passes, until it is proven gone (`lib/evaluation_capacity.py`); a full pool defers the evaluation |
+
+A test run takes `cores_per_run` cores of the pool and a product
+`cores_per_product`, from `config/host-slots.json`, which says what was
+measured (a Cockpit regression used 3.97 cores; an evaluation product
+waiting for its Evaluator, 0.08): on 8 processors, two test runs at once,
+or one and two products. `python3 lib/host_slots.py show` prints the pool
+and who holds it.
 
 | What you see | What it means | What to do |
 |---|---|---|
-| `ci-run-tests: waiting for the battery of <work tree> (pid, since HH:MM, J file(s) at once) -- ... waited Ns of at most Ms`, repeated every minute | Another battery holds the host; yours has not started and starts by itself when that one ends. | Nothing. Do not start a second one, do not kill the other. |
-| `ci-run-tests: NOT RUN -- the battery of ... still holds the host after Ns`, exit 75 | The wait reached `CI_RUN_TESTS_HOST_WAIT` seconds (default 5400). No test ran. | Not a test failure: start it again later. Never report it as red or green. |
+| `<tool>: waiting for a host slot (K of the N cores of the host pool taken, W wanted for a run, held by: <who> (pid, since HH:MM); ...); waited Ns of at most Ms`, repeated every 30 s | The pool is full; your run has not started and starts by itself when a slot comes back. | Nothing. Do not start a second one, do not kill the others. |
+| `NOT RUN -- ... after Ns of waiting`, exit 75 (`ci-run-tests`, the regression, `tdd-step`, `project-launch`), or a refusal « aucune place sur l'hôte … (NOT RUN) » | The wait reached its bound (`CI_RUN_TESTS_HOST_WAIT`, default 5400 s; `host_wait_seconds` of `config/test-budgets.json` for the regression, `tdd-step` and `spec-integration`; 5400 s elsewhere). Nothing ran. | Not a test failure: start it again later. Never report it as red or green. |
+| « capacité des produits d'évaluation atteinte (K of the N cores of the host pool taken, W wanted for a product) » | An evaluation found the pool full; it is deferred to the next pass. | Nothing. |
 
-How it holds: `bin/ci-run-tests` takes `/tmp/agent-factory-ci-run-tests-<uid>.lock`
-through `flock --close` and runs itself under it, so the lock belongs to the
-battery and to nothing a test leaves behind, and it goes when the battery
-ends, however it ends. `--list`, a GitHub runner (one run per machine), a job
-of the host's own runner (boxed and held to 8 cores and 4 GB:
-`docs/OPERATIONS.md`, "Factory CI on the host's own runner") and a
-`ci-run-tests` started from inside a battery (the tests of the runner) do not
-wait. Proof: `tests/ci-run-tests-host-queue-test.sh`.
+How it holds: a share is one lock file per core of `~/.local/state/agent-factory-product-capacity/host-slots/`
+(writable inside the sandbox) held through `flock` by the process that runs
+the work, never by what a test leaves behind; it goes when that process
+ends, however it ends. The wait comes before every budget: a tool takes its
+slot, then starts its clock (`--timeout` of `project-launch` measures the
+product only; the regression's budget counts from the slot). A run started
+by a slot holder (`HOST_SLOT_HELD`, inherited) takes none and never waits on
+itself: the tests of a battery, the regression of a `tdd-step` check, the
+product of an evaluation. `--list`, a GitHub runner (one run per machine)
+and a job of the host's own runner (boxed and held to 8 cores and 4 GB:
+`docs/OPERATIONS.md`, "Factory CI on the host's own runner") take none.
+Proof: `tests/host-slots-test.py` (more runs than room, at most two together on eight cores,
+the wait neither a failure nor part of the budget),
+`tests/ci-run-tests-host-queue-test.sh`, `tests/regression-host-queue-test.py`,
+`tests/evaluation-capacity-test.py`.
 
-The cockpit's regression command (`tests/cockpit-criteria/regression.py`,
-what `bin/tdd-step` and `bin/spec-integration` run) takes the same lock
-since 25/10/2026: on 22/10 it ran beside two authors' and a merge's,
-took 1.9 times as long and was refused at 600 s on tickets that were green
-(study C, `docs/research/2026-10-22-strategie-tests-budgets.md`). It waits
-at most `host_wait_seconds`, then runs within the budget of its kind
-(`green_seconds` at a ticket's green, `full_seconds` elsewhere) counted
-from the lock; past either it exits 75, NOT RUN, which the gates never
-count as a red. It ends with « regression: took Ns », and an « ALERT »
-line past `alert_ratio` of its budget. Proof:
-`tests/regression-host-queue-test.py`.
+The cockpit's regression command (`tests/cockpit-criteria/regression.py`)
+waits at most `host_wait_seconds` when it is not run in a holder's turn,
+then runs within the budget of its kind (`green_seconds` at a ticket's
+green, `full_seconds` elsewhere) counted from the slot; past either it
+exits 75, NOT RUN, which the gates never count as a red. It ends with
+« regression: took Ns », and an « ALERT » line past `alert_ratio` of its
+budget (study C, `docs/research/2026-10-22-strategie-tests-budgets.md`).
 
 **Time budgets, measured, in one file** (study C, T3, af-npz9v1.32).
 `config/test-budgets.json` holds every deadline of a ticket's tests; the

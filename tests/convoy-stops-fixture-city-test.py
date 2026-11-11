@@ -535,6 +535,11 @@ class ConvoyStopsOnTheFixtureCity(Staged, publication.Harness):
         self.env["SPEC_END_LOCK_DIR"] = str(self.tmp / "locks")
         self.env["SPEC_END_WORK_DIR"] = str(self.tmp / "gate-work")
         self.env["OUTCOME_EVALUATION_STATE_DIR"] = str(self.tmp / "launches")
+        # The host pool of this test (lib/host_slots.py, af-lsbqj9): two
+        # products of two cores; its other runs are in a holder's turn.
+        self.env.setdefault("EVALUATION_CAPACITY_STATE_DIR", str(self.tmp / "capacity"))
+        self.env.setdefault("HOST_SLOTS", "4")
+        self.env.setdefault("HOST_SLOT_HELD", str(Path(self.env["EVALUATION_CAPACITY_STATE_DIR"]) / "host-slots"))
         if not_done or out_of_ticket:
             self.run_ok(STATE, "add-evidence", self.convoy, self.ids["T4"], "--piece", "handoff_records",
                         "--digest", "sha256:" + "ab" * 32, "--commit", self.base)
