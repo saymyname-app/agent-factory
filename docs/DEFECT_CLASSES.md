@@ -292,7 +292,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `bash tests/pr-autopilot-time-budget-test.sh`,
   `bash tests/planning-artifacts-close-test.sh`,
   `bash tests/convoy-parent-sweep-test.sh`,
-  `bash tests/factory-maintain-test.sh` — partiel : le premier
+  `bash tests/factory-maintain-test.sh`,
+  `bash tests/isolated-city-stop-guard-test.sh` — partiel : le premier
   tient la frontière entre un report explicite (sortie 75, rejoué sans
   alerte) et une vraie panne répétée (bead et page Mayor) ; le deuxième tient
   la collecte VM Beads/Git/GitHub, le silence sur état inchangé, la route
@@ -336,7 +337,13 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   balayages coupés de suite sortent 2. Le contrôle `factory-maintain` refuse
   que `clean-worktrees` signale comme travail perdu la copie non publiée d'un
   ticket en cours dont la session auteure est ouverte, et tient le
-  signalement de la copie d'un ticket dont la session est partie.
+  signalement de la copie d'un ticket dont la session est partie. Le contrôle
+  `isolated-city-stop-guard` refuse qu'un essai en cité isolée attende sur une
+  échéance d'horloge à lui : chaque attente passe par `isolated_city_wait_for`
+  (`tests/lib/isolated-city.sh`), qui compte le temps que l'hôte donne à
+  l'essai (une seconde à deux fois plus de charge que de CPU compte pour
+  moitié, jusqu'à quatre fois le délai écrit) et nomme la charge quand il
+  renonce.
 - Occurrences : #651, #679, #688, #717 ; af-npz9v1.50 ; #767 (armement local
   annoncé mais `autoMergeRequest=null`, af-npz9v1.50.1) ; af-ncg9qy ; #778
   (demande directe acceptée localement mais encore `AWAITING_CHECKS`,
@@ -358,7 +365,10 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   au délai de 120 s de `convoy-parent-sweep`, le 10/11/2026 à 00:01) ;
   af-mc1u08 (`clean-worktrees` a signalé comme non poussée la copie d'un
   ticket dont l'auteur, session active, n'avait pas encore publié : af-h2boiv
-  le 28/10, af-apbds3 le 11/11/2026).
+  le 28/10, af-apbds3 le 11/11/2026) ; af-2crkwu (la nuit du 11/11/2026, sous
+  une charge de 40 à 100 sur 8 CPU, trois essais en cité isolée arrêtés à leur
+  échéance d'horloge fixe en plein parcours, sans rien de cassé, et signalés
+  comme régressions).
 - Ouvertes : aucune connue.
 
 ## A — Autre
