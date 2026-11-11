@@ -15,7 +15,11 @@ already pins down (``tests/cockpit-heartbeat-test.py``): ``en_marche``,
 from :mod:`cockpit.heartbeat.emitter` rather than redefined, since that is
 the exact value the heartbeat pauses on), ``redemarrage``,
 ``reprise_verifiee``, ``reprise_avec_ecarts``, ``arret_force``,
-``arret_interrompu``.
+``arret_interrompu``. The heartbeat reads ``heartbeat_state()``, not
+``state()``: a clean stop that lost a work is a suspension still to verify
+-- the page Usine says « Suspension à vérifier » -- and is never given to
+it as ``arretee_proprement`` (Spec af-fgcw0d, « pause uniquement à arrêt
+propre confirmé, reprise au redémarrage »; R17, af-8hq9o8).
 
 ``essai_reussi()`` (T24, af-j2mkpa -- spec "Bouton masqué tant que ... qu'un
 essai réel déclenché par Benjamin n'a pas réussi") is the persisted trace
@@ -71,6 +75,7 @@ PARIS = ZoneInfo("Europe/Paris")
 EN_MARCHE = "en_marche"
 ARRET_EN_COURS = "arret_en_cours"
 ARRETEE_PROPREMENT = CLEANLY_STOPPED  # "arretee_proprement"
+SUSPENSION_A_VERIFIER = "suspension_a_verifier"  # heartbeat_state() only
 REDEMARRAGE = "redemarrage"
 REPRISE_VERIFIEE = "reprise_verifiee"
 REPRISE_AVEC_ECARTS = "reprise_avec_ecarts"
@@ -208,6 +213,14 @@ class StopDriver:
 
     # -- read side -----------------------------------------------------------
     def state(self):
+        return self._state
+
+    def heartbeat_state(self):
+        """The state the heartbeat reads: ``arretee_proprement`` only once
+        the clean stop is confirmed, nothing lost; with a work lost,
+        ``suspension_a_verifier``, which it does not pause on."""
+        if self._state == ARRETEE_PROPREMENT and self._perdu:
+            return SUSPENSION_A_VERIFIER
         return self._state
 
     def bilan(self):
