@@ -127,7 +127,9 @@ tracker's `blocks` edges (`docs/CONVOY_STATE.md`). `bin/convoy-advance` does
 not start a parked ticket and reports it under `waiting`; the tickets that
 wait for none of them keep starting. A parking is lifted by
 `bin/convoy-advance`, on the operator's answer (T20,
-`docs/CONVOY_ADVANCE.md`): any answer to an `operator_request`; for a
+`docs/CONVOY_ADVANCE.md`): any answer to an `operator_request` but
+« Corriger par maintenance sur main », which waits for its linked repair
+(below); for a
 `planning_exception`, only the option that accepts the deviation. The
 ticket is then sent to a fresh author session (cause `answered`) and the
 tickets behind it are startable again.
@@ -141,7 +143,11 @@ structurally unproven repair work waits; once every linked repair has merge
 and exact-head CI proof, `bin/convoy-advance` withdraws the request, lifts
 the parking and uses the existing `unblocked` resume. The link remains the
 release marker until it is consumed atomically with that resume; later
-requests without their own link keep the human-answer rule above.
+requests without their own link keep the human-answer rule above. An
+answer « Corriger par maintenance sur main » lifts nothing by itself: the
+ticket stays parked until its maintenance bead is linked and delivered,
+and `lift-park` re-reads the link at its write, so a pass that read the
+ticket before a link cannot lift it on the answer (af-fv8ca4).
 
 The same door may bind a maintenance bead to the exact stop time of an
 `evaluation_outage`. Once delivery has merge and exact-head CI proof,
