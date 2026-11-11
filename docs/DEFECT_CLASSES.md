@@ -132,7 +132,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_factory_repair_is_taken_up_and_tested_before_its_resume_is_consumed_once`,
   `python3 tests/outcome-evaluation-every-dataset-test.py`,
   `python3 tests/outcome-evaluation-outdated-stop-test.py`,
-  `bash tests/factory-work-dispatch-test.sh`. Sa même table tient chaque
+  `bash tests/factory-work-dispatch-test.sh`,
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_ticket_finished_without_its_green_at_the_tip_goes_back_to_its_author_once`. Sa même table tient chaque
   fonction de `bin/convoy-advance` qui publie un repair rédigé par la porte
   de patch : un refus de la porte y est noté là où le repair a été rédigé et
   arrête le convoi, ou la fonction est une exception datée qui nomme son
@@ -192,7 +193,14 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   autre commit, et une maintenance liée ne pouvait plus le lever : `settle`
   range l'arrêt périmé sous `lifts` (`outdated_by`), retire sa demande sans
   réponse et évalue la nouvelle pointe, prouvé par
-  `python3 tests/outcome-evaluation-outdated-stop-test.py`).
+  `python3 tests/outcome-evaluation-outdated-stop-test.py`) ;
+  af-1row55 (R16 af-yv2g3n sorti « terminé » à un commit de jeu de données
+  après son vert : la revue et l'évaluation attendaient un ticket vert à la
+  pointe, rien ne le renvoyait ; `bin/ticket-exit` refuse cette sortie et
+  `convoy-advance` renvoie à son auteur, cause `returned`, celle déjà
+  enregistrée, prouvé par
+  `python3 tests/ticket-exit-test.py TicketExitTest.test_finished_is_refused_when_the_green_was_proven_before_the_head_commit`
+  et `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_ticket_finished_without_its_green_at_the_tip_goes_back_to_its_author_once`).
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
   contrôle : `criterion_already_green` reste au Planning Run, sauf
   le repair qui ne fait que déplacer une preuve (af-oa2ci4 : `tdd-step red`
