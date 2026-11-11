@@ -11,6 +11,7 @@ import functools
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -969,6 +970,101 @@ class SpecIntegrationTest(unittest.TestCase):
         self.assertEqual(EXIT_REFUSED, proc.returncode, proc.stdout + proc.stderr)
         self.assertIn("NOT RUN", json.loads(proc.stdout).get("error"))
         self.assertIsNone(self.show()["convoy"]["integration_red"])
+
+    # --- af-l8zgmw: a green run already sealed on the same tree is not run again ---
+
+    def counted_profile(self):
+        """A regression command that counts its runs in a file and exits with
+        the code written in another; returns both files."""
+        runs, code = self.tmp / "runs.log", self.tmp / "exit-code"
+        code.write_text("0")
+        descriptor = json.loads(self.profile.read_text())
+        descriptor["launch"]["regression_command"] = f"sh -c 'echo run >> {runs}; exit $(cat {code})'"
+        self.profile.write_text(json.dumps(descriptor))
+        return runs, code
+
+    def runs(self):
+        path = self.tmp / "runs.log"
+        return len(path.read_text().splitlines()) if path.exists() else 0
+
+    def tested_unpushed(self, ticket, tip):
+        """What a pass killed once its tests were sealed leaves (R17,
+        10/11/2026, af-8cfygl): the ticket merged on the integration tip in a
+        work tree, its piece `merged_tests` captured on that result by the
+        real capture tool, and nothing pushed or written on the merge.
+        Returns the commit tested."""
+        tree = self.tmp / "killed-pass"
+        self.git("fetch", "-q", "origin")
+        self.git("worktree", "add", "-q", "--detach", str(tree), f"origin/{INTEGRATION}")
+        self.git("-C", str(tree), "merge", "-q", "--no-ff", "-m", f"Fusion de {ticket}", tip)
+        tested = self.git("-C", str(tree), "rev-parse", "HEAD")
+        command = json.loads(self.profile.read_text())["launch"]["regression_command"]
+        proc = self.run_cmd(CAPTURE_TOOL, "command", CONVOY, ticket, "--piece", TESTS_PIECE, "--repo", tree,
+                            "--", TOOL, "tests", "--tree", tree, "--", *shlex.split(command))
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.git("worktree", "remove", "--force", str(tree))
+        return tested
+
+    def test_a_merged_result_already_tested_green_on_the_same_tree_is_pushed_without_running_again(self):
+        tip1, tip2 = self.two_finished_tickets()
+        self.counted_profile()
+        tested = self.tested_unpushed(T1, tip1)
+        self.assertEqual(1, self.runs())
+
+        answer = self.merged()
+
+        first, second = answer["merged"]
+        # The commit that was tested is the one pushed, and the answer says where its run comes from.
+        self.assertEqual(tested, first["commit"])
+        reused = first["tests"]["reused_from"]
+        self.assertEqual((T1, TESTS_PIECE, tested), (reused["ticket"], reused["piece"], reused["commit"]))
+        self.assertEqual(tested, self.shown(T1)["merge"]["commit"])
+        self.assertEqual(tested, self.piece(T1)["commit"])
+        # Only the merge of the second ticket ran the command.
+        self.assertNotIn("reused_from", second["tests"])
+        self.assertEqual(2, self.runs())
+        self.assertEqual([tested, tip2], self.parents(second["commit"]))
+
+    def test_a_merged_result_tested_red_on_the_same_tree_is_run_again(self):
+        tip1, _ = self.two_finished_tickets()
+        _, code = self.counted_profile()
+        code.write_text("1")
+        red = self.tested_unpushed(T1, tip1)
+        code.write_text("0")
+
+        answer = self.merged()
+
+        first = answer["merged"][0]
+        self.assertNotEqual(red, first["commit"])
+        self.assertNotIn("reused_from", first["tests"])
+        self.assertEqual((0, first["commit"]), (self.piece(T1)["exit_code"], self.piece(T1)["commit"]))
+        self.assertEqual(3, self.runs())
+
+    def test_a_green_run_on_another_tree_does_not_spare_the_run(self):
+        tip1, _ = self.two_finished_tickets()
+        self.counted_profile()
+        tested = self.tested_unpushed(T1, tip1)
+        self.advance_protected({"docs/ailleurs.md": "fusionné ailleurs\n"})
+
+        answer = self.merged()
+
+        # The takeover changed the tree under the ticket: its control and both merges run.
+        self.assertNotIn("reused_from", answer["takeover"])
+        self.assertNotEqual(tested, answer["merged"][0]["commit"])
+        self.assertNotIn("reused_from", answer["merged"][0]["tests"])
+        self.assertEqual(4, self.runs())
+
+    def test_take_up_on_a_tip_its_last_merge_tested_green_does_not_run_again(self):
+        self.two_finished_tickets()
+        self.counted_profile()
+        tip = self.merged()["merged"][1]["commit"]
+        self.assertEqual(2, self.runs())
+
+        answer = self.taken_up()
+
+        self.assertEqual((tip, None), (answer["integration"], answer["takeover"]))
+        self.assertEqual((T2, tip), (answer["tests"]["reused_from"]["ticket"], answer["tests"]["reused_from"]["commit"]))
+        self.assertEqual(2, self.runs())
 
     def test_a_red_takeover_is_not_pushed_and_no_ticket_is_blamed(self):
         self.two_finished_tickets()
