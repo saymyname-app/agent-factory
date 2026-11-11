@@ -1,6 +1,6 @@
 {
   "cores_per_run": 4,
   "cores_per_product": 2,
-  "measured": "2026-11-12 00:27 Paris, 8 processors, load 25: one Cockpit regression (tests/cockpit-criteria/regression.py, 4 files at once) used 3.97 cores over 62 s, its whole process tree sampled from /proc; one evaluation product (bin/cockpit run, at nice 19, waiting for its Evaluator) used 0.08 core over 20 s. cores_per_run is that measure; cores_per_product is not: 2 keeps, beside one test run on 8 processors, the two evaluation products of the former cap (af-5rx5mu, PR 561), for a product an Evaluator drives with a browser.",
+  "measured": "2026-11-12, 8 processors, load 25 to 42. One Cockpit regression (tests/cockpit-criteria/regression.py, 4 files at once, then its criterion tests alone): 3.97 cores over 62 s of its 4-file phase (process tree sampled from /proc, 00:27 Paris); a whole run of it, 00:24 to 00:35, used 679.6 s of CPU in the 349 s it held the host, 1.95 cores on average, after 649 s waiting for the former lock. cores_per_run is the 4-file phase, its peak. One evaluation product (bin/cockpit run at nice 19, waiting for its Evaluator) used 0.08 core over 20 s. cores_per_product is not a measure: 2 keeps, beside one test run on 8 processors, the two evaluation products of the former cap (af-5rx5mu, PR 561), for a product an Evaluator drives with a browser.",
   "source": "af-lsbqj9; lib/host_slots.py reads it"
 }

@@ -665,6 +665,7 @@ the lock lived in `/tmp`, which `bin/delivery-role-sandbox` replaces.
 |---|---|
 | `bin/ci-run-tests` (a battery) | when the battery ends |
 | `tests/cockpit-criteria/regression.py` run alone | when it ends |
+| `bin/local-only-tests` (each nightly test: isolated cities, real trackers) | when the test ends; past `LOCAL_ONLY_SLOT_WAIT` (1800 s) the test is NOT RUN, named, not failed |
 | `bin/tdd-step` (every step but the freeze, and its `check`) | when the step ends: its product, its tests and its regression run in its turn |
 | `bin/spec-integration` (`merge`, `take-up`) | at the end of the pass, from its first regression on |
 | `bin/ticket-author`, `bin/prototype-fidelity`, `bin/outcome-promote` | when the command ends, its product with it |

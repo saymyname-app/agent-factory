@@ -631,7 +631,8 @@ def cmd_start(args: argparse.Namespace) -> int:
     if slot is None:
         try:
             slot = host_slots.take(f"project-launch {descriptor['project_id']} {resolved_commit[:12]}",
-                                   kind=host_slots.PRODUCT, say=lambda line: print(f"project-launch: {line}", file=sys.stderr, flush=True))
+                                   kind=host_slots.PRODUCT,
+                                   say=lambda line: print(f"project-launch: {line}", file=sys.stderr, flush=True))
         except host_slots.NotRun as exc:
             print(json.dumps({"started": False, "not_run": True,
                               "error": f"no host slot for the product: {exc}"}, sort_keys=True))

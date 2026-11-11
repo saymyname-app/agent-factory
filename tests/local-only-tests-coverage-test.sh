@@ -179,6 +179,20 @@ if grep -q 'SKIPPED tests/silent-77-test.sh' <<<"$out"; then fail "a silent exit
 grep -q 'tests/silent-77-test.sh' "$TMP/gc.calls" || fail "the bead does not name the silent exit 77 as failing"
 rm -f "$FAKE/tests/silent-77-test.sh" "$TMP/gc.calls" "$TMP/door.calls"
 
+# --- 5b. A test that finds no host slot is NOT RUN, never failed (af-lsbqj9) -
+mkdir -p "$TMP/slots"
+( exec 9>"$TMP/slots/slot-0.lock"; flock 9; : >"$TMP/slot.held"; exec sleep 300 ) >/dev/null 2>&1 &
+slot_holder=$!
+for _ in $(seq 1 100); do [ -e "$TMP/slot.held" ] && break; sleep 0.1; done
+rm -f "$TMP/ran"/*
+rc=0
+out=$(unset HOST_SLOT_HELD; HOST_SLOTS_DIR="$TMP/slots" HOST_SLOTS=1 LOCAL_ONLY_SLOT_WAIT=0 run) || rc=$?
+kill "$slot_holder" 2>/dev/null || true
+[ "$rc" = 0 ] || fail "a run whose tests found no host slot exited $rc: $out"
+grep -q 'NOT RUN tests/alpha-test.sh' <<<"$out" || fail "the output does not name the test left without a slot: $out"
+[ ! -e "$TMP/ran/alpha-test.sh" ] || fail "a test ran without its host slot"
+if grep -q 'FAIL tests/alpha-test.sh' <<<"$out"; then fail "a test left without a slot was counted as failed: $out"; fi
+
 # --- 6. The capture-browser probe skips on the sandbox refusal only ---------
 fake_browser() { # <name> <stderr line> <exit code>
   printf '#!/usr/bin/env bash\necho %q >&2\nexit %s\n' "$2" "$3" >"$TMP/bin/$1"
@@ -194,4 +208,4 @@ grep -q '^SKIP: .*No usable sandbox.*af-yb2cb5' <<<"$out" || fail "the skip does
 [ "$(probe starts)" = ran ] || fail "a browser that starts did not let the test run"
 [ "$(probe broken 2>/dev/null)" = ran ] || fail "a browser broken another way was skipped instead of failing the test"
 
-echo "PASS: every local-only test is run by bin/local-only-tests or excluded with its reason; one its host cannot run is named SKIPPED"
+echo "PASS: every local-only test is run by bin/local-only-tests or excluded with its reason; one its host cannot run is named SKIPPED, one without a host slot NOT RUN"
