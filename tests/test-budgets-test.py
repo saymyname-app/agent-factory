@@ -134,6 +134,16 @@ class TestBudgets(unittest.TestCase):
               "regression: took 900s with the host held (full budget 900s)\n", exit_code=1)
         self.assertEqual([], test_budgets.runs(self.store))
 
+    def test_each_criterion_class_keeps_its_last_successful_measure(self):
+        piece(self.store, "m1", "merged_tests.json",
+              "regression: took 700s for criterion class a.py::Long\n"
+              "regression: took 40s for criterion class b.py::Short\n", at="2026-11-10T00:00:00Z")
+        piece(self.store, "m2", "merged_tests.json",
+              "regression: took 900s for criterion class a.py::Long\n", at="2026-11-11T00:00:00Z")
+        piece(self.store, "m3", "merged_tests.json",
+              "regression: took 5s for criterion class a.py::Long\n", exit_code=1, at="2026-11-12T00:00:00Z")
+        self.assertEqual({"a.py::Long": 900, "b.py::Short": 40}, test_budgets.class_seconds(self.store))
+
 
 if __name__ == "__main__":
     unittest.main()

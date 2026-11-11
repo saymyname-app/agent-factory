@@ -46,6 +46,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import re
 import statistics
 import subprocess
@@ -122,6 +123,33 @@ def runs(store: Path) -> list[dict]:
     return sorted(found, key=lambda run: run["at"])
 
 
+def store_dir() -> Path:
+    """The evidence store, where bin/evidence-capture writes it."""
+    sys.path.insert(0, str(ROOT / "lib"))
+    from account_home import account_home  # noqa: E402
+    configured = os.environ.get("EVIDENCE_STORE_DIR")
+    return Path(configured) if configured else account_home() / ".local" / "state" / "agent-factory-evidence"
+
+
+def class_seconds(store: Path) -> dict[str, int]:
+    """The last measured seconds of each criterion class, from the successful
+    runs of the evidence store: the order tests/cockpit-criteria-test.py
+    starts them in (af-8a246o)."""
+    found: list[tuple[str, str, int]] = []
+    for path in store.glob("*/*/*.json"):
+        if path.name not in ("merged_tests.json", "tdd_green.json"):
+            continue
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if path.name == "merged_tests.json" and str(record.get("exit_code")) != "0":
+            continue
+        for seconds, name in CRITERION_TOOK.findall(record.get("output") or ""):
+            found.append((record.get("at", ""), name.strip(), int(seconds)))
+    return {name: seconds for _, name, seconds in sorted(found)}
+
+
 def budget_of(seconds: list[int]) -> int:
     return 60 * math.ceil(1.5 * max(seconds) / 60)
 
@@ -180,9 +208,7 @@ def main(argv: list[str]) -> int:
         ok = order is not None and order >= needed
         print(json.dumps({"ok": ok, "order_seconds": order, "pass_seconds": needed}))
         return 0 if ok else 1
-    sys.path.insert(0, str(ROOT / "lib"))
-    from account_home import account_home  # noqa: E402
-    store = args.store or account_home() / ".local" / "state" / "agent-factory-evidence"
+    store = args.store or store_dir()
     found = runs(store)
     if args.command == "refresh":
         new = refreshed(budgets, found)
