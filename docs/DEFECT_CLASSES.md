@@ -137,7 +137,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/outcome-evaluation-every-dataset-test.py`,
   `python3 tests/outcome-evaluation-outdated-stop-test.py`,
   `bash tests/factory-work-dispatch-test.sh`,
-  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_ticket_finished_without_its_green_at_the_tip_goes_back_to_its_author_once`. Sa même table tient chaque
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_ticket_finished_without_its_green_at_the_tip_goes_back_to_its_author_once`,
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_linked_repair_answered_to_be_fixed_in_the_convoy_goes_back_to_the_ticket_s_author_once ConvoyAdvanceTest.test_a_ticket_lifted_before_its_link_resumes_once_its_repair_is_answered_to_be_fixed_in_the_convoy`. Sa même table tient chaque
   fonction de `bin/convoy-advance` qui publie un repair rédigé par la porte
   de patch : un refus de la porte y est noté là où le repair a été rédigé et
   arrête le convoi, ou la fonction est une exception datée qui nomme son
@@ -210,7 +211,13 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `convoy-advance` renvoie à son auteur, cause `returned`, celle déjà
   enregistrée, prouvé par
   `python3 tests/ticket-exit-test.py TicketExitTest.test_finished_is_refused_when_the_green_was_proven_before_the_head_commit`
-  et `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_ticket_finished_without_its_green_at_the_tip_goes_back_to_its_author_once`).
+  et `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_ticket_finished_without_its_green_at_the_tip_goes_back_to_its_author_once`) ;
+  af-t8hycw (R20 af-3l6hbt restait lié à af-8fk8nz, une réparation de code
+  présent sur la seule branche d'intégration, que Benjamin a fait corriger
+  « dans le convoi » : aucune PR vers main ne la livrerait, le ticket
+  l'attendait pour toujours ; `convoy-advance` rend la réparation au ticket,
+  `return-technical-repair`, et son auteur reprend pour la faire, prouvé par
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_linked_repair_answered_to_be_fixed_in_the_convoy_goes_back_to_the_ticket_s_author_once ConvoyAdvanceTest.test_a_ticket_lifted_before_its_link_resumes_once_its_repair_is_answered_to_be_fixed_in_the_convoy`).
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
   contrôle : `criterion_already_green` reste au Planning Run, sauf
   le repair qui ne fait que déplacer une preuve (af-oa2ci4 : `tdd-step red`
