@@ -412,6 +412,11 @@ fi
 
 PYTHON=python3
 command -v python3 >/dev/null 2>&1 || PYTHON=python
+# A copy of this runner without its lib/ (a throwaway repository of a test)
+# runs each test directly.
+REAPED=()
+REAPER="$(dirname -- "$SELF")/../lib/ci_test_reaper.py"
+[ -f "$REAPER" ] && REAPED=("$PYTHON" "$REAPER")
 
 # Several at once: start the long files first, so the last one to end is not
 # a long file that waited its turn behind short ones.
@@ -503,7 +508,12 @@ run_one() {  # index file -> prints its result line, leaves $RESULTS/<index>.fai
   # here, because run by hand it would wait on (or hold) the live Factory's
   # lock (af-wnj692).
   runtime_dir=$(mktemp -d)
-  out=$(unset ESCALATION_DOOR_LOCK_FILE; XDG_RUNTIME_DIR="$runtime_dir" "${wrap[@]}" "$interp" "$f" 2>&1)
+  # Each test runs as the child of lib/ci_test_reaper.py, a child subreaper
+  # (outside every blind area): what the test leaves alive when it ends is
+  # killed and fails it (category P: a test stops what it starts). A Cockpit
+  # test left one synthetic door that never answers per run, 23 alive on the
+  # host on 11/11/2026 (af-i9llwm).
+  out=$(unset ESCALATION_DOOR_LOCK_FILE; XDG_RUNTIME_DIR="$runtime_dir" "${wrap[@]}" "${REAPED[@]}" "$interp" "$f" 2>&1)
   status=$?
   if [ -e "$runtime_dir/agent-factory-escalation-door.lock" ]; then
     status=1

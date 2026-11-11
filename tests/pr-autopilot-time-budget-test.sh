@@ -39,7 +39,7 @@ JSON
 cat > "$TMP/bin/gh" <<STUB
 #!/usr/bin/env bash
 echo "\$*" >> "$TMP/gh.log"
-if [ -n "\${GH_HANG:-}" ] && [[ "\$*" == *"\$GH_HANG"* ]]; then exec sleep 120; fi
+if [ -n "\${GH_HANG:-}" ] && [[ "\$*" == *"\$GH_HANG"* ]]; then echo \$\$ >> "$TMP/hung.pids"; exec sleep 120; fi
 case "\$1 \$2" in
   "pr list")
     if [[ "\$*" == *"--state open"* && "\$*" == *"example-backend"* ]]; then cat "\$OPEN_JSON"; else echo '[]'; fi ;;
@@ -146,6 +146,12 @@ pilot GH_HANG="example-backend --state open" PR_AUTOPILOT_STOP_SECONDS=2
 [ "$elapsed" -lt 10 ] || fail "(f) ran ${elapsed}s: the whole-run stop did not cut the pass"
 grep -qE "^pr-autopilot: run stopped at 2s — pass deferred \(1 of 3 in a row, loadavg [0-9]" <<<"$out" \
   || fail "(f) the deferred pass was not reported with its count and loadavg"
+# af-i9llwm: the call in flight is a timeout(1) in a group of its own; the
+# stop ends it with the run instead of leaving it to its 20 s cap.
+for pid in $(cat "$TMP/hung.pids"); do
+  state=$(awk '{print $3}' "/proc/$pid/stat" 2>/dev/null || true)
+  [ -z "$state" ] || [ "$state" = Z ] || fail "(f) the hung gh call (pid $pid) outlived the stopped run"
+done
 pilot GH_HANG="example-backend --state open" PR_AUTOPILOT_STOP_SECONDS=2
 [ "$rc" = 0 ] || fail "(f) the second cut pass in a row exited $rc instead of being deferred"
 pilot GH_HANG="example-backend --state open" PR_AUTOPILOT_STOP_SECONDS=2
