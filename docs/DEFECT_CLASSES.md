@@ -95,7 +95,10 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   af-npz9v1.55.1 ; af-npz9v1.55.2 ; af-npz9v1.55.3 ; af-8cfygl (régression
   survivant à sa passe tuée, ordre convoy-advance à 90 min sans compter une
   attente par exécution) ; af-i9llwm (porte synthétique « expires » laissée
-  par chaque régression du Cockpit, 23 vivantes le 11/11).
+  par chaque régression du Cockpit, 23 vivantes le 11/11) ; af-8a246o
+  (plafonds d'attente de 3 s des actions opérateur et de 1,5 s du réveil
+  idle-ready-work-wake, rouges sous une charge de 37 à 39 sur 8 cœurs ;
+  budget complet de la régression du Cockpit dépassé, relevé par la mesure).
 - Ouvertes : les invocations directes antérieures hors des occurrences de
   l'étude B sont nommées une par une, avec leur date et leur motif, dans
   `config/bounded-process-exceptions.tsv` ; une vingtaine de délais écrits à

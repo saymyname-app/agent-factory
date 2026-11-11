@@ -695,7 +695,12 @@ For `criterion_test_seconds`, one sample is the slowest criterion-class timing
 inside a successful green or full run. On 06/11/2026, the last ten samples gave
 green 1680 s from 1106 s, full 2340 s from 1534 s, and one criterion test
 1200 s from 798 s (the 1534 s full run measured 750 s for its slowest
-criterion). Proof: `tests/test-budgets-test.py`.
+criterion). On 11/11/2026 (af-8a246o), with 87 criterion classes, they gave
+green 1260 s, full 3480 s from 2315 s, and one criterion test 1620 s; the
+order convoy-advance went from 110 to 148 min. Starting the longest classes
+first was tried and measured no gain: the criterion tests share 8 cores,
+their sum is the floor, and the heaviest run together grew by half.
+Proof: `tests/test-budgets-test.py`.
 
 What it does not cover:
 
