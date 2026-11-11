@@ -47,7 +47,10 @@
 #   factory-do-work-workspace finish <bead-id> <worktree-path> <branch> <base-branch>
 #       No-op if <worktree-path> is "." (enter's no-op marker) or does not
 #       exist. Otherwise: commits any remaining changes, pushes <branch>
-#       (rebasing onto <base-branch> up to twice on conflict), opens a PR
+#       (rebasing onto <base-branch> up to twice when refused; a remote tip
+#       this branch already held is overwritten with --force-with-lease
+#       pinned to it, a conflicting rebase is aborted and its files named,
+#       af-j54vl1), opens a PR
 #       with `gh` if available -- or, if one is already open for <branch>
 #       (a re-dispatch resuming earlier work, O04), resumes that PR instead
 #       of trying to create a duplicate -- (prints the PR URL on its own
@@ -150,10 +153,15 @@ install_post_commit_push_hook() {
     echo "factory-do-work-workspace: could not create hooks dir $hooks_dir" >&2
     return 1
   }
+  # af-j54vl1: once a pushed commit is rebased, a plain push is refused for
+  # good. The fallback forces only over a remote tip this branch's reflog
+  # already holds (--force-if-includes), never over a commit made elsewhere.
   cat > "$hooks_dir/post-commit" <<'HOOK'
 #!/usr/bin/env bash
 branch=$(git symbolic-ref --short HEAD 2>/dev/null) || exit 0
-git push origin "HEAD:refs/heads/$branch" >/dev/null 2>&1 || true
+git push origin "refs/heads/$branch:refs/heads/$branch" >/dev/null 2>&1 \
+  || git push --force-with-lease --force-if-includes origin "refs/heads/$branch:refs/heads/$branch" >/dev/null 2>&1 \
+  || true
 HOOK
   if [ $? -ne 0 ]; then
     echo "factory-do-work-workspace: could not write post-commit hook at $hooks_dir" >&2
@@ -167,6 +175,52 @@ HOOK
     echo "factory-do-work-workspace: could not set core.hooksPath to $hooks_dir for $wt" >&2
     return 1
   }
+}
+
+# rebase_in_progress <worktree-path> — true while a rebase is stopped in it.
+rebase_in_progress() {
+  local d
+  for d in rebase-merge rebase-apply; do
+    [ -d "$(git -C "$1" rev-parse --path-format=absolute --git-path "$d" 2>/dev/null)" ] && return 0
+  done
+  return 1
+}
+
+# remote_tip_integrated <worktree-path> <branch> <sha> — af-j54vl1: true when
+# <sha> (the remote branch's tip) is in the history this worktree's branch has
+# held: its HEAD, or any commit its HEAD or branch reflog went through. That
+# is the case after the post-commit hook pushed a commit that was later
+# rebased; it is not when someone else pushed a commit this worktree never had.
+remote_tip_integrated() {
+  local wt="$1" branch="$2" sha="$3" c
+  git -C "$wt" cat-file -e "$sha^{commit}" 2>/dev/null || return 1
+  while read -r c; do
+    [ -n "$c" ] && git -C "$wt" merge-base --is-ancestor "$sha" "$c" 2>/dev/null && return 0
+  done < <({ git -C "$wt" rev-parse HEAD
+             git -C "$wt" reflog --format=%H HEAD
+             git -C "$wt" reflog --format=%H "refs/heads/$branch"; } 2>/dev/null | awk '!seen[$0]++')
+  return 1
+}
+
+# push_work_branch <worktree-path> <branch> — af-j54vl1: a plain push while
+# origin has no such branch or our head descends from it; otherwise a push
+# with --force-with-lease pinned to the remote SHA just read, and only when
+# that SHA is one remote_tip_integrated accepts. Returns 1 on a push failure
+# (retryable), 2 when origin holds commits this worktree never had.
+push_work_branch() {
+  local wt="$1" branch="$2" remote_sha
+  remote_sha=$(git -C "$wt" ls-remote origin "refs/heads/$branch" 2>/dev/null | cut -f1)
+  if [ -z "$remote_sha" ] || git -C "$wt" merge-base --is-ancestor "$remote_sha" HEAD 2>/dev/null; then
+    git -C "$wt" push -u origin "$branch" >/dev/null 2>&1
+    return
+  fi
+  git -C "$wt" cat-file -e "$remote_sha^{commit}" 2>/dev/null \
+    || git -C "$wt" fetch origin "refs/heads/$branch" >/dev/null 2>&1 || true
+  if ! remote_tip_integrated "$wt" "$branch" "$remote_sha"; then
+    echo "factory-do-work-workspace: origin/$branch is at $remote_sha, a commit this worktree's branch never held -- not overwriting it; merge it into $branch, then run finish again" >&2
+    return 2
+  fi
+  git -C "$wt" push -u --force-with-lease="refs/heads/$branch:$remote_sha" origin "$branch" >/dev/null 2>&1
 }
 
 # with_repo_lock <repo-toplevel> <command...> — af-jz4zb (P08): an exclusive
@@ -354,6 +408,13 @@ MSG
       fi
     fi
 
+    # af-j54vl1: an earlier finish left the worktree mid-rebase; committing
+    # "remaining work" there would commit on a detached HEAD.
+    if rebase_in_progress "$WT"; then
+      echo "factory-do-work-workspace: $WT is in the middle of a rebase (conflicted: $(git -C "$WT" diff --name-only --diff-filter=U | paste -sd ' ' -)); finish it (git rebase --continue) or abort it (git rebase --abort), then run finish again. Nothing was pushed, opened or removed." >&2
+      exit 1
+    fi
+
     if [ -n "$(git -C "$WT" status --porcelain)" ]; then
       git -C "$WT" add -A && git -C "$WT" commit -qm "chore: capture remaining work ($BEAD_ID)"
     fi
@@ -384,21 +445,27 @@ MSG
     fi
 
     if [ -z "$DELIVERED" ]; then
-      (
-        cd "$WT" || exit 1
-        ok=0
-        for attempt in 1 2 3; do
-          if git push -u origin "$BRANCH" >/dev/null 2>&1; then
-            ok=1
-            break
-          fi
-          [ "$attempt" -eq 3 ] && break
-          git fetch origin "$BASE_BRANCH" >/dev/null 2>&1
-          git rebase "origin/$BASE_BRANCH" >/dev/null 2>&1
-        done
-        [ "$ok" = "1" ]
-      ) || {
-        echo "factory-do-work-workspace: could not push $BRANCH after 3 attempts" >&2
+      # af-j54vl1 (af-ji2ruy PR #455, af-p4rdr7): the rebase below makes the
+      # branch non-fast-forward against what the post-commit hook already
+      # pushed, so push_work_branch leases over that SHA instead of a plain
+      # push. A rebase that conflicts is aborted, never left in progress.
+      ok=0
+      for attempt in 1 2 3; do
+        push_rc=0
+        push_work_branch "$WT" "$BRANCH" || push_rc=$?
+        [ "$push_rc" = "0" ] && { ok=1; break; }
+        [ "$push_rc" = "2" ] && break
+        [ "$attempt" -eq 3 ] && break
+        git -C "$WT" fetch origin "$BASE_BRANCH" >/dev/null 2>&1
+        if ! git -C "$WT" rebase "origin/$BASE_BRANCH" >/dev/null 2>&1; then
+          CONFLICTED=$(git -C "$WT" diff --name-only --diff-filter=U | paste -sd ' ' -)
+          git -C "$WT" rebase --abort >/dev/null 2>&1
+          echo "factory-do-work-workspace: rebasing $BRANCH onto origin/$BASE_BRANCH conflicted in: ${CONFLICTED:-<no conflicted file reported>}. The rebase was aborted; $BRANCH is back at $(git -C "$WT" rev-parse --short HEAD). Merge or rebase origin/$BASE_BRANCH by hand in $WT, then run finish again." >&2
+          break
+        fi
+      done
+      [ "$ok" = "1" ] || {
+        echo "factory-do-work-workspace: could not push $BRANCH (attempt $attempt of 3)" >&2
         exit 1
       }
     fi
