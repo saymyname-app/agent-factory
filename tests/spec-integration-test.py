@@ -987,7 +987,7 @@ class SpecIntegrationTest(unittest.TestCase):
         path = self.tmp / "runs.log"
         return len(path.read_text().splitlines()) if path.exists() else 0
 
-    def tested_unpushed(self, ticket, tip):
+    def sealed_unpushed(self, ticket, tip):
         """What a pass killed once its tests were sealed leaves (R17,
         10/11/2026, af-8cfygl): the ticket merged on the integration tip in a
         work tree, its piece `merged_tests` captured on that result by the
@@ -1008,7 +1008,7 @@ class SpecIntegrationTest(unittest.TestCase):
     def test_a_merged_result_already_tested_green_on_the_same_tree_is_pushed_without_running_again(self):
         tip1, tip2 = self.two_finished_tickets()
         self.counted_profile()
-        tested = self.tested_unpushed(T1, tip1)
+        tested = self.sealed_unpushed(T1, tip1)
         self.assertEqual(1, self.runs())
 
         answer = self.merged()
@@ -1029,7 +1029,7 @@ class SpecIntegrationTest(unittest.TestCase):
         tip1, _ = self.two_finished_tickets()
         _, code = self.counted_profile()
         code.write_text("1")
-        red = self.tested_unpushed(T1, tip1)
+        red = self.sealed_unpushed(T1, tip1)
         code.write_text("0")
 
         answer = self.merged()
@@ -1043,7 +1043,7 @@ class SpecIntegrationTest(unittest.TestCase):
     def test_a_green_run_on_another_tree_does_not_spare_the_run(self):
         tip1, _ = self.two_finished_tickets()
         self.counted_profile()
-        tested = self.tested_unpushed(T1, tip1)
+        tested = self.sealed_unpushed(T1, tip1)
         self.advance_protected({"docs/ailleurs.md": "fusionné ailleurs\n"})
 
         answer = self.merged()
