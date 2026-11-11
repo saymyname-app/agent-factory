@@ -25,6 +25,8 @@ set -uo pipefail
 
 ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
 ESCALATION_DOOR="$(dirname "${BASH_SOURCE[0]}")/escalation-door"
+# shellcheck source=lib/work_route_release.sh
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/lib/work_route_release.sh"
 CHECK_ONLY=0
 QUIET=0
 LOOKBACK="${ON_SESSION_STRANDED_LOOKBACK:-30m}"
@@ -91,7 +93,13 @@ while IFS= read -r event; do
     bead_assignee=$(jq -r '(.[0].assignee // empty)' <<<"$bead_json")
     held=()
     [ -z "$bead_assignee" ] || held=(--if-assignee "$bead_assignee")
-    gc bd update "$bead_id" "${held[@]}" --status open --assignee "" \
+    # A work ticket loses its route and session too (af-asymry): it waits to
+    # be launched again instead of being taken by a worker launched for
+    # another ticket. A formula step keeps its route: the pool resumes it.
+    release=()
+    jq -e '(.[0].metadata["gc.step_id"] // "") == ""' <<<"$bead_json" >/dev/null 2>&1 \
+      && release=("${WORK_ROUTE_RELEASE_ARGS[@]}")
+    gc bd update "$bead_id" "${held[@]}" --status open --assignee "" "${release[@]}" \
         --set-metadata "gc.session_stranded=$session_id" \
         --append-notes "Reopened by on-session-stranded: session $session_name terminated without a clean drain while this bead was in progress." \
         >/dev/null 2>&1

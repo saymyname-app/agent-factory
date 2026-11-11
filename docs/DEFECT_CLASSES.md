@@ -404,6 +404,27 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   sans défaut dans le changement).
 - Ouvertes : aucune connue.
 
+## L — Ticket rouvert réclamable par un ouvrier lancé pour un autre
+
+- Invariant : Un ticket de travail n'est pris que par la session lancée pour
+  lui : un outil qui le rouvre sans le relancer lui retire sa route
+  (`gc.routed_to`) et la session de son dernier lancement (`gc.session_id`,
+  `gc.session_name`), par `lib/work_route_release.sh`.
+- Contrôle : `python3 tests/work-route-release-test.py` — complet : chaque
+  écriture de `bin/` et des formules qui rouvre un bead passe par
+  `lib/work_route_release.sh`, ou est nommée dans sa table avec pourquoi elle
+  ne rouvre aucun travail lancé ; les retraits eux-mêmes sont prouvés par
+  `bash tests/escalation-door-test.sh`,
+  `bash tests/on-session-stranded-test.sh`,
+  `bash tests/pr-autopilot-ticket-rejection-test.sh` et
+  `bash tests/factory-delivery-guard-test.sh`.
+- Occurrences : af-asymry (le 11/11/2026, la session lancée pour af-fv8ca4 a
+  pris af-8fk8nz, rouvert par `escalation-door repondre` avec
+  `gc.routed_to=factory-worker` et sa session, et l'a repris sur la mauvaise
+  branche ; le balayage des orphelins de Gas City rend la route à un ticket
+  ouvert, sans assigné, qui garde `gc.work_branch` et sa session).
+- Ouvertes : aucune connue.
+
 ## A — Autre
 
 - Invariant : Aucun invariant commun : une PR rangée ici dit pourquoi elle

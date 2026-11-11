@@ -105,8 +105,11 @@ grep -q "^mail send mayor --notify -s Escalation (Mayor first): af-stuck1" "$CAL
   || fail "did not route through escalation-door's mayor-first class"
 grep -q '"af-br7i"' "$STATE_FILE" || fail "the session was not recorded as handled"
 # "$*" logging turns the empty --assignee value into a double space.
-grep -q -- "^bd update af-stuck1 --status open --assignee  --set-metadata" "$CALLS" \
-  || fail "the reopened bead was left assigned to the dead session"
+# af-asymry: a work ticket also loses its route and the dead session's
+# reference, so it waits to be launched again instead of being taken by a
+# worker launched for another ticket.
+grep -q -- "^bd update af-stuck1 --status open --assignee  --unset-metadata gc.routed_to --unset-metadata gc.session_id --unset-metadata gc.session_name --set-metadata" "$CALLS" \
+  || fail "the reopened bead was left assigned, routed or tied to the dead session"
 
 # --- a second run does not reprocess the same session -------------------------
 rm -f "$TMP/updated.log"; : > "$CALLS"
@@ -165,12 +168,24 @@ cat > "$TMP/beads/af-stuck4.json" <<'JSON'
 JSON
 rm -f "$TMP/updated.log"; : > "$CALLS"; touch "$TMP/holder-changed"
 out=$(run)
-grep -q -- "^bd update af-stuck4 --if-assignee claude-af-held1 --status open --assignee  --set-metadata" "$CALLS" \
+grep -q -- "^bd update af-stuck4 --if-assignee claude-af-held1 --status open --assignee  --unset-metadata gc.routed_to --unset-metadata gc.session_id --unset-metadata gc.session_name --set-metadata" "$CALLS" \
   || fail "a held bead was not released by compare-and-set on the assignee just read"
 grep -q "af-stuck4 is no longer held by 'claude-af-held1'" <<<"$out" \
   || { echo "$out" >&2; fail "a holder that changed since the read was not reported"; }
 grep -q "mail send mayor" "$CALLS" && fail "the mayor was paged although the bead was left to its new holder"
 grep -q '"af-held1"' "$STATE_FILE" || fail "a session whose bead changed holder must not be retried"
 rm -f "$TMP/holder-changed"
+
+# --- af-asymry: a formula step keeps its route -- the pool resumes it -------
+cat > "$EVENTS_FILE" <<'JSON'
+{"actor":"gc","message":"pool session terminated without clean drain","payload":{"session_id":"af-step1","session_name":"claude-af-step1","template":"claude","work_bead_ids":["af-stuck5"]},"session_id":"af-step1","type":"session.stranded","ts":"2026-11-11T18:00:00Z","ok":true}
+JSON
+cat > "$TMP/beads/af-stuck5.json" <<'JSON'
+[{"id":"af-stuck5","status":"in_progress","metadata":{"gc.step_id":"mol-do-work.do-work","gc.routed_to":"factory-worker"}}]
+JSON
+: > "$CALLS"
+run >/dev/null
+grep -q -- "^bd update af-stuck5 --status open --assignee  --set-metadata" "$CALLS" \
+  || fail "a stranded formula step lost its route: the pool could no longer resume it"
 
 echo "OK on-session-stranded reopens orphaned work, once per session"
