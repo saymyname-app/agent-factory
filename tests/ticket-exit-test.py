@@ -194,7 +194,17 @@ class TicketExitTest(unittest.TestCase):
                                                      README: "Le produit de la fixture.\n"})
         if demonstrated:
             self.demonstrate(ticket)
+            self.prove_green(ticket)
         return head
+
+    def prove_green(self, ticket=T2):
+        """The green of the frozen criterion tests at HEAD (bin/tdd-step
+        green), as its author proves it before leaving."""
+        tdd = self.shown(ticket).get("tdd") or {}
+        if "freeze" not in tdd:
+            self.state("set-tdd", CONVOY, ticket, "--step", "freeze", "--commit", tdd["red"]["commit"])
+        self.state("set-tdd", CONVOY, ticket, "--step", "green", "--commit", self.git("rev-parse", "HEAD"))
+        self.write_log.write_text("")
 
     def demonstrate(self, ticket=T2):
         """The piece `demonstration`, captured for real on the product
@@ -441,6 +451,15 @@ class TicketExitTest(unittest.TestCase):
         head = self.commit("un dernier commit", {README: "Le produit de la fixture, relu.\n"})
         self.assert_refused_and_nothing_written(lambda: self.finish(self.handoff()), "commit de tête", head)
 
+    def test_finished_is_refused_when_the_green_was_proven_before_the_head_commit(self):
+        # af-1row55: R16 finished at a dataset commit after its green, then
+        # waited for ever on a review and an evaluation that take a green tip.
+        green = self.code()
+        head = self.commit("le jeu de données", {README: "Le produit de la fixture, avec son jeu.\n"})
+        self.demonstrate()
+        self.assert_refused_and_nothing_written(
+            lambda: self.finish(self.handoff()), "vert des tests de critère", green, head, "bin/tdd-step green")
+
     def test_finished_is_refused_when_the_demonstration_was_not_captured_on_the_launched_product(self):
         self.code(demonstrated=False)
         proc = self.run_cmd(CAPTURE_TOOL, "command", CONVOY, T2, "--piece", "demonstration", "--repo", self.repo,
@@ -532,6 +551,7 @@ class TicketExitTest(unittest.TestCase):
         self.state("set-tdd", CONVOY, T2, "--step", "red", "--commit", red, "--base", base)
         self.commit("le README est écrit", {README: "Le produit de la fixture.\n"})
         self.demonstrate()
+        self.prove_green()
 
         self.exited("--exit", "finished", "--repo", self.repo, "--handoff", self.handoff())
         self.assertEqual([], self.shown()["handoff"]["records"]["deferral_markers"])
