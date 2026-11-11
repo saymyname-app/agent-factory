@@ -307,13 +307,7 @@ opened=$("$ROOT/bin/spec-integration" open "$CONVOY" --repo "$PRODUCT" --protect
   || fail "spec-integration open did not pass: $opened"
 echo "$(date -u +%H:%M:%S) marque posée, branche integration/$SPEC ouverte"
 
-wait_for() { # <seconds> <command...>
-  local deadline=$(( $(date +%s) + $1 )); shift
-  until "$@"; do
-    [ "$(date +%s)" -lt "$deadline" ] || return 1
-    sleep 3
-  done
-}
+wait_for() { isolated_city_wait_for "$@"; }  # <seconds> of host time, <command...>
 step_session() { sed -n "s/^$1 $2 //p" "$TRIAL/steps" 2>/dev/null | head -1; }
 live() { # <agent>: the sessions of the agent that are not over, one reading
   gc session list --json | jq -c --arg agent "$1" '[.sessions[] | select((.template | split("/") | last) == $agent)

@@ -303,7 +303,8 @@ the parking only):
 | Parked for | Lifted by |
 |---|---|
 | `operator_request` explicitly linked to Factory-maintenance bead(s) (`gc.flow.technical_repairs`) | code only, once every linked bead has the existing structural PR merge and exact-head CI proof; when the repair merged into this project's protected branch, `bin/spec-integration take-up` must also have put that merge in the tested green integration tip; an open, failed, merely closed or not-yet-taken-up repair waits, any human answer is ignored for this linked technical class |
-| `operator_request` (its own Ticket Exit) | any answer given to the request of that ticket (`bin/escalation-door repondre`) after the parking |
+| `operator_request` answered « Corriger par maintenance sur main » (`MAINTENANCE_OPTION`), not yet linked | nothing: the answer waits for the Mayor to link the maintenance bead (`bin/factory-work-dispatch <repair> --technical-request <convoy> <ticket>`), then the row above applies; the ticket is not put in a grouped request again (af-fv8ca4) |
+| `operator_request` (its own Ticket Exit) | any other answer given to the request of that ticket (`bin/escalation-door repondre`) after the parking |
 | `planning_exception` (its own Ticket Exit) | only the option that accepts the deviation: the last Planning Exception of the ticket is `accepted` (it was answered by its `accept_option`, `docs/CONVOY_STATE.md`; every exception raised since ADR-0030 L5 has one, with or without anchors). Any other answer leaves the ticket parked |
 | `planning_exception` (its Ticket Evaluation: the ticket is `finished`, its last evaluation's outcome is `planning_exception`, no entry under `planning_exceptions`) | only option `a`, « Juger ce qui est inobservable prouvé par son test de critère vert » (`bin/ticket-evaluation`); `lift-park` records what that evaluation found unobservable by the criterion under `proven_by_test`, and the evaluation the lift sends again counts it proven (`docs/TICKET_EVALUATION.md`); or option `c`, « Réévaluer sur le produit relancé » (af-npz9v1.38): the lift records nothing proven, and the evaluation it sends again judges every item on the products launched again. Option `b` (remove the ticket from the graph) or no answer: parked |
 | `resumes_exhausted` | option `a` of the convoy's grouped request (below), for the tickets that request names as lifted; or, without an answer, the ticket has resumes left under the bounds of now (`resumes_left` above 0): a parking left by a bound that no longer holds, such as the one an answered resume took before af-npz9v1.41. That lift gives no resume back |
@@ -1545,8 +1546,8 @@ closing of its Spec and its draft replayed.
 
 **What it leaves open.**
 
-- The merge is made inside the pass, under the timeout of the order (40 min, derived from
-  `config/test-budgets.json`);
+- The merge is made inside the pass, under the timeout of the order (110 min, derived from
+  `config/test-budgets.json`, `bin/test-budgets check-order`);
   a replay of the mechanical controls killed there is taken up by the next
   pass (`docs/OUTCOME_PROMOTE.md`, Limits).
 - Once an answer that ends the judgement stands, `settle_acceptance` no

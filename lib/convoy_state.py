@@ -291,6 +291,13 @@ KEY_GRAPH_DIGEST = "gc.graph_digest"
 KEY_NEEDS_BENJAMIN = "gc.needs_benjamin"
 KEY_RESPONSE_OPTION = "gc.escalation_response_option"
 KEY_RESPONSE_AT = "gc.escalation_response_at"
+# The options of that request, as bin/escalation-door stored them. Read only.
+KEY_QUE_FAIRE = "gc.escalation_que_faire"
+# The one option a Factory defect's operator_request offers
+# (docs/TICKET_AUTHOR.md, « Factory defects are fixed on main »): its answer
+# says the ticket resumes once its linked maintenance is delivered, never on
+# the answer itself (af-fv8ca4: R13 and R20 resumed without their repair).
+MAINTENANCE_OPTION = "Corriger par maintenance sur main"
 # The key Gas City and bin/ticket-exit read the session of a bead under.
 KEY_SESSION_NAME = "gc.session_name"
 
@@ -2096,6 +2103,36 @@ def operator_answer(metadata: dict[str, Any], since: str) -> dict[str, str] | No
     return {"option": option, "at": at}
 
 
+def answer_awaits_repair(metadata: dict[str, Any], option: str | None) -> bool:
+    """Whether the option answered to the request a bead carries is
+    MAINTENANCE_OPTION: the parking it answers is lifted by the delivery of
+    the repair linked to it (link-technical-repair), not by the answer."""
+    raw = metadata.get(KEY_QUE_FAIRE)
+    if option is None or raw is None:
+        return False
+    try:
+        options = json.loads(raw) if isinstance(raw, str) else raw
+    except ValueError:
+        return False
+    return isinstance(options, list) and any(
+        isinstance(entry, dict) and entry.get("lettre") == option and entry.get("option") == MAINTENANCE_OPTION
+        for entry in options)
+
+
+def current_technical_repairs(metadata: dict[str, Any], park: dict[str, Any] | None) -> list[str]:
+    """The repairs linked to the operator request that parks the ticket
+    now: bound to this parking and to the Ticket Exit that raised it."""
+    if park is None or park["cause"] != "operator_request" or KEY_TECHNICAL_REPAIRS not in metadata \
+            or KEY_EXIT not in metadata:
+        return []
+    record = technical_repairs_record(metadata[KEY_TECHNICAL_REPAIRS])
+    exit_record = stored_record(metadata[KEY_EXIT], ("exit", "at"))
+    if exit_record["exit"] != "operator_request" or record.get("parked_at") != park["at"] \
+            or record.get("exit_at") != exit_record["at"]:
+        return []
+    return [entry["id"] for entry in record["entries"]]
+
+
 def proven_by_test_at_lift(park: dict[str, Any], option: str | None, metadata: dict[str, Any]) -> list[dict[str, str]]:
     """What the operator's answer judges proven by its criterion test when
     it lifts the parking an evaluation's Planning Exception caused: with the
@@ -2122,6 +2159,8 @@ def park_rendered(record: dict[str, Any], ticket_id: str, metadata: dict[str, An
     """The parking with the answer given to the request of the ticket that
     was asked: the one whose exit parked it, never those behind it."""
     answer = operator_answer(metadata, record["at"]) if record["origin"] == ticket_id else None
+    if answer and record["cause"] == "operator_request" and answer_awaits_repair(metadata, answer["option"]):
+        answer = {**answer, "awaits_repair": True}
     return {**record, "answer": answer}
 
 
@@ -5584,6 +5623,20 @@ def cmd_lift_park(args: argparse.Namespace) -> int:
                 waiting.append(f"{repair_id} ({readiness['reason']})")
         if waiting:
             raise Refusal("réparations techniques sans preuve de livraison : " + ", ".join(waiting))
+    elif park["cause"] == "operator_request" and ticket.get("status") != "closed" and not args.withdrawing:
+        # Read here, at the write, not from the caller's earlier read: a
+        # repair linked since then holds the parking (af-fv8ca4, R22, R20).
+        # A lift the caller follows with withdraw-ticket resumes nothing
+        # (--withdrawing): it is not held.
+        linked = current_technical_repairs(metadata, park)
+        if linked:
+            raise Refusal(
+                f"le ticket {args.ticket} attend ses réparations techniques liées ({', '.join(linked)}) : "
+                "seule leur livraison prouvée lève son parcage (--repair)")
+        if answer_awaits_repair(metadata, option):
+            raise Refusal(
+                f"le ticket {args.ticket} a reçu la réponse « {MAINTENANCE_OPTION} » : son parcage se lève à la "
+                "livraison prouvée de la réparation liée (factory-work-dispatch --technical-request), pas à la réponse")
     lifts = park_lifts_record(metadata[KEY_PARK_LIFTS]) if KEY_PARK_LIFTS in metadata else []
     resumes = counter_value(metadata.get(COUNTER_PREFIX + "resumes"), "resumes")
     taken = resumes_taken(metadata)
@@ -8186,6 +8239,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--option")
     p.add_argument("--repair", action="append", default=[])
     p.add_argument("--reset-cause")
+    p.add_argument("--withdrawing", action="store_true")
     command("migrate-repair-resume", cmd_migrate_repair_resume)
     p = command("open-resume", cmd_open_resume)
     p.add_argument("--cause")

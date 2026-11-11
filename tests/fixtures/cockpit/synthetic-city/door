@@ -10,7 +10,11 @@ B, af-4uzgzm):
   answers -- the gesture was done, its command cannot say so. A door that
   refuses still answers its refusal: it recorded nothing.
 
-The cockpit gives up on a door after its own delay and kills it.
+The cockpit gives up on a door after its own delay and kills it. A door
+that never answers still ends once its caller is gone: no one waits for its
+answer any more. A cockpit stopped while it waited on one left it asleep for
+a day, one per Cockpit regression, 23 alive on the host on 11/11/2026
+(af-i9llwm).
 """
 import os
 import subprocess
@@ -18,6 +22,16 @@ import sys
 import time
 
 FOREVER = 24 * 3600
+# How often a door that never answers looks whether its caller is still there.
+CALLER_LOOK_SECONDS = 0.2
+
+
+def never_answer():
+    """Wait for ever, or until the caller is gone (this door is handed to
+    another parent)."""
+    caller, end = os.getppid(), time.monotonic() + FOREVER
+    while os.getppid() == caller and time.monotonic() < end:
+        time.sleep(CALLER_LOOK_SECONDS)
 
 
 def main(argv):
@@ -25,7 +39,7 @@ def main(argv):
     if how == "acts":
         os.execv(door, [door, *arguments])
     if how == "expires":
-        time.sleep(FOREVER)
+        never_answer()
         return 1
     if how == "records-then-expires":
         done = subprocess.run([door, *arguments], capture_output=True, text=True)
@@ -33,7 +47,7 @@ def main(argv):
             sys.stdout.write(done.stdout)
             sys.stderr.write(done.stderr)
             return done.returncode
-        time.sleep(FOREVER)
+        never_answer()
         return 1
     sys.stderr.write("synthetic door: no such way to answer: %s\n" % how)
     return 2

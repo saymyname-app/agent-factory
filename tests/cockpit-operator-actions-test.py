@@ -36,6 +36,12 @@ from fake_gc import FakeGc  # noqa: E402
 
 BENJAMIN_LOGIN = "benjamin@example.ts.net"
 PARIS = ZoneInfo("Europe/Paris")
+# How long a case waits for the cockpit to listen, answer or show a state:
+# a ceiling, never a measure -- each wait ends as soon as it is met. An
+# action answers once its fake doors and fake bd, each a Python process,
+# have run; at a load of 37 on 8 cores a 3 s ceiling timed out on 4 of 13
+# cases that pass alone (af-8a246o).
+WAIT_SECONDS = 30
 
 OPTIONS_WITH_LETTERS = [
     {"lettre": "a", "option": "répondre a", "consequence": "le travail reprend avec l'option a", "recommande": True, "raison": "c'est le choix le plus sûr"},
@@ -49,7 +55,7 @@ def free_port():
         return s.getsockname()[1]
 
 
-def wait_for_port(host, port, timeout=5):
+def wait_for_port(host, port, timeout=WAIT_SECONDS):
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
@@ -60,7 +66,7 @@ def wait_for_port(host, port, timeout=5):
     raise TimeoutError("nothing listening on %s:%d after %ss" % (host, port, timeout))
 
 
-def wait_until(predicate, timeout=5, interval=0.05):
+def wait_until(predicate, timeout=WAIT_SECONDS, interval=0.05):
     deadline = time.time() + timeout
     last = None
     while time.time() < deadline:
@@ -203,17 +209,17 @@ class OperatorActionsSeamTest(unittest.TestCase):
 
     def _capture_session_cookie(self):
         req = urllib.request.Request("http://127.0.0.1:%d/" % self.port)
-        with urllib.request.urlopen(req, timeout=3) as resp:
+        with urllib.request.urlopen(req, timeout=WAIT_SECONDS) as resp:
             resp.read()
             set_cookie = resp.headers.get("Set-Cookie", "")
         self.session_cookie = set_cookie.split(";", 1)[0]
 
     def requests_payload(self):
         req = urllib.request.Request("http://127.0.0.1:%d/api/requests" % self.port)
-        with urllib.request.urlopen(req, timeout=3) as resp:
+        with urllib.request.urlopen(req, timeout=WAIT_SECONDS) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
-    def wait_for_requests(self, predicate, timeout=5):
+    def wait_for_requests(self, predicate, timeout=WAIT_SECONDS):
         return wait_until(lambda: self._try(predicate), timeout=timeout)
 
     def _try(self, predicate):
@@ -231,7 +237,7 @@ class OperatorActionsSeamTest(unittest.TestCase):
         data = json.dumps(body).encode("utf-8")
         req = urllib.request.Request(url, data=data, headers=headers, method="POST")
         try:
-            with urllib.request.urlopen(req, timeout=3) as resp:
+            with urllib.request.urlopen(req, timeout=WAIT_SECONDS) as resp:
                 return resp.status, json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             payload = exc.read().decode("utf-8")
@@ -332,7 +338,7 @@ class OperatorActionsSeamTest(unittest.TestCase):
         self.start_cockpit()
         self.wait_for_requests(lambda p: len(p["requests"]) == 1)
         req = urllib.request.Request("http://127.0.0.1:%d/" % self.port)
-        with urllib.request.urlopen(req, timeout=3) as resp:
+        with urllib.request.urlopen(req, timeout=WAIT_SECONDS) as resp:
             body = resp.read().decode("utf-8")
         # The script that handles every action's answer: result written on
         # the request, its controls removed, a refusal said, then reload.
