@@ -65,6 +65,7 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state launch-resume af-convoy af-t1 --bead af-resume        # bin/convoy-advance, once the author session is sent
 ./bin/convoy-state park          af-convoy af-t1 --cause resumes_exhausted --detail "reprises épuisées pour la cause …"   # bin/convoy-advance, at the bound of a same cause
 ./bin/convoy-state lift-park     af-convoy af-t1 --request <answered request bead> [--option a]   # bin/convoy-advance, on the operator's answer
+./bin/convoy-state return-technical-repair af-convoy af-t1   # bin/convoy-advance, once a linked repair is answered « Corriger dans le convoi »
 ./bin/convoy-state record-grouped-request af-convoy --bead af-request [--signature sha256:<hex>] [--lift-option a --lifts af-t1]   # bin/convoy-advance
 ./bin/convoy-state clear-grouped-request  af-convoy     # bin/convoy-advance, once a ticket may advance again
 ./bin/convoy-state ticket af-t1                         # does this bead carry the mark? (bin/dispatch-door, the Mayor)
@@ -151,6 +152,7 @@ Every answer is one JSON object on stdout.
 | Parking | `gc.flow.park` | ticket | cause: `planning_exception`, `operator_request`, `resumes_exhausted` (T20); the ticket that caused it (`origin`: the one whose Ticket Exit parked it, or that is out of resumes); a one-line detail |
 | Resumes | `gc.flow.resume` | ticket | `entries`, oldest first, one per resume code opened (T20): `cause` (`interrupted`, `returned`, `unblocked`, `repair_delivered`, `answered`, `behind`, `evaluation_no_result`, `stage_removed`, `code_review_no_result`, `amendment_granted`, `inherited_change`, `proof_moved`), `ref` (the one-line fact that asked for it), `session` (the author session it takes over from, or null), `exit` (the Ticket Exit it replaced, `{exit, at}`, or null), `stop` (for `evaluation_no_result`; for `repair_delivered`, an `evaluation_no_result` or `evaluation_outage` stop released by its linked Factory repair; for `stage_removed`, a stop `test_review_refused` or `test_review_no_result`; for `code_review_no_result`, whose resume also drops the `request` of `gc.flow.code_review`; for `amendment_granted`, a stop `amendment_exhausted` the operator answered « a », which allows one amendment more; and for `proof_moved`, a stop `criterion_already_green` of a repair whose `restores` cites a rule of `docs/TEST_GUIDELINE.md`, refused on any other ticket (af-oa2ci4): the stop it lifted, as it was), `launches`: at most one `{bead, at}`; `at` |
 | Linked technical repairs | `gc.flow.technical_repairs` | ticket | one active technical request: either `exit_at` and `parked_at` bind the link to an exact Ticket Exit and parking, or `stop_at` binds it to an exact `evaluation_no_result` or `evaluation_outage`; `entries`, oldest first, carries `{id, at}` for each Factory-maintenance bead explicitly linked by `link-technical-repair`. The record remains the deterministic release marker and is consumed atomically with the bounded `repair_delivered` resume; ordinary operator, product, planning and human requests have none |
+| Repairs returned to the ticket | `gc.flow.returned_repairs` | ticket | `entries`, oldest first, one per linked Factory-maintenance bead given back to the ticket's author by `return-technical-repair` (af-t8hycw): `id`, `linked_at` (when it was linked), the request generation it was bound to (`exit_at` and `parked_at`, or `stop_at`), `at`. The resumed author makes that fix on its branch |
 | Parkings lifted | `gc.flow.park_lifts` | ticket | `entries`, oldest first, one per parking lifted on the ticket that caused it (T20): `cause`, `detail`, `parked_at`, `request` (the bead of the answered or withdrawn request), `option` (the letter taken, or null), `resumes` (the counter at that moment), `at`; `repairs` and `exit_at` (optional: every explicitly linked Factory-maintenance bead and the exact operator-request exit whose structural delivery proof released it); `proven_by_test`: `{what, text}` per item the operator's answer `a` to an evaluation's Planning Exception judged proven by its criterion test (af-ten1sp) |
 | Grouped request | `gc.flow.grouped_request` | convoy | the bead that carries the one request of a convoy in which nothing but parked tickets is left (T20) and, once it reached the escalation door, the `sha256:` signature of the parkings it names, with `lift_option` (a letter) and `lifts` (the tickets that option lifts), both or neither |
 | Fidelity result | `gc.flow.fidelity` | ticket | `commit`, `verdict` (`favorable` / `unfavorable`, computed), `piece` (the sealed record), `screens`, `states` (state → `viewports`, `anchors` compared), `deviations`: each `state`, `viewport`, `anchor`, `kind` (`absent`, `structure`, `style`, `token`, `theme`), `property`; a `token` deviation has neither viewport nor anchor, a `theme` one (a theme not measurable on the prototype) a viewport and no anchor; past 100 deviations, the first 100 only, with `deviation_count` (all of them) and `deviation_anchors` (the anchors of all, `null` for a token deviation) |
@@ -849,7 +851,22 @@ read at the write, or whose answered `--option` is « Corriger par
 maintenance sur main » (`MAINTENANCE_OPTION`): that parking is lifted by
 the delivery of its linked repair, never by the answer (af-fv8ca4).
 `--withdrawing` lifts it anyway: the caller withdraws the ticket right
-after (`withdraw-ticket`), so no resume follows the lift. `show`
+after (`withdraw-ticket`), so no resume follows the lift. Nor does it
+refuse that answer once a repair linked to the same exit and parking was
+given back to the ticket (`returned_repairs`, below): nothing is left to
+deliver on main, the answer lifts it.
+
+`return-technical-repair` removes from the ticket's linked technical
+repairs each one whose own request was answered, after the link, with an
+option that reads « Corriger dans le convoi » (`IN_CONVOY_OPTION`, alone or
+followed by its detail), read at the write; the repairs still linked stay
+(af-t8hycw). Each one removed is kept under `returned_repairs` with the
+request generation it was bound to. Such a repair changes code that exists
+only on the convoy's integration branch: no pull request to the protected
+branch reaches it, so its delivery proof never comes, and the ticket's own
+author makes that fix. It refuses a closed ticket, one without a link, and
+one none of whose linked repairs was so answered. `MAINTENANCE_OPTION` is
+read the same way, alone or followed by its detail. `show`
 marks such an answer `awaits_repair: true` under `park.answer`. Nothing here lifts a stop.
 
 `record-grouped-request` writes on the convoy the bead of its grouped
