@@ -191,9 +191,8 @@ def product_text(address: str, seconds: float = 60) -> str:
         time.sleep(1)
 
 
-# The Acceptance Session an isolated cockpit runs (bin/cockpit-isolated), in
-# the tree of a LaunchTree, and where it is kept while another stands in for
-# it.
+# The Acceptance Session the isolated launch of the cockpit runs, in the
+# tree of a LaunchTree, and where it is kept while another stands in for it.
 SESSION = Path("tests") / "fixtures" / "cockpit" / "synthetic-city" / "acceptance-session"
 SESSION_KEPT = SESSION.with_name("acceptance-session-kept")
 REDELIVERING_SESSION = """#!/usr/bin/env python3
