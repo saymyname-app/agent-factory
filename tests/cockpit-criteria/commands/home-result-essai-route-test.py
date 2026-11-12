@@ -23,8 +23,8 @@ revision went through an internal function of the actions until R11.
 
 The dossier may also move on between the moment the cockpit read it and the
 launch: the result is delivered again at another revision once the page is
-served (`redelivered`, the tracker of the launch rewritten as the Acceptance
-Session reads it), so the session launches that other revision. Essai then
+served (`redelivered_once_read`, the tracker of the launch rewritten as its
+Acceptance Session opens), so the session launches that other revision. Essai then
 gives no address, and says the dossier changed: no tab on the product of a
 revision the page does not show (F1.1 and F1.2 of the code review of R11).
 """
@@ -38,7 +38,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from home_destination import LaunchTree  # noqa: E402
-from result_trial import Operator, product_text, result_of, serve  # noqa: E402
+from result_trial import Operator, product_text, redelivered_once_read, result_of, serve  # noqa: E402
 
 # How long a product launched by Essai may take to start.
 STARTING_SECONDS = 60
@@ -85,7 +85,8 @@ class HomeResultEssaiRoute(unittest.TestCase):
     def test_essai_gives_no_address_when_the_session_launches_another_revision_than_the_dossier(self):
         revision = self.tree.reword("home-content", {SAID_AT_HEAD: SAID_AT_REVISION})
         redelivered = self.tree.reword("home-content", {SAID_AT_HEAD: SAID_REDELIVERED})
-        address = serve(self.tree, "result-essai", {"commit": revision, "redelivered": redelivered})
+        with redelivered_once_read(self.tree, redelivered):
+            address = serve(self.tree, "result-essai", {"commit": revision})
         chantier, result = result_of(address)
         self.assertEqual(revision, result["commit"], "the dossier served is not at its revision")
 

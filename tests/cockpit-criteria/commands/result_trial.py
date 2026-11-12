@@ -25,7 +25,12 @@ it.
 - `result_of`: the chantier whose result the cockpit serves at
   GET /api/projects, and that result;
 - `product_text`: what the address a tab was opened on answers, once it
-  answers.
+  answers;
+- `redelivered_once_read`: the cockpits served meanwhile find their result
+  delivered again at another commit once they have read it -- the tracker
+  of the launch rewritten as the Acceptance Session of the launch opens,
+  before it reads the dossier, as a new delivery can land between the read
+  of the cockpit and the session in service (R11, af-ksan9t).
 
 Nothing here reads the code of the cockpit: the launcher is an entry point
 of the profile, the page is read where the browser renders it, the result
@@ -34,6 +39,7 @@ where the cockpit serves it.
 
 from __future__ import annotations
 
+import contextlib
 import html
 import http.client
 import json
@@ -183,6 +189,52 @@ def product_text(address: str, seconds: float = 60) -> str:
         if time.monotonic() > deadline:
             return ""
         time.sleep(1)
+
+
+# The Acceptance Session an isolated cockpit runs (bin/cockpit-isolated), in
+# the tree of a LaunchTree, and where it is kept while another stands in for
+# it.
+SESSION = Path("tests") / "fixtures" / "cockpit" / "synthetic-city" / "acceptance-session"
+SESSION_KEPT = SESSION.with_name("acceptance-session-kept")
+REDELIVERING_SESSION = """#!/usr/bin/env python3
+# The Acceptance Session of the launch, the result delivered again at %(commit)s
+# once the cockpit read it (result_trial.redelivered_once_read): that
+# delivery written in the tracker of the launch, then the session itself.
+import json, os, subprocess, sys
+from pathlib import Path
+
+if len(sys.argv) > 2:
+    bd, convoy = os.environ["COCKPIT_BD_BIN"], sys.argv[2]
+    bead = json.loads(subprocess.run([bd, "show", convoy, "--json"], capture_output=True, text=True,
+                                     check=True).stdout)
+    bead = bead[0] if isinstance(bead, list) else bead
+    delivered = dict(json.loads(bead["metadata"]["gc.flow.delivered"]), commit=%(commit)r)
+    subprocess.run([bd, "update", convoy, "--set-metadata",
+                    "gc.flow.delivered=" + json.dumps(delivered, ensure_ascii=False)],
+                   capture_output=True, text=True, check=True)
+kept = str(Path(__file__).resolve().with_name(%(kept)r))
+os.execv(sys.executable, [sys.executable, kept, *sys.argv[1:]])
+"""
+
+
+@contextlib.contextmanager
+def redelivered_once_read(tree, commit: str):
+    """The cockpits `serve` starts on `tree` meanwhile find the result they
+    serve delivered again at `commit` when Essai opens its Acceptance
+    Session: the session of the launch writes that delivery in the tracker,
+    then reads the dossier and launches it. The tree has its own session
+    back afterwards, at a commit of its own."""
+    repo = tree.repo
+    session, kept = repo / SESSION, repo / SESSION_KEPT
+    session.replace(kept)
+    session.write_text(REDELIVERING_SESSION % {"commit": commit, "kept": kept.name}, encoding="utf-8")
+    session.chmod(0o755)
+    try:
+        yield
+    finally:
+        kept.replace(session)
+        git(repo, "add", "--all")
+        git(repo, "commit", "--quiet", "--message", "the Acceptance Session of the launch back")
 
 
 # --- the browser ------------------------------------------------------------------
