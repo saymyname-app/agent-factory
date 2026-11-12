@@ -31,12 +31,14 @@
 # failure and handing back a worktree with no safety net.
 #
 # Usage:
-#   factory-do-work-workspace enter  <bead-id>
+#   factory-do-work-workspace enter  <bead-id> [integration/<spec>]
 #       Prints "." and does nothing if the calling repo is not on a
 #       protected branch (see lib/protected_rigs.sh). Otherwise creates (or
 #       reuses) an isolated worktree at
 #       $HOME/.local/share/agent-factory-runtime-worktrees/<bead-id> on
-#       branch do-work/<bead-id>, off the protected branch, and prints the
+#       branch do-work/<bead-id>, off the protected branch -- or off
+#       origin/integration/<spec> when given (a maintenance bead towards a
+#       convoy's integration branch, af-wpzic4) -- and prints the
 #       worktree path. A newly created branch is pushed immediately (O04:
 #       "workers push their branch from the first commit"), and the
 #       worktree is given a per-worktree post-commit hook that pushes after
@@ -69,6 +71,14 @@
 #       -- before anything is pushed or opened, worktree left as is -- until
 #       that file (or the already-open PR's body) carries all three.
 #
+#       Integration target (af-41i8d0): when <base-branch> is
+#       integration/<spec>, finish opens the PR only if lib/
+#       integration_maintenance.py accepts the bead (maintenance, authorized
+#       by af-wpzic4) and every changed file (test/harness code the convoy
+#       changed, that main cannot reach); the PR body then carries its
+#       « Cible : integration/<spec> — ... » line. Otherwise exit 3, nothing
+#       opened, worktree left as is.
+#
 #       Nothing to deliver (af-cjaj8o): when the branch's head is exactly
 #       the head of a PR already merged into <base-branch>, or its tree has
 #       no difference with origin/<base-branch>, `finish` pushes nothing,
@@ -96,7 +106,7 @@ CMD="${1:-}"
 [ $# -gt 0 ] && shift
 
 usage() {
-  echo "usage: factory-do-work-workspace enter <bead-id>" >&2
+  echo "usage: factory-do-work-workspace enter <bead-id> [integration/<spec>]" >&2
   echo "       factory-do-work-workspace finish <bead-id> <worktree-path> <branch> <base-branch>" >&2
   exit 2
 }
@@ -276,10 +286,37 @@ missing_pr_sections() {
   printf '%s' "$out"
 }
 
+# af-41i8d0 (af-wpzic4, docs/DELIVERY.md): a PR into integration/<spec> is
+# opened only for a maintenance bead af-wpzic4 authorizes, and only when it
+# changes test/harness code the convoy itself changed and main cannot reach
+# (lib/integration_maintenance.py). On success prints the « Cible » line the
+# PR body carries; on refusal prints why and returns 1. Fails closed: an
+# unreadable bead or git error refuses.
+INTEGRATION_MAINTENANCE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/lib/integration_maintenance.py"
+integration_pr_check() {  # bead-id worktree base-branch
+  local bead_id="$1" wt="$2" base="$3" top protected bead_json out
+  top=$(git -C "$wt" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
+    && top=$(cd -- "$(dirname -- "$top")" 2>/dev/null && pwd -P) || top=""
+  protected=$(protected_branch_for "$top")
+  protected="${protected:-main}"
+  bead_json=$(cd "$ROOT" 2>/dev/null && timeout 30 bd show "$bead_id" --json 2>/dev/null) || bead_json=""
+  [ -n "$bead_json" ] || { echo "le bead $bead_id est illisible"; return 1; }
+  out=$(printf '%s' "$bead_json" | python3 "$INTEGRATION_MAINTENANCE" target --target "$base" 2>&1) \
+    || { printf '%s\n' "$out"; return 1; }
+  git -C "$wt" fetch origin "$protected" "$base" >/dev/null 2>&1 \
+    || { echo "git fetch origin $protected $base a échoué"; return 1; }
+  python3 "$INTEGRATION_MAINTENANCE" files --git "$wt" --protected "origin/$protected" \
+    --base "origin/$base" --head HEAD 2>&1
+}
+
 case "$CMD" in
   enter)
-    BEAD_ID="${1:-}"
+    BEAD_ID="${1:-}"; START_BASE="${2:-}"
     [ -n "$BEAD_ID" ] || usage
+    case "$START_BASE" in
+      ''|integration/*) ;;
+      *) echo "factory-do-work-workspace: enter takes no base other than an integration/<spec> branch (got $START_BASE)" >&2; exit 2 ;;
+    esac
     HERE=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
     if [ -z "$HERE" ]; then
       echo "."
@@ -306,6 +343,9 @@ case "$CMD" in
 
     BRANCH="do-work/$BEAD_ID"
     WT="$HOME/.local/share/agent-factory-runtime-worktrees/$BEAD_ID"
+    # af-41i8d0: a maintenance bead that targets a convoy's integration
+    # branch (gc.work_base_branch, af-wpzic4) branches off that branch.
+    START_BASE="${START_BASE:-$CURRENT_BRANCH}"
 
     if [ -d "$WT" ]; then
       install_post_commit_push_hook "$WT" || {
@@ -322,7 +362,7 @@ case "$CMD" in
     # internal state.
     with_repo_lock "$HERE" bash -c '
       set -uo pipefail
-      HERE="$1"; BEAD_ID="$2"; BRANCH="$3"; WT="$4"; CURRENT_BRANCH="$5"
+      HERE="$1"; BEAD_ID="$2"; BRANCH="$3"; WT="$4"; CURRENT_BRANCH="$5"; START_BASE="$6"
 
       git -C "$HERE" fetch --prune origin >/dev/null 2>&1 || true
 
@@ -332,6 +372,13 @@ case "$CMD" in
       START_REF="$CURRENT_BRANCH"
       if git -C "$HERE" show-ref --verify --quiet "refs/remotes/origin/$CURRENT_BRANCH"; then
         START_REF="origin/$CURRENT_BRANCH"
+      fi
+      if [ "$START_BASE" != "$CURRENT_BRANCH" ]; then
+        START_REF="origin/$START_BASE"
+        git -C "$HERE" show-ref --verify --quiet "refs/remotes/origin/$START_BASE" || {
+          echo "factory-do-work-workspace: origin has no branch $START_BASE to branch off" >&2
+          exit 1
+        }
       fi
 
       mkdir -p "$(dirname "$WT")"
@@ -350,7 +397,7 @@ case "$CMD" in
         # always has a remote branch to push onto.
         git -C "$WT" push -u origin "$BRANCH" >/dev/null 2>&1 || true
       fi
-    ' -- "$HERE" "$BEAD_ID" "$BRANCH" "$WT" "$CURRENT_BRANCH" || exit 1
+    ' -- "$HERE" "$BEAD_ID" "$BRANCH" "$WT" "$CURRENT_BRANCH" "$START_BASE" || exit 1
 
     install_post_commit_push_hook "$WT" || {
       echo "factory-do-work-workspace: could not install the auto-push hook for $WT; removing the worktree rather than handing back one with no safety net" >&2
@@ -443,6 +490,22 @@ MSG
       git -C "$WT" diff --quiet "origin/$BASE_BRANCH" HEAD 2>/dev/null \
         && DELIVERED="it has no difference with origin/$BASE_BRANCH"
     fi
+
+    case "$BASE_BRANCH" in
+      integration/*)
+        if [ -z "$DELIVERED" ]; then
+          if ! CIBLE=$(integration_pr_check "$BEAD_ID" "$WT" "$BASE_BRANCH"); then
+            rm -f "$PR_BODY_FILE"
+            cat >&2 <<MSG
+factory-do-work-workspace: finish of $BEAD_ID refused -- no PR into $BASE_BRANCH (docs/DELIVERY.md, maintenance towards an integration branch, af-wpzic4):
+$CIBLE
+Code that main can reach, or that is not the convoy's own test/harness code, is delivered on main: re-dispatch the bead with gc.work_base_branch unset. No PR was opened and the worktree is left as it is.
+MSG
+            exit 3
+          fi
+          printf '\n%s\n' "$CIBLE" >> "$PR_BODY_FILE"
+        fi ;;
+    esac
 
     if [ -z "$DELIVERED" ]; then
       # af-j54vl1 (af-ji2ruy PR #455, af-p4rdr7): the rebase below makes the

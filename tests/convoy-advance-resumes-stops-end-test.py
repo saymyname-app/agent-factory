@@ -1696,6 +1696,45 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual(resumed_tip, self.git("rev-parse", self.INTEGRATION))
         self.assertEqual(1, self.resumes())
 
+    def parked_on_integration_repair(self, target):
+        """T1 parked by its own request, linked to a maintenance repair merged
+        into `target` (af-41i8d0): a commit on the convoy's integration
+        branch, with the merge and CI proof of a PR into `target`."""
+        self.integrated()
+        self.resumable()
+        self.advance(CONVOY)
+        self.taken(T1, "auteur-1")
+        self.run_ok(STATE, "park", CONVOY, T1, "--cause", "operator_request", "--detail", "test du convoi faux")
+        self.run_ok(STATE, "set-exit", CONVOY, T1, "--exit", "operator_request")
+        repair = "fx-rinteg"
+        state = self.tracker_state()
+        state["beads"][repair] = {
+            "title": "test du convoi corrigé", "status": "open", "issue_type": "bug",
+            "labels": ["maintenance"], "metadata": {"gc.authorized_by": "af-wpzic4"},
+        }
+        self.tracker.write_text(json.dumps(state))
+        self.run_ok(STATE, "link-technical-repair", CONVOY, T1, "--repair", repair)
+        proof = delivered(42, "2" * 40, self.integration_moved())
+        proof.update({"gc.github_repo": "example/fx", "gc.pr_url": "https://github.com/example/fx/pull/42",
+                      "merged_target": target})
+        self.edit(repair, status="closed", metadata=proof)
+
+    def test_a_repair_merged_into_the_convoys_integration_branch_resumes_its_ticket(self):
+        self.parked_on_integration_repair(self.INTEGRATION)
+        tip = self.git("rev-parse", self.INTEGRATION)
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "repair_delivered")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+        self.assertEqual(tip, self.git("rev-parse", self.INTEGRATION))
+
+    def test_a_repair_merged_into_another_integration_branch_does_not_resume_the_ticket(self):
+        self.parked_on_integration_repair("integration/fx-other")
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([], self.of(answer, "resumed"))
+
     def test_a_legacy_delivered_repair_at_the_unblocked_bound_is_migrated_and_sent_once(self):
         # af-o5ritb: A2 (af-ocz64w) already had two `unblocked` resumes and
         # four resumes in all. Its next linked repair was counted as the third
