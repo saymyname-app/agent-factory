@@ -52,6 +52,12 @@ EXIT_NOT_NEW_FLOW = first.EXIT_NOT_NEW_FLOW
 ticket = first.ticket
 session = first.session
 
+# The detail of an all-green stop bin/tdd-step red writes since it runs a
+# pass again up to k times (af-batj8g); one without « à chacune de ses » was
+# decided on one run.
+ALL_GREEN = "critère 1 déjà vert : tests/roadmap-test.py::RoadmapTest.test_rows passe au commit de départ"
+ALL_GREEN_AT_EVERY_RUN = f"{ALL_GREEN} à chacune de ses 3 exécutions"
+
 AUTHORIZED_TICKET = "af-ocz64w"
 AUTHORIZED_COMMIT = "e62cb740dc8d134f26758c24fea4634d3787ffe8"
 AUTHORIZED_RESPONSE_AT = "2026-11-06T16:22:23Z"
@@ -1226,7 +1232,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
 
     # --- a repair that only moves a proof, stopped all green, is resumed (af-oa2ci4) ---
 
-    def stopped_all_green(self, restores, raised=True):
+    def stopped_all_green(self, restores, raised=True, detail=ALL_GREEN_AT_EVERY_RUN):
         """T1, a repair that restores `restores`, at work under an author
         session that is over, stopped all green by bin/tdd-step red before
         it gave a moved proof its path, the stop raised to the operator (R12,
@@ -1240,8 +1246,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
             "## Target rigs", f"## Restores\n\n{restores}\n\n## Target rigs")
         self.edit(T1, status="in_progress", metadata=metadata, description=description)
         self.taken(T1, "auteur-1")
-        self.run_ok(STATE, "stop-ticket", CONVOY, T1, "--reason", "criterion_already_green",
-                    "--detail", "critère 1 déjà vert : tests/roadmap-test.py::RoadmapTest.test_rows passe au commit de départ")
+        self.run_ok(STATE, "stop-ticket", CONVOY, T1, "--reason", "criterion_already_green", "--detail", detail)
         if raised:
             self.stopped_all_green_request()
 
@@ -1282,6 +1287,22 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual("criterion_already_green", self.shown_state(T1)["stop"]["reason"])
         self.assertEqual(1, len([line for line in self.needs() if T1 in line]))
         self.assertEqual(before, self.tickets_snapshot())
+
+    def test_a_ticket_stopped_all_green_on_one_run_of_each_test_is_resumed_once_without_an_answer(self):
+        # R23 (af-ujme6p): stopped « déjà vert » on one lucky pass of a test
+        # red 7 times out of 8, before bin/tdd-step ran a pass k times (af-batj8g).
+        self.stopped_all_green("spec_line : la page projet montre les lignes de roadmap", detail=ALL_GREEN)
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "red_replayed")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+        self.assertEqual(1, len(self.resume_launches()))
+        shown = self.shown_state(T1)
+        self.assertIsNone(shown["stop"])
+        self.assertEqual(ALL_GREEN, shown["resume"]["entries"][-1]["stop"]["detail"])
+        self.assertEqual([], [line for line in self.needs() if T1 in line])
+        self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
+        self.assertEqual(1, self.resumes())
 
     def answered_before_its_stop_request(self):
         """R12 (af-vm0vua): stopped all green at 00:52, a Planning Exception
@@ -3082,7 +3103,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         request parks T1, then the session is over (ADR-0030 L5)."""
         self.started_convoy()
         self.taken(T1, "auteur-1", alive=True)
-        self.run_ok(STATE, "stop-ticket", CONVOY, T1, "--reason", "criterion_already_green", "--detail", "critère 1 déjà vert")
+        self.run_ok(STATE, "stop-ticket", CONVOY, T1, "--reason", "criterion_already_green", "--detail", ALL_GREEN_AT_EVERY_RUN)
         before_exception = self.advance(CONVOY)
         self.assertEqual([], self.of(before_exception, "tdd_stops"))
         request = {"quoi": f"Planning Exception (semantic) sur {T1} : critères tous déjà verts",
@@ -3143,7 +3164,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         # af-npz9v1.9: no silent block when the author never raises one.
         self.started_convoy()
         self.taken(T1, "auteur-1")
-        self.run_ok(STATE, "stop-ticket", CONVOY, T1, "--reason", "criterion_already_green", "--detail", "critère 1 déjà vert")
+        self.run_ok(STATE, "stop-ticket", CONVOY, T1, "--reason", "criterion_already_green", "--detail", ALL_GREEN_AT_EVERY_RUN)
 
         answer = self.advance(CONVOY)
 
@@ -3164,7 +3185,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         record["entries"][-1]["at"] = "2000-01-01T00:00:00Z"
         metadata["gc.flow.planning_exceptions"] = json.dumps(record)
         self.edit(T1, metadata=metadata)
-        self.run_ok(STATE, "stop-ticket", CONVOY, T1, "--reason", "criterion_already_green", "--detail", "critère 1 déjà vert")
+        self.run_ok(STATE, "stop-ticket", CONVOY, T1, "--reason", "criterion_already_green", "--detail", ALL_GREEN_AT_EVERY_RUN)
 
         answer = self.advance(CONVOY)
 

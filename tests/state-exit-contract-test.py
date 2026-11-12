@@ -78,8 +78,9 @@ EXHAUSTED_PROOF = (
 CONTRACT = {
     # A repair that only moves a proof is no longer stopped all green, and one
     # stopped so before is resumed by code (cause proof_moved, af-oa2ci4,
-    # tests/convoy-advance-resumes-stops-end-test.py); every other ticket's
-    # stop stays the Planning Run's.
+    # tests/convoy-advance-resumes-stops-end-test.py), and so is, once, a stop
+    # decided on one run of each test (cause red_replayed, af-batj8g); every
+    # other ticket's stop stays the Planning Run's.
     ("ticket_stop", "criterion_already_green"): {
         "exit": operator("Planning Run: close or revise the approved ticket"),
         "options": {
