@@ -71,6 +71,7 @@ from types import ModuleType
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 from account_home import account_home  # noqa: E402
+import host_slots  # noqa: E402
 
 
 def process_identity(pid: int) -> str | None:
@@ -619,6 +620,24 @@ def cmd_start(args: argparse.Namespace) -> int:
         print(json.dumps({"started": False, "error": str(exc)}, sort_keys=True))
         return 1
 
+    # A product loads the host: it takes a product's share of the
+    # host pool (lib/host_slots.py, af-lsbqj9) and its guard holds it for the
+    # life of the launch. The slot a caller took and handed over
+    # (HOST_SLOT_FD) is that one; a launch started in a slot holder's turn
+    # (a test of a battery, a tdd-step check, an evaluation whose record
+    # is its place) takes none. The wait comes before `--timeout`, which
+    # measures the product only.
+    slot = host_slots.adopt_handed()
+    if slot is None:
+        try:
+            slot = host_slots.take(f"project-launch {descriptor['project_id']} {resolved_commit[:12]}",
+                                   kind=host_slots.PRODUCT,
+                                   say=lambda line: print(f"project-launch: {line}", file=sys.stderr, flush=True))
+        except host_slots.NotRun as exc:
+            print(json.dumps({"started": False, "not_run": True,
+                              "error": f"no host slot for the product: {exc}"}, sort_keys=True))
+            return host_slots.NOT_RUN
+
     # The record owns the capacity slot before git starts materializing the
     # copy. A crash during checkout therefore leaves a recoverable path.
     worktree = str(Path(tempfile.gettempdir()) / f"project-launch-{uuid.uuid4().hex}")
@@ -641,7 +660,10 @@ def cmd_start(args: argparse.Namespace) -> int:
                               "--launch-id", launch_id, "--deadline", str(deadline),
                               "--state-file", str(Path(args.state_file).resolve())],
                              cwd="/", stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL, start_new_session=True)
+                             stderr=subprocess.DEVNULL, start_new_session=True,
+                             pass_fds=slot.fds if slot else ())
+    if slot:
+        slot.release()  # the guard's copy holds it now
     try:
         Path(f"{worktree}.owner").write_text(json.dumps({
             "launch_id": launch_id, "repo_root": str(repo_root), "commit": resolved_commit}))

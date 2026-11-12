@@ -129,9 +129,11 @@ UNRULED = "état sans règle"
 # (study C, T1).
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 from bounded_process import run as bounded_run  # noqa: E402
+import host_slots  # noqa: E402
 import test_budgets  # noqa: E402
 
-DEFAULT_TIMEOUT = test_budgets.deadline(test_budgets.load(Path(__file__).resolve().parents[1]), "full")
+BUDGETS = test_budgets.load(Path(__file__).resolve().parents[1])
+DEFAULT_TIMEOUT = test_budgets.deadline(BUDGETS, "full")
 NOT_RUN = 75
 MAX_DETAIL = 300
 # A red's detail names the failing file and keeps its output (af-3p6iz7).
@@ -695,6 +697,11 @@ class Pass:
             self.tip = self.held = result
             return {"commit": result, "protected": protected_tip, "reused_from": reused} if taken else None
         try:
+            self.take_host(where)
+        except Refusal:
+            self.git("reset", "--quiet", "--hard", self.tip)
+            raise
+        try:
             proc = run(self.command, cwd=self.tree, timeout=self.timeout)
         except subprocess.TimeoutExpired as exc:
             self.git("reset", "--quiet", "--hard", self.tip)
@@ -729,9 +736,21 @@ class Pass:
             self.merge_protected(protected_tip)
             self.held = self.head()
 
+    def take_host(self, where: str) -> None:
+        """This pass's slot of the host pool, taken before the first run of
+        the regression starts its clock; every later run of the pass, and
+        what the run starts, is in its turn (af-lsbqj9)."""
+        try:
+            host_slots.hold(f"spec-integration {self.convoy_id}", BUDGETS["host_wait_seconds"],
+                            say=lambda line: print(f"{PROGRAM}: {line}", file=sys.stderr, flush=True))
+        except host_slots.NotRun as exc:
+            raise Refusal(f"aucune place sur l'hôte pour la commande de régression sur {where} (NOT RUN) : "
+                          f"rien n'est poussé, la passe suivante la relance ({exc})") from exc
+
     def tests(self, ticket_id: str) -> dict[str, Any]:
         """Run the tests on the merged result checked out in the work tree,
         by the capture tool: the record is tied to the commit of that result."""
+        self.take_host(f"le résultat fusionné de {ticket_id}")
         # The capture tool runs from here, where the tracker is reached; the
         # tests themselves run in the work tree (`tests`, below).
         status, answer = tool(

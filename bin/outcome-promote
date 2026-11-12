@@ -77,6 +77,9 @@ EXIT_UNRULED = 3
 EXIT_NOT_NEW_FLOW = 4
 MAX_DETAIL = 300
 
+sys.path.insert(0, str(BIN.parent / "lib"))
+import host_slots  # noqa: E402
+
 
 class Refusal(RuntimeError):
     """The call is refused, or could not run."""
@@ -326,6 +329,12 @@ def starts(convoy: Convoy, repo: Repo, profile: Path, tip: str) -> str | None:
         raise Refusal(f"profil de projet illisible ({profile}) : {exc}") from exc
     if not isinstance(launch, dict) or not launch.get("recipe"):
         raise Refusal(f"le profil {profile} ne déclare aucune recette de lancement : le démarrage ne peut pas être rejoué")
+    # A slot of the host pool for this command's product, taken before the
+    # launch's timeout starts; the launch runs in its turn (af-lsbqj9).
+    try:
+        host_slots.hold(f"{PROGRAM} {convoy.id} {sha(tip)}")
+    except host_slots.NotRun as exc:
+        raise Refusal(f"aucune place sur l'hôte pour lancer le produit (NOT RUN), la passe suivante le relance : {exc}") from exc
     with tempfile.TemporaryDirectory(prefix="outcome-promote-") as tmp:
         for dataset in sorted(launch.get("datasets") or {}) or [None]:
             state_file = Path(tmp) / f"launch-{dataset or 'product'}.json"

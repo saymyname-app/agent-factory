@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""The two evaluation flows share durable host admission."""
+"""The two evaluation flows share durable host admission, in the one pool of
+heavy runs of the host (lib/host_slots.py, af-lsbqj9)."""
 
 import os
 import json
@@ -14,6 +15,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+import host_slots
 from evaluation_capacity import admission, Busy, ready_product, product_running, remove_attestation
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -112,7 +114,9 @@ class CapacityTest(unittest.TestCase):
             outcome.mkdir()
             env = {"TICKET_EVALUATION_STATE_DIR": str(ticket),
                    "OUTCOME_EVALUATION_STATE_DIR": str(outcome),
-                   "EVALUATION_CAPACITY_STATE_DIR": str(root / "capacity")}
+                   "EVALUATION_CAPACITY_STATE_DIR": str(root / "capacity"),
+                   # Two products of two cores each fill a pool of four.
+                   "HOST_SLOTS": "4"}
             with patch.dict(os.environ, env):
                 first = ticket / "one.json"
                 second = outcome / "two.json"
@@ -160,38 +164,51 @@ class CapacityTest(unittest.TestCase):
             ticket.mkdir()
             env = {**os.environ, "TICKET_EVALUATION_STATE_DIR": str(ticket),
                    "OUTCOME_EVALUATION_STATE_DIR": str(root / "outcome"),
-                   "EVALUATION_CAPACITY_STATE_DIR": str(root / "capacity")}
+                   "EVALUATION_CAPACITY_STATE_DIR": str(root / "capacity"), "HOST_SLOTS": "1"}
+            released = root / "released"
             launcher = ("import os, subprocess, sys; "
                         "from pathlib import Path; "
                         "from evaluation_capacity import admission; "
-                        "with admission(Path(sys.argv[1])) as fd: "
-                        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(1)'], "
-                        "pass_fds=(fd,), stdout=subprocess.DEVNULL); os._exit(0)")
+                        "with admission(Path(sys.argv[1])) as fds: "
+                        "subprocess.Popen(['sh', '-c', 'until [ -e \"$0\" ]; do sleep 0.05; done', sys.argv[2]], "
+                        "pass_fds=fds, stdout=subprocess.DEVNULL); os._exit(0)")
             # A compound `with` statement needs a real newline in -c code.
             launcher = launcher.replace("; with admission", "\nwith admission")
-            subprocess.run([sys.executable, "-c", launcher, str(ticket / "pending.json")],
+            subprocess.run([sys.executable, "-c", launcher, str(ticket / "pending.json"), str(released)],
                            env={**env, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "lib")},
                            check=True, timeout=5)
-            started = time.monotonic()
-            with patch.dict(os.environ, env), admission(ticket / "next.json"):
-                pass
-            self.assertGreaterEqual(time.monotonic() - started, 0.5)
+            with patch.dict(os.environ, env):
+                # The parent is gone without a record: its launcher still holds the place.
+                with self.assertRaises(Busy):
+                    with admission(ticket / "next.json"):
+                        pass
+                released.touch()
+                deadline = time.monotonic() + 10
+                while True:
+                    try:
+                        with admission(ticket / "next.json"):
+                            break
+                    except Busy:
+                        self.assertLess(time.monotonic(), deadline, "the place never came back once the launcher ended")
+                        time.sleep(0.05)
 
-    def test_interrupted_admission_recovers_from_provisional_record(self):
+    def test_a_held_host_slot_is_a_place_an_evaluation_product_cannot_take(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            ticket = root / "ticket"
-            ticket.mkdir()
-            capacity = root / "capacity"
-            capacity.mkdir()
-            (capacity / "interrupted.reservation").write_text("interrupted")
-            env = {"TICKET_EVALUATION_STATE_DIR": str(ticket),
+            env = {"TICKET_EVALUATION_STATE_DIR": str(root / "ticket"),
                    "OUTCOME_EVALUATION_STATE_DIR": str(root / "outcome"),
-                   "EVALUATION_CAPACITY_STATE_DIR": str(capacity)}
+                   "EVALUATION_CAPACITY_STATE_DIR": str(root / "capacity"), "HOST_SLOTS": "1"}
             with patch.dict(os.environ, env):
-                with admission(ticket / "recover.json"):
-                    (ticket / "recover.json").write_text("provisional")
-                self.assertEqual([], list(capacity.glob("*.reservation")))
+                battery = host_slots.try_take("a battery")
+                try:
+                    with self.assertRaises(Busy) as busy:
+                        with admission(root / "ticket" / "next.json"):
+                            pass
+                    self.assertIn("capacité des produits d'évaluation atteinte", str(busy.exception))
+                finally:
+                    battery.release()
+                with admission(root / "ticket" / "next.json"):
+                    pass
 
 
 if __name__ == "__main__":

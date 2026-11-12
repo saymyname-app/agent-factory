@@ -85,6 +85,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 import bounded_process  # noqa: E402
+import host_slots  # noqa: E402
 
 
 PROGRAM = "prototype-fidelity"
@@ -349,6 +350,12 @@ def serve_prototype(prototype: Path) -> tuple[http.server.ThreadingHTTPServer, s
 
 def launch(descriptor: Path, repo_root: Path, commit: str, state: str, work: Path) -> tuple[Path, dict[str, Any]]:
     state_file = work / f"launch-{uuid.uuid4().hex}.json"
+    # A slot of the host pool for this command's product, taken before the
+    # launch's timeout starts; the launch runs in its turn (af-lsbqj9).
+    try:
+        host_slots.hold(f"prototype-fidelity {commit[:12]}")
+    except host_slots.NotRun as exc:
+        raise Refusal(f"aucune place sur l'hôte pour lancer le produit (NOT RUN), relancer la commande : {exc}") from exc
     status, answer = run_json([
         str(LAUNCH_TOOL), "--repo-root", str(repo_root), "start", "--owner-pid", str(os.getpid()), str(descriptor), "--commit", commit,
         "--dataset", state, "--timeout", str(LAUNCH_TIMEOUT), "--state-file", str(state_file)])

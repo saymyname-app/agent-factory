@@ -573,10 +573,10 @@ def launch_products(convoy: Convoy, ticket_id: str, commit: str, settings: dict[
             "--timeout", str(settings["start_timeout_seconds"]), "--state-file", str(state_file),
             "--dataset", chosen]
     try:
-        with admission(state_file) as lock_fd:
+        with admission(state_file) as lock_fds:
             for attempt in range(START_ATTEMPTS):
                 started = run(argv, timeout=settings["start_timeout_seconds"] + 60,
-                              detached=True, pass_fds=(lock_fd,))
+                              detached=True, pass_fds=lock_fds)
                 if started.returncode == 0 and state_file.is_file():
                     break
                 if state_file.exists():

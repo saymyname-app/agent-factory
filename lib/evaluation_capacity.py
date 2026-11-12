@@ -1,14 +1,16 @@
 """Host-wide admission for products launched by the two evaluation flows.
 
-The launch record is the durable occupancy marker. project-launch writes it
+They take their place in the one pool of heavy runs (lib/host_slots.py,
+af-lsbqj9): their cap of two (PR 561, af-5rx5mu) is now that pool's. The
+launch record is the durable occupancy marker: project-launch writes it
 before spawning and removes it only after its descendants, port and worktree
-are confirmed gone. A short reservation covers the interval before that
-record exists. The same lock serializes admission across both flows.
+are confirmed gone, and the pool counts every record not proven gone. A slot
+of the pool, handed to the launcher, covers the interval before that record
+exists.
 """
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
@@ -18,8 +20,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-
-LIMIT = 2
+import host_slots
 
 
 def launch_timeout(settings: dict, datasets: int) -> int:
@@ -90,35 +91,30 @@ def occupied() -> list[Path]:
 
 
 @contextmanager
-def admission(state_file: Path) -> Iterator[int]:
-    """Reserve one of two host slots before project-launch can spawn.
+def admission(state_file: Path) -> Iterator[tuple[int, ...]]:
+    """Take a product's share of the host pool before project-launch can
+    spawn, or Busy. It yields the descriptors to hand to the launcher.
 
-    Hold the lock through startup. A crash after project-launch writes its
-    provisional record leaves that record counted; a crash before it writes
-    one leaves no process to recover. Stale reservations are retired under
-    the lock on the next admission.
+    The caller hands the slot to the detached launcher (pass_fds): if the
+    caller dies before the provisional record exists, the launcher still
+    holds it until it exits, and by then its record holds the place. While
+    inside, a launcher started from here runs in this slot's turn and takes
+    no slot of its own: its record is its place.
     """
-    directory = capacity_dir()
-    directory.mkdir(parents=True, exist_ok=True)
-    with (directory / "lock").open("a+") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        for stale in directory.glob("*.reservation"):
-            # No live holder can leave a reservation while we own the lock.
-            # The provisional record either owns that slot or no product
-            # was spawned. project-launch guarantees this ordering.
-            stale.unlink(missing_ok=True)
-        if len(occupied()) >= LIMIT:
-            raise Busy(f"capacité des produits d'évaluation atteinte ({LIMIT} sur l'hôte)")
-        reservation = directory / f"{uuid.uuid4().hex}.reservation"
-        reservation.write_text(json.dumps({"state_file": str(state_file)}), encoding="utf-8")
-        try:
-            # The detached launcher inherits this lock. If the caller dies
-            # before its provisional record exists, the launcher still holds
-            # admission until it exits and its record owns the slot.
-            yield lock.fileno()
-        finally:
-            reservation.unlink(missing_ok=True)
-            fcntl.flock(lock, fcntl.LOCK_UN)
+    try:
+        slot = host_slots.try_take(f"evaluation product {Path(state_file).name}", host_slots.PRODUCT)
+    except host_slots.Busy as exc:
+        raise Busy(f"capacité des produits d'évaluation atteinte ({exc})") from None
+    previous = os.environ.get(host_slots.HELD)
+    os.environ[host_slots.HELD] = str(slot.pool)
+    try:
+        yield slot.fds
+    finally:
+        if previous is None:
+            os.environ.pop(host_slots.HELD, None)
+        else:
+            os.environ[host_slots.HELD] = previous
+        slot.release()
 
 
 def listening_sockets(port: int) -> set[str]:

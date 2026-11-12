@@ -135,6 +135,7 @@ sys.path.insert(0, str(BIN.parent / "lib"))
 from bounded_process import run as bounded_run  # noqa: E402
 from delivery_rules import moves_a_proof, tdd_evidence_piece  # noqa: E402
 import convoy_state  # noqa: E402
+import host_slots  # noqa: E402
 import test_budgets  # noqa: E402
 
 BUDGETS = test_budgets.load(BIN.parent)
@@ -1332,8 +1333,24 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# The steps whose check runs the ticket's tests, its product or the
+# regression: all but the freeze. Each takes its slot of the host pool before
+# any of its budgets starts, and what it runs runs in that turn (af-lsbqj9).
+HEAVY_STEPS = frozenset(PIECES) - {"freeze"}
+
+
 def main(argv: list[str]) -> int:
     args = build_parser().parse_args(argv)
+    if args.handler in (cmd_step, cmd_check) and args.step in HEAVY_STEPS:
+        try:
+            host_slots.hold(f"tdd-step {args.step} {args.ticket}", BUDGETS["host_wait_seconds"],
+                            say=lambda line: print(f"{PROGRAM}: {line}", file=sys.stderr, flush=True))
+        except host_slots.NotRun as exc:
+            print(json.dumps({"ok": False, "not_run": True,
+                              "error": f"aucune place sur l'hôte pour l'étape {args.step} (NOT RUN, exit 75) ; "
+                                       f"ce n'est pas un échec du ticket, relancer l'étape : {exc}"},
+                             sort_keys=True, ensure_ascii=False))
+            return NOT_RUN
     return args.handler(args)
 
 

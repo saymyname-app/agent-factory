@@ -388,6 +388,12 @@ class ConvoyAdvanceHarness(unittest.TestCase):
         self.env.update({
             "TICKET_EVALUATION_DISPATCH_DOOR_BIN": str(ROOT / "tests" / "fixtures" / "ticket-evaluation" / "evaluator"),
             "TICKET_EVALUATION_STATE_DIR": str(self.tmp / "launches"),
+            # The host pool of this test (lib/host_slots.py, af-lsbqj9): two products
+            # of two cores, the evaluations' former cap; the live pool's load never
+            # reaches it, and its other runs are in a holder's turn and never wait.
+            "EVALUATION_CAPACITY_STATE_DIR": str(self.tmp / "capacity"),
+            "HOST_SLOTS": "4",
+            "HOST_SLOT_HELD": str(self.tmp / "capacity" / "host-slots"),
             "TICKET_EVALUATION_FAKE_LOG": str(self.tmp / "evaluation-door.log"),
             "TICKET_EVALUATION_FAKE_PLAN": str(self.tmp / "evaluation-plan.json"),
         })
@@ -411,6 +417,12 @@ class ConvoyAdvanceHarness(unittest.TestCase):
         self.env.update({
             "OUTCOME_EVALUATION_DISPATCH_DOOR_BIN": str(ROOT / "tests" / "fixtures" / "outcome-evaluation" / "evaluator"),
             "OUTCOME_EVALUATION_STATE_DIR": str(self.tmp / "launches" / "outcome"),
+            # The host pool of this test (lib/host_slots.py, af-lsbqj9): two products
+            # of two cores, the evaluations' former cap; the live pool's load never
+            # reaches it, and its other runs are in a holder's turn and never wait.
+            "EVALUATION_CAPACITY_STATE_DIR": str(self.tmp / "capacity"),
+            "HOST_SLOTS": "4",
+            "HOST_SLOT_HELD": str(self.tmp / "capacity" / "host-slots"),
             "OUTCOME_EVALUATION_FAKE_LOG": str(self.tmp / "outcome-door.log"),
             "OUTCOME_EVALUATION_FAKE_PLAN": str(self.tmp / "outcome-plan.json"),
         })

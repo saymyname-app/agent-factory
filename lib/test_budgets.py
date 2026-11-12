@@ -13,8 +13,8 @@ convoy-advance), tied to nothing measured; the series grew with each ticket
 and green tickets were refused at 600 s. Now `config/test-budgets.json` holds
 them all, and every reader takes them from here:
 
-- `host_wait_seconds`: how long the cockpit's regression waits for the host
-  lock (tests/cockpit-criteria/regression.py);
+- `host_wait_seconds`: how long the cockpit's regression waits for a slot
+  of the host pool (tests/cockpit-criteria/regression.py, lib/host_slots.py);
 - `green_seconds` / `full_seconds`: its budget once the lock is held, at a
   ticket's green (the ticket's families, study C T4) and for the whole series
   (a merge, a take-up, prefactoring); `bin/spec-integration` and `bin/spec-end`
