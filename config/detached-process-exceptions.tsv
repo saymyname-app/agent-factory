@@ -5,7 +5,7 @@
 # caller goes through bounded_process.run or bounded_process.popen instead.
 2026-11-10	bin/acceptance-session:128	`detached`: the product of an Acceptance Session runs until its `close`.
 2026-11-10	bin/cockpit:134	`cockpit start` daemonises the Cockpit server; `cockpit stop` owns it.
-2026-11-10	bin/convoy-advance:3703	The fidelity check outlives the pass on purpose: a later pass reads its result.
+2026-11-10	bin/convoy-advance:3768	The fidelity check outlives the pass on purpose: a later pass reads its result.
 2026-11-10	bin/outcome-evaluation:151	`detached`: the product launched for an Outcome Evaluation runs between passes.
 2026-11-10	bin/outcome-promote:115	`detached`: the product started for the promotion runs past this call; project-launch's owner and deadline end it.
 2026-11-10	bin/project-launch:497	The launched product, recorded with its owner and deadline for the sweep that ends it.

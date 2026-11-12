@@ -356,8 +356,16 @@ mails the operator itself), then park with `--outcome blocked
 --classification repair` as above. Never try to close the bead while its
 NEEDS BENJAMIN is active — `deliver-close` refuses every closing form until
 the question is answered. `escalation-door repondre` records the answer and
-reopens the bead (`clear` reopens it too); the next worker resumes on the same branch and delivers
-through the normal PR path.
+reopens the bead (`clear` reopens it too) without its route nor this session
+(af-asymry); once the Mayor launches it again, its worker resumes on the same
+branch and delivers through the normal PR path.
+
+A repair linked to a convoy ticket (`gc.authorized_by` names it) whose code
+exists only on that convoy's integration branch cannot reach main: ask the
+same way, with one option whose text starts « Corriger dans le convoi »
+(`lib/convoy_state.py` `IN_CONVOY_OPTION`). Once it is answered,
+`bin/convoy-advance` gives the repair back to that ticket, whose author makes
+the fix on its branch (af-t8hycw).
 
 **3c. Delivered on another ticket's branch** (P07, af-87f9u): the repair this
 bead needs is the same logical unit as another ticket's change, so you

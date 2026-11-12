@@ -60,6 +60,12 @@ MAINTENANCE_ANSWER_PROOF = (
     "tests/convoy-advance-resumes-stops-end-test.py::"
     "test_a_maintenance_answer_waits_for_its_linked_repair_s_delivery_then_resumes_once"
 )
+# A linked repair answered « Corriger dans le convoi » goes back to the
+# ticket's author (af-t8hycw).
+RETURNED_REPAIR_PROOF = (
+    "tests/convoy-advance-resumes-stops-end-test.py::"
+    "test_a_linked_repair_answered_to_be_fixed_in_the_convoy_goes_back_to_the_ticket_s_author_once"
+)
 EXHAUSTED_PROOF = (
     "tests/convoy-advance-resumes-stops-end-test.py::"
     "test_the_answer_that_lifts_makes_the_ticket_and_its_descendants_startable_again"
@@ -198,6 +204,11 @@ CONTRACT = {
             "Corriger par maintenance sur main": transition(
                 "lift-park --repair once the repair linked by factory-work-dispatch --technical-request is delivered",
                 MAINTENANCE_ANSWER_PROOF),
+            # The linked repair's own request answered « Corriger dans le
+            # convoi »: its delivery never comes, the author makes the fix.
+            "Corriger dans le convoi": transition(
+                "return-technical-repair, then lift-park on the answer and open-resume --cause answered",
+                RETURNED_REPAIR_PROOF),
         },
     },
     ("park", "resumes_exhausted"): {

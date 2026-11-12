@@ -1535,6 +1535,92 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
         self.assertEqual(1, self.resumes())
 
+    def linked_open_repair(self, repair):
+        state = self.tracker_state()
+        state["beads"][repair] = {
+            "title": "réparation ouverte", "status": "open", "issue_type": "bug",
+            "labels": ["maintenance"], "metadata": {"gc.authorized_by": "af-authority"},
+        }
+        self.tracker.write_text(json.dumps(state))
+        self.run_ok(STATE, "link-technical-repair", CONVOY, T1, "--repair", repair)
+
+    def repair_asks_where_to_fix(self, repair, letter):
+        request = {
+            "quoi": "La correction vise du code présent sur la seule branche d'intégration",
+            "pourquoi": "Aucune voie de livraison n'ouvre de PR vers une branche d'intégration",
+            "que_faire": [
+                {"option": "Corriger dans le convoi : le ticket modifie serve_sessions",
+                 "consequence": "Le ticket reprend sans attendre main."},
+                {"option": "Autoriser une PR de maintenance vers l'intégration",
+                 "consequence": "Une PR vise la branche d'intégration."},
+            ],
+            "langue": "fr", "bloquant": True,
+        }
+        self.run_ok(ESCALATION, "benjamin", repair, json.dumps(request))
+        self.run_ok(ESCALATION, "repondre", repair, letter, "--actor", "operateur-test")
+
+    def test_a_linked_repair_answered_to_be_fixed_in_the_convoy_goes_back_to_the_ticket_s_author_once(self):
+        # af-t8hycw: af-8fk8nz, linked to R20, could only change code of the
+        # integration branch; answered « Corriger dans le convoi », R20 still
+        # waited for its delivery on main.
+        self.started_convoy()
+        self.taken(T1, "auteur-1")
+        request = {
+            "quoi": "Le faux superviseur rend tout son journal d'un coup",
+            "pourquoi": "Le rouge du ticket est impossible",
+            "que_faire": [{"option": "Corriger par maintenance sur main : serve_sessions journalise par emit",
+                            "consequence": "Le ticket reprend après la fusion de sa réparation."}],
+            "langue": "fr", "bloquant": True,
+        }
+        self.run_ok(ESCALATION, "benjamin", T1, json.dumps(request))
+        self.run_ok(STATE, "park", CONVOY, T1, "--cause", "operator_request", "--detail", request["quoi"])
+        self.run_ok(STATE, "set-exit", CONVOY, T1, "--exit", "operator_request")
+        self.run_ok(ESCALATION, "repondre", T1, "a", "--actor", "operateur-test")
+        repair = "fx-repair1"
+        self.linked_open_repair(repair)
+        refused = self.run_cmd(STATE, "return-technical-repair", CONVOY, T1)
+        self.assertNotEqual(0, refused.returncode)
+        self.assertIn("« Corriger dans le convoi »", refused.stdout + refused.stderr)
+
+        self.repair_asks_where_to_fix(repair, "b")
+        other = self.advance(CONVOY)
+        self.assertEqual(([], [], []), (self.of(other, "returned_repairs"), self.of(other, "lifted"),
+                                        self.of(other, "resumed")))
+        self.assertEqual("operator_request", self.park_of(T1)["cause"])
+
+        self.repair_asks_where_to_fix(repair, "a")
+        returned = self.advance(CONVOY)
+
+        self.assertEqual([{"id": T1, "repairs": [repair]}], self.of(returned, "returned_repairs"))
+        self.assertEqual([(T1, "answered")], [(r["id"], r["cause"]) for r in self.of(returned, "resumed")])
+        shown = self.shown_state(T1)
+        self.assertIsNone(shown["park"])
+        self.assertIsNone(shown["technical_repairs"])
+        self.assertEqual([repair], [entry["id"] for entry in shown["returned_repairs"]])
+        self.assertEqual(shown["resume"]["entries"][-1]["exit"]["at"], shown["returned_repairs"][-1]["exit_at"])
+        self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
+        self.assertEqual(1, self.resumes())
+
+    def test_a_ticket_lifted_before_its_link_resumes_once_its_repair_is_answered_to_be_fixed_in_the_convoy(self):
+        # R20 itself: lifted on the answer before af-fv8ca4, its link to
+        # af-8fk8nz still bound to its operator-request exit.
+        self.started_convoy()
+        self.taken(T1, "auteur-1")
+        self.run_ok(STATE, "park", CONVOY, T1, "--cause", "operator_request", "--detail", "faux superviseur")
+        self.run_ok(STATE, "set-exit", CONVOY, T1, "--exit", "operator_request")
+        repair = "fx-repair1"
+        self.linked_open_repair(repair)
+        metadata = dict(self.bead(T1)["metadata"])
+        del metadata["gc.flow.park"]
+        self.edit(T1, metadata=metadata)
+        self.repair_asks_where_to_fix(repair, "a")
+
+        returned = self.advance(CONVOY)
+
+        self.assertEqual([{"id": T1, "repairs": [repair]}], self.of(returned, "returned_repairs"))
+        self.assertEqual([(T1, "answered")], [(r["id"], r["cause"]) for r in self.of(returned, "resumed")])
+        self.assertIsNone(self.shown_state(T1)["technical_repairs"])
+
     def test_a_factory_repair_is_taken_up_and_tested_before_its_resume_is_consumed_once(self):
         self.integrated(regression="test -f budget.txt")
         self.resumable()
@@ -1745,6 +1831,28 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
 
         self.assertEqual([(T1, "returned")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
         self.assertEqual(1, self.resumes())
+        self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
+        self.assertEqual(1, self.resumes())
+
+    def test_a_ticket_finished_without_its_green_at_the_tip_goes_back_to_its_author_once(self):
+        # af-1row55: R16 finished at a tip its green was not proven at; the
+        # review and the evaluation wait for a green tip, nothing moved it.
+        self.integrated()
+        self.resumable()
+        self.code_reviewed("favorable")
+        self.evaluated()
+        self.advance(CONVOY)
+        tip = self.finished(T1)
+        # Its regression proven one commit before the tip it finished at.
+        before = self.git("rev-parse", f"{tip}~1")
+        self.run_ok(STATE, "set-tdd", CONVOY, T1, "--step", "prefactoring", "--commit", before, "--base", before)
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "returned")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+        self.assertEqual(f"unproven:{tip}/", self.shown_state(T1)["resume"]["entries"][-1]["ref"][:len(tip) + 10])
+        self.assertEqual(1, self.resumes())
+        self.assertEqual([], self.code_review_launches())
         self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
         self.assertEqual(1, self.resumes())
 
