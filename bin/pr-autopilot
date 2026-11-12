@@ -423,7 +423,7 @@ direct_merge() {  # repo num head_sha
 
 active_waiters_for() {  # bead -> comma-separated open/in_progress waiter ids
   local bead=$1
-  printf '%s' "$RIG_ALL_BEADS_JSON" | jq -r --arg bead "$bead" '
+  link_beads_json | jq -r --arg bead "$bead" '
     [.[]
       | select(.id != $bead)
       | select(.status == "open" or .status == "in_progress")
@@ -573,11 +573,11 @@ integration_gate() {  # repo rig_path num sha branch base protected labels -> 0 
   local repo=$1 rig_path=$2 num=$3 sha=$4 branch=$5 base=$6 protected=$7 labels=" $8 "
   local candidate why rc
   ensure_rig_all_beads
-  if [ "$RIG_ALL_BEADS_UNKNOWN" = "1" ]; then
+  candidate=$(linked_work_candidate_for "$branch" "$num")
+  if [ -z "$candidate" ] && [ "$RIG_ALL_BEADS_UNKNOWN" = "1" ]; then
     log "  PR #$num: beads unknown (gc bd list timed out) -> not merging into $base this pass"
     return 1
   fi
-  candidate=$(linked_work_candidate_for "$branch" "$num")
   if [ -z "$candidate" ]; then
     why="aucun bead de maintenance n'est lié à $branch"
   else
@@ -867,9 +867,28 @@ ensure_rig_all_beads() {  # fetch $RIG_ALL_BEADS_JSON once per rig, lazily
   local rc
   RIG_ALL_BEADS_JSON=$(cd "$rig_path" && bounded "$AP_WRITE_CAP" gc bd list --all --limit 0 --json 2>/dev/null); rc=$?
   # A cut read is not "no beads": callers must not act on it (RIG_ALL_BEADS_UNKNOWN).
-  timed_out "$rc" && RIG_ALL_BEADS_UNKNOWN=1
+  if timed_out "$rc"; then RIG_ALL_BEADS_UNKNOWN=1; RIG_ALL_BEADS_JSON='[]'; fi
   [ -n "$RIG_ALL_BEADS_JSON" ] || RIG_ALL_BEADS_JSON='[]'
   RIG_ALL_BEADS_FETCHED=1
+}
+
+# af-8hdaf1: PR #867 merged at 13:35Z on 2026-11-12 and its ticket af-batj8g
+# (open, sent back to the pool for a conflict) stayed open, with no merge
+# trace, until 17:48Z. The host's load was 75 to 95 that afternoon: the
+# whole-history read above (tens of MB) was cut on every pass, and RECONCILE
+# skipped every merged PR on that alone -- although the bead it closes is,
+# by definition, one not yet closed, so already in $RIG_OPEN_BEADS_JSON, the
+# lighter read this pass completed before ever reaching here. Linking a PR to
+# its ticket, its waiters, a DIRTY/red rejection and the integration gate
+# therefore read the open beads when the whole history is unknown. Only the
+# closed history stays unknown: a PR whose ticket is not among the open beads
+# is still "unknown, retried next tick", never "no ticket".
+link_beads_json() {
+  if [ "$RIG_ALL_BEADS_UNKNOWN" = "1" ]; then
+    printf '%s' "$RIG_OPEN_BEADS_JSON"
+  else
+    printf '%s' "$RIG_ALL_BEADS_JSON"
+  fi
 }
 
 # Same exclusions RECONCILE below relies on: never a bead pr-autopilot itself
@@ -889,7 +908,7 @@ LINKED_WORK_JQ='def linked($b; $n):
   | .[0] // empty;'
 
 linked_work_candidate_for() {  # branch num -> json of the linked work bead, or empty
-  printf '%s' "$RIG_ALL_BEADS_JSON" \
+  link_beads_json \
     | jq -r --arg b "$1" --arg n "$2" "$LINKED_WORK_JQ"' linked($b; $n) | @json' 2>/dev/null
 }
 
@@ -908,14 +927,14 @@ index_merged() {  # merged-TSV -> fills LINKED_FOR[num]=candidate-json, VIA_FOR[
   [ -n "$pairs" ] || pairs='[]'
   while IFS=$'\t' read -r n v; do
     [ -n "$n" ] && LINKED_FOR[$n]=$v
-  done < <(printf '%s' "$RIG_ALL_BEADS_JSON" | jq -r --argjson pairs "$pairs" "$LINKED_WORK_JQ"'
+  done < <(link_beads_json | jq -r --argjson pairs "$pairs" "$LINKED_WORK_JQ"'
     . as $all | $pairs[] | . as $p | ($all | linked($p.b; $p.n)) as $c
     | select((($c.metadata["gc.needs_benjamin"] // "") | tostring) as $needs
              | $needs == "" or $needs == "none")
     | "\($p.n)\t\($c|tojson)"' 2>/dev/null)
   while IFS=$'\t' read -r n v; do
     [ -n "$n" ] && VIA_FOR[$n]+="$v"$'\n'
-  done < <(printf '%s' "$RIG_ALL_BEADS_JSON" | jq -r '
+  done < <(link_beads_json | jq -r '
     .[]|(.metadata["gc.delivered_via_pr"]|tostring) as $v
     |select($v!="null")
     |select(.status=="open" or .status=="in_progress")
@@ -997,9 +1016,11 @@ reject_ticket() {  # repo rig_path num sha reason -> 0 handled (ticket-owned PR)
   timed_out "$rc" && return 2
   [ -n "$branch" ] || return 1
   ensure_rig_all_beads
-  [ "$RIG_ALL_BEADS_UNKNOWN" = "1" ] && return 2
   candidate=$(linked_work_candidate_for "$branch" "$num")
-  [ -n "$candidate" ] || return 1
+  if [ -z "$candidate" ]; then
+    [ "$RIG_ALL_BEADS_UNKNOWN" = "1" ] && return 2
+    return 1
+  fi
   bead=$(printf '%s' "$candidate" | jq -r '.id // empty' 2>/dev/null)
   [ -n "$bead" ] || return 1
   status=$(printf '%s' "$candidate" | jq -r '.status // empty' 2>/dev/null)
@@ -1430,8 +1451,7 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
   # above, on any tick that also had a DIRTY/red-after-retry PR this rig.
   [ -n "$merged" ] && ensure_rig_all_beads
   if [ "$RIG_ALL_BEADS_UNKNOWN" = "1" ]; then
-    log "  beads unknown (gc bd list timed out) -- reconciliation retried next tick"
-    continue
+    log "  closed beads unknown (gc bd list --all timed out) -- merged PRs reconciled from open beads only, the rest retried next tick"
   fi
   index_merged "$merged"
 

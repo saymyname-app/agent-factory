@@ -507,5 +507,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   catégorie nouvelle.
 - Contrôle : aucun — catégorie de tri.
 - Occurrences : #619, #622, #639, #655, #677 ; tests nocturnes #634, #663,
-  #670, #707.
+  #670, #707 ; af-8hdaf1 (`bin/pr-autopilot` : la lecture de tout
+  l'historique coupée sous charge suspendait la clôture des PR fusionnées et
+  le renvoi des PR en conflit, que la lecture des beads ouverts, déjà faite,
+  suffisait à décider ; garde-fou `bash tests/pr-autopilot-cut-history-test.sh`).
 - Ouvertes : aucune connue.
