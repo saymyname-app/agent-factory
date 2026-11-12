@@ -939,6 +939,23 @@ class SpecIntegrationTest(unittest.TestCase):
         self.addCleanup(lambda: subprocess.run(["kill", "-9", str(grandchild)], capture_output=True))
         self.assertFalse(Path(f"/proc/{grandchild}").exists(), "the control's own child still runs")
 
+    def test_a_control_kills_what_it_leaves_in_a_session_of_its_own_and_keeps_its_verdict(self):
+        # 12/11/2026: cockpits of a branch's regression, in sessions of their
+        # own, polled for hours outside the host pool (af-8mjdai).
+        self.opened()
+        pid_file = self.tmp / "left-alive.pid"
+        descriptor = json.loads(self.profile.read_text())
+        descriptor["launch"]["regression_command"] = (
+            f"sh -c 'setsid sleep 300 >/dev/null 2>&1 & echo $! > {pid_file}'")
+        self.profile.write_text(json.dumps(descriptor))
+
+        answer = self.taken_up()
+
+        left = int(pid_file.read_text())
+        self.addCleanup(lambda: subprocess.run(["kill", "-9", str(left)], capture_output=True))
+        self.assertEqual(0, answer["tests"]["exit_code"])
+        self.assertFalse(Path(f"/proc/{left}").exists(), "the control's leftover still runs")
+
     def not_run_profile(self):
         descriptor = json.loads(self.profile.read_text())
         descriptor["launch"]["regression_command"] = "sh -c 'echo regression: NOT RUN; exit 75'"

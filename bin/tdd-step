@@ -134,12 +134,19 @@ EXIT_STOPPED = 5
 sys.path.insert(0, str(BIN.parent / "lib"))
 from bounded_process import run as bounded_run  # noqa: E402
 from delivery_rules import GREEN_AT_EVERY_RUN, moves_a_proof, tdd_evidence_piece  # noqa: E402
+import ci_test_reaper  # noqa: E402
 import convoy_state  # noqa: E402
 import host_slots  # noqa: E402
 import test_budgets  # noqa: E402
 
 BUDGETS = test_budgets.load(BIN.parent)
 COMMAND_TIMEOUT = int(BUDGETS["criterion_test_seconds"])
+# The test and regression commands are the branch's own, and so is their
+# harness: one older than the Factory's reaper leaves its cockpits behind,
+# polling their synthetic city outside the host pool (12/11/2026: one for
+# 43 h, a load of 81 on 8 cores, af-8mjdai). Each runs under the Factory's
+# reaper, which kills what it leaves and keeps its verdict.
+REAPER = [sys.executable, str(BIN.parent / "lib" / "ci_test_reaper.py"), "--keep-status"]
 NOT_RUN = 75
 TIMING = re.compile(r"^regression: (?:took|ALERT) .*$", re.MULTILINE)
 # The whole check of one step, as bin/evidence-capture bounds it.
@@ -518,7 +525,7 @@ class Check:
         argv = [token.replace("{test}", test_id).replace("{report}", str(report)) for token in self.test_command()]
         env = {**os.environ, "PRODUCT_ADDRESS": address, "PYTHONDONTWRITEBYTECODE": "1"}
         try:
-            proc = bounded_run(argv, cwd=tree, env=env, stdin=subprocess.DEVNULL, capture_output=True,
+            proc = bounded_run([*REAPER, *argv], cwd=tree, env=env, stdin=subprocess.DEVNULL, capture_output=True,
                                timeout=COMMAND_TIMEOUT)
         except subprocess.TimeoutExpired as exc:
             raise Refusal(f"la commande de test n'a pas fini en {COMMAND_TIMEOUT} s : {test_id}") from exc
@@ -991,8 +998,8 @@ def regression_run(check: Check, commit: str, moment: str, ticket_tests: list[st
         env["TDD_STEP_TICKET_TESTS"] = " ".join(ticket_tests)
     timeout = test_budgets.deadline(BUDGETS, "green" if ticket_tests else "full")
     try:
-        proc = bounded_run(command, cwd=check.export(commit), stdin=subprocess.DEVNULL, capture_output=True,
-                           timeout=timeout, env=env)
+        proc = bounded_run([*REAPER, *command], cwd=check.export(commit), stdin=subprocess.DEVNULL,
+                           capture_output=True, timeout=timeout, env=env)
     except subprocess.TimeoutExpired as exc:
         raise Refusal(f"la commande de régression n'a pas fini en {timeout} s {moment}") from exc
     except OSError as exc:
@@ -1178,7 +1185,10 @@ CHECKS = {"red": check_red, "freeze": check_freeze, "green": check_green, "amend
 
 def cmd_check(args: argparse.Namespace) -> int:
     """The check of one step. It writes nothing: bin/evidence-capture runs it
-    and seals its report."""
+    and seals its report. It is the subreaper of all it starts: what a
+    command killed at its deadline left, and the reaper with it, dies with
+    the check (af-8mjdai)."""
+    reaping = ci_test_reaper.subreaper()
     work = Path(tempfile.mkdtemp(prefix="tdd-step-"))
     try:
         proof = CHECKS[args.step](Check(args, work))
@@ -1192,6 +1202,9 @@ def cmd_check(args: argparse.Namespace) -> int:
         print(json.dumps(answer, sort_keys=True, ensure_ascii=False))
         return EXIT_REFUSED
     finally:
+        if reaping:
+            for pid, line in ci_test_reaper.kill_left().items():
+                print(f"{PROGRAM}: left alive by the check, now killed: {pid} {line}", file=sys.stderr, flush=True)
         shutil.rmtree(work, ignore_errors=True)
     print(json.dumps(proof, indent=2, sort_keys=True, ensure_ascii=False))
     return 0

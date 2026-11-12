@@ -183,6 +183,14 @@ def sha256_of(path):
     return "sha256:" + hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def alive(pid):
+    """A process still running: present in /proc and not a zombie."""
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] not in {"Z", "X"}
+    except (OSError, IndexError):
+        return False
+
+
 class TddStepTest(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="tdd-step-test-"))
@@ -767,6 +775,21 @@ class TddStepTest(unittest.TestCase):
         self.assertIn("commande de régression non exécutée", error)
         self.assertIn("pas un échec du ticket", error)
         self.assertNotIn("en échec", error)
+
+    def test_green_kills_what_the_regression_leaves_alive_and_keeps_its_verdict(self):
+        """af-8mjdai: the regression command is the branch's own; a process
+        it leaves in a session of its own dies with the step all the same,
+        and the step's verdict stays the command's."""
+        self.frozen()
+        self.commit("code du ticket", {APP: self.green_app()})
+        pid_file = self.tmp / "left-alive.pid"
+
+        self.ok("green", profile=self.descriptor(
+            regression_command=f"sh -c 'setsid sleep 300 >/dev/null 2>&1 & echo $! > {pid_file}'"))
+
+        pid = int(pid_file.read_text())
+        self.addCleanup(lambda: subprocess.run(["kill", "-KILL", str(pid)], capture_output=True))
+        self.assertFalse(alive(pid), f"the regression's leftover {pid} outlived the step")
 
     def ticket_tests_seen(self, out):
         lines = [line for line in out.read_text().splitlines() if line.startswith("TDD_STEP_TICKET_TESTS=")]

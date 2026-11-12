@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run one test file so that nothing it starts outlives it (category P, af-8cfygl).
 
-    python3 lib/ci_test_reaper.py COMMAND [ARGUMENT...]
+    python3 lib/ci_test_reaper.py [--keep-status] COMMAND [ARGUMENT...]
 
 bin/ci-run-tests and the Cockpit regression (tests/cockpit-criteria/
 regression.py) run each test file through this. It becomes a child
@@ -18,6 +18,14 @@ the host on 11/11, adopted by systemd --user (af-i9llwm). The cockpit
 replaces the environment and the cockpit launcher opens sessions of its own,
 so neither an environment mark nor a process group finds such a process;
 being its subreaper does.
+
+With --keep-status the leftovers are killed and named all the same, but
+the exit status stays the command's: bin/tdd-step and bin/spec-integration
+run a ticket's or a convoy's own test and regression commands through it
+(af-8mjdai). Those commands come from the branch under test, whose harness
+may predate this reaper: on 12/11/2026 a tdd-step tree's cockpit had polled
+its synthetic city for 43 h, beside others, outside the host pool. Killing
+what they leave is the Factory's; failing them is their harness's.
 
 Where prctl is not there (not Linux), the test simply runs.
 """
@@ -79,9 +87,37 @@ def command_line(pid: int) -> str:
         return "?"
 
 
+def kill_left(grace: float = GRACE_SECONDS) -> dict[int, str]:
+    """Once what this subreaper ran has ended: what it left alive after
+    `grace`, killed, each pid with its command line."""
+    deadline = time.monotonic() + grace
+    while True:
+        reap()
+        left = children()
+        if not left or time.monotonic() >= deadline:
+            break
+        time.sleep(0.1)
+    named: dict[int, str] = {}
+    # Killing a leftover hands its own children to this process: repeat.
+    while left:
+        for pid in left:
+            named.setdefault(pid, command_line(pid))
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        time.sleep(0.1)
+        reap()
+        left = children()
+    return named
+
+
 def main(argv: list[str]) -> int:
+    keep_status = argv[:1] == ["--keep-status"]
+    if keep_status:
+        argv = argv[1:]
     if not argv:
-        sys.stderr.write("usage: ci_test_reaper.py COMMAND [ARGUMENT...]\n")
+        sys.stderr.write("usage: ci_test_reaper.py [--keep-status] COMMAND [ARGUMENT...]\n")
         return 2
     if not subreaper():
         os.execvp(argv[0], argv)
@@ -98,31 +134,13 @@ def main(argv: list[str]) -> int:
             break
     if status < 0:  # ended by a signal: the shell's way to say it
         status = 128 - status
-    deadline = time.monotonic() + GRACE_SECONDS
-    while True:
-        reap()
-        left = children()
-        if not left or time.monotonic() >= deadline:
-            break
-        time.sleep(0.1)
-    if not left:
+    named = kill_left()
+    if not named:
         return status
-    named: dict[int, str] = {}
-    # Killing a leftover hands its own children to this process: repeat.
-    while left:
-        for pid in left:
-            named.setdefault(pid, command_line(pid))
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        time.sleep(0.1)
-        reap()
-        left = children()
     sys.stderr.write(f"test reaper: {' '.join(argv)} ended and left these processes alive, now killed -- "
                      "a test stops what it starts (docs/DEFECT_CLASSES.md, P):\n"
                      + "".join(f"  {pid} {line}\n" for pid, line in named.items()))
-    return status or 1
+    return status if keep_status else status or 1
 
 
 if __name__ == "__main__":
