@@ -1,0 +1,7 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/home-result-essai-slow-test.py::HomeResultEssaiSlow.test_an_essai_longer_than_a_minute_reaches_the_operator_as_the_cockpit_answers_it"
+    ]
+  }
+}
