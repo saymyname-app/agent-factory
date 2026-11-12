@@ -344,8 +344,13 @@ caching a verdict or authorising an action from stale state (af-8cfygl).
   resumes a stopped ticket (`docs/CONVOY_ADVANCE.md`).
 - A Planning Exception named by the refusal of a criterion is not opened by
   this command.
-- The author role counts in the ceiling N once its session is alive; like a
-  review, the launch itself does not wait for a free place.
+- The author role counts in the ceiling N, and a round waits for a free
+  place like a resume (af-sdd8gr): `settle --free N` sends at most N rounds,
+  the places `bin/convoy-advance` leaves under the ceiling once the counted
+  resumes are sent. A round with no place is opened and counted all the
+  same, listed under `waiting` (« plafond N des auteurs atteint »), and sent
+  before any other round of the convoy once a place frees, the longest
+  waiting first. Without `--free` nothing is counted (a direct call).
 
 ## Proof
 

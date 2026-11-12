@@ -224,6 +224,29 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
             self.assertTrue(answer["ok"])
         self.assertEqual(base, self.git("rev-parse", self.INTEGRATION))
 
+    def test_a_correction_round_waits_for_a_free_author_place_then_holds_it_until_a_session_takes_the_ticket(self):
+        # af-sdd8gr: the round of R18 was sent past the ceiling and took the
+        # place the counted resume of R11 had waited five hours for.
+        self.refused_by_its_review("works")
+        settings = self.root / "config" / "delivery-flow.json"
+        settings.write_text(json.dumps({**json.loads(settings.read_text()), "max_sessions": 1}))
+        self.edit(sessions=[first.session("delivery-author")])
+
+        full = self.advance(CONVOY)
+
+        self.assertEqual([T1], [entry["ticket"] for entry in self.correction_of(full)["waiting"]])
+        self.assertEqual([], self.correction_launches())
+        self.assertEqual(1, self.shown(T1)["counters"]["correction_rounds"])
+
+        self.edit(sessions=[])
+        settings.write_text(json.dumps({**json.loads(settings.read_text()), "max_sessions": full["occupied"]}))
+        sent = self.advance(CONVOY)
+        held = self.advance(CONVOY)
+
+        self.assertEqual([T1], [entry["ticket"] for entry in self.correction_of(sent)["launched"]])
+        self.assertEqual(1, len(self.correction_launches()))
+        self.assertEqual(sent["occupied"] + 1, held["occupied"])
+
     def test_a_pass_stops_a_ticket_still_refused_after_its_round_and_raises_it_once(self):
         base, _ = self.refused_by_its_review("leaves")
         self.advance(CONVOY)
