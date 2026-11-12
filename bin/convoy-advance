@@ -245,6 +245,7 @@ from typing import Any, Iterator
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+import advance_pass  # noqa: E402
 from convoy_state import (  # noqa: E402
     PROVEN_BY_TEST_OPTION, REEVALUATE_OPTION, STOP_COUNT_WHY, overridden_ticket, repair_answered_in_convoy,
 )
@@ -3374,17 +3375,20 @@ def advance_lock() -> Iterator[bool]:
     there and was killed (af-wz4dd8); a pass that overlapped settlement
     amplified tracker load until both exceeded that deadline (af-ebqm1y).
     The pass that holds it does the work; a later pass reads what it left."""
-    lock_dir = Path(os.environ.get("CONVOY_ADVANCE_LOCK_DIR") or os.environ.get("XDG_RUNTIME_DIR") or "/tmp")
+    lock_dir = advance_pass.lock_dir()
     lock_dir.mkdir(parents=True, exist_ok=True)
-    with (lock_dir / "agent-factory-convoy-advance.lock").open("w") as handle:
+    with (lock_dir / advance_pass.LOCK_NAME).open("w") as handle:
         try:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             yield False
             return
         try:
+            # bin/factory-watchdog holds back a ticket this pass may be moving (af-xgd1rd).
+            advance_pass.mark_started()
             yield True
         finally:
+            advance_pass.mark_ended()
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
