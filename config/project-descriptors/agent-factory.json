@@ -260,7 +260,8 @@
       "chantier-decisions": "config/cockpit-datasets/chantier-decisions.json",
       "home-decisions-relaunches": "config/cockpit-datasets/home-decisions-relaunches.json",
       "factory-stop-unanswered": "config/cockpit-datasets/factory-stop-unanswered.json",
-      "factory-suspension-a-verifier": "config/cockpit-datasets/factory-suspension-a-verifier.json"
+      "factory-suspension-a-verifier": "config/cockpit-datasets/factory-suspension-a-verifier.json",
+      "home-projects-real": "config/cockpit-datasets/home-projects-real.json"
     },
     "test_perimeter": [
       "tests/cockpit-criteria/"
