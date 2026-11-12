@@ -82,7 +82,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   contrôle `factory-watchdog-test.sh` injecte un `gc` bloqué dans le vrai
   `factory-watchdog`, prouve que son budget interne rend avant celui de
   l'order et tue tout son groupe de processus, puis tient le délai d'incident
-  ticket sur le `pass_seconds` mesuré sans casser l'override d'exploitation ;
+  ticket à 30 min de silence réel, retenu par une passe `convoy-advance` en
+  cours au plus son `pass_seconds` mesuré, sans casser l'override
+  d'exploitation (af-xgd1rd) ;
   le dernier tient la notification de `idle-ready-work-wake` dans son budget
   sans changer son réveil ni son cooldown. Les deux derniers tiennent les
   tests eux-mêmes : `bin/ci-run-tests` et la régression du Cockpit lancent
@@ -422,7 +424,11 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   comme régressions) ; af-xcdibe (le 11/11/2026 de 14:28 à 15:45Z, les
   quatre exécutions de la CI de #859 rouges sur `apt-get install
   bubblewrap`, « Temporary failure resolving azure.archive.ubuntu.com »,
-  sans défaut dans le changement).
+  sans défaut dans le changement) ; af-xgd1rd (R16 et R19 du convoi af-strhoy
+  sans suite ~8 h le 11/11 sans alerte : la demande de fin de Spec portée par
+  le convoi exemptait tous ses tickets, une session d'auteur vivante mais
+  oisive après sa sortie comptait comme avancée, et le délai suivait le
+  budget d'une passe, 148 min, au lieu de 30 min de silence réel).
 - Ouvertes : aucune connue.
 
 ## L — Ticket rouvert réclamable par un ouvrier lancé pour un autre

@@ -1102,10 +1102,15 @@ mark or field. On such a convoy the pass:
 A state the command has a rule for can still leave a ticket that no pass
 moves on: T02R (#673) and T02R2 (#687) each sat so for hours. That one is
 caught outside the pass, by `bin/factory-watchdog` (`tickets`,
-`docs/FACTORY_TOOLS.md`): a started ticket with no live session, no open
-launch, no request on the operator's list and nothing recorded for 30 min
-raises the same kind of « Incident d'usine », withdrawn once the ticket
-moves again (af-1fvzns).
+`docs/FACTORY_TOOLS.md`): a started ticket with no live session started
+since its last exit or stop, no open launch made since, no request of its
+own (or grouped request covering it) on the operator's list and nothing
+recorded for 30 min raises the same kind of « Incident d'usine », withdrawn
+once the ticket moves again (af-1fvzns, af-xgd1rd). While it holds the lock,
+a pass records its start beside it (`agent-factory-convoy-advance.pass`,
+`lib/advance_pass.py`), and removes it at its end: the watchdog holds back a
+ticket a pass started within those 30 min may still be moving, for at most
+the budget of one pass.
 
 The repair is Factory maintenance: bring the tracker back to a state the
 command has a rule for (`bin/convoy-state show <convoy>` lists what is

@@ -175,6 +175,7 @@ from pathlib import Path
 LIB = str(Path(__file__).resolve().parent)
 if LIB not in sys.path:
     sys.path.insert(0, LIB)
+import advance_pass
 from delivery_rules import PROVEN_BY_TEST_OPTION, evaluation_proven_by_test, moves_a_proof, review_replay_due
 
 # The two names serve annotations only, which are never evaluated here
@@ -738,9 +739,9 @@ def convoy_advance_close_lock() -> Iterator[None]:
     if os.environ.get("CONVOY_ADVANCE_LOCK_HELD_BY_PASS") == "1":
         yield
         return
-    lock_dir = Path(os.environ.get("CONVOY_ADVANCE_LOCK_DIR") or os.environ.get("XDG_RUNTIME_DIR") or "/tmp")
+    lock_dir = advance_pass.lock_dir()
     lock_dir.mkdir(parents=True, exist_ok=True)
-    with (lock_dir / "agent-factory-convoy-advance.lock").open("w") as handle:
+    with (lock_dir / advance_pass.LOCK_NAME).open("w") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         try:
             yield

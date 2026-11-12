@@ -482,39 +482,50 @@ stalled_show() {  # stalled_show <status> [age-seconds] -> a convoy with one tic
     gates:{dispatch:{at:$at}},session:{at:$at,name:"delivery-author-gone"},exit:{at:$at,exit:"finished"},
     stop:{at:$at,raised:$at,reason:"still_refused"}}]}' > "$CONVOY_SHOW"
 }
+export CONVOY_ADVANCE_LOCK_DIR="$TMP/advance-lock"; mkdir -p "$CONVOY_ADVANCE_LOCK_DIR"
 stalled_show in_progress "$((TICKET_STALL_SECONDS - 60))"
 reset_logs
 out=$(watchdog --check-only)
 grep -q "ticket sans suite —" <<<"$out" \
-  && { echo "$out" >&2; fail "a ticket still inside the current order budget must not be reported"; }
+  && { echo "$out" >&2; fail "a ticket still inside its window of silence must not be reported"; }
 
 reset_logs
-out=$(FACTORY_WATCHDOG_TICKET_MINUTES=30 watchdog --check-only)
+out=$(FACTORY_WATCHDOG_TICKET_MINUTES=10 watchdog --check-only)
 grep -q "ticket sans suite — af-t9 (T09) du convoi af-cv1 : sans suite depuis" <<<"$out" \
   || { echo "$out" >&2; fail "the ticket-stall override should still report after its explicit limit"; }
 [ "$(creates)" = "0" ] || fail "--check-only must never file a bead for a ticket without a next step"
 [ "$(grep -c '^bd show ' "$CALLS")" = "1" ] \
-  || fail "ticket scan must read the convoy and ticket in one batched tracker call"
-grep -q '^bd show af-cv1 af-t9 --json$' "$CALLS" \
+  || fail "ticket scan must read the ticket and its launches in one batched tracker call"
+grep -q '^bd show af-t9 --json$' "$CALLS" \
   || { cat "$CALLS" >&2; fail "ticket scan did not batch its tracker reads"; }
 
 stalled_show in_progress
 reset_logs
 out=$(watchdog --check-only)
 grep -q "ticket sans suite — af-t9 (T09) du convoi af-cv1 : sans suite depuis" <<<"$out" \
-  || { echo "$out" >&2; fail "--check-only should still report a ticket beyond the current order budget"; }
+  || { echo "$out" >&2; fail "--check-only should still report a ticket beyond its window of silence"; }
 
-printf '[{"id":"af-cv1","status":"open","metadata":{"gc.needs_benjamin":"Decision attendue"}}]' > "$BEADS_DIR/af-cv1.json"
+# A convoy-advance pass in flight since within the window may still move it (af-xgd1rd).
+iso $((NOW - TICKET_STALL_SECONDS)) > "$CONVOY_ADVANCE_LOCK_DIR/agent-factory-convoy-advance.pass"
 reset_logs
 out=$(watchdog --check-only)
 grep -q "ticket sans suite —" <<<"$out" \
-  && { echo "$out" >&2; fail "a ticket whose convoy is on the operator list must not be reported"; }
+  && { echo "$out" >&2; fail "a ticket a pass in flight may still be moving must not be reported"; }
+unlink "$CONVOY_ADVANCE_LOCK_DIR/agent-factory-convoy-advance.pass"
+
+# The convoy's own request (here a Spec-end Planning Exception) blocks none
+# of its tickets: R19 af-dmsp3y sat ~8 h behind it on 11/11 (af-xgd1rd).
+printf '[{"id":"af-cv1","status":"open","metadata":{"gc.needs_benjamin":"Decision attendue"}}]' > "$BEADS_DIR/af-cv1.json"
+reset_logs
+out=$(watchdog --check-only)
+grep -q "ticket sans suite — af-t9" <<<"$out" \
+  || { echo "$out" >&2; fail "a request on the convoy itself must not hide a ticket nobody moves"; }
 unlink "$BEADS_DIR/af-cv1.json"
 
-# A convoy's grouped request carries the operator wait for every parked ticket
-# it covers. The request bead, rather than the convoy itself, is on the list.
+# A convoy's grouped request carries the operator wait for the tickets it
+# lifts. The request bead, rather than the convoy itself, is on the list.
 jq --arg at "$(iso $((NOW - 3000)))" \
-  '.convoy.grouped_request = {bead:"af-grouped", at:$at}' \
+  '.convoy.grouped_request = {bead:"af-grouped", at:$at, lift_option:"a", lifts:["af-t9"]}' \
   "$CONVOY_SHOW" > "$CONVOY_SHOW.next"
 mv "$CONVOY_SHOW.next" "$CONVOY_SHOW"
 printf '[{"id":"af-grouped","status":"open","metadata":{"gc.needs_benjamin":"Décision groupée attendue"}}]' > "$BEADS_DIR/af-grouped.json"
@@ -522,7 +533,7 @@ reset_logs
 out=$(watchdog --check-only)
 grep -q "ticket sans suite —" <<<"$out" \
   && { echo "$out" >&2; fail "a ticket covered by the active grouped request must not be reported"; }
-grep -q '^bd show af-cv1 af-grouped af-t9 --json$' "$CALLS" \
+grep -q '^bd show af-grouped af-t9 --json$' "$CALLS" \
   || { cat "$CALLS" >&2; fail "ticket scan did not read the grouped request in its batch"; }
 unlink "$BEADS_DIR/af-grouped.json"
 stalled_show in_progress
@@ -550,6 +561,6 @@ grep -q "ticket sans suite —" <<<"$out" && fail "a ticket that moved must not 
 grep -q "auto-resolved ticket without a next step" <<<"$out" || { echo "$out" >&2; fail "the request was not withdrawn"; }
 jq -e '(.[0].metadata["gc.needs_benjamin"] // "none") == "none"' "$stall_bead" >/dev/null \
   || { cat "$stall_bead" >&2; fail "the withdrawn request is still on the operator's list"; }
-unset FACTORY_WATCHDOG_CONVOY_STATE_BIN
+unset FACTORY_WATCHDOG_CONVOY_STATE_BIN CONVOY_ADVANCE_LOCK_DIR
 
 printf 'PASS: factory-watchdog pages aged gates, stuck PRs, false-success closes, broken gh auth, aggregated control-step quarantines, tickets without a next step, and open liveness defects, all throttled and silent under --check-only\n'
