@@ -292,7 +292,9 @@ for status in blocked closed; do
     {id: "af-t21", status: $s,
      metadata: {"gc.needs_benjamin": "Choisir une variante", "gc.escalation_que_faire": $q,
                 "gc.outcome": (if $s == "closed" then "pass" else "blocked" end),
-                "gc.work_outcome": "blocked", "gc.blocked_classification": "repair"},
+                "gc.work_outcome": "blocked", "gc.blocked_classification": "repair",
+                "gc.routed_to": "factory-worker", "gc.session_id": "af-wisp-old",
+                "gc.session_name": "factory-worker-af-wisp-old", "gc.work_branch": "do-work/af-t21"},
      notes: "", labels: []}')"
   door repondre af-t21 b --actor test-session >/dev/null || fail "repondre on a $status-blocked ticket should succeed"
   written=$(bead af-t21)
@@ -300,6 +302,12 @@ for status in blocked closed; do
     || fail "repondre did not reopen a $status ticket with gc.work_outcome=blocked: $written"
   [[ $(jq -r '.metadata | has("gc.work_outcome") or has("gc.outcome") or has("gc.blocked_classification")' <<<"$written") == false ]] \
     || fail "repondre left a stale blocked outcome on the reopened $status ticket: $written"
+  # af-asymry: reopened without its route and session, it waits to be
+  # launched again -- the worker launched for af-fv8ca4 took af-8fk8nz so.
+  [[ $(jq -r '.metadata | has("gc.routed_to") or has("gc.session_id") or has("gc.session_name")' <<<"$written") == false ]] \
+    || fail "repondre left the reopened $status ticket routed to the pool or tied to its old session: $written"
+  [[ $(jq -r '.metadata["gc.work_branch"]' <<<"$written") == do-work/af-t21 ]] \
+    || fail "repondre touched the reopened ticket's work branch: $written"
   [[ $(jq -r '.metadata["gc.needs_benjamin"]' <<<"$written") == none ]] \
     || fail "repondre did not clear NEEDS BENJAMIN on the $status ticket"
   grep -Fq "rouvert" "$TEST_TMP/calls.log" \

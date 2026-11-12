@@ -243,6 +243,19 @@ def _knowledge(depots, descriptor):
                      "changed_at": read.get("changed_at"), "path": descriptor["roadmap_path"]}
 
 
+def release_line(depots, descriptor):
+    """What the line of the project in the zone « Projets » of the home page
+    says of its release, on one line (R19, af-dmsp3y): the target of the
+    release plan this page reads, or the release unavailable with the reason
+    this page gives -- the same reading, so neither page contradicts the
+    other. ``depots``, ``descriptor``: as for :func:`project_view`."""
+    release, _ = _knowledge(depots, descriptor)
+    if release.get("state") == "read":
+        return release["plan"]["target"]
+    said, why = _release_missing(release, descriptor.get("knowledge_repo") or "")
+    return "Release indisponible · %s" % (why or said)
+
+
 def project_view(descriptor, project, chantiers_state, depots, roadmap_chantiers, runs, now, historique, below,
                  decisions=None):
     """The plain data :func:`render_project_fold` draws. ``descriptor``: the

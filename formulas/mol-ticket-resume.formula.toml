@@ -61,7 +61,7 @@ PROFILE=$(printf '%s' "$START" | jq -r '.profile')
 INTEGRATION=$(printf '%s' "$START" | jq -r '.integration_branch')
 "$FACTORY_ROOT/bin/ticket-exit" read "$CONVOY" "$TICKET"
 "$FACTORY_ROOT/bin/convoy-state" show "$CONVOY" --repo "$WORKTREE" | jq --arg t "$TICKET" \\
-  '.tickets[] | select(.id == $t) | {resume, resumes_left, resumes_left_by_cause, park_lifts, merge, tdd, verdicts, handoff, tip}'
+  '.tickets[] | select(.id == $t) | {resume, resumes_left, resumes_left_by_cause, park_lifts, returned_repairs, merge, tdd, verdicts, handoff, tip}'
 for STEP in workspace red code demonstration exit; do
   "$FACTORY_ROOT/bin/ticket-author" gate "$CONVOY" "$TICKET" --step "$STEP"
 done
@@ -128,6 +128,15 @@ Work only in the work tree.
   taken (`option`); read the request and its answer with
   `gc bd show <request> --json`. Do what the answer says, and nothing it
   does not say.
+
+Whatever the cause, an entry of `.returned_repairs` whose `exit_at` (or
+`stop_at`) is the exit or stop your resume replaced (`.resume.entries[-1]`)
+is a Factory repair linked to your request and answered « Corriger dans le
+convoi »: the code it must change exists only on the integration branch, so
+no maintenance on main will make it. That fix is yours, on your branch: read
+the repair with `gc bd show <id> --json` (its defect, its requirements, its
+notes) and make it with the rest of your work (af-t8hycw). Do not leave
+again by `operator_request` to wait for it.
 
 The rules of the author hold: follow the `tdd` and `codebase-design`
 skills; you write the code yourself, no writing sub-agent; a frozen test is

@@ -137,7 +137,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/outcome-evaluation-every-dataset-test.py`,
   `python3 tests/outcome-evaluation-outdated-stop-test.py`,
   `bash tests/factory-work-dispatch-test.sh`,
-  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_ticket_finished_without_its_green_at_the_tip_goes_back_to_its_author_once`. Sa même table tient chaque
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_ticket_finished_without_its_green_at_the_tip_goes_back_to_its_author_once`,
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_linked_repair_answered_to_be_fixed_in_the_convoy_goes_back_to_the_ticket_s_author_once ConvoyAdvanceTest.test_a_ticket_lifted_before_its_link_resumes_once_its_repair_is_answered_to_be_fixed_in_the_convoy`. Sa même table tient chaque
   fonction de `bin/convoy-advance` qui publie un repair rédigé par la porte
   de patch : un refus de la porte y est noté là où le repair a été rédigé et
   arrête le convoi, ou la fonction est une exception datée qui nomme son
@@ -210,7 +211,13 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `convoy-advance` renvoie à son auteur, cause `returned`, celle déjà
   enregistrée, prouvé par
   `python3 tests/ticket-exit-test.py TicketExitTest.test_finished_is_refused_when_the_green_was_proven_before_the_head_commit`
-  et `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_ticket_finished_without_its_green_at_the_tip_goes_back_to_its_author_once`).
+  et `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_ticket_finished_without_its_green_at_the_tip_goes_back_to_its_author_once`) ;
+  af-t8hycw (R20 af-3l6hbt restait lié à af-8fk8nz, une réparation de code
+  présent sur la seule branche d'intégration, que Benjamin a fait corriger
+  « dans le convoi » : aucune PR vers main ne la livrerait, le ticket
+  l'attendait pour toujours ; `convoy-advance` rend la réparation au ticket,
+  `return-technical-repair`, et son auteur reprend pour la faire, prouvé par
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_linked_repair_answered_to_be_fixed_in_the_convoy_goes_back_to_the_ticket_s_author_once ConvoyAdvanceTest.test_a_ticket_lifted_before_its_link_resumes_once_its_repair_is_answered_to_be_fixed_in_the_convoy`).
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
   contrôle : `criterion_already_green` reste au Planning Run, sauf
   le repair qui ne fait que déplacer une preuve (af-oa2ci4 : `tdd-step red`
@@ -318,7 +325,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `bash tests/planning-artifacts-close-test.sh`,
   `bash tests/convoy-parent-sweep-test.sh`,
   `bash tests/factory-maintain-test.sh`,
-  `bash tests/isolated-city-stop-guard-test.sh` — partiel : le premier
+  `bash tests/isolated-city-stop-guard-test.sh`,
+  `bash tests/ci-apt-install-test.sh` — partiel : le premier
   tient la frontière entre un report explicite (sortie 75, rejoué sans
   alerte) et une vraie panne répétée (bead et page Mayor) ; le deuxième tient
   la collecte VM Beads/Git/GitHub, le silence sur état inchangé, la route
@@ -368,7 +376,11 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   (`tests/lib/isolated-city.sh`), qui compte le temps que l'hôte donne à
   l'essai (une seconde à deux fois plus de charge que de CPU compte pour
   moitié, jusqu'à quatre fois le délai écrit) et nomme la charge quand il
-  renonce.
+  renonce. Le contrôle `ci-apt-install` refuse dans `.github/workflows/`
+  un `apt-get` hors de `bin/ci-apt-install`, qui passe à l'archive
+  principale d'Ubuntu puis à la copie gardée de `config/ci-apt-kept/`
+  (vérifiée par son SHA256SUMS) quand le miroir du runner ne répond pas :
+  une panne du dépôt de paquets n'est plus un contrôle rouge.
 - Occurrences : #651, #679, #688, #717 ; af-npz9v1.50 ; #767 (armement local
   annoncé mais `autoMergeRequest=null`, af-npz9v1.50.1) ; af-ncg9qy ; #778
   (demande directe acceptée localement mais encore `AWAITING_CHECKS`,
@@ -393,7 +405,31 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   le 28/10, af-apbds3 le 11/11/2026) ; af-2crkwu (la nuit du 11/11/2026, sous
   une charge de 40 à 100 sur 8 CPU, trois essais en cité isolée arrêtés à leur
   échéance d'horloge fixe en plein parcours, sans rien de cassé, et signalés
-  comme régressions).
+  comme régressions) ; af-xcdibe (le 11/11/2026 de 14:28 à 15:45Z, les
+  quatre exécutions de la CI de #859 rouges sur `apt-get install
+  bubblewrap`, « Temporary failure resolving azure.archive.ubuntu.com »,
+  sans défaut dans le changement).
+- Ouvertes : aucune connue.
+
+## L — Ticket rouvert réclamable par un ouvrier lancé pour un autre
+
+- Invariant : Un ticket de travail n'est pris que par la session lancée pour
+  lui : un outil qui le rouvre sans le relancer lui retire sa route
+  (`gc.routed_to`) et la session de son dernier lancement (`gc.session_id`,
+  `gc.session_name`), par `lib/work_route_release.sh`.
+- Contrôle : `python3 tests/work-route-release-test.py` — complet : chaque
+  écriture de `bin/` et des formules qui rouvre un bead passe par
+  `lib/work_route_release.sh`, ou est nommée dans sa table avec pourquoi elle
+  ne rouvre aucun travail lancé ; les retraits eux-mêmes sont prouvés par
+  `bash tests/escalation-door-test.sh`,
+  `bash tests/on-session-stranded-test.sh`,
+  `bash tests/pr-autopilot-ticket-rejection-test.sh` et
+  `bash tests/factory-delivery-guard-test.sh`.
+- Occurrences : af-asymry (le 11/11/2026, la session lancée pour af-fv8ca4 a
+  pris af-8fk8nz, rouvert par `escalation-door repondre` avec
+  `gc.routed_to=factory-worker` et sa session, et l'a repris sur la mauvaise
+  branche ; le balayage des orphelins de Gas City rend la route à un ticket
+  ouvert, sans assigné, qui garde `gc.work_branch` et sa session).
 - Ouvertes : aucune connue.
 
 ## A — Autre
