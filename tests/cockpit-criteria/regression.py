@@ -17,20 +17,20 @@ archive`) is no repository, and the launcher's tests launch a commit of
 their own tree: such a tree is first recorded as one commit of a repository
 of its own, which leaves its files as they are.
 
-One battery at a time on the host (study C, docs/research/2026-10-22-
-strategie-tests-budgets.md, T1): run beside the batteries of two authors and
-a merge, the same tests took 1.9 times as long (load 35 to 108 on 8 cores,
-22/10/2026) and the gates refused tickets that were green. So it takes the
-host lock of `bin/ci-run-tests` and waits its turn, at most
-REGRESSION_HOST_WAIT seconds (600). Its budget, REGRESSION_BUDGET seconds
-(600), counts from the lock obtained. Past either, it exits 75 and says NOT
-RUN: the gates take that as no answer, never as a red.
+One limit for the heavy runs of the host (study C, docs/research/2026-10-22-
+strategie-tests-budgets.md, T1; af-lsbqj9): run beside the batteries of two
+authors and a merge, the same tests took 1.9 times as long (load 35 to 108
+on 8 cores, 22/10/2026) and the gates refused tickets that were green. So it
+takes a slot of the host pool (lib/host_slots.py) and waits its turn, at
+most REGRESSION_HOST_WAIT seconds (600) -- none when its caller holds one
+for it (bin/tdd-step, bin/spec-integration). Its budget, REGRESSION_BUDGET
+seconds (600), counts from the slot obtained. Past either, it exits 75 and
+says NOT RUN: the gates take that as no answer, never as a red.
 Exit: 0 green, 1 red, 75 not run.
 """
 
 from __future__ import annotations
 
-import fcntl
 import os
 import re
 import signal
@@ -50,10 +50,6 @@ JOBS = 4
 # run alone, after the others.
 ALONE = ("tests/cockpit-criteria-test.py",)
 NOT_RUN = 75
-# The lock of bin/ci-run-tests: CI_RUN_TESTS_HOST_LOCK_FILE names another
-# one (tests only); a run started inside a battery that holds it
-# (CI_RUN_TESTS_HOST_LOCK_HELD) inherits that battery's turn.
-HOST_LOCK = os.environ.get("CI_RUN_TESTS_HOST_LOCK_FILE") or f"/tmp/agent-factory-ci-run-tests-{os.getuid()}.lock"
 
 
 def seconds(name: str, default: int) -> int:
@@ -70,35 +66,19 @@ def not_run(why: str) -> None:
 
 
 def take_host(wait: int):
-    """The host lock, or None where it is not taken. Exits NOT RUN past `wait`."""
-    if os.environ.get("GITHUB_ACTIONS") == "true" or os.environ.get("CI_RUN_TESTS_HOST_LOCK_HELD") == HOST_LOCK:
-        return None
-    handle = open(HOST_LOCK, "a")
-    started, said = time.monotonic(), None
-    while True:
-        try:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            break
-        except BlockingIOError:
-            waited = time.monotonic() - started
-            try:
-                holder = Path(f"{HOST_LOCK}.holder").read_text().strip() or "another session"
-            except OSError:
-                holder = "another session"
-            if waited >= wait:
-                not_run(f"the battery of {holder} still holds the host after {waited:.0f}s (REGRESSION_HOST_WAIT={wait})")
-            # Tried every second, said every 30 s.
-            if said is None or waited - said >= 30:
-                print(f"regression: waiting for the battery of {holder} -- one battery at a time on this host; "
-                      f"waited {waited:.0f}s of at most {wait}s", flush=True)
-                said = waited
-            time.sleep(1)
+    """A slot of the host pool, or None where none is taken (a GitHub
+    runner, a caller's turn, a tree without lib/host_slots.py). Exits NOT
+    RUN past `wait`."""
+    sys.path.insert(0, str(ROOT / "lib"))
     try:
-        Path(f"{HOST_LOCK}.holder").write_text(f"{ROOT} (pid {os.getpid()}, since {time.strftime('%H:%M')}, regression)\n")
-    except OSError:
-        pass
-    os.environ["CI_RUN_TESTS_HOST_LOCK_HELD"] = HOST_LOCK
-    return handle
+        import host_slots
+    except ImportError:
+        return None
+    try:
+        return host_slots.take(f"the regression of {ROOT}", wait,
+                               say=lambda line: print(f"regression: {line}", flush=True))
+    except host_slots.NotRun as exc:
+        not_run(str(exc))
 
 
 def files() -> list[Path]:

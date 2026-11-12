@@ -63,7 +63,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `bash tests/factory-watchdog-test.sh`,
   `python3 tests/idle-ready-work-wake-test.py IdleReadyWorkWakeTest.test_a_hung_notification_is_bounded_without_changing_wake_cooldown`,
   `bash tests/ci-run-tests-leftover-test.sh`,
-  `python3 tests/regression-host-queue-test.py RegressionHostQueue.test_a_file_that_leaves_a_process_alive_is_red_and_the_process_is_killed`
+  `python3 tests/regression-host-queue-test.py RegressionHostQueue.test_a_file_that_leaves_a_process_alive_is_red_and_the_process_is_killed`,
+  `python3 tests/host-slots-test.py`
   — complet pour les commandes Python bornées de `bin/`, `lib/` et
   `tests/cockpit-criteria/` : un seul lanceur (`lib/bounded_process.py`)
   ouvre une session et tue son groupe au délai, et aussi quand l'appelant
@@ -81,13 +82,17 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   contrôle `factory-watchdog-test.sh` injecte un `gc` bloqué dans le vrai
   `factory-watchdog`, prouve que son budget interne rend avant celui de
   l'order et tue tout son groupe de processus, puis tient le délai d'incident
-  ticket sur le `pass_seconds` mesuré sans casser l'override d'exploitation ;
+  ticket à 30 min de silence réel, retenu par une passe `convoy-advance` en
+  cours au plus son `pass_seconds` mesuré, sans casser l'override
+  d'exploitation (af-xgd1rd) ;
   le dernier tient la notification de `idle-ready-work-wake` dans son budget
   sans changer son réveil ni son cooldown. Les deux derniers tiennent les
   tests eux-mêmes : `bin/ci-run-tests` et la régression du Cockpit lancent
   chaque fichier sous `lib/ci_test_reaper.py`, sous-faucheur (subreaper) qui
   tue ce qu'un fichier laisse vivant en finissant, le nomme et le fait
-  échouer (af-i9llwm).
+  échouer (af-i9llwm). Le dernier tient la limite unique de l'hôte : au
+  plus N exécutions lourdes ensemble (`lib/host_slots.py`), l'attente d'une
+  place n'étant ni un échec ni une part d'un budget (af-lsbqj9).
 - Occurrences : #624, #628, #629, #630, #631, #636, #647, #657, #658, #661,
   #667, #694, #696, #705, #706, #708, #710, #713, #721 ; copies orphelines du
   22/10 (sans PR) ; af-kky570 ; af-npz9v1.46 ; af-npz9v1.26 ; af-30zwwu ;
@@ -98,7 +103,13 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   par chaque régression du Cockpit, 23 vivantes le 11/11) ; af-8a246o
   (plafonds d'attente de 3 s des actions opérateur et de 1,5 s du réveil
   idle-ready-work-wake, rouges sous une charge de 37 à 39 sur 8 cœurs ;
-  budget complet de la régression du Cockpit dépassé, relevé par la mesure).
+  budget complet de la régression du Cockpit dépassé, relevé par la mesure) ;
+  af-lsbqj9 (PR 840 à 860 : des outils sains rouges sous une charge de 30 à
+  100 sur 8 CPU, budgets relevés trois fois, chaque correctif bornant un
+  seul outil ; arbres tdd-step, copies project-launch et régressions
+  spec-integration tournaient hors du verrou de `ci-run-tests`, lui-même
+  dans un `/tmp` que le bac à sable des rôles remplace : une seule limite
+  hôte les tient tous).
 - Ouvertes : les invocations directes antérieures hors des occurrences de
   l'étude B sont nommées une par une, avec leur date et leur motif, dans
   `config/bounded-process-exceptions.tsv` ; une vingtaine de délais écrits à
@@ -132,6 +143,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_the_exact_answered_R8_is_closed_without_merge_then_its_control_runs_green ConvoyAdvanceTest.test_the_exact_R8_close_retry_finishes_after_its_durable_native_lift ConvoyAdvanceTest.test_the_exact_answered_R8_closes_without_merge_and_one_repair_follows_a_red_control ConvoyAdvanceTest.test_the_R8_close_release_rejects_nearby_state_and_option_b`,
   `python3 tests/convoy-advance-red-replay-test.py`,
   `python3 tests/convoy-advance-red-cleared-test.py`,
+  `python3 tests/tdd-step-intermittent-red-test.py`,
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_ticket_stopped_all_green_on_one_run_of_each_test_is_resumed_once_without_an_answer`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_malformed_legacy_resume_is_left_to_the_incident_door_without_crashing`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_factory_repair_is_taken_up_and_tested_before_its_resume_is_consumed_once`,
   `python3 tests/outcome-evaluation-every-dataset-test.py`,
@@ -217,12 +230,21 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   « dans le convoi » : aucune PR vers main ne la livrerait, le ticket
   l'attendait pour toujours ; `convoy-advance` rend la réparation au ticket,
   `return-technical-repair`, et son auteur reprend pour la faire, prouvé par
-  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_linked_repair_answered_to_be_fixed_in_the_convoy_goes_back_to_the_ticket_s_author_once ConvoyAdvanceTest.test_a_ticket_lifted_before_its_link_resumes_once_its_repair_is_answered_to_be_fixed_in_the_convoy`).
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_linked_repair_answered_to_be_fixed_in_the_convoy_goes_back_to_the_ticket_s_author_once ConvoyAdvanceTest.test_a_ticket_lifted_before_its_link_resumes_once_its_repair_is_answered_to_be_fixed_in_the_convoy`) ;
+  af-batj8g (R23 af-ujme6p arrêté `criterion_already_green` sur un seul
+  passage d'un test rouge 7 fois sur 8, et la Planning Exception de son
+  auteur n'offrait pas « le rouge est réel » : `tdd-step red` rejoue un test
+  qui passe jusqu'à k exécutions et ne le dit vert que s'il passe à chacune ;
+  `convoy-advance` reprend une fois, cause `red_replayed`, un arrêt décidé
+  sur une seule exécution, prouvé par
+  `python3 tests/tdd-step-intermittent-red-test.py` et
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_ticket_stopped_all_green_on_one_run_of_each_test_is_resumed_once_without_an_answer`).
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
   contrôle : `criterion_already_green` reste au Planning Run, sauf
   le repair qui ne fait que déplacer une preuve (af-oa2ci4 : `tdd-step red`
   ne l'arrête plus, et `convoy-advance` reprend une fois, cause
-  `proof_moved`, celui arrêté avant) ;
+  `proof_moved`, celui arrêté avant) et l'arrêt décidé sur une seule
+  exécution de chaque test (af-batj8g, cause `red_replayed`) ;
   `outcome_evaluation_no_result` et `outcome_evaluation_outage` ne repartent
   qu'à une nouvelle pointe d'intégration ; `story_unobservable` reste au
   Planning Run, sauf l'arrêt qu'une maintenance de l'usine liée lève par code
@@ -298,7 +320,12 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   #716 ; af-npz9v1.42 ; af-npz9v1.52 ; af-9wnmid ; af-a53dy2 ; af-epwkmn
   (`factory-delivery-guard` lisait `gc.authorized_by` comme le bead livré et
   a fermé hors porte R10 af-30ix43, ce qui a arrêté son convoi ; il rouvre
-  ce ticket au statut que ses portes permettent).
+  ce ticket au statut que ses portes permettent) ; af-lsbqj9 (le verrou
+  « une batterie à la fois » de `bin/ci-run-tests` et le plafond de deux
+  produits d'évaluation étaient deux règles de charge de l'hôte, chacune
+  pour un outil : les deux sont des usages du pool de `lib/host_slots.py`,
+  tenu par `python3 tests/host-slots-test.py` et
+  `python3 tests/evaluation-capacity-test.py`).
 - Ouvertes : les quatre propositions que `factory-delivery-guard` a fermées
   hors de `bin/proposal-door` avant af-epwkmn (af-p1q5pz, af-ze0zan,
   af-pgckwt, af-rmbml9) attendent leur résolution par la porte, af-8a2e9d ;
@@ -321,12 +348,14 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/factory-delivery-proof-test.py ClaimedShippedBead`,
   `python3 tests/ticket-graph-publish-test.py TicketGraphPublishBeadModeTest.test_a_mayor_wake_delivered_but_slow_to_answer_is_not_reported_as_lost`,
   `bash tests/factory-watchdog-test.sh`,
+  `python3 tests/factory-watchdog-test.py StalledTicketRules`,
   `bash tests/pr-autopilot-time-budget-test.sh`,
   `bash tests/planning-artifacts-close-test.sh`,
   `bash tests/convoy-parent-sweep-test.sh`,
   `bash tests/factory-maintain-test.sh`,
   `bash tests/isolated-city-stop-guard-test.sh`,
-  `bash tests/ci-apt-install-test.sh` — partiel : le premier
+  `bash tests/ci-apt-install-test.sh`,
+  `python3 tests/bounded-process-test.py BoundedProcessTest.test_an_exception_keeps_its_name_when_lines_move_around_it` — partiel : le premier
   tient la frontière entre un report explicite (sortie 75, rejoué sans
   alerte) et une vraie panne répétée (bead et page Mayor) ; le deuxième tient
   la collecte VM Beads/Git/GitHub, le silence sur état inchangé, la route
@@ -337,7 +366,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   au contrôle requis vert ; il relit aussi GitHub après toute demande de fusion
   directe et n'annonce la fusion que si le serveur répond `MERGED`. Le contrôle
   9 du gardien (#688) couvre les tickets que personne ne bouge, pas les autres
-  signaux. Le quatrième refuse qu'un workflow encore actif ou une demande de
+  signaux ; `StalledTicketRules` tient qu'un ticket qui attend ce que Benjamin
+  a choisi (le Planning Run, une réparation liée encore ouverte) n'est pas
+  signalé, par la règle de levée que la passe applique (af-hnh16e). Le quatrième refuse qu'un workflow encore actif ou une demande de
   rerun refusée soit annoncé comme déjà retenté. Le contrôle `tdd-step`
   conserve le début et la fin d'une longue sortie bornée, dont le nom du
   contrôle en échec. Le contrôle `role-adoption-trial-codex` tient la minute de
@@ -380,7 +411,13 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   un `apt-get` hors de `bin/ci-apt-install`, qui passe à l'archive
   principale d'Ubuntu puis à la copie gardée de `config/ci-apt-kept/`
   (vérifiée par son SHA256SUMS) quand le miroir du runner ne répond pas :
-  une panne du dépôt de paquets n'est plus un contrôle rouge.
+  une panne du dépôt de paquets n'est plus un contrôle rouge. Le contrôle
+  `bounded-process` nomme chaque exception de
+  `config/bounded-process-exceptions.tsv` et
+  `config/detached-process-exceptions.tsv` par son fichier et sa fonction
+  (`#2` après la première d'une même fonction), jamais par son numéro de
+  ligne : une ligne ajoutée ailleurs dans le fichier ne rougit plus un
+  travail sans rapport.
 - Occurrences : #651, #679, #688, #717 ; af-npz9v1.50 ; #767 (armement local
   annoncé mais `autoMergeRequest=null`, af-npz9v1.50.1) ; af-ncg9qy ; #778
   (demande directe acceptée localement mais encore `AWAITING_CHECKS`,
@@ -408,7 +445,19 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   comme régressions) ; af-xcdibe (le 11/11/2026 de 14:28 à 15:45Z, les
   quatre exécutions de la CI de #859 rouges sur `apt-get install
   bubblewrap`, « Temporary failure resolving azure.archive.ubuntu.com »,
-  sans défaut dans le changement).
+  sans défaut dans le changement) ; af-xgd1rd (R16 et R19 du convoi af-strhoy
+  sans suite ~8 h le 11/11 sans alerte : la demande de fin de Spec portée par
+  le convoi exemptait tous ses tickets, une session d'auteur vivante mais
+  oisive après sa sortie comptait comme avancée, et le délai suivait le
+  budget d'une passe, 148 min, au lieu de 30 min de silence réel) ;
+  af-vy9ajj (le 12/11/2026, #866 et #867, sans rapport entre elles, rouges
+  sur `bounded-process` parce que la vérification de fidélité détachée de
+  `bin/convoy-advance`, listée à la ligne 3768, avait glissé à 3772 et à
+  3780) ; af-hnh16e (le 12/11/2026, le gardien signalait « sans suite » R23
+  af-ujme6p, renvoyée au Planning Run par la réponse de Benjamin à sa
+  Planning Exception, et R16 af-yv2g3n, qui attendait sa réparation liée
+  af-33j358 encore ouverte : la règle de levée du parcage, tenue dans
+  `convoy-advance` seul, est partagée par `lib/delivery_rules.py`).
 - Ouvertes : aucune connue.
 
 ## L — Ticket rouvert réclamable par un ouvrier lancé pour un autre

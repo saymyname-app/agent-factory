@@ -28,12 +28,18 @@ failure behind a CLOSED status":
              by (rig, failure_reason) over a rolling window so one root cause
              pages once, not once per bead.
   tickets    a started ticket of a marked convoy that nobody moves: no live
-             session holds it, no launch of it is open, no request of it or
-             of its convoy or the convoy's grouped request is on Benjamin's
-             list, and nothing was recorded for it within the threshold.
-             Twice in two days a ticket sat so for hours -- T02R (#673),
-             T02R2 (#687) -- and only an operator's own watcher noticed
-             (af-1fvzns).
+             session works for its current state, no launch of it is open,
+             no request of it (nor the convoy's grouped request that covers
+             it) is on Benjamin's list, and nothing was recorded for it
+             within the threshold. Twice in two days a ticket sat so for
+             hours -- T02R (#673), T02R2 (#687) -- and only an operator's own
+             watcher noticed (af-1fvzns). On 11/11 R16 and R19 sat ~8 h
+             unflagged: the convoy's own request (on its Spec end) exempted
+             every ticket, and an idle author session alive after its exit
+             counted as moving it (af-xgd1rd). A ticket whose wait Benjamin
+             already chose is not stalled: a Planning Exception he sent to
+             the Planning Run (R23, af-hnh16e), or a linked Factory repair
+             still open.
 
 Each assessor is a pure function over already-fetched JSON, so it is
 unit-testable without gc/gh. bin/factory-watchdog does the fetching, paging,
@@ -50,7 +56,6 @@ state.
 from __future__ import annotations
 
 import json
-import math
 from pathlib import Path
 import os
 import sys
@@ -58,12 +63,20 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
+import advance_pass
+from delivery_rules import answer_lifts_planning_exception, technical_repairs
 import test_budgets
 
 GATE_AGE_MINUTES_DEFAULT = 30
 PR_STUCK_MINUTES_DEFAULT = 30
 QUARANTINE_WINDOW_HOURS_DEFAULT = 24
-TICKET_STALL_MINUTES_DEFAULT = math.ceil(test_budgets.pass_seconds(test_budgets.load()) / 60)
+# Real silence after the last convoy-advance pass (af-xgd1rd): a pass still
+# in flight holds the window back for at most its own budget.
+TICKET_STALL_MINUTES_DEFAULT = 30
+
+
+def advance_pass_seconds() -> int:
+    return test_budgets.pass_seconds(test_budgets.load())
 # The gates a closed or withdrawn ticket carries (lib/convoy_state.py).
 CLOSING_GATES = ("ticket_end", "withdrawn")
 
@@ -284,10 +297,28 @@ def _records(value: Any) -> Iterable[tuple[str, Any]]:
             yield from _records(item)
 
 
+def _launches(ticket: dict[str, Any]) -> list[dict[str, Any]]:
+    return [entry for key, launches in _records(ticket) if key == "launches" and isinstance(launches, list)
+            for entry in launches if isinstance(entry, dict) and entry.get("bead")]
+
+
 def _launch_beads(ticket: dict[str, Any]) -> list[str]:
     """The beads code launched for the ticket: correction, resume, evaluation, review."""
-    return [str(entry["bead"]) for key, launches in _records(ticket) if key == "launches" and isinstance(launches, list)
-            for entry in launches if isinstance(entry, dict) and entry.get("bead")]
+    return [str(entry["bead"]) for entry in _launches(ticket)]
+
+
+def _ended(ticket: dict[str, Any]) -> float | None:
+    """When the ticket's current work last ended: its exit or its stop."""
+    times = [_epoch((ticket.get(key) or {}).get("at")) for key in ("exit", "stop")]
+    return max((t for t in times if t), default=None)
+
+
+def _works_now(at: Any, ended: float | None) -> bool:
+    """A session or a launch works for the ticket's current state only when it
+    started after the exit or stop that ended the last work: an author alive
+    but idle after its own exit moves nothing (af-xgd1rd, R16)."""
+    started = _epoch(at)
+    return ended is None or (started is not None and started > ended)
 
 
 def _at_stake(ticket: dict[str, Any]) -> bool:
@@ -303,34 +334,65 @@ def grouped_request_bead(show: dict[str, Any]) -> str | None:
     return str(request.get("bead") or "") or None
 
 
+def grouped_request_covers(show: dict[str, Any]) -> set[str]:
+    """The tickets the convoy's grouped request waits for (T20): those its
+    lifting option lifts once it reached the door, else the tickets parked
+    and not yet answered. The convoy's own request (Spec end, acceptance)
+    blocks none of them (af-xgd1rd, R19)."""
+    request = (show.get("convoy") or {}).get("grouped_request") or {}
+    lifts = request.get("lifts") if isinstance(request, dict) else None
+    if isinstance(lifts, list):
+        return {str(name) for name in lifts}
+    return {str(ticket.get("id") or "") for ticket in show.get("tickets") or []
+            if isinstance(ticket, dict) and isinstance(ticket.get("park"), dict) and not ticket["park"].get("answer")}
+
+
+def _awaits_planning_run(ticket: dict[str, Any]) -> bool:
+    """Parked by its own Planning Exception, answered, and that answer does
+    not lift the parking: the question went to the Planning Run, Benjamin's
+    to decide (af-hnh16e, R23 answered « Trancher dans le Planning Run »)."""
+    park = ticket.get("park") or {}
+    return park.get("origin") == ticket.get("id") and park.get("cause") == "planning_exception" \
+        and bool(park.get("answer")) and not answer_lifts_planning_exception(ticket)
+
+
 def stalled_lookups(show: dict[str, Any]) -> list[str]:
-    """The beads bin/factory-watchdog reads before assess_ticket: the convoy,
-    its grouped request, then each ticket at stake followed by its launches."""
-    ids = [str((show.get("convoy") or {}).get("id") or ""), grouped_request_bead(show) or ""]
+    """The beads bin/factory-watchdog reads before assess_ticket: the convoy's
+    grouped request, then each ticket at stake followed by its launches and
+    the Factory repairs linked to its current request."""
+    ids = [grouped_request_bead(show) or ""]
     for ticket in show.get("tickets") or []:
         if isinstance(ticket, dict) and _at_stake(ticket):
-            ids += [str(ticket.get("id") or ""), *_launch_beads(ticket)]
+            ids += [str(ticket.get("id") or ""), *_launch_beads(ticket), *technical_repairs(ticket)]
     return [bead_id for bead_id in ids if bead_id]
 
 
 def assess_ticket(
     ticket: dict[str, Any], convoy_id: str, now: float, alive: set[str], open_beads: set[str],
-    listed: set[str], minutes: int = TICKET_STALL_MINUTES_DEFAULT,
+    listed: set[str], minutes: int = TICKET_STALL_MINUTES_DEFAULT, pass_started: float | None = None,
 ) -> tuple[str, str] | None:
-    """A ticket at stake that nobody moves (af-1fvzns): no live session holds
-    it, no launch of it is open, neither it nor its convoy has a request on
-    Benjamin's list (the caller maps an active grouped request to the convoy),
-    it does not wait for its blockers, and its last record is older than
-    `minutes`. The record times are those convoy-state writes (`at`, `raised`):
-    the pass acts within minutes of any of them."""
+    """A ticket at stake that nobody moves (af-1fvzns): no live session works
+    for its current state, no launch of it made since is open, it has no
+    request on Benjamin's list (the caller adds the tickets an active grouped
+    request covers; the convoy's own request covers none), it waits neither
+    for its blockers, nor for the Planning Run Benjamin sent it to, nor for
+    an open Factory repair linked to its request, and its last record is
+    older than `minutes`. The record
+    times are those convoy-state writes (`at`, `raised`): the pass acts within
+    minutes of any of them. A pass in flight that started within that window
+    (`pass_started`, bounded by the caller) may still be moving the ticket."""
     if not _at_stake(ticket):
         return None
     ticket_id = str(ticket.get("id") or "")
-    if ticket_id in listed or convoy_id in listed:
+    if ticket_id in listed or _awaits_planning_run(ticket):
         return None
-    if (ticket.get("session") or {}).get("name") in alive:
+    if any(repair in open_beads for repair in technical_repairs(ticket)):
         return None
-    if any(bead in open_beads for bead in _launch_beads(ticket)):
+    ended = _ended(ticket)
+    session = ticket.get("session") or {}
+    if session.get("name") in alive and _works_now(session.get("at"), ended):
+        return None
+    if any(str(entry["bead"]) in open_beads and _works_now(entry.get("at"), ended) for entry in _launches(ticket)):
         return None
     exit_name = (ticket.get("exit") or {}).get("exit")
     if exit_name == "technically_blocked":
@@ -338,6 +400,8 @@ def assess_ticket(
     times = [t for key, value in _records(ticket) if key in ("at", "raised") for t in [_epoch(value)] if t]
     latest = max(times) if times else None
     if latest is not None and now - latest < minutes * 60:
+        return None
+    if latest is not None and pass_started is not None and pass_started < latest + minutes * 60:
         return None
     stop = (ticket.get("stop") or {}).get("reason")
     state = f"arrêt {stop}" if stop else f"sortie {exit_name}" if exit_name else str(ticket.get("status") or "?")
@@ -505,10 +569,13 @@ def _cli_tickets(argv: list[str]) -> int:
     minutes = int(os.environ.get("FACTORY_WATCHDOG_TICKET_MINUTES") or TICKET_STALL_MINUTES_DEFAULT)
     sets = [set(map(str, payload.get(key) or [])) for key in ("alive", "open", "listed")]
     if grouped_request_bead(show) in sets[2]:
-        sets[2].add(convoy_id)
+        sets[2] |= grouped_request_covers(show)
+    pass_started = advance_pass.started()
+    if pass_started is not None and now - pass_started >= advance_pass_seconds():
+        pass_started = None  # left behind by a pass its order killed
     for ticket in show.get("tickets") or []:
         if isinstance(ticket, dict):
-            found = assess_ticket(ticket, convoy_id, now, *sets, minutes)
+            found = assess_ticket(ticket, convoy_id, now, *sets, minutes, pass_started)
             if found:
                 print(f"{ticket.get('id')}\t{found[0]}\t{found[1]}")
     return 0

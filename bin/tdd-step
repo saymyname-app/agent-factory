@@ -133,8 +133,9 @@ EXIT_STOPPED = 5
 # answer, never a red (study C, T1).
 sys.path.insert(0, str(BIN.parent / "lib"))
 from bounded_process import run as bounded_run  # noqa: E402
-from delivery_rules import moves_a_proof, tdd_evidence_piece  # noqa: E402
+from delivery_rules import GREEN_AT_EVERY_RUN, moves_a_proof, tdd_evidence_piece  # noqa: E402
 import convoy_state  # noqa: E402
+import host_slots  # noqa: E402
 import test_budgets  # noqa: E402
 
 BUDGETS = test_budgets.load(BIN.parent)
@@ -813,6 +814,13 @@ def import_rule_problems(check: Check, ids: list[str], base: str) -> list[str]:
     return problems
 
 
+def run_outcome(cases: list[dict[str, str]]) -> str:
+    """What one run of a criterion test says at the red: an error or a skip
+    first, then a pass, then an assertion failure; `empty` if it ran nothing."""
+    outcomes = [case["outcome"] for case in cases]
+    return next((o for o in ("error", "skipped", "passed", "failure") if o in outcomes), "empty")
+
+
 def red_proof(check: Check, base: str, table_path: str | None, amendment: bool,
               satisfied_before: list[str] | None = None) -> dict[str, Any]:
     """Every criterion test fails by assertion against the product at the
@@ -842,19 +850,27 @@ def red_proof(check: Check, base: str, table_path: str | None, amendment: bool,
         try:
             results = []
             for test_id in ids:
-                cases = check.run_test(test_id, trees[seams[test_id]["mode"]], recorder.address)
-                asked = recorder.take()
-                results.append((test_id, cases, list(dict.fromkeys(f"{m} {p}" for m, p in asked if (m, p) in declared))))
+                # A test that passes is run again, up to k runs, until its
+                # first run that does not pass: green is passing at every
+                # run, as at the green step; one lucky pass of a test red 7
+                # times out of 8 stopped R23 « déjà vert » (af-batj8g).
+                runs, asked = [], []
+                while not runs or (runs[-1][0] == "passed" and len(runs) < launch["k"]):
+                    cases = check.run_test(test_id, trees[seams[test_id]["mode"]], recorder.address)
+                    runs.append((run_outcome(cases), cases))
+                    asked += recorder.take()
+                results.append((test_id, runs[-1][1], list(dict.fromkeys(f"{m} {p}" for m, p in asked if (m, p) in declared)),
+                                [outcome for outcome, _ in runs]))
         finally:
             recorder.close()
 
     allowed_errors = launch.get("red_error_types") or []
     problems, green, tests = [], [], []
-    for test_id, cases, entry_points in results:
+    for test_id, cases, entry_points, runs in results:
         outcomes = [case["outcome"] for case in cases]
-        outcome = next((o for o in ("error", "skipped", "passed", "failure") if o in outcomes), "empty")
+        outcome = run_outcome(cases)
         seam, mode = seams[test_id]["name"], seams[test_id]["mode"]
-        entry: dict[str, Any] = {"id": test_id, "outcome": outcome, "seam": seam, "seam_mode": mode}
+        entry: dict[str, Any] = {"id": test_id, "outcome": outcome, "runs": runs, "seam": seam, "seam_mode": mode}
         if mode == "black_box":
             entry["entry_points"] = entry_points
         errors = [case for case in cases if case["outcome"] == "error"]
@@ -891,7 +907,8 @@ def red_proof(check: Check, base: str, table_path: str | None, amendment: bool,
     satisfied = [number for number in sorted(criteria, key=int) if all(t in green for t in criteria[number])]
     if not amendment and green and len(satisfied) == len(criteria) and not moves_a_proof(check.ticket):
         raise Refusal(" ; ".join(
-            f"critère {number} déjà vert : {test_id} passe au commit de départ"
+            f"critère {number} déjà vert : {test_id} passe au commit de départ "
+            f"{GREEN_AT_EVERY_RUN} {launch['k']} exécutions"
             for number in criteria for test_id in criteria[number] if test_id in green
         ), stop=STOP_ALREADY_GREEN)
     if amendment:
@@ -1332,8 +1349,24 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# The steps whose check runs the ticket's tests, its product or the
+# regression: all but the freeze. Each takes its slot of the host pool before
+# any of its budgets starts, and what it runs runs in that turn (af-lsbqj9).
+HEAVY_STEPS = frozenset(PIECES) - {"freeze"}
+
+
 def main(argv: list[str]) -> int:
     args = build_parser().parse_args(argv)
+    if args.handler in (cmd_step, cmd_check) and args.step in HEAVY_STEPS:
+        try:
+            host_slots.hold(f"tdd-step {args.step} {args.ticket}", BUDGETS["host_wait_seconds"],
+                            say=lambda line: print(f"{PROGRAM}: {line}", file=sys.stderr, flush=True))
+        except host_slots.NotRun as exc:
+            print(json.dumps({"ok": False, "not_run": True,
+                              "error": f"aucune place sur l'hôte pour l'étape {args.step} (NOT RUN, exit 75) ; "
+                                       f"ce n'est pas un échec du ticket, relancer l'étape : {exc}"},
+                             sort_keys=True, ensure_ascii=False))
+            return NOT_RUN
     return args.handler(args)
 
 

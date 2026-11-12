@@ -106,7 +106,10 @@ cause `amendment_granted`, one amendment more), or whose every change
 since the freeze is the base's it merged (af-npz9v1.39, cause
 `inherited_change`, no answer asked), or a repair that only moves a proof
 stopped all green before bin/tdd-step gave it its path (af-oa2ci4, cause
-`proof_moved`, no answer asked, once per stop); every other stop stays
+`proof_moved`, no answer asked, once per stop), or a ticket stopped all
+green by a red that ran each test once, before bin/tdd-step replayed a pass
+up to k runs (af-batj8g, cause `red_replayed`, no answer asked, once per
+stop); every other stop stays
 with the operator. At the
 last resume of a same cause (bounds.resumes, one bound per cause, ADR-0030
 L2: these causes and a commit after a verdict; the correction rounds keep
@@ -245,10 +248,13 @@ from typing import Any, Iterator
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+import advance_pass  # noqa: E402
 from convoy_state import (  # noqa: E402
-    PROVEN_BY_TEST_OPTION, REEVALUATE_OPTION, STOP_COUNT_WHY, overridden_ticket, repair_answered_in_convoy,
+    STOP_COUNT_WHY, overridden_ticket, repair_answered_in_convoy,
 )
-from delivery_rules import moves_a_proof  # noqa: E402
+from delivery_rules import (  # noqa: E402
+    EVALUATION_STOPS, answer_lifts_planning_exception, green_seen_once, moves_a_proof, technical_repairs,
+)
 from factory_delivery_proof import delivery_readiness  # noqa: E402
 
 
@@ -308,8 +314,6 @@ PASS_RUNNING = "passe déjà en cours : elle avance les convois, celle-ci ne fai
 
 # The stop the code review of a ticket writes (bin/convoy-state).
 CODE_REVIEW_STOP = "code_review_no_result"
-# The stops the Ticket Evaluation of a ticket writes (bin/convoy-state).
-EVALUATION_STOPS = ("evaluation_no_result", "evaluation_outage")
 EVALUATION_OUTAGE = "evaluation_outage"
 # A structurally delivered Factory repair explicitly linked to the current
 # operator request or evaluation-outage stop. It has its own bounded bucket:
@@ -354,6 +358,11 @@ AMENDMENT_RESUME_OPTION = "a"
 # gave it its path: resumed once per stop, its request withdrawn, without
 # an answer (af-oa2ci4).
 PROOF_MOVED = "proof_moved"
+# A ticket stopped all green by a red that ran each test once: R23
+# (af-ujme6p) was, on a test red 7 times out of 8. Resumed once per stop,
+# its request withdrawn, without an answer; the red its author replays runs
+# a pass up to k times (af-batj8g).
+RED_REPLAYED = "red_replayed"
 # af-atrg8o: Benjamin answered the preceding A2 operator request before the
 # authorized test amendment could write its stop. Consume that exact answer
 # once, at that exact commit and file set, through the ordinary resume door.
@@ -749,7 +758,10 @@ class Convoy:
         reached the operator."""
         return [t for t in self.tickets
                 if (t.get("stop") or {}).get("reason") in TDD_STOPS and "raised" not in t["stop"]
-                and (t["stop"]["reason"] != ALREADY_GREEN or (already_green_due(t, alive) and not moves_a_proof(t)))]
+                and (t["stop"]["reason"] != ALREADY_GREEN
+                     or (already_green_due(t, alive) and not moves_a_proof(t)
+                         # Resumed once instead (red_replayed), unless no resume is left.
+                         and not (green_seen_once(t["stop"]) and t.get("resumes_left") != 0)))]
 
     def corrections_due(self) -> list[str]:
         """Tickets whose author has finished and that are not merged yet --
@@ -1142,22 +1154,6 @@ def resume_on_its_way(ticket: dict[str, Any]) -> bool:
     if not last.get("launches") or last.get("session") != (ticket.get("session") or {}).get("name"):
         return False
     return read_bead(last["launches"][-1]["bead"]).get("status") != "closed"
-
-
-def technical_repairs(ticket: dict[str, Any]) -> list[str]:
-    """The Factory-maintenance links bound to the current request."""
-    record = ticket.get("technical_repairs")
-    park, exit_record = ticket.get("park") or {}, ticket.get("exit") or {}
-    stop = ticket.get("stop") or {}
-    if not isinstance(record, dict):
-        return []
-    current_parking = park.get("cause") == "operator_request" and exit_record.get("exit") == "operator_request" \
-        and record.get("parked_at") == park.get("at") and record.get("exit_at") == exit_record.get("at")
-    current_stop = stop.get("reason") in EVALUATION_STOPS and record.get("stop_at") == stop.get("at")
-    if not current_parking and not current_stop:
-        return []
-    entries = record.get("entries")
-    return [entry["id"] for entry in entries] if isinstance(entries, list) else []
 
 
 def released_technical_repairs(ticket: dict[str, Any]) -> list[str]:
@@ -2168,12 +2164,13 @@ def stopped_without_result(ticket: dict[str, Any]) -> bool:
     Evaluation or its code review gave no result, by a stage the flow
     removed, at its second amendment, for an evaluation outage carrying
     an explicit technical-repair link, or all green on a repair that moves a
-    proof (af-oa2ci4): the stops a resume may lift."""
+    proof (af-oa2ci4) or on one run of each test (af-batj8g): the stops a
+    resume may lift."""
     reason = (ticket.get("stop") or {}).get("reason")
     return started(ticket) and ticket.get("status") != "closed" and not ticket.get("park") \
         and (reason in (NO_RESULT, CODE_REVIEW_STOP, AMENDMENT_STOP, *REMOVED_STAGE_STOPS)
              or (reason == EVALUATION_OUTAGE and technical_repairs(ticket))
-             or (reason == ALREADY_GREEN and moves_a_proof(ticket)))
+             or (reason == ALREADY_GREEN and (moves_a_proof(ticket) or green_seen_once(ticket["stop"]))))
 
 
 def amendment_granted_due(ticket: dict[str, Any]) -> tuple[str, str, str] | None:
@@ -2308,7 +2305,7 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
             elif ticket["stop"]["reason"] == CODE_REVIEW_STOP:
                 due = once_per_stop_due(ticket, CODE_REVIEW_STOP)
             elif ticket["stop"]["reason"] == ALREADY_GREEN:
-                due = once_per_stop_due(ticket, PROOF_MOVED)
+                due = once_per_stop_due(ticket, PROOF_MOVED if moves_a_proof(ticket) else RED_REPLAYED)
             elif ticket["stop"]["reason"] == AMENDMENT_STOP:
                 due = preauthorized_amendment_due(convoy, ticket) or amendment_granted_due(ticket) \
                     or inherited_change_due(convoy, ticket)
@@ -2344,7 +2341,7 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
                     passed(run([str(ESCALATION_BIN), "clear", ticket_id]), "escalation-door clear")
                     # The answer and clear share the door lock. An answer may
                     # have landed after the due check but before clear won it.
-                    if cause in (NO_RESULT, STAGE_REMOVED, CODE_REVIEW_STOP, PROOF_MOVED) \
+                    if cause in (NO_RESULT, STAGE_REMOVED, CODE_REVIEW_STOP, PROOF_MOVED, RED_REPLAYED) \
                             and stop_answer(read_bead(ticket_id), ticket["stop"]) is not None:
                         continue
                 elif cause == REPAIR_DELIVERED and released_technical_repairs(ticket):
@@ -2531,14 +2528,8 @@ def settle_lifts(convoy: Convoy, out: dict[str, Any]) -> None:
             # the answer (af-fv8ca4) -- unless that repair was given back
             # to its author (settle_returned_repairs, af-t8hycw).
             continue
-        exceptions = ticket.get("planning_exceptions") or []
-        accepted = bool(exceptions) and isinstance(exceptions, list) and exceptions[-1].get("accepted")
-        # Raised by the Ticket Evaluation of a finished ticket: no entry under
-        # `planning_exceptions` (Benjamin, 21/10/2026, af-ten1sp).
-        evaluated = ((ticket.get("exit") or {}).get("exit") == "finished"
-                     and ((ticket.get("evaluation") or {}).get("state") or {}).get("outcome") == "planning_exception")
-        proven = evaluated and answer["option"] in (PROVEN_BY_TEST_OPTION, REEVALUATE_OPTION)
-        if park.get("cause") == "operator_request" or (park.get("cause") == "planning_exception" and (accepted or proven)):
+        if park.get("cause") == "operator_request" \
+                or (park.get("cause") == "planning_exception" and answer_lifts_planning_exception(ticket)):
             lifts.append((ticket["id"], ticket["id"], answer["option"], []))
     try:
         grouped = convoy.grouped or {}
@@ -3374,17 +3365,20 @@ def advance_lock() -> Iterator[bool]:
     there and was killed (af-wz4dd8); a pass that overlapped settlement
     amplified tracker load until both exceeded that deadline (af-ebqm1y).
     The pass that holds it does the work; a later pass reads what it left."""
-    lock_dir = Path(os.environ.get("CONVOY_ADVANCE_LOCK_DIR") or os.environ.get("XDG_RUNTIME_DIR") or "/tmp")
+    lock_dir = advance_pass.lock_dir()
     lock_dir.mkdir(parents=True, exist_ok=True)
-    with (lock_dir / "agent-factory-convoy-advance.lock").open("w") as handle:
+    with (lock_dir / advance_pass.LOCK_NAME).open("w") as handle:
         try:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             yield False
             return
         try:
+            # bin/factory-watchdog holds back a ticket this pass may be moving (af-xgd1rd).
+            advance_pass.mark_started()
             yield True
         finally:
+            advance_pass.mark_ended()
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 

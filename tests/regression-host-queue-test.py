@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""The cockpit's regression command waits its turn on the host and keeps to
-its budget (study C, T1: docs/research/2026-10-22-strategie-tests-budgets.md;
-docs/DELIVERY.md, one battery at a time).
+"""The cockpit's regression command waits its turn in the host pool
+(lib/host_slots.py, af-lsbqj9) and keeps to its budget (study C, T1:
+docs/research/2026-10-22-strategie-tests-budgets.md; docs/DELIVERY.md, one
+limit for every heavy test run).
 
 On 22/10/2026 it ran beside the batteries of two authors and a merge: the
 same tests took 1.9 times as long and bin/tdd-step refused, at 600 s, two
 tickets that were green. Each case runs a copy of
 tests/cockpit-criteria/regression.py on a tree of stand-in test files and a
-lock file of its own.
+pool of one slot of its own.
 """
 
 from __future__ import annotations
@@ -53,28 +54,31 @@ class RegressionHostQueue(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="regression-host-queue-"))
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
-        self.tree, self.marks, self.lock = self.tmp / "tree", self.tmp / "marks", self.tmp / "host.lock"
+        self.tree, self.marks, self.slots = self.tmp / "tree", self.tmp / "marks", self.tmp / "slots"
+        self.lock = self.slots / "slot-0.lock"
         self.marks.mkdir()
         (self.tree / "tests" / "cockpit-criteria").mkdir(parents=True)
         shutil.copy(REGRESSION, self.tree / "tests" / "cockpit-criteria" / "regression.py")
         (self.tree / "lib").mkdir()
-        for name in ("bounded_process.py", "ci_test_reaper.py"):
+        for name in ("bounded_process.py", "ci_test_reaper.py", "host_slots.py", "account_home.py"):
             shutil.copy(ROOT / "lib" / name, self.tree / "lib" / name)
         for name in FILES:
             (self.tree / name).write_text(STAND_IN)
 
     def regression(self, **env):
         base = {key: value for key, value in os.environ.items()
-                if key not in ("GITHUB_ACTIONS", "CI_RUN_TESTS_HOST_LOCK_HELD", "REGRESSION_HOST_WAIT", "REGRESSION_BUDGET")}
+                if key not in ("GITHUB_ACTIONS", "HOST_SLOT_HELD", "REGRESSION_HOST_WAIT", "REGRESSION_BUDGET")}
         started = time.monotonic()
         proc = subprocess.run([sys.executable, "tests/cockpit-criteria/regression.py"], cwd=self.tree, text=True,
                               capture_output=True, stdin=subprocess.DEVNULL, timeout=120,
-                              env={**base, "MARKS": str(self.marks), "CI_RUN_TESTS_HOST_LOCK_FILE": str(self.lock), **env})
+                              env={**base, "MARKS": str(self.marks), "HOST_SLOTS_DIR": str(self.slots), "HOST_SLOTS": "1",
+                                   **env})
         return proc, time.monotonic() - started
 
     def hold_host(self, seconds):
-        """Another battery holds the host lock for `seconds`."""
+        """Another run holds the one slot of the host for `seconds`."""
         ready = self.tmp / "held"
+        self.slots.mkdir(exist_ok=True)
         holder = subprocess.Popen(["flock", str(self.lock), "sh", "-c", f"touch {ready}; sleep {seconds}"],
                                   start_new_session=True)
         # flock, its shell and their sleep: the whole group.
@@ -110,16 +114,16 @@ class RegressionHostQueue(unittest.TestCase):
         self.hold_host(2)
         proc, took = self.regression(REGRESSION_HOST_WAIT="30")
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        self.assertIn("waiting for the battery", proc.stdout)
+        self.assertIn("waiting for a host slot", proc.stdout)
         self.assertEqual(len(FILES), len(self.ran()))
 
-    def test_the_budget_counts_from_the_lock_and_a_spent_budget_is_not_run_with_nothing_left_running(self):
+    def test_the_budget_counts_from_the_slot_and_a_spent_budget_is_not_run_with_nothing_left_running(self):
         self.hold_host(2)
         proc, took = self.regression(REGRESSION_HOST_WAIT="30", REGRESSION_BUDGET="3", SLOW="cockpit-criteria-test.py")
         self.assertEqual(NOT_RUN, proc.returncode, proc.stdout + proc.stderr)
         self.assertIn("LATE tests/cockpit-criteria-test.py", proc.stdout)
         self.assertIn("REGRESSION_BUDGET", proc.stdout)
-        # The other files ran in the budget, which began once the lock was held.
+        # The other files ran in the budget, which began once the slot was held.
         self.assertIn("PASS tests/cockpit-a-test.py", proc.stdout)
         self.assertLess(took, 30)
         grandchild = int((self.marks / "grandchild.pid").read_text())
@@ -146,7 +150,7 @@ class RegressionHostQueue(unittest.TestCase):
 
     def test_a_run_inside_the_battery_that_holds_the_host_does_not_wait(self):
         self.hold_host(30)
-        proc, took = self.regression(REGRESSION_HOST_WAIT="1", CI_RUN_TESTS_HOST_LOCK_HELD=str(self.lock))
+        proc, took = self.regression(REGRESSION_HOST_WAIT="1", HOST_SLOT_HELD=str(self.slots))
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         self.assertNotIn("waiting", proc.stdout)
 
@@ -155,10 +159,10 @@ class RegressionHostQueue(unittest.TestCase):
         # 10/11/2026: the pass that ran the regression was killed and the
         # regression ran on alone (af-8cfygl); its test files must not.
         base = {key: value for key, value in os.environ.items()
-                if key not in ("GITHUB_ACTIONS", "CI_RUN_TESTS_HOST_LOCK_HELD", "REGRESSION_HOST_WAIT", "REGRESSION_BUDGET")}
+                if key not in ("GITHUB_ACTIONS", "HOST_SLOT_HELD", "REGRESSION_HOST_WAIT", "REGRESSION_BUDGET")}
         proc = subprocess.Popen([sys.executable, "tests/cockpit-criteria/regression.py"], cwd=self.tree,
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
-                                env={**base, "MARKS": str(self.marks), "CI_RUN_TESTS_HOST_LOCK_FILE": str(self.lock),
+                                env={**base, "MARKS": str(self.marks), "HOST_SLOTS_DIR": str(self.slots), "HOST_SLOTS": "1",
                                      "SLOW": "cockpit-a-test.py"})
         mark = self.marks / "grandchild.pid"
         deadline = time.monotonic() + 30

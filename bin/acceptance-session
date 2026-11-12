@@ -54,6 +54,7 @@ PROGRAM = "acceptance-session"
 BIN = Path(__file__).resolve().parent
 sys.path.insert(0, str(BIN.parent / "lib"))
 import delivery_reads  # noqa: E402
+import host_slots  # noqa: E402
 ROOT = Path(os.environ.get("FACTORY_ROOT") or BIN.parent)
 GC_BIN = os.environ.get("GC_BIN", "gc")
 STATE_TOOL = BIN / "convoy-state"
@@ -122,11 +123,12 @@ def short(text: str, limit: int = MAX_DETAIL) -> str:
 # --- the other commands ----------------------------------------------------------
 
 
-def run(argv: list[str], timeout: float | None = None, detached: bool = False) -> subprocess.CompletedProcess[str]:
+def run(argv: list[str], timeout: float | None = None, detached: bool = False,
+        pass_fds: tuple[int, ...] = ()) -> subprocess.CompletedProcess[str]:
     try:
         # `detached`: the product of the session runs until `close`.
         return subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=timeout,
-                              start_new_session=detached)
+                              start_new_session=detached, pass_fds=pass_fds)
     except subprocess.TimeoutExpired as exc:
         raise Refusal(f"{Path(argv[0]).name} n'a pas répondu en {timeout:.0f} s") from exc
     except OSError as exc:
@@ -339,14 +341,30 @@ def launch_products(convoy: Convoy, commit: str, folder: Path, trial: bool = Fal
             argv = [str(LAUNCH_TOOL), "--repo-root", str(convoy.repo()), "start", "--detached", str(profile), "--commit", commit,
                     "--timeout", str(START_TIMEOUT), "--max-lifetime", str(SESSION_LIFETIME), "--state-file", str(state_file)]
             argv += ["--dataset", dataset]
-            for _ in range(START_ATTEMPTS):
-                started = run(argv, timeout=START_TIMEOUT + 60, detached=True)
-                if started.returncode == 0 and state_file.is_file():
-                    break
-            else:
+            # Its place in the host pool, taken here so that the wait is not
+            # counted in START_TIMEOUT, then handed to the launch's guard,
+            # which holds it until the product ends (af-lsbqj9).
+            failed = None
+            try:
+                slot = host_slots.take(f"acceptance-session {dataset} {commit[:12]}", mark=False,
+                                       kind=host_slots.PRODUCT)
+            except host_slots.NotRun as exc:
+                raise Outage(f"aucune place sur l'hôte pour le produit du jeu {dataset} : {exc}") from exc
+            try:
+                for _ in range(START_ATTEMPTS):
+                    with host_slots.handed(slot) as fds:
+                        started = run(argv, timeout=START_TIMEOUT + 60, detached=True, pass_fds=fds)
+                    if started.returncode == 0 and state_file.is_file():
+                        break
+                else:
+                    failed = started
+            finally:
+                if slot:
+                    slot.release()
+            if failed is not None:
                 raise Outage(
                     f"le produit ne démarre pas depuis une copie propre du commit {commit[:12]}"
-                    f" sur le jeu {dataset} : {detail_of(started)}")
+                    f" sur le jeu {dataset} : {detail_of(failed)}")
             record = json.loads(state_file.read_text(encoding="utf-8"))
             launched.append({"dataset": dataset, "address": record["address"], "port": int(record["port"]),
                              "state_file": str(state_file)})

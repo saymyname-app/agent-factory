@@ -325,6 +325,12 @@ class City:
             "CODE_REVIEW_FAKE_REPO": str(self.root),
             "TICKET_EVALUATION_DISPATCH_DOOR_BIN": str(EVALUATOR),
             "TICKET_EVALUATION_STATE_DIR": str(self.workspace / "launches"),
+            # The host pool of this test (lib/host_slots.py, af-lsbqj9): two products
+            # of two cores, the evaluations' former cap; the live pool's load never
+            # reaches it, and its other runs are in a holder's turn and never wait.
+            "EVALUATION_CAPACITY_STATE_DIR": str(self.workspace / "capacity"),
+            "HOST_SLOTS": "4",
+            "HOST_SLOT_HELD": str(self.workspace / "capacity" / "host-slots"),
             "TICKET_EVALUATION_FAKE_LOG": str(self.workspace / "evaluation-door.log"),
             "TICKET_EVALUATION_FAKE_PLAN": str(self.workspace / "evaluation-plan.json"),
             "OUTCOME_EVALUATION_DISPATCH_DOOR_BIN": str(END_EVALUATOR),

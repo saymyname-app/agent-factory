@@ -175,7 +175,8 @@ from pathlib import Path
 LIB = str(Path(__file__).resolve().parent)
 if LIB not in sys.path:
     sys.path.insert(0, LIB)
-from delivery_rules import PROVEN_BY_TEST_OPTION, evaluation_proven_by_test, moves_a_proof, review_replay_due
+import advance_pass
+from delivery_rules import PROVEN_BY_TEST_OPTION, evaluation_proven_by_test, green_seen_once, moves_a_proof, review_replay_due
 
 # The two names serve annotations only, which are never evaluated here
 # (`from __future__ import annotations`): importing `typing` on each of the
@@ -471,9 +472,7 @@ EVALUATION_STATES = ("observed", "not_observed", "unobservable")
 UNOBSERVABLE_CAUSES = ("criterion", "environment")
 EVALUATION_OUTCOMES = ("favorable", "return_to_author", "planning_exception", "environment_outage")
 # The option of that request that has it evaluated again on the products
-# launched again, judging nothing proven (af-npz9v1.38). Benjamin, 28/10/2026
-# 01:20 Paris, relayed from the central chat: « Oui aux deux recommandations : fais ajouter puis utiliser l’option de réévaluation réelle pour les trois tickets, et accorde le tour de correction exceptionnel. Coordonne tout et vérifie que ça repart. »
-REEVALUATE_OPTION = "c"
+# launched again: REEVALUATE_OPTION (lib/delivery_rules.py).
 EVALUATION_MAX_LAUNCHES = 2
 EVALUATION_MAX_LAUNCH_HISTORY = EVALUATION_MAX_LAUNCHES + 1
 KIND_WITHOUT_EVALUATOR = "prefactoring"
@@ -507,11 +506,12 @@ BOUND_END_ROUNDS = "end_rounds"
 # (ADR-0030 L3, af-pjvsgo), or its code review gave no result (af-wu6xj7),
 # or the operator answered « a » to its stop at a second amendment
 # (af-25o7vr), or a repair that only moves a proof was stopped all green
-# before tdd-step gave it its path (af-oa2ci4): those resumes lift the stop. The correction round and a commit after a
+# before tdd-step gave it its path (af-oa2ci4), or a ticket was stopped all
+# green by a red that ran each test once (af-batj8g): those resumes lift the stop. The correction round and a commit after a
 # verdict are counted where they are written.
 RESUME_CAUSES = ("interrupted", "returned", "unblocked", "repair_delivered", "answered", "behind",
                  "evaluation_no_result", "stage_removed", "code_review_no_result", "amendment_granted",
-                 "inherited_change", "proof_moved")
+                 "inherited_change", "proof_moved", "red_replayed")
 # The stops a resume lifts, by the cause that lifts them: a Ticket Evaluation
 # without result (af-xhc0sj), the stops of the test review, a stage
 # ADR-0030 L3 removed (af-pjvsgo), a code review without result
@@ -523,7 +523,9 @@ RESUMABLE_STOPS = {"evaluation_no_result": ("evaluation_no_result",),
                    # af-npz9v1.39: every change since the freeze is the merged base's.
                    "inherited_change": ("amendment_exhausted",),
                    # af-oa2ci4: a repair that moves a proof finishes all green.
-                   "proof_moved": ("criterion_already_green",)}
+                   "proof_moved": ("criterion_already_green",),
+                   # af-batj8g: an all-green stop decided on one run of each test.
+                   "red_replayed": ("criterion_already_green",)}
 # A ticket stopped still refused whose every Blocking Finding the operator
 # overrode is merged as if at work; the merge that returns it lifts its stop
 # like a resumable one (af-n4bn62). The cause stays one of a ticket not
@@ -550,8 +552,10 @@ COMMIT_AFTER_VERDICT = "commit_after_verdict"
 # ticket for exhausted resumes (af-npz9v1.41: R2, af-cifk1e, parked on
 # 28/10/2026 at its third answer, the resume that answer opened never sent).
 # A repair that moves a proof is lifted once per stop, and is never stopped
-# all green again (af-oa2ci4): no bound either.
-ANSWERED_CAUSES = ("answered", "amendment_granted", "proof_moved")
+# all green again (af-oa2ci4): no bound either. Nor is a stop all green
+# decided on one run: lifted once, the red it replays writes a stop of k runs,
+# which is never lifted so (af-batj8g).
+ANSWERED_CAUSES = ("answered", "amendment_granted", "proof_moved", "red_replayed")
 BOUNDED_RESUME_CAUSES = tuple(cause for cause in RESUME_CAUSES if cause not in ANSWERED_CAUSES) \
     + (COMMIT_AFTER_VERDICT,)
 # A resume `behind` comes from the factory, not from the ticket: another
@@ -738,9 +742,9 @@ def convoy_advance_close_lock() -> Iterator[None]:
     if os.environ.get("CONVOY_ADVANCE_LOCK_HELD_BY_PASS") == "1":
         yield
         return
-    lock_dir = Path(os.environ.get("CONVOY_ADVANCE_LOCK_DIR") or os.environ.get("XDG_RUNTIME_DIR") or "/tmp")
+    lock_dir = advance_pass.lock_dir()
     lock_dir.mkdir(parents=True, exist_ok=True)
-    with (lock_dir / "agent-factory-convoy-advance.lock").open("w") as handle:
+    with (lock_dir / advance_pass.LOCK_NAME).open("w") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         try:
             yield
@@ -5820,7 +5824,8 @@ def cmd_open_resume(args: argparse.Namespace) -> int:
     cause is one that lifts its stop (RESUMABLE_STOPS): `evaluation_no_result`
     (af-xhc0sj), `stage_removed` for a stop of the removed test review
     (af-pjvsgo), `code_review_no_result` (af-wu6xj7), `proof_moved` for a
-    repair that moves a proof stopped all green (af-oa2ci4), or `returned` for a
+    repair that moves a proof stopped all green (af-oa2ci4), `red_replayed`
+    for a stop all green decided on one run of each test (af-batj8g), or `returned` for a
     stop `still_refused` the operator overrode in full (af-n4bn62); that
     resume keeps the stop under it. A code review without result also loses its spent round:
     the next finished exit is reviewed afresh."""
@@ -5842,6 +5847,9 @@ def cmd_open_resume(args: argparse.Namespace) -> int:
                                                      "restores": restores_cited(ticket.get("description"))}):
         raise Refusal(f"le ticket {args.ticket} ne déplace pas une preuve (un repair qui rétablit une règle de "
                       "docs/TEST_GUIDELINE.md) : son arrêt « critères tous déjà verts » reste à l'opérateur")
+    if cause == "red_replayed" and not green_seen_once(lifted or {}):
+        raise Refusal(f"l'arrêt « critères tous déjà verts » de {args.ticket} a vu chaque test passer à chacune de "
+                      "ses exécutions : il reste à l'opérateur")
     entries = resume_record(metadata[KEY_RESUME])["entries"] if KEY_RESUME in metadata else []
     if entries and (entries[-1]["cause"], entries[-1]["ref"]) == (cause, ref):
         return done(args.convoy, args.ticket, {})

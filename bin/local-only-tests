@@ -45,6 +45,15 @@ LIST=0
 ESCALATION_DOOR_BIN="${ESCALATION_DOOR_BIN:-$ROOT/bin/escalation-door}"
 EXCLUSIONS_FILE="config/local-only-tests-exclusions.txt"
 TEST_TIMEOUT="${LOCAL_ONLY_TEST_TIMEOUT:-3600}"
+# Each test takes a test run's share of the host pool (lib/host_slots.py,
+# af-lsbqj9) before its timeout starts: an isolated-city journey is as heavy
+# as a battery. Past LOCAL_ONLY_SLOT_WAIT seconds of waiting it is NOT RUN,
+# named, and never counted as a failure. A copy of this script without its
+# lib/ runs each test directly.
+SLOT_WAIT="${LOCAL_ONLY_SLOT_WAIT:-1800}"
+SLOTS="$(cd -- "$(dirname -- "$0")" && pwd -P)/../lib/host_slots.py"
+IN_SLOT=()
+[ -f "$SLOTS" ] && IN_SLOT=(python3 "$SLOTS" run --name local-only-tests --wait "$SLOT_WAIT" --label)
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -98,6 +107,7 @@ done
 
 FAILED=()
 HOST_SKIPPED=()
+NOT_RUN=()
 for t in ${TESTS[@]+"${TESTS[@]}"}; do
   if [ ! -x "$t" ]; then
     say "local-only-tests: $t missing or not executable — treating as failed"
@@ -107,10 +117,14 @@ for t in ${TESTS[@]+"${TESTS[@]}"}; do
   # Unbuffered: a Python test's stdout, block-buffered into this pipe, landed
   # after its FAIL lines on stderr, and the last 5 lines kept for the bead hid
   # them (fake-tool-contract-test.py, 2026-10-18 nightly, af-foq4t7).
-  OUTPUT=$(PYTHONUNBUFFERED=1 timeout --kill-after=30 "$TEST_TIMEOUT" "$t" 2>&1)
+  OUTPUT=$(PYTHONUNBUFFERED=1 ${IN_SLOT[@]+"${IN_SLOT[@]}" "local-only-tests $t" --} \
+    timeout --kill-after=30 "$TEST_TIMEOUT" "$t" 2>&1)
   rc=$?
   if [ "$rc" -eq 0 ]; then
     say "local-only-tests: PASS $t"
+  elif [ "$rc" -eq 75 ] && [ "${#IN_SLOT[@]}" -gt 0 ] && grep -q '^local-only-tests: NOT RUN' <<<"$OUTPUT"; then
+    NOT_RUN+=("$t")
+    printf 'local-only-tests: NOT RUN %s — no host slot within %ss, not a failure\n' "$t" "$SLOT_WAIT"
   elif [ "$rc" -eq 77 ] && why=$(printf '%s\n' "$OUTPUT" | grep '^SKIP:' | tail -1) && [ -n "$why" ]; then
     HOST_SKIPPED+=("$t: $why")
     printf 'local-only-tests: SKIPPED %s — %s\n' "$t" "$why"
@@ -122,7 +136,7 @@ stopped after ${TEST_TIMEOUT}s"
   fi
 done
 
-[ "${#FAILED[@]}" -eq 0 ] && { say "local-only-tests: no failure in ${#TESTS[@]} test(s), ${#HOST_SKIPPED[@]} skipped"; exit 0; }
+[ "${#FAILED[@]}" -eq 0 ] && { say "local-only-tests: no failure in ${#TESTS[@]} test(s), ${#HOST_SKIPPED[@]} skipped, ${#NOT_RUN[@]} not run"; exit 0; }
 
 TITLE="[local-only-tests] $(date -u +%Y-%m-%d) run: ${#FAILED[@]} failure(s)"
 REASON=$(printf '%s\n' "${FAILED[@]}")
@@ -131,6 +145,12 @@ if [ "${#HOST_SKIPPED[@]}" -gt 0 ]; then
 
 Skipped, this host cannot run them (exit 77, not counted as failures):
 $(printf '%s\n' "${HOST_SKIPPED[@]}")"
+fi
+if [ "${#NOT_RUN[@]}" -gt 0 ]; then
+  REASON="$REASON
+
+Not run, no host slot came free (not counted as failures):
+$(printf '%s\n' "${NOT_RUN[@]}")"
 fi
 
 CREATED=$(gc bd create "$TITLE" -p 1 -t bug \

@@ -32,7 +32,7 @@ g add -A && g commit -q -m base
 BASE=$(g rev-parse HEAD)
 
 runner() {
-  env -u CI_RUN_TESTS_FULL -u CI_RUN_TESTS_JOBS CI_RUN_TESTS_HOST_LOCK_FILE="$TMP/lock" \
+  env -u CI_RUN_TESTS_FULL -u CI_RUN_TESTS_JOBS HOST_SLOTS_DIR="$TMP/slots" HOST_SLOTS=1 \
     FACTORY_ROOT="$REPO" "$RUNNER" "$@" 2>&1
 }
 listed() { runner "$@" --list | tr '\n' ' '; }

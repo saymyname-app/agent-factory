@@ -233,6 +233,10 @@ class TicketEvaluationTest(unittest.TestCase):
             "TICKET_EVALUATION_STATE_DIR": str(self.launches_dir),
             "OUTCOME_EVALUATION_STATE_DIR": str(self.tmp / "outcome-launches"),
             "EVALUATION_CAPACITY_STATE_DIR": str(self.tmp / "capacity"),
+            # The host pool of this test (lib/host_slots.py, af-lsbqj9): two products
+            # of two cores, the former cap; its other runs are in a holder's turn.
+            "HOST_SLOTS": "4",
+            "HOST_SLOT_HELD": str(self.tmp / "capacity" / "host-slots"),
             "TICKET_EVALUATION_FAKE_LOG": str(self.door_log),
             "TICKET_EVALUATION_FAKE_PLAN": str(self.plan),
             "TICKET_EVALUATION_FAKE_BRIEFS": str(self.briefs),

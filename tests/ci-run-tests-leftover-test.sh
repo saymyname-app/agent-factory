@@ -33,7 +33,7 @@ exit 0
 TEST
 
 run() {  # root -> runner output
-  env -u CI_RUN_TESTS_JOBS CI_RUN_TESTS_HOST_LOCK_FILE="$TMP/host.lock" FACTORY_ROOT="$1" PIDS="$TMP" "$RUNNER" 2>&1
+  env -u CI_RUN_TESTS_JOBS HOST_SLOTS_DIR="$TMP/slots" HOST_SLOTS=1 FACTORY_ROOT="$1" PIDS="$TMP" "$RUNNER" 2>&1
 }
 
 if out=$(run "$TMP/leaks"); then
