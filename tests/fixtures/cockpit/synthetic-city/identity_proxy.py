@@ -37,6 +37,13 @@ NOT_ON_THE_TAILNET = (
     b"e.g. X-Synthetic-Tailnet-Login: synthetic@example.ts.net, the operator of this launch. "
     b"Tailscale-User-* headers sent by a client are dropped, as Tailscale Serve drops them.\n"
 )
+# How long the proxy waits for the cockpit's answer. The cockpit bounds each
+# gesture itself -- Essai waits up to 150 s for the product it launches
+# (TRIAL_TIMEOUT_SECONDS of cockpit.actions.registry) -- and its answer is
+# the operator's to read: the proxy never drops a request the cockpit is
+# still answering (R24, af-rayc44: at 60 s it dropped Essai on a loaded host,
+# and the page read the proxy's silence as a broken answer).
+ANSWER_SECONDS = 300
 
 
 def certificate(folder: Path) -> tuple[Path, Path]:
@@ -74,7 +81,7 @@ def relay_to(cockpit_port: int, login_of):
             headers = {name: value for name, value in self.headers.items() if name.lower() not in DROPPED}
             headers["Tailscale-User-Login"] = login
             headers["Tailscale-User-Name"] = login.split("@")[0]
-            upstream = http.client.HTTPConnection("127.0.0.1", cockpit_port, timeout=60)
+            upstream = http.client.HTTPConnection("127.0.0.1", cockpit_port, timeout=ANSWER_SECONDS)
             try:
                 upstream.request(self.command, self.path, body=body, headers=headers)
                 answer = upstream.getresponse()
