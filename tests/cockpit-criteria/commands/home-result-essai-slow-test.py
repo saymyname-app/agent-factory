@@ -25,18 +25,18 @@ product does not start.
 
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from home_destination import LaunchTree, git  # noqa: E402
+from home_destination import PROFILE, LaunchTree, git  # noqa: E402
 from result_trial import Operator, result_of, serve  # noqa: E402
 
-# The launch recipe of the profile, at the revision of the dossier: alive,
-# listening on nothing, until it is stopped.
-RECIPE = "bin/cockpit-isolated"
+# What the program of the launch recipe the profile declares is, at the
+# revision of the dossier: alive, listening on nothing, until it is stopped.
 NEVER_ANSWERS = "#!/usr/bin/env python3\nimport time\ntime.sleep(3600)\n"
 # The proxy dropped the request at this many seconds; the launch of a
 # product that never answers takes longer to give up.
@@ -61,7 +61,10 @@ class HomeResultEssaiSlow(unittest.TestCase):
         """A commit of the tree where the launch recipe never answers; the
         tree is back at its first commit afterwards."""
         repo = self.tree.repo
-        (repo / RECIPE).write_text(NEVER_ANSWERS, encoding="utf-8")
+        recipe = json.loads((repo / PROFILE).read_text(encoding="utf-8"))["launch"]["recipe"]
+        programs = [part for part in recipe if (repo / part).is_file()]
+        self.assertEqual(1, len(programs), f"the launch recipe of the profile runs not one program of the tree: {recipe}")
+        (repo / programs[0]).write_text(NEVER_ANSWERS, encoding="utf-8")
         git(repo, "commit", "--quiet", "--all", "--message", "the product of this revision never answers")
         revision = git(repo, "rev-parse", "HEAD")
         git(repo, "checkout", "--quiet", self.tree.head)
