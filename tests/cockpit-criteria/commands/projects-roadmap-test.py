@@ -246,9 +246,11 @@ status = "in_progress"
             convoy("convoy-f4", FACTORY, "Cockpit Panorama", "spec-f4", "open"),
             ticket("ticket-f4-a", "convoy-f4", "closed", **{"gc.merge_commit": "4" * 40}),
             ticket("ticket-f4-b", "convoy-f4", "in_progress"),
-            # F5: the PRs of its tickets merged, its Spec and convoy still open.
+            # F5: its result merged -- the convoy records the proof of its
+            # merge, the D01 promotion --, its Spec and convoy still open.
+            # Merged ticket PRs alone are no merge of the result (R18, af-gnplfy).
             spec("spec-f5", FACTORY, "Spec — Notifications groupées", "F5", status="in_progress"),
-            convoy("convoy-f5", FACTORY, "Notifications groupées", "spec-f5", "open"),
+            convoy("convoy-f5", FACTORY, "Notifications groupées", "spec-f5", "open", **records("merging")),
             ticket("ticket-f5-a", "convoy-f5", "closed", **{"gc.merge_commit": "5" * 40}),
             ticket("ticket-f5-b", "convoy-f5", "closed", **{"gc.merge_commit": "6" * 40}),
         ]
@@ -264,7 +266,7 @@ status = "in_progress"
                          "the roadmap of the Factory does not say the date of its last change")
         for title, ended in (("Livraison parallèle", "its chantier is closed"),
                              ("Flux de livraison jugé", "its result is merged"),
-                             ("Notifications groupées", "the PRs of its chantier are merged")):
+                             ("Notifications groupées", "its result is merged with its ticket PRs")):
             self.assertRegex(self.line(lines, title), r"(?i)incohéren",
                              f"« {title} » is in progress while {ended}, and is not flagged")
         self.assertNotRegex(self.line(lines, "Cockpit Panorama"), r"(?i)incohéren",

@@ -1,0 +1,7 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/projects-roadmap-merge-proof-test.py::ProjectsRoadmapMergeProof.test_a_step_whose_ticket_prs_are_merged_into_integration_without_merge_proof_is_not_said_merged"
+    ]
+  }
+}

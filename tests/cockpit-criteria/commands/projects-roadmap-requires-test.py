@@ -64,6 +64,17 @@ def convoy(bead_id: str, spec_id: str, status: str) -> dict:
             "metadata": {"gc.project_id": FACTORY, "gc.graph_digest": f"sha256:{bead_id}", "gc.spec_id": spec_id}}
 
 
+def merged_convoy(bead_id: str, spec_id: str) -> dict:
+    """An open convoy of the Spec `spec_id` whose result the D01 flow
+    promoted: the proof of its merge into the protected branch."""
+    record = convoy(bead_id, spec_id, "open")
+    record["metadata"]["gc.flow.mark"] = "new-flow/v1"
+    record["metadata"]["gc.flow.promotion"] = json.dumps(
+        {"at": "2026-10-20T14:50:00+02:00", "judged": "1" * 40, "merged": "2" * 40, "protected": "0" * 40,
+         "tip": "1" * 40})
+    return record
+
+
 def ticket(bead_id: str, convoy_id: str, status: str, **metadata) -> dict:
     """A ticket of the convoy `convoy_id`, as its graph was published."""
     return {"id": bead_id, "title": f"Ticket {bead_id}", "status": status, "issue_type": "task",
@@ -241,9 +252,11 @@ status = "in_progress"
             # G2: its chantier closed in the tracker.
             spec("spec-g2", "G2", "closed"),
             convoy("convoy-g2", "spec-g2", "closed"),
-            # G3: the PRs of its tickets merged, its Spec and convoy still open.
+            # G3: its result merged -- the convoy records the proof of its
+            # merge, the D01 promotion --, its Spec and convoy still open.
+            # Merged ticket PRs alone are no merge of the result (R18, af-gnplfy).
             spec("spec-g3", "G3", "in_progress"),
-            convoy("convoy-g3", "spec-g3", "open"),
+            merged_convoy("convoy-g3", "spec-g3"),
             ticket("ticket-g3-a", "convoy-g3", "closed", **{"gc.merge_commit": "3" * 40}),
             ticket("ticket-g3-b", "convoy-g3", "closed", **{"gc.merge_commit": "4" * 40}),
             # G4: its chantier closed too, while G5 it requires is in progress.
@@ -256,7 +269,7 @@ status = "in_progress"
                       "a step in progress whose required steps are done and whose chantier is closed is not flagged")
         self.assertIn("Incohérent : marqué en cours, son résultat est fusionné",
                       self.line(lines, "Notifications groupées"),
-                      "a step in progress whose required steps are done and whose PRs are merged is not flagged")
+                      "a step in progress whose required steps are done and whose result is merged is not flagged")
         waiting = self.line(lines, "Flux de livraison jugé")
         self.assertIn("En cours", waiting, "a step in progress waiting on a required step is not shown in progress")
         self.assertNotRegex(waiting, r"(?i)incohéren",

@@ -1966,9 +1966,11 @@ by its gain (« Voir la preuve : <gain> »).
   « En cours » whose chantier is closed (the Specs that target it, by
   `planning_run_target`, and the convoys published from them, by
   `gc.spec_id`, all closed), one of whose results is merged (a convoy
-  that records its promotion, or whose tickets all recorded the merge of
-  their PR, `gc.merge_commit`; one PR merged among tickets still at work is
-  a chantier under way), or accepted (Benjamin's recorded answer on one of
+  that records the proof of its merge, the promotion of the D01 flow,
+  `gc.flow.promotion`; never because the PRs of its tickets merged into
+  the integration branch, `gc.merge_commit` -- a ticket closed or
+  integrated is not its result merged into the protected branch; R18,
+  af-gnplfy), or accepted (Benjamin's recorded answer on one of
   its convoys, read as the historique reads it, `stage._accepted`; R3,
   af-plu8kn), is flagged « Incohérent »
   (`roadmap.roadmap_rows`; the Specs that target a step are read open or
