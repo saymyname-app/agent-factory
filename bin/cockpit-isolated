@@ -235,7 +235,7 @@ def serve_sessions(supervisor, city: synthetic_city.SyntheticCity) -> None:
                 record("session.stopped", name, logged["stopped"])
 
     def listed() -> list:
-        return [dict(sessions[name]) for name in known if name not in city.dispatched or sessions[name]["running"]]
+        return [dict(sessions[name]) for name in known if sessions[name]["running"]]
 
     def do_GET(self):  # noqa: N802
         nonlocal readings
