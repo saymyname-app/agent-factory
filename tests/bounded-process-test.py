@@ -44,23 +44,58 @@ def alive(pid: int) -> bool:
         return False
 
 
-def direct_timed_calls() -> set[str]:
+def times_out(call: ast.Call) -> bool:
+    return any(keyword.arg == "timeout" for keyword in call.keywords)
+
+
+def opens_a_session(call: ast.Call) -> bool:
+    """`start_new_session` given anything but a literal False."""
+    return any(keyword.arg == "start_new_session"
+               and not (isinstance(keyword.value, ast.Constant) and keyword.value.value is False)
+               for keyword in call.keywords)
+
+
+def call_sites(tree: ast.AST, path: str, matches) -> set[str]:
+    """Each subprocess.run/Popen of `tree` that `matches`, named by its file
+    and the function that holds it (`path:Class.function`, `path:<module>` at
+    top level), then `#2`, `#3`… after the first in the same function. A name,
+    not a line number: a line added elsewhere in the file leaves it unchanged
+    (af-vy9ajj)."""
+    found = set()
+    seen: dict[str, int] = {}
+
+    def visit(node: ast.AST, scope: tuple[str, ...]) -> None:
+        for child in ast.iter_child_nodes(node):
+            function = child.func if isinstance(child, ast.Call) else None
+            if (isinstance(function, ast.Attribute) and isinstance(function.value, ast.Name)
+                    and function.value.id == "subprocess" and function.attr in {"run", "Popen"}
+                    and matches(child)):
+                site = f"{path}:{'.'.join(scope) or '<module>'}"
+                seen[site] = seen.get(site, 0) + 1
+                found.add(site if seen[site] == 1 else f"{site}#{seen[site]}")
+            named = isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            visit(child, (*scope, child.name) if named else scope)
+
+    visit(tree, ())
+    return found
+
+
+def scanned_calls(matches, skip: Path | None = None) -> set[str]:
     found = set()
     for directory in (ROOT / "bin", ROOT / "lib", ROOT / "tests" / "cockpit-criteria"):
         for path in directory.rglob("*"):
-            if not path.is_file():
+            if not path.is_file() or path == skip:
                 continue
             try:
                 tree = ast.parse(path.read_text(encoding="utf-8"))
             except (SyntaxError, UnicodeDecodeError):
                 continue
-            for node in ast.walk(tree):
-                function = node.func if isinstance(node, ast.Call) else None
-                if (isinstance(function, ast.Attribute) and isinstance(function.value, ast.Name)
-                        and function.value.id == "subprocess" and function.attr in {"run", "Popen"}
-                        and any(keyword.arg == "timeout" for keyword in node.keywords)):
-                    found.add(f"{path.relative_to(ROOT)}:{node.lineno}")
+            found |= call_sites(tree, str(path.relative_to(ROOT)), matches)
     return found
+
+
+def direct_timed_calls() -> set[str]:
+    return scanned_calls(times_out)
 
 
 def guards() -> set[int]:
@@ -82,25 +117,7 @@ def guards() -> set[int]:
 def detached_sessions() -> set[str]:
     """Every subprocess.run/Popen given `start_new_session` (anything but a
     literal False) outside the one launcher."""
-    found = set()
-    launcher = ROOT / "lib" / "bounded_process.py"
-    for directory in (ROOT / "bin", ROOT / "lib", ROOT / "tests" / "cockpit-criteria"):
-        for path in directory.rglob("*"):
-            if not path.is_file() or path == launcher:
-                continue
-            try:
-                tree = ast.parse(path.read_text(encoding="utf-8"))
-            except (SyntaxError, UnicodeDecodeError):
-                continue
-            for node in ast.walk(tree):
-                function = node.func if isinstance(node, ast.Call) else None
-                if (isinstance(function, ast.Attribute) and isinstance(function.value, ast.Name)
-                        and function.value.id == "subprocess" and function.attr in {"run", "Popen"}
-                        and any(keyword.arg == "start_new_session"
-                                and not (isinstance(keyword.value, ast.Constant) and keyword.value.value is False)
-                                for keyword in node.keywords)):
-                    found.add(f"{path.relative_to(ROOT)}:{node.lineno}")
-    return found
+    return scanned_calls(opens_a_session, skip=ROOT / "lib" / "bounded_process.py")
 
 
 def listed_exceptions(listing: Path = EXCEPTIONS) -> set[str]:
@@ -144,6 +161,23 @@ class BoundedProcessTest(unittest.TestCase):
             finally:
                 if child_pid.exists() and alive(pid := int(child_pid.read_text())):
                     os.kill(pid, signal.SIGKILL)
+
+    def test_an_exception_keeps_its_name_when_lines_move_around_it(self) -> None:
+        # 12/11/2026: #866 and #867, unrelated, went red because lines added
+        # above it moved bin/convoy-advance's listed fidelity check off 3768.
+        source = (
+            "import subprocess\n"
+            "class Trial:\n"
+            "    def start(self):\n"
+            "        subprocess.Popen(['a'], start_new_session=True)\n"
+            "        subprocess.run(['b'], start_new_session=False)\n"
+            "        subprocess.run(['c'], start_new_session=True)\n"
+            "subprocess.Popen(['d'], start_new_session=True)\n"
+        )
+        named = {"bin/x:Trial.start", "bin/x:Trial.start#2", "bin/x:<module>"}
+        self.assertEqual(named, call_sites(ast.parse(source), "bin/x", opens_a_session))
+        moved = source.replace("class Trial:\n", "import os\n\n\nclass Trial:\n    'Moved.'\n")
+        self.assertEqual(named, call_sites(ast.parse(moved), "bin/x", opens_a_session))
 
     def test_every_direct_subprocess_timeout_is_a_dated_exception(self) -> None:
         self.assertEqual(listed_exceptions(), direct_timed_calls())
