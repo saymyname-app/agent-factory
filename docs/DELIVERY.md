@@ -278,6 +278,53 @@ and `pr-autopilot` arms its green PRs too (`bin/pr-autopilot`, rig table entry
 `.|saymyname-app/agent-factory|main`). `main` there is the running factory,
 not a product production branch.
 
+### Maintenance towards an integration branch (af-wpzic4)
+
+Intent (Benjamin, his words, 12/11/2026 18:35 Paris): « Oui, autorise », to
+« J'autorise la maintenance vers la branche d'intégration pour le code de
+test du convoi ? », itself after « autoriser des PR de maintenance vers la
+branche d'intégration, uniquement pour le code de test que le convoi a
+lui-même changé […] premier précédent hors main, ça change la règle de
+livraison (DELIVERY.md) ».
+Mechanism (agent interpretation, af-41i8d0): the first delivery path that
+does not end on the protected branch. Everything else in this document still
+lands on `main` (or a product rig's `dev`).
+
+A maintenance pull request may target a convoy's `integration/<spec>`
+branch instead of `main` only when all of these hold:
+
+| Condition | Read on |
+|---|---|
+| The bead is a `maintenance` bead whose `gc.authorized_by` names `af-wpzic4`, and whose `gc.work_base_branch` is that `integration/<spec>` | the bead |
+| Every file the PR changes is test/harness code: under `tests/` (the fake tools included), `lib/synthetic_city.py`, `bin/cockpit-isolated` | the PR's diff against `integration/<spec>` |
+| The convoy itself changed each of those files (diff from the fork point of `main` and `integration/<spec>` to `integration/<spec>`), so `main` cannot reach the defect (diff `main` ↔ `integration/<spec>` on that file) | git |
+
+The PR body carries `Cible : integration/<spec> — code de test changé par le
+convoi (<files> ; diff main ↔ integration/<spec> non vide sur chacun)`,
+written by `factory-do-work-workspace finish`. Any other code is delivered on
+`main`; a maintenance PR towards the integration branch that touches it is
+refused by code. Otherwise it is the same chain as any maintenance: bug bead,
+preflight by class, PR, CI, automatic merge on green.
+
+| Step | What does it |
+|---|---|
+| Dispatch | The Mayor sets `gc.work_base_branch=integration/<spec>` on the bead; `mol-do-work` keeps it and `factory-do-work-workspace enter <bead> integration/<spec>` branches off `origin/integration/<spec>` |
+| Opening the PR | `factory-do-work-workspace finish` checks the rule; a refusal is exit 3 with its reasons, no PR, worktree kept |
+| CI | `.github/workflows/ci.yml` runs on pull requests into `integration/**`. The integration branch must carry that trigger: one that has not taken `main` up since af-41i8d0 gets no run, and its PR waits |
+| Merge | `bin/pr-autopilot`, on the Factory's own repo, lists each `integration/*` branch as a base. Those branches have no ruleset, so a PR there is never armed (GitHub would merge it before its check): it is merged directly once `Tests` is green on its head and it is CLEAN, after the rule holds; otherwise it is labelled `integration-maintenance-refused` and explained once |
+| Close | `bin/deliver-close` accepts `merged_target=integration/<spec>` only for a bead the rule authorizes, and refuses any target other than the repository's protected branch; `bin/factory-delivery-guard` flags once a closed delivery on any other target |
+| Convoy | `bin/convoy-advance` counts a technical repair merged into the convoy's own integration branch as delivered (never one merged into another convoy's), checks its merge commit is in the integration tip (the take-up fetches when it is not), and resumes the linked ticket, whose resume brings the new tip in |
+
+The rule is written once, in `lib/integration_maintenance.py`; proof:
+`tests/integration-maintenance-test.py` (the rule) and, for its
+transmission, `tests/factory-do-work-workspace-test.sh` (16),
+`tests/pr-autopilot-integration-test.sh`, `tests/deliver-close-test.sh`,
+`tests/factory-delivery-guard-test.sh`,
+`tests/convoy-advance-resumes-stops-end-test.py`.
+Rollback: remove this section and the integration case of
+`lib/integration_maintenance.py` (`target_refusals`), which then refuses
+every integration target; PRs already merged stay in the integration branch.
+
 ### Outside authors are left to a human (af-996mmd)
 
 Intent (Benjamin, his words, 2026-10-11): « en soit l'usine peut aller en

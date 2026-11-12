@@ -72,6 +72,10 @@
 # reopened to the status its gates allow, with only the proof fields it
 # copied removed.
 #
+# It also checks where each of those closed deliveries landed (af-41i8d0):
+# merged_target must be the repo's protected branch, or integration/<spec>
+# for a maintenance bead af-wpzic4 authorizes; any other is flagged once.
+#
 # --check-only reports without writing anything (no repair, no flag).
 #
 # Usage: factory-delivery-guard [--check-only]
@@ -112,6 +116,7 @@ require_command "$GH_BIN"
 require_command "$PY_BIN"
 require_command jq
 [ -f "$LIB_DIR/factory_delivery_proof.py" ] || { echo "$PROGRAM_NAME: lib/factory_delivery_proof.py not found" >&2; exit 2; }
+[ -f "$LIB_DIR/integration_maintenance.py" ] || { echo "$PROGRAM_NAME: lib/integration_maintenance.py not found" >&2; exit 2; }
 
 PROBLEMS=(); ACTIONS=(); STATUS=0
 CHECKED=0; INCOMPLETE=0
@@ -205,6 +210,26 @@ list_closed_claimed_shipped_beads() {  # $1 = rig name, or "" for the city root
   jq -e . >/dev/null 2>&1 <<<"$out" && printf '%s' "$out" || printf '[]'
 }
 
+# process_merged_target_beads (af-41i8d0): a delivery lands on the repo's
+# protected branch, or on integration/<spec> for a maintenance bead
+# af-wpzic4 authorizes (lib/integration_maintenance.py, docs/DELIVERY.md).
+# Reads the same closed gc.pr_url beads as the check below (no extra list);
+# a bead whose merged_target that rule refuses is flagged once, like an
+# unverifiable delivery. Nothing is reopened: that stays a human/Mayor call.
+process_merged_target_beads() {  # rig label beads-json
+  local rig=$1 label=$2 reports id target why flagged
+  reports=$("$PY_BIN" "$LIB_DIR/integration_maintenance.py" scan --projects "$ROOT/config/projects" <<<"$3")
+  if [ -z "$reports" ]; then
+    say "✓ merged-target:$label — every closed delivery landed on an allowed target"
+    return
+  fi
+  while IFS=$'\x1f' read -r id target why flagged; do
+    [ -z "$id" ] && continue
+    CHECKED=$((CHECKED + 1)); INCOMPLETE=$((INCOMPLETE + 1))
+    handle_unverifiable "$id" "$label" "$rig" "merged_target ($target)" "$flagged" "$why"
+  done <<<"$reports"
+}
+
 # process_claimed_shipped_scope: the af-x45xw-shaped sibling check (af-1xz1g).
 # Any closed bead (no label required) claiming gc.outcome=pass or
 # gc.work_outcome=shipped with its own gc.pr_url, that lacks the six verified
@@ -214,6 +239,7 @@ list_closed_claimed_shipped_beads() {  # $1 = rig name, or "" for the city root
 process_claimed_shipped_scope() {  # rig label
   local rig=$1 label=$2 beads reports
   beads=$(list_closed_claimed_shipped_beads "$rig")
+  process_merged_target_beads "$rig" "$label" "$beads"
   reports=$("$PY_BIN" "$LIB_DIR/factory_delivery_proof.py" --mode claimed-shipped <<<"$beads")
   if [ -z "$reports" ]; then
     say "✓ claimed-shipped:$label — every closed bead claiming shipped verifies against its own PR"

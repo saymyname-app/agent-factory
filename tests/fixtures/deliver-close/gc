@@ -8,7 +8,8 @@ if [[ ${1:-} == bd && ${2:-} == show ]]; then
   metadata=${DELIVER_CLOSE_BEAD_METADATA:-}
   [[ -n $metadata ]] || metadata='{}'
   jq -cn --arg id "$bead_id" --arg pr_url "$pr_url" --argjson metadata "$metadata" \
-    '[{id:$id,status:"in_progress",metadata:($metadata + {"gc.pr_url":$pr_url})}]'
+    --argjson labels "${DELIVER_CLOSE_BEAD_LABELS:-[]}" \
+    '[{id:$id,status:"in_progress",labels:$labels,metadata:($metadata + {"gc.pr_url":$pr_url})}]'
   exit 0
 fi
 

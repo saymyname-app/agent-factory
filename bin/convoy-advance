@@ -1225,13 +1225,21 @@ def awaits_repair(ticket: dict[str, Any]) -> bool:
         and bool((park.get("answer") or {}).get("awaits_repair"))
 
 
-def delivered_technical_repairs(ticket: dict[str, Any]) -> list[str]:
+def delivered_technical_repairs(ticket: dict[str, Any], convoy: Convoy) -> list[str]:
     """Every linked repair, only after structural PR merge and exact-head
-    CI proof. Open, failed and merely closed work keeps waiting."""
+    CI proof. Open, failed and merely closed work keeps waiting. A repair
+    merged into an integration branch (af-41i8d0, docs/DELIVERY.md) is
+    delivered for the convoy of that branch only; whether its commit is in
+    the tip is the take-up's question (repairs_missing_from_integration)."""
     repairs = technical_repairs(ticket)
+    own = (convoy.integration or {}).get("branch")
     for repair_id in repairs:
-        readiness = delivery_readiness(read_bead(repair_id))
+        bead = read_bead(repair_id)
+        readiness = delivery_readiness(bead)
         if not readiness["ready"] or not readiness["pr_backed"]:
+            return []
+        target = str((bead.get("metadata") or {}).get("merged_target") or "")
+        if target.startswith("integration/") and target != own:
             return []
     return repairs
 
@@ -1723,21 +1731,22 @@ def exact_r8_close_release_phase(convoy: Convoy, ticket: dict[str, Any]) -> str 
 
 
 def repairs_missing_from_integration(convoy: Convoy) -> dict[str, str]:
-    """Delivered repairs from this project's protected branch that its
-    integration branch does not contain yet."""
+    """Delivered repairs from this project's protected branch, or merged
+    into this integration branch itself (af-41i8d0), that the integration
+    tip read here does not contain yet: the take-up fetches and checks again."""
     if not convoy.rig or not convoy.integration:
         return {}
     try:
         project = tomllib.loads((PROJECTS / f"{convoy.rig}.toml").read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise Refusal(f"config/projects/{convoy.rig}.toml illisible : {exc}") from exc
-    protected = convoy.integration.get("protected")
+    targets = (convoy.integration.get("protected"), convoy.integration.get("branch"))
     commits: dict[str, str] = {}
     for ticket in convoy.tickets:
-        for repair_id in delivered_technical_repairs(ticket):
+        for repair_id in delivered_technical_repairs(ticket, convoy):
             metadata = read_bead(repair_id).get("metadata")
             if isinstance(metadata, dict) and metadata.get("gc.github_repo") == project.get("repo") \
-                    and metadata.get("merged_target") == protected:
+                    and metadata.get("merged_target") in targets:
                 commits[repair_id] = metadata["gc.merge_commit"]
     if not commits:
         return {}
@@ -1818,7 +1827,7 @@ def close_red_repair(convoy: Convoy, ticket: dict[str, Any], reason: str) -> lis
     its own parking lifted, a live request cleared. Returns the lifted."""
     lifted: list[str] = []
     if ticket.get("park"):
-        repairs = [part for repair in delivered_technical_repairs(ticket) for part in ("--repair", repair)]
+        repairs = [part for repair in delivered_technical_repairs(ticket, convoy) for part in ("--repair", repair)]
         lifted = state_write("lift-park", convoy.id, ticket["id"], "--request", ticket["id"], *repairs,
                              "--withdrawing")["lifted"]
     if (read_bead(ticket["id"]).get("metadata") or {}).get("gc.needs_benjamin") not in (None, "none"):
@@ -2007,10 +2016,10 @@ def withdraw_exact_answered_r6_r7(convoy: Convoy) -> dict[str, Any] | None:
     return {"repair": repair_id, "withdrawn": withdrawn_ids, "cleared": cleared}
 
 
-def evaluation_repair_due(ticket: dict[str, Any]) -> tuple[str, str, str] | None:
+def evaluation_repair_due(convoy: Convoy, ticket: dict[str, Any]) -> tuple[str, str, str] | None:
     """One resume for an evaluation stop once every explicitly
     linked Factory repair has structural delivery proof."""
-    repairs = delivered_technical_repairs(ticket)
+    repairs = delivered_technical_repairs(ticket, convoy)
     if not repairs or ticket.get("resumes_left") == 0:
         return None
     ref = hashlib.sha256(",".join(repairs).encode("utf-8")).hexdigest()[:16]
@@ -2310,7 +2319,7 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
                 due = preauthorized_amendment_due(convoy, ticket) or amendment_granted_due(ticket) \
                     or inherited_change_due(convoy, ticket)
             elif ticket["stop"]["reason"] in EVALUATION_STOPS and technical_repairs(ticket):
-                due = evaluation_repair_due(ticket)
+                due = evaluation_repair_due(convoy, ticket)
             elif ticket["stop"]["reason"] == EVALUATION_OUTAGE:
                 due = None
             elif overridden_at_work(ticket):
@@ -2512,7 +2521,7 @@ def settle_lifts(convoy: Convoy, out: dict[str, Any]) -> None:
             continue
         if ticket.get("status") != "closed" and park.get("origin") == ticket["id"] \
                 and park.get("cause") == "operator_request" and technical_repairs(ticket):
-            repairs = delivered_technical_repairs(ticket)
+            repairs = delivered_technical_repairs(ticket, convoy)
             if repairs:
                 lifts.append((ticket["id"], ticket["id"], None, repairs))
             # Once explicitly linked, this is a code-owned technical wait:

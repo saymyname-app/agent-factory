@@ -42,7 +42,7 @@ merged_at="2026-09-16T07:00:00Z"
 head_ref="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 merge_oid="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 head_branch="do-work/af-work"
-base_branch="main"
+base_branch="${DELIVER_CLOSE_PR_BASE:-main}"
 
 case "$scenario" in
   merged) ;;

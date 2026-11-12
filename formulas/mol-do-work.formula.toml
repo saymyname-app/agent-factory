@@ -172,11 +172,15 @@ safe to call unconditionally:
 FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
 HERE=$(git rev-parse --show-toplevel 2>/dev/null || echo "$FACTORY_ROOT")
 BASE_BRANCH_BEFORE=$(git -C "$HERE" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-WORKTREE=$("$FACTORY_ROOT/bin/factory-do-work-workspace" enter "$WORK_BEAD_ID")
+# af-41i8d0: a maintenance bead the Mayor aimed at a convoy's integration
+# branch (gc.work_base_branch=integration/<spec>, af-wpzic4) keeps it.
+PRESET_BASE=$(gc bd show "$WORK_BEAD_ID" --json | jq -r '.[0].metadata["gc.work_base_branch"] // empty')
+case "$PRESET_BASE" in integration/*) ;; *) PRESET_BASE="" ;; esac
+WORKTREE=$("$FACTORY_ROOT/bin/factory-do-work-workspace" enter "$WORK_BEAD_ID" $PRESET_BASE)
 if [ "$WORKTREE" != "." ]; then
   cd "$WORKTREE"
   BRANCH="do-work/$WORK_BEAD_ID"
-  BASE_BRANCH="$BASE_BRANCH_BEFORE"
+  BASE_BRANCH="${PRESET_BASE:-$BASE_BRANCH_BEFORE}"
   gc bd update "$WORK_BEAD_ID" \
     --set-metadata work_dir="$WORKTREE" \
     --set-metadata gc.work_branch="$BRANCH" \
@@ -187,6 +191,11 @@ fi
 
 If `$WORKTREE` is `.` you were not on a protected branch — proceed exactly
 as before, in the current directory.
+
+With `PRESET_BASE` set, your branch starts from `origin/integration/<spec>`
+and push-and-pr opens the PR there — only for test/harness code the convoy
+itself changed (docs/DELIVERY.md, "Maintenance towards an integration
+branch"); `finish` refuses anything else with exit 3.
 
 **Exit criteria:** you know your assignment, and if you started on a
 protected branch (the live agent-factory root, or a product rig's `dev`)
@@ -453,6 +462,12 @@ fi
 If `finish` exits 3, nothing failed: the bead asks for PR sections that are
 not written yet. Its message names the file to write; write it, then run the
 block above again. Do not mail anyone for that.
+Exit 3 is also the refusal of a PR into `integration/<spec>` that
+docs/DELIVERY.md does not allow (bead not authorized by af-wpzic4, or a file
+that is not the convoy's own test/harness code): its message says why. That
+work is delivered on main: park the work bead with `--outcome blocked
+--classification repair` and mail the Mayor, who re-dispatches it without
+`gc.work_base_branch`.
 
 On any non-zero exit other than 4 the block writes nothing on the work bead
 and keeps `work_dir`, so running it again resumes the same worktree
