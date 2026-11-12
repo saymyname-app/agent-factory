@@ -238,7 +238,13 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `convoy-advance` reprend une fois, cause `red_replayed`, un arrêt décidé
   sur une seule exécution, prouvé par
   `python3 tests/tdd-step-intermittent-red-test.py` et
-  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_ticket_stopped_all_green_on_one_run_of_each_test_is_resumed_once_without_an_answer`).
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_ticket_stopped_all_green_on_one_run_of_each_test_is_resumed_once_without_an_answer`) ;
+  af-u21377 (R11 af-ksan9t, reprise `behind` comptée sous un plafond plein,
+  attendait depuis cinq heures : chaque place libérée allait à la reprise
+  d'un ticket rangé avant lui dans le convoi ; une reprise comptée et pas
+  envoyée prend la place suivante, la plus ancienne d'abord, dans le convoi
+  et entre convois, prouvé par
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_counted_resume_waiting_for_a_place_takes_the_next_one_before_a_ticket_earlier_in_the_convoy ConvoyAdvanceTest.test_a_counted_resume_waiting_in_another_convoy_takes_the_next_place_before_this_one_s_resume`).
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
   contrôle : `criterion_already_green` reste au Planning Run, sauf
   le repair qui ne fait que déplacer une preuve (af-oa2ci4 : `tdd-step red`
@@ -259,7 +265,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   d'intégration n'a pas de sortie et refait échouer `convoy-advance` à
   chaque passe (`docs/CONVOY_ADVANCE.md`, « What these stops leave open ») ;
   le choix de sa sortie est une règle de méthode, proposée à Benjamin
-  (af-le1aas, ADR-0029 point 6).
+  (af-le1aas, ADR-0029 point 6). Constatée le 12/11/2026 (af-u21377) : un
+  tour de correction (`bin/correction-round`) part sans regarder le plafond
+  N et prend la place qu'une reprise comptée attend (af-sdd8gr).
 
 ## D — Doublure, instrument ou vue partielle qui ne se comporte pas comme le réel
 
