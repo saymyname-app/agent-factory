@@ -292,13 +292,7 @@ gc --city "$CITY" start >/dev/null 2>&1 || true
 grep -q "Controller: supervisor-managed" <<<"$(gc --city "$CITY" status 2>/dev/null)" || fail "the isolated city's controller did not start"
 gc order show convoy-advance --json >/dev/null 2>&1 || fail "the city does not accept orders/convoy-advance.toml"
 
-wait_for() { # <seconds> <command...>
-  local deadline=$(( $(date +%s) + $1 )); shift
-  until "$@"; do
-    [ "$(date +%s)" -lt "$deadline" ] || return 1
-    sleep 5
-  done
-}
+wait_for() { isolated_city_wait_for "$@"; }  # <seconds> of host time, <command...>
 stamp() { date -u +%H:%M:%S; }
 started() {
   gc bd show "$1" --json | jq -e '.[0].metadata["gc.dispatched_via"] == "dispatch-door"' >/dev/null 2>&1

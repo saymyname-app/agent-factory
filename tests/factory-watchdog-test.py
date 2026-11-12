@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
 from factory_watchdog import (  # noqa: E402
+    TICKET_STALL_MINUTES_DEFAULT,
     code_read_formulas,
     assess_gate,
     assess_gh_auth,
@@ -23,6 +24,7 @@ from factory_watchdog import (  # noqa: E402
 )
 
 NOW = 1789555200.0  # 2026-09-16T10:40:00Z
+TICKET_EXIT = 1789549200.0  # 2026-09-16T09:00:00Z, _started_ticket's exit
 
 
 class GateRules(unittest.TestCase):
@@ -342,11 +344,11 @@ class StalledTicketRules(unittest.TestCase):
 
 
 class Cli(unittest.TestCase):
-    def _run(self, subcommand: str, payload: str) -> list[str]:
+    def _run(self, subcommand: str, payload: str, now: float = NOW) -> list[str]:
         result = subprocess.run(
             [sys.executable, str(ROOT / "lib" / "factory_watchdog.py"), subcommand],
             input=payload, capture_output=True, text=True,
-            env={**os.environ, "FACTORY_GUARD_NOW": str(NOW)},
+            env={**os.environ, "FACTORY_GUARD_NOW": str(now)},
         )
         return [line for line in result.stdout.strip().split("\n") if line]
 
@@ -416,7 +418,10 @@ class Cli(unittest.TestCase):
             _started_ticket(id="af-held", session={"at": "2026-09-16T08:05:00Z", "name": "author-held"}),
         ]}
         payload = {"show": show, "alive": ["author-held"], "open": [], "listed": []}
-        lines = self._run("tickets", json.dumps(payload))
+        # The default window follows the measured convoy pass (af-8cfygl):
+        # read it, one minute past the fixture's last record (its exit).
+        past_window = TICKET_EXIT + (TICKET_STALL_MINUTES_DEFAULT + 1) * 60
+        lines = self._run("tickets", json.dumps(payload), now=past_window)
         self.assertEqual(1, len(lines))
         self.assertTrue(lines[0].startswith("af-r2c0tx\tstalled_ticket\t"))
 

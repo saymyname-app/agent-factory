@@ -55,6 +55,17 @@ NEW_TIP_PROOF = (
     "test_a_stop_the_gate_moved_past_leaves_the_list_without_an_answer_and_is_evaluated_at_the_new_tip"
 )
 LIFT_PROOF = "tests/convoy-state-test.py::test_lift_park_unparks_the_ticket_and_those_it_parked_and_keeps_the_record"
+# The answer « Corriger par maintenance sur main » waits for its linked repair (af-fv8ca4).
+MAINTENANCE_ANSWER_PROOF = (
+    "tests/convoy-advance-resumes-stops-end-test.py::"
+    "test_a_maintenance_answer_waits_for_its_linked_repair_s_delivery_then_resumes_once"
+)
+# A linked repair answered « Corriger dans le convoi » goes back to the
+# ticket's author (af-t8hycw).
+RETURNED_REPAIR_PROOF = (
+    "tests/convoy-advance-resumes-stops-end-test.py::"
+    "test_a_linked_repair_answered_to_be_fixed_in_the_convoy_goes_back_to_the_ticket_s_author_once"
+)
 EXHAUSTED_PROOF = (
     "tests/convoy-advance-resumes-stops-end-test.py::"
     "test_the_answer_that_lifts_makes_the_ticket_and_its_descendants_startable_again"
@@ -188,7 +199,17 @@ CONTRACT = {
     },
     ("park", "operator_request"): {
         "exit": transition("lift-park after any answer, or after every linked repair is delivered", LIFT_PROOF),
-        "options": {"*": transition("lift-park with the answered request", LIFT_PROOF)},
+        "options": {
+            "*": transition("lift-park with the answered request", LIFT_PROOF),
+            "Corriger par maintenance sur main": transition(
+                "lift-park --repair once the repair linked by factory-work-dispatch --technical-request is delivered",
+                MAINTENANCE_ANSWER_PROOF),
+            # The linked repair's own request answered « Corriger dans le
+            # convoi »: its delivery never comes, the author makes the fix.
+            "Corriger dans le convoi": transition(
+                "return-technical-repair, then lift-park on the answer and open-resume --cause answered",
+                RETURNED_REPAIR_PROOF),
+        },
     },
     ("park", "resumes_exhausted"): {
         "exit": operator("grouped escalation-door request on the convoy"),

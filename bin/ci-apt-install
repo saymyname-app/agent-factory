@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+#
+# ci-apt-install — install Ubuntu packages on a Factory CI runner without
+# making an outage of the package source a red check (af-xcdibe).
+#
+# On 2026-11-11, from 14:28 to 15:45Z, the four runs of PR #859 (af-fv8ca4)
+# ended red on the step "Ensure fixture sandbox runtime": `apt-get install
+# bubblewrap` exit 100, « Temporary failure resolving
+# azure.archive.ubuntu.com ». The change was sound; the runner's mirror was
+# not answering. A red that says nothing about the change is a false signal
+# (docs/DEFECT_CLASSES.md, S).
+#
+# Usage: ci-apt-install PACKAGE...
+#
+# Three sources, in this order, the first that installs every package wins:
+#   1. the runner's own sources, apt retrying each download 3 times;
+#   2. the same sources with a regional mirror (xx.archive.ubuntu.com, as
+#      the Azure one GitHub's runners use) replaced by archive.ubuntu.com,
+#      read from a copy: the runner's files are not modified;
+#   3. the copy kept in config/ci-apt-kept/, checked against its SHA256SUMS
+#      and installed with dpkg. Only a package kept there can come from it.
+# All three failing is still red, and the error says it is the package
+# source and not the change.
+#
+# Every apt-get of .github/workflows/ goes through here:
+# tests/ci-apt-install-test.sh refuses one that does not.
+
+set -Eeuo pipefail
+
+REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+KEPT=${CI_APT_KEPT_DIR:-$REPO_ROOT/config/ci-apt-kept}
+ETC=${CI_APT_ETC:-/etc/apt}
+# The tests run it without root: CI_APT_SUDO= (empty) calls the fakes directly.
+SUDO=${CI_APT_SUDO-sudo}
+APT=(apt-get -q -o Acquire::Retries=3)
+
+[ "$#" -gt 0 ] || exit 0
+PACKAGES=("$@")
+
+say() { printf 'ci-apt-install: %s\n' "$*" >&2; }
+
+# from LABEL [APT-OPTION...]: update and install from one set of sources.
+from() {
+  local label=$1
+  shift
+  if $SUDO "${APT[@]}" "$@" update && $SUDO "${APT[@]}" "$@" install -y "${PACKAGES[@]}"; then
+    say "installed ${PACKAGES[*]} from $label"
+    return 0
+  fi
+  say "$label did not answer"
+  return 1
+}
+
+from "the runner's package sources" && exit 0
+
+# The runner's sources, a regional mirror replaced by the main archive.
+FALLBACK=$(mktemp -d)
+trap 'rm -rf "$FALLBACK"' EXIT
+changed=0
+: >"$FALLBACK/sources.list"
+[ -f "$ETC/sources.list" ] && sed -E 's#://[a-z0-9-]+\.archive\.ubuntu\.com/#://archive.ubuntu.com/#g' "$ETC/sources.list" >"$FALLBACK/sources.list"
+mkdir "$FALLBACK/parts"
+for f in "$ETC"/sources.list.d/*.list "$ETC"/sources.list.d/*.sources; do
+  [ -f "$f" ] || continue
+  sed -E 's#://[a-z0-9-]+\.archive\.ubuntu\.com/#://archive.ubuntu.com/#g' "$f" >"$FALLBACK/parts/${f##*/}"
+done
+for f in "$FALLBACK/sources.list" "$FALLBACK"/parts/*; do
+  [ -f "$f" ] && grep -q '://archive\.ubuntu\.com/' "$f" && changed=1
+done
+if [ "$changed" = 1 ]; then
+  chmod -R a+rX "$FALLBACK"
+  from "archive.ubuntu.com" \
+    -o "Dir::Etc::SourceList=$FALLBACK/sources.list" \
+    -o "Dir::Etc::SourceParts=$FALLBACK/parts" && exit 0
+fi
+
+# The kept copy.
+arch=$(dpkg --print-architecture)
+debs=()
+missing=()
+for p in "${PACKAGES[@]}"; do
+  found=("$KEPT/${p}_"*"_${arch}.deb")
+  if [ "${#found[@]}" -eq 1 ] && [ -f "${found[0]}" ]; then
+    debs+=("${found[0]}")
+  else
+    missing+=("$p")
+  fi
+done
+if [ "${#missing[@]}" -gt 0 ]; then
+  echo "::error::the Ubuntu package sources did not answer and config/ci-apt-kept/ keeps no $arch copy of: ${missing[*]}. This red is the package source, not the change: run the check again later."
+  exit 1
+fi
+for d in "${debs[@]}"; do
+  sum=$(grep -sF "  ${d##*/}" "$KEPT/SHA256SUMS" || true)
+  if [ -z "$sum" ] || ! (cd "$KEPT" && printf '%s\n' "$sum" | sha256sum -c --status -); then
+    echo "::error::config/ci-apt-kept/${d##*/} does not match its SHA256SUMS: not installed."
+    exit 1
+  fi
+done
+$SUDO dpkg -i "${debs[@]}"
+say "installed ${PACKAGES[*]} from the copy kept in config/ci-apt-kept/"

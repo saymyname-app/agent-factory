@@ -104,6 +104,43 @@ isolated_city_remove() {
   rm -rf -- "$trial"
 }
 
+# isolated_city_wait_for <seconds> <command...>
+#   Runs the command every ISOLATED_CITY_WAIT_INTERVAL seconds (5) until it
+#   succeeds (return 0), or gives up (return 1) once <seconds> of host time
+#   have gone to the trial. A second of wall clock counts whole while the
+#   1-minute load stays within the host's CPUs, and CPUs/load of a second
+#   above: at a load of twice the CPUs it counts half. The wall clock is
+#   never stretched past ISOLATED_CITY_WAIT_STRETCH_MAX (4) times <seconds>.
+#   On giving up it names, on stderr, the wall clock spent and the load.
+#
+#   Each trial used to wait <seconds> of wall clock. On 11/11/2026 the nightly
+#   run of the local-only tests met a load of 40 to 100 on 8 CPUs: three
+#   trials stopped at their fixed deadline, mid-journey, with nothing broken
+#   (af-2crkwu). Every trial waits through this function;
+#   tests/isolated-city-stop-guard-test.sh refuses a wait of its own.
+isolated_city_wait_for() {
+  local budget_ms=$(( ${1:?isolated_city_wait_for: <seconds> <command...>} * 1000 ))
+  local interval=${ISOLATED_CITY_WAIT_INTERVAL:-5} stretch=${ISOLATED_CITY_WAIT_STRETCH_MAX:-4}
+  local loadavg=${ISOLATED_CITY_LOADAVG_FILE:-/proc/loadavg}
+  local cpus=${ISOLATED_CITY_CPUS:-$(nproc 2>/dev/null || echo 1)}
+  local start last now load spent=0
+  shift
+  start=$(date +%s%3N); last=$start
+  until "$@"; do
+    now=$(date +%s%3N)
+    load=$(cut -d' ' -f1 "$loadavg" 2>/dev/null) || load=0
+    spent=$(awk -v s="$spent" -v d="$(( now - last ))" -v l="${load:-0}" -v n="$cpus" \
+      'BEGIN { printf "%d", s + (l > n ? d * n / l : d) }')
+    last=$now
+    if [ "$spent" -ge "$budget_ms" ] || [ $(( now - start )) -ge $(( budget_ms * stretch )) ]; then
+      printf 'isolated_city_wait_for: gave up after %ss of wall clock for %ss of host time (load %s on %s CPUs): %s\n' \
+        "$(( (now - start) / 1000 ))" "$(( budget_ms / 1000 ))" "${load:-unknown}" "$cpus" "$*" >&2
+      return 1
+    fi
+    sleep "$interval"
+  done
+}
+
 # isolated_city_preserve_latest_failure <trial-dir> <latest-link>
 #   Keeps one failed trial at its original path (its configs contain that
 #   path) and points a stable symlink at it. A later failure replaces only a

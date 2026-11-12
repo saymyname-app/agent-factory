@@ -199,7 +199,7 @@ jq -n '{done: ["Critères 1 et 2 observés ; la ligne se voit par GET /items sur
 
 # One stub per role: the header names the trial, the body is the session.
 stub() { # <name>: reads the body on stdin
-  printf '#!/bin/bash\n. "%s/env"\n' "$TRIAL" > "$TRIAL/$1"
+  printf '#!/bin/bash\n. "%s/env"\n. "%s/tests/lib/isolated-city.sh"\n' "$TRIAL" "$ROOT" > "$TRIAL/$1"
   cat >> "$TRIAL/$1"
   chmod +x "$TRIAL/$1"
 }
@@ -335,18 +335,16 @@ while true; do
     exit 0
   fi
   mv "$BRIEF.new" "$BRIEF"
+  product_ready() { # <dataset>: the product answers ready, or refused (PRODUCT_REFUSED=1)
+    ANSWER=$("$BIN/ticket-evaluation" product "$CONVOY" "$TICKET" --dataset "$1" 2>>"$LOG") || { PRODUCT_REFUSED=1; return 0; }
+    [ "$(printf '%s' "$ANSWER" | jq -r '.ready')" = true ]
+  }
   product_on() {
-    local answer deadline=$(( $(date +%s) + 300 ))
-    while true; do
-      answer=$("$BIN/ticket-evaluation" product "$CONVOY" "$TICKET" --dataset "$1" 2>>"$LOG") || return 1
-      if [ "$(printf '%s' "$answer" | jq -r '.ready')" = true ]; then
-        ADDRESS=$(printf '%s' "$answer" | jq -r '.address')
-        LAUNCH=$(printf '%s' "$answer" | jq -r '.launch_state')
-        return 0
-      fi
-      [ "$(date +%s)" -lt "$deadline" ] || return 1
-      sleep 2
-    done
+    PRODUCT_REFUSED=0
+    ISOLATED_CITY_WAIT_INTERVAL=2 isolated_city_wait_for 300 product_ready "$1" 2>>"$LOG" || return 1
+    [ "$PRODUCT_REFUSED" = 0 ] || return 1
+    ADDRESS=$(printf '%s' "$ANSWER" | jq -r '.address')
+    LAUNCH=$(printf '%s' "$ANSWER" | jq -r '.launch_state')
   }
   covered() {
     "$BIN/evidence-capture" command "$CONVOY" "$TICKET" --piece "evaluation.coverage.$1" --launch-state "$LAUNCH" -- curl -s "$ADDRESS/health" >/dev/null 2>>"$LOG" || return 1
@@ -565,13 +563,7 @@ field() { gc bd show "$1" --json | jq -r --arg k "$2" '.[0].metadata[$k] // empt
 status_of() { gc bd show "$1" --json | jq -r '.[0].status'; }
 shown() { "$ROOT/bin/convoy-state" show "$CONVOY" --repo "$PRODUCT" | jq -c --arg t "$T" '.tickets[] | select(.id == $t)'; }
 piece() { jq -r '.output' "$TRIAL/store/$SPEC/$T/$1.json"; }
-wait_for() { # <seconds> <command...>
-  local deadline=$(( $(date +%s) + $1 )); shift
-  until "$@"; do
-    [ "$(date +%s)" -lt "$deadline" ] || return 1
-    sleep 5
-  done
-}
+wait_for() { isolated_city_wait_for "$@"; }  # <seconds> of host time, <command...>
 dump() {
   for log in author checks reviewer evaluator; do
     echo "--- $log.log" >&2

@@ -72,6 +72,15 @@ if [ "${PR_AUTOPILOT_STOP_ACTIVE:-0}" != "1" ]; then
     rm -f "$AP_DEFERRED_FILE"
     exit "$stop_rc"
   fi
+  # The stop kills the run's process group, but each bounded() call is a
+  # timeout(1) in a group of its own: a call in flight outlived the cut run
+  # until its own cap (af-i9llwm, caught by lib/ci_test_reaper.py). Every
+  # process of the run carries its scratch dir in its environment; what is
+  # left of it is killed here.
+  for _pid in $(grep -lzxF "PR_AUTOPILOT_TMPDIR=$PR_AUTOPILOT_TMPDIR" /proc/[0-9]*/environ 2>/dev/null \
+                | sed 's#^/proc/\([0-9]*\)/environ$#\1#'); do
+    kill -KILL "$_pid" 2>/dev/null
+  done
   load=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)
   in_a_row=$(( $(cat "$AP_DEFERRED_FILE" 2>/dev/null || echo 0) + 1 ))
   if mkdir -p "$(dirname "$AP_DEFERRED_FILE")" 2>/dev/null && printf '%s\n' "$in_a_row" > "$AP_DEFERRED_FILE" 2>/dev/null \
@@ -91,6 +100,8 @@ fi
 # committing in place, so it lives in lib/protected_rigs.sh and both scripts
 # source it from there. Add a rig once, and it is protected everywhere.
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/lib/protected_rigs.sh"
+# shellcheck source=lib/work_route_release.sh
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/lib/work_route_release.sh"
 RIGS=("${PROTECTED_RIGS[@]}")
 DELIVER_CLOSE_BIN="${DELIVER_CLOSE_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/deliver-close}"
 DELIVERY_PROOF_BIN="${DELIVERY_PROOF_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../lib" && pwd -P)/factory_delivery_proof.py}"
@@ -946,7 +957,10 @@ reject_ticket() {  # repo rig_path num sha reason -> 0 handled (ticket-owned PR)
   held=$(printf '%s' "$candidate" | jq -r '.assignee // empty' 2>/dev/null)
   if_held=""
   [ -z "$held" ] || if_held="--if-assignee '${held//\'/}' "
+  # Without its route and session (af-asymry): the ticket waits to be
+  # launched again, never taken by a worker launched for another ticket.
   run bash -c "cd '$rig_path' && gc bd update '$bead' ${if_held}--status open --assignee '' \
+    ${WORK_ROUTE_RELEASE_ARGS[*]} \
     --set-metadata 'gc.pr_rejection_reason=$reason' \
     --set-metadata 'gc.pr_rejection_count=$count' \
     --append-notes 'pr-autopilot: rejected PR #$num ($reason); rejection $count.'"; rc=$?

@@ -61,7 +61,9 @@ on the product it launched (piece `demonstration`, `docs/TICKET_AUTHOR.md`).
 `handoff_records`, `docs/TICKET_EXIT.md`). `bin/spec-integration` captures
 the tests it runs on a merged result without `--expect-exit` (piece
 `merged_tests`, `docs/SPEC_INTEGRATION.md`): a red run is a piece too, tied
-to the commit that was tested and never pushed.
+to the commit that was tested and never pushed. It reads that piece back,
+through `show`, before running the same command on a result of the same Git
+tree: a green one is reused instead of run again (af-l8zgmw).
 
 `command --attach <file>` files a file the command writes during the run
 (refused if it exists before, or is not written) beside the record, as

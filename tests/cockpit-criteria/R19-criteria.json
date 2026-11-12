@@ -1,0 +1,8 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/home-projects-release-test.py::HomeProjectsRelease.test_the_line_of_the_home_page_says_the_release_the_page_of_the_project_reads",
+      "tests/cockpit-criteria/commands/home-projects-release-test.py::HomeProjectsRelease.test_a_missing_release_plan_is_said_unavailable_on_the_line_with_the_reason_the_page_gives"
+    ]
+  }
+}
