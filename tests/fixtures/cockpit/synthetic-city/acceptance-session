@@ -9,7 +9,11 @@ which a synthetic convoy does not have. This one keeps what Essai relies on
 and does the launch for real: the commit of the Delivered Outcome the tracker
 of the launch records, the first dataset of the profile, bin/project-launch
 from a clean copy of that commit. The product belongs to the cockpit that
-asked for it, and ends with it. It answers as the real command does: one JSON
+asked for it, and ends with it. A result its dataset says delivered again
+at another commit once the cockpit read it (`result.redelivered`,
+lib/synthetic_city.py) is delivered again at that commit in the tracker
+when the session opens, before it reads the dossier: the race the real
+command can lose against a new delivery. It answers as the real command does: one JSON
 object, `address` once the product answers, an `error` with `outage: true`
 when it does not start.
 """
@@ -30,12 +34,23 @@ def answer(body, code=0):
     return code
 
 
+# Where the convoy keeps the commit it is delivered again at (lib/synthetic_city.py).
+REDELIVERED_KEY = "synthetic.redelivered"
+
+
 def delivered_commit(convoy):
-    shown = subprocess.run([os.environ["COCKPIT_BD_BIN"], "show", convoy, "--json"],
-                           capture_output=True, text=True, check=True)
+    bd = os.environ["COCKPIT_BD_BIN"]
+    shown = subprocess.run([bd, "show", convoy, "--json"], capture_output=True, text=True, check=True)
     bead = json.loads(shown.stdout)
     bead = bead[0] if isinstance(bead, list) else bead
-    return json.loads(bead["metadata"]["gc.flow.delivered"])["commit"]
+    delivered = json.loads(bead["metadata"]["gc.flow.delivered"])
+    redelivered = bead["metadata"].get(REDELIVERED_KEY)
+    if redelivered and delivered["commit"] != redelivered:
+        delivered["commit"] = redelivered
+        subprocess.run([bd, "update", convoy, "--set-metadata",
+                        "gc.flow.delivered=" + json.dumps(delivered, ensure_ascii=False)],
+                       capture_output=True, text=True, check=True)
+    return delivered["commit"]
 
 
 def main(argv):

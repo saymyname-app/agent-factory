@@ -487,11 +487,19 @@ REPAIR_DRAFT = {
                              "false_if": "le constat est encore présent"}]}
 # What a result in a dataset may say of itself (`result`): its commits, the
 # times its records were written (HH:MM, Paris, the day of the dataset), the
-# words of the answer, the reason of an abandon, what a failed trial said.
+# words of the answer, the reason of an abandon, what a failed trial said,
+# and the commit a result to judge is delivered again at once the cockpit
+# has read it (`redelivered`, R11): the Acceptance Session of the launch
+# finds it in the tracker when it opens.
 # Unsaid, the commits and times are those the reference writes.
 RESULT_VALUES = {"commit": "1" * 40, "merged": "2" * 40, "outdated_commit": "3" * 40, "ready_at": "14:30",
                  "answered_at": "14:48", "merged_at": "14:50", "words": "C’est ce que je voulais.",
-                 "reason": None, "outage": "Le produit ne démarre pas au commit du dossier.", "summary": None}
+                 "reason": None, "outage": "Le produit ne démarre pas au commit du dossier.", "summary": None,
+                 "redelivered": None}
+# Where the convoy of a result keeps `redelivered`, for the Acceptance
+# Session of the launch (tests/fixtures/cockpit/synthetic-city/
+# acceptance-session) and no reader of the cockpit.
+REDELIVERED_KEY = "synthetic.redelivered"
 
 
 def _result_values(values) -> dict:
@@ -557,6 +565,8 @@ def _result(tracker, dossier: dict, state: str, folded: dict, values: dict) -> d
         records.update({"gc.flow.delivered": delivered, "gc.flow.acceptance": acceptance})
         if state == "outage":
             acceptance["panne"] = {"at": at["ready_at"], "detail": values["outage"]}
+        if values["redelivered"]:
+            metadata[REDELIVERED_KEY] = values["redelivered"]
     elif state in ACCEPTED_STATES:
         records.update({"gc.flow.delivered": delivered, "gc.flow.judgement": {"verdicts": [], "answers": [{**answer, "response": "accepted"}]}})
         if state != "accepted":

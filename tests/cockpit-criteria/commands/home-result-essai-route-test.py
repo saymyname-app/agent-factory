@@ -20,6 +20,13 @@ False if the answer gives no address, names another revision than the
 dossier's, or the product at its address is the product of another
 revision. Nothing here calls the code of the cockpit: the proof of the
 revision went through an internal function of the actions until R11.
+
+The dossier may also move on between the moment the cockpit read it and the
+launch: the result is delivered again at another revision once the page is
+served (`redelivered`, the tracker of the launch rewritten as the Acceptance
+Session reads it), so the session launches that other revision. Essai then
+gives no address, and says the dossier changed: no tab on the product of a
+revision the page does not show (F1.1 and F1.2 of the code review of R11).
 """
 
 from __future__ import annotations
@@ -35,6 +42,11 @@ from result_trial import Operator, product_text, result_of, serve  # noqa: E402
 
 # How long a product launched by Essai may take to start.
 STARTING_SECONDS = 60
+# The sentence of the first dataset of the profile, what the revision of the
+# dossier says instead, and what the revision it is delivered again at says.
+SAID_AT_HEAD = "Recherche dans les notes"
+SAID_AT_REVISION = "Recherche plein texte des notes, version du dossier"
+SAID_REDELIVERED = "Recherche plein texte des notes, version livrée ensuite"
 
 
 class HomeResultEssaiRoute(unittest.TestCase):
@@ -52,8 +64,7 @@ class HomeResultEssaiRoute(unittest.TestCase):
         self.tree.stop_all()
 
     def test_essai_answers_the_address_of_the_product_launched_at_the_revision_of_the_dossier(self):
-        revision = self.tree.reword("home-content", {"Recherche dans les notes":
-                                                     "Recherche plein texte des notes, version du dossier"})
+        revision = self.tree.reword("home-content", {SAID_AT_HEAD: SAID_AT_REVISION})
         address = serve(self.tree, "result-essai", {"commit": revision})
         chantier, result = result_of(address)
         self.assertEqual(revision, result["commit"], "the dossier served is not at its revision")
@@ -67,9 +78,22 @@ class HomeResultEssaiRoute(unittest.TestCase):
                          f"Essai answers the cockpit itself, not the product: {launched}")
         product = product_text(launched, STARTING_SECONDS)
         self.assertTrue(product, f"nothing answers at the address Essai gives: {launched}")
-        self.assertIn("Recherche plein texte des notes, version du dossier", product,
+        self.assertIn(SAID_AT_REVISION, product,
                       "the product at the address is not the product at the revision of the dossier")
-        self.assertNotIn("Recherche dans les notes", product, "the product at the address is of another revision")
+        self.assertNotIn(SAID_AT_HEAD, product, "the product at the address is of another revision")
+
+    def test_essai_gives_no_address_when_the_session_launches_another_revision_than_the_dossier(self):
+        revision = self.tree.reword("home-content", {SAID_AT_HEAD: SAID_AT_REVISION})
+        redelivered = self.tree.reword("home-content", {SAID_AT_HEAD: SAID_REDELIVERED})
+        address = serve(self.tree, "result-essai", {"commit": revision, "redelivered": redelivered})
+        chantier, result = result_of(address)
+        self.assertEqual(revision, result["commit"], "the dossier served is not at its revision")
+
+        answer = Operator(address).gesture("essai", {"chantier": chantier, "commit": revision})
+        self.assertIn(answer.status, (400, 409),
+                      f"Essai answered though the session launched another revision: {answer!r}")
+        self.assertNotIn("address", answer.body or {}, f"Essai gives the address of another revision: {answer!r}")
+        self.assertRegex(answer.error(), r"(?i)n’est plus", f"the refusal does not say the dossier changed: {answer!r}")
 
 
 if __name__ == "__main__":
