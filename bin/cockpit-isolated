@@ -191,8 +191,8 @@ def serve_sessions(supervisor, city: synthetic_city.SyntheticCity) -> None:
     provider recorded (``{"id", "format": "raw", "messages"}``); ``GET
     /v0/city/<city>/events?type=session.woke|session.stopped``, when it
     woke and stopped, and ``…?type=execution.step_started``, the bead it
-    took (the subject), the latest first -- a 404 for a session it knows
-    nothing of. Then send the sessions `city` dispatches once the cockpit
+    took (the subject), the latest first and by pages, from its own journal
+    -- a 404 for a session it knows nothing of. Then send the sessions `city` dispatches once the cockpit
     has read the sessions a first time, so that a slow start takes nothing
     from them: each wakes, is listed at work for a while with only its first
     records and the bead it works (``active_bead``), and stops once a
@@ -209,23 +209,22 @@ def serve_sessions(supervisor, city: synthetic_city.SyntheticCity) -> None:
     reading = threading.Condition(lock)
     readings = 0
     # What the supervisor knows now: the sessions it sent, how many records
-    # of each it serves (None: all), its events.
+    # of each it serves (None: all). Its events go to its own journal,
+    # which it serves by pages as gc 1.5.0 does.
     known = {name: None for name in sessions if name not in city.dispatched}
-    events = []
 
     def record(kind: str, name: str, at: str) -> None:
-        events.append({"seq": len(events) + 1, "type": kind, "ts": at, "actor": "gc",
-                       "subject": sessions[name].get("template") or "", "session_id": name,
-                       "payload": {"session_id": name, "template": sessions[name].get("template") or ""}})
+        template = sessions[name].get("template") or ""
+        supervisor.emit(kind, template, {"session_id": name, "template": template},
+                        ts=at, actor="gc", session_id=name)
 
     def took(name: str, started: list) -> None:
         # As the installed supervisor logs a session taking a step: the
         # bead it took is the subject, the session acts -- once for each
         # step it takes.
         for step in started or []:
-            events.append({"seq": len(events) + 1, "type": "execution.step_started", "ts": step["at"],
-                           "actor": name, "subject": step["bead"], "payload": {}, "run_id": step["run"],
-                           "session_id": name, "step_id": step["step"], "depends_on_step_ids": []})
+            supervisor.emit("execution.step_started", step["bead"], {}, ts=step["at"], actor=name,
+                            run_id=step["run"], session_id=name, step_id=step["step"], depends_on_step_ids=[])
 
     for name, logged in sorted(city.session_log.items(), key=lambda pair: pair[1]["woke"] or ""):
         if name in known and name in sessions:
@@ -236,11 +235,11 @@ def serve_sessions(supervisor, city: synthetic_city.SyntheticCity) -> None:
                 record("session.stopped", name, logged["stopped"])
 
     def listed() -> list:
-        return [dict(sessions[name]) for name in known if name not in city.dispatched or sessions[name]["running"]]
+        return [dict(sessions[name]) for name in known if sessions[name]["running"]]
 
     def do_GET(self):  # noqa: N802
         nonlocal readings
-        path, _, query = self.path.partition("?")
+        path = self.path.partition("?")[0]
         rest = path[len(prefix):] if path.startswith(prefix) else None
         if rest == "sessions" and not supervisor._down:
             with reading:
@@ -248,15 +247,10 @@ def serve_sessions(supervisor, city: synthetic_city.SyntheticCity) -> None:
                 readings += 1
                 reading.notify_all()
             return
-        if supervisor._down or rest is None or not (rest == "events" or rest.startswith("session/")):
+        if supervisor._down or rest is None or not rest.startswith("session/"):
             answer_other(self)
             return
         with lock:
-            if rest == "events":
-                wanted = urllib.parse.parse_qs(query).get("type", [""])[0]
-                items = [dict(event) for event in reversed(events) if not wanted or event["type"] == wanted]
-                self._send_json({"items": items, "total": len(items)})
-                return
             name, _, part = urllib.parse.unquote(rest[len("session/"):]).partition("/")
             if name not in known or part not in ("", "transcript") or (part and name not in city.transcripts):
                 self._send(404, "text/plain; charset=utf-8", b"404 page not found\n")
