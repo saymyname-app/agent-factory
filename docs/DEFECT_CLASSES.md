@@ -348,6 +348,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/factory-delivery-proof-test.py ClaimedShippedBead`,
   `python3 tests/ticket-graph-publish-test.py TicketGraphPublishBeadModeTest.test_a_mayor_wake_delivered_but_slow_to_answer_is_not_reported_as_lost`,
   `bash tests/factory-watchdog-test.sh`,
+  `python3 tests/factory-watchdog-test.py StalledTicketRules`,
   `bash tests/pr-autopilot-time-budget-test.sh`,
   `bash tests/planning-artifacts-close-test.sh`,
   `bash tests/convoy-parent-sweep-test.sh`,
@@ -365,7 +366,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   au contrôle requis vert ; il relit aussi GitHub après toute demande de fusion
   directe et n'annonce la fusion que si le serveur répond `MERGED`. Le contrôle
   9 du gardien (#688) couvre les tickets que personne ne bouge, pas les autres
-  signaux. Le quatrième refuse qu'un workflow encore actif ou une demande de
+  signaux ; `StalledTicketRules` tient qu'un ticket qui attend ce que Benjamin
+  a choisi (le Planning Run, une réparation liée encore ouverte) n'est pas
+  signalé, par la règle de levée que la passe applique (af-hnh16e). Le quatrième refuse qu'un workflow encore actif ou une demande de
   rerun refusée soit annoncé comme déjà retenté. Le contrôle `tdd-step`
   conserve le début et la fin d'une longue sortie bornée, dont le nom du
   contrôle en échec. Le contrôle `role-adoption-trial-codex` tient la minute de
