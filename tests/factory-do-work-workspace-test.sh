@@ -539,4 +539,90 @@ rc=0
 [ -f "$GH_FAKE_DIR/do-work_af-no-diff-ticket.url" ] && fail "finish opened an empty PR for a branch with no difference with the base"
 [ -d "$WT14d" ] && fail "finish on a branch with no difference with the base did not remove the worktree"
 
+# ---------------------------------------------------------------------------
+# 15. af-j54vl1 (af-ji2ruy PR #455, af-p4rdr7): once the post-commit hook has
+#     published a commit, any rebase makes the branch non-fast-forward
+#     against origin. A plain push was then refused on every attempt, and a
+#     conflicting rebase left the worktree detached mid-rebase with only
+#     "could not push after 3 attempts".
+# ---------------------------------------------------------------------------
+remote_tip() { git -C "$TMP/origin.git" rev-parse "refs/heads/$1"; }
+base_commit() {   # <file> <content>: a new commit on origin/main
+  git -C "$TMP/root" pull -q origin main
+  echo "$2" > "$TMP/root/$1"
+  git -C "$TMP/root" add "$1" && git -C "$TMP/root" commit -qm "base: $1"
+  git -C "$TMP/root" push -q origin main
+}
+
+# 15a. the author rebased after the hook pushed: the hook's next push and
+#      finish both replace the stale remote tip
+WT15=$("$SCRIPT" enter af-rebased-ticket)
+echo first > "$WT15/r1" && git -C "$WT15" add r1 && git -C "$WT15" commit -qm "first"
+[ "$(remote_tip do-work/af-rebased-ticket)" = "$(git -C "$WT15" rev-parse HEAD)" ] \
+  || fail "the post-commit hook did not push the first commit"
+base_commit r-base moved
+git -C "$WT15" fetch -q origin main && git -C "$WT15" rebase -q origin/main
+echo second > "$WT15/r2" && git -C "$WT15" add r2 && git -C "$WT15" commit -qm "second"
+[ "$(remote_tip do-work/af-rebased-ticket)" = "$(git -C "$WT15" rev-parse HEAD)" ] \
+  || fail "the post-commit hook did not push a commit made after a rebase"
+git -C "$WT15" -c core.hooksPath=/dev/null commit -q --amend -m "second, amended"   # not pushed
+HEAD15=$(git -C "$WT15" rev-parse HEAD)
+"$SCRIPT" finish af-rebased-ticket "$WT15" do-work/af-rebased-ticket main >/dev/null 2>"$TMP/s15a.err" \
+  || { cat "$TMP/s15a.err" >&2; fail "finish of a rebased branch whose old tip was pushed exited non-zero"; }
+[ "$(remote_tip do-work/af-rebased-ticket)" = "$HEAD15" ] \
+  || fail "finish did not replace the stale remote tip of a rebased branch"
+
+# 15b. origin holds a commit this worktree never had: not overwritten
+WT15b=$("$SCRIPT" enter af-foreign-ticket)
+echo mine > "$WT15b/f1" && git -C "$WT15b" add f1 && git -C "$WT15b" commit -qm "mine"
+git clone -q "$TMP/origin.git" "$TMP/other-clone"
+git -C "$TMP/other-clone" checkout -q do-work/af-foreign-ticket
+echo theirs > "$TMP/other-clone/f2"
+git -C "$TMP/other-clone" add f2
+git -C "$TMP/other-clone" -c user.email=t@t -c user.name=t commit -qm "theirs"
+git -C "$TMP/other-clone" push -q origin do-work/af-foreign-ticket
+FOREIGN=$(remote_tip do-work/af-foreign-ticket)
+git -C "$WT15b" -c core.hooksPath=/dev/null commit -q --amend -m "mine, amended"
+rc=0
+"$SCRIPT" finish af-foreign-ticket "$WT15b" do-work/af-foreign-ticket main >/dev/null 2>"$TMP/s15b.err" || rc=$?
+[ "$rc" = "1" ] || { cat "$TMP/s15b.err" >&2; fail "finish over a foreign remote commit exited $rc (expected 1)"; }
+[ "$(remote_tip do-work/af-foreign-ticket)" = "$FOREIGN" ] || fail "finish overwrote a commit this worktree never had"
+grep -qF -- "$FOREIGN" "$TMP/s15b.err" || fail "finish over a foreign remote commit does not name it"
+[ -d "$WT15b" ] || fail "finish over a foreign remote commit removed the worktree"
+
+# 15c. the rebase after a refused push conflicts: aborted, its file named
+WT15c=$("$SCRIPT" enter af-conflict-ticket)
+echo "row of af-conflict-ticket" > "$WT15c/INDEX" && git -C "$WT15c" add INDEX \
+  && git -C "$WT15c" -c core.hooksPath=/dev/null commit -qm "index row"
+HEAD15c=$(git -C "$WT15c" rev-parse HEAD)
+base_commit INDEX "row of another ticket"
+cat > "$TMP/origin.git/hooks/pre-receive" <<'EOF'
+#!/usr/bin/env bash
+echo "refused once for the test" >&2
+rm -f "$0"
+exit 1
+EOF
+chmod +x "$TMP/origin.git/hooks/pre-receive"
+rc=0
+"$SCRIPT" finish af-conflict-ticket "$WT15c" do-work/af-conflict-ticket main >/dev/null 2>"$TMP/s15c.err" || rc=$?
+rm -f "$TMP/origin.git/hooks/pre-receive"
+[ "$rc" = "1" ] || { cat "$TMP/s15c.err" >&2; fail "finish with a conflicting rebase exited $rc (expected 1)"; }
+grep -qE -- "conflicted in: INDEX" "$TMP/s15c.err" || { cat "$TMP/s15c.err" >&2; fail "finish does not name the file the rebase conflicted on"; }
+[ "$(git -C "$WT15c" rev-parse --abbrev-ref HEAD)" = "do-work/af-conflict-ticket" ] \
+  || fail "finish left the worktree off its branch after a conflicting rebase"
+[ "$(git -C "$WT15c" rev-parse HEAD)" = "$HEAD15c" ] || fail "finish moved the branch after aborting a rebase"
+[ -d "$(git -C "$WT15c" rev-parse --path-format=absolute --git-path rebase-merge)" ] \
+  && fail "finish left a rebase in progress"
+
+# 15d. a worktree an earlier finish left mid-rebase: refused, nothing committed
+git -C "$WT15c" fetch -q origin main
+git -C "$WT15c" rebase origin/main >/dev/null 2>&1 && fail "the test's rebase was expected to conflict"
+rc=0
+"$SCRIPT" finish af-conflict-ticket "$WT15c" do-work/af-conflict-ticket main >/dev/null 2>"$TMP/s15d.err" || rc=$?
+[ "$rc" = "1" ] || { cat "$TMP/s15d.err" >&2; fail "finish on a worktree mid-rebase exited $rc (expected 1)"; }
+grep -qF -- "middle of a rebase (conflicted: INDEX)" "$TMP/s15d.err" \
+  || { cat "$TMP/s15d.err" >&2; fail "finish on a worktree mid-rebase does not say so"; }
+git -C "$WT15c" rebase --abort
+[ "$(git -C "$WT15c" rev-parse HEAD)" = "$HEAD15c" ] || fail "finish committed on a worktree mid-rebase"
+
 echo "OK bin/factory-do-work-workspace isolates HQ dispatches AND protected product-rig branches in a worktree, pushes and cleans up on finish, and is a no-op elsewhere"

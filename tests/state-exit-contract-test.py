@@ -49,8 +49,23 @@ OUTCOME_LIFT_PROOF = (
     "tests/outcome-evaluation-every-dataset-test.py::"
     "test_a_stop_linked_to_a_delivered_maintenance_is_lifted_and_evaluated_again_without_a_round_of_the_end"
 )
-NEW_TIP_PROOF = "lib/convoy_state.py::record.pop(\"stop\", None)"
+# A stop at a commit the gate left is set aside and its request cleared (af-mmefvq).
+NEW_TIP_PROOF = (
+    "tests/outcome-evaluation-outdated-stop-test.py::"
+    "test_a_stop_the_gate_moved_past_leaves_the_list_without_an_answer_and_is_evaluated_at_the_new_tip"
+)
 LIFT_PROOF = "tests/convoy-state-test.py::test_lift_park_unparks_the_ticket_and_those_it_parked_and_keeps_the_record"
+# The answer « Corriger par maintenance sur main » waits for its linked repair (af-fv8ca4).
+MAINTENANCE_ANSWER_PROOF = (
+    "tests/convoy-advance-resumes-stops-end-test.py::"
+    "test_a_maintenance_answer_waits_for_its_linked_repair_s_delivery_then_resumes_once"
+)
+# A linked repair answered « Corriger dans le convoi » goes back to the
+# ticket's author (af-t8hycw).
+RETURNED_REPAIR_PROOF = (
+    "tests/convoy-advance-resumes-stops-end-test.py::"
+    "test_a_linked_repair_answered_to_be_fixed_in_the_convoy_goes_back_to_the_ticket_s_author_once"
+)
 EXHAUSTED_PROOF = (
     "tests/convoy-advance-resumes-stops-end-test.py::"
     "test_the_answer_that_lifts_makes_the_ticket_and_its_descendants_startable_again"
@@ -139,7 +154,8 @@ CONTRACT = {
         },
     },
     ("outcome_stop", "outcome_evaluation_no_result"): {
-        "exit": transition("open-outcome-evaluation on a new integration tip", NEW_TIP_PROOF),
+        "exit": transition("lift-outcome-stop --outdated-by on a new integration tip, its request cleared, "
+                           "then open-outcome-evaluation", NEW_TIP_PROOF),
         "options": {
             "Faire vérifier le rôle Evaluator par la maintenance de l'usine":
                 operator("Factory maintenance; the next integration tip reopens Outcome Evaluation"),
@@ -147,7 +163,8 @@ CONTRACT = {
         },
     },
     ("outcome_stop", "outcome_evaluation_outage"): {
-        "exit": transition("open-outcome-evaluation on a new integration tip", NEW_TIP_PROOF),
+        "exit": transition("lift-outcome-stop --outdated-by on a new integration tip, its request cleared, "
+                           "then open-outcome-evaluation", NEW_TIP_PROOF),
         "options": {
             "Faire réparer l'environnement d'évaluation par la maintenance de l'usine":
                 operator("Factory maintenance; the next integration tip reopens Outcome Evaluation"),
@@ -155,7 +172,8 @@ CONTRACT = {
         },
     },
     ("outcome_stop", "outcome_repair_refused"): {
-        "exit": transition("open-outcome-evaluation on a new integration tip", NEW_TIP_PROOF),
+        "exit": transition("lift-outcome-stop --outdated-by on a new integration tip, its request cleared, "
+                           "then open-outcome-evaluation", NEW_TIP_PROOF),
         "options": {
             "Faire reprendre le repair refusé dans le Planning Run":
                 operator("Planning Run: redraft the refused repair; the next integration tip reopens Outcome Evaluation"),
@@ -181,7 +199,17 @@ CONTRACT = {
     },
     ("park", "operator_request"): {
         "exit": transition("lift-park after any answer, or after every linked repair is delivered", LIFT_PROOF),
-        "options": {"*": transition("lift-park with the answered request", LIFT_PROOF)},
+        "options": {
+            "*": transition("lift-park with the answered request", LIFT_PROOF),
+            "Corriger par maintenance sur main": transition(
+                "lift-park --repair once the repair linked by factory-work-dispatch --technical-request is delivered",
+                MAINTENANCE_ANSWER_PROOF),
+            # The linked repair's own request answered « Corriger dans le
+            # convoi »: its delivery never comes, the author makes the fix.
+            "Corriger dans le convoi": transition(
+                "return-technical-repair, then lift-park on the answer and open-resume --cause answered",
+                RETURNED_REPAIR_PROOF),
+        },
     },
     ("park", "resumes_exhausted"): {
         "exit": operator("grouped escalation-door request on the convoy"),
@@ -227,7 +255,7 @@ BUILDERS = {
     ("bin/ticket-evaluation", "raise_stop"): (
         {2}, {("ticket_stop", "evaluation_no_result"), ("ticket_stop", "evaluation_outage")}),
     ("bin/ticket-evaluation", "planning_exception_request"): ({3}, {("park", "planning_exception")}),
-    ("bin/outcome-evaluation", "raise_stop"): (
+    ("bin/outcome-evaluation", "stop_request"): (
         {2}, {("outcome_stop", reason) for reason in
               ("outcome_evaluation_no_result", "outcome_evaluation_outage", "story_unobservable",
                "outcome_repair_refused")}),

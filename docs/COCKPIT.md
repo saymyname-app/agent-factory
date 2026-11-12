@@ -131,7 +131,14 @@ missing secret file or a failing ping becomes a health issue instead of a
 crash. It pauses only for `CLEANLY_STOPPED` (Clean stop, requested by
 Benjamin — spec "Heartbeat et usine muette": never at a Windows reboot),
 via a `state_provider` callable so this module does not depend on the
-Clean stop driver (T23) to be tested. `tick()`/`health_issues()` are the
+Clean stop driver (T23) to be tested. The process gives it
+`StopDriver.heartbeat_state`, which says `arretee_proprement` only for a
+clean stop confirmed with nothing lost: a suspension that lost a work --
+the page Usine says « Suspension à vérifier » -- keeps the heartbeat going
+(Spec af-fgcw0d, « pause uniquement à arrêt propre confirmé »; R17,
+af-8hq9o8, proven on the launched cockpit by
+`tests/cockpit-criteria/commands/factory-stop-heartbeat-test.py`).
+`tick()`/`health_issues()` are the
 whole public interface; process wiring (secret file location, thread
 scheduling, the health zone display) is left to the tickets that build
 those.
@@ -1995,9 +2002,12 @@ by its gain (« Voir la preuve : <gain> »).
 Tests: `tests/cockpit-home-projects-test.py` (`GET /projets` and the page of
 a project, through the running process), and the criterion tests of E
 (`tests/cockpit-criteria/commands/projects-{release,roadmap,recette}-test.py`).
-The flags and the current step of R3 are proven in process by
-`tests/cockpit-roadmap-rows-test.py`, their transmission to the launched
-cockpit by `tests/cockpit-criteria/commands/projects-roadmap-unlinked-test.py`.
+The flags and the current step of R3 are proven on the launched cockpit by
+`tests/cockpit-criteria/commands/projects-roadmap-unlinked-test.py`, the
+other cases of the roadmap lines (a result returned, steps all reserved, a
+step waiting on a required step, a roadmap all done, a tracker not read) by
+`tests/cockpit-criteria/commands/projects-roadmap-rows-test.py` (R12,
+af-0p3nfo), on `/projet/<id>` and the « Projets » zone of `GET /`.
 
 ## « Journal » in Panorama (F, af-njwz8v: the Prototype Fold of the Journal reference)
 

@@ -850,6 +850,15 @@ class ProjectLaunchTest(unittest.TestCase):
             return []
         return [json.loads(line) for line in self.trace.read_text().splitlines()]
 
+    def _guard_traced(self, count: int = 1, seconds: float = 10.0) -> list[dict]:
+        # The guard stops the launch (its copy goes) and only then writes its
+        # line: under load the copy can be gone before the line is there
+        # (10/11/2026, af-272r6y).
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline and len(self._traced()) < count:
+            time.sleep(0.1)
+        return self._traced()
+
     def _until_gone(self, record: dict, seconds: float = 30.0) -> None:
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline and Path(record["worktree"]).exists():
@@ -880,7 +889,7 @@ class ProjectLaunchTest(unittest.TestCase):
         self.assertEqual([], left, "a process of the launch outlived its caller")
         self.assertFalse(state_file.exists())
         self._until_gone(record)
-        self.assertEqual(["owner_ended"], [event["reason"] for event in self._traced()])
+        self.assertEqual(["owner_ended"], [event["reason"] for event in self._guard_traced()])
 
     def test_a_detached_launch_outlives_its_caller_until_stop(self):
         result, state_file = self.start("--dataset", "content", "--detached")
@@ -907,7 +916,7 @@ class ProjectLaunchTest(unittest.TestCase):
         while state_file.exists() and time.monotonic() < deadline:
             time.sleep(0.1)
         self.assertFalse(state_file.exists())
-        [event] = self._traced()
+        [event] = self._guard_traced()
         self.assertEqual(("guard", "lifetime_over", record["launch_id"], True),
                          (event["by"], event["reason"], event["launch_id"], event["stopped"]))
 
@@ -920,7 +929,7 @@ class ProjectLaunchTest(unittest.TestCase):
         record = json.loads(result.stdout)
         state_file.unlink()
         self._until_gone(record)
-        [event] = self._traced()
+        [event] = self._guard_traced()
         self.assertEqual(("guard", "record_removed", True), (event["by"], event["reason"], event["stopped"]))
 
     def test_a_record_reused_by_another_launch_does_not_stop_it(self):
@@ -1047,7 +1056,7 @@ class ProjectLaunchTest(unittest.TestCase):
         self.assertEqual([], left, "a process of the launch outlived its caller")
         self.assertFalse(state_file.exists())
         self.assertTrue(_port_is_free(record["port"]))
-        self.assertEqual([("owner_ended", True)], [(event["reason"], event["stopped"]) for event in self._traced()])
+        self.assertEqual([("owner_ended", True)], [(event["reason"], event["stopped"]) for event in self._guard_traced()])
 
     def test_the_sweep_releases_a_copy_left_without_process(self):
         env = self._private_tmp()
@@ -1136,8 +1145,7 @@ class ProjectLaunchTest(unittest.TestCase):
         # The launcher ends at once: its program is handed to init.
         subprocess.run(["bash", "-c", f"cd {work_tree} && (sleep 300 </dev/null >/dev/null 2>&1 & echo $! > {pid_file})"], check=True)
         pid = int(pid_file.read_text())
-        self.addCleanup(lambda: contextlib.suppress(ProcessLookupError)(os.kill)(pid, signal.SIGKILL)
-                        if Path(f"/proc/{pid}").exists() else None)
+        self.addCleanup(subprocess.run, ["kill", "-9", str(pid)], capture_output=True)
         env = self._private_tmp()
 
         code, swept = self._sweep("none", env, "--work-root", str(root))

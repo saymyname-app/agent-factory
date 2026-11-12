@@ -1,0 +1,16 @@
+# observed_on	path:line	reason
+# Sessions opened outside lib/bounded_process.py: they outlive their caller.
+# Each is detached on purpose and says why; a new one is refused
+# (tests/bounded-process-test.py, af-8cfygl). A session that must die with its
+# caller goes through bounded_process.run or bounded_process.popen instead.
+2026-11-10	bin/acceptance-session:128	`detached`: the product of an Acceptance Session runs until its `close`.
+2026-11-10	bin/cockpit:134	`cockpit start` daemonises the Cockpit server; `cockpit stop` owns it.
+2026-11-10	bin/convoy-advance:3768	The fidelity check outlives the pass on purpose: a later pass reads its result.
+2026-11-10	bin/outcome-evaluation:151	`detached`: the product launched for an Outcome Evaluation runs between passes.
+2026-11-10	bin/outcome-promote:115	`detached`: the product started for the promotion runs past this call; project-launch's owner and deadline end it.
+2026-11-10	bin/project-launch:497	The launched product, recorded with its owner and deadline for the sweep that ends it.
+2026-11-10	bin/project-launch:638	The owner watcher of a launch, which must outlive the start command to stop the product at its deadline.
+2026-11-10	bin/role-adoption-trial:377	The supervisor of a throwaway trial city, stopped by the trial itself.
+2026-11-10	bin/ticket-evaluation:157	`detached`: the product launched for a Ticket Evaluation runs between passes.
+2026-11-10	tests/cockpit-criteria/commands/home_destination.py:256	Measuring browser killed by its finally, not when its caller dies; the file differs on integration/af-fgcw0d around these lines, so it moves to bounded_process.popen after convoy af-strhoy merges, not before (no take-up conflict).
+2026-11-10	tests/cockpit-criteria/regression.py:131	Fallback for a tree without lib/bounded_process.py (a tree older than af-8cfygl): its session stays alone, as before; every newer tree goes through bounded_process.popen.

@@ -78,6 +78,7 @@ LIVE_FLOW_KEYS = {
     "gc.flow.park",
     "gc.flow.park_lifts",
     "gc.flow.resume",
+    "gc.flow.returned_repairs",
     "gc.flow.technical_repairs",
 }
 FREEFORM_SIGNAL_FIELDS = {"detail", "reason", "ref", "text"}

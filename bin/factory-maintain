@@ -41,6 +41,8 @@ gestures:
       branch or has gone untouched for more than --idle-days (default 7).
       An exact merged-PR head match also proves recoverability after GitHub
       deletes a squash-merged branch; absent or mismatched proof fails closed.
+      A worktree named after a ticket still in_progress whose session is
+      open is its author's copy, not pushed yet: kept, never reported.
       Refuses anything with uncommitted changes. A worktree with commits
       that were never pushed, or ahead of its pushed upstream, is reported
       through the escalation door instead of removed (unrecoverable).
@@ -140,6 +142,67 @@ for pull in pulls:
         raise SystemExit(0)
 raise SystemExit(1)
 ' "$branch" "$sha"
+}
+
+# held_by_live_session <path> <branch> — print "<ticket> <session>" and
+# succeed when the worktree is the working copy of a ticket still
+# in_progress whose recorded session is still open: its author has simply
+# not pushed yet, nothing is lost (af-mc1u08; af-h2boiv and af-apbds3 were
+# filed against a live author). A worktree is named after its ticket
+# (factory-do-work-workspace, the new-flow ticket worktrees). Anything else
+# fails closed -- an unreadable ticket or session list, another status, a
+# recorded branch that is not this one, a session gone -- so a copy truly
+# left behind is still escalated. The session list is read once per run.
+LIVE_SESSIONS_JSON=""
+held_by_live_session() {
+  local path="$1" branch="$2" ticket bead
+  ticket=$(basename -- "$path")
+  bead=$(timeout 20 gc bd show "$ticket" --json 2>/dev/null) || return 1
+  if [ -z "$LIVE_SESSIONS_JSON" ]; then
+    LIVE_SESSIONS_JSON=$(timeout 20 gc session list --json 2>/dev/null) || { LIVE_SESSIONS_JSON=""; return 1; }
+  fi
+  printf '%s\n%s\n' "$bead" "$LIVE_SESSIONS_JSON" | python3 -c '
+import json
+import sys
+
+ticket, branch = sys.argv[1:]
+text = sys.stdin.read()
+decoder = json.JSONDecoder()
+try:
+    bead, end = decoder.raw_decode(text.lstrip())
+    sessions, _ = decoder.raw_decode(text.lstrip()[end:].lstrip())
+except Exception:
+    raise SystemExit(1)
+if isinstance(bead, list):
+    bead = bead[0] if bead else {}
+if not isinstance(bead, dict) or bead.get("id") != ticket or bead.get("status") != "in_progress":
+    raise SystemExit(1)
+meta = bead.get("metadata") if isinstance(bead.get("metadata"), dict) else {}
+recorded = {meta.get(k) for k in ("gc.work_branch", "gc.flow.branch")} - {None, ""}
+if recorded and branch not in recorded:
+    raise SystemExit(1)
+owners = [meta.get("gc.session_name"), meta.get("gc.session_id"), bead.get("assignee")]
+flow = meta.get("gc.flow.session")
+try:
+    flow = json.loads(flow) if isinstance(flow, str) else flow
+except Exception:
+    flow = None
+if isinstance(flow, dict):
+    owners.append(flow.get("name"))
+owners = [o for o in owners if isinstance(o, str) and o]
+rows = sessions.get("sessions") if isinstance(sessions, dict) else None
+if not isinstance(rows, list):
+    raise SystemExit(1)
+live = set()
+for row in rows:
+    if isinstance(row, dict) and not row.get("closed"):
+        live |= {str(row[k]) for k in ("id", "name", "session_name", "alias") if row.get(k)}
+for owner in owners:
+    if owner in live:
+        print(ticket, owner)
+        raise SystemExit(0)
+raise SystemExit(1)
+' "$ticket" "$branch"
 }
 
 cmd_prune_merged_branches() {
@@ -315,6 +378,14 @@ cmd_clean_worktrees() {
     fi
     if [ -z "$upstream" ] || [ "$ahead" != "0" ]; then
       merged_pr=$(merged_pr_for_exact_head "$d" "$branch" "$sha" || true)
+    fi
+    local held=""
+    if [ -z "$merged_pr" ] && { [ -z "$upstream" ] || [ "$ahead" != "0" ]; } \
+       && held=$(held_by_live_session "$d" "$branch"); then
+      # the author is at work and has not pushed yet: not lost work
+      log clean-worktrees escalation-skipped \
+        "path=$d branch=$branch sha=$sha reason=ticket-in-progress ticket=${held% *} session=${held#* }"
+      skipped=$((skipped+1)); continue
     fi
     if [ -z "$merged_pr" ] && { [ -z "$upstream" ] || [ "$ahead" != "0" ]; }; then
       # never pushed, or pushed but ahead of its upstream -- either way some

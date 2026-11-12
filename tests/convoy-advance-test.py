@@ -1770,8 +1770,9 @@ esac
     # what bin/factory-watchdog checks on the live Factory.
 
     def next_step_missing(self, ticket_id):
-        """What bin/factory-watchdog would page about the ticket, read a day
-        after the pass: None when the ticket has a next step."""
+        """What bin/factory-watchdog would page about the ticket, read one
+        minute past its stall window after the pass: None when the ticket has
+        a next step."""
         shown = self.shown(ticket_id)
         if (shown.get("merge") or {}).get("outcome") == "merged":
             return None
@@ -1783,7 +1784,8 @@ esac
         listed = {bead_id for bead_id in open_beads
                   if str((state["beads"][bead_id].get("metadata") or {}).get("gc.needs_benjamin") or "none")
                   not in ("", "none")}
-        return factory_watchdog.assess_ticket(shown, CONVOY, time.time() + 86400, alive, open_beads, listed)
+        past_window = time.time() + 60 * (factory_watchdog.TICKET_STALL_MINUTES_DEFAULT + 1)
+        return factory_watchdog.assess_ticket(shown, CONVOY, past_window, alive, open_beads, listed)
 
     def author_finished(self):
         self.integrated()

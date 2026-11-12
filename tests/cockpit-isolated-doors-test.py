@@ -36,6 +36,14 @@ def free_port():
         return s.getsockname()[1]
 
 
+def alive(pid):
+    """A process that runs: neither gone nor ended and not yet collected."""
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] != "Z"
+    except OSError:
+        return False
+
+
 class TheDoors(unittest.TestCase):
 
     def dataset(self, doors=None):
@@ -184,6 +192,26 @@ class TheDoors(unittest.TestCase):
         with self.assertRaises(subprocess.TimeoutExpired):
             subprocess.run([expiring["COCKPIT_OPERATOR_CONFIG_BIN"], "language"], env=expiring,
                            capture_output=True, timeout=PATIENCE)
+
+    def test_a_door_that_never_answers_ends_once_its_caller_is_gone(self):
+        # 11/11/2026: a cockpit stopped while it waited on such a door left it
+        # asleep for a day, 23 on the host, one per regression (af-i9llwm).
+        caller = subprocess.Popen(
+            [sys.executable, "-c", "import subprocess, sys; door = subprocess.Popen(sys.argv[1:], "
+             "stdout=subprocess.DEVNULL); print(door.pid, flush=True); door.wait()",
+             str(ROOT / "tests" / "fixtures" / "cockpit" / "synthetic-city" / "door"), "expires", "true"],
+            stdout=subprocess.PIPE, text=True)
+        door = int(caller.stdout.readline())
+        self.addCleanup(lambda: subprocess.run(["kill", "-9", str(door)], capture_output=True))
+        time.sleep(0.5)
+        self.assertTrue(alive(door), "the door ended while its caller still waited")
+        caller.kill()
+        caller.wait()
+        caller.stdout.close()
+        deadline = time.monotonic() + PATIENCE
+        while alive(door) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertFalse(alive(door), "the door that never answers outlived its caller")
 
     def test_doors_that_are_not_each_a_door_and_how_it_answers_are_refused(self):
         for doors in ({"proposal-door": "answers twice"}, {"merge-door": "expires"}):

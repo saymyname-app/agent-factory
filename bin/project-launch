@@ -857,11 +857,16 @@ def copy_owner_file(sidecar: Path) -> dict:
 
 
 def reparented(pid: int) -> bool:
-    """Whether `pid`'s launcher has ended: it was handed to init or to the
-    session manager (`systemd --user`), the only subreapers of this host."""
+    """Whether `pid`'s launcher has ended: it was handed to init, to the
+    session manager (`systemd --user`), or to the reaper a test battery runs
+    each test file under (`lib/ci_test_reaper.py`, af-i9llwm): the only
+    subreapers of this host."""
     try:
         ppid = int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[1])
-        return ppid == 1 or Path(f"/proc/{ppid}/comm").read_text().strip() == "systemd"
+        if ppid == 1 or Path(f"/proc/{ppid}/comm").read_text().strip() == "systemd":
+            return True
+        return any(Path(argument).name == "ci_test_reaper.py"
+                   for argument in Path(f"/proc/{ppid}/cmdline").read_bytes().decode(errors="replace").split("\0")[:2])
     except (OSError, IndexError, ValueError):
         return False
 

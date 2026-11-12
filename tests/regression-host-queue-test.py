@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -37,6 +38,10 @@ if os.environ.get("SLOW") == name:
     child = subprocess.Popen(["sleep", "60"])
     (marks / "grandchild.pid").write_text(str(child.pid))
     time.sleep(60)
+if os.environ.get("LEAK") == name:
+    left = subprocess.Popen(["sleep", "60"], start_new_session=True, stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    (marks / "left.pid").write_text(str(left.pid))
 if os.environ.get("CLASS_TIMING") == name:
     print("regression: took 7s for criterion class example.py::Example")
 """
@@ -52,6 +57,9 @@ class RegressionHostQueue(unittest.TestCase):
         self.marks.mkdir()
         (self.tree / "tests" / "cockpit-criteria").mkdir(parents=True)
         shutil.copy(REGRESSION, self.tree / "tests" / "cockpit-criteria" / "regression.py")
+        (self.tree / "lib").mkdir()
+        for name in ("bounded_process.py", "ci_test_reaper.py"):
+            shutil.copy(ROOT / "lib" / name, self.tree / "lib" / name)
         for name in FILES:
             (self.tree / name).write_text(STAND_IN)
 
@@ -67,8 +75,10 @@ class RegressionHostQueue(unittest.TestCase):
     def hold_host(self, seconds):
         """Another battery holds the host lock for `seconds`."""
         ready = self.tmp / "held"
-        holder = subprocess.Popen(["flock", str(self.lock), "sh", "-c", f"touch {ready}; sleep {seconds}"])
-        self.addCleanup(lambda: (holder.kill(), holder.wait()))
+        holder = subprocess.Popen(["flock", str(self.lock), "sh", "-c", f"touch {ready}; sleep {seconds}"],
+                                  start_new_session=True)
+        # flock, its shell and their sleep: the whole group.
+        self.addCleanup(lambda: (os.killpg(holder.pid, signal.SIGKILL), holder.wait()))
         deadline = time.monotonic() + 10
         while not ready.exists():
             self.assertLess(time.monotonic(), deadline, "the lock holder never started")
@@ -122,11 +132,52 @@ class RegressionHostQueue(unittest.TestCase):
         self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
         self.assertIn("FAIL tests/cockpit-a-test.py", proc.stdout)
 
+    def test_a_file_that_leaves_a_process_alive_is_red_and_the_process_is_killed(self):
+        # 11/11/2026: a Cockpit test file left one synthetic door per
+        # regression, in a session of its own; 23 were alive (af-i9llwm).
+        proc, _ = self.regression(LEAK="cockpit-a-test.py")
+        left = int((self.marks / "left.pid").read_text())
+        self.addCleanup(lambda: subprocess.run(["kill", "-9", str(left)], capture_output=True))
+        self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
+        self.assertIn("FAIL tests/cockpit-a-test.py", proc.stdout)
+        self.assertRegex(proc.stdout, rf"left these processes alive, now killed[^\n]*\n  {left} sleep 60")
+        self.assertIn("PASS tests/cockpit-criteria-test.py", proc.stdout)
+        self.assertFalse(Path(f"/proc/{left}").exists(), "the process the file left still runs")
+
     def test_a_run_inside_the_battery_that_holds_the_host_does_not_wait(self):
         self.hold_host(30)
         proc, took = self.regression(REGRESSION_HOST_WAIT="1", CI_RUN_TESTS_HOST_LOCK_HELD=str(self.lock))
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         self.assertNotIn("waiting", proc.stdout)
+
+
+    def test_a_regression_killed_takes_the_processes_of_its_test_files_with_it(self):
+        # 10/11/2026: the pass that ran the regression was killed and the
+        # regression ran on alone (af-8cfygl); its test files must not.
+        base = {key: value for key, value in os.environ.items()
+                if key not in ("GITHUB_ACTIONS", "CI_RUN_TESTS_HOST_LOCK_HELD", "REGRESSION_HOST_WAIT", "REGRESSION_BUDGET")}
+        proc = subprocess.Popen([sys.executable, "tests/cockpit-criteria/regression.py"], cwd=self.tree,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                                env={**base, "MARKS": str(self.marks), "CI_RUN_TESTS_HOST_LOCK_FILE": str(self.lock),
+                                     "SLOW": "cockpit-a-test.py"})
+        mark = self.marks / "grandchild.pid"
+        deadline = time.monotonic() + 30
+        while not (mark.exists() and mark.read_text()) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        grandchild = int(mark.read_text())
+        self.addCleanup(lambda: subprocess.run(["kill", "-9", str(grandchild)], capture_output=True))
+        proc.kill()
+        proc.wait()
+        deadline = time.monotonic() + 5
+        while Path(f"/proc/{grandchild}").exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertFalse(Path(f"/proc/{grandchild}").exists(), "a test file's process outlived its killed regression")
+
+    def test_a_tree_without_the_launcher_still_runs_green(self):
+        shutil.rmtree(self.tree / "lib")
+        proc, _ = self.regression()
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual(sorted(Path(name).name + ".ran" for name in FILES), self.ran())
 
 
 if __name__ == "__main__":

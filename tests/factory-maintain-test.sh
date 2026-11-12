@@ -111,6 +111,12 @@ case "$1 $2" in
     printf '%s\n' "$*" >> "$BD_CREATE_LOG"
     echo '[{"id":"fake-bead-1"}]'
     ;;
+  "bd show")
+    cat "$FAKE_BEADS/$3.json" 2>/dev/null || { echo "no issue $3" >&2; exit 1; }
+    ;;
+  "session list")
+    cat "$FAKE_SESSIONS"
+    ;;
   *)
     echo "fake-gc: unexpected invocation: $*" >&2
     exit 1
@@ -161,6 +167,22 @@ git -C "$REPO2" worktree add -q -b unpushed-worktree "$WT_ROOT/unpushed-worktree
 echo more > "$WT_ROOT/unpushed-worktree/h"
 git -C "$WT_ROOT/unpushed-worktree" add -A
 git -C "$WT_ROOT/unpushed-worktree" commit -qm "not pushed"
+
+# the working copies of two tickets in progress, neither pushed yet: the
+# author session of af-live01 is open (it is at work, nothing is lost --
+# af-mc1u08), the one of af-gone01 is not (left behind, still escalated)
+export FAKE_BEADS="$TMP/fake-beads" FAKE_SESSIONS="$TMP/fake-sessions.json"
+mkdir -p "$FAKE_BEADS"
+echo '{"sessions":[{"id":"af-wisp-live","session_name":"delivery-author-af-wisp-live","state":"active","closed":false}]}' \
+  > "$FAKE_SESSIONS"
+for t in live01 gone01; do
+  git -C "$REPO2" worktree add -q -b "ticket/af-$t" "$WT_ROOT/af-$t" main
+  echo "$t" > "$WT_ROOT/af-$t/$t.txt"
+  git -C "$WT_ROOT/af-$t" add -A
+  git -C "$WT_ROOT/af-$t" commit -qm "$t not pushed yet"
+  printf '[{"id":"af-%s","status":"in_progress","metadata":{"gc.flow.branch":"ticket/af-%s","gc.session_name":"delivery-author-af-wisp-%s"}}]\n' \
+    "$t" "$t" "${t%01}" > "$FAKE_BEADS/af-$t.json"
+done
 
 # a not-merged, clean, fully-pushed worktree, untouched for 10 days -- old
 # enough to be eligible for removal even though its branch never merged
@@ -227,6 +249,16 @@ grep -q "unpushed-worktree" "$ESCALATION_LOG" \
   || fail "clean-worktrees did not page the escalation door for the unpushed worktree"
 grep -q "gesture=clean-worktrees.*status=escalated.*path=$WT_ROOT/unpushed-worktree" "$FACTORY_MAINTAIN_LOG" \
   || fail "clean-worktrees did not log the escalation for the unpushed worktree"
+
+# a ticket's copy whose author session is open is kept and not reported;
+# one whose session is gone is still reported
+[ -d "$WT_ROOT/af-live01" ] || fail "clean-worktrees removed the copy of a ticket in progress"
+grep -q "af-live01" "$BD_CREATE_LOG" "$ESCALATION_LOG" \
+  && fail "clean-worktrees reported as lost the copy of a ticket whose author session is open"
+grep -q "gesture=clean-worktrees.*status=escalation-skipped.*path=$WT_ROOT/af-live01.*reason=ticket-in-progress.*ticket=af-live01 session=delivery-author-af-wisp-live" "$FACTORY_MAINTAIN_LOG" \
+  || fail "clean-worktrees did not log why it kept the copy of a ticket in progress"
+grep -q "af-gone01" "$ESCALATION_LOG" \
+  || fail "clean-worktrees did not page the escalation door for a ticket's copy whose session is gone"
 
 echo "PASS: clean-worktrees"
 

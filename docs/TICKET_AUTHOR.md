@@ -186,7 +186,13 @@ stopped the ticket is what raises it to the operator.
   Only then does code withdraw the technical request and resume the ticket as
   `repair_delivered`, exactly once. A repair
   merely open, failed, closed without proof, or not explicitly linked lifts
-  nothing. An ordinary operator request without that link still needs the
+  nothing, and neither does Benjamin's answer to that option: the ticket
+  waits for the link (af-fv8ca4). A linked repair whose code exists only on
+  the convoy's integration branch cannot be delivered on main: its worker asks
+  through `bin/escalation-door` with the option « Corriger dans le convoi »;
+  once answered so, code gives the repair back to the ticket
+  (`returned_repairs`) and its author, resumed, makes that fix on its branch
+  (af-t8hycw). An ordinary operator request without that link still needs the
   operator's answer. The same explicit link applies to a Ticket Evaluation
   stopped `evaluation_no_result` or `evaluation_outage`: its exact stop
   resumes once as `repair_delivered` only after the maintenance delivery is proven.

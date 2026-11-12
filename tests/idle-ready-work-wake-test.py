@@ -124,13 +124,16 @@ class IdleReadyWorkWakeTest(unittest.TestCase):
     def test_a_hung_notification_is_bounded_without_changing_wake_cooldown(self):
         self.run_tick("2026-09-28T10:00:00+00:00")
 
+        # The mail hangs 30 s and is cut at 0.5 s: past 15 s the tick waited
+        # for it. A hang of 2 s against 1.5 s was red at a load of 39 on 8
+        # cores, where starting the tool alone took more than 1 s (af-8a246o).
         started = time.monotonic()
         fired = self.run_tick(
-            "2026-09-28T10:15:01+00:00", mail_sleep="2", notify_timeout="0.5",
+            "2026-09-28T10:15:01+00:00", mail_sleep="30", notify_timeout="0.5",
         )
         elapsed = time.monotonic() - started
 
-        self.assertLess(elapsed, 1.5)
+        self.assertLess(elapsed, 15)
         self.assertTrue(fired["fired"])
         self.assertEqual(1, len(self.wake_calls()))
 

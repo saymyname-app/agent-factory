@@ -245,7 +245,9 @@ from typing import Any, Iterator
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
-from convoy_state import PROVEN_BY_TEST_OPTION, REEVALUATE_OPTION, STOP_COUNT_WHY, overridden_ticket  # noqa: E402
+from convoy_state import (  # noqa: E402
+    PROVEN_BY_TEST_OPTION, REEVALUATE_OPTION, STOP_COUNT_WHY, overridden_ticket, repair_answered_in_convoy,
+)
 from delivery_rules import moves_a_proof  # noqa: E402
 from factory_delivery_proof import delivery_readiness  # noqa: E402
 
@@ -1174,6 +1176,59 @@ def released_technical_repairs(ticket: dict[str, Any]) -> list[str]:
         and lift.get("exit_at") == record.get("exit_at") == exit_record.get("at") else []
 
 
+def linked_to_current_request(ticket: dict[str, Any]) -> list[dict[str, str]]:
+    """The repair links bound to the ticket's current request, parked or
+    already lifted: its operator-request exit, or its evaluation stop."""
+    record = ticket.get("technical_repairs")
+    if not isinstance(record, dict) or not isinstance(record.get("entries"), list):
+        return []
+    exit_record, stop = ticket.get("exit") or {}, ticket.get("stop") or {}
+    current = (exit_record.get("exit") == "operator_request" and record.get("exit_at") == exit_record.get("at")) \
+        or (stop.get("reason") in EVALUATION_STOPS and record.get("stop_at") == stop.get("at"))
+    return record["entries"] if current else []
+
+
+def returned_for_parking(ticket: dict[str, Any]) -> bool:
+    """A repair linked to the request that parks the ticket now was given
+    back to its author (bin/convoy-state return-technical-repair)."""
+    park, exit_record = ticket.get("park") or {}, ticket.get("exit") or {}
+    return any(entry.get("parked_at") == park.get("at") and entry.get("exit_at") == exit_record.get("at")
+               for entry in ticket.get("returned_repairs") or [])
+
+
+def settle_returned_repairs(convoy: Convoy, out: dict[str, Any]) -> None:
+    """A linked Factory repair answered « Corriger dans le convoi »
+    (IN_CONVOY_OPTION) never reaches main: its code lives on the
+    integration branch alone. Its link is removed and kept under
+    `returned_repairs`, and the ticket's author makes that fix on its
+    branch (af-t8hycw, R20 and af-8fk8nz)."""
+    returned = False
+    for ticket in convoy.tickets:
+        if ticket.get("status") == "closed":
+            continue
+        repairs = [entry["id"] for entry in linked_to_current_request(ticket)
+                   if repair_answered_in_convoy(read_bead(entry["id"]), entry["at"])]
+        if not repairs:
+            continue
+        try:
+            state_write("return-technical-repair", convoy.id, ticket["id"])
+            out.setdefault("returned_repairs", []).append({"id": ticket["id"], "repairs": repairs})
+            returned = True
+        except Refusal as exc:
+            out["refused"].append({"id": ticket["id"], "reason": str(exc)})
+    if returned:
+        convoy.load()
+
+
+def awaits_repair(ticket: dict[str, Any]) -> bool:
+    """A ticket whose own operator request was answered with
+    « Corriger par maintenance sur main » (lib/convoy_state.py
+    MAINTENANCE_OPTION): it waits for the repair the Mayor links to it."""
+    park = ticket.get("park") or {}
+    return park.get("origin") == ticket["id"] and park.get("cause") == "operator_request" \
+        and bool((park.get("answer") or {}).get("awaits_repair"))
+
+
 def delivered_technical_repairs(ticket: dict[str, Any]) -> list[str]:
     """Every linked repair, only after structural PR merge and exact-head
     CI proof. Open, failed and merely closed work keeps waiting."""
@@ -1768,7 +1823,8 @@ def close_red_repair(convoy: Convoy, ticket: dict[str, Any], reason: str) -> lis
     lifted: list[str] = []
     if ticket.get("park"):
         repairs = [part for repair in delivered_technical_repairs(ticket) for part in ("--repair", repair)]
-        lifted = state_write("lift-park", convoy.id, ticket["id"], "--request", ticket["id"], *repairs)["lifted"]
+        lifted = state_write("lift-park", convoy.id, ticket["id"], "--request", ticket["id"], *repairs,
+                             "--withdrawing")["lifted"]
     if (read_bead(ticket["id"]).get("metadata") or {}).get("gc.needs_benjamin") not in (None, "none"):
         passed(run([str(ESCALATION_BIN), "clear", ticket["id"]]), "escalation-door clear")
     state_write("withdraw-ticket", convoy.id, ticket["id"], "--reason", reason)
@@ -1869,7 +1925,7 @@ def close_exact_answered_r8(convoy: Convoy) -> dict[str, Any] | None:
             if "red" in replay:
                 replay.pop("error", None)
             lifted = state_write("lift-park", convoy.id, ticket["id"], "--request", ticket["id"],
-                                 "--option", authorization["response_option"])["lifted"]
+                                 "--option", authorization["response_option"], "--withdrawing")["lifted"]
             convoy.load()
             ticket = convoy.ticket(ticket["id"])
         metadata = read_bead(ticket["id"]).get("metadata") or {}
@@ -1965,6 +2021,13 @@ def evaluation_repair_due(ticket: dict[str, Any]) -> tuple[str, str, str] | None
     return "new", REPAIR_DELIVERED, f"repairs:{ref}/stop:{ticket['stop']['at']}"
 
 
+def green_at(ticket: dict[str, Any], tip: str) -> bool:
+    """The green proof of bin/tdd-step (the regression of a prefactoring)
+    is at `tip`, as bin/code-review and bin/ticket-evaluation read it."""
+    step = "prefactoring" if ticket.get("kind") == "prefactoring" else "green"
+    return ((ticket.get("tdd") or {}).get(step) or {}).get("commit") == tip
+
+
 def resume_due(ticket: dict[str, Any], alive: set[str]) -> tuple[str, str, str] | None:
     """What the pass owes a ticket at work, read on the tracker alone:
     ("new", cause, ref) a fact that asks for a resume not counted yet;
@@ -1999,6 +2062,13 @@ def resume_due(ticket: dict[str, Any], alive: set[str]) -> tuple[str, str, str] 
         merge = ticket.get("merge") or {}
         if merge.get("outcome") in RETURNED_MERGES and merge.get("ticket_commit") == ticket.get("tip"):
             return "new", "returned", f"merge:{merge.get('at')}/exit:{exit_at}"
+        tip, handoff = ticket.get("tip"), ticket.get("handoff") or {}
+        merged = merge.get("outcome") == "merged" and merge.get("ticket_commit") == tip
+        if tip and not merged and handoff.get("partial") is False and handoff.get("commit") == tip \
+                and not green_at(ticket, tip):
+            # Finished without its green at the tip: neither the review nor the
+            # Ticket Evaluation ever takes it, its author replays it (af-1row55).
+            return "new", "returned", f"unproven:{tip}/exit:{exit_at}"
         return None
     if exit_name is None and ticket.get("status") == "in_progress" and session and session not in alive:
         # Spec §5: a session that died without an exit is read as interrupted.
@@ -2360,7 +2430,9 @@ def legacy_repair_resume_due(ticket: dict[str, Any]) -> bool:
 
 def settle_lifts(convoy: Convoy, out: dict[str, Any]) -> None:
     """An answer of the operator that lifts a parking is applied by the
-    pass: any answer to the request an operator request left on its ticket;
+    pass: any answer to the request an operator request left on its ticket,
+    except « Corriger par maintenance sur main », which waits for the
+    delivery of the repair linked to it (af-fv8ca4);
     the option that accepts the deviation a Planning Exception asked about;
     the option that judges proven by its test what an evaluation's Planning
     Exception could not observe, or the one that has it evaluated again on
@@ -2452,6 +2524,13 @@ def settle_lifts(convoy: Convoy, out: dict[str, Any]) -> None:
         answer = park.get("answer")
         if ticket.get("status") == "closed" or park.get("origin") != ticket["id"] or not answer:
             continue
+        if park.get("cause") == "operator_request" and answer.get("awaits_repair") \
+                and not returned_for_parking(ticket):
+            # Answered « Corriger par maintenance sur main »: the ticket
+            # resumes once its linked repair is delivered, above, never on
+            # the answer (af-fv8ca4) -- unless that repair was given back
+            # to its author (settle_returned_repairs, af-t8hycw).
+            continue
         exceptions = ticket.get("planning_exceptions") or []
         accepted = bool(exceptions) and isinstance(exceptions, list) and exceptions[-1].get("accepted")
         # Raised by the Ticket Evaluation of a finished ticket: no entry under
@@ -2493,7 +2572,9 @@ def parked_origins(convoy: Convoy) -> dict[str, list[str]] | None:
     left = [t for t in convoy.tickets if t.get("status") != "closed"]
     if not left or not all(isinstance(t.get("park"), dict) and "origin" in t["park"] for t in left):
         return None
-    technical = {t["id"] for t in left if technical_repairs(t)}
+    # A technical wait, linked or answered to be repaired, is not the
+    # operator's to answer again.
+    technical = {t["id"] for t in left if technical_repairs(t) or awaits_repair(t)}
     origins: dict[str, list[str]] = {}
     for ticket in left:
         origin = ticket["park"]["origin"]
@@ -3388,6 +3469,9 @@ def advance_convoy(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
             out["repair_take_up"] = take_up
             if "error" in take_up or "message" in take_up or "unruled" in take_up:
                 return out
+    # A linked repair that can only be made in the convoy goes back to the
+    # ticket's author before the lifts read the links.
+    settle_returned_repairs(convoy, out)
     # The answers first: a ticket whose parking is lifted is resumed, and
     # those behind it started, by the same pass.
     settle_lifts(convoy, out)

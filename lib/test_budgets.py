@@ -20,6 +20,10 @@ them all, and every reader takes them from here:
   (a merge, a take-up, prefactoring); `bin/spec-integration` and `bin/spec-end`
   derive their full-regression deadline from it;
 - `criterion_test_seconds`: one criterion test run by bin/tdd-step;
+- `settle_seconds`: what a pass of convoy-advance spends before its merge
+  (reads, resumes, reviews settled): 579 s measured on 10/11/2026 under a
+  load of 15 to 30 on 8 vCPU (pass started 18:26:50 Paris, its
+  spec-integration merge at 18:36:29), rounded up to 600;
 - `margin_seconds`, `alert_ratio`.
 
 `refresh` sets `green_seconds` and `full_seconds` to 1.5 times the slowest of
@@ -30,8 +34,12 @@ class in each successful run. Figures are rounded up to the minute; a kind with
 fewer than three runs keeps its figure. `show` prints the budgets, the deadlines
 derived from them, the last runs and how many more criterion classes the full
 series holds before its alert. `check-order` exits 1 when the order
-convoy-advance gives a pass less than one wait and two full runs (a take-up
-control, then the tests of the merged result).
+convoy-advance gives a pass less than its settlement and two full
+regression deadlines (a take-up control, then the tests of the merged
+result), each with its own wait for the host. Until 10/11/2026 it counted
+one wait for the two runs and none for the settlement: 90 min against a
+worst case of 110, and three passes were killed at 90 min in 21 h, one of
+them after a green regression whose merge was never written (af-8cfygl).
 """
 from __future__ import annotations
 
@@ -48,7 +56,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FILE = Path("config") / "test-budgets.json"
 ORDER = Path("orders") / "convoy-advance.toml"
 DEFAULTS = {"host_wait_seconds": 600, "green_seconds": 600, "full_seconds": 600, "criterion_test_seconds": 600,
-            "margin_seconds": 60, "alert_ratio": 0.8}
+            "settle_seconds": 600, "margin_seconds": 60, "alert_ratio": 0.8}
 # Anywhere in the output: a green piece holds it inside the JSON answer of
 # bin/tdd-step, a merged piece on a line of its own.
 TOOK = re.compile(r"regression: took (\d+)s [^\n\"]*\((green|full)\b")
@@ -74,8 +82,9 @@ def deadline(budgets: dict, kind: str) -> int:
 
 
 def pass_seconds(budgets: dict) -> int:
-    """One pass of convoy-advance: one wait, two full runs, two margins."""
-    return int(budgets["host_wait_seconds"] + 2 * budgets["full_seconds"] + 2 * budgets["margin_seconds"])
+    """One pass of convoy-advance: its settlement, then two full regression
+    deadlines (each run waits for the host on its own)."""
+    return int(budgets["settle_seconds"] + 2 * deadline(budgets, "full"))
 
 
 def runs(store: Path) -> list[dict]:

@@ -120,7 +120,7 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state release-outcome-evaluation CONVOY --state-file PATH [--state-file PATH] [--withdraw]
     convoy-state stop-outcome-evaluation    CONVOY (--commit SHA --reason REASON --detail LINE | --raised)
     convoy-state link-outcome-repair        CONVOY --repair BEAD
-    convoy-state lift-outcome-stop          CONVOY --commit SHA
+    convoy-state lift-outcome-stop          CONVOY --commit SHA [--outdated-by SHA]
     convoy-state classify-finding   CONVOY TICKET --item out_of_ticket.N --as repaired|proposal|dismissed
                                     --recorded-by SESSION [--reason LINE] [--file PATH]
     convoy-state set-outcome-repair CONVOY (--repair TICKET | --refused LINE) (--story N | --ticket TICKET --item out_of_ticket.N)
@@ -251,6 +251,9 @@ KEY_CRITERIA = PREFIX + "criteria"
 KEY_RESUME = PREFIX + "resume"
 KEY_PARK_LIFTS = PREFIX + "park_lifts"
 KEY_TECHNICAL_REPAIRS = PREFIX + "technical_repairs"
+# The linked repairs answered IN_CONVOY_OPTION, given back to the ticket's
+# author: history, oldest first (af-t8hycw).
+KEY_RETURNED_REPAIRS = PREFIX + "returned_repairs"
 KEY_GROUPED_REQUEST = PREFIX + "grouped_request"
 KEY_SPEC_END = PREFIX + "spec_end"
 KEY_END_REVIEW = PREFIX + "end_review"
@@ -291,6 +294,18 @@ KEY_GRAPH_DIGEST = "gc.graph_digest"
 KEY_NEEDS_BENJAMIN = "gc.needs_benjamin"
 KEY_RESPONSE_OPTION = "gc.escalation_response_option"
 KEY_RESPONSE_AT = "gc.escalation_response_at"
+# The options of that request, as bin/escalation-door stored them. Read only.
+KEY_QUE_FAIRE = "gc.escalation_que_faire"
+# The one option a Factory defect's operator_request offers
+# (docs/TICKET_AUTHOR.md, « Factory defects are fixed on main »): its answer
+# says the ticket resumes once its linked maintenance is delivered, never on
+# the answer itself (af-fv8ca4: R13 and R20 resumed without their repair).
+MAINTENANCE_OPTION = "Corriger par maintenance sur main"
+# The option a linked Factory-maintenance repair offers when the code it
+# must change exists only on the convoy's integration branch: no PR to main
+# reaches it, so the ticket's own author makes that fix on its branch
+# (af-t8hycw: R20 waited for af-8fk8nz, answered so, for ever).
+IN_CONVOY_OPTION = "Corriger dans le convoi"
 # The key Gas City and bin/ticket-exit read the session of a bead under.
 KEY_SESSION_NAME = "gc.session_name"
 
@@ -2096,6 +2111,62 @@ def operator_answer(metadata: dict[str, Any], since: str) -> dict[str, str] | No
     return {"option": option, "at": at}
 
 
+def answered_option_is(metadata: dict[str, Any], option: str | None, named: str) -> bool:
+    """Whether the option `option` of the request a bead carries is the
+    option `named`, alone or followed by its detail (« Corriger par
+    maintenance sur main : serve_sessions … », R20)."""
+    raw = metadata.get(KEY_QUE_FAIRE)
+    if option is None or raw is None:
+        return False
+    try:
+        options = json.loads(raw) if isinstance(raw, str) else raw
+    except ValueError:
+        return False
+    return isinstance(options, list) and any(
+        isinstance(entry, dict) and entry.get("lettre") == option and isinstance(entry.get("option"), str)
+        and (entry["option"] == named or entry["option"].startswith(named + " "))
+        for entry in options)
+
+
+def answer_awaits_repair(metadata: dict[str, Any], option: str | None) -> bool:
+    """Whether the option answered to the request a bead carries is
+    MAINTENANCE_OPTION: the parking it answers is lifted by the delivery of
+    the repair linked to it (link-technical-repair), not by the answer."""
+    return answered_option_is(metadata, option, MAINTENANCE_OPTION)
+
+
+def repair_answered_in_convoy(repair: dict[str, Any], linked_at: str) -> bool:
+    """Whether a linked repair's own request, answered after it was linked,
+    took IN_CONVOY_OPTION: its fix is the ticket's to make, not main's."""
+    metadata = repair.get("metadata") or {}
+    answer = operator_answer(metadata, linked_at)
+    return answer is not None and answered_option_is(metadata, answer["option"], IN_CONVOY_OPTION)
+
+
+def returned_in_generation(metadata: dict[str, Any], park: dict[str, Any]) -> bool:
+    """Whether a repair linked to the operator request that parks the
+    ticket now was given back to its author (return-technical-repair)."""
+    if KEY_RETURNED_REPAIRS not in metadata or KEY_EXIT not in metadata:
+        return False
+    exit_record = stored_record(metadata[KEY_EXIT], ("exit", "at"))
+    return any(entry.get("parked_at") == park["at"] and entry.get("exit_at") == exit_record["at"]
+               for entry in returned_repairs_record(metadata[KEY_RETURNED_REPAIRS]))
+
+
+def current_technical_repairs(metadata: dict[str, Any], park: dict[str, Any] | None) -> list[str]:
+    """The repairs linked to the operator request that parks the ticket
+    now: bound to this parking and to the Ticket Exit that raised it."""
+    if park is None or park["cause"] != "operator_request" or KEY_TECHNICAL_REPAIRS not in metadata \
+            or KEY_EXIT not in metadata:
+        return []
+    record = technical_repairs_record(metadata[KEY_TECHNICAL_REPAIRS])
+    exit_record = stored_record(metadata[KEY_EXIT], ("exit", "at"))
+    if exit_record["exit"] != "operator_request" or record.get("parked_at") != park["at"] \
+            or record.get("exit_at") != exit_record["at"]:
+        return []
+    return [entry["id"] for entry in record["entries"]]
+
+
 def proven_by_test_at_lift(park: dict[str, Any], option: str | None, metadata: dict[str, Any]) -> list[dict[str, str]]:
     """What the operator's answer judges proven by its criterion test when
     it lifts the parking an evaluation's Planning Exception caused: with the
@@ -2122,6 +2193,8 @@ def park_rendered(record: dict[str, Any], ticket_id: str, metadata: dict[str, An
     """The parking with the answer given to the request of the ticket that
     was asked: the one whose exit parked it, never those behind it."""
     answer = operator_answer(metadata, record["at"]) if record["origin"] == ticket_id else None
+    if answer and record["cause"] == "operator_request" and answer_awaits_repair(metadata, answer["option"]):
+        answer = {**answer, "awaits_repair": True}
     return {**record, "answer": answer}
 
 
@@ -2192,6 +2265,23 @@ def technical_repairs_record(raw: Any) -> dict[str, Any]:
             raise Refusal(f"réparation technique liée mal formée : {entry!r}")
         seen.add(entry["id"])
     return record
+
+
+def returned_repairs_record(raw: Any) -> list[dict[str, Any]]:
+    """The linked repairs given back to the ticket's author, oldest first:
+    the repair, when it was linked, the request generation it was bound to
+    (`exit_at` and `parked_at`, or `stop_at`) and when it was given back."""
+    entries = stored_record(raw, ("entries",))["entries"]
+    if not isinstance(entries, list) or not entries:
+        raise Refusal(f"réparations rendues au ticket mal formées : {entries!r}")
+    for entry in entries:
+        generation = set(entry) - {"id", "linked_at", "at"} if isinstance(entry, dict) else None
+        if generation not in ({"exit_at", "parked_at"}, {"stop_at"}) \
+                or not isinstance(entry.get("id"), str) or not BEAD_ID_RE.match(entry["id"]) \
+                or any(not isinstance(entry.get(name), str) or not entry[name] or "\n" in entry[name]
+                       for name in ("linked_at", "at", *generation)):
+            raise Refusal(f"réparation rendue au ticket mal formée : {entry!r}")
+    return entries
 
 
 def park_lifts_record(raw: Any) -> list[dict[str, Any]]:
@@ -3033,12 +3123,19 @@ def outcome_evaluation_record(raw: Any) -> dict[str, Any]:
                 raise Refusal(f"réparation liée à un arrêt qui ne se lève pas par code : {stop!r}")
             technical_repairs_record(encode({"stop_at": stop["at"], "entries": stop["repairs"]}))
     for lift in record.get("lifts", []) if isinstance(record.get("lifts", []), list) else [None]:
-        if not isinstance(lift, dict) or set(lift) != {"reason", "commit", "stop_at", "repairs", "at"} \
-                or lift["reason"] not in OUTCOME_LIFTABLE_STOPS or not isinstance(lift["repairs"], list) \
-                or not lift["repairs"] or any(not isinstance(repair, str) or not BEAD_ID_RE.match(repair)
-                                              for repair in lift["repairs"]):
+        # Lifted by its delivered repairs, or set aside because the gate left its commit (af-mmefvq).
+        outdated = isinstance(lift, dict) and "outdated_by" in lift
+        repairs = lift.get("repairs") if isinstance(lift, dict) else None
+        if not isinstance(lift, dict) or not {"reason", "commit", "stop_at", "at"} <= set(lift) \
+                or set(lift) - {"reason", "commit", "stop_at", "repairs", "outdated_by", "at"} \
+                or lift["reason"] not in (OUTCOME_STOPS if outdated else OUTCOME_LIFTABLE_STOPS) \
+                or (repairs is not None or not outdated) and (
+                    not isinstance(repairs, list) or not repairs
+                    or any(not isinstance(repair, str) or not BEAD_ID_RE.match(repair) for repair in repairs)):
             raise Refusal(f"levée d'arrêt de l'Outcome Evaluation mal formée : {lift!r}")
         valid_commit(lift["commit"], "commit de la levée")
+        if outdated and valid_commit(lift["outdated_by"], "commit qui périme l'arrêt") == lift["commit"]:
+            raise Refusal(f"arrêt de l'Outcome Evaluation périmé par son propre commit : {lift!r}")
         single_line(lift["at"], "date de la levée")
     if "lifts" in record and not record["lifts"]:
         raise Refusal("levées d'arrêt de l'Outcome Evaluation vides")
@@ -3382,7 +3479,7 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
             KEY_MARK, KEY_DEMONSTRATION, KEY_USER_STORIES, KEY_LAUNCH_RECIPE, KEY_PROTOTYPE_FOLD, KEY_BRANCH, KEY_EXIT,
             KEY_STOP, KEY_HANDOFF, KEY_PARK, KEY_MERGE, KEY_SESSION, KEY_TEST_REVIEW, KEY_CODE_REVIEW, KEY_MODELS,
             KEY_EVALUATION, KEY_FIDELITY, KEY_PLANNING_EXCEPTIONS, KEY_CORRECTION, KEY_OVERRIDES, KEY_CRITERIA,
-            KEY_RESUME, KEY_PARK_LIFTS, KEY_TECHNICAL_REPAIRS, KEY_FINDINGS, KEY_BLOCKING_RED,
+            KEY_RESUME, KEY_PARK_LIFTS, KEY_TECHNICAL_REPAIRS, KEY_RETURNED_REPAIRS, KEY_FINDINGS, KEY_BLOCKING_RED,
         ):
             continue
         raw = metadata[key]
@@ -3456,6 +3553,7 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
         ("session", KEY_SESSION, session_record),
         ("resume", KEY_RESUME, resume_record),
         ("technical_repairs", KEY_TECHNICAL_REPAIRS, technical_repairs_record),
+        ("returned_repairs", KEY_RETURNED_REPAIRS, returned_repairs_record),
         ("finding_classifications", KEY_FINDINGS, findings_record),
         ("blocking_red", KEY_BLOCKING_RED, blocking_red_record),
     ):
@@ -5530,6 +5628,39 @@ def cmd_link_technical_repair(args: argparse.Namespace) -> int:
     return done(args.convoy, args.ticket, {KEY_TECHNICAL_REPAIRS: value})
 
 
+def cmd_return_technical_repair(args: argparse.Namespace) -> int:
+    """Give back to the ticket's author every repair linked to its current
+    request whose own request was answered IN_CONVOY_OPTION after the link,
+    read here at the write: the link is removed (the repairs still linked
+    stay) and kept under `returned_repairs`, so the resume tells the author
+    to make that fix on its branch. Refused when none was so answered."""
+    ticket = marked_ticket(args.convoy, args.ticket)
+    metadata = metadata_of(ticket)
+    if ticket.get("status") == "closed" or KEY_TECHNICAL_REPAIRS not in metadata:
+        raise Refusal(f"le ticket {args.ticket} n'a aucune réparation technique liée à rendre")
+    record = technical_repairs_record(metadata[KEY_TECHNICAL_REPAIRS])
+    generation = {name: value for name, value in record.items() if name != "entries"}
+    returned = [entry for entry in record["entries"] if repair_answered_in_convoy(load_bead(entry["id"]), entry["at"])]
+    if not returned:
+        raise Refusal(
+            f"aucune réparation liée à {args.ticket} n'a reçu la réponse « {IN_CONVOY_OPTION} » : "
+            "elles attendent leur livraison")
+    history = returned_repairs_record(metadata[KEY_RETURNED_REPAIRS]) if KEY_RETURNED_REPAIRS in metadata else []
+    at = now()
+    history += [{"id": entry["id"], "linked_at": entry["at"], **generation, "at": at} for entry in returned]
+    left = [entry for entry in record["entries"] if entry not in returned]
+    values: dict[str, Any] = {KEY_RETURNED_REPAIRS: encode({"entries": history})}
+    update = ["bd", "update", args.ticket, "--set-metadata", f"{KEY_RETURNED_REPAIRS}={values[KEY_RETURNED_REPAIRS]}"]
+    if left:
+        values[KEY_TECHNICAL_REPAIRS] = encode({**record, "entries": left})
+        update += ["--set-metadata", f"{KEY_TECHNICAL_REPAIRS}={values[KEY_TECHNICAL_REPAIRS]}"]
+    else:
+        values[KEY_TECHNICAL_REPAIRS] = None
+        update += ["--unset-metadata", KEY_TECHNICAL_REPAIRS]
+    run_gc(update)
+    return done(args.convoy, args.ticket, values)
+
+
 def cmd_lift_park(args: argparse.Namespace) -> int:
     """Lift the parking a ticket caused (T20): on itself and on every ticket
     parked behind it, once the request `--request` was answered. A ticket
@@ -5577,6 +5708,22 @@ def cmd_lift_park(args: argparse.Namespace) -> int:
                 waiting.append(f"{repair_id} ({readiness['reason']})")
         if waiting:
             raise Refusal("réparations techniques sans preuve de livraison : " + ", ".join(waiting))
+    elif park["cause"] == "operator_request" and ticket.get("status") != "closed" and not args.withdrawing:
+        # Read here, at the write, not from the caller's earlier read: a
+        # repair linked since then holds the parking (af-fv8ca4, R22, R20).
+        # A lift the caller follows with withdraw-ticket resumes nothing
+        # (--withdrawing): it is not held.
+        linked = current_technical_repairs(metadata, park)
+        if linked:
+            raise Refusal(
+                f"le ticket {args.ticket} attend ses réparations techniques liées ({', '.join(linked)}) : "
+                "seule leur livraison prouvée lève son parcage (--repair)")
+        # A linked repair answered IN_CONVOY_OPTION was given back to the
+        # author: nothing is left to deliver on main (af-t8hycw).
+        if answer_awaits_repair(metadata, option) and not returned_in_generation(metadata, park):
+            raise Refusal(
+                f"le ticket {args.ticket} a reçu la réponse « {MAINTENANCE_OPTION} » : son parcage se lève à la "
+                "livraison prouvée de la réparation liée (factory-work-dispatch --technical-request), pas à la réponse")
     lifts = park_lifts_record(metadata[KEY_PARK_LIFTS]) if KEY_PARK_LIFTS in metadata else []
     resumes = counter_value(metadata.get(COUNTER_PREFIX + "resumes"), "resumes")
     taken = resumes_taken(metadata)
@@ -7994,16 +8141,27 @@ def cmd_lift_outcome_stop(args: argparse.Namespace) -> int:
     stop is kept under `lifts`, the round it stopped on is set aside, and
     the evaluation may be opened again at that commit. No counter moves: a
     stop the factory caused takes no round of the end (af-ip0nrq). Whether
-    the repairs are delivered is read by the caller, bin/outcome-evaluation."""
+    the repairs are delivered is read by the caller, bin/outcome-evaluation.
+    `--outdated-by` sets aside, the same way, a stop of any reason whose
+    commit the gate has left for that one (af-mmefvq): it is kept under
+    `lifts` with that commit, and no counter moves either."""
     _, _, _, record = outcome_target(args)
     commit = valid_commit(args.commit, "commit de la levée")
+    outdated_by = valid_commit(args.outdated_by, "commit qui périme l'arrêt") if args.outdated_by else None
     stop = record.get("stop")
-    if not stop or not stop.get("repairs") or stop["commit"] != commit:
+    if outdated_by is not None:
+        if not stop or stop["commit"] != commit or outdated_by == commit:
+            raise Refusal(f"aucun arrêt de l'Outcome Evaluation du convoi {args.convoy} au commit {commit} que le "
+                          f"commit {outdated_by} périme : rien à lever")
+    elif not stop or not stop.get("repairs") or stop["commit"] != commit:
         raise Refusal(f"aucun arrêt de l'Outcome Evaluation du convoi {args.convoy} relié à une maintenance au "
                       f"commit {commit} : rien à lever")
-    record["lifts"] = record.get("lifts", []) + [{
-        "reason": stop["reason"], "commit": commit, "stop_at": stop["at"],
-        "repairs": [entry["id"] for entry in stop["repairs"]], "at": now()}]
+    lift = {"reason": stop["reason"], "commit": commit, "stop_at": stop["at"]}
+    if stop.get("repairs"):
+        lift["repairs"] = [entry["id"] for entry in stop["repairs"]]
+    if outdated_by is not None:
+        lift["outdated_by"] = outdated_by
+    record["lifts"] = record.get("lifts", []) + [{**lift, "at": now()}]
     del record["stop"]
     values = {KEY_OUTCOME_EVALUATION: encode(outcome_evaluation_record(encode(record)))}
     write_metadata(args.convoy, values)
@@ -8163,11 +8321,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--cause")
     p.add_argument("--detail")
     command("link-technical-repair", cmd_link_technical_repair).add_argument("--repair")
+    command("return-technical-repair", cmd_return_technical_repair)
     p = command("lift-park", cmd_lift_park)
     p.add_argument("--request")
     p.add_argument("--option")
     p.add_argument("--repair", action="append", default=[])
     p.add_argument("--reset-cause")
+    p.add_argument("--withdrawing", action="store_true")
     command("migrate-repair-resume", cmd_migrate_repair_resume)
     p = command("open-resume", cmd_open_resume)
     p.add_argument("--cause")
@@ -8264,7 +8424,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--detail")
     p.add_argument("--raised", action="store_true")
     command("link-outcome-repair", cmd_link_outcome_repair, ticket=False).add_argument("--repair")
-    command("lift-outcome-stop", cmd_lift_outcome_stop, ticket=False).add_argument("--commit")
+    p = command("lift-outcome-stop", cmd_lift_outcome_stop, ticket=False)
+    p.add_argument("--commit")
+    p.add_argument("--outdated-by")
     p = command("classify-finding", cmd_classify_finding)
     p.add_argument("--item")
     p.add_argument("--as", dest="classification")
