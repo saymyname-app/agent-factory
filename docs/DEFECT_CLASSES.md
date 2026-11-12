@@ -348,6 +348,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/factory-delivery-proof-test.py ClaimedShippedBead`,
   `python3 tests/ticket-graph-publish-test.py TicketGraphPublishBeadModeTest.test_a_mayor_wake_delivered_but_slow_to_answer_is_not_reported_as_lost`,
   `bash tests/factory-watchdog-test.sh`,
+  `python3 tests/factory-watchdog-test.py StalledTicketRules`,
   `bash tests/pr-autopilot-time-budget-test.sh`,
   `bash tests/planning-artifacts-close-test.sh`,
   `bash tests/convoy-parent-sweep-test.sh`,
@@ -365,7 +366,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   au contrôle requis vert ; il relit aussi GitHub après toute demande de fusion
   directe et n'annonce la fusion que si le serveur répond `MERGED`. Le contrôle
   9 du gardien (#688) couvre les tickets que personne ne bouge, pas les autres
-  signaux. Le quatrième refuse qu'un workflow encore actif ou une demande de
+  signaux ; `StalledTicketRules` tient qu'un ticket qui attend ce que Benjamin
+  a choisi (le Planning Run, une réparation liée encore ouverte) n'est pas
+  signalé, par la règle de levée que la passe applique (af-hnh16e). Le quatrième refuse qu'un workflow encore actif ou une demande de
   rerun refusée soit annoncé comme déjà retenté. Le contrôle `tdd-step`
   conserve le début et la fin d'une longue sortie bornée, dont le nom du
   contrôle en échec. Le contrôle `role-adoption-trial-codex` tient la minute de
@@ -450,7 +453,11 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   af-vy9ajj (le 12/11/2026, #866 et #867, sans rapport entre elles, rouges
   sur `bounded-process` parce que la vérification de fidélité détachée de
   `bin/convoy-advance`, listée à la ligne 3768, avait glissé à 3772 et à
-  3780).
+  3780) ; af-hnh16e (le 12/11/2026, le gardien signalait « sans suite » R23
+  af-ujme6p, renvoyée au Planning Run par la réponse de Benjamin à sa
+  Planning Exception, et R16 af-yv2g3n, qui attendait sa réparation liée
+  af-33j358 encore ouverte : la règle de levée du parcage, tenue dans
+  `convoy-advance` seul, est partagée par `lib/delivery_rules.py`).
 - Ouvertes : aucune connue.
 
 ## L — Ticket rouvert réclamable par un ouvrier lancé pour un autre

@@ -250,9 +250,11 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 import advance_pass  # noqa: E402
 from convoy_state import (  # noqa: E402
-    PROVEN_BY_TEST_OPTION, REEVALUATE_OPTION, STOP_COUNT_WHY, overridden_ticket, repair_answered_in_convoy,
+    STOP_COUNT_WHY, overridden_ticket, repair_answered_in_convoy,
 )
-from delivery_rules import green_seen_once, moves_a_proof  # noqa: E402
+from delivery_rules import (  # noqa: E402
+    EVALUATION_STOPS, answer_lifts_planning_exception, green_seen_once, moves_a_proof, technical_repairs,
+)
 from factory_delivery_proof import delivery_readiness  # noqa: E402
 
 
@@ -312,8 +314,6 @@ PASS_RUNNING = "passe déjà en cours : elle avance les convois, celle-ci ne fai
 
 # The stop the code review of a ticket writes (bin/convoy-state).
 CODE_REVIEW_STOP = "code_review_no_result"
-# The stops the Ticket Evaluation of a ticket writes (bin/convoy-state).
-EVALUATION_STOPS = ("evaluation_no_result", "evaluation_outage")
 EVALUATION_OUTAGE = "evaluation_outage"
 # A structurally delivered Factory repair explicitly linked to the current
 # operator request or evaluation-outage stop. It has its own bounded bucket:
@@ -1154,22 +1154,6 @@ def resume_on_its_way(ticket: dict[str, Any]) -> bool:
     if not last.get("launches") or last.get("session") != (ticket.get("session") or {}).get("name"):
         return False
     return read_bead(last["launches"][-1]["bead"]).get("status") != "closed"
-
-
-def technical_repairs(ticket: dict[str, Any]) -> list[str]:
-    """The Factory-maintenance links bound to the current request."""
-    record = ticket.get("technical_repairs")
-    park, exit_record = ticket.get("park") or {}, ticket.get("exit") or {}
-    stop = ticket.get("stop") or {}
-    if not isinstance(record, dict):
-        return []
-    current_parking = park.get("cause") == "operator_request" and exit_record.get("exit") == "operator_request" \
-        and record.get("parked_at") == park.get("at") and record.get("exit_at") == exit_record.get("at")
-    current_stop = stop.get("reason") in EVALUATION_STOPS and record.get("stop_at") == stop.get("at")
-    if not current_parking and not current_stop:
-        return []
-    entries = record.get("entries")
-    return [entry["id"] for entry in entries] if isinstance(entries, list) else []
 
 
 def released_technical_repairs(ticket: dict[str, Any]) -> list[str]:
@@ -2544,14 +2528,8 @@ def settle_lifts(convoy: Convoy, out: dict[str, Any]) -> None:
             # the answer (af-fv8ca4) -- unless that repair was given back
             # to its author (settle_returned_repairs, af-t8hycw).
             continue
-        exceptions = ticket.get("planning_exceptions") or []
-        accepted = bool(exceptions) and isinstance(exceptions, list) and exceptions[-1].get("accepted")
-        # Raised by the Ticket Evaluation of a finished ticket: no entry under
-        # `planning_exceptions` (Benjamin, 21/10/2026, af-ten1sp).
-        evaluated = ((ticket.get("exit") or {}).get("exit") == "finished"
-                     and ((ticket.get("evaluation") or {}).get("state") or {}).get("outcome") == "planning_exception")
-        proven = evaluated and answer["option"] in (PROVEN_BY_TEST_OPTION, REEVALUATE_OPTION)
-        if park.get("cause") == "operator_request" or (park.get("cause") == "planning_exception" and (accepted or proven)):
+        if park.get("cause") == "operator_request" \
+                or (park.get("cause") == "planning_exception" and answer_lifts_planning_exception(ticket)):
             lifts.append((ticket["id"], ticket["id"], answer["option"], []))
     try:
         grouped = convoy.grouped or {}
