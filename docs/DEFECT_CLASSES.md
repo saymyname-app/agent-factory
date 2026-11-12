@@ -342,7 +342,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `bash tests/convoy-parent-sweep-test.sh`,
   `bash tests/factory-maintain-test.sh`,
   `bash tests/isolated-city-stop-guard-test.sh`,
-  `bash tests/ci-apt-install-test.sh` — partiel : le premier
+  `bash tests/ci-apt-install-test.sh`,
+  `python3 tests/bounded-process-test.py BoundedProcessTest.test_an_exception_keeps_its_name_when_lines_move_around_it` — partiel : le premier
   tient la frontière entre un report explicite (sortie 75, rejoué sans
   alerte) et une vraie panne répétée (bead et page Mayor) ; le deuxième tient
   la collecte VM Beads/Git/GitHub, le silence sur état inchangé, la route
@@ -396,7 +397,13 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   un `apt-get` hors de `bin/ci-apt-install`, qui passe à l'archive
   principale d'Ubuntu puis à la copie gardée de `config/ci-apt-kept/`
   (vérifiée par son SHA256SUMS) quand le miroir du runner ne répond pas :
-  une panne du dépôt de paquets n'est plus un contrôle rouge.
+  une panne du dépôt de paquets n'est plus un contrôle rouge. Le contrôle
+  `bounded-process` nomme chaque exception de
+  `config/bounded-process-exceptions.tsv` et
+  `config/detached-process-exceptions.tsv` par son fichier et sa fonction
+  (`#2` après la première d'une même fonction), jamais par son numéro de
+  ligne : une ligne ajoutée ailleurs dans le fichier ne rougit plus un
+  travail sans rapport.
 - Occurrences : #651, #679, #688, #717 ; af-npz9v1.50 ; #767 (armement local
   annoncé mais `autoMergeRequest=null`, af-npz9v1.50.1) ; af-ncg9qy ; #778
   (demande directe acceptée localement mais encore `AWAITING_CHECKS`,
@@ -428,7 +435,11 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   sans suite ~8 h le 11/11 sans alerte : la demande de fin de Spec portée par
   le convoi exemptait tous ses tickets, une session d'auteur vivante mais
   oisive après sa sortie comptait comme avancée, et le délai suivait le
-  budget d'une passe, 148 min, au lieu de 30 min de silence réel).
+  budget d'une passe, 148 min, au lieu de 30 min de silence réel) ;
+  af-vy9ajj (le 12/11/2026, #866 et #867, sans rapport entre elles, rouges
+  sur `bounded-process` parce que la vérification de fidélité détachée de
+  `bin/convoy-advance`, listée à la ligne 3768, avait glissé à 3772 et à
+  3780).
 - Ouvertes : aucune connue.
 
 ## L — Ticket rouvert réclamable par un ouvrier lancé pour un autre
