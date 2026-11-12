@@ -44,7 +44,8 @@ synthetic sources only:
   `bin/order-pause`, and for the settings and the upkeep `bin/provider-failover`,
   `bin/factory-maintain`, `bin/operator-config`) are the real ones, run on the tracker of the launch through a synthetic
   `gc` (`tests/fixtures/cockpit/synthetic-city/`): a gesture is recorded
-  there as in service, and read back from there (B, af-4uzgzm). A dataset
+  there as in service, and read back from there (B, af-4uzgzm), under
+  locks of the launch, never the host's (af-33j358). A dataset
   may say a door expires, or expires once its record is written
   (`doors`), and the cockpit gives up on a door after a few seconds.
 
@@ -830,6 +831,29 @@ def throwaway_repositories(home: str) -> str:
     return str(clone)
 
 
+# The locks of the doors that take one on the host by default
+# (`${XDG_RUNTIME_DIR:-/tmp}/agent-factory-<door>.lock`): each launch holds
+# its own, or the doors of launches side by side wait on one another beyond
+# ACTION_TIMEOUT_SECONDS (af-33j358, seen on R16 of af-strhoy). A lock the
+# launcher gives explicitly is kept.
+DOOR_LOCKS = {
+    "PROPOSAL_DOOR_LOCK_FILE": "proposal-door.lock",
+    "ESCALATION_DOOR_LOCK_FILE": "escalation-door.lock",
+}
+
+
+def door_locks(home: str) -> dict[str, str]:
+    """The runtime directory of the launch, in `home`, and the lock of each
+    door of DOOR_LOCKS in it: a door that falls back on XDG_RUNTIME_DIR for
+    its lock finds the launch's, never the host's."""
+    run = Path(home, "run")
+    run.mkdir(mode=0o700)
+    env = {"XDG_RUNTIME_DIR": str(run)}
+    for variable, name in DOOR_LOCKS.items():
+        env[variable] = os.environ.get(variable) or str(run / name)
+    return env
+
+
 def write_tracker_and_projects(city: synthetic_city.SyntheticCity, home: str) -> dict[str, str]:
     """Put what the tracker holds and the projects declared in `home`; the
     environment that makes the cockpit read them."""
@@ -1006,6 +1030,7 @@ def main(argv: list[str]) -> int:
         **write_tracker_and_projects(city, home),
         **write_knowledge_repos(city, home),
         **write_evidence(city, home),
+        **door_locks(home),
     }
     if city.retention_purge:
         purge_retained(city, env["EVIDENCE_STORE_DIR"])

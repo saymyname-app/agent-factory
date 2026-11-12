@@ -661,7 +661,13 @@ def cmd_start(args: argparse.Namespace) -> int:
                               "--state-file", str(Path(args.state_file).resolve())],
                              cwd="/", stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL, start_new_session=True,
-                             pass_fds=slot.fds if slot else ())
+                             pass_fds=slot.fds if slot else (),
+                             # R23 (af-ujme6p): a launch started from inside another launch (Essai from
+                             # a launched cockpit) must not hand its guard the caller's launch marks
+                             # marks: `stop` of the caller finds processes by FACTORY_LAUNCH_ID and would
+                             # kill this guard with it, leaving the product it owns running.
+                             env={k: v for k, v in os.environ.items()
+                                  if k not in ("FACTORY_LAUNCH_ID", "FACTORY_LAUNCH_DEADLINE", "FACTORY_LAUNCH_OWNER")})
     if slot:
         slot.release()  # the guard's copy holds it now
     try:

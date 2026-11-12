@@ -322,6 +322,12 @@ class SessionTrace:
         of its provider, or None): a session the first time it is seen,
         again while it runs, at most every TRANSCRIPT_EVERY_SECONDS, and once
         more when it stopped. Returns what the projection holds."""
+        if self._after is None:
+            # R20 (af-3l6hbt): a cockpit started again resumes the log of the
+            # supervisor where the projection it keeps stopped, not at its
+            # latest page: the sessions sent while it was stopped are read
+            # back, however many came after them.
+            self._after = self._kept_after()
         records, listed, logged, failed, after = [], {}, {}, set(), self._after
         for item in agents or []:
             record = session_record(item)
@@ -334,7 +340,8 @@ class SessionTrace:
         for event in events:
             seen = self._after or {}
             self._after = {**seen, event["type"]: max(seen.get(event["type"], 0), event["seq"])}
-            moment = {"kind": LOGGED[event["type"]], "id": event["session_id"], "at": _epoch(event["ts"])}
+            moment = {"kind": LOGGED[event["type"]], "id": event["session_id"], "at": _epoch(event["ts"]),
+                      "seq": event["seq"]}
             if moment["kind"] == "started":
                 moment["bead"] = event.get("bead")
             if moment["at"] is not None and (moment["kind"] != "started" or moment["bead"]):
@@ -381,6 +388,20 @@ class SessionTrace:
             self._after = after
         self._append(records)
         return self.read()
+
+    def _kept_after(self):
+        """{event type: the last seq the projection holds of it}, or None
+        when it holds none: the moments collected carry the seq of their
+        event in the log of the supervisor."""
+        types = {kind: event_type for event_type, kind in LOGGED.items()}
+        after = {}
+        with self._lock:
+            lines = self._lines()
+        for line in lines:
+            event_type, seq = types.get(line.get("kind")), line.get("seq")
+            if event_type and isinstance(seq, int) and not isinstance(seq, bool):
+                after[event_type] = max(after.get(event_type, 0), seq)
+        return after or None
 
     @staticmethod
     def _key(record):
