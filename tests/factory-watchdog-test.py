@@ -270,6 +270,26 @@ def _started_ticket(**fields):
     return ticket
 
 
+def _parked_by_its_exception(accepted, option="a", **fields):
+    """Exited on a Planning Exception, parked by it, answered by `option`."""
+    answer = {"at": "2026-09-16T09:30:00Z", "option": option} if option else None
+    return _started_ticket(**{
+        "exit": {"at": "2026-09-16T09:00:00Z", "exit": "planning_exception"},
+        "park": {"at": "2026-09-16T08:59:00Z", "cause": "planning_exception", "origin": "af-r2c0tx", "answer": answer},
+        "planning_exceptions": [{"at": "2026-09-16T08:58:00Z", "kind": "semantic", "accepted": accepted,
+                                 "state": "resolved" if option else "open"}], **fields})
+
+
+def _waiting_for_its_repair(parked_at="2026-09-16T08:59:00Z"):
+    """Parked by its own operator request, answered, one Factory repair linked."""
+    return _started_ticket(
+        exit={"at": "2026-09-16T09:00:00Z", "exit": "operator_request"},
+        park={"at": "2026-09-16T08:59:00Z", "cause": "operator_request", "origin": "af-r2c0tx",
+              "answer": {"at": "2026-09-16T09:20:00Z", "option": "a", "awaits_repair": True}},
+        technical_repairs={"exit_at": "2026-09-16T09:00:00Z", "parked_at": parked_at,
+                           "entries": [{"at": "2026-09-16T09:30:00Z", "id": "af-33j358"}]})
+
+
 def _stalled(ticket, alive=(), open_beads=(), listed=(), minutes=30, pass_started=None):
     return assess_ticket(ticket, "af-pqfxmd", NOW, set(alive), set(open_beads), set(listed), minutes, pass_started)
 
@@ -283,7 +303,9 @@ class StalledTicketRules(unittest.TestCase):
     its convoy is on Benjamin's list, and nothing was recorded for it within
     the threshold. af-xgd1rd: R16 and R19 of convoy af-strhoy sat ~8 h on
     11/11 unflagged -- an author alive but idle after its exit, and a convoy
-    request on the Spec end, each counted as someone moving the ticket."""
+    request on the Spec end, each counted as someone moving the ticket.
+    af-hnh16e: R23 and R16 of the same convoy flagged on 12/11 while each
+    waited for what Benjamin chose -- the Planning Run, a linked repair."""
 
     def test_a_ticket_nobody_moves_past_the_threshold_is_flagged(self):
         # T02R2 at 20:56 Paris: stopped, override recorded at 18:54, nothing since.
@@ -360,6 +382,38 @@ class StalledTicketRules(unittest.TestCase):
         # Dispatched through the door, and nobody picked it up.
         self.assertIsNotNone(_stalled(_started_ticket(status="open", session=None, exit=None)))
 
+    def test_a_ticket_sent_to_the_planning_run_by_the_answer_is_not_flagged(self):
+        # af-hnh16e, R23 af-ujme6p on 12/11: its Planning Exception answered
+        # « Trancher dans le Planning Run » at 08:45Z, parked for Benjamin since.
+        self.assertIsNone(_stalled(_parked_by_its_exception(accepted=False)))
+
+    def test_an_accepted_planning_exception_still_parked_is_flagged(self):
+        # The answer lifts this parking: a pass that did not lift it is stalled.
+        self.assertIsNotNone(_stalled(_parked_by_its_exception(accepted=True)))
+
+    def test_an_evaluation_exception_is_flagged_only_once_its_answer_lifts_it(self):
+        # Raised by the Ticket Evaluation of a finished ticket: no entry under planning_exceptions.
+        for option, flagged in (("a", True), ("c", True), ("b", False)):
+            with self.subTest(option=option):
+                ticket = _parked_by_its_exception(accepted=False, option=option, planning_exceptions=[],
+                                                  exit={"at": "2026-09-16T09:00:00Z", "exit": "finished"},
+                                                  evaluation={"state": {"outcome": "planning_exception"}})
+                self.assertEqual(flagged, _stalled(ticket) is not None)
+
+    def test_an_unanswered_planning_exception_is_held_by_its_request_only(self):
+        ticket = _parked_by_its_exception(accepted=False, option=None)
+        self.assertIsNotNone(_stalled(ticket))
+        self.assertIsNone(_stalled(ticket, listed={"af-r2c0tx"}))
+
+    def test_an_open_factory_repair_linked_to_the_request_holds_the_ticket(self):
+        # R16 af-yv2g3n on 12/11: answered « Corriger par maintenance sur main »,
+        # waiting for its linked repair af-33j358, still open.
+        ticket = _waiting_for_its_repair()
+        self.assertIsNone(_stalled(ticket, open_beads={"af-33j358"}))
+        self.assertIsNotNone(_stalled(ticket))  # delivered and still parked: the pass did not lift it
+        stale = _waiting_for_its_repair(parked_at="2026-09-16T07:00:00Z")
+        self.assertIsNotNone(_stalled(stale, open_beads={"af-33j358"}))  # bound to an earlier request
+
     def test_the_lookups_name_the_grouped_request_the_tickets_at_stake_and_their_launches(self):
         show = {"convoy": {"id": "af-pqfxmd", "grouped_request": {"bead": "af-grp001"}}, "tickets": [
             _started_ticket(correction={"launches": [{"at": "2026-09-16T08:10:00Z", "bead": "af-co0ee2"}]}),
@@ -368,6 +422,10 @@ class StalledTicketRules(unittest.TestCase):
             _started_ticket(id="af-new", gates={}),
         ]}
         self.assertEqual(["af-grp001", "af-r2c0tx", "af-co0ee2"], stalled_lookups(show))
+
+    def test_the_lookups_name_the_factory_repairs_linked_to_the_request(self):
+        show = {"convoy": {"id": "af-strhoy"}, "tickets": [_waiting_for_its_repair()]}
+        self.assertEqual(["af-r2c0tx", "af-33j358"], stalled_lookups(show))
 
 
 class Cli(unittest.TestCase):

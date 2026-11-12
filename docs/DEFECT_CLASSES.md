@@ -450,7 +450,11 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   af-vy9ajj (le 12/11/2026, #866 et #867, sans rapport entre elles, rouges
   sur `bounded-process` parce que la vérification de fidélité détachée de
   `bin/convoy-advance`, listée à la ligne 3768, avait glissé à 3772 et à
-  3780).
+  3780) ; af-hnh16e (le 12/11/2026, le gardien signalait « sans suite » R23
+  af-ujme6p, renvoyée au Planning Run par la réponse de Benjamin à sa
+  Planning Exception, et R16 af-yv2g3n, qui attendait sa réparation liée
+  af-33j358 encore ouverte : la règle de levée du parcage, tenue dans
+  `convoy-advance` seul, est partagée par `lib/delivery_rules.py`).
 - Ouvertes : aucune connue.
 
 ## L — Ticket rouvert réclamable par un ouvrier lancé pour un autre

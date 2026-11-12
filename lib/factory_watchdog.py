@@ -36,7 +36,10 @@ failure behind a CLOSED status":
              watcher noticed (af-1fvzns). On 11/11 R16 and R19 sat ~8 h
              unflagged: the convoy's own request (on its Spec end) exempted
              every ticket, and an idle author session alive after its exit
-             counted as moving it (af-xgd1rd).
+             counted as moving it (af-xgd1rd). A ticket whose wait Benjamin
+             already chose is not stalled: a Planning Exception he sent to
+             the Planning Run (R23, af-hnh16e), or a linked Factory repair
+             still open.
 
 Each assessor is a pure function over already-fetched JSON, so it is
 unit-testable without gc/gh. bin/factory-watchdog does the fetching, paging,
@@ -61,6 +64,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable
 
 import advance_pass
+from delivery_rules import answer_lifts_planning_exception, technical_repairs
 import test_budgets
 
 GATE_AGE_MINUTES_DEFAULT = 30
@@ -343,13 +347,23 @@ def grouped_request_covers(show: dict[str, Any]) -> set[str]:
             if isinstance(ticket, dict) and isinstance(ticket.get("park"), dict) and not ticket["park"].get("answer")}
 
 
+def _awaits_planning_run(ticket: dict[str, Any]) -> bool:
+    """Parked by its own Planning Exception, answered, and that answer does
+    not lift the parking: the question went to the Planning Run, Benjamin's
+    to decide (af-hnh16e, R23 answered « Trancher dans le Planning Run »)."""
+    park = ticket.get("park") or {}
+    return park.get("origin") == ticket.get("id") and park.get("cause") == "planning_exception" \
+        and bool(park.get("answer")) and not answer_lifts_planning_exception(ticket)
+
+
 def stalled_lookups(show: dict[str, Any]) -> list[str]:
     """The beads bin/factory-watchdog reads before assess_ticket: the convoy's
-    grouped request, then each ticket at stake followed by its launches."""
+    grouped request, then each ticket at stake followed by its launches and
+    the Factory repairs linked to its current request."""
     ids = [grouped_request_bead(show) or ""]
     for ticket in show.get("tickets") or []:
         if isinstance(ticket, dict) and _at_stake(ticket):
-            ids += [str(ticket.get("id") or ""), *_launch_beads(ticket)]
+            ids += [str(ticket.get("id") or ""), *_launch_beads(ticket), *technical_repairs(ticket)]
     return [bead_id for bead_id in ids if bead_id]
 
 
@@ -360,15 +374,19 @@ def assess_ticket(
     """A ticket at stake that nobody moves (af-1fvzns): no live session works
     for its current state, no launch of it made since is open, it has no
     request on Benjamin's list (the caller adds the tickets an active grouped
-    request covers; the convoy's own request covers none), it does not wait
-    for its blockers, and its last record is older than `minutes`. The record
+    request covers; the convoy's own request covers none), it waits neither
+    for its blockers, nor for the Planning Run Benjamin sent it to, nor for
+    an open Factory repair linked to its request, and its last record is
+    older than `minutes`. The record
     times are those convoy-state writes (`at`, `raised`): the pass acts within
     minutes of any of them. A pass in flight that started within that window
     (`pass_started`, bounded by the caller) may still be moving the ticket."""
     if not _at_stake(ticket):
         return None
     ticket_id = str(ticket.get("id") or "")
-    if ticket_id in listed:
+    if ticket_id in listed or _awaits_planning_run(ticket):
+        return None
+    if any(repair in open_beads for repair in technical_repairs(ticket)):
         return None
     ended = _ended(ticket)
     session = ticket.get("session") or {}

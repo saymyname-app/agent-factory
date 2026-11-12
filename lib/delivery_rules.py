@@ -16,6 +16,12 @@ TDD_EVIDENCE_PIECES = {
 # The answer to an evaluation's Planning Exception that judges its
 # unobservable item proven by the frozen criterion test.
 PROVEN_BY_TEST_OPTION = "a"
+# The option of that request that has it evaluated again on the products
+# launched again, judging nothing proven (af-npz9v1.38). Benjamin, 28/10/2026
+# 01:20 Paris, relayed from the central chat: « Oui aux deux recommandations : fais ajouter puis utiliser l’option de réévaluation réelle pour les trois tickets, et accorde le tour de correction exceptionnel. Coordonne tout et vérifie que ça repart. »
+REEVALUATE_OPTION = "c"
+# The stops the Ticket Evaluation of a ticket writes (bin/convoy-state).
+EVALUATION_STOPS = ("evaluation_no_result", "evaluation_outage")
 
 # The written rules of how a test is written: a repair that restores one of
 # them moves a proof, it changes no behavior (af-oa2ci4).
@@ -49,6 +55,40 @@ def green_seen_once(stop: dict) -> bool:
     ran each test once, before the replay above (af-batj8g)."""
     return stop.get("reason") == "criterion_already_green" \
         and GREEN_AT_EVERY_RUN not in str(stop.get("detail") or "")
+
+
+def answer_lifts_planning_exception(ticket: dict) -> bool:
+    """Whether the operator's answer to the Planning Exception that parks a
+    ticket, as bin/convoy-state shows it, lifts that parking: the last one a
+    Ticket Exit raised is accepted, or the one the Ticket Evaluation of a
+    finished ticket raised (no entry under `planning_exceptions`, Benjamin,
+    21/10/2026, af-ten1sp) is answered proven by its test or evaluated
+    again. Any other answer leaves the question to the Planning Run: the
+    ticket stays parked until Benjamin decides there (af-hnh16e)."""
+    answer = (ticket.get("park") or {}).get("answer") or {}
+    exceptions = ticket.get("planning_exceptions") or []
+    accepted = bool(exceptions) and isinstance(exceptions, list) and bool(exceptions[-1].get("accepted"))
+    evaluated = ((ticket.get("exit") or {}).get("exit") == "finished"
+                 and ((ticket.get("evaluation") or {}).get("state") or {}).get("outcome") == "planning_exception")
+    return accepted or (evaluated and answer.get("option") in (PROVEN_BY_TEST_OPTION, REEVALUATE_OPTION))
+
+
+def technical_repairs(ticket: dict) -> list[str]:
+    """The Factory-maintenance links bound to the ticket's current request,
+    as bin/convoy-state shows it: its parking by its own operator request,
+    or its evaluation stop."""
+    record = ticket.get("technical_repairs")
+    park, exit_record = ticket.get("park") or {}, ticket.get("exit") or {}
+    stop = ticket.get("stop") or {}
+    if not isinstance(record, dict):
+        return []
+    current_parking = park.get("cause") == "operator_request" and exit_record.get("exit") == "operator_request" \
+        and record.get("parked_at") == park.get("at") and record.get("exit_at") == exit_record.get("at")
+    current_stop = stop.get("reason") in EVALUATION_STOPS and record.get("stop_at") == stop.get("at")
+    if not current_parking and not current_stop:
+        return []
+    entries = record.get("entries")
+    return [entry["id"] for entry in entries] if isinstance(entries, list) else []
 
 
 def review_replay_due(last: dict, tip: str, correction_commit: str | None,

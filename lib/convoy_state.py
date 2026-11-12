@@ -472,9 +472,7 @@ EVALUATION_STATES = ("observed", "not_observed", "unobservable")
 UNOBSERVABLE_CAUSES = ("criterion", "environment")
 EVALUATION_OUTCOMES = ("favorable", "return_to_author", "planning_exception", "environment_outage")
 # The option of that request that has it evaluated again on the products
-# launched again, judging nothing proven (af-npz9v1.38). Benjamin, 28/10/2026
-# 01:20 Paris, relayed from the central chat: « Oui aux deux recommandations : fais ajouter puis utiliser l’option de réévaluation réelle pour les trois tickets, et accorde le tour de correction exceptionnel. Coordonne tout et vérifie que ça repart. »
-REEVALUATE_OPTION = "c"
+# launched again: REEVALUATE_OPTION (lib/delivery_rules.py).
 EVALUATION_MAX_LAUNCHES = 2
 EVALUATION_MAX_LAUNCH_HISTORY = EVALUATION_MAX_LAUNCHES + 1
 KIND_WITHOUT_EVALUATOR = "prefactoring"
