@@ -934,6 +934,17 @@ of the end: only a refusal of the end review or of the Outcome Evaluation
 counts one. Answered before the pass took it, the stop stays with the
 operator.
 
+A ticket stopped all green by a red that ran each test once, before
+`bin/tdd-step red` ran a pass again up to k times (af-batj8g,
+`docs/TDD_STEP.md`), is not raised either: R23 (af-ujme6p) was stopped so on
+one pass of a test red 7 times out of 8. Its stop's detail lacks « à chacune
+de ses k exécutions » (`green_seen_once`, `lib/delivery_rules.py`); the pass
+lifts it by a resume of cause `red_replayed`, once per stop, as for
+`proof_moved` above, and the author's red is replayed under the rule. A
+stop it writes again names its k runs and goes to the operator. A ticket
+parked by its own Planning Exception is resumed only once that parking is
+lifted.
+
 ## A ticket stopped at its second amendment reaches the operator (T45)
 
 `bin/tdd-step amend` stops a ticket at its second amendment

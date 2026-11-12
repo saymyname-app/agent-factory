@@ -35,6 +35,22 @@ def moves_a_proof(ticket: dict) -> bool:
     return bool(separator) and path.strip() in TEST_RULE_PATHS
 
 
+# bin/tdd-step red runs a criterion test that passes at the start commit
+# again, up to the profile's k runs, and calls it green only if it passed at
+# each one: a single lucky pass of a test red 7 times out of 8 had stopped
+# R23 (af-ujme6p) « déjà vert » (af-batj8g). The detail of the stop it
+# writes says so with these words; a stop without them was decided on one
+# run, and bin/convoy-advance resumes it once (cause red_replayed).
+GREEN_AT_EVERY_RUN = "à chacune de ses"
+
+
+def green_seen_once(stop: dict) -> bool:
+    """Whether a ticket's stop is an all-green stop written by a red that
+    ran each test once, before the replay above (af-batj8g)."""
+    return stop.get("reason") == "criterion_already_green" \
+        and GREEN_AT_EVERY_RUN not in str(stop.get("detail") or "")
+
+
 def review_replay_due(last: dict, tip: str, correction_commit: str | None,
                       unsettled, overridden) -> bool:
     """Whether an unfavorable review is replaced by a full review at a later tip."""

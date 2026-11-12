@@ -46,7 +46,7 @@ order of the steps under its lock.
 
 | Step | Piece | Report (`output` of the piece, JSON) |
 |---|---|---|
-| `red` | `tdd_red` | `verdict: red`, `base`, `table`, `criteria` {number: [test id]}, `satisfied` [the numbers of the criteria already green at `base`], `tests` [{`id`, `outcome`, `seam`, `seam_mode`, `entry_points` for a black-box test}], `seam_mode` (the modes the tests went through, joined by `+`: `black_box`, `black_box+import_rule`), `launch.healthy` |
+| `red` | `tdd_red` | `verdict: red`, `base`, `table`, `criteria` {number: [test id]}, `satisfied` [the numbers of the criteria already green at `base`], `tests` [{`id`, `outcome`, `runs` (the outcome of each run, a pass replayed up to k), `seam`, `seam_mode`, `entry_points` for a black-box test}], `seam_mode` (the modes the tests went through, joined by `+`: `black_box`, `black_box+import_rule`), `launch.healthy` |
 | `freeze` | `tdd_freeze` | `files` {path: `sha256:`}, `table`, `criteria`, `satisfied` (from the red): the **registry of fingerprints** |
 | `green` | `tdd_green` | `verdict: green`, `k`, `satisfied` (from the registry), `tests` [{`id`, `runs`: k outcomes, `seam`, `seam_mode`}], `frozen` (the commit of the freeze), `regression` [{`commit`, `exit_code`}] at HEAD |
 | `amend` | `tdd_amendment` | the red report of the amended tests, plus `amendment` {`reason`, `diff`, `files`, `previous_freeze`, `succession` {path: {`owner`, `digest`, `accepted` (an accepted deviation only)}}} |
@@ -94,6 +94,15 @@ Two declared cases accept an error as the red: on the slice that
 (`launch.healthy` is `false` in the report); an error whose type is listed
 in the profile's `red_error_types` (a missing symbol on a library seam).
 
+**A pass is replayed before it counts** (af-batj8g): a test that passes at
+the start commit is run again, up to the profile's `k` runs (3 when it
+declares none, as at the green), and stops at its first run that does not
+pass; that run is its outcome. A test is green at the start commit only if
+it passed at each of its runs; its report lists them (`runs`). R23
+(af-ujme6p) was stopped « déjà vert » on one pass of a test red 7 times out
+of 8: under this rule, the chance that such a test passes 3 runs in a row
+is (1/8)³, below 1 in 500.
+
 **A criterion already green is satisfied by the existing code** (ADR-0030
 L5): if every test is otherwise valid and every test of a criterion passes
 at the start commit, the red is proven for the other criteria and the report
@@ -105,7 +114,8 @@ test green at the start commit in a criterion that another of its tests
 keeps red is a plain refusal, no stop (« test vert au commit de départ : …
 (critère N encore rouge) »): the author fixes the table or the test.
 **Only a ticket whose criteria are all already green stops**: the answer
-names them (« critère 2 déjà vert »), `bin/convoy-state stop-ticket` writes
+names them (« critère 2 déjà vert : <test> passe au commit de départ à
+chacune de ses 3 exécutions »), `bin/convoy-state stop-ticket` writes
 the stop (`criterion_already_green`) and the exit status is 5. A stopped
 ticket is refused by every step.
 
@@ -124,7 +134,9 @@ rule forbids (a file outside the test perimeter, after the freeze) and
 proves its green like any other. Any other ticket whose criteria all hold
 at the start commit — a slice, a repair of a behavior, a repair of another
 rule — still stops. A repair of this kind stopped all green before this
-path existed is resumed by `bin/convoy-advance` (cause `proof_moved`).
+path existed is resumed by `bin/convoy-advance` (cause `proof_moved`), and
+so is, once, any ticket stopped all green by a red that ran each test once
+(cause `red_replayed`, `docs/CONVOY_ADVANCE.md`).
 
 ### Proof of the seam
 

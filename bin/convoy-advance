@@ -106,7 +106,10 @@ cause `amendment_granted`, one amendment more), or whose every change
 since the freeze is the base's it merged (af-npz9v1.39, cause
 `inherited_change`, no answer asked), or a repair that only moves a proof
 stopped all green before bin/tdd-step gave it its path (af-oa2ci4, cause
-`proof_moved`, no answer asked, once per stop); every other stop stays
+`proof_moved`, no answer asked, once per stop), or a ticket stopped all
+green by a red that ran each test once, before bin/tdd-step replayed a pass
+up to k runs (af-batj8g, cause `red_replayed`, no answer asked, once per
+stop); every other stop stays
 with the operator. At the
 last resume of a same cause (bounds.resumes, one bound per cause, ADR-0030
 L2: these causes and a commit after a verdict; the correction rounds keep
@@ -249,7 +252,7 @@ import advance_pass  # noqa: E402
 from convoy_state import (  # noqa: E402
     PROVEN_BY_TEST_OPTION, REEVALUATE_OPTION, STOP_COUNT_WHY, overridden_ticket, repair_answered_in_convoy,
 )
-from delivery_rules import moves_a_proof  # noqa: E402
+from delivery_rules import green_seen_once, moves_a_proof  # noqa: E402
 from factory_delivery_proof import delivery_readiness  # noqa: E402
 
 
@@ -355,6 +358,11 @@ AMENDMENT_RESUME_OPTION = "a"
 # gave it its path: resumed once per stop, its request withdrawn, without
 # an answer (af-oa2ci4).
 PROOF_MOVED = "proof_moved"
+# A ticket stopped all green by a red that ran each test once: R23
+# (af-ujme6p) was, on a test red 7 times out of 8. Resumed once per stop,
+# its request withdrawn, without an answer; the red its author replays runs
+# a pass up to k times (af-batj8g).
+RED_REPLAYED = "red_replayed"
 # af-atrg8o: Benjamin answered the preceding A2 operator request before the
 # authorized test amendment could write its stop. Consume that exact answer
 # once, at that exact commit and file set, through the ordinary resume door.
@@ -750,7 +758,10 @@ class Convoy:
         reached the operator."""
         return [t for t in self.tickets
                 if (t.get("stop") or {}).get("reason") in TDD_STOPS and "raised" not in t["stop"]
-                and (t["stop"]["reason"] != ALREADY_GREEN or (already_green_due(t, alive) and not moves_a_proof(t)))]
+                and (t["stop"]["reason"] != ALREADY_GREEN
+                     or (already_green_due(t, alive) and not moves_a_proof(t)
+                         # Resumed once instead (red_replayed), unless no resume is left.
+                         and not (green_seen_once(t["stop"]) and t.get("resumes_left") != 0)))]
 
     def corrections_due(self) -> list[str]:
         """Tickets whose author has finished and that are not merged yet --
@@ -2169,12 +2180,13 @@ def stopped_without_result(ticket: dict[str, Any]) -> bool:
     Evaluation or its code review gave no result, by a stage the flow
     removed, at its second amendment, for an evaluation outage carrying
     an explicit technical-repair link, or all green on a repair that moves a
-    proof (af-oa2ci4): the stops a resume may lift."""
+    proof (af-oa2ci4) or on one run of each test (af-batj8g): the stops a
+    resume may lift."""
     reason = (ticket.get("stop") or {}).get("reason")
     return started(ticket) and ticket.get("status") != "closed" and not ticket.get("park") \
         and (reason in (NO_RESULT, CODE_REVIEW_STOP, AMENDMENT_STOP, *REMOVED_STAGE_STOPS)
              or (reason == EVALUATION_OUTAGE and technical_repairs(ticket))
-             or (reason == ALREADY_GREEN and moves_a_proof(ticket)))
+             or (reason == ALREADY_GREEN and (moves_a_proof(ticket) or green_seen_once(ticket["stop"]))))
 
 
 def amendment_granted_due(ticket: dict[str, Any]) -> tuple[str, str, str] | None:
@@ -2309,7 +2321,7 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
             elif ticket["stop"]["reason"] == CODE_REVIEW_STOP:
                 due = once_per_stop_due(ticket, CODE_REVIEW_STOP)
             elif ticket["stop"]["reason"] == ALREADY_GREEN:
-                due = once_per_stop_due(ticket, PROOF_MOVED)
+                due = once_per_stop_due(ticket, PROOF_MOVED if moves_a_proof(ticket) else RED_REPLAYED)
             elif ticket["stop"]["reason"] == AMENDMENT_STOP:
                 due = preauthorized_amendment_due(convoy, ticket) or amendment_granted_due(ticket) \
                     or inherited_change_due(convoy, ticket)
@@ -2345,7 +2357,7 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
                     passed(run([str(ESCALATION_BIN), "clear", ticket_id]), "escalation-door clear")
                     # The answer and clear share the door lock. An answer may
                     # have landed after the due check but before clear won it.
-                    if cause in (NO_RESULT, STAGE_REMOVED, CODE_REVIEW_STOP, PROOF_MOVED) \
+                    if cause in (NO_RESULT, STAGE_REMOVED, CODE_REVIEW_STOP, PROOF_MOVED, RED_REPLAYED) \
                             and stop_answer(read_bead(ticket_id), ticket["stop"]) is not None:
                         continue
                 elif cause == REPAIR_DELIVERED and released_technical_repairs(ticket):

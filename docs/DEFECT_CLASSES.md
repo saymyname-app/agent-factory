@@ -143,6 +143,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_the_exact_answered_R8_is_closed_without_merge_then_its_control_runs_green ConvoyAdvanceTest.test_the_exact_R8_close_retry_finishes_after_its_durable_native_lift ConvoyAdvanceTest.test_the_exact_answered_R8_closes_without_merge_and_one_repair_follows_a_red_control ConvoyAdvanceTest.test_the_R8_close_release_rejects_nearby_state_and_option_b`,
   `python3 tests/convoy-advance-red-replay-test.py`,
   `python3 tests/convoy-advance-red-cleared-test.py`,
+  `python3 tests/tdd-step-intermittent-red-test.py`,
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_ticket_stopped_all_green_on_one_run_of_each_test_is_resumed_once_without_an_answer`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_malformed_legacy_resume_is_left_to_the_incident_door_without_crashing`,
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_factory_repair_is_taken_up_and_tested_before_its_resume_is_consumed_once`,
   `python3 tests/outcome-evaluation-every-dataset-test.py`,
@@ -228,12 +230,21 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   « dans le convoi » : aucune PR vers main ne la livrerait, le ticket
   l'attendait pour toujours ; `convoy-advance` rend la réparation au ticket,
   `return-technical-repair`, et son auteur reprend pour la faire, prouvé par
-  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_linked_repair_answered_to_be_fixed_in_the_convoy_goes_back_to_the_ticket_s_author_once ConvoyAdvanceTest.test_a_ticket_lifted_before_its_link_resumes_once_its_repair_is_answered_to_be_fixed_in_the_convoy`).
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_linked_repair_answered_to_be_fixed_in_the_convoy_goes_back_to_the_ticket_s_author_once ConvoyAdvanceTest.test_a_ticket_lifted_before_its_link_resumes_once_its_repair_is_answered_to_be_fixed_in_the_convoy`) ;
+  af-batj8g (R23 af-ujme6p arrêté `criterion_already_green` sur un seul
+  passage d'un test rouge 7 fois sur 8, et la Planning Exception de son
+  auteur n'offrait pas « le rouge est réel » : `tdd-step red` rejoue un test
+  qui passe jusqu'à k exécutions et ne le dit vert que s'il passe à chacune ;
+  `convoy-advance` reprend une fois, cause `red_replayed`, un arrêt décidé
+  sur une seule exécution, prouvé par
+  `python3 tests/tdd-step-intermittent-red-test.py` et
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_ticket_stopped_all_green_on_one_run_of_each_test_is_resumed_once_without_an_answer`).
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
   contrôle : `criterion_already_green` reste au Planning Run, sauf
   le repair qui ne fait que déplacer une preuve (af-oa2ci4 : `tdd-step red`
   ne l'arrête plus, et `convoy-advance` reprend une fois, cause
-  `proof_moved`, celui arrêté avant) ;
+  `proof_moved`, celui arrêté avant) et l'arrêt décidé sur une seule
+  exécution de chaque test (af-batj8g, cause `red_replayed`) ;
   `outcome_evaluation_no_result` et `outcome_evaluation_outage` ne repartent
   qu'à une nouvelle pointe d'intégration ; `story_unobservable` reste au
   Planning Run, sauf l'arrêt qu'une maintenance de l'usine liée lève par code
