@@ -269,6 +269,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 - Contrôle : `python3 tests/account-home-lint-test.py`,
   `python3 tests/fake-tool-contract-test.py`,
   `python3 tests/cockpit-isolated-https-test.py`,
+  `python3 tests/cockpit-isolated-door-locks-test.py`,
   `python3 tests/evaluation-capacity-test.py`,
   `bash tests/gh-unsupported-subcommand-guard-test.sh` — complet pour le dossier
   personnel et les faux exécutables `bd`/`gc` : le second tient en CI la
@@ -281,17 +282,20 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   jetable ; les 16 faux de lecture ou de transport sans état mutable ont
   chacun leur exception datée dans le contrôle (af-npz9v1.28). Le troisième
   lance les trois décors résultat d'Essai derrière le proxy d'identité et
-  tient leur suivi jetable. Le quatrième tient l'admission partagée des
+  tient leur suivi jetable. Le quatrième prouve que deux lancements du
+  cockpit isolé côte à côte ont chacun leurs verrous des portes (proposition,
+  escalade) et leur répertoire d'exécution, jamais ceux de l'hôte. Le suivant
+  tient l'admission partagée des
   produits d'évaluation et refuse qu'une cité isolée lise les lancements, le
   verrou ou les attestations de l'usine en service ; il tient aussi le
   sous-montage des attestations en lecture seule quand leur état isolé vit
-  sous le parent inscriptible `$HOME/.cache`. Le cinquième refuse dans
+  sous le parent inscriptible `$HOME/.cache`. Le dernier refuse dans
   `bin/` et `lib/` les formes de `gh` absentes du vrai : `gh pr
   update-branch`, et `--jq` suivi de `--arg`, que le faux `gh` de la
   relance d'un contrôle rouge acceptait (af-toyety).
 - Occurrences : #566, #618, #641, #648, #656, #664, #665, #669, #671, #674,
   #675, #676, #680, #689, #690, #692, #699, #700, #714, #715 ; af-vf51g6 ;
-  af-dtsy06 ; af-h6nyqc ; af-toyety ; af-yxxa68.
+  af-dtsy06 ; af-h6nyqc ; af-toyety ; af-yxxa68 ; af-33j358.
 - Ouvertes : exception datée du 29/10/2026 : la relecture de code par modèle
   n'est pas rejouée sur un cas connu (étude B § 4.3). Elle reste bornée par
   ses citations vérifiées et ses passes ciblées, mais n'est pas déclarée
