@@ -255,7 +255,14 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   d'un ticket rangé avant lui dans le convoi ; une reprise comptée et pas
   envoyée prend la place suivante, la plus ancienne d'abord, dans le convoi
   et entre convois, prouvé par
-  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_counted_resume_waiting_for_a_place_takes_the_next_one_before_a_ticket_earlier_in_the_convoy ConvoyAdvanceTest.test_a_counted_resume_waiting_in_another_convoy_takes_the_next_place_before_this_one_s_resume`).
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_counted_resume_waiting_for_a_place_takes_the_next_one_before_a_ticket_earlier_in_the_convoy ConvoyAdvanceTest.test_a_counted_resume_waiting_in_another_convoy_takes_the_next_place_before_this_one_s_resume`) ;
+  af-sdd8gr (le tour de correction de R18 af-gnplfy parti sans regarder le
+  plafond N : Gas City lui a donné la place que la reprise comptée de R11
+  af-ksan9t attendait depuis 07:01 ; un tour attend une place libre, compté
+  et daté, après les reprises et avant les démarrages, et un tour envoyé
+  tient sa place jusqu'à ce qu'une session prenne le ticket, prouvé par
+  `python3 tests/correction-round-test.py CorrectionRoundTest.test_a_round_with_no_free_author_place_waits_counted_and_is_sent_once_a_place_frees`
+  et `python3 tests/convoy-advance-review-evaluation-correction-test.py ConvoyAdvanceTest.test_a_correction_round_waits_for_a_free_author_place_then_holds_it_until_a_session_takes_the_ticket`).
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
   contrôle : `criterion_already_green` reste au Planning Run, sauf
   le repair qui ne fait que déplacer une preuve (af-oa2ci4 : `tdd-step red`

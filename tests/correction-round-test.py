@@ -432,8 +432,9 @@ class CorrectionRoundTest(unittest.TestCase):
         self.finish(ticket, new_tip)
         return new_tip
 
-    def settle(self, expect=0, env=None):
-        proc = self.run_cmd(TOOL, "settle", CONVOY, "--repo", self.repo, env=env)
+    def settle(self, expect=0, env=None, free=None):
+        places = () if free is None else ("--free", free)
+        proc = self.run_cmd(TOOL, "settle", CONVOY, *places, "--repo", self.repo, env=env)
         self.assertEqual(expect, proc.returncode, proc.stdout + proc.stderr)
         return json.loads(proc.stdout)
 
@@ -548,6 +549,27 @@ class CorrectionRoundTest(unittest.TestCase):
         self.assertEqual([{"ticket": SLICE, "commit": tip, "bead": call[0]}], settled["launched"])
         correction = self.shown()["correction"]
         self.assertEqual((tip, [call[0]]), (correction["commit"], [launch["bead"] for launch in correction["launches"]]))
+
+    def test_a_round_with_no_free_author_place_waits_counted_and_is_sent_once_a_place_frees(self):
+        # af-sdd8gr: a round sent past the ceiling took the place a counted
+        # resume had waited five hours for.
+        tip = self.refused_by_both()
+
+        waiting = self.settle(free=0)
+
+        self.assertEqual([], waiting["launched"])
+        self.assertEqual([SLICE], self.tickets(waiting["waiting"]))
+        self.assertIn("plafond", waiting["waiting"][0]["reason"])
+        self.assertEqual([], self.launches())
+        correction = self.shown()["correction"]
+        self.assertEqual((tip, []), (correction["commit"], correction["launches"]))
+        self.assertEqual(1, self.shown()["counters"]["correction_rounds"])
+
+        sent = self.settle(free=1)
+
+        (call,) = self.launches()
+        self.assertEqual([{"ticket": SLICE, "commit": tip, "bead": call[0]}], sent["launched"])
+        self.assertEqual(1, self.shown()["counters"]["correction_rounds"])
 
     def test_the_author_session_is_given_the_findings_of_the_review_and_what_the_evaluation_did_not_observe(self):
         tip = self.refused_by_both()

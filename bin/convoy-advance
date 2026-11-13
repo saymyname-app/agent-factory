@@ -711,10 +711,17 @@ class Convoy:
         raise Refusal(f"le ticket {ticket_id} n'appartient pas au convoi {self.id}")
 
     def awaiting_a_session(self) -> list[str]:
-        """Tickets started through the door, or sent to a resume, that no
-        session has picked yet."""
+        """Tickets started through the door, or sent to a resume or to a
+        correction round, that no session has picked yet."""
         return [t["id"] for t in self.tickets
-                if (started(t) and t.get("status") == "open" and not t.get("exit")) or resume_on_its_way(t)]
+                if (started(t) and t.get("status") == "open" and not t.get("exit")) or resume_on_its_way(t)
+                or round_on_its_way(t)]
+
+    def rounds_waiting(self) -> int:
+        """Correction rounds counted and sent to no session yet: each waits
+        for a free author place, after the counted resumes and before any
+        start (af-sdd8gr)."""
+        return sum(1 for t in self.tickets if not t.get("park") and round_waiting(t))
 
     def not_started(self) -> list[dict[str, Any]]:
         return [t for t in self.tickets if t.get("status") == "open" and not t.get("gates") and not t.get("exit")]
@@ -1154,6 +1161,28 @@ def resume_on_its_way(ticket: dict[str, Any]) -> bool:
     if not last.get("launches") or last.get("session") != (ticket.get("session") or {}).get("name"):
         return False
     return read_bead(last["launches"][-1]["bead"]).get("status") != "closed"
+
+
+def round_waiting(ticket: dict[str, Any]) -> bool:
+    """A correction round counted on the ticket (bin/correction-round) and
+    sent to no session yet."""
+    correction = ticket.get("correction")
+    return isinstance(correction, dict) and "unruled" not in correction and not correction.get("launches") \
+        and not ticket.get("stop") and ticket.get("status") != "closed"
+
+
+def round_on_its_way(ticket: dict[str, Any]) -> bool:
+    """A correction round was sent and no session took the ticket since:
+    its session holds a place under the ceiling, like a resume on its way
+    (af-sdd8gr). A round bead closed without the ticket taken holds none."""
+    correction = ticket.get("correction")
+    launches = correction.get("launches") if isinstance(correction, dict) else None
+    if not launches or ticket.get("status") == "closed":
+        return False
+    session_at = str((ticket.get("session") or {}).get("at") or "")
+    if session_at >= str(launches[-1].get("at") or ""):
+        return False
+    return read_bead(launches[-1]["bead"]).get("status") != "closed"
 
 
 def released_technical_repairs(ticket: dict[str, Any]) -> list[str]:
@@ -3421,7 +3450,10 @@ def dispatch(convoy: Convoy, ticket_id: str, rig: str, settings: dict[str, Any])
     return run(argv)
 
 
-def advance_convoy(convoy: Convoy, settings: dict[str, Any], free: int, alive: set[str]) -> dict[str, Any]:
+def advance_convoy(convoy: Convoy, settings: dict[str, Any], free: int, alive: set[str],
+                   reserved: int = 0) -> dict[str, Any]:
+    """`reserved`: the places the counted correction rounds wait for; the
+    resumes go before them, the starts after them."""
     out: dict[str, Any] = {"id": convoy.id, "started": [], "waiting": [], "deferred": [], "refused": [],
                            "resumed": [], "parked": [], "lifted": []}
     migrated = False
@@ -3526,7 +3558,7 @@ def advance_convoy(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
         if held:
             out["waiting"].append({"id": ticket_id, "reason": held})
             continue
-        if len(out["started"]) + len(out["resumed"]) >= free:
+        if len(out["started"]) + len(out["resumed"]) >= free - reserved:
             out["waiting"].append({"id": ticket_id, "reason": f"plafond N={settings['ceiling']} atteint"})
             continue
         blockers = open_blockers(ticket_id)
@@ -3721,16 +3753,18 @@ def settle_evaluations(convoy: Convoy) -> dict[str, Any] | None:
     return {name: answer[name] for name in kept if answer.get(name)}
 
 
-def settle_corrections(convoy: Convoy) -> dict[str, Any] | None:
+def settle_corrections(convoy: Convoy, free: int | None = None) -> dict[str, Any] | None:
     """Spec §8: code, not a session, opens the correction rounds of a
     ticket its code review or its evaluation refused, sends each to one fresh
     author session, and stops the ticket still refused after the last, through
-    bin/correction-round. None when the convoy has no finished ticket, or
-    when nothing was refused: the settlement then had nothing to say."""
+    bin/correction-round, at most `free` rounds sent (af-sdd8gr). None when
+    the convoy has no finished ticket, or when nothing was refused: the
+    settlement then had nothing to say."""
     if not convoy.corrections_due():
         return None
+    places = [] if free is None else ["--free", str(max(0, free))]
     try:
-        answer = parsed(run([str(CORRECTION_BIN), "settle", convoy.id, "--repo", str(convoy.repo)]),
+        answer = parsed(run([str(CORRECTION_BIN), "settle", convoy.id, *places, "--repo", str(convoy.repo)]),
                         f"correction-round settle {convoy.id}")
     except Refusal as exc:
         return {"error": f"refus : {exc}"}
@@ -3893,6 +3927,9 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
     occupied = sessions.get("author", 0) + len(awaiting)
     free = max(0, settings["ceiling"] - occupied)
 
+    # A correction round counted and waiting for its place is sent after the
+    # resumes and before any start (af-sdd8gr): its places are held here.
+    waiting_rounds = {convoy_id: convoy.rounds_waiting() for convoy_id, convoy in convoys.items()}
     results, alive = [], session_names(live)
     # The convoy whose counted resume waits the longest for a place is walked
     # first, so that a convoy sorted before it does not take that place
@@ -3901,7 +3938,7 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
              for convoy_id, convoy in convoys.items()}
     walked = targets if targets is not None else sorted(convoys, key=lambda c: (waits[c] is None, waits[c] or "", c))
     for convoy_id in walked:
-        result = advance_convoy(convoys[convoy_id], settings, free, alive)
+        result = advance_convoy(convoys[convoy_id], settings, free, alive, sum(waiting_rounds.values()))
         free -= len(result["started"]) + len(result["resumed"])
         results.append(result)
 
@@ -3934,9 +3971,13 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
             result["evaluation"] = evaluations
         # Once both have answered: what they refused goes to one author
         # session, and a ticket still refused after its round is stopped.
-        corrections = settle_corrections(convoys[result["id"]])
+        # A round takes a place left under the ceiling, those the counted
+        # rounds of the convoys settled after this one wait for held.
+        waiting_rounds[result["id"]] = 0
+        corrections = settle_corrections(convoys[result["id"]], max(0, free - sum(waiting_rounds.values())))
         if corrections is not None:
             result["correction"] = corrections
+            free -= len(corrections.get("launched") or [])
         # Before the merge: the fidelity of an interface ticket is measured
         # on the commit that merges (condition 4 of the ticket-end gate).
         fidelity = check_fidelity(convoys[result["id"]])

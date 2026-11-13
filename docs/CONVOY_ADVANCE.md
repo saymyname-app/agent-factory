@@ -151,7 +151,10 @@ is taken by:
   on its way;
 - each ticket a resume was sent for (T20) and that no session has taken
   since, as long as the bead of that resume is not closed: its fresh author
-  session is on its way.
+  session is on its way;
+- each ticket a correction round was sent for (T17) and that no session has
+  taken since the round was sent, as long as the bead of the round is not
+  closed (af-sdd8gr).
 
 Between the moment an author session appears and the moment it takes its
 ticket, that ticket counts twice. The count is therefore never below the
@@ -172,6 +175,15 @@ sent before the other resumes and the starts, the longest waiting first, and
 (af-u21377: R11, 37th of its convoy, waited five hours while each freed
 place went to a resume of a ticket listed before it). The other resumes keep
 the convoy's order; a resume due but not counted yet has no date to wait from.
+
+A correction round (T17, `bin/correction-round`) takes a place the same
+way, after the resumes and before the starts (af-sdd8gr: the round of R18
+was sent past the ceiling and Gas City gave it the place the counted resume
+of R11 had waited five hours for). The pass holds a place for each round
+counted and sent to no session yet, so that no start takes it, and hands
+`correction-round settle --free` what is left once the resumes of every
+convoy are sent, less the places held for the counted rounds of the convoys
+settled after it.
 
 The settings file also names what the door receives for a start:
 `start.formula` and `start.role`: the author formula `mol-ticket-author`
