@@ -24,6 +24,9 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+from sandbox import Sandbox
+
 ROOT = Path(__file__).resolve().parents[1]
 RECIPE = ROOT / "bin" / "cockpit-isolated"
 DATASET = ROOT / "config" / "cockpit-datasets" / "home-content.json"
@@ -42,11 +45,17 @@ def free_port():
 
 class DoorLocks(unittest.TestCase):
 
+    def setUp(self):
+        # The cockpit gives its doors a synthetic gc; the sandbox keeps the
+        # launch itself off the live city all the same.
+        self.sandbox = Sandbox()
+        self.addCleanup(self.sandbox.cleanup)
+
     def launch(self, **given):
         """The environment of the cockpit the recipe serves, once it answers;
         `given` are the lock variables of the launcher, none when empty."""
         port = free_port()
-        env = {**os.environ, **{name: given.get(name, "") for name in HOST_LOCKS}}
+        env = {**self.sandbox.env, **{name: given.get(name, "") for name in HOST_LOCKS}}
         proc = subprocess.Popen([sys.executable, str(RECIPE), "--port", str(port), "--dataset", str(DATASET)],
                                 env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.addCleanup(proc.wait, 30)
