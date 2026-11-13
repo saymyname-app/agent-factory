@@ -1026,10 +1026,10 @@ def main(argv: list[str]) -> int:
         "COCKPIT_SESSIONS_POLL_SECONDS": POLL_SECONDS,
         "COCKPIT_GITHUB_POLL_SECONDS": POLL_SECONDS,
         "COCKPIT_FIRST_READ_SECONDS": FIRST_READ_SECONDS,
-        **write_doors(doors, home),
-        **write_tracker_and_projects(city, home),
         **write_knowledge_repos(city, home),
         **write_evidence(city, home),
+        **write_doors(doors, home),
+        **write_tracker_and_projects(city, home),
         **door_locks(home),
     }
     if city.retention_purge:
