@@ -165,6 +165,14 @@ passes until its session takes the ticket (`bin/ticket-author start`); a
 resume whose bead is closed without the ticket taken holds no place: it is
 one more interruption, counted and sent again by that pass.
 
+A resume counted and not sent yet (a `behind` one counted under a full
+ceiling) takes the next free place before anything else: in its convoy it is
+sent before the other resumes and the starts, the longest waiting first, and
+`--all` walks first the convoy whose counted resume waits the longest
+(af-u21377: R11, 37th of its convoy, waited five hours while each freed
+place went to a resume of a ticket listed before it). The other resumes keep
+the convoy's order; a resume due but not counted yet has no date to wait from.
+
 The settings file also names what the door receives for a start:
 `start.formula` and `start.role`: the author formula `mol-ticket-author`
 and the role `author` (`docs/TICKET_AUTHOR.md`). With no formula the
