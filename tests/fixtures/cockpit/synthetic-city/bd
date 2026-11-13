@@ -3,7 +3,8 @@
 
 It answers the reads of the cockpit as `tests/fixtures/cockpit/requests/
 fake-bd` does, from the JSON list of beads in $FAKE_BD_STATE_FILE -- plain
-`list` hides closed beads, `list --all` does not -- and it writes as the real
+`list` hides closed beads, `list --all` does not, and the beads kept apart
+(`ephemeral`) are listed only with `--include-ephemeral` -- and it writes as the real
 `bd` does what the doors of the Factory and the cockpit's own gestures write
 there: `update` (metadata, notes, status), `create`, `show`. So a gesture
 done on an isolated cockpit goes through the doors it goes through in
@@ -106,6 +107,10 @@ def cmd_list(args):
     _, found = options(args, ("--status", "--title-contains", "--limit", "--has-metadata-key"))
     with tracker() as beads:
         listed = list(beads)
+    # The beads the tracker keeps apart (the sessions of the supervisor)
+    # are listed only when the read asks for them, as the real bd does.
+    if "--include-ephemeral" not in found:
+        listed = [b for b in listed if not b.get("ephemeral")]
     if "--status" in found:
         listed = [b for b in listed if b.get("status") == found["--status"]]
     elif "--all" not in found:
