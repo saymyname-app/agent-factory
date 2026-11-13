@@ -64,6 +64,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/idle-ready-work-wake-test.py IdleReadyWorkWakeTest.test_a_hung_notification_is_bounded_without_changing_wake_cooldown`,
   `bash tests/ci-run-tests-leftover-test.sh`,
   `python3 tests/regression-host-queue-test.py RegressionHostQueue.test_a_file_that_leaves_a_process_alive_is_red_and_the_process_is_killed`,
+  `python3 tests/regression-host-queue-test.py RegressionHostQueue.test_a_ticket_s_green_has_the_budget_of_the_whole_series`,
   `python3 tests/host-slots-test.py`,
   `python3 tests/tdd-step-test.py TddStepTest.test_green_kills_what_the_regression_leaves_alive_and_keeps_its_verdict`,
   `python3 tests/spec-integration-test.py SpecIntegrationTest.test_a_control_kills_what_it_leaves_in_a_session_of_its_own_and_keeps_its_verdict`
@@ -120,7 +121,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   hôte les tient tous) ; af-8mjdai (charge de 81 sur 8 cœurs le 12/11 :
   les cockpits laissés par la régression d'arbres `tdd-step` de branches
   antérieures au faucheur sondaient leur ville synthétique hors du pool, un
-  depuis 43 h, 0,8 cœur chacun).
+  depuis 43 h, 0,8 cœur chacun) ; af-hafyxx (budget vert de 1260 s mesuré
+  sur les seuls verts finis dedans : la famille « runs », 24 classes, n'y
+  tenait jamais ; un vert a désormais le budget de la série entière).
 - Ouvertes : les invocations directes antérieures hors des occurrences de
   l'étude B sont nommées une par une, avec leur date et leur motif, dans
   `config/bounded-process-exceptions.tsv` ; une vingtaine de délais écrits à
