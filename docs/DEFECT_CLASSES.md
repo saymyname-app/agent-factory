@@ -373,6 +373,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 - Invariant : Une alerte dit vrai et une situation qui demande quelqu'un
   produit une alerte.
 - Contrôle : `bash tests/on-order-failed-test.sh`,
+  `python3 tests/alert-dedup-status-test.py`,
   `python3 tests/factory-observe-test.py LiveObservationTest`,
   `bash tests/pr-autopilot-armed-not-merged-test.sh`,
   `bash tests/pr-autopilot-transient-retry-test.sh`,
@@ -391,7 +392,12 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `bash tests/ci-apt-install-test.sh`,
   `python3 tests/bounded-process-test.py BoundedProcessTest.test_an_exception_keeps_its_name_when_lines_move_around_it` — partiel : le premier
   tient la frontière entre un report explicite (sortie 75, rejoué sans
-  alerte) et une vraie panne répétée (bead et page Mayor) ; le deuxième tient
+  alerte) et une vraie panne répétée (bead et page Mayor), et qu'un bead pris
+  en réparation ou parqué répond encore à sa panne ; `alert-dedup-status`
+  refuse dans `bin/` une recherche d'alerte par titre qui ne lit que les beads
+  `open` : elle lit `open,in_progress,blocked,deferred`, ou c'est un balayage
+  qui ne ferme que les alertes que personne n'a prises et le dit
+  (`# open only:`) ; le deuxième tient
   la collecte VM Beads/Git/GitHub, le silence sur état inchangé, la route
   unique au plus petit propriétaire présent, la preuve durable avant l'alerte,
   sa clé stable de dédoublonnage, la conservation d'une demande humaine et le
@@ -496,7 +502,13 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   heures pour un seul refus de `deliver-close` : #876, fusionnée dans
   integration/af-fgcw0d sans run de CI possible sur sa tête, comptée en
   erreur d'ordre à chaque passe, et l'alerte nommait le budget de temps de la
-  ligne suivante ; le refus est désormais un constat déposé une fois).
+  ligne suivante ; le refus est désormais un constat déposé une fois) ;
+  af-yzojic (le 13/11/2026, `on-order-failed` ne cherchait l'alerte d'une
+  panne que parmi les beads `open` : af-65mbq2, en cours de réparation, n'y
+  était plus, et trois alertes en double, af-0965hq, af-uzajg3 et af-to7kkp,
+  ont été ouvertes et envoyées au Mayor ; même recherche corrigée dans
+  `backup-freshness`, `factory-session-loop-guard`, `factory-watchdog` et
+  `factory-maintain`).
 - Ouvertes : aucune connue.
 
 ## L — Ticket rouvert réclamable par un ouvrier lancé pour un autre

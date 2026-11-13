@@ -87,7 +87,7 @@ if [ "$CHECK_ONLY" = "1" ]; then
 fi
 
 TITLE="[backup-freshness] off-box archive stale for $((AGE / 3600))h"
-EXISTING=$(gc bd list --status open --title-contains "$TITLE" --json 2>/dev/null | jq 'length' 2>/dev/null)
+EXISTING=$(gc bd list --status open,in_progress,blocked,deferred --title-contains "$TITLE" --json 2>/dev/null | jq 'length' 2>/dev/null)
 if [ "${EXISTING:-0}" != "0" ]; then
   say "backup-freshness: already flagged"
   exit 0

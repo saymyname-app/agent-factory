@@ -16,7 +16,9 @@
 # last closing, not for the same failures still inside LOOKBACK (af-2shgd8,
 # af-lidzgq then af-od7wiy, 2026-10-12). And a tracker read that fails files
 # nothing: read as "no open bead", it filed a duplicate on the saturated
-# host (af-yqci4n beside af-giox6p, 2026-10-12).
+# host (af-yqci4n beside af-giox6p, 2026-10-12). A bead taken for repair is
+# still the bead of its cause: read as open only, the in_progress af-65mbq2
+# let three duplicates through during its repair (af-yzojic, 2026-11-13).
 #
 # Observe-and-page only (ADR-0016 section 7): this never retries, disables,
 # or fixes the failing order itself. Runs as an exec order (no LLM).
@@ -89,7 +91,7 @@ while IFS= read -r subject; do
   last_message=$(printf '%s\n' "$EVENTS" | jq -r --arg s "$subject" 'select(.subject == $s) | .message' | tail -1)
 
   title="[on-order-failed] $subject failing repeatedly"
-  existing=$(gc bd list --status open --title-contains "$title" --json 2>/dev/null | jq 'length' 2>/dev/null)
+  existing=$(gc bd list --status open,in_progress,blocked,deferred --title-contains "$title" --json 2>/dev/null | jq 'length' 2>/dev/null)
   if [ -z "$existing" ]; then
     say "on-order-failed: could not read the open beads for $subject, nothing filed this run"
     continue
