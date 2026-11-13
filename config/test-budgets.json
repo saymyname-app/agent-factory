@@ -1,6 +1,5 @@
 {
   "host_wait_seconds": 600,
-  "green_seconds": 1260,
   "full_seconds": 3480,
   "criterion_test_seconds": 1620,
   "settle_seconds": 600,

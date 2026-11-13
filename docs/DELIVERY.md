@@ -750,8 +750,8 @@ the wait neither a failure nor part of the budget),
 
 The cockpit's regression command (`tests/cockpit-criteria/regression.py`)
 waits at most `host_wait_seconds` when it is not run in a holder's turn,
-then runs within the budget of its kind (`green_seconds` at a ticket's
-green, `full_seconds` elsewhere) counted from the slot; past either it
+then runs within `full_seconds` counted from the slot, at a ticket's
+green too, where it keeps to the ticket's families (af-hafyxx); past either it
 exits 75, NOT RUN, which the gates never count as a red. It ends with
 « regression: took Ns », and an « ALERT » line past `alert_ratio` of its
 budget (study C, `docs/research/2026-10-22-strategie-tests-budgets.md`).
@@ -778,7 +778,11 @@ green 1260 s, full 3480 s from 2315 s, and one criterion test 1620 s; the
 order convoy-advance went from 110 to 148 min. Starting the longest classes
 first was tried and measured no gain: the criterion tests share 8 cores,
 their sum is the floor, and the heaviest run together grew by half.
-Proof: `tests/test-budgets-test.py`.
+On 13/11/2026 (af-hafyxx) `green_seconds` went: measured only on the greens
+that ended within it, it never grew to a family larger than those, and the
+ticket of the « runs » family (24 classes) ran out three times at 1260 s;
+a green now has `full_seconds`, and `show` still lists its runs.
+Proof: `tests/test-budgets-test.py`, `tests/regression-host-queue-test.py`.
 
 What it does not cover:
 
