@@ -6,7 +6,8 @@
 # Drives the real script against a stub gc whose `events` subcommand returns
 # canned order.failed lines, and asserts: below the streak threshold, nothing
 # happens; at or above it, exactly one bead is filed and the Mayor is paged
-# once; a second run recognises the still-open bead and does not duplicate it;
+# once; a second run recognises the still-open bead, or the same bead taken
+# for repair, and does not duplicate it;
 # a different subject is tracked independently; --check-only files nothing.
 
 set -Eeuo pipefail
@@ -61,7 +62,8 @@ if [[ \${1:-} == bd && \${2:-} == list ]]; then
     fi
     exit 0
   fi
-  if [[ -n \$title && -f "$TMP/beads/filed" ]] && grep -qF "\$title" "$TMP/beads/filed"; then
+  filed_status=open; [[ -f "$TMP/beads/filed-status" ]] && filed_status=\$(cat "$TMP/beads/filed-status")
+  if [[ -n \$title && -f "$TMP/beads/filed" && ",\$status," == *",\$filed_status,"* ]] && grep -qF "\$title" "$TMP/beads/filed"; then
     echo '[{"id":"af-existing"}]'
   else
     echo '[]'
@@ -126,6 +128,16 @@ grep -q "consecutive failures" "$CALLS" && fail "the page words a total count as
 out=$(run)
 grep -q "^bd create" "$CALLS" && fail "duplicated an already-open finding"
 grep -q "^mail send mayor" "$CALLS" && fail "re-paged an already-open finding"
+
+# --- a bead taken for repair still answers its cause (af-yzojic) -------------
+# Live: af-65mbq2 in_progress under its repair, three duplicates filed beside it.
+for taken in in_progress blocked; do
+  echo "$taken" > "$TMP/beads/filed-status"; : > "$CALLS"
+  out=$(run)
+  grep -q "^bd create" "$CALLS" && { echo "$out" >&2; fail "duplicated a finding whose bead is $taken"; }
+  grep -q "^mail send mayor" "$CALLS" && fail "re-paged a finding whose bead is $taken"
+done
+rm -f "$TMP/beads/filed-status"
 
 # --- --check-only never files or pages ---------------------------------------
 rm -f "$TMP/beads/filed"; : > "$CALLS"
