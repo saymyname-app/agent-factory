@@ -388,8 +388,10 @@ class HomeProjectsZoneTest(unittest.TestCase):
         ])
         self.start_cockpit()
         wait_until(self.projects)
-        page = wait_until(lambda: (lambda body: body if "Runs ouverts" in body and "Dernier run" in body else None)(
-            self.get("/projets")))
+        # The runs and the open decisions are read apart: until the decisions
+        # are known the card says « En cours ». Wait for both (af-1o6ea6).
+        page = wait_until(lambda: (lambda body: body if "Runs ouverts" in body and "Dernier run" in body
+                                   and "À toi de jouer" in body else None)(self.get("/projets")))
         cards = re.findall(r'<a class="pj-card".*?</a>', page, re.S)
         self.assertEqual(2, len(cards), "not one card per declared project")
         usine = next(card for card in cards if 'href="/projet/agent-factory"' in card)
