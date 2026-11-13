@@ -128,9 +128,9 @@ EXIT_STOPPED = 5
 # One run of the test command on one test, and one run of the regression command.
 # Every deadline comes from config/test-budgets.json, measured (study C,
 # T3: lib/test_budgets.py). The regression command waits its turn on the
-# host, then runs within the budget of its kind -- green at a ticket's
-# green, full elsewhere -- and a minute more. Exit 75 is its NOT RUN: no
-# answer, never a red (study C, T1).
+# host, then runs within the budget of the whole series -- at a ticket's
+# green too, where it keeps to the ticket's families (af-hafyxx) -- and a
+# minute more. Exit 75 is its NOT RUN: no answer, never a red (study C, T1).
 sys.path.insert(0, str(BIN.parent / "lib"))
 from bounded_process import run as bounded_run  # noqa: E402
 from delivery_rules import GREEN_AT_EVERY_RUN, moves_a_proof, tdd_evidence_piece  # noqa: E402
@@ -996,7 +996,7 @@ def regression_run(check: Check, commit: str, moment: str, ticket_tests: list[st
     env.pop("TDD_STEP_TICKET_TESTS", None)
     if ticket_tests:
         env["TDD_STEP_TICKET_TESTS"] = " ".join(ticket_tests)
-    timeout = test_budgets.deadline(BUDGETS, "green" if ticket_tests else "full")
+    timeout = test_budgets.deadline(BUDGETS, "full")
     try:
         proc = bounded_run([*REAPER, *command], cwd=check.export(commit), stdin=subprocess.DEVNULL,
                            capture_output=True, timeout=timeout, env=env)

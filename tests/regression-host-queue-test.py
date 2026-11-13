@@ -35,6 +35,8 @@ marks = Path(os.environ["MARKS"])
 (marks / (name + ".ran")).write_text("ran")
 if os.environ.get("FAIL") == name:
     sys.exit(1)
+if os.environ.get("PAUSE") == name:
+    time.sleep(2)
 if os.environ.get("SLOW") == name:
     child = subprocess.Popen(["sleep", "60"])
     (marks / "grandchild.pid").write_text(str(child.pid))
@@ -100,6 +102,19 @@ class RegressionHostQueue(unittest.TestCase):
         self.assertIn("regression: took 7s for criterion class example.py::Example", proc.stdout)
         self.assertIn("regression: took", proc.stdout)
         self.assertIn("full budget 600s", proc.stdout)
+
+    def test_a_ticket_s_green_has_the_budget_of_the_whole_series(self):
+        # 13/11/2026: a green budget of its own, measured on the greens that
+        # ended within it, refused the ticket of a family of 24 classes three
+        # times (af-hafyxx). A tree that still names one has it ignored.
+        shutil.copy(ROOT / "lib" / "test_budgets.py", self.tree / "lib" / "test_budgets.py")
+        (self.tree / "config").mkdir()
+        (self.tree / "config" / "test-budgets.json").write_text('{"green_seconds": 1, "full_seconds": 30}')
+        proc, _ = self.regression(TDD_STEP_TICKET_TESTS="tests/cockpit-criteria/commands/runs-x-test.py",
+                                  PAUSE="cockpit-criteria-test.py")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertIn("PASS tests/cockpit-criteria-test.py", proc.stdout)
+        self.assertIn("(green budget 30s)", proc.stdout)
 
     def test_a_host_held_past_the_wait_is_not_run_and_no_test_runs(self):
         self.hold_host(30)

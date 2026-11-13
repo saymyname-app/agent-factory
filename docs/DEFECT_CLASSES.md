@@ -64,6 +64,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/idle-ready-work-wake-test.py IdleReadyWorkWakeTest.test_a_hung_notification_is_bounded_without_changing_wake_cooldown`,
   `bash tests/ci-run-tests-leftover-test.sh`,
   `python3 tests/regression-host-queue-test.py RegressionHostQueue.test_a_file_that_leaves_a_process_alive_is_red_and_the_process_is_killed`,
+  `python3 tests/regression-host-queue-test.py RegressionHostQueue.test_a_ticket_s_green_has_the_budget_of_the_whole_series`,
   `python3 tests/host-slots-test.py`,
   `python3 tests/tdd-step-test.py TddStepTest.test_green_kills_what_the_regression_leaves_alive_and_keeps_its_verdict`,
   `python3 tests/spec-integration-test.py SpecIntegrationTest.test_a_control_kills_what_it_leaves_in_a_session_of_its_own_and_keeps_its_verdict`
@@ -120,7 +121,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   hôte les tient tous) ; af-8mjdai (charge de 81 sur 8 cœurs le 12/11 :
   les cockpits laissés par la régression d'arbres `tdd-step` de branches
   antérieures au faucheur sondaient leur ville synthétique hors du pool, un
-  depuis 43 h, 0,8 cœur chacun).
+  depuis 43 h, 0,8 cœur chacun) ; af-hafyxx (budget vert de 1260 s mesuré
+  sur les seuls verts finis dedans : la famille « runs », 24 classes, n'y
+  tenait jamais ; un vert a désormais le budget de la série entière).
 - Ouvertes : les invocations directes antérieures hors des occurrences de
   l'étude B sont nommées une par une, avec leur date et leur motif, dans
   `config/bounded-process-exceptions.tsv` ; une vingtaine de délais écrits à
@@ -249,7 +252,20 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `convoy-advance` reprend une fois, cause `red_replayed`, un arrêt décidé
   sur une seule exécution, prouvé par
   `python3 tests/tdd-step-intermittent-red-test.py` et
-  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_ticket_stopped_all_green_on_one_run_of_each_test_is_resumed_once_without_an_answer`).
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_ticket_stopped_all_green_on_one_run_of_each_test_is_resumed_once_without_an_answer`) ;
+  af-u21377 (R11 af-ksan9t, reprise `behind` comptée sous un plafond plein,
+  attendait depuis cinq heures : chaque place libérée allait à la reprise
+  d'un ticket rangé avant lui dans le convoi ; une reprise comptée et pas
+  envoyée prend la place suivante, la plus ancienne d'abord, dans le convoi
+  et entre convois, prouvé par
+  `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_a_counted_resume_waiting_for_a_place_takes_the_next_one_before_a_ticket_earlier_in_the_convoy ConvoyAdvanceTest.test_a_counted_resume_waiting_in_another_convoy_takes_the_next_place_before_this_one_s_resume`) ;
+  af-sdd8gr (le tour de correction de R18 af-gnplfy parti sans regarder le
+  plafond N : Gas City lui a donné la place que la reprise comptée de R11
+  af-ksan9t attendait depuis 07:01 ; un tour attend une place libre, compté
+  et daté, après les reprises et avant les démarrages, et un tour envoyé
+  tient sa place jusqu'à ce qu'une session prenne le ticket, prouvé par
+  `python3 tests/correction-round-test.py CorrectionRoundTest.test_a_round_with_no_free_author_place_waits_counted_and_is_sent_once_a_place_frees`
+  et `python3 tests/convoy-advance-review-evaluation-correction-test.py ConvoyAdvanceTest.test_a_correction_round_waits_for_a_free_author_place_then_holds_it_until_a_session_takes_the_ticket`).
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
   contrôle : `criterion_already_green` reste au Planning Run, sauf
   le repair qui ne fait que déplacer une preuve (af-oa2ci4 : `tdd-step red`
@@ -270,7 +286,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   d'intégration n'a pas de sortie et refait échouer `convoy-advance` à
   chaque passe (`docs/CONVOY_ADVANCE.md`, « What these stops leave open ») ;
   le choix de sa sortie est une règle de méthode, proposée à Benjamin
-  (af-le1aas, ADR-0029 point 6).
+  (af-le1aas, ADR-0029 point 6). Constatée le 12/11/2026 (af-u21377) : un
+  tour de correction (`bin/correction-round`) part sans regarder le plafond
+  N et prend la place qu'une reprise comptée attend (af-sdd8gr).
 
 ## D — Doublure, instrument ou vue partielle qui ne se comporte pas comme le réel
 
@@ -280,6 +298,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 - Contrôle : `python3 tests/account-home-lint-test.py`,
   `python3 tests/fake-tool-contract-test.py`,
   `python3 tests/cockpit-isolated-https-test.py`,
+  `python3 tests/cockpit-isolated-door-locks-test.py`,
   `python3 tests/evaluation-capacity-test.py`,
   `bash tests/gh-unsupported-subcommand-guard-test.sh` — complet pour le dossier
   personnel et les faux exécutables `bd`/`gc` : le second tient en CI la
@@ -292,17 +311,20 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   jetable ; les 16 faux de lecture ou de transport sans état mutable ont
   chacun leur exception datée dans le contrôle (af-npz9v1.28). Le troisième
   lance les trois décors résultat d'Essai derrière le proxy d'identité et
-  tient leur suivi jetable. Le quatrième tient l'admission partagée des
+  tient leur suivi jetable. Le quatrième prouve que deux lancements du
+  cockpit isolé côte à côte ont chacun leurs verrous des portes (proposition,
+  escalade) et leur répertoire d'exécution, jamais ceux de l'hôte. Le suivant
+  tient l'admission partagée des
   produits d'évaluation et refuse qu'une cité isolée lise les lancements, le
   verrou ou les attestations de l'usine en service ; il tient aussi le
   sous-montage des attestations en lecture seule quand leur état isolé vit
-  sous le parent inscriptible `$HOME/.cache`. Le cinquième refuse dans
+  sous le parent inscriptible `$HOME/.cache`. Le dernier refuse dans
   `bin/` et `lib/` les formes de `gh` absentes du vrai : `gh pr
   update-branch`, et `--jq` suivi de `--arg`, que le faux `gh` de la
   relance d'un contrôle rouge acceptait (af-toyety).
 - Occurrences : #566, #618, #641, #648, #656, #664, #665, #669, #671, #674,
   #675, #676, #680, #689, #690, #692, #699, #700, #714, #715 ; af-vf51g6 ;
-  af-dtsy06 ; af-h6nyqc ; af-toyety ; af-yxxa68.
+  af-dtsy06 ; af-h6nyqc ; af-toyety ; af-yxxa68 ; af-33j358.
 - Ouvertes : exception datée du 29/10/2026 : la relecture de code par modèle
   n'est pas rejouée sur un cas connu (étude B § 4.3). Elle reste bornée par
   ses citations vérifiées et ses passes ciblées, mais n'est pas déclarée
@@ -499,5 +521,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   catégorie nouvelle.
 - Contrôle : aucun — catégorie de tri.
 - Occurrences : #619, #622, #639, #655, #677 ; tests nocturnes #634, #663,
-  #670, #707.
+  #670, #707 ; af-8hdaf1 (`bin/pr-autopilot` : la lecture de tout
+  l'historique coupée sous charge suspendait la clôture des PR fusionnées et
+  le renvoi des PR en conflit, que la lecture des beads ouverts, déjà faite,
+  suffisait à décider ; garde-fou `bash tests/pr-autopilot-cut-history-test.sh`).
 - Ouvertes : aucune connue.
