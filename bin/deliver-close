@@ -100,6 +100,7 @@ GH_BIN="${GH_BIN:-gh}"
 ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
 PROPOSAL_DOOR_BIN="${PROPOSAL_DOOR_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/proposal-door}"
 CONVOY_STATE_BIN="${CONVOY_STATE_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/convoy-state}"
+INTEGRATION_MAINTENANCE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/lib/integration_maintenance.py"
 # shellcheck source=lib/project_registry.sh
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/lib/project_registry.sh"
 
@@ -124,7 +125,10 @@ Usage: deliver-close <bead-id> --repo <owner/repository> --pr <number> [--requir
 the required workflow succeeded on the exact PR head, then atomically records
 the ADR-0016 fields plus merge_result/merged_sha/merged_target and gc.ci_* proof
 before closing <bead-id>. Known Factory repositories infer their required
-workflow; other repositories must pass --required-workflow.
+workflow; other repositories must pass --required-workflow. The PR's target
+must be the repository's protected branch (config/projects), or an
+integration/<spec> branch for a maintenance bead authorized by af-wpzic4
+(lib/integration_maintenance.py, docs/DELIVERY.md); any other is refused.
 
 --outcome form: writes the ADR-0009 work-record outcome (gc.outcome=pass,
 gc.work_outcome=<outcome>, and for shipped gc.work_commit/gc.work_branch) and
@@ -284,6 +288,12 @@ verify_pr_delivery() {  # bead-id bead-json repo pr-number required-workflow
     || die "$bead_id records gc.work_branch=$linked_branch but PR $pr_number head is $PR_HEAD_BRANCH."
   [[ -z $linked_base || $linked_base == "$MERGED_TARGET" ]] \
     || die "$bead_id records gc.work_base_branch=$linked_base but PR $pr_number target is $MERGED_TARGET."
+  # af-41i8d0: the protected branch, or an integration/<spec> branch for a
+  # maintenance bead authorized by af-wpzic4 (docs/DELIVERY.md); no other.
+  local refused
+  refused=$(bead_object "$bead_json" | python3 "$INTEGRATION_MAINTENANCE" target --target "$MERGED_TARGET" \
+    --repo "$repo" --projects "$ROOT/config/projects" 2>&1) \
+    || die "$bead_id cannot be delivered by PR $pr_number into $MERGED_TARGET: ${refused//$'\n'/; }."
 
   capture_json actions_response "GitHub Actions for PR head $PR_HEAD" "$GH_BIN" api \
     "repos/$repo/actions/runs?head_sha=$PR_HEAD&per_page=100"

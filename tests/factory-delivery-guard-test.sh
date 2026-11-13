@@ -573,4 +573,23 @@ grep -q "flagged zz-fixture-synthetic-rig" <<<"$out" \
 [ "$(mail_count mayor)" = "1" ] || fail "expected exactly one page to the Mayor for the config-only rig's bead"
 rm -f "$TMP/config/projects/synthetic-project.toml" "$TMP/rig-synthetic-project-goal-beads.json"
 
+# --- merged target (af-41i8d0): a delivery merged into integration/<spec>
+# is flagged once unless af-wpzic4 authorizes its maintenance bead (the rule
+# itself is proven by tests/integration-maintenance-test.py) ---------------
+landed='{"id": "zz-fixture-landed", "status": "closed", "title": "Landed", "labels": [],
+  "metadata": {"gc.pr_url": "https://github.com/example-org/example-repo/pull/7",
+    "gc.delivery_status": "merged", "gc.work_outcome": "shipped",
+    "gc.github_repo": "example-org/example-repo", "gc.pr_number": 7,
+    "gc.pr_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "gc.merge_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "merged_target": "integration/af-spec", "gc.work_base_branch": "integration/af-spec"}}'
+jq -n --argjson b "$landed" '[$b, ($b | .id = "zz-fixture-authorized" | .labels = ["maintenance"]
+  | .metadata["gc.authorized_by"] = "af-wpzic4")]' > "$BEADS_FILE"
+: > "$UPDATE_LOG"; : > "$MAIL_LOG"
+out=$(guard)
+grep -q "flagged zz-fixture-landed" <<<"$out" \
+  || { echo "$out" >&2; fail "an unauthorized delivery into integration/af-spec was not flagged"; }
+[ "$(update_count zz-fixture-landed)" = "1" ] || fail "expected exactly one flag write for the unauthorized target"
+[ "$(update_count zz-fixture-authorized)" = "0" ] || fail "flagged a delivery af-wpzic4 authorizes"
+
 echo "PASS: factory-delivery-guard backfills verified proof and flags the rest exactly once"

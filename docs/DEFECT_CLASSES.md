@@ -64,7 +64,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/idle-ready-work-wake-test.py IdleReadyWorkWakeTest.test_a_hung_notification_is_bounded_without_changing_wake_cooldown`,
   `bash tests/ci-run-tests-leftover-test.sh`,
   `python3 tests/regression-host-queue-test.py RegressionHostQueue.test_a_file_that_leaves_a_process_alive_is_red_and_the_process_is_killed`,
-  `python3 tests/host-slots-test.py`
+  `python3 tests/host-slots-test.py`,
+  `python3 tests/tdd-step-test.py TddStepTest.test_green_kills_what_the_regression_leaves_alive_and_keeps_its_verdict`,
+  `python3 tests/spec-integration-test.py SpecIntegrationTest.test_a_control_kills_what_it_leaves_in_a_session_of_its_own_and_keeps_its_verdict`
   — complet pour les commandes Python bornées de `bin/`, `lib/` et
   `tests/cockpit-criteria/` : un seul lanceur (`lib/bounded_process.py`)
   ouvre une session et tue son groupe au délai, et aussi quand l'appelant
@@ -92,7 +94,13 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   tue ce qu'un fichier laisse vivant en finissant, le nomme et le fait
   échouer (af-i9llwm). Le dernier tient la limite unique de l'hôte : au
   plus N exécutions lourdes ensemble (`lib/host_slots.py`), l'attente d'une
-  place n'étant ni un échec ni une part d'un budget (af-lsbqj9).
+  place n'étant ni un échec ni une part d'un budget (af-lsbqj9). Les deux
+  derniers tiennent les commandes de test et de régression qu'une branche
+  apporte elle-même à `bin/tdd-step` et `bin/spec-integration` : elles
+  tournent sous le faucheur de l'usine (`--keep-status`), qui tue ce
+  qu'elles laissent sans changer leur verdict, et la vérification d'une
+  étape de `tdd-step` est elle-même sous-faucheuse de tout ce qu'elle lance
+  (af-8mjdai).
 - Occurrences : #624, #628, #629, #630, #631, #636, #647, #657, #658, #661,
   #667, #694, #696, #705, #706, #708, #710, #713, #721 ; copies orphelines du
   22/10 (sans PR) ; af-kky570 ; af-npz9v1.46 ; af-npz9v1.26 ; af-30zwwu ;
@@ -109,7 +117,10 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   seul outil ; arbres tdd-step, copies project-launch et régressions
   spec-integration tournaient hors du verrou de `ci-run-tests`, lui-même
   dans un `/tmp` que le bac à sable des rôles remplace : une seule limite
-  hôte les tient tous).
+  hôte les tient tous) ; af-8mjdai (charge de 81 sur 8 cœurs le 12/11 :
+  les cockpits laissés par la régression d'arbres `tdd-step` de branches
+  antérieures au faucheur sondaient leur ville synthétique hors du pool, un
+  depuis 43 h, 0,8 cœur chacun).
 - Ouvertes : les invocations directes antérieures hors des occurrences de
   l'étude B sont nommées une par une, avec leur date et leur motif, dans
   `config/bounded-process-exceptions.tsv` ; une vingtaine de délais écrits à

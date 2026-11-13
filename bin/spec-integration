@@ -130,6 +130,11 @@ UNRULED = "état sans règle"
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 from bounded_process import run as bounded_run  # noqa: E402
 import host_slots  # noqa: E402
+
+# The regression command is the convoy branch's own, and so is its harness:
+# it runs under the Factory's reaper, which kills what it leaves behind and
+# keeps its verdict (af-8mjdai; lib/ci_test_reaper.py).
+REAPER = [sys.executable, str(Path(__file__).resolve().parents[1] / "lib" / "ci_test_reaper.py"), "--keep-status"]
 import test_budgets  # noqa: E402
 
 BUDGETS = test_budgets.load(Path(__file__).resolve().parents[1])
@@ -702,7 +707,7 @@ class Pass:
             self.git("reset", "--quiet", "--hard", self.tip)
             raise
         try:
-            proc = run(self.command, cwd=self.tree, timeout=self.timeout)
+            proc = run([*REAPER, *self.command], cwd=self.tree, timeout=self.timeout)
         except subprocess.TimeoutExpired as exc:
             self.git("reset", "--quiet", "--hard", self.tip)
             raise Refusal(
@@ -1033,7 +1038,7 @@ def cmd_tests(args: argparse.Namespace) -> int:
         raise Refusal("tests : --tree et la commande à exécuter sont obligatoires")
     try:
         os.chdir(args.tree)
-        os.execvp(argv[0], argv)
+        os.execv(REAPER[0], [*REAPER, *argv])
     except OSError as exc:
         raise Refusal(f"commande de test impossible à exécuter : {argv[0]} ({exc.strerror or exc})") from exc
     return 0
