@@ -854,6 +854,34 @@ def door_locks(home: str) -> dict[str, str]:
     return env
 
 
+def session_beads(city: synthetic_city.SyntheticCity) -> list[dict]:
+    """The bead the tracker keeps of each session of `city` that says its
+    agent, as gc 1.5.0 keeps one apart (ephemeral): open while the session
+    runs, closed once it stopped. The supervisor lists only the sessions it
+    runs (serve_sessions), so a stopped session's agent is read from this
+    bead, as in service (af-1o6ea6). A session the supervisor sends only
+    once the cockpit is up (`city.dispatched`) has none yet."""
+    held = {bead.get("id") for bead in city.beads if isinstance(bead, dict)}
+    beads = []
+    for session in city.sessions:
+        name = session.get("id")
+        if not name or name in held or name in city.dispatched or not session.get("agent_name"):
+            continue
+        logged = city.session_log.get(name) or {}
+        bead = {"id": name, "title": session["agent_name"], "issue_type": "session", "ephemeral": True,
+                "status": "open" if session.get("running") else "closed",
+                "labels": ["agent:%s" % session["agent_name"], "gc:session"],
+                "metadata": {key: session[key] for key in ("agent_name", "template", "provider", "command")
+                             if session.get(key)}}
+        bead["metadata"]["session_name"] = session.get("session_name") or name
+        if session.get("created_at") or logged.get("woke"):
+            bead["created_at"] = session.get("created_at") or logged["woke"]
+        if not session.get("running") and logged.get("stopped"):
+            bead["closed_at"] = logged["stopped"]
+        beads.append(bead)
+    return beads
+
+
 def write_tracker_and_projects(city: synthetic_city.SyntheticCity, home: str) -> dict[str, str]:
     """Put what the tracker holds and the projects declared in `home`; the
     environment that makes the cockpit read them."""
@@ -863,7 +891,7 @@ def write_tracker_and_projects(city: synthetic_city.SyntheticCity, home: str) ->
         Path(home, path).parent.mkdir(parents=True, exist_ok=True)
         Path(home, path).write_text(content, encoding="utf-8")
     beads = Path(home, "tracker.json")
-    beads.write_text(json.dumps(city.beads, ensure_ascii=False).replace(synthetic_city.HOME_MARK, home + "/"),
+    beads.write_text(json.dumps(city.beads + session_beads(city), ensure_ascii=False).replace(synthetic_city.HOME_MARK, home + "/"),
                      encoding="utf-8")
     projects = Path(home, "projects")
     projects.mkdir()
