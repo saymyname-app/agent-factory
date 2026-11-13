@@ -216,6 +216,48 @@ finalize_delivery() {  # rig-path bead repo pr required-workflow
   )
 }
 
+# af-65mbq2: PR #876, merged into integration/af-fgcw0d on Benjamin's
+# decision, has no run of the required workflow on its head and never will
+# (that branch's CI does not run on PRs into integration/**). deliver-close
+# rightly refused its ticket af-zt371w -- and pr-autopilot counted that same
+# refusal in ERRORS on every pass, so the order failed every 3 minutes for
+# hours (on-order-failed, 13/11/2026), naming the time budget of the line
+# printed after it. A merged PR's refusal does not change by itself: it is a
+# finding for a human, filed once per ticket (reopened if its bead was closed
+# while the ticket is still unproven), not an order error. Only a filing that
+# could not be done, or not checked, still fails the order.
+unproven_title() { printf '[autopilot] PR #%s merged without delivery proof for %s' "$1" "$2"; }
+flag_unproven_merge() {  # repo rig_path num bead refusal -> 0 filed, 2 already filed, 1 not filed
+  local repo=$1 rig_path=$2 num=$3 bead=$4 refusal=$5 title open old desc
+  title=$(unproven_title "$num" "$bead")
+  open=$(printf '%s' "$RIG_OPEN_BEADS_JSON" | jq -r --arg t "$title" '[.[]|select(.title==$t)|.id][0] // empty' 2>/dev/null)
+  if [ -n "$open" ]; then
+    log "    already filed as $open -- a finding, not an order error"
+    return 2
+  fi
+  ensure_rig_all_beads
+  if [ "$RIG_ALL_BEADS_UNKNOWN" = "1" ]; then
+    log "    earlier findings unknown (a read timed out) -> nothing filed this pass"
+    return 1
+  fi
+  old=$(printf '%s' "$RIG_ALL_BEADS_JSON" | jq -r --arg t "$title" \
+    '[.[]|select(.status=="closed" and .title==$t)] | sort_by(.closed_at // .updated_at // "") | last | .id // empty' 2>/dev/null)
+  desc="PR #$num is merged but bin/deliver-close refuses to close its ticket $bead:
+${refusal:-(no reason printed)}
+https://github.com/$repo/pull/$num
+The refusal does not change by itself once the PR is merged. Left to a human or the Mayor: make the required workflow succeed on the PR's exact head, or decide the ticket's outcome and close or park $bead through bin/deliver-close's --outcome form. pr-autopilot reports it on every pass without failing the order while this bead is open."
+  if [ -n "$old" ]; then
+    log "    refused again -> reopening $old"
+    ( cd "$rig_path" && run gc bd update "$old" --status open \
+        --append-notes "Reopened by pr-autopilot: $bead is still refused for merged PR #$num: ${refusal:-(no reason printed)}" ) >/dev/null 2>&1 || return 1
+  else
+    log "    filing $title"
+    ( cd "$rig_path" && run gc bd create "$title" -p 1 -t bug -d "$desc" \
+        --metadata "$(jq -nc --arg n "$num" --arg b "$bead" '{pr_number:$n, source:"pr-autopilot", "gc.unproven_bead":$b}')" ) >/dev/null 2>&1 || return 1
+  fi
+  return 0
+}
+
 # Bring a BEHIND PR up to date with its base through the REST endpoint
 # (PUT /repos/{repo}/pulls/{num}/update-branch), which every gh version can
 # call via `gh api` -- unlike `gh pr update-branch`, absent from gh 2.45.
@@ -1548,7 +1590,8 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
     waiters=$(active_waiters_for "$bead")
     wake_reason=""
     [ -n "$waiters" ] && wake_reason="active waiter(s): $waiters"
-    finalize_delivery "$rig_path" "$bead" "$repo" "$num" "$required_workflow"; rc=$?
+    proof_out=$(finalize_delivery "$rig_path" "$bead" "$repo" "$num" "$required_workflow" 2>&1); rc=$?
+    [ -n "$proof_out" ] && printf '%s\n' "$proof_out"
     if timed_out "$rc"; then
       log "    delivery door timed out for bead $bead -- outcome unknown, re-checked next tick"
     elif [ "$rc" = 0 ]; then
@@ -1577,7 +1620,8 @@ NEXT: Mayor advances or finalizes work waiting on $bead.' >/dev/null 2>&1"; then
       RECONCILED=$((RECONCILED+1))
     else
       log "    delivery proof rejected for bead $bead — leaving it open/unreleased"
-      ERRORS=$((ERRORS+1))
+      flag_unproven_merge "$repo" "$rig_path" "$num" "$bead" "$proof_out"
+      case $? in 0) FLAGGED=$((FLAGGED+1)) ;; 1) ERRORS=$((ERRORS+1)) ;; esac
     fi
   done <<<"$merged"
 
@@ -1596,7 +1640,8 @@ NEXT: Mayor advances or finalizes work waiting on $bead.' >/dev/null 2>&1"; then
     while IFS= read -r via_bead; do
       [ -z "$via_bead" ] && continue
       log "  PR #$num merged at ${sha:0:8} -> delivered_via_pr reconciles $via_bead"
-      finalize_delivery "$rig_path" "$via_bead" "$repo" "$num" "$required_workflow"; rc=$?
+      proof_out=$(finalize_delivery "$rig_path" "$via_bead" "$repo" "$num" "$required_workflow" 2>&1); rc=$?
+      [ -n "$proof_out" ] && printf '%s\n' "$proof_out"
       if timed_out "$rc"; then
         log "    delivery door timed out for bead $via_bead -- outcome unknown, re-checked next tick"
       elif [ "$rc" = 0 ]; then
@@ -1615,7 +1660,8 @@ NEXT: Mayor advances or finalizes work waiting on $via_bead.' >/dev/null 2>&1"; 
         RECONCILED=$((RECONCILED+1))
       else
         log "    delivery proof rejected for delivered_via_pr bead $via_bead — leaving it open/unreleased"
-        ERRORS=$((ERRORS+1))
+        flag_unproven_merge "$repo" "$rig_path" "$num" "$via_bead" "$proof_out"
+        case $? in 0) FLAGGED=$((FLAGGED+1)) ;; 1) ERRORS=$((ERRORS+1)) ;; esac
       fi
     done < <(delivered_via_pr_candidates_for "$num")
   done <<<"$merged"

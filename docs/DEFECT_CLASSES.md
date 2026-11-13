@@ -376,6 +376,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/factory-observe-test.py LiveObservationTest`,
   `bash tests/pr-autopilot-armed-not-merged-test.sh`,
   `bash tests/pr-autopilot-transient-retry-test.sh`,
+  `bash tests/pr-autopilot-unproven-merge-test.sh`,
   `python3 tests/tdd-step-test.py TddStepTest.test_green_refusal_keeps_the_failing_control_after_long_regression_output`,
   `python3 tests/role-adoption-trial-codex-test.py`,
   `python3 tests/factory-delivery-proof-test.py ClaimedShippedBead`,
@@ -490,7 +491,12 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   af-ujme6p, renvoyée au Planning Run par la réponse de Benjamin à sa
   Planning Exception, et R16 af-yv2g3n, qui attendait sa réparation liée
   af-33j358 encore ouverte : la règle de levée du parcage, tenue dans
-  `convoy-advance` seul, est partagée par `lib/delivery_rules.py`).
+  `convoy-advance` seul, est partagée par `lib/delivery_rules.py`) ;
+  af-65mbq2 (le 13/11/2026, `pr-autopilot` en échec à chaque passe pendant des
+  heures pour un seul refus de `deliver-close` : #876, fusionnée dans
+  integration/af-fgcw0d sans run de CI possible sur sa tête, comptée en
+  erreur d'ordre à chaque passe, et l'alerte nommait le budget de temps de la
+  ligne suivante ; le refus est désormais un constat déposé une fois).
 - Ouvertes : aucune connue.
 
 ## L — Ticket rouvert réclamable par un ouvrier lancé pour un autre

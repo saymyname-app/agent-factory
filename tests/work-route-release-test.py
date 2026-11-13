@@ -17,11 +17,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE = ROOT / "lib" / "work_route_release.sh"
 
-# path -> (a text of the reopening write, why it reopens no launched work)
+# path -> ((a text of the reopening write, why it reopens no launched work), ...)
 NOT_WORK = {
     "bin/pr-autopilot": (
-        "--title '$title'",
-        "flag_stuck reopens its own « PR stuck » bead, filed by pr-autopilot and never launched",
+        ("--title '$title'",
+         "flag_stuck reopens its own « PR stuck » bead, filed by pr-autopilot and never launched"),
+        ("is still refused for merged PR",
+         "flag_unproven_merge reopens its own « merged without delivery proof » bead, "
+         "filed by pr-autopilot and never launched (af-65mbq2)"),
     ),
 }
 
@@ -75,8 +78,7 @@ def offenders(root):
                 continue
             if any(name in command for name in released):
                 continue
-            exempt = NOT_WORK.get(rel)
-            if exempt and exempt[0] in command:
+            if any(text in command for text, _why in NOT_WORK.get(rel, ())):
                 continue
             bad.append(f"{rel}: {command[:160]}")
     return bad
