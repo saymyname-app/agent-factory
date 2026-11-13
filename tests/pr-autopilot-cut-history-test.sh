@@ -88,6 +88,7 @@ exit 0
 STUB
 chmod +x "$TMP/bin/"*
 export PATH="$TMP/bin:$PATH"
+export GC_BIN="$TMP/bin/gc"
 export FACTORY_ROOT="$TMP/factory"
 export GC_PR_AUTHORS=example-operator
 export REVERSIBILITY_CHECK_BIN="$TMP/bin/gh"
