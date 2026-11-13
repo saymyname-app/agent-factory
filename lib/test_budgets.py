@@ -15,10 +15,13 @@ them all, and every reader takes them from here:
 
 - `host_wait_seconds`: how long the cockpit's regression waits for a slot
   of the host pool (tests/cockpit-criteria/regression.py, lib/host_slots.py);
-- `green_seconds` / `full_seconds`: its budget once the lock is held, at a
-  ticket's green (the ticket's families, study C T4) and for the whole series
-  (a merge, a take-up, prefactoring); `bin/spec-integration` and `bin/spec-end`
-  derive their full-regression deadline from it;
+- `full_seconds`: its budget once the lock is held, for the whole series (a
+  merge, a take-up, prefactoring) and at a ticket's green, where it keeps to
+  the ticket's families (study C T4); `bin/tdd-step`, `bin/spec-integration`
+  and `bin/spec-end` derive their regression deadline from it. A green budget
+  of its own, until 13/11/2026, was measured only on the greens that ended
+  within it: it never grew to a family larger than those, and refused the
+  ticket of the « runs » family, 24 classes, three times (af-hafyxx);
 - `criterion_test_seconds`: one criterion test run by bin/tdd-step;
 - `settle_seconds`: what a pass of convoy-advance spends before its merge
   (reads, resumes, reviews settled): 579 s measured on 10/11/2026 under a
@@ -26,11 +29,11 @@ them all, and every reader takes them from here:
   spec-integration merge at 18:36:29), rounded up to 600;
 - `margin_seconds`, `alert_ratio`.
 
-`refresh` sets `green_seconds` and `full_seconds` to 1.5 times the slowest of
-the last ten successful runs of each kind found in the evidence store (the line
-« regression: took Ns » the regression prints, or for older merged runs its
-per-file seconds). It sets `criterion_test_seconds` from the slowest criterion
-class in each successful run. Figures are rounded up to the minute; a kind with
+`refresh` sets `full_seconds` to 1.5 times the slowest of the last ten
+successful full runs found in the evidence store (the line « regression: took
+Ns » the regression prints, or for older merged runs its per-file seconds).
+It sets `criterion_test_seconds` from the slowest criterion class in each
+successful run. Figures are rounded up to the minute; a kind with
 fewer than three runs keeps its figure. `show` prints the budgets, the deadlines
 derived from them, the last runs and how many more criterion classes the full
 series holds before its alert. `check-order` exits 1 when the order
@@ -55,7 +58,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 FILE = Path("config") / "test-budgets.json"
 ORDER = Path("orders") / "convoy-advance.toml"
-DEFAULTS = {"host_wait_seconds": 600, "green_seconds": 600, "full_seconds": 600, "criterion_test_seconds": 600,
+DEFAULTS = {"host_wait_seconds": 600, "full_seconds": 600, "criterion_test_seconds": 600,
             "settle_seconds": 600, "margin_seconds": 60, "alert_ratio": 0.8}
 # Anywhere in the output: a green piece holds it inside the JSON answer of
 # bin/tdd-step, a merged piece on a line of its own.
@@ -128,7 +131,7 @@ def budget_of(seconds: list[int]) -> int:
 
 def refreshed(budgets: dict, found: list[dict]) -> dict:
     new = dict(budgets)
-    for kind in ("green", "full", "criterion_test"):
+    for kind in ("full", "criterion_test"):
         last = [run["seconds"] for run in found if run["kind"] == kind][-10:]
         if len(last) >= 3:
             new[f"{kind}_seconds"] = budget_of(last)
@@ -191,7 +194,7 @@ def main(argv: list[str]) -> int:
         return 0
     print(json.dumps({
         "budgets": budgets,
-        "deadlines": {"green": deadline(budgets, "green"), "full": deadline(budgets, "full"),
+        "deadlines": {"regression": deadline(budgets, "full"),
                       "pass": pass_seconds(budgets), "order": order_seconds(args.root)},
         "last_runs": found[-6:],
         "headroom": headroom(budgets, found, args.root),

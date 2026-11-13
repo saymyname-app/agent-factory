@@ -10,7 +10,11 @@ the author, never a reviewer -- opens a correction round of the ticket
 and sends it to one fresh author session, started as routed work through
 bin/dispatch-door on the formula `mol-ticket-correction`. That session is
 given every finding of both (`brief`). The round counts among the resumes
-of the ticket. A ticket takes at most `bounds.correction_rounds` rounds
+of the ticket, and waits for a free author place like one (`--free`: the
+places under the ceiling N bin/convoy-advance leaves it once the counted
+resumes are sent; af-sdd8gr): a round with no place is counted and dated,
+and sent before any other once a place frees. A ticket takes at most
+`bounds.correction_rounds` rounds
 (config/delivery-flow.json; Benjamin, 2026-10-21: two, af-bv0ikr): still
 refused after a round with one left, the next round opens the same way, on
 what still refuses it at the tip.
@@ -41,7 +45,7 @@ the bound, the same approver may grant one exceptional round, once per
 ticket (`grant --exceptional`, ADR-0034), when a control still refuses it
 at a tip its author finished: a round opens on that tip like the others.
 
-    correction-round settle   CONVOY [--repo DIR]            bin/convoy-advance, at each pass
+    correction-round settle   CONVOY [--free N] [--repo DIR] bin/convoy-advance, at each pass
     correction-round brief    CONVOY TICKET [--repo DIR]     the author session of the round
     correction-round override CONVOY TICKET --finding ID --approved-by NAME --words TEXT [--repo DIR]
     correction-round grant    CONVOY TICKET --approved-by NAME --words TEXT [--exceptional] [--repo DIR]
@@ -435,6 +439,47 @@ def launch(convoy: Convoy, ticket_id: str, correction: dict[str, Any], settings:
     return bead_id
 
 
+class Places:
+    """The author places a settlement may fill (`--free`); None: not counted.
+    A round sent through the door takes one; a round deferred or refused by
+    the door takes none."""
+
+    def __init__(self, free: int | None):
+        self.free = free
+
+    def full(self) -> bool:
+        return self.free is not None and self.free <= 0
+
+    def took(self) -> None:
+        if self.free is not None:
+            self.free -= 1
+
+
+def send_round(convoy: Convoy, ticket_id: str, correction: dict[str, Any], places: Places) -> dict[str, Any]:
+    """Send the counted round to its author session when a place is free
+    under the ceiling; otherwise it waits, counted and dated, for the next
+    free place (af-sdd8gr: a round sent past the ceiling took the place a
+    counted resume had waited five hours for)."""
+    if places.full():
+        return {"ticket": ticket_id, "action": "waiting", "commit": correction["commit"],
+                "reason": f"plafond N des auteurs atteint : le tour de correction compté le {correction.get('at')} "
+                          "attend une place libre"}
+    # The settings are read when a round is sent, not before: a convoy
+    # nothing refused asks nothing of them.
+    bead_id = launch(convoy, ticket_id, correction, load_settings())
+    places.took()
+    return {"ticket": ticket_id, "action": "launched", "commit": correction["commit"], "bead": bead_id}
+
+
+def round_waiting_since(ticket: dict[str, Any]) -> str | None:
+    """When the round counted on the ticket and sent to no session yet was
+    counted: the longest waiting is sent first. None for any other ticket."""
+    correction = ticket.get("correction")
+    if not isinstance(correction, dict) or correction.get("launches") or ticket.get("stop"):
+        return None
+    return str(correction.get("at") or "")
+
+
 def session_over(launched: dict[str, Any]) -> bool:
     """The author session of the round has ended: its bead is closed."""
     try:
@@ -588,7 +633,7 @@ def stop_ticket(convoy: Convoy, ticket_id: str, detail: str) -> dict[str, Any]:
 # --- settle: what is due on one ticket ----------------------------------------------
 
 
-def settle_ticket(convoy: Convoy, ticket_id: str) -> dict[str, Any]:
+def settle_ticket(convoy: Convoy, ticket_id: str, places: Places) -> dict[str, Any]:
     """Do what is due on the correction round of one ticket, from the
     tracker and its branch alone: raise a stop that did not reach the
     operator; open the round once the code review and the evaluation both
@@ -632,10 +677,7 @@ def settle_ticket(convoy: Convoy, ticket_id: str) -> dict[str, Any]:
             correction = convoy.ticket(ticket_id)["correction"]
 
         if not correction["launches"]:
-            # The settings are read when a round is sent, not before: a
-            # convoy nothing refused asks nothing of them.
-            bead_id = launch(convoy, ticket_id, correction, load_settings())
-            return {"ticket": ticket_id, "action": "launched", "commit": correction["commit"], "bead": bead_id}
+            return send_round(convoy, ticket_id, correction, places)
         over = session_over(correction["launches"][-1])
         if not finished or WITH_AUTHOR in positions:
             if over:
@@ -652,9 +694,7 @@ def settle_ticket(convoy: Convoy, ticket_id: str) -> dict[str, Any]:
                         "reason": f"{missing[2]} : le tour de correction suivant attend les deux contrôles"}
             state_write("open-correction", convoy.id, ticket_id, "--commit", tip)
             convoy.load()
-            correction = convoy.ticket(ticket_id)["correction"]
-            bead_id = launch(convoy, ticket_id, correction, load_settings())
-            return {"ticket": ticket_id, "action": "launched", "commit": correction["commit"], "bead": bead_id}
+            return send_round(convoy, ticket_id, convoy.ticket(ticket_id)["correction"], places)
         if REFUSED in positions:
             return stop_ticket(convoy, ticket_id, still_refused(review, evaluation, False, fidelity))
         if PENDING in positions:
@@ -666,10 +706,16 @@ def settle_ticket(convoy: Convoy, ticket_id: str) -> dict[str, Any]:
 
 
 def cmd_settle(args: argparse.Namespace) -> int:
+    if args.free is not None and (not args.free.isdigit()):
+        raise Refusal(f"--free attend un nombre de places, pas {args.free!r}")
+    places = Places(None if args.free is None else int(args.free))
     convoy = Convoy(args.convoy, args.repo)
     answer: dict[str, Any] = {"ok": True, "convoy": args.convoy, "launched": [], "pending": [], "waiting": [],
                               "stopped": [], "escalated": [], "deferred": [], "refused": []}
-    for initial in list(convoy.tickets):
+    # A round already counted and waiting for its place is sent first, the
+    # longest waiting first; the others keep the convoy's order.
+    waits = {id(t): round_waiting_since(t) for t in convoy.tickets}
+    for initial in sorted(convoy.tickets, key=lambda t: (waits[id(t)] is None, waits[id(t)] or "")):
         ticket_id = initial.get("id")
         try:
             # No finished exit or stop means no work for this stage. Keep
@@ -678,7 +724,7 @@ def cmd_settle(args: argparse.Namespace) -> int:
             initial = readable(initial)
             if not initial.get("exit") and not initial.get("stop"):
                 continue
-            done = settle_ticket(convoy, ticket_id)
+            done = settle_ticket(convoy, ticket_id, places)
         except Deferred as exc:
             answer["deferred"].append({"ticket": ticket_id, "reason": str(exc)})
             continue
@@ -971,6 +1017,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("settle")
     p.add_argument("convoy")
     p.add_argument("--repo")
+    p.add_argument("--free")
     p.set_defaults(handler=cmd_settle, ticket=None)
     return parser
 

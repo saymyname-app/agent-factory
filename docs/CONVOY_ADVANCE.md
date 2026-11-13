@@ -151,7 +151,10 @@ is taken by:
   on its way;
 - each ticket a resume was sent for (T20) and that no session has taken
   since, as long as the bead of that resume is not closed: its fresh author
-  session is on its way.
+  session is on its way;
+- each ticket a correction round was sent for (T17) and that no session has
+  taken since the round was sent, as long as the bead of the round is not
+  closed (af-sdd8gr).
 
 Between the moment an author session appears and the moment it takes its
 ticket, that ticket counts twice. The count is therefore never below the
@@ -164,6 +167,23 @@ nothing meanwhile. A resume that was sent keeps its place on the later
 passes until its session takes the ticket (`bin/ticket-author start`); a
 resume whose bead is closed without the ticket taken holds no place: it is
 one more interruption, counted and sent again by that pass.
+
+A resume counted and not sent yet (a `behind` one counted under a full
+ceiling) takes the next free place before anything else: in its convoy it is
+sent before the other resumes and the starts, the longest waiting first, and
+`--all` walks first the convoy whose counted resume waits the longest
+(af-u21377: R11, 37th of its convoy, waited five hours while each freed
+place went to a resume of a ticket listed before it). The other resumes keep
+the convoy's order; a resume due but not counted yet has no date to wait from.
+
+A correction round (T17, `bin/correction-round`) takes a place the same
+way, after the resumes and before the starts (af-sdd8gr: the round of R18
+was sent past the ceiling and Gas City gave it the place the counted resume
+of R11 had waited five hours for). The pass holds a place for each round
+counted and sent to no session yet, so that no start takes it, and hands
+`correction-round settle --free` what is left once the resumes of every
+convoy are sent, less the places held for the counted rounds of the convoys
+settled after it.
 
 The settings file also names what the door receives for a start:
 `start.formula` and `start.role`: the author formula `mol-ticket-author`
@@ -354,7 +374,7 @@ ticket:
 | `interrupted` | the Ticket Exit is `interrupted`; or the ticket is `in_progress` with no Ticket Exit and its recorded session is not among the live ones (`gc session list`); or the bead of its last resume is closed and no session took the ticket since |
 | `returned` | the Ticket Exit is `finished` and the merge returned the ticket (`merge.outcome` `conflict` or `red`) at the tip of its branch. Also a Ticket Exit `finished` whose Handoff is complete at the tip while its green (the regression of a prefactoring) is proven at another commit, ref `unproven:<tip>/exit:<at>`: neither the code review nor the Ticket Evaluation takes such a ticket, its author replays the green (af-1row55; R16 af-yv2g3n waited there from 11/11/2026 05:31Z). Also on a ticket stopped `still_refused` whose every Blocking Finding the operator overrode, which `bin/spec-integration` merges as if at work: the resume lifts that stop, keeps it on its entry and withdraws its request; with no resume left the stop stays with the operator (af-n4bn62: F and G1 of af-strhoy, returned red on 21/10/2026, were neither merged again nor resumed) |
 | `unblocked` | the Ticket Exit is `technically_blocked` and no bead it waits for with a `blocks` edge is open any more |
-| `repair_delivered` | the ticket is an `operator_request` carrying explicit Factory-maintenance links whose every bead has structural delivery proof, after code lifted its parking; or it is stopped `evaluation_no_result` or `evaluation_outage` and every Factory-maintenance bead explicitly linked to that exact stop has the same proof. A repair merged into the protected branch of the ticket's own project must also be an ancestor of the integration tip after its tested `spec-integration take-up`. This separate bounded cause prevents ordinary blocker closures from spending the resumes reserved for independently delivered repairs (af-o5ritb) |
+| `repair_delivered` | the ticket is an `operator_request` carrying explicit Factory-maintenance links whose every bead has structural delivery proof, after code lifted its parking; or it is stopped `evaluation_no_result` or `evaluation_outage` and every Factory-maintenance bead explicitly linked to that exact stop has the same proof. A repair merged into the protected branch of the ticket's own project, or into the convoy's own integration branch (maintenance authorized by af-wpzic4, `docs/DELIVERY.md`), must also be an ancestor of the integration tip after its tested `spec-integration take-up`; one merged into another convoy's integration branch is not delivered for this one (af-41i8d0). This separate bounded cause prevents ordinary blocker closures from spending the resumes reserved for independently delivered repairs (af-o5ritb) |
 | `answered` | the Ticket Exit is `planning_exception` or `operator_request` and the ticket is no longer parked: its parking was lifted |
 | `behind` | the Ticket Exit is `finished`, the ticket is not merged, and `bin/code-review show <convoy> <ticket> --repo` reports `behind`: its branch does not contain the tip of the integration branch, so no reviewer is sent on it (T44, `docs/CODE_REVIEW.md`). The fact is `integration:<tip>/exit:<exit time>`: once per Ticket Exit |
 | `evaluation_no_result` | the ticket is stopped `evaluation_no_result` (its Ticket Evaluation gave no result, relaunch included, `docs/TICKET_EVALUATION.md`), it has no explicit Factory-maintenance link, is neither parked nor closed, has a resume left, the operator has not answered the request of that stop, and no resume of this cause was opened yet on the current tip of the integration branch (on `origin` when it is there, else local). The fact is `integration:<tip>/stop:<stop time>`: once per tip of the integration branch (af-xhc0sj) |

@@ -711,10 +711,17 @@ class Convoy:
         raise Refusal(f"le ticket {ticket_id} n'appartient pas au convoi {self.id}")
 
     def awaiting_a_session(self) -> list[str]:
-        """Tickets started through the door, or sent to a resume, that no
-        session has picked yet."""
+        """Tickets started through the door, or sent to a resume or to a
+        correction round, that no session has picked yet."""
         return [t["id"] for t in self.tickets
-                if (started(t) and t.get("status") == "open" and not t.get("exit")) or resume_on_its_way(t)]
+                if (started(t) and t.get("status") == "open" and not t.get("exit")) or resume_on_its_way(t)
+                or round_on_its_way(t)]
+
+    def rounds_waiting(self) -> int:
+        """Correction rounds counted and sent to no session yet: each waits
+        for a free author place, after the counted resumes and before any
+        start (af-sdd8gr)."""
+        return sum(1 for t in self.tickets if not t.get("park") and round_waiting(t))
 
     def not_started(self) -> list[dict[str, Any]]:
         return [t for t in self.tickets if t.get("status") == "open" and not t.get("gates") and not t.get("exit")]
@@ -1156,6 +1163,28 @@ def resume_on_its_way(ticket: dict[str, Any]) -> bool:
     return read_bead(last["launches"][-1]["bead"]).get("status") != "closed"
 
 
+def round_waiting(ticket: dict[str, Any]) -> bool:
+    """A correction round counted on the ticket (bin/correction-round) and
+    sent to no session yet."""
+    correction = ticket.get("correction")
+    return isinstance(correction, dict) and "unruled" not in correction and not correction.get("launches") \
+        and not ticket.get("stop") and ticket.get("status") != "closed"
+
+
+def round_on_its_way(ticket: dict[str, Any]) -> bool:
+    """A correction round was sent and no session took the ticket since:
+    its session holds a place under the ceiling, like a resume on its way
+    (af-sdd8gr). A round bead closed without the ticket taken holds none."""
+    correction = ticket.get("correction")
+    launches = correction.get("launches") if isinstance(correction, dict) else None
+    if not launches or ticket.get("status") == "closed":
+        return False
+    session_at = str((ticket.get("session") or {}).get("at") or "")
+    if session_at >= str(launches[-1].get("at") or ""):
+        return False
+    return read_bead(launches[-1]["bead"]).get("status") != "closed"
+
+
 def released_technical_repairs(ticket: dict[str, Any]) -> list[str]:
     """The latest lift released the ticket's current operator-request exit."""
     record = ticket.get("technical_repairs")
@@ -1225,13 +1254,21 @@ def awaits_repair(ticket: dict[str, Any]) -> bool:
         and bool((park.get("answer") or {}).get("awaits_repair"))
 
 
-def delivered_technical_repairs(ticket: dict[str, Any]) -> list[str]:
+def delivered_technical_repairs(ticket: dict[str, Any], convoy: Convoy) -> list[str]:
     """Every linked repair, only after structural PR merge and exact-head
-    CI proof. Open, failed and merely closed work keeps waiting."""
+    CI proof. Open, failed and merely closed work keeps waiting. A repair
+    merged into an integration branch (af-41i8d0, docs/DELIVERY.md) is
+    delivered for the convoy of that branch only; whether its commit is in
+    the tip is the take-up's question (repairs_missing_from_integration)."""
     repairs = technical_repairs(ticket)
+    own = (convoy.integration or {}).get("branch")
     for repair_id in repairs:
-        readiness = delivery_readiness(read_bead(repair_id))
+        bead = read_bead(repair_id)
+        readiness = delivery_readiness(bead)
         if not readiness["ready"] or not readiness["pr_backed"]:
+            return []
+        target = str((bead.get("metadata") or {}).get("merged_target") or "")
+        if target.startswith("integration/") and target != own:
             return []
     return repairs
 
@@ -1723,21 +1760,22 @@ def exact_r8_close_release_phase(convoy: Convoy, ticket: dict[str, Any]) -> str 
 
 
 def repairs_missing_from_integration(convoy: Convoy) -> dict[str, str]:
-    """Delivered repairs from this project's protected branch that its
-    integration branch does not contain yet."""
+    """Delivered repairs from this project's protected branch, or merged
+    into this integration branch itself (af-41i8d0), that the integration
+    tip read here does not contain yet: the take-up fetches and checks again."""
     if not convoy.rig or not convoy.integration:
         return {}
     try:
         project = tomllib.loads((PROJECTS / f"{convoy.rig}.toml").read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise Refusal(f"config/projects/{convoy.rig}.toml illisible : {exc}") from exc
-    protected = convoy.integration.get("protected")
+    targets = (convoy.integration.get("protected"), convoy.integration.get("branch"))
     commits: dict[str, str] = {}
     for ticket in convoy.tickets:
-        for repair_id in delivered_technical_repairs(ticket):
+        for repair_id in delivered_technical_repairs(ticket, convoy):
             metadata = read_bead(repair_id).get("metadata")
             if isinstance(metadata, dict) and metadata.get("gc.github_repo") == project.get("repo") \
-                    and metadata.get("merged_target") == protected:
+                    and metadata.get("merged_target") in targets:
                 commits[repair_id] = metadata["gc.merge_commit"]
     if not commits:
         return {}
@@ -1818,7 +1856,7 @@ def close_red_repair(convoy: Convoy, ticket: dict[str, Any], reason: str) -> lis
     its own parking lifted, a live request cleared. Returns the lifted."""
     lifted: list[str] = []
     if ticket.get("park"):
-        repairs = [part for repair in delivered_technical_repairs(ticket) for part in ("--repair", repair)]
+        repairs = [part for repair in delivered_technical_repairs(ticket, convoy) for part in ("--repair", repair)]
         lifted = state_write("lift-park", convoy.id, ticket["id"], "--request", ticket["id"], *repairs,
                              "--withdrawing")["lifted"]
     if (read_bead(ticket["id"]).get("metadata") or {}).get("gc.needs_benjamin") not in (None, "none"):
@@ -2007,10 +2045,10 @@ def withdraw_exact_answered_r6_r7(convoy: Convoy) -> dict[str, Any] | None:
     return {"repair": repair_id, "withdrawn": withdrawn_ids, "cleared": cleared}
 
 
-def evaluation_repair_due(ticket: dict[str, Any]) -> tuple[str, str, str] | None:
+def evaluation_repair_due(convoy: Convoy, ticket: dict[str, Any]) -> tuple[str, str, str] | None:
     """One resume for an evaluation stop once every explicitly
     linked Factory repair has structural delivery proof."""
-    repairs = delivered_technical_repairs(ticket)
+    repairs = delivered_technical_repairs(ticket, convoy)
     if not repairs or ticket.get("resumes_left") == 0:
         return None
     ref = hashlib.sha256(",".join(repairs).encode("utf-8")).hexdigest()[:16]
@@ -2024,6 +2062,26 @@ def green_at(ticket: dict[str, Any], tip: str) -> bool:
     return ((ticket.get("tdd") or {}).get(step) or {}).get("commit") == tip
 
 
+def untaken_resume(ticket: dict[str, Any]) -> dict[str, Any] | None:
+    """The last resume of the ticket when nobody took the ticket since it
+    was counted: no Ticket Exit, the same session as when it was counted."""
+    entries = (ticket.get("resume") or {}).get("entries") or []
+    last = entries[-1] if entries else None
+    if last and not (ticket.get("exit") or {}).get("exit") \
+            and last.get("session") == (ticket.get("session") or {}).get("name"):
+        return last
+    return None
+
+
+def waiting_since(ticket: dict[str, Any]) -> str | None:
+    """When the resume counted on a ticket at work, and sent to no session
+    yet, was counted (a `behind` one is counted under a full ceiling): it
+    takes the next free author place before any other start or resume
+    (af-u21377). None for any other ticket."""
+    last = untaken_resume(ticket) if at_work(ticket) else None
+    return last.get("at") if last and not last["launches"] else None
+
+
 def resume_due(ticket: dict[str, Any], alive: set[str]) -> tuple[str, str, str] | None:
     """What the pass owes a ticket at work, read on the tracker alone:
     ("new", cause, ref) a fact that asks for a resume not counted yet;
@@ -2032,9 +2090,8 @@ def resume_due(ticket: dict[str, Any], alive: set[str]) -> tuple[str, str, str] 
     exit_record = ticket.get("exit") or {}
     exit_name, exit_at = exit_record.get("exit"), exit_record.get("at")
     session = (ticket.get("session") or {}).get("name")
-    entries = (ticket.get("resume") or {}).get("entries") or []
-    last = entries[-1] if entries else None
-    if last and exit_name is None and last.get("session") == session:
+    last = untaken_resume(ticket)
+    if last:
         # Nobody took the ticket since its last resume was counted.
         if not last["launches"]:
             return "launch", last["cause"], last["ref"]
@@ -2284,8 +2341,12 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
     """Spec §8: park the ticket that took its last resume; send the ticket
     that needs its author again to one fresh session, and count it. `only`:
     the tickets a red integration branch still lets go on."""
-    for ticket_id in [t["id"] for t in convoy.tickets
-                      if at_work(t) or stopped_without_result(t) or overridden_at_work(t)]:
+    candidates = [t for t in convoy.tickets if at_work(t) or stopped_without_result(t) or overridden_at_work(t)]
+    # A resume already counted and waiting for its session is served first,
+    # the longest waiting first; the others keep the convoy's order
+    # (af-u21377: R11, listed last, waited five hours behind the others).
+    candidates.sort(key=lambda t: (waiting_since(t) is None, waiting_since(t) or ""))
+    for ticket_id in [t["id"] for t in candidates]:
         if only is not None and ticket_id not in only:
             continue
         try:
@@ -2310,7 +2371,7 @@ def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
                 due = preauthorized_amendment_due(convoy, ticket) or amendment_granted_due(ticket) \
                     or inherited_change_due(convoy, ticket)
             elif ticket["stop"]["reason"] in EVALUATION_STOPS and technical_repairs(ticket):
-                due = evaluation_repair_due(ticket)
+                due = evaluation_repair_due(convoy, ticket)
             elif ticket["stop"]["reason"] == EVALUATION_OUTAGE:
                 due = None
             elif overridden_at_work(ticket):
@@ -2512,7 +2573,7 @@ def settle_lifts(convoy: Convoy, out: dict[str, Any]) -> None:
             continue
         if ticket.get("status") != "closed" and park.get("origin") == ticket["id"] \
                 and park.get("cause") == "operator_request" and technical_repairs(ticket):
-            repairs = delivered_technical_repairs(ticket)
+            repairs = delivered_technical_repairs(ticket, convoy)
             if repairs:
                 lifts.append((ticket["id"], ticket["id"], None, repairs))
             # Once explicitly linked, this is a code-owned technical wait:
@@ -3389,7 +3450,10 @@ def dispatch(convoy: Convoy, ticket_id: str, rig: str, settings: dict[str, Any])
     return run(argv)
 
 
-def advance_convoy(convoy: Convoy, settings: dict[str, Any], free: int, alive: set[str]) -> dict[str, Any]:
+def advance_convoy(convoy: Convoy, settings: dict[str, Any], free: int, alive: set[str],
+                   reserved: int = 0) -> dict[str, Any]:
+    """`reserved`: the places the counted correction rounds wait for; the
+    resumes go before them, the starts after them."""
     out: dict[str, Any] = {"id": convoy.id, "started": [], "waiting": [], "deferred": [], "refused": [],
                            "resumed": [], "parked": [], "lifted": []}
     migrated = False
@@ -3494,7 +3558,7 @@ def advance_convoy(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
         if held:
             out["waiting"].append({"id": ticket_id, "reason": held})
             continue
-        if len(out["started"]) + len(out["resumed"]) >= free:
+        if len(out["started"]) + len(out["resumed"]) >= free - reserved:
             out["waiting"].append({"id": ticket_id, "reason": f"plafond N={settings['ceiling']} atteint"})
             continue
         blockers = open_blockers(ticket_id)
@@ -3689,16 +3753,18 @@ def settle_evaluations(convoy: Convoy) -> dict[str, Any] | None:
     return {name: answer[name] for name in kept if answer.get(name)}
 
 
-def settle_corrections(convoy: Convoy) -> dict[str, Any] | None:
+def settle_corrections(convoy: Convoy, free: int | None = None) -> dict[str, Any] | None:
     """Spec §8: code, not a session, opens the correction rounds of a
     ticket its code review or its evaluation refused, sends each to one fresh
     author session, and stops the ticket still refused after the last, through
-    bin/correction-round. None when the convoy has no finished ticket, or
-    when nothing was refused: the settlement then had nothing to say."""
+    bin/correction-round, at most `free` rounds sent (af-sdd8gr). None when
+    the convoy has no finished ticket, or when nothing was refused: the
+    settlement then had nothing to say."""
     if not convoy.corrections_due():
         return None
+    places = [] if free is None else ["--free", str(max(0, free))]
     try:
-        answer = parsed(run([str(CORRECTION_BIN), "settle", convoy.id, "--repo", str(convoy.repo)]),
+        answer = parsed(run([str(CORRECTION_BIN), "settle", convoy.id, *places, "--repo", str(convoy.repo)]),
                         f"correction-round settle {convoy.id}")
     except Refusal as exc:
         return {"error": f"refus : {exc}"}
@@ -3861,9 +3927,18 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
     occupied = sessions.get("author", 0) + len(awaiting)
     free = max(0, settings["ceiling"] - occupied)
 
+    # A correction round counted and waiting for its place is sent after the
+    # resumes and before any start (af-sdd8gr): its places are held here.
+    waiting_rounds = {convoy_id: convoy.rounds_waiting() for convoy_id, convoy in convoys.items()}
     results, alive = [], session_names(live)
-    for convoy_id in targets if targets is not None else sorted(convoys):
-        result = advance_convoy(convoys[convoy_id], settings, free, alive)
+    # The convoy whose counted resume waits the longest for a place is walked
+    # first, so that a convoy sorted before it does not take that place
+    # (af-u21377); the others keep their order.
+    waits = {convoy_id: min((since for t in convoy.tickets if (since := waiting_since(t))), default=None)
+             for convoy_id, convoy in convoys.items()}
+    walked = targets if targets is not None else sorted(convoys, key=lambda c: (waits[c] is None, waits[c] or "", c))
+    for convoy_id in walked:
+        result = advance_convoy(convoys[convoy_id], settings, free, alive, sum(waiting_rounds.values()))
         free -= len(result["started"]) + len(result["resumed"])
         results.append(result)
 
@@ -3896,9 +3971,13 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
             result["evaluation"] = evaluations
         # Once both have answered: what they refused goes to one author
         # session, and a ticket still refused after its round is stopped.
-        corrections = settle_corrections(convoys[result["id"]])
+        # A round takes a place left under the ceiling, those the counted
+        # rounds of the convoys settled after this one wait for held.
+        waiting_rounds[result["id"]] = 0
+        corrections = settle_corrections(convoys[result["id"]], max(0, free - sum(waiting_rounds.values())))
         if corrections is not None:
             result["correction"] = corrections
+            free -= len(corrections.get("launched") or [])
         # Before the merge: the fidelity of an interface ticket is measured
         # on the commit that merges (condition 4 of the ticket-end gate).
         fidelity = check_fidelity(convoys[result["id"]])

@@ -16,7 +16,11 @@ name: Factory CI
 # sets and removes the variable.
 on:
   pull_request:
-    branches: [main]
+    # integration/**: a maintenance PR into a convoy's integration branch
+    # (af-wpzic4, docs/DELIVERY.md) is merged and closed on this same run.
+    # The branch must carry this file: a convoy that has not taken up main
+    # since af-41i8d0 gets no run, and its maintenance PR waits.
+    branches: [main, 'integration/**']
   # GitHub's merge queue asks for the required check on the commit it is
   # about to put on main: main, the pull requests ahead in the queue and
   # this one. Without this trigger "Tests" is never reported on that commit

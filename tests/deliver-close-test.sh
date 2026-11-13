@@ -120,6 +120,26 @@ for metadata in '{"gc.work_branch":"do-work/af-other"}' \
   [[ -z $(<"$CALL_LOG") ]] || fail_test "branch-mismatch refusal made a Beads write"
 done
 
+# af-41i8d0: a PR merged into integration/<spec> closes a maintenance bead
+# authorized by af-wpzic4 (the rule itself: tests/integration-maintenance-test.py),
+# and is refused, with no Beads write, for a bead without that authority.
+TESTS_RUN=$((TESTS_RUN + 1))
+DELIVER_CLOSE_PR_BASE=integration/af-spec DELIVER_CLOSE_BEAD_LABELS='["maintenance"]' \
+DELIVER_CLOSE_BEAD_METADATA='{"gc.authorized_by":"af-wpzic4","gc.work_base_branch":"integration/af-spec"}' \
+  run merged af-work --repo owner/repo --pr 42 >/dev/null \
+  || fail_test "an authorized maintenance PR merged into integration/af-spec should close its bead"
+[[ $(<"$CALL_LOG") == *"merged_target=integration/af-spec"* ]] \
+  || fail_test "integration close did not record merged_target: $(<"$CALL_LOG")"
+TESTS_RUN=$((TESTS_RUN + 1))
+if output=$(DELIVER_CLOSE_PR_BASE=integration/af-spec \
+    DELIVER_CLOSE_BEAD_METADATA='{"gc.work_base_branch":"integration/af-spec"}' \
+    run merged af-work --repo owner/repo --pr 42 2>&1); then
+  fail_test "a PR merged into integration/af-spec must not close a bead af-wpzic4 does not authorize"
+fi
+[[ $output == *"cannot be delivered by PR 42 into integration/af-spec"*"af-wpzic4"* ]] \
+  || fail_test "integration refusal did not name its reason: $output"
+[[ -z $(<"$CALL_LOG") ]] || fail_test "integration refusal made a Beads write"
+
 # ADR-0023: the --outcome form is the door mol-do-work uses instead of a raw
 # `gc bd update --set-metadata gc.work_outcome=...`. No GitHub verification.
 TESTS_RUN=$((TESTS_RUN + 1))
@@ -335,6 +355,7 @@ run_auto() {
     GH_BIN="$FIXTURE_ROOT/gh" \
     DELIVER_CLOSE_CALL_LOG="$CALL_LOG" \
     FACTORY_ROOT="$SYNTHETIC_ROOT" \
+    DELIVER_CLOSE_PR_BASE=dev \
     "$SCRIPT" "$@"
 }
 

@@ -90,15 +90,16 @@ class TestBudgets(unittest.TestCase):
                   f"PASS tests/cockpit-criteria-test.py ({criteria}s)\n", at=f"2026-10-25T0{n}:00:00Z")
         found = test_budgets.runs(self.store)
         new = test_budgets.refreshed(test_budgets.DEFAULTS, found)
-        self.assertEqual(60 * 7, new["green_seconds"])        # 1.5 x 260 = 390 -> 420
         self.assertEqual(60 * 10, new["full_seconds"])        # 1.5 x (20 + 372) = 588 -> 600
+        self.assertNotIn("green_seconds", new)
+        self.assertEqual([200, 260, 240], [run["seconds"] for run in found if run["kind"] == "green"])
         self.assertEqual(600, new["host_wait_seconds"])
 
     def test_refresh_cli_raises_every_measured_budget_from_recent_evidence(self):
         root = self.tmp / "root"
         (root / "config").mkdir(parents=True)
         (root / "config" / "test-budgets.json").write_text(json.dumps({
-            "host_wait_seconds": 600, "green_seconds": 1140, "full_seconds": 1320,
+            "host_wait_seconds": 600, "full_seconds": 1320,
             "criterion_test_seconds": 600, "margin_seconds": 60, "alert_ratio": 0.8,
         }))
         for n, (total, criterion) in enumerate(((900, 500), (1106, 798), (252, 51))):
@@ -117,15 +118,14 @@ class TestBudgets(unittest.TestCase):
 
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         after = json.loads(proc.stdout)["after"]
-        self.assertEqual(1680, after["green_seconds"])          # 1.5 x 1106 -> 28 min
         self.assertEqual(2340, after["full_seconds"])           # 1.5 x 1534 -> 39 min
         self.assertEqual(1200, after["criterion_test_seconds"]) # 1.5 x 798 -> 20 min
         self.assertEqual(after, json.loads((root / "config" / "test-budgets.json").read_text()))
 
     def test_a_kind_with_fewer_than_three_runs_keeps_its_budget(self):
-        piece(self.store, "g", "tdd_green.json", "regression: took 900s with the host held (green budget 600s)\n")
-        new = test_budgets.refreshed({**test_budgets.DEFAULTS, "green_seconds": 480}, test_budgets.runs(self.store))
-        self.assertEqual(480, new["green_seconds"])
+        piece(self.store, "m", "merged_tests.json", "regression: took 900s with the host held (full budget 600s)\n")
+        new = test_budgets.refreshed({**test_budgets.DEFAULTS, "full_seconds": 480}, test_budgets.runs(self.store))
+        self.assertEqual(480, new["full_seconds"])
 
     def test_a_red_merged_run_is_no_measure(self):
         piece(self.store, "m", "merged_tests.json",

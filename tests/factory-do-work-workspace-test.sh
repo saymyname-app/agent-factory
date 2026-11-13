@@ -324,6 +324,9 @@ if [ "$1" = "show" ]; then
     af-sections-*)
       printf '[{"id":"%s","description":"no_silent_deferral: écrit dans la PR sous « Non fait », « Écarts », « Constats hors ticket »"}]\n' "$2"
       ;;
+    af-integ-ok)
+      printf '[{"id":"%s","description":"a test fix","labels":["maintenance"],"metadata":{"gc.authorized_by":"af-wpzic4","gc.work_base_branch":"integration/af-spec"}}]\n' "$2"
+      ;;
     *)
       printf '[{"id":"%s","description":"a plain ticket"}]\n' "$2"
       ;;
@@ -624,5 +627,39 @@ grep -qF -- "middle of a rebase (conflicted: INDEX)" "$TMP/s15d.err" \
   || { cat "$TMP/s15d.err" >&2; fail "finish on a worktree mid-rebase does not say so"; }
 git -C "$WT15c" rebase --abort
 [ "$(git -C "$WT15c" rev-parse HEAD)" = "$HEAD15c" ] || fail "finish committed on a worktree mid-rebase"
+
+# ---------------------------------------------------------------------------
+# 16. af-41i8d0: a maintenance bead towards a convoy's integration branch
+#     (af-wpzic4) branches off it and opens its PR there, with the « Cible »
+#     line; a bead the decision does not authorize is refused (exit 3, no
+#     PR). The file rules themselves: tests/integration-maintenance-test.py.
+# ---------------------------------------------------------------------------
+git clone -q --branch main "$TMP/origin.git" "$TMP/convoy"
+git -C "$TMP/convoy" checkout -q -b integration/af-spec origin/main
+mkdir -p "$TMP/convoy/tests" && echo convoy > "$TMP/convoy/tests/t.py"
+git -C "$TMP/convoy" add -A
+git -C "$TMP/convoy" -c user.email=t@t -c user.name=t commit -qm "convoy test"
+git -C "$TMP/convoy" push -q origin integration/af-spec
+SPEC_TIP=$(git -C "$TMP/convoy" rev-parse HEAD)
+
+WT16=$("$SCRIPT" enter af-integ-ok integration/af-spec)
+[ "$(git -C "$WT16" rev-parse HEAD)" = "$SPEC_TIP" ] || fail "enter with integration/af-spec did not branch off its tip"
+echo repaired > "$WT16/tests/t.py"
+git -C "$WT16" commit -qam "repair the convoy's test"
+"$SCRIPT" finish af-integ-ok "$WT16" do-work/af-integ-ok integration/af-spec >/dev/null 2>"$TMP/s16.err" \
+  || { cat "$TMP/s16.err" >&2; fail "finish of an authorized integration repair exited non-zero"; }
+grep -qF -- "Cible : integration/af-spec — code de test changé par le convoi (tests/t.py" "$GH_FAKE_DIR/do-work_af-integ-ok.body" \
+  || fail "the integration PR body does not carry its « Cible » line"
+
+WT16b=$("$SCRIPT" enter af-integ-no integration/af-spec)
+echo repaired > "$WT16b/tests/t.py"
+git -C "$WT16b" commit -qam "repair without authority"
+rc=0
+"$SCRIPT" finish af-integ-no "$WT16b" do-work/af-integ-no integration/af-spec >/dev/null 2>"$TMP/s16b.err" || rc=$?
+[ "$rc" = "3" ] || { cat "$TMP/s16b.err" >&2; fail "finish of an unauthorized integration repair exited $rc (expected 3)"; }
+grep -qF -- "af-wpzic4" "$TMP/s16b.err" || { cat "$TMP/s16b.err" >&2; fail "the integration refusal does not name the decision"; }
+[ -f "$GH_FAKE_DIR/do-work_af-integ-no.url" ] && fail "a refused integration finish opened a PR"
+[ -d "$WT16b" ] || fail "a refused integration finish must leave the worktree in place"
+git -C "$TMP/root" worktree remove --force "$WT16b"
 
 echo "OK bin/factory-do-work-workspace isolates HQ dispatches AND protected product-rig branches in a worktree, pushes and cleans up on finish, and is a no-op elsewhere"

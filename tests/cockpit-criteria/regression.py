@@ -24,7 +24,8 @@ on 8 cores, 22/10/2026) and the gates refused tickets that were green. So it
 takes a slot of the host pool (lib/host_slots.py) and waits its turn, at
 most REGRESSION_HOST_WAIT seconds (600) -- none when its caller holds one
 for it (bin/tdd-step, bin/spec-integration). Its budget, REGRESSION_BUDGET
-seconds (600), counts from the slot obtained. Past either, it exits 75 and
+seconds (`full_seconds` of config/test-budgets.json, at a ticket's green
+too), counts from the slot obtained. Past either, it exits 75 and
 says NOT RUN: the gates take that as no answer, never as a red.
 Exit: 0 green, 1 red, 75 not run.
 """
@@ -143,17 +144,21 @@ def budgets() -> dict:
     try:
         from test_budgets import load
     except ImportError:
-        return {"host_wait_seconds": 600, "green_seconds": 600, "full_seconds": 600, "alert_ratio": 0.8}
+        return {"host_wait_seconds": 600, "full_seconds": 600, "alert_ratio": 0.8}
     return load(ROOT)
 
 
 def main() -> int:
     known = budgets()
     # At a ticket's green bin/tdd-step names its tests and the series keeps
-    # to their families (study C, T4): the green budget; else the full one.
+    # to their families (study C, T4); its run is measured as a green one.
+    # It has the budget of the whole series all the same: a family is a part
+    # of it, and of any size. Until 13/11/2026 a green budget of its own,
+    # measured on the greens that ended within it, refused three times at
+    # 1260 s the ticket of the « runs » family, 24 classes (af-hafyxx).
     kind = "green" if os.environ.get("TDD_STEP_TICKET_TESTS", "").strip() else "full"
     wait = seconds("REGRESSION_HOST_WAIT", int(known["host_wait_seconds"]))
-    budget = seconds("REGRESSION_BUDGET", int(known[f"{kind}_seconds"]))
+    budget = seconds("REGRESSION_BUDGET", int(known["full_seconds"]))
     host = take_host(wait)  # noqa: F841 -- held until the process ends
     started = time.monotonic()
     deadline = started + budget

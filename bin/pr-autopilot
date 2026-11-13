@@ -26,6 +26,15 @@
 # dev, so their dev -> main promotion stays a human decision by construction;
 # the Factory repo's protected branch is main itself, which is armed.
 #
+# Integration branches (af-41i8d0, af-wpzic4): on the Factory's own repo, a
+# PR into integration/<spec> is merged too -- never armed (those branches
+# have no ruleset, so GitHub would merge an armed PR before its check), only
+# merged directly once its required check is green on its head and it is
+# CLEAN -- and only when lib/integration_maintenance.py accepts its
+# maintenance bead and every file it changes (docs/DELIVERY.md); otherwise
+# held, labelled and explained once. FINALIZE closes it through
+# bin/deliver-close like any other.
+#
 # Outside authors (af-996mmd): a pull request from a fork, or whose author is
 # not one of the operator's own GitHub accounts (config/operator.toml,
 # `github_logins`), is never armed, merged, retried, labelled or turned into
@@ -414,7 +423,7 @@ direct_merge() {  # repo num head_sha
 
 active_waiters_for() {  # bead -> comma-separated open/in_progress waiter ids
   local bead=$1
-  printf '%s' "$RIG_ALL_BEADS_JSON" | jq -r --arg bead "$bead" '
+  link_beads_json | jq -r --arg bead "$bead" '
     [.[]
       | select(.id != $bead)
       | select(.status == "open" or .status == "in_progress")
@@ -544,6 +553,71 @@ project_descriptor_gate() {  # repo num sha labels armed -> 0 proceed, 1 hold
         run gh label create "$PROJECT_HOLD_LABEL" --repo "$repo" --color 5319E7 --force \
           --description "pr-autopilot: ajout/retrait de projet, fusion réservée à $OPERATOR_NAME" >/dev/null 2>&1
         add_label "$repo" "$num" "$PROJECT_HOLD_LABEL"
+      fi
+      ;;
+  esac
+  HELD=$((HELD+1))
+  return 1
+}
+
+# ---------- integration maintenance gate (af-41i8d0) ----------
+# A PR into integration/<spec> is merged only for a maintenance bead
+# af-wpzic4 authorizes, and only when every file it changes is test/harness
+# code the convoy itself changed and main cannot reach. The rule is
+# lib/integration_maintenance.py; the files are read from git in the rig's
+# checkout after a fetch, at the exact head this pass read.
+INTEGRATION_HOLD_LABEL="integration-maintenance-refused"
+INTEGRATION_MAINTENANCE_TOOL="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/lib/integration_maintenance.py"
+
+integration_gate() {  # repo rig_path num sha branch base protected labels -> 0 proceed, 1 hold
+  local repo=$1 rig_path=$2 num=$3 sha=$4 branch=$5 base=$6 protected=$7 labels=" $8 "
+  local candidate why rc
+  ensure_rig_all_beads
+  candidate=$(linked_work_candidate_for "$branch" "$num")
+  if [ -z "$candidate" ] && [ "$RIG_ALL_BEADS_UNKNOWN" = "1" ]; then
+    log "  PR #$num: beads unknown (gc bd list timed out) -> not merging into $base this pass"
+    return 1
+  fi
+  if [ -z "$candidate" ]; then
+    why="aucun bead de maintenance n'est lié à $branch"
+  else
+    why=$(printf '%s' "$candidate" | python3 "$INTEGRATION_MAINTENANCE_TOOL" target --target "$base" 2>&1) && why=""
+  fi
+  if [ -z "$why" ]; then
+    bounded "$AP_READ_CAP" git -C "$rig_path" fetch --quiet origin "$protected" "$base" "$branch" >/dev/null 2>&1; rc=$?
+    if [ "$rc" != 0 ] || [ "$(git -C "$rig_path" rev-parse --verify --quiet "refs/remotes/origin/$branch")" != "$sha" ]; then
+      log "  PR #$num: head $sha not fetched (rc=$rc) -> files unknown, not merging into $base this pass"
+      return 1
+    fi
+    why=$(python3 "$INTEGRATION_MAINTENANCE_TOOL" files --git "$rig_path" --protected "origin/$protected" \
+      --base "origin/$base" --head "origin/$branch" 2>&1); rc=$?
+    case "$rc" in
+      0) why="" ;;
+      1) ;;
+      *) log "  PR #$num: files unreadable ($why) -> not merging into $base this pass"; return 1 ;;
+    esac
+  fi
+  if [ -z "$why" ]; then
+    case "$labels" in *" $INTEGRATION_HOLD_LABEL "*)
+      log "  PR #$num: now allowed into $base -> removing '$INTEGRATION_HOLD_LABEL'"
+      remove_label "$repo" "$num" "$INTEGRATION_HOLD_LABEL" ;;
+    esac
+    return 0
+  fi
+  case "$labels" in
+    *" $INTEGRATION_HOLD_LABEL "*) vlog "PR #$num: held ($INTEGRATION_HOLD_LABEL), already explained on the PR" ;;
+    *)
+      log "  PR #$num: HELD -> $INTEGRATION_HOLD_LABEL"
+      {
+        printf '### Maintenance vers %s refusée\n\n' "$base"
+        printf 'docs/DELIVERY.md (décision af-wpzic4) : une PR vers une branche d’intégration ne porte que du code de test/harnais que le convoi a lui-même changé et que main ne peut pas atteindre, pour un bead de maintenance autorisé par af-wpzic4.\n\n'
+        printf '%s\n' "$why" | sed 's/^/- /'
+        printf '\npr-autopilot ne fusionne pas cette PR. Ce qui ne relève pas de cette règle se livre sur %s.\n' "$protected"
+      } > "$TMPDIR_AP/integration-hold.md"
+      if explain_once "$repo" "$num" "$INTEGRATION_HOLD_LABEL" "$TMPDIR_AP/integration-hold.md" || [ $? = 2 ]; then
+        run gh label create "$INTEGRATION_HOLD_LABEL" --repo "$repo" --color B60205 --force \
+          --description "pr-autopilot: PR vers une branche d'intégration hors règle af-wpzic4" >/dev/null 2>&1
+        add_label "$repo" "$num" "$INTEGRATION_HOLD_LABEL"
       fi
       ;;
   esac
@@ -793,9 +867,28 @@ ensure_rig_all_beads() {  # fetch $RIG_ALL_BEADS_JSON once per rig, lazily
   local rc
   RIG_ALL_BEADS_JSON=$(cd "$rig_path" && bounded "$AP_WRITE_CAP" gc bd list --all --limit 0 --json 2>/dev/null); rc=$?
   # A cut read is not "no beads": callers must not act on it (RIG_ALL_BEADS_UNKNOWN).
-  timed_out "$rc" && RIG_ALL_BEADS_UNKNOWN=1
+  if timed_out "$rc"; then RIG_ALL_BEADS_UNKNOWN=1; RIG_ALL_BEADS_JSON='[]'; fi
   [ -n "$RIG_ALL_BEADS_JSON" ] || RIG_ALL_BEADS_JSON='[]'
   RIG_ALL_BEADS_FETCHED=1
+}
+
+# af-8hdaf1: PR #867 merged at 13:35Z on 2026-11-12 and its ticket af-batj8g
+# (open, sent back to the pool for a conflict) stayed open, with no merge
+# trace, until 17:48Z. The host's load was 75 to 95 that afternoon: the
+# whole-history read above (tens of MB) was cut on every pass, and RECONCILE
+# skipped every merged PR on that alone -- although the bead it closes is,
+# by definition, one not yet closed, so already in $RIG_OPEN_BEADS_JSON, the
+# lighter read this pass completed before ever reaching here. Linking a PR to
+# its ticket, its waiters, a DIRTY/red rejection and the integration gate
+# therefore read the open beads when the whole history is unknown. Only the
+# closed history stays unknown: a PR whose ticket is not among the open beads
+# is still "unknown, retried next tick", never "no ticket".
+link_beads_json() {
+  if [ "$RIG_ALL_BEADS_UNKNOWN" = "1" ]; then
+    printf '%s' "$RIG_OPEN_BEADS_JSON"
+  else
+    printf '%s' "$RIG_ALL_BEADS_JSON"
+  fi
 }
 
 # Same exclusions RECONCILE below relies on: never a bead pr-autopilot itself
@@ -815,7 +908,7 @@ LINKED_WORK_JQ='def linked($b; $n):
   | .[0] // empty;'
 
 linked_work_candidate_for() {  # branch num -> json of the linked work bead, or empty
-  printf '%s' "$RIG_ALL_BEADS_JSON" \
+  link_beads_json \
     | jq -r --arg b "$1" --arg n "$2" "$LINKED_WORK_JQ"' linked($b; $n) | @json' 2>/dev/null
 }
 
@@ -834,14 +927,14 @@ index_merged() {  # merged-TSV -> fills LINKED_FOR[num]=candidate-json, VIA_FOR[
   [ -n "$pairs" ] || pairs='[]'
   while IFS=$'\t' read -r n v; do
     [ -n "$n" ] && LINKED_FOR[$n]=$v
-  done < <(printf '%s' "$RIG_ALL_BEADS_JSON" | jq -r --argjson pairs "$pairs" "$LINKED_WORK_JQ"'
+  done < <(link_beads_json | jq -r --argjson pairs "$pairs" "$LINKED_WORK_JQ"'
     . as $all | $pairs[] | . as $p | ($all | linked($p.b; $p.n)) as $c
     | select((($c.metadata["gc.needs_benjamin"] // "") | tostring) as $needs
              | $needs == "" or $needs == "none")
     | "\($p.n)\t\($c|tojson)"' 2>/dev/null)
   while IFS=$'\t' read -r n v; do
     [ -n "$n" ] && VIA_FOR[$n]+="$v"$'\n'
-  done < <(printf '%s' "$RIG_ALL_BEADS_JSON" | jq -r '
+  done < <(link_beads_json | jq -r '
     .[]|(.metadata["gc.delivered_via_pr"]|tostring) as $v
     |select($v!="null")
     |select(.status=="open" or .status=="in_progress")
@@ -923,9 +1016,11 @@ reject_ticket() {  # repo rig_path num sha reason -> 0 handled (ticket-owned PR)
   timed_out "$rc" && return 2
   [ -n "$branch" ] || return 1
   ensure_rig_all_beads
-  [ "$RIG_ALL_BEADS_UNKNOWN" = "1" ] && return 2
   candidate=$(linked_work_candidate_for "$branch" "$num")
-  [ -n "$candidate" ] || return 1
+  if [ -z "$candidate" ]; then
+    [ "$RIG_ALL_BEADS_UNKNOWN" = "1" ] && return 2
+    return 1
+  fi
   bead=$(printf '%s' "$candidate" | jq -r '.id // empty' 2>/dev/null)
   [ -n "$bead" ] || return 1
   status=$(printf '%s' "$candidate" | jq -r '.status // empty' 2>/dev/null)
@@ -985,8 +1080,21 @@ if [ -z "$PR_AUTHORS" ]; then
   ERRORS=$((ERRORS+1))
 fi
 
+# af-41i8d0: after the Factory repo's protected branch, each of its
+# integration/<spec> branches is a base of its own (one gh call per pass).
+ENTRIES=()
 for entry in "${RIGS[@]}"; do
+  ENTRIES+=("$entry|")
   IFS='|' read -r rig_dir repo dev required_workflow <<<"$entry"
+  [ "$rig_dir" = "." ] || continue
+  while IFS= read -r ref; do
+    [[ $ref =~ ^refs/heads/(integration/[A-Za-z0-9][A-Za-z0-9._-]*)$ ]] && ENTRIES+=("$entry|${BASH_REMATCH[1]}")
+  done < <(bounded "$AP_READ_CAP" gh api "repos/$repo/git/matching-refs/heads/integration/" --jq '.[].ref' 2>/dev/null)
+done
+
+for entry in "${ENTRIES[@]}"; do
+  IFS='|' read -r rig_dir repo protected required_workflow integration <<<"$entry"
+  dev="${integration:-$protected}"
   repo_done
   if over_budget; then
     not_checked "$repo and any repo after it"
@@ -1003,7 +1111,7 @@ for entry in "${RIGS[@]}"; do
     ERRORS=$((ERRORS+1))
     continue
   fi
-  verify_required_check_live "$repo" "$dev" "$required_check"
+  [ -n "$integration" ] || verify_required_check_live "$repo" "$dev" "$required_check"
   case $? in
     1) log "  LOUD: config/projects names required_check='$required_check' for $repo but the live ruleset on $dev does not require it -- fix the config or the ruleset before trusting this repo's gating"
        ERRORS=$((ERRORS+1)) ;;
@@ -1164,6 +1272,19 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
     reversibility_gate "$repo" "$num" "$sha" "${labels//,/ }" "$armed" || continue
     project_descriptor_gate "$repo" "$num" "${labels//,/ }" "$armed" || continue
     maintenance_form_gate "$repo" "$rig_dir" "$num" "$sha" "$branch" "${labels//,/ }" "$armed" || continue
+
+    # af-41i8d0: into integration/<spec>, only what the rule allows, merged
+    # directly on a green, CLEAN head -- never armed (no ruleset there).
+    if [ -n "$integration" ]; then
+      integration_gate "$repo" "$rig_path" "$num" "$sha" "$branch" "$dev" "$protected" "${labels//,/ }" || continue
+      if [ "$checks" = "OK" ] && [ "$state" = "CLEAN" ] && [ "$sha" != "unknown" ]; then
+        log "  PR #$num: into $dev, required check green, CLEAN -> direct squash merge"
+        direct_merge "$repo" "$num" "$sha"
+      else
+        vlog "PR #$num: into $dev, waiting (state=$state, checks=$checks)"; SKIPPED=$((SKIPPED+1))
+      fi
+      continue
+    fi
 
     # af-s6lef (P04): BEHIND is never armable -- GitHub would happily arm
     # auto-merge and, on a non-strict ruleset, merge without the base's
@@ -1330,8 +1451,7 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
   # above, on any tick that also had a DIRTY/red-after-retry PR this rig.
   [ -n "$merged" ] && ensure_rig_all_beads
   if [ "$RIG_ALL_BEADS_UNKNOWN" = "1" ]; then
-    log "  beads unknown (gc bd list timed out) -- reconciliation retried next tick"
-    continue
+    log "  closed beads unknown (gc bd list --all timed out) -- merged PRs reconciled from open beads only, the rest retried next tick"
   fi
   index_merged "$merged"
 
