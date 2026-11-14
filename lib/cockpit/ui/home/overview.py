@@ -371,12 +371,12 @@ def _projects(row, beads, requests, depots=None, descriptors=(), runs=None, now=
     the order of what waits: its name, its current chantier and its stage
     -- the issue of its result when the D01 records give one --, two of the
     figures of its page, counted as it counts them (its chantiers open and
-    its runs merged in seven days, F2.8: never figures a synthetic card
-    writes), and the line of its release: the
+    its runs merged in seven days, F2.8), and the line of its release: the
     one the page of the project reads from its knowledge repository
     (``depots``, ``descriptors``), unavailable with its reason when there
     is none (R19, af-dmsp3y) -- a card a synthetic set writes gives its
-    own. A project with no active chantier shows its last one ended."""
+    own figures and release, those of its reference. A project with no
+    active chantier shows its last one ended."""
     if row is None or row["value"] is None:
         return []
     projects, _ = projects_from_value(row["value"])
@@ -394,8 +394,9 @@ def _projects(row, beads, requests, depots=None, descriptors=(), runs=None, now=
             "name": project.display_name,
             "chantier": "%s · %s" % (current.titre, current.issue or card.get("stage") or current.stage) if current
             else "Aucun chantier en cours",
-            "figures": ["%s : %s" % (caption, value) for value, caption in
-                        project_metrics(project, project_runs(runs, project.project_id), now, decisions)[1:]],
+            "figures": [str(figure) for figure in card.get("figures") or []] or [
+                "%s : %s" % (caption, value) for value, caption in
+                project_metrics(project, project_runs(runs, project.project_id), now, decisions)[1:]],
             "release": card.get("release") or release_line(depots, declared.get(project.project_id) or {
                 "project_id": project.project_id, "display_name": project.display_name}),
         })
@@ -816,8 +817,8 @@ CSS = """
   border-radius:6px;color:var(--ink);overflow-wrap:anywhere}
 .pn-resources{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:22px}
 .pn-overview .pn-resource{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;width:100%;
-  min-height:95px;padding:15px;text-align:left;border-color:var(--line)}
-.pn-overview .pn-resource:disabled{opacity:1;cursor:default}
+  min-height:95px;padding:15px;text-align:left;border-color:var(--pn-control-line)}
+.pn-overview .pn-resource:disabled{opacity:1;cursor:default;border-color:var(--line)}
 .pn-resource>span:first-child{display:flex;flex-direction:column;gap:4px;min-width:0;overflow-wrap:anywhere}
 .pn-resources details{grid-column:1/-1}
 .pn-result details{border-top:1px solid var(--line);padding:14px 0}
