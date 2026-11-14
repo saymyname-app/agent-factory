@@ -475,10 +475,7 @@ def _render_content(view, anchors):
     title = '<h2 %s>Ce qui t’attend</h2>' % anchors("h2")
     result = view["dossier"]
     opened = result["chantier"] if result else (view["requests"][0]["id"] if view["requests"] else None)
-    # The request whose result the destination opens leads the list, whatever
-    # its level (prototype home-content; F2.7 keeps a result to judge in
-    # « Quand tu veux », behind the « À faire » it used to precede).
-    lines = _render_lines(sorted(view["requests"], key=lambda request: request["id"] != opened), opened, anchors)
+    lines = _render_lines(view["requests"], opened, anchors)
     opened_html = _render_result(view, anchors)
     parts.append('<div class="pn-inbox" id="pn-inbox" %s><div class="pn-panel pn-requests" %s>%s%s%s%s</div>%s</div>'
                  % (inbox, requests_panel, title, _unknown_notice(view), lines,
