@@ -26,7 +26,7 @@ from cockpit.projects.decisions import decisions_line
 from cockpit.projects.release import estimate_of
 from cockpit.projects.roadmap import current_step, roadmap_rows
 from cockpit.ui.panorama.shell import open_button
-from cockpit.ui.projects.panorama import project_counts, project_runs
+from cockpit.ui.projects.panorama import current_chantier, open_address, project_counts, project_runs
 
 PARIS = ZoneInfo("Europe/Paris")
 NO_PROGRESS = "Aucun avancement déduit."
@@ -150,8 +150,8 @@ def _current(anchors, view):
         body = '<p %s>Aucun chantier en cours.</p>' % anchors("p")
     else:
         current = view["current"]
-        run = ('<div class="pf-actions" %s>%s</div>' % (anchors("actions"), open_button(current["run"], "Voir le run",
-                                                                                         anchors("button")))
+        run = ('<div class="pf-actions" %s>%s</div>' % (anchors("actions"), open_address(current["run"], "Voir le run",
+                                                                                          anchors("button")))
                if current.get("run") else "")
         body = '<h2 %s>%s</h2><p %s>%s</p>%s' % (anchors("h2"), _e(current["title"]), anchors("p"), _e(current["line"]), run)
     return '<section class="pn-panel" %s>%s%s</section>' % (panel, head, body)
@@ -256,6 +256,20 @@ def release_line(depots, descriptor):
     return "Release indisponible · %s" % (why or said)
 
 
+def project_metrics(project, runs, now, decisions):
+    """The three counts of the page of a project, each (value, caption):
+    the decisions it waits for, its chantiers open, its runs merged in
+    seven days -- each said unknown while ``project`` (its chantiers) is
+    not read. ``runs``: its own (:func:`project_runs`). The line of the
+    project on the home page says the same (F2.8)."""
+    if project is None:
+        return [("—", "Décisions attendues · inconnu"), ("—", "Chantiers ouverts · inconnu"),
+                ("—", "Runs fusionnés · 7 jours · inconnu")]
+    waiting, active, merged, _ = project_counts(project, runs, now, decisions)
+    return [(waiting, "Décisions attendues") if waiting is not None else ("—", "Décisions attendues · inconnu"),
+            (active, "Chantiers ouverts"), (merged, "Runs fusionnés · 7 jours")]
+
+
 def project_view(descriptor, project, chantiers_state, depots, roadmap_chantiers, runs, now, historique, below,
                  decisions=None):
     """The plain data :func:`render_project_fold` draws. ``descriptor``: the
@@ -273,16 +287,13 @@ def project_view(descriptor, project, chantiers_state, depots, roadmap_chantiers
         # Chantiers not read: the tracker says nothing of the steps (R3).
         roadmap["rows"] = roadmap_rows(roadmap["steps"], (roadmap_chantiers or {}) if project is not None else None)
     own = project_runs(runs, descriptor["project_id"])
+    metrics = project_metrics(project, own, now, decisions)
     if project is None:
-        metrics = [("—", "Décisions attendues · inconnu"), ("—", "Chantiers ouverts · inconnu"),
-                   ("—", "Runs fusionnés · 7 jours · inconnu")]
         badge, current = ("", "État inconnu"), None
     else:
-        waiting, active, merged, live = project_counts(project, own, now, decisions)
-        metrics = [(waiting, "Décisions attendues") if waiting is not None else ("—", "Décisions attendues · inconnu"),
-                   (active, "Chantiers ouverts"), (merged, "Runs fusionnés · 7 jours")]
+        waiting, _, _, live = project_counts(project, own, now, decisions)
         badge = ("wait", "À toi de jouer · %d" % waiting) if waiting else (("live", "En cours") if live else ("", "Calme"))
-        chantier = next((c for c in project.chantiers if not c.termine and not c.abandonne), None)
+        chantier = current_chantier(project)
         current = None
         if chantier is not None:
             count = None if decisions is None else decisions.get(chantier.id, 0)
