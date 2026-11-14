@@ -212,7 +212,7 @@ class HomeD01Records(stops.FixtureCityWalk):
         chantier under « Projets » on it, and the whole text of the page of
         that project; with `history`, « Historique et preuves » of the
         result opened (``home["after"]``)."""
-        address = self.serve(tracker)
+        address = self.address = self.serve(tracker)
         home = measure(address, click=HISTORY if history else None)[0]
         rows = [anchor["name"] for anchor in home["anchors"]
                 if re.fullmatch(r"row-\d+", anchor["name"]) and "rows-1" in anchor["chain"]]
@@ -284,6 +284,12 @@ class HomeD01Records(stops.FixtureCityWalk):
         self.assertEqual([False, False], [c["disabled"] for c in home["controls"]
                                           if c["name"].startswith("Essai") or c["name"] == "Avis"],
                          "Essai or Avis cannot be used on a result to judge")
+        # F2.7 (user story 8): the Acceptance Request bin/convoy-advance sent
+        # for this result waits « Quand tu veux », never Urgent.
+        code, _, body = fetch(f"{self.address}/api/requests")
+        self.assertEqual(200, code)
+        levels = [request["niveau"] for request in json.loads(body)["requests"] if request["id"] == self.convoy]
+        self.assertEqual(["Quand tu veux"], levels, "the result ready to judge is not « Quand tu veux »")
 
     def test_an_accepted_result_not_merged_says_accepted_and_the_merge_pending(self):
         self.accepted()
