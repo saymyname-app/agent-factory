@@ -388,7 +388,7 @@ def cmd_open(args: argparse.Namespace) -> dict[str, Any]:
                 "digest": held["digest"], "page": held["page"], "address": held["products"][0]["address"],
                 "products": [{"dataset": entry["dataset"], "address": entry["address"]} for entry in held["products"]],
                 "rules": list(RULES)}
-    if held is not None:
+    if held is not None and not held.get("trial"):
         raise Refusal(
             f"une Acceptance Session est déjà ouverte sur le convoi {convoy.id} : la fermer par "
             f"« {PROGRAM} close {convoy.id} » avant d'en ouvrir une autre")
@@ -402,6 +402,10 @@ def cmd_open(args: argparse.Namespace) -> dict[str, Any]:
             f"{repair} ; la session s'ouvrira sur le dossier du produit réparé")
     # Refused before anything is launched or written: no named dataset.
     convoy.datasets()
+    if held is not None:
+        # An Essai holds neither the judgment nor the Essai of the next
+        # dossier (F2.5): its product is stopped, the session opened anew.
+        end_session(convoy.id, held)
     folder = session_folder(convoy.id)
     folder.mkdir(parents=True, exist_ok=True)
     try:
@@ -419,7 +423,7 @@ def cmd_open(args: argparse.Namespace) -> dict[str, Any]:
         raise
     session = {"convoy": convoy.id, "kind": dossier["kind"], "commit": dossier["commit"], "digest": dossier["digest"],
                "page": pack["page"], "opened_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-               "products": products}
+               "products": products, "trial": args.trial}
     (folder / "session.json").write_text(json.dumps(session, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     answer: dict[str, Any] = {
         "ok": True, "convoy": convoy.id, "kind": dossier["kind"], "commit": dossier["commit"],
@@ -436,7 +440,13 @@ def cmd_close(args: argparse.Namespace) -> dict[str, Any]:
     session = read_session(args.convoy)
     if session is None:
         raise Refusal(f"aucune Acceptance Session n'est ouverte sur le convoi {args.convoy} : rien à fermer")
-    folder = session_folder(args.convoy)
+    return {"ok": True, "convoy": args.convoy, "closed": True, "stopped": end_session(args.convoy, session)}
+
+
+def end_session(convoy_id: str, session: dict[str, Any]) -> list[dict[str, Any]]:
+    """Stop every product of `session` and remove its record once each port
+    is free again; refused, the record kept, while one is still held."""
+    folder = session_folder(convoy_id)
     stopped = []
     for entry in session.get("products") or []:
         stop_product(entry["state_file"])
@@ -448,11 +458,11 @@ def cmd_close(args: argparse.Namespace) -> dict[str, Any]:
     if held:
         raise Refusal(
             "le produit est arrêté mais le port " + ", ".join(str(entry["port"]) for entry in held)
-            + f" n'est pas libéré : la session du convoi {args.convoy} reste à fermer")
+            + f" n'est pas libéré : la session du convoi {convoy_id} reste à fermer")
     for path in folder.iterdir():
         path.unlink()
     folder.rmdir()
-    return {"ok": True, "convoy": args.convoy, "closed": True, "stopped": stopped}
+    return stopped
 
 
 def normalized(word: str) -> str:
@@ -494,7 +504,8 @@ def main() -> int:
     p.add_argument("--repo")
     p.add_argument("--profile")
     p.add_argument("--trial", action="store_true",
-                   help="Essai of the cockpit: one product, on the first dataset; the session already open answers again")
+                   help="Essai of the cockpit: one product, on the first dataset; the session already open answers again"
+                        " (an Essai left open gives way to the judgment and to the Essai of another dossier)")
     p.set_defaults(run=cmd_open)
     p = sub.add_parser("close")
     p.add_argument("convoy")
