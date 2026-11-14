@@ -435,7 +435,8 @@ else
     "$WORK_BEAD_ID" "$WORKTREE" "$BRANCH" "$BASE_BRANCH")
   FINISH_RC=$?
   if [ "$FINISH_RC" = "4" ]; then
-    # af-cjaj8o: already merged (or no difference with the base) -- no PR was
+    # af-cjaj8o: already merged (or no difference with, or no commit ahead
+    # of, the base: af-hi8i79) -- no PR was
     # opened and the worktree is gone. Do not touch gc.pr_url,
     # gc.delivery_status or the notes: they are the ticket's merge record.
     gc bd update "$WORK_BEAD_ID" --unset-metadata work_dir
@@ -475,9 +476,10 @@ and keeps `work_dir`, so running it again resumes the same worktree
 "nothing to do" with the work still unpublished).
 
 If `finish` exits 4, nothing failed either: the ticket's PR already merged
-with this exact head while the dispatch was running, or the branch has no
-difference with the base. No PR is opened and none must be opened by hand;
-the block above only drops `work_dir` and leaves `gc.pr_url`,
+with this exact head while the dispatch was running, the branch has no
+difference with the base, or it has no commit ahead of the base (af-hi8i79:
+a base that moved on since the branch was cut). No PR is opened and none
+must be opened by hand; the block above only drops `work_dir` and leaves `gc.pr_url`,
 `gc.delivery_status` and the notes as they are (af-cjaj8o, 2026-10-08: on
 af-cbp84n a second, empty PR #445 was opened after #444 had merged and the
 closed ticket was rewritten to `waiting` on it, which failed pr-autopilot five
