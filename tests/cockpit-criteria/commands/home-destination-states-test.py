@@ -108,8 +108,9 @@ class HomeDestinationStates(unittest.TestCase):
                                                                        "Reprise du cockpit")),
                         f"« Derniers runs » does not show first the run of « Reprise du cockpit »: {cards}")
         assert_says(self, page, "panel-2", "Ce qui t’attend")
-        assert_says(self, page, "request-1", "Le cockpit attend ton avis", "Usine")
-        assert_says(self, page, "request-2", "Choisir le format d’export", "Notes")
+        # F2.7: a result to judge is « Quand tu veux », after the decision « À faire ».
+        assert_says(self, page, "request-1", "Choisir le format d’export", "Notes")
+        assert_says(self, page, "request-2", "Le cockpit attend ton avis", "Usine")
         assert_inbox_follows_requests(self, address, page)
         assert_says(self, page, "panel-3", "Usine · Reprise du cockpit", "Le cockpit attend ton avis",
                     "Les nouveaux parcours du cockpit sont prêts.")
@@ -136,7 +137,7 @@ class HomeDestinationStates(unittest.TestCase):
         # not only another colour.
         lines = {c["anchor"]: c for c in page["controls"] if c["anchor"] in ("request-1", "request-2")}
         self.assertEqual(
-            [True, False],
+            [False, True],
             [any(value not in (None, "false") for value in lines[line]["state"].values())
              for line in ("request-1", "request-2")],
             "the request open is not marked as the one open",
@@ -144,11 +145,12 @@ class HomeDestinationStates(unittest.TestCase):
         self.assertNotEqual(lines["request-1"]["shape"], lines["request-2"]["shape"],
                             "the request open is told from the other one by its colour alone")
         assert_says(self, page, "panel-4", "Projets")
-        assert_says(self, page, "row-1", "Usine", "Reprise du cockpit · À juger")
-        assert_says(self, page, "small-stats-1", "6 résultats fusionnés", "12 PR · 7 jours")
+        # F2.7: the project of the decision « À faire » (Notes) comes before the one of the result to judge.
+        assert_says(self, page, "row-2", "Usine", "Reprise du cockpit · À juger")
+        assert_says(self, page, "small-stats-2", "6 résultats fusionnés", "12 PR · 7 jours")
         assert_says(self, page, "release-info-1", "Cible révisable · 2 acquis · 2 critères restants · 1 décision ouverte")
-        assert_says(self, page, "row-2", "Notes", "Recherche dans les notes · En cours")
-        assert_says(self, page, "small-stats-2", "3 résultats fusionnés", "7 PR · 7 jours")
+        assert_says(self, page, "row-1", "Notes", "Recherche dans les notes · En cours")
+        assert_says(self, page, "small-stats-1", "3 résultats fusionnés", "7 PR · 7 jours")
         assert_says(self, page, "row-3", "Portfolio", "Présentation du projet · Fusionné")
         assert_says(self, page, "small-stats-3", "2 résultats fusionnés", "4 PR · 7 jours")
 
@@ -268,7 +270,7 @@ class HomeDestinationStates(unittest.TestCase):
         assert_says(self, page, "notice-1", "Lecture périmée · état actuel inconnu.",
                     "Dernières valeurs conservées ; actions indisponibles.")
         assert_says(self, page, "live-1", "État actuel inconnu")
-        assert_says(self, page, "request-1", "Le cockpit attend ton avis")
+        assert_says(self, page, "request-2", "Le cockpit attend ton avis")
         assert_says(self, page, "panel-3", "Le cockpit attend ton avis")
         actions = [c for c in page["controls"] if c["anchor"] and c["name"].startswith(("Essai", "Avis"))]
         self.assertEqual([], [c["name"] for c in actions if not c["disabled"]],
@@ -316,7 +318,7 @@ class HomeDestinationStates(unittest.TestCase):
         address, page = self.served("home-content", commit=reworded)
         assert_destination(self, page, CONTENT_PARTS)
         assert_inbox_follows_requests(self, address, page)
-        self.assertIn("Choisir la langue des notes", says(page, "request-2"))
+        self.assertIn("Choisir la langue des notes", says(page, "request-1"))
         self.assertNotIn("Choisir le format d’export", page["text"])
 
 

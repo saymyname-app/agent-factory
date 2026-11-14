@@ -30,7 +30,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from analyses_destination import LaunchTree, Page, ci_run, decision, result, served, sources  # noqa: E402
-from project_destination import launch_declared  # noqa: E402
+from project_destination import dataset_of, launch_declared  # noqa: E402
 
 # The four indicators of the home, by their label, as the reference names them.
 DECISIONS, RESULTS, DELAY, CI = ("Décisions à prendre", "Résultats fusionnés", "Délai de livraison",
@@ -193,6 +193,33 @@ class HomeIndicators(unittest.TestCase):
         self.assert_says(indicator(page, RESULTS)[0], "4", RESULTS)
         self.assert_says(indicator(page, DELAY)[0], "3 h 05", DELAY)
 
+
+    # --- F2.17 of the end review (tour 2): only a merge proven counts --------------
+
+    def at_noon(self, state: str) -> str:
+        """The address of the cockpit launched on the dataset `state` of the
+        profile, its clock fixed at the time of its records (noon on Monday
+        12/10/2026, Paris), as the datasets of the sources fix it: the result
+        of the state falls within the seven days the indicators count."""
+        dataset = dataset_of(self.tree, state)
+        dataset["ui"]["id"] = f"{state}-at-noon"
+        dataset["flow"] = {"results": [], "tickets": [], "decisions": []}
+        return launch_declared(self.tree, dataset["ui"]["id"], dataset)
+
+    def test_a_merge_under_way_is_counted_merged_neither_on_the_home_nor_in_the_analyses(self):
+        """result-merging: the proof of the merge is recorded, the convoy not
+        closed yet -- the result says « La fusion est en cours » and « Aucune
+        preuve de fusion à ce stade. ». « Résultats fusionnés » counts it
+        neither on the home nor in the Analyses; result-merged, the same
+        result whose merge is confirmed, counts once."""
+        merging = self.at_noon("result-merging")
+        self.assert_says(indicator(home(merging), RESULTS)[0], "0", RESULTS)
+        self.assertEqual("Aucun résultat sur sept jours · fusion prouvée", served(merging, "Résultats").says("p-1"),
+                         "the Analyses count as merged a result whose merge is under way")
+        self.tree.stop_all()
+        merged = self.at_noon("result-merged")
+        self.assert_says(indicator(home(merged), RESULTS)[0], "1", RESULTS)
+        self.assertEqual("1 résultat sur sept jours · fusion prouvée", served(merged, "Résultats").says("p-1"))
 
 if __name__ == "__main__":
     unittest.main()

@@ -15,6 +15,7 @@ import urllib.parse
 from datetime import datetime
 
 from cockpit.access.guard import ActionGuard, new_session_token
+from cockpit.actions.essai_relay import RelayService, TrialTarget, make_relay
 from cockpit.actions.registry import build_action_handlers
 from cockpit.analyses.sources import read_github
 from cockpit.core.beads_source import read_operator_beads
@@ -149,6 +150,20 @@ def build(config, clock=None):
     # accepter/rejeter/reporter une proposition, and relancer need the
     # escalation-door/proposal-door/loop-guard/order-pause binaries wired through
     # from config, the same as bd_bin already is.
+    # The relay of Essai (F2.4): bound before the gestures are, so that Essai
+    # says an entry it does not serve as such. A port taken is said, the
+    # cockpit runs on without it.
+    trial_target = None
+    if config.essai_port:
+        try:
+            relayed = TrialTarget()
+            relay = make_relay(action_guard, relayed, port=config.essai_port)
+        except OSError as exc:
+            print("cockpit: relais de l’Essai non démarré sur 127.0.0.1:%d : %s" % (config.essai_port, exc),
+                  file=sys.stderr, flush=True)
+        else:
+            trial_target = relayed
+            pollers.append(RelayService(relay))
     action_handlers = build_action_handlers(
         config.bd_bin,
         clock,
@@ -159,6 +174,8 @@ def build(config, clock=None):
         door_timeout=config.action_timeout_seconds,
         acceptance_session_bin=config.acceptance_session_bin,
         outcome_of=lambda chantier: outcome_of((read_model.snapshot().get("projets") or {}).get("value"), chantier),
+        trial_target=trial_target,
+        trial_https_port=config.essai_https_port,
     )
     server = make_server(
         read_model,
@@ -276,6 +293,7 @@ def build(config, clock=None):
             "heartbeat_file": config.heartbeat_url_file,
             "heartbeat_ready": read_url_from_file(config.heartbeat_url_file) is not None,
             "public_url": config.public_url, "port": config.port, "supervisor_port": supervisor_port,
+            "essai_port": config.essai_port, "essai_https_port": config.essai_https_port,
         }
 
     server.procedure_settings = procedure_settings

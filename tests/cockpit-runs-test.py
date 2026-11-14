@@ -82,7 +82,10 @@ class RunsTest(unittest.TestCase):
     def test_merged_and_withdrawn_runs_are_finished(self):
         merged = self.one(bead("af-d", status="closed", closed_at="2026-10-19T10:55:00Z",
                                gc__flow__merge={"at": "2026-10-19T10:54:00Z", "outcome": "merged"}))
-        self.assertEqual((merged["status"], merged["state"], merged["elapsed"]), ("Fusionné", "done", 3300))
+        # A ticket merged into the integration branch is finished, never
+        # « Fusionné »: only the merge of the result into the protected
+        # branch is (F2.11).
+        self.assertEqual((merged["status"], merged["state"], merged["elapsed"]), ("Intégré", "done", 3300))
         withdrawn = self.one(bead("af-e", status="closed", closed_at="2026-10-19T10:55:00Z",
                                   gc__flow__gate__withdrawn={"at": "2026-10-19T10:44:00Z"}))
         self.assertEqual(withdrawn["status"], "Abandonné")

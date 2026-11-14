@@ -9,6 +9,7 @@ the proposal door and :mod:`cockpit.actions.trace` leave them. The test
 starts the real ``bin/cockpit`` on faked sources and reads only ``GET
 /journal``, ``GET /api/journal``, ``GET /`` and ``POST /api/actions/*``.
 """
+import html
 import json
 import os
 import re
@@ -19,6 +20,7 @@ import tempfile
 import time
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -410,9 +412,46 @@ class JournalTest(unittest.TestCase):
         merged = merged[:merged.index("</article>")]
         self.assertIn("fusionné · Une page", merged)
         self.assertIn("12:00 (Paris) · Changement", merged)
-        self.assertIn('action="/runs/run?id=af-tk-run"', merged)
+        # The run is named by a field of the form: a form sent by GET drops
+        # the query of its action (F2.10).
+        self.assertIn('action="/runs/run"><input type="hidden" name="id" value="af-tk-run">', merged)
         self.assertIn("Voir le run", merged)
         self.assertNotIn('data-bead-id="af-rep1"', page, "a decision is not a change")
+
+    def test_the_run_a_delivery_of_the_journal_links_to_opens(self):
+        # F2.10: a delivery of the D01 flow is one run of the page Runs, its
+        # convoy's; the « Voir le run » of its change in the journal opens it.
+        self.write_beads(
+            {"id": "af-conv-e", "title": "Recherche dans les notes", "status": "open", "issue_type": "convoy",
+             "labels": [], "notes": "", "created_at": "2026-10-06T08:55:00Z",
+             "metadata": {"gc.flow.mark": "new-flow/v1", "gc.graph_digest": "sha256:e",
+                          "gc.project_id": "saymyname"}},
+            {"id": "af-tk-e1", "title": "Une page", "status": "closed", "issue_type": "task", "labels": [],
+             "notes": "", "created_at": "2026-10-06T09:00:00Z", "closed_at": "2026-10-06T10:05:00Z",
+             "metadata": {"gc.flow.mark": "new-flow/v1", "gc.graph_digest": "sha256:e", "gc.ticket_id": "AF-TK-E1",
+                          "gc.flow.gate.dispatch": json.dumps({"at": "2026-10-06T09:00:00Z"}),
+                          "gc.flow.models": json.dumps({"author": {"at": "2026-10-06T09:00:00Z", "model": "m"}}),
+                          "gc.flow.merge": json.dumps({"at": "2026-10-06T10:00:00Z", "outcome": "merged"})}},
+        )
+        self.start_cockpit()
+        wait_until(self.journal)
+        page = wait_until(lambda: (lambda p: p if "Voir le run" in p else None)(
+            self.get("/journal?categorie=changements")))
+        forms = re.findall(r'<form class="pn-open" method="get" action="([^"]*)">((?:(?!</form>).)*?)<button[^>]*>Voir le run</button>',
+                           page, re.S)
+        self.assertTrue(forms, "no « Voir le run » in the journal")
+        for action, inner in forms:
+            # What a browser opens: the address of the form, its query
+            # replaced by the fields of the form.
+            fields = dict(re.findall(r'<input type="hidden" name="([^"]*)" value="([^"]*)">', inner))
+            address = html.unescape(action).split("?", 1)[0] + "?" + urllib.parse.urlencode(fields)
+            try:
+                with urllib.request.urlopen("http://127.0.0.1:%d%s" % (self.port, address), timeout=5) as resp:
+                    status, run = resp.status, resp.read().decode("utf-8")
+            except urllib.error.HTTPError as exc:
+                status, run = exc.code, exc.read().decode("utf-8")
+            self.assertEqual(200, status, "« Voir le run » opens %s: « Run introuvable »" % address)
+            self.assertIn("Recherche dans les notes", run)
 
     def test_secrets_and_private_reasoning_never_leave_a_raw_event(self):
         # Secrets of no known shape, under the names of a JSON key or of a
@@ -457,6 +496,28 @@ class JournalTest(unittest.TestCase):
         sources = self.get("/journal?vue=sources")
         self.assertIn("<strong>CI</strong> · raccordée — 1 log lu", sources)
         self.assertIn("<strong>Agents</strong> · raccordée — aucun log reçu", sources)
+        self.assertIn("<strong>Livraison</strong> · absente — aucun log reçu", sources)
+
+    def test_the_logs_of_the_ci_and_of_the_connections_the_cockpit_reads(self):
+        # F2.9: no event bead held for the journal; the CI GitHub answers and
+        # the sources the cockpit reads are logs of their own, their sources
+        # connected; a source without producer stays absent.
+        github = os.path.join(self.tmp.name, "github.json")
+        at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 600))
+        with open(github, "w") as fh:
+            json.dump({"repository": "saymyname-app/notes", "pull_requests": [], "workflow_runs": [
+                {"id": 41, "name": "regression", "status": "completed", "conclusion": "failure", "created_at": at,
+                 "updated_at": at, "head_branch": "main", "event": "push"}]}, fh)
+        self.start_cockpit(COCKPIT_GITHUB_REPO="saymyname-app/notes", COCKPIT_GITHUB_POLL_SECONDS="0.2",
+                           COCKPIT_GH_BIN=str(ROOT / "tests" / "fixtures" / "cockpit" / "github" / "fake-gh"),
+                           FAKE_GH_STATE_FILE=github)
+        wait_until(self.journal)
+        ci = wait_until(lambda: (lambda p: p if "regression" in p else None)(self.get("/journal?vue=logs&source=ci")))
+        self.assertIn("CI · regression · échouée", ci)
+        self.assertIn("Lecture réussie : tickets", self.get("/journal?vue=logs&source=connexions"))
+        sources = self.get("/journal?vue=sources")
+        self.assertRegex(sources, r"<strong>CI</strong> · raccordée — 1 log lu")
+        self.assertRegex(sources, r"<strong>Connexions</strong> · raccordée — \d+ logs? lus?")
         self.assertIn("<strong>Livraison</strong> · absente — aucun log reçu", sources)
 
     def test_no_model_is_called_to_read_or_label_the_journal(self):

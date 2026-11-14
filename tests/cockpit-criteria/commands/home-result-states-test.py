@@ -39,6 +39,7 @@ user stories 119 and 120):
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 import unittest
@@ -46,7 +47,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from home_destination import LaunchTree, assert_says, measure, says  # noqa: E402
+from home_destination import LaunchTree, assert_says, fetch, measure, says  # noqa: E402
 
 # The project of the result, and its chantier, in every result-* state.
 PROJECT = "Usine"
@@ -85,7 +86,7 @@ class HomeResultStates(unittest.TestCase):
         """The page at GET / of the cockpit launched on `dataset`, 1440 px
         wide, dark; with `click`, the control of that name activated, the
         page read again under `after`."""
-        address = self.tree.launch(dataset)
+        address = self.address = self.tree.launch(dataset)
         return measure(address, click=click)[0]
 
     # --- what every result is held to ---------------------------------------
@@ -161,6 +162,12 @@ class HomeResultStates(unittest.TestCase):
         self.assert_issue(page, "À juger")
         self.assertEqual(1, len(self.requests_ready(page)),
                          "« Ce qui t’attend » does not ask for the judgement of the result ready")
+        # F2.7 (user story 8): the request keeps the level the escalation door
+        # writes of an Acceptance Request, « Quand tu veux ».
+        code, _, body = fetch(f"{self.address}/api/requests")
+        self.assertEqual(200, code)
+        self.assertEqual(["Quand tu veux"], [request["niveau"] for request in json.loads(body)["requests"]
+                                             if "résultat prêt" in request["pourquoi"]])
 
     def test_result_dossier_shows_the_dossier_above_the_bar(self):
         page = self.served("result-dossier")

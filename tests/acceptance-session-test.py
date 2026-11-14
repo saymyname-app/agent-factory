@@ -271,6 +271,42 @@ class AcceptanceSessionTest(packs.EvidencePackTest):
         self.assertEqual(first["address"], again["address"])
         self.assertTrue(answers(again["address"]))
 
+    def test_a_trial_does_not_hold_the_judgment_whose_session_opens_on_the_same_dossier(self):
+        commit = self.delivered_outcome()
+        status, trial = self.open_session("--trial")
+        self.assertEqual(0, status, trial)
+
+        status, answer = self.open_session()
+
+        # F2.5: the session of judgment opens, with every dataset, on the dossier of the trial.
+        self.assertEqual(0, status, answer)
+        self.assertEqual((commit, ["content", "empty"]),
+                         (answer["commit"], [product["dataset"] for product in answer["products"]]))
+        for product in answer["products"]:
+            self.assertTrue(answers(product["address"]), product)
+        # The product of the trial is not left behind: closing the session stops everything.
+        self.assertEqual(0, self.acc("close")[0])
+        for address in {trial["address"], *(product["address"] for product in answer["products"])}:
+            self.assertFalse(answers(address), address)
+
+    def test_a_trial_left_open_on_the_previous_dossier_gives_way_to_the_trial_of_the_new_one(self):
+        commit = self.delivered_outcome()
+        status, first = self.open_session("--trial")
+        self.assertEqual(0, status, first)
+        # Decor: that trial was opened on the dossier before this one.
+        record = next(self.sessions.glob("*/session.json"))
+        held = json.loads(record.read_text(encoding="utf-8"))
+        held["commit"] = "0" * 40
+        record.write_text(json.dumps(held), encoding="utf-8")
+
+        status, again = self.open_session("--trial")
+
+        # F2.5: the trial of the new dossier opens, not « une Acceptance Session est déjà ouverte ».
+        self.assertEqual(0, status, again)
+        self.assertEqual((commit, ["content"]), (again["commit"], [product["dataset"] for product in again["products"]]))
+        self.assertTrue(answers(again["address"]))
+        self.assertEqual(1, len(json.loads(record.read_text(encoding="utf-8"))["products"]))
+
     def test_open_on_an_outdated_pack_is_refused_and_launches_nothing(self):
         self.delivered_outcome()
         self.note(INTEGRATION)

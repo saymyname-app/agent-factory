@@ -39,14 +39,17 @@ opens a product of another revision, or an outage is shown as a judgement.
 
 from __future__ import annotations
 
+import json
+import re
 import sys
 import unittest
+import urllib.error
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from home_destination import LaunchTree  # noqa: E402
-from result_trial import Operator, controls, last, product_text, result_of, serve, shown, walk  # noqa: E402
+from result_trial import Operator, _open, controls, last, product_text, result_of, serve, shown, walk  # noqa: E402
 
 # The sentence of the first dataset of the profile, and what the revision of
 # the dossier says instead.
@@ -57,6 +60,8 @@ JUDGEMENTS = ("Tu as accepté", "Accepté", "Tes constats ont été rendus", "Ab
 # How long a product launched by Essai may take to start, and the walk to
 # wait for it once Essai is activated.
 STARTING_SECONDS = 60
+# The host name of the cockpit on the tailnet, as Serve forwards it.
+TAILNET_HOST = "factory-vm.example.ts.net"
 ESSAI_WAIT_MS = 75000
 
 
@@ -108,6 +113,35 @@ class HomeResultEssai(unittest.TestCase):
         self.assertIn(SAID_AT_REVISION, product, "the tab does not show the product at the revision of the dossier")
         self.assertNotIn(SAID_AT_HEAD, product, "the tab shows the product of another revision")
         self.assert_not_judged(last(walked), address)
+
+    def test_essai_from_another_device_answers_the_https_entry_of_the_tailnet_where_the_product_answers(self):
+        # F2.4: the PC or the iPhone opened the cockpit by its HTTPS address on
+        # the tailnet; Tailscale Serve forwards the host name they used.
+        revision = self.tree.reword("home-content", {SAID_AT_HEAD: SAID_AT_REVISION})
+        address = serve(self.tree, "result-ready", {"commit": revision})
+        chantier, _ = result_of(address)
+        cookie = Operator(address).cookie
+        try:
+            with _open(address, "/api/actions/essai",
+                       data=json.dumps({"chantier": chantier, "commit": revision}).encode("utf-8"),
+                       headers={"Content-Type": "application/json", "Origin": address, "Cookie": cookie,
+                                "X-Forwarded-Host": TAILNET_HOST}, timeout=150) as response:
+                status, answer = response.status, json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as refused:
+            status, answer = refused.code, refused.read().decode("utf-8")
+
+        self.assertEqual(200, status, answer)
+        self.assertEqual(f"https://{TAILNET_HOST}:8443/", answer["address"],
+                         "Essai does not answer the HTTPS entry of Essai on the host the client used")
+        self.assertNotRegex(answer["address"], r"127\.0\.0\.1|localhost")
+        # That entry is Serve in front of the relay of Essai, on the port the
+        # procedure of the VM settings names: there, the product of the dossier.
+        with _open(address, "/usine/procedure") as response:
+            procedure = response.read().decode("utf-8")
+        relayed = re.findall(r"tailscale serve --bg --https=8443 http://127\.0\.0\.1:(\d+)", procedure)
+        self.assertEqual(1, len(set(relayed)), "the procedure does not name the one entry of Essai")
+        product = product_text(f"http://127.0.0.1:{relayed[0]}/", STARTING_SECONDS)
+        self.assertIn(SAID_AT_REVISION, product, "the entry of Essai does not show the product of the dossier")
 
     def test_a_tab_the_browser_blocks_is_said_and_no_product_is_said_open(self):
         revision = self.tree.reword("home-content", {SAID_AT_HEAD: SAID_AT_REVISION})
