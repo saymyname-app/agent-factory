@@ -58,7 +58,8 @@ forced stop is judged the same way, once its sessions are stopped: the
 assignment it keeps is the one the tracker read after it shows.
 
 What is compared at the resume is the work held when the stop was asked
-(``held``), never the other tickets of the photo. A resume waits
+(``held``) and still to do -- a ticket closed since is finished, not a gap
+--, never the other tickets of the photo. A resume waits
 ``resume_grace_seconds`` for the sessions to come back before it calls one
 that did not a gap.
 """
@@ -452,7 +453,13 @@ class StopDriver:
         self._save()
 
     def _tick_redemarrage(self, now):
-        gaps = _gaps(self._held, self._gc.status())
+        status = self._gc.status()
+        # A ticket closed since the stop was asked, that no session took
+        # back, is finished, not a work to resume: no gap (F2.2).
+        beads = self._snapshot_fn().get("beads") or {}
+        taken = {s.get("bead_id") for s in status.get("sessions") or []}
+        gaps = [bead_id for bead_id in _gaps(self._held, status)
+                if bead_id in taken or (beads.get(bead_id) or {}).get("status") != "closed"]
         if gaps and now - (self._redemarrage_started_at or now) < self._resume_grace_seconds:
             return
         self._resumed_at = now

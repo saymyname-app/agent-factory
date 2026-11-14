@@ -34,6 +34,7 @@ REVIEWER = {"session": "relecteur-notes", "role": "Relecteur", "ticket": "tk-not
 ASK = {"click": "Demander la suspension"}
 CONFIRM = {"click": "Confirmer"}
 RESTART = {"click": "Redémarrer"}
+CONFIRM_RESUME = {"click": "Confirmer la reprise"}
 # A ticket of the tracker no session at work holds: its holder sleeps.
 IDLE = {"ticket": "tk-archives", "title": "Ranger les archives du trimestre", "status": "in_progress",
         "holder": "auteur-endormi"}
@@ -89,8 +90,14 @@ class FactoryStop(unittest.TestCase):
         self.assertIn("La suspension des agents n’est pas l’arrêt de la VM", suspended)
         self.assertIn("Fermer ou éteindre ce PC client n’arrête pas la VM", suspended)
 
+        # « Redémarrer » asks a confirmation first, and nothing else.
+        [asked] = self.walked(address, [RESTART])
+        self.assertIsNotNone(control(asked, "Confirmer la reprise"),
+                             f"the resume is not confirmed first: « {visible_text(asked)} »")
+        self.assertEqual([SUSPENDED_WRITE], written(writes), "the resume was asked before its confirmation")
+
         # The restart compares what came back with the photo.
-        self.walked(address, [RESTART])
+        self.walked(address, [RESTART, CONFIRM_RESUME])
         resumed = said_until(address, "Reprise vérifiée à")
         self.assertRegex(resumed, r"Reprise vérifiée à \d{2}:\d{2}", f"the resume is not verified: « {resumed} »")
         self.assertEqual([SUSPENDED_WRITE, RESUMED_WRITE], written(writes))
@@ -141,7 +148,7 @@ class FactoryStop(unittest.TestCase):
         self.walked(address, [ASK, CONFIRM])
         suspended = said_until(address, "Suspension confirmée")
         self.assertIn("2 travaux retrouvés, aucun écart", suspended, f"not the work in flight: « {suspended} »")
-        self.walked(address, [RESTART])
+        self.walked(address, [RESTART, CONFIRM_RESUME])
         resumed = said_until(address, "Reprise vérifiée à")
         self.assertRegex(resumed, r"Reprise vérifiée à \d{2}:\d{2}",
                          f"a ticket no session held before is taken for a gap: « {resumed} »")
@@ -154,11 +161,13 @@ class FactoryStop(unittest.TestCase):
             "reassigned_on_resume": {"tk-recus": "auteur-remplacant"}})
         self.walked(address, [ASK, CONFIRM])
         said_until(address, "Suspension confirmée")
-        self.walked(address, [RESTART])
+        self.walked(address, [RESTART, CONFIRM_RESUME])
         text = said_until(address, "Reprise avec écarts")
         self.assertIn("Reprise avec écarts", text, f"the gap is not said: « {text} »")
         gaps = re.findall(r"Écarts : ([^.]*)\.", text)
         self.assertEqual([AUTHOR["title"]], gaps, f"the gaps are not the work whose holder changed: « {text} »")
+        self.assertNotIn("aucun écart", text, f"the page says no gap above its gaps: « {text} »")
+        self.assertNotIn("✓ Comparer le travail avant / après", text, f"the comparison is said done: « {text} »")
         self.assertNotRegex(text, r"Reprise vérifiée à \d", "verified with a holder changed")
         self.assertEqual([SUSPENDED_WRITE, RESUMED_WRITE], written(writes))
 

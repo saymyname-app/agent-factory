@@ -12,12 +12,14 @@ cannot be done by the cockpit itself:
   heartbeat-secret     write the Healthchecks.io ping URL to the
                        out-of-repo file cockpit.heartbeat.emitter already
                        knows how to read.
-  healthchecks-check   verify the "Usine muette" check's locally-knowable
-                       parameters (period, grace, up-notification) and
-                       note the 2h-repeat/priority-1 capability as a
-                       defect, never a blocker, when it cannot be proven
-                       without a live Healthchecks.io account (spec:
-                       "sinon c'est un défaut noté, pas un blocage").
+  healthchecks-check   read the real "Usine muette" check on Healthchecks.io
+                       (Management API, read-only key on stdin) and say
+                       « conforme » only for what it read (period, grace);
+                       what the API does not give (up-notification,
+                       2h-repeat, priority 1) is as Benjamin read it on
+                       the check's page, else a defect, never a blocker
+                       (spec: "sinon c'est un défaut noté, pas un
+                       blocage"). Nothing read: "vérification non faite".
   serve                configure Tailscale Serve to the cockpit's own
                        port, refusing outright (not just discouraging in
                        prose) any attempt that uses Funnel or targets the
@@ -37,10 +39,13 @@ Healthchecks.io secrets are read from stdin (a line, or a JSON object),
 never from argv, so they never show up in a process listing either.
 """
 import argparse
+import getpass
 import json
 import os
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "lib"))
@@ -50,6 +55,7 @@ from cockpit.notify.secrets import REQUIRED_KEYS as PUSHOVER_REQUIRED_KEYS  # no
 REQUIRED_CHECK_NAME = "Usine muette"
 REQUIRED_PERIOD_MINUTES = 5
 REQUIRED_GRACE_MINUTES = 10
+HEALTHCHECKS_API = "https://healthchecks.io"
 
 
 class WizardError(Exception):
@@ -130,35 +136,80 @@ def cmd_heartbeat_secret(args):
 # ---------------------------------------------------------------------
 # healthchecks-check
 # ---------------------------------------------------------------------
+def _read_api_key():
+    """The read-only API key of the Healthchecks.io project, on stdin --
+    never argv, never echoed."""
+    if getattr(sys.stdin, "isatty", lambda: False)():
+        return getpass.getpass("Clé API Healthchecks.io (lecture seule) : ").strip()
+    return sys.stdin.readline().strip()
+
+
+def _read_check(api_base, api_key, name):
+    """The check ``name`` as Healthchecks.io serves it (``GET
+    /api/v3/checks/``); a WizardError when it cannot be read."""
+    request = urllib.request.Request(api_base.rstrip("/") + "/api/v3/checks/", headers={"X-Api-Key": api_key})
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            checks = json.load(response).get("checks") or []
+    except urllib.error.HTTPError as exc:
+        raise WizardError("vérification non faite : Healthchecks.io refuse la lecture (HTTP %d) — "
+                          "donne une clé API en lecture seule du projet du contrôle" % exc.code)
+    except (OSError, ValueError, AttributeError) as exc:
+        raise WizardError("vérification non faite : Healthchecks.io n'a pas pu être lu (%s)" % exc)
+    found = [check for check in checks if isinstance(check, dict) and check.get("name") == name]
+    if not found:
+        raise WizardError("refus : aucun contrôle « %s » lu sur Healthchecks.io dans ce projet" % name)
+    return found[0]
+
+
+def _minutes(seconds):
+    return "%g min" % (seconds / 60.0) if isinstance(seconds, (int, float)) else "illisible"
+
+
 def cmd_healthchecks_check(args):
+    """Reads the real « Usine muette » check on Healthchecks.io and says
+    « conforme » only for what it read there (period, grace). The return
+    notification, the priority and the repeat of the alert are not given by
+    the API: Benjamin reads them on the check's page, else they stay noted
+    to verify (F2.15)."""
     if args.name != REQUIRED_CHECK_NAME:
         raise WizardError(
             "refus : le check doit s'appeler « %s » (texte lisible sans IA) — reçu %r"
             % (REQUIRED_CHECK_NAME, args.name)
         )
-    if args.period_minutes != REQUIRED_PERIOD_MINUTES:
-        raise WizardError(
-            "refus : période attendue %d min, reçue %s" % (REQUIRED_PERIOD_MINUTES, args.period_minutes)
-        )
-    if args.grace_minutes != REQUIRED_GRACE_MINUTES:
-        raise WizardError(
-            "refus : grâce attendue %d min, reçue %s" % (REQUIRED_GRACE_MINUTES, args.grace_minutes)
-        )
-    if args.up_notifications != "off":
+    if args.up_notifications == "on":
         raise WizardError("refus : la notification « up » doit être désactivée")
+    api_key = _read_api_key()
+    if not api_key:
+        raise WizardError("vérification non faite : la clé API Healthchecks.io est attendue sur stdin")
+    check = _read_check(args.api_base, api_key, args.name)
+    if "timeout" not in check:
+        raise WizardError("refus : le contrôle « %s » n'est pas à période simple (lu sur Healthchecks.io)" % args.name)
+    period, grace = check.get("timeout"), check.get("grace")
+    if period != REQUIRED_PERIOD_MINUTES * 60:
+        raise WizardError("refus : période lue sur Healthchecks.io %s, attendue %d min"
+                          % (_minutes(period), REQUIRED_PERIOD_MINUTES))
+    if grace != REQUIRED_GRACE_MINUTES * 60:
+        raise WizardError("refus : grâce lue sur Healthchecks.io %s, attendue %d min"
+                          % (_minutes(grace), REQUIRED_GRACE_MINUTES))
 
     print(
-        "cockpit-setup-wizard : check « %s » conforme (période %dmin, grâce %dmin, "
-        "notification « up » désactivée)" % (REQUIRED_CHECK_NAME, REQUIRED_PERIOD_MINUTES, REQUIRED_GRACE_MINUTES)
+        "cockpit-setup-wizard : check « %s » lu sur Healthchecks.io : période %d min, grâce %d min — conforme"
+        % (REQUIRED_CHECK_NAME, REQUIRED_PERIOD_MINUTES, REQUIRED_GRACE_MINUTES)
     )
 
-    defects = []
-    if args.repeat_2h != "yes":
-        defects.append("répétition de l'alerte toutes les 2 h non confirmée sur Healthchecks.io")
-    if args.priority1 != "yes":
-        defects.append("priorité Pushover 1 sur l'intégration non confirmée sur Healthchecks.io")
-    for defect in defects:
-        print("cockpit-setup-wizard : défaut noté (non bloquant) — %s" % defect)
+    # What the API does not give: as Benjamin read it on the check's page.
+    unread = (
+        (args.up_notifications == "off", "notification « up » désactivée"),
+        (args.repeat_2h == "yes", "répétition de l'alerte toutes les 2 h"),
+        (args.priority1 == "yes", "priorité Pushover 1 sur l'intégration"),
+    )
+    for confirmed, what in unread:
+        if confirmed:
+            print("cockpit-setup-wizard : %s — relevé par toi sur Healthchecks.io (l'API ne le donne pas)" % what)
+        else:
+            print("cockpit-setup-wizard : défaut noté (non bloquant) — %s non vérifié : l'API ne le donne pas, "
+                  "relève-le sur la page du contrôle" % what)
     return 0
 
 
@@ -253,7 +304,10 @@ def cmd_run(args):
             _push_secret_stdin_line(step_args.pop("url"))
             rc = cmd_heartbeat_secret(_dict_to_namespace({"path": step_args["path"]}))
         elif step == "healthchecks_check":
-            rc = cmd_healthchecks_check(_dict_to_namespace(step_args))
+            _push_secret_stdin_line(step_args.pop("api_key"))
+            rc = cmd_healthchecks_check(_dict_to_namespace(dict(
+                {"name": REQUIRED_CHECK_NAME, "api_base": HEALTHCHECKS_API, "up_notifications": "unknown",
+                 "repeat_2h": "unknown", "priority1": "unknown"}, **step_args)))
         elif step == "serve":
             rc = cmd_serve(_dict_to_namespace(step_args))
         elif step == "focus_check":
@@ -303,11 +357,11 @@ def build_parser():
     p.add_argument("--path", required=True)
     p.set_defaults(handler=cmd_heartbeat_secret)
 
-    p = sub.add_parser("healthchecks-check", help="verify the Usine muette check's parameters")
+    p = sub.add_parser("healthchecks-check",
+                       help="read the Usine muette check on Healthchecks.io (read-only API key on stdin)")
     p.add_argument("--name", default=REQUIRED_CHECK_NAME)
-    p.add_argument("--period-minutes", type=int, required=True)
-    p.add_argument("--grace-minutes", type=int, required=True)
-    p.add_argument("--up-notifications", choices=["on", "off"], required=True)
+    p.add_argument("--api-base", default=HEALTHCHECKS_API)
+    p.add_argument("--up-notifications", choices=["on", "off", "unknown"], default="unknown")
     p.add_argument("--repeat-2h", choices=["yes", "no", "unknown"], default="unknown")
     p.add_argument("--priority1", choices=["yes", "no", "unknown"], default="unknown")
     p.set_defaults(handler=cmd_healthchecks_check)
