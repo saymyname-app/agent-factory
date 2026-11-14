@@ -113,14 +113,36 @@ class RestartTest(unittest.TestCase):
         fake = FakeGcCity(sessions=[{"session_id": "s1", "bead_id": "af-1", "assignee": "w1", "last_event_at": clock.now()}])
         driver = new_driver(fake, clock, store)
         driver.request_stop()
-        fake.end_session("s1")
-        driver.tick()
+        # s1 leaves with its ticket still to do, kept for the resume.
+        fake.sessions = []
+        self.assertEqual(ARRETEE_PROPREMENT, driver.tick())
         driver.resume()
 
         # af-1 never comes back at all -- no session claims it post-restart.
         fake.sessions = []
         self.assertEqual(REPRISE_AVEC_ECARTS, driver.tick())
         self.assertEqual(["af-1"], driver.ecarts())
+
+    def test_a_ticket_closed_during_the_suspension_is_no_gap_at_the_resume(self):
+        # F2.2: af-1 is finished while the city drains -- nothing left to
+        # resume; af-2 is kept by w2 and comes back under w2.
+        clock = FakeClock()
+        store = InMemoryStateStore()
+        fake = FakeGcCity(sessions=[
+            {"session_id": "s1", "bead_id": "af-1", "assignee": "w1", "last_event_at": clock.now()},
+            {"session_id": "s2", "bead_id": "af-2", "assignee": "w2", "last_event_at": clock.now()},
+        ])
+        driver = new_driver(fake, clock, store)
+        driver.request_stop()
+        fake.end_session("s1")  # af-1 closed
+        fake.sessions = []  # s2 leaves, af-2 still held by w2
+        self.assertEqual(ARRETEE_PROPREMENT, driver.tick())
+        driver.resume()
+
+        fake.sessions = [{"session_id": "s3", "bead_id": "af-2", "assignee": "w2", "last_event_at": clock.now()}]
+        self.assertEqual(REPRISE_VERIFIEE, driver.tick())
+        self.assertEqual([], driver.ecarts())
+        self.assertIn("Reprise vérifiée à", driver.label())
 
     # ------------------------------------------------------------------
     # AC2 -- restart calls only gc resume, and the heartbeat resumes.
