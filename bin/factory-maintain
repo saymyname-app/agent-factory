@@ -42,7 +42,8 @@ gestures:
       An exact merged-PR head match also proves recoverability after GitHub
       deletes a squash-merged branch; absent or mismatched proof fails closed.
       A worktree named after a ticket still in_progress whose session is
-      open is its author's copy, not pushed yet: kept, never reported.
+      open is its author's copy: kept (held-by-session), never a candidate
+      nor reported, pushed or not.
       Refuses anything with uncommitted changes. A worktree with commits
       that were never pushed, or ahead of its pushed upstream, is reported
       through the escalation door instead of removed (unrecoverable).
@@ -55,7 +56,7 @@ gestures:
       escalated: <path> (...)" -- not escalated: the escalation door failed,
       the worktree is kept and nobody was told --, "not removed: <path> (...)",
       "would keep|kept: <path> (<reason>)", the reason one of detached,
-      local-changes, not-merged, changed.
+      local-changes, not-merged, changed, held-by-session.
 
   rotate-logs [--dir <path>] [--max-bytes N] [--keep N]
       Gzip-archive and truncate *.log files over --max-bytes (default 10MiB)
@@ -385,7 +386,7 @@ cmd_clean_worktrees() {
       # the author is at work and has not pushed yet: not lost work
       log clean-worktrees escalation-skipped \
         "path=$d branch=$branch sha=$sha reason=ticket-in-progress ticket=${held% *} session=${held#* }"
-      skipped=$((skipped+1)); continue
+      kept_line "$dry_run" "$d" held-by-session; skipped=$((skipped+1)); continue
     fi
     if [ -z "$merged_pr" ] && { [ -z "$upstream" ] || [ "$ahead" != "0" ]; }; then
       # never pushed, or pushed but ahead of its upstream -- either way some
@@ -426,6 +427,13 @@ cmd_clean_worktrees() {
       if [ "$age" -lt "$idle_seconds" ]; then
         kept_line "$dry_run" "$d" not-merged; skipped=$((skipped+1)); continue
       fi
+    fi
+
+    if held=$(held_by_live_session "$d" "$branch"); then
+      # removable, but a live session still holds it: never a candidate
+      log clean-worktrees kept \
+        "path=$d branch=$branch sha=$sha reason=held-by-session ticket=${held% *} session=${held#* }"
+      kept_line "$dry_run" "$d" held-by-session; skipped=$((skipped+1)); continue
     fi
 
     local main_repo proof_detail=""

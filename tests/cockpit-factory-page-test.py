@@ -186,6 +186,23 @@ class FactoryPageTest(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
 
+    def test_a_work_space_a_live_session_holds_is_shown_protected_in_the_cleaning_preview(self):
+        # F2.16: what the door factory-maintain says of a worktree a live
+        # session holds (tests/factory-maintain-test.sh proves it says it)
+        # reaches the preview as a protection, never a candidate.
+        door = Path(self.tmp) / "factory-maintain"
+        door.write_text("#!/bin/sh\n"
+                        "echo 'would keep: /w/af-idle01 (held-by-session)'\n"
+                        "echo 'would remove: /w/af-merged (branch=wt-merged sha=0123456789ab, merged)'\n",
+                        encoding="utf-8")
+        door.chmod(0o755)
+        self.start_cockpit(COCKPIT_FACTORY_MAINTAIN_BIN=str(door))
+        said = text_of(self.usine("?nettoyage=apercu"))
+        self.assertIn("af-idle01 — protégé : tenu par une session", said)
+        self.assertIn("1 espace tenu par une session · protégé", said)
+        self.assertNotIn("af-idle01 — candidat", said)
+        self.assertIn("af-merged — candidat", said)
+
     def test_a_supervisor_that_fails_after_it_answered_is_unknown_with_its_age_never_stale(self):
         self.start_cockpit(COCKPIT_VALIDITY_GC_SECONDS="0.5")
         wait_until(lambda: json.loads(http_get(self.port, "/api/status"))["gc"]["freshness"] == "fresh")

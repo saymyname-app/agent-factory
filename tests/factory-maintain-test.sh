@@ -219,7 +219,30 @@ git -C "$REPO2" push -q origin main
 git -C "$REPO2" push -q origin --delete squash-merged-deleted
 git -C "$REPO2" remote prune origin >/dev/null
 
+# F2.16: the copy of a ticket in progress whose author session is open,
+# pushed, clean and untouched for 10 days -- idle, but held: never a
+# candidate, and shown kept with its reason
+git -C "$REPO2" worktree add -q -b ticket/af-idle01 "$WT_ROOT/af-idle01" main
+echo idle > "$WT_ROOT/af-idle01/idle.txt"
+git -C "$WT_ROOT/af-idle01" add -A
+GIT_AUTHOR_DATE="$TEN_DAYS_AGO" GIT_COMMITTER_DATE="$TEN_DAYS_AGO" \
+  git -C "$WT_ROOT/af-idle01" commit -qm "idle, held"
+git -C "$WT_ROOT/af-idle01" push -qu origin ticket/af-idle01
+printf '[{"id":"af-idle01","status":"in_progress","metadata":{"gc.flow.branch":"ticket/af-idle01","gc.session_name":"delivery-author-af-wisp-live"}}]\n' \
+  > "$FAKE_BEADS/af-idle01.json"
+
+DRY=$("$SCRIPT" clean-worktrees --worktree-root "$WT_ROOT" --dry-run 2>&1) || fail "clean-worktrees --dry-run exited non-zero: $DRY"
+grep -q "would remove: $WT_ROOT/af-idle01 " <<<"$DRY" \
+  && fail "clean-worktrees offers to remove a worktree held by a live session: $DRY"
+grep -qx "would keep: $WT_ROOT/af-idle01 (held-by-session)" <<<"$DRY" \
+  || fail "clean-worktrees does not show the idle worktree held by a live session as kept: $DRY"
+grep -qx "would keep: $WT_ROOT/af-live01 (held-by-session)" <<<"$DRY" \
+  || fail "clean-worktrees does not show the unpushed worktree held by a live session as kept: $DRY"
+grep -q "would remove: $WT_ROOT/clean-pushed-old " <<<"$DRY" \
+  || fail "clean-worktrees no longer offers an idle worktree no session holds: $DRY"
+
 OUT2=$("$SCRIPT" clean-worktrees --worktree-root "$WT_ROOT" 2>&1) || fail "clean-worktrees exited non-zero: $OUT2"
+[ -d "$WT_ROOT/af-idle01" ] || fail "clean-worktrees removed an idle worktree held by a live session"
 
 [ -d "$WT_ROOT/clean-merged-pushed" ] && fail "clean-worktrees did not remove a merged, fully-pushed, clean worktree"
 [ -d "$WT_ROOT/dirty-worktree" ] || fail "clean-worktrees removed a worktree with uncommitted changes"

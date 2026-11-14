@@ -546,6 +546,7 @@ def render_agents(a, check, live, selected, now, setting=None):
 
 
 CLEAN_REASONS = {
+    "held-by-session": ("tenu par une session", "protégé", "Tenu par une session : travail actif, rien n’est retiré"),
     "local-changes": ("avec modifications locales", "conservé", "Modifications locales : rien n’est retiré"),
     "not-merged": ("en cours", "conservé", "Travail en cours : branche pas encore fusionnée"),
     "unpushed": ("non publié", "protégé", "Commits non poussés : exclusion et examen requis"),
