@@ -24,43 +24,30 @@ False if the case fails once another worktree has committed during it.
 
 from __future__ import annotations
 
-import os
-import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from home_destination import LaunchTree, git  # noqa: E402
+
 DOORS = Path("tests") / "cockpit-isolated-doors-test.py"
 CASE = "TheDoors.test_an_upkeep_cleans_throwaway_repositories_and_keeps_what_it_must"
 # The recipe of the profile, as the case launches its cockpit.
 RECIPE = Path("bin") / "cockpit-isolated"
 # Longer than the case takes, cockpit and cleaning included; shorter than forever.
 CASE_SECONDS = 300
-GIT_ENV = {**os.environ, "GIT_AUTHOR_NAME": "criterion", "GIT_AUTHOR_EMAIL": "criterion@example.invalid",
-           "GIT_COMMITTER_NAME": "criterion", "GIT_COMMITTER_EMAIL": "criterion@example.invalid"}
-
-
-def git(repo: Path, *args: str) -> str:
-    return subprocess.run(["git", "-C", str(repo), *args], check=True, text=True, capture_output=True,
-                          env=GIT_ENV).stdout.strip()
 
 
 class SharedRefs(unittest.TestCase):
     def setUp(self) -> None:
-        self.work = Path(tempfile.mkdtemp(prefix="isolated-doors-shared-refs-")).resolve()
-        self.addCleanup(shutil.rmtree, self.work, True)
-        self.repo = self.work / "repo"
-        shutil.copytree(ROOT, self.repo, symlinks=True,
-                        ignore=shutil.ignore_patterns(".git", ".gc", "__pycache__", "var", "node_modules"))
-        git(self.repo, "init", "--quiet", "--initial-branch", "main")
-        git(self.repo, "add", "--all", "--force")
-        git(self.repo, "commit", "--quiet", "--message", "the tree under test")
+        tree = LaunchTree()
+        self.addCleanup(tree.remove)
+        self.repo = tree.repo.resolve()
         git(self.repo, "branch", "elsewhere")
-        self.other = self.work / "elsewhere"
+        self.other = self.repo.parent / "elsewhere"
         git(self.repo, "worktree", "add", "--quiet", str(self.other), "elsewhere")
 
     def running(self, recipe: Path) -> bool:
