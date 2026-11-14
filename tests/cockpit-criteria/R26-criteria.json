@@ -1,0 +1,7 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/isolated-doors-shared-refs-test.py::SharedRefs.test_the_upkeep_case_passes_while_another_worktree_commits"
+    ]
+  }
+}
