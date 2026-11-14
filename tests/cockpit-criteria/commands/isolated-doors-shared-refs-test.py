@@ -15,9 +15,9 @@ nothing of it.
 The decor is a disposable Git repository holding the tree this test runs
 in, and a second worktree of it on a branch `elsewhere`. The case of the
 doors runs there as the regression runs it, its cockpit launched by the
-recipe the profile gives `bin/project-launch`; a `git` placed first on its
-PATH commits in the second worktree right after the case has read the
-branches of its repository the first time, as the operator did.
+recipe the profile gives `bin/project-launch`; once that cockpit runs,
+this test commits in the second worktree, as the operator did, whatever
+the case reads of its repository and when.
 
 False if the case fails once another worktree has committed during it.
 """
@@ -25,34 +25,23 @@ False if the case fails once another worktree has committed during it.
 from __future__ import annotations
 
 import os
-import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 DOORS = Path("tests") / "cockpit-isolated-doors-test.py"
 CASE = "TheDoors.test_an_upkeep_cleans_throwaway_repositories_and_keeps_what_it_must"
+# The recipe of the profile, as the case launches its cockpit.
+RECIPE = Path("bin") / "cockpit-isolated"
+# Longer than the case takes, cockpit and cleaning included; shorter than forever.
+CASE_SECONDS = 300
 GIT_ENV = {**os.environ, "GIT_AUTHOR_NAME": "criterion", "GIT_AUTHOR_EMAIL": "criterion@example.invalid",
            "GIT_COMMITTER_NAME": "criterion", "GIT_COMMITTER_EMAIL": "criterion@example.invalid"}
-
-# The git of the case: the real one, and once, right after the first reading
-# of the branches of the repository under test, a commit in another worktree.
-# Its paths are written in it: the launch gives some of its processes an
-# environment of its own.
-OTHER_WORKTREE_COMMITS = """#!/bin/sh
-{git} "$@"
-code=$?
-if [ "$1" = "-C" ] && [ "$2" = {repo} ] && [ "$3" = "for-each-ref" ] && [ ! -e {committed} ]; then
-  : > {committed}
-  {git} -C {other} -c user.name=operator -c user.email=operator@example.invalid \\
-    commit -q --allow-empty -m "a commit of another worktree" >/dev/null 2>&1
-fi
-exit $code
-"""
 
 
 def git(repo: Path, *args: str) -> str:
@@ -73,23 +62,33 @@ class SharedRefs(unittest.TestCase):
         git(self.repo, "branch", "elsewhere")
         self.other = self.work / "elsewhere"
         git(self.repo, "worktree", "add", "--quiet", str(self.other), "elsewhere")
-        tools = self.work / "tools"
-        tools.mkdir()
-        (tools / "git").write_text(OTHER_WORKTREE_COMMITS.format(
-            git=shlex.quote(shutil.which("git")), repo=shlex.quote(str(self.repo)),
-            other=shlex.quote(str(self.other)), committed=shlex.quote(str(self.work / "committed"))),
-            encoding="utf-8")
-        (tools / "git").chmod(0o755)
-        self.env = {**os.environ, "PATH": f"{tools}{os.pathsep}{os.environ.get('PATH', os.defpath)}"}
+
+    def running(self, recipe: Path) -> bool:
+        """A process of this host runs `recipe`: the cockpit of the case."""
+        for cmdline in Path("/proc").glob("[0-9]*/cmdline"):
+            try:
+                if str(recipe).encode() in cmdline.read_bytes().split(b"\0"):
+                    return True
+            except OSError:
+                pass
+        return False
 
     def test_the_upkeep_case_passes_while_another_worktree_commits(self) -> None:
         before = git(self.repo, "rev-parse", "refs/heads/elsewhere")
-        case = subprocess.run([sys.executable, str(self.repo / DOORS), CASE], cwd=self.repo, env=self.env,
-                              text=True, capture_output=True, stdin=subprocess.DEVNULL)
+        case = subprocess.Popen([sys.executable, str(self.repo / DOORS), CASE], cwd=self.repo, text=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL)
+        self.addCleanup(case.kill)
+        committed = False
+        while case.poll() is None and not committed:
+            if self.running(self.repo / RECIPE):
+                git(self.other, "commit", "--quiet", "--allow-empty", "--message", "a commit of another worktree")
+                committed = True
+            time.sleep(0.05)
+        stdout, stderr = case.communicate(timeout=CASE_SECONDS)
         # The decor did what the operator did: `elsewhere` moved during the case.
-        self.assertTrue((self.work / "committed").exists(), "the case never read the branches of its repository")
+        self.assertTrue(committed, "the case ended before its cockpit was seen running")
         self.assertNotEqual(before, git(self.repo, "rev-parse", "refs/heads/elsewhere"))
-        self.assertEqual(0, case.returncode, case.stdout[-4000:] + case.stderr[-4000:])
+        self.assertEqual(0, case.returncode, stdout[-4000:] + stderr[-4000:])
 
 
 if __name__ == "__main__":
