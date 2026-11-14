@@ -2,9 +2,12 @@
 """What the trace of the sessions keeps of a job (C2b, af-ofz29f): the
 input of a tool call with no credential in clear (AGENTS.md: never put
 secrets in logs), and the usage of a job that is missing when no counter
-of its session falls within the job, never zero."""
+of its session falls within the job, never zero; and the context of a
+session each job shows, the one observed while it worked that job, never
+the one it had later at another job (F2.14 of the end review, tour 2)."""
 import json
 import sys
+import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
@@ -12,7 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
-from cockpit.runs.trace import done  # noqa: E402
+from cockpit.runs.trace import SessionTrace, done  # noqa: E402
 from cockpit.runs.workflows import workflow_runs  # noqa: E402
 
 SECRET = "s3cr3t-de-recette-42"
@@ -107,6 +110,58 @@ class JobUsage(unittest.TestCase):
         self.assertEqual([{"name": SESSION, "total": 2, "running": False}], usage["sessions"])
         self.assertTrue(usage["complete"])
         self.assertEqual({"codex": {"input": 1, "output": 1, "total": 2}}, usage["providers"])
+
+
+# One session that worked two jobs of the workflow af-w one after the other:
+# « implement » (af-w-s), then « verify » (af-w-v).
+TWO_JOBS = TRACKER + [
+    {"id": "af-w-v", "issue_type": "task", "status": "closed", "title": "verify",
+     "created_at": "2026-10-19T10:03:00Z", "closed_at": "2026-10-19T10:06:00Z",
+     "metadata": {"gc.kind": "ralph", "gc.root_bead_id": "af-w", "gc.step_id": "verify", "gc.outcome": "pass"}},
+    {"id": "af-w-v-1", "issue_type": "task", "status": "closed", "title": "verify",
+     "created_at": "2026-10-19T10:03:00Z", "closed_at": "2026-10-19T10:06:00Z",
+     "metadata": {"gc.logical_bead_id": "af-w-v", "gc.root_bead_id": "af-w", "gc.attempt": "1",
+                  "gc.session_id": "af-wisp-x", "gc.session_name": SESSION,
+                  "gc.claimed_at": "2026-10-19T10:03:00Z", "gc.outcome": "pass"}},
+]
+
+
+class Supervisor:
+    """A supervisor that logs nothing and whose provider recorded nothing."""
+
+    def session_events(self, after):
+        return []
+
+    def session(self, session_id):
+        raise OSError("not listed")
+
+    def transcript(self, session_id):
+        return []
+
+
+def listed(bead, context, model):
+    """The session as the supervisor lists it while it works `bead`."""
+    return {"id": "af-wisp-x", "session_name": SESSION, "agent_name": "delivery-author", "provider": "codex",
+            "model": model, "context_pct": context, "context_window": 258400, "created_at": "2026-10-19T09:50:00Z",
+            "active_bead": bead, "running": True}
+
+
+class JobContext(unittest.TestCase):
+    def test_each_job_shows_the_context_its_session_had_while_it_worked_that_job(self):
+        with tempfile.TemporaryDirectory() as home:
+            trace = SessionTrace(str(Path(home) / "sessions.jsonl"))
+            clock = iter([0, 100, 200, 300])
+            # Read while it works « implement », then while it works « verify ».
+            trace.collect([listed("af-w-s-1", 27, "gpt-a")], Supervisor(), clock=lambda: next(clock))
+            observed = trace.collect([listed("af-w-v-1", 64, "gpt-b")], Supervisor(), clock=lambda: next(clock))
+        run = next(r for r in workflow_runs(TWO_JOBS, [], ts("2026-10-19T11:00:00Z"), trace=observed)
+                   if r["id"] == "af-c")
+        seen = {item["name"]: [(s["name"], (s["observed"] or {}).get("context_pct"), (s["observed"] or {}).get("model"))
+                               for s in item.get("trace_sessions") or []]
+                for item in run["items"] if item.get("trace_sessions") is not None}
+        self.assertEqual([(SESSION, 27, "gpt-a")], seen.get("implement"),
+                         "the first job shows the context its session had later, at another job")
+        self.assertEqual([(SESSION, 64, "gpt-b")], seen.get("verify"))
 
 
 if __name__ == "__main__":
