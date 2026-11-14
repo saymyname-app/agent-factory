@@ -102,6 +102,7 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state stop-end-review        CONVOY --reason REASON --detail LINE
     convoy-state end-review-stop-raised CONVOY --bead BEAD
     convoy-state end-stop-raised  CONVOY --bead BEAD
+    convoy-state lift-end-stop    CONVOY --answer a --answered-at STAMP
     convoy-state record-delivered CONVOY --commit SHA --pack-digest sha256:HEX
     convoy-state acceptance-requested     CONVOY --bead BEAD
     convoy-state acceptance-launch-failed CONVOY --commit SHA --detail LINE
@@ -261,6 +262,12 @@ KEY_END_REVIEW = PREFIX + "end_review"
 KEY_END_ROUND = PREFIX + "end_round"
 KEY_EVIDENCE_PACK = PREFIX + "evidence_pack"
 KEY_END_STOP = PREFIX + "end_stop"
+# The stops of the rounds of the end lifted by the operator's answer « a »
+# to their « non conforme » request, oldest first (af-strhoy).
+KEY_END_STOP_LIFTS = PREFIX + "end_stop_lifts"
+# The one answer of the « non conforme » request that lifts its stop:
+# « Relancer un tour de réparation ». « b » and « c » leave it stopped.
+END_STOP_LIFT_ANSWER = "a"
 KEY_DELIVERED = PREFIX + "delivered"
 KEY_ACCEPTANCE = PREFIX + "acceptance"
 # Benjamin's judgement of the Outcome (T29, Spec §11): his verdict on each
@@ -615,6 +622,8 @@ ANCHOR_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
 ITEM_RE = re.compile(r"^(?:deviations|not_done)\.[1-9][0-9]*$")
 FINDING_ITEM_RE = re.compile(r"^out_of_ticket\.[1-9][0-9]*$")
 OPTION_LETTER_RE = re.compile(r"^[a-z]$")
+# A date as now() and bin/escalation-door write it.
+STAMP_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
 CRITERION_RE = re.compile(r"^\s*-\s+\[[ xX]\]\s+(.*\S)\s*$")
 QUESTION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 FINDING_ID_RE = re.compile(r"^F[1-9][0-9]*\.[1-9][0-9]*$")
@@ -2798,6 +2807,25 @@ def end_stop_record(raw: Any) -> dict[str, Any]:
     return record
 
 
+def end_stop_lifts_record(raw: Any) -> list[dict[str, Any]]:
+    """The stops of the rounds of the end lifted by the operator's answer
+    « a » to their « non conforme » request, oldest first: each the stop as
+    it was, request included, with the answer, when it was given and when
+    the stop was lifted."""
+    entries = stored_record(raw, ("entries",))["entries"]
+    if not isinstance(entries, list) or not entries:
+        raise Refusal(f"levées des arrêts des tours de fin mal formées : {entries!r}")
+    for entry in entries:
+        lift = {name: entry.get(name) for name in ("answer", "answered_at", "lifted_at")}             if isinstance(entry, dict) else {}
+        if lift.get("answer") != END_STOP_LIFT_ANSWER or any(
+                not isinstance(lift.get(name), str) or not STAMP_RE.match(lift[name]) for name in ("answered_at", "lifted_at")):
+            raise Refusal(f"levée d'un arrêt des tours de fin mal formée : {entry!r}")
+        stop = end_stop_record(json.dumps({name: value for name, value in entry.items() if name not in lift}))
+        if "request" not in stop:
+            raise Refusal(f"levée d'un arrêt des tours de fin sans demande « non conforme » : {entry!r}")
+    return entries
+
+
 def delivered_record(raw: Any) -> dict[str, Any]:
     """The Delivered Outcome of a convoy (T26, Spec §9): the one commit of
     the integration branch every condition of the end of the Spec was met
@@ -3742,6 +3770,13 @@ def cmd_show(args: argparse.Namespace) -> int:
         except Refusal as exc:
             end_stop = {"unruled": f"{KEY_END_STOP} : {exc}", "raw": metadata[KEY_END_STOP]}
             convoy_unruled.append({"field": KEY_END_STOP, "reason": end_stop["unruled"]})
+    end_stop_lifts: list[dict[str, Any]] | dict[str, Any] = []
+    if KEY_END_STOP_LIFTS in metadata:
+        try:
+            end_stop_lifts = end_stop_lifts_record(metadata[KEY_END_STOP_LIFTS])
+        except Refusal as exc:
+            end_stop_lifts = {"unruled": f"{KEY_END_STOP_LIFTS} : {exc}", "raw": metadata[KEY_END_STOP_LIFTS]}
+            convoy_unruled.append({"field": KEY_END_STOP_LIFTS, "reason": end_stop_lifts["unruled"]})
     judgement: dict[str, Any] | None = None
     if KEY_JUDGEMENT in metadata:
         try:
@@ -3775,8 +3810,8 @@ def cmd_show(args: argparse.Namespace) -> int:
     for key in sorted(metadata):
         known = (KEY_MARK, KEY_INCIDENT, KEY_INTEGRATION, KEY_INTEGRATION_RED, KEY_INTEGRATION_RED_CLEARED,
                  KEY_GROUPED_REQUEST, KEY_SPEC_END,
-                 KEY_OUTCOME_EVALUATION, KEY_END_REVIEW, KEY_END_ROUND, KEY_EVIDENCE_PACK, KEY_END_STOP, KEY_DELIVERED,
-                 KEY_ACCEPTANCE, KEY_JUDGEMENT, KEY_PROMOTION, KEY_CLOSED, *(COUNTER_PREFIX + name for name in CONVOY_COUNTERS))
+                 KEY_OUTCOME_EVALUATION, KEY_END_REVIEW, KEY_END_ROUND, KEY_EVIDENCE_PACK, KEY_END_STOP, KEY_END_STOP_LIFTS,
+                 KEY_DELIVERED, KEY_ACCEPTANCE, KEY_JUDGEMENT, KEY_PROMOTION, KEY_CLOSED, *(COUNTER_PREFIX + name for name in CONVOY_COUNTERS))
         if key.startswith(EVIDENCE_PREFIX):
             name = key[len(EVIDENCE_PREFIX):]
             try:
@@ -3804,6 +3839,7 @@ def cmd_show(args: argparse.Namespace) -> int:
         "end_review": end_review,
         "end_round": end_round,
         "end_stop": end_stop,
+        "end_stop_lifts": end_stop_lifts,
         "delivered": delivered,
         "acceptance": acceptance,
         "judgement": judgement,
@@ -6332,6 +6368,49 @@ def cmd_end_stop_raised(args: argparse.Namespace) -> int:
     return done(args.convoy, args.convoy, values)
 
 
+def cmd_lift_end_stop(args: argparse.Namespace) -> int:
+    """Lift the stop of the rounds of the end on the operator's answer « a »
+    (« Relancer un tour de réparation ») to its « non conforme » request,
+    which bin/convoy-advance reads on the convoy's bead (af-strhoy). The
+    stop is kept under `gc.flow.end_stop_lifts` with the answer and its
+    date; and one round of the end is counted, in the same write, for the
+    tip the stop refused -- the round the stop held back, above the bound
+    -- so the repairs waiting are published and the whole end-of-Spec gate
+    is replayed. A refusal after that round stops the rounds again, once
+    the bound is consumed. Refused without a stop, before its request
+    reached the operator, on another answer, or on an answer that is not
+    later than the request."""
+    convoy, _ = load_convoy(args.convoy)
+    require_marked(convoy)
+    metadata = metadata_of(convoy)
+    if args.answer != END_STOP_LIFT_ANSWER:
+        raise Refusal(f"seule la réponse « {END_STOP_LIFT_ANSWER} » (relancer un tour de réparation) lève l'arrêt des "
+                      f"tours de fin : {args.answer!r}")
+    if not isinstance(args.answered_at, str) or not STAMP_RE.match(args.answered_at):
+        raise Refusal(f"date de la réponse absente ou mal formée (--answered-at) : {args.answered_at!r}")
+    if KEY_END_STOP not in metadata:
+        raise Refusal(f"les tours de fin du convoi {args.convoy} ne sont pas arrêtés : rien à lever")
+    stop = end_stop_record(metadata[KEY_END_STOP])
+    if "request" not in stop:
+        raise Refusal(f"la demande « non conforme » du convoi {args.convoy} n'est pas encore remontée : "
+                      "aucune réponse ne peut lever son arrêt")
+    if args.answered_at <= stop["request"]["at"]:
+        raise Refusal(f"la réponse du {args.answered_at} n'est pas postérieure à la demande « non conforme » du "
+                      f"convoi {args.convoy} ({stop['request']['at']}) : elle répond à une autre demande")
+    lifted_at = now()
+    lifts = end_stop_lifts_record(metadata[KEY_END_STOP_LIFTS]) if KEY_END_STOP_LIFTS in metadata else []
+    lifts.append({**stop, "answer": args.answer, "answered_at": args.answered_at, "lifted_at": lifted_at})
+    evaluation = stored_or_none(metadata.get(KEY_OUTCOME_EVALUATION), outcome_evaluation_record)
+    state = outcome_state(evaluation) if evaluation else None
+    not_observed = sorted(state["not_observed"]) if state and state["commit"] == stop["commit"] else None
+    rest = {key: value for key, value in metadata.items() if key != KEY_END_STOP}
+    values: dict[str, Any] = {KEY_END_STOP: None, KEY_END_STOP_LIFTS: encode({"entries": lifts})}
+    values.update(end_refusal_values(rest, stop["commit"], stop["source"], lifted_at, stop["detail"],
+                                     not_observed=not_observed, granted=True))
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
 def cmd_record_delivered(args: argparse.Namespace) -> int:
     """The end-of-Spec gate records that the Outcome of the convoy is
     Delivered (T26, Spec §9): every condition of its list met on one commit,
@@ -7246,7 +7325,8 @@ def cmd_launch_end_review(args: argparse.Namespace) -> int:
 
 
 def end_refusal_values(metadata: dict[str, Any], commit: str, source: str, at: str, detail: str,
-                       not_observed: list[int] | None = None, once_per_tip: bool = True) -> dict[str, Any]:
+                       not_observed: list[int] | None = None, once_per_tip: bool = True,
+                       granted: bool = False) -> dict[str, Any]:
     """What a refusal of the tip `commit` at the end of the Spec writes
     (T26, Spec §8: at most `bounds.end_rounds` rounds of repair, every
     source of findings together -- one counter). Either one round counted,
@@ -7255,7 +7335,9 @@ def end_refusal_values(metadata: dict[str, Any], commit: str, source: str, at: s
     Outcome Evaluation did not observe (`not_observed`), a story is refused
     a second time or the round before did not reduce their number. Nothing
     on a convoy whose rounds are already stopped. A Delivered Outcome does
-    not survive a refusal."""
+    not survive a refusal. `granted`: the round the operator's answer « a »
+    grants to the tip its stop refused (lift-end-stop) -- counted as any
+    other, above the bound, and never a stop."""
     if KEY_END_STOP in metadata:
         return {}
     counted = end_round_record(metadata[KEY_END_ROUND]) if KEY_END_ROUND in metadata else None
@@ -7271,7 +7353,9 @@ def end_refusal_values(metadata: dict[str, Any], commit: str, source: str, at: s
     rounds = counter_value(metadata.get(counter), "end_rounds")
     stop: tuple[str, str] | None = None
     twice = sorted(set(not_observed or []) & set(refused))
-    if twice:
+    if granted:
+        pass
+    elif twice:
         stop = (END_STOP_TWICE, f"user story {', '.join(map(str, twice))} refusée deux fois par l'Outcome Evaluation : "
                                 "arrêt avant un tour de plus")
     elif not_observed and previous and len(not_observed) >= len(previous):
@@ -8434,6 +8518,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--detail")
     command("end-review-stop-raised", cmd_end_review_stop_raised, ticket=False).add_argument("--bead")
     command("end-stop-raised", cmd_end_stop_raised, ticket=False).add_argument("--bead")
+    p = command("lift-end-stop", cmd_lift_end_stop, ticket=False)
+    p.add_argument("--answer")
+    p.add_argument("--answered-at")
     p = command("record-delivered", cmd_record_delivered, ticket=False)
     p.add_argument("--commit")
     p.add_argument("--pack-digest")

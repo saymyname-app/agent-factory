@@ -3358,6 +3358,10 @@ END_STOP_CAUSES = {
 }
 
 
+# The option of non_conforme_request that lifts the stop: its first one.
+END_STOP_LIFT_ANSWER = "a"
+
+
 def non_conforme_request(convoy: Convoy, stop: dict[str, Any], page: str) -> dict[str, Any]:
     """What the operator reads on the escalation door's list (Spec §11):
     the convoy, why its rounds are stopped, and the link of its Evidence
@@ -3388,12 +3392,20 @@ def settle_non_conforme(convoy: Convoy) -> dict[str, Any] | None:
     stop: None when there is no stop or its request already reached the
     operator. It waits for an Outcome Evaluation or an end review still open
     on the tip, so that the dossier holds what they hand in. A request that
-    could not be raised is a failure of the pass."""
+    could not be raised is a failure of the pass.
+
+    Once raised, the operator's answer is read on that bead: « a »
+    (« Relancer un tour de réparation »), given after the request, lifts the
+    stop by code (convoy-state lift-end-stop, one round more) and the next
+    pass replays the end of the Spec. « b » and « c » lift nothing: the
+    convoy stays stopped with the operator (af-strhoy)."""
     try:
         convoy.load()
         stop = convoy.end_stop
-        if stop is None or "request" in stop:
+        if stop is None:
             return None
+        if "request" in stop:
+            return lift_answered_end_stop(convoy, stop)
         if (convoy.outcome or {}).get("request") or convoy.end_review_open:
             return {"action": "pending", "reason": stop["reason"]}
         pack = parsed(run([str(PACK_BIN), "generate", convoy.id, "--repo", str(convoy.repo)]),
@@ -3412,6 +3424,21 @@ def settle_non_conforme(convoy: Convoy) -> dict[str, Any] | None:
         return {"error": f"refus : {exc}"}
     return {"action": "raised", "reason": stop["reason"], "commit": pack["commit"], "page": pack["page"],
             "digest": pack["digest"], "bead": convoy.id}
+
+
+def lift_answered_end_stop(convoy: Convoy, stop: dict[str, Any]) -> dict[str, Any] | None:
+    """The answer « a » to the « non conforme » request of a stopped convoy,
+    given after that request: the stop is lifted by code. None for no
+    answer yet, an answer to an earlier request of the same bead, « b » or
+    « c »."""
+    request = stop["request"]
+    bead = read_bead(request["bead"])
+    answered_at = (bead.get("metadata") or {}).get("gc.escalation_response_at")
+    if request_answer(bead, request["at"]) != END_STOP_LIFT_ANSWER or answered_at <= request["at"]:
+        return None
+    state_write("lift-end-stop", convoy.id, "--answer", END_STOP_LIFT_ANSWER, "--answered-at", answered_at)
+    convoy.load()
+    return {"action": "lifted", "reason": stop["reason"], "commit": stop["commit"], "answered_at": answered_at}
 
 
 # --- the pass ----------------------------------------------------------------

@@ -1417,18 +1417,35 @@ nothing), and a bead that never carried one gets no such field. The
 « non conforme » request is its one caller so far
 (`tests/escalation-door-test.sh`).
 
-Once `end_stop.request` is written the pass does nothing more about the
-stop and the entry has no `non_conforme`. An error at any of these steps is
-`non_conforme.error`: the pass exits 1 and the next one tries again. No
-agent writes the dossier, the request or its wording.
+Once `end_stop.request` is written the pass sends nothing more about the
+stop; it reads, on the request's bead, the operator's answer
+(`bin/escalation-door repondre`, or `bin/acceptance-session record` which
+hands it there). **« a » — « Relancer un tour de réparation »** — given
+after `end_stop.request.at`, and once the door no longer holds the request
+open, is applied by code: `bin/convoy-state lift-end-stop` keeps the stop
+under `gc.flow.end_stop_lifts` with the answer and its date, withdraws
+`end_stop` and counts, in the same write, the round the stop held back on
+the tip it refused — one round above `bounds.end_rounds`, no bound changed
+— and the entry says `non_conforme: {action: lifted, reason, commit,
+answered_at}`. The next pass publishes the repairs that were waiting and
+replays the whole end of the Spec on the tip as it stands; a refusal after
+that round stops the rounds again, and a new request is sent (af-strhoy).
+An answer older than the request (to another request of the same bead) is
+not read. Otherwise the entry has no `non_conforme`. An error at any of
+these steps is `non_conforme.error`: the pass exits 1 and the next one tries
+again. No agent writes the dossier, the request or its wording.
 
 **What it leaves open.**
 
-- Nothing reads the operator's answer yet: no command withdraws `end_stop`,
-  so a stopped convoy stays stopped whatever option is taken.
-  `bin/acceptance-session record` hands the chosen issue to the door (T28,
-  `docs/ACCEPTANCE_SESSION.md`) and nothing reads it: T29 covers the answer
-  to a Delivered Outcome only (`docs/OWNER_ANSWER.md`, Limits).
+- « b » (« Retourner à la planification ») and « c » (« Abandonner ») lift
+  nothing: the convoy stays stopped with the operator. No code turns « b »
+  into a Planning Exception nor « c » into an abandon; « abandonné » on a
+  « non conforme » dossier is recorded by `bin/owner-answer`
+  (`docs/OWNER_ANSWER.md`).
+- The lift grants a round to the tip the stop refused: when that tip has
+  no repair waiting (nothing drafted, or every draft refused by the patch
+  door), the round publishes nothing and the end of the Spec is only
+  replayed once the integration branch moves.
 - A pass that fails between the door and `end-stop-raised` sends the request
   again at the next pass: the bead carries one request, the operator gets a
   second mail.

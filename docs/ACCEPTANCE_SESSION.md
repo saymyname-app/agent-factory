@@ -161,10 +161,13 @@ two versioned images; an undeclared change prevents pack generation.
   (T29, `docs/OWNER_ANSWER.md`), which also clears the Acceptance Request
   on the door. Answering the one option of the request on the door
   triggers nothing.
-- **`record` hands the issue of a « non conforme » request to the door and
-  nothing acts on it**: no round restarts, the stop is not withdrawn. T29
-  covers the Delivered Outcome only; « abandonné » alone can be recorded on
-  a « non conforme » dossier, by `bin/owner-answer`.
+- **`record` hands the issue of a « non conforme » request to the door**:
+  `relancer` (a) is read there by the next pass of `bin/convoy-advance`,
+  which lifts the stop and grants one round more (`bin/convoy-state
+  lift-end-stop`, `docs/CONVOY_ADVANCE.md`, af-strhoy); `planification` (b)
+  and `abandon` (c) lift nothing, the convoy stays stopped. T29 covers the
+  Delivered Outcome only; « abandonné » alone can be recorded on a « non
+  conforme » dossier, by `bin/owner-answer`.
 - **The `repair` of an outage is published by the next pass**, not by
   `open`; **under stopped end rounds none is published**: the outage of a
   « non conforme » session is recorded and said, nothing more.
