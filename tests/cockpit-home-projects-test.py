@@ -7,6 +7,7 @@ test) and reads only what a browser gets: ``GET /``, ``GET /projets``,
 ``GET /projet/<id>``, ``GET /api/projects``,
 ``POST /api/actions/*``, and what the fake bd recorded.
 """
+import html
 import json
 import os
 import re
@@ -17,6 +18,7 @@ import tempfile
 import time
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -401,13 +403,79 @@ class HomeProjectsZoneTest(unittest.TestCase):
                                 r'À toi de jouer · 1 · ')
         self.assertEqual(1, usine.count("<a "), "a link inside the card")
         self.assertIn("<dt>Chantiers ouverts</dt><dd>1</dd>", usine)
-        # Its runs only: merged within 7 days, and at work.
-        self.assertIn("<dt>Runs fusionnés · 7 j</dt><dd>1</dd>", usine)
+        # Its runs only: merged within 7 days, and at work. A ticket merged
+        # into the integration branch is no merge of the result (F2.11).
+        self.assertIn("<dt>Runs fusionnés · 7 j</dt><dd>0</dd>", usine)
         self.assertIn("<dt>Runs ouverts</dt><dd>1</dd>", usine)
         self.assertIn("Dernier run : AF-RUN-LIVE · En cours", usine)
         saymyname = next(card for card in cards if 'href="/projet/saymyname"' in card)
-        self.assertIn("<dt>Runs fusionnés · 7 j</dt><dd>1</dd>", saymyname)
+        self.assertIn("<dt>Runs fusionnés · 7 j</dt><dd>0</dd>", saymyname)
         self.assertIn("<dt>Runs ouverts</dt><dd>0</dd>", saymyname)
+
+    def test_a_project_whose_only_chantier_is_to_judge_names_it_on_its_card(self):
+        # F2.12: the Factory's one chantier is delivered, its result waits
+        # for Benjamin; its card names it as its page does.
+        self.start_cockpit()
+        wait_until(self.projects)
+        page = wait_until(lambda: (lambda body: body if "À toi de jouer" in body else None)(self.get("/projets")))
+        usine = next(card for card in re.findall(r'<a class="pj-card".*?</a>', page, re.S)
+                     if 'href="/projet/agent-factory"' in card)
+        self.assertNotIn("Aucun chantier en cours", usine)
+        self.assertIn("Chantier actuel : Page d&#x27;accueil publique", usine)
+
+    def test_the_run_a_project_page_links_to_opens(self):
+        # F2.10: a delivery of the D01 flow -- its convoy carries the mark
+        # and its ticket the same graph -- is one run of the page Runs, the
+        # convoy's; « Voir le run » of the page of its project opens it.
+        at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 600))
+        self.write_beads(beads() + [
+            {"id": "af-conv-e", "title": "Recherche dans les notes", "status": "open", "issue_type": "convoy",
+             "labels": [], "notes": "", "created_at": at,
+             "metadata": {"gc.flow.mark": "new-flow/v1", "gc.graph_digest": "sha256:e", "gc.project_id": "saymyname"}},
+            {"id": "af-tk-e1", "title": "AF-TK-E1 — Une page", "status": "in_progress", "issue_type": "task",
+             "labels": [], "notes": "", "created_at": at, "updated_at": at,
+             "metadata": {"gc.flow.mark": "new-flow/v1", "gc.graph_digest": "sha256:e", "gc.ticket_id": "AF-TK-E1",
+                          "gc.dispatch_rig": "saymyname", "gc.flow.gate.dispatch": json.dumps({"at": at}),
+                          "gc.flow.models": json.dumps({"author": {"agent": "delivery-author", "at": at,
+                                                                   "model": "claude-opus-5-5"}})}},
+        ])
+        self.start_cockpit()
+        wait_until(self.projects)
+        page = wait_until(lambda: (lambda body: body if "Voir le run" in body else None)(self.get("/projet/saymyname")))
+        form = re.search(r'<form class="pn-open" method="get" action="([^"]*)">((?:(?!</form>).)*?)<button[^>]*>Voir le run</button>',
+                         page, re.S)
+        self.assertTrue(form, "no « Voir le run » on the page of the project")
+        # What a browser opens: the address of the form, its query replaced
+        # by the fields of the form.
+        fields = dict(re.findall(r'<input type="hidden" name="([^"]*)" value="([^"]*)">', form.group(2)))
+        address = html.unescape(form.group(1)).split("?", 1)[0] + "?" + urllib.parse.urlencode(fields)
+        status, run = self.get_status(address)
+        self.assertEqual(200, status, "« Voir le run » opens %s: « Run introuvable »" % address)
+        self.assertIn("Recherche dans les notes", run)
+
+    def test_the_home_line_of_a_project_says_the_figures_of_its_page(self):
+        # F2.8: no gc.project_card in the tracker; the line of each project
+        # on the home page says the figures its page says.
+        self.start_cockpit()
+        wait_until(self.projects)
+        for project_id in ("agent-factory", "saymyname"):
+            page = wait_until(lambda: (lambda body: body if "Décisions attendues · inconnu" not in body
+                                       else None)(self.get("/projet/%s" % project_id)))
+            kpis = re.search(r'class="pf-kpis"[^>]*>(.*?)</div></div>', page, re.S).group(1)
+            figures = [(html.unescape(value), html.unescape(caption)) for value, caption in
+                       re.findall(r"<strong[^>]*>(.*?)</strong><small[^>]*>(.*?)</small>", kpis)]
+            self.assertEqual(3, len(figures), kpis)
+            home = re.search(r'<section class="pn-panel pn-projects".*?</section>', self.get("/"), re.S).group(0)
+            line = re.search(r'<a href="/projet/%s">(.*?)</a>' % project_id, home, re.S)
+            self.assertTrue(line, "no line of %s on the home page" % project_id)
+            said = " ".join(html.unescape(re.sub(r"<[^>]+>", " ", line.group(1))).split())
+            self.assertNotIn("Volumes non collectés", said)
+            # The two figures of a line, as its page says them.
+            shown = [(value, caption) for value, caption in figures
+                     if caption in ("Chantiers ouverts", "Runs fusionnés · 7 jours")]
+            self.assertEqual(2, len(shown), figures)
+            for value, caption in shown:
+                self.assertIn("%s : %s" % (caption, value), said, "the home line does not say the figure of the page")
 
     def test_a_project_without_run_says_so(self):
         self.start_cockpit()

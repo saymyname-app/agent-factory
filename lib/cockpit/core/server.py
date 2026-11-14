@@ -44,7 +44,6 @@ from cockpit.requests.defects import DefectCounter
 from cockpit.requests.journal import entries_from_value as journal_entries_from_value
 from cockpit.requests.journal import sources_from_value as journal_sources_from_value
 from cockpit.requests.sources.readability import ILLISIBLE_THRESHOLD_SECONDS
-from cockpit.runs.derive import runs_from_beads
 from cockpit.runs.workflows import waiting_on, workflow_runs
 from cockpit.ui.analyses.page import CSS as ANALYSES_CSS, render_analyses
 from cockpit.ui.base.page import render_document, render_fresh, render_home_zones
@@ -378,7 +377,8 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                              stop_trial_passed=bool(driver is not None and driver.essai_reussi()),
                              analysis=analyses(snapshot, now, requests), runs=runs, runs_failed=runs_failed,
                              descriptors=load_descriptors(self.server.descriptors_dir)
-                             if self.server.descriptors_dir else ())
+                             if self.server.descriptors_dir else (),
+                             decisions=self._chantier_decisions(snapshot, now))
         # T13, af-cx20q9: the SameSite=Strict cookie an action POST must
         # echo back -- a cross-site POST never carries it, so its presence
         # alone proves this request came from a page the cockpit itself
@@ -576,7 +576,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             inner = '<div class="pn-head"><h1>Projets</h1></div>' + render_projects_unknown(row["read_at"] if row else None)
         else:
             projects, _ = projects_from_value(row["value"])
-            runs, _, checked = self._runs(read_model)
+            runs, _, checked = self._workflow_runs(read_model, snapshot)
             inner = render_projects_list(projects, runs, read_model.now(),
                                          self._chantier_decisions(snapshot, read_model.now()), checked=checked)
         self._send_page(read_model, "projets", inner, extra_css=PROJECT_PAGE_CSS + PROJECTS_PANORAMA_CSS,
@@ -596,7 +596,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         row = snapshot.get("projets")
         descriptor = next((d for d in load_descriptors(self.server.descriptors_dir) if d["project_id"] == project_id),
                           None) if self.server.descriptors_dir else None
-        runs, _, _ = self._runs(read_model)
+        runs, _, _ = self._workflow_runs(read_model, snapshot)
         now = read_model.now()
         status = 200
         if row is None or row["value"] is None or row["freshness"] == UNKNOWN:
@@ -628,15 +628,6 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         self._send_page(read_model, "projets", inner,
                         extra_css=PROJECT_PAGE_CSS + PROJECTS_PANORAMA_CSS + RUNS_PAGE_CSS + PROJECT_FOLD_CSS,
                         status=status, snapshot=snapshot)
-
-    def _runs(self, read_model):
-        """The runs the cockpit reads (cockpit.runs), most recent first:
-        (runs or None while unread, read failed, HH:MM of the reading)."""
-        row = read_model.snapshot().get("runs")
-        if row is None or row["value"] is None:
-            return None, bool(row and row.get("failed_at") is not None), None
-        checked = datetime.fromtimestamp(row["read_at"], tz=PARIS).strftime("%H:%M") if row["read_at"] else None
-        return runs_from_beads(row["value"], read_model.now()), False, checked
 
     def _send_analyses_page(self, read_model):
         """GET /analyses?vue=: the four indicators, each its view, and the
@@ -1037,7 +1028,9 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
     def _workflow_runs(self, read_model, snapshot):
         """The runs of the destination Runs (cockpit.runs.workflows), one
         per complete workflow, most recent first: (runs or None while
-        unread, read failed, HH:MM of the reading)."""
+        unread, read failed, HH:MM of the reading). The one reader of runs
+        of every page -- Projets, the page of a project, the Journal --, so
+        each link to a run opens it on /runs/run (F2.10)."""
         row = snapshot.get("runs")
         if row is None or row["value"] is None:
             return None, bool(row and row.get("failed_at") is not None), None
@@ -1096,7 +1089,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         journal --, the technical logs, and the coverage of their sources."""
         snapshot = read_model.snapshot()
         row = snapshot.get("journal")
-        runs, _, _ = self._runs(read_model)
+        runs, _, _ = self._workflow_runs(read_model, snapshot)
         known = row is not None and row["value"] is not None and row["freshness"] != UNKNOWN
         projects = {}
         projets = snapshot.get("projets")

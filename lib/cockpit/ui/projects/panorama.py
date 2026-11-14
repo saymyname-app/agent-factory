@@ -9,6 +9,7 @@ Mechanism (agent interpretation): Projets, next in the navigation after
 Vue d'ensemble, Runs and Usine; built directly, outside the paused convoy.
 """
 import html
+import urllib.parse
 
 from cockpit.runs.derive import DONE, WAIT
 from cockpit.ui.projects.project_page import project_page_url
@@ -20,9 +21,30 @@ def _e(value):
     return html.escape(str(value), quote=True)
 
 
+def open_address(href, label, anchor, css_class=""):
+    """A button that opens ``href`` as
+    :func:`cockpit.ui.panorama.shell.open_button` draws it, its query
+    carried by fields of the form: a form sent by GET replaces the query of
+    its action with its fields (« Voir le run » opened ``/runs/run?``, F2.10)."""
+    path, _, query = href.partition("?")
+    fields = "".join('<input type="hidden" name="%s" value="%s">' % (_e(name), _e(value))
+                     for name, value in urllib.parse.parse_qsl(query))
+    return '<form class="pn-open" method="get" action="%s">%s<button type="submit"%s %s>%s</button></form>' % (
+        _e(path), fields, ' class="%s"' % css_class if css_class else "", anchor, _e(label))
+
+
 def project_runs(runs, project_id):
-    """The runs of a project: those dispatched to its rig."""
-    return [run for run in runs or [] if run.get("rig") == project_id]
+    """The runs of a project: those of the page Runs whose project it is
+    (:mod:`cockpit.runs.workflows`: the project of a D01 delivery, else the
+    rig its work was dispatched to)."""
+    return [run for run in runs or [] if project_id in (run.get("project"), run.get("rig"))]
+
+
+def current_chantier(project):
+    """The chantier under way of a project: its first one neither ended nor
+    abandoned -- a result to judge too (F2.12) --, or None. The card of
+    /projets and the page of the project name the same one."""
+    return next((c for c in project.chantiers if not c.termine and not c.abandonne), None)
 
 
 def project_counts(project, runs, now, decisions):
@@ -55,8 +77,7 @@ def render_projects_list(projects, runs, now, decisions, checked=None):
         own = project_runs(runs, project.project_id)
         waiting, active, merged, live = project_counts(project, own, now, decisions)
         tone, label = _badge(waiting, live)
-        current = next((c for c in project.chantiers if not c.termine and not c.abandonne and c.etat != "a_toi_de_jouer"),
-                       None)
+        current = current_chantier(project)
         last = own[0] if own else None
         line = "Chantier actuel : %s" % current.titre if current else "Aucun chantier en cours"
         cards.append(

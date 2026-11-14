@@ -41,7 +41,7 @@ from datetime import datetime, timedelta, timezone
 from cockpit.core.freshness import FRESH, UNKNOWN
 from cockpit.core.readmodel import PARIS
 from cockpit.ui.journal.render import _render_entry
-from cockpit.ui.panorama.shell import open_button
+from cockpit.ui.projects.panorama import open_address
 
 LOADING, ERROR, EMPTY, CONTENT = "loading", "error", "empty", "content"
 
@@ -315,7 +315,7 @@ def _render_event(item, anchors):
             item["category"], _e(item["bead_id"]), article, head, item["html"])
     title = '<h3 %s>%s</h3>' % (anchors("h3"), _e(item["title"]))
     text = '<p %s>%s</p>' % (anchors("p"), _e(item["text"])) if item.get("text") else ""
-    link = open_button(item["link"][1], item["link"][0], anchors("link"), "jn-link") if item.get("link") else ""
+    link = open_address(item["link"][1], item["link"][0], anchors("link"), "jn-link") if item.get("link") else ""
     folded = list(item.get("folded") or [])
     source = folded.pop() if len(folded) > 1 else None
     details = '<details %s><summary %s>Détail et source</summary>%s%s<small class="jn-id">%s</small></details>' % (

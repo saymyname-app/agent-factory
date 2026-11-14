@@ -66,7 +66,8 @@ from cockpit.ui.runs.page import recent_cards_document
 from cockpit.ui.home.page import UNKNOWN_TEXT, UNKNOWN_TEXT_NO_TIME
 from cockpit.ui.home.pour_moi import CSS as POUR_MOI_CSS, links_of, render_details, render_request, render_signals
 from cockpit.ui.panorama.shell import Anchors, anchor_slug, open_button
-from cockpit.ui.projects.fold import release_line
+from cockpit.ui.projects.fold import project_metrics, release_line
+from cockpit.ui.projects.panorama import project_runs
 from cockpit.ui.projects.page import RESULT_PANEL_ID
 from cockpit.ui.projects.project_page import project_page_url
 
@@ -138,7 +139,7 @@ LEGACY_SUMMARY = "Détails techniques et actions"
 
 
 def overview_view(snapshot, requests, stop_trial_passed=False, now=None, undelivered=(), uncertain=None,
-                  analysis=None, runs=None, runs_failed=False, descriptors=()):
+                  analysis=None, runs=None, runs_failed=False, descriptors=(), decisions=None):
     """What the destination shows: ``state`` (see the module), ``stale``,
     ``checked`` (HH:MM of the reading shown), ``requests`` (« Pour moi »,
     each opened with its gestures, :mod:`cockpit.ui.home.pour_moi`),
@@ -149,7 +150,10 @@ def overview_view(snapshot, requests, stop_trial_passed=False, now=None, undeliv
     the workflow runs it lists, None while unread or with ``runs_failed``),
     ``dossier`` (the result open), ``projects`` (each with the release the
     page of the project reads from ``descriptors``, the projects as
-    declared, and the depots source). ``stop_trial_passed``:
+    declared, and the depots source, and its figures as that page counts
+    them from ``runs`` and ``decisions``, the open decisions of each
+    chantier, :func:`cockpit.projects.decisions.chantier_decisions`, or
+    None while unknown). ``stop_trial_passed``:
     whether a real stop and restart reached a verified restart (the
     recette). ``requests`` are those the cockpit knows even while the
     tracker is not read: what it raises itself (« Usine muette »); the
@@ -188,7 +192,8 @@ def overview_view(snapshot, requests, stop_trial_passed=False, now=None, undeliv
     view["indicators"] = _indicators(analysis) if analysis else []
     view["activity"] = _activity(said.get(ACTIVITY) or [])
     view["runs"] = recent_cards_document(runs, now, runs_failed)
-    view["projects"] = _projects(snapshot.get("projets"), beads, view["requests"], snapshot.get("depots"), descriptors)
+    view["projects"] = _projects(snapshot.get("projets"), beads, view["requests"], snapshot.get("depots"), descriptors,
+                                 runs, now, decisions)
     projets = snapshot.get("projets")
     view["projects_unread"] = projets is not None and projets["value"] is None
     # An indicator without its source says why: the home is not empty of
@@ -354,11 +359,13 @@ def _version(outcome):
     return lines
 
 
-def _projects(row, beads, requests, depots=None, descriptors=()):
+def _projects(row, beads, requests, depots=None, descriptors=(), runs=None, now=None, decisions=None):
     """One card per declared project, those something waits for first, in
     the order of what waits: its name, its current chantier and its stage
-    -- the issue of its result when the D01 records give one --, its
-    figures when the tracker holds them, and the line of its release: the
+    -- the issue of its result when the D01 records give one --, two of the
+    figures of its page, counted as it counts them (its chantiers open and
+    its runs merged in seven days, F2.8: never figures a synthetic card
+    writes), and the line of its release: the
     one the page of the project reads from its knowledge repository
     (``depots``, ``descriptors``), unavailable with its reason when there
     is none (R19, af-dmsp3y) -- a card a synthetic set writes gives its
@@ -380,7 +387,8 @@ def _projects(row, beads, requests, depots=None, descriptors=()):
             "name": project.display_name,
             "chantier": "%s · %s" % (current.titre, current.issue or card.get("stage") or current.stage) if current
             else "Aucun chantier en cours",
-            "figures": [str(figure) for figure in card.get("figures") or []],
+            "figures": ["%s : %s" % (caption, value) for value, caption in
+                        project_metrics(project, project_runs(runs, project.project_id), now, decisions)[1:]],
             "release": card.get("release") or release_line(depots, declared.get(project.project_id) or {
                 "project_id": project.project_id, "display_name": project.display_name}),
         })
@@ -732,8 +740,7 @@ def _render_projects(projects, anchors, unread=False):
     for project in projects:
         row, holder, name, chantier, stats = (anchors("row"), anchors("div"), anchors("strong"), anchors("small"),
                                               anchors("small-stats"))
-        figures = "".join("<span %s>%s</span>" % (anchors("span"), _e(figure)) for figure in project["figures"]) or \
-            "<span %s>Volumes non collectés</span>" % anchors("span")
+        figures = "".join("<span %s>%s</span>" % (anchors("span"), _e(figure)) for figure in project["figures"])
         rows.append(
             '<div class="pn-row pn-project" %s><a href="%s">'
             '<div %s><strong %s>%s</strong><small %s>%s</small><div class="pn-stats" %s>%s</div>'
