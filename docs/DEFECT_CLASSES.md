@@ -67,7 +67,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/regression-host-queue-test.py RegressionHostQueue.test_a_ticket_s_green_has_the_budget_of_the_whole_series`,
   `python3 tests/host-slots-test.py`,
   `python3 tests/tdd-step-test.py TddStepTest.test_green_kills_what_the_regression_leaves_alive_and_keeps_its_verdict`,
-  `python3 tests/spec-integration-test.py SpecIntegrationTest.test_a_control_kills_what_it_leaves_in_a_session_of_its_own_and_keeps_its_verdict`
+  `python3 tests/spec-integration-test.py SpecIntegrationTest.test_a_control_kills_what_it_leaves_in_a_session_of_its_own_and_keeps_its_verdict`,
+  `python3 tests/project-launch-test.py ProjectLaunchTest.test_the_sweep_stops_a_program_whose_trial_has_ended_though_its_folder_is_there`,
+  `python3 tests/project-launch-test.py ProjectLaunchTest.test_every_tool_that_runs_a_branch_s_commands_in_a_tree_of_its_own_holds_its_trial_lock`
   — complet pour les commandes Python bornées de `bin/`, `lib/` et
   `tests/cockpit-criteria/` : un seul lanceur (`lib/bounded_process.py`)
   ouvre une session et tue son groupe au délai, et aussi quand l'appelant
@@ -101,7 +103,12 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   tournent sous le faucheur de l'usine (`--keep-status`), qui tue ce
   qu'elles laissent sans changer leur verdict, et la vérification d'une
   étape de `tdd-step` est elle-même sous-faucheuse de tout ce qu'elle lance
-  (af-8mjdai).
+  (af-8mjdai). Les deux derniers tiennent ce qui survit à l'essai lui-même
+  tué : `bin/tdd-step` et `bin/spec-integration` tiennent un verrou d'essai
+  sur leur arbre tant qu'ils vivent (`lib/trial_lock.py`), et
+  `bin/project-launch sweep` arrête tout programme remis à init dont l'arbre
+  est sous un essai au verrou libre ; tout outil qui lance les commandes
+  d'une branche sous le faucheur doit tenir ce verrou (af-3vcqd3).
 - Occurrences : #624, #628, #629, #630, #631, #636, #647, #657, #658, #661,
   #667, #694, #696, #705, #706, #708, #710, #713, #721 ; copies orphelines du
   22/10 (sans PR) ; af-kky570 ; af-npz9v1.46 ; af-npz9v1.26 ; af-30zwwu ;
@@ -123,11 +130,17 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   antérieures au faucheur sondaient leur ville synthétique hors du pool, un
   depuis 43 h, 0,8 cœur chacun) ; af-hafyxx (budget vert de 1260 s mesuré
   sur les seuls verts finis dedans : la famille « runs », 24 classes, n'y
-  tenait jamais ; un vert a désormais le budget de la série entière).
+  tenait jamais ; un vert a désormais le budget de la série entière) ;
+  af-3vcqd3 (af-p4v2q2 : un `bin/cockpit run` de l'arbre `tree-10` d'un
+  `tdd-step` tué, remis à systemd --user, a sondé sa ville synthétique 61 h :
+  l'arbre restait là, le sweep le gardait ; les arbres de fusion de
+  `spec-integration`, sous `$XDG_RUNTIME_DIR`, n'étaient même pas regardés).
 - Ouvertes : les invocations directes antérieures hors des occurrences de
   l'étude B sont nommées une par une, avec leur date et leur motif, dans
   `config/bounded-process-exceptions.tsv` ; une vingtaine de délais écrits à
-  la main restent à l'étude C. Aucune autre invocation
+  la main restent à l'étude C. Le produit d'un test dont le faucheur de
+  `bin/ci-run-tests` ou de la régression du Cockpit est tué avec lui reste
+  hors du contrôle : af-23j8a8. Aucune autre invocation
   Python bornée ni aucun lanceur de produit sans propriétaire n'est connu
   hors du contrôle.
 

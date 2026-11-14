@@ -37,7 +37,9 @@ every pass in silence (af-kky570: 3 then 12 copies, 7600 trace lines in four
 days). It also stops the programs launched without this launcher whose work
 tree is gone (WORK_ROOTS): their launcher ended without them, nothing else
 will stop them (af-kky570: two `bin/cockpit run` of a deleted runtime
-worktree lived 3 days 12 hours). Each stop is written to TRACE_FILE.
+worktree lived 3 days 12 hours), or whose trial has ended though its
+folder is still there (lib/trial_lock.py; af-3vcqd3: a cockpit of a killed
+tdd-step's tree, 61 h). Each stop is written to TRACE_FILE.
 orders/project-launch-sweep.toml runs it.
 
 `--repo-root` is the repository of the product (default: the Factory's own);
@@ -72,6 +74,7 @@ from types import ModuleType
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 from account_home import account_home  # noqa: E402
 import host_slots  # noqa: E402
+import trial_lock  # noqa: E402
 
 
 def process_identity(pid: int) -> str | None:
@@ -93,10 +96,14 @@ SWEEP_GRACE = 60
 # Where Factory programs run from a work tree of their own: the copies of
 # this launcher and tests' temporary folders, the isolated cities of the
 # evaluations (~/.cache), runtime worktrees of the delivery roles,
-# maintenance and operator worktrees. Never the live root.
+# maintenance and operator worktrees, the merge trees of bin/spec-integration
+# (af-3vcqd3). Never the live root.
 RUNTIME_WORKTREES = account_home() / ".local" / "share" / "agent-factory-runtime-worktrees"
+SPEC_INTEGRATION_TREES = Path(os.environ.get("SPEC_INTEGRATION_WORK_DIR")
+                              or Path(os.environ.get("SPEC_INTEGRATION_LOCK_DIR") or os.environ.get("XDG_RUNTIME_DIR")
+                                      or "/tmp") / "agent-factory-spec-integration")
 WORK_ROOTS = (Path(tempfile.gettempdir()), account_home() / ".cache", RUNTIME_WORKTREES,
-              account_home() / "agent-factory-maint", account_home() / "agent-factory-po")
+              account_home() / "agent-factory-maint", account_home() / "agent-factory-po", SPEC_INTEGRATION_TREES)
 # A copy the sweep could not release: set aside, never retried in silence.
 UNRELEASABLE = ".unreleasable"
 # Where the guard and the sweep write each launch they stop: ~/.local/state
@@ -895,8 +902,10 @@ def reparented(pid: int) -> bool:
 
 def work_tree_orphan(pid: int, roots: list[Path]) -> tuple[str, str] | None:
     """Why a program launched without this launcher must end, and its work
-    tree: its launcher ended and its work tree is gone, or it has outlived a
-    lifetime in a runtime worktree."""
+    tree: its launcher ended and its work tree is gone, or lies in the folder
+    of a trial that has ended (lib/trial_lock.py: a killed tdd-step left a
+    cockpit polling for 61 h in its still present tree, af-3vcqd3), or it
+    has outlived a lifetime in a runtime worktree."""
     if not reparented(pid):
         return None
     try:
@@ -910,6 +919,8 @@ def work_tree_orphan(pid: int, roots: list[Path]) -> tuple[str, str] | None:
         return None
     if gone or not folder.exists():
         return "work_tree_gone", str(folder)
+    if trial_lock.ended_trial(folder, root) is not None:
+        return "trial_gone", str(folder)
     age = process_age(pid)
     if root == RUNTIME_WORKTREES and age is not None and age > DEFAULT_LIFETIME:
         return "orphan_lifetime_over", str(folder)
