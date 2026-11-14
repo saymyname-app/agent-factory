@@ -793,6 +793,9 @@ def _stop_comparison(view):
         count = len(view["work"]) - len(view["lost"])
         if view["lost"]:
             return False, "Travail sans point de reprise durable : %s." % ", ".join(view["lost"])
+        if view["ecarts"]:
+            # F2.1: never « aucun écart » above the gaps listed.
+            return False, "Travail d’avant non repris tel quel : %s." % ", ".join(view["ecarts"])
         if view["state"] != "redemarrage":
             return True, ("1 travail retrouvé, aucun écart." if count == 1
                           else "%d travaux retrouvés, aucun écart." % count)
