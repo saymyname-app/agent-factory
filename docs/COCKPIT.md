@@ -380,7 +380,9 @@ that is not to judge with what it says of itself (`périmé`, …), and runs
 `bin/acceptance-session open <convoy> --trial`
 (`COCKPIT_ACCEPTANCE_SESSION_BIN`), which launches the product at the commit
 of the dossier on the first dataset of the profile, records an outage on the
-convoy, and answers the same address while the session stays open. The page
+convoy, and answers the same address while the session stays open; that
+session of Essai gives way -- its product stopped -- to the session of
+judgment (`open`) and to the Essai of another dossier (F2.5). The page
 opens the tab in the gesture, then leads it to that address, or closes it
 and says the outage. In an isolated launch the door is
 `tests/fixtures/cockpit/synthetic-city/acceptance-session`: no Evidence Pack
