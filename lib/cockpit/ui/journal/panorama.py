@@ -170,17 +170,74 @@ def _event_items(entry, at, projects):
     ]
 
 
-def journal_view(row, entries, runs, projects, gc_row, connected=()):
+# What a CI run GitHub answers concluded, as a log says it.
+CI_CONCLUSIONS = {"success": "réussie", "failure": "échouée", "cancelled": "annulée", "skipped": "ignorée",
+                  "timed_out": "expirée", "action_required": "en attente d’une action", "neutral": "neutre",
+                  "startup_failure": "échouée au démarrage", "stale": "périmée"}
+CI_RAW = ("id", "name", "head_branch", "head_sha", "event", "status", "conclusion", "created_at", "updated_at",
+          "html_url")
+
+
+def technical_logs(snapshot):
+    """The technical logs of the sources the cockpit reads itself, beside
+    the events the factory holds for the journal (F2.9): each run of the
+    CI GitHub answers for the declared repository (« CI »), and the last
+    reading of each source of the cockpit, read or failed (« Connexions »).
+    ``(items, connected)``: the logs, and the producers' names of the
+    sources they come from -- CI once the cockpit reads GitHub, the
+    connections always."""
+    items, connected = [], ["connexions"]
+    github = snapshot.get("github")
+    if github is not None:
+        connected.append("ci")
+        for run in (github.get("value") or {}).get("workflow_runs") or []:
+            if not isinstance(run, dict):
+                continue
+            said = (CI_CONCLUSIONS.get(run.get("conclusion"), run.get("conclusion") or "sans issue enregistrée")
+                    if run.get("status") == "completed" else "en cours")
+            name = run.get("name") or "exécution"
+            items.append({"at": _epoch(run.get("updated_at") or run.get("created_at")), "log": True, "source": "ci",
+                          "bead_id": "ci-%s" % run.get("id"), "project": None, "link": None, "nature": "ci",
+                          "title": "CI · %s · %s" % (name, said),
+                          "text": "Exécution de la CI sur %s (%s) : %s." % (
+                              run.get("head_branch") or "une branche non indiquée",
+                              run.get("event") or "déclencheur non indiqué", said),
+                          "raw": ["%s : %s" % (key, run[key]) for key in CI_RAW if run.get(key) is not None]})
+    for name, row in sorted(snapshot.items()):
+        if not isinstance(row, dict):
+            continue
+        label, read, failed = row.get("display_name") or name, row.get("read_at"), row.get("failed_at")
+        if failed is not None and (read is None or failed >= read):
+            at, title, text = failed, "Lecture échouée : %s" % label, "Le cockpit n’a pas pu lire cette source."
+        elif read is not None:
+            latency = row.get("latency")
+            at, title = read, "Lecture réussie : %s" % label
+            text = "Le cockpit a lu cette source%s." % (
+                " en %s s" % ("%.1f" % latency).replace(".", ",") if latency is not None else "")
+        else:
+            continue
+        items.append({"at": at, "log": True, "source": "connexions", "bead_id": "connexion-%s" % name,
+                      "project": None, "link": None, "nature": "connexions", "title": title, "text": text,
+                      "raw": ["source : %s" % name, "état : %s" % row.get("freshness"),
+                              "dernière lecture : %s" % (_hhmm(read) if read else "aucune"),
+                              "dernier échec : %s" % (_hhmm(failed) if failed else "aucun")]})
+    return items, connected
+
+
+def journal_view(row, entries, runs, projects, gc_row, connected=(), technical=((), ())):
     """What the destination shows: ``state`` (LOADING while the journal was
     never read, ERROR when its read failed, EMPTY, CONTENT), ``stale``
     (what it shows is no longer current: the journal or the supervisor no
     longer answers), ``checked`` (when it was read), ``items`` and
     ``connected`` (the keys of the sources declared connected, from their
-    producers' names in ``connected``)."""
+    producers' names in ``connected``). ``technical``: the logs the
+    cockpit reads itself and their sources, :func:`technical_logs`."""
     if row is None or row["value"] is None or row["freshness"] == UNKNOWN:
         state = ERROR if row is not None and row.get("failed_at") is not None else LOADING
         return {"state": state, "stale": False, "checked": None, "items": [], "connected": set()}
-    items = journal_items(entries, runs, projects)
+    logs, read = technical
+    items = sorted(journal_items(entries, runs, projects) + list(logs), key=lambda item: -(item["at"] or 0))
+    connected = list(connected) + list(read)
     stale = row["freshness"] != FRESH or (gc_row or {}).get("freshness", UNKNOWN) != FRESH
     return {"state": CONTENT if items else EMPTY, "stale": stale, "checked": row["read_at"], "items": items,
             "connected": {TECHNICAL.get(str(name).lower(), str(name).lower()) for name in connected}}

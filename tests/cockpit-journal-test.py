@@ -498,6 +498,28 @@ class JournalTest(unittest.TestCase):
         self.assertIn("<strong>Agents</strong> · raccordée — aucun log reçu", sources)
         self.assertIn("<strong>Livraison</strong> · absente — aucun log reçu", sources)
 
+    def test_the_logs_of_the_ci_and_of_the_connections_the_cockpit_reads(self):
+        # F2.9: no event bead held for the journal; the CI GitHub answers and
+        # the sources the cockpit reads are logs of their own, their sources
+        # connected; a source without producer stays absent.
+        github = os.path.join(self.tmp.name, "github.json")
+        at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 600))
+        with open(github, "w") as fh:
+            json.dump({"repository": "saymyname-app/notes", "pull_requests": [], "workflow_runs": [
+                {"id": 41, "name": "regression", "status": "completed", "conclusion": "failure", "created_at": at,
+                 "updated_at": at, "head_branch": "main", "event": "push"}]}, fh)
+        self.start_cockpit(COCKPIT_GITHUB_REPO="saymyname-app/notes", COCKPIT_GITHUB_POLL_SECONDS="0.2",
+                           COCKPIT_GH_BIN=str(ROOT / "tests" / "fixtures" / "cockpit" / "github" / "fake-gh"),
+                           FAKE_GH_STATE_FILE=github)
+        wait_until(self.journal)
+        ci = wait_until(lambda: (lambda p: p if "regression" in p else None)(self.get("/journal?vue=logs&source=ci")))
+        self.assertIn("CI · regression · échouée", ci)
+        self.assertIn("Lecture réussie : tickets", self.get("/journal?vue=logs&source=connexions"))
+        sources = self.get("/journal?vue=sources")
+        self.assertRegex(sources, r"<strong>CI</strong> · raccordée — 1 log lu")
+        self.assertRegex(sources, r"<strong>Connexions</strong> · raccordée — \d+ logs? lus?")
+        self.assertIn("<strong>Livraison</strong> · absente — aucun log reçu", sources)
+
     def test_no_model_is_called_to_read_or_label_the_journal(self):
         # Every way out of the cockpit to a model is recorded: the network,
         # through a proxy, the providers' own addresses, and their commands.

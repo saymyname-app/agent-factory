@@ -62,7 +62,8 @@ from cockpit.ui.home.overview import overview_view, render_overview
 from cockpit.ui.panorama.shell import CSS as PANORAMA_CSS
 from cockpit.ui.panorama.shell import HOME, NAVIGATION, render_not_folded, render_shell
 from cockpit.ui.stop.render import render_stop_section
-from cockpit.ui.journal.panorama import CSS as JOURNAL_PANORAMA_CSS, journal_items, journal_view, render_journal_panorama
+from cockpit.ui.journal.panorama import (CSS as JOURNAL_PANORAMA_CSS, journal_items, journal_view,
+                                         render_journal_panorama, technical_logs)
 from cockpit.ui.journal.render import CSS as JOURNAL_CSS
 from cockpit.ui.notify.render import render_envois_section
 from cockpit.ui.runs.page import CSS as RUNS_PAGE_CSS, render_run_page, render_runs_page
@@ -1138,7 +1139,8 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         if projets is not None and projets["value"] is not None:
             projects = {p.project_id: p.display_name for p in projects_from_value(projets["value"])[0]}
         view = journal_view(row, journal_entries_from_value(row["value"]) if known else [], runs, projects,
-                            snapshot.get("gc"), journal_sources_from_value(row["value"]) if known else ())
+                            snapshot.get("gc"), journal_sources_from_value(row["value"]) if known else (),
+                            technical_logs(snapshot))
         notify = self.server.notify
         envois = render_envois_section(notify.journal_entries(), notify.configured()) if notify is not None else ""
         query = {key: values[0] for key, values in urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).items()}
