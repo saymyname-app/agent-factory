@@ -14,6 +14,9 @@ no I/O.
 """
 import html
 
+from cockpit.actions.essai_relay import (
+    DEFAULT_HTTPS_PORT as ESSAI_HTTPS_PORT, DEFAULT_PORT as ESSAI_PORT, SERVE_COMMAND)
+
 TITLE = "Procédure des réglages sur la VM"
 # Where the procedure proposes the secret files, when none is set yet: in
 # the home of the account that runs the cockpit on the VM, outside every
@@ -79,6 +82,8 @@ def render_procedure(settings):
     public_url = settings.get("public_url") or ""
     port = settings.get("port") or 0
     supervisor_port = settings.get("supervisor_port") or 0
+    essai_port = settings.get("essai_port") or ESSAI_PORT
+    essai_https_port = settings.get("essai_https_port") or ESSAI_HTTPS_PORT
     pushover_path = pushover or SUGGESTED_PUSHOVER_FILE
     heartbeat_path = heartbeat or SUGGESTED_HEARTBEAT_FILE
     https = public_url.startswith("https://")
@@ -142,6 +147,13 @@ def render_procedure(settings):
                 "ton identité Tailscale en %s : le cockpit refuse toute autre identité, en lecture comme en "
                 "action." % (_code('"public_url"'), _code('"allowed_origin"'), _code('"benjamin_login"')),
                 "Redémarre le cockpit, puis ouvre cette adresse depuis le PC et depuis l’iPhone.",
+                "Pour qu’Essai ouvre le produit depuis le PC et l’iPhone, donne au relais de l’Essai (le "
+                "cockpit, port %s sur la VM seule) son entrée HTTPS sur ton réseau Tailscale seul, jamais "
+                "Funnel : Essai ouvre alors %s." % (essai_port, _code("https://<nom de la VM>:%s/" % essai_https_port))
+                + _cmd(SERVE_COMMAND % (essai_https_port, essai_port))
+                + "Ou, par l’assistant : "
+                + _cmd("%s serve --target-port %s --gc-port %s --essai-port %s"
+                       % (WIZARD, port, supervisor_port, essai_port)),
             ],
         ),
         _step(

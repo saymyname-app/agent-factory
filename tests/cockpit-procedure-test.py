@@ -27,7 +27,7 @@ SETTINGS = {
     "local_config": "/home/factory/agent-factory/.gc/runtime/cockpit-local.json",
     "pushover_file": "", "pushover_ready": False,
     "heartbeat_file": "", "heartbeat_ready": False,
-    "public_url": "", "port": 8765, "supervisor_port": 8372,
+    "public_url": "", "port": 8765, "supervisor_port": 8372, "essai_port": 8174, "essai_https_port": 8443,
 }
 
 
@@ -72,6 +72,13 @@ class ProcedureServeTest(unittest.TestCase):
         said = step({}, "3. Accès")
         self.assertIn("serve --target-port 8765 --gc-port 8372", said)
         self.assertNotIn("<port", said)
+
+    def test_the_entry_of_essai_is_given_with_its_exact_command_tailnet_only(self):
+        # F2.4: Essai opens from the PC and the iPhone through a second entry of Serve.
+        said = step({}, "3. Accès")
+        self.assertIn("sudo tailscale serve --bg --https=8443 http://127.0.0.1:8174", said)
+        self.assertIn("--essai-port 8174", said)
+        self.assertIn("jamais Funnel", said)
 
 
 class ProcedureHealthcheckTest(unittest.TestCase):

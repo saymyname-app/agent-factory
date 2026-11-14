@@ -387,8 +387,23 @@ opens the tab in the gesture, then leads it to that address, or closes it
 and says the outage. In an isolated launch the door is
 `tests/fixtures/cockpit/synthetic-city/acceptance-session`: no Evidence Pack
 exists there, the launch itself is the real `bin/project-launch`, owned by
-that cockpit. Limit: the address is the loopback address of the host, so a
-browser on another device does not reach it.
+that cockpit. The address answered is the one the client can open (F2.4,
+`actions/essai_relay.py`): to a client that opened the cockpit by a host
+name of the tailnet (`X-Forwarded-Host` that Tailscale Serve forwards, else
+`Host`), `https://<that host>:8443/` -- the HTTPS entry Serve gives the relay
+of Essai, `sudo tailscale serve --bg --https=8443 http://127.0.0.1:8174`
+(Benjamin's setting of the host, tailnet only, never Funnel; « Accès » and
+`bin/cockpit-setup-wizard serve --essai-port` give it). The relay is the
+cockpit's, on 127.0.0.1 only (`COCKPIT_ESSAI_PORT`, 8174 by default where
+`public_url` is an HTTPS address of the tailnet, else none; the HTTPS port,
+`COCKPIT_ESSAI_HTTPS_PORT`, 8443): it checks the reader with the cockpit's
+guard, removes every `Tailscale-User-*` header, rewrites Origin and Referer
+to the product, keeps the product's cookies apart from the cockpit's
+(prefix `essai_`) and relays, at the root, to the product of the last
+Essai; with none open it says so (503), with that product stopped too
+(502). A client on the host itself (a loopback name) gets the product's own
+address; without a relay, another device gets a refusal that says the
+entry is not configured, never a loopback address.
 
 Avis (panel `#pn-avis`, inside the result, its actions in the same bar) runs
 in the page and writes nothing. It asks one answer of D01, the verdict on each

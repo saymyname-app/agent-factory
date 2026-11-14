@@ -23,6 +23,7 @@ import subprocess
 from datetime import datetime
 
 from cockpit.actions import relancer, trace
+from cockpit.actions.essai_relay import DEFAULT_HTTPS_PORT, public_address
 from cockpit.actions.continuer import build_prompt
 from cockpit.actions.defer import compute_defer_until
 from cockpit.core.readmodel import PARIS
@@ -180,6 +181,8 @@ def build_action_handlers(
     acceptance_session_bin="acceptance-session",
     outcome_of=lambda chantier: None,
     trial_timeout=TRIAL_TIMEOUT_SECONDS,
+    trial_target=None,
+    trial_https_port=DEFAULT_HTTPS_PORT,
 ):
     def run_door(args):
         return _run_door(args, timeout=door_timeout)
@@ -364,7 +367,12 @@ def build_action_handlers(
         answered at another one by the session, refused: no tab on a product
         of another revision than the page shows. A product that does not
         start is said as an outage, by the command that records it.
-        ``outcome_of``: the Outcome the cockpit reads of a chantier."""
+        ``outcome_of``: the Outcome the cockpit reads of a chantier.
+        The address answered is the one the client can open (F2.4,
+        :func:`cockpit.actions.essai_relay.public_address`): on the host the
+        client opened the cockpit by (``client_host``, set by the server),
+        the HTTPS entry of the relay, ``trial_target`` -- which then relays
+        to this product --; the product's own address on the host itself."""
         chantier = _require(payload, "chantier")
         outcome = outcome_of(chantier)
         if outcome is None:
@@ -388,7 +396,14 @@ def build_action_handlers(
             raise ActionError(answer.get("error") or "la session d’acceptation n’a pas donné d’adresse")
         if answer.get("commit") != commit:
             raise ActionError(TRIAL_OTHER_DOSSIER)
-        return {"ok": True, "address": answer["address"], "commit": commit}
+        if trial_target is not None:
+            trial_target.set(answer["address"])
+        try:
+            address = public_address(payload.get("client_host"), answer["address"], trial_https_port,
+                                     trial_target is not None)
+        except ValueError as exc:
+            raise ActionError(str(exc))
+        return {"ok": True, "address": address, "commit": commit}
 
     def handle_pas_bon_vers_agent(payload):
         """« Pas bon → agent » (spec .31): a prompt to copy, nothing

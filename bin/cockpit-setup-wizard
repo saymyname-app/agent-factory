@@ -240,11 +240,28 @@ def cmd_serve(args):
             "refus : le port visé (%d) est celui de l'API gc — l'API gc n'est jamais "
             "exposée (spec .95)" % args.target_port
         )
+    # F2.4: the relay of Essai (the cockpit, on loopback) gets an HTTPS entry
+    # of its own on the tailnet, Serve only.
+    essai_port = getattr(args, "essai_port", None)
+    essai_https_port = getattr(args, "essai_https_port", None) or 8443
+    if essai_port in (args.gc_port, args.target_port):
+        raise WizardError(
+            "refus : le port du relais de l'Essai (%d) est celui de l'API gc ou du cockpit — "
+            "l'API gc n'est jamais exposée (spec .95)" % essai_port
+        )
 
     target_url = "http://127.0.0.1:%d" % args.target_port
     result = _run_tailscale(args.tailscale_bin, ["serve", "--bg", "--yes", target_url])
     if result.returncode != 0:
         raise WizardError("échec de « tailscale serve » : %s" % (result.stderr or result.stdout).strip())
+
+    if essai_port:
+        essai_url = "http://127.0.0.1:%d" % essai_port
+        result = _run_tailscale(args.tailscale_bin, ["serve", "--bg", "--yes", "--https=%d" % essai_https_port,
+                                                     essai_url])
+        if result.returncode != 0:
+            raise WizardError("échec de « tailscale serve » pour l'Essai : %s"
+                              % (result.stderr or result.stdout).strip())
 
     funnel_result = _run_tailscale(args.tailscale_bin, ["funnel", "status"])
     funnel_output = (funnel_result.stdout or "") + (funnel_result.stderr or "")
@@ -255,6 +272,9 @@ def cmd_serve(args):
         )
 
     print("cockpit-setup-wizard : Tailscale Serve HTTPS configuré vers %s (Funnel : désactivé)" % target_url)
+    if essai_port:
+        print("cockpit-setup-wizard : entrée HTTPS de l'Essai, port %d, vers %s (tailnet seul)"
+              % (essai_https_port, essai_url))
     return 0
 
 
@@ -370,6 +390,8 @@ def build_parser():
     p.add_argument("--tailscale-bin", default="tailscale")
     p.add_argument("--target-port", type=int, required=True)
     p.add_argument("--gc-port", type=int, required=True)
+    p.add_argument("--essai-port", type=int, help="the relay of Essai (the cockpit's, on loopback): its own HTTPS entry")
+    p.add_argument("--essai-https-port", type=int, default=8443)
     p.add_argument("--funnel", action="store_true", help="never do this — present only so the wizard can refuse it")
     p.set_defaults(handler=cmd_serve)
 

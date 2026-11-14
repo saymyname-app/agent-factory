@@ -1069,6 +1069,8 @@ def main(argv: list[str]) -> int:
     env.update(usine_validity)
     if https:
         env.update(start_identity_proxy(args.port, home, [alive_write]))
+        # The relay of Essai, as in service behind Serve (F2.4), on a port of its own.
+        env["COCKPIT_ESSAI_PORT"] = str(free_port())
     if front:
         # The cockpit listens behind the operator, on a port of its own.
         env["COCKPIT_PORT"] = str(free_port())

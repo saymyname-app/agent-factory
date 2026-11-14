@@ -19,6 +19,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from cockpit.access.guard import session_cookie_header
+from cockpit.actions.essai_relay import client_host
 from cockpit.actions.registry import DOOR_TIMEOUT_SECONDS, ActionError, ActionUncertain, expired
 from cockpit.actions.uncertain import UncertainOutcomes
 from cockpit.analyses.indicators import analyses
@@ -279,6 +280,10 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         except ValueError:
             self._send_json({"error": "bad_json"}, status=400)
             return
+        if action == "essai" and isinstance(payload, dict):
+            # F2.4: the address of Essai is built on the host the client
+            # opened the cockpit by, never on what the page says of it.
+            payload["client_host"] = client_host(self.headers)
         writes = action not in ACTIONS_WITHOUT_WRITE
         target = (payload.get("bead_id") or payload.get("source_key")) if isinstance(payload, dict) else None
         if writes and target:

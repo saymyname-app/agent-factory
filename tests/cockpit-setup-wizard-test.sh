@@ -31,8 +31,10 @@ SECRET_HC_URL="https://hc-ping.com/super-secret-check-id"
 FAKE_TAILSCALE="$TEST_TMP/fake-tailscale"
 cat >"$FAKE_TAILSCALE" <<'EOF'
 #!/usr/bin/env python3
-import sys
+import os, sys
 args = sys.argv[1:]
+with open(os.environ.get("FAKE_TAILSCALE_CALLS", os.devnull), "a") as calls:
+    calls.write(" ".join(args) + "\n")
 if args[:1] == ["serve"]:
     print("ok")
     sys.exit(0)
@@ -221,6 +223,26 @@ pass
   >"$OUT" 2>"$ERR"
 RC=$?
 [ "$RC" -eq 0 ] || fail "serve refused a valid, Funnel-free configuration"
+pass
+
+# F2.4: with --essai-port, Serve also gives the relay of Essai its HTTPS entry
+# on the tailnet; the gc port is refused there too, before any call.
+export FAKE_TAILSCALE_CALLS="$TEST_TMP/tailscale-calls"
+"$WIZARD" serve --tailscale-bin "$FAKE_TAILSCALE" --target-port 8173 --gc-port 8372 --essai-port 8174 \
+  >"$OUT" 2>"$ERR"
+RC=$?
+[ "$RC" -eq 0 ] || fail "serve refused the entry of Essai"
+grep -qx "serve --bg --yes --https=8443 http://127.0.0.1:8174" "$FAKE_TAILSCALE_CALLS" \
+  || fail "serve did not give Essai its HTTPS entry: $(cat "$FAKE_TAILSCALE_CALLS")"
+: >"$FAKE_TAILSCALE_CALLS"
+set +e
+"$WIZARD" serve --tailscale-bin "$FAKE_TAILSCALE" --target-port 8173 --gc-port 8372 --essai-port 8372 \
+  >"$OUT" 2>"$ERR"
+RC=$?
+set -e
+[ "$RC" -ne 0 ] || fail "serve gave the gc API port an entry as Essai"
+[ ! -s "$FAKE_TAILSCALE_CALLS" ] || fail "serve called tailscale before refusing the gc port as Essai"
+unset FAKE_TAILSCALE_CALLS
 pass
 
 # ---------------------------------------------------------------------------
