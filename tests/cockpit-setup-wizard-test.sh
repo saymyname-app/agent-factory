@@ -123,25 +123,73 @@ fi
 pass
 
 # ---------------------------------------------------------------------------
-# 4. healthchecks-check: refuses a non-conforming "Usine muette" check;
-#    accepts the exact spec parameters and notes the live-capability checks
-#    as non-blocking defects rather than failing.
+# 4. healthchecks-check (F2.15): reads the real « Usine muette » check on
+#    Healthchecks.io -- here a fake API on localhost, no network -- with a
+#    read-only API key read on stdin, never echoed. « conforme » only for
+#    what it read; what the API does not give stays « à vérifier ».
 # ---------------------------------------------------------------------------
+HC_KEY="hc-readonly-sekrit-5K2W"
+HC_CHECKS="$TEST_TMP/hc-checks.json"
+HC_PORT_FILE="$TEST_TMP/hc-port"
+cat >"$TEST_TMP/fake-healthchecks.py" <<'EOF'
+import http.server, json, sys
+key, checks, port_file = sys.argv[1:]
+class Api(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.headers.get("X-Api-Key") != key:
+            self.send_response(401); self.end_headers(); return
+        if self.path.split("?")[0] != "/api/v3/checks/":
+            self.send_response(404); self.end_headers(); return
+        body = open(checks, "rb").read()
+        self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *a): pass
+server = http.server.HTTPServer(("127.0.0.1", 0), Api)
+open(port_file, "w").write(str(server.server_port))
+server.serve_forever()
+EOF
+python3 "$TEST_TMP/fake-healthchecks.py" "$HC_KEY" "$HC_CHECKS" "$HC_PORT_FILE" &
+HC_PID=$!
+trap 'kill "$HC_PID" 2>/dev/null; rm -rf -- "$TEST_TMP"' EXIT
+for _ in $(seq 50); do [ -s "$HC_PORT_FILE" ] && break; sleep 0.1; done
+HC_API="http://127.0.0.1:$(cat "$HC_PORT_FILE")"
+hc_checks() { printf '{"checks":[{"name":"Autre","timeout":300,"grace":600},{"name":"Usine muette","timeout":%s,"grace":%s}]}' "$1" "$2" >"$HC_CHECKS"; }
+
+# The real check has a 10-minute period: refused, whatever was expected.
+hc_checks 600 600
 set +e
-"$WIZARD" healthchecks-check --name "Usine muette" --period-minutes 10 \
-  --grace-minutes 10 --up-notifications off >"$OUT" 2>"$ERR"
+printf '%s\n' "$HC_KEY" | "$WIZARD" healthchecks-check --api-base "$HC_API" >"$OUT" 2>"$ERR"
 RC=$?
 set -e
-[ "$RC" -ne 0 ] || fail "healthchecks-check accepted a wrong period"
+[ "$RC" -ne 0 ] || fail "healthchecks-check accepted a check whose real period is 10 min"
+grep -q "conforme" "$OUT" "$ERR" && fail "healthchecks-check said conforme over a wrong real period"
+grep -q "10 min" "$ERR" || fail "the refusal does not say the period read: $(cat "$ERR")"
 pass
 
-"$WIZARD" healthchecks-check --name "Usine muette" --period-minutes 5 \
-  --grace-minutes 10 --up-notifications off --repeat-2h unknown --priority1 unknown \
-  >"$OUT" 2>"$ERR"
+# The real check conforms: conforme for what was read, the rest to verify.
+hc_checks 300 600
+printf '%s\n' "$HC_KEY" | "$WIZARD" healthchecks-check --api-base "$HC_API" >"$OUT" 2>"$ERR"
 RC=$?
-[ "$RC" -eq 0 ] || fail "healthchecks-check refused the conforming parameters"
+[ "$RC" -eq 0 ] || fail "healthchecks-check refused a conforming real check: $(cat "$ERR")"
+grep -q "lu sur Healthchecks.io.*conforme" "$OUT" || fail "no conforme read on Healthchecks.io: $(cat "$OUT")"
+grep -q "défaut noté" "$OUT" || fail "expected a non-blocking defect note for what the API does not give"
+if grep -q "$HC_KEY" "$OUT" "$ERR"; then fail "the Healthchecks.io API key leaked into stdout/stderr"; fi
 pass
-grep -q "défaut noté" "$OUT" || fail "expected a non-blocking defect note for the unverified 2h/priority-1 capability"
+
+# Nothing read -- a key refused, or no Healthchecks.io answering: never conforme.
+set +e
+printf 'wrong-key\n' | "$WIZARD" healthchecks-check --api-base "$HC_API" >"$OUT" 2>"$ERR"
+RC=$?
+set -e
+[ "$RC" -ne 0 ] || fail "healthchecks-check passed with a key Healthchecks.io refused"
+grep -q "conforme" "$OUT" "$ERR" && fail "healthchecks-check said conforme without reading the check"
+set +e
+printf '%s\n' "$HC_KEY" | "$WIZARD" healthchecks-check --api-base "http://127.0.0.1:9" >"$OUT" 2>"$ERR"
+RC=$?
+set -e
+[ "$RC" -ne 0 ] || fail "healthchecks-check passed without reaching Healthchecks.io"
+grep -q "conforme" "$OUT" "$ERR" && fail "healthchecks-check said conforme without reaching Healthchecks.io"
+grep -q "vérification non faite" "$ERR" || fail "the check does not say it was not made: $(cat "$ERR")"
 pass
 
 # ---------------------------------------------------------------------------
@@ -186,7 +234,7 @@ cat >"$ANSWERS" <<EOF
 {
   "pushover_secrets": {"path": "$RUN_SECRETS_PATH", "secret": {"token": "$SECRET_TOKEN", "user_key": "$SECRET_USER_KEY", "e2e_key": "$SECRET_E2E_KEY"}},
   "heartbeat_secret": {"path": "$RUN_HC_PATH", "url": "$SECRET_HC_URL"},
-  "healthchecks_check": {"name": "Usine muette", "period_minutes": 5, "grace_minutes": 10, "up_notifications": "off", "repeat_2h": "yes", "priority1": "yes"},
+  "healthchecks_check": {"api_key": "$HC_KEY", "api_base": "$HC_API", "up_notifications": "off", "repeat_2h": "yes", "priority1": "yes"},
   "serve": {"tailscale_bin": "$FAKE_TAILSCALE", "target_port": 8173, "gc_port": 8372, "funnel": false},
   "focus_check": {"confirmed": "yes"}
 }
@@ -201,7 +249,7 @@ pass
 [ -f "$RUN_HC_PATH" ] || fail "run did not write the heartbeat URL file"
 pass
 
-if grep -qE "$SECRET_TOKEN|$SECRET_USER_KEY|$SECRET_E2E_KEY|$SECRET_HC_URL" "$OUT" "$ERR"; then
+if grep -qE "$SECRET_TOKEN|$SECRET_USER_KEY|$SECRET_E2E_KEY|$SECRET_HC_URL|$HC_KEY" "$OUT" "$ERR"; then
   fail "run leaked a secret into stdout/stderr"
 fi
 pass

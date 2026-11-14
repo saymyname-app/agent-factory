@@ -74,6 +74,19 @@ class ProcedureServeTest(unittest.TestCase):
         self.assertNotIn("<port", said)
 
 
+class ProcedureHealthcheckTest(unittest.TestCase):
+    """The check « Usine muette » is verified by reading it on
+    Healthchecks.io, never by handing the command the values expected
+    (F2.15); tests/cockpit-setup-wizard-test.sh proves the command reads."""
+
+    def test_the_check_command_reads_the_real_check_and_is_handed_no_expected_value(self):
+        said = step({}, "2. Signal de vie")
+        self.assertIn("bin/cockpit-setup-wizard healthchecks-check", said)
+        self.assertNotIn("--period-minutes", said)
+        self.assertNotIn("--grace-minutes", said)
+        self.assertRegex(said, r"(?i)clé API en lecture seule")
+
+
 class LocalSettingsPathsTest(unittest.TestCase):
     """The paths the procedure has the operator write in the local settings
     file, `~/…` included, are the files the cockpit reads (F1.6)."""
