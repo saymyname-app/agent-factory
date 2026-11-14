@@ -182,7 +182,8 @@ def technical_logs(snapshot):
     """The technical logs of the sources the cockpit reads itself, beside
     the events the factory holds for the journal (F2.9): each run of the
     CI GitHub answers for the declared repository (« CI »), and the last
-    reading of each source of the cockpit, read or failed (« Connexions »).
+    reading of each source of the cockpit, read or failed (« Connexions »)
+    -- for a source of which the journal holds no event of the factory.
     ``(items, connected)``: the logs, and the producers' names of the
     sources they come from -- CI once the cockpit reads GitHub, the
     connections always."""
@@ -236,7 +237,11 @@ def journal_view(row, entries, runs, projects, gc_row, connected=(), technical=(
         state = ERROR if row is not None and row.get("failed_at") is not None else LOADING
         return {"state": state, "stale": False, "checked": None, "items": [], "connected": set()}
     logs, read = technical
-    items = sorted(journal_items(entries, runs, projects) + list(logs), key=lambda item: -(item["at"] or 0))
+    items = journal_items(entries, runs, projects)
+    # A source the factory writes to the journal itself is read there: the
+    # cockpit's own reading of it would say it twice.
+    held = {item["source"] for item in items if item["log"]}
+    items = sorted(items + [log for log in logs if log["source"] not in held], key=lambda item: -(item["at"] or 0))
     connected = list(connected) + list(read)
     stale = row["freshness"] != FRESH or (gc_row or {}).get("freshness", UNKNOWN) != FRESH
     return {"state": CONTENT if items else EMPTY, "stale": stale, "checked": row["read_at"], "items": items,
