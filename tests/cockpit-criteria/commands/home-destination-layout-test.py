@@ -178,8 +178,8 @@ class HomeDestinationLayout(unittest.TestCase):
             for frame in frames:
                 self.assertEqual(
                     (True, True, True, True),
-                    (long_result in says(frame, "request-1"), long_request in says(frame, "request-2"),
-                     long_result in says(frame, "panel-3"), long_chantier in says(frame, "row-2")),
+                    (long_result in says(frame, "request-2"), long_request in says(frame, "request-1"),
+                     long_result in says(frame, "panel-3"), long_chantier in says(frame, "row-1")),
                     f"a long title is not said whole at {frame['width']} px, {theme}",
                 )
 
