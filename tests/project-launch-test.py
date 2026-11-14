@@ -1165,6 +1165,61 @@ class ProjectLaunchTest(unittest.TestCase):
         [event] = self._traced()
         self.assertEqual(("sweep", "work_tree_gone", str(work_tree)), (event["by"], event["reason"], event["work_tree"]))
 
+    def test_the_sweep_stops_a_program_whose_trial_has_ended_though_its_folder_is_there(self):
+        # af-3vcqd3: a `bin/cockpit run` of the tree of a killed tdd-step,
+        # handed to systemd --user, polled its synthetic city for 61 h: its
+        # folder was still there, so the sweep kept it.
+        root = Path(tempfile.mkdtemp(prefix="launch-work-root-")).resolve()
+        self.addCleanup(shutil.rmtree, root, True)
+        folder = root / "tdd-step-x"
+        work_tree = folder / "tree-10"
+        work_tree.mkdir(parents=True)
+        pid_file = root / "pid"
+        # The trial holds its lock, launches a program in its tree that is
+        # handed to init at once, and lives on.
+        trial = subprocess.Popen([sys.executable, "-c", (
+            "import subprocess, sys, time\n"
+            f"sys.path.insert(0, {str(ROOT / 'lib')!r})\n"
+            "import trial_lock\n"
+            f"with trial_lock.hold({str(folder)!r}):\n"
+            f"    subprocess.run(['bash', '-c', 'cd {work_tree} && (sleep 300 </dev/null >/dev/null 2>&1 & "
+            f"echo $! > {pid_file})'], check=True)\n"
+            "    print('ready', flush=True)\n"
+            "    time.sleep(300)\n")], stdout=subprocess.PIPE, text=True)
+        self.addCleanup(trial.stdout.close)
+        self.addCleanup(trial.wait)
+        self.addCleanup(trial.kill)
+        self.assertEqual("ready", trial.stdout.readline().strip())
+        pid = int(pid_file.read_text())
+        self.addCleanup(subprocess.run, ["kill", "-9", str(pid)], capture_output=True)
+        env = self._private_tmp()
+
+        code, swept = self._sweep("none", env, "--work-root", str(root))
+        self.assertEqual((0, []), (code, swept["stopped"]), "a program whose trial lives was stopped")
+
+        trial.kill()  # however it ends: nothing of its own runs after this
+        trial.wait()
+        code, swept = self._sweep("none", env, "--work-root", str(root))
+
+        self.assertEqual((0, [("trial_gone", [pid], True)]),
+                         (code, [(e["reason"], e["pids"], e["stopped"]) for e in swept["stopped"]]), swept)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and _alive(pid):
+            time.sleep(0.1)
+        self.assertFalse(_alive(pid))
+        self.assertEqual([str(work_tree)], [event["work_tree"] for event in self._traced()])
+
+    def test_every_tool_that_runs_a_branch_s_commands_in_a_tree_of_its_own_holds_its_trial_lock(self):
+        # af-3vcqd3: the sweep knows a trial has ended only from its lock. A
+        # tool that runs a branch's commands under the Factory's reaper
+        # (REAPER) runs them in a tree of its own, and holds that lock.
+        runners = sorted(path.name for path in (ROOT / "bin").iterdir()
+                         if path.is_file() and "ci_test_reaper.py\"), \"--keep-status\"]" in path.read_text(errors="replace"))
+        self.assertEqual(["spec-integration", "tdd-step"], runners)
+        for name in runners:
+            with self.subTest(tool=name):
+                self.assertIn("trial_lock.hold(", (ROOT / "bin" / name).read_text())
+
 
 if __name__ == "__main__":
     unittest.main()
