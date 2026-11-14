@@ -107,7 +107,7 @@ from datetime import datetime
 
 from cockpit.core.readmodel import PARIS
 from cockpit.projects.decisions import decisions_line
-from cockpit.projects.outcome import ABANDONED, MERGED, read_outcome
+from cockpit.projects.outcome import ABANDONED, ACCEPTED, MERGED, MERGING, VOIDED, read_outcome
 from cockpit.runs.derive import (AGENT, CODE, DONE, HUMAN, LIVE, PASSED, REFUSED, STOPPED, WAIT, WAITING, _decoded, _ts,
                                  run_from_bead, tone)
 from cockpit.runs.trace import _epoch
@@ -132,6 +132,10 @@ UNKNOWN_AGENT = "Agent inconnu · sessions terminées illisibles"
 SESSIONS_UNREAD = "cockpit:ended-sessions-unread"
 NEW_FLOW = "new-flow/"
 DONE_STEP = "Exécution terminée · historique disponible"
+# The issues of an open D01 delivery judged by Benjamin, its card says as
+# its result says them: his acceptance, its merge under way, its
+# acceptance voided (F2.13; Spec af-fgcw0d, user story 117).
+JUDGED_OPEN = (ACCEPTED, MERGING, VOIDED)
 UNRECORDED = "non enregistré"
 # The lines of a bead the dispatch door wrote that name the work it
 # launched (bin/dispatch-door, « convoy: … », « ticket: … »).
@@ -301,8 +305,10 @@ def waiting_on(runs, decisions):
     for run in runs or []:
         count = (decisions or {}).get(run["id"], 0)
         if count and run["state"] != DONE:
-            run = dict(run, state=WAIT, status="Ta décision", step=decisions_line(count),
-                       tone=tone(WAIT, "Ta décision"), decisions=count)
+            # A D01 delivery judged keeps the issue its result says (F2.13).
+            status = run["status"] if run.get("issue") in JUDGED_OPEN else "Ta décision"
+            run = dict(run, state=WAIT, status=status, step=decisions_line(count),
+                       tone=tone(WAIT, status), decisions=count)
         out.append(run)
     return out
 
@@ -465,7 +471,8 @@ def _run(key, group, meta, steps, attempts, sessions, now, trace, absent=UNRECOR
         "id": key, "ticket": meta[root["id"]].get("gc.ticket_id") or key, "spec": meta[root["id"]].get("gc.spec_id"),
         "type": _type(group, meta), "title": title or root.get("title") or key, "step": step, "status": status,
         "trigger": trigger, "project": project,
-        "tone": tone(state, status), "state": state, "start": start, "end": max(end, start + 1),
+        "tone": tone(state, status), "state": state, "issue": (result or {}).get("issue"), "start": start,
+        "end": max(end, start + 1),
         "branch": meta[root["id"]].get("gc.flow.branch"), "rig": meta[root["id"]].get("gc.dispatch_rig"),
         "models": {}, "workflow": True, "declared": declared,
     }, jobs, now)))
@@ -660,7 +667,9 @@ def _state(jobs, tickets, outcomes, closed, result=None):
     Outcome of a D01 delivery as its records give it
     (:func:`cockpit.projects.outcome.read_outcome`), or None. A D01 delivery
     is merged or abandoned only as its records say, as the result says it;
-    closed otherwise, it says the issue of its result, never a merge."""
+    closed otherwise, it says the issue of its result, never a merge. Open,
+    once accepted, its merge under way or its acceptance voided, it says
+    that issue as its result says it (F2.13), and what it waits for."""
     issue = (result or {}).get("issue")
     if issue in (MERGED, ABANDONED) or (closed and result is not None):
         return DONE, result["label"], DONE_STEP
@@ -672,7 +681,11 @@ def _state(jobs, tickets, outcomes, closed, result=None):
         return DONE, "Terminé", DONE_STEP
     open_jobs = sorted((j for j in jobs if j["end"] is None), key=lambda j: j["start"])
     waiting = [j["name"] for j in open_jobs if j["lane"]["kind"] == HUMAN]
-    if waiting or any(d and d["state"] == WAIT for d in tickets.values()):
+    decided = waiting or any(d and d["state"] == WAIT for d in tickets.values())
+    if issue in JUDGED_OPEN:
+        return (WAIT if decided else LIVE), result["label"], (
+            " · ".join(j["name"] for j in open_jobs) or result["sentence"])
+    if decided:
         return WAIT, "Ta décision", " · ".join(waiting) or "Décision attendue"
     if open_jobs:
         return LIVE, "En cours", " · ".join(j["name"] for j in open_jobs)
