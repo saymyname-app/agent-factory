@@ -112,7 +112,7 @@ def cmd_list(args):
     if "--include-ephemeral" not in found:
         listed = [b for b in listed if not b.get("ephemeral")]
     if "--status" in found:
-        listed = [b for b in listed if b.get("status") == found["--status"]]
+        listed = [b for b in listed if b.get("status") in found["--status"].split(",")]
     elif "--all" not in found:
         listed = [b for b in listed if b.get("status") != "closed"]
     if "--title-contains" in found:

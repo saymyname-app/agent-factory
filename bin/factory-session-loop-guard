@@ -73,6 +73,7 @@ cmd_resume() {
     log resume resumed "session=$session_id reason=$reason undo='factory-session-loop-guard will re-pause it if it starts looping again'"
     local title="$BEAD_PREFIX $session_id"
     local existing
+    # open only: an alert already taken for repair is closed by its repair, not by a resume.
     existing=$("$GC_BIN" bd list --status open --title-contains "$title" --json 2>/dev/null | jq -r '(.[0].id // empty)' 2>/dev/null)
     if [ -n "$existing" ]; then
       "$GC_BIN" bd update "$existing" --set-metadata gc.outcome=pass --status=closed \
@@ -127,7 +128,7 @@ cmd_detect() {
     printf '%s\n' "$title" >> "$active_titles"
     if [ "$check_only" != "1" ]; then
       local existing
-      existing=$("$GC_BIN" bd list --status open --title-contains "$title" --json 2>/dev/null | jq -r '(.[0].id // empty)')
+      existing=$("$GC_BIN" bd list --status open,in_progress,blocked,deferred --title-contains "$title" --json 2>/dev/null | jq -r '(.[0].id // empty)')
       if [ -z "$existing" ]; then
         local created
         created=$("$GC_BIN" bd create "$title" -p 1 -t bug \
@@ -160,6 +161,7 @@ Detected by factory-session-loop-guard. Session suspended pending investigation 
           --notes "no new wake/stop cycles past threshold in the window; auto-resolved by factory-session-loop-guard" >/dev/null 2>&1 \
           && did "auto-resolved recovered session-loop bead $existing_id"
       fi
+    # open only: an alert already taken for repair is closed by its repair, not by this sweep.
     done < <("$GC_BIN" bd list --status open --title-contains "$BEAD_PREFIX" --json 2>/dev/null | jq -r '.[].id')
   fi
   rm -f "$active_titles"

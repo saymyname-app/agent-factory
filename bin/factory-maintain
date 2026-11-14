@@ -275,7 +275,7 @@ escalate_unpushed_worktree() {
   local title="[clean-worktrees] unpushed commits in $path (branch $branch)"
 
   local existing
-  existing=$(gc bd list --status open --title-contains "$title" --json 2>/dev/null | python3 -c '
+  existing=$(gc bd list --status open,in_progress,blocked,deferred --title-contains "$title" --json 2>/dev/null | python3 -c '
 import json, sys
 try:
     data = json.load(sys.stdin)

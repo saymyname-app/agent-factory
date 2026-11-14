@@ -219,7 +219,7 @@ if command -v gh >/dev/null 2>&1; then
     bad "stuck PR — $msg"
     if [ "$CHECK_ONLY" != "1" ]; then
       title="[watchdog] PR #$pr_num stuck ($code)"
-      existing=$(gc bd list --status open --title-contains "$title" --json 2>/dev/null \
+      existing=$(gc bd list --status open,in_progress,blocked,deferred --title-contains "$title" --json 2>/dev/null \
         | jq 'length' 2>/dev/null)
       if [ "${existing:-0}" = "0" ]; then
         created=$(gc bd create "$title" -p 1 -t bug \
@@ -316,7 +316,7 @@ if command -v gh >/dev/null 2>&1; then
     gh_msg=${gh_auth_verdict#*$'\t'}
     bad "gh auth — $gh_msg"
     if [ "$CHECK_ONLY" != "1" ]; then
-      existing=$(gc bd list --status open --title-contains "$GH_AUTH_BEAD_TITLE" --json 2>/dev/null \
+      existing=$(gc bd list --status open,in_progress,blocked,deferred --title-contains "$GH_AUTH_BEAD_TITLE" --json 2>/dev/null \
         | jq -r '(.[0].id // empty)')
       if [ -z "$existing" ]; then
         created=$(gc bd create "$GH_AUTH_BEAD_TITLE" -p 1 -t bug \
@@ -342,6 +342,7 @@ Detected by factory-watchdog. Only a human can re-authenticate (gh auth login -h
       fi
     fi
   elif [ "$CHECK_ONLY" != "1" ]; then
+    # open only: an alert already taken for repair is closed by its repair, not by this sweep.
     existing=$(gc bd list --status open --title-contains "$GH_AUTH_BEAD_TITLE" --json 2>/dev/null \
       | jq -r '(.[0].id // empty)')
     if [ -n "$existing" ]; then
@@ -374,7 +375,7 @@ if command -v gc >/dev/null 2>&1; then
       title="$QUARANTINE_BEAD_PREFIX $rig_name/$reason"
       printf '%s\n' "$title" >> "$quarantine_active_titles"
       if [ "$CHECK_ONLY" != "1" ]; then
-        existing=$(gc bd list --status open --title-contains "$title" --json 2>/dev/null \
+        existing=$(gc bd list --status open,in_progress,blocked,deferred --title-contains "$title" --json 2>/dev/null \
           | jq -r '(.[0].id // empty)')
         if [ -z "$existing" ]; then
           created=$(gc bd create "$title" -p 1 -t bug \
@@ -409,6 +410,7 @@ Detected by factory-watchdog from $rig_name's gc:control-quarantined beads. Obse
           --notes "no new control-step quarantine in this group for ${QUARANTINE_WINDOW_HOURS}h; auto-resolved by factory-watchdog" >/tmp/edoor-out.log 2>&1 \
           && did "auto-resolved recovered control-quarantine bead $existing_id"
       fi
+    # open only: an alert already taken for repair is closed by its repair, not by this sweep.
     done < <(gc bd list --status open --title-contains "$QUARANTINE_BEAD_PREFIX" --json 2>/dev/null | jq -r '.[].id')
   fi
   rm -f "$quarantine_active_titles"
@@ -462,7 +464,7 @@ if [ -x "$CONVOY_STATE" ]; then
       title="$STALL_PREFIX $ticket_id"
       printf '%s\n' "$title" >> "$stall_active"
       [ "$CHECK_ONLY" = "1" ] && continue
-      existing=$(gc bd list --status open --title-contains "$title" --json 2>/dev/null | jq -r '(.[0].id // empty)')
+      existing=$(gc bd list --status open,in_progress,blocked,deferred --title-contains "$title" --json 2>/dev/null | jq -r '(.[0].id // empty)')
       [ -n "$existing" ] && continue
       created=$(gc bd create "$title" -p 1 -t bug -d "$msg
 
@@ -483,6 +485,7 @@ Detected by factory-watchdog (af-1fvzns, af-xgd1rd, af-hnh16e): the ticket is st
         && gc bd update "$existing_id" --set-metadata gc.outcome=pass --status=closed \
           --notes "the ticket moves again; auto-resolved by factory-watchdog" >/tmp/edoor-out.log 2>&1 \
         && did "auto-resolved ticket without a next step $existing_id"
+    # open only: an alert already taken for repair is closed by its repair, not by this sweep.
     done < <(gc bd list --status open --title-contains "$STALL_PREFIX" --json 2>/dev/null | jq -r '.[] | [.id, .title] | @tsv')
   fi
   rm -f "$stall_active" "$stall_show" "$stall_payload"
