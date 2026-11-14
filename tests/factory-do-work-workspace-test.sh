@@ -542,6 +542,46 @@ rc=0
 [ -f "$GH_FAKE_DIR/do-work_af-no-diff-ticket.url" ] && fail "finish opened an empty PR for a branch with no difference with the base"
 [ -d "$WT14d" ] && fail "finish on a branch with no difference with the base did not remove the worktree"
 
+# 14d. af-hi8i79 (af-7curg1): a branch with no commit of its own, while the
+#      base moved on after it was cut: its tree differs from the base's, but
+#      there is nothing to deliver (gh refuses "No commits between"). It
+#      exited 0 with no URL and push-and-pr asked for an empty PR by hand.
+WT14e=$("$SCRIPT" enter af-behind-ticket)
+git -C "$TMP/root" pull -q origin main
+echo moved > "$TMP/root/p" && git -C "$TMP/root" add p && git -C "$TMP/root" commit -qm "base moved on"
+git -C "$TMP/root" push -q origin main
+rc=0
+"$SCRIPT" finish af-behind-ticket "$WT14e" do-work/af-behind-ticket main >"$TMP/s14d.out" 2>"$TMP/s14d.err" || rc=$?
+[ "$rc" = "4" ] || { cat "$TMP/s14d.err" >&2; fail "finish on a branch with no commit ahead of a moved base exited $rc (expected 4)"; }
+[ -s "$TMP/s14d.out" ] && fail "finish on a branch with no commit ahead of the base printed a PR URL"
+[ -f "$GH_FAKE_DIR/do-work_af-behind-ticket.url" ] && fail "finish opened an empty PR for a branch with no commit ahead of the base"
+[ -d "$WT14e" ] && fail "finish on a branch with no commit ahead of the base did not remove the worktree"
+grep -qF -- "no commit ahead of origin/main" "$TMP/s14d.err" \
+  || { cat "$TMP/s14d.err" >&2; fail "finish on a branch with no commit ahead of the base does not say why"; }
+
+# 14e. the rebase after a refused push drops the branch's only commit (the
+#      base holds the same change, then moved on): nothing left, exit 4
+WT14f=$("$SCRIPT" enter af-rebased-away-ticket)
+echo same > "$WT14f/q" && git -C "$WT14f" add q \
+  && git -C "$WT14f" -c core.hooksPath=/dev/null commit -qm "same change"
+git -C "$TMP/root" pull -q origin main
+echo same > "$TMP/root/q" && git -C "$TMP/root" add q && git -C "$TMP/root" commit -qm "same change, landed elsewhere"
+echo later > "$TMP/root/q2" && git -C "$TMP/root" add q2 && git -C "$TMP/root" commit -qm "base moved on"
+git -C "$TMP/root" push -q origin main
+cat > "$TMP/origin.git/hooks/pre-receive" <<'EOF'
+#!/usr/bin/env bash
+echo "refused once for the test" >&2
+rm -f "$0"
+exit 1
+EOF
+chmod +x "$TMP/origin.git/hooks/pre-receive"
+rc=0
+"$SCRIPT" finish af-rebased-away-ticket "$WT14f" do-work/af-rebased-away-ticket main >"$TMP/s14e.out" 2>"$TMP/s14e.err" || rc=$?
+rm -f "$TMP/origin.git/hooks/pre-receive"
+[ "$rc" = "4" ] || { cat "$TMP/s14e.err" >&2; fail "finish whose rebase dropped every commit exited $rc (expected 4)"; }
+[ -s "$TMP/s14e.out" ] && fail "finish whose rebase dropped every commit printed a PR URL"
+[ -f "$GH_FAKE_DIR/do-work_af-rebased-away-ticket.url" ] && fail "finish opened an empty PR after its rebase dropped every commit"
+
 # ---------------------------------------------------------------------------
 # 15. af-j54vl1 (af-ji2ruy PR #455, af-p4rdr7): once the post-commit hook has
 #     published a commit, any rebase makes the branch non-fast-forward

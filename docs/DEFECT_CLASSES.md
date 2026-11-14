@@ -530,7 +530,11 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   était plus, et trois alertes en double, af-0965hq, af-uzajg3 et af-to7kkp,
   ont été ouvertes et envoyées au Mayor ; même recherche corrigée dans
   `backup-freshness`, `factory-session-loop-guard`, `factory-watchdog` et
-  `factory-maintain`).
+  `factory-maintain`) ; af-hi8i79 (af-7curg1 : `factory-do-work-workspace
+  finish` sortait 0 sans URL pour une branche sans commit d'avance sur une
+  base qui avait bougé — gh refusait « No commits between » — et
+  push-and-pr demandait d'ouvrir à la main une PR vide ; même cas corrigé
+  après un rebase qui retire tous les commits).
 - Ouvertes : aucune connue.
 
 ## L — Ticket rouvert réclamable par un ouvrier lancé pour un autre
