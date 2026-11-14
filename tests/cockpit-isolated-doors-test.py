@@ -158,9 +158,10 @@ class TheDoors(unittest.TestCase):
         # G2: a preview, then the cleaning of the scope, on Git repositories
         # of the launch; an active worktree, a local change and a commit not
         # pushed are kept, and the commit not pushed is escalated on the
-        # tracker of the launch. The repository of the commit keeps its own.
-        own = subprocess.run(["git", "-C", str(ROOT), "for-each-ref", "refs/heads/"],
-                             capture_output=True, text=True).stdout
+        # tracker of the launch. The repository of the commit keeps its own:
+        # every branch the door deletes, its log says where, is one of the
+        # launch. Its branches are not read before and after: other worktrees
+        # share them and move them meanwhile (R26, af-qniv4b).
         env = self.launched()
         worktrees = Path(env["HOME"], ".local", "share", "agent-factory-runtime-worktrees")
         preview = self.door(env, "COCKPIT_FACTORY_MAINTAIN_BIN", "clean-worktrees", "--dry-run")
@@ -178,8 +179,10 @@ class TheDoors(unittest.TestCase):
                                    "--format=%(refname:short)", "refs/heads/"], capture_output=True, text=True)
         self.assertNotIn("merged", branches.stdout.split())
         self.assertIn("unpushed", branches.stdout.split())
-        self.assertEqual(own, subprocess.run(["git", "-C", str(ROOT), "for-each-ref", "refs/heads/"],
-                                             capture_output=True, text=True).stdout)
+        log = Path(env["HOME"], "factory-maintain.log").read_text(encoding="utf-8")
+        deleted = re.findall(r"gesture=prune-merged-branches\tstatus=deleted\tbranch=(\S+) .*undo='git -C (\S+) ", log)
+        clone = str(Path(env["HOME"], "maintain", "factory"))
+        self.assertEqual([("merged", clone), ("wt-merged", clone)], deleted)
 
     def test_the_operator_settings_are_read_from_the_commit(self):
         read = subprocess.run([sys.executable, str(ROOT / "bin" / "operator-config"), "language"],
