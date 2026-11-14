@@ -147,6 +147,8 @@ class NotificationsTest(unittest.TestCase):
                 "COCKPIT_BENJAMIN_LOGIN": BENJAMIN_LOGIN,
                 "COCKPIT_ALLOWED_ORIGIN": self.origin,
                 "COCKPIT_PUBLIC_URL": "https://cockpit.example.ts.net",
+                # No relay of Essai on the fixed port of the host (F2.4).
+                "COCKPIT_ESSAI_PORT": "0",
                 "COCKPIT_PUSHOVER_URL": self.pushover.messages_url,
                 "COCKPIT_PUSHOVER_SECRETS_FILE": str(self.secrets_file),
                 "COCKPIT_NOTIFY_STATE_FILE": str(self.dir / "notify-state.json"),
