@@ -845,6 +845,17 @@ def _stop_confirmation(a, stop):
         a("shutdown-phase"), work, essai, _gesture("arreter", "Confirmer la suspension"))
 
 
+def _resume_confirmation(a, stop):
+    """Before the resume is asked: what it will start again (F2.3)."""
+    work = "".join('<li>%s <small>%s</small></li>' % (_e(item["title"]), _e(_stop_role(item["template"])))
+                   for item in stop["view"]["work"]) or "<li>Aucun travail d’avant : aucun agent ne tenait de ticket.</li>"
+    return ('<div class="shutdown-phase" %s>Reprendre l’usine ?</div><p>La reprise autorise de nouveau les départs. '
+            'Chaque travail d’avant doit revenir à la session qui le tenait ; la comparaison dira ensuite '
+            '« Reprise vérifiée » ou « Reprise avec écarts ».</p><h3>Ce que la reprise va relancer</h3>'
+            '<ul class="fa-stop-work">%s</ul><div class="fa-actions">%s<a class="fa-link" href="/usine">Annuler</a></div>'
+            ) % (a("shutdown-phase"), work, _gesture("redemarrer", "Confirmer la reprise"))
+
+
 def _stop_machine(a, stop):
     """The procedure of a complete stop: read here, carried out by hand."""
     steps = "".join("<li>%s</li>" % _e(step) for step in stop["procedure"])
@@ -879,7 +890,7 @@ def _stop_state(a, stop):
     if stop["stoppable"]:
         controls += _opens("confirmer", "Demander la suspension", stop["blocked"])
     if stop["resumable"]:
-        controls += _gesture("redemarrer", "Redémarrer")
+        controls += _opens("reprendre", "Redémarrer")
     if not stop["stoppable"] and not stop["resumable"]:
         controls += '<a class="fa-link" href="/usine">Relire l’état</a>'
     if stop["blocked"] and stop["stoppable"]:
@@ -892,7 +903,8 @@ def render_stop(a, stop, actions_html):
     """« Suspension, reprise et arrêt » (H, af-69qhlk): the clean stop as
     the driver observed it, what confirms it, and the procedure of the
     machine, read here. ``arret=confirmer`` opens the work a stop will wait
-    for, ``arret=machine`` the procedure."""
+    for, ``arret=reprendre`` the work a resume will start again, before
+    either is asked; ``arret=machine`` the procedure."""
     head = ('<section class="pn-panel" %s><h2>Suspension, reprise et arrêt</h2><p>La VM héberge l’usine. Fermer ou '
             'éteindre ce PC client n’arrête pas la VM.</p>') % a("panel")
     alert = '<p class="fa-alert" role="alert" data-usine-alert hidden></p>'
@@ -900,6 +912,7 @@ def render_stop(a, stop, actions_html):
     if stop is not None:
         confirming = stop["mode"] == "confirmer" and stop["stoppable"] and not stop["blocked"]
         body = (_stop_confirmation(a, stop) if confirming
+                else _resume_confirmation(a, stop) if stop["mode"] == "reprendre" and stop["resumable"]
                 else _stop_machine(a, stop) if stop["mode"] == "machine" else _stop_state(a, stop))
     return head + body + alert + '<div class="fa-legacy">%s</div></section>' % actions_html
 
