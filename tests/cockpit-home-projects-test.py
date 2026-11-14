@@ -477,6 +477,41 @@ class HomeProjectsZoneTest(unittest.TestCase):
             for value, caption in shown:
                 self.assertIn("%s : %s" % (caption, value), said, "the home line does not say the figure of the page")
 
+    def test_the_dossier_of_a_result_to_judge_opens_from_its_panel(self):
+        # F2.6: « Ce qui a été livré » and « Vérifications et preuves » open
+        # the page of the dossier the convoy records, and what it shows
+        # beside it; nothing outside its folder.
+        folder = os.path.join(self.tmp.name, "pack")
+        os.mkdir(folder)
+        Path(folder, "index.html").write_text('<html><body><h1>Dossier du résultat</h1><img src="capture.png">'
+                                              "</body></html>", encoding="utf-8")
+        Path(folder, "capture.png").write_bytes(b"capture")
+        commit, digest, at = "a" * 40, "sha256:" + "b" * 64, "2026-10-06T10:00:00Z"
+        result = convoy("af-conv-r", "Recherche dans les notes", "open", "sha256:r", project="agent-factory")
+        result["metadata"].pop("gc.cockpit_acceptance_note")
+        result["metadata"].update({
+            "gc.flow.mark": "new-flow/v1",
+            "gc.flow.delivered": json.dumps({"commit": commit, "protected": "c" * 40, "pack": digest,
+                                             "version": "spec-end/v4", "at": at}),
+            "gc.flow.evidence_pack": json.dumps({"commit": commit, "digest": digest, "path": folder, "conforming": True,
+                                                 "inadmissible": 0, "version": "evidence-pack/v1", "at": at}),
+        })
+        self.write_beads(beads() + [result])
+        self.start_cockpit()
+        home = wait_until(lambda: (lambda body: body if 'data-issue="to_judge"' in body else None)(self.get("/")))
+        panel = home[home.index('id="pn-result"'):]
+        for label in ("Ce qui a été livré", "Vérifications et preuves"):
+            form = re.search(r'<form class="pn-open" method="get" action="([^"]*)"[^>]*>((?:(?!</form>).)*?)%s' % label,
+                             panel, re.S)
+            self.assertTrue(form, "« %s » opens nothing" % label)
+            self.assertNotIn("disabled", form.group(2))
+            status, page = self.get_status(html.unescape(form.group(1)))
+            self.assertEqual(200, status, "« %s » opens no dossier" % label)
+            self.assertIn("Dossier du résultat", page)
+        self.assertEqual(200, self.get_status("/dossier/af-conv-r/capture.png")[0])
+        self.assertEqual(404, self.get_status("/dossier/af-conv-r/..%2Fbeads.json")[0])
+        self.assertEqual(404, self.get_status("/dossier/af-conv-a/")[0], "a convoy without dossier opens one")
+
     def test_a_project_without_run_says_so(self):
         self.start_cockpit()
         wait_until(self.projects)

@@ -106,6 +106,9 @@ OPENING = (("Ce qui a été livré", "Changements et version à essayer"),
 TO_VERIFY = "Ce qui reste à vérifier"
 VERSION = "Version et sources"
 DOSSIER_UNREAD = "Dossier non lu : sa page est introuvable ou illisible."
+# Where the cockpit serves the page of the dossier of a convoy
+# (cockpit.core.server, GET /dossier/<convoy>/).
+DOSSIER_PAGE = "/dossier/%s/"
 FOLLOW_UP = "Suivi du résultat"
 HISTORY = "Historique et preuves"
 SINCE = "Depuis ton dernier jugement"
@@ -331,7 +334,11 @@ def _result_view(project, chantier, lines_of_recette):
     view["title"] = title if title and speaks_plainly(title) else TO_JUDGE_TITLE
     view["summary"] = outcome["summary"] or ""
     to_verify = outcome["unverified"] if outcome["pack_read"] else [DOSSIER_UNREAD]
-    resources = [{"label": label, "detail": detail, "opens": True} for label, detail in OPENING]
+    # The page of the dossier the convoy records, served by the cockpit
+    # (F2.6); unread, the part says so and opens nothing.
+    page = DOSSIER_PAGE % outcome["convoy"] if outcome.get("convoy") and outcome["pack_read"] else None
+    resources = [{"label": label, "detail": detail if page else DOSSIER_UNREAD, "opens": True, "href": page}
+                 for label, detail in OPENING]
     resources.append({"label": TO_VERIFY, "opens": False, "said": to_verify, "recette": list(lines_of_recette)})
     # « Version et sources » the dossier leaves empty, or does not have, is
     # given by the records: the version delivered and its dossier.
@@ -709,15 +716,19 @@ def _render_proposition(number, proposition):
 
 
 def _render_resource(resource, anchors):
-    """A resource of the dossier: one that opens -- not from this view yet,
-    so drawn unavailable --, or one that unfolds."""
+    """A resource of the dossier: one that opens the page of the dossier in
+    another tab -- drawn unavailable, saying why, while that page is not
+    read --, or one that unfolds."""
     if not resource.get("opens"):
         return _render_folded(resource, anchors)
     button, label = anchors("button"), anchors("span")
-    return ('<button type="button" class="pn-resource" disabled %s><span %s><strong %s>%s</strong><small %s>%s</small>'
-            '</span><span aria-hidden="true" %s>↗</span></button>'
-            % (button, label, anchors("strong"), _e(resource.get("label")), anchors("small"),
-               _e(resource.get("detail") or ""), anchors("span")))
+    inner = ('<span %s><strong %s>%s</strong><small %s>%s</small></span><span aria-hidden="true" %s>↗</span>'
+             % (label, anchors("strong"), _e(resource.get("label")), anchors("small"),
+                _e(resource.get("detail") or ""), anchors("span")))
+    if resource.get("href"):
+        return ('<form class="pn-open" method="get" action="%s" target="_blank">'
+                '<button type="submit" class="pn-resource" %s>%s</button></form>' % (_e(resource["href"]), button, inner))
+    return '<button type="button" class="pn-resource" disabled %s>%s</button>' % (button, inner)
 
 
 def _render_folded(part, anchors):

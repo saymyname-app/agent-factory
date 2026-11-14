@@ -5,7 +5,10 @@ config: a local process already has every power on this host (spec .9
 threat model), but the cockpit is still not allowed to become reachable
 from the tailnet or LAN by an operator mistake in a config file.
 """
+import html
 import logging
+import mimetypes
+import os
 import subprocess
 import time
 import threading
@@ -37,6 +40,7 @@ from cockpit.projects import anomalies as project_anomalies
 from cockpit.projects.decisions import chantier_decisions
 from cockpit.projects.depots import apply_to_projects
 from cockpit.projects.descriptors import load_descriptors
+from cockpit.projects.outcome import PACK_PAGE, pack_folder
 from cockpit.projects.source import from_value as projects_from_value
 from cockpit.projects.source import project_page_data
 from cockpit.requests.assemble import assemble_from_snapshot
@@ -196,6 +200,9 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/runs":
             self._send_runs_page(read_model)
+            return
+        if path.startswith("/dossier/"):
+            self._send_dossier(read_model)
             return
         if path in ("/runs/run", "/runs/job"):
             self._send_run_page(read_model, job=path == "/runs/job")
@@ -1080,6 +1087,41 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                                event=int(event) if event.isdigit() else None, session=session, opened=opened, raw=raw)
         self._send_page(read_model, "runs", main, extra_css=RUNS_PAGE_CSS, status=200 if run else 404,
                         snapshot=snapshot)
+
+    def _send_dossier(self, read_model):
+        """GET /dossier/<convoy>/[<file>]: the page of the dossier of a
+        result (F2.6) -- the index.html of the Evidence Pack the convoy
+        records (cockpit.projects.outcome.pack_folder) -- and the files it
+        shows beside it, as they are on disk; nothing outside that folder.
+        A convoy the tracker read holds no dossier, or its file is not
+        there: a 404 that says so."""
+        rest = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path[len("/dossier/"):])
+        convoy_id, _, name = rest.partition("/")
+        bead = next((b for b in (read_model.snapshot().get("beads") or {}).get("value") or []
+                     if isinstance(b, dict) and b.get("id") == convoy_id), None)
+        folder = pack_folder(bead) if bead is not None else None
+        body, kind = None, None
+        if folder is not None:
+            root = os.path.realpath(folder)
+            target = os.path.realpath(os.path.join(root, name or PACK_PAGE))
+            if target.startswith(root + os.sep) and os.path.isfile(target):
+                try:
+                    with open(target, "rb") as handle:
+                        body = handle.read()
+                    kind = mimetypes.guess_type(target)[0] or "application/octet-stream"
+                except OSError:
+                    body = None
+        if body is None:
+            body = ("<!doctype html><meta charset=\"utf-8\"><p>Dossier introuvable : le convoi %s n’enregistre "
+                    "aucun dossier lisible à cette adresse.</p>" % html.escape(convoy_id)).encode("utf-8")
+            self.send_response(404)
+            kind = "text/html"
+        else:
+            self.send_response(200)
+        self.send_header("Content-Type", kind + ("; charset=utf-8" if kind.startswith("text/") else ""))
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def _send_journal_page(self, read_model):
         """GET /journal?vue=&categorie=&source=&q= (spec .18; F, af-njwz8v):
