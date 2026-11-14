@@ -1085,6 +1085,75 @@ class ConvoyStopsOnTheFixtureCity(Staged, publication.Harness):
         self.assertEqual(before, self.state_path.read_bytes())
         self.assertEqual(1, len(self.requests()))
 
+    def stopped_and_raised(self, story=3):
+        """Two rounds of the end consumed, the Outcome Evaluation refuses the
+        tip once more: the rounds are stopped, and the « non conforme »
+        request reached the operator."""
+        self.delivered()
+        self.run_ok(STATE, "set-counter", self.convoy, "--counter", "end_rounds", "--value", "2")
+        self.evaluation_at(self.base, not_observed=[story])
+        self.assert_non_conforme_request(self.one_pass(), "end_rounds_exhausted")
+
+    def test_the_answer_a_to_the_non_conforme_request_lifts_the_stop_and_grants_exactly_one_round_more(self):
+        story = 3
+        self.stopped_and_raised(story)
+        self.answer(self.convoy, "a")
+
+        # The pass reads the answer and lifts the stop by code: one round more, counted.
+        lifted = self.one_pass()["non_conforme"]
+        self.assertEqual(("lifted", "end_rounds_exhausted", self.base),
+                         (lifted["action"], lifted["reason"], lifted["commit"]), lifted)
+        self.assertIsNone(self.stop())
+        self.assertEqual(3, self.end_rounds())
+        [lift] = self.shown()["convoy"]["end_stop_lifts"]
+        self.assertEqual(("a", "end_rounds_exhausted"), (lift["answer"], lift["reason"]))
+        # The next pass publishes the repair that was waiting.
+        published = self.one_pass()["outcome_repairs"]
+        self.assertEqual([story], [entry["story"] for entry in published])
+        tip = self.repair_delivered(published[0]["id"])
+
+        # The end of the Spec is replayed on the new tip and still refuses it: stopped again, no repair.
+        self.evaluation_at(tip, not_observed=[story])
+        answer = self.one_pass()
+        self.assertNotIn("outcome_repairs", answer)
+        stop = self.stop()
+        self.assertEqual(("story_refused_twice", tip, 3),
+                         tuple(stop[name] for name in ("reason", "commit", "rounds")))
+        self.assertEqual("raised", answer["non_conforme"]["action"])
+        # The answer to the first request does not lift the second one.
+        again = self.one_pass()
+        self.assertNotIn("non_conforme", again)
+        self.assertEqual(tip, self.stop()["commit"])
+        self.assertEqual(1, len(self.shown()["convoy"]["end_stop_lifts"]))
+
+    def test_the_answers_b_and_c_to_the_non_conforme_request_lift_nothing(self):
+        self.stopped_and_raised()
+        stop = self.stop()
+        for option in ("b", "c"):
+            with self.subTest(option=option):
+                self.answer(self.convoy, option)
+                before = self.state_path.read_bytes()
+
+                answer = self.one_pass()
+
+                self.assertNotIn("non_conforme", answer)
+                self.assertNotIn("outcome_repairs", answer)
+                self.assertEqual(stop, self.stop())
+                self.assertEqual(before, self.state_path.read_bytes())
+
+    def test_an_answer_a_given_before_the_non_conforme_request_lifts_nothing(self):
+        self.stopped_and_raised()
+        stop = self.stop()
+        self.env["ESCALATION_DOOR_NOW"] = "946684800"  # 2000-01-01: before the request
+        self.run_ok(ESCALATION, "repondre", self.convoy, "a", "--actor", "operateur-test")
+        before = self.state_path.read_bytes()
+
+        answer = self.one_pass()
+
+        self.assertNotIn("non_conforme", answer)
+        self.assertEqual(stop, self.stop())
+        self.assertEqual(before, self.state_path.read_bytes())
+
     def one_round_for(self, not_observed):
         """One round of the end, for the stories the first Outcome Evaluation
         did not observe: counted, their repairs published by the pass,

@@ -278,7 +278,16 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   et daté, après les reprises et avant les démarrages, et un tour envoyé
   tient sa place jusqu'à ce qu'une session prenne le ticket, prouvé par
   `python3 tests/correction-round-test.py CorrectionRoundTest.test_a_round_with_no_free_author_place_waits_counted_and_is_sent_once_a_place_frees`
-  et `python3 tests/convoy-advance-review-evaluation-correction-test.py ConvoyAdvanceTest.test_a_correction_round_waits_for_a_free_author_place_then_holds_it_until_a_session_takes_the_ticket`).
+  et `python3 tests/convoy-advance-review-evaluation-correction-test.py ConvoyAdvanceTest.test_a_correction_round_waits_for_a_free_author_place_then_holds_it_until_a_session_takes_the_ticket`) ;
+  af-strhoy (l'option « a » « Relancer un tour de réparation » de la
+  demande « non conforme » n'avait aucun consommateur : la réponse restait
+  sur le bead, `end_stop` n'était jamais retiré et le convoi ne pouvait plus
+  être livré ; `convoy-advance` lit la réponse « a » postérieure à la
+  demande et appelle `convoy-state lift-end-stop`, qui garde l'arrêt sous
+  `end_stop_lifts` et compte un tour au-delà de la borne ; la table du
+  contrôle tient désormais les trois raisons `END_STOPS` et les trois
+  options de `non_conforme_request`, prouvé par
+  `python3 tests/convoy-stops-fixture-city-test.py ConvoyStopsOnTheFixtureCity.test_the_answer_a_to_the_non_conforme_request_lifts_the_stop_and_grants_exactly_one_round_more ConvoyStopsOnTheFixtureCity.test_the_answers_b_and_c_to_the_non_conforme_request_lift_nothing ConvoyStopsOnTheFixtureCity.test_an_answer_a_given_before_the_non_conforme_request_lifts_nothing`).
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
   contrôle : `criterion_already_green` reste au Planning Run, sauf
   le repair qui ne fait que déplacer une preuve (af-oa2ci4 : `tdd-step red`
