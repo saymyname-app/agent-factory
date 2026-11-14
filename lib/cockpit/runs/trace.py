@@ -74,6 +74,9 @@ SESSION_FIELDS = ("id", "name", "session_name", "agent_name", "template", "provi
                   "context_window", "work_dir", "created_at", "active_bead")
 # Of its options, the ones that say how it runs.
 OPTION_FIELDS = ("effort", "permission_mode")
+# What a session runs with, as observed at a moment: kept for each bead it
+# was seen working (SessionTrace.read, ``at_bead``).
+OBSERVED = ("provider", "model", "context_pct", "context_window", "work_dir", *OPTION_FIELDS)
 # A session at work is read again at most this often: what it was sent
 # grows while it runs.
 TRANSCRIPT_EVERY_SECONDS = 60
@@ -447,7 +450,10 @@ class SessionTrace:
 
     def read(self):
         """{session name: {the fields observed of it, the latest one of each
-        kept; "beads": every bead it was seen working; "prompts": what it
+        kept; "at_bead": by each bead it was seen working, those fields as
+        last observed while it worked it, the bead last observed last -- a
+        session that worked several jobs keeps the context of each (F2.14);
+        "beads": every bead it was seen working; "prompts": what it
         was sent, each version once, in the order sent; "tools": the tools
         it called; "calls": each tool call once, in the order made, with how
         long it lasted once known; "usage": its usage so far at each moment
@@ -473,11 +479,17 @@ class SessionTrace:
             if not name:
                 continue
             seen = found.setdefault(name, {"session": name, "prompts": [], "tools": [], "beads": [], "calls": [],
-                                           "usage": []})
+                                           "usage": [], "at_bead": {}})
             if line.get("kind") == "session":
                 seen.update({key: value for key, value in line.items() if key not in ("key", "kind")})
-                if line.get("active_bead") and line["active_bead"] not in seen["beads"]:
-                    seen["beads"].append(line["active_bead"])
+                bead = line.get("active_bead")
+                if bead and bead not in seen["beads"]:
+                    seen["beads"].append(bead)
+                if bead:
+                    # What it was observed with while it worked that bead,
+                    # the last observation of it last (F2.14).
+                    seen["at_bead"].pop(bead, None)
+                    seen["at_bead"][bead] = {key: seen[key] for key in OBSERVED if key in seen}
             elif line.get("kind") == "prompt":
                 if all(p["version"] != line.get("version") or p["role"] != line.get("role") for p in seen["prompts"]):
                     seen["prompts"].append({key: line.get(key) for key in ("role", "text", "version", "at")})

@@ -575,7 +575,9 @@ def _unrecorded_lanes(jobs, horizon):
 
 def _place_sessions(jobs, sessions, trace, now):
     """Give each job of an agent its sessions (``trace_sessions``: each its
-    name, its start and end or None, what the trace observed of it or None), and a
+    name, its start and end or None, what the trace observed of it while it
+    worked the job -- else as last observed -- or None, and ``latest``, as
+    last observed, or None), and a
     job no session is recorded for the lane of the one agent of its
     workflow, when one agent alone worked it."""
     for job in jobs:
@@ -604,9 +606,13 @@ def _place_sessions(jobs, sessions, trace, now):
         placed = []
         for name, at in ordered:
             begin = max(at, job["start"]) if at is not None else None
-            end = (trace.get(name) or {}).get("ended_at")
+            latest = trace.get(name)
+            end = (latest or {}).get("ended_at")
+            # What the session ran with while it worked this job, not later
+            # at another (F2.14): as last observed at a bead of the job.
+            during = [fields for bead, fields in ((latest or {}).get("at_bead") or {}).items() if bead in job["beads"]]
             placed.append({"name": name, "start": begin, "end": max(end, begin or end) if end is not None else None,
-                           "observed": trace.get(name)})
+                           "observed": dict(latest, **during[-1]) if during else latest, "latest": latest})
         job["trace_sessions"] = placed
     for job in jobs:
         if not job["lane"].get("unattributed"):
@@ -621,8 +627,8 @@ def _place_sessions(jobs, sessions, trace, now):
 
 def _last_sessions(run):
     """Each lane of an agent with the last session of that agent in the
-    run (``last_session``: its name and what the trace observed of it, or
-    None)."""
+    run (``last_session``: its name and what the trace last observed of it,
+    or None)."""
     if run is None:
         return run
     for lane in run["lanes"]:
@@ -630,7 +636,8 @@ def _last_sessions(run):
             continue
         placed = [s for item in lane["items"] for s in item.get("trace_sessions") or []]
         last = max(placed, key=lambda s: (s["start"] if s["start"] is not None else -1, s["name"]), default=None)
-        lane["last_session"] = last
+        # The last session as last observed, whichever job it was at.
+        lane["last_session"] = dict(last, observed=last.get("latest")) if last else None
     return run
 
 
