@@ -40,7 +40,7 @@ from datetime import datetime, timedelta, timezone
 
 from cockpit.core.freshness import FRESH, STALE
 from cockpit.core.readmodel import PARIS
-from cockpit.projects.outcome import MERGED, MERGING, read_outcome
+from cockpit.projects.outcome import MERGED, read_outcome
 from cockpit.requests.journal import entries_from_value
 from cockpit.runs.derive import runs_from_beads
 from convoy_state import outcome_records_of
@@ -248,10 +248,12 @@ def _result(bead):
     the flow did not write it). Its records are read by the reader of
     convoy-state, as every screen reads them
     (:func:`cockpit.projects.outcome.read_outcome`): a result is merged when
-    that reader says it merged or its merge under way -- never on a record
-    it refuses, nor on a proof of merge its acceptance voided contradicts."""
+    that reader says it merged, its merge confirmed -- never while its merge
+    is under way, whose result says « Aucune preuve de fusion à ce stade. »
+    (F2.17), nor on a record it refuses, nor on a proof of merge its
+    acceptance voided contradicts."""
     outcome = read_outcome(bead)
-    if outcome is None or outcome["issue"] not in (MERGED, MERGING):
+    if outcome is None or outcome["issue"] != MERGED:
         return None
     records = outcome_records_of(bead)
     answers = records["judgement"]["answers"]

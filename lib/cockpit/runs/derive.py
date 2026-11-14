@@ -229,6 +229,9 @@ def run_from_bead(bead, now):
     }
 
 
+# The status of a ticket merged into the integration branch: never
+# « Fusionné », which only a merge into the protected branch is.
+INTEGRATED = "Intégré"
 # A run ended that is not a success: abandoned, closed without a merge, or
 # a D01 delivery closed on a result its records contradict or do not let
 # read (cockpit.projects.outcome).
@@ -252,7 +255,12 @@ def _state(bead, closed, stop, exit_, waiting, agent_lanes, now, merge=None, wit
     """(state, status, step) of a run."""
     if closed or withdrawn:
         if merge:
-            return DONE, "Fusionné", "Livré · historique disponible"
+            # A ticket merged into the integration branch: no merge of the
+            # result into the protected branch, which only the promotion
+            # of a D01 delivery records (F2.11; Spec af-fgcw0d: « Ticket
+            # fermé/intégré ne signifie pas fusion du résultat dans la
+            # branche protégée. »).
+            return DONE, INTEGRATED, "Intégré dans la branche d’intégration · historique disponible"
         if withdrawn:
             return DONE, "Abandonné", "Retiré ou remplacé · historique disponible"
         return DONE, "Fermé", bead.get("close_reason") or "Fermé sans fusion · historique disponible"

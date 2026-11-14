@@ -6,7 +6,9 @@ Only two kinds of bead ever become a request here:
     status — a closed bead's question is still open until answered
     (af-1al0t1; the beads source reads those too) — an escalation-door
     NEEDS BENJAMIN (T06). Its level is Urgent when
-    ``gc.escalation_bloquant`` is "true", otherwise À faire (spec .5).
+    ``gc.escalation_bloquant`` is "true", otherwise À faire (spec .5) --
+    except the Acceptance Request of a Delivered Outcome, a result ready
+    to judge, always Quand tu veux (Spec af-fgcw0d user story 8, F2.7).
   * an open bead labelled ``proposal`` of class ``decision`` whose
     ``gc.proposal_state`` is not yet ``a_planifier``/``rejetee``/``resolue``
     — an open proposal-door proposal (T07), always Quand tu veux.
@@ -31,6 +33,7 @@ the operator acknowledged or deferred it (spec .15, .19).
 import json
 from datetime import datetime, timezone
 
+from convoy_state import outcome_records_of
 from cockpit.requests.model import (
     A_FAIRE,
     DEFAULT_PROJECT,
@@ -121,6 +124,20 @@ def _is_open_proposal(bead):
     return is_open_decision(bead)
 
 
+def _is_acceptance_request(bead):
+    """The NEEDS BENJAMIN of ``bead`` is the Acceptance Request
+    bin/convoy-advance sends of its Delivered Outcome: the convoy holds that
+    Outcome, and the request's link is the page of its Evidence Pack, as
+    that command writes it. Another request on the same convoy (an
+    incident) carries no such link and keeps its own level."""
+    records = outcome_records_of(bead) or {}
+    delivered, pack = records.get("delivered"), records.get("evidence_pack")
+    if not delivered or not pack or "unruled" in delivered or "unruled" in pack:
+        return False
+    page = "%s/index.html" % pack["path"].rstrip("/")
+    return (bead.get("metadata") or {}).get("gc.escalation_lien") == page
+
+
 def _build_one(bead, verifie_a, defects):
     metadata = bead.get("metadata") or {}
     bead_id = bead.get("id") or ""
@@ -133,7 +150,10 @@ def _build_one(bead, verifie_a, defects):
         pourquoi = metadata.get("gc.escalation_pourquoi")
         que_faire_raw = metadata.get("gc.escalation_que_faire") or []
         depuis_iso = metadata.get("gc.escalation_horodatage")
-        niveau = URGENT if str(metadata.get("gc.escalation_bloquant")).lower() == "true" else A_FAIRE
+        if _is_acceptance_request(bead):
+            niveau = QUAND_TU_VEUX
+        else:
+            niveau = URGENT if str(metadata.get("gc.escalation_bloquant")).lower() == "true" else A_FAIRE
     else:
         req_type = TYPE_PROPOSAL
         quoi = metadata.get("gc.proposal_quoi")

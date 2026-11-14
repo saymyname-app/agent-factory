@@ -11,7 +11,8 @@ either a candidate -- pushed, no local change, and ``merged`` or ``idle``
 (not merged, untouched past the door's idle days) as the door says why -- or
 kept with the door's reason: ``local-changes``, ``not-merged`` (work under
 way), ``unpushed`` (commits that exist only here: the door escalates them,
-never removes them), ``detached``. The cockpit decides nothing of it.
+never removes them), ``detached``, ``held-by-session`` (the copy of a ticket
+a live session still holds: never a candidate, F2.16). The cockpit decides nothing of it.
 
 ``clean`` takes the candidates the operator confirmed, each ``{"name",
 "sha"}`` as the preview read it. It reads the scope again first: if the
@@ -37,7 +38,7 @@ from cockpit.actions.registry import ActionError, expired
 LINE = re.compile(r"^(would remove|removed|would escalate|escalated|not escalated|would keep|kept|not removed): "
                   r"(\S+)(?: \((.*)\))?$")
 SHA = re.compile(r"\bsha=([0-9a-f]+)")
-KEPT_REASONS = ("local-changes", "not-merged", "detached", "changed")
+KEPT_REASONS = ("local-changes", "not-merged", "detached", "changed", "held-by-session")
 
 
 class ScopeChanged(ActionError):

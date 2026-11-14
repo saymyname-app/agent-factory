@@ -14,6 +14,9 @@ no I/O.
 """
 import html
 
+from cockpit.actions.essai_relay import (
+    DEFAULT_HTTPS_PORT as ESSAI_HTTPS_PORT, DEFAULT_PORT as ESSAI_PORT, SERVE_COMMAND)
+
 TITLE = "Procédure des réglages sur la VM"
 # Where the procedure proposes the secret files, when none is set yet: in
 # the home of the account that runs the cockpit on the VM, outside every
@@ -23,7 +26,8 @@ SUGGESTED_HEARTBEAT_FILE = "~/.config/agent-factory/heartbeat-url"
 WIZARD = "bin/cockpit-setup-wizard"
 # The check « Usine muette » on Healthchecks.io: a heartbeat every five
 # minutes, the alert after ten more of silence -- fifteen at most (user
-# story 67).
+# story 67). Said to Benjamin to set; the wizard reads them back on
+# Healthchecks.io, never from the procedure (F2.15).
 PERIOD_MINUTES = 5
 GRACE_MINUTES = 10
 
@@ -78,6 +82,8 @@ def render_procedure(settings):
     public_url = settings.get("public_url") or ""
     port = settings.get("port") or 0
     supervisor_port = settings.get("supervisor_port") or 0
+    essai_port = settings.get("essai_port") or ESSAI_PORT
+    essai_https_port = settings.get("essai_https_port") or ESSAI_HTTPS_PORT
     pushover_path = pushover or SUGGESTED_PUSHOVER_FILE
     heartbeat_path = heartbeat or SUGGESTED_HEARTBEAT_FILE
     https = public_url.startswith("https://")
@@ -116,9 +122,13 @@ def render_procedure(settings):
                 "au plus." % (PERIOD_MINUTES, GRACE_MINUTES),
                 "Écris l’adresse de ping du contrôle dans le fichier privé ; la commande la lit sur son "
                 "entrée." + _cmd("%s heartbeat-secret --path %s" % (WIZARD, heartbeat_path)),
-                "Vérifie les paramètres du contrôle."
-                + _cmd("%s healthchecks-check --period-minutes %d --grace-minutes %d --up-notifications off"
-                       % (WIZARD, PERIOD_MINUTES, GRACE_MINUTES)),
+                "Vérifie le contrôle réel. Dans Healthchecks.io, crée une clé API en lecture seule (réglages "
+                "du projet, « API Access ») ; la commande la lit sur son entrée sans l’écrire nulle part, lit "
+                "le contrôle « Usine muette » et ne dit « conforme » que pour la période et le délai de grâce "
+                "qu’elle y a lus." + _cmd("%s healthchecks-check" % WIZARD)
+                + "La notification de retour, la priorité 1 et la répétition ne sont pas données par l’API : "
+                "relève-les sur la page du contrôle et ajoute %s seulement si tu les y vois ; sinon la commande "
+                "les note à vérifier." % _code("--up-notifications off --repeat-2h yes --priority1 yes"),
                 "Ajoute %s au fichier de réglages local, puis redémarre le cockpit. Le signal ne part que "
                 "lorsque le superviseur et les tickets sont lus à jour." % _code(
                     '"heartbeat_url_file": "%s"' % heartbeat_path),
@@ -137,6 +147,13 @@ def render_procedure(settings):
                 "ton identité Tailscale en %s : le cockpit refuse toute autre identité, en lecture comme en "
                 "action." % (_code('"public_url"'), _code('"allowed_origin"'), _code('"benjamin_login"')),
                 "Redémarre le cockpit, puis ouvre cette adresse depuis le PC et depuis l’iPhone.",
+                "Pour qu’Essai ouvre le produit depuis le PC et l’iPhone, donne au relais de l’Essai (le "
+                "cockpit, port %s sur la VM seule) son entrée HTTPS sur ton réseau Tailscale seul, jamais "
+                "Funnel : Essai ouvre alors %s." % (essai_port, _code("https://<nom de la VM>:%s/" % essai_https_port))
+                + _cmd(SERVE_COMMAND % (essai_https_port, essai_port))
+                + "Ou, par l’assistant : "
+                + _cmd("%s serve --target-port %s --gc-port %s --essai-port %s"
+                       % (WIZARD, port, supervisor_port, essai_port)),
             ],
         ),
         _step(

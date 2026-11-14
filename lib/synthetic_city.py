@@ -614,6 +614,11 @@ def _hand_over_request(tracker, project: str, metadata) -> None:
     if metadata is not None:
         metadata.update({key: request["metadata"][key] for key in
                          (NEEDS_BENJAMIN, "gc.escalation_pourquoi", "gc.escalation_horodatage")})
+        # What else the door writes of the Acceptance Request bin/convoy-advance
+        # sends: not blocking, and the page of the dossier as its link (F2.7).
+        pack = json.loads(metadata["gc.flow.evidence_pack"])
+        metadata.update({"gc.escalation_bloquant": "false",
+                         "gc.escalation_lien": pack["path"].rstrip("/") + "/index.html"})
 
 
 def _at(day: datetime, hhmm: str) -> str:

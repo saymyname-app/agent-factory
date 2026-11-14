@@ -5,6 +5,7 @@ at fake sources and shrunk Validity windows without writing a temp file.
 """
 import json
 import os
+import urllib.parse
 
 from cockpit.core.beads_source import READ_TIMEOUT_SECONDS as BEADS_READ_TIMEOUT_SECONDS
 from cockpit.core.freshness import VALIDITY_WINDOWS_SECONDS
@@ -18,6 +19,7 @@ from cockpit.requests.sources.readability import ILLISIBLE_THRESHOLD_SECONDS
 from cockpit.requests.sources.silence import SILENCE_ALERT_SECONDS
 from cockpit.runs.evidence import store_dir
 from cockpit.actions.registry import DOOR_TIMEOUT_SECONDS
+from cockpit.actions.essai_relay import DEFAULT_HTTPS_PORT as ESSAI_HTTPS_PORT, DEFAULT_PORT as ESSAI_PORT
 from cockpit.notify.pushover import PUSHOVER_URL
 from cockpit.projects.depots import REPO_URL_TEMPLATE
 from cockpit.health.engine import (
@@ -158,6 +160,14 @@ class Config:
         # The address a push links back to: the ts.net URL once Tailscale
         # Serve exposes the cockpit; the local origin until then.
         self.public_url = env.get("COCKPIT_PUBLIC_URL") or local.get("public_url") or self.allowed_origin
+        # The relay of Essai (F2.4, cockpit.actions.essai_relay): on loopback,
+        # where the cockpit is opened by an HTTPS address of the tailnet --
+        # the entry Tailscale Serve gives it is on that host, port
+        # `essai_https_port`. 0: no relay (a cockpit opened on its host only).
+        public = urllib.parse.urlsplit(self.public_url)
+        served = public.scheme == "https" and public.hostname not in ("127.0.0.1", "localhost", "::1")
+        self.essai_port = int(env.get("COCKPIT_ESSAI_PORT") or (ESSAI_PORT if served else 0))
+        self.essai_https_port = int(env.get("COCKPIT_ESSAI_HTTPS_PORT") or ESSAI_HTTPS_PORT)
         self.heartbeat_url_file = _from_home(
             env.get("COCKPIT_HEARTBEAT_URL_FILE") or local.get("heartbeat_url_file", ""), env)
         self.heartbeat_tick_seconds = float(env.get("COCKPIT_HEARTBEAT_TICK_SECONDS", "30"))

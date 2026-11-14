@@ -668,6 +668,35 @@ class UnknownSignalSeamTest(CockpitOnFakes):
         self.assertIn('data-target-type="order" data-order-name="convoy-advance"', article)
 
 
+    def test_a_result_ready_to_judge_waits_when_you_want_whatever_its_blocking_flag(self):
+        # F2.7 (Spec af-fgcw0d, user story 8): the Acceptance Request bin/convoy-advance
+        # sends through the escalation door on the convoy of a Delivered Outcome, its
+        # link the page of that Outcome's Evidence Pack -- even written « bloquant ».
+        commit, digest = "a" * 40, "sha256:" + "b" * 64
+        records = {
+            "gc.flow.mark": "new-flow/v1",
+            "gc.flow.delivered": json.dumps({"commit": commit, "protected": "c" * 40, "pack": digest,
+                                             "version": "spec-end/v4", "at": "2026-09-30T08:00:00Z"}),
+            "gc.flow.evidence_pack": json.dumps({"commit": commit, "digest": digest, "path": "/packs/af-conv",
+                                                 "conforming": True, "inadmissible": 0,
+                                                 "version": "evidence-pack/v1", "at": "2026-09-30T08:00:00Z"}),
+        }
+        ready = escalation_bead("af-conv", "un résultat attend ton jugement", "chaque condition de fin est verte",
+                                SOME_OPTIONS, "2026-09-30T08:00:00Z", bloquant=True)
+        ready["metadata"].update(records, **{"gc.escalation_lien": "/packs/af-conv/index.html"})
+        # Another request on a delivered convoy, without the dossier's link: its own level.
+        incident = escalation_bead("af-conw", "un état sans règle bloque le chantier", "plus rien ne démarre",
+                                   SOME_OPTIONS, "2026-09-30T09:00:00Z", bloquant=True)
+        incident["metadata"].update(records, **{"gc.escalation_lien": "none"})
+        self.start_cockpit()
+        self.write_beads([ready, incident])
+
+        payload = self.wait_for_requests(lambda p: len(p["requests"]) == 2)
+
+        self.assertEqual({"af-conv": "Quand tu veux", "af-conw": "Urgent"},
+                         {r["id"]: r["niveau"] for r in payload["requests"]})
+
+
 class TextContractSeamTest(CockpitOnFakes):
     """The control of the main text (spec af-oohx2x « Compréhensible sans
     IA », af-fgcw0d user story 73), read where the operator meets it: a
