@@ -87,8 +87,9 @@ class FactoryStopBlocked(unittest.TestCase):
         self.assertEqual(AUTHOR["session"], holder(writes, AUTHOR["ticket"]),
                          "the page says the assignment kept, the tracker does not")
 
-        walked = walk(address, [{"click": "Redémarrer"}], path=PAGE)["steps"]
-        self.assertTrue(walked and walked[0]["found"], f"no control « Redémarrer »: {walked}")
+        # F2.3: « Redémarrer » asks a confirmation first; the resume follows it.
+        walked = walk(address, [{"click": "Redémarrer"}, {"click": "Confirmer la reprise", "wait": 4000}], path=PAGE)["steps"]
+        self.assertTrue(walked and all(s["found"] for s in walked), f"no control « Redémarrer » then « Confirmer la reprise »: {walked}")
         resumed = said_until(address, "Reprise vérifiée à")
         self.assertRegex(resumed, r"Reprise vérifiée à \d{2}:\d{2}", f"the work is not back as it was: « {resumed} »")
 
