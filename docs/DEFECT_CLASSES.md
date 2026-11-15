@@ -469,7 +469,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   (`tests/lib/isolated-city.sh`), qui compte le temps que l'hôte donne à
   l'essai (une seconde à deux fois plus de charge que de CPU compte pour
   moitié, jusqu'à quatre fois le délai écrit) et nomme la charge quand il
-  renonce. Le contrôle `ci-apt-install` refuse dans `.github/workflows/`
+  renonce ; il refuse aussi qu'un essai efface son répertoire sans le garder
+  quand il a échoué (`isolated_city_keep_failure`). Le contrôle `ci-apt-install` refuse dans `.github/workflows/`
   un `apt-get` hors de `bin/ci-apt-install`, qui passe à l'archive
   principale d'Ubuntu puis à la copie gardée de `config/ci-apt-kept/`
   (vérifiée par son SHA256SUMS) quand le miroir du runner ne répond pas :
@@ -534,7 +535,11 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   finish` sortait 0 sans URL pour une branche sans commit d'avance sur une
   base qui avait bougé — gh refusait « No commits between » — et
   push-and-pr demandait d'ouvrir à la main une PR vide ; même cas corrigé
-  après un rebase qui retire tous les commits).
+  après un rebase qui retire tous les commits) ; af-dbe735 (les 17 et
+  18/10/2026, des échecs nocturnes intermittents de `correction-round` et
+  `spec-end-review` en cité isolée : le nettoyage effaçait l'essai et rien ne
+  restait à diagnostiquer ; #727 ne gardait que `correction-round`, les douze
+  autres essais gardent désormais leur dernier échec).
 - Ouvertes : aucune connue.
 
 ## L — Ticket rouvert réclamable par un ouvrier lancé pour un autre
