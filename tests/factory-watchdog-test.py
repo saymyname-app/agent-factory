@@ -290,8 +290,9 @@ def _waiting_for_its_repair(parked_at="2026-09-16T08:59:00Z"):
                            "entries": [{"at": "2026-09-16T09:30:00Z", "id": "af-33j358"}]})
 
 
-def _stalled(ticket, alive=(), open_beads=(), listed=(), minutes=30, pass_started=None):
-    return assess_ticket(ticket, "af-pqfxmd", NOW, set(alive), set(open_beads), set(listed), minutes, pass_started)
+def _stalled(ticket, alive=(), open_beads=(), listed=(), minutes=30, pass_started=None, blocked=()):
+    return assess_ticket(ticket, "af-pqfxmd", NOW, set(alive), set(open_beads), set(listed), minutes, pass_started,
+                         blocked=set(blocked))
 
 
 class StalledTicketRules(unittest.TestCase):
@@ -370,7 +371,15 @@ class StalledTicketRules(unittest.TestCase):
 
     def test_a_ticket_waiting_for_its_blockers_is_not_flagged(self):
         ticket = _started_ticket(exit={"at": "2026-09-16T08:00:00Z", "exit": "technically_blocked"})
-        self.assertIsNone(_stalled(ticket))
+        self.assertIsNone(_stalled(ticket, blocked=["af-r2c0tx"]))
+
+    def test_a_technically_blocked_ticket_whose_blockers_are_closed_is_flagged(self):
+        # af-o3clwq: its blockers closed, convoy-advance owes it a resume; none came in 30 min.
+        ticket = _started_ticket(exit={"at": "2026-09-16T08:00:00Z", "exit": "technically_blocked"})
+        found = _stalled(ticket, blocked=[])
+        self.assertEqual("stalled_ticket", found[0])
+        self.assertIn("sans suite depuis", found[1])
+        self.assertIn("sortie technically_blocked", found[1])
 
     def test_a_ticket_never_started_or_closed_is_out_of_scope(self):
         self.assertIsNone(_stalled(_started_ticket(gates={})))
@@ -542,6 +551,14 @@ class Cli(unittest.TestCase):
         payload = {"show": show, "alive": [], "open": [], "listed": ["af-grp001"]}
         lines = self._run("tickets", json.dumps(payload), now=TICKET_EXIT + 31 * 60)
         self.assertEqual(["af-answered"], [line.split("\t")[0] for line in lines])
+
+    def test_tickets_cli_holds_back_only_the_technically_blocked_tickets_with_an_open_blocker(self):
+        blocked_exit = {"at": "2026-09-16T09:00:00Z", "exit": "technically_blocked"}
+        show = {"convoy": {"id": "af-pqfxmd"}, "tickets": [_started_ticket(id="af-waits", exit=blocked_exit),
+                                                           _started_ticket(id="af-freed", exit=blocked_exit)]}
+        payload = {"show": show, "alive": [], "open": [], "listed": [], "blocked": ["af-waits"]}
+        lines = self._run("tickets", json.dumps(payload), now=TICKET_EXIT + 31 * 60)
+        self.assertEqual(["af-freed"], [line.split("\t")[0] for line in lines])
 
     def test_tickets_cli_reads_the_pass_in_flight_bounded_by_its_budget(self):
         show = {"convoy": {"id": "af-pqfxmd"}, "tickets": [_started_ticket()]}

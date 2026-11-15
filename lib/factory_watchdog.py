@@ -370,12 +370,15 @@ def stalled_lookups(show: dict[str, Any]) -> list[str]:
 def assess_ticket(
     ticket: dict[str, Any], convoy_id: str, now: float, alive: set[str], open_beads: set[str],
     listed: set[str], minutes: int = TICKET_STALL_MINUTES_DEFAULT, pass_started: float | None = None,
+    blocked: set[str] = frozenset(),
 ) -> tuple[str, str] | None:
     """A ticket at stake that nobody moves (af-1fvzns): no live session works
     for its current state, no launch of it made since is open, it has no
     request on Benjamin's list (the caller adds the tickets an active grouped
     request covers; the convoy's own request covers none), it waits neither
-    for its blockers, nor for the Planning Run Benjamin sent it to, nor for
+    for its blockers (a technically_blocked exit with one still open, in
+    `blocked`: once all are closed bin/convoy-advance resumes it, and a
+    resume that never comes is paged, af-o3clwq), nor for the Planning Run Benjamin sent it to, nor for
     an open Factory repair linked to its request, and its last record is
     older than `minutes`. The record
     times are those convoy-state writes (`at`, `raised`): the pass acts within
@@ -395,7 +398,7 @@ def assess_ticket(
     if any(str(entry["bead"]) in open_beads and _works_now(entry.get("at"), ended) for entry in _launches(ticket)):
         return None
     exit_name = (ticket.get("exit") or {}).get("exit")
-    if exit_name == "technically_blocked":
+    if exit_name == "technically_blocked" and ticket_id in blocked:
         return None
     times = [t for key, value in _records(ticket) if key in ("at", "raised") for t in [_epoch(value)] if t]
     latest = max(times) if times else None
@@ -552,7 +555,7 @@ def _cli_show_row(argv: list[str]) -> int:
 
 def _cli_tickets(argv: list[str]) -> int:
     """tickets: {"show": convoy-state show, "alive": [...], "open": [...],
-    "listed": [...]} on stdin; ticket-lookups: one convoy-state show on
+    "listed": [...], "blocked": [...]} on stdin; ticket-lookups: one convoy-state show on
     stdin, the ids to read, one per line."""
     try:
         payload = json.loads(sys.stdin.read() or "{}")
@@ -573,9 +576,10 @@ def _cli_tickets(argv: list[str]) -> int:
     pass_started = advance_pass.started()
     if pass_started is not None and now - pass_started >= advance_pass_seconds():
         pass_started = None  # left behind by a pass its order killed
+    blocked = set(map(str, payload.get("blocked") or []))
     for ticket in show.get("tickets") or []:
         if isinstance(ticket, dict):
-            found = assess_ticket(ticket, convoy_id, now, *sets, minutes, pass_started)
+            found = assess_ticket(ticket, convoy_id, now, *sets, minutes, pass_started, blocked=blocked)
             if found:
                 print(f"{ticket.get('id')}\t{found[0]}\t{found[1]}")
     return 0
@@ -596,7 +600,7 @@ def main() -> int:
             "       factory_watchdog.py gh-auth <returncode>  (reads `gh auth status` output on stdin)\n"
             "       factory_watchdog.py quarantine <rig>  (reads gc:control-quarantined bd list --json on stdin)\n"
             "       factory_watchdog.py <ticket-of|ticket-handled>  (reads one gc bd show --json on stdin)\n"
-            "       factory_watchdog.py tickets  (reads {show, alive, open, listed} on stdin)\n"
+            "       factory_watchdog.py tickets  (reads {show, alive, open, listed, blocked} on stdin)\n"
             "       factory_watchdog.py ticket-lookups  (reads one convoy-state show on stdin)",
             file=sys.stderr,
         )
