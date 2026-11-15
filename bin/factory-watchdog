@@ -444,20 +444,23 @@ if [ -x "$CONVOY_STATE" ]; then
   stall_ok=1
   for convoy_id in $("$CONVOY_STATE" list 2>/dev/null | jq -r '.convoys[]?' 2>/dev/null); do
     "$CONVOY_STATE" show "$convoy_id" > "$stall_show" 2>/dev/null || { stall_ok=0; continue; }
-    open_ids=(); listed_ids=()
+    open_ids=(); listed_ids=(); blocked_ids=()
     mapfile -t lookup_ids < <(python3 "$LIB/factory_watchdog.py" ticket-lookups < "$stall_show" 2>/dev/null)
     if [ "${#lookup_ids[@]}" -gt 0 ]; then
       rows=$(gc bd show "${lookup_ids[@]}" --json 2>/dev/null) || { stall_ok=0; continue; }
+      # af-o3clwq: a ticket with a 'blocks' dep still open waits for its blockers.
       lookup_state=$(jq -r '.[]? | [(.id // ""), (.status // "open"),
-        (((.metadata["gc.needs_benjamin"] // "") | tostring) as $n | ($n != "" and $n != "none"))] | @tsv' <<<"$rows") \
+        (((.metadata["gc.needs_benjamin"] // "") | tostring) as $n | ($n != "" and $n != "none")),
+        any(.dependencies[]?; .dependency_type == "blocks" and .status != "closed")] | @tsv' <<<"$rows") \
         || { stall_ok=0; continue; }
-      while IFS=$'\t' read -r bead_id status listed; do
+      while IFS=$'\t' read -r bead_id status listed blocked; do
         [ -z "$bead_id" ] && continue
         [ "$status" != "closed" ] && open_ids+=("$bead_id")
         [ "$listed" = "true" ] && listed_ids+=("$bead_id")
+        [ "$blocked" = "true" ] && blocked_ids+=("$bead_id")
       done <<<"$lookup_state"
     fi
-    jq -c --argjson alive "$alive_json" --arg open "${open_ids[*]:-}" --arg listed "${listed_ids[*]:-}" '{show: ., alive: $alive, open: ($open | split(" ") | map(select(. != ""))), listed: ($listed | split(" ") | map(select(. != "")))}' "$stall_show" > "$stall_payload"
+    jq -c --argjson alive "$alive_json" --arg open "${open_ids[*]:-}" --arg listed "${listed_ids[*]:-}" --arg blocked "${blocked_ids[*]:-}" '{show: ., alive: $alive, open: ($open | split(" ") | map(select(. != ""))), listed: ($listed | split(" ") | map(select(. != ""))), blocked: ($blocked | split(" ") | map(select(. != "")))}' "$stall_show" > "$stall_payload"
     while IFS=$'\t' read -r ticket_id code msg; do
       [ -z "$ticket_id" ] && continue
       bad "ticket sans suite — $msg"
@@ -468,7 +471,7 @@ if [ -x "$CONVOY_STATE" ]; then
       [ -n "$existing" ] && continue
       created=$(gc bd create "$title" -p 1 -t bug -d "$msg
 
-Detected by factory-watchdog (af-1fvzns, af-xgd1rd, af-hnh16e): the ticket is started and not closed, no live session works for its current state, no launch of it made since its last exit is open, no request of it, nor a grouped request of convoy $convoy_id covering it, is on Benjamin's list, it does not wait for the Planning Run his answer sent it to, and no Factory repair linked to its request is open. The repair is Factory maintenance: give code the rule that moves the ticket on (bin/convoy-state show $convoy_id). It never consists in advancing or closing the ticket by hand. Observe-and-page only (ADR-0016 section 7): the watchdog withdraws this request and closes this bead once the ticket moves again." --metadata "$(jq -cn --arg ticket "$ticket_id" '{"gc.source":"factory-watchdog","gc.ticket":$ticket}')" --json 2>/dev/null | jq -r '(.[0]?.id // .id // empty)')
+Detected by factory-watchdog (af-1fvzns, af-xgd1rd, af-hnh16e): the ticket is started and not closed, no live session works for its current state, no launch of it made since its last exit is open, no request of it, nor a grouped request of convoy $convoy_id covering it, is on Benjamin's list, it waits for no open blocker, nor for the Planning Run his answer sent it to, and no Factory repair linked to its request is open. The repair is Factory maintenance: give code the rule that moves the ticket on (bin/convoy-state show $convoy_id). It never consists in advancing or closing the ticket by hand. Observe-and-page only (ADR-0016 section 7): the watchdog withdraws this request and closes this bead once the ticket moves again." --metadata "$(jq -cn --arg ticket "$ticket_id" '{"gc.source":"factory-watchdog","gc.ticket":$ticket}')" --json 2>/dev/null | jq -r '(.[0]?.id // .id // empty)')
       if [ -n "$created" ] && "$ESCALATION_DOOR" benjamin "$created" "$(stall_request "$ticket_id" "$msg")" >/tmp/edoor-out.log 2>&1; then
         did "flagged ticket $ticket_id without a next step as $created on the operator's list"
       else
