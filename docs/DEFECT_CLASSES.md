@@ -539,7 +539,12 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   18/10/2026, des échecs nocturnes intermittents de `correction-round` et
   `spec-end-review` en cité isolée : le nettoyage effaçait l'essai et rien ne
   restait à diagnostiquer ; #727 ne gardait que `correction-round`, les douze
-  autres essais gardent désormais leur dernier échec).
+  autres essais gardent désormais leur dernier échec) ; af-kz2eao (même
+  forme que R19 d'af-xgd1rd, au contrôle 1 du gardien : une porte humaine
+  vieillie était tue dès que le bead qu'elle bloque, ou le convoi qui le
+  suit, avait n'importe quelle demande sur la liste de Benjamin ; seule la
+  demande portée par la porte, ou celle de ce bead ou de ce convoi qui nomme
+  la porte, la tait désormais).
 - Ouvertes : aucune connue.
 
 ## L — Ticket rouvert réclamable par un ouvrier lancé pour un autre
