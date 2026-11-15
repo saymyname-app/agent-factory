@@ -39,7 +39,9 @@ tree is gone (WORK_ROOTS): their launcher ended without them, nothing else
 will stop them (af-kky570: two `bin/cockpit run` of a deleted runtime
 worktree lived 3 days 12 hours), or whose trial has ended though its
 folder is still there (lib/trial_lock.py; af-3vcqd3: a cockpit of a killed
-tdd-step's tree, 61 h). Each stop is written to TRACE_FILE.
+tdd-step's tree, 61 h; af-23j8a8: a product of a test file whose reaper,
+lib/ci_test_reaper.py, was killed with it). Each stop is written to
+TRACE_FILE.
 orders/project-launch-sweep.toml runs it.
 
 `--repo-root` is the repository of the product (default: the Factory's own);
@@ -106,6 +108,23 @@ WORK_ROOTS = (Path(tempfile.gettempdir()), account_home() / ".cache", RUNTIME_WO
               account_home() / "agent-factory-maint", account_home() / "agent-factory-po", SPEC_INTEGRATION_TREES)
 # A copy the sweep could not release: set aside, never retried in silence.
 UNRELEASABLE = ".unreleasable"
+# The temporary folder a test file runs with under lib/ci_test_reaper.py: a
+# copy a test makes there is still this launcher's, and stays there when the
+# reaper is killed with the test (af-23j8a8).
+TEST_FOLDERS = "ci-test-reaper-*"
+
+
+def copy_folder(folder: Path, temporary: Path) -> bool:
+    """Whether `folder` is a copy of this launcher: named so, in the
+    temporary folder or in a test's own under the reaper."""
+    return bool(re.fullmatch(r"project-launch-[A-Za-z0-9_-]+", folder.name)) and (
+        folder.parent == temporary
+        or (folder.parent.parent == temporary and folder.parent.match(TEST_FOLDERS)))
+
+
+def copy_sidecars(temporary: Path, suffix: str = "") -> list[Path]:
+    return sorted([*temporary.glob(f"project-launch-*.owner{suffix}"),
+                   *temporary.glob(f"{TEST_FOLDERS}/project-launch-*.owner{suffix}")])
 # Where the guard and the sweep write each launch they stop: ~/.local/state
 # is writable inside bin/delivery-role-sandbox too.
 TRACE_FILE = Path(os.environ.get("FACTORY_LAUNCH_TRACE")
@@ -426,8 +445,7 @@ def verify_worktree(repo_root: str, worktree: str, launch_id: str | None = None,
     """Refuse cleanup outside a launcher-owned temporary worktree."""
     target = Path(worktree)
     temporary = Path(tempfile.gettempdir()).resolve()
-    if (not target.is_absolute() or target.parent != temporary or target.is_symlink()
-            or not re.fullmatch(r"project-launch-[A-Za-z0-9_-]+", target.name)):
+    if not target.is_absolute() or not copy_folder(target, temporary) or target.is_symlink():
         raise RuntimeError(f"unexpected product worktree path: {worktree}")
     registered = False
     # A removed product repository (a deleted ticket worktree) registers
@@ -868,7 +886,7 @@ def launch_copy(members: list[int]) -> str | None:
         except OSError:
             continue
         for folder in (cwd, *cwd.parents):
-            if folder.parent == temporary and re.fullmatch(r"project-launch-[A-Za-z0-9_-]+", folder.name):
+            if copy_folder(folder, temporary):
                 return str(folder)
     return None
 
@@ -984,7 +1002,7 @@ def cmd_sweep(args: argparse.Namespace) -> int:
         stopped.append(event)
     released = []
     temporary = Path(tempfile.gettempdir())
-    for sidecar in sorted(temporary.glob("project-launch-*.owner")):
+    for sidecar in copy_sidecars(temporary):
         worktree = str(sidecar)[:-len(".owner")]
         try:
             age = now - sidecar.stat().st_mtime
@@ -1014,7 +1032,7 @@ def cmd_sweep(args: argparse.Namespace) -> int:
             trace(event)
         released.append(event)
     unreleasable = sorted(str(path)[:-len(".owner" + UNRELEASABLE)]
-                          for path in temporary.glob(f"project-launch-*.owner{UNRELEASABLE}")
+                          for path in copy_sidecars(temporary, UNRELEASABLE)
                           if not args.launch_id or copy_owner_file(path).get("launch_id") in args.launch_id)
     print(json.dumps({"stopped": stopped, "released": released, "running_kept": kept,
                       "unreleasable": unreleasable}, sort_keys=True))

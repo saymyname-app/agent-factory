@@ -69,7 +69,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/tdd-step-test.py TddStepTest.test_green_kills_what_the_regression_leaves_alive_and_keeps_its_verdict`,
   `python3 tests/spec-integration-test.py SpecIntegrationTest.test_a_control_kills_what_it_leaves_in_a_session_of_its_own_and_keeps_its_verdict`,
   `python3 tests/project-launch-test.py ProjectLaunchTest.test_the_sweep_stops_a_program_whose_trial_has_ended_though_its_folder_is_there`,
-  `python3 tests/project-launch-test.py ProjectLaunchTest.test_every_tool_that_runs_a_branch_s_commands_in_a_tree_of_its_own_holds_its_trial_lock`
+  `python3 tests/project-launch-test.py ProjectLaunchTest.test_every_tool_that_runs_a_branch_s_commands_in_a_tree_of_its_own_holds_its_trial_lock`,
+  `python3 tests/project-launch-test.py ProjectLaunchTest.test_the_sweep_stops_a_product_whose_test_reaper_was_killed_with_its_test`
   — complet pour les commandes Python bornées de `bin/`, `lib/` et
   `tests/cockpit-criteria/` : un seul lanceur (`lib/bounded_process.py`)
   ouvre une session et tue son groupe au délai, et aussi quand l'appelant
@@ -108,7 +109,17 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   sur leur arbre tant qu'ils vivent (`lib/trial_lock.py`), et
   `bin/project-launch sweep` arrête tout programme remis à init dont l'arbre
   est sous un essai au verrou libre ; tout outil qui lance les commandes
-  d'une branche sous le faucheur doit tenir ce verrou (af-3vcqd3).
+  d'une branche sous le faucheur doit tenir ce verrou (af-3vcqd3). Le
+  dernier tient ce qui survit au faucheur lui-même tué avec son test : le
+  faucheur donne au test un dossier temporaire à lui (`TMPDIR`), sous un
+  verrou d'essai qu'il tient tant qu'il vit et qu'il retire avec le dossier
+  en finissant ; le sweep arrête le produit remis à init dont l'arbre est
+  sous ce dossier au verrou libre, et reconnaît les copies de
+  `project-launch` qu'un test y a faites (af-23j8a8). Le lint de
+  `tests/bounded-process-test.py` refuse enfin une liste d'arguments de
+  kill(1) qui donne un groupe (un pid négatif calculé) avant `--` :
+  procps-ng 4.0.4 lit `kill -9 -11176` comme kill(-1, SIGKILL) ; un groupe
+  se signale par `os.killpg` (af-23j8a8).
 - Occurrences : #624, #628, #629, #630, #631, #636, #647, #657, #658, #661,
   #667, #694, #696, #705, #706, #708, #710, #713, #721 ; copies orphelines du
   22/10 (sans PR) ; af-kky570 ; af-npz9v1.46 ; af-npz9v1.26 ; af-30zwwu ;
@@ -134,13 +145,19 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   af-3vcqd3 (af-p4v2q2 : un `bin/cockpit run` de l'arbre `tree-10` d'un
   `tdd-step` tué, remis à systemd --user, a sondé sa ville synthétique 61 h :
   l'arbre restait là, le sweep le gardait ; les arbres de fusion de
-  `spec-integration`, sous `$XDG_RUNTIME_DIR`, n'étaient même pas regardés).
+  `spec-integration`, sous `$XDG_RUNTIME_DIR`, n'étaient même pas regardés) ;
+  af-23j8a8 (le produit d'un test lancé dans une session à lui, son
+  faucheur tué avec le test, passait à systemd --user dans un dossier
+  temporaire du test encore là, sans marque, sans dossier disparu ni
+  essai ; le nettoyage du test de ce correctif, `kill -9 -<groupe>`, a tué
+  par kill(-1) tous les processus du compte du runner GitHub : le lot 5
+  perdu deux fois, sans journal).
 - Ouvertes : les invocations directes antérieures hors des occurrences de
   l'étude B sont nommées une par une, avec leur date et leur motif, dans
   `config/bounded-process-exceptions.tsv` ; une vingtaine de délais écrits à
-  la main restent à l'étude C. Le produit d'un test dont le faucheur de
-  `bin/ci-run-tests` ou de la régression du Cockpit est tué avec lui reste
-  hors du contrôle : af-23j8a8. Aucune autre invocation
+  la main restent à l'étude C. Un test qui fait ses dossiers hors de
+  `TMPDIR` (un chemin `/tmp/...` écrit en dur) reste hors du verrou de son
+  faucheur. Aucune autre invocation
   Python bornée ni aucun lanceur de produit sans propriétaire n'est connu
   hors du contrôle.
 

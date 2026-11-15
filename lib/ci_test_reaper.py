@@ -27,21 +27,38 @@ may predate this reaper: on 12/11/2026 a tdd-step tree's cockpit had polled
 its synthetic city for 43 h, beside others, outside the host pool. Killing
 what they leave is the Factory's; failing them is their harness's.
 
+The test runs with a temporary folder of its own (TMPDIR), on which this
+reaper holds a trial lock (lib/trial_lock.py) for as long as it lives, and
+which it removes once the test and its leftovers have ended. When the
+reaper is killed with the test (a caller's deadline killing its group, an
+interrupted shell, SIGKILL), a product the test launched in a session of
+its own is handed to systemd --user in a folder of that test that is still
+there; `bin/project-launch sweep` sees from the free lock that its trial
+has ended and stops it (af-23j8a8).
+
 Where prctl is not there (not Linux), the test simply runs.
 """
 from __future__ import annotations
 
 import ctypes
 import os
+import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
+from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import trial_lock  # noqa: E402
 
 PR_SET_CHILD_SUBREAPER = 36
 # A process the test stopped may take a moment to be gone.
 GRACE_SECONDS = 3.0
 PASSED_ON = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+# The test's temporary folder, under the caller's (af-23j8a8).
+FOLDER_PREFIX = "ci-test-reaper-"
 
 
 def subreaper() -> bool:
@@ -121,7 +138,16 @@ def main(argv: list[str]) -> int:
         return 2
     if not subreaper():
         os.execvp(argv[0], argv)
-    test = subprocess.Popen(argv)
+    folder = Path(tempfile.mkdtemp(prefix=FOLDER_PREFIX))
+    try:
+        with trial_lock.hold(folder):
+            return run(argv, keep_status, folder)
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+def run(argv: list[str], keep_status: bool, folder: Path) -> int:
+    test = subprocess.Popen(argv, env={**os.environ, "TMPDIR": str(folder)})
     for number in PASSED_ON:
         signal.signal(number, lambda received, _frame: test.send_signal(received))
     # Collect every child as it ends, the test's orphans among them: one left
