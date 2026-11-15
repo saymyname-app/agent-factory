@@ -62,7 +62,7 @@ class RegressionHostQueue(unittest.TestCase):
         (self.tree / "tests" / "cockpit-criteria").mkdir(parents=True)
         shutil.copy(REGRESSION, self.tree / "tests" / "cockpit-criteria" / "regression.py")
         (self.tree / "lib").mkdir()
-        for name in ("bounded_process.py", "ci_test_reaper.py", "host_slots.py", "account_home.py"):
+        for name in ("bounded_process.py", "ci_test_reaper.py", "host_slots.py", "account_home.py", "trial_lock.py"):
             shutil.copy(ROOT / "lib" / name, self.tree / "lib" / name)
         for name in FILES:
             (self.tree / name).write_text(STAND_IN)

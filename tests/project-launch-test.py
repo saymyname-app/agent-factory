@@ -15,6 +15,7 @@ import ctypes
 import functools
 import json
 import os
+import re
 import shutil
 import signal
 import socket
@@ -1208,6 +1209,56 @@ class ProjectLaunchTest(unittest.TestCase):
             time.sleep(0.1)
         self.assertFalse(_alive(pid))
         self.assertEqual([str(work_tree)], [event["work_tree"] for event in self._traced()])
+
+    def test_the_sweep_stops_a_product_whose_test_reaper_was_killed_with_its_test(self):
+        # af-23j8a8: lib/ci_test_reaper.py killed with its test (a caller's
+        # deadline killing the group) handed a product the test had launched
+        # in a session of its own to systemd --user, in a temporary folder of
+        # the test still there: no launch mark, no folder gone, no trial.
+        root = Path(tempfile.mkdtemp(prefix="launch-work-root-")).resolve()
+        self.addCleanup(shutil.rmtree, root, True)
+        pid_file = root / "pid"
+        test = ("cd \"$(mktemp -d)\" || exit 1; env -i setsid sleep 300 </dev/null >/dev/null 2>&1 & "
+                f"echo $! > {pid_file}; echo ready; sleep 300")
+        reaper = subprocess.Popen([sys.executable, str(ROOT / "lib" / "ci_test_reaper.py"), "bash", "-c", test],
+                                  env={**os.environ, "TMPDIR": str(root)}, stdout=subprocess.PIPE, text=True,
+                                  start_new_session=True)
+        self.addCleanup(reaper.stdout.close)
+        self.addCleanup(reaper.wait)
+        self.addCleanup(subprocess.run, ["kill", "-9", f"-{reaper.pid}"], capture_output=True)
+        self.assertEqual("ready", reaper.stdout.readline().strip())
+        pid = int(pid_file.read_text())
+        self.addCleanup(subprocess.run, ["kill", "-9", str(pid)], capture_output=True)
+        deadline = time.monotonic() + 5  # its session is its own once setsid has run
+        while time.monotonic() < deadline and Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[3] != str(pid):
+            time.sleep(0.05)
+        env = self._private_tmp()
+
+        code, swept = self._sweep("none", env, "--work-root", str(root))
+        self.assertEqual((0, []), (code, swept["stopped"]), "a product whose test reaper lives was stopped")
+
+        os.killpg(reaper.pid, signal.SIGKILL)  # the reaper and its test, not the product's session
+        reaper.wait()
+        self.assertTrue(_alive(pid), "the product did not outlive its reaper: nothing proven")
+        code, swept = self._sweep("none", env, "--work-root", str(root))
+
+        self.assertEqual((0, [("trial_gone", [pid], True)]),
+                         (code, [(e["reason"], e["pids"], e["stopped"]) for e in swept["stopped"]]), swept)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and _alive(pid):
+            time.sleep(0.1)
+        self.assertFalse(_alive(pid))
+
+    def test_a_test_reaper_takes_its_temporary_folder_with_it(self):
+        # af-23j8a8: each test file runs with a folder of its own as TMPDIR;
+        # one per file of every battery must not pile up.
+        root = Path(tempfile.mkdtemp(prefix="reaper-tmp-")).resolve()
+        self.addCleanup(shutil.rmtree, root, True)
+        given = subprocess.run([sys.executable, str(ROOT / "lib" / "ci_test_reaper.py"), "bash", "-c",
+                                "mktemp -d && touch \"$TMPDIR/left\""],
+                               env={**os.environ, "TMPDIR": str(root)}, text=True, capture_output=True, check=True)
+        self.assertRegex(given.stdout.strip(), rf"^{re.escape(str(root))}/ci-test-reaper-[^/]+/tmp\.")
+        self.assertEqual([], sorted(root.iterdir()))
 
     def test_every_tool_that_runs_a_branch_s_commands_in_a_tree_of_its_own_holds_its_trial_lock(self):
         # af-3vcqd3: the sweep knows a trial has ended only from its lock. A
