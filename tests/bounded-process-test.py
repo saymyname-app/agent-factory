@@ -98,6 +98,38 @@ def direct_timed_calls() -> set[str]:
     return scanned_calls(times_out)
 
 
+def kill_binary_groups(source: str, path: str) -> list[str]:
+    """Each argument list of kill(1) in `source` that gives a computed
+    negative pid (a process group: f"-{pid}", "-" + ...) before any `--`.
+    procps-ng 4.0.4 reads `kill -9 -11176` as kill(-1, SIGKILL): every
+    process of the account, the CI runner's own among them (af-23j8a8)."""
+    found = []
+    for node in ast.walk(ast.parse(source)):
+        if not (isinstance(node, (ast.List, ast.Tuple)) and node.elts and isinstance(node.elts[0], ast.Constant)
+                and Path(str(node.elts[0].value)).name == "kill"):
+            continue
+        for argument in node.elts[1:]:
+            if isinstance(argument, ast.Constant) and argument.value == "--":
+                break
+            first = argument.values[0] if isinstance(argument, ast.JoinedStr) and argument.values else (
+                argument.left if isinstance(argument, ast.BinOp) else None)
+            if isinstance(first, ast.Constant) and str(first.value).startswith("-"):
+                found.append(node.lineno)
+    return [f"{path}:{line}" for line in sorted(found)]
+
+
+def scanned_kill_binary_groups() -> list[str]:
+    found = []
+    for directory in (ROOT / "bin", ROOT / "lib", ROOT / "tests"):
+        for path in sorted(directory.rglob("*")):
+            try:
+                source = path.read_text(encoding="utf-8") if path.is_file() else ""
+                found += kill_binary_groups(source, str(path.relative_to(ROOT)))
+            except (SyntaxError, UnicodeDecodeError, ValueError):
+                continue
+    return found
+
+
 def guards() -> set[int]:
     """The pids of the guards this test process started and that still run
     (other guards of the host are not this test's business)."""
@@ -181,6 +213,16 @@ class BoundedProcessTest(unittest.TestCase):
 
     def test_every_direct_subprocess_timeout_is_a_dated_exception(self) -> None:
         self.assertEqual(listed_exceptions(), direct_timed_calls())
+
+    def test_no_process_group_is_signalled_through_the_kill_binary(self) -> None:
+        # af-23j8a8: a test's cleanup ran `kill -9 -<its reaper's group>`;
+        # procps-ng read it as kill(-1, SIGKILL) and the GitHub runner of
+        # Lot 5 lost every process of its account, twice, with no log.
+        self.assertEqual(["x:1", "x:2"], kill_binary_groups(
+            'subprocess.run(["kill", "-9", f"-{pid}"])\n("/usr/bin/kill", "-KILL", "-" + str(pid))\n'
+            'subprocess.run(["kill", "-9", "--", f"-{pid}"])\nsubprocess.run(["kill", "-9", str(pid)])\n', "x"))
+        self.assertEqual([], scanned_kill_binary_groups(),
+                         "signal a process group with os.killpg, or put `--` before the negative pid")
 
     def test_every_session_outside_the_launcher_is_a_dated_exception(self) -> None:
         # A session of its own outlives its caller unless lib/bounded_process.py

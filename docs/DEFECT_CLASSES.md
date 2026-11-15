@@ -115,7 +115,11 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   verrou d'essai qu'il tient tant qu'il vit et qu'il retire avec le dossier
   en finissant ; le sweep arrête le produit remis à init dont l'arbre est
   sous ce dossier au verrou libre, et reconnaît les copies de
-  `project-launch` qu'un test y a faites (af-23j8a8).
+  `project-launch` qu'un test y a faites (af-23j8a8). Le lint de
+  `tests/bounded-process-test.py` refuse enfin une liste d'arguments de
+  kill(1) qui donne un groupe (un pid négatif calculé) avant `--` :
+  procps-ng 4.0.4 lit `kill -9 -11176` comme kill(-1, SIGKILL) ; un groupe
+  se signale par `os.killpg` (af-23j8a8).
 - Occurrences : #624, #628, #629, #630, #631, #636, #647, #657, #658, #661,
   #667, #694, #696, #705, #706, #708, #710, #713, #721 ; copies orphelines du
   22/10 (sans PR) ; af-kky570 ; af-npz9v1.46 ; af-npz9v1.26 ; af-30zwwu ;
@@ -145,7 +149,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   af-23j8a8 (le produit d'un test lancé dans une session à lui, son
   faucheur tué avec le test, passait à systemd --user dans un dossier
   temporaire du test encore là, sans marque, sans dossier disparu ni
-  essai).
+  essai ; le nettoyage du test de ce correctif, `kill -9 -<groupe>`, a tué
+  par kill(-1) tous les processus du compte du runner GitHub : le lot 5
+  perdu deux fois, sans journal).
 - Ouvertes : les invocations directes antérieures hors des occurrences de
   l'étude B sont nommées une par une, avec leur date et leur motif, dans
   `config/bounded-process-exceptions.tsv` ; une vingtaine de délais écrits à

@@ -117,6 +117,14 @@ def _end(pids: list[int]) -> None:
         os.waitpid(pid, 0)
 
 
+def _kill_group(group: int) -> None:
+    # Never through kill(1): procps-ng 4.0.4 reads `kill -9 -11176` as
+    # kill(-1, SIGKILL), every process of the account, the CI runner's own
+    # among them (af-23j8a8).
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(group, signal.SIGKILL)
+
+
 class ProjectLaunchTest(unittest.TestCase):
     def setUp(self) -> None:
         self._state_files: list[Path] = []
@@ -1225,7 +1233,7 @@ class ProjectLaunchTest(unittest.TestCase):
                                   start_new_session=True)
         self.addCleanup(reaper.stdout.close)
         self.addCleanup(reaper.wait)
-        self.addCleanup(subprocess.run, ["kill", "-9", f"-{reaper.pid}"], capture_output=True)
+        self.addCleanup(_kill_group, reaper.pid)
         self.assertEqual("ready", reaper.stdout.readline().strip())
         pid = int(pid_file.read_text())
         self.addCleanup(subprocess.run, ["kill", "-9", str(pid)], capture_output=True)
@@ -1237,7 +1245,7 @@ class ProjectLaunchTest(unittest.TestCase):
         code, swept = self._sweep("none", env, "--work-root", str(root))
         self.assertEqual((0, []), (code, swept["stopped"]), "a product whose test reaper lives was stopped")
 
-        os.killpg(reaper.pid, signal.SIGKILL)  # the reaper and its test, not the product's session
+        _kill_group(reaper.pid)  # the reaper and its test, not the product's session
         reaper.wait()
         self.assertTrue(_alive(pid), "the product did not outlive its reaper: nothing proven")
         code, swept = self._sweep("none", env, "--work-root", str(root))
