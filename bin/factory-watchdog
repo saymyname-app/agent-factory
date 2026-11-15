@@ -7,7 +7,10 @@
 #                        re-notification and no visible cockpit signal. af-oihx
 #                        sat 2h7m on 2026-09-16 before a human found it by hand.
 #                        A gate whose wait is already a request on the
-#                        operator's list is reported, never paged (af-brjmv6).
+#                        operator's list is reported, never paged (af-brjmv6):
+#                        a request on the gate itself, or one on the bead it
+#                        blocks or its convoy that names the gate; any other
+#                        request there leaves it paged (af-kz2eao).
 #   2. STUCK PR          a Factory-repo PR that is CONFLICTING, or has never
 #                        triggered any CI check, looks identical from the
 #                        outside to one quietly waiting its turn. PR #57 sat
@@ -162,25 +165,35 @@ should_nudge() {  # should_nudge <bead-id> <metadata-key> -> 0 if due, 1 if thro
 }
 
 # A human gate whose wait is already an open request on the operator's list is
-# a wanted, visible wait, not a silent one: the bead it blocks, or the convoy
-# tracking that bead, carries an active gc.needs_benjamin. Paging the Mayor
-# about it tells nobody anything -- gate af-fmeaj6 (D01's final verification,
-# request on convoy af-wtjo2x) was paged every 30 min for three days, each page
-# cleared by hand (af-brjmv6). Prints the bead holding the request. Any
-# unreadable link reads as "not on the list": the gate is paged as before.
+# a wanted, visible wait, not a silent one. Paging the Mayor about it tells
+# nobody anything -- gate af-fmeaj6 (D01's final verification, request on
+# convoy af-wtjo2x) was paged every 30 min for three days, each page cleared by
+# hand (af-brjmv6). The request must be the one that waits for this gate: an
+# active gc.needs_benjamin on the gate itself, or on the bead it blocks or the
+# convoy tracking that bead when the request (its words, why, options or link)
+# names the gate. Any other request there -- a convoy's Spec end or acceptance,
+# a variant to pick -- says nothing about the gate, which is paged as before
+# (af-kz2eao, same form as af-xgd1rd R19). Prints the bead holding the
+# request. Any unreadable link reads as "not on the list".
 ON_OPERATOR_LIST='[.[]? | select((.status // "open") != "closed")
   | select(((.metadata["gc.needs_benjamin"] // "") | tostring) as $n | $n != "" and $n != "none")
+  | select($gate == "" or ([.metadata["gc.needs_benjamin", "gc.escalation_pourquoi",
+        "gc.escalation_que_faire", "gc.escalation_lien"] // empty | tostring]
+      | any(test("(^|[^A-Za-z0-9_-])" + $gate + "($|[^A-Za-z0-9_-])"))))
   | .id] | first // empty'
 gate_on_operator_list() {  # gate_on_operator_list <gate-id> -> 0 + holder id if listed
   local gate_id=$1 blocked holder ids
-  blocked=$(gc bd dep list "$gate_id" --direction=up -t blocks --json 2>/dev/null) || return 1
-  holder=$(jq -r "$ON_OPERATOR_LIST" <<<"$blocked" 2>/dev/null)
+  holder=$(gc bd show "$gate_id" --json 2>/dev/null | jq -r --arg gate "" "$ON_OPERATOR_LIST" 2>/dev/null)
+  if [ -z "$holder" ]; then
+    blocked=$(gc bd dep list "$gate_id" --direction=up -t blocks --json 2>/dev/null) || return 1
+    holder=$(jq -r --arg gate "$gate_id" "$ON_OPERATOR_LIST" <<<"$blocked" 2>/dev/null)
+  fi
   if [ -z "$holder" ]; then
     ids=$(jq -r '[.[]?.id // empty] | join(" ")' <<<"$blocked" 2>/dev/null)
     [ -n "$ids" ] || return 1
     # shellcheck disable=SC2086  # $ids: bead ids, one argument each
     holder=$(gc bd dep list $ids --direction=up -t tracks --json 2>/dev/null \
-      | jq -r "$ON_OPERATOR_LIST" 2>/dev/null)
+      | jq -r --arg gate "$gate_id" "$ON_OPERATOR_LIST" 2>/dev/null)
   fi
   [ -n "$holder" ] && printf '%s' "$holder"
 }
