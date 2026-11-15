@@ -182,10 +182,13 @@ SKIPPED, not failed, on every run and in the bead of a failing run; exit 77
 without a `SKIP:` line counts as a failure. Any other
 failure of the probe lets the test run, so a real regression stays red.
 
-The intermittent correction-round journey keeps its latest failed disposable
-city at `~/.cache/af-rx0ocp-correction.last-failure` (a symlink to the original
-trial path); the next failure replaces it. `KEEP_TEST_CITY=1` still preserves
-any manually selected run without rotating that diagnostic.
+Every isolated-city trial keeps its latest failed disposable city beside its
+trial directory, at `<prefix>.last-failure` (a symlink, e.g.
+`~/.cache/af-rx0ocp-correction.last-failure`); the next failure replaces it.
+A trial of a fixed directory name is first renamed there, so the next run
+finds its path free (`isolated_city_keep_failure`, af-dbe735).
+`KEEP_TEST_CITY=1` still preserves any manually selected run without rotating
+that diagnostic.
 
 ## In this repository: the ceiling held by code
 

@@ -62,7 +62,7 @@ CITY="$TRIAL/c"
 PRODUCT="$CITY"
 FIXTURE="tests/fixtures/delivery-fixture-city"
 cleanup() {
-  status=$?
+  status=$? latest_failure="$HOME/.cache/af-higj9z-evaluation.last-failure"
   trap - EXIT
   isolated_city_stop "$TRIAL" "$CITY" >/dev/null 2>&1 || true
   tmux -L "$(basename "$TRIAL")" kill-server >/dev/null 2>&1 || true
@@ -90,6 +90,12 @@ cleanup() {
   done
   if [ "${KEEP_TEST_CITY:-0}" = 1 ]; then
     echo "trial preserved at $TRIAL" >&2
+  elif [ "$status" != 0 ]; then
+    if kept=$(isolated_city_keep_failure "$TRIAL" "$latest_failure"); then
+      echo "failed trial preserved at $kept (latest: $latest_failure)" >&2
+    else
+      echo "FAIL: could not rotate latest failure; trial left at $TRIAL" >&2
+    fi
   else
     git -C "$PRODUCT" worktree prune >/dev/null 2>&1 || true
     isolated_city_remove "$TRIAL"
